@@ -33,6 +33,12 @@ if ! [[ "$baseline_timeout_budget" =~ ^[0-9]+$ ]]; then
   echo "ROLLOUT_BASELINE_TIMEOUT_BUDGET must be a non-negative integer, got '$baseline_timeout_budget'" >&2
   exit 2
 fi
+# The final API sample after activation is retaken the same way (below).
+final_timeout_retake_budget="${ROLLOUT_FINAL_TIMEOUT_RETAKES:-2}"
+if ! [[ "$final_timeout_retake_budget" =~ ^[0-9]+$ ]]; then
+  echo "ROLLOUT_FINAL_TIMEOUT_RETAKES must be a non-negative integer, got '$final_timeout_retake_budget'" >&2
+  exit 2
+fi
 # A control plane rebuilt from backups has no API until its first
 # activation starts it (docs/runbooks/ControlPlaneStateBackup.md, "Rebuild a
 # control plane from backups"). Its baseline cannot be healthy, so that one
@@ -195,6 +201,20 @@ command_status=0
 wait "$command_pid" || command_status=$?
 sample_number=$((sample_number + 1))
 sample rollout api "$probe_url" "$sample_number" "$primary_log" 3
+# A final sample that timed out is retaken, at most
+# ROLLOUT_FINAL_TIMEOUT_RETAKES times, as a baseline sample is: the control
+# plane's egress to the edge loses connection attempts in bursts, and the
+# unit lane's first production run (2026-11-23) failed on a timed-out last
+# sample, the hand-off having passed its checks and the app path healthy.
+# The judge below still counts every retake against the timeout budget and
+# the consecutive-failure streak, and any answer other than a timeout fails.
+final_timeout_retakes=0
+while last_sample_timed_out "$primary_log" && (( final_timeout_retakes < final_timeout_retake_budget )); do
+  final_timeout_retakes=$((final_timeout_retakes + 1))
+  sleep "$probe_interval_seconds"
+  sample_number=$((sample_number + 1))
+  sample rollout api "$probe_url" "$sample_number" "$primary_log" 3
+done
 if [[ "$first_activation" == true ]] && (( command_status == 0 )); then
   ready_deadline=$((SECONDS + first_ready_seconds))
   until tail -n 1 "$primary_log" | awk -F '\t' '{ exit !($9 == 0 && $5 >= 200 && $5 < 300) }' \
