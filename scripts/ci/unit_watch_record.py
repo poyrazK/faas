@@ -262,7 +262,7 @@ def main(argv: list[str]) -> int:
             p.add_argument("--now", type=int, required=True)
             p.add_argument("--target-file", default="")
             p.add_argument("--commit", default="")
-            p.add_argument("--max-unwatched", type=int, default=2)
+            p.add_argument("--max-unwatched", type=int, default=4)
     args = parser.parse_args(argv)
     try:
         with locked(args.record):

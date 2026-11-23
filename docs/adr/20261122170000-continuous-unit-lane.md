@@ -307,6 +307,15 @@ release deploys the control-plane and edge lanes, behind the existing
 preflight (freeze, newest, current, main's light run, idle, healthy,
 watch) and the 30 min watch with automatic rollback and freeze.
 
+**Watch cap** (owner, 2026-11-23). A deploy joins an open watch, but a host
+may hold only `watch.max_unwatched` releases not yet watched clean; past it
+the preflight waits for the watch (up to 30 min). At 2, a merge burst queued
+its third release behind the watch, past the four-minute target. The cap is
+now 4 and release retention keeps 5 previous releases
+(`releaseretention.DefaultKeepPrevious`, was 3), so a breach still finds the
+known-good release installed; a test keeps the cap below retention. Cost:
+two more releases on disk per host, about 4 GB.
+
 ### 5. Full releases stay manual
 
 The owner cuts full releases. A stalled lane says so in every run's

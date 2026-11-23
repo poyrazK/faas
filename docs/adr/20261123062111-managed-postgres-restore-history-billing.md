@@ -136,7 +136,7 @@ Pro, overage on, one month: average restore history 12 GB, snapshots 1 GB.
 - **Prices and limits** in `pkg/api/limits.go`: the two Neon cost constants, the two prices derived with `ManagedPostgresOverageMarkupPercent`, `ManagedPostgresHistoryMonthSeconds` (744 h) and `ManagedPostgresIncludedHistoryBytes`.
 - **Meter.** `MeterSnapshotByteSeconds` (`snapshot_byte_seconds`) takes Neon's `snapshot_storage_bytes_month`; `history_byte_seconds` keeps `instant_restore_bytes_month` only. Windows recorded before the release keep both in `history_byte_seconds`, so history billing starts in a month after the release. The operator's `max_monthly_history_byte_seconds` ceiling still bounds both together, and the cost estimate prices snapshots at the history rate, an upper bound. The operator usage line items add `managed_postgres.snapshots`.
 - **Charge.** `HistoryOverageCharge` and the plan-span sum in `pkg/managedpostgres`. A step never lowers the history the month already billed.
-- **Schema.** Migration `20261123071905357_managed_postgres_history_billing` widens the usage meter CHECK online and adds the delivery and reservation columns.
+- **Schema.** Migration `20261123105120100_managed_postgres_history_billing` widens the usage meter CHECK online and adds the delivery and reservation columns.
 - **Customers.** `gregale postgres usage` and the usage API show `snapshot_byte_seconds` and `included_history_bytes`.
 - **Next (D2).** Shortening the restore window needs a provider update of the history retention, a restore-point check against the shortened window, the reset on the 1st, `history_state` in `usage` and the email. Until it ships, overage-off accounts' history past the included amount stays unbilled, as before this ADR.
 

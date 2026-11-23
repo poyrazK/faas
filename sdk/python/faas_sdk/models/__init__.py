@@ -1273,9 +1273,12 @@ from .mcp_policy_convergence_snapshot_state import MCPPolicyConvergenceSnapshotS
 from .mcp_readiness_expectation import MCPReadinessExpectation
 from .mcp_readiness_expectation_evidence_ids import MCPReadinessExpectationEvidenceIds
 from .mcp_resource_policy import MCPResourcePolicy
+from .mcp_resource_policy_credential import MCPResourcePolicyCredential
 from .mcp_resource_policy_prompt_scopes_type_0 import MCPResourcePolicyPromptScopesType0
 from .mcp_resource_policy_resource_scopes_type_0 import MCPResourcePolicyResourceScopesType0
+from .mcp_resource_policy_tool_limits import MCPResourcePolicyToolLimits
 from .mcp_resource_policy_tool_scopes_type_0 import MCPResourcePolicyToolScopesType0
+from .mcp_tool_limit import MCPToolLimit
 from .member_list_response import MemberListResponse
 from .mfa_confirm_request import MFAConfirmRequest
 from .mfa_confirm_response import MFAConfirmResponse
@@ -4290,9 +4293,12 @@ __all__ = (
     "MCPReadinessExpectation",
     "MCPReadinessExpectationEvidenceIds",
     "MCPResourcePolicy",
+    "MCPResourcePolicyCredential",
     "MCPResourcePolicyPromptScopesType0",
     "MCPResourcePolicyResourceScopesType0",
+    "MCPResourcePolicyToolLimits",
     "MCPResourcePolicyToolScopesType0",
+    "MCPToolLimit",
     "MemberListResponse",
     "MFAConfirmRequest",
     "MFAConfirmResponse",

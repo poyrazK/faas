@@ -6108,6 +6108,9 @@ func (s *server) handler() http.Handler {
 		CountStatuses: []int{middleware.CountEveryAttempt},
 	})(http.HandlerFunc(s.serviceCallerKeys)))
 	mux.HandleFunc("GET /v1/status", s.publicStatusOverviewHandler)
+	// ADR-20261122194324: the empty key set an api-key MCP policy names so
+	// gateways that predate consumer-key MCP policies refuse every token.
+	mux.HandleFunc("GET "+api.MCPConsumerKeyJWKSPath, serveMCPConsumerKeyJWKS)
 	// ADR-1506: an app's customer reads its own billing with its consumer
 	// key; no account credential is involved.
 	mux.Handle("GET /v1/consumer-billing/{slug}", selfVerified(s.consumerBilling.Summary))

@@ -614,6 +614,7 @@ export type { ManagedServiceProbeSpec } from './models/ManagedServiceProbeSpec.j
 export type { MCPPolicyConvergenceSnapshot } from './models/MCPPolicyConvergenceSnapshot.js';
 export type { MCPReadinessExpectation } from './models/MCPReadinessExpectation.js';
 export type { MCPResourcePolicy } from './models/MCPResourcePolicy.js';
+export type { MCPToolLimit } from './models/MCPToolLimit.js';
 export type { MemberListResponse } from './models/MemberListResponse.js';
 export type { MFAConfirmRequest } from './models/MFAConfirmRequest.js';
 export type { MFAConfirmResponse } from './models/MFAConfirmResponse.js';

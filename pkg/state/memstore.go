@@ -6158,7 +6158,7 @@ func (m *MemStore) customerCausedFailureLocked(d Deployment) bool {
 	case api.CodeReleaseCommandFailed:
 		for _, task := range m.appTasks {
 			if task.DeploymentID == d.ID && task.Kind == AppTaskKindRelease &&
-				api.IsCustomerCausedReleaseTask(task.ExitCode, task.Status == AppTaskTimedOut, task.Status == AppTaskCancelled && task.CancelRequested != nil) {
+				api.IsCustomerCausedReleaseTask(task.ExitCode, derefString(task.FailureCode), task.StderrTail, task.Status == AppTaskTimedOut, task.Status == AppTaskCancelled && task.CancelRequested != nil) {
 				return true
 			}
 		}
@@ -29209,6 +29209,9 @@ func (m *MemStore) CreateConsumerKey(_ context.Context, accountID, appID, name, 
 		case "read", "write", "admin", "billing":
 			// ok
 		default:
+			if api.ValidConsumerKeyMCPScope(s) {
+				continue
+			}
 			return ConsumerKey{}, fmt.Errorf("memstore: CreateConsumerKey: scope %q is not in the closed-set {read, write, admin} (00329 vocab CHECK)", s)
 		}
 	}

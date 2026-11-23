@@ -420,18 +420,23 @@ WATCH_OWNER=777 bash "$helper" watch-close >/dev/null || fail "the owner could n
 [[ ! -f "$WATCH_RECORD" ]] || fail "watch-close left the record"
 [[ "$(bash "$helper" watch-record)" == null ]] || fail "watch-record of no record is not null"
 
-# The cap: at most max_unwatched releases per host.
-printf '%s\n' "$releases/$known_good" > "$test_root/current"
-bash "$helper" watch-open "$plan" control-plane || fail "watch-open (1)"
-jq '.release_id = "0123456789abcdef0123456789abcdef0123456a" | .expect_current = "0123456789abcdef0123456789abcdef01234567"' "$plan" > "$test_root/plan2.json"
-printf '%s\n' "$releases/0123456789abcdef0123456789abcdef01234567" > "$test_root/current"
-bash "$helper" watch-open "$test_root/plan2.json" control-plane || fail "watch-open (2)"
-jq '.release_id = "0123456789abcdef0123456789abcdef0123456b" | .expect_current = "0123456789abcdef0123456789abcdef0123456a"' "$plan" > "$test_root/plan3.json"
-mkdir -p "$releases/0123456789abcdef0123456789abcdef0123456a"
-cp "$releases/$known_good/release-manifest.json" "$releases/0123456789abcdef0123456789abcdef0123456a/"
-printf '%s\n' "$releases/0123456789abcdef0123456789abcdef0123456a" > "$test_root/current"
-status=0; bash "$helper" watch-open "$test_root/plan3.json" control-plane 2>/dev/null || status=$?
-[[ "$status" == 3 ]] || fail "a third unwatched release was accepted (exit $status)"
+# The cap: at most max_unwatched releases per host (release_units.json).
+cap="$(jq -r .watch.max_unwatched "$repo_root/scripts/ci/release_units.json")"
+expect="$known_good"
+for (( i = 1; i <= cap + 1; i++ )); do
+  id="$(printf '0123456789abcdef0123456789abcdef012345%02x' "$((0x70 + i))")"
+  mkdir -p "$releases/$expect"
+  [[ -f "$releases/$expect/release-manifest.json" ]] || cp "$releases/$known_good/release-manifest.json" "$releases/$expect/"
+  printf '%s\n' "$releases/$expect" > "$test_root/current"
+  jq --arg id "$id" --arg expect "$expect" '.release_id = $id | .expect_current = $expect' "$plan" > "$test_root/cap-$i.json"
+  status=0; bash "$helper" watch-open "$test_root/cap-$i.json" control-plane 2>/dev/null || status=$?
+  if (( i <= cap )); then
+    [[ "$status" == 0 ]] || fail "unwatched release $i of $cap was refused (exit $status)"
+  else
+    [[ "$status" == 3 ]] || fail "release $i, past the cap of $cap, was accepted (exit $status)"
+  fi
+  expect="$id"
+done
 rm -f "$WATCH_RECORD"
 
 # pin-node keeps only keys with the pinned fingerprint.

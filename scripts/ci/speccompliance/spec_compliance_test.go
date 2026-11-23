@@ -124,6 +124,8 @@ var previewFields = map[string]map[string]bool{
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
+	// ADR-20261122194324: fixed empty key set for old gateways' fail-closed api-key MCP policies.
+	"GET /v1/mcp/consumer-key-jwks.json":                      true,
 	"GET /v1/referrals/checkout":                              true, // private browser checkout hint; mounted in sales.go
 	"GET /v1/orgs/{slug}/referrals/checkout":                  true, // private browser checkout hint for an organization's first purchase
 	"GET /v1/sales/templates":                                 true, // private sales message tools; session authentication
