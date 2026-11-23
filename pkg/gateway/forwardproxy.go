@@ -487,12 +487,29 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	guestHeaders := stripHopByHop(r.Header)
 	injectGuestTraceContext(r.Context(), guestHeaders)
 	faasPolicy := guestFaasHeaderPolicyFrom(r.Context())
+	// One backing array holds every header frame of the init (each was its
+	// own allocation, ~25 per request), filled in place and addressed, never
+	// copied. Sized for every value plus Host; the deadline header is its
+	// own message.
+	values := 0
+	for _, vals := range guestHeaders {
+		values += len(vals)
+	}
+	frames := make([]vmmdpb.Header, values+1)
+	used := 0
+	frame := func(name, value string) *vmmdpb.Header {
+		h := &frames[used]
+		used++
+		h.Name, h.Value = name, value
+		return h
+	}
+	init.Headers = make([]*vmmdpb.Header, 0, values+2)
 	for name, vals := range guestHeaders {
 		if api.HasLowerPrefix(name, "x-faas-") && !faasPolicy.receives(name) {
 			continue
 		}
 		for _, v := range vals {
-			init.Headers = append(init.Headers, &vmmdpb.Header{Name: name, Value: v})
+			init.Headers = append(init.Headers, frame(name, v))
 		}
 	}
 	// net/http moves Host out of r.Header into r.Host, so the loop above
@@ -502,7 +519,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// served on several hostnames (production-us hunt #9, H9-98). ADR-028:
 	// the guest sees the request's Host.
 	if r.Host != "" {
-		init.Headers = append(init.Headers, &vmmdpb.Header{Name: "Host", Value: r.Host})
+		init.Headers = append(init.Headers, frame("Host", r.Host))
 	}
 	if deadline, ok := guestDeadlineHeader(r.Context()); ok {
 		init.Headers = append(init.Headers, deadline)

@@ -5185,9 +5185,10 @@ func stampTrustedClientIP(r *http.Request) {
 		r.Header.Del(name)
 	}
 	if ip, ok := clientIPFromTrustedXFF(r); ok {
-		r.Header.Set(wire.ClientIPHeader, ip.String())
-		r.Header.Set("True-Client-Ip", ip.String())
-		r.Header.Set("X-Real-Ip", ip.String())
+		addr := ip.String()
+		r.Header.Set(wire.ClientIPHeader, addr)
+		r.Header.Set("True-Client-Ip", addr)
+		r.Header.Set("X-Real-Ip", addr)
 	}
 }
 
