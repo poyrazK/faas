@@ -14,8 +14,8 @@ import (
 // minus lines the platform's own build tooling causes and the customer cannot
 // act on. Railpack's Node provider sets NPM_CONFIG_PRODUCTION=false, so every
 // npm step printed "npm warn config production Use `--omit=dev` instead."
-// (prod 2026-11-20). The unfiltered output still reaches the build failure
-// tail.
+// (prod 2026-11-20). The build log tail builderd shows is cut from the same
+// filtered text (withoutPlatformBuildNoise, prod hunt r29).
 type buildOutputFilter struct {
 	out     io.Writer
 	partial []byte

@@ -23,6 +23,9 @@ func TestPositionalMistakesNameTheWorkingForm(t *testing.T) {
 		{"cron runs app only", func() int {
 			return main.CmdCronsRuns([]string{"my-app"})
 		}, "gregale cron list my-app"},
+		{"cron runs short id is not an app", func() int {
+			return main.CmdCronsRuns([]string{"5a470eed"})
+		}, "usage: gregale cron runs <id>"},
 		{"cron runs --app without id", func() int {
 			return main.CmdCronsRuns([]string{"--app", "my-app"})
 		}, "gregale cron list my-app"},

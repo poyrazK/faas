@@ -428,7 +428,7 @@ func listAppForm(list cliSub, slug string) string {
 func commonVerbWord(word string) bool {
 	switch word {
 	case "get", "show", "describe", "view", "ls", "delete", "del", "remove", "create", "new", "edit", "set", "help", "status", "logs",
-		"revoke", "destroy", "update", "rotate", "enable", "disable":
+		"revoke", "update", "rotate", "enable", "disable":
 		return true
 	}
 	return false

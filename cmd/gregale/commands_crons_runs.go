@@ -78,6 +78,11 @@ func cmdCronsRuns(args []string) int {
 	if logsFlagWasSet(fs, "app") && len(pos) == 0 {
 		return printErr("Missing cron ID", fmt.Errorf("cron runs takes a cron ID: list %s's crons with gregale cron list %s, or choose one with gregale cron runs --interactive --app %s", *app, *app, *app))
 	}
+	if logsFlagWasSet(fs, "app") && !jsonOutput {
+		// The ID alone selects the cron; say so rather than imply a filter
+		// (code review: an ID of another app printed its runs silently).
+		_, _ = fmt.Fprintf(os.Stderr, "Note: --app is not needed with a cron ID and does not filter; showing the runs of cron %s.\n", pos[0])
+	}
 	if len(pos) > 1 {
 		// prod 2026-11-20: `cron runs <app> <id>` (the order `cron list
 		// <app>` suggests) printed only the usage line.
@@ -92,7 +97,9 @@ func cmdCronsRuns(args []string) int {
 		return 1
 	}
 	id := pos[0]
-	if !cronIDPattern.MatchString(id) && api.ValidAppSlug(id) {
+	// A word of only hex digits and dashes is a cut-short or mistyped cron ID
+	// (`5a470eed`), not an app; it keeps the usage line (code review).
+	if !cronIDPattern.MatchString(id) && api.ValidAppSlug(id) && strings.Trim(id, "0123456789abcdef-") != "" {
 		// `cron runs APP` printed only the usage line (prod hunt r31).
 		return printErr("Missing cron ID", fmt.Errorf("cron runs takes a cron ID, not an app: list %s's crons with gregale cron list %s, then run gregale cron runs <id>", id, id))
 	}
