@@ -3083,7 +3083,7 @@ func (c *Client) ProbeMCPInstanceProtocol(ctx context.Context, slug, deploymentI
 	endpoint := "/v1/apps/" + url.PathEscape(slug) + "/deployments/" + url.PathEscape(deploymentID) + "/instances/" + url.PathEscape(instanceID) + "/mcp-probe"
 	headers := make(http.Header)
 	if token != "" {
-		headers.Set("MCP-Probe-Authorization", token)
+		headers.Set("Mcp-Probe-Authorization", token)
 	}
 	return out, c.doWithHeaders(ctx, "POST", endpoint, probe, &out, headers)
 }
@@ -7570,14 +7570,14 @@ func (c *Client) GetAppsDeploymentOpenAPIDoc(ctx context.Context, slug, deployme
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return false
 		}
-		out.DeploymentID = resp.Header.Get("X-OpenAPI-Doc-Deployment-ID")
-		out.AppID = resp.Header.Get("X-OpenAPI-Doc-App-ID")
-		out.Source = resp.Header.Get("X-OpenAPI-Doc-Source")
-		out.DocSHA256 = resp.Header.Get("X-OpenAPI-Doc-SHA256")
-		out.CapturedAt = resp.Header.Get("X-OpenAPI-Doc-Captured-At")
-		out.UpdatedAt = resp.Header.Get("X-OpenAPI-Doc-Updated-At")
-		out.ByteSize, _ = strconv.Atoi(resp.Header.Get("X-OpenAPI-Doc-Byte-Size"))
-		out.Truncated = resp.Header.Get("X-OpenAPI-Doc-Truncated") == "1"
+		out.DeploymentID = resp.Header.Get("X-Openapi-Doc-Deployment-Id")
+		out.AppID = resp.Header.Get("X-Openapi-Doc-App-Id")
+		out.Source = resp.Header.Get("X-Openapi-Doc-Source")
+		out.DocSHA256 = resp.Header.Get("X-Openapi-Doc-Sha256")
+		out.CapturedAt = resp.Header.Get("X-Openapi-Doc-Captured-At")
+		out.UpdatedAt = resp.Header.Get("X-Openapi-Doc-Updated-At")
+		out.ByteSize, _ = strconv.Atoi(resp.Header.Get("X-Openapi-Doc-Byte-Size"))
+		out.Truncated = resp.Header.Get("X-Openapi-Doc-Truncated") == "1"
 		return true
 	})
 	if err != nil {

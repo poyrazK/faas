@@ -1737,7 +1737,7 @@ func (p *ServiceProxy) prepareGuestRequest(ctx context.Context, request *http.Re
 	request.Header = request.Header.Clone()
 	flagValues := request.Header.Values(api.FlagContextHeader)
 	request.Header.Del(api.FlagContextHeader)
-	request.Header.Del("x-faas-stream")
+	request.Header.Del("X-Faas-Stream")
 	request.Header.Del(trafficdeadline.Header)
 	request.Header.Del(ServiceProxyCallerAppHeader)
 	// An override applies only to this resolved binding. Forwarding it would
@@ -1765,7 +1765,7 @@ func (p *ServiceProxy) prepareGuestRequest(ctx context.Context, request *http.Re
 			addServiceFlagPropagationEvents(ctx, inherited)
 		}
 	}
-	request.Header.Set("x-faas-protocol", serviceGuestProtocol(target))
+	request.Header.Set("X-Faas-Protocol", serviceGuestProtocol(target))
 	// Preview identity is always propagated, including an isolated
 	// preview-to-preview hop. The resolver tells us whether the chosen target
 	// came from the same PR scope so the fleet counters do not misclassify that
@@ -1839,7 +1839,7 @@ func (p *ServiceProxy) forwardUpgrade(w http.ResponseWriter, r *http.Request, ta
 	// Mirrors the public edge (ADR-080): the wake-timeline vocabulary marks a
 	// raw-bytes session so observability does not have to re-derive it from
 	// the Connection/Upgrade pair.
-	request.Header.Set("x-faas-upgrade", "true")
+	request.Header.Set("X-Faas-Upgrade", "true")
 	key := serviceProxyEndpointKey(target.AppID, endpoint.InstanceID)
 	signal := &staleTargetSignal{}
 	signal.onStale = func() { p.retireEndpoint(target.AppID, endpoint.InstanceID, signal.frozen.Load()) }

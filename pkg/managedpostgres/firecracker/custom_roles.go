@@ -128,7 +128,9 @@ END $gregale$;
 ALTER ROLE %[1]s NOLOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION %[2]s CONNECTION LIMIT -1 PASSWORD NULL;
 ALTER ROLE %[1]s RESET ALL;
 COMMENT ON ROLE %[1]s IS '%[4]s';
-`, spec.Name, bypass, customRoleMarkerPrefix, marker)
+GRANT EXECUTE ON ALL ROUTINES IN SCHEMA public TO %[1]s;
+ALTER DEFAULT PRIVILEGES FOR ROLE %[5]s IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO %[1]s;
+`, spec.Name, bypass, customRoleMarkerPrefix, marker, schemaOwner)
 	}
 	for _, spec := range desired {
 		var markers, children []string
