@@ -564,6 +564,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/instances/{id}":               true,
 	"GET /v1/admin/obs/wake-latency":                 true, // operator wake-latency report (ADR-20261121200409)
 	"GET /v1/admin/obs/snapshot-health":              true, // operator snapshot health report (ADR-20261122135018)
+	"GET /v1/admin/obs/build-queue":                  true, // operator build queue report (ADR-20261123163340)
 	"GET /v1/admin/obs/tenants/{id}":                 true, // ADR-091 — operator-only
 	"GET /v1/admin/obs/tenants/{id}/activity":        true, // operator-only tenant activity drill-down
 	"GET /v1/admin/obs/apps/{id}":                    true, // operator-only app workload drill-down
@@ -1124,6 +1125,12 @@ var dtoExclude = map[string]bool{
 	"ObsWakeSample":        true,
 	"ObsWakeAppStat":       true,
 	// ADR-20261122135018 operator snapshot health report.
+	"ObsBuildQueueReport":        true,
+	"ObsBuildQueueTotals":        true,
+	"ObsBuildKindStat":           true,
+	"ObsBuildFailureCount":       true,
+	"ObsBuilderNodeSlots":        true,
+	"ObsBuildRow":                true,
 	"ObsSnapshotHealthReport":    true,
 	"ObsSnapshotTotals":          true,
 	"ObsSnapshotGroup":           true,

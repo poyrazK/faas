@@ -5922,6 +5922,10 @@ type Querier interface {
 	// one linear chain: a run starts one step attempt at a time.
 	OperationTimelineStepAttempts(ctx context.Context, db DBTX, arg OperationTimelineStepAttemptsParams) ([]OperationTimelineStepAttemptsRow, error)
 	OperationWebhookTenantStatus(ctx context.Context, db DBTX, arg OperationWebhookTenantStatusParams) (OperationWebhookTenantStatusRow, error)
+	// The operator build queue report (ADR-20261123163340): queued and running
+	// builds with their app, the longest waiting first. The caller asks for one
+	// row more than it keeps to learn whether it was cut.
+	OperatorActiveBuilds(ctx context.Context, db DBTX, rowLimit int32) ([]OperatorActiveBuildsRow, error)
 	OperatorAlertAdvanceRules(ctx context.Context, db DBTX, rules []byte) ([]string, error)
 	OperatorAlertCollection(ctx context.Context, db DBTX) (OperatorAlertCollectionRow, error)
 	OperatorAlertCollectionFailed(ctx context.Context, db DBTX, at pgtype.Timestamptz) error
@@ -5978,6 +5982,10 @@ type Querier interface {
 	// Bound each indexed source per verified target before merging. Account rows
 	// are deliberately excluded: an account match is not incident correlation.
 	OperatorContextTimeline(ctx context.Context, db DBTX, arg OperatorContextTimelineParams) ([]OperatorContextTimelineRow, error)
+	// Builds that reached a terminal status at or after since, newest first,
+	// for the build queue report's durations, failures and cache outcomes.
+	// builds_finished_at_idx serves the range.
+	OperatorFinishedBuildsSince(ctx context.Context, db DBTX, arg OperatorFinishedBuildsSinceParams) ([]OperatorFinishedBuildsSinceRow, error)
 	OperatorImagePreparationProgressSnapshot(ctx context.Context, db DBTX, nodeID string) ([]OperatorImagePreparationProgressSnapshotRow, error)
 	// Each branch uses an exact-resource index and is independently bounded before
 	// the merge. Payload references use the partial operator-resource index.

@@ -4920,6 +4920,9 @@ func (s *server) handler() http.Handler {
 	// Fleet snapshot health report (ADR-20261122135018).
 	mux.HandleFunc("GET /v1/admin/obs/snapshot-health",
 		s.authLimited(s.requireOperatorSessionRead(s.obsSnapshotHealth)))
+	// Build queue and builder slot report (ADR-20261123163340).
+	mux.HandleFunc("GET /v1/admin/obs/build-queue",
+		s.authLimited(s.requireOperatorSessionRead(s.obsBuildQueue)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/heartbeats",
 		s.authLimited(s.requireOperatorRead(s.obsNodeHeartbeats)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/probe-notifications",
