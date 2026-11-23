@@ -2,6 +2,7 @@
 package main_test
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -19,7 +20,8 @@ import (
 type destroyFake struct {
 	mu       sync.Mutex
 	requests []string
-	bucket   int // status for DELETE bucket
+	bucket   int  // status for DELETE bucket
+	full     bool // bucket "assets" holds an object
 }
 
 func (f *destroyFake) handler(w http.ResponseWriter, r *http.Request) {
@@ -38,6 +40,12 @@ func (f *destroyFake) handler(w http.ResponseWriter, r *http.Request) {
 		main.WriteJSONTest(w, api.ObjectBucketList{Items: []api.ObjectBucket{{ID: "bkt-1", Name: "assets"}}})
 	case "GET /v1/apps/assetforge-worker/buckets":
 		main.WriteJSONTest(w, api.ObjectBucketList{})
+	case "GET /v1/apps/assetforge-web/buckets/bkt-1/objects/versions":
+		list := api.ObjectVersionList{Items: []api.ObjectVersion{}}
+		if f.full {
+			list.Items = append(list.Items, api.ObjectVersion{Key: "rooms/1.png", VersionID: "v1", IsLatest: true})
+		}
+		main.WriteJSONTest(w, list)
 	case "GET /v1/apps/assetforge-web/postgres-bindings", "GET /v1/apps/assetforge-worker/postgres-bindings":
 		main.WriteJSONTest(w, api.AppPostgresBindingList{Items: []api.AppPostgresBinding{{Database: "main"}, {Database: "shared"}}})
 	case "GET /v1/postgres/databases":
@@ -123,6 +131,25 @@ func TestProjectDestroyRefusedBucketKeepsItsAppAndTheProject(t *testing.T) {
 		if slices.Contains(f.deletes(), kept) {
 			t.Fatalf("%s ran after the bucket was refused: %v", kept, f.deletes())
 		}
+	}
+}
+
+// Gregale deletes only empty buckets, so a bucket holding objects is kept by
+// the plan, with how to empty it, instead of failing every run.
+func TestProjectDestroyPlansToKeepABucketWithObjects(t *testing.T) {
+	f := &destroyFake{full: true}
+	var stdout bytes.Buffer
+	old := *main.OsStdout
+	*main.OsStdout = &stdout
+	t.Cleanup(func() { *main.OsStdout = old })
+	if code := runDestroy(t, f, "assetforge", "--yes", "--include-data"); code != 0 {
+		t.Fatalf("exit %d, want 0", code)
+	}
+	if got, want := f.deletes(), []string{"DELETE /v1/apps/assetforge-worker"}; !slices.Equal(got, want) {
+		t.Fatalf("deletes %v, want %v", got, want)
+	}
+	if out := stdout.String(); !strings.Contains(out, "assets still hold objects") || !strings.Contains(out, "gregale bucket deletion create") {
+		t.Fatalf("plan does not say how to empty the bucket:\n%s", out)
 	}
 }
 

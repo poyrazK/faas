@@ -17,6 +17,8 @@ type projectDestroyClient interface {
 	PreviewDeleteProject(ctx context.Context, slug string) (api.ProjectDeletePreviewResponse, error)
 	GetApp(ctx context.Context, slug string) (api.AppResponse, error)
 	ListObjectBuckets(ctx context.Context, slug string) (api.ObjectBucketList, error)
+	ListObjectBucketVersions(ctx context.Context, app, bucket string, req api.ObjectVersionListRequest) (api.ObjectVersionList, error)
+	ListBucketObjects(ctx context.Context, slug, bucket, prefix, cursor string, limit int) (api.BucketObjectPage, error)
 	DeleteObjectBucket(ctx context.Context, slug, bucket string) error
 	ListAppPostgresBindings(ctx context.Context, slug string) (api.AppPostgresBindingList, error)
 	ListManagedPostgresDatabases(ctx context.Context) (api.ManagedPostgresDatabaseList, error)
@@ -122,6 +124,25 @@ func planProjectDestroy(ctx context.Context, client projectDestroyClient, slug s
 			app.Delete, app.KeepNote = false, "owns buckets "+strings.Join(app.Buckets, ", ")+" (pass --include-data to delete them)"
 			plan.DeleteProject = false
 		}
+		if includeData {
+			// Gregale deletes only empty buckets. Say so in the plan rather
+			// than fail on every run.
+			var full []string
+			for _, name := range app.Buckets {
+				holds, err := bucketHoldsObjects(ctx, client, workload.Slug, app.bucketID[name])
+				if err != nil {
+					return projectDestroyPlan{}, fmt.Errorf("read bucket %s of %s: %w", name, workload.Slug, err)
+				}
+				if holds {
+					full = append(full, name)
+				}
+			}
+			if len(full) > 0 {
+				app.Delete, plan.DeleteProject = false, false
+				app.KeepNote = fmt.Sprintf("buckets %s still hold objects; empty them first (gregale bucket version list %s BUCKET_ID, then gregale bucket deletion create %s BUCKET_ID KEY REQUEST_UUID for each object) and run destroy again",
+					strings.Join(full, ", "), workload.Slug, workload.Slug)
+			}
+		}
 		bindings, err := client.ListAppPostgresBindings(ctx, workload.Slug)
 		if err != nil {
 			return projectDestroyPlan{}, fmt.Errorf("list database bindings of %s: %w", workload.Slug, err)
@@ -151,6 +172,21 @@ func planProjectDestroy(ctx context.Context, client projectDestroyClient, slug s
 	}
 	sort.Slice(plan.Databases, func(i, j int) bool { return plan.Databases[i].Name < plan.Databases[j].Name })
 	return plan, nil
+}
+
+// bucketHoldsObjects reports whether a bucket holds any object, version or
+// delete marker, each of which blocks its deletion. A bucket whose versions
+// cannot be listed falls back to the current objects.
+func bucketHoldsObjects(ctx context.Context, client projectDestroyClient, app, bucket string) (bool, error) {
+	versions, err := client.ListObjectBucketVersions(ctx, app, bucket, api.ObjectVersionListRequest{Limit: 1})
+	if err == nil {
+		return len(versions.Items) > 0, nil
+	}
+	objects, err := client.ListBucketObjects(ctx, app, bucket, "", "", 1)
+	if err != nil {
+		return false, err
+	}
+	return len(objects.Items) > 0, nil
 }
 
 // projectOwnsDatabase reports whether every binding of the database belongs
@@ -270,7 +306,21 @@ func printProjectDestroy(plan projectDestroyPlan, executed bool) {
 	for _, item := range plan.Outcome.Failed {
 		_, _ = fmt.Fprintf(os.Stderr, "Not deleted: %s\n", item)
 	}
+	for _, app := range plan.Apps {
+		if !app.Delete && app.KeepNote != "" {
+			_, _ = fmt.Fprintf(w, "Kept app %s: %s\n", app.Slug, app.KeepNote)
+		}
+	}
+	for _, db := range plan.Databases {
+		if !db.Delete && db.KeepNote != "" {
+			_, _ = fmt.Fprintf(w, "Kept database %s: %s\n", db.Name, db.KeepNote)
+		}
+	}
 	if !plan.DeleteProject {
-		_, _ = fmt.Fprintf(w, "Project %s was kept; fix what is listed and run `gregale project destroy %s --yes` again.\n", plan.Project, plan.Project)
+		rerun := "gregale project destroy " + plan.Project + " --yes"
+		if plan.IncludeData {
+			rerun += " --include-data"
+		}
+		_, _ = fmt.Fprintf(w, "Project %s was kept; fix what is listed and run `%s` again.\n", plan.Project, rerun)
 	}
 }
