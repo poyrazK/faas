@@ -3759,6 +3759,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				OnLost:    deps.metrics.AddRequestAnalyticsRollupLost,
 			}, log)
 		}
+		if osGetenv("FAAS_ROUTE_RESOURCE_PEAKS") != "0" {
+			// ADR-20261121170000: per-instance route minutes for apps the
+			// route_resource_peaks flag releases. Its own client, so the
+			// shipper never races the publisher actor's rtCli.
+			handler.WithInstanceRouteMinutes(ctx, gateway.InstanceRouteMinutesConfig{
+				Ship:      newInstanceRouteShipper(apidRTTarget, rtTLS, rtTLSErr, coverageNode),
+				OnDropped: func(n int) { deps.metrics.AddInstanceRouteMinutesDropped(int64(n)) },
+			})
+		}
 		// Wake the publisher as the recorder approaches capacity so the
 		// normal five-second ticker is only the idle fallback.
 		recorder.SetWakeHook(publisher.Wake)
@@ -4425,7 +4434,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			ObserveRequestAttempt: chaosMatchRecorder.ObserveRequestAttempt,
 			ObserveTCPAttempt:     chaosMatchRecorder.ObserveTCPAttempt,
 			Forward:               deps.nodeCache.Forwarding(),
-			RawForward:            deps.nodeCache.RawForwarding(),
+			RawForward:            deps.nodeCache.ServiceRawForwarding(),
 			ObserveRequest:        handler.RecordServiceRequest,
 			// ADR-196: a call to a parked internal service must hold and
 			// wake exactly like a public request does. Without this seam a

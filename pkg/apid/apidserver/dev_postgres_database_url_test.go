@@ -54,8 +54,8 @@ func TestDevPostgresBindsAMigrationCredential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if postgres.EnvironmentKey != "DATABASE_URL" {
-		t.Fatalf("response names %s, want DATABASE_URL", postgres.EnvironmentKey)
+	if postgres.EnvironmentKey != "DATABASE_URL" || postgres.MigrationEnvironmentKey != "MIGRATION_DATABASE_URL" {
+		t.Fatalf("response names %s and %q, want DATABASE_URL and MIGRATION_DATABASE_URL", postgres.EnvironmentKey, postgres.MigrationEnvironmentKey)
 	}
 	bindings := devPostgresBindings(t, srv, acct, postgres.DatabaseID)
 	if !slices.Equal(bindings, []string{"DATABASE_URL=read_write", "MIGRATION_DATABASE_URL=migration"}) {
@@ -110,4 +110,32 @@ func devPostgresBindings(t *testing.T, srv *apidserver.Server, acct state.Accoun
 	}
 	slices.Sort(out)
 	return out
+}
+
+// The developer database reports ready only once both its bindings are: the
+// CLI holds the first sync on it, and the first release command needs
+// MIGRATION_DATABASE_URL as much as the first boot needs DATABASE_URL.
+func TestDevPostgresBindingsStateIsReadyOnlyWhenEveryBindingIs(t *testing.T) {
+	const (
+		provisioning = managedpostgres.BindingStateProvisioning
+		ready        = managedpostgres.BindingStateReady
+		failed       = managedpostgres.BindingStateFailed
+	)
+	for _, tc := range []struct {
+		name   string
+		states []managedpostgres.BindingState
+		want   string
+	}{
+		{"none yet", nil, "provisioning"},
+		{"both ready", []managedpostgres.BindingState{ready, ready}, "ready"},
+		{"migration still provisioning", []managedpostgres.BindingState{ready, provisioning}, "provisioning"},
+		{"database url still provisioning", []managedpostgres.BindingState{provisioning, ready}, "provisioning"},
+		{"failed wins", []managedpostgres.BindingState{provisioning, failed}, "failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := apidserver.DevPostgresBindingsState(tc.states); got != tc.want {
+				t.Fatalf("state = %q, want %q", got, tc.want)
+			}
+		})
+	}
 }

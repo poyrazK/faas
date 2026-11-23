@@ -402,6 +402,7 @@ func appScaleCLIFlags() []cliFlag {
 		{Name: "size", Short: "RAM/CPU resource size", Value: "SIZE", ClosedSet: []string{"micro", "small", "medium", "large", "xlarge"}},
 		{Name: "profile", Short: "deprecated: use --size", Value: "SIZE"},
 		{Name: "ram", Short: "RAM in MB", Value: "MB"},
+		{Name: "suggest", Short: "suggest moving a heavy route to its own app, from route resource peaks", Bool: true, Capability: "route-resource-peaks"},
 		{Name: "cpu-millicores", Short: "cap CPU at 250 or 500 millicores; 1000 (the default) leaves it uncapped", Value: "250|500|1000", ClosedSet: []string{"250", "500", "1000"}},
 		{Name: "max-concurrency", Short: "maximum instances (replicas) the app scales to", Value: "N"},
 		{Name: "concurrency-overflow", Short: "saturated concurrency behavior", Value: "POLICY", ClosedSet: []string{"queue", "drop"}},
@@ -542,7 +543,9 @@ var templateNames13 = []string{
 	"mcp-node",
 	"mcp-node-tasks",
 	"mcp-go",
+	"mcp-go-tasks",
 	"mcp-python",
+	"mcp-python-tasks",
 	"customer-operation-export",
 	"customer-operation-job-export",
 	"customer-operation-workflow-export",
@@ -734,7 +737,7 @@ var cliCommands = []cliCommand{
 				{Name: "permission", Short: "compute binding permission", Value: "MODE", ClosedSet: []string{"read", "write", "read_write"}},
 				{Name: "label", Short: "bucket-scoped compute credential label", Value: "LABEL"},
 				{Name: "prefix", Short: "injected storage secret prefix", Value: "PREFIX"},
-				{Name: "key-prefix", Short: "limit the binding to object keys under this prefix (preview)", Value: "KEYS/"},
+				{Name: "key-prefix", Short: "limit the binding to object keys under this prefix", Value: "KEYS/"},
 				{Name: "wait-timeout", Short: "readiness timeout", Value: "DURATION"},
 			}},
 			{Name: "datadog", Short: "Send the app's logs and deployment events to Datadog", Examples: []string{
@@ -772,7 +775,7 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name: "bucket", DocSlug: "object-storage", Short: "Manage object storage buckets: encryption, versioning and lifecycle",
+		Name: "bucket", DocSlug: "object-storage", Short: "Manage object storage buckets, objects, signed URLs and uploads",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List an app's object-storage buckets and their IDs", Positionals: []string{"<app>"}},
 			{Name: "delete", Short: "Delete an empty bucket (including retained versions)", Positionals: []string{"<app>", "<bucket-id>"}, Flags: []cliFlag{{Name: "yes", Short: "skip the typed confirmation (alias: --quiet)"}}},
@@ -5204,13 +5207,22 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "trace",
 		DocSlug: "trace",
-		Short:   "Look up a distributed trace by its trace ID",
+		Short:   "Look up a distributed trace by its trace ID or a request ID",
+		HelpNotes: []string{
+			"A trace ID is 32 hex characters and spans the account: edge and app requests, wake method and restore fallback, queue, delayed and cron invocations to dead letter, access logs and spans.",
+			"An x-faas-request-id works too: request ids have the same 32-hex shape, so when no trace has the id it is resolved as a request of the app (--app, else the linked app) to the request's trace. A request with no trace shows its own evidence.",
+		},
+		Examples: []string{
+			"gregale debug trace 4bf92f3577b34da6a3ce929d0e0e4736",
+			"gregale debug trace 019a3c5e7d1b7f2a9c4e6b8d0f1a2c3e --app my-api --json",
+		},
 		Flags: []cliFlag{
+			{Name: "app", Short: "app the request ID belongs to (default: the linked app)", Value: "SLUG"},
 			{Name: "watch", Short: "poll until linked invocations reach a terminal state"},
 			{Name: "interval", Short: "poll interval (default 1s)", Value: "DURATION"},
 			{Name: "timeout", Short: "maximum watch duration (default 5m)", Value: "DURATION"},
 		},
-		Positionals: []string{"<trace-id>"},
+		Positionals: []string{"<trace-id-or-request-id>"},
 	},
 	{
 		Name:    "invitations",
@@ -5345,7 +5357,7 @@ var cliCommands = []cliCommand{
 		DocSlug:     "logs",
 		Short:       "Search an app's runtime logs and HTTP requests, or follow them",
 		CompactHelp: true,
-		Examples:    []string{"gregale logs my-api --interactive", "gregale logs my-api --follow", "gregale logs --project shop --follow", "gregale logs my-api --since 1h --level error", "gregale logs views save runtime-errors --since 1h --level error", "gregale logs my-api --view runtime-errors"},
+		Examples:    []string{"gregale logs my-api --interactive", "gregale logs my-api --follow", "gregale logs my-api --follow --source http", "gregale logs --project shop --follow", "gregale logs my-api --since 1h --level error", "gregale logs views save runtime-errors --since 1h --level error", "gregale logs my-api --view runtime-errors"},
 		Positionals: []string{"[<slug>]"},
 		Flags: []cliFlag{
 			{Name: "dry-run", Bool: true, Short: "preview effective target, source, and filters offline; no authentication or remote reads"},
@@ -5358,7 +5370,7 @@ var cliCommands = []cliCommand{
 			{Name: "latest-failure", Short: "select latest failed deployment and read up to 500 retained build/deploy entries; accepts only an app target", Bool: true},
 			{Name: "latest-request-error", Short: "select newest retained HTTP 5xx row; default 15m window; accepts app, since, route", Bool: true},
 			{Name: "interactive", Common: true, Short: "choose source, time window, and filters and show the equivalent command", Bool: true},
-			{Name: "follow", Common: true, Short: "stream logs until interrupted"},
+			{Name: "follow", Common: true, Short: "stream new runtime lines, or new HTTP requests with --source http, until interrupted"},
 			{Name: "deployment", Short: "deployment id or vN revision (default: latest)", Value: "ID"},
 			{Name: "release", Short: "release id or revision (alias for --deployment)", Value: "ID|vN"},
 			{Name: "source", Common: true, Short: "log source", Value: "SOURCE", ClosedSet: []string{"runtime", "http"}},
@@ -5509,6 +5521,16 @@ var cliCommands = []cliCommand{
 			{Name: "since", Short: "lookback window", Value: "WINDOW"},
 			{Name: "until", Short: "exclusive RFC3339 end", Value: "TIMESTAMP"},
 			{Name: "by", Short: "grouping dimension", Value: "DIMENSION", ClosedSet: []string{"route", "country", "referrer_host", "ua_family", "status", "consumer_id"}},
+			{Name: "range", Short: "lookback window; same as --since (gregale metric --range)", Value: "WINDOW"},
+		},
+		Positionals: []string{"[<slug>]"},
+	},
+	{
+		Name:    "route-resources",
+		DocSlug: "analytics",
+		Short:   "Show which routes an app's memory and CPU peaks come from",
+		Flags: []cliFlag{
+			{Name: "since", Short: "lookback window, at most 336h", Value: "WINDOW"},
 			{Name: "range", Short: "lookback window; same as --since (gregale metric --range)", Value: "WINDOW"},
 		},
 		Positionals: []string{"[<slug>]"},
@@ -6341,7 +6363,7 @@ var cliCommands = []cliCommand{
 				{Name: "region", Short: "region (defaults to configured region)", Value: "REGION"},
 			}, Examples: []string{"gregale postgres capabilities --json"}},
 			{Name: "usage", Short: "Show monthly managed PostgreSQL usage and guardrail state"},
-			{Name: "overage", Short: "Show or change compute overage past the monthly allowance", Notes: []string{"With overage on, databases keep running up to twice the allowance."}, Positionals: []string{"[on|off]"}, Examples: []string{"gregale postgres overage on"}},
+			{Name: "overage", Short: "Show or change compute overage past the monthly allowance", Notes: []string{"With overage on, databases keep running up to twice the allowance."}, Positionals: []string{"[on|off]"}, Examples: []string{"gregale postgres overage get", "gregale postgres overage set on"}},
 			{Name: "create", Short: "Create a managed PostgreSQL database", Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "region", Short: "provider-neutral region", Req: true, Value: "REGION"},
 				{Name: "postgres-major", Short: "PostgreSQL major version", Value: "N"},
@@ -6491,6 +6513,26 @@ var cliCommands = []cliCommand{
 				{Name: "proxy", Short: "keep the tunnel open for another client instead of starting psql"},
 				{Name: "wait-timeout", Short: "maximum time to wait for each task VM to start", Value: "D"},
 			}, Examples: []string{"gregale postgres connect orders", "gregale postgres connect orders --access read_only -- -c 'select count(*) from segments'", "gregale postgres connect orders --proxy --port 5433"}},
+			{Name: "query", Aliases: []string{"sql"}, Short: "Run one SQL query and print rows (read-only unless --write)", Notes: []string{
+				"Uses the same tunnel as `postgres connect` (credentials never print) and needs no local psql.",
+				"Read-only by default: one statement in a READ ONLY transaction that is always rolled back, on a read_only binding when there is one.",
+				"--write runs the text as a script on a writable binding; it commits. To try a destructive change first, run it on a copy-on-write branch: `gregale postgres branch <database> <name> --ttl 2h`.",
+				"--json prints typed rows: numbers, booleans and json stay typed; NULL is null; other values are PostgreSQL text.",
+			}, Positionals: []string{"<database>", "[<query>]"}, Flags: []cliFlag{
+				{Name: "file", Short: "read the query from PATH, or - for stdin", Value: "PATH"},
+				{Name: "write", Short: "allow writes and several statements (commits)"},
+				{Name: "read-only", Short: "refuse writes (the default)"},
+				{Name: "max-rows", Short: "rows kept per result, 1..10000 (default 500)", Value: "N"},
+				{Name: "timeout", Short: "statement timeout (default 30s)", Value: "D"},
+				{Name: "app", Short: "bound app whose credentials to use (default: the best ready binding)", Value: "SLUG"},
+				{Name: "env", Short: "binding environment key", Value: "KEY"},
+				{Name: "access", Short: "binding access (default prefers read_only for reads, read_write for --write)", Value: "MODE", ClosedSet: []string{"read_only", "session", "read_write", "migration"}},
+				{Name: "wait-timeout", Short: "maximum time to wait for each task VM to start", Value: "D"},
+			}, Examples: []string{
+				"gregale postgres sql orders \"select status, count(*) from orders group by 1\"",
+				"gregale postgres sql orders --file audit.sql --json",
+				"gregale postgres sql orders --write \"update orders set status = 'void' where id = 42\"",
+			}},
 		},
 	},
 	{
@@ -7193,7 +7235,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "tail",
 		DocSlug: "tail",
-		Short:   "Watch invocations finish across your account in real time",
+		Short:   "Watch async invocations finish across your account in real time (not app output or HTTP requests; see gregale logs --follow)",
 		// The stream is always followed; there is no --follow flag on
 		// cmdTail (commands5.go) and the manifest must not invent one.
 		Positionals: []string{"[<slug>]"},

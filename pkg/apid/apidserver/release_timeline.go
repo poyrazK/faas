@@ -3,12 +3,14 @@ package apidserver
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/apid/releasediff"
 	"github.com/onebox-faas/faas/pkg/apid/releasetimeline"
 	"github.com/onebox-faas/faas/pkg/dashboard"
@@ -46,6 +48,15 @@ func (s *server) releaseTimeline(ctx context.Context, app state.App, d state.Dep
 	}
 	for _, row := range rows {
 		in.Audit = append(in.Audit, releasetimeline.AuditRow{ID: row.ID, At: row.At, Kind: string(row.Kind), Actor: row.Actor, Data: row.Data})
+	}
+	if store, ok := s.store.(state.RollbackOutcomeStore); ok {
+		record, err := store.LatestRollbackFromDeployment(ctx, app.ID, d.ID)
+		if err == nil {
+			operation := release.RecordOperation(record)
+			in.Rollback = &operation
+		} else if !errors.Is(err, state.ErrNotFound) {
+			logCustomerFailure(s.log, "read rollback outcome for release timeline", err)
+		}
 	}
 	if releases, err := s.store.ListDeploymentsForApp(ctx, app.ID, releaseDiffDeploymentsMax, 0); err != nil {
 		logCustomerFailure(s.log, "list deployments for release timeline", err)

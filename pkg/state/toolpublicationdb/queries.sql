@@ -358,3 +358,12 @@ AND NOT EXISTS (
 -- name: ReadHostedTaskRehearsalRun :one
 SELECT run_id, plan_sha256, reserved_at, approval_expires_at FROM hosted_task_rehearsal_runs
 WHERE account_id = $1 AND id = $2;
+
+
+-- name: MatchHostedTaskRehearsalReservation :one
+SELECT EXISTS (
+  SELECT 1 FROM hosted_task_rehearsal_runs
+  WHERE account_id = sqlc.arg(account_id)::uuid AND run_id = sqlc.arg(run_id)::uuid
+    AND plan_sha256 = sqlc.arg(plan_sha256)::text AND reserved_at = sqlc.arg(reserved_at)::timestamptz
+    AND reserved_at <= clock_timestamp()
+);

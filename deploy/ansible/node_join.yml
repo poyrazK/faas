@@ -1455,7 +1455,7 @@
           [Service]
           Environment=FAAS_IMAGED_LAYER_REUSE={{ '1' if (imaged_app_layer_reuse | default(false) | bool) else '0' }}
 
-    - name: Install builderd's shared platform blobs, BuildKit seed and deferred cache export switches
+    - name: Install builderd's shared platform blobs, BuildKit seed, deferred cache export and zstd layer switches
       ansible.builtin.copy:
         dest: /etc/systemd/system/faas-builderd.service.d/zz-faas-perf-switches.conf
         owner: root
@@ -1466,6 +1466,7 @@
           Environment=FAAS_BUILD_SHARED_PLATFORM_BLOBS={{ '1' if (builderd_shared_platform_blobs | default(false) | bool) else '0' }}
           Environment=FAAS_BUILD_BUILDKIT_SEED={{ '1' if (builderd_buildkit_seed | default(false) | bool) else '0' }}
           Environment=FAAS_BUILD_DEFER_CACHE_EXPORT={{ '1' if (builderd_defer_cache_export | default(false) | bool) else '0' }}
+          Environment=FAAS_BUILD_LAYER_ZSTD={{ '1' if (builderd_layer_zstd | default(false) | bool) else '0' }}
 
     # ADR-20261118154632 amendment 1: the guaranteed builds builderd runs,
     # the count the build slice and tenant fence above are sized for.
@@ -1497,6 +1498,38 @@
       ansible.builtin.file:
         path: /etc/systemd/system/faas-schedd.service.d/70-faas-quiet-pause-ledger.conf
         state: absent
+
+    # Release commands (group_vars/compute_nodes/release_commands.yml): this
+    # node's schedd dispatches release tasks and imaged runs them. Hand
+    # drop-ins with the same names until 2026-11-22; lost in the GCP -> OVH
+    # move, which made managed PostgreSQL migrations impossible.
+    - name: Install schedd's release task dispatch switch
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/faas-schedd.service.d/zz-faas-release-phase.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Service]
+          Environment=FAAS_APP_TASK_DISPATCH={{ '1' if (faas_release_commands | default(false) | bool) else '0' }}
+
+    - name: Create imaged's drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/faas-imaged.service.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install imaged's release phase switch
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/faas-imaged.service.d/zz-faas-release-phase.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Service]
+          Environment=FAAS_RELEASE_PHASE_ENABLED={{ '1' if (faas_release_commands | default(false) | bool) else '0' }}
 
     # ADR-20261109170000: refuse v1 layer signatures, which do not name their
     # storage key and can be replayed onto another app's layer. Only true once

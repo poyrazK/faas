@@ -2,6 +2,7 @@ import { createLocalJWKSet, createRemoteJWKSet, customFetch, jwtVerify } from 'j
 import { createPromptPolicy, createResourcePolicy, createToolPolicy, validateScopes } from './tool-policy.js';
 
 const MAX_JWKS_BYTES = 1 << 20;
+const JWKS_FAILURE_BACKOFF_MS = 1_000;
 
 async function readJWKSet(response) {
   if (!response.body) throw new Error('Empty JWKS response');
@@ -38,8 +39,10 @@ function createJWKResolver(url) {
         createLocalJWKSet(jwks); // Validate the payload before considering the fetch successful.
         return new Response(JSON.stringify(jwks), { status: 200 });
       } catch (error) {
-        // jose coalesces concurrent fetches; failed fetches also need a cooldown.
-        retryAt = performance.now() + 30_000;
+        // jose coalesces concurrent fetches; failed fetches also need a
+        // backoff. Keep it short: a transient failure (the issuer waking, a
+        // network blip) must not reject every valid token for 30 s.
+        retryAt = performance.now() + JWKS_FAILURE_BACKOFF_MS;
         throw error;
       }
     },

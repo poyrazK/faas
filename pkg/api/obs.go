@@ -401,6 +401,200 @@ type ObsInstanceListResponse struct {
 	UnavailableNodes []string         `json:"unavailable_nodes,omitempty"`
 }
 
+// ObsWakeLatencyReport is GET /v1/admin/obs/wake-latency (ADR-20261121200409):
+// the fleet's wakes over a window, read from the wake.* events. A wake's
+// duration is schedd's boot window, wake.boot_completed started_at ->
+// completed_at; a thaw's is wake.thaw_breakdown total_ms. Platform snapshot
+// refresh boots are counted apart and left out of every other figure.
+// Truncated names the event kinds whose rows hit the per-kind read cap, so
+// the figures cover only the newest part of the window.
+type ObsWakeLatencyReport struct {
+	Window         string               `json:"window"`
+	Since          time.Time            `json:"since"`
+	AsOf           time.Time            `json:"as_of"`
+	TargetMS       int64                `json:"target_ms"`
+	Truncated      []string             `json:"truncated,omitempty"`
+	Totals         ObsWakeTotals        `json:"totals"`
+	Methods        []ObsWakeMethodStat  `json:"methods"`
+	Nodes          []ObsWakeNodeStat    `json:"nodes"`
+	Phases         []ObsWakePhaseStat   `json:"phases"`
+	ColdReasons    []ObsWakeReasonCount `json:"cold_reasons"`
+	FailureReasons []ObsWakeReasonCount `json:"failure_reasons"`
+	Slowest        []ObsWakeSample      `json:"slowest"`
+	ColdBootApps   []ObsWakeAppStat     `json:"cold_boot_apps"`
+}
+
+// ObsWakeTotals counts the window's wakes. Fallbacks are restores vmmd ran as
+// cold boots; RestoresOverTarget are restores slower than TargetMS.
+type ObsWakeTotals struct {
+	Wakes              int `json:"wakes"`
+	Restores           int `json:"restores"`
+	ColdBoots          int `json:"cold_boots"`
+	Thaws              int `json:"thaws"`
+	Failures           int `json:"failures"`
+	Fallbacks          int `json:"fallbacks"`
+	RestoresOverTarget int `json:"restores_over_target"`
+	PlatformRefreshes  int `json:"platform_refreshes"`
+}
+
+// ObsWakeMethodStat is one wake method's duration quantiles.
+type ObsWakeMethodStat struct {
+	Method     string `json:"method"`
+	Count      int    `json:"count"`
+	P50MS      int64  `json:"p50_ms"`
+	P95MS      int64  `json:"p95_ms"`
+	P99MS      int64  `json:"p99_ms"`
+	MaxMS      int64  `json:"max_ms"`
+	OverTarget int    `json:"over_target"`
+}
+
+// ObsWakeNodeStat is one node's wakes; NodeName is empty for a node apid no
+// longer knows.
+type ObsWakeNodeStat struct {
+	NodeID             string `json:"node_id"`
+	NodeName           string `json:"node_name,omitempty"`
+	Restores           int    `json:"restores"`
+	ColdBoots          int    `json:"cold_boots"`
+	Thaws              int    `json:"thaws"`
+	Failures           int    `json:"failures"`
+	Fallbacks          int    `json:"fallbacks"`
+	RestoreP50MS       int64  `json:"restore_p50_ms"`
+	RestoreP95MS       int64  `json:"restore_p95_ms"`
+	RestoresOverTarget int    `json:"restores_over_target"`
+}
+
+// ObsWakePhaseStat is one vmmd (restore, cold_boot) or schedd (thaw) phase
+// across the window's breakdown events, slowest p95 first.
+type ObsWakePhaseStat struct {
+	Method  string `json:"method"`
+	Phase   string `json:"phase"`
+	Samples int    `json:"samples"`
+	P50MS   int64  `json:"p50_ms"`
+	P95MS   int64  `json:"p95_ms"`
+	MaxMS   int64  `json:"max_ms"`
+}
+
+// ObsWakeReasonCount is how often one closed reason code occurred.
+type ObsWakeReasonCount struct {
+	Reason string `json:"reason"`
+	Count  int    `json:"count"`
+}
+
+// ObsWakeSample is one completed wake, for the slowest-wakes list. SlowPhase
+// is its breakdown's longest phase, when vmmd reported one.
+type ObsWakeSample struct {
+	WakeID         string    `json:"wake_id"`
+	InstanceID     string    `json:"instance_id,omitempty"`
+	AppID          string    `json:"app_id"`
+	AppSlug        string    `json:"app_slug,omitempty"`
+	AccountID      string    `json:"account_id,omitempty"`
+	NodeID         string    `json:"node_id,omitempty"`
+	NodeName       string    `json:"node_name,omitempty"`
+	Method         string    `json:"method"`
+	Tier           string    `json:"tier,omitempty"`
+	Trigger        string    `json:"trigger,omitempty"`
+	ColdReason     string    `json:"cold_reason,omitempty"`
+	FallbackReason string    `json:"fallback_reason,omitempty"`
+	DurationMS     int64     `json:"duration_ms"`
+	CompletedAt    time.Time `json:"completed_at"`
+	SlowPhase      string    `json:"slow_phase,omitempty"`
+	SlowPhaseMS    int64     `json:"slow_phase_ms,omitempty"`
+}
+
+// ObsWakeAppStat is one app that cold booted in the window, most cold boots
+// first: the apps whose wakes keep missing a snapshot.
+type ObsWakeAppStat struct {
+	AppID         string `json:"app_id"`
+	AppSlug       string `json:"app_slug,omitempty"`
+	AccountID     string `json:"account_id,omitempty"`
+	Wakes         int    `json:"wakes"`
+	Restores      int    `json:"restores"`
+	ColdBoots     int    `json:"cold_boots"`
+	Fallbacks     int    `json:"fallbacks"`
+	TopColdReason string `json:"top_cold_reason,omitempty"`
+	P95MS         int64  `json:"p95_ms"`
+}
+
+// ObsSnapshotHealthReport is GET /v1/admin/obs/snapshot-health
+// (ADR-20261122135018). A snapshot's footprint is its allocated mem + vmstate
+// (logical bytes from a legacy writer) plus its deployment's above-base layer,
+// as fcvm_snapshot_fleet_avg_bytes counts it; the fleet figures cover snapshots
+// that are not stale, as that gauge does. Truncated means more snapshot rows
+// existed than the report reads, so the smallest are missing from the figures.
+type ObsSnapshotHealthReport struct {
+	AsOf                   time.Time                    `json:"as_of"`
+	TargetMB               int64                        `json:"target_mb"`
+	WarnMB                 int64                        `json:"warn_mb"`
+	PageMB                 int64                        `json:"page_mb"`
+	Truncated              bool                         `json:"truncated"`
+	Totals                 ObsSnapshotTotals            `json:"totals"`
+	Tiers                  []ObsSnapshotGroup           `json:"tiers"`
+	FCVersions             []ObsSnapshotGroup           `json:"fc_versions"`
+	CPUTemplates           []ObsSnapshotGroup           `json:"cpu_templates"`
+	Largest                []ObsSnapshotRow             `json:"largest"`
+	RecentlyStale          []ObsSnapshotRow             `json:"recently_stale"`
+	Unsnapshotted          []ObsUnsnapshottedDeployment `json:"unsnapshotted"`
+	UnsnapshottedTruncated bool                         `json:"unsnapshotted_truncated"`
+}
+
+// ObsSnapshotTotals counts the fleet's snapshots. Live are not stale (some may
+// be pending deletion); NotColdBootable counts live deployments with neither a
+// usable snapshot nor a rootfs, which breaks spec invariant 6.2-3.
+type ObsSnapshotTotals struct {
+	Live            int   `json:"live"`
+	Stale           int   `json:"stale"`
+	DeletePending   int   `json:"delete_pending"`
+	LiveBytes       int64 `json:"live_bytes"`
+	AvgBytes        int64 `json:"avg_bytes"`
+	P95Bytes        int64 `json:"p95_bytes"`
+	OverWarn        int   `json:"over_warn"`
+	Unsnapshotted   int   `json:"unsnapshotted"`
+	NotColdBootable int   `json:"not_cold_bootable"`
+}
+
+// ObsSnapshotGroup is the live and stale snapshots sharing one key: a tier, a
+// Firecracker version, or a CPU template and model ("template/model").
+type ObsSnapshotGroup struct {
+	Key      string `json:"key"`
+	Live     int    `json:"live"`
+	Stale    int    `json:"stale"`
+	AvgBytes int64  `json:"avg_bytes"`
+}
+
+// ObsSnapshotRow is one snapshot with its app.
+type ObsSnapshotRow struct {
+	ID               string     `json:"id"`
+	DeploymentID     string     `json:"deployment_id"`
+	DeploymentStatus string     `json:"deployment_status"`
+	AppID            string     `json:"app_id"`
+	AppSlug          string     `json:"app_slug,omitempty"`
+	AccountID        string     `json:"account_id,omitempty"`
+	Tier             string     `json:"tier"`
+	FCVersion        string     `json:"fc_version"`
+	CPUTemplate      string     `json:"cpu_template,omitempty"`
+	CPUModel         string     `json:"cpu_model,omitempty"`
+	Stale            bool       `json:"stale"`
+	DeletePending    bool       `json:"delete_pending"`
+	SnapshotBytes    int64      `json:"snapshot_bytes"`
+	LayerBytes       int64      `json:"layer_bytes"`
+	FootprintBytes   int64      `json:"footprint_bytes"`
+	CreatedAt        time.Time  `json:"created_at"`
+	StaleAt          *time.Time `json:"stale_at,omitempty"`
+}
+
+// ObsUnsnapshottedDeployment is a live deployment of an active app with no
+// usable snapshot: every wake cold boots until one is taken. ColdBootable is
+// false when it has no rootfs either.
+type ObsUnsnapshottedDeployment struct {
+	DeploymentID string     `json:"deployment_id"`
+	AppID        string     `json:"app_id"`
+	AppSlug      string     `json:"app_slug,omitempty"`
+	AccountID    string     `json:"account_id,omitempty"`
+	ColdBootable bool       `json:"cold_bootable"`
+	CreatedAt    time.Time  `json:"created_at"`
+	LastStaleAt  *time.Time `json:"last_stale_at,omitempty"`
+}
+
 // ObsAuditActivityRow is the safe metadata-only projection of audit_log.
 // Data is deliberately omitted; the global audit page remains the explicit
 // high-detail path for an operator who is authorized to inspect it.

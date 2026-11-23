@@ -25,13 +25,16 @@ func TestWatchdogGivesEveryColdBootTheStartupWindow(t *testing.T) {
 		age      time.Duration
 		survive  bool
 	}{
-		{"default deadline wake at 31s", api.PlanScale, 0, state.StateColdBooting, 31 * time.Second, false},
+		// Every cold boot also gets the 7 s RPC grace (vmmd's 35 s call
+		// answers before the watchdog's 30 s sweep budget runs out).
+		{"default deadline wake inside the RPC grace at 36s", api.PlanScale, 0, state.StateColdBooting, 36 * time.Second, true},
+		{"default deadline wake at 38s", api.PlanScale, 0, state.StateColdBooting, 38 * time.Second, false},
 		{"scale 120s wake at 100s", api.PlanScale, 120, state.StateColdBooting, 100 * time.Second, true},
-		{"scale 120s wake at 140s", api.PlanScale, 120, state.StateColdBooting, 140 * time.Second, false},
+		{"scale 120s wake at 145s", api.PlanScale, 120, state.StateColdBooting, 145 * time.Second, false},
 		{"pro 60s wake at 70s", api.PlanPro, 60, state.StateColdBooting, 70 * time.Second, true},
-		{"pro 60s wake at 80s", api.PlanPro, 60, state.StateColdBooting, 80 * time.Second, false},
+		{"pro 60s wake at 85s", api.PlanPro, 60, state.StateColdBooting, 85 * time.Second, false},
 		{"scale 120s restore fallback at 100s", api.PlanScale, 120, state.StateWaking, 100 * time.Second, true},
-		{"default deadline restore fallback at 40s", api.PlanScale, 0, state.StateWaking, 40 * time.Second, false},
+		{"default deadline restore fallback at 45s", api.PlanScale, 0, state.StateWaking, 45 * time.Second, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()

@@ -42,9 +42,16 @@ const (
 	guestHeadroomDialTimeout = 5 * time.Second
 
 	// h1IdleConnTimeout bounds an idle keep-alive connection to an H1 guest.
-	// It is shorter than the bridge's process lifetime so parked instances do
-	// not retain guest-side sockets until the outer bridge reaper runs.
-	h1IdleConnTimeout = 30 * time.Second
+	// It must stay below the keep-alive timeout of the app servers customers
+	// run (gunicorn gthread 2 s; Node, uvicorn, hypercorn and actix 5 s):
+	// when the app closes an idle connection just as the bridge reuses it,
+	// the guest answers the request with a reset, and net/http retries only
+	// replayable methods, so a POST became a 502 (prod 2026-11-22: a cron
+	// delivery to a Node app at ~one request per 5 s). Closing first leaves
+	// no race; a new connection to the guest on its own tap costs well under
+	// a millisecond. It also keeps parked instances from retaining
+	// guest-side sockets until the outer bridge reaper runs.
+	h1IdleConnTimeout = time.Second
 
 	// The bridge is started as soon as vmmd creates the instance network,
 	// before Firecracker has finished restoring the guest. Retry the H2C

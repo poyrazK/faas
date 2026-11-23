@@ -132,21 +132,6 @@ func (p *Provider) awaitComputeState(ctx context.Context, providerResourceID str
 	}
 }
 
-func awaitQuery(ctx context.Context, dsn string, wait time.Duration) bool {
-	deadline := time.Now().Add(wait)
-	for {
-		attempt, cancel := context.WithTimeout(ctx, 30*time.Second)
-		err := probeQuery(attempt, dsn)
-		cancel()
-		if err == nil {
-			return true
-		}
-		if time.Now().After(deadline) || sleepContext(ctx, computeCapProbePoll) != nil {
-			return false
-		}
-	}
-}
-
 // probeHold keeps the compute active for hold.
 func probeHold(ctx context.Context, dsn string, hold time.Duration) error {
 	conn, err := pgx.Connect(ctx, dsn)

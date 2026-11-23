@@ -67,6 +67,14 @@ func RecordHTTPIssue(ctx context.Context, store AppErrorsStore, req *apidpb.Incr
 	return err
 }
 
+// issueEligibleErrorClass reports whether an app error may open an HTTP
+// issue. A wake_failed error is a 5xx the app never began to answer (a failed
+// wake or a platform refusal), not an application exception: as an issue it
+// paged the customer for Gregale's outages (Observe audit 2026-11-21).
+func issueEligibleErrorClass(class string) bool {
+	return class != "wake_failed"
+}
+
 type httpIssueOutcome uint8
 
 const (
@@ -78,7 +86,7 @@ const (
 // recordHTTPIssue distinguishes a deliberate skip, an accepted occurrence,
 // and an idempotent duplicate.
 func recordHTTPIssue(ctx context.Context, store AppErrorsStore, req *apidpb.IncrementAppErrorRequest) (httpIssueOutcome, error) {
-	if req.GetHttpStatus() < 500 || req.GetDeploymentId() == "" {
+	if req.GetHttpStatus() < 500 || req.GetDeploymentId() == "" || !issueEligibleErrorClass(req.GetErrorClass()) {
 		return httpIssueSkipped, nil
 	}
 	st, ok := store.(state.IssueStore)

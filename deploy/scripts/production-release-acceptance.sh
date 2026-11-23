@@ -43,7 +43,7 @@ POLICY_RETRY_DELAY_SECONDS="${POLICY_RETRY_DELAY_SECONDS:-20}"
 CONTINUITY_PROBE_INTERVAL_SECONDS="${CONTINUITY_PROBE_INTERVAL_SECONDS:-2}"
 # ACCEPTANCE_NODE selects the per-node canary below instead of the fleet gate.
 ACCEPTANCE_NODE="${ACCEPTANCE_NODE:-}"
-NODE_CANARY_MAX_DEPLOYMENTS="${NODE_CANARY_MAX_DEPLOYMENTS:-6}"
+NODE_CANARY_MAX_DEPLOYMENTS="${NODE_CANARY_MAX_DEPLOYMENTS:-14}"
 if [[ -n "$ACCEPTANCE_NODE" ]]; then
 	[[ "$ACCEPTANCE_NODE" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || { echo "invalid ACCEPTANCE_NODE" >&2; exit 2; }
 	[[ "$NODE_CANARY_MAX_DEPLOYMENTS" =~ ^[1-9][0-9]*$ ]] || { echo "invalid NODE_CANARY_MAX_DEPLOYMENTS" >&2; exit 2; }
@@ -375,6 +375,14 @@ verify_app_policy_controls() {
 # takes every one: rc.345's fsn-3 canary followed fsn-2's, the templates were
 # cached, and fsn-2 (in the database's zone) built all six in under ten
 # seconds each. Each canary deployment therefore builds a fresh source.
+#
+# A builderd now runs as many builds as the node's reserved builder slots
+# (ADR-20261118154632, up to api.BuilderReservedSlotsMax = 4), so a pair no
+# longer splits: on rc.368 bhs-3's two slots took both builds of all three
+# pairs and bhs-2's canary failed with a healthy builderd. This step does not
+# know how many other nodes can claim, so each round doubles (2, 4, 8): once
+# a round has more fresh builds than the other nodes' slots, a healthy
+# activated node claims one of them.
 if [[ -n "$ACCEPTANCE_NODE" ]]; then
 	# Slugs stay reserved after cleanup, so each node's apps carry its name
 	# (a valid slug is at most 40 characters).
@@ -387,12 +395,15 @@ if [[ -n "$ACCEPTANCE_NODE" ]]; then
 	canary_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	canary_deadline=$((SECONDS + 20 * 60))
 	i=0
+	round_size=2
 	while ((i < NODE_CANARY_MAX_DEPLOYMENTS && SECONDS < canary_deadline)); do
 		pids=()
 		round_slugs=()
 		round_outputs=()
-		for template in hello-node function-node; do
+		for ((r = 0; r < round_size; r++)); do
 			((i < NODE_CANARY_MAX_DEPLOYMENTS)) || break
+			template=hello-node
+			((r % 2 == 0)) || template=function-node
 			i=$((i + 1))
 			canary_slug="ra-${short_sha}-${run_suffix}-${node_tag}-${i}"
 			canary_output="$workdir/${canary_slug}.json"
@@ -427,6 +438,7 @@ if [[ -n "$ACCEPTANCE_NODE" ]]; then
 			exit 0
 		fi
 		(( node_exit == 3 )) || exit "$node_exit"
+		round_size=$((round_size * 2))
 	done
 	echo "node canary did not see ${ACCEPTANCE_NODE} serve and build an acceptance app within ${NODE_CANARY_MAX_DEPLOYMENTS} deployments and 20 minutes" >&2
 	jq -c . "$node_report" >&2 || true

@@ -25,7 +25,7 @@ MAX_BYTES = 1 << 20
 RECEIPTS_MAX_BYTES = 32768
 HOLD_SECONDS = 90
 VALID_HOURS = 24
-EVENTS = {"faas-page": ("firing", "resolved"), "faas-warn": ("firing", "resolved"),
+EVENTS = {remote.DELIVERY_RECEIVER: ("firing", "resolved"), "faas-page": ("firing", "resolved"), "faas-warn": ("firing", "resolved"),
           "faas-heartbeat": ("watchdog_ping", "watchdog_alarm", "watchdog_recovery")}
 LIMITATIONS = ["operator_attestation_not_provider_api_verification", "receiver_groups_can_aggregate_destinations",
                "injected_alerts_do_not_test_prometheus_rule_evaluation", "live_watchdog_interruption_not_exercised",
@@ -127,6 +127,7 @@ class SSHRemote:
     def __init__(self, env):
         self.host = env.get("CP_HOST", "")
         self.key = env.get("QUALIFICATION_SSH_KEY", os.path.expanduser("~/.ssh/deploy_key"))
+        self.known_hosts = env.get("QUALIFICATION_SSH_KNOWN_HOSTS", os.path.expanduser("~/.ssh/known_hosts"))
         self.token = env.get("MONITORING_OPERATOR_TOKEN", "")
 
     def __call__(self, operation, report):
@@ -141,7 +142,10 @@ class SSHRemote:
         # Only reviewed code is in the command argument; credentials travel on
         # stdin. Disable PTY echo and discard raw remote/transport error text.
         code = Path(remote.__file__).read_text()
-        command = ["ssh", "-T", "-i", self.key, "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+        command = ["ssh", "-F", "/dev/null", "-T", "-i", self.key, "-o", "BatchMode=yes",
+                   "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=yes",
+                   "-o", f"UserKnownHostsFile={self.known_hosts}", "-o", "GlobalKnownHostsFile=/dev/null",
+                   "-o", "UpdateHostKeys=no", "-o", "ForwardAgent=no", "-o", "ClearAllForwardings=yes",
                    "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=2",
                    "root@" + self.host, "python3 -c " + shlex.quote(code)]
         child_env = os.environ.copy()
@@ -180,8 +184,7 @@ def validate_remote_result(value, operation):
 def reviewed_groups(groups):
     require(isinstance(groups, list) and 1 <= len(groups) <= remote.GROUPS_MAX, "invalid_receiver_inventory")
     for group in groups:
-        require(isinstance(group, dict) and set(group) == {"receiver", "integration"} and group["receiver"] in remote.ROLES and group["integration"] in remote.INTEGRATIONS, "invalid_receiver_inventory")
-        require(group["receiver"] != "faas-heartbeat" or group["integration"] == "webhook", "invalid_receiver_inventory")
+        require(isinstance(group, dict) and set(group) == {"receiver", "integration"} and remote.valid_receiver_pair(group), "invalid_receiver_inventory")
     require(groups == sorted(groups, key=lambda row: (row["receiver"], row["integration"])) and len({(row["receiver"], row["integration"]) for row in groups}) == len(groups), "invalid_receiver_inventory")
     require({"faas-page", "faas-heartbeat"}.issubset({row["receiver"] for row in groups}), "required_receiver_missing")
     return groups

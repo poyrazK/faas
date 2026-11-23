@@ -18,28 +18,28 @@ class ProjectRollbackTraffic:
     """Observed HTTP recovery for the exact restored deployment."""
 
     status: ProjectRollbackTrafficStatus
-    first_success_at: datetime.datetime | Unset = UNSET
-    gateways_applied_at: datetime.datetime | Unset = UNSET
     route_generation: int | Unset = UNSET
     routing_committed_at: datetime.datetime | Unset = UNSET
+    gateways_applied_at: datetime.datetime | Unset = UNSET
+    first_success_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         status: str = self.status
-
-        first_success_at: str | Unset = UNSET
-        if not isinstance(self.first_success_at, Unset):
-            first_success_at = self.first_success_at.isoformat()
-
-        gateways_applied_at: str | Unset = UNSET
-        if not isinstance(self.gateways_applied_at, Unset):
-            gateways_applied_at = self.gateways_applied_at.isoformat()
 
         route_generation = self.route_generation
 
         routing_committed_at: str | Unset = UNSET
         if not isinstance(self.routing_committed_at, Unset):
             routing_committed_at = self.routing_committed_at.isoformat()
+
+        gateways_applied_at: str | Unset = UNSET
+        if not isinstance(self.gateways_applied_at, Unset):
+            gateways_applied_at = self.gateways_applied_at.isoformat()
+
+        first_success_at: str | Unset = UNSET
+        if not isinstance(self.first_success_at, Unset):
+            first_success_at = self.first_success_at.isoformat()
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -48,14 +48,14 @@ class ProjectRollbackTraffic:
                 "status": status,
             }
         )
-        if first_success_at is not UNSET:
-            field_dict["first_success_at"] = first_success_at
-        if gateways_applied_at is not UNSET:
-            field_dict["gateways_applied_at"] = gateways_applied_at
         if route_generation is not UNSET:
             field_dict["route_generation"] = route_generation
         if routing_committed_at is not UNSET:
             field_dict["routing_committed_at"] = routing_committed_at
+        if gateways_applied_at is not UNSET:
+            field_dict["gateways_applied_at"] = gateways_applied_at
+        if first_success_at is not UNSET:
+            field_dict["first_success_at"] = first_success_at
 
         return field_dict
 
@@ -63,20 +63,6 @@ class ProjectRollbackTraffic:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
         status = check_project_rollback_traffic_status(d.pop("status"))
-
-        _first_success_at = d.pop("first_success_at", UNSET)
-        first_success_at: datetime.datetime | Unset
-        if isinstance(_first_success_at, Unset):
-            first_success_at = UNSET
-        else:
-            first_success_at = datetime.datetime.fromisoformat(_first_success_at)
-
-        _gateways_applied_at = d.pop("gateways_applied_at", UNSET)
-        gateways_applied_at: datetime.datetime | Unset
-        if isinstance(_gateways_applied_at, Unset):
-            gateways_applied_at = UNSET
-        else:
-            gateways_applied_at = datetime.datetime.fromisoformat(_gateways_applied_at)
 
         route_generation = d.pop("route_generation", UNSET)
 
@@ -87,12 +73,26 @@ class ProjectRollbackTraffic:
         else:
             routing_committed_at = datetime.datetime.fromisoformat(_routing_committed_at)
 
+        _gateways_applied_at = d.pop("gateways_applied_at", UNSET)
+        gateways_applied_at: datetime.datetime | Unset
+        if isinstance(_gateways_applied_at, Unset):
+            gateways_applied_at = UNSET
+        else:
+            gateways_applied_at = datetime.datetime.fromisoformat(_gateways_applied_at)
+
+        _first_success_at = d.pop("first_success_at", UNSET)
+        first_success_at: datetime.datetime | Unset
+        if isinstance(_first_success_at, Unset):
+            first_success_at = UNSET
+        else:
+            first_success_at = datetime.datetime.fromisoformat(_first_success_at)
+
         project_rollback_traffic = cls(
             status=status,
-            first_success_at=first_success_at,
-            gateways_applied_at=gateways_applied_at,
             route_generation=route_generation,
             routing_committed_at=routing_committed_at,
+            gateways_applied_at=gateways_applied_at,
+            first_success_at=first_success_at,
         )
 
         project_rollback_traffic.additional_properties = d

@@ -85,7 +85,7 @@ RULES = [
     (r"retained-service-spans|spans-", "Tracing:"),
     (r"response-status-hooks", "Throttle suggestions"),
     (r"^warmup$", "Warm pool"),
-    (r"^(apps-root|artifact-sync-.*|compute-mem-mb|control-plane-api-target|cp-state-backup-.*|curl|drill-.*|edge-discovery-url|git-sha|h2-?c-.*|ha-.*|host-(age-pub|age-recipient-path|bridge-cidr|hmac-key-path|key-path|name)|internal-target|json|masquerade-cidr|origin-ip|output|private-(control-|peer-)?ingress-cidrs|public-(control-addr|edge-control-plane-target|edge-mode|entry-addrs|health-path|host|iface|ingress-cidrs|listen-addr|private-listen-addr)|quiet-pause(-observe)?|rclone-bin|repo-root|require-shared-artifacts|sample-interval|sign-pub|token|trusted-ingress-cidrs)$", "INFRA"),
+    (r"^(apps-root|artifact-sync-.*|compute-mem-mb|control-plane-api-target|cp-state-backup-.*|curl|drill-.*|edge-discovery-url|git-sha|h2-?c-.*|ha-.*|host-(age-pub|age-recipient-path|bridge-cidr|hmac-key-path|key-path|name)|internal-target|json|masquerade-cidr|origin-ip|output|peer-entry-addrs|private-(control-|peer-)?ingress-cidrs|public-(control-addr|edge-control-plane-target|edge-mode|entry-addrs|health-path|host|iface|ingress-cidrs|listen-addr|private-listen-addr)|quiet-pause(-observe)?|rclone-bin|repo-root|require-shared-artifacts|sample-interval|sign-pub|token|trusted-ingress-cidrs)$", "INFRA"),
     (r"^(control|dns-handoff|edge-health-outcome|handler|inflight|pgbackend|rule-label-set|stale-target|workload-retirement)$", "INFRA"),
     (r"^/v1/apps/\\$|^/v1\?api.key", "TEST"),
     (r"^app-layer-max", "Builds in builder"),
@@ -402,10 +402,16 @@ PRIORITY_RULES = [
     (r"^ai-(content-policy|request-replay)$", "AI gateway"),
     (r"^security-headers$", "Edge rules (incl"),
     (r"^signed-urls$", "Object storage"),
+    # ADR-20261121230052: these object-storage sub-features stay preview while
+    # the rest of object storage is GA, so they have their own inventory row.
+    (r"^(object-versioning|object-protection|object-lifecycle|bucket-encryption|bucket-cors|bucket-access-grants)$", "Bucket versioning, Object Lock"),
     (r"^test$|^scenario-tests$|^scenario-(test|object|postgres)", "Scenario tests"),
     (r"^(project-)?environment-(workload-)?qualification|^project-environment-qualifications$", "Environments and Environment GitOps"),
     (r"stored-workflow-test", "Stored workflows:"),
     (r"realtime-customer-examples", "Realtime channels"),
+    # ADR-20261123074615: core realtime is beta; retained history and what
+    # builds on it stay preview, so they have their own inventory row.
+    (r"^realtime-(access|channels|occupancy|publishers|push|tickets|workers)$", "Realtime preview:"),
     (r"^durableentity$", "Durable entities"),
     (r"^appmetrics$", "App, service and account metrics"),
     (r"^otlpmetrics$", "Custom metrics and OTLP"),

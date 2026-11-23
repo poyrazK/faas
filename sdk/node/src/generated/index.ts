@@ -1684,6 +1684,7 @@ export type { MCPTaskCompatibilityReportRequest } from './models/MCPTaskCompatib
 export type { MCPTaskCompatibilityReportResponse } from './models/MCPTaskCompatibilityReportResponse.js';
 export type { MCPTaskHandlerCompatibility } from './models/MCPTaskHandlerCompatibility.js';
 export type { MCPTaskHandlerDeploymentWorkers } from './models/MCPTaskHandlerDeploymentWorkers.js';
+export type { MCPToolLimit } from './models/MCPToolLimit.js';
 export type { MemberListResponse } from './models/MemberListResponse.js';
 export type { MFAConfirmRequest } from './models/MFAConfirmRequest.js';
 export type { MFAConfirmResponse } from './models/MFAConfirmResponse.js';
@@ -3250,6 +3251,9 @@ export type { RouteRequirementsConfig } from './models/RouteRequirementsConfig.j
 export type { RouteRequirementsFinding } from './models/RouteRequirementsFinding.js';
 export type { RouteRequirementsReport } from './models/RouteRequirementsReport.js';
 export type { RouteRequirementsResult } from './models/RouteRequirementsResult.js';
+export type { RouteResourceAttribution } from './models/RouteResourceAttribution.js';
+export type { RouteResourceSplit } from './models/RouteResourceSplit.js';
+export type { RouteResourcesResponse } from './models/RouteResourcesResponse.js';
 export type { RouteRow } from './models/RouteRow.js';
 export type { RouteThrottleRequirement } from './models/RouteThrottleRequirement.js';
 export type { RunArtifactDelivery } from './models/RunArtifactDelivery.js';

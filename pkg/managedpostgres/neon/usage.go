@@ -131,8 +131,9 @@ func firstOfUTCMonth(value time.Time) bool {
 // before the collector advances its durable checkpoint.
 func validateConsumptionCoverage(project projectConsumption, window managedpostgres.UsageWindow) error {
 	type interval struct{ from, to time.Time }
-	var intervals []interval
+	type bucket struct{ from, to int64 }
 	periods := make(map[string]bool, len(project.Periods))
+	reported := make(map[bucket]int)
 	for _, period := range project.Periods {
 		if period.ID == "" || periods[period.ID] || period.From.IsZero() || (!period.To.IsZero() && !period.To.After(period.From)) {
 			return managedpostgres.ErrUnavailable
@@ -142,17 +143,30 @@ func validateConsumptionCoverage(project projectConsumption, window managedpostg
 			if frame.From.IsZero() || !frame.To.After(frame.From) || frame.From.Before(window.From) || frame.To.After(window.To) {
 				return managedpostgres.ErrUnavailable
 			}
-			// A billing-plan change can split a bucket across two periods.
-			// Each period's quantities apply only to its share of that bucket.
-			from, to := frame.From, frame.To
-			if from.Before(period.From) {
-				from = period.From
-			}
-			if !period.To.IsZero() && to.After(period.To) {
-				to = period.To
-			}
-			if !to.After(from) {
+			// A frame must overlap the period that reports it.
+			if !frame.To.After(period.From) || (!period.To.IsZero() && !frame.From.Before(period.To)) {
 				return managedpostgres.ErrUnavailable
+			}
+			reported[bucket{frame.From.UnixNano(), frame.To.UnixNano()}]++
+		}
+	}
+	var intervals []interval
+	for _, period := range project.Periods {
+		for _, frame := range period.Consumption {
+			from, to := frame.From, frame.To
+			// A billing-plan change can split a bucket across two periods.
+			// When both report it, each period's quantities apply only to its
+			// share of that bucket. When only one does, Neon accounted the
+			// whole bucket there: on 2026-11-22 an idle project's 19:00 bucket
+			// came only in the period that ended 19:51:47, with a full hour of
+			// storage, and the next period's frames began at 20:00.
+			if reported[bucket{frame.From.UnixNano(), frame.To.UnixNano()}] > 1 {
+				if from.Before(period.From) {
+					from = period.From
+				}
+				if !period.To.IsZero() && to.After(period.To) {
+					to = period.To
+				}
 			}
 			intervals = append(intervals, interval{from, to})
 		}

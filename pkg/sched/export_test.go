@@ -513,8 +513,8 @@ func (r *Engine) NoteEgressAbuseRecycle(p0 string, p1 time.Time) bool {
 func (r *Engine) ParkForCapacity(p0 context.Context, p1 string, p2 string, p3 error) bool {
 	return r.parkForCapacity(p0, p1, p2, p3)
 }
-func (r *Engine) ParkZeroTrafficSibling(p0 context.Context, p1 string, p2 string) bool {
-	return r.parkZeroTrafficSibling(p0, p1, p2)
+func (r *Engine) ParkZeroTrafficSibling(p0 context.Context, p1 string, p2 string, p3 bool) bool {
+	return r.parkZeroTrafficSibling(p0, p1, p2, p3)
 }
 func (r *Engine) PressureSweepCounterValue(p0 string) int    { return r.pressureSweepCounterValue(p0) }
 func (r *Engine) PrimeColdBootBudget(p0 int32) time.Duration { return r.primeColdBootBudget(p0) }
@@ -1469,3 +1469,6 @@ func ReportTriggerPoll(ctx context.Context, records int) { reportTriggerPoll(ctx
 
 // ErrTriggerGatewayDispatch marks a batch the gateway could not take.
 var ErrTriggerGatewayDispatch = errTriggerGatewayDispatch
+
+// InvocationErrorText is the last_error text of a failed invocation.
+var InvocationErrorText = invocationErrorText

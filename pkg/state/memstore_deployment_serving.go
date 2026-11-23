@@ -31,7 +31,6 @@ func (m *MemStore) putDeploymentLocked(id string, d Deployment) {
 	m.consumeMCPReadinessOverrideLocked(prev, d)
 	d = m.preserveFailedRollbackTargetLocked(id, d)
 	m.recordAppliedLifecycleLocked(prev, d, existed)
-	m.deployments[id] = d
 	switch {
 	case deploymentServing(d):
 		delete(m.deploymentServingEndedAt, id)
@@ -47,6 +46,11 @@ func (m *MemStore) putDeploymentLocked(id string, d Deployment) {
 		m.lastServingEndedAt = at
 		m.deploymentServingEndedAt[id] = at
 	}
+	d.ServingEndedAt = nil
+	if at, ok := m.deploymentServingEndedAt[id]; ok {
+		d.ServingEndedAt = &at
+	}
+	m.deployments[id] = d
 }
 
 // preserveFailedRollbackTargetLocked mirrors the rollback failure trigger

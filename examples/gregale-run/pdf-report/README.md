@@ -11,7 +11,7 @@ Select a package version available in that installer's repositories; this
 example uses `poppler-utils=26.08.0-r0` from the public Wolfi index.
 
 ```sh
-gregale run environments build --runtime python313 \
+gregale sandbox environment publish --runtime python313 \
   --system-package poppler-utils=26.08.0-r0 --wait --json
 
 export REPORT_ENVIRONMENT_ID=ENVIRONMENT_UUID

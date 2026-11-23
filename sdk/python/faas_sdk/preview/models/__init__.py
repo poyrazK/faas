@@ -3304,13 +3304,16 @@ from .mcp_readiness_role_catalog_format import MCPReadinessRoleCatalogFormat
 from .mcp_readiness_role_protocol_version import MCPReadinessRoleProtocolVersion
 from .mcp_readiness_snapshot import MCPReadinessSnapshot
 from .mcp_resource_policy import MCPResourcePolicy
+from .mcp_resource_policy_credential import MCPResourcePolicyCredential
 from .mcp_resource_policy_prompt_scopes_type_0 import MCPResourcePolicyPromptScopesType0
 from .mcp_resource_policy_resource_scopes_type_0 import MCPResourcePolicyResourceScopesType0
+from .mcp_resource_policy_tool_limits import MCPResourcePolicyToolLimits
 from .mcp_resource_policy_tool_scopes_type_0 import MCPResourcePolicyToolScopesType0
 from .mcp_task_compatibility_report_request import MCPTaskCompatibilityReportRequest
 from .mcp_task_compatibility_report_response import MCPTaskCompatibilityReportResponse
 from .mcp_task_handler_compatibility import MCPTaskHandlerCompatibility
 from .mcp_task_handler_deployment_workers import MCPTaskHandlerDeploymentWorkers
+from .mcp_tool_limit import MCPToolLimit
 from .mcpo_auth_retirement import MCPOAuthRetirement
 from .mcpo_auth_retirement_action import MCPOAuthRetirementAction
 from .mcpo_auth_retirement_action_action import MCPOAuthRetirementActionAction
@@ -5398,13 +5401,13 @@ from .project_release_verification_percent import ProjectReleaseVerificationPerc
 from .project_release_worker import ProjectReleaseWorker
 from .project_release_worker_status import ProjectReleaseWorkerStatus
 from .project_response import ProjectResponse
-from .project_rollback_batch import ProjectRollbackBatch
-from .project_rollback_member import ProjectRollbackMember
 from .project_rollback_auto_undo import ProjectRollbackAutoUndo
 from .project_rollback_auto_undo_status import ProjectRollbackAutoUndoStatus
+from .project_rollback_batch import ProjectRollbackBatch
 from .project_rollback_health import ProjectRollbackHealth
 from .project_rollback_history import ProjectRollbackHistory
 from .project_rollback_live_traffic import ProjectRollbackLiveTraffic
+from .project_rollback_member import ProjectRollbackMember
 from .project_rollback_operation import ProjectRollbackOperation
 from .project_rollback_operation_status import ProjectRollbackOperationStatus
 from .project_rollback_pre_cutover_health import ProjectRollbackPreCutoverHealth
@@ -6107,6 +6110,9 @@ from .route_requirements_config_version import RouteRequirementsConfigVersion
 from .route_requirements_finding import RouteRequirementsFinding
 from .route_requirements_report import RouteRequirementsReport
 from .route_requirements_result import RouteRequirementsResult
+from .route_resource_attribution import RouteResourceAttribution
+from .route_resource_split import RouteResourceSplit
+from .route_resources_response import RouteResourcesResponse
 from .route_row import RouteRow
 from .route_throttle_requirement import RouteThrottleRequirement
 from .route_throttle_requirement_key_by import RouteThrottleRequirementKeyBy
@@ -10411,13 +10417,16 @@ __all__ = (
     "MCPReadinessRoleProtocolVersion",
     "MCPReadinessSnapshot",
     "MCPResourcePolicy",
+    "MCPResourcePolicyCredential",
     "MCPResourcePolicyPromptScopesType0",
     "MCPResourcePolicyResourceScopesType0",
+    "MCPResourcePolicyToolLimits",
     "MCPResourcePolicyToolScopesType0",
     "MCPTaskCompatibilityReportRequest",
     "MCPTaskCompatibilityReportResponse",
     "MCPTaskHandlerCompatibility",
     "MCPTaskHandlerDeploymentWorkers",
+    "MCPToolLimit",
     "MemberListResponse",
     "MFAConfirmRequest",
     "MFAConfirmResponse",
@@ -12335,13 +12344,13 @@ __all__ = (
     "ProjectReleaseWorker",
     "ProjectReleaseWorkerStatus",
     "ProjectResponse",
-    "ProjectRollbackBatch",
-    "ProjectRollbackMember",
     "ProjectRollbackAutoUndo",
     "ProjectRollbackAutoUndoStatus",
+    "ProjectRollbackBatch",
     "ProjectRollbackHealth",
     "ProjectRollbackHistory",
     "ProjectRollbackLiveTraffic",
+    "ProjectRollbackMember",
     "ProjectRollbackOperation",
     "ProjectRollbackOperationStatus",
     "ProjectRollbackPreCutoverHealth",
@@ -13032,6 +13041,9 @@ __all__ = (
     "RouteRequirementsFinding",
     "RouteRequirementsReport",
     "RouteRequirementsResult",
+    "RouteResourceAttribution",
+    "RouteResourceSplit",
+    "RouteResourcesResponse",
     "RouteRow",
     "RouteThrottleRequirement",
     "RouteThrottleRequirementKeyBy",

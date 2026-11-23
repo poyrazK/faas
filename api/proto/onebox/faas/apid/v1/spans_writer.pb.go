@@ -513,6 +513,263 @@ func (x *IngestGuestMetricsResponse) GetRetryAfterMs() int64 {
 	return 0
 }
 
+// InstanceResourceMinute is one app instance's cgroup in one UTC minute.
+// Memory is MiB of memory.current; CPU from cpu.stat.
+type InstanceResourceMinute struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	AccountId          string                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	AppId              string                 `protobuf:"bytes,2,opt,name=app_id,json=appId,proto3" json:"app_id,omitempty"`
+	DeploymentId       string                 `protobuf:"bytes,3,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
+	InstanceId         string                 `protobuf:"bytes,4,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	MinuteUnix         int64                  `protobuf:"varint,5,opt,name=minute_unix,json=minuteUnix,proto3" json:"minute_unix,omitempty"`
+	Samples            int32                  `protobuf:"varint,6,opt,name=samples,proto3" json:"samples,omitempty"`
+	MemStartMb         int32                  `protobuf:"varint,7,opt,name=mem_start_mb,json=memStartMb,proto3" json:"mem_start_mb,omitempty"`
+	MemPeakMb          int32                  `protobuf:"varint,8,opt,name=mem_peak_mb,json=memPeakMb,proto3" json:"mem_peak_mb,omitempty"`
+	MemEndMb           int32                  `protobuf:"varint,9,opt,name=mem_end_mb,json=memEndMb,proto3" json:"mem_end_mb,omitempty"`
+	MemLimitMb         int32                  `protobuf:"varint,10,opt,name=mem_limit_mb,json=memLimitMb,proto3" json:"mem_limit_mb,omitempty"`
+	CpuMs              int64                  `protobuf:"varint,11,opt,name=cpu_ms,json=cpuMs,proto3" json:"cpu_ms,omitempty"`
+	CpuPeakMillicores  int32                  `protobuf:"varint,12,opt,name=cpu_peak_millicores,json=cpuPeakMillicores,proto3" json:"cpu_peak_millicores,omitempty"`
+	CpuLimitMillicores int32                  `protobuf:"varint,13,opt,name=cpu_limit_millicores,json=cpuLimitMillicores,proto3" json:"cpu_limit_millicores,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *InstanceResourceMinute) Reset() {
+	*x = InstanceResourceMinute{}
+	mi := &file_onebox_faas_apid_v1_spans_writer_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InstanceResourceMinute) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InstanceResourceMinute) ProtoMessage() {}
+
+func (x *InstanceResourceMinute) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_apid_v1_spans_writer_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InstanceResourceMinute.ProtoReflect.Descriptor instead.
+func (*InstanceResourceMinute) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_apid_v1_spans_writer_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *InstanceResourceMinute) GetAccountId() string {
+	if x != nil {
+		return x.AccountId
+	}
+	return ""
+}
+
+func (x *InstanceResourceMinute) GetAppId() string {
+	if x != nil {
+		return x.AppId
+	}
+	return ""
+}
+
+func (x *InstanceResourceMinute) GetDeploymentId() string {
+	if x != nil {
+		return x.DeploymentId
+	}
+	return ""
+}
+
+func (x *InstanceResourceMinute) GetInstanceId() string {
+	if x != nil {
+		return x.InstanceId
+	}
+	return ""
+}
+
+func (x *InstanceResourceMinute) GetMinuteUnix() int64 {
+	if x != nil {
+		return x.MinuteUnix
+	}
+	return 0
+}
+
+func (x *InstanceResourceMinute) GetSamples() int32 {
+	if x != nil {
+		return x.Samples
+	}
+	return 0
+}
+
+func (x *InstanceResourceMinute) GetMemStartMb() int32 {
+	if x != nil {
+		return x.MemStartMb
+	}
+	return 0
+}
+
+func (x *InstanceResourceMinute) GetMemPeakMb() int32 {
+	if x != nil {
+		return x.MemPeakMb
+	}
+	return 0
+}
+
+func (x *InstanceResourceMinute) GetMemEndMb() int32 {
+	if x != nil {
+		return x.MemEndMb
+	}
+	return 0
+}
+
+func (x *InstanceResourceMinute) GetMemLimitMb() int32 {
+	if x != nil {
+		return x.MemLimitMb
+	}
+	return 0
+}
+
+func (x *InstanceResourceMinute) GetCpuMs() int64 {
+	if x != nil {
+		return x.CpuMs
+	}
+	return 0
+}
+
+func (x *InstanceResourceMinute) GetCpuPeakMillicores() int32 {
+	if x != nil {
+		return x.CpuPeakMillicores
+	}
+	return 0
+}
+
+func (x *InstanceResourceMinute) GetCpuLimitMillicores() int32 {
+	if x != nil {
+		return x.CpuLimitMillicores
+	}
+	return 0
+}
+
+type IngestInstanceResourceMinutesRequest struct {
+	state         protoimpl.MessageState    `protogen:"open.v1"`
+	Minutes       []*InstanceResourceMinute `protobuf:"bytes,1,rep,name=minutes,proto3" json:"minutes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *IngestInstanceResourceMinutesRequest) Reset() {
+	*x = IngestInstanceResourceMinutesRequest{}
+	mi := &file_onebox_faas_apid_v1_spans_writer_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IngestInstanceResourceMinutesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IngestInstanceResourceMinutesRequest) ProtoMessage() {}
+
+func (x *IngestInstanceResourceMinutesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_apid_v1_spans_writer_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IngestInstanceResourceMinutesRequest.ProtoReflect.Descriptor instead.
+func (*IngestInstanceResourceMinutesRequest) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_apid_v1_spans_writer_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *IngestInstanceResourceMinutesRequest) GetMinutes() []*InstanceResourceMinute {
+	if x != nil {
+		return x.Minutes
+	}
+	return nil
+}
+
+// IngestInstanceResourceMinutesResponse outcome ∈ {accepted, unavailable}.
+// disabled_app_ids are apps whose rows apid left out because the flag is
+// off for them; invalid counts rows refused for their identity or values.
+type IngestInstanceResourceMinutesResponse struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Outcome        string                 `protobuf:"bytes,1,opt,name=outcome,proto3" json:"outcome,omitempty"`
+	Accepted       int64                  `protobuf:"varint,2,opt,name=accepted,proto3" json:"accepted,omitempty"`
+	DisabledAppIds []string               `protobuf:"bytes,3,rep,name=disabled_app_ids,json=disabledAppIds,proto3" json:"disabled_app_ids,omitempty"`
+	Invalid        int64                  `protobuf:"varint,4,opt,name=invalid,proto3" json:"invalid,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *IngestInstanceResourceMinutesResponse) Reset() {
+	*x = IngestInstanceResourceMinutesResponse{}
+	mi := &file_onebox_faas_apid_v1_spans_writer_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IngestInstanceResourceMinutesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IngestInstanceResourceMinutesResponse) ProtoMessage() {}
+
+func (x *IngestInstanceResourceMinutesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_apid_v1_spans_writer_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IngestInstanceResourceMinutesResponse.ProtoReflect.Descriptor instead.
+func (*IngestInstanceResourceMinutesResponse) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_apid_v1_spans_writer_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *IngestInstanceResourceMinutesResponse) GetOutcome() string {
+	if x != nil {
+		return x.Outcome
+	}
+	return ""
+}
+
+func (x *IngestInstanceResourceMinutesResponse) GetAccepted() int64 {
+	if x != nil {
+		return x.Accepted
+	}
+	return 0
+}
+
+func (x *IngestInstanceResourceMinutesResponse) GetDisabledAppIds() []string {
+	if x != nil {
+		return x.DisabledAppIds
+	}
+	return nil
+}
+
+func (x *IngestInstanceResourceMinutesResponse) GetInvalid() int64 {
+	if x != nil {
+		return x.Invalid
+	}
+	return 0
+}
+
 var File_onebox_faas_apid_v1_spans_writer_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_apid_v1_spans_writer_proto_rawDesc = "" +
@@ -552,12 +809,41 @@ const file_onebox_faas_apid_v1_spans_writer_proto_rawDesc = "" +
 	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12'\n" +
 	"\x0faccepted_points\x18\x02 \x01(\x03R\x0eacceptedPoints\x12'\n" +
 	"\x0frejected_points\x18\x03 \x01(\x03R\x0erejectedPoints\x12$\n" +
-	"\x0eretry_after_ms\x18\x04 \x01(\x03R\fretryAfterMs2\xd6\x03\n" +
+	"\x0eretry_after_ms\x18\x04 \x01(\x03R\fretryAfterMs\"\xca\x03\n" +
+	"\x16InstanceResourceMinute\x12\x1d\n" +
+	"\n" +
+	"account_id\x18\x01 \x01(\tR\taccountId\x12\x15\n" +
+	"\x06app_id\x18\x02 \x01(\tR\x05appId\x12#\n" +
+	"\rdeployment_id\x18\x03 \x01(\tR\fdeploymentId\x12\x1f\n" +
+	"\vinstance_id\x18\x04 \x01(\tR\n" +
+	"instanceId\x12\x1f\n" +
+	"\vminute_unix\x18\x05 \x01(\x03R\n" +
+	"minuteUnix\x12\x18\n" +
+	"\asamples\x18\x06 \x01(\x05R\asamples\x12 \n" +
+	"\fmem_start_mb\x18\a \x01(\x05R\n" +
+	"memStartMb\x12\x1e\n" +
+	"\vmem_peak_mb\x18\b \x01(\x05R\tmemPeakMb\x12\x1c\n" +
+	"\n" +
+	"mem_end_mb\x18\t \x01(\x05R\bmemEndMb\x12 \n" +
+	"\fmem_limit_mb\x18\n" +
+	" \x01(\x05R\n" +
+	"memLimitMb\x12\x15\n" +
+	"\x06cpu_ms\x18\v \x01(\x03R\x05cpuMs\x12.\n" +
+	"\x13cpu_peak_millicores\x18\f \x01(\x05R\x11cpuPeakMillicores\x120\n" +
+	"\x14cpu_limit_millicores\x18\r \x01(\x05R\x12cpuLimitMillicores\"m\n" +
+	"$IngestInstanceResourceMinutesRequest\x12E\n" +
+	"\aminutes\x18\x01 \x03(\v2+.onebox.faas.apid.v1.InstanceResourceMinuteR\aminutes\"\xa1\x01\n" +
+	"%IngestInstanceResourceMinutesResponse\x12\x18\n" +
+	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12\x1a\n" +
+	"\baccepted\x18\x02 \x01(\x03R\baccepted\x12(\n" +
+	"\x10disabled_app_ids\x18\x03 \x03(\tR\x0edisabledAppIds\x12\x18\n" +
+	"\ainvalid\x18\x04 \x01(\x03R\ainvalid2\xef\x04\n" +
 	"\vSpansWriter\x12r\n" +
 	"\x11WriteSpansSummary\x12-.onebox.faas.apid.v1.WriteSpansSummaryRequest\x1a..onebox.faas.apid.v1.WriteSpansSummaryResponse\x12o\n" +
 	"\x10IngestGuestSpans\x12,.onebox.faas.apid.v1.IngestGuestSpansRequest\x1a-.onebox.faas.apid.v1.IngestGuestSpansResponse\x12m\n" +
 	"\x0fIngestGuestLogs\x12,.onebox.faas.apid.v1.IngestGuestSpansRequest\x1a,.onebox.faas.apid.v1.IngestGuestLogsResponse\x12s\n" +
-	"\x12IngestGuestMetrics\x12,.onebox.faas.apid.v1.IngestGuestSpansRequest\x1a/.onebox.faas.apid.v1.IngestGuestMetricsResponseBBZ@github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1;apidpbb\x06proto3"
+	"\x12IngestGuestMetrics\x12,.onebox.faas.apid.v1.IngestGuestSpansRequest\x1a/.onebox.faas.apid.v1.IngestGuestMetricsResponse\x12\x96\x01\n" +
+	"\x1dIngestInstanceResourceMinutes\x129.onebox.faas.apid.v1.IngestInstanceResourceMinutesRequest\x1a:.onebox.faas.apid.v1.IngestInstanceResourceMinutesResponseBBZ@github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1;apidpbb\x06proto3"
 
 var (
 	file_onebox_faas_apid_v1_spans_writer_proto_rawDescOnce sync.Once
@@ -571,29 +857,35 @@ func file_onebox_faas_apid_v1_spans_writer_proto_rawDescGZIP() []byte {
 	return file_onebox_faas_apid_v1_spans_writer_proto_rawDescData
 }
 
-var file_onebox_faas_apid_v1_spans_writer_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_onebox_faas_apid_v1_spans_writer_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_onebox_faas_apid_v1_spans_writer_proto_goTypes = []any{
-	(*WriteSpansSummaryRequest)(nil),   // 0: onebox.faas.apid.v1.WriteSpansSummaryRequest
-	(*WriteSpansSummaryResponse)(nil),  // 1: onebox.faas.apid.v1.WriteSpansSummaryResponse
-	(*IngestGuestSpansRequest)(nil),    // 2: onebox.faas.apid.v1.IngestGuestSpansRequest
-	(*IngestGuestSpansResponse)(nil),   // 3: onebox.faas.apid.v1.IngestGuestSpansResponse
-	(*IngestGuestLogsResponse)(nil),    // 4: onebox.faas.apid.v1.IngestGuestLogsResponse
-	(*IngestGuestMetricsResponse)(nil), // 5: onebox.faas.apid.v1.IngestGuestMetricsResponse
+	(*WriteSpansSummaryRequest)(nil),              // 0: onebox.faas.apid.v1.WriteSpansSummaryRequest
+	(*WriteSpansSummaryResponse)(nil),             // 1: onebox.faas.apid.v1.WriteSpansSummaryResponse
+	(*IngestGuestSpansRequest)(nil),               // 2: onebox.faas.apid.v1.IngestGuestSpansRequest
+	(*IngestGuestSpansResponse)(nil),              // 3: onebox.faas.apid.v1.IngestGuestSpansResponse
+	(*IngestGuestLogsResponse)(nil),               // 4: onebox.faas.apid.v1.IngestGuestLogsResponse
+	(*IngestGuestMetricsResponse)(nil),            // 5: onebox.faas.apid.v1.IngestGuestMetricsResponse
+	(*InstanceResourceMinute)(nil),                // 6: onebox.faas.apid.v1.InstanceResourceMinute
+	(*IngestInstanceResourceMinutesRequest)(nil),  // 7: onebox.faas.apid.v1.IngestInstanceResourceMinutesRequest
+	(*IngestInstanceResourceMinutesResponse)(nil), // 8: onebox.faas.apid.v1.IngestInstanceResourceMinutesResponse
 }
 var file_onebox_faas_apid_v1_spans_writer_proto_depIdxs = []int32{
-	0, // 0: onebox.faas.apid.v1.SpansWriter.WriteSpansSummary:input_type -> onebox.faas.apid.v1.WriteSpansSummaryRequest
-	2, // 1: onebox.faas.apid.v1.SpansWriter.IngestGuestSpans:input_type -> onebox.faas.apid.v1.IngestGuestSpansRequest
-	2, // 2: onebox.faas.apid.v1.SpansWriter.IngestGuestLogs:input_type -> onebox.faas.apid.v1.IngestGuestSpansRequest
-	2, // 3: onebox.faas.apid.v1.SpansWriter.IngestGuestMetrics:input_type -> onebox.faas.apid.v1.IngestGuestSpansRequest
-	1, // 4: onebox.faas.apid.v1.SpansWriter.WriteSpansSummary:output_type -> onebox.faas.apid.v1.WriteSpansSummaryResponse
-	3, // 5: onebox.faas.apid.v1.SpansWriter.IngestGuestSpans:output_type -> onebox.faas.apid.v1.IngestGuestSpansResponse
-	4, // 6: onebox.faas.apid.v1.SpansWriter.IngestGuestLogs:output_type -> onebox.faas.apid.v1.IngestGuestLogsResponse
-	5, // 7: onebox.faas.apid.v1.SpansWriter.IngestGuestMetrics:output_type -> onebox.faas.apid.v1.IngestGuestMetricsResponse
-	4, // [4:8] is the sub-list for method output_type
-	0, // [0:4] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	6, // 0: onebox.faas.apid.v1.IngestInstanceResourceMinutesRequest.minutes:type_name -> onebox.faas.apid.v1.InstanceResourceMinute
+	0, // 1: onebox.faas.apid.v1.SpansWriter.WriteSpansSummary:input_type -> onebox.faas.apid.v1.WriteSpansSummaryRequest
+	2, // 2: onebox.faas.apid.v1.SpansWriter.IngestGuestSpans:input_type -> onebox.faas.apid.v1.IngestGuestSpansRequest
+	2, // 3: onebox.faas.apid.v1.SpansWriter.IngestGuestLogs:input_type -> onebox.faas.apid.v1.IngestGuestSpansRequest
+	2, // 4: onebox.faas.apid.v1.SpansWriter.IngestGuestMetrics:input_type -> onebox.faas.apid.v1.IngestGuestSpansRequest
+	7, // 5: onebox.faas.apid.v1.SpansWriter.IngestInstanceResourceMinutes:input_type -> onebox.faas.apid.v1.IngestInstanceResourceMinutesRequest
+	1, // 6: onebox.faas.apid.v1.SpansWriter.WriteSpansSummary:output_type -> onebox.faas.apid.v1.WriteSpansSummaryResponse
+	3, // 7: onebox.faas.apid.v1.SpansWriter.IngestGuestSpans:output_type -> onebox.faas.apid.v1.IngestGuestSpansResponse
+	4, // 8: onebox.faas.apid.v1.SpansWriter.IngestGuestLogs:output_type -> onebox.faas.apid.v1.IngestGuestLogsResponse
+	5, // 9: onebox.faas.apid.v1.SpansWriter.IngestGuestMetrics:output_type -> onebox.faas.apid.v1.IngestGuestMetricsResponse
+	8, // 10: onebox.faas.apid.v1.SpansWriter.IngestInstanceResourceMinutes:output_type -> onebox.faas.apid.v1.IngestInstanceResourceMinutesResponse
+	6, // [6:11] is the sub-list for method output_type
+	1, // [1:6] is the sub-list for method input_type
+	1, // [1:1] is the sub-list for extension type_name
+	1, // [1:1] is the sub-list for extension extendee
+	0, // [0:1] is the sub-list for field type_name
 }
 
 func init() { file_onebox_faas_apid_v1_spans_writer_proto_init() }
@@ -607,7 +899,7 @@ func file_onebox_faas_apid_v1_spans_writer_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_onebox_faas_apid_v1_spans_writer_proto_rawDesc), len(file_onebox_faas_apid_v1_spans_writer_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

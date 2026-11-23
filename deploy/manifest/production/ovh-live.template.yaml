@@ -26,6 +26,21 @@
 # - The second NVMe left blank for /srv/fc. NVMe device names change across
 #   reboots on these servers, so each host pins its data disk by
 #   /dev/disk/by-id below.
+# - /etc/netplan/62-peer-via-gw.yaml on bhs-2 and bhs-3 (added 2026-11-23):
+#   routes 15.235.50.0/25 and 15.235.50.128/25 via 15.235.50.254 (on-link)
+#   on eno1np0. Any compute node added to this /24 later (dynamic_compute)
+#   needs the same file; bhs-1 (149.56.23.0/24) has no peer and needs none.
+#   The two servers share the DHCP /24, but OVH answers ARP between them
+#   only sporadically (the gateway's proxy-ARP), so the on-link /24
+#   black-holed replies to the other node's primary address. App egress is
+#   masqueraded to that address, so an app calling *.gregale.app served by
+#   the other node's entry_ipv4 hung about half the time. The /25s are more
+#   specific than the /24; the DHCP scope-link /32 for .254 still reaches
+#   the gateway itself. See docs/runbooks/GcpToOvhMigration.md. Since
+#   ADR-20261123100000 the converge also hairpins guests' calls to the other
+#   nodes' entry addresses onto the local edge (faas_peer_entry_addrs, from
+#   entry_ipv4 below), so app calls no longer cross between the servers; the
+#   routes stay for nodes without an entry address and host traffic.
 #
 # The control plane keeps the address fsn-1.gregale.dev. During the planned
 # switchover (docs/runbooks/ControlPlaneFailover.md, step 4) only the host's
@@ -111,11 +126,15 @@ daemons:
     # The control-plane schedd reaches the local edge; compute schedds use
     # their node-local gatewayd-internal socket after host rendering.
     gateway_synth_target: tcp://127.0.0.1:8080
-    # ADR-20261021215353 early freeze. Releases re-render schedd.toml from
-    # this manifest, so a value set by hand on a node is lost at the next
-    # rollout. Set it here only after a release whose gregalectl and imaged
-    # parse the key is live on every node: older ones reject unknown keys.
-    # frozen_tier_early_freeze_after_s: 10
+    # ADR-20261021215353 early freeze. schedd defaults it to 15 s
+    # (api.FrozenEarlyFreezeDefaultSeconds) whenever hot_path.frozen_tier is
+    # on, and frozen seconds are unbilled, so 15 s would stop billing an idle
+    # instance 15 s after its last request instead of at its plan's idle
+    # timeout. 0 keeps billing unchanged: an instance freezes only at its idle
+    # timeout, where it would otherwise park (owner decision 2026-11-21).
+    # Compute schedds get it as a drop-in (renderHotPathVars), the
+    # control-plane schedd in schedd.toml.
+    frozen_tier_early_freeze_after_s: 0
   vmmd:
     bind: tcp://0.0.0.0:50051
     tls:
@@ -325,6 +344,11 @@ log_archive:
   region: bhs
   auth: static
   credentials_src: /operator/secrets/log-archive-s3.json
+  # Compute nodes should hold a key that can only s3:PutObject on the bucket
+  # (a rooted node could otherwise read every tenant's archived logs). Create
+  # that key, then uncomment:
+  # compute_write_only: true
+  # compute_credentials_src: /operator/secrets/log-archive-s3-put-only.json
 
 # docs/ops/serving-probe.md: each compute node requests the platform-owned
 # probe function (release-acceptance account) through the public edge every
@@ -337,6 +361,15 @@ serving_probes:
   # gregale.dev name is an alias that redirect mode will answer with a 308.
   urls: ["https://serving-probe.gregale.app/"]
   expected_body: gregale-serving-probe-ok
+
+# ADR-576 private TCP service addresses (<name>.svc.gregale:<port>), which
+# managed Redis caches are reached at (ADR-20261116192126). Staged by hand on
+# bhs-2/bhs-3 on 2026-11-23 in the README's order (node, listener, dns); this
+# block keeps every converge rendering the same.
+service_tcp:
+  node: true
+  listener: true
+  dns: true
 
 dns:
   # ADR-20261026100000: apps (and PR and deployment previews) move to

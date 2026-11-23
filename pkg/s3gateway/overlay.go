@@ -190,6 +190,7 @@ func (h *Handler) readThroughOverlay(w http.ResponseWriter, r *http.Request, req
 		return true
 	}
 	response, err := h.client.Do(upstream)
+	objectstorage.NormalizeProviderResponse(req.provider, response)
 	if err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
 		return true

@@ -444,6 +444,11 @@ func runDeploy(args []string) error {
 		return err
 	}
 	runtime.only = services
+	// The unit lane's activation script sets it (restart_waves.go); a full
+	// release restarts one at a time.
+	if runtime.restartParallel, err = restartParallelFromEnv(); err != nil {
+		return err
+	}
 	controller, err := deploycontroller.New(deploycontroller.Config{
 		ReleasesRoot: "/opt/faas/releases",
 		CurrentPath:  "/opt/faas/current",

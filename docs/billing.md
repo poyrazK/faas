@@ -156,7 +156,10 @@ organization's cap, not at the cap of the member who created them.
 ## Egress overage
 
 Each plan includes a monthly allowance of application egress: Free 10 GiB,
-Hobby 100 GiB, Pro 500 GiB, Scale 2,000 GiB. By default every plan stops at
+Hobby 100 GiB, Pro 500 GiB, Scale 2,000 GiB. Application egress is the
+responses your apps send to their callers (including streamed and WebSocket
+responses and responses served from the edge cache) plus the connections your
+apps open to the internet themselves. By default every plan stops at
 it: once the month's egress reaches the allowance, the account's apps are
 parked (`quota_exceeded_egress`) until the month ends, the plan grows or, on a
 paid plan, egress overage is turned on. New deploys wait until then too. Your

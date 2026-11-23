@@ -11,6 +11,7 @@ from ..models.dev_postgres_response_binding_state import (
     check_dev_postgres_response_binding_state,
 )
 from ..models.dev_postgres_response_state import DevPostgresResponseState, check_dev_postgres_response_state
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="DevPostgresResponse")
 
@@ -28,6 +29,9 @@ class DevPostgresResponse:
     binding_id: str
     binding_state: DevPostgresResponseBindingState
     environment_key: str
+    migration_environment_key: str | Unset = UNSET
+    """The release-only migration credential the database is also bound to. Absent from a control plane that binds
+    none."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -43,6 +47,8 @@ class DevPostgresResponse:
 
         environment_key = self.environment_key
 
+        migration_environment_key = self.migration_environment_key
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -55,6 +61,8 @@ class DevPostgresResponse:
                 "environment_key": environment_key,
             }
         )
+        if migration_environment_key is not UNSET:
+            field_dict["migration_environment_key"] = migration_environment_key
 
         return field_dict
 
@@ -73,6 +81,8 @@ class DevPostgresResponse:
 
         environment_key = d.pop("environment_key")
 
+        migration_environment_key = d.pop("migration_environment_key", UNSET)
+
         dev_postgres_response = cls(
             database_id=database_id,
             name=name,
@@ -80,6 +90,7 @@ class DevPostgresResponse:
             binding_id=binding_id,
             binding_state=binding_state,
             environment_key=environment_key,
+            migration_environment_key=migration_environment_key,
         )
 
         dev_postgres_response.additional_properties = d

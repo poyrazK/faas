@@ -1230,6 +1230,7 @@ type App struct {
 	GithubPreviewEnabled              pgtype.Bool
 	ScalingRevision                   int64
 	SandboxTemplate                   bool
+	OwnerHomeNodeID                   pgtype.UUID
 }
 
 type AppApiRoute struct {
@@ -4842,6 +4843,7 @@ type DeploymentRollbackOperation struct {
 	Status              string
 	Receipt             []byte
 	UpdatedAt           pgtype.Timestamptz
+	ProjectRollbackID   pgtype.UUID
 }
 
 type DeploymentRoutePolicySnapshot struct {
@@ -7582,6 +7584,36 @@ type InstanceQuietPause struct {
 	StartedAt  pgtype.Timestamptz
 	EndedAt    pgtype.Timestamptz
 	RecordedAt pgtype.Timestamptz
+}
+
+// Per-instance app cgroup memory and CPU per minute; written by apid from vmmd, swept by meterd (ADR-20261121170000).
+type InstanceResourceMinute struct {
+	AppID              pgtype.UUID
+	InstanceID         string
+	Minute             pgtype.Timestamptz
+	AccountID          pgtype.UUID
+	DeploymentID       pgtype.UUID
+	Samples            int32
+	MemStartMb         int32
+	MemPeakMb          int32
+	MemEndMb           int32
+	MemLimitMb         int32
+	CpuMs              int64
+	CpuPeakMillicores  int32
+	CpuLimitMillicores int32
+}
+
+// Per-instance route activity per minute; written by apid from gateways, swept by meterd (ADR-20261121170000).
+type InstanceRouteMinute struct {
+	AppID        pgtype.UUID
+	InstanceID   string
+	Minute       pgtype.Timestamptz
+	Route        string
+	Method       string
+	AccountID    pgtype.UUID
+	Requests     int64
+	BusyMs       int64
+	MaxLatencyMs int32
 }
 
 type InstanceRuntimeConfigReceipt struct {
@@ -10477,6 +10509,7 @@ type MeterNetworkCheckpoint struct {
 	InternalTxValid     bool
 	InternalTxPending   int64
 	ServiceReplyPending int64
+	NodeID              string
 }
 
 type MeterdTenantSurfaceCertExpiryState struct {
@@ -14859,6 +14892,22 @@ type ProjectRollbackDeployProtection struct {
 	StorageKeys   []string
 	ExpiresAt     pgtype.Timestamptz
 	LayerBytes    int64
+}
+
+type ProjectRollbackHttpRecovery struct {
+	RollbackID           pgtype.UUID
+	OperationID          pgtype.UUID
+	AppID                pgtype.UUID
+	TargetID             pgtype.UUID
+	Service              bool
+	Generation           pgtype.Int8
+	RoutingCommittedAt   pgtype.Timestamptz
+	ExpectedGateways     []string
+	AcknowledgedGateways []string
+	GatewaysAppliedAt    pgtype.Timestamptz
+	FirstSuccessAt       pgtype.Timestamptz
+	ExpiresAt            pgtype.Timestamptz
+	NextNotifyAt         pgtype.Timestamptz
 }
 
 type ProjectRollbackOperation struct {

@@ -2,6 +2,7 @@ package apidserver
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -77,6 +78,13 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 			if flagKey, ok := platformflags.FlagForCapability(capabilities.Capabilities[i].Key); ok {
 				available = available && s.platformFlagFor(flagKey, flagSubject(r, acct))
 			}
+		case "realtime", "realtime-access", "realtime-channels", "realtime-connections", "realtime-occupancy",
+			"realtime-publishers", "realtime-push", "realtime-tickets", "realtime-workers":
+			// The realtime routes decide by realtime node, preview rollout,
+			// daemon switch and per-feature flag; the registry used to check
+			// only the capability flag, so gregale_context and the CLI
+			// offered features whose routes answered 404 (2026-11-22).
+			available, _ = s.realtime.CapabilityAvailable(r, acct, capabilities.Capabilities[i].Key)
 		case "custom-domains":
 			// production-us hunt #8: with ADR-520 on-demand TLS off, a
 			// customer hostname can never obtain a certificate or reach
@@ -97,7 +105,8 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 		applyCapabilityRuntimeAvailability(&capabilities.Capabilities[i], available)
 	}
 	applyParentRuntimeAvailability(capabilities.Capabilities)
-	capabilities.HiddenCapabilities = s.hiddenCapabilities(flagSubject(r, acct))
+	capabilities.HiddenCapabilities = mergeHiddenCapabilities(s.hiddenCapabilities(flagSubject(r, acct)),
+		s.realtime.PreviewHiddenCapabilities(acct.ID))
 	writeJSON(w, http.StatusOK, capabilities)
 }
 
@@ -138,6 +147,17 @@ func (s *server) hiddenCapabilities(subject platformflags.Subject) []string {
 	for _, capability := range catalog.Capabilities {
 		if !s.capGate.Enabled(capability.ID, subject) {
 			hidden = append(hidden, capability.ID)
+		}
+	}
+	return hidden
+}
+
+// mergeHiddenCapabilities appends extra to hidden, skipping duplicates, so
+// capabilities hidden by a rollout outside the flag gate are hidden too.
+func mergeHiddenCapabilities(hidden, extra []string) []string {
+	for _, id := range extra {
+		if !slices.Contains(hidden, id) {
+			hidden = append(hidden, id)
 		}
 	}
 	return hidden

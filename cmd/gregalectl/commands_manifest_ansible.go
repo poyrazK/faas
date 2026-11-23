@@ -233,17 +233,18 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		body += databases.hostVars(host, hostScheddTarget)
 		body += renderServiceTCPVars(m.ServiceTCP, host)
 		body += renderComputeEdgeVars(m.PublicEdge, host, postgresListenAddress, computeAllowedCIDRs)
+		body += renderPeerEntryVars(m.PublicEdge, m.Fleet.Hosts, host)
 		exactVars, exactErr := renderExactPeerVars(m.Fleet.Hosts, host)
 		if exactErr != nil {
 			return nil, exactErr
 		}
 		body += exactVars
-		body += renderHotPathVars(m.HotPath, host)
+		body += renderHotPathVars(m.HotPath, m.Daemons.Schedd, host)
 		if host.Role == roleControlPlane {
 			body += renderEdgeDNSVars(m.PublicEdge, m.Fleet.Hosts, m.DNS.AppsDomain)
 		}
 		body += renderComputeObjectGatewayVars(m.ObjectStorage, host)
-		body += renderLogArchiveVars(m.LogArchive)
+		body += renderLogArchiveVars(m.LogArchive, host.Role == roleComputeOnly)
 		probeVars, probeErr := renderServingProbeVars(m.ServingProbes, m.Fleet.Hosts)
 		if probeErr != nil {
 			return nil, probeErr
@@ -421,7 +422,9 @@ func renderServingProbeVars(p *manifest.ServingProbes, hosts []manifest.Host) (s
 // renderLogArchiveVars hands the manifest's archive bucket to the log_archive
 // role on every host, which writes it into archive-creds.json. Absent emits
 // nothing, so a converge never rewrites an envelope the operator provisioned.
-func renderLogArchiveVars(l manifest.LogArchive) string {
+// With compute_write_only a compute-only host gets the write-only envelope
+// and, with static auth, the create-only key pair.
+func renderLogArchiveVars(l manifest.LogArchive, computeOnly bool) string {
 	if !l.Configured() {
 		return ""
 	}
@@ -433,11 +436,19 @@ func renderLogArchiveVars(l manifest.LogArchive) string {
 	fmt.Fprintf(&b, "faas_log_archive_bucket: %q\n", l.Bucket)
 	fmt.Fprintf(&b, "faas_log_archive_endpoint: %q\n", l.Endpoint)
 	fmt.Fprintf(&b, "faas_log_archive_region: %q\n", region)
+	writeOnly := computeOnly && l.ComputeWriteOnly
 	if l.Auth == "static" {
+		credentials := l.CredentialsSrc
+		if writeOnly {
+			credentials = l.ComputeCredentialsSrc
+		}
 		b.WriteString("faas_log_archive_auth_mode: \"\"\n")
-		fmt.Fprintf(&b, "faas_log_archive_credentials_src: %q\n", l.CredentialsSrc)
+		fmt.Fprintf(&b, "faas_log_archive_credentials_src: %q\n", credentials)
 	} else {
 		fmt.Fprintf(&b, "faas_log_archive_auth_mode: %q\n", l.Auth)
+	}
+	if writeOnly {
+		b.WriteString("faas_log_archive_write_only: true\n")
 	}
 	return b.String()
 }
@@ -920,6 +931,39 @@ func renderWorkloadIdentityVars(w manifest.WorkloadIdentity) string {
 	return fmt.Sprintf("faas_workload_identity_source_dir: %q\n", w.SourceDir)
 }
 
+// renderPeerEntryVars hands a compute edge with an IPv4 entry address the
+// other compute edges' IPv4 entry addresses (ADR-20261123100000). Its
+// guests' 443 calls to them are DNATed to its own entry address, so an app
+// calling another app's public URL stays on the node: every edge serves
+// every app, the edge sees the guest's own bridge address, and the call does
+// not cross the provider network between the servers' primary addresses.
+// Dynamically enrolled nodes have no entry address, so public DNS never
+// names them and the manifest's hosts are the whole list.
+func renderPeerEntryVars(edge manifest.PublicEdge, hosts []manifest.Host, host manifest.Host) string {
+	if !edge.ComputeNodes || !edge.NoFront() || host.Role != roleComputeOnly {
+		return ""
+	}
+	own, err := netip.ParseAddr(host.EntryAddress())
+	if err != nil || !own.Is4() {
+		return ""
+	}
+	var peers []string
+	for _, h := range hosts {
+		if h.Role != roleComputeOnly || h.Name == host.Name {
+			continue
+		}
+		addr, err := netip.ParseAddr(h.EntryAddress())
+		if err != nil || !addr.Is4() || addr == own || slices.Contains(peers, addr.String()) {
+			continue
+		}
+		peers = append(peers, addr.String())
+	}
+	if len(peers) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("faas_peer_entry_addrs: [%s]\n", quotedYAMLList(peers))
+}
+
 func renderComputeEdgeVars(edge manifest.PublicEdge, host manifest.Host, controlPlaneAddress string, computeCIDRs []string) string {
 	role := host.Role
 	if !edge.ComputeNodes || controlPlaneAddress == "" {
@@ -986,9 +1030,11 @@ func renderComputeEdgeVars(edge manifest.PublicEdge, host manifest.Host, control
 }
 
 // renderHotPathVars hands each compute node the request- and wake-path
-// switches its roles turn into drop-ins (manifest.HotPath). The control plane
-// runs none of the daemons they touch on the request path.
-func renderHotPathVars(h manifest.HotPath, host manifest.Host) string {
+// switches its roles turn into drop-ins (manifest.HotPath), and the schedd
+// early-freeze seconds (daemons.schedd.frozen_tier_early_freeze_after_s),
+// which compute schedds read only from that drop-in. The control plane runs
+// none of the daemons they touch on the request path.
+func renderHotPathVars(h manifest.HotPath, schedd *manifest.DaemonConfig, host manifest.Host) string {
 	if host.Role != roleComputeOnly {
 		return ""
 	}
@@ -1015,6 +1061,9 @@ func renderHotPathVars(h manifest.HotPath, host manifest.Host) string {
 	}
 	if h.InvocationDispatchConcurrency > 0 {
 		fmt.Fprintf(&b, "faas_schedd_invocation_dispatch_concurrency: %d\n", h.InvocationDispatchConcurrency)
+	}
+	if schedd != nil && schedd.FrozenTierEarlyFreezeAfterS != nil {
+		fmt.Fprintf(&b, "faas_schedd_frozen_tier_early_freeze_after_s: %d\n", *schedd.FrozenTierEarlyFreezeAfterS)
 	}
 	return b.String()
 }

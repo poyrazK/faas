@@ -893,6 +893,12 @@ func TestEveryCodeHasWhycopyEntry(t *testing.T) {
 		api.CodeStageSnapshotPrepareTimeout,
 		api.CodeBeforeCheckpointFailed,
 		api.CodeStageReadinessFailed,
+		// Deploy-path failure copy (#7825).
+		api.CodeImageNotFound,
+		api.CodeApplicationStandardsPending,
+		api.CodeDeploymentSmokeFailed,
+		api.CodeDeploymentVerificationUnavailable,
+		api.CodeReleaseCommandFailed,
 	}
 
 	// Forward direction: every cluster-owned Code must have a

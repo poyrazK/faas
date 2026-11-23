@@ -39,7 +39,7 @@ import (
 //
 // Include private Python module filenames, which directory embedding omits.
 //
-//go:embed hello-node hello-node-private hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 function-rust event-worker queue-worker s3-uploader object-storage-node slack-bot rest-api-postgres rest-api-postgres-python cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-node-tasks mcp-go mcp-python customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter durable-entity-node data-api-teams data-api-support-console auth agent-stateless-node agent-infinity-rust
+//go:embed hello-node hello-node-private hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 function-rust event-worker queue-worker s3-uploader object-storage-node slack-bot rest-api-postgres rest-api-postgres-python cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-node-tasks mcp-go mcp-go-tasks mcp-python mcp-python-tasks customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter durable-entity-node data-api-teams data-api-support-console auth agent-stateless-node agent-infinity-rust
 //go:embed rest-api-postgres-python/runtime/*.py object-storage-python object-storage-python/runtime/*.py
 var FS embed.FS
 
@@ -122,7 +122,9 @@ var Names = []string{
 	"mcp-node",
 	"mcp-node-tasks",
 	"mcp-go",
+	"mcp-go-tasks",
 	"mcp-python",
+	"mcp-python-tasks",
 	"customer-operation-export",
 	"customer-operation-job-export",
 	"customer-operation-workflow-export",
@@ -205,9 +207,15 @@ var generatedDotfiles = map[string]map[string]string{
 		".gregale/env.json": "{\"optional\":[\"MCP_CATALOG_EXPECTED_SHA256\",\"MCP_TASK_MIGRATION_DATABASE_URL\",\"MCP_TASK_RELEASE_INPUT\",\"MCP_TELEMETRY_LOSS_ALERT\"]}\n",
 	},
 	"mcp-go": {
+		".gregale/env.json": "{\"optional\":[\"GREGALE_API_URL\",\"MCP_BIND_ADDRESS\",\"MCP_CATALOG_EXPECTED_SHA256\",\"MCP_CONFIG_PATH\",\"MCP_DRAIN_TIMEOUT_SECONDS\",\"MCP_TELEMETRY_LOSS_ALERT\"]}\n",
+	},
+	"mcp-go-tasks": {
 		".gregale/env.json": "{\"optional\":[\"GREGALE_API_URL\",\"MCP_BIND_ADDRESS\",\"MCP_CATALOG_EXPECTED_SHA256\",\"MCP_CONFIG_PATH\",\"MCP_DRAIN_TIMEOUT_SECONDS\",\"MCP_TASKS_ROLE\",\"MCP_TASKS_SCALING_APP_SLUG\",\"MCP_TASKS_SCALING_TOKEN\",\"MCP_TASK_MIGRATION_DATABASE_URL\",\"MCP_TASK_NAMESPACE\",\"MCP_TELEMETRY_LOSS_ALERT\"]}\n",
 	},
 	"mcp-python": {
+		".gregale/env.json": "{\"optional\":[\"MCP_BIND_ADDRESS\",\"MCP_TELEMETRY_LOSS_ALERT\"]}\n",
+	},
+	"mcp-python-tasks": {
 		".gregale/env.json": "{\"optional\":[\"MCP_BIND_ADDRESS\",\"MCP_TELEMETRY_LOSS_ALERT\"]}\n",
 	},
 	"rest-api-postgres": {
@@ -224,7 +232,10 @@ var generatedDotfiles = map[string]map[string]string{
 // package after materialization, but its source must not be compiled as part
 // of Gregale's repository module.
 var generatedTemplateFiles = map[string]map[string]string{
-	"mcp-go": {"main_test.go.tmpl": "main_test.go"}}
+	// The plain Go starter's disabled Task runtime is not Go source in this
+	// repository: its package here has only that file.
+	"mcp-go":       {"tasks_off.go.tmpl": "tasks_off.go"},
+	"mcp-go-tasks": {"main_test.go.tmpl": "main_test.go"}}
 
 // mcpGoModuleRequirements mirrors the Go SDK's pruned module graph so a fresh
 // mcp-go starter can run without a preliminary `go mod tidy`.
@@ -257,7 +268,9 @@ require (
 
 func goModuleContent(name string) []byte {
 	content := fmt.Sprintf("module %s\n\ngo %s\n", name, GoToolchainVersion)
-	if name == "mcp-go" {
+	if name == "mcp-go" || name == "mcp-go-tasks" {
+		// The plain starter keeps pgx listed: dropping it changes the pruned
+		// module graph and needs go.sum entries only a download can add.
 		content += mcpGoModuleRequirements
 	}
 	return []byte(content)
@@ -275,6 +288,52 @@ var generatedTemplateCopies = map[string]map[string]string{
 
 // Share the runtime catalog implementation with the owner-side permission tool.
 var sharedTemplateCopies = map[string]map[string]string{
+	// The plain Go and Python starters share the Tasks starters' server code;
+	// a small disabled Task runtime in each plain directory replaces the
+	// Task modules.
+	"mcp-go": {
+		"auth.go":                        "mcp-go-tasks/auth.go",
+		"auth_policy_test.go":            "mcp-go-tasks/auth_policy_test.go",
+		"auth_verification_test.go":      "mcp-go-tasks/auth_verification_test.go",
+		"catalog.go":                     "mcp-go-tasks/catalog.go",
+		"catalog_test.go":                "mcp-go-tasks/catalog_test.go",
+		"completion_test.go":             "mcp-go-tasks/completion_test.go",
+		"cors.go":                        "mcp-go-tasks/cors.go",
+		"cors_test.go":                   "mcp-go-tasks/cors_test.go",
+		"go.sum":                         "mcp-go-tasks/go.sum",
+		"main.go":                        "mcp-go-tasks/main.go",
+		"main_test.go":                   "mcp-go-tasks/main_test.go.tmpl",
+		"protocol_headers.go":            "mcp-go-tasks/protocol_headers.go",
+		"protocol_headers_test.go":       "mcp-go-tasks/protocol_headers_test.go",
+		"protocol_telemetry.go":          "mcp-go-tasks/protocol_telemetry.go",
+		"protocol_telemetry_test.go":     "mcp-go-tasks/protocol_telemetry_test.go",
+		"resource_authorization_test.go": "mcp-go-tasks/resource_authorization_test.go",
+		"resource_updates.go":            "mcp-go-tasks/resource_updates.go",
+		"subscription_output_test.go":    "mcp-go-tasks/subscription_output_test.go",
+		"subscriptions.go":               "mcp-go-tasks/subscriptions.go",
+		"tool_schema.go":                 "mcp-go-tasks/tool_schema.go",
+		"tool_schema_test.go":            "mcp-go-tasks/tool_schema_test.go",
+		"write_deadline_test.go":         "mcp-go-tasks/write_deadline_test.go",
+	},
+	"mcp-python": {
+		"auth.py":                       "mcp-python-tasks/auth.py",
+		"bounded_jwks.py":               "mcp-python-tasks/bounded_jwks.py",
+		"catalog.py":                    "mcp-python-tasks/catalog.py",
+		"http_body.py":                  "mcp-python-tasks/http_body.py",
+		"protocol_headers.py":           "mcp-python-tasks/protocol_headers.py",
+		"protocol_telemetry.py":         "mcp-python-tasks/protocol_telemetry.py",
+		"server.py":                     "mcp-python-tasks/server.py",
+		"test_auth_policy.py":           "mcp-python-tasks/test_auth_policy.py",
+		"test_auth_verification.py":     "mcp-python-tasks/test_auth_verification.py",
+		"test_bounded_jwks.py":          "mcp-python-tasks/test_bounded_jwks.py",
+		"test_catalog.py":               "mcp-python-tasks/test_catalog.py",
+		"test_http_body.py":             "mcp-python-tasks/test_http_body.py",
+		"test_ownership_regressions.py": "mcp-python-tasks/test_ownership_regressions.py",
+		"test_protocol_telemetry.py":    "mcp-python-tasks/test_protocol_telemetry.py",
+		"test_schema_regressions.py":    "mcp-python-tasks/test_schema_regressions.py",
+		"test_server.py":                "mcp-python-tasks/test_server.py",
+		"test_tool_schema.py":           "mcp-python-tasks/test_tool_schema.py",
+	},
 	// The plain Node MCP starter is the Tasks starter's server without the
 	// durable Tasks module: one copy of the shared code lives in mcp-node-tasks.
 	"mcp-node": {
@@ -400,7 +459,7 @@ func Materialize(name, dest string) error {
 	// HTTP Go apps need a module marker. function-go stays marker-free so a
 	// later zero-config deploy detects handler.go as a function; the packer
 	// adds its build module to the upload archive.
-	if name == "hello-go" || name == "mcp-go" {
+	if name == "hello-go" || name == "mcp-go" || name == "mcp-go-tasks" {
 		modPath := filepath.Join(dest, "go.mod")
 		if _, err := os.Stat(modPath); os.IsNotExist(err) {
 			if err := os.WriteFile(modPath, goModuleContent(name), 0o644); err != nil {
@@ -516,7 +575,7 @@ func TarGz(name, dest string) error {
 			return err
 		}
 	}
-	if name == "hello-go" || name == "function-go" || name == "mcp-go" {
+	if name == "hello-go" || name == "function-go" || name == "mcp-go" || name == "mcp-go-tasks" {
 		modContent := goModuleContent(name)
 		hdr := &tar.Header{
 			Name:     name + "/go.mod",
@@ -590,7 +649,7 @@ func CategoryFor(name string) string {
 		return "stateless-contract"
 	case "ai-chat", "agent-stateless-node", "agent-infinity-rust":
 		return "ai"
-	case "mcp-node", "mcp-node-tasks", "mcp-go", "mcp-python":
+	case "mcp-node", "mcp-node-tasks", "mcp-go", "mcp-go-tasks", "mcp-python", "mcp-python-tasks":
 		return "mcp"
 	case "durable-entity-node":
 		return "durable-entities"
@@ -630,7 +689,9 @@ var summaries = map[string]string{
 	"mcp-node":                           "Node.js MCP server with sample tools and prompts",
 	"mcp-node-tasks":                     "Node.js MCP server with durable MCP Tasks on PostgreSQL",
 	"mcp-go":                             "Go MCP server with sample tools",
+	"mcp-go-tasks":                       "Go MCP server with durable MCP Tasks on PostgreSQL",
 	"mcp-python":                         "Python MCP server with sample tools",
+	"mcp-python-tasks":                   "Python MCP server with durable MCP Tasks on PostgreSQL",
 	"customer-operation-export":          "HTTP operation with a CSV export and progress page",
 	"customer-operation-job-export":      "Job that exports a CSV with progress and download",
 	"customer-operation-workflow-export": "Workflow export with progress and cancellation",

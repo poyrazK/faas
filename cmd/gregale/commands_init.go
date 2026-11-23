@@ -91,7 +91,17 @@ func cmdInit(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, initCmdUsage, initCmdDocsTopic)
+		usage := initCmdUsage
+		// `gregale init function-python313 .` printed only the usage on prod
+		// (hunt 2026-11-21): name the command the words meant.
+		if pos := fs.Args(); templates.Exists(pos[0]) && fs.NArg() <= 2 && *tpl == "" {
+			dir := "./" + pos[0]
+			if fs.NArg() == 2 {
+				dir = pos[1]
+			}
+			usage += fmt.Sprintf("\n  error: the template is a flag; did you mean: gregale init --template %s --path %s", pos[0], recoveryArgument(dir))
+		}
+		PrintUsage(osStderr, usage, initCmdDocsTopic)
 		return 1
 	}
 	if *agents {
@@ -449,7 +459,7 @@ func docsURLForTemplate(name string) string {
 		return "https://gregale.dev/docs/durable-entity-development"
 	case "data-api", "data-api-starter", "data-api-teams", "data-api-support-console":
 		return "https://gregale.dev/docs/data-api"
-	case "mcp-node", "mcp-node-tasks", "mcp-go", "mcp-python":
+	case "mcp-node", "mcp-node-tasks", "mcp-go", "mcp-go-tasks", "mcp-python", "mcp-python-tasks":
 		return "https://gregale.dev/docs/mcp"
 	case "customer-operation-export", "customer-operation-job-export", "customer-operation-workflow-export":
 		return "https://gregale.dev/docs/operations"
@@ -600,6 +610,10 @@ func nextStepsFor(tpl string) []string {
 		return []string{"cd <dest> && npm ci && npm test", "Read README.md: Tasks are off until you bind PostgreSQL, set MCP_TASK_OWNER_KEY and set tasks.enabled in gregale-mcp.json.", "gregale mcp server deploy --path <dest> --name <slug>"}
 	case "mcp-node":
 		return []string{"cd <dest> && npm ci && npm test", "Review gregale-mcp.json: the sample catalog is public; configure external OAuth before adding sensitive entries.", "gregale mcp server deploy --path <dest> --name <slug>", "gregale mcp server doctor --app <slug> --legacy --stream-tool stream_demo"}
+	case "mcp-go-tasks":
+		return []string{"cd <dest> && go test ./...", "Read README.md: Tasks are off until you bind PostgreSQL, set MCP_TASK_OWNER_KEY and set tasks.enabled in gregale-mcp.json.", "gregale mcp server deploy --path <dest> --name <slug>"}
+	case "mcp-python-tasks":
+		return []string{"cd <dest> && python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt", "python -m unittest", "Read README.md: Tasks are off until you bind PostgreSQL, set MCP_TASK_OWNER_KEY and set tasks.enabled in gregale-mcp.json.", "gregale mcp server deploy --path <dest> --name <slug>"}
 	case "mcp-go":
 		return []string{"cd <dest> && go test ./...", "Review gregale-mcp.json: the sample catalog is public; configure external OAuth before adding sensitive entries.", "gregale mcp server deploy --path <dest> --name <slug>"}
 	case "mcp-python":

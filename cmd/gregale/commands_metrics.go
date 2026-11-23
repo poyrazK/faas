@@ -162,10 +162,12 @@ func renderAppMetrics(w io.Writer, slug string, m api.AppMetricsResponse) {
 	// explanation; each line now names what it counts.
 	_, _ = fmt.Fprintf(w, "Requests:   %d (in window, every response the gateway served)\n", m.RequestCount)
 	_, _ = fmt.Fprintf(w, "Latency:    %s\n", requestLatencyLine(m.LatencyP50MS, m.LatencyP95MS, m.LatencyP99MS))
-	_, _ = fmt.Fprintf(w, "Error rate: %.2f%% (5xx; 4xx are client errors)\n", m.ErrorRatePct)
+	_, _ = fmt.Fprintf(w, "Error rate: %.2f%% (5xx and capacity 429s; other 4xx are client errors)\n", m.ErrorRatePct)
 	_, _ = fmt.Fprintf(w, "Cold boot:  %.2f%%\n", m.ColdStartPct)
 	if m.WakeP95MS > 0 {
-		if m.WakeSamples != nil && *m.WakeSamples < api.FleetWakeP95MinSamples {
+		if m.AppWakeSamples != nil && m.AppWakeP95MS != nil && *m.AppWakeSamples >= api.FleetWakeP95MinSamples {
+			_, _ = fmt.Fprintf(w, "Wake p95:   %.0fms (this app, %d wakes)\n", *m.AppWakeP95MS, *m.AppWakeSamples)
+		} else if m.WakeSamples != nil && *m.WakeSamples < api.FleetWakeP95MinSamples {
 			_, _ = fmt.Fprintf(w, "Wake p95:   — (fleet-wide; %d wakes in the window, %d needed)\n", *m.WakeSamples, api.FleetWakeP95MinSamples)
 		} else {
 			_, _ = fmt.Fprintf(w, "Wake p95:   %.0fms (fleet-wide)\n", m.WakeP95MS)

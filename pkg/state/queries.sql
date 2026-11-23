@@ -1907,6 +1907,51 @@ where ($1 = '' or actor = $1)
 order by at desc, id desc
 limit $5::int8;
 
+-- name: ListEventsByKindSince :many
+-- The operator wake-latency report (ADR-20261121200409): one kind's rows at
+-- or after since, newest first, as a backward scan of events_kind_at_idx
+-- (kind, at DESC). The caller asks for one row more than it keeps to learn
+-- whether the window was cut.
+SELECT id, at, actor, kind, subject, data
+FROM events
+WHERE kind = sqlc.arg(kind)::text AND at >= sqlc.arg(since)::timestamptz
+ORDER BY at DESC
+LIMIT sqlc.arg(row_limit)::int;
+
+-- name: OperatorSnapshotInventory :many
+-- The operator snapshot health report (ADR-20261122135018): every snapshot
+-- row with its parked footprint (the fcvm_snapshot_fleet_avg_bytes
+-- definition: allocated mem + vmstate, or logical bytes from a legacy writer,
+-- plus the deployment's above-base layer) and its app, largest first. The
+-- caller asks for one row more than it keeps to learn whether it was cut.
+SELECT s.id::text AS id, s.deployment_id::text AS deployment_id, d.app_id::text AS app_id,
+       a.slug AS app_slug, a.account_id::text AS account_id, d.status AS deployment_status,
+       s.tier, s.fc_version, s.cpu_template, s.cpu_model, s.stale, s.stale_at,
+       s.delete_pending, s.created_at,
+       (CASE WHEN s.stored_bytes > 0 THEN s.stored_bytes ELSE s.mem_bytes + s.disk_bytes END)::bigint AS snapshot_bytes,
+       COALESCE(d.rootfs_bytes, 0)::bigint AS layer_bytes
+FROM snapshots s
+JOIN deployments d ON d.id = s.deployment_id
+JOIN apps a ON a.id = d.app_id
+ORDER BY (CASE WHEN s.stored_bytes > 0 THEN s.stored_bytes ELSE s.mem_bytes + s.disk_bytes END) + COALESCE(d.rootfs_bytes, 0) DESC, s.id
+LIMIT sqlc.arg(row_limit)::int;
+
+-- name: OperatorLiveDeploymentsWithoutSnapshot :many
+-- Live deployments of active apps with no usable snapshot (none, or every one
+-- stale or pending deletion): they cold boot on every wake until a snapshot
+-- is taken. cold_bootable is false when the deployment has no rootfs either,
+-- which breaks spec invariant 6.2-3. Those come first, then the newest.
+SELECT d.id::text AS deployment_id, d.app_id::text AS app_id, a.slug AS app_slug,
+       a.account_id::text AS account_id, (d.rootfs_key <> '')::boolean AS cold_bootable,
+       d.created_at,
+       (SELECT max(s.stale_at) FROM snapshots s WHERE s.deployment_id = d.id)::timestamptz AS last_stale_at
+FROM deployments d
+JOIN apps a ON a.id = d.app_id
+WHERE d.status = 'live' AND d.deleted_at IS NULL AND a.status = 'active'
+  AND NOT EXISTS (SELECT 1 FROM snapshots s WHERE s.deployment_id = d.id AND NOT s.stale AND NOT s.delete_pending)
+ORDER BY (d.rootfs_key = '') DESC, d.created_at DESC, d.id
+LIMIT sqlc.arg(row_limit)::int;
+
 -- name: ListRecentEventsForAccount :many
 -- ADR-091 §3.7 / PR #3 — per-account events drill-down. Backed by
 -- the partial index events_actor_account_idx on
@@ -1970,14 +2015,18 @@ with inserted as (
 select exists(select 1 from inserted) as inserted;
 
 -- name: ApplyGatewayUsageEvent :execrows
+-- $6 is the frame's billed egress: its response bytes when meterd counts
+-- gateway responses as app egress (ADR-20261121210517, compute nodes whose
+-- public responses do not cross the instance veth), otherwise 0.
 insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, requests, cpu_usec, tx_bytes, net_tx_bytes, net_rx_bytes, cold_boot_count, tail_seconds)
-select a.account_id, i.app_id, i.id, $2::timestamptz, 0, $3::int, 0, $4::bigint, 0, 0, $5::int, 0
+select a.account_id, i.app_id, i.id, $2::timestamptz, 0, $3::int, 0, $4::bigint, $6::bigint, 0, $5::int, 0
   from instances i
   join apps a on a.id = i.app_id
  where i.id = $1
 on conflict (instance_id, minute) do update
    set requests        = usage_minutes.requests        + EXCLUDED.requests,
        tx_bytes        = usage_minutes.tx_bytes        + EXCLUDED.tx_bytes,
+       net_tx_bytes    = usage_minutes.net_tx_bytes    + EXCLUDED.net_tx_bytes,
        cold_boot_count = usage_minutes.cold_boot_count + EXCLUDED.cold_boot_count;
 
 -- name: ApplyGatewayEdgeUsageEvent :execrows
@@ -2051,6 +2100,9 @@ with subject as (
     join builds b on b.deployment_id = d.id
    where b.started_at >= sqlc.arg(month_start)::timestamptz
      and b.coalesced_with is null
+     -- A build the platform failed (builder VM, node or registry outage)
+     -- used no customer build minutes (ADR-20261121231500).
+     and b.failure_class is distinct from 'infra'
 )
 select coalesce((select br.plan from billing_resource_accounts br join subject s on br.id = s.id), '')::text as plan,
        (select seconds from used)::bigint as used_seconds;
@@ -6017,6 +6069,9 @@ SELECT account_id FROM object_buckets WHERE id=$1;
 -- narrows by their indexes without changing the result. The subject function
 -- alone cannot use an index (its EXISTS keeps it from inlining): it scanned
 -- every bucket on the platform, under the account lock of every object write.
+-- inventory_held also covers an all-version-path bucket with a live multipart
+-- session: its refresh cannot start until the session ends (ADR-533/540), and
+-- its tracked reservations keep capacity conservative meanwhile.
 SELECT b.*, u.baseline_bytes, u.baseline_keys, u.granted_bytes, u.granted_keys,
 u.observed_bytes, u.observed_keys, u.observed_at, u.attempt_at, u.lease_until AS inventory_lease_until, u.token, u.inventory_scope,
 COALESCE((SELECT sum(g.max_bytes)::bigint FROM object_storage_multipart_part_grants g
@@ -6028,7 +6083,13 @@ COALESCE(floor(s.stored_byte_hours), 0)::bigint AS gateway_stored_byte_hours,
 s.accrued_through AS gateway_storage_through,
 i.started_at AS scan_started_at, i.progress_at AS scan_progress_at, i.listed_bytes AS scan_bytes, i.listed_keys AS scan_keys, i.pages AS scan_pages, i.complete AS scan_complete,
 (EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=b.id AND v.state<>'ready') OR EXISTS(SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=b.id AND l.state<>'ready')
- OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning')))::boolean AS inventory_held,
+ OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning'))
+ OR (EXISTS(SELECT 1 FROM object_storage_multipart_uploads mu WHERE mu.bucket_id=b.id AND mu.state IN ('initiating','active','completing','completing_conditional','aborting'))
+   AND (EXISTS(SELECT 1 FROM object_storage_bucket_usage vu WHERE vu.bucket_id=b.id AND vu.inventory_scope='all_versions')
+   OR EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=b.id AND recovery_versions_observed)
+   OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=b.id AND versions_observed)
+   OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=b.id AND completion_versions_observed)
+   OR EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=b.id AND versions_required))))::boolean AS inventory_held,
 a.mutated_at, a.active_since, object_inventory_quiet_mode()::text AS inventory_quiet_mode
 FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
 LEFT JOIN object_storage_inventory_scans i ON i.bucket_id = b.id
@@ -6240,8 +6301,9 @@ ORDER BY CASE WHEN z.quiet THEN u.observed_at + (sqlc.arg(quiet_max_age_seconds)
 -- ADR-20261110151628 §3: how far the inventory sweep is behind. due_buckets
 -- counts what ObjectInventoriesDue would hand out now (same rule).
 -- oldest_age_seconds is the oldest observation admission still holds to the
--- 900 s window: a bucket held by a versioning, Object Lock or capacity change
--- (with an observation), or whose listing advanced within progress_window on
+-- 900 s window: a bucket held by a versioning, Object Lock or capacity change,
+-- or whose all-version refresh waits for a live multipart session (with an
+-- observation), or whose listing advanced within progress_window on
 -- an observation under scan_max_age, stays fresh on an older one and does not
 -- count (objectBucketInventoryStale). A bucket never observed counts from its
 -- creation. With quiet set and object_inventory_quiet on (§2), a quiet bucket
@@ -6300,6 +6362,12 @@ o AS (
       AND NOT (EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=s.bucket_id AND v.state<>'ready')
       OR EXISTS(SELECT 1 FROM object_bucket_object_lock lk WHERE lk.bucket_id=s.bucket_id AND lk.state<>'ready')
       OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations rc WHERE rc.bucket_id=s.bucket_id AND rc.state IN ('waiting','scanning'))
+      OR (EXISTS(SELECT 1 FROM object_storage_multipart_uploads mu WHERE mu.bucket_id=s.bucket_id AND mu.state IN ('initiating','active','completing','completing_conditional','aborting'))
+        AND (EXISTS(SELECT 1 FROM object_storage_bucket_usage vu WHERE vu.bucket_id=s.bucket_id AND vu.inventory_scope='all_versions')
+        OR EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=s.bucket_id AND recovery_versions_observed)
+        OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=s.bucket_id AND versions_observed)
+        OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=s.bucket_id AND completion_versions_observed)
+        OR EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=s.bucket_id AND versions_required)))
       OR (s.observed_at > now() - sqlc.arg(scan_max_age_seconds)::bigint * interval '1 second' AND EXISTS(SELECT 1 FROM object_storage_inventory_scans i WHERE i.bucket_id=s.bucket_id
         AND i.pages > 0 AND i.started_at > s.observed_at AND i.progress_at <= now() AND i.progress_at >= now() - sqlc.arg(progress_window_seconds)::bigint * interval '1 second')))
       ORDER BY s.observed_at LIMIT 1) AS active_observed,
@@ -6307,6 +6375,12 @@ o AS (
       WHERE s.mutated_at < s.quiet_after AND NOT (EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=s.bucket_id AND v.state<>'ready')
       OR EXISTS(SELECT 1 FROM object_bucket_object_lock lk WHERE lk.bucket_id=s.bucket_id AND lk.state<>'ready')
       OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations rc WHERE rc.bucket_id=s.bucket_id AND rc.state IN ('waiting','scanning'))
+      OR (EXISTS(SELECT 1 FROM object_storage_multipart_uploads mu WHERE mu.bucket_id=s.bucket_id AND mu.state IN ('initiating','active','completing','completing_conditional','aborting'))
+        AND (EXISTS(SELECT 1 FROM object_storage_bucket_usage vu WHERE vu.bucket_id=s.bucket_id AND vu.inventory_scope='all_versions')
+        OR EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=s.bucket_id AND recovery_versions_observed)
+        OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=s.bucket_id AND versions_observed)
+        OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=s.bucket_id AND completion_versions_observed)
+        OR EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=s.bucket_id AND versions_required)))
       OR (s.observed_at > now() - sqlc.arg(scan_max_age_seconds)::bigint * interval '1 second' AND EXISTS(SELECT 1 FROM object_storage_inventory_scans i WHERE i.bucket_id=s.bucket_id
         AND i.pages > 0 AND i.started_at > s.observed_at AND i.progress_at <= now() AND i.progress_at >= now() - sqlc.arg(progress_window_seconds)::bigint * interval '1 second')))
       ORDER BY s.observed_at LIMIT 1) END AS quiet_observed,
@@ -6315,6 +6389,12 @@ o AS (
       AND NOT (EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=s.bucket_id AND v.state<>'ready')
       OR EXISTS(SELECT 1 FROM object_bucket_object_lock lk WHERE lk.bucket_id=s.bucket_id AND lk.state<>'ready')
       OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations rc WHERE rc.bucket_id=s.bucket_id AND rc.state IN ('waiting','scanning'))
+      OR (EXISTS(SELECT 1 FROM object_storage_multipart_uploads mu WHERE mu.bucket_id=s.bucket_id AND mu.state IN ('initiating','active','completing','completing_conditional','aborting'))
+        AND (EXISTS(SELECT 1 FROM object_storage_bucket_usage vu WHERE vu.bucket_id=s.bucket_id AND vu.inventory_scope='all_versions')
+        OR EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=s.bucket_id AND recovery_versions_observed)
+        OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=s.bucket_id AND versions_observed)
+        OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=s.bucket_id AND completion_versions_observed)
+        OR EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=s.bucket_id AND versions_required)))
       OR (s.observed_at > now() - sqlc.arg(scan_max_age_seconds)::bigint * interval '1 second' AND EXISTS(SELECT 1 FROM object_storage_inventory_scans i WHERE i.bucket_id=s.bucket_id
         AND i.pages > 0 AND i.started_at > s.observed_at AND i.progress_at <= now() AND i.progress_at >= now() - sqlc.arg(progress_window_seconds)::bigint * interval '1 second')))
       ORDER BY s.active_since LIMIT 1) END AS activated,
@@ -13078,7 +13158,12 @@ WHERE id IN (sqlc.arg(from_node_id)::uuid, sqlc.arg(to_node_id)::uuid)
 ORDER BY id FOR SHARE;
 
 -- name: ReassignOrphanedAppOwner :execrows
-UPDATE apps SET node_id=sqlc.arg(to_node_id)::uuid, reassigned_at=now()
+-- ADR-20261121203000: a displacement remembers the node the app came from
+-- (its home), keeps an older home across a chain of drains, and clears it
+-- when the app lands back on its home.
+UPDATE apps SET node_id=sqlc.arg(to_node_id)::uuid, reassigned_at=now(),
+  owner_home_node_id=CASE WHEN owner_home_node_id=sqlc.arg(to_node_id)::uuid THEN NULL
+                          ELSE coalesce(owner_home_node_id, sqlc.arg(from_node_id)::uuid) END
 WHERE id=sqlc.arg(app_id)::uuid AND node_id=sqlc.arg(from_node_id)::uuid
   AND status IN ('active', 'evicted_cold')
   AND (sqlc.arg(cooldown_seconds)::integer < 0 OR reassigned_at IS NULL

@@ -12,7 +12,7 @@ import (
 )
 
 func TestReadinessReadOnlyAndFailures(t *testing.T) {
-	for _, mode := range []string{"healthy", "ping_failure", "bad_version", "session", "bad_negotiation", "unauthorized", "incomplete_catalog", "catalog_drift", "redirect", "deadline"} {
+	for _, mode := range []string{"healthy", "bad_version", "session", "bad_negotiation", "unauthorized", "incomplete_catalog", "catalog_drift", "redirect", "deadline"} {
 		t.Run(mode, func(t *testing.T) {
 			calls := map[string]int{}
 			redirected := 0
@@ -49,7 +49,7 @@ func TestReadinessReadOnlyAndFailures(t *testing.T) {
 				if mode == "session" {
 					w.Header().Set("MCP-Session-Id", "PRIVATE_SESSION")
 				}
-				result := `{}`
+				var result string
 				switch req.Method {
 				case "server/discover":
 					// Revision 2026-07-28 opens with server/discover; it has
@@ -60,10 +60,11 @@ func TestReadinessReadOnlyAndFailures(t *testing.T) {
 					}
 					result = fmt.Sprintf(`{"supportedVersions":[%q],"capabilities":{"tools":{}}}`, version)
 				case "ping":
-					if mode == "ping_failure" {
-						w.WriteHeader(503)
-						return
-					}
+					// 2026-07-28 removed ping; a conformant server
+					// answers method-not-found (ADR-20261121160000).
+					w.WriteHeader(404)
+					_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"error":{"code":-32601,"message":"Method not found"}}`, req.ID)
+					return
 				case "tools/list":
 					result = `{"tools":[{"name":"add","inputSchema":{"type":"object"}}]}`
 					if mode == "incomplete_catalog" {
@@ -90,7 +91,7 @@ func TestReadinessReadOnlyAndFailures(t *testing.T) {
 			if report.OK != (mode == "healthy") {
 				t.Fatalf("unexpected readiness: %+v", report)
 			}
-			if mode == "healthy" && (calls["ping"] != 1 || calls["tools/list"] != 1 || len(report.CatalogSHA256) != 64) {
+			if mode == "healthy" && (calls["ping"] != 0 || calls["tools/list"] != 1 || len(report.CatalogSHA256) != 64) {
 				t.Fatalf("missing probes: %+v %+v", calls, report)
 			}
 			data, _ := json.Marshal(report)
@@ -205,6 +206,56 @@ func TestReadinessAcceptsABareNotificationAck(t *testing.T) {
 			}
 			report := CheckReadiness(t.Context(), c, nil)
 			if report.OK != tc.wantOK {
+				t.Fatalf("readiness OK = %v, want %v: %+v", report.OK, tc.wantOK, report.Checks)
+			}
+		})
+	}
+}
+
+// Ping stays part of the pre-2026 readiness contract; only 2026-07-28 dropped
+// it from the method set.
+func TestReadinessLegacyStillRequiresPing(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		pingCode int
+		wantOK   bool
+	}{
+		{name: "ping answered", pingCode: 0, wantOK: true},
+		{name: "ping method not found", pingCode: -32601, wantOK: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var req struct {
+					ID     int    `json:"id"`
+					Method string `json:"method"`
+				}
+				_ = json.NewDecoder(r.Body).Decode(&req)
+				if req.Method == "notifications/initialized" {
+					w.WriteHeader(http.StatusAccepted)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("MCP-Protocol-Version", LegacyProtocolVersion)
+				if req.Method == "ping" && tc.pingCode != 0 {
+					w.WriteHeader(http.StatusNotFound)
+					_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "error": map[string]any{"code": tc.pingCode, "message": "Method not found"}})
+					return
+				}
+				var result any = map[string]any{}
+				switch req.Method {
+				case "initialize":
+					result = map[string]any{"protocolVersion": LegacyProtocolVersion, "capabilities": map[string]any{"tools": map[string]any{}}}
+				case "tools/list":
+					result = map[string]any{"tools": []any{map[string]any{"name": "add", "inputSchema": map[string]any{"type": "object"}}}}
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
+			}))
+			t.Cleanup(s.Close)
+			c, err := NewClient(s.URL+"/mcp", "", LegacyProtocolVersion)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if report := CheckReadiness(t.Context(), c, nil); report.OK != tc.wantOK {
 				t.Fatalf("readiness OK = %v, want %v: %+v", report.OK, tc.wantOK, report.Checks)
 			}
 		})

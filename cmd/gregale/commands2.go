@@ -815,7 +815,7 @@ func cmdApp(args []string) int {
 		}
 		printAppReadContext(slug, *environment)
 		fmt.Printf("%-30s %s\n", "slug:", a.Slug)
-		fmt.Printf("%-30s %s\n", "url:", canonicalAppURL(a))
+		fmt.Printf("%-30s %s\n", "url:", appGetURL(a))
 		printAppProtectionLine(ctx, client, slug, *environment)
 		fmt.Printf("%-30s %s\n", "visibility:", api.NormalizeAppVisibility(api.AppVisibility(a.Visibility)))
 		fmt.Printf("%-30s %d MB\n", "ram:", a.RAMMB)
@@ -3015,6 +3015,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		var nameErr error
 		slug, nameErr = linkedDefaultAppName(contextDir)
 		if nameErr != nil {
+			// A plain `gregale deploy` of a Compose project links the checkout
+			// to the project only (linkCheckoutAfterProjectDeploy). The next
+			// plain deploy found that link, asked for one app and failed
+			// "has multiple or no workloads" on every run after the first
+			// (deploy-path probe 2026-11-21, R6-1). A project-only link with
+			// no --name means the project: deploy it as the first run did.
+			if !projectRequested && linkedProjectOnly(contextDir) {
+				return cmdDeployTarballToExisting(ctx, append([]string{"--project"}, args...), false)
+			}
 			return printErr("Could not read local project context", nameErr)
 		}
 	}
@@ -3231,6 +3240,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *image != "" {
 			PrintFail(os.Stderr, "--template and --image are mutually exclusive")
 			return 1
+		}
+	}
+	if deployFunction && deployRuntime == "" && *tarball == "" && *image == "" && *repo == "" && contextDir != "" {
+		// `deploy --function` of a directory holding handler.py refused to
+		// infer the runtime the plain `deploy` of the same directory infers
+		// (prod hunt r27).
+		if rt, _, ok := inferFunctionRuntime(contextDir); ok {
+			deployRuntime = rt
 		}
 	}
 	if deployFunction && deployRuntime == "" {
@@ -4370,14 +4387,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			if resolvedSimplePlan != nil {
 				existingReq.ExecutionMode = ""
 			}
-			creating := false
 			if !*createOnly {
 				if code := guardUnlinkedExistingApp(ctx, client, slug, contextDir, *yes); code != 0 {
 					return code
 				}
-				_, getErr := client.GetApp(ctx, slug)
-				creating = isNotFound(getErr)
 			}
+			// --create-only links the directory too: the MCP Tasks README
+			// reserves each role with it and then deploys, and the unlinked
+			// deploy warned it would replace a running release that did not
+			// exist (MCP Tasks prod re-probe 2026-11-23).
+			_, getErr := client.GetApp(ctx, slug)
+			creating := isNotFound(getErr)
 			err = createOrFetchAppWith(ctx, client, createReq, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
 			if err == nil && creating {
 				rememberCreatedApp(contextDir, slug)
@@ -4680,6 +4700,16 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// cancellation does not cancel the remote deployment.
 		if code := recordQueued(dep); code != 0 {
 			return code
+		}
+		if ann.ReleaseAt != "" && dep.ScheduledRelease == nil {
+			// Recover the schedule independently because a replay can return a
+			// release that already started. Older servers could also return
+			// an accepted deployment whose schedule was never written.
+			scheduled, err := client.GetDeploymentSchedule(ctx, dep.ID)
+			if err != nil {
+				return submissionFailed("Could not confirm the release schedule", dep, err, deployKey)
+			}
+			dep.ScheduledRelease = &scheduled
 		}
 		issueMaps, sourceMapErr := publishDeployIssueSourceMaps(ctx, client, slug, dep, sourceSHA256, sourceRoot, preparedIssueSourceMaps)
 		if sourceMapErr != nil {
@@ -7541,7 +7571,7 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 		*archiveDate = resolvedDate
 		archiveSelector = &api.ArchiveLogSelector{InstanceID: *archiveInstance, Date: *archiveDate}
 	}
-	if logSource == logsSourceHTTP && (*follow || *grep != "" || *level != "" || *explain || archiveRequested) {
+	if logSource == logsSourceHTTP && (*grep != "" || *level != "" || *explain || archiveRequested) {
 		if inferred := logsHTTPOnlyFlagsSet(fs); !logsFlagWasSet(fs, "source") && len(inferred) > 0 {
 			// `logs h14-py --grep healthz --limit 3` never asked for HTTP logs;
 			// --limit chose them silently (Hunt 14 H14-64).
@@ -7549,11 +7579,17 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 			if len(inferred) > 1 {
 				verb = "apply"
 			}
-			PrintUsage(os.Stderr, fmt.Sprintf("%s %s only to HTTP request logs, which cannot be combined with --follow, --grep, --level, --explain, or --archive; drop %s to read runtime logs",
+			PrintUsage(os.Stderr, fmt.Sprintf("%s %s only to HTTP request logs, which cannot be combined with --grep, --level, --explain, or --archive; drop %s to read runtime logs",
 				flags, verb, flags), "logs")
 			return 2
 		}
-		PrintUsage(os.Stderr, "HTTP log queries cannot be combined with --follow, --grep, --level, --explain, or --archive", "logs")
+		PrintUsage(os.Stderr, "HTTP log queries cannot be combined with --grep, --level, --explain, or --archive", "logs")
+		return 2
+	}
+	if logSource == logsSourceHTTP && *follow && (strings.TrimSpace(*requestID) != "" || strings.TrimSpace(*traceID) != "" || *all || logsFlagWasSet(fs, "limit")) {
+		// --follow polls new request rows; a single-request lookup or a
+		// full-window read has nothing to follow.
+		PrintUsage(os.Stderr, "--follow prints new HTTP requests as they are recorded; drop --request, --trace, --limit, or --all (filter with --route, --status, or --release)", "logs")
 		return 2
 	}
 	// Validate --level early so a typo costs the customer a network
@@ -7614,6 +7650,15 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 				return code
 			}
 		}
+	}
+	if logSource == logsSourceHTTP && *follow {
+		return followHTTPLogs(context.Background(), slug, api.DebugTelemetryListOptions{
+			Since:        normalizedSince,
+			Route:        *route,
+			DeploymentID: deploymentRef,
+			Status:       *status,
+			Limit:        *limit,
+		})
 	}
 	if logSource == logsSourceHTTP {
 		return runHTTPLogsQuery(context.Background(), slug, deploymentRef, strings.TrimSpace(*requestID), strings.TrimSpace(*traceID), *route, normalizedSince, *status, *limit, *all, now)
@@ -7749,6 +7794,14 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 		collector = newExplainCollector(slug, deployment)
 	}
 	printedLines := retainedLines
+	markRuntimeLine := func() {}
+	// Only an unfiltered follow: with --grep, --level or --deployment a quiet
+	// stream says nothing about whether the app writes output.
+	if follow && archive == nil && !jsonOutput && printedLines == 0 && deployment == "" && filter.Grep == "" && filter.Level == "" {
+		var stopIdleHint func()
+		markRuntimeLine, stopIdleHint = startRuntimeFollowIdleHint(slug)
+		defer stopIdleHint()
+	}
 	parkedFallback := false
 	// reconnectAt is set when a follow stream ended on its idle timeout:
 	// `gregale logs -f` reconnects instead of exiting 0 after ten quiet
@@ -7822,6 +7875,7 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 				return false, 0
 			}
 			printedLines++
+			markRuntimeLine()
 			line := e.Data
 			if !jsonOutput {
 				line = formatRuntimeLogLine(e.Data)
@@ -8508,6 +8562,16 @@ func deployedAppURL(appID string) string {
 
 // canonicalAppURL prefers the server-resolved customer-facing URL while
 // retaining compatibility with older API responses that only include url.
+// appGetURL is the url row of `app get`. An internal app's canonical URL
+// answers 404 on the public edge (prod hunt r26), so it says so instead of
+// printing a dead link.
+func appGetURL(app api.AppResponse) string {
+	if api.NormalizeAppVisibility(api.AppVisibility(app.Visibility)) == api.AppVisibilityInternal {
+		return "none (internal: reached by service bindings only)"
+	}
+	return canonicalAppURL(app)
+}
+
 func canonicalAppURL(app api.AppResponse) string {
 	if value := strings.TrimSpace(app.CanonicalURL); value != "" {
 		return value
@@ -8566,6 +8630,11 @@ func renderDeployFailure(d api.DeploymentResponse) int {
 		}
 		if lifted := mapFailureProblem(problem); lifted != "" {
 			PrintFail(os.Stderr, "%s", lifted)
+			// A process that exited 0 did not crash: it finished. Say so,
+			// since the catalog copy above reads as a crash.
+			if d.ErrorCode == api.CodeAppStartupCrash && strings.Contains(d.Error, api.StartupCleanExitMarker) {
+				_, _ = fmt.Fprintln(os.Stderr, "  your start command exited with status 0: it ran to completion instead of serving.\n  Start a long-running server in the foreground that listens on $PORT (a Dockerfile needs a CMD or ENTRYPOINT that does).")
+			}
 			// The catalog copy says the crash output "is in the error
 			// detail" but never showed it; on prod the real cause
 			// ("Error: X is not set", nginx's [emerg] line) was only

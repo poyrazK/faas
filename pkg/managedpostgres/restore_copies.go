@@ -30,7 +30,7 @@ type RestoreCopiesStore interface {
 var (
 	// errDatabaseHasBindings and errDatabaseCloneHold name why a delete is
 	// refused; a bare conflict read like lease contention.
-	errDatabaseHasBindings = fmt.Errorf("%w: the database still has bindings; delete them first (gregale postgres bindings list)", ErrConflict)
+	errDatabaseHasBindings = fmt.Errorf("%w: the database still has bindings; delete them first (gregale postgres bindings list DATABASE, then gregale postgres bindings delete ID for each, or gregale app delete APP --delete-bindings)", ErrConflict)
 	errDatabaseCloneHold   = fmt.Errorf("%w: an environment clone is copying the database; delete it once the clone finishes", ErrConflict)
 )
 

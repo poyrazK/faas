@@ -1194,9 +1194,10 @@ each paid product carries a metered price of $0.00001 per unit on it.
 Receipts live in `managed_postgres_overage_deliveries`. Charges need cap
 enforcement on, because the cap sweep records the `allowance` event.
 
-The setting is the `postgres-overage` capability, at maturity `internal`.
-Every account reads as off, and the route answers as unknown, until an operator
-releases it with `gregalectl flags`.
+The setting is the `postgres-overage` capability, at maturity `ga` since
+2026-11-22 (ADR-20261031110037 amendment 2026-11-22). Access still follows its
+`postgres_overage` platform flag: an account the flag does not enable reads as
+off, and the route answers as unknown.
 
 The choice is stored per usage subject in `managed_postgres_account_overage`:
 the organization when it owns resources, else the namespace. The usage

@@ -18,7 +18,7 @@ class ProjectRollbackPreCutoverHealth:
     """Durable outcome of configured HTTP probes of the prepared revision before cutover."""
 
     status: str
-    """ One of pending, awaiting_probe, passed, or failed. """
+    """One of pending, awaiting_probe, passed, or failed."""
     attempt_id: UUID | Unset = UNSET
     checked_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

@@ -1,12 +1,12 @@
 name: monitoring-qualification
 
-# Manual only. Exercise emits REAL page/warn notifications; prepare is read-only.
+# Manual only. Exercise emits real notifications; prepare is read-only.
 # See docs/ops/monitoring-qualification.md for receipt scope and watchdog testing.
 on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "prepare reads intent; exercise sends real page/warn tests; record imports operator-attested receipts"
+        description: "prepare reads intent; exercise sends real test notifications; record imports operator-attested receipts"
         type: choice
         default: prepare
         options: [prepare, exercise, record]
@@ -38,7 +38,7 @@ concurrency:
 
 jobs:
   qualify:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(inputs.deploy_environment == 'production-us' && '["self-hosted","linux","faas-fleet-us"]' || '["ubuntu-latest"]') }}
     environment: ${{ inputs.deploy_environment }}
     timeout-minutes: 10
     env:
@@ -72,46 +72,29 @@ jobs:
           github-token: ${{ github.token }}
           run-id: ${{ inputs.source_run_id }}
           name: monitoring-qualification-${{ inputs.deploy_environment }}-${{ inputs.source_run_id }}-${{ inputs.source_run_attempt }}
-          path: ${{ runner.temp }}/qualification-source
+          path: ${{ runner.temp }}/qualification-source-${{ github.run_id }}-${{ github.run_attempt }}
 
-      - name: Set up pinned control-plane SSH
+      - name: Set up pinned control-plane SSH and run qualification
+        timeout-minutes: 5
         env:
           CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
           COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
-        run: |
-          set -euo pipefail
-          [[ "$CP_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.:-]{0,252}$ && -n "$CP_SSH_KEY" && -n "$COMPUTE_KNOWN_HOSTS" ]] || {
-            echo '::error::control-plane SSH credentials and pinned known hosts are required'
-            exit 1
-          }
-          install -d -m 0700 ~/.ssh
-          printf '%s\n' "$CP_SSH_KEY" > ~/.ssh/deploy_key
-          chmod 0600 ~/.ssh/deploy_key
-          scanned="$(ssh-keyscan -T 10 -t ed25519,ecdsa,rsa "$CP_HOST" 2>/dev/null || true)"
-          pinned=0
-          # Clear prior runner entries; accept only keys from the operator pin.
-          : > ~/.ssh/known_hosts
-          while read -r _ key_type key; do
-            [[ -n "${key:-}" ]] || continue
-            if awk -v t="$key_type" -v k="$key" '!/^#/ { for (i = 1; i < NF; i++) if ($i == t && $(i + 1) == k) found = 1 } END { exit !found }' <<<"$COMPUTE_KNOWN_HOSTS"; then
-              printf '%s %s %s\n' "$CP_HOST" "$key_type" "$key" >> ~/.ssh/known_hosts
-              pinned=1
-            fi
-          done <<<"$scanned"
-          [[ "$pinned" == 1 ]] || {
-            echo '::error::the control-plane host did not present a pinned key'
-            exit 1
-          }
-          chmod 0600 ~/.ssh/known_hosts
-
-      - name: Run selected qualification operation
-        timeout-minutes: 5
-        env:
           MONITORING_OPERATOR_TOKEN: ${{ secrets.MONITORING_OPERATOR_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
           QUALIFICATION_RECEIPTS: ${{ inputs.receipts_json }}
-          QUALIFICATION_SOURCE_FILE: ${{ runner.temp }}/qualification-source/report.json
+          QUALIFICATION_SOURCE_FILE: ${{ runner.temp }}/qualification-source-${{ github.run_id }}-${{ github.run_attempt }}/report.json
         run: |
+          set -euo pipefail
+          umask 077
+          ssh_temp="$(mktemp -d "$RUNNER_TEMP/monitoring-qualification-ssh.XXXXXX")"
+          trap 'rm -rf -- "$ssh_temp"' EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          env -u MONITORING_OPERATOR_TOKEN -u GITHUB_TOKEN -u QUALIFICATION_RECEIPTS \
+            RUNNER_TEMP="$ssh_temp" bash scripts/ops/canary_ssh.sh setup
+          unset CP_SSH_KEY COMPUTE_KNOWN_HOSTS
+          export QUALIFICATION_SSH_KEY="$ssh_temp/canary-ssh/deploy_key"
+          export QUALIFICATION_SSH_KNOWN_HOSTS="$ssh_temp/canary-ssh/known_hosts"
           python3 scripts/ops/monitoring_qualification.py \
             --mode "$QUALIFICATION_MODE" --source "$QUALIFICATION_SOURCE_FILE"
 
