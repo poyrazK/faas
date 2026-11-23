@@ -417,6 +417,7 @@ func (s *Server) ForwardHTTPStream(stream grpc.BidiStreamingServer[vmmdpb.Forwar
 	bodyErrCh := make(chan error, 1)
 	go func() {
 		var written int64
+		discarding := false // see guestStoppedReadingBody
 		// close stdinW exactly once at exit, regardless of
 		// which branch returned.
 		defer func() { _ = stdinW.Close() }()
@@ -440,7 +441,14 @@ func (s *Server) ForwardHTTPStream(stream grpc.BidiStreamingServer[vmmdpb.Forwar
 					"streaming body exceeds %d bytes", maxBody)
 				return
 			}
+			if discarding {
+				continue
+			}
 			if _, err := stdinW.Write(chunk); err != nil {
+				if guestStoppedReadingBody(err) {
+					discarding = true
+					continue
+				}
 				bodyErrCh <- err
 				return
 			}
@@ -982,6 +990,21 @@ func rawBridgeCommand(ctx context.Context, id bridgeIdentity, instancePID int, b
 // (nil) and surfaces OK for a truncated response. The
 // combination WaitGroup + stream.Context() makes the disconnect
 // detection deterministic.
+// guestStoppedReadingBody reports a request-body write that failed because the
+// bridge stopped reading: the guest answered without consuming the whole upload
+// (a handler that ignores the body, or a 413 from its own size cap) and the
+// bridge closed its end. That is not a client error. The body loop keeps
+// receiving and discards the rest, still bounded by the body cap, so the RPC
+// ends cleanly and the gateway delivers the guest's answer. Failing it instead
+// returned InvalidArgument "body stream: io: read/write on closed pipe" after
+// the response was committed, the gateway aborted the stream, and clients saw
+// HTTP/2 INTERNAL_ERROR for uploads of about 512 KiB and up (prod 2026-11-23,
+// the vmmd side of #7917). A guest that died mid-upload is still reported: the
+// bridge's exit status is checked before the body error.
+func guestStoppedReadingBody(err error) bool {
+	return errors.Is(err, io.ErrClosedPipe) || errors.Is(err, syscall.EPIPE) || errors.Is(err, os.ErrClosed)
+}
+
 func rawBridgeBodyLoop(stream grpc.BidiStreamingServer[vmmdpb.ForwardRawRequest, vmmdpb.ForwardRawResponse], stdinW io.WriteCloser, maxRequestBytes int64) (chan error, *sync.WaitGroup) {
 	maxBody := api.RawStreamMaxRequestBytes
 	if maxRequestBytes > 0 && maxRequestBytes < maxBody {
@@ -1789,6 +1812,7 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 	bodyErrCh := make(chan error, 1)
 	go func() {
 		var written int64
+		discarding := false // see guestStoppedReadingBody
 		defer func() { _ = bodyPw.Close() }()
 		for {
 			f, err := stream.Recv()
@@ -1810,7 +1834,14 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 					"streaming body exceeds %d bytes", maxBody)
 				return
 			}
+			if discarding {
+				continue
+			}
 			if _, err := bodyPw.Write(chunk); err != nil {
+				if guestStoppedReadingBody(err) {
+					discarding = true
+					continue
+				}
 				bodyErrCh <- err
 				return
 			}
