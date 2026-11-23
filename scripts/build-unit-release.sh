@@ -114,7 +114,11 @@ report_path, lanes_path, work = sys.argv[1:]
 with open(report_path, encoding="utf-8") as fh:
     report = json.load(fh)
 with open(lanes_path, encoding="utf-8") as fh:
-    lanes = json.load(fh)["binaries"]
+    table = json.load(fh)
+lanes = table["binaries"]
+# Compute-lane helpers (ADR 20261123122457) have no unit: the overlay
+# replaces them and nothing restarts.
+helpers = set((table.get("compute_lane") or {}).get("helpers") or [])
 units = {}
 for name in report["deployable"]:
     path = os.path.join(work, "bin", name)
@@ -127,8 +131,10 @@ for name in report["deployable"]:
         "commit": entry["commit"],
         "sha256": digest,
         "size": os.path.getsize(path),
-        "services": lanes[name]["services"],
+        "services": lanes[name].get("services") or [],
     }
+    if name in helpers:
+        units[name]["helper"] = True
     # Selection by code: the status against base and the digests the plan
     # compares with what each host runs (scripts/ci/binary_code.py).
     for key in ("code", "code_digest", "base_code_digest"):

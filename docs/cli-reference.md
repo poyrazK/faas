@@ -35,7 +35,7 @@ Read retries: put `--http-retries 3` before the command for up to three addition
 | [`version`](#version) | Print the CLI version |
 | [`update`](#update) | Update the CLI to the newest release |
 | [`man`](#man) | Print the CLI manual page, or one command&#39;s page |
-| [`guide`](#guide) | Short task pages: deploy, health checks, private services, rollouts |
+| [`guide`](#guide) | Task pages, or search commands and docs for a task in your own words |
 | [`release`](#release) | Inspect releases and control rollouts: canary, traffic, approvals |
 | [`preview`](#preview) | Manage pull-request preview environments |
 | [`project`](#project) | Inspect and recover repository projects |
@@ -1093,19 +1093,22 @@ Print the CLI manual page, or one command&#39;s page
 
 ## guide
 
-Short task pages: deploy, health checks, private services, rollouts
+Task pages, or search commands and docs for a task in your own words
 
-`gregale guide [<task>] [--json]`
+`gregale guide [<task>|<question>] [--json]`
+
+A question lists the matching commands, then docs sections from the docs shipped with this CLI and the live site. Preview pages show only when your account has that preview feature. GREGALE_DOCS_OFFLINE=1 skips the live site.
 
 | Flag | Meaning | |
 |---|---|---|
-| `--json` | print the pages as JSON |  |
+| `--json` | print the pages or the search results as JSON |  |
 
 Examples:
 
 ```sh
 gregale guide
 gregale guide private-services
+gregale guide "open an outbound tcp port"
 ```
 
 

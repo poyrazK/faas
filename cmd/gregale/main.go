@@ -238,6 +238,11 @@ func run(args []string) (status int) {
 	defer func() { treeUsageFrom, treeUsageTo = previousUsageFrom, previousUsageTo }()
 	if len(args) > 0 {
 		if noun, ok := lookupCliTreeNoun(args[0]); ok && oldPathDepth(args[:1]) == 0 {
+			if len(args) > 1 {
+				if path := nestedVerbPath(noun, args[1]); path != "" {
+					return printErr("Unknown command", commandDiagnosticError(fmt.Sprintf("gregale: unknown command %q; did you mean 'gregale %s'? Run 'gregale %s --help' for its usage", leadingWords(args), path, path), cliUnknownCommand, strings.Fields(leadingWords(args))))
+				}
+			}
 			return printErr("Unknown command", commandDiagnosticError(fmt.Sprintf("gregale: unknown command %q; run 'gregale %s --help' for its commands", leadingWords(args), noun.Name), cliUnknownCommand, strings.Fields(leadingWords(args))))
 		}
 	}

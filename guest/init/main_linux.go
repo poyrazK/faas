@@ -598,7 +598,7 @@ func boot() error {
 			return BuildEnvWithSecrets(os.Environ(), manifest, currentSecrets, apiEnv)
 		},
 	}); err != nil {
-		slog.Default().Warn("healthcheck poll unavailable", "err", err)
+		logHealthcheckPollUnavailable(slog.Default(), err)
 	}
 	// M-2 / ADR-138 §Decision 1 / issue #474 — install the PID 1
 	// signal handler before invoking the supervisor. The handler
@@ -3096,6 +3096,7 @@ func runCharacterizationForSup(sup *Supervisor, manifest api.AppManifest) {
 		Manifest:       manifest,
 		ProvenWorker:   bootProvenWorker(),
 		FunctionRunner: bootFunctionRunner(),
+		RawTCPListener: bootRawTCPListener(),
 		AppPID:         func() int { return sup.LastAppPID() },
 		ExitStatus:     func() (int, bool) { return sup.LastExitStatus() },
 		RingBufferTail: func() string {

@@ -26735,6 +26735,33 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/apps/{slug}/mcp-tool-insights:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getMCPToolInsights
+      summary: Per-tool MCP calls, failures, argument mismatches and estimated compute.
+      description: |
+        Reads the last hour of the app's per-tool MCP telemetry. Execution
+        seconds are converted to GB-seconds at the app's plan RAM + 8 MB, and
+        estimated_millicents is an upper bound at the overage rate: usage
+        inside the plan's included GB-hours costs nothing extra. telemetry is
+        not_observed (with no tools) when the app reported nothing in the
+        window. Available only where MCP tool insights are enabled for the
+        account.
+      responses:
+        '200':
+          description: Per-tool MCP insights for the last hour.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPToolInsightsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/analytics/timeseries:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -120605,6 +120632,7 @@ components:
         status: { type: string }
         url: { type: string, description: "The workload's stable address in the branch, which a reset keeps. Its first request starts it." }
         environment_url: { type: string, description: "The address of this incarnation of the branch; a reset gives it a new one." }
+        error: { type: string, description: "Why the workload is not serving: its branch deployment failed, or has not gone live five minutes after the branch's data was ready." }
 
     ProjectEnvironmentBranchDatabase:
       description: "One managed PostgreSQL copy a branch owns."
@@ -130680,6 +130708,36 @@ components:
         customers_truncated: { type: boolean, description: "More identity pairs matched than the customer detail limit." }
         other_customer_requests: { type: integer, format: int64, minimum: 0, description: "Identified requests belonging to identity pairs omitted by the detail cap." }
 
+    MCPToolInsightsResponse:
+      description: "Per-tool MCP usage and estimated compute for one app over the trailing window."
+      type: object
+      required: [app, window, observed_at, telemetry, memory_mb, tools]
+      properties:
+        app: { type: string }
+        window: { type: string, description: "Trailing window every figure covers." }
+        observed_at: { type: string, format: date-time }
+        telemetry: { type: string, enum: [reporting, not_observed] }
+        last_event: { type: string, format: date-time }
+        memory_mb: { type: integer, description: "Plan RAM; compute is estimated at memory_mb + 8." }
+        tools:
+          type: array
+          items: { $ref: '#/components/schemas/MCPToolInsight' }
+    MCPToolInsight:
+      description: "One tool's calls, failures, argument mismatches, compute and latency."
+      type: object
+      required: [tool, calls, errors, cancellations, mismatches, execution_seconds, gb_seconds, estimated_millicents]
+      properties:
+        tool: { type: string }
+        calls: { type: number }
+        errors: { type: number }
+        cancellations: { type: number }
+        mismatches: { type: number, description: "Calls whose arguments did not match the tool's input schema; also counted in errors." }
+        execution_seconds: { type: number }
+        gb_seconds: { type: number }
+        estimated_millicents: { type: integer, format: int64, description: "Upper bound at the overage rate, in 1/100,000 USD." }
+        p50_ms: { type: number }
+        p95_ms: { type: number }
+        p99_ms: { type: number }
     RouteResourcesResponse:
       type: object
       description: "Route attribution of an app's memory and CPU peaks over a window."

@@ -71,7 +71,7 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 			if flagKey, ok := platformflags.FlagForCapability(capabilities.Capabilities[i].Key); ok {
 				available = available && s.platformFlagFor(flagKey, flagSubject(r, acct))
 			}
-		case "app-tasks", "tcp-listeners", "udp-listeners", dataAPICapability:
+		case "app-tasks", "tcp-listeners", "udp-listeners", dataAPICapability, api.ManagedValkeyCapability:
 			// Prod findings 2026-11-15 #25: these were listed as available
 			// while their runtime was off and every request was refused.
 			available = s.capabilityRuntimeReady(capabilities.Capabilities[i].Key)
@@ -177,6 +177,11 @@ func (s *server) capabilityRuntimeReady(key string) bool {
 		return s.udpListenersEnabled
 	case dataAPICapability:
 		return s.managedPostgres != nil && s.managedPostgresBindings != nil && s.notif != nil
+	case api.ManagedValkeyCapability:
+		// Agent eval 2026-11-23: a release converge dropped the private TCP
+		// listener, yet managed Redis stayed listed and redis create kept
+		// making caches no app could reach.
+		return s.privateServiceTCPEnabled()
 	}
 	return true
 }
