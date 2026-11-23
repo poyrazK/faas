@@ -44,7 +44,7 @@ from faas_sdk.api.account import get_account
 from faas_sdk.models.account_response import AccountResponse
 
 client = FaaSClient(
-    base_url=os.environ.get("FAAS_API", "https://api.gregale.dev"),
+    base_url=os.environ.get("GREGALE_API_URL", "https://api.gregale.dev"),
     token=os.environ["GREGALE_TOKEN"],
 )
 try:

@@ -33,18 +33,22 @@ func printSecretDeliveryOverview(app, scope string, resp *api.AppSecretListRespo
 			add(row.DeliveryStatus, row.DeliveryVersion, row.DeliveredVersion)
 		}
 	}
-	_, _ = fmt.Fprintf(osStdout, "Delivery overview for listed secrets (app=%s; scope=%s): %d delivered at current version; %d pending; %d failed; %d unknown or unconfirmed.\n",
+	// One line: the counts and what to run. The caveat that delivery records
+	// runtime-start delivery, not application adoption, lives in the help
+	// notes of `env list`; repeating it on every listing was most of the
+	// output agents read in the 2026-11-23 eval.
+	line := fmt.Sprintf("Delivery (app=%s; scope=%s): %d delivered at current version, %d pending, %d failed, %d unknown",
 		compactInspectFailureText(app), compactInspectFailureText(scopeOrDefault(scope)), delivered, pending, failed, unknown)
-	_, _ = fmt.Fprintln(osStdout, "Delivery records describe runtime-start delivery. Runtime reload and application acknowledgement are separate evidence shown in each row; delivery does not confirm application adoption or every active instance.")
 	switch {
 	case failed > 0:
-		_, _ = fmt.Fprintln(osStdout, "Delivery failures were reported. Review current operations before attempting recovery.")
+		line += "; failures reported"
 	case pending > 0:
-		_, _ = fmt.Fprintln(osStdout, "Pending delivery is not a failure. Review current operations and the serving scope before deciding whether a fresh boot is needed.")
+		line += "; pending is not a failure"
 	case unknown > 0:
-		_, _ = fmt.Fprintln(osStdout, "Some current-version delivery evidence is unavailable or inconsistent. Review current operations before retrying a write or requesting a restart.")
+		line += "; some evidence is unavailable"
 	default:
+		_, _ = fmt.Fprintln(osStdout, line+".")
 		return
 	}
-	_, _ = fmt.Fprintf(osStdout, "Next step (POSIX shells):\n  %s inspect %s\n", recoveryCLI(), recoveryArgument(app))
+	_, _ = fmt.Fprintf(osStdout, "%s. Next: %s inspect %s\n", line, recoveryCLI(), recoveryArgument(app))
 }

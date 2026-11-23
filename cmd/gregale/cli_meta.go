@@ -7189,7 +7189,7 @@ var cliCommands = []cliCommand{
 				{Name: "set", Short: "Select an existing scoped secret; respects Git field ownership", Examples: []string{"gregale env ref set --app my-api --env production DATABASE_URL=secret:DATABASE_PRIMARY"}, Positionals: []string{"<KEY=secret:NAME>"}, Flags: secretReferenceCLIFlags()},
 				{Name: "unset", Short: "Suppress a secret destination and keep the sealed source", Notes: []string{"Applies to a primary workload destination."}, Examples: []string{"gregale env ref unset --app my-api --env production DATABASE_URL"}, Positionals: []string{"<KEY>"}, Flags: secretReferenceCLIFlags()},
 			}},
-			{Name: "list", Short: "List sealed secrets", Examples: []string{"gregale env list --app my-api", "gregale env list --app my-api --env __all__", "gregale env list --app my-api --class ephemeral", "gregale env list --app my-api --older-than 90d"}, Flags: []cliFlag{
+			{Name: "list", Short: "List sealed secrets", Notes: []string{"Delivery counts describe runtime-start delivery; runtime reload and application acknowledgement are separate evidence in each row, and delivery does not confirm that the application adopted a value."}, Examples: []string{"gregale env list --app my-api", "gregale env list --app my-api --env __all__", "gregale env list --app my-api --class ephemeral", "gregale env list --app my-api --older-than 90d"}, Flags: []cliFlag{
 				{Name: "key", Short: "include an exact secret key name (repeatable)", Value: "KEY", Repeatable: true},
 				{Name: "watch", Short: "follow metadata changes; JSON emits snapshot/change/unavailable events", Bool: true},
 				{Name: "interval", Short: "watch poll interval (1s to 1h; default 5s)", Value: "DURATION"},
