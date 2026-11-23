@@ -5,7 +5,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -46,7 +45,7 @@ func cmdMCPReplay(args []string) int {
 	}
 	options := mcphosting.ReplayOptions{Runs: *runs, AllowTools: allow}
 	if *fixtures != "" {
-		f, err := os.Open(*fixtures)
+		f, err := openCustomerFile(*fixtures)
 		if err != nil {
 			return printErr("MCP fixtures", err)
 		}
@@ -135,14 +134,14 @@ func printMCPReplay(r mcphosting.ReplayReport) {
 		PrintOK(osStdout, "Catalog: compatible")
 	}
 	for _, change := range r.Catalog.Changes {
-		fmt.Fprintf(osStdout, "  %-12s %s %s %s\n", change.Severity, change.Tool, change.Path, change.Kind)
+		_, _ = fmt.Fprintf(osStdout, "  %-12s %s %s %s\n", change.Severity, change.Tool, change.Path, change.Kind)
 	}
 	for _, p := range r.Probes {
-		fmt.Fprintf(osStdout, "  %-11s %-8s %s  serving %d ms (%d errors)  candidate %d ms (%d errors)\n",
+		_, _ = fmt.Fprintf(osStdout, "  %-11s %-8s %s  serving %d ms (%d errors)  candidate %d ms (%d errors)\n",
 			p.Outcome, p.Kind, p.Target, p.Serving.MedianMS, p.Serving.Errors, p.Candidate.MedianMS, p.Candidate.Errors)
 	}
 	for _, skipped := range r.Skipped {
-		fmt.Fprintf(osStdout, "  skipped: %s\n", skipped)
+		_, _ = fmt.Fprintf(osStdout, "  skipped: %s\n", skipped)
 	}
 	if r.OK {
 		PrintOK(osStdout, "Candidate replay passed")

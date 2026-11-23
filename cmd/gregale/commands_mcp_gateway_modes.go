@@ -144,7 +144,7 @@ func cmdMCPAuth(args []string) int {
 	}
 	PrintOK(osStdout, "%s access is on for %s (gateway rule %s); %s updated", *mode, endpoint, rule.ID, mcphosting.ConfigFile)
 	for _, line := range mcpAuthNext(cfg, *slug) {
-		fmt.Fprintln(osStdout, "  "+line)
+		_, _ = fmt.Fprintln(osStdout, "  "+line)
 	}
 	return 0
 }

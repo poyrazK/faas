@@ -136,16 +136,16 @@ func replayProbes(before, after Catalog, options ReplayOptions, report *ReplayRe
 		switch fixture.Kind {
 		case "prompt":
 			probes = append(probes, &replayProbe{ReplayProbe: ReplayProbe{Kind: "prompt", Target: fixture.Target, Fixture: fixture.Name}, promptArgs: fixture.PromptArguments})
-		default:
-			// Resource and auth fixtures are not compared yet; say so rather
-			// than report a pass that never probed them.
-			report.Skipped = append(report.Skipped, fmt.Sprintf("%s fixture %q: replay compares only prompt and tool fixtures", fixture.Kind, fixture.Name))
 		case "tool":
 			if !slices.Contains(options.AllowTools, fixture.Target) {
 				report.Skipped = append(report.Skipped, fmt.Sprintf("tool fixture %q: %s is not in --allow-tool", fixture.Name, fixture.Target))
 				continue
 			}
 			probes = append(probes, &replayProbe{ReplayProbe: ReplayProbe{Kind: "tool", Target: fixture.Target, Fixture: fixture.Name}, args: fixture.Arguments})
+		default:
+			// Resource and auth fixtures are not compared yet; say so rather
+			// than report a pass that never probed them.
+			report.Skipped = append(report.Skipped, fmt.Sprintf("%s fixture %q: replay compares only prompt and tool fixtures", fixture.Kind, fixture.Name))
 		}
 	}
 	return probes
