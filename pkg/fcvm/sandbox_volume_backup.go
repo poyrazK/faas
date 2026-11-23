@@ -281,6 +281,11 @@ func (v *SandboxVolumes) RestoreBackupFrom(ctx context.Context, store storage.St
 	if err != nil {
 		return "", err
 	}
+	if sourceID != sandboxID {
+		if ok, err := v.cloneLocalBackup(accountID, sourceID, path, id); err != nil || ok {
+			return path, err
+		}
+	}
 	m, err := volbackup.ReadManifest(ctx, store, accountID, sourceID, id)
 	if err != nil {
 		return "", err
@@ -298,6 +303,36 @@ func (v *SandboxVolumes) RestoreBackupFrom(ctx context.Context, store storage.St
 		}
 	}
 	return path, nil
+}
+
+// cloneLocalBackup makes path a clone of backup id of sourceID's volume when
+// this node still holds that backup's clone: pending while it uploads, the
+// base once it has (same-node forks, ADR-20261122132055 §3). The fork then
+// starts without the shared store; its first backup reads all its data.
+// It reports false when the node holds neither.
+func (v *SandboxVolumes) cloneLocalBackup(accountID, sourceID, path, id string) (bool, error) {
+	src, err := v.Path(accountID, sourceID)
+	if err != nil || !safeVolumeSegment(id) {
+		return false, nil //nolint:nilerr // no local copy to use: restore from the store
+	}
+	unlock := v.lockVolume(path)
+	defer unlock()
+	// The upload renames pending to base; try both, in that order.
+	for _, candidate := range []string{src + volumeBackupPendingInfix + id, src + volumeBackupBaseInfix + id} {
+		if _, statErr := os.Stat(candidate); statErr != nil {
+			continue
+		}
+		v.dropBackupBase(path)
+		_ = os.Remove(path)
+		if _, err := storage.CloneFile(path, candidate); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue // renamed or dropped between the stat and the clone
+			}
+			return false, fmt.Errorf("fcvm: clone sandbox volume backup %s: %w", id, err)
+		}
+		return true, nil
+	}
+	return false, nil
 }
 
 // dropBackupBase forgets the node's backups of the volume.

@@ -262,6 +262,7 @@ CREATE TABLE sandbox_sessions (
  volume_gb integer,
  fork_capture_id uuid,
  fork_requested_at timestamptz,
+ fork_local_refused_at timestamptz,
  pause_requested_at timestamptz,
  resume_requested_at timestamptz,
  paused_at timestamptz,

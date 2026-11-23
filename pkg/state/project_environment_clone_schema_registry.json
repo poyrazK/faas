@@ -18717,6 +18717,7 @@
       "egress_deny",
       "expires_at",
       "fork_capture_id",
+      "fork_local_refused_at",
       "fork_requested_at",
       "forked_from",
       "id",

@@ -140,6 +140,42 @@ func TestVMMClientRelaysAPauseAndEndsCleanly(t *testing.T) {
 	}
 }
 
+// adr: 20261122132055 §3 — a fork pinned to its capture's node (same-node
+// forks, before the upload) starts there or is refused: never elsewhere,
+// even when the node is gone, since no other node holds the capture.
+func TestSandboxRunnerPinnedForkStaysOnItsCapturesNode(t *testing.T) {
+	runner, router, ledger, full := sandboxRunnerPoolFixture(t, "base/sandbox-layer-v1-amd64.ext4", "agents-1", "agents-2")
+	a := sandboxAdmission()
+	a.Resume = &sched.SandboxResume{NodeID: full, RequireNode: true, Fork: true,
+		Snapshot: sched.AgentRunSnapshot{StorageKey: sessionCapture, FCVersion: "1.10.0", MemBytes: 1}}
+
+	// Room on the capture's node: the fork starts there.
+	ctx, cancel := context.WithCancel(context.Background())
+	booted := func(context.Context, sched.SandboxBooted) error { cancel(); return nil }
+	_ = runner.RunSandbox(ctx, a, nil, sched.SandboxHooks{Booted: booted}, nil)
+	if router.nodeID != full || router.spec.Snapshot == nil {
+		t.Fatalf("pinned fork placed on %q with %+v, want %q", router.nodeID, router.spec.Snapshot, full)
+	}
+
+	var problem *api.Problem
+	// No room there: refused, not placed on the other node.
+	if err := ledger.Admit(sched.Request{Instance: "filler", NodeID: full, NodeCeilingMB: 47600, Plan: api.PlanScale, RAMMB: 47000}); err != nil {
+		t.Fatal(err)
+	}
+	router.nodeID = ""
+	if err := runner.RunSandbox(context.Background(), a, nil, sched.SandboxHooks{}, nil); !errors.As(err, &problem) || problem.Code != api.CodeCapacity {
+		t.Fatalf("pinned fork on a full node = %v, want a capacity refusal", err)
+	}
+	// Its node gone: refused too, unlike a pause resume.
+	a.Resume.NodeID = "a-node-that-is-gone"
+	if err := runner.RunSandbox(context.Background(), a, nil, sched.SandboxHooks{}, nil); !errors.As(err, &problem) || problem.Code != api.CodeCapacity {
+		t.Fatalf("pinned fork of a gone node = %v, want a capacity refusal", err)
+	}
+	if router.nodeID != "" {
+		t.Fatalf("a refused pinned fork reached node %q", router.nodeID)
+	}
+}
+
 // adr: 20261122132055 §2 — a capture only its node holds resumes there or
 // not at all: schedd answers no capacity before it records a placement, and
 // agentd tries again. A node that is draining or restarting still holds the

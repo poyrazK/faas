@@ -62970,6 +62970,7 @@ CREATE TABLE public.sandbox_sessions (
     resume_not_before timestamp with time zone,
     fork_capture_id uuid,
     fork_requested_at timestamp with time zone,
+    fork_local_refused_at timestamp with time zone,
     CONSTRAINT sandbox_sessions_closed_check CHECK (((state = ANY (ARRAY['closed'::text, 'expired'::text, 'failed'::text])) = (closed_at IS NOT NULL))),
     CONSTRAINT sandbox_sessions_durability_check CHECK (((durability IS NULL) OR (durability = ANY (ARRAY['node'::text, 'remote'::text])))),
     CONSTRAINT sandbox_sessions_idle_timeout_sec_check CHECK (((idle_timeout_sec >= 1) AND (idle_timeout_sec <= 86400))),

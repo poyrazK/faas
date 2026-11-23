@@ -165,3 +165,51 @@ func TestSandboxVolumeTookBackupBeforeUpload(t *testing.T) {
 		t.Fatal("a removed volume left its backup mark")
 	}
 }
+
+// A fork on the node that holds its source's backup clones it locally, before
+// the upload finishes and after it; elsewhere it restores from the store.
+func TestSandboxVolumeForkClonesTheLocalBackup(t *testing.T) {
+	ctx := context.Background()
+	v, store, _, write := volumeFixture(t)
+	const fork, later = "33333333-3333-3333-3333-333333333333", "44444444-4444-4444-4444-444444444444"
+	write(0, "at-pause")
+	p, err := v.PrepareBackup(backupAccount, backupSandbox, "pause")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(0, "changed!")
+	readsPause := func(name, path string) {
+		t.Helper()
+		got, _ := os.ReadFile(path)
+		if !bytes.HasPrefix(got, []byte("at-pause")) {
+			t.Fatalf("%s reads %q", name, got[:8])
+		}
+	}
+	// Nothing is in the store yet: the pending clone is the only copy.
+	forkPath, err := v.RestoreBackupFrom(ctx, store, backupAccount, backupSandbox, fork, "pause")
+	if err != nil {
+		t.Fatalf("fork before upload: %v", err)
+	}
+	readsPause("fork before upload", forkPath)
+	if _, err := p.Upload(ctx, store); err != nil {
+		t.Fatal(err)
+	}
+	// After the upload the base is the local copy.
+	laterPath, err := v.RestoreBackupFrom(ctx, store, backupAccount, backupSandbox, later, "pause")
+	if err != nil {
+		t.Fatalf("fork after upload: %v", err)
+	}
+	readsPause("fork after upload", laterPath)
+	// A node without the source's volume reads the store.
+	other := NewSandboxVolumes(t.TempDir())
+	other.run = (&volumeRuns{}).run
+	otherPath, err := other.RestoreBackupFrom(ctx, store, backupAccount, backupSandbox, fork, "pause")
+	if err != nil {
+		t.Fatalf("fork elsewhere: %v", err)
+	}
+	readsPause("fork elsewhere", otherPath)
+	// A backup the node does not hold and the store lacks fails.
+	if _, err := other.RestoreBackupFrom(ctx, store, backupAccount, backupSandbox, later, "missing"); err == nil {
+		t.Fatal("a missing backup restored")
+	}
+}

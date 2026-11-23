@@ -79,6 +79,7 @@ type SandboxStore interface {
 	DeleteSandboxVolume(ctx context.Context, sessionID string) error
 	// Forks (ADR-20261122132055 §3).
 	RecordSandboxFork(ctx context.Context, id, token string, c agentstore.SandboxCapture) (int, error)
+	RequeueSandboxForkElsewhere(ctx context.Context, id, token string) error
 	UnuploadedSandboxForkCaptures(ctx context.Context, limit int) ([]agentstore.SandboxCapture, error)
 	MarkSandboxForkCaptureUploaded(ctx context.Context, captureID string) error
 	SweepSandboxForks(ctx context.Context) (consumed, failed int, err error)
@@ -408,10 +409,12 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 		}
 	}
 	if c := claim.Resume; c != nil && claim.ForkOf != "" {
-		// A fork restores its source's capture, which the shared store holds.
+		// A fork restores its source's capture. Until the shared store holds
+		// it, the fork runs on the capture's node, from that node's copy
+		// (ADR-20261122132055 §3, same-node forks).
 		start.WorkspaceKey = ""
 		start.Resume = &scheddpb.SandboxRunResume{StorageKey: c.StorageKey, VmstateStorageKey: c.VMStateStorageKey,
-			FcVersion: c.FCVersion, MemBytes: c.MemBytes, NodeId: c.NodeID, Fork: true}
+			FcVersion: c.FCVersion, MemBytes: c.MemBytes, NodeId: c.NodeID, Fork: true, RequireNode: localFork(claim)}
 	}
 	if claim.Resuming {
 		// A resumed session's workspace is in its capture; one without a
@@ -479,6 +482,11 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 		// A resume that never booted goes back to paused with its capture; a
 		// refused one waits for the next request.
 		s.returnResume(ctx, claim, code != codes.FailedPrecondition && code != codes.InvalidArgument && code != codes.DataLoss, recvErr)
+	case localFork(claim) && !ready:
+		// The capture's node refused the fork (no room, gone, or a schedd
+		// that does not pin forks): it waits for the upload and starts on
+		// any node.
+		s.requeueForkElsewhere(ctx, claim, recvErr)
 	case ready:
 		if s.pauseLost(ctx, claim) {
 			return
@@ -1093,11 +1101,32 @@ func (s *Sandboxes) requeue(ctx context.Context, claim agentstore.SandboxClaim, 
 		s.returnResume(ctx, claim, true, cause)
 		return
 	}
+	if localFork(claim) {
+		s.requeueForkElsewhere(ctx, claim, cause)
+		return
+	}
 	if err := s.store.RequeueSandbox(context.WithoutCancel(ctx), claim.ID, claim.LeaseToken); err != nil {
 		s.log.Warn("agentd: requeue sandbox failed", "sandbox_id", claim.ID, "err", err)
 		return
 	}
 	s.log.Info("agentd: sandbox requeued", "sandbox_id", claim.ID, "cause", status.Code(cause).String())
+}
+
+// localFork reports a fork started before the shared store holds its
+// capture: only the capture's node can restore it.
+func localFork(claim agentstore.SandboxClaim) bool {
+	return claim.ForkOf != "" && claim.Resume != nil && !claim.Resume.Remote && claim.Resume.NodeID != ""
+}
+
+// requeueForkElsewhere returns a fork the capture's node did not start to
+// the queue, to start on any node once the capture is uploaded.
+func (s *Sandboxes) requeueForkElsewhere(ctx context.Context, claim agentstore.SandboxClaim, cause error) {
+	if err := s.store.RequeueSandboxForkElsewhere(context.WithoutCancel(ctx), claim.ID, claim.LeaseToken); err != nil {
+		s.log.Warn("agentd: requeue sandbox fork failed", "sandbox_id", claim.ID, "err", err)
+		return
+	}
+	s.log.Info("agentd: sandbox fork waits for its capture's upload", "sandbox_id", claim.ID,
+		"node", claim.Resume.NodeID, "cause", status.Code(cause).String())
 }
 
 // returnResume puts a resume that never booted back to paused.

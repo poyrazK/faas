@@ -362,6 +362,7 @@ type SandboxSession struct {
 	VolumeGb            pgtype.Int4
 	ForkCaptureID       pgtype.UUID
 	ForkRequestedAt     pgtype.Timestamptz
+	ForkLocalRefusedAt  pgtype.Timestamptz
 	PauseRequestedAt    pgtype.Timestamptz
 	ResumeRequestedAt   pgtype.Timestamptz
 	PausedAt            pgtype.Timestamptz

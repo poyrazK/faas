@@ -225,6 +225,15 @@ agentd learned of a pause, close or fork request at its next lease renewal (a th
 - **Nudge.** After recording a pause, close or fork request, apid sends `pg_notify('sandbox_session_request', <session id>)`; a fork request sends it inside its transaction, so it goes out at commit. The agentd replica holding the session renews its lease at once, and its 1 s session tick acts on the request. The row stays the request: a lost notification waits for the next renewal, as before. A resume, and every fork start, is a claim, which agentd polls every second.
 - **Upload watch.** The replica that records a fork capture checks the shared store for its objects every second, for up to five minutes, and marks the capture uploaded as soon as the store holds them all. The sweep stays the fallback.
 
+### Amendment: same-node forks
+
+A fork of a running session still waited for its capture's upload to the shared store, seconds for a large memory file, although the node that took the capture holds it already. Owner decision 2026-11-23: start on the capture's node first.
+
+- **Claim.** A fork is claimable as soon as its capture exists. Until the capture is uploaded, agentd starts it with `RequireNode` on the capture's node, the way a resume restores a capture that is not uploaded yet (§2). schedd accepts `Fork` with `RequireNode` and refuses a pinned fork whose node is not active with a capacity error.
+- **Refusal.** A pinned fork that does not become ready (no room on the node, the node gone, or any failure before ready) goes back to the queue with `sandbox_sessions.fork_local_refused_at` set. It is then claimable only once the capture is uploaded, and starts on any node, as before this amendment. A fork is never failed for being refused on the capture's node.
+- **Volume.** vmmd clones the fork's volume from the node's own clone of the source's fork backup: the pending clone while it uploads, the base once it has. A node without either reads the backup from the store. The fork has no backup base of its own, so its first backup is full.
+- **Migration.** `fork_local_refused_at timestamptz` is an expand-only column. A replica of the previous release ignores it and waits for the upload as before; a previous schedd rejects `Fork` with `RequireNode` as invalid, which agentd treats as a refusal.
+
 ## Open questions
 
 1. **Prices:** GB-month for stored bytes and the free allowance, alongside `k` and the 256 MB floor.

@@ -4,7 +4,9 @@
 -- source that restores fork_capture_id: the source's live fork capture, or
 -- its pause capture when it was paused. apid sets fork_requested_at on a
 -- running source; agentd takes the capture, hands it to the waiting forks
--- and clears it.
+-- and clears it. A fork starts on the capture's node before the upload;
+-- fork_local_refused_at records that the node refused it, and the fork then
+-- waits for the upload and starts on any node.
 --
 -- A capture now has a purpose: a pause's is restored once by its session's
 -- resume, a fork's by each of the source's forks, so only pause captures
@@ -26,7 +28,8 @@ SET lock_timeout = '5s';
 SET statement_timeout = '10min';
 ALTER TABLE sandbox_sessions
     ADD COLUMN IF NOT EXISTS fork_capture_id uuid,
-    ADD COLUMN IF NOT EXISTS fork_requested_at timestamptz;
+    ADD COLUMN IF NOT EXISTS fork_requested_at timestamptz,
+    ADD COLUMN IF NOT EXISTS fork_local_refused_at timestamptz;
 ALTER TABLE sandbox_session_captures
     ADD COLUMN IF NOT EXISTS purpose text NOT NULL DEFAULT 'pause',
     ADD COLUMN IF NOT EXISTS uploaded_at timestamptz;
@@ -95,4 +98,5 @@ ALTER TABLE sandbox_volume_backups DROP CONSTRAINT IF EXISTS sandbox_volume_back
 ALTER TABLE sandbox_sessions DROP CONSTRAINT IF EXISTS sandbox_sessions_volume_gb_v2_check;
 ALTER TABLE sandbox_session_captures DROP CONSTRAINT IF EXISTS sandbox_session_captures_purpose_check;
 ALTER TABLE sandbox_session_captures DROP COLUMN IF EXISTS uploaded_at, DROP COLUMN IF EXISTS purpose;
-ALTER TABLE sandbox_sessions DROP COLUMN IF EXISTS fork_requested_at, DROP COLUMN IF EXISTS fork_capture_id;
+ALTER TABLE sandbox_sessions DROP COLUMN IF EXISTS fork_local_refused_at, DROP COLUMN IF EXISTS fork_requested_at,
+    DROP COLUMN IF EXISTS fork_capture_id;

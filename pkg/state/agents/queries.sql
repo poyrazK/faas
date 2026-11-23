@@ -566,7 +566,9 @@ UPDATE sandbox_sessions SET resume_requested_at=coalesce(resume_requested_at, no
 -- its image ready, and one from a template until it has a finished build
 -- (ADR-20261027090013).
 -- A paused persistent session asked to resume is claimable too
--- (ADR-20261122132055 §1).
+-- (ADR-20261122132055 §1). A fork is claimable once its capture exists: it
+-- starts on the capture's node until that node refuses it, then waits for
+-- the shared store to hold the capture (§3, same-node forks).
 SELECT sb.id::text AS id, sb.account_id::text AS account_id FROM sandbox_sessions sb
  WHERE (sb.state='queued' AND sb.expires_at > now()
  AND (sb.image_ref IS NULL OR EXISTS (SELECT 1 FROM jobs j WHERE j.id=sb.image_job_id AND j.account_id=sb.account_id
@@ -574,7 +576,7 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id FROM sandbox_session
    OR EXISTS (SELECT 1 FROM sandbox_templates t JOIN deployments d ON d.app_id=t.app_id
    WHERE t.id=sb.template_id AND t.account_id=sb.account_id AND d.status='live' AND d.rootfs_key <> ''))
  AND (sb.forked_from IS NULL OR EXISTS (SELECT 1 FROM sandbox_session_captures c
-   WHERE c.id=sb.fork_capture_id AND c.uploaded_at IS NOT NULL)))
+   WHERE c.id=sb.fork_capture_id AND (c.uploaded_at IS NOT NULL OR sb.fork_local_refused_at IS NULL))))
  OR (sb.state='paused' AND sb.resume_requested_at IS NOT NULL AND sb.close_requested_at IS NULL AND sb.expires_at > now()
    AND (sb.resume_not_before IS NULL OR sb.resume_not_before <= now()))
  ORDER BY sb.created_at, sb.id LIMIT sqlc.arg(max_rows)::integer FOR UPDATE OF sb SKIP LOCKED;
@@ -615,7 +617,8 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, 
     ORDER BY b.created_at DESC, b.id DESC LIMIT 1), '')::text AS volume_stored_backup_id,
   coalesce(sb.fork_capture_id::text, '')::text AS fork_capture_id,
   coalesce(cap.volume_backup_id::text, '')::text AS capture_volume_backup_id,
-  coalesce(cap.session_id::text, '')::text AS capture_session_id
+  coalesce(cap.session_id::text, '')::text AS capture_session_id,
+  (cap.uploaded_at IS NOT NULL)::boolean AS capture_uploaded
  FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id
  LEFT JOIN sandbox_session_captures cap ON (sb.fork_capture_id IS NOT NULL AND cap.id=sb.fork_capture_id)
    OR (sb.fork_capture_id IS NULL AND cap.session_id=sb.id AND cap.state='live' AND cap.purpose='pause')
@@ -784,6 +787,14 @@ SELECT method, samples, expected_samples, measured_ms, paused_ms, frozen_ms, pri
 -- Only a starting session, which has no VM, goes back to the queue.
 UPDATE sandbox_sessions SET state='queued', lease_token=NULL, lease_expires_at=NULL, lease_owner=NULL, updated_at=now()
  WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state='starting';
+
+-- name: RequeueSandboxForkElsewhere :execrows
+-- A fork its capture's node refused goes back to the queue to wait for the
+-- shared store to hold the capture, then starts on any node.
+UPDATE sandbox_sessions SET state='queued', lease_token=NULL, lease_expires_at=NULL, lease_owner=NULL,
+  fork_local_refused_at=coalesce(fork_local_refused_at, now()), updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state='starting'
+ AND forked_from IS NOT NULL;
 
 -- name: FinishSandboxSession :execrows
 -- A session that ends, from resuming too, never restores its capture: it

@@ -1737,7 +1737,8 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, 
     ORDER BY b.created_at DESC, b.id DESC LIMIT 1), '')::text AS volume_stored_backup_id,
   coalesce(sb.fork_capture_id::text, '')::text AS fork_capture_id,
   coalesce(cap.volume_backup_id::text, '')::text AS capture_volume_backup_id,
-  coalesce(cap.session_id::text, '')::text AS capture_session_id
+  coalesce(cap.session_id::text, '')::text AS capture_session_id,
+  (cap.uploaded_at IS NOT NULL)::boolean AS capture_uploaded
  FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id
  LEFT JOIN sandbox_session_captures cap ON (sb.fork_capture_id IS NOT NULL AND cap.id=sb.fork_capture_id)
    OR (sb.fork_capture_id IS NULL AND cap.session_id=sb.id AND cap.state='live' AND cap.purpose='pause')
@@ -1790,6 +1791,7 @@ type GetSandboxSessionClaimRow struct {
 	ForkCaptureID            string
 	CaptureVolumeBackupID    string
 	CaptureSessionID         string
+	CaptureUploaded          bool
 }
 
 // A session that starts from a persisted workspace carries its archive's
@@ -1836,6 +1838,7 @@ func (q *Queries) GetSandboxSessionClaim(ctx context.Context, db DBTX, sessionID
 		&i.ForkCaptureID,
 		&i.CaptureVolumeBackupID,
 		&i.CaptureSessionID,
+		&i.CaptureUploaded,
 	)
 	return i, err
 }
@@ -3039,7 +3042,7 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id FROM sandbox_session
    OR EXISTS (SELECT 1 FROM sandbox_templates t JOIN deployments d ON d.app_id=t.app_id
    WHERE t.id=sb.template_id AND t.account_id=sb.account_id AND d.status='live' AND d.rootfs_key <> ''))
  AND (sb.forked_from IS NULL OR EXISTS (SELECT 1 FROM sandbox_session_captures c
-   WHERE c.id=sb.fork_capture_id AND c.uploaded_at IS NOT NULL)))
+   WHERE c.id=sb.fork_capture_id AND (c.uploaded_at IS NOT NULL OR sb.fork_local_refused_at IS NULL))))
  OR (sb.state='paused' AND sb.resume_requested_at IS NOT NULL AND sb.close_requested_at IS NULL AND sb.expires_at > now()
    AND (sb.resume_not_before IS NULL OR sb.resume_not_before <= now()))
  ORDER BY sb.created_at, sb.id LIMIT $1::integer FOR UPDATE OF sb SKIP LOCKED
@@ -3055,7 +3058,9 @@ type ListClaimableSandboxSessionsRow struct {
 // its image ready, and one from a template until it has a finished build
 // (ADR-20261027090013).
 // A paused persistent session asked to resume is claimable too
-// (ADR-20261122132055 §1).
+// (ADR-20261122132055 §1). A fork is claimable once its capture exists: it
+// starts on the capture's node until that node refuses it, then waits for
+// the shared store to hold the capture (§3, same-node forks).
 func (q *Queries) ListClaimableSandboxSessions(ctx context.Context, db DBTX, maxRows int32) ([]ListClaimableSandboxSessionsRow, error) {
 	rows, err := db.Query(ctx, listClaimableSandboxSessions, maxRows)
 	if err != nil {
@@ -5146,6 +5151,28 @@ UPDATE sandbox_sessions SET state='queued', lease_token=NULL, lease_expires_at=N
 
 func (q *Queries) RequeueExpiredStartingSandboxSessions(ctx context.Context, db DBTX) (int64, error) {
 	result, err := db.Exec(ctx, requeueExpiredStartingSandboxSessions)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const requeueSandboxForkElsewhere = `-- name: RequeueSandboxForkElsewhere :execrows
+UPDATE sandbox_sessions SET state='queued', lease_token=NULL, lease_expires_at=NULL, lease_owner=NULL,
+  fork_local_refused_at=coalesce(fork_local_refused_at, now()), updated_at=now()
+ WHERE id=$1::text::uuid AND lease_token=$2::text AND state='starting'
+ AND forked_from IS NOT NULL
+`
+
+type RequeueSandboxForkElsewhereParams struct {
+	SessionID  string
+	LeaseToken string
+}
+
+// A fork its capture's node refused goes back to the queue to wait for the
+// shared store to hold the capture, then starts on any node.
+func (q *Queries) RequeueSandboxForkElsewhere(ctx context.Context, db DBTX, arg RequeueSandboxForkElsewhereParams) (int64, error) {
+	result, err := db.Exec(ctx, requeueSandboxForkElsewhere, arg.SessionID, arg.LeaseToken)
 	if err != nil {
 		return 0, err
 	}

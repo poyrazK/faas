@@ -1,6 +1,7 @@
 // adr: 20261122132055 §3 — forks: agentd takes a running source's fork
-// capture when apid asks, starts each fork from it once the shared store
-// holds it (its volume from the source's fork backup), keeps the capture
+// capture when apid asks, starts each fork from it at once on the capture's
+// node, or once the shared store holds it on any node when that node refuses
+// (its volume from the source's fork backup), keeps the capture
 // and the backup while a fork waits, consumes the capture once none does,
 // and fails a fork whose source ended before it was captured.
 package agentd_test
@@ -12,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
 	"github.com/onebox-faas/faas/pkg/agentd"
 	"github.com/onebox-faas/faas/pkg/state"
 	agentstore "github.com/onebox-faas/faas/pkg/state/agents"
@@ -35,6 +38,29 @@ func forkSandbox(t *testing.T, s *agentstore.Store, sourceID, kind string, count
 	return ids
 }
 
+func forkLocalRefused(t *testing.T, pool *pgxpool.Pool, id string) bool {
+	t.Helper()
+	var refused bool
+	if err := pool.QueryRow(context.Background(),
+		`SELECT fork_local_refused_at IS NOT NULL FROM sandbox_sessions WHERE id=$1`, id).Scan(&refused); err != nil {
+		t.Fatal(err)
+	}
+	return refused
+}
+
+func lastStart(t *testing.T, fake *fakeSandboxSchedd, id string) *scheddpb.SandboxRunStart {
+	t.Helper()
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	for i := len(fake.starts) - 1; i >= 0; i-- {
+		if fake.starts[i].GetSandboxId() == id {
+			return fake.starts[i]
+		}
+	}
+	t.Fatalf("no start for %s", id)
+	return nil
+}
+
 func TestSandboxForkOfARunningSession(t *testing.T) {
 	pool, store := openStore(t)
 	ctx := context.Background()
@@ -46,6 +72,10 @@ func TestSandboxForkOfARunningSession(t *testing.T) {
 	waitFor(t, "ready", func() bool { return sandboxState(t, store, src).State == agentstore.SandboxReady })
 
 	forks := forkSandbox(t, store, src, agentstore.SandboxEphemeral, 2)
+	first, second := forks[0], forks[1]
+	fake.mu.Lock()
+	fake.scripts[second] = "full" // the capture's node has no room for it
+	fake.mu.Unlock()
 	waitFor(t, "the fork capture", func() bool {
 		fake.mu.Lock()
 		defer fake.mu.Unlock()
@@ -56,15 +86,41 @@ func TestSandboxForkOfARunningSession(t *testing.T) {
 	forkBackup := fake.volumeBackups[len(fake.volumeBackups)-1]
 	fake.mu.Unlock()
 	waitFor(t, "the fork recorded", func() bool { return backupStates(t, pool, src)[forkBackup] == "uploading" })
-	// The source runs on; its forks wait for the upload.
+	// The source runs on. Its forks start at once on the capture's node; the
+	// one that node refuses waits for the upload.
 	if sb := sandboxState(t, store, src); sb.State != agentstore.SandboxReady {
 		t.Fatalf("source %s after the fork", sb.State)
 	}
+	mem := "snap/sandbox-session-" + account + "/captures/" + captureID + "/v2/mem"
+	// Either claimer may take either fork: the one driving the refused fork
+	// returns, the other holds the first fork until it closes.
+	holdA, holdB := holdSandbox(t, sbx), holdSandbox(t, sbx)
+	waitFor(t, "the first fork ready on the capture's node", func() bool {
+		return sandboxState(t, store, first).State == agentstore.SandboxReady
+	})
+	waitFor(t, "the second fork refused", func() bool { return forkLocalRefused(t, pool, second) })
+	var forkDone <-chan bool
+	select {
+	case <-holdA:
+		forkDone = holdB
+	case <-holdB:
+		forkDone = holdA
+	case <-time.After(10 * time.Second):
+		t.Fatal("the refused fork's claim did not return")
+	}
+	for _, id := range []string{first, second} {
+		r := lastStart(t, fake, id).GetResume()
+		if r == nil || !r.GetFork() || !r.GetRequireNode() || r.GetNodeId() == "" || r.GetStorageKey() != mem {
+			t.Fatalf("fork %s before the upload: resume = %v", id, r)
+		}
+	}
+	if sb := sandboxState(t, store, second); sb.State != agentstore.SandboxQueued {
+		t.Fatalf("refused fork %s", sb.State)
+	}
 	if found, err := sbx.ClaimOnce(ctx); err != nil || found {
-		t.Fatalf("a fork claimed before its capture was uploaded: %v %v", found, err)
+		t.Fatalf("a refused fork claimed before its capture was uploaded: %v %v", found, err)
 	}
 
-	mem := "snap/sandbox-session-" + account + "/captures/" + captureID + "/v2/mem"
 	snap := state.Snapshot{StorageKey: mem}
 	for _, key := range []string{mem, state.SnapshotVMStateKey(snap), state.SnapshotDriveKey(snap), volbackup.ManifestKey(account, src, forkBackup)} {
 		if err := blobs.Put(ctx, key, strings.NewReader("x")); err != nil {
@@ -74,26 +130,9 @@ func TestSandboxForkOfARunningSession(t *testing.T) {
 	// The replica that recorded the capture watches its upload: the forks
 	// become claimable without waiting for a sweep.
 	waitFor(t, "the upload seen", func() bool { return backupStates(t, pool, src)[forkBackup] == "stored" })
-
-	// The first fork restores the capture with the source's volume backup.
-	forkDone := holdSandbox(t, sbx)
-	waitFor(t, "a fork ready", func() bool {
-		return sandboxState(t, store, forks[0]).State == agentstore.SandboxReady || sandboxState(t, store, forks[1]).State == agentstore.SandboxReady
-	})
 	fake.mu.Lock()
-	start := fake.starts[len(fake.starts)-1]
+	delete(fake.scripts, second)
 	fake.mu.Unlock()
-	r := start.GetResume()
-	if r == nil || !r.GetFork() || r.GetRequireNode() || r.GetStorageKey() != mem || start.GetPersistent() ||
-		start.GetVolumeGb() != 10 || start.GetVolumeBackupId() != forkBackup || start.GetVolumeSourceSandboxId() != src ||
-		start.GetVolumeBackupIntervalMs() != 0 {
-		t.Fatalf("fork start = %v", start)
-	}
-	first := start.GetSandboxId()
-	second := forks[0]
-	if second == first {
-		second = forks[1]
-	}
 
 	// The source ends while the second fork waits: its volume and the fork
 	// backup stay.
@@ -109,6 +148,17 @@ func TestSandboxForkOfARunningSession(t *testing.T) {
 	}
 	secondDone := holdSandbox(t, sbx)
 	waitFor(t, "the second fork ready", func() bool { return sandboxState(t, store, second).State == agentstore.SandboxReady })
+	// Each fork restores the capture with the source's volume backup; the
+	// refused one, from the shared store on any node.
+	for _, id := range []string{first, second} {
+		start := lastStart(t, fake, id)
+		r := start.GetResume()
+		if r == nil || !r.GetFork() || r.GetStorageKey() != mem || start.GetPersistent() ||
+			start.GetVolumeGb() != 10 || start.GetVolumeBackupId() != forkBackup || start.GetVolumeSourceSandboxId() != src ||
+			start.GetVolumeBackupIntervalMs() != 0 || r.GetRequireNode() != (id == first) {
+			t.Fatalf("fork %s start = %v", id, start)
+		}
+	}
 
 	// No fork waits any more: the capture is consumed and its objects go,
 	// then the source's volume and backups.
