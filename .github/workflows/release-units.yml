@@ -286,7 +286,9 @@ jobs:
             echo "eligible=$eligible"
             echo "deployable=$deployable"
             echo "control_plane=$(jq -r '.lanes["control-plane"].eligible' "$OUT_DIR/report.json")"
-            echo "edge=$(jq -r '.lanes.edge.eligible' "$OUT_DIR/report.json")"
+            # The compute lane rides the edge lane's per-node jobs
+            # (docs/adr/20261123122457-compute-unit-lane.md).
+            echo "edge=$(jq -r '.lanes.edge.eligible or (.lanes.compute.eligible // false)' "$OUT_DIR/report.json")"
             # false only when the host view names the control-plane group
             # and no role of it changed since the base full release; an
             # unknown group (no host view) keeps the host-config job.
