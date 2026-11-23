@@ -829,23 +829,6 @@
         group: root
         mode: "0644"
 
-    - name: Stage the release-pinned Firecracker guest kernel
-      ansible.builtin.shell:
-        cmd: >-
-          set -euo pipefail;
-          umask 077;
-          tmp=$(mktemp /var/lib/faas/bootstrap/vmlinux.XXXXXX);
-          trap 'rm -f "$tmp"' EXIT;
-          tar --extract --gzip --file /var/lib/faas/bootstrap/release.tar.gz
-          --to-stdout vmlinux > "$tmp";
-          test -s "$tmp";
-          install -o root -g root -m 0644 "$tmp"
-          /var/lib/faas/bootstrap/vmlinux;
-          rm -f "$tmp";
-          trap - EXIT
-        executable: /bin/bash
-      changed_when: true
-
     - name: Stage the release signature bundle
       ansible.builtin.copy:
         src: "{{ faas_join_release_signature_source }}"
@@ -871,49 +854,86 @@
           - /var/lib/faas/bootstrap/release.tar.gz
       changed_when: false
 
+    # ADR-20261123150000: the guest kernel, the release-built Firecracker VMM
+    # and the operator CLI promoted below come out of the verified bundle in
+    # ONE decompression (three before, 26 s per run). A stamp records the
+    # bundle's sha256 and each staged file's; a rerun on the same bundle (an
+    # activation that converges roles after preparation staged them) keeps the
+    # files while their hashes still match.
+    #
     # Releases carry the patched Firecracker as firecracker-vmm. The firecracker
     # role installs it under the upstream basename and checks it against
     # release.firecracker_digest. A release without it (built before the patch,
     # or a rollback to one) removes any staged copy so the role keeps upstream's
     # binary, which that release's manifest digest names.
-    - name: Stage the release-built Firecracker VMM
+    - name: Stage the release-pinned kernel, Firecracker VMM and operator CLI
       ansible.builtin.shell:
-        cmd: >-
-          set -euo pipefail;
-          umask 077;
-          if ! tar --list --gzip --file /var/lib/faas/bootstrap/release.tar.gz
-          firecracker-vmm > /dev/null 2>&1; then
-          rm -f /var/lib/faas/bootstrap/firecracker-vmm;
-          echo absent;
-          exit 0;
-          fi;
-          tmp=$(mktemp /var/lib/faas/bootstrap/firecracker-vmm.XXXXXX);
-          trap 'rm -f "$tmp"' EXIT;
-          tar --extract --gzip --file /var/lib/faas/bootstrap/release.tar.gz
-          --to-stdout firecracker-vmm > "$tmp";
-          test -s "$tmp";
-          install -o root -g root -m 0755 "$tmp"
-          /var/lib/faas/bootstrap/firecracker-vmm;
-          rm -f "$tmp";
-          trap - EXIT;
+        cmd: |
+          set -euo pipefail
+          umask 077
+          dir=/var/lib/faas/bootstrap
+          bundle="$dir/release.tar.gz"
+          stamp="$dir/release-members.stamp"
+          want="$(sha256sum "$bundle" | cut -d' ' -f1)"
+          current() {
+            [[ -s "$stamp" && "$(sed -n 1p "$stamp")" == "$want" ]] || return 1
+            [[ "$(sed -n '2,$p' "$stamp" | wc -l)" -eq 3 ]] || return 1
+            while read -r name sum; do
+              if [[ "$sum" == absent ]]; then
+                [[ ! -e "$dir/$name" ]] || return 1
+              else
+                [[ -s "$dir/$name" && "$(sha256sum "$dir/$name" | cut -d' ' -f1)" == "$sum" ]] || return 1
+              fi
+            done < <(sed -n '2,$p' "$stamp")
+          }
+          if current; then
+            echo current
+            exit 0
+          fi
+          rm -f "$stamp"
+          tmp="$(mktemp -d "$dir/members.XXXXXX")"
+          trap 'rm -rf "$tmp"' EXIT
+          if ! tar --extract --gzip --file "$bundle" --directory "$tmp" \
+              -- vmlinux gregalectl firecracker-vmm 2> "$tmp/.tar-errors"; then
+            # Only a release without firecracker-vmm may leave a member out.
+            if grep -v -x -E -e '[^ :]*tar: firecracker-vmm: Not found in archive' \
+                -e '[^ :]*tar: Exiting with failure status due to previous errors' \
+                "$tmp/.tar-errors" | grep -q .; then
+              cat "$tmp/.tar-errors" >&2
+              exit 1
+            fi
+          fi
+          test -s "$tmp/vmlinux"
+          test -s "$tmp/gregalectl"
+          install -o root -g root -m 0644 "$tmp/vmlinux" "$dir/vmlinux"
+          install -o root -g root -m 0755 "$tmp/gregalectl" "$dir/gregalectl-release"
+          vmm=absent
+          if [[ -s "$tmp/firecracker-vmm" ]]; then
+            install -o root -g root -m 0755 "$tmp/firecracker-vmm" "$dir/firecracker-vmm"
+            vmm="$(sha256sum "$dir/firecracker-vmm" | cut -d' ' -f1)"
+          else
+            rm -f "$dir/firecracker-vmm"
+          fi
+          {
+            echo "$want"
+            echo "vmlinux $(sha256sum "$dir/vmlinux" | cut -d' ' -f1)"
+            echo "gregalectl-release $(sha256sum "$dir/gregalectl-release" | cut -d' ' -f1)"
+            echo "firecracker-vmm $vmm"
+          } > "$tmp/stamp"
+          install -o root -g root -m 0600 "$tmp/stamp" "$stamp"
           echo staged
         executable: /bin/bash
-      register: faas_join_firecracker_stage
-      changed_when: (faas_join_firecracker_stage.stdout | trim) == 'staged'
+      register: faas_join_release_members_stage
+      changed_when: (faas_join_release_members_stage.stdout | trim) == 'staged'
 
-    - name: Delete kernel temporaries left by interrupted or older rollouts
-      ansible.builtin.command:
-        argv:
-          - find
-          - /var/lib/faas/bootstrap
-          - -maxdepth
-          - "1"
-          - -type
-          - f
-          - -name
-          - vmlinux.*
-          - -print
-          - -delete
+    - name: Delete staging temporaries left by interrupted or older rollouts
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          find /var/lib/faas/bootstrap -maxdepth 1 \
+            \( -type f -name 'vmlinux.*' -o -type f -name 'firecracker-vmm.*' -o -type d -name 'members.*' \) \
+            -print -exec rm -rf {} +
+        executable: /bin/bash
       register: faas_join_kernel_temp_cleanup
       changed_when: (faas_join_kernel_temp_cleanup.stdout | trim) != ''
 
@@ -1019,21 +1039,42 @@
           - /var/lib/faas/bootstrap/release.tar.gz
       changed_when: false
 
+    # ADR-20261123150000: the first play staged this exact bundle's gregalectl
+    # (gregalectl-release, hashed in release-members.stamp); copy it instead of
+    # decompressing the bundle again. Without a matching stamp, extract as
+    # before.
     - name: Promote the catalog-aware gregalectl from the verified release
       ansible.builtin.shell:
-        cmd: >-
-          set -eu -o pipefail;
-          umask 077;
-          tmp=$(mktemp /var/lib/faas/bootstrap/gregalectl.XXXXXX);
-          trap 'rm -f "$tmp"' EXIT;
-          tar --extract --gzip --file /var/lib/faas/bootstrap/release.tar.gz
-          --to-stdout gregalectl > "$tmp";
-          test -s "$tmp";
-          chmod 0755 "$tmp";
-          mv -f "$tmp" /usr/local/bin/gregalectl;
+        cmd: |
+          set -euo pipefail
+          umask 077
+          dir=/var/lib/faas/bootstrap
+          stamp="$dir/release-members.stamp"
+          staged="$dir/gregalectl-release"
+          tmp="$(mktemp "$dir/gregalectl.XXXXXX")"
+          trap 'rm -f "$tmp"' EXIT
+          want=""
+          if [[ -s "$stamp" && -s "$staged" ]] &&
+              [[ "$(sed -n 1p "$stamp")" == "$(sha256sum "$dir/release.tar.gz" | cut -d' ' -f1)" ]]; then
+            want="$(awk '$1 == "gregalectl-release" { print $2 }' "$stamp")"
+          fi
+          if [[ -n "$want" && "$(sha256sum "$staged" | cut -d' ' -f1)" == "$want" ]]; then
+            if [[ "$(sha256sum /usr/local/bin/gregalectl | cut -d' ' -f1)" == "$want" ]]; then
+              echo current
+              exit 0
+            fi
+            cp "$staged" "$tmp"
+          else
+            tar --extract --gzip --file "$dir/release.tar.gz" --to-stdout gregalectl > "$tmp"
+          fi
+          test -s "$tmp"
+          chmod 0755 "$tmp"
+          mv -f "$tmp" /usr/local/bin/gregalectl
           trap - EXIT
+          echo promoted
         executable: /bin/bash
-      changed_when: true
+      register: faas_join_gregalectl_promote
+      changed_when: (faas_join_gregalectl_promote.stdout | trim) == 'promoted'
 
 - name: Install, render, start, and activate the adopted node
   hosts: compute_nodes
@@ -1641,6 +1682,28 @@
         mode: "0755"
       when: (faas_join_rollout_phase | default('full')) != 'activate'
 
+    # ADR-20261123150000: verify and extract the release for activation while
+    # the node still serves, alongside the runtime-base pre-stage. Activation's
+    # install reuses the tree after re-checking its bytes and cosign (32 s per
+    # node on the serialized path before). Best effort: an older operator CLI
+    # (a rollback) or any failure leaves activation's full install in charge.
+    - name: Stage the verified release for activation in the background
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/gregalectl
+          - release
+          - install
+          - --git-sha
+          - "{{ faas_join_release_git_sha }}"
+          - --tarball-path
+          - /var/lib/faas/bootstrap/release.tar.gz
+          - --stage-only
+      async: 900
+      poll: 0
+      register: faas_join_release_stage_job
+      changed_when: false
+      when: (faas_join_rollout_phase | default('full')) == 'prepare'
+
     - name: Extract the signed candidate for runtime-base pre-staging
       ansible.builtin.unarchive:
         src: /var/lib/faas/bootstrap/release.tar.gz
@@ -1870,6 +1933,31 @@
         - name: Reload systemd after fresh-host vmmd bootstrap cleanup
           ansible.builtin.systemd:
             daemon_reload: true
+
+    - name: Wait for the background release stage
+      ansible.builtin.async_status:
+        jid: "{{ faas_join_release_stage_job.ansible_job_id }}"
+      register: faas_join_release_stage
+      until: faas_join_release_stage.finished | default(false) | bool
+      retries: 180
+      delay: 5
+      failed_when: false
+      changed_when: (faas_join_release_stage.rc | default(1)) == 0
+      when:
+        - (faas_join_rollout_phase | default('full')) == 'prepare'
+        - faas_join_release_stage_job.ansible_job_id is defined
+
+    - name: Report a release stage activation will redo
+      ansible.builtin.debug:
+        msg: >-
+          The release was not staged for reuse (rc
+          {{ faas_join_release_stage.rc | default('unknown') }}):
+          {{ (faas_join_release_stage.stderr | default('') | trim)[-600:] }}.
+          Activation installs from the tarball instead.
+      when:
+        - (faas_join_rollout_phase | default('full')) == 'prepare'
+        - faas_join_release_stage_job.ansible_job_id is defined
+        - (faas_join_release_stage.rc | default(1)) != 0
 
     - name: Record completed non-disruptive rollout preparation
       ansible.builtin.copy:
