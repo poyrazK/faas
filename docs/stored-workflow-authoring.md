@@ -690,8 +690,11 @@ migration removes the retained revisions.
 
 ## Moved sections
 
-Testing and recovery now have their own pages. These headings stay so
-links from earlier releases still land on a pointer.
+Testing and recovery now have their own pages:
+[Test stored workflows](stored-workflow-testing.md) and
+[Run and recover stored workflows](stored-workflow-operations.md). The two
+headings below stay because errors from earlier CLI and API releases link to
+them.
 
 ### Promote and use a named baseline
 
