@@ -216,3 +216,36 @@ func (e *Evaluator) channelStandDownPending(ctx context.Context, ruleID, channel
 	}
 	return pending
 }
+
+// pagerDutyStandDownPending uses the remote destination, since different
+// Gregale channel rows can share a PagerDuty routing key and incident key.
+func (e *Evaluator) pagerDutyStandDownPending(ctx context.Context, ruleID string, ch state.NotificationChannel) bool {
+	store, ok := e.store.(state.AlertChannelStandDownStore)
+	if !ok || ch.Kind != alertchannels.KindPagerDuty {
+		return false
+	}
+	channels, err := store.ListPagerDutyObservationStandDownChannels(ctx, ruleID)
+	if err != nil {
+		e.log.Warn("alerts: check PagerDuty stand-down destinations", "rule", ruleID, "err", err)
+		return true
+	}
+	if len(channels) == 0 {
+		return false
+	}
+
+	ids := e.unsealIdentities()
+	target, ok := openTarget(ids, ch)
+	if !ok {
+		return true
+	}
+	for _, earlier := range channels {
+		if earlier.PagerDutyRegion != target.Region {
+			continue
+		}
+		previous, opened := openTarget(ids, earlier)
+		if !opened || previous.RoutingKey == target.RoutingKey {
+			return true
+		}
+	}
+	return false
+}

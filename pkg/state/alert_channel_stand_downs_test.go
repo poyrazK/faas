@@ -9,6 +9,7 @@ package state_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -278,6 +279,21 @@ func TestPgStore_AlertScopeDeliveryGuard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	pagerDutyChannel := func(name string) state.NotificationChannel {
+		t.Helper()
+		channel, err := s.CreateNotificationChannel(ctx, state.NotificationChannel{
+			AccountID: acct, Name: name, Kind: "pagerduty", PagerDutyRegion: "us", TargetSealed: []byte(name),
+		}, api.MaxNotificationChannelsPerAccount)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return channel
+	}
+	original := pagerDutyChannel("original")
+	if err := s.SetAlertRuleChannels(ctx, rule.ID, []string{original.ID}); err != nil {
+		t.Fatal(err)
+	}
+
 	insert := func(key, payload string, test bool) error {
 		// The old meterd claims a delivery with this insert and doesn't
 		// read the rule's scope. Exercise the database guard directly.
@@ -315,6 +331,14 @@ func TestPgStore_AlertScopeDeliveryGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	reject("observe-only", string(payload))
+	alias := pagerDutyChannel("alias")
+	if err := s.SetAlertRuleChannels(ctx, rule.ID, []string{alias.ID}); err != nil {
+		t.Fatal(err)
+	}
+	older, err := s.ListPagerDutyObservationStandDownChannels(ctx, rule.ID)
+	if err != nil || len(older) != 1 || older[0].ID != original.ID {
+		t.Fatalf("expected the old unbound stand-down channel, got %d channels and %v", len(older), err)
+	}
 	if _, err := s.UpdateAlertRule(ctx, rule.ID, state.UpdateAlertRuleParams{ObserveOnly: new(false)}); err != nil {
 		t.Fatal(err)
 	}
@@ -323,14 +347,15 @@ func TestPgStore_AlertScopeDeliveryGuard(t *testing.T) {
 		t.Fatalf("new scoped fire: won=%v err=%v", won, err)
 	}
 	held, err := s.AlertDeferredFireRecipients(ctx, rule.ID, second)
-	if err != nil || held.WebhookURL != rule.WebhookURL {
-		t.Fatalf("webhook was held=%v, err=%v", held.WebhookURL != "", err)
+	if err != nil || held.WebhookURL != rule.WebhookURL || !held.ChannelIDs[alias.ID] {
+		t.Fatalf("the webhook and possible PagerDuty alias should be deferred, err=%v", err)
 	}
 	fires, err := s.DueDeferredAlertFires(ctx, second, 10)
-	if err != nil || len(fires) != 1 || !fires[0].Blocked {
-		t.Fatalf("deferred fires=%d err=%v, want one blocked fire", len(fires), err)
+	webhook := slices.IndexFunc(fires, func(fire state.AlertDeferredFire) bool { return fire.WebhookURL != "" })
+	if err != nil || len(fires) != 2 || webhook < 0 || !fires[webhook].Blocked {
+		t.Fatalf("deferred fires=%d err=%v, want the possible alias and a blocked webhook", len(fires), err)
 	}
-	if started, err := s.StartDeferredWebhookFire(ctx, fires[0].ID); err != nil || started {
+	if started, err := s.StartDeferredWebhookFire(ctx, fires[webhook].ID); err != nil || started {
 		t.Fatalf("blocked webhook started=%v err=%v", started, err)
 	}
 	notices, err := s.DueAlertWebhookStandDowns(ctx, second, 10)
@@ -340,7 +365,7 @@ func TestPgStore_AlertScopeDeliveryGuard(t *testing.T) {
 	if err := s.DeleteAlertWebhookStandDown(ctx, notices[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	if started, err := s.StartDeferredWebhookFire(ctx, fires[0].ID); err != nil || !started {
+	if started, err := s.StartDeferredWebhookFire(ctx, fires[webhook].ID); err != nil || !started {
 		t.Fatalf("unblocked webhook started=%v err=%v", started, err)
 	}
 	if _, err := s.UpdateAlertRule(ctx, rule.ID, state.UpdateAlertRuleParams{ObserveOnly: new(true)}); err != nil {

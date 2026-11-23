@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/alertchannels"
 	"github.com/onebox-faas/faas/pkg/alerts"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/promql"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/webhookout"
@@ -87,10 +88,40 @@ func TestEvaluator_ObserveOnlyStandsDownLiveAlert(t *testing.T) {
 }
 
 func TestEvaluator_ObserveOnlyRepromotionResolvesPagerDutyBeforeRefiring(t *testing.T) {
+	const originalKey = "0123456789abcdef0123456789abcdef"
+	for _, tc := range []struct {
+		name           string
+		replacementKey string
+		telemetryGap   bool
+	}{
+		{name: "same channel"},
+		{name: "alias with a telemetry gap", replacementKey: originalKey, telemetryGap: true},
+		{name: "independent destination", replacementKey: "fedcba9876543210fedcba9876543210"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checkPagerDutyRepromotion(t, originalKey, tc.replacementKey, tc.telemetryGap)
+		})
+	}
+}
+
+type pagerDutyHandoffProm struct {
+	*anomalyProm
+	unavailable bool
+}
+
+func (p *pagerDutyHandoffProm) QueryVectorStrictAt(ctx context.Context, query string, at time.Time) ([]promql.VectorSample, error) {
+	if p.unavailable {
+		return nil, errors.New("telemetry temporarily unavailable")
+	}
+	return p.anomalyProm.QueryVectorStrictAt(ctx, query, at)
+}
+
+func checkPagerDutyRepromotion(t *testing.T, originalKey, replacementKey string, telemetryGap bool) {
+	t.Helper()
 	ctx := t.Context()
 	store := state.NewMemStore()
 	rule, ident, _ := seedRule(t, store, state.AlertMetricRequestCount, state.AlertAboveBaseline, 3)
-	sealed, err := secretbox.SealBytes(ident.Recipient(), alertchannels.SealNamespace, []byte("test-page-routing-key"), 256)
+	sealed, err := secretbox.SealBytes(ident.Recipient(), alertchannels.SealNamespace, []byte(originalKey), 256)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,9 +146,10 @@ func TestEvaluator_ObserveOnlyRepromotionResolvesPagerDutyBeforeRefiring(t *test
 	live := edit(false, nil)
 	now := live.UpdatedAt.Add(time.Minute)
 	channels := &recordingChannels{fail: map[string]error{}}
+	prom := &pagerDutyHandoffProm{anomalyProm: &anomalyProm{currentSamples: 400, pastSamples: 100, trafficDays: 7}}
 	newEvaluator := func() *alerts.Evaluator {
 		return alerts.NewEvaluator(alerts.EvaluatorOptions{
-			Store: store, PromQL: &anomalyProm{currentSamples: 400, pastSamples: 100, trafficDays: 7},
+			Store: store, PromQL: prom,
 			Identity: func() *age.X25519Identity { return ident }, Now: func() time.Time { return now },
 			Channels: channels, Log: discardLog(), Dispatcher: &recordingDispatcher{result: webhookout.Result{StatusCode: 200}},
 		})
@@ -127,6 +159,21 @@ func TestEvaluator_ObserveOnlyRepromotionResolvesPagerDutyBeforeRefiring(t *test
 		t.Fatalf("initial PagerDuty fire: stats=%+v sent=%+v err=%v", stats, channels.sent, err)
 	}
 	edit(true, new("staging"))
+	if replacementKey != "" {
+		sealed, err := secretbox.SealBytes(ident.Recipient(), alertchannels.SealNamespace, []byte(replacementKey), 256)
+		if err != nil {
+			t.Fatal(err)
+		}
+		alias, err := store.CreateNotificationChannel(ctx, state.NotificationChannel{
+			AccountID: rule.AccountID, Kind: alertchannels.KindPagerDuty, Name: "replacement", TargetSealed: sealed, PagerDutyRegion: "us",
+		}, api.MaxNotificationChannelsPerAccount)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SetAlertRuleChannels(ctx, rule.ID, []string{alias.ID}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	live = edit(false, nil)
 	// Keep the evaluator clock after the edit and the prior evaluation.
 	if live.UpdatedAt.After(now) {
@@ -134,14 +181,30 @@ func TestEvaluator_ObserveOnlyRepromotionResolvesPagerDutyBeforeRefiring(t *test
 	}
 	now = now.Add(time.Minute)
 	channels.fail[alertchannels.KindPagerDuty] = errors.New("PagerDuty unavailable")
-	if stats, err := ev.RunOnce(ctx); err != nil || stats.Fired != 1 || len(channels.sent) != 2 || channels.sent[1].msg.Event != alertchannels.EventResolve {
-		t.Fatalf("the unavailable destination should only attempt the old resolve: stats=%+v sent=%+v err=%v", stats, channels.sent, err)
+	stats, err := ev.RunOnce(ctx)
+	if replacementKey != "" && replacementKey != originalKey {
+		if err != nil || len(channels.sent) != 3 || channels.sent[2].msg.Event != alertchannels.EventFire || channels.sent[2].target.RoutingKey != replacementKey {
+			t.Fatalf("the distinct destination should still attempt its fire: stats=%+v attempts=%d err=%v", stats, len(channels.sent), err)
+		}
+		return
+	}
+	if err != nil || stats.Fired != 1 || len(channels.sent) != 2 || channels.sent[1].msg.Event != alertchannels.EventResolve {
+		t.Fatalf("the unavailable destination should only attempt the old resolve: stats=%+v attempts=%d err=%v", stats, len(channels.sent), err)
 	}
 	channels.fail[alertchannels.KindPagerDuty] = nil
 	now = now.Add(time.Minute)
-	stats, err := newEvaluator().RunOnce(ctx)
-	if err != nil || len(channels.sent) != 4 || stats.ChannelStandDownsDelivered != 1 || stats.ChannelFiresRetried != 1 {
-		t.Fatalf("recovered PagerDuty: stats=%+v sent=%+v err=%v", stats, channels.sent, err)
+	if telemetryGap {
+		prom.unavailable = true
+		stats, err := newEvaluator().RunOnce(ctx)
+		if err != nil || stats.ChannelStandDownsDelivered != 1 || len(channels.sent) != 3 {
+			t.Fatalf("the old resolve should go through during the telemetry gap: stats=%+v attempts=%d err=%v", stats, len(channels.sent), err)
+		}
+		prom.unavailable = false
+		now = now.Add(time.Minute)
+	}
+	stats, err = newEvaluator().RunOnce(ctx)
+	if err != nil || len(channels.sent) != 4 || stats.ChannelFiresRetried != 1 {
+		t.Fatalf("the deferred trigger should be delivered: stats=%+v attempts=%d err=%v", stats, len(channels.sent), err)
 	}
 	resolved, fired := channels.sent[2].msg, channels.sent[3].msg
 	if resolved.Event != alertchannels.EventResolve || fired.Event != alertchannels.EventFire ||

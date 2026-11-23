@@ -55378,6 +55378,46 @@ func (q *Queries) ListOutboundBindingProbeSnapshots(ctx context.Context, db DBTX
 	return items, nil
 }
 
+const listPagerDutyObservationStandDownChannels = `-- name: ListPagerDutyObservationStandDownChannels :many
+SELECT c.id, c.account_id, c.name, c.kind, c.target_sealed, c.target_hint, c.pagerduty_region, c.email, c.last_delivered_at, c.last_error, c.last_error_at, c.created_at, c.updated_at FROM alert_channel_stand_downs s
+  JOIN notification_channels c ON c.id = s.channel_id
+ WHERE s.rule_id = $1::uuid AND s.observation_transition AND c.kind = 'pagerduty'
+`
+
+func (q *Queries) ListPagerDutyObservationStandDownChannels(ctx context.Context, db DBTX, ruleID pgtype.UUID) ([]NotificationChannel, error) {
+	rows, err := db.Query(ctx, listPagerDutyObservationStandDownChannels, ruleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []NotificationChannel{}
+	for rows.Next() {
+		var i NotificationChannel
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.Name,
+			&i.Kind,
+			&i.TargetSealed,
+			&i.TargetHint,
+			&i.PagerdutyRegion,
+			&i.Email,
+			&i.LastDeliveredAt,
+			&i.LastError,
+			&i.LastErrorAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPendingAlertRollbacks = `-- name: ListPendingAlertRollbacks :many
 SELECT receipt FROM alert_rollback_actions WHERE status IN ('pending','blocked') ORDER BY updated_at,fire_id LIMIT $1
 `
@@ -83679,8 +83719,13 @@ WITH live AS (
 INSERT INTO alert_deferred_fires (delivery_id, channel_id, webhook_url, channel_only, next_attempt_at)
 SELECT live.id, b.channel_id, '', live.webhook_url = '', live.fired_at
   FROM live JOIN alert_rule_channels b ON b.rule_id = live.rule_id
-  JOIN alert_channel_stand_downs s ON s.rule_id = b.rule_id AND s.channel_id = b.channel_id
- WHERE s.observation_transition
+  JOIN notification_channels target ON target.id = b.channel_id
+ WHERE EXISTS (
+    SELECT 1 FROM alert_channel_stand_downs s JOIN notification_channels old ON old.id = s.channel_id
+     WHERE s.rule_id = b.rule_id AND s.observation_transition
+       AND (s.channel_id = b.channel_id OR
+            (target.kind = 'pagerduty' AND old.kind = 'pagerduty' AND target.pagerduty_region = old.pagerduty_region))
+ )
 UNION ALL
 SELECT live.id, NULL::uuid, live.webhook_url, false, live.fired_at FROM live
  WHERE live.webhook_url <> '' AND EXISTS (
@@ -83688,7 +83733,8 @@ SELECT live.id, NULL::uuid, live.webhook_url, false, live.fired_at FROM live
  )
 `
 
-// Hold only the destinations that still owe a terminal event.
+// Hold exact channel bindings and possible PagerDuty aliases. Meterd can
+// compare the sealed routing keys before releasing an alias.
 func (q *Queries) QueueDeferredAlertFires(ctx context.Context, db DBTX, deliveryID pgtype.UUID) error {
 	_, err := db.Exec(ctx, queueDeferredAlertFires, deliveryID)
 	return err

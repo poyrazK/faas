@@ -2,7 +2,7 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 
-CREATE TABLE alert_deferred_fires (
+CREATE TABLE IF NOT EXISTS alert_deferred_fires (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     delivery_id uuid NOT NULL REFERENCES alert_deliveries(id) ON DELETE CASCADE,
     channel_id uuid,
@@ -12,13 +12,13 @@ CREATE TABLE alert_deferred_fires (
     next_attempt_at timestamptz NOT NULL,
     CHECK ((channel_id IS NOT NULL) <> (webhook_url <> ''))
 );
-CREATE INDEX alert_deferred_fires_delivery_idx ON alert_deferred_fires (delivery_id);
-CREATE INDEX alert_deferred_fires_due_idx ON alert_deferred_fires (next_attempt_at);
+CREATE INDEX IF NOT EXISTS alert_deferred_fires_delivery_idx ON alert_deferred_fires (delivery_id);
+CREATE INDEX IF NOT EXISTS alert_deferred_fires_due_idx ON alert_deferred_fires (next_attempt_at);
 
 -- A meterd that predates environment scoping uses the same delivery claim
 -- insert. Close that boundary for old binaries and for stale live snapshots.
 -- +goose StatementBegin
-CREATE FUNCTION guard_live_alert_delivery_scope() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_live_alert_delivery_scope() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
     rule_scope text;
     observing boolean;
@@ -36,14 +36,14 @@ END
 $$;
 -- +goose StatementEnd
 
-CREATE TRIGGER alert_deliveries_live_scope
+CREATE OR REPLACE TRIGGER alert_deliveries_live_scope
     BEFORE INSERT ON alert_deliveries
     FOR EACH ROW EXECUTE FUNCTION guard_live_alert_delivery_scope();
 
 -- An older meterd can also mistake app-wide recovery for scoped recovery.
 -- The new state writers opt in for the duration of their own transaction.
 -- +goose StatementBegin
-CREATE FUNCTION guard_scoped_alert_rule_state() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_scoped_alert_rule_state() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF OLD.environment_scope <> '' AND NEW.observe_only = OLD.observe_only
        AND NEW.state IS DISTINCT FROM OLD.state
@@ -55,7 +55,7 @@ END
 $$;
 -- +goose StatementEnd
 
-CREATE TRIGGER alert_rules_scoped_state
+CREATE OR REPLACE TRIGGER alert_rules_scoped_state
     BEFORE UPDATE OF state ON alert_rules
     FOR EACH ROW EXECUTE FUNCTION guard_scoped_alert_rule_state();
 

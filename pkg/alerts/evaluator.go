@@ -878,11 +878,11 @@ func (e *Evaluator) deliverAlert(ctx context.Context, rule state.AlertRule, deli
 	// transport so an unresponsive receiver cannot hold it up.
 	e.runAction(ctx, rule, deliveryID, observed, now, stats)
 	e.send(ctx, stats, func(stats *Stats) {
-		e.sendAlertWebhook(ctx, rule, deliveryID, observed, payload, now, stats)
+		e.sendAlertWebhook(ctx, ctx, rule, deliveryID, observed, payload, now, stats)
 	})
 }
 
-func (e *Evaluator) sendAlertWebhook(ctx context.Context, rule state.AlertRule, deliveryID string, observed float64, payloadMap map[string]any, now time.Time, stats *Stats) bool {
+func (e *Evaluator) sendAlertWebhook(ctx, sendCtx context.Context, rule state.AlertRule, deliveryID string, observed float64, payloadMap map[string]any, now time.Time, stats *Stats) bool {
 	// Unseal the webhook secret. A nil identity or a namespace
 	// mismatch is a hard skip — we never dispatch without a valid
 	// signature, and we never re-open a future-namespace blob.
@@ -932,10 +932,13 @@ func (e *Evaluator) sendAlertWebhook(ctx context.Context, rule state.AlertRule, 
 		}
 	}
 
-	dctx, cancel := context.WithTimeout(ctx, api.AlertWebhookBudget)
+	dctx, cancel := context.WithTimeout(sendCtx, api.AlertWebhookBudget)
 	result := e.dispatch.Dispatch(dctx, webhookout.Target{URL: rule.WebhookURL, Signer: e.newSigner(plaintext)}, evt)
 	cancel()
-	return e.recordResult(ctx, rule, deliveryID, observed, result, now, stats) == nil
+	// A timed-out transport still leaves a delivery outcome to persist.
+	writeCtx, cancelWrite := context.WithTimeout(ctx, alertDeliveryWriteBudget)
+	defer cancelWrite()
+	return e.recordResult(writeCtx, rule, deliveryID, observed, result, now, stats) == nil
 }
 
 // openIdentities returns the host identities that open webhook secrets,

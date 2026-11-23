@@ -151,3 +151,64 @@ func TestObserveOnlyWebhookResolveRetryDoesNotHoldOtherAccounts(t *testing.T) {
 		}
 	})
 }
+
+type contextAwareDeliveryStore struct {
+	MemStore *state.MemStore
+}
+
+func (s contextAwareDeliveryStore) UpdateAlertDeliveryStatus(ctx context.Context, id string, status state.AlertDeliveryStatus, attempts, code int, detail string, deliveredAt *time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.MemStore.UpdateAlertDeliveryStatus(ctx, id, status, attempts, code, detail, deliveredAt)
+}
+
+func TestObserveOnlySettlesTimedOutDeferredWebhook(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		base := state.NewMemStore()
+		rule, ident, _ := seedRule(t, base, state.AlertMetricRequestCount, state.AlertAboveBaseline, 3)
+		rule = updateHandoffRule(t, base, rule.ID, state.UpdateAlertRuleParams{NotifyResolved: new(true)})
+		now := rule.UpdatedAt.Add(time.Minute)
+		tickNumber, timeouts := 0, 0
+		dispatch := handoffDispatchFunc(func(ctx context.Context, _ webhookout.Target, event webhookout.Event) webhookout.Result {
+			if tickNumber == 1 && event.Payload["event"] == "alert.resolved" {
+				return webhookout.Result{StatusCode: 503, Err: errors.New("temporarily unavailable")}
+			}
+			if tickNumber >= 2 && event.Payload["event"] == "alert.fired" {
+				timeouts++
+				<-ctx.Done()
+				time.Sleep(time.Nanosecond) // Both the batch and the transport deadline have elapsed.
+				return webhookout.Result{Err: ctx.Err()}
+			}
+			return webhookout.Result{StatusCode: 200}
+		})
+		ev := alerts.NewEvaluator(alerts.EvaluatorOptions{
+			Store:      statetest.NewMem(contextAwareDeliveryStore{MemStore: base}),
+			PromQL:     &anomalyProm{currentSamples: 400, pastSamples: 100, trafficDays: 7},
+			Identity:   func() *age.X25519Identity { return ident },
+			Dispatcher: dispatch, Now: func() time.Time { return now }, Log: discardLog(),
+		})
+		tick := func() {
+			t.Helper()
+			if _, err := ev.RunOnce(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			tickNumber++
+			now = now.Add(time.Minute)
+		}
+		tick()
+		updateHandoffRule(t, base, rule.ID, state.UpdateAlertRuleParams{ObserveOnly: new(true)})
+		updateHandoffRule(t, base, rule.ID, state.UpdateAlertRuleParams{ObserveOnly: new(false)})
+		tick()
+		tick()
+		tick()
+
+		deliveries, err := base.ListAlertDeliveriesForRule(t.Context(), rule.ID, 2, false)
+		if err != nil || len(deliveries) != 2 || deliveries[0].Status != state.AlertDeliveryFailed {
+			t.Fatalf("the timed-out delivery should be settled: deliveries=%+v err=%v", deliveries, err)
+		}
+		if timeouts != 1 {
+			t.Fatalf("the same transport timeout was attempted %d times", timeouts)
+		}
+	})
+}

@@ -49,6 +49,9 @@ type AlertChannelStandDownStore interface {
 	// AlertChannelStandDownPending reports a terminal notice from entering
 	// Observe only. A new fire may supersede ordinary queued notices.
 	AlertChannelStandDownPending(ctx context.Context, ruleID, channelID string, supersede bool) (bool, error)
+	// ListPagerDutyObservationStandDownChannels includes unbound channels
+	// that still owe a resolve and may share a binding's routing key.
+	ListPagerDutyObservationStandDownChannels(ctx context.Context, ruleID string) ([]NotificationChannel, error)
 	// ClearAlertChannelStandDowns drops ordinary notices for a rule.
 	ClearAlertChannelStandDowns(ctx context.Context, ruleID string) error
 	// ListStrandedAlertRules lists up to maxRows rules that are not ok but
@@ -125,6 +128,22 @@ func (s *PgStore) AlertChannelStandDownPending(ctx context.Context, ruleID, chan
 	return sqlc.New().AlertChannelStandDownPending(ctx, s.pool, sqlc.AlertChannelStandDownPendingParams{
 		RuleID: rule, ChannelID: channel, Supersede: supersede,
 	})
+}
+
+func (s *PgStore) ListPagerDutyObservationStandDownChannels(ctx context.Context, ruleID string) ([]NotificationChannel, error) {
+	rule, err := alertPgUUID(ruleID)
+	if err != nil || !rule.Valid {
+		return nil, ErrInvalidArgument
+	}
+	rows, err := sqlc.New().ListPagerDutyObservationStandDownChannels(ctx, s.pool, rule)
+	if err != nil {
+		return nil, fmt.Errorf("state: list PagerDuty stand-down destinations: %w", err)
+	}
+	out := make([]NotificationChannel, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, channelFromRow(row))
+	}
+	return out, nil
 }
 
 func (s *PgStore) ClearAlertChannelStandDowns(ctx context.Context, ruleID string) error {
@@ -301,6 +320,22 @@ func (m *MemStore) AlertChannelStandDownPending(_ context.Context, ruleID, chann
 		delete(m.alertChannelStandDowns, key)
 	}
 	return false, nil
+}
+
+func (m *MemStore) ListPagerDutyObservationStandDownChannels(_ context.Context, ruleID string) ([]NotificationChannel, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.pagerDutyObservationStandDownChannelsLocked(m.alertRules[ruleID]), nil
+}
+
+func (m *MemStore) pagerDutyObservationStandDownChannelsLocked(rule AlertRule) []NotificationChannel {
+	var channels []NotificationChannel
+	for _, ch := range m.notificationChannels[rule.AccountID] {
+		if ch.Kind == "pagerduty" && m.alertChannelStandDowns[alertChannelRetryKey{rule.ID, ch.ID}].observationTransition {
+			channels = append(channels, ch)
+		}
+	}
+	return channels
 }
 
 func (m *MemStore) ClearAlertChannelStandDowns(_ context.Context, ruleID string) error {

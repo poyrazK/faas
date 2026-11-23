@@ -4410,6 +4410,7 @@ type Querier interface {
 	// ADR-421: keyset paging advances even when a candidate cannot fit.
 	ListOrphanedAppsPage(ctx context.Context, db DBTX, arg ListOrphanedAppsPageParams) ([]ListOrphanedAppsPageRow, error)
 	ListOutboundBindingProbeSnapshots(ctx context.Context, db DBTX, arg ListOutboundBindingProbeSnapshotsParams) ([]ListOutboundBindingProbeSnapshotsRow, error)
+	ListPagerDutyObservationStandDownChannels(ctx context.Context, db DBTX, ruleID pgtype.UUID) ([]NotificationChannel, error)
 	// Undecided requests of agents the account connected, or of agents acting in
 	// the organizations given (those the account owns or administers).
 	ListPendingAgentApprovals(ctx context.Context, db DBTX, arg ListPendingAgentApprovalsParams) ([]AgentApprovalRequest, error)
@@ -6550,7 +6551,8 @@ type Querier interface {
 	QueueConsumerReviveBinding(ctx context.Context, db DBTX, arg QueueConsumerReviveBindingParams) (QueueBinding, error)
 	QueueConsumerUpdateBinding(ctx context.Context, db DBTX, arg QueueConsumerUpdateBindingParams) (QueueBinding, error)
 	QueueConsumerUpdateTrigger(ctx context.Context, db DBTX, arg QueueConsumerUpdateTriggerParams) (int64, error)
-	// Hold only the destinations that still owe a terminal event.
+	// Hold exact channel bindings and possible PagerDuty aliases. Meterd can
+	// compare the sealed routing keys before releasing an alias.
 	QueueDeferredAlertFires(ctx context.Context, db DBTX, deliveryID pgtype.UUID) error
 	// QueueStateForBinding's depth up to row_limit per branch: the binding's own
 	// messages, then legacy unassigned work under its name. Each branch reads an

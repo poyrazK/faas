@@ -1,7 +1,7 @@
 -- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
-CREATE TABLE alert_observation_checks (
+CREATE TABLE IF NOT EXISTS alert_observation_checks (
     rule_id uuid NOT NULL REFERENCES alert_rules(id) ON DELETE CASCADE,
     evaluated_at timestamptz NOT NULL,
     skip_reason text NOT NULL,

@@ -3,6 +3,7 @@ package state
 import (
 	"bytes"
 	"context"
+	"slices"
 	"sort"
 	"time"
 
@@ -133,9 +134,17 @@ func (m *MemStore) queueDeferredAlertFiresLocked(rule AlertRule, delivery AlertD
 			next: delivery.FiredAt, deliveryKey: delivery.IdempotencyKey,
 		}
 	}
-	for _, channelID := range m.alertRuleChannels[rule.ID] {
-		if m.alertChannelStandDowns[alertChannelRetryKey{rule.ID, channelID}].observationTransition {
-			add(channelID, "")
+	standDowns := m.pagerDutyObservationStandDownChannelsLocked(rule)
+	bound := m.alertRuleChannels[rule.ID]
+	for _, ch := range m.notificationChannels[rule.AccountID] {
+		if !slices.Contains(bound, ch.ID) {
+			continue
+		}
+		alias := ch.Kind == "pagerduty" && slices.ContainsFunc(standDowns, func(older NotificationChannel) bool {
+			return older.PagerDutyRegion == ch.PagerDutyRegion
+		})
+		if alias || m.alertChannelStandDowns[alertChannelRetryKey{rule.ID, ch.ID}].observationTransition {
+			add(ch.ID, "")
 		}
 	}
 	if rule.WebhookURL != "" && m.alertWebhookStandDownPendingLocked(rule.ID, rule.WebhookURL) {

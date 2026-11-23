@@ -22371,8 +22371,14 @@ SELECT EXISTS (
      WHERE rule_id = sqlc.arg(rule_id)::uuid AND channel_id = sqlc.arg(channel_id)::uuid AND observation_transition
 )::boolean AS pending;
 
+-- name: ListPagerDutyObservationStandDownChannels :many
+SELECT c.* FROM alert_channel_stand_downs s
+  JOIN notification_channels c ON c.id = s.channel_id
+ WHERE s.rule_id = sqlc.arg(rule_id)::uuid AND s.observation_transition AND c.kind = 'pagerduty';
+
 -- name: QueueDeferredAlertFires :exec
--- Hold only the destinations that still owe a terminal event.
+-- Hold exact channel bindings and possible PagerDuty aliases. Meterd can
+-- compare the sealed routing keys before releasing an alias.
 WITH live AS (
     SELECT d.id, d.fired_at, r.id AS rule_id, r.webhook_url
       FROM alert_deliveries d JOIN alert_rules r ON r.id = d.rule_id
@@ -22381,8 +22387,13 @@ WITH live AS (
 INSERT INTO alert_deferred_fires (delivery_id, channel_id, webhook_url, channel_only, next_attempt_at)
 SELECT live.id, b.channel_id, '', live.webhook_url = '', live.fired_at
   FROM live JOIN alert_rule_channels b ON b.rule_id = live.rule_id
-  JOIN alert_channel_stand_downs s ON s.rule_id = b.rule_id AND s.channel_id = b.channel_id
- WHERE s.observation_transition
+  JOIN notification_channels target ON target.id = b.channel_id
+ WHERE EXISTS (
+    SELECT 1 FROM alert_channel_stand_downs s JOIN notification_channels old ON old.id = s.channel_id
+     WHERE s.rule_id = b.rule_id AND s.observation_transition
+       AND (s.channel_id = b.channel_id OR
+            (target.kind = 'pagerduty' AND old.kind = 'pagerduty' AND target.pagerduty_region = old.pagerduty_region))
+ )
 UNION ALL
 SELECT live.id, NULL::uuid, live.webhook_url, false, live.fired_at FROM live
  WHERE live.webhook_url <> '' AND EXISTS (
