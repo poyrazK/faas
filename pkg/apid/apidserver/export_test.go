@@ -2702,3 +2702,9 @@ var AppHasBucketsProblem = appHasBucketsProblem
 func DevPostgresBindingsState(states []managedpostgres.BindingState) string {
 	return devPostgresBindingsState(states)
 }
+
+// AvailabilityQueryExcluding exposes availabilityQueryExcluding.
+func AvailabilityQueryExcluding(appIDs []string) string { return availabilityQueryExcluding(appIDs) }
+
+// StatusAPIAvailabilityQuery exposes statusAPIAvailabilityQuery.
+const StatusAPIAvailabilityQuery = statusAPIAvailabilityQuery

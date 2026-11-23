@@ -128,13 +128,12 @@ def sync_detailed(
 ) -> Response[ManagedRealtimePublishResponse | Problem]:
     """Publish a message to live or resumable channel subscribers.
 
-     delivery=live (the default) fans out to live raw-frame subscribers. delivery=retained is preview-
-    only and requires FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on the API; it accepts at most 4096
-    decoded bytes and requires an Idempotency-Key. Retained delivery commits the message to the ordered
-    channel log before fan-out and returns its sequence. V2 subscribers read the committed log in
-    sequence; a best-effort wake reduces latency while bounded polling recovers missed wakes. The
-    retained log remains authoritative if live fan-out is incomplete. The resume protocol separately
-    requires FAAS_REALTIME_RESUME_PREVIEW_ENABLED=1 on the realtime service.
+     delivery=live (the default) fans out to live raw-frame subscribers. delivery=retained is part of the
+    realtime preview, released per account; it accepts at most 4096 decoded bytes and requires an
+    Idempotency-Key. Retained delivery commits the message to the ordered channel log before fan-out and
+    returns its sequence. Resumable subscribers read the committed log in sequence; a best-effort wake
+    reduces latency while bounded polling recovers missed wakes. The retained log remains authoritative
+    if live fan-out is incomplete.
     A supplied Idempotency-Key binds the publish to delivery mode, decoded payload and binary flag for
     24 hours. Replays return the original response and do not retry recipients that missed a partial
     publish. Reusing a key with a different mode or payload returns 409. An in-flight or uncertain
@@ -186,13 +185,12 @@ def sync(
 ) -> ManagedRealtimePublishResponse | Problem | None:
     """Publish a message to live or resumable channel subscribers.
 
-     delivery=live (the default) fans out to live raw-frame subscribers. delivery=retained is preview-
-    only and requires FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on the API; it accepts at most 4096
-    decoded bytes and requires an Idempotency-Key. Retained delivery commits the message to the ordered
-    channel log before fan-out and returns its sequence. V2 subscribers read the committed log in
-    sequence; a best-effort wake reduces latency while bounded polling recovers missed wakes. The
-    retained log remains authoritative if live fan-out is incomplete. The resume protocol separately
-    requires FAAS_REALTIME_RESUME_PREVIEW_ENABLED=1 on the realtime service.
+     delivery=live (the default) fans out to live raw-frame subscribers. delivery=retained is part of the
+    realtime preview, released per account; it accepts at most 4096 decoded bytes and requires an
+    Idempotency-Key. Retained delivery commits the message to the ordered channel log before fan-out and
+    returns its sequence. Resumable subscribers read the committed log in sequence; a best-effort wake
+    reduces latency while bounded polling recovers missed wakes. The retained log remains authoritative
+    if live fan-out is incomplete.
     A supplied Idempotency-Key binds the publish to delivery mode, decoded payload and binary flag for
     24 hours. Replays return the original response and do not retry recipients that missed a partial
     publish. Reusing a key with a different mode or payload returns 409. An in-flight or uncertain
@@ -239,13 +237,12 @@ async def asyncio_detailed(
 ) -> Response[ManagedRealtimePublishResponse | Problem]:
     """Publish a message to live or resumable channel subscribers.
 
-     delivery=live (the default) fans out to live raw-frame subscribers. delivery=retained is preview-
-    only and requires FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on the API; it accepts at most 4096
-    decoded bytes and requires an Idempotency-Key. Retained delivery commits the message to the ordered
-    channel log before fan-out and returns its sequence. V2 subscribers read the committed log in
-    sequence; a best-effort wake reduces latency while bounded polling recovers missed wakes. The
-    retained log remains authoritative if live fan-out is incomplete. The resume protocol separately
-    requires FAAS_REALTIME_RESUME_PREVIEW_ENABLED=1 on the realtime service.
+     delivery=live (the default) fans out to live raw-frame subscribers. delivery=retained is part of the
+    realtime preview, released per account; it accepts at most 4096 decoded bytes and requires an
+    Idempotency-Key. Retained delivery commits the message to the ordered channel log before fan-out and
+    returns its sequence. Resumable subscribers read the committed log in sequence; a best-effort wake
+    reduces latency while bounded polling recovers missed wakes. The retained log remains authoritative
+    if live fan-out is incomplete.
     A supplied Idempotency-Key binds the publish to delivery mode, decoded payload and binary flag for
     24 hours. Replays return the original response and do not retry recipients that missed a partial
     publish. Reusing a key with a different mode or payload returns 409. An in-flight or uncertain
@@ -295,13 +292,12 @@ async def asyncio(
 ) -> ManagedRealtimePublishResponse | Problem | None:
     """Publish a message to live or resumable channel subscribers.
 
-     delivery=live (the default) fans out to live raw-frame subscribers. delivery=retained is preview-
-    only and requires FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on the API; it accepts at most 4096
-    decoded bytes and requires an Idempotency-Key. Retained delivery commits the message to the ordered
-    channel log before fan-out and returns its sequence. V2 subscribers read the committed log in
-    sequence; a best-effort wake reduces latency while bounded polling recovers missed wakes. The
-    retained log remains authoritative if live fan-out is incomplete. The resume protocol separately
-    requires FAAS_REALTIME_RESUME_PREVIEW_ENABLED=1 on the realtime service.
+     delivery=live (the default) fans out to live raw-frame subscribers. delivery=retained is part of the
+    realtime preview, released per account; it accepts at most 4096 decoded bytes and requires an
+    Idempotency-Key. Retained delivery commits the message to the ordered channel log before fan-out and
+    returns its sequence. Resumable subscribers read the committed log in sequence; a best-effort wake
+    reduces latency while bounded polling recovers missed wakes. The retained log remains authoritative
+    if live fan-out is incomplete.
     A supplied Idempotency-Key binds the publish to delivery mode, decoded payload and binary flag for
     24 hours. Replays return the original response and do not retry recipients that missed a partial
     publish. Reusing a key with a different mode or payload returns 409. An in-flight or uncertain
