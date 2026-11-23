@@ -180,6 +180,24 @@ func (c *Client) request(ctx context.Context, method string, params map[string]a
 	if err != nil {
 		return Exchange{}, fmt.Errorf("send MCP request: %w", err)
 	}
+	if retryableTokenRejection(res) {
+		// The server refused before handling the request, so resending is
+		// safe even for tools/call. One retry only: a token the server
+		// really rejects still fails, just tokenRejectionRetryDelay later.
+		_ = res.Body.Close()
+		retry := req.Clone(ctx)
+		if retry.Body, err = req.GetBody(); err != nil {
+			return Exchange{}, fmt.Errorf("create MCP request: %w", err)
+		}
+		select {
+		case <-time.After(tokenRejectionRetryDelay):
+		case <-ctx.Done():
+			return Exchange{}, fmt.Errorf("send MCP request: %w", ctx.Err())
+		}
+		if res, err = c.HTTP.Do(retry); err != nil {
+			return Exchange{}, fmt.Errorf("send MCP request: %w", err)
+		}
+	}
 	defer func() { _ = res.Body.Close() }()
 	x := Exchange{WakeTier: res.Header.Get(wire.WakeHeader), SessionID: res.Header.Get("Mcp-Session-Id"), StreamingStatus: api.StreamingStatus(res.Header.Get(api.StreamingStatusHeader)), HTTPStatus: res.StatusCode, AuthChallenge: res.Header.Get("WWW-Authenticate")}
 	if res.StatusCode < 200 || res.StatusCode > 299 {
