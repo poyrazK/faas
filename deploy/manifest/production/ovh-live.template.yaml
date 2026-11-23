@@ -27,7 +27,9 @@
 #   reboots on these servers, so each host pins its data disk by
 #   /dev/disk/by-id below.
 # - /etc/netplan/62-peer-via-gw.yaml on bhs-2 and bhs-3 (added 2026-11-23):
-#   routes 15.235.50.0/25 and 15.235.50.128/25 via 15.235.50.254 on eno1np0.
+#   routes 15.235.50.0/25 and 15.235.50.128/25 via 15.235.50.254 (on-link)
+#   on eno1np0. Any compute node added to this /24 later (dynamic_compute)
+#   needs the same file; bhs-1 (149.56.23.0/24) has no peer and needs none.
 #   The two servers share the DHCP /24, but OVH answers ARP between them
 #   only sporadically (the gateway's proxy-ARP), so the on-link /24
 #   black-holed replies to the other node's primary address. App egress is
