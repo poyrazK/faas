@@ -161,6 +161,7 @@ import type { PublishIssueSourceMapsRequest } from '../models/PublishIssueSource
 import type { PutIssueSavedViewRequest } from '../models/PutIssueSavedViewRequest.js';
 import type { PutIssueTeamRequest } from '../models/PutIssueTeamRequest.js';
 import type { PutIssueTrackerLinkRequest } from '../models/PutIssueTrackerLinkRequest.js';
+import type { PutVerificationContractRequest } from '../models/PutVerificationContractRequest.js';
 import type { QueueBindingCanary } from '../models/QueueBindingCanary.js';
 import type { RenameAppRequest } from '../models/RenameAppRequest.js';
 import type { RequestAnalyticsResponse } from '../models/RequestAnalyticsResponse.js';
@@ -240,6 +241,7 @@ import type { UpdateNativeLinearIssueTrackerStatusRequest } from '../models/Upda
 import type { UpdateSyntheticCheckRequest } from '../models/UpdateSyntheticCheckRequest.js';
 import type { UpdateTCPListenerRequest } from '../models/UpdateTCPListenerRequest.js';
 import type { UpdateUDPListenerRequest } from '../models/UpdateUDPListenerRequest.js';
+import type { VerificationContract } from '../models/VerificationContract.js';
 import type { WakeTimelineResponse } from '../models/WakeTimelineResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -9793,6 +9795,117 @@ export class AppsService {
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
         when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read an app's stored verification contract.
+   * Returns the gregale.verify.yaml contract (as JSON) that production deployments of the app are checked against before they take traffic. 404 when no contract is stored or the verification-contracts capability is not released to the account. Requires app read access.
+   * @returns VerificationContract The app's current verification contract.
+   * @throws ApiError
+   */
+  public static getVerificationContract({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<VerificationContract> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/verification-contract',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Store or replace an app's verification contract.
+   * Validates and stores the contract. Every later production deployment runs its HTTP, MCP and read-only SQL checks against the candidate; a failing required check blocks promotion. expected_revision makes the write conditional: 0 creates only, a positive revision replaces only that revision, and a mismatch answers 409. Requires deploy write access.
+   * @returns VerificationContract The verification contract after the write.
+   * @throws ApiError
+   */
+  public static setVerificationContract({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: PutVerificationContractRequest,
+  }): CancelablePromise<VerificationContract> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/verification-contract',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Delete an app's verification contract.
+   * Removes the stored contract; later deployments promote on the platform smoke alone. expected_revision makes the delete conditional and a mismatch answers 409. Requires deploy write access.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteVerificationContract({
+    slug,
+    expectedRevision,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Delete only if the stored contract is at this revision.
+     */
+    expectedRevision?: number,
+  }): CancelablePromise<void> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/verification-contract',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'expected_revision': expectedRevision,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
