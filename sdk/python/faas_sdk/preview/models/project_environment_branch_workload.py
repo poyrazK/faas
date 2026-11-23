@@ -24,6 +24,9 @@ class ProjectEnvironmentBranchWorkload:
     """The workload's stable address in the branch, which a reset keeps. Its first request starts it."""
     environment_url: str | Unset = UNSET
     """The address of this incarnation of the branch; a reset gives it a new one."""
+    error: str | Unset = UNSET
+    """Why the workload is not serving: its branch deployment failed, or has not gone live five minutes after the
+    branch's data was ready."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -39,6 +42,8 @@ class ProjectEnvironmentBranchWorkload:
 
         environment_url = self.environment_url
 
+        error = self.error
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -53,6 +58,8 @@ class ProjectEnvironmentBranchWorkload:
             field_dict["url"] = url
         if environment_url is not UNSET:
             field_dict["environment_url"] = environment_url
+        if error is not UNSET:
+            field_dict["error"] = error
 
         return field_dict
 
@@ -71,6 +78,8 @@ class ProjectEnvironmentBranchWorkload:
 
         environment_url = d.pop("environment_url", UNSET)
 
+        error = d.pop("error", UNSET)
+
         project_environment_branch_workload = cls(
             workload=workload,
             deployment_id=deployment_id,
@@ -78,6 +87,7 @@ class ProjectEnvironmentBranchWorkload:
             status=status,
             url=url,
             environment_url=environment_url,
+            error=error,
         )
 
         project_environment_branch_workload.additional_properties = d
