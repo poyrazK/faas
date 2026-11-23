@@ -170,6 +170,9 @@ echo "now=$(date +%s)"`)
 	if out, _ := rootExec(t, m, instance, sandboxID, "ip -4 -o addr show eth0; ping -c 2 -W 1 "+netns.GuestGateway+" >/dev/null 2>&1 && echo answered"); !strings.Contains(out, netns.GuestIP+"/") || !strings.Contains(out, "answered") {
 		t.Fatalf("no network after the resume:\n%s", out)
 	}
+	if os.Getenv("FAAS_TEST_SANDBOX_BENCH") == "1" {
+		sandboxWriteBench(t, m, instance, sandboxID)
+	}
 	if os.Getenv("FAAS_TEST_SANDBOX_DIFF") == "1" {
 		sandboxDiffRounds(t, m, vmm, req)
 	}
@@ -237,6 +240,25 @@ func sandboxDiffRounds(t *testing.T, m *Manager, vmm *JailerVMM, req SandboxWake
 				t.Fatalf("round %d: %s changed across the diff capture:\n%s", round, file, out)
 			}
 		}
+	}
+}
+
+// sandboxWriteBench times guest memory writes in the restored session, the
+// cost KVM dirty page tracking adds (ADR-20261122132055): pass 1 writes
+// 384 MiB of tmpfs pages the restore never touched, passes 2 and 3 rewrite
+// the same pages. Compare runs with FAAS_TEST_SANDBOX_DIFF=1 and without.
+func sandboxWriteBench(t *testing.T, m *Manager, instance, sandboxID string) {
+	t.Helper()
+	for pass := 1; pass <= 3; pass++ {
+		begun := time.Now()
+		out, code := userExec(t, m, instance, sandboxID, "dd if=/dev/zero of=/tmp/bench bs=1M count=384 conv=notrunc 2>&1 | tail -1")
+		if code != 0 {
+			t.Fatalf("bench pass %d: %q exit %d", pass, out, code)
+		}
+		t.Logf("bench pass %d: 384 MiB guest write in %d ms", pass, time.Since(begun).Milliseconds())
+	}
+	if out, code := userExec(t, m, instance, sandboxID, "rm -f /tmp/bench"); code != 0 {
+		t.Fatalf("bench cleanup: %q exit %d", out, code)
 	}
 }
 
