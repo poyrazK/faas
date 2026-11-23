@@ -4,14 +4,21 @@ These are the same limits the API enforces: this page is generated from them. Pr
 
 ## At a glance
 
-What each plan gets: how many apps you can deploy, how much RAM each instance has, and the rest of its limits. [What each limit means](#what-each-limit-means) explains every column.
+Compare monthly prices and limits across plans. See [what each limit means](#what-each-limit-means) for details.
 
-| Plan | Monthly | Deployed apps | PR preview environments | Developer apps | Concurrent instances | RAM / app | Included GB-RAM-hours | App egress / month | App layer | Idle timeout | Max request timeout |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **Free** | $0 | 1 | 1 | 1 | 1 | 256 MB | 20 | 10 GiB | 256 MB | 1m | 30s |
-| **Hobby** | $10 | 5 | 2 | 2 | 2 | 512 MB | 200 | 100 GiB | 512 MB | 1m | 1m |
-| **Pro** | $30 | 25 | 5 | 5 | 5 | 1024 MB | 1000 | 500 GiB | 1024 MB | 5m | 5m |
-| **Scale** | $99 | 100 | 20 | 10 | 20 | 2048 MB | 3000 | 2,000 GiB | 2048 MB | 10m | 15m |
+| Price and limits | Free | Hobby | Pro | Scale |
+|---|---:|---:|---:|---:|
+| **Monthly price** | $0 | $10 | $30 | $99 |
+| **Deployed apps** | 1 | 5 | 25 | 100 |
+| **PR preview environments** | 1 | 2 | 5 | 20 |
+| **Developer apps** | 1 | 2 | 5 | 10 |
+| **Concurrent instances** | 1 | 2 | 5 | 20 |
+| **RAM per app (MB)** | 256 | 512 | 1,024 | 2,048 |
+| **Included GB-RAM-hours** | 20 | 200 | 1,000 | 3,000 |
+| **App egress per month (GiB)** | 10 | 100 | 500 | 2,000 |
+| **App layer (MB)** | 256 | 512 | 1,024 | 2,048 |
+| **Idle timeout** | 1m | 1m | 5m | 10m |
+| **Max request timeout** | 30s | 1m | 5m | 15m |
 
 ## What each limit means
 

@@ -10,21 +10,37 @@ import (
 
 func TestRenderUsesEveryPlanAndCanonicalValues(t *testing.T) {
 	out := render()
-	for _, plan := range api.Plans {
-		if !strings.Contains(out, "**"+titlePlan(plan)+"**") {
-			t.Fatalf("render missing plan %q:\n%s", plan, out)
+	_, comparison, _ := strings.Cut(out, "| Price and limits |")
+	comparison, _, _ = strings.Cut(comparison, "\n\n")
+	lines := strings.Split(comparison, "\n")
+	if len(lines) != 13 {
+		t.Fatalf("expected one header, one separator and eleven comparison rows, got %d lines", len(lines))
+	}
+	header := strings.Split(lines[0], "|")
+	if len(header) != len(api.Plans)+1 {
+		t.Fatalf("unexpected plan columns: %s", lines[0])
+	}
+	for col, plan := range api.Plans {
+		if got := strings.TrimSpace(header[col]); got != titlePlan(plan) {
+			t.Errorf("column %d: got plan %q, want %q", col, got, titlePlan(plan))
 		}
 		limits, ok := api.LimitsFor(plan)
 		if !ok {
 			t.Fatalf("plan %q missing from limits table", plan)
 		}
-		for _, want := range []string{formatPrice(limits.PriceMillicents),
-			fmtInt(limits.DeployedApps), fmtInt(limits.DeveloperApps),
-			fmtInt(limits.MaxConcurrency),
-			fmtInt(limits.RAMMB), fmtInt(limits.IncludedGBHours),
-			fmtInt(limits.AppLayerMaxMB)} {
-			if !strings.Contains(out, want) {
-				t.Errorf("plan %q missing canonical value %q", plan, want)
+		for row, want := range []string{
+			formatPrice(limits.PriceMillicents), fmt.Sprint(limits.DeployedApps),
+			fmt.Sprint(limits.PreviewApps), fmt.Sprint(limits.DeveloperApps), fmt.Sprint(limits.MaxConcurrency),
+			formatCount(limits.RAMMB), formatCount(limits.IncludedGBHours), formatThousands(limits.MonthlyEgressGiB),
+			formatCount(limits.AppLayerMaxMB), formatDuration(limits.IdleTimeoutS),
+			formatDuration(int(limits.RequestBudgetMaxDuration().Seconds())),
+		} {
+			cells := strings.Split(lines[row+2], "|")
+			if len(cells) != len(api.Plans)+3 {
+				t.Fatalf("unexpected comparison row: %s", lines[row+2])
+			}
+			if got := strings.TrimSpace(cells[col+2]); got != want {
+				t.Errorf("%s %s: got %q, want %q", plan, strings.TrimSpace(cells[1]), got, want)
 			}
 		}
 		leaseRow := fmt.Sprintf("| **%s** | %d | %dh |", titlePlan(plan), limits.DeveloperApps, limits.DeveloperLeaseMaxHours)
@@ -71,5 +87,3 @@ func TestFormatPrice(t *testing.T) {
 		}
 	}
 }
-
-func fmtInt(v int) string { return fmt.Sprintf("%d", v) }

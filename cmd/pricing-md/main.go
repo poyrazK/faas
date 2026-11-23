@@ -33,20 +33,8 @@ func render() string {
 	b.WriteString("# Plans and pricing\n\n")
 	b.WriteString("These are the same limits the API enforces: this page is generated from them. Prices are monthly, shown in US dollars and before tax: the billing provider adds any sales tax or VAT that applies where you live at checkout. Usage beyond the included GB-RAM-hours is billed at " + formatPrice(api.OverageMillicentsPerGBHour) + " per GB-RAM-hour on paid plans.\n\n")
 	b.WriteString("## At a glance\n\n")
-	b.WriteString("What each plan gets: how many apps you can deploy, how much RAM each instance has, and the rest of its limits. [What each limit means](#what-each-limit-means) explains every column.\n\n")
-	b.WriteString("| Plan | Monthly | Deployed apps | PR preview environments | Developer apps | Concurrent instances | RAM / app | Included GB-RAM-hours | App egress / month | App layer | Idle timeout | Max request timeout |\n")
-	b.WriteString("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
-	for _, plan := range api.Plans {
-		l, ok := api.LimitsFor(plan)
-		if !ok {
-			continue
-		}
-		fmt.Fprintf(&b, "| **%s** | %s | %d | %d | %d | %d | %d MB | %d | %s GiB | %d MB | %s | %s |\n",
-			titlePlan(plan), formatPrice(l.PriceMillicents), l.DeployedApps,
-			l.PreviewApps, l.DeveloperApps, l.MaxConcurrency, l.RAMMB, l.IncludedGBHours,
-			formatThousands(l.MonthlyEgressGiB), l.AppLayerMaxMB,
-			formatDuration(l.IdleTimeoutS), formatDuration(int(l.RequestBudgetMaxDuration().Seconds())))
-	}
+	b.WriteString("Compare monthly prices and limits across plans. See [what each limit means](#what-each-limit-means) for details.\n\n")
+	renderPlanComparison(&b)
 	b.WriteString("\n## What each limit means\n\n")
 	b.WriteString("- **Deployed apps** is the maximum number of production app records on the plan. `gregale dev` environments have a separate developer-app allowance.\n")
 	b.WriteString("- **PR preview environments** is the separate limit for temporary pull-request previews: one per open pull request, however many workloads it runs. One environment runs at most as many workloads as the plan can deploy, and a closed pull request frees its environment at once. See [PR preview environments](preview-environments.md#quota).\n")
@@ -118,6 +106,44 @@ func render() string {
 	b.WriteString("Start on **Free** for a small public API or a trial. **Hobby** unlocks the paid observability, async, and data surfaces. **Pro** is the normal production tier for teams, while **Scale** raises the app, concurrency, RAM, and usage ceilings. Feature maturity and entitlement are listed in the [capability matrix](capabilities.md).\n\n")
 	b.WriteString("Plan changes are safe to preview with `gregale billing plan`; quota errors include the exact observed value, limit, and next action.\n")
 	return b.String()
+}
+
+func renderPlanComparison(b *strings.Builder) {
+	var limits []api.Limits
+	b.WriteString("| Price and limits |")
+	for _, plan := range api.Plans {
+		if l, ok := api.LimitsFor(plan); ok {
+			limits = append(limits, l)
+			fmt.Fprintf(b, " %s |", titlePlan(plan))
+		}
+	}
+	b.WriteString("\n|---|" + strings.Repeat("---:|", len(limits)) + "\n")
+
+	rows := []struct {
+		label string
+		value func(api.Limits) string
+	}{
+		{"Monthly price", func(l api.Limits) string { return formatPrice(l.PriceMillicents) }},
+		{"Deployed apps", func(l api.Limits) string { return strconv.Itoa(l.DeployedApps) }},
+		{"PR preview environments", func(l api.Limits) string { return strconv.Itoa(l.PreviewApps) }},
+		{"Developer apps", func(l api.Limits) string { return strconv.Itoa(l.DeveloperApps) }},
+		{"Concurrent instances", func(l api.Limits) string { return strconv.Itoa(l.MaxConcurrency) }},
+		{"RAM per app (MB)", func(l api.Limits) string { return formatCount(l.RAMMB) }},
+		{"Included GB-RAM-hours", func(l api.Limits) string { return formatCount(l.IncludedGBHours) }},
+		{"App egress per month (GiB)", func(l api.Limits) string { return formatThousands(l.MonthlyEgressGiB) }},
+		{"App layer (MB)", func(l api.Limits) string { return formatCount(l.AppLayerMaxMB) }},
+		{"Idle timeout", func(l api.Limits) string { return formatDuration(l.IdleTimeoutS) }},
+		{"Max request timeout", func(l api.Limits) string {
+			return formatDuration(int(l.RequestBudgetMaxDuration().Seconds()))
+		}},
+	}
+	for _, row := range rows {
+		fmt.Fprintf(b, "| **%s** |", row.label)
+		for _, l := range limits {
+			fmt.Fprintf(b, " %s |", row.value(l))
+		}
+		b.WriteByte('\n')
+	}
 }
 
 // renderObjectStorage lists each plan's included object storage, the
