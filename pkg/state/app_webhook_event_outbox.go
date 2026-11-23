@@ -36,6 +36,13 @@ type AppParkTransitionStore interface {
 	DrainDrainedAppParkTransitions(context.Context, int) (int, error)
 }
 
+// AppParkTransitionReader reports the customer park transition behind an
+// app's current park ("" when the park came from elsewhere, such as a
+// liveness park). Optional: PgStore and MemStore implement it.
+type AppParkTransitionReader interface {
+	CurrentAppParkTransitionID(context.Context, string) (string, error)
+}
+
 type AppParkTransition struct {
 	ID    string
 	AppID string
