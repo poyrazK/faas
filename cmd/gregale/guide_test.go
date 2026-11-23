@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	main "github.com/onebox-faas/faas/cmd/gregale"
 )
@@ -137,6 +138,39 @@ func TestAgentHintOnlyOnStderr(t *testing.T) {
 	restore()
 	if strings.Contains(stderr(), "Agent: run") {
 		t.Fatalf("GREGALE_NO_AGENT_HINT=1 printed the hint: %q", stderr())
+	}
+}
+
+// The pointer shows once an hour across gregale processes, not on every
+// failing command an agent runs.
+func TestAgentHintAtMostHourly(t *testing.T) {
+	for _, marker := range []string{"CLAUDECODE", "GEMINI_CLI", "CODEX_THREAD_ID", "CODEX_SANDBOX", "CURSOR_AGENT"} {
+		t.Setenv(marker, "")
+	}
+	t.Setenv("CLAUDECODE", "1")
+	t.Setenv("GREGALE_NO_AGENT_HINT", "")
+	path := filepath.Join(t.TempDir(), "gregale", "agent-hint")
+	main.SetAgentHintMarker(t, path)
+	hints := func() int {
+		main.NewAgentHintProcess()
+		main.ResetJSONOut(t)
+		_, stderr, restore := main.SwapIO(t)
+		_ = main.Run([]string{"guide", "--help"})
+		restore()
+		return strings.Count(stderr(), "Agent: run `gregale guide`")
+	}
+	if got := hints(); got != 1 {
+		t.Fatalf("first process printed the pointer %d times, want 1", got)
+	}
+	if got := hints(); got != 0 {
+		t.Fatalf("second process within the hour printed the pointer %d times, want 0", got)
+	}
+	old := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if got := hints(); got != 1 {
+		t.Fatalf("a process an hour later printed the pointer %d times, want 1", got)
 	}
 }
 
