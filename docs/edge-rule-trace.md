@@ -97,7 +97,7 @@ A scenario with a binary body uses `body_base64`:
 Unknown fields and unsupported versions are rejected. Use `--config -` to read
 the JSON from stdin. `--config` cannot be combined with individual request
 flags; edit the scenario file when changing a request. The file is read locally
-and is not uploaded. Gregale fetches the app's current rules, evaluates them
+and is not uploaded. Gregale fetches the app's (or the selected environment's) current rules, evaluates them
 locally, withholds request-body contents, and redacts credential-like header
 values from trace output.
 

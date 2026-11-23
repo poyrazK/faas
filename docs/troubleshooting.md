@@ -115,7 +115,7 @@ failure, return 503 with your own error body instead. See
 | Code | Meaning | What to do |
 |---|---|---|
 | `ip_denied`, `geo_denied`, `waf_blocked` | An edge rule on the app refused the request | List the rules with `gregale edge rule list --app my-api`. See [Edge rules](edge-rules.md). |
-| `api_rate_limited` | The account sent more API requests this minute than its plan allows | Wait for `Retry-After` and spread requests out. |
+| `api_rate_limited` | Not your app's traffic: your account sent more Gregale API or CLI requests this minute than its plan allows | Wait for `Retry-After` and spread requests out. |
 | `plan_*` (often 402) | The plan does not include the feature or quota | Check [Plans and pricing](plans.md). |
 
 ## The first request is slow

@@ -2,7 +2,7 @@
 
 After a Job run finishes, read its result, find the tasks that produced artifacts, and collect their outputs without copying run IDs.
 
-## Reading the newest job run
+## Next step after a successful run
 
 When `jobs wait` or a mutation with `--wait` (`jobs run`, `jobs retry`, or
 `jobs replay-failed`) observes the exact run succeed, human output also prints
@@ -202,20 +202,6 @@ and provide a bulk `--resume` command. JSON emits one combined receipt containin
 Ordinary run and `--wait` output without `--out-dir` remains unchanged. The output
 path is local and is not included in the job submission request.
 
-### Output directory
-
-Bulk downloads (`--all` and `--all-tasks`) create a missing `--out-dir`,
-including missing parent directories, after validating the selected run,
-manifest(s), and artifact destinations. New directories use permissions 0750
-(subject to umask). Existing path components must be real directories, never
-files or symlinks; a destination that appears during creation causes failure
-rather than being silently adopted. No directory is created for runs/tasks with
-no managed artifacts. Invalid metadata and conflicts cause no directory writes.
-`--dry-run` prints planned directories and includes `directories_to_create`
-in JSON when applicable, without creating them. Preview cannot guarantee write
-permissions. Failed transfers may leave created directories and verified files.
-Single-artifact `--out` retains its existing parent-directory requirement.
-
 ## Choose which artifacts to download
 
 ### Exclude names
@@ -306,6 +292,20 @@ absolute parent directory, and profile. Conflicts prevent all transfers;
 failures return nonzero and preserve previously verified files and directories.
 Transfers retain size/SHA-256 verification and a five-minute overall deadline.
 Historical-attempt downloads remain unsupported.
+
+### Output directory
+
+Bulk downloads (`--all` and `--all-tasks`) create a missing `--out-dir`,
+including missing parent directories, after validating the selected run,
+manifest(s), and artifact destinations. New directories use permissions 0750
+(subject to umask). Existing path components must be real directories, never
+files or symlinks; a destination that appears during creation causes failure
+rather than being silently adopted. No directory is created for runs/tasks with
+no managed artifacts. Invalid metadata and conflicts cause no directory writes.
+`--dry-run` prints planned directories and includes `directories_to_create`
+in JSON when applicable, without creating them. Preview cannot guarantee write
+permissions. Failed transfers may leave created directories and verified files.
+Single-artifact `--out` retains its existing parent-directory requirement.
 
 ### Preview before writing files
 

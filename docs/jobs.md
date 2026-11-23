@@ -114,7 +114,7 @@ Occurrence history includes the last `outcome_code` and `work_decision`.
 
 ## Failure rules and outcome codes
 
-Failure rules decide what happens after a task or Cron occurrence fails: retry it, fail it for good, or hold it when the outcome is unknown. They apply to Jobs, command Crons and HTTP request Crons.
+Failure rules classify how a task or Cron occurrence ended (a failed exit, or a mapped outcome code even when the command exits zero) and decide whether to retry it, fail it for good, or hold it when the outcome is unknown. They apply to Jobs, command Crons and HTTP request Crons.
 
 ### HTTP request Crons
 
@@ -170,7 +170,7 @@ gregale cron update CRON_ID --retry-max 3 --failure-rules \
   '{"version":1,"rules":[{"exit_codes":[65],"action":"fail_partition"}],"unmatched_failure":"retry","uncertain_outcome":"hold"}'
 ```
 
-### Jobs
+### Job failure rules
 
 Retry classification can be explicit and run-scoped. Define exit-code
 mappings or structured application outcome codes, plus the action for
