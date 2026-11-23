@@ -53,7 +53,7 @@ func PreviewAnomaly(ctx context.Context, fetcher appmetrics.PromQL, appID, windo
 	const checksPerDay = int(anomalyPreviewDay / step)
 	const baselineChecks = api.AnomalyBaselineDays * checksPerDay
 	first := AnomalyPreviewFirstCheck(now).Add(-api.AnomalyBaselineDays * anomalyPreviewDay)
-	counts, err := appmetrics.FetchAnomalyPreviewSamples(ctx, fetcher, appID, config.EnvironmentScope, window, config.metric(), first, step, baselineChecks+api.AnomalyPreviewChecks)
+	counts, err := appmetrics.FetchAnomalySamples(ctx, fetcher, appID, config.EnvironmentScope, window, config.metric(), first, step, baselineChecks+api.AnomalyPreviewChecks)
 	if err != nil {
 		return api.AlertAnomalyPreviewResponse{}, err
 	}
@@ -82,7 +82,7 @@ func ReplayAnomalyIncidents(ctx context.Context, fetcher appmetrics.PromQL, appI
 	var samples anomalyPreviewSamples
 	for day := range samples.daily {
 		first := start.Add(-time.Duration(day) * anomalyPreviewDay)
-		counts, err := appmetrics.FetchAnomalyPreviewSamples(ctx, fetcher, appID, config.EnvironmentScope, window, config.metric(), first, step, api.AnomalyIncidentReplayChecks)
+		counts, err := appmetrics.FetchAnomalySamples(ctx, fetcher, appID, config.EnvironmentScope, window, config.metric(), first, step, api.AnomalyIncidentReplayChecks)
 		if err != nil {
 			return api.AlertAnomalyPreviewResponse{}, err
 		}
@@ -117,7 +117,7 @@ func (s *anomalyPreviewSamples) fetchWeekdayHistory(ctx context.Context, fetcher
 	current := s.daily[0]
 	for week := 1; week < len(s.weekday); week++ {
 		first := current[0].At.Add(-time.Duration(week+1) * anomalyPreviewWeek)
-		counts, err := appmetrics.FetchAnomalyPreviewSamples(ctx, fetcher, appID, scope, window, "request_count", first, step, len(current))
+		counts, err := appmetrics.FetchAnomalySamples(ctx, fetcher, appID, scope, window, "request_count", first, step, len(current))
 		if err != nil {
 			return err
 		}
@@ -126,7 +126,7 @@ func (s *anomalyPreviewSamples) fetchWeekdayHistory(ctx context.Context, fetcher
 	return nil
 }
 
-func previewBaselineAt(history [][]appmetrics.AnomalyPreviewSample, i int, minimumRequests int64) anomalyBaseline {
+func anomalyBaselineAt(history [][]appmetrics.AnomalyPreviewSample, i int, minimumRequests int64) anomalyBaseline {
 	values := make([]float64, 0, len(history))
 	for _, day := range history {
 		past := day[i]
@@ -205,7 +205,7 @@ func buildAnomalyPreview(samples anomalyPreviewSamples, config AnomalyPreviewCom
 				continue
 			}
 		}
-		baseline := previewBaselineAt(samples.daily[1:], i, minimumHistoryRequests)
+		baseline := anomalyBaselineAt(samples.daily[1:], i, minimumHistoryRequests)
 		decision := evaluateAnomaly(current.Value, baseline, api.AnomalyBaselineMinDays, metric, config.Comparison, config.Threshold)
 		if decision.skip != "" {
 			preview.SkippedWindows = append(preview.SkippedWindows, api.AlertAnomalyPreviewSkippedWindow{
@@ -220,7 +220,7 @@ func buildAnomalyPreview(samples anomalyPreviewSamples, config AnomalyPreviewCom
 		}
 		candidateBaseline, requiredDays := baseline, api.AnomalyBaselineMinDays
 		if weekday != nil {
-			matching := previewBaselineAt(samples.weekday[:], i, minimumHistoryRequests)
+			matching := anomalyBaselineAt(samples.weekday[:], i, minimumHistoryRequests)
 			if matching.days == weekdayPreviewWeeks {
 				candidateBaseline, requiredDays = matching, weekdayPreviewWeeks
 			} else {

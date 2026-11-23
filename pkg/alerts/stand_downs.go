@@ -24,7 +24,7 @@ import (
 // standDownNotes explain, per reason, why a notice arrives without the
 // metric recovering.
 var standDownNotes = map[string]string{
-	state.StandDownDisabled:    "The rule was disabled, so Gregale stopped evaluating it.",
+	state.StandDownDisabled:    "Live notifications for this rule were disabled.",
 	state.StandDownNotReleased: "The account's plan or features no longer cover this rule, so Gregale stopped evaluating it.",
 	state.StandDownAppDeleted:  "The app was deleted, so Gregale stopped evaluating this rule.",
 	state.StandDownDeleted:     "The rule was deleted.",
@@ -202,12 +202,14 @@ func (e *Evaluator) abandonStandDown(ctx context.Context, store state.AlertChann
 
 // clearChannelStandDowns drops the notices a rule still owed: a new fire
 // supersedes them, as it does a resolve retry.
-func (e *Evaluator) clearChannelStandDowns(ctx context.Context, ruleID string) {
+func (e *Evaluator) clearChannelStandDowns(ctx context.Context, ruleID string, channels []state.NotificationChannel) {
 	store, ok := e.store.(state.AlertChannelStandDownStore)
 	if !ok {
 		return
 	}
-	if err := store.ClearAlertChannelStandDowns(ctx, ruleID); err != nil {
-		e.log.Warn("alerts: clear channel stand-downs", "rule", ruleID, "err", err)
+	for _, channel := range channels {
+		if err := store.DeleteAlertChannelStandDown(ctx, ruleID, channel.ID); err != nil {
+			e.log.Warn("alerts: clear channel stand-down", "rule", ruleID, "channel", channel.ID, "err", err)
+		}
 	}
 }

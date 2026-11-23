@@ -29,12 +29,28 @@ type anomalyRead struct {
 	ok       bool
 }
 
-// Baselines are shared by matching rules within one evaluation timestamp.
-// RunOnce clears the previous timestamp before starting the account workers.
+const anomalyBaselineStep = time.Minute
+
+type anomalyBaselineFrame struct {
+	first     time.Time
+	baselines []anomalyBaseline
+}
+
+func (f anomalyBaselineFrame) at(check time.Time) (anomalyBaseline, bool) {
+	offset := check.Sub(f.first)
+	if offset < 0 || offset%anomalyBaselineStep != 0 || offset/anomalyBaselineStep >= time.Duration(len(f.baselines)) {
+		return anomalyBaseline{}, false
+	}
+	return f.baselines[offset/anomalyBaselineStep], true
+}
+
+// Share matching reads within a tick and retain aligned historical checkpoints
+// across ticks. The frame retains time-of-day changes inside the cache period.
 type anomalyState struct {
-	mu    sync.Mutex
-	at    time.Time
-	reads map[anomalyKey]*anomalyRead
+	mu     sync.Mutex
+	at     time.Time
+	reads  map[anomalyKey]*anomalyRead
+	frames map[anomalyKey]anomalyBaselineFrame
 }
 
 func (s *anomalyState) begin(now time.Time) {
@@ -42,6 +58,11 @@ func (s *anomalyState) begin(now time.Time) {
 	if !s.at.Equal(at) || s.reads == nil {
 		s.at = at
 		s.reads = make(map[anomalyKey]*anomalyRead)
+	}
+	for key, frame := range s.frames {
+		if !at.Before(frame.first.Add(api.AnomalyBaselineCacheTTL)) {
+			delete(s.frames, key)
+		}
 	}
 }
 
@@ -131,7 +152,13 @@ func evaluateAnomaly(observed float64, baseline anomalyBaseline, requiredDays in
 // firing on a partial history.
 func (e *Evaluator) anomalyBaselineFor(ctx context.Context, rule state.AlertRule) (anomalyBaseline, bool) {
 	key := anomalyKey{appID: rule.AppID, scope: rule.EnvironmentScope, metric: string(rule.Metric), window: string(rule.WindowSpec)}
+	at := e.anomaly.at
 	e.anomaly.mu.Lock()
+	frame, attempted := e.anomaly.frames[key]
+	if baseline, ok := frame.at(at); ok {
+		e.anomaly.mu.Unlock()
+		return baseline, true
+	}
 	if cached := e.anomaly.reads[key]; cached != nil {
 		e.anomaly.mu.Unlock()
 		select {
@@ -145,11 +172,26 @@ func (e *Evaluator) anomalyBaselineFor(ctx context.Context, rule state.AlertRule
 	e.anomaly.reads[key] = read
 	e.anomaly.mu.Unlock()
 
-	values, qualified, source := appmetrics.FetchAnomalyAlertHistory(ctx, e.promQL, e.log, key.appID, key.scope, key.window, key.metric, e.anomaly.at)
-	read.ok = source == appmetrics.SourcePrometheus
-	if read.ok {
-		read.baseline = anomalyBaseline{value: median(values), days: qualified}
-	} else if ctx.Err() != nil {
+	if !attempted {
+		frame = e.prefetchAnomalyBaselines(ctx, key, at)
+		if ctx.Err() == nil {
+			e.anomaly.mu.Lock()
+			if e.anomaly.frames == nil {
+				e.anomaly.frames = make(map[anomalyKey]anomalyBaselineFrame)
+			}
+			e.anomaly.frames[key] = frame
+			e.anomaly.mu.Unlock()
+		}
+	}
+	read.baseline, read.ok = frame.at(at)
+	if !read.ok && ctx.Err() == nil {
+		values, qualified, source := appmetrics.FetchAnomalyAlertHistory(ctx, e.promQL, e.log, key.appID, key.scope, key.window, key.metric, at)
+		read.ok = source == appmetrics.SourcePrometheus
+		if read.ok {
+			read.baseline = anomalyBaseline{value: median(values), days: qualified}
+		}
+	}
+	if !read.ok && ctx.Err() != nil {
 		// A canceled account or rule budget should not poison later callers.
 		e.anomaly.mu.Lock()
 		delete(e.anomaly.reads, key)
@@ -157,6 +199,29 @@ func (e *Evaluator) anomalyBaselineFor(ctx context.Context, rule state.AlertRule
 	}
 	close(read.done)
 	return read.baseline, read.ok
+}
+
+func (e *Evaluator) prefetchAnomalyBaselines(ctx context.Context, key anomalyKey, first time.Time) anomalyBaselineFrame {
+	frame := anomalyBaselineFrame{first: first}
+	const checkpoints = int(api.AnomalyBaselineCacheTTL / anomalyBaselineStep)
+	history := make([][]appmetrics.AnomalyPreviewSample, 0, api.AnomalyBaselineDays)
+	for day := 1; day <= api.AnomalyBaselineDays; day++ {
+		past := first.Add(-time.Duration(day) * 24 * time.Hour)
+		samples, err := appmetrics.FetchAnomalySamples(ctx, e.promQL, key.appID, key.scope, key.window, key.metric, past, anomalyBaselineStep, checkpoints)
+		if err != nil {
+			return frame
+		}
+		history = append(history, samples)
+	}
+	minimum := int64(api.AnomalyAlertMinRequests)
+	if key.metric == "request_count" {
+		minimum = 1
+	}
+	frame.baselines = make([]anomalyBaseline, checkpoints)
+	for i := range frame.baselines {
+		frame.baselines[i] = anomalyBaselineAt(history, i, minimum)
+	}
+	return frame
 }
 
 func (b anomalyBaseline) payload(observed float64) map[string]any {

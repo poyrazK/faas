@@ -44927,6 +44927,7 @@ paths:
         - name: comparison
           in: query
           required: true
+          description: Direction in which the observed metric must cross the baseline multiplier.
           schema: { type: string, enum: [above_baseline, below_baseline] }
         - name: threshold
           in: query
@@ -48193,15 +48194,13 @@ paths:
       summary: Publish a message to live or resumable channel subscribers.
       description: >-
         delivery=live (the default) fans out to live raw-frame subscribers.
-        delivery=retained is preview-only and requires
-        FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on the API; it accepts at most
-        4096 decoded bytes and requires an Idempotency-Key. Retained delivery
-        commits the message to the ordered channel log before fan-out and
-        returns its sequence. V2 subscribers read the committed log in sequence;
-        a best-effort wake reduces latency while bounded polling recovers missed
-        wakes. The retained log remains authoritative if live fan-out is
-        incomplete. The resume protocol separately requires
-        FAAS_REALTIME_RESUME_PREVIEW_ENABLED=1 on the realtime service.
+        delivery=retained is part of the realtime preview, released per
+        account; it accepts at most 4096 decoded bytes and requires an
+        Idempotency-Key. Retained delivery commits the message to the ordered
+        channel log before fan-out and returns its sequence. Resumable
+        subscribers read the committed log in sequence; a best-effort wake
+        reduces latency while bounded polling recovers missed wakes. The
+        retained log remains authoritative if live fan-out is incomplete.
 
         A supplied Idempotency-Key binds the publish to delivery mode, decoded
         payload and binary flag for 24 hours. Replays return the original
@@ -123207,6 +123206,7 @@ components:
         zero_baseline_fallback: { type: boolean, description: True when the absolute fallback threshold triggered this breach. }
 
     AlertAnomalyPreviewCandidate:
+      description: Alternate threshold or baseline evaluated on the preview checkpoints.
       type: object
       required: [threshold, breaches]
       properties:
@@ -123221,6 +123221,7 @@ components:
           $ref: '#/components/schemas/AlertAnomalyZeroBaselineFallback'
 
     AlertAnomalyZeroBaselineFallback:
+      description: Absolute error-rate and failure-count guard for a zero historical baseline.
       type: object
       required: [minimum_error_rate_pct, minimum_failed_requests]
       properties:
@@ -123228,6 +123229,7 @@ components:
         minimum_failed_requests: { type: integer, format: int64, minimum: 1, description: Minimum failed requests in the evaluation window. }
 
     AlertAnomalyPreviewSkippedWindow:
+      description: A historical checkpoint the anomaly evaluator could not use.
       type: object
       required: [evaluated_at, reason]
       properties:
@@ -123261,6 +123263,7 @@ components:
           items: { type: string, format: date-time }
 
     AlertAnomalyIncidentReplay:
+      description: Anomaly incidents reconstructed from a selected two-hour interval.
       type: object
       required: [cooldown_minutes, incidents]
       properties:
@@ -123295,6 +123298,7 @@ components:
         truncated: { type: boolean, description: True when more than 100 recorded promotions fall within the replay window. }
 
     AlertAnomalyDeploymentPromotion:
+      description: A recorded change that sent all traffic in an environment to a deployment.
       type: object
       required: [deployment_id, promoted_at]
       properties:
@@ -123303,6 +123307,7 @@ components:
         promoted_at: { type: string, format: date-time, description: When a traffic change last took this deployment to 100 percent of the scope. }
 
     AlertAnomalyRecoveryComparison:
+      description: Replay outcomes with two consecutive healthy checks required for recovery.
       type: object
       required: [required_healthy_checks, incidents]
       properties:
@@ -123319,6 +123324,7 @@ components:
           items: { $ref: '#/components/schemas/AlertObservedIncident' }
 
     AlertAnomalyPreviewResponse:
+      description: Historical anomaly evaluations with coverage, breaches, and optional replay results.
       type: object
       required: [first_check_at, last_check_at, step_seconds, evaluated, skipped, skipped_windows, breaches]
       properties:
@@ -123352,6 +123358,7 @@ components:
           $ref: '#/components/schemas/AlertAnomalyIncidentReplay'
 
     AlertObservedIncident:
+      description: An incident observed in live traffic or reconstructed during replay.
       type: object
       required: [opened_at, eligible_notifications, last_eligible_at]
       properties:
@@ -123391,6 +123398,7 @@ components:
         last_checked_at: { type: string, format: date-time, description: Most recent recorded check for this observation even if older than 24 hours. }
 
     AlertObservationSkipCount:
+      description: Count of observation checks skipped for a single reason.
       type: object
       required: [reason, count]
       properties:

@@ -210,6 +210,13 @@ func (s *PgStore) UpdateAlertRule(ctx context.Context, id string, p UpdateAlertR
 		return AlertRule{}, err
 	}
 	updatedAt := pgtype.Timestamptz{Time: at, Valid: true}
+	if observeOnly && !old.ObserveOnly {
+		if _, err := queries.QueueAlertChannelStandDowns(ctx, tx, sqlc.QueueAlertChannelStandDownsParams{
+			RuleID: rule, Reason: StandDownDisabled, At: updatedAt,
+		}); err != nil {
+			return AlertRule{}, err
+		}
+	}
 	updated, err := queries.UpdateCustomerAlertRule(ctx, tx, sqlc.UpdateCustomerAlertRuleParams{
 		ID: rule, Enabled: enabled && !observeOnly, ObserveOnly: observeOnly, ObservationEnabled: enabled && observeOnly,
 		EnvironmentScope:           alertOptionalText(p.EnvironmentScope),

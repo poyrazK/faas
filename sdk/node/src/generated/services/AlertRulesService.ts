@@ -365,6 +365,9 @@ export class AlertRulesService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Direction in which the observed metric must cross the baseline multiplier.
+     */
     comparison: 'above_baseline' | 'below_baseline',
     /**
      * Baseline multiplier for the selected comparison.

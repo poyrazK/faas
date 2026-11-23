@@ -98,6 +98,43 @@ func checkStandDowns(t *testing.T, ctx context.Context, s standDownStore, templa
 		t.Fatal(err)
 	}
 
+	for _, open := range []bool{true, false} {
+		rule := newRule("before observation")
+		if open {
+			if _, err := s.SetAlertRuleState(ctx, rule.ID, state.AlertStateFiring, now); err != nil {
+				t.Fatal(err)
+			}
+		} else if err := s.RecordAlertChannelResolveRetry(ctx, state.AlertChannelResolveRetry{
+			RuleID: rule.ID, ChannelID: ch.ID, ResolvedAt: now, NextAttemptAt: now,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.UpdateAlertRule(ctx, rule.ID, state.UpdateAlertRuleParams{
+			Metric: new(state.AlertMetricErrorRate), Comparison: new(state.AlertAboveBaseline),
+			Threshold: new(3.0), Name: new("observing"), ObserveOnly: new(true),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if active, err := s.AlertRuleEpisodeOpen(ctx, rule.ID); err != nil || active {
+			t.Fatalf("observed rule has a live episode: %v, %v", active, err)
+		}
+		if got := due(); len(got) != 1 || got[0].RuleID != rule.ID || got[0].ChannelID != ch.ID || got[0].RuleName != "before observation" {
+			t.Fatalf("mode change lost the notice for the original destination: %+v", got)
+		}
+		if retries, err := s.DueAlertChannelResolveRetries(ctx, now.Add(time.Hour), 10); err != nil || len(retries) != 0 {
+			t.Fatalf("mode change did not transfer the old resolve retry: %+v, %v", retries, err)
+		}
+		if _, err := s.UpdateAlertRule(ctx, rule.ID, state.UpdateAlertRuleParams{ObserveOnly: new(false)}); err != nil {
+			t.Fatal(err)
+		}
+		if got := due(); len(got) != 1 || got[0].RuleID != rule.ID {
+			t.Fatalf("switching back lost the pending stand-down: %+v", got)
+		}
+		if err := s.DeleteAlertChannelStandDown(ctx, rule.ID, ch.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	// A rule that never fired owes nothing, deleted or not.
 	quiet := newRule("quiet")
 	if n, err := s.QueueAlertChannelStandDowns(ctx, quiet.ID, state.StandDownNotReleased, now); err != nil || n != 0 {

@@ -25,6 +25,8 @@ T = TypeVar("T", bound="AlertAnomalyPreviewResponse")
 
 @_attrs_define
 class AlertAnomalyPreviewResponse:
+    """Historical anomaly evaluations with coverage, breaches, and optional replay results."""
+
     first_check_at: datetime.datetime
     last_check_at: datetime.datetime
     step_seconds: AlertAnomalyPreviewResponseStepSeconds
@@ -41,7 +43,9 @@ class AlertAnomalyPreviewResponse:
     """Environments available for incident replay. Present in the hourly overview. Recent telemetry may still be
     unavailable."""
     candidate: AlertAnomalyPreviewCandidate | Unset = UNSET
+    """Alternate threshold or baseline evaluated on the preview checkpoints."""
     incident_replay: AlertAnomalyIncidentReplay | Unset = UNSET
+    """Anomaly incidents reconstructed from a selected two-hour interval."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -62,6 +62,25 @@ func TestEvaluator_RecoveryAfterADegradedReadIsAnnounced(t *testing.T) {
 	}
 }
 
+func TestEvaluator_ObserveOnlyStandsDownLiveAlert(t *testing.T) {
+	f := newChannelRetryFixture(t)
+	f.fire(t)
+	rule, err := f.store.UpdateAlertRule(t.Context(), f.rule.ID, state.UpdateAlertRuleParams{
+		Comparison: new(state.AlertAboveBaseline), ObserveOnly: new(true),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stats, sent := f.tick(t, 12, rule.UpdatedAt.Add(time.Minute))
+	wantStandDown(t, sent, rule.ID, state.StandDownDisabled)
+	if stats.Fired != 0 || stats.ChannelStandDownsDelivered != 2 || f.episodeOpen(t) {
+		t.Fatalf("observe-only tick = %+v; episode open=%v", stats, f.episodeOpen(t))
+	}
+	if _, sent := f.tick(t, 12, rule.UpdatedAt.Add(2*time.Minute)); len(sent) != 0 {
+		t.Fatalf("observe-only check sent %+v after the stand-down", sent)
+	}
+}
+
 func TestEvaluator_RuleThatNeverFiredOwesNoNotice(t *testing.T) {
 	f := newChannelRetryFixture(t)
 	t0 := f.now

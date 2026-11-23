@@ -6,6 +6,9 @@ import type { AlertAnomalyIncidentReplay } from './AlertAnomalyIncidentReplay.js
 import type { AlertAnomalyPreviewBreach } from './AlertAnomalyPreviewBreach.js';
 import type { AlertAnomalyPreviewCandidate } from './AlertAnomalyPreviewCandidate.js';
 import type { AlertAnomalyPreviewSkippedWindow } from './AlertAnomalyPreviewSkippedWindow.js';
+/**
+ * Historical anomaly evaluations with coverage, breaches, and optional replay results.
+ */
 export type AlertAnomalyPreviewResponse = {
   /**
    * Environment used for both observed traffic and historical baselines. Present for environment-specific replays.

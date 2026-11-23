@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AlertObservedIncidentOpeningEvidence } from './AlertObservedIncidentOpeningEvidence.js';
+/**
+ * An incident observed in live traffic or reconstructed during replay.
+ */
 export type AlertObservedIncident = {
   opening_evidence?: AlertObservedIncidentOpeningEvidence;
   /**

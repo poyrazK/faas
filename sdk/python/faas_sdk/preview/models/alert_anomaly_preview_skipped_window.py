@@ -18,6 +18,8 @@ T = TypeVar("T", bound="AlertAnomalyPreviewSkippedWindow")
 
 @_attrs_define
 class AlertAnomalyPreviewSkippedWindow:
+    """A historical checkpoint the anomaly evaluator could not use."""
+
     evaluated_at: datetime.datetime
     reason: AlertAnomalyPreviewSkippedWindowReason
     eligible_requests: int | Unset = UNSET

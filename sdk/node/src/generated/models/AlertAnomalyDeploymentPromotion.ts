@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * A recorded change that sent all traffic in an environment to a deployment.
+ */
 export type AlertAnomalyDeploymentPromotion = {
   deployment_id: string;
   /**

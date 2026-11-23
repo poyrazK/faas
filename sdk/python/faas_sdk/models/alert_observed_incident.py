@@ -19,6 +19,8 @@ T = TypeVar("T", bound="AlertObservedIncident")
 
 @_attrs_define
 class AlertObservedIncident:
+    """An incident observed in live traffic or reconstructed during replay."""
+
     opened_at: datetime.datetime
     eligible_notifications: int
     """Notification opportunities for this incident under the rule's cooldown."""

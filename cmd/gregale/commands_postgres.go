@@ -85,6 +85,8 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresAttach(args[1:])
 	case "connect":
 		return cmdPostgresConnect(args[1:])
+	case "sql", "query":
+		return cmdPostgresSQL(args[1:])
 	case "live":
 		return cmdPostgresLive(args[1:])
 	default:

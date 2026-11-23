@@ -26,6 +26,7 @@ type anomalyProm struct {
 	pastSamples, pastValue       float64
 	trafficDays                  int
 	historyQueries               atomic.Int32
+	lastCheckAt                  atomic.Int64
 	currentCount                 func(time.Time) float64
 	pastCount                    func(time.Time) float64
 }
@@ -35,6 +36,7 @@ func (p *anomalyProm) QueryScalar(context.Context, string) (float64, error) {
 }
 
 func (p *anomalyProm) QueryVectorStrictAt(_ context.Context, query string, at time.Time) ([]promql.VectorSample, error) {
+	p.lastCheckAt.Store(at.Unix())
 	value := p.currentValue
 	if strings.Contains(query, "count_over_time(") {
 		value = p.currentSamples
@@ -50,20 +52,28 @@ func (p *anomalyProm) QueryRangeStrict(_ context.Context, q, start, end, step st
 	first, firstErr := strconv.ParseInt(start, 10, 64)
 	last, lastErr := strconv.ParseInt(end, 10, 64)
 	const day = int64(24 * time.Hour / time.Second)
-	if firstErr != nil || lastErr != nil || last-first != (api.AnomalyBaselineDays-1)*day || step != "1d" {
-		return nil, errors.New("history query must cover seven aligned daily windows")
+	var interval int64
+	switch step {
+	case "1d":
+		interval = day
+	case "60":
+		interval = 60
+	}
+	if firstErr != nil || lastErr != nil || interval == 0 || last < first || (last-first)%interval != 0 {
+		return nil, errors.New("history query must use aligned windows")
 	}
 	isSamples := strings.Contains(q, "count_over_time(")
-	rows := make([]promql.QueryRangeSample, api.AnomalyBaselineDays)
+	rows := make([]promql.QueryRangeSample, (last-first)/interval+1)
 	for i := range rows {
-		at := first + int64(i)*day
+		at := first + int64(i)*interval
 		value := p.pastValue
 		if isSamples {
 			value = p.pastSamples
 			if p.pastCount != nil {
 				value = p.pastCount(time.Unix(at, 0).UTC())
 			}
-			if api.AnomalyBaselineDays-i > p.trafficDays {
+			daysAgo := (p.lastCheckAt.Load() - at + day - 1) / day
+			if daysAgo > int64(p.trafficDays) {
 				value = -1 // no coverage that day
 			}
 		}
@@ -97,11 +107,11 @@ func TestAnomalyRuleFiresAboveBaseline(t *testing.T) {
 		t.Fatalf("state = %q, want firing", got.State)
 	}
 
-	// Two range queries cover all seven days. A retry at the same time
-	// reuses the baseline that was read for that evaluation.
+	// Each day needs one range for request coverage and one for error rate.
+	// A retry at the same time uses the already-read historical checkpoint.
 	before := prom.historyQueries.Load()
-	if before != 2 {
-		t.Fatalf("history queries=%d, want 2", before)
+	if before != 2*api.AnomalyBaselineDays {
+		t.Fatalf("history queries=%d, want %d", before, 2*api.AnomalyBaselineDays)
 	}
 	if _, err := ev.RunOnce(context.Background()); err != nil {
 		t.Fatalf("second RunOnce: %v", err)
@@ -373,9 +383,23 @@ func TestAnomalyRulesShareMatchingBaseline(t *testing.T) {
 	}
 	prom := &anomalyProm{currentSamples: 400, pastSamples: 100, trafficDays: 7}
 	dispatch := &recordingDispatcher{result: webhookout.Result{StatusCode: 200}}
-	ev, _ := makeEvaluator(t, store, prom, ident, dispatch)
+	start := rule.UpdatedAt.Add(time.Minute)
+	now := start
+	ev := alerts.NewEvaluator(alerts.EvaluatorOptions{
+		Store: store, PromQL: prom, Dispatcher: dispatch, Log: discardLog(),
+		Identity: func() *age.X25519Identity { return ident },
+		Now:      func() time.Time { return now },
+	})
 	stats, err := ev.RunOnce(t.Context())
-	if err != nil || stats.Fired != 2 || prom.historyQueries.Load() != 1 {
-		t.Fatalf("stats=%+v history queries=%d err=%v, want two fires from one history query", stats, prom.historyQueries.Load(), err)
+	if err != nil || stats.Fired != 2 || prom.historyQueries.Load() != api.AnomalyBaselineDays {
+		t.Fatalf("stats=%+v history queries=%d err=%v, want two fires from one shared baseline frame", stats, prom.historyQueries.Load(), err)
+	}
+	now = start.Add(time.Minute)
+	if _, err := ev.RunOnce(t.Context()); err != nil || prom.historyQueries.Load() != api.AnomalyBaselineDays {
+		t.Fatalf("next tick fetched %d total historical ranges, err=%v", prom.historyQueries.Load(), err)
+	}
+	now = start.Add(api.AnomalyBaselineCacheTTL)
+	if _, err := ev.RunOnce(t.Context()); err != nil || prom.historyQueries.Load() != 2*api.AnomalyBaselineDays {
+		t.Fatalf("expired cache fetched %d total historical ranges, err=%v", prom.historyQueries.Load(), err)
 	}
 }

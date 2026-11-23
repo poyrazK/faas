@@ -75,7 +75,7 @@ func (e *Evaluator) notifyChannels(ctx context.Context, rule state.AlertRule, ev
 		// A new incident supersedes a recovery notice a channel never took;
 		// sent now, it would resolve the incident this fire opens.
 		e.clearChannelResolves(ctx, rule.ID)
-		e.clearChannelStandDowns(ctx, rule.ID)
+		e.clearChannelStandDowns(ctx, rule.ID, chans)
 	}
 	// Any new notice supersedes a fire still waiting for a retry: a newer
 	// fire repeats it, and a late fire after a recovery would reopen the

@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Absolute error-rate and failure-count guard for a zero historical baseline.
+ */
 export type AlertAnomalyZeroBaselineFallback = {
   /**
    * Minimum absolute error rate expressed as a percent.

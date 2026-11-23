@@ -288,6 +288,8 @@ ends the observation. Choose **Notify** with a configured destination to
 start live alerting. The first live breach can notify immediately and starts
 its own cooldown.
 Notifications or actions already in flight can finish after a mode change.
+Switching into **Observe only** also queues a stand-down for any open
+live incident's notification channels.
 
 **Evaluation coverage** shows how many live checks completed in the last
 24 hours, why checks were skipped, and when Gregale last checked the rule.

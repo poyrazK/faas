@@ -21,6 +21,8 @@ T = TypeVar("T", bound="AlertAnomalyRecoveryComparison")
 
 @_attrs_define
 class AlertAnomalyRecoveryComparison:
+    """Replay outcomes with two consecutive healthy checks required for recovery."""
+
     required_healthy_checks: AlertAnomalyRecoveryComparisonRequiredHealthyChecks
     incidents: list[AlertObservedIncident]
     """Incidents for the selected multiplier with recovery confirmation, newest first."""

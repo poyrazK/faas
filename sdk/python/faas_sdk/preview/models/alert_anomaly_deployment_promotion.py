@@ -15,6 +15,8 @@ T = TypeVar("T", bound="AlertAnomalyDeploymentPromotion")
 
 @_attrs_define
 class AlertAnomalyDeploymentPromotion:
+    """A recorded change that sent all traffic in an environment to a deployment."""
+
     deployment_id: UUID
     promoted_at: datetime.datetime
     """When a traffic change last took this deployment to 100 percent of the scope."""

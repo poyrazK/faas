@@ -5,6 +5,9 @@
 import type { AlertAnomalyPreviewBreach } from './AlertAnomalyPreviewBreach.js';
 import type { AlertAnomalyWeekdayPreview } from './AlertAnomalyWeekdayPreview.js';
 import type { AlertAnomalyZeroBaselineFallback } from './AlertAnomalyZeroBaselineFallback.js';
+/**
+ * Alternate threshold or baseline evaluated on the preview checkpoints.
+ */
 export type AlertAnomalyPreviewCandidate = {
   /**
    * Candidate baseline multiplier.

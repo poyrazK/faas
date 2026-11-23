@@ -6086,12 +6086,16 @@ func (m *MemStore) ListAllDeployments(_ context.Context) ([]Deployment, error) {
 // CountDeploymentOutcomesSince mirrors the production aggregate without
 // widening Store. Status evaluators discover it through a narrow optional
 // interface, keeping existing test stores source-compatible.
-func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Time) (DeploymentOutcomeCounts, error) {
+func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Time, excludedAccounts ...string) (DeploymentOutcomeCounts, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out DeploymentOutcomeCounts
 	failedTenants := map[string]struct{}{}
+	failures := map[string]struct{}{}
 	for _, d := range m.deployments {
+		if m.excludedOutcomeAccountLocked(d, excludedAccounts) {
+			continue
+		}
 		switch d.Status {
 		case DeployLive, DeploySuperseded:
 			terminalAt := d.CreatedAt
@@ -6111,7 +6115,11 @@ func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Ti
 				continue
 			}
 			if !m.customerCausedFailureLocked(d) {
-				out.Failed++
+				key := d.AppID
+				if key == "" {
+					key = d.ID
+				}
+				failures[key+":"+d.ErrorCode+":"+terminalAt.UTC().Truncate(time.Hour).String()] = struct{}{}
 				tenant := d.AppID
 				if app, ok := m.apps[d.AppID]; ok && app.AccountID != "" {
 					tenant = app.AccountID
@@ -6120,13 +6128,23 @@ func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Ti
 			}
 		}
 	}
+	out.Failed = len(failures)
 	out.FailedAccounts = len(failedTenants)
 	return out, nil
 }
 
+// excludedOutcomeAccountLocked reports whether d belongs to an account the
+// status aggregates leave out. Caller holds m.mu.
+func (m *MemStore) excludedOutcomeAccountLocked(d Deployment, excludedAccounts []string) bool {
+	app, ok := m.apps[d.AppID]
+	return ok && app.AccountID != "" && slices.Contains(excludedAccounts, app.AccountID)
+}
+
 // customerCausedFailureLocked mirrors the PgStore status aggregates' exclusion
-// of a failed deployment: a user_error build, or an error code that places the
-// failure in the customer's workload. Caller holds m.mu.
+// of a failed deployment: a user_error build, an error code that places the
+// failure in the customer's workload, a release command the task shows ended
+// on its own (api.IsCustomerCausedReleaseTask), or a proven 4xx smoke answer
+// (api.IsCustomerCausedSmokeStatus). Caller holds m.mu.
 func (m *MemStore) customerCausedFailureLocked(d Deployment) bool {
 	if api.IsCustomerCausedDeploymentFailure(d.ErrorCode) {
 		return true
@@ -6136,16 +6154,38 @@ func (m *MemStore) customerCausedFailureLocked(d Deployment) bool {
 			return true
 		}
 	}
+	switch d.ErrorCode {
+	case api.CodeReleaseCommandFailed:
+		for _, task := range m.appTasks {
+			if task.DeploymentID == d.ID && task.Kind == AppTaskKindRelease &&
+				api.IsCustomerCausedReleaseTask(task.ExitCode, derefString(task.FailureCode), task.StderrTail, task.Status == AppTaskTimedOut, task.Status == AppTaskCancelled && task.CancelRequested != nil) {
+				return true
+			}
+		}
+		return false
+	case api.CodeDeploymentSmokeFailed:
+		var receipt struct {
+			Smoke struct {
+				ErrorCode  string `json:"error_code"`
+				StatusCode int    `json:"status_code"`
+			} `json:"smoke"`
+		}
+		return json.Unmarshal(d.APIHostingReceipt, &receipt) == nil && receipt.Smoke.ErrorCode == api.CustomerCausedSmokeErrorCode &&
+			api.IsCustomerCausedSmokeStatus(receipt.Smoke.StatusCode)
+	}
 	return false
 }
 
 // LatestPlatformDeploymentOutcome mirrors the production last-known result.
-func (m *MemStore) LatestPlatformDeploymentOutcome(_ context.Context) (LatestDeploymentOutcome, error) {
+func (m *MemStore) LatestPlatformDeploymentOutcome(_ context.Context, excludedAccounts ...string) (LatestDeploymentOutcome, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var latest LatestDeploymentOutcome
 	found := false
 	for _, d := range m.deployments {
+		if m.excludedOutcomeAccountLocked(d, excludedAccounts) {
+			continue
+		}
 		succeeded := d.Status == DeployLive || d.Status == DeploySuperseded
 		if !succeeded && d.Status != DeployFailed {
 			continue
@@ -25989,11 +26029,11 @@ func (m *MemStore) UpdateAlertRule(_ context.Context, id string, p UpdateAlertRu
 		r.observationChecks = nil
 	}
 	if r.ObserveOnly != before.ObserveOnly {
+		if r.ObserveOnly {
+			m.queueAlertChannelStandDownsLocked(before, StandDownDisabled, r.UpdatedAt)
+		}
 		r.State = AlertStateOk
 		m.recordAlertEpisodeLocked(r, r.UpdatedAt)
-		match := func(k alertChannelRetryKey) bool { return k.rule == id }
-		m.clearAlertChannelResolveRetriesLocked(match)
-		m.clearAlertChannelStandDownsLocked(match)
 	}
 	m.alertRules[id] = r
 	return r, nil

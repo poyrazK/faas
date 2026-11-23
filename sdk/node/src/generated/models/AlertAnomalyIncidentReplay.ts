@@ -5,6 +5,9 @@
 import type { AlertAnomalyDeploymentContext } from './AlertAnomalyDeploymentContext.js';
 import type { AlertAnomalyRecoveryComparison } from './AlertAnomalyRecoveryComparison.js';
 import type { AlertObservedIncident } from './AlertObservedIncident.js';
+/**
+ * Anomaly incidents reconstructed from a selected two-hour interval.
+ */
 export type AlertAnomalyIncidentReplay = {
   cooldown_minutes: number;
   /**

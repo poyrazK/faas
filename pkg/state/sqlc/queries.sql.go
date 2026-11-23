@@ -9523,11 +9523,6 @@ func (q *Queries) CloseLegacyWorkflowOutboundUnknownAttempts(ctx context.Context
 }
 
 const closeLiveAlertEpisodeForObservation = `-- name: CloseLiveAlertEpisodeForObservation :exec
-WITH cancel_resolves AS (
- DELETE FROM alert_channel_resolve_retries AS retry WHERE retry.rule_id=$2::uuid
-), cancel_stand_downs AS (
- DELETE FROM alert_channel_stand_downs AS notice WHERE notice.rule_id=$2::uuid
-)
 UPDATE alert_episodes AS episode SET resolved_at=greatest(episode.opened_at,$1::timestamptz)
 WHERE episode.rule_id=$2 AND episode.resolved_at IS NULL
 `

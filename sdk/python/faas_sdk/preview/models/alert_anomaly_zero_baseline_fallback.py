@@ -11,6 +11,8 @@ T = TypeVar("T", bound="AlertAnomalyZeroBaselineFallback")
 
 @_attrs_define
 class AlertAnomalyZeroBaselineFallback:
+    """Absolute error-rate and failure-count guard for a zero historical baseline."""
+
     minimum_error_rate_pct: float
     """Minimum absolute error rate expressed as a percent."""
     minimum_failed_requests: int

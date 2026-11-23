@@ -158,11 +158,11 @@ func anomalyValueQuery(series requestSeries, appID, scope, window, metric string
 	return series.latency(window, .95), SafeFloat
 }
 
-// FetchAnomalyPreviewSamples uses the live metric and coverage expressions at
+// FetchAnomalySamples uses the live metric and coverage expressions at
 // aligned checkpoints. count includes the sample at first.
-func FetchAnomalyPreviewSamples(ctx context.Context, fetcher PromQL, appID, scope, window, metric string, first time.Time, step time.Duration, count int) ([]AnomalyPreviewSample, error) {
-	if !api.SupportsEnvironmentAnomalyMetric(metric) {
-		return nil, fmt.Errorf("unsupported anomaly preview metric %q", metric)
+func FetchAnomalySamples(ctx context.Context, fetcher PromQL, appID, scope, window, metric string, first time.Time, step time.Duration, count int) ([]AnomalyPreviewSample, error) {
+	if !supportedAnomalyMetric(metric, scope) {
+		return nil, fmt.Errorf("unsupported anomaly metric %q", metric)
 	}
 	read := func(query string) ([]promql.QueryRangeSample, error) {
 		return fetchAnomalyPreviewRange(ctx, fetcher, appID, window, query, first, step, count)

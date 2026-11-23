@@ -19,12 +19,15 @@ T = TypeVar("T", bound="AlertAnomalyPreviewCandidate")
 
 @_attrs_define
 class AlertAnomalyPreviewCandidate:
+    """Alternate threshold or baseline evaluated on the preview checkpoints."""
+
     threshold: float
     """Candidate baseline multiplier."""
     breaches: list[AlertAnomalyPreviewBreach]
     weekday_baseline: AlertAnomalyWeekdayPreview | Unset = UNSET
     """Coverage for the same-weekday candidate."""
     zero_baseline_fallback: AlertAnomalyZeroBaselineFallback | Unset = UNSET
+    """Absolute error-rate and failure-count guard for a zero historical baseline."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -4157,6 +4157,11 @@ const (
 	// mode (ADR-1170): development servers need far more memory than the
 	// production server of the same app.
 	DevWatchMinRAMMB = 512
+	// DevWatchDefaultRAMMB is the RAM a new watch-mode developer environment
+	// gets, capped at the plan's RAM (DevWatchRAMMB). A Next.js 15 dev server
+	// compiled its first page in 31.8 s at 512 MB and 2.3 s at 2048 MB on prod
+	// (2026-11-22): at the 512 MB app default it swaps through the first build.
+	DevWatchDefaultRAMMB = 1024
 	// Remote debugger tunnels for `gregale dev --debug` (ADR-741): concurrent
 	// sessions per developer app, the quiet period after which a session is
 	// closed, the per-direction byte cap, and how long the tunnel waits for a
@@ -4284,6 +4289,13 @@ const StandaloneAppDefaultMaxRAMMB = 512
 // size: the plan's RAM, capped at StandaloneAppDefaultMaxRAMMB.
 func StandaloneAppDefaultRAMMB(l Limits) int {
 	return min(l.RAMMB, StandaloneAppDefaultMaxRAMMB)
+}
+
+// DevWatchRAMMB is the RAM of a new watch-mode developer environment: the
+// plan's RAM, capped at DevWatchDefaultRAMMB. A plan below DevWatchMinRAMMB
+// is still refused by the watch-mode check.
+func DevWatchRAMMB(l Limits) int {
+	return min(l.RAMMB, DevWatchDefaultRAMMB)
 }
 
 // App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.
@@ -10230,8 +10242,10 @@ const (
 	GuestOpenFilesHardLimit = 1 << 20
 
 	// ColdBootReadyWindowS is how long an app may take to become ready
-	// on a cold boot by default: the spec §6.1 COLD_BOOTING budget the
-	// scheduler's watchdog enforces (sched.ColdBootSweepBudget). An app on a
+	// on a cold boot by default: the spec §6.1 COLD_BOOTING budget
+	// (sched.ColdBootSweepBudget). vmmd's cold-boot call judges readiness
+	// against it; the scheduler's watchdog stops the row only after a further
+	// grace, so vmmd's typed verdict lands first (ADR-20261123140000). An app on a
 	// plan with a longer startup window (Limits.MaxStartupDeadlineS) that sets
 	// startup_deadline_s above it gets that window on every cold boot
 	// (ADR-20261114120000).

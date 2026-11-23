@@ -16,6 +16,8 @@ T = TypeVar("T", bound="AlertObservationSkipCount")
 
 @_attrs_define
 class AlertObservationSkipCount:
+    """Count of observation checks skipped for a single reason."""
+
     reason: AlertObservationSkipCountReason
     count: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

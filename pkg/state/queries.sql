@@ -22217,11 +22217,6 @@ UPDATE alert_rules SET mcp_min_calls=coalesce(sqlc.narg(mcp_min_calls)::integer,
 WHERE id=sqlc.arg(id) RETURNING *;
 
 -- name: CloseLiveAlertEpisodeForObservation :exec
-WITH cancel_resolves AS (
- DELETE FROM alert_channel_resolve_retries AS retry WHERE retry.rule_id=sqlc.arg(id)::uuid
-), cancel_stand_downs AS (
- DELETE FROM alert_channel_stand_downs AS notice WHERE notice.rule_id=sqlc.arg(id)::uuid
-)
 UPDATE alert_episodes AS episode SET resolved_at=greatest(episode.opened_at,sqlc.arg(ended_at)::timestamptz)
 WHERE episode.rule_id=sqlc.arg(id) AND episode.resolved_at IS NULL;
 

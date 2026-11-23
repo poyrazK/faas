@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AlertObservedIncident } from './AlertObservedIncident.js';
+/**
+ * Replay outcomes with two consecutive healthy checks required for recovery.
+ */
 export type AlertAnomalyRecoveryComparison = {
   required_healthy_checks: 2;
   /**

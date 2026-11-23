@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * A historical checkpoint the anomaly evaluator could not use.
+ */
 export type AlertAnomalyPreviewSkippedWindow = {
   evaluated_at: string;
   reason: 'telemetry_missing_or_stale' | 'insufficient_history' | 'insufficient_traffic';

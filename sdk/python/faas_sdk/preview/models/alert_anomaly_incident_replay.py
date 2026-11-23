@@ -19,6 +19,8 @@ T = TypeVar("T", bound="AlertAnomalyIncidentReplay")
 
 @_attrs_define
 class AlertAnomalyIncidentReplay:
+    """Anomaly incidents reconstructed from a selected two-hour interval."""
+
     cooldown_minutes: int
     incidents: list[AlertObservedIncident]
     """Incidents for the selected multiplier, newest first. An incident is open at the end of the replay when
@@ -26,6 +28,7 @@ class AlertAnomalyIncidentReplay:
     candidate_incidents: list[AlertObservedIncident] | Unset = UNSET
     """Incidents for the candidate, newest first. Omitted when the candidate has no incidents or is absent."""
     recovery_confirmation: AlertAnomalyRecoveryComparison | Unset = UNSET
+    """Replay outcomes with two consecutive healthy checks required for recovery."""
     deployment_context: AlertAnomalyDeploymentContext | Unset = UNSET
     """Recorded full-traffic promotions for the selected environment. An app-wide replay includes default-
     environment promotions."""

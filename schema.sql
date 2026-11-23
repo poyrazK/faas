@@ -39475,7 +39475,7 @@ CREATE TABLE public.deployment_route_policy_snapshots (
     schema_version integer DEFAULT 1 NOT NULL,
     captured_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT deployment_route_policy_snapshots_schema_version_positive CHECK ((schema_version >= 1)),
-    CONSTRAINT deployment_route_policy_snapshots_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
+    CONSTRAINT deployment_route_policy_snapshots_scope_v2_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
     CONSTRAINT deployment_route_policy_snapshots_sha256_shape CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text))
 );
 
@@ -59769,7 +59769,7 @@ CASE
     WHEN (environment_id IS NULL) THEN ('scope:'::text || scope)
     ELSE ('environment:'::text || (environment_id)::text)
 END)),
-    CONSTRAINT runtime_environment_scaling_states_scope_check CHECK (((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text) AND (scope <> 'default'::text)))
+    CONSTRAINT runtime_environment_scaling_states_scope_v2_check CHECK (((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text) AND (scope <> 'default'::text)))
 );
 
 
@@ -59791,7 +59791,7 @@ CREATE TABLE public.runtime_instance_config_proofs (
     CONSTRAINT runtime_instance_config_proofs_environment_id_check CHECK ((environment_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT runtime_instance_config_proofs_node_id_check CHECK ((node_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT runtime_instance_config_proofs_prime_activation_handoff_check CHECK (((prime_activation_handoff IS NULL) OR (jsonb_typeof(prime_activation_handoff) = 'object'::text))),
-    CONSTRAINT runtime_instance_config_proofs_scope_check CHECK (((scope = 'default'::text) OR (scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text))),
+    CONSTRAINT runtime_instance_config_proofs_scope_v2_check CHECK (((scope = 'default'::text) OR (scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text))),
     CONSTRAINT runtime_instance_config_proofs_secret_fingerprint_check CHECK ((secret_fingerprint ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT runtime_instance_config_proofs_wake_id_check CHECK ((wake_id <> '00000000-0000-0000-0000-000000000000'::uuid))
 );
