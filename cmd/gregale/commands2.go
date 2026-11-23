@@ -5410,6 +5410,10 @@ func cmdTrafficSet(args []string) int {
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
+	slug, err := leadingDeploymentID(slug, deployment)
+	if err != nil {
+		return printErr("Invalid arguments", err)
+	}
 	if err := mergeLeadingSlug(app, slug); err != nil {
 		return printErr("Invalid arguments", err)
 	}
@@ -5478,6 +5482,10 @@ func cmdTrafficPromote(args []string) int {
 	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
+	}
+	slug, err := leadingDeploymentID(slug, deployment)
+	if err != nil {
+		return printErr("Invalid arguments", err)
 	}
 	if err := mergeLeadingSlug(app, slug); err != nil {
 		return printErr("Invalid arguments", err)
