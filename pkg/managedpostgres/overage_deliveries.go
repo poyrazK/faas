@@ -19,7 +19,8 @@ import (
 
 func validOverageDelivery(d OverageDelivery) bool {
 	return d.Provider != "" && !d.PeriodStart.IsZero() && d.PeriodStart.Equal(monthStart(d.PeriodStart)) &&
-		d.BilledUnitSeconds >= 0 && d.BilledStorageByteSeconds >= 0 && d.Millicents > 0 && !d.UpdatedAt.Before(d.PeriodStart)
+		d.BilledUnitSeconds >= 0 && d.BilledStorageByteSeconds >= 0 && d.BilledHistoryByteSeconds >= 0 && d.BilledSnapshotByteSeconds >= 0 &&
+		d.Millicents > 0 && !d.UpdatedAt.Before(d.PeriodStart)
 }
 
 func (s *PostgresStore) OverageSubjects(ctx context.Context, periodStart time.Time) ([]OverageSubject, error) {
@@ -56,6 +57,7 @@ func (s *PostgresStore) OverageDelivered(ctx context.Context, provider, subjectI
 	}
 	delivery.Live, delivery.BilledUnitSeconds, delivery.Millicents, delivery.UpdatedAt = row.Live, row.BilledUnitSeconds, row.DeliveredMillicents, row.UpdatedAt.Time.UTC()
 	delivery.BilledStorageByteSeconds, delivery.BilledEgressBytes = row.BilledStorageByteSeconds, row.BilledEgressBytes
+	delivery.BilledHistoryByteSeconds, delivery.BilledSnapshotByteSeconds = row.BilledHistoryByteSeconds, row.BilledSnapshotByteSeconds
 	return delivery, nil
 }
 
@@ -82,6 +84,7 @@ func (s *PostgresStore) RecordOverageDelivery(ctx context.Context, delivery Over
 		Live: delivery.Live, BilledUnitSeconds: delivery.BilledUnitSeconds, DeliveredMillicents: delivery.Millicents,
 		UpdatedAt: pgtype.Timestamptz{Time: delivery.UpdatedAt.UTC(), Valid: true}, PreviousMillicents: previous.Millicents,
 		PreviousLive: previous.Live, BilledStorageByteSeconds: delivery.BilledStorageByteSeconds, BilledEgressBytes: delivery.BilledEgressBytes,
+		BilledHistoryByteSeconds: delivery.BilledHistoryByteSeconds, BilledSnapshotByteSeconds: delivery.BilledSnapshotByteSeconds,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
@@ -115,6 +118,8 @@ func (s *PostgresStore) OveragePending(ctx context.Context, provider, subjectID 
 			DeliveredMillicents: row.FromMillicents, TargetMillicents: row.TargetMillicents,
 			UsedStorageByteSeconds: row.UsedStorageByteSeconds, StoragePoolBytes: row.StoragePoolBytes, BilledStorageByteSeconds: row.BilledStorageByteSeconds,
 			UsedEgressBytes: row.UsedEgressBytes, AppEgressBytes: row.AppEgressBytes, EgressAllowanceBytes: row.EgressAllowanceBytes, BilledEgressBytes: row.BilledEgressBytes,
+			UsedHistoryByteSeconds: row.UsedHistoryByteSeconds, UsedSnapshotByteSeconds: row.UsedSnapshotByteSeconds, IncludedHistoryBytes: row.IncludedHistoryBytes,
+			BilledHistoryByteSeconds: row.BilledHistoryByteSeconds, BilledSnapshotByteSeconds: row.BilledSnapshotByteSeconds,
 		}}, true, nil
 }
 
@@ -132,6 +137,8 @@ func (s *PostgresStore) ReserveOverage(ctx context.Context, pending OveragePendi
 		UsedStorageByteSeconds: step.UsedStorageByteSeconds, StoragePoolBytes: step.StoragePoolBytes, BilledStorageByteSeconds: step.BilledStorageByteSeconds,
 		PreviousMillicents: pending.Previous.Millicents, PreviousLive: pending.Previous.Live,
 		UsedEgressBytes: step.UsedEgressBytes, AppEgressBytes: step.AppEgressBytes, EgressAllowanceBytes: step.EgressAllowanceBytes, BilledEgressBytes: step.BilledEgressBytes,
+		UsedHistoryByteSeconds: step.UsedHistoryByteSeconds, UsedSnapshotByteSeconds: step.UsedSnapshotByteSeconds, IncludedHistoryBytes: step.IncludedHistoryBytes,
+		BilledHistoryByteSeconds: step.BilledHistoryByteSeconds, BilledSnapshotByteSeconds: step.BilledSnapshotByteSeconds,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
@@ -162,6 +169,7 @@ func (s *PostgresStore) CompleteOverage(ctx context.Context, pending OveragePend
 			Live: delivery.Live, BilledUnitSeconds: delivery.BilledUnitSeconds, DeliveredMillicents: delivery.Millicents,
 			UpdatedAt: pgtype.Timestamptz{Time: delivery.UpdatedAt, Valid: true}, PreviousMillicents: pending.Previous.Millicents,
 			PreviousLive: pending.Previous.Live, BilledStorageByteSeconds: delivery.BilledStorageByteSeconds, BilledEgressBytes: delivery.BilledEgressBytes,
+			BilledHistoryByteSeconds: delivery.BilledHistoryByteSeconds, BilledSnapshotByteSeconds: delivery.BilledSnapshotByteSeconds,
 		})
 		switch {
 		case err == nil:
@@ -184,7 +192,8 @@ func pendingDelivery(pending OveragePendingStep) OverageDelivery {
 	step := pending.Step
 	return OverageDelivery{Provider: pending.Provider, SubjectID: step.SubjectID, PeriodStart: step.PeriodStart.UTC(),
 		Live: pending.Live, BilledUnitSeconds: step.BilledUnitSeconds, Millicents: step.TargetMillicents,
-		UpdatedAt: step.At.UTC(), BilledStorageByteSeconds: step.BilledStorageByteSeconds, BilledEgressBytes: step.BilledEgressBytes}
+		UpdatedAt: step.At.UTC(), BilledStorageByteSeconds: step.BilledStorageByteSeconds, BilledEgressBytes: step.BilledEgressBytes,
+		BilledHistoryByteSeconds: step.BilledHistoryByteSeconds, BilledSnapshotByteSeconds: step.BilledSnapshotByteSeconds}
 }
 
 type memoryOverageKey struct {

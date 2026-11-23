@@ -17,18 +17,24 @@ func TestManagedPostgresUsageViewIsCustomerSafe(t *testing.T) {
 		PolicyEnabled: true,
 		Fresh:         true,
 		Snapshot: managedpostgres.UsageSnapshot{
-			PeriodStart:        time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
-			LastObservedAt:     observed,
-			ReadyDatabases:     1,
-			ComputeUnitSeconds: 30,
-			StorageByteSeconds: 40,
-			HistoryByteSeconds: 50,
-			EgressBytes:        60,
-			CostMillicents:     999,
+			PeriodStart:         time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
+			LastObservedAt:      observed,
+			ReadyDatabases:      1,
+			ComputeUnitSeconds:  30,
+			StorageByteSeconds:  40,
+			HistoryByteSeconds:  50,
+			SnapshotByteSeconds: 55,
+			EgressBytes:         60,
+			CostMillicents:      999,
 		},
 	}, api.ManagedPostgresPlanLimits{DatabasesMax: 1, StorageLimitBytes: 10 << 30}, managedpostgres.CapEnforcementShadow, false)
 	if view.GuardrailState != "healthy" || view.StorageByteSecondsRemaining <= 0 || view.ObservedAt == nil {
 		t.Fatalf("view = %+v", view)
+	}
+	// Restore history and snapshots are shown apart, with the history the
+	// plan includes: its storage pool (ADR-20261123062111).
+	if view.HistoryByteSeconds != 50 || view.SnapshotByteSeconds != 55 || view.IncludedHistoryBytes != 10<<30 {
+		t.Fatalf("history view = %+v", view)
 	}
 	encoded, err := json.Marshal(view)
 	if err != nil {

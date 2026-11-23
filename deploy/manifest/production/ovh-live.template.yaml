@@ -362,6 +362,15 @@ serving_probes:
   urls: ["https://serving-probe.gregale.app/"]
   expected_body: gregale-serving-probe-ok
 
+# ADR-576 private TCP service addresses (<name>.svc.gregale:<port>), which
+# managed Redis caches are reached at (ADR-20261116192126). Staged by hand on
+# bhs-2/bhs-3 on 2026-11-23 in the README's order (node, listener, dns); this
+# block keeps every converge rendering the same.
+service_tcp:
+  node: true
+  listener: true
+  dns: true
+
 dns:
   # ADR-20261026100000: apps (and PR and deployment previews) move to
   # gregale.app; the site, dashboard, API, emails and webhooks stay on

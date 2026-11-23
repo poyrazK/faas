@@ -208,6 +208,7 @@ func (s *PostgresStore) UsageSnapshot(ctx context.Context, accountID string, per
 	}
 	snapshot.ComputeUnitSeconds, snapshot.StorageByteSeconds = totals.ComputeUnitSeconds, totals.StorageByteSeconds
 	snapshot.HistoryByteSeconds, snapshot.EgressBytes, snapshot.CostMillicents = totals.HistoryByteSeconds, totals.EgressBytes, totals.CostMillicents
+	snapshot.SnapshotByteSeconds = totals.SnapshotByteSeconds
 	egress, err := sqlc.New().ManagedPostgresEgressByDatabase(ctx, tx, sqlc.ManagedPostgresEgressByDatabaseParams{SubjectID: account, PeriodStart: databaseNullableTime(periodStart), PeriodEnd: databaseNullableTime(periodEnd)})
 	if err != nil {
 		return UsageSnapshot{}, mapPostgresError(err)

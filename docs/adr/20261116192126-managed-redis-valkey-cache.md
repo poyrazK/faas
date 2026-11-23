@@ -408,6 +408,17 @@ closed by a later slice:
     rollout aborts and the running VM keeps serving with its data.
   - Its writes stay paused until the handoff's `CLIENT PAUSE` expires, at most
     300 s. They are delayed, not lost.
+- **A handoff cuts over at once, never by canary.** The safe-by-default
+  release policy (ADR-1446) gives a production deploy of an app that already
+  serves a 4-step canary. On prod (2026-11-23, first run with
+  `service_tcp` on) a resize's handoff deployment got one, so the old VM
+  kept serving for 7m40s beside the new one. That outlasts the 300 s write
+  pause, so the old VM could acknowledge writes that were dropped with it. A
+  canary or 5xx rollback has nothing to offer a cache anyway: the old VM's
+  copy goes stale as soon as the handoff starts. `release.ApplyDefault` now
+  leaves every deploy of a cache app immediate (ADR-1446 amendment of
+  2026-11-23), and the prod journey fails a resize whose handoff takes over
+  3 minutes.
 - **Unchanged:** the stateful-image deny-list. `valkey` is not on it today,
   and adding it would break customers who deploy Valkey themselves. That is
   left for an owner decision.
