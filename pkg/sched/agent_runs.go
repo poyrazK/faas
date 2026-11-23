@@ -59,6 +59,11 @@ type AgentRunConfig struct {
 	// first cold-booted session there ends (ADR-20261027090013 §12). Off:
 	// every session cold-boots.
 	SandboxSnapshots bool
+	// LargeNodes are the agent-pool nodes, by ID or name, that declare large
+	// session shapes (ADR-20261122132055 §5): a session above
+	// api.SandboxLargeShapeRAMMB or api.SandboxLargeShapeVCPU runs only on
+	// them. None: large sessions find no node and queue.
+	LargeNodes []string
 }
 
 // AgentRunAdmission is one run's machine (ADR-20261027090010 §5), already checked
@@ -144,6 +149,8 @@ type AgentRunner struct {
 	router agentRunRouter
 	cfg    AgentRunConfig
 	pool   map[string]bool
+	// largePool is the part of pool that takes large session shapes.
+	largePool map[string]bool
 
 	// snapshots and capturing are per schedd process: a restart captures
 	// again, overwriting the same keys, and a stale snapshot is dropped
@@ -169,7 +176,13 @@ func NewAgentRunner(engine *Engine, router agentRunRouter, cfg AgentRunConfig) (
 	if engine == nil || router == nil || cfg.BaseKey == "" || cfg.LayerKey == "" || len(pool) == 0 {
 		return nil, ErrAgentRunsDisabled
 	}
-	return &AgentRunner{engine: engine, router: router, cfg: cfg, pool: pool,
+	largePool := map[string]bool{}
+	for _, node := range cfg.LargeNodes {
+		if node = strings.TrimSpace(node); node != "" && pool[node] {
+			largePool[node] = true
+		}
+	}
+	return &AgentRunner{engine: engine, router: router, cfg: cfg, pool: pool, largePool: largePool,
 		snapshots: map[agentSnapshotShape]*AgentRunSnapshot{}, capturing: map[agentSnapshotShape]bool{},
 		sandboxSnaps: map[sandboxSnapshotShape]sandboxSnapshot{}, sandboxCapturing: map[sandboxSnapshotShape]bool{}}, nil
 }
@@ -297,7 +310,10 @@ func (r *AgentRunner) captureID(shape agentSnapshotShape) string {
 // admit places req on the agent pool as an agent-run reservation; sandbox
 // sessions are admitted the same way (ADR-20261027090013 §7).
 func (r *AgentRunner) admit(ctx context.Context, req Request) (AgentRunPlacement, func(), error) {
-	req.Kind, req.agentPool = KindAgentRun, r.pool
+	req.Kind = KindAgentRun
+	if req.agentPool == nil {
+		req.agentPool = r.pool
+	}
 	placement, err := r.engine.choosePlacementLocked(ctx, req)
 	if err != nil {
 		return AgentRunPlacement{}, nil, fmt.Errorf("sched: agent run placement: %w", err)

@@ -60,6 +60,13 @@ func sandboxRunnerPoolFixture(t *testing.T, layer string, pool ...string) (*sche
 // sandboxRunnerStoreFixture is sandboxRunnerPoolFixture with its store.
 func sandboxRunnerStoreFixture(t *testing.T, layer string, pool ...string) (*sched.AgentRunner, *sandboxRouter, *sched.NodeLedger, string, *state.MemStore) {
 	t.Helper()
+	return sandboxRunnerLargeFixture(t, layer, nil, pool...)
+}
+
+// sandboxRunnerLargeFixture is sandboxRunnerStoreFixture whose pool declares
+// large shapes on the nodes large names.
+func sandboxRunnerLargeFixture(t *testing.T, layer string, large []string, pool ...string) (*sched.AgentRunner, *sandboxRouter, *sched.NodeLedger, string, *state.MemStore) {
+	t.Helper()
 	ctx := context.Background()
 	store := state.NewMemStore()
 	var agentNode string
@@ -78,7 +85,7 @@ func sandboxRunnerStoreFixture(t *testing.T, layer string, pool ...string) (*sch
 	}
 	router := &sandboxRouter{agentRouter: &agentRouter{ledger: ledger}}
 	runner, err := sched.NewAgentRunner(engine, router, sched.AgentRunConfig{BaseKey: "base/agent-base.ext4",
-		LayerKey: "layer/agent.ext4", SandboxLayerKey: layer, Nodes: pool})
+		LayerKey: "layer/agent.ext4", SandboxLayerKey: layer, Nodes: pool, LargeNodes: large})
 	if err != nil {
 		t.Fatal(err)
 	}

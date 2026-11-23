@@ -23,7 +23,8 @@ import (
 const sessionCapture = "snap/sandbox-session-acct/captures/c1/v2/mem"
 
 func TestSandboxRunnerResumesFromTheSessionCapture(t *testing.T) {
-	runner, router, ledger, node := sandboxRunnerFixture(t, "base/sandbox-layer-v1-amd64.ext4")
+	// An 8 GB session is a large shape: its node declares them (§5).
+	runner, router, ledger, node, _ := sandboxRunnerLargeFixture(t, "base/sandbox-layer-v1-amd64.ext4", []string{"agents-1"}, "agents-1")
 	a := sandboxAdmission()
 	a.Persistent, a.RAMMB, a.VCPU, a.CPUMillicores = true, 8192, 4, 4000
 	a.Resume = &sched.SandboxResume{NodeID: node, Snapshot: sched.AgentRunSnapshot{StorageKey: sessionCapture,

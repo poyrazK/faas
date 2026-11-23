@@ -221,6 +221,13 @@ Each step is one PR on the sandbox branches until the owner asks for PRs. Every 
 - **Reattach (schedd and agentd restarts).** schedd starts a persistent session's VM `detachable`. When its stream ends without a close or a pause, vmmd keeps the VM running and its data-plane calls served for `SandboxReattachGraceSec` (120 s), then destroys it as before. agentd does not fail a running persistent session whose stream dropped (`Unavailable`): its lease lapses, the sweep leaves it alone within the grace, and the next claim on any replica takes it over (`ClaimDetachedSandbox`, before queued sessions). The claim's start carries `reattach{node, instance}`; schedd books the VM on that node again without placement (running it even if the ledger has no room, since the VM is resident), and vmmd hands the running VM to the new stream (`booted{reattached}`). A VM that did not outlive its stream answers `NotFound` and the session fails as `vm_lost`. Actions in flight when the stream dropped are ended.
 - **Not yet:** a node drain does not wait for its sessions (drain completion counts app instances only); adoption of session VMs across a vmmd restart (a stopping vmmd evacuates instead); an ephemeral session still ends with its stream.
 
+### Step 8 as built
+
+- **Declared nodes.** Until `compute_nodes` carries the agents role, an agent-pool node declares large shapes by being listed in schedd's `FAAS_SCHEDD_SANDBOX_LARGE_NODES` (IDs or names, a subset of `FAAS_SCHEDD_AGENT_RUN_NODES`).
+- **Large.** A session above `SandboxLargeShapeRAMMB` (4,096 MB, the largest ephemeral shape) or `SandboxLargeShapeVCPU` (2) is placed only on those nodes: a new session, a resume, a fork and a drain's move alike. With none declared it is refused for capacity and queues, failing after `SandboxQueueMaxSec` as any session no node can place. A reattach goes to the node it runs on.
+- **Unchanged:** invariant 2 per node, measured admission, and the plan limits (`SandboxPersistentRAMMBMax`, `SandboxPersistentVCPUMax`).
+- **Not yet:** packing large sessions before small ones (small sessions may still land on a large node); a per-node maximum shape; the manifest and Ansible key for the list.
+
 ## Open questions
 
 1. **Prices:** GB-month for stored bytes and the free allowance, alongside `k` and the 256 MB floor.
