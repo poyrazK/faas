@@ -352,7 +352,7 @@ resuming my-api on v42
 ```
 
 It runs the same steps as a
-[rollback that restores the database](deploys.md#rollbacks-that-restore-the-database),
+[rollback that restores the database](releases.md#rollbacks-that-restore-the-database),
 except that the release stays the same: restore, stage and verify credentials,
 fence and drain the app, move every binding the app has to the database in
 the scope (`--env`, default `default`) in one transaction, then resume. Until
