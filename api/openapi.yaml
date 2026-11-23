@@ -95272,7 +95272,9 @@ components:
         storage_byte_seconds: { type: integer, format: int64, minimum: 0 }
         storage_byte_seconds_limit: { type: integer, format: int64, minimum: 0 }
         storage_byte_seconds_remaining: { type: integer, format: int64, minimum: 0 }
-        history_byte_seconds: { type: integer, format: int64, minimum: 0 }
+        history_byte_seconds: { type: integer, format: int64, minimum: 0, description: "Point-in-time restore history held this month, in byte-seconds." }
+        snapshot_byte_seconds: { type: integer, format: int64, minimum: 0, description: "Snapshot storage held this month, in byte-seconds." }
+        included_history_bytes: { type: integer, format: int64, minimum: 0, description: "Restore history and snapshot storage the plan includes, held for the whole month. Restore history uses it first. With overage on, history past it is billed per GB-month." }
         egress_bytes: { type: integer, format: int64, minimum: 0 }
         compute_allowance_unit_seconds:
           description: The plan's monthly compute allowance in compute-unit seconds, pooled across the account's databases.
@@ -95366,6 +95368,7 @@ components:
         storage_byte_seconds_limit: { type: integer, format: int64, minimum: 0 }
         storage_byte_seconds_remaining: { type: integer, format: int64, minimum: 0 }
         history_byte_seconds: { type: integer, format: int64, minimum: 0 }
+        snapshot_byte_seconds: { type: integer, format: int64, minimum: 0 }
         egress_bytes: { type: integer, format: int64, minimum: 0 }
         cost_millicents: { type: integer, format: int64, minimum: 0 }
         max_monthly_cost_millicents: { type: integer, format: int64, minimum: 0 }
@@ -95435,7 +95438,7 @@ components:
       additionalProperties: false
       required: [meter, quantity]
       properties:
-        meter: { type: string, enum: [active_seconds, compute_unit_seconds, storage_byte_seconds, history_byte_seconds, egress_bytes, operations] }
+        meter: { type: string, enum: [active_seconds, compute_unit_seconds, storage_byte_seconds, history_byte_seconds, snapshot_byte_seconds, egress_bytes, operations] }
         quantity: { type: integer, format: int64, minimum: 0 }
     ManagedPostgresUsageImportWindow:
       description: A complete policy-sized usage window with its actual source observation time.

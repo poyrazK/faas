@@ -76,6 +76,19 @@ Object storage bills the bytes it holds. Each plan includes an average amount of
 
 Included storage is the average over the month, so 20 GiB held for half a month uses 10 GiB of it. A lower spend cap lowers how much a paid plan stores: a $0 cap stops at the included storage. Need more than the plan stores? Ask support to raise your account's ceiling; your spend cap still applies. At the ceiling, uploads are refused, and downloads stop while you store more than it until you delete objects. A downgrade waits until your data fits. Every plan stores up to 1,000,000 objects per account, counting retained versions. Egress counts the bytes Gregale serves from your buckets, through `s3.gregale.dev`, signed URLs and public buckets; a public object served from the CDN's cache does not count. At the egress limit, requests other than deletes are refused until the month ends; at the request limit, every request is refused until the month ends. See [object storage](object-storage.md#limits).
 
+## Managed PostgreSQL
+
+Each paid plan includes [managed PostgreSQL](postgres.md) databases, with storage pooled across them and a monthly compute allowance. Restore history and snapshots are included up to the size of the storage pool, averaged over the month.
+
+| Plan | Databases | Pooled storage | Compute per month | Included restore history |
+|---|---:|---:|---:|---:|
+| **Free** | — | — | — | — |
+| **Hobby** | 1 | 1 GiB | 25 CU-hours | 1 GiB |
+| **Pro** | 3 | 5 GiB | 75 CU-hours | 5 GiB |
+| **Scale** | 10 | 20 GiB | 200 CU-hours | 20 GiB |
+
+With overage on (`gregale postgres overage on`), compute past the allowance costs $0.2331 per CU-hour, storage past the pool $0.50 per GiB-month, restore history past the included history $0.21 per GB-month and snapshots past it $0.0945 per GB-month. Restore history uses the included history first. With egress overage on, a database's egress past its own 500 GB costs $0.105 per GB. Overage counts toward your [spend cap](billing.md#spend-cap). A GB is 10^9 bytes. See [usage and limits](postgres.md#usage-and-limits).
+
 ## Choose a plan
 
 Start on **Free** for a small public API or a trial. **Hobby** unlocks the paid observability, async, and data surfaces. **Pro** is the normal production tier for teams, while **Scale** raises the app, concurrency, RAM, and usage ceilings. Feature maturity and entitlement are listed in the [capability matrix](capabilities.md).

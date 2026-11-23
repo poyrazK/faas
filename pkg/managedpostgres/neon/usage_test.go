@@ -144,11 +144,13 @@ func TestUsageNormalizesByteMonthStorage(t *testing.T) {
 					}
 					continue
 				}
-				index := 1
-				if metric == "instant_restore_bytes_month" || metric == "snapshot_storage_bytes_month" {
-					index = 2
+				// Restore history and snapshots are separate meters: Neon
+				// prices them differently (ADR-20261123062111).
+				index := map[string]int{"instant_restore_bytes_month": 2, "snapshot_storage_bytes_month": 3}[metric]
+				if index == 0 {
+					index = 1
 				}
-				if err != nil || len(usage.Readings) != 4 || usage.Readings[index].Quantity != quantity*secondsPerBillingMonth {
+				if err != nil || len(usage.Readings) != 5 || usage.Readings[index].Quantity != quantity*secondsPerBillingMonth {
 					t.Fatalf("byte-month normalization: %+v, %v; want %d byte-seconds", usage, err, quantity*secondsPerBillingMonth)
 				}
 			}

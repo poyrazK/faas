@@ -614,8 +614,12 @@ const (
 	MeterComputeUnitSeconds Meter = "compute_unit_seconds"
 	MeterStorageByteSeconds Meter = "storage_byte_seconds"
 	MeterHistoryByteSeconds Meter = "history_byte_seconds"
-	MeterEgressBytes        Meter = "egress_bytes"
-	MeterOperations         Meter = "operations"
+	// MeterSnapshotByteSeconds is snapshot storage, apart from restore
+	// history because the provider prices it differently
+	// (ADR-20261123062111).
+	MeterSnapshotByteSeconds Meter = "snapshot_byte_seconds"
+	MeterEgressBytes         Meter = "egress_bytes"
+	MeterOperations          Meter = "operations"
 )
 
 type UsageWindow struct {
@@ -758,7 +762,9 @@ type UsageSnapshot struct {
 	ComputeUnitSeconds int64
 	StorageByteSeconds int64
 	HistoryByteSeconds int64
-	EgressBytes        int64
+	// SnapshotByteSeconds is snapshot storage (ADR-20261123062111).
+	SnapshotByteSeconds int64
+	EgressBytes         int64
 	// DatabaseEgress is each database's egress this month, by database ID.
 	// Neon's transfer allowance is per project and every database is its own
 	// project, so a database's egress allowance is its own
@@ -838,6 +844,7 @@ func (p UsagePolicy) LineItems(snapshot UsageSnapshot) ([]UsageLineItem, error) 
 		{"managed_postgres.compute", MeterComputeUnitSeconds, "compute_unit_seconds", snapshot.ComputeUnitSeconds},
 		{"managed_postgres.storage", MeterStorageByteSeconds, "byte_seconds", snapshot.StorageByteSeconds},
 		{"managed_postgres.restore_history", MeterHistoryByteSeconds, "byte_seconds", snapshot.HistoryByteSeconds},
+		{"managed_postgres.snapshots", MeterSnapshotByteSeconds, "byte_seconds", snapshot.SnapshotByteSeconds},
 		{"managed_postgres.egress", MeterEgressBytes, "bytes", snapshot.EgressBytes},
 	}
 	items := make([]UsageLineItem, 0, len(readings))
@@ -1495,7 +1502,7 @@ func providerErrorCode(err error) string {
 
 func validMeter(meter Meter) bool {
 	switch meter {
-	case MeterActiveSeconds, MeterComputeUnitSeconds, MeterStorageByteSeconds, MeterHistoryByteSeconds, MeterEgressBytes, MeterOperations:
+	case MeterActiveSeconds, MeterComputeUnitSeconds, MeterStorageByteSeconds, MeterHistoryByteSeconds, MeterSnapshotByteSeconds, MeterEgressBytes, MeterOperations:
 		return true
 	default:
 		return false
