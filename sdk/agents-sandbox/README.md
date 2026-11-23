@@ -30,7 +30,9 @@ const result = await run(agent, 'Triage owner/name#42.', { sandbox: { client, ma
 | `session.persistSnapshot()` (Gregale only) | `…/workspace:persist`; create with `options.snapshotId` to start from it |
 | `resolveExposedPort` | `POST …/ports`. A private port's endpoint carries its preview token in `query`; it is never written to the session state |
 | `session.startBrowser()` (Gregale only) | starts the session's headless Chromium (`gregale-browser`) and exposes its DevTools protocol on port 9222, privately. Connect with `chromium.connectOverCDP(browser.cdpUrl, { headers: browser.headers })`; the headers carry the preview token and are never written to the session state. Pages reach the web only in `web` network mode |
-| `running`, `stop`, `shutdown`, `close`, `delete` | `GET` / `DELETE /v1/sandboxes/{id}` |
+| `running`, `stop`, `shutdown`, `close`, `delete` | `GET` / `DELETE /v1/sandboxes/{id}`; `stop` pauses a persistent session instead |
+| `options.kind: 'persistent'` (with `volumeGb`, `vcpu`) | a session whose memory and `/workspace` survive pauses (ADR-20261122132055) |
+| `session.pause()` (Gregale only), `client.resume(state)` | `…/pause`; `resume` calls `…/resume` for a paused session, then waits for it |
 | `serializeSessionState` | `{ sandboxId, apiBase }` only. `resume` re-mints the session token with your API key, and refuses state for another API origin |
 
 ## Options

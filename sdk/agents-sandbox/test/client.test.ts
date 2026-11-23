@@ -24,6 +24,8 @@ type Command = { cmd: string[]; env?: Record<string, string>; run_as?: string };
 /** An in-memory Gregale API: one session, a workspace of files, and commands. */
 class FakeGregale {
   state = 'queued';
+  kind = 'ephemeral';
+  controls: string[] = [];
   reads = 0;
   tokens = 0;
   staleTokens = new Set<string>();
@@ -51,12 +53,19 @@ class FakeGregale {
 
     if (control && method === 'POST' && path === '/v1/sandboxes') {
       this.created = JSON.parse(text);
+      if (this.created?.kind) this.kind = String(this.created.kind);
       return json(201, this.view());
+    }
+    if (control && method === 'POST' && (path === `${base}/pause` || path === `${base}/resume`)) {
+      this.controls.push(path.slice(base.length));
+      this.state = path.endsWith('/pause') ? 'pausing' : 'resuming';
+      return json(202, this.view());
     }
     if (control && method === 'GET' && path === base) {
       this.reads++;
       if (this.state === 'queued') this.state = 'starting';
-      else if (this.state === 'starting') this.state = 'ready';
+      else if (this.state === 'starting' || this.state === 'resuming') this.state = 'ready';
+      else if (this.state === 'pausing') this.state = 'paused';
       return json(200, this.view());
     }
     if (control && method === 'DELETE' && path === base) {
@@ -158,13 +167,13 @@ class FakeGregale {
     return {
       id: ID,
       state: this.state,
-      kind: 'ephemeral',
+      kind: this.kind,
       preset: 'codex',
       ram_mb: 1024,
       network: { mode: 'registries' },
       expires_at: '2026-11-05T04:00:00Z',
       labels: {},
-      ...(this.state !== 'closed' ? { token, token_expires_at: new Date(Date.now() + (placed ? 900_000 : 900_000)).toISOString() } : {}),
+      ...(this.state !== 'closed' && this.state !== 'paused' && this.state !== 'pausing' && this.state !== 'resuming' ? { token, token_expires_at: new Date(Date.now() + (placed ? 900_000 : 900_000)).toISOString() } : {}),
     };
   }
 }
@@ -316,6 +325,32 @@ test('state serializes to its identity and resumes only on this API', async () =
   assert.equal(fake.deleted, 1);
   assert.equal(await resumed.running(), false);
   await assert.rejects(client.resume(state), /is closed/);
+});
+
+test('a persistent session pauses on stop and resume resumes it', async () => {
+  const { fake, client } = setup();
+  const session = await client.create({ options: { kind: 'persistent', volumeGb: 10, vcpu: 2 } });
+  assert.deepEqual([fake.created?.kind, fake.created?.volume_gb, fake.created?.vcpu], ['persistent', 10, 2]);
+  await session.stop();
+  assert.equal(fake.state, 'paused');
+  assert.equal(fake.deleted, 0, 'stop keeps a persistent session');
+  assert.equal(await session.running(), false);
+  assert.equal(await session.pause(), false, 'already paused');
+  const state = await client.deserializeSessionState({ ...(await client.serializeSessionState(session.state)), manifest: { root: '/workspace' } });
+  const resumed = await client.resume(state);
+  assert.deepEqual(fake.controls, ['/pause', '/resume']);
+  assert.equal(fake.state, 'ready');
+  assert.equal(await resumed.running(), true);
+  await resumed.close();
+  assert.equal(fake.deleted, 1);
+});
+
+test('an ephemeral session does not pause; stop closes it', async () => {
+  const { fake, client } = setup();
+  const session = await client.create();
+  await assert.rejects(session.pause(), /freezes on its own/);
+  await session.stop();
+  assert.equal(fake.deleted, 1);
 });
 
 test('the workspace round-trips as an archive', async () => {
