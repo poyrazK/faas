@@ -15,12 +15,12 @@ Operators: see the [operator guide](managed-postgres.md).
 
 ## Plans
 
-| Plan | Databases | Pooled storage | Compute per month | Restore window | Classes |
-| --- | ---: | ---: | ---: | ---: | --- |
-| Free | — | — | — | — | — |
-| Hobby | 1 | 1 GiB | 25 CU-hours | 7 days | development |
-| Pro | 3 | 5 GiB | 75 CU-hours | 7 days | development, burstable |
-| Scale | 10 | 20 GiB | 200 CU-hours | 7 days | development, burstable, production |
+| Plan | Databases | Pooled storage | Compute per month | Included restore history | Restore window | Classes |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| Free | — | — | — | — | — | — |
+| Hobby | 1 | 1 GiB | 25 CU-hours | 1 GiB | 7 days | development |
+| Pro | 3 | 5 GiB | 75 CU-hours | 5 GiB | 7 days | development, burstable |
+| Scale | 10 | 20 GiB | 200 CU-hours | 20 GiB | 7 days | development, burstable, production |
 
 - The Free plan includes no managed PostgreSQL: create, `gregale dev
   --postgres`, a Compose `postgres` service and restores answer
@@ -41,7 +41,10 @@ Operators: see the [operator guide](managed-postgres.md).
   A suspended database takes the new time at once; a running one takes it
   the next time it suspends, without dropping connections. `gregale postgres
   get` shows the current value. Always-on compute is not part of these plans.
-- Storage is a limit. Compute and egress past the allowance are billed only
+- Restore history (what point-in-time restore keeps) and snapshots are
+  included up to the size of the storage pool, averaged over the month.
+- Without overage, storage is a limit and nothing past the plan is billed.
+  Compute, storage, restore history and egress past the plan are billed only
   when you turn on overage; see [Usage and limits](#usage-and-limits).
 - A database runs in a single zone. Gregale makes no high-availability
   promise for it; point-in-time restore and the 7-day undo of a delete are the
@@ -471,12 +474,22 @@ databases by up to two hours.
   allowance the databases are suspended until the 1st of next month or an
   upgrade, unless compute overage is on. A suspended database keeps its data.
 - Compute overage (`gregale postgres overage on|off`) keeps the databases
-  running past the allowance, up to twice it, and bills the excess. It is off
-  by default on Hobby and Pro and on by default on Scale; turning it off on
-  Scale is kept.
+  running past the allowance, up to twice it, and bills the excess at $0.2331
+  per CU-hour. It is off by default on Hobby and Pro and on by default on
+  Scale; turning it off on Scale is kept.
 - Storage: at the pooled storage limit, writes that would grow a database
   fail. Reads, deletes and `VACUUM` keep working, and nothing is suspended or
-  deleted.
+  deleted. With overage on, the limit is twice the pool, and storage past the
+  pool, averaged over the month, is billed at $0.50 per GiB-month.
+- Restore history and snapshots: `usage` shows `history_byte_seconds` (what
+  point-in-time restore keeps), `snapshot_byte_seconds` and
+  `included_history_bytes`, which equals your storage pool. Restore history
+  uses the included amount first. It grows with how much your databases write,
+  not with their size: rewriting 1 GiB a day keeps about 7 GiB with a 7-day
+  restore window. With overage on, what passes the included amount, averaged
+  over the month, is billed at $0.21 per GB-month for restore history and
+  $0.0945 per GB-month for snapshots (10^9 bytes). A month that billed it
+  keeps the charge if you turn overage off.
 - Egress: each database has its own 500 GB (10^9 bytes) monthly egress
   allowance, separate from your apps' plan allowance. `usage` shows
   `egress_allowance_bytes` (per database) and what all the databases sent

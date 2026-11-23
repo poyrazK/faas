@@ -646,7 +646,8 @@ func deliverManagedPostgresOverage(ctx context.Context, store managedpostgres.Us
 	if !ok {
 		return
 	}
-	options := managedpostgres.OverageBillerOptions{Provider: policy.Provider, EffectiveFrom: policy.EffectiveFrom, Allowance: limits, PlanSpans: spans, Egress: egress, CapRoom: capRoom, Logger: log}
+	options := managedpostgres.OverageBillerOptions{Provider: policy.Provider, EffectiveFrom: policy.EffectiveFrom, HistoryFrom: policy.HistoryFrom,
+		Allowance: limits, PlanSpans: spans, Egress: egress, CapRoom: capRoom, Logger: log}
 	if policy.Live {
 		options.Publish = func(ctx context.Context, step managedpostgres.OverageChargeStep) error {
 			return sink.PublishManagedPostgresCharge(ctx, billing.ManagedPostgresChargeStep(step))

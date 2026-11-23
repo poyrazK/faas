@@ -305,6 +305,8 @@ func managedPostgresUsageView(summary managedpostgres.UsageSummary, limits api.M
 		StorageByteSeconds:      summary.Snapshot.StorageByteSeconds,
 		StorageByteSecondsLimit: storageLimit, StorageByteSecondsRemaining: remaining,
 		HistoryByteSeconds: summary.Snapshot.HistoryByteSeconds, EgressBytes: summary.Snapshot.EgressBytes,
+		SnapshotByteSeconds:  summary.Snapshot.SnapshotByteSeconds,
+		IncludedHistoryBytes: api.ManagedPostgresIncludedHistoryBytes(limits.StorageLimitBytes),
 	}
 	if limits.MonthlyComputeUnitSeconds > 0 {
 		view.ComputeAllowanceUnitSeconds = limits.MonthlyComputeUnitSeconds
@@ -407,7 +409,7 @@ func managedPostgresUsageOperatorView(accountID string, summary managedpostgres.
 		ReadyDatabases: customer.ReadyDatabases, DatabaseLimit: customer.DatabaseLimit,
 		StorageLimitBytes: customer.StorageLimitBytes, ComputeUnitSeconds: customer.ComputeUnitSeconds,
 		StorageByteSeconds: customer.StorageByteSeconds, StorageByteSecondsLimit: storageLimit,
-		StorageByteSecondsRemaining: remaining, HistoryByteSeconds: customer.HistoryByteSeconds,
+		StorageByteSecondsRemaining: remaining, HistoryByteSeconds: customer.HistoryByteSeconds, SnapshotByteSeconds: customer.SnapshotByteSeconds,
 		EgressBytes: customer.EgressBytes, CostMillicents: summary.Snapshot.CostMillicents,
 		MaxMonthlyCostMillicents:     summary.EffectivePolicy.MaxMonthlyCostMillicents,
 		MaxMonthlyComputeUnitSeconds: summary.EffectivePolicy.MaxMonthlyComputeUnitSeconds,

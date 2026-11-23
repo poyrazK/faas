@@ -197,6 +197,7 @@ func (p *Provider) Capabilities() managedpostgres.Capabilities {
 			managedpostgres.MeterComputeUnitSeconds,
 			managedpostgres.MeterStorageByteSeconds,
 			managedpostgres.MeterHistoryByteSeconds,
+			managedpostgres.MeterSnapshotByteSeconds,
 			managedpostgres.MeterEgressBytes,
 		},
 	}

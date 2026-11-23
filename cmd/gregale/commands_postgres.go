@@ -286,6 +286,12 @@ func cmdPostgresUsage(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "  storage_byte_seconds:         %d / %d (remaining %d)\n", result.StorageByteSeconds, result.StorageByteSecondsLimit, result.StorageByteSecondsRemaining)
 	_, _ = fmt.Fprintf(osStdout, "                                (%s of %s used)\n", formatGiBMonths(result.StorageByteSeconds), formatGiBMonths(result.StorageByteSecondsLimit))
 	_, _ = fmt.Fprintf(osStdout, "  history_byte_seconds:         %d (%s)\n", result.HistoryByteSeconds, formatGiBMonths(result.HistoryByteSeconds))
+	if result.SnapshotByteSeconds > 0 {
+		_, _ = fmt.Fprintf(osStdout, "  snapshot_byte_seconds:        %d (%s)\n", result.SnapshotByteSeconds, formatGiBMonths(result.SnapshotByteSeconds))
+	}
+	if result.IncludedHistoryBytes > 0 {
+		_, _ = fmt.Fprintf(osStdout, "  included_history:             %s per month\n", formatIECBytes(result.IncludedHistoryBytes))
+	}
 	_, _ = fmt.Fprintf(osStdout, "  egress_bytes:                 %d (%s)\n", result.EgressBytes, formatIECBytes(result.EgressBytes))
 	if result.EgressAllowanceBytes > 0 {
 		_, _ = fmt.Fprintf(osStdout, "  egress_allowance:             %.0f GB per database\n", float64(result.EgressAllowanceBytes)/1e9)
