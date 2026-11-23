@@ -61,7 +61,6 @@ var guidePages = []guidePage{
 			{Do: "Preview every service, its URL, health check and managed databases", Command: "gregale deploy --project --dry-run"},
 			{Do: "Deploy the project", Command: "gregale deploy --project --yes"},
 			{Do: "Deploy some services only", Command: "gregale deploy --project --only <service>"},
-			{Do: "Open a public service to everyone", Command: "gregale app update <app> --no-require-authn"},
 			{Do: "Restart, health-check or change every app of the project at once", Command: "gregale app restart --project <project> --fresh --wait"},
 			{Do: "Follow every service's logs", Command: "gregale logs --project <project> --follow"},
 			{Do: "Run a command in a fresh instance of a service", Command: "gregale app exec <app> -- <command>"},
@@ -69,6 +68,7 @@ var guidePages = []guidePage{
 		Notes: []string{
 			"Plain environment: values are imported only with `x-gregale-env-import: true` at the top of the Compose file; a URL that names a sibling (http://api:8080) is rewritten to its Gregale address without it. Do not copy them into Dockerfiles.",
 			"A gRPC service declares `x-gregale-app-protocol: grpc` on its Compose service.",
+			"A browser-facing service declares `x-gregale-access: public` on its Compose service (or `access: public` under project.services.<name> in gregale.yaml): its URL needs no Gregale API key, and every production deploy keeps it so. Removing the key makes the URL need a key again. Use this instead of `gregale app update <app> --no-require-authn`, which the next deploy undoes for a service that declares access.",
 			"Too many files: each service's .dockerignore applies inside its build context; list directories no service builds from (k8s, docs) in .gregaleignore.",
 			"Code that dials a Compose name (redis, db) must read $GREGALE_SERVICE_<NAME>_HOST (raw TCP) or $GREGALE_SERVICE_<NAME>_URL (HTTP); the caller lists the service in depends_on. The dry run names each place.",
 			"A postgres service becomes a managed database bound as DATABASE_URL, and a redis service a managed Redis cache bound as REDIS_URL where managed Redis is on for the account (`gregale feature list`). Gregale does not run other datastores (mysql, mongo): an app parks to a snapshot and keeps no data. Point the code at a hosted one (PlanetScale, Atlas) with an env URL.",

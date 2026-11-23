@@ -23,10 +23,10 @@ func TestScanProjectExplainsDatastoreWithoutManagedEquivalent(t *testing.T) {
     image: ghcr.io/example/api:v1
     ports: ["8080:8080"]
     environment:
-      REDIS_URL: redis://cache:6379
+      MEMCACHED_URL: cache:11211
     depends_on: [cache]
   cache:
-    image: redis:7
+    image: memcached:1.6
 `
 	e, _ := apidserver.NewTestServerWithCapturingNotifier(t, api.PlanPro)
 	req := scanAuditRegressionRequest(t, *e.Key(), composeTarGz(t, compose), map[string]string{"project_slug": "cache-plan"})
@@ -40,15 +40,15 @@ func TestScanProjectExplainsDatastoreWithoutManagedEquivalent(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(plan.Managed) != 1 {
-		t.Fatalf("managed = %+v, want the redis service", plan.Managed)
+		t.Fatalf("managed = %+v, want the memcached service", plan.Managed)
 	}
 	cache := plan.Managed[0]
-	if cache.NotProvisionedReason != "" || !slices.Equal(cache.Unbound, []string{"api.REDIS_URL"}) {
-		t.Fatalf("cache = %+v, want api.REDIS_URL unbound and no postgres reason", cache)
+	if cache.NotProvisionedReason != "" || !slices.Equal(cache.Unbound, []string{"api.MEMCACHED_URL"}) {
+		t.Fatalf("cache = %+v, want api.MEMCACHED_URL unbound and no postgres reason", cache)
 	}
 	if !slices.ContainsFunc(plan.Warnings, func(w string) bool {
-		return strings.Contains(w, "cache (redis)") && strings.Contains(w, "api.REDIS_URL")
+		return strings.Contains(w, "cache (memcached)") && strings.Contains(w, "api.MEMCACHED_URL")
 	}) {
-		t.Fatalf("warnings = %q, want one naming cache and api.REDIS_URL", plan.Warnings)
+		t.Fatalf("warnings = %q, want one naming cache and api.MEMCACHED_URL", plan.Warnings)
 	}
 }
