@@ -5,9 +5,7 @@ Claude, Cursor, VS Code and other MCP clients can call its tools. Gregale runs
 it as an ordinary app that speaks Streamable HTTP at `/mcp`, scales it to zero
 when nobody calls it, and checks every new version before it takes traffic.
 
-MCP hosting is in preview on the Hobby, Pro and Scale plans. Run
-`gregale feature list` and look for `mcp-hosting` to see whether it is on for
-your account.
+MCP hosting is available on the Hobby, Pro and Scale plans.
 
 To let an agent manage your Gregale account instead, see
 [Use Gregale from coding agents](agents.md).
