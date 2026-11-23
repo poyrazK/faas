@@ -23,7 +23,7 @@ Membership removal and role changes invalidate requests already in progress,
 including requests paused before their intent write or idempotent replay.
 
 ```bash
-curl -X POST "$GREGALE_API/v1/orgs/acme/apps/image-worker/queues/jobs/leases" \
+curl -X POST "$GREGALE_API_URL/v1/orgs/acme/apps/image-worker/queues/jobs/leases" \
   -H "Authorization: Bearer $KEY" \
   -H 'Content-Type: application/json' \
   -d '{"max_messages":4,"wait_seconds":20}'

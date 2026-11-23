@@ -64,7 +64,7 @@ this starter reads it at process startup.
 
 Run `tools/customer.js` on your operator machine. It uses the existing Gregale
 REST API. Set `GREGALE_TOKEN` to your account-owner credential using your secret
-manager or CLI environment; optionally set `FAAS_API` (default
+manager or CLI environment; optionally set `GREGALE_API_URL` (default
 `https://api.gregale.dev`). **Never put the owner token in the app's secrets.**
 Owner API scopes, MFA requirements, and quotas still apply.
 

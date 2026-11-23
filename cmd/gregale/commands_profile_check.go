@@ -62,9 +62,9 @@ func cmdProfileCheck(args []string) int {
 		PrintUsage(osStderr, "usage: gregale [--profile NAME] profile check [--timeout 10s] (timeout must be positive)", "config")
 		return profileCheckFailure
 	}
-	// Validate before rendering the endpoint: FAAS_API may contain embedded secrets.
+	// Validate before rendering the endpoint: the API variable may contain embedded secrets.
 	if _, err := validateConfigAPIBase(apiBase()); err != nil {
-		return printErr("Invalid API endpoint", errors.New("set api-base to an http(s) URL without credentials, query parameters, or fragments; FAAS_API overrides profile settings"))
+		return printErr("Invalid API endpoint", errors.New("set api-base to an http(s) URL without credentials, query parameters, or fragments; "+envAPIName()+" overrides profile settings"))
 	}
 	if err := checkAPIBaseTransport(apiBase()); err != nil {
 		return printErr("Insecure API connection", err)
@@ -199,8 +199,8 @@ func (r *profileCheckReport) fail(exit int, code, message, hint string, status i
 func renderProfileCheck(report profileCheckReport) {
 	c := report.Connection
 	_, _ = fmt.Fprintf(osStdout, "Profile: %s (source=%s)\nAPI: %s (source=%s)\nCredential source: %s\n", c.Profile, c.ProfileSource, c.APIBase, c.APISource, report.CredentialSource)
-	if c.APISource == "env:FAAS_API" {
-		_, _ = fmt.Fprintln(osStdout, "FAAS_API overrides this profile's saved endpoint.")
+	if name, ok := strings.CutPrefix(c.APISource, "env:"); ok {
+		_, _ = fmt.Fprintln(osStdout, name+" overrides this profile's saved endpoint.")
 	}
 	if name, ok := strings.CutPrefix(report.CredentialSource, "env:"); ok {
 		_, _ = fmt.Fprintln(osStdout, name+" overrides this profile's stored credential.")
