@@ -139,7 +139,7 @@ func renderContextVerification(report *contextVerification) {
 
 func validateContextVerifyEndpoint() error {
 	if _, err := validateConfigAPIBase(apiBase()); err != nil {
-		return errors.New("API address must be http(s) without credentials, query parameters, or fragments; FAAS_API overrides profile settings")
+		return errors.New("API address must be http(s) without credentials, query parameters, or fragments; " + envAPIName() + " overrides profile settings")
 	}
 	return checkAPIBaseTransport(apiBase())
 }
