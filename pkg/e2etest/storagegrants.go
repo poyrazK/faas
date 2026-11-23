@@ -104,6 +104,7 @@ func (h *Harness) startStorageGrants(t *testing.T, bin, dbURL string) {
 	if _, err := client.CreateBucket(context.Background(), &s3.CreateBucketInput{Bucket: aws.String(storageGrantsBucket)}); err != nil {
 		t.Fatalf("e2etest: create bucket: %v", err)
 	}
+	publishKernels(t, client)
 
 	// secretd's leaf and the node's: the handshake admits the node's CN only
 	// because default-local is a registered compute node.
@@ -266,4 +267,40 @@ func waitHTTPOK(t *testing.T, url string, d time.Duration, logPath string) {
 	}
 	out, _ := os.ReadFile(logPath)
 	t.Fatalf("e2etest: %s not ready after %s\n%s", url, d, out)
+}
+
+// publishKernels does what `gregalectl artifact publish` does on a real
+// fleet: it copies the host's release kernels into the shared store under
+// kernel/<version>, with the control plane's key. Compute nodes never
+// write kernels, and under grants nothing else stays on node disk.
+func publishKernels(t *testing.T, client *s3.Client) {
+	t.Helper()
+	root := os.Getenv("FAAS_STORAGE_ROOT")
+	if root == "" {
+		root = "/srv/fc"
+	}
+	entries, err := os.ReadDir(filepath.Join(root, "kernel"))
+	if err != nil {
+		t.Fatalf("e2etest: storage grants need the host's kernels: %v", err)
+	}
+	published := 0
+	for _, e := range entries {
+		if !e.Type().IsRegular() {
+			continue
+		}
+		f, err := os.Open(filepath.Join(root, "kernel", e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = client.PutObject(context.Background(), &s3.PutObjectInput{Bucket: aws.String(storageGrantsBucket),
+			Key: aws.String("kernel/" + e.Name()), Body: f})
+		_ = f.Close()
+		if err != nil {
+			t.Fatalf("e2etest: publish kernel/%s: %v", e.Name(), err)
+		}
+		published++
+	}
+	if published == 0 {
+		t.Fatalf("e2etest: storage grants need a kernel in %s", filepath.Join(root, "kernel"))
+	}
 }
