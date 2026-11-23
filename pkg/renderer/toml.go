@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/daemonunitspec"
 	"github.com/onebox-faas/faas/pkg/manifest"
 )
@@ -65,6 +66,12 @@ type tomlRenderCtx struct {
 	// root-owned systemd EnvironmentFile; embedding it in every daemon
 	// TOML would duplicate a credential into world-readable config.
 	HostRole string
+	// ServiceTCP is the manifest's service_tcp block (ADR-576), and
+	// HostBridgeCIDR the host's vmmd host_bridge_cidr override (empty: the
+	// default bridge). gatewayd-internal on a compute-only host listens for
+	// service TCP on the bridge's first address.
+	ServiceTCP     *manifest.ServiceTCP
+	HostBridgeCIDR string
 }
 
 // controlPlanePostgresSocketDSN is intentionally credential-free. The
@@ -107,6 +114,11 @@ func renderTOML(ctx tomlRenderCtx) ([]byte, map[string]string, error) {
 	if err := emitPrivateKeys(ctx.Daemon, ctx.DC, dbURL, ctx.AppsDomain, ctx.HostAddress, ctx.HostRole, host.PrivateKeys, flat); err != nil {
 		return nil, nil, err
 	}
+	if hostKey == "gatewayd_internal" {
+		if err := emitGuestServiceKeys(ctx, flat); err != nil {
+			return nil, nil, err
+		}
+	}
 
 	// [compute_node] table-block (vmmd only today). The renderer
 	// pulls the values from the manifest's DaemonConfig (Outbound
@@ -129,6 +141,40 @@ func renderTOML(ctx tomlRenderCtx) ([]byte, map[string]string, error) {
 	// (~10 keys per daemon) so a pellucid-toml dep is overkill.
 	body := serialiseTOML(host, flat)
 	return body, flat, nil
+}
+
+// guestServiceProxyPort is the tenant-bridge guest service proxy port
+// (ADR-169), the port node_join's default service_proxy_listen uses.
+const guestServiceProxyPort = 10080
+
+// emitGuestServiceKeys renders gatewayd-internal's tenant-bridge listeners
+// on a compute-only host: the guest service proxy and, when the manifest's
+// service_tcp stages turn it on, the private TCP service listener (ADR-576).
+// Both bind the bridge's first address, which gatewayd requires of them
+// (validateServiceTCPListen), so the rendered file boots on its own. Every
+// release rollout re-renders this file, so a key the renderer leaves out is
+// dropped from production: the TCP listener and its DNS answers vanished on
+// each rollout although the manifest enabled them (prod 2026-11-23, managed
+// Redis caches unreachable).
+func emitGuestServiceKeys(ctx tomlRenderCtx, flat map[string]string) error {
+	if ctx.HostRole != "compute-only" {
+		return nil
+	}
+	bridge := api.DefaultHostBridgeCIDR()
+	if raw := strings.TrimSpace(ctx.HostBridgeCIDR); raw != "" {
+		parsed, err := netip.ParsePrefix(raw)
+		if err != nil {
+			return fmt.Errorf("renderer: %s: host_bridge_cidr %q: %w", ctx.Daemon, raw, err)
+		}
+		bridge = parsed
+	}
+	ip := bridge.Masked().Addr().Next()
+	flat["service_proxy_listen"] = netip.AddrPortFrom(ip, guestServiceProxyPort).String()
+	if s := ctx.ServiceTCP; s != nil && s.Node && s.Listener {
+		flat["service_tcp_listen"] = netip.AddrPortFrom(ip, api.ServiceTCPProxyPort).String()
+		flat["service_tcp_dns"] = strconv.FormatBool(s.DNS)
+	}
+	return nil
 }
 
 // emitPrivateKeys copies the manifest's DaemonConfig values into the
@@ -600,7 +646,7 @@ func writeTOMLKV(buf *bytes.Buffer, key, value string) {
 }
 
 func isTOMLBoolKey(key string) bool {
-	return key == "route_metrics_enabled" || key == "streaming_enabled" || key == "lease"
+	return key == "route_metrics_enabled" || key == "streaming_enabled" || key == "lease" || key == "service_tcp_dns"
 }
 
 func isTOMLIntKey(key string) bool {
