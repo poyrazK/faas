@@ -1,0 +1,19 @@
+# ADR-20261114100000 amendment 2026-11-23 (metering review r10): public
+# destinations that are still Gregale's own. vmmd adds them to every instance
+# namespace's faas_internal_tx counter, so meterd leaves the guest's traffic to
+# them out of billed app egress (meterd_internal_egress_unbilled).
+#
+# - Managed Postgres (Neon) endpoints: Neon already includes 500 GB of egress
+#   per database, so app→database bytes are not billed again as app egress.
+#   An app connects to <endpoint>.<region>.aws.neon.tech, a CNAME of the
+#   regional host below; vmmd resolves it every 5 minutes and keeps each
+#   address internal for 24 h after it was last seen.
+# - Gregale's public entry (*.gregale.app, storage, objects, otel): an app
+#   calling another app, object storage or the OTLP endpoint over its public
+#   name is platform-internal traffic; the receiving side bills it where due.
+faas_vmmd_internal_egress_hosts:
+  - us-east-2.aws.neon.tech
+  - storage.gregale.dev
+  - objects.gregale.dev
+  - otel.gregale.dev
+faas_vmmd_internal_egress_cidrs: []

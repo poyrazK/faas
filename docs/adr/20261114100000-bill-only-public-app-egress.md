@@ -187,3 +187,34 @@ full `make leakcheck` waits for that host's concurrent soak to end).
 internal reading stays billed on its whole veth counter, and the first
 reading after the switch is a baseline only (R12-3), so nothing billed
 before is subtracted.
+
+## Amendment (2026-11-23): service addresses, the database route and Gregale's own public destinations
+
+Metering review r10 found guest bytes to Gregale-owned destinations billed as
+egress:
+
+- The ADR-576 service block (198.19.0.0/16) and the ADR-1027 database route
+  (198.18.0.1) are translated on the host, not inside the namespace, so the
+  guest's packets leave the veth still addressed to them. `faas_internal_tx`
+  now also counts `198.18.0.0/15`. The rule counts only; it admits nothing.
+- Managed Postgres runs on Neon, whose plan already includes 500 GB of
+  egress per database (owner decision 2026-11-23: we do not bill app→database
+  bytes again). Apps reach it at public `*.<region>.aws.neon.tech` addresses.
+- Calls from an app to Gregale's public entry (`*.gregale.app`, object
+  storage, the OTLP endpoint) are platform traffic; the receiving side bills
+  them where due (gateway response bytes, storage usage).
+
+vmmd takes `compute_node.internal_egress_cidrs` (IPv4 prefixes or addresses)
+and `compute_node.internal_egress_hosts` (`FAAS_VMMD_INTERNAL_EGRESS_CIDRS` /
+`_HOSTS` win) and adds them to every namespace's `faas_internal_tx` rule it
+prepares. Hosts are resolved at start and every 5 minutes; an address stays
+internal for 24 h after DNS last returned it, and a failed lookup keeps the
+previous set. Namespaces already running keep the set they were prepared
+with until their next wake. Production lists the regional Neon host and
+Gregale's public names in `group_vars/compute_nodes/internal_egress_destinations.yml`.
+
+The same review found the gateway billed by status, not by author: an app's
+own 4xx/5xx body was never billed and the bridge's synthetic init-error 502
+was. Gateway response bytes are now billed for every response the app wrote
+and for none the platform wrote (a marked writer, or a problem carrying
+`api.ErrorCodeHeader`, which both proxy paths strip from guest responses).

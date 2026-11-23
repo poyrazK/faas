@@ -574,6 +574,18 @@ type ComputeNodeConfig struct {
 	// nftables role's faas_database_route_enabled and gatewayd-internal's
 	// database_route_listen.
 	DatabaseRouteEnabled bool `toml:"database_route_enabled"`
+	// InternalEgressCIDRs and InternalEgressHosts are public destinations
+	// that are still Gregale's own, so a guest's traffic to them is internal
+	// egress, not billed (ADR-20261114100000 amendment 2026-11-23): the
+	// nodes' entry addresses (app-to-app calls, object storage and telemetry
+	// by public hostname) and the managed PostgreSQL provider's regional
+	// endpoints, whose traffic the database's own egress allowance covers.
+	// Hosts are re-resolved every few minutes; addresses seen in the last day
+	// stay internal so DNS rotation does not bill a long session. A namespace
+	// takes the set current when it is prepared. FAAS_VMMD_INTERNAL_EGRESS_CIDRS
+	// and FAAS_VMMD_INTERNAL_EGRESS_HOSTS (comma-separated) win.
+	InternalEgressCIDRs []string `toml:"internal_egress_cidrs"`
+	InternalEgressHosts []string `toml:"internal_egress_hosts"`
 	// PrivateNetworkTransportInterface is the underlay NIC used for VXLAN
 	// packets. Empty falls back to OverlayInterface, which keeps the common
 	// Tailscale/WireGuard deployment concise.
@@ -1002,6 +1014,15 @@ func loadConfig(path string, readConfig func(string) ([]byte, error)) (*Config, 
 			return nil, fmt.Errorf("vmmd: FAAS_VMMD_DATABASE_ROUTE_ENABLED %q invalid: %w", v, perr)
 		}
 		c.ComputeNode.DatabaseRouteEnabled = parsed
+	}
+	if v, ok := os.LookupEnv("FAAS_VMMD_INTERNAL_EGRESS_CIDRS"); ok {
+		c.ComputeNode.InternalEgressCIDRs = splitCommaList(v)
+	}
+	if v, ok := os.LookupEnv("FAAS_VMMD_INTERNAL_EGRESS_HOSTS"); ok {
+		c.ComputeNode.InternalEgressHosts = splitCommaList(v)
+	}
+	if _, err := parseInternalEgressCIDRs(c.ComputeNode.InternalEgressCIDRs); err != nil {
+		return nil, err
 	}
 	if v := os.Getenv("FAAS_PRIVATE_NETWORK_TRANSPORT_MTU"); v != "" {
 		mtu, err := strconv.Atoi(v)

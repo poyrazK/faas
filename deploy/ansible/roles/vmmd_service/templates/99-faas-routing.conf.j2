@@ -14,3 +14,12 @@ Environment=FAAS_VMMD_DATABASE_ROUTE_ENABLED=true
 # faas_service_tcp_enabled and gatewayd-internal's service_tcp_*).
 Environment=FAAS_SERVICE_TCP_ENABLED=true
 {% endif %}
+{% if faas_vmmd_internal_egress_cidrs | default([]) | length > 0 %}
+# ADR-20261114100000 amendment 2026-11-23: public destinations that are
+# Gregale's own; guest traffic to them is internal, not billed egress.
+Environment=FAAS_VMMD_INTERNAL_EGRESS_CIDRS={{ faas_vmmd_internal_egress_cidrs | join(',') }}
+{% endif %}
+{% if faas_vmmd_internal_egress_hosts | default([]) | length > 0 %}
+# Hostnames vmmd re-resolves every 5 minutes into the same internal set.
+Environment=FAAS_VMMD_INTERNAL_EGRESS_HOSTS={{ faas_vmmd_internal_egress_hosts | join(',') }}
+{% endif %}
