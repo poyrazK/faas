@@ -313,6 +313,16 @@ CREATE TABLE sandbox_volume_backups (
  created_at timestamptz NOT NULL DEFAULT now(),
  deleted_at timestamptz
 );
+
+CREATE TABLE sandbox_storage_hours (
+ account_id uuid NOT NULL,
+ hour timestamptz NOT NULL,
+ paused_sessions integer NOT NULL CHECK (paused_sessions >= 0),
+ capture_bytes bigint NOT NULL CHECK (capture_bytes >= 0),
+ volume_bytes bigint NOT NULL CHECK (volume_bytes >= 0),
+ created_at timestamptz NOT NULL DEFAULT now(),
+ PRIMARY KEY (account_id, hour)
+);
 CREATE TABLE agent_sandbox_task_calls (
  sandbox_id uuid PRIMARY KEY,
  account_id uuid NOT NULL,

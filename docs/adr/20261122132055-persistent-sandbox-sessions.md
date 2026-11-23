@@ -233,7 +233,15 @@ Each step is one PR on the sandbox branches until the owner asks for PRs. Every 
 - **Declared nodes.** Until `compute_nodes` carries the agents role, an agent-pool node declares large shapes by being listed in schedd's `FAAS_SCHEDD_SANDBOX_LARGE_NODES` (IDs or names, a subset of `FAAS_SCHEDD_AGENT_RUN_NODES`).
 - **Large.** A session above `SandboxLargeShapeRAMMB` (4,096 MB, the largest ephemeral shape) or `SandboxLargeShapeVCPU` (2) is placed only on those nodes: a new session, a resume, a fork and a drain's move alike. With none declared it is refused for capacity and queues, failing after `SandboxQueueMaxSec` as any session no node can place. A reattach goes to the node it runs on.
 - **Unchanged:** invariant 2 per node, measured admission, and the plan limits (`SandboxPersistentRAMMBMax`, `SandboxPersistentVCPUMax`).
-- **Not yet:** packing large sessions before small ones (small sessions may still land on a large node); a per-node maximum shape; the manifest and Ansible key for the list.
+- **Not yet (large shapes):** packing large sessions before small ones (small sessions may still land on a large node); a per-node maximum shape; the manifest and Ansible key for the list.
+
+### Step 9 as built (dark: metered, not billed)
+
+- **Owner's choice (2026-11-23): build it dark.** Stored bytes are metered and shown; nothing prices or bills them until the GB-month price is set (open question 1).
+- **What counts.** A session's stored bytes are its live pause capture (memory and vmstate bytes as captured; the compressed upload size is not recorded yet, so this over-counts what the store holds) plus its newest volume backup's data (data chunks × 4 MiB, before compression). Fork captures are not counted to the source; a fork pays for itself once it runs.
+- **Metering.** agentd's sweep writes `sandbox_storage_hours`: per account and UTC hour, its paused sessions and their capture and volume bytes. The first sweep of an hour wins; an hour without paused sessions has no row. Running sessions are not metered here (their compute is).
+- **Showing it.** A session's view has `stored_bytes`. `GET /v1/sandbox-storage?from=&to=` lists an account's metered hours (the current UTC month by default, at most 31 days), their GB-hours, the plan's `SandboxPausedBytesFreePerAccount` in GB, and `billable: false`.
+- **Not yet:** the price, the statement line and meterd's export to billing; the compressed capture size; deduplication across a fork tree.
 
 ### Amendment: prompt requests and fork starts
 

@@ -96,6 +96,9 @@ type Sandbox struct {
 	Durability        string
 	ResumedCold       bool
 	ForkedFrom        string
+	// StoredBytes is what the session keeps stored: its pause capture and
+	// its newest volume backup's data (ADR-20261122132055 §8).
+	StoredBytes int64
 }
 
 // SandboxAdmission is a session to admit. QueuedMax is the plan's
@@ -409,7 +412,7 @@ func sandboxFrom(row sqlc.ListSandboxSessionsRow) (Sandbox, error) {
 		NodeID: row.NodeID, InstanceID: row.InstanceID, WorkspaceSnapshotID: row.WorkspaceSnapshotID, ImageRef: row.ImageRef, Browser: row.Browser,
 		EgressAllow: row.EgressAllow, EgressDeny: row.EgressDeny, VCPU: int(row.Vcpu), VolumeGB: int(row.VolumeGb),
 		PauseRequestedAt: optTime(row.PauseRequestedAt), ResumeRequestedAt: optTime(row.ResumeRequestedAt), PausedAt: optTime(row.PausedAt),
-		Durability: row.Durability, ResumedCold: row.ResumedCold, ForkedFrom: row.ForkedFrom}
+		Durability: row.Durability, ResumedCold: row.ResumedCold, ForkedFrom: row.ForkedFrom, StoredBytes: row.StoredBytes}
 	if err := json.Unmarshal(row.Labels, &sb.Labels); err != nil {
 		return Sandbox{}, fmt.Errorf("decode sandbox labels: %w", err)
 	}

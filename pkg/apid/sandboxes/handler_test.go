@@ -56,6 +56,8 @@ type fakeStore struct {
 	actionResults map[string]agentstore.SandboxActionResult
 	// domains are sessions' domain logs by session.
 	domains map[string][]agentstore.SandboxDomain
+	// storage are metered storage hours by account.
+	storage map[string][]agentstore.SandboxStorageHour
 }
 
 func (f *fakeStore) CreateSandbox(_ context.Context, a agentstore.SandboxAdmission) (agentstore.Sandbox, error) {
@@ -176,6 +178,19 @@ func (f *fakeStore) GrowPausedSandboxVolume(_ context.Context, accountID, id str
 	}
 	s.VolumeGB = gb
 	return true, nil
+}
+
+// SandboxStorageHours returns the metered hours in [from, to).
+func (f *fakeStore) SandboxStorageHours(_ context.Context, accountID string, from, to time.Time) ([]agentstore.SandboxStorageHour, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []agentstore.SandboxStorageHour
+	for _, h := range f.storage[accountID] {
+		if !h.Hour.Before(from) && h.Hour.Before(to) {
+			out = append(out, h)
+		}
+	}
+	return out, nil
 }
 
 // ForkSandbox queues a's forks as the Postgres store does: a running or

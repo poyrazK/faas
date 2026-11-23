@@ -422,6 +422,27 @@ type UpdateSandboxRequest struct {
 	VolumeGB *int `json:"volume_gb,omitempty"`
 }
 
+// SandboxStorageHour is one metered hour of an account's paused sessions
+// (ADR-20261122132055 §8).
+type SandboxStorageHour struct {
+	Hour           time.Time `json:"hour"`
+	PausedSessions int       `json:"paused_sessions"`
+	CaptureBytes   int64     `json:"capture_bytes"`
+	VolumeBytes    int64     `json:"volume_bytes"`
+}
+
+// SandboxStorageUsage is GET /v1/sandbox-storage: the metered hours of a
+// window and their total in GB-hours (GiB stored for an hour). Stored bytes
+// are metered, not billed, until their price is set.
+type SandboxStorageUsage struct {
+	From     time.Time            `json:"from"`
+	To       time.Time            `json:"to"`
+	Hours    []SandboxStorageHour `json:"hours"`
+	GBHours  float64              `json:"gb_hours"`
+	FreeGB   int64                `json:"free_gb"`
+	Billable bool                 `json:"billable"`
+}
+
 // ForkSandboxRequest forks a running or paused session
 // (ADR-20261122132055 §3): Count new sessions (1 when 0, at most the plan's
 // SandboxForkMax) start from its memory and volume as they are now. Kind is
@@ -479,6 +500,9 @@ type Sandbox struct {
 	Durability        string     `json:"durability,omitempty"`
 	ResumedCold       bool       `json:"resumed_cold,omitempty"`
 	ForkedFrom        string     `json:"forked_from,omitempty"`
+	// StoredBytes is what the session keeps stored: its pause capture and
+	// its workspace volume's newest backup (ADR-20261122132055 §8).
+	StoredBytes int64 `json:"stored_bytes,omitempty"`
 }
 
 // SandboxSnapshot is a persisted workspace (ADR-20261027090013 step 7): a

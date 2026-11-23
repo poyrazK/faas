@@ -427,6 +427,15 @@ type SandboxSessionUsage struct {
 	BaseBillableMbMs        int64
 }
 
+type SandboxStorageHour struct {
+	AccountID      pgtype.UUID
+	Hour           pgtype.Timestamptz
+	PausedSessions int32
+	CaptureBytes   int64
+	VolumeBytes    int64
+	CreatedAt      pgtype.Timestamptz
+}
+
 type SandboxTemplate struct {
 	ID            pgtype.UUID
 	AccountID     pgtype.UUID

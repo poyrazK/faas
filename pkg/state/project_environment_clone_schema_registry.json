@@ -19033,6 +19033,18 @@
     "kind": "operational"
   },
   {
+    "table": "sandbox_storage_hours",
+    "columns": [
+      "account_id",
+      "capture_bytes",
+      "created_at",
+      "hour",
+      "paused_sessions",
+      "volume_bytes"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "sandbox_egress_policies",
     "columns": [
       "account_id",

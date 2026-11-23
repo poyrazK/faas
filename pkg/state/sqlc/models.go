@@ -17240,6 +17240,15 @@ type SandboxSessionUsage struct {
 	BaseBillableMbMs        int64
 }
 
+type SandboxStorageHour struct {
+	AccountID      pgtype.UUID
+	Hour           pgtype.Timestamptz
+	PausedSessions int32
+	CaptureBytes   int64
+	VolumeBytes    int64
+	CreatedAt      pgtype.Timestamptz
+}
+
 // ADR-20261027090013: named sandbox templates; each owns one apps row with sandbox_template = true that builds its image.
 type SandboxTemplate struct {
 	ID            pgtype.UUID

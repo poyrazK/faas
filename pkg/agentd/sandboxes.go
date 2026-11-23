@@ -84,6 +84,8 @@ type SandboxStore interface {
 	UnuploadedSandboxForkCaptures(ctx context.Context, limit int) ([]agentstore.SandboxCapture, error)
 	MarkSandboxForkCaptureUploaded(ctx context.Context, captureID string) error
 	SweepSandboxForks(ctx context.Context) (consumed, failed int, err error)
+	// Storage metering (ADR-20261122132055 §8).
+	RecordSandboxStorageHour(ctx context.Context) (int, error)
 }
 
 // SandboxSchedd opens RunSandbox streams; scheddpb.ScheddClient implements
@@ -275,7 +277,7 @@ func (s *Sandboxes) SweepOnce(ctx context.Context) error {
 	if requeued+failed+expired > 0 {
 		s.log.Info("agentd: expired sandbox leases", "requeued", requeued, "failed", failed, "expired", expired)
 	}
-	return errors.Join(err, s.sweepSnapshots(ctx), s.sweepScreenshots(ctx), s.sweepCaptures(ctx), s.sweepDurability(ctx), s.sweepVolumes(ctx), s.sweepForks(ctx))
+	return errors.Join(err, s.sweepSnapshots(ctx), s.sweepScreenshots(ctx), s.sweepCaptures(ctx), s.sweepDurability(ctx), s.sweepVolumes(ctx), s.sweepForks(ctx), s.meterStorage(ctx))
 }
 
 func (s *Sandboxes) sweep(ctx context.Context) {
