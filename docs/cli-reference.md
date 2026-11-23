@@ -3292,7 +3292,7 @@ Watch async invocations finish across your account in real time
 | `--app <slug>` | filter to a single app slug (optional) |  |
 | `--include-stateless` | also print stateless.advisory frames (default: hide) |  |
 
-Shows invocation completions, not app output or HTTP requests; for those use gregale logs --follow.
+This shows invocation results, not app output or HTTP requests; for those, run `gregale logs --follow`.
 
 ### invocation list
 
@@ -4739,13 +4739,12 @@ With overage on, databases keep running up to twice the allowance.
 
 Show whether databases keep running past the monthly compute allowance
 
-`gregale postgres overage get [on|off]`
+`gregale postgres overage get`
 
 Examples:
 
 ```sh
 gregale postgres overage get
-gregale postgres overage get set on
 ```
 
 With overage on, databases keep running up to twice the allowance.
@@ -4759,7 +4758,6 @@ Turn compute overage on or off (on: databases run up to twice the allowance)
 Examples:
 
 ```sh
-gregale postgres overage set get
 gregale postgres overage set on
 ```
 
@@ -5047,7 +5045,7 @@ gregale postgres attach orders my-api --env DATABASE_URL --access read_write
 
 ### postgres query
 
-Run one SQL query and print rows
+Run one SQL query and print rows; read-only by default
 
 `gregale postgres query [--file <PATH>] [--write] [--read-only] [--max-rows <N>] [--timeout <D>] [--app <SLUG>] [--env <KEY>] [--access <MODE>] [--wait-timeout <D>] <database> [<query>]`
 
@@ -5070,8 +5068,6 @@ gregale postgres sql orders "select status, count(*) from orders group by 1"
 gregale postgres sql orders --file audit.sql --json
 gregale postgres sql orders --write "update orders set status = 'void' where id = 42"
 ```
-
-Read-only unless --write.
 
 Uses the same tunnel as `postgres connect` (credentials never print) and needs no local psql.
 

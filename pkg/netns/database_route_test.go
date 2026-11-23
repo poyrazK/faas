@@ -32,14 +32,14 @@ func TestDatabaseRouteAdmissionIsOptIn(t *testing.T) {
 	c := databaseRouteTestConfig()
 	c.DatabaseRouteAddress = netip.Addr{}
 	for _, line := range renderedLines(c) {
-		if strings.Contains(line, "198.18.") {
+		if strings.Contains(line, "198.18.") && !isInternalEgressCounterLine(line) {
 			t.Fatalf("disabled config rendered %q", line)
 		}
 	}
 	qualification := databaseRouteTestConfig()
 	qualification.QualificationOnly = true
 	for _, line := range renderedLines(qualification) {
-		if strings.Contains(line, "198.18.") {
+		if strings.Contains(line, "198.18.") && !isInternalEgressCounterLine(line) {
 			t.Fatalf("a qualification-only namespace rendered %q", line)
 		}
 	}
@@ -83,4 +83,11 @@ func TestNewConfigCarriesDefaultDatabaseRouteAddress(t *testing.T) {
 	if after.DatabaseRouteAddress != testDatabaseRouteAddress || before.DatabaseRouteAddress.IsValid() {
 		t.Fatalf("NewConfig DatabaseRouteAddress = %s (on) / %s (off)", after.DatabaseRouteAddress, before.DatabaseRouteAddress)
 	}
+}
+
+// isInternalEgressCounterLine is the egress_account rule that only counts the
+// guest's traffic to internal destinations (198.18.0.0/15 among them) for
+// billing; it admits nothing.
+func isInternalEgressCounterLine(line string) bool {
+	return strings.Contains(line, "egress_account") && strings.HasSuffix(line, "counter name faas_internal_tx")
 }
