@@ -936,7 +936,7 @@ func (s UsageSnapshot) hasHeadroom(policy UsagePolicy) bool {
 	return below(s.CostMillicents, policy.MaxMonthlyCostMillicents) &&
 		below(s.ComputeUnitSeconds, policy.MaxMonthlyComputeUnitSeconds) &&
 		below(s.StorageByteSeconds, policy.MaxMonthlyStorageByteSeconds) &&
-		(policy.MaxMonthlyHistoryByteSeconds <= 0 || below(s.HistoryByteSeconds, policy.MaxMonthlyHistoryByteSeconds)) &&
+		(policy.MaxMonthlyHistoryByteSeconds <= 0 || below(s.historyAndSnapshots(), policy.MaxMonthlyHistoryByteSeconds)) &&
 		below(s.EgressBytes, policy.MaxMonthlyEgressBytes)
 }
 
@@ -947,8 +947,15 @@ func (s UsageSnapshot) Exceeds(policy UsagePolicy) bool {
 	return s.CostMillicents >= policy.MaxMonthlyCostMillicents ||
 		s.ComputeUnitSeconds >= policy.MaxMonthlyComputeUnitSeconds ||
 		s.StorageByteSeconds >= policy.MaxMonthlyStorageByteSeconds ||
-		(policy.MaxMonthlyHistoryByteSeconds > 0 && s.HistoryByteSeconds >= policy.MaxMonthlyHistoryByteSeconds) ||
+		(policy.MaxMonthlyHistoryByteSeconds > 0 && s.historyAndSnapshots() >= policy.MaxMonthlyHistoryByteSeconds) ||
 		s.EgressBytes >= policy.MaxMonthlyEgressBytes
+}
+
+// historyAndSnapshots is what the operator's history ceiling bounds: restore
+// history and snapshot storage together, as the single history meter
+// recorded them before snapshots had their own (ADR-20261123062111).
+func (s UsageSnapshot) historyAndSnapshots() int64 {
+	return saturatingAdd(max(s.HistoryByteSeconds, 0), max(s.SnapshotByteSeconds, 0))
 }
 
 type Capabilities struct {

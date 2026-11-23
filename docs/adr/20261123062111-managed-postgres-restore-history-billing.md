@@ -99,7 +99,7 @@ Each plan includes history equal to its storage pool, held for the whole month: 
 - **No 2× ceiling.** Unlike compute and storage, Neon puts no limit on history, so a ceiling would bring the loss back past it. The month's charge is bounded by the subject's spend cap (`CapRoom`), as every live step already is. At the cap the databases are held with `hold: compute_ceiling`, as today.
 - **Plan spans.** Each span bills against its own plan's included history, as compute does (ADR-20261103131742 amendment 2).
 - **Row and event.** The delivery row and step add `billed_history_byte_seconds` and `billed_snapshot_byte_seconds` (one migration, CHECKs added `NOT VALID`). The Polar event metadata adds the history and snapshot usage, the included bytes, the billed byte-seconds and the two prices.
-- **Start.** The first whole UTC month after release, through a new `FAAS_POLAR_MANAGED_POSTGRES_HISTORY_BILLING_FROM`, so no month already delivered is repriced. Managed PostgreSQL billing is already live, so the shadow month is a log line: before that month, or while the variable is empty, apid logs `managed postgres restore history not billed yet` with what each subject would have been charged. Compare one month of those lines with Neon's invoice before setting it.
+- **Start.** The first whole UTC month after release, through a new `FAAS_POLAR_MANAGED_POSTGRES_HISTORY_BILLING_FROM`, so no month already delivered is repriced. Managed PostgreSQL billing is already live, so the shadow month is the ledger: compare one whole month of `history_byte_seconds` and `snapshot_byte_seconds` with Neon's invoice before setting it (apid also logs `managed postgres restore history not billed yet` at debug level). The month must start after the release reached production: earlier windows hold snapshot storage in `history_byte_seconds`.
 
 ### 4. Accounts with overage off (D2)
 
@@ -134,7 +134,7 @@ Pro, overage on, one month: average restore history 12 GB, snapshots 1 GB.
 ## Implementation
 
 - **Prices and limits** in `pkg/api/limits.go`: the two Neon cost constants, the two prices derived with `ManagedPostgresOverageMarkupPercent`, `ManagedPostgresHistoryMonthSeconds` (744 h) and `ManagedPostgresIncludedHistoryBytes`.
-- **Meter.** `MeterSnapshotByteSeconds` (`snapshot_byte_seconds`) takes Neon's `snapshot_storage_bytes_month`; `history_byte_seconds` keeps `instant_restore_bytes_month` only. Windows recorded before the release keep both in `history_byte_seconds`; they belong to months before history billing starts. The operator's cost estimate prices snapshots at the history rate, an upper bound.
+- **Meter.** `MeterSnapshotByteSeconds` (`snapshot_byte_seconds`) takes Neon's `snapshot_storage_bytes_month`; `history_byte_seconds` keeps `instant_restore_bytes_month` only. Windows recorded before the release keep both in `history_byte_seconds`, so history billing starts in a month after the release. The operator's `max_monthly_history_byte_seconds` ceiling still bounds both together, and the cost estimate prices snapshots at the history rate, an upper bound. The operator usage line items add `managed_postgres.snapshots`.
 - **Charge.** `HistoryOverageCharge` and the plan-span sum in `pkg/managedpostgres`. A step never lowers the history the month already billed.
 - **Schema.** Migration `20261123071905357_managed_postgres_history_billing` widens the usage meter CHECK online and adds the delivery and reservation columns.
 - **Customers.** `gregale postgres usage` and the usage API show `snapshot_byte_seconds` and `included_history_bytes`.

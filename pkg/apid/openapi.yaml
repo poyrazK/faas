@@ -95344,7 +95344,7 @@ components:
       type: object
       required: [code, meter, unit, quantity, cost_millicents]
       properties:
-        code: { type: string, enum: [managed_postgres.compute, managed_postgres.storage, managed_postgres.restore_history, managed_postgres.egress] }
+        code: { type: string, enum: [managed_postgres.compute, managed_postgres.storage, managed_postgres.restore_history, managed_postgres.snapshots, managed_postgres.egress] }
         meter: { type: string }
         unit: { type: string }
         quantity: { type: integer, format: int64, minimum: 0 }

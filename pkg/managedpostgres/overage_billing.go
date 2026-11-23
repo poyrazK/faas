@@ -459,7 +459,7 @@ func (b *OverageBiller) deliver(ctx context.Context, subject OverageSubject, mon
 		}
 		if charge.history && !b.historyBilled(month) {
 			if charge.billedHistoryByteSeconds > 0 || charge.billedSnapshotByteSeconds > 0 {
-				b.options.Logger.Info("managed postgres restore history not billed yet", "subject_id", subject.SubjectID,
+				b.options.Logger.Debug("managed postgres restore history not billed yet", "subject_id", subject.SubjectID,
 					"period", month.Format("2006-01"), "billed_history_byte_seconds", charge.billedHistoryByteSeconds,
 					"billed_snapshot_byte_seconds", charge.billedSnapshotByteSeconds, "would_charge_millicents", charge.historyMillicents)
 			}

@@ -231,3 +231,30 @@ func TestMemoryStoreSplitsRestoreHistoryAndSnapshots(t *testing.T) {
 		t.Fatal("snapshot meter rejected")
 	}
 }
+
+// The operator's history ceiling bounds restore history and snapshots
+// together, as the single history meter did before the split.
+func TestHistoryCeilingCountsSnapshots(t *testing.T) {
+	policy := UsagePolicy{Enabled: true, MaxMonthlyCostMillicents: 1 << 50, MaxMonthlyComputeUnitSeconds: 1 << 50,
+		MaxMonthlyStorageByteSeconds: 1 << 50, MaxMonthlyEgressBytes: 1 << 50, MaxMonthlyHistoryByteSeconds: 1000}
+	for _, tc := range []struct {
+		name               string
+		history, snapshots int64
+		exceeds, headroom  bool
+	}{
+		{name: "well below", history: 100, snapshots: 100, headroom: true},
+		{name: "snapshots alone reach it", history: 0, snapshots: 1000, exceeds: true},
+		{name: "together reach it", history: 600, snapshots: 400, exceeds: true},
+		{name: "together near it leave no headroom", history: 500, snapshots: 450},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := UsageSnapshot{HistoryByteSeconds: tc.history, SnapshotByteSeconds: tc.snapshots}
+			if got := s.Exceeds(policy); got != tc.exceeds {
+				t.Fatalf("Exceeds = %v, want %v", got, tc.exceeds)
+			}
+			if got := s.hasHeadroom(policy); got != tc.headroom {
+				t.Fatalf("hasHeadroom = %v, want %v", got, tc.headroom)
+			}
+		})
+	}
+}

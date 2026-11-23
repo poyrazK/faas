@@ -1197,10 +1197,14 @@ enforcement on, because the cap sweep records the `allowance` event.
 Restore history and snapshot storage past the plan's included history (its
 storage pool) are charged on the same step from
 `FAAS_POLAR_MANAGED_POSTGRES_HISTORY_BILLING_FROM` (a UTC month;
-ADR-20261123062111). Until then, or while it is empty, apid logs
-`managed postgres restore history not billed yet` with what each subject
-would have been charged: compare a month of those lines with Neon's invoice
-before setting it. The event metadata carries the history and snapshot usage,
+ADR-20261123062111). Until then, or while it is empty, nothing is charged
+(at debug level apid logs `managed postgres restore history not billed yet`
+with what each subject would have been charged). Before setting it, compare
+a whole month of the ledger's `history_byte_seconds` and
+`snapshot_byte_seconds` with Neon's invoice. Set it to a month that starts
+after the release reached production: windows recorded before the release
+hold snapshot storage in `history_byte_seconds`, which would bill it at the
+restore-history price. The event metadata carries the history and snapshot usage,
 the included history, the billed byte-seconds and both prices.
 
 The setting is the `postgres-overage` capability, at maturity `ga` since
