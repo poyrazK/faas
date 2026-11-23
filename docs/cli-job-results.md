@@ -2,7 +2,7 @@
 
 After a Job run finishes, read its result, find the tasks that produced artifacts, and collect their outputs without copying run IDs.
 
-## Reading the newest job run
+## Next step after a successful run
 
 When `jobs wait` or a mutation with `--wait` (`jobs run`, `jobs retry`, or
 `jobs replay-failed`) observes the exact run succeed, human output also prints
@@ -19,6 +19,8 @@ this also applies to `jobs runs --status succeeded`. Commands retain the exact
 run UUID and active profile. Success alone does not establish that a run has
 artifacts; discovery checks its current task manifests. No extra API requests
 are made for guidance, and JSON output remains unchanged.
+
+## Find tasks that produced artifacts
 
 To find tasks that produced artifacts without checking indexes individually:
 
@@ -60,6 +62,8 @@ filtered to matching tasks. No matching tasks succeeds with empty
 NDJSON or a human message explaining that active tasks may produce outputs later.
 Discovery downloads nothing and creates no files or directories. Without filters,
 existing discovery output and JSON remain unchanged.
+
+## List artifact names
 
 To discover artifact names before downloading:
 
@@ -103,6 +107,8 @@ name, while `--attempt` remains historical metadata only and emits no download
 commands. Without filters, existing listing JSON and behavior are unchanged.
 Task discovery now preserves filters in both listing and download commands.
 
+## Inspect one attempt's manifest
+
 To inspect the recorded manifest from a specific retained terminal attempt:
 
 ```sh
@@ -115,6 +121,10 @@ fail without falling back to current output. JSON keeps the same shape and
 identifies the selected attempt. This mode lists metadata only and omits all
 download commands: historical downloads are not supported by the server,
 and `artifact-download` always reads the current task output.
+
+## Collect results as part of a run
+
+### Run or wait, then collect selected results
 
 To run or continue a job while collecting only selected results:
 
@@ -137,6 +147,8 @@ to continue waiting or downloading retain every quoted pattern, the resolved
 UUID, profile, and directory. `jobs wait --out-dir` continues to verify and skip
 matching existing files, only for selected artifacts. Commands without filters
 retain their existing JSON shape and behavior.
+
+### Collect a run you already started
 
 To finish waiting and collect an existing run without submitting another:
 
@@ -163,6 +175,8 @@ recovery commands now also include `jobs wait ... --out-dir`, so an interrupted
 wait can finish collection in one step. Plain `jobs wait` output and exit codes
 remain unchanged. No submission or retry request is made by this command.
 
+### Submit, wait and collect in one command
+
 To submit once, wait, and collect results with one command:
 
 ```sh
@@ -188,17 +202,9 @@ and provide a bulk `--resume` command. JSON emits one combined receipt containin
 Ordinary run and `--wait` output without `--out-dir` remains unchanged. The output
 path is local and is not included in the job submission request.
 
-Bulk downloads (`--all` and `--all-tasks`) create a missing `--out-dir`,
-including missing parent directories, after validating the selected run,
-manifest(s), and artifact destinations. New directories use permissions 0750
-(subject to umask). Existing path components must be real directories, never
-files or symlinks; a destination that appears during creation causes failure
-rather than being silently adopted. No directory is created for runs/tasks with
-no managed artifacts. Invalid metadata and conflicts cause no directory writes.
-`--dry-run` prints planned directories and includes `directories_to_create`
-in JSON when applicable, without creating them. Preview cannot guarantee write
-permissions. Failed transfers may leave created directories and verified files.
-Single-artifact `--out` retains its existing parent-directory requirement.
+## Choose which artifacts to download
+
+### Exclude names
 
 To omit unwanted artifact names:
 
@@ -227,6 +233,8 @@ download, wait, and resume commands. Historical listings remain metadata only.
 No selected artifacts succeeds with no downloads or directory writes. Without
 exclusion patterns, existing output and JSON retain their previous behavior.
 
+### Include names
+
 To collect only selected artifact names across tasks:
 
 ```sh
@@ -250,6 +258,10 @@ counts; preview and recovery commands retain every quoted pattern and the
 resolved UUID/profile. Downloads without `--include` retain their existing
 behavior and JSON shape. `jobs run`/`jobs wait` automatic collection also accepts these filters
 when `--out-dir` is provided.
+
+## Download artifacts
+
+### A whole run
 
 To download current results across an entire run:
 
@@ -281,6 +293,22 @@ failures return nonzero and preserve previously verified files and directories.
 Transfers retain size/SHA-256 verification and a five-minute overall deadline.
 Historical-attempt downloads remain unsupported.
 
+### Output directory
+
+Bulk downloads (`--all` and `--all-tasks`) create a missing `--out-dir`,
+including missing parent directories, after validating the selected run,
+manifest(s), and artifact destinations. New directories use permissions 0750
+(subject to umask). Existing path components must be real directories, never
+files or symlinks; a destination that appears during creation causes failure
+rather than being silently adopted. No directory is created for runs/tasks with
+no managed artifacts. Invalid metadata and conflicts cause no directory writes.
+`--dry-run` prints planned directories and includes `directories_to_create`
+in JSON when applicable, without creating them. Preview cannot guarantee write
+permissions. Failed transfers may leave created directories and verified files.
+Single-artifact `--out` retains its existing parent-directory requirement.
+
+### Preview before writing files
+
 To preview a bulk download before writing files:
 
 ```sh
@@ -304,6 +332,8 @@ with `--dry-run` removed. Storage URIs and signed URLs are omitted. The preview
 checks recorded metadata and local destinations; it does not guarantee directory
 write permissions or remote availability. Downloads recheck destinations and
 checksums, since local files and task outputs may change after the preview.
+
+### One task's artifacts
 
 To download all current managed artifacts into a directory:
 
@@ -329,8 +359,11 @@ reported failures before resuming; mismatched existing files still fail safely.
 Preflight failures do not produce a transfer receipt or resume command.
 Successful receipts omit `resume_command`. Failures return nonzero; earlier verified files
 remain saved. A valid empty manifest succeeds without downloads; a missing or
-invalid manifest fails. The overall deadline is five minutes. Retry individual
-failed artifacts into new files, or resume the bulk download:
+invalid manifest fails. The overall deadline is five minutes.
+
+### Resume a failed download
+
+Retry individual failed artifacts into new files, or resume the bulk download:
 
 ```sh
 gregale job artifact download nightly-report RUN_ID 0 --all --out-dir ./results --resume
@@ -345,6 +378,8 @@ and unreadable files stop preflight without downloading or overwriting anything.
 Without `--resume`, existing destinations still cause failure. Verification
 uses the current task manifest, so a retry that changes outputs can prevent
 resumption even within the same run. Historical downloads are unsupported.
+
+### A single result
 
 To download a managed job result directly:
 
@@ -369,6 +404,10 @@ returns `job`, `run_id`, `task_index`, `artifact`, `path`, `size_bytes`, and
 unchanged. The command reads the remote result and writes only the requested
 local file; it does not change the Job run.
 
+## Check a run
+
+### Run summary
+
 For a one-time run summary:
 
 ```sh
@@ -387,6 +426,8 @@ the existing run object, including its normal API fields. Reading a failed
 run exits 0 when the read succeeds; use `jobs wait` to assess completion for
 automation. No run is submitted, retried, or cancelled.
 
+### Success check for scripts
+
 For a one-time success check in scripts:
 
 ```sh
@@ -401,6 +442,10 @@ JSON error on stderr. API errors retain their usual codes. The command reads
 status once without polling, and ordinary status reads retain exit 0 when
 the read succeeds. `latest` works too, but explicit UUIDs keep CI checks tied
 to the intended run. A successful check describes the run, not app health.
+
+## Inspect tasks and attempts
+
+### Every task
 
 To inspect a complete task list:
 
@@ -419,6 +464,8 @@ JSON retains NDJSON. `--failed-only` still traverses pages automatically and
 now also respects the supplied limit and starting offset. Task states may
 change during traversal; results are not an atomic snapshot. Without these
 options, the request and JSON format remain unchanged.
+
+### Every attempt of one task
 
 To read all retained attempts for one task:
 
@@ -449,6 +496,8 @@ Empty retained history does not mean the task never ran; active or expired
 attempts may be absent. The command does not retry tasks. Ordinary reads
 without pagination options preserve their JSON request and output formats.
 
+### Output from one attempt
+
 To compare output from a particular retained attempt:
 
 ```sh
@@ -469,6 +518,8 @@ reported when either retained history or the local limit omits output;
 increasing the local limit cannot recover output the server did not retain.
 An empty retained log uses the existing no-output message. These options apply
 to the explicit command; ordinary logs without `--attempt` stay unchanged.
+
+## Find runs by outcome
 
 To find runs with a particular outcome:
 
@@ -493,6 +544,8 @@ profile and cover up to three distinct matching runs in returned order, with
 a count for additional runs. Successful, cancelled, unknown-status, and
 invalid-ID rows receive no guidance. No extra reads or mutations are sent.
 
+## Show only failed tasks
+
 To focus on task failures without interactive browsing:
 
 ```sh
@@ -513,6 +566,8 @@ failed page emits no partial list. Each page read has a 30-second deadline;
 Ctrl-C stops the traversal. This is a read of changing task states, not an
 atomic snapshot or a claim that the run succeeded. Without the flag, the
 existing one-page read and output remain unchanged.
+
+## Using `latest`
 
 ```sh
 gregale job tasks nightly-report latest

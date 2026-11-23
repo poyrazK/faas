@@ -219,7 +219,7 @@ a release summary against the previous deployment, and a copy-paste rollback
 command when a previous release is available:
 
 ```
-✓ Deployed. https://my-app.gregale.dev
+✓ Deployed. https://my-app.gregale.app
 Release summary:
   Changes since d0:
     commit_sha         "old" -> "new"
@@ -380,7 +380,7 @@ store it as `FAAS_TOKEN` in the CI secret store.
 
 A deploy token can also manage its app's edge rules, but only for that app's
 own hosts: a rule's `match_host` must be `@app`, the app's
-`<slug>.gregale.dev` host or one of its custom domains. The same goes for
+`<slug>.gregale.app` host or one of its custom domains. The same goes for
 `routes` and `async_routes` in a `gregale.yaml` it deploys. A rule that covers
 other hosts (`*`, a wildcard, another app's host), or a route that sends
 another app's host to this app, needs an account API key, because edge rules

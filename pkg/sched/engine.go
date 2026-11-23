@@ -432,6 +432,8 @@ type BrokerLagReader interface {
 // one app's instances is serialised by a per-app lock so a Wake and a reaper
 // Park for the same app never race the ledger or the state machine.
 type Engine struct {
+	// smokeRefusals throttles the refused-smoke diagnostic (smoke_refusal_log.go).
+	smokeRefusals smokeRefusalThrottle
 	// environmentBranchEgress caches deployments outside any contained
 	// environment branch (ADR-20261031193635).
 	environmentBranchEgress environmentBranchEgressCache
@@ -1879,6 +1881,10 @@ type WakeResult struct {
 	InstanceID        string
 	NodeID            string // compute_nodes.id (uuid), empty only on error
 	Method            vmmdpb.WakeMethod
+	// StartupOOM: the app ran out of memory while this wake booted it
+	// (vmmd WakeResponse.startup_oom). Gateways keep such a wake out of the
+	// platform wake SLO. False on the already-running fast path.
+	StartupOOM bool
 	// WakeID is the per-wake-attempt correlation handle (gaps analysis
 	// 2026-07-23). UUIDv7 minted at Phase 2 before CreateInstance;
 	// gatewayd-internal propagates it back to the client as x-faas-wake-id and
@@ -2820,6 +2826,9 @@ func (e *Engine) AdmitInstance(ctx context.Context, appID, deploymentID, scope, 
 	if e.parkForCapacity(ctx, appID, trigger, err) ||
 		(err == nil && res.AtCapacity && e.parkZeroTrafficSibling(ctx, appID, deploymentID, trigger == TriggerDeploymentSmoke)) {
 		res, err = e.admitInstance(ctx, appID, deploymentID, scope, trigger)
+	}
+	if trigger == TriggerDeploymentSmoke && (res.AtCapacity || err != nil) {
+		e.logSmokeRefusal(ctx, appID, deploymentID, res, err)
 	}
 	return res, err
 }
@@ -4854,7 +4863,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 
 	bootInput.identity.InstanceID = fresh.ID
 	bootInput.identity.NodeID = fresh.NodeID
-	return WakeResult{InstanceID: bootInput.insID, NodeID: fresh.NodeID, Method: out.Method, WakeID: bootInput.wakeID, Port: bootInput.spec.Port, DeploymentID: bootInput.depID, RequestCount: fresh.RequestCount, Identity: bootInput.identity}, nil
+	return WakeResult{InstanceID: bootInput.insID, NodeID: fresh.NodeID, Method: out.Method, StartupOOM: out.StartupOOM, WakeID: bootInput.wakeID, Port: bootInput.spec.Port, DeploymentID: bootInput.depID, RequestCount: fresh.RequestCount, Identity: bootInput.identity}, nil
 }
 
 // recordBootCharacterization persists the workload class a cold boot's

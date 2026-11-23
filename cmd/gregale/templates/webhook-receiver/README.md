@@ -74,19 +74,19 @@ gregale deploy
 ```sh
 # Health probe — shows whether the secret is configured and what
 # paths are allowed.
-curl https://<slug>.gregale.dev/healthz
+curl https://<slug>.gregale.app/healthz
 
 # Unauthenticated POST when WEBHOOK_SECRET is unset:
 curl -X POST -H 'content-type: application/json' \
      -d '{"event":"test","data":{"hello":"world"}}' \
-     https://<slug>.gregale.dev/stripe
+     https://<slug>.gregale.app/stripe
 
 # Authenticated POST when WEBHOOK_SECRET is set:
 curl -X POST \
      -H 'X-Webhook-Secret: <the-secret>' \
      -H 'content-type: application/json' \
      -d '{"event":"test","data":{"hello":"world"}}' \
-     https://<slug>.gregale.dev/stripe
+     https://<slug>.gregale.app/stripe
 ```
 
 ## Adding provider-specific verification

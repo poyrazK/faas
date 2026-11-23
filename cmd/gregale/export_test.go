@@ -1220,6 +1220,14 @@ var CoveragePolicy = coveragePolicy
 var CreateDevSetupManifest = createDevSetupManifest
 var CreateDurableProjectVerification = createDurableProjectVerification
 var CreateOrFetchApp = createOrFetchApp
+
+// DeployAppWithAlternatives runs the deploy's name resolution: slug, or the
+// caller's suffixed alternative when another owner holds slug.
+func DeployAppWithAlternatives(ctx context.Context, client *Client, slug, sourceDir string) (string, error) {
+	req := api.CreateAppRequest{Slug: slug}
+	return createOrFetchAppWithAlternatives(ctx, client, req, req, sourceDir, nil, nil, nil, nil, nil)
+}
+
 var CreateTestAsyncRoutes = createTestAsyncRoutes
 var CurrentUploadOffset = currentUploadOffset
 var CustomerCliCommands = customerCliCommands
@@ -2647,6 +2655,7 @@ var RoutesAppFlagAsPositional = routesAppFlagAsPositional
 
 var RenderProject = renderProject
 var InspectAttention = inspectAttention
+var SelectInspectDeployments = selectInspectDeployments
 var RemoveCLITestSandbox = removeCLITestSandbox
 var WorkerScalingMetrics = workerScalingMetrics
 var WorkerMetricLabel = workerMetricLabel

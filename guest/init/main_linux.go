@@ -1597,7 +1597,7 @@ func runBuildOnce(m api.BuildManifest) error {
 	var combined bytes.Buffer
 	if buf.Len() > 0 {
 		combined.WriteString("[build]\n")
-		combined.WriteString(tailOf(buf.Bytes(), m.LogTailBytes/2))
+		combined.WriteString(tailOf(withoutPlatformBuildNoise(buf.Bytes()), m.LogTailBytes/2))
 	}
 	if err != nil && buildkitLog.Len() > 0 {
 		combined.WriteString("\n[buildkitd]\n")

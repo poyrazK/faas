@@ -3177,6 +3177,11 @@ func (s *server) handler() http.Handler {
 	// even while dark-launched so clients receive the stable 503 feature code.
 	mux.HandleFunc("GET /v1/apps/{slug}/openapi/diff", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppOpenAPIContractDiff)))
 	mux.HandleFunc("POST /v1/apps/{slug}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.postAppOpenAPIImport))))
+	// ADR-20261122220000: the app's gregale.verify.yaml. Writes change what
+	// gates a production deploy, so they take MFA and deploy scope.
+	mux.HandleFunc("GET /v1/apps/{slug}/verification-contract", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getVerificationContract)))
+	mux.HandleFunc("PUT /v1/apps/{slug}/verification-contract", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putVerificationContract))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/verification-contract", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteVerificationContract))))
 	mux.HandleFunc("POST /v1/apps/{slug}/openapi/dry-run", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.postAppOpenAPIImportDryRun)))
 	// Explicit OpenAPI policy plan/apply. The write path requires MFA and
 	// deploy scope; the handler itself remains read-only until confirm=true

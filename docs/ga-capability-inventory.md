@@ -148,6 +148,7 @@ internal hosting service and Gregale Agents are already unreachable.
 | 34 | Release commands: a command (e.g. migrations) that must succeed before a deployment takes traffic | `gregale.yaml` `release` | **MISSING** | — | beta |
 | 35 | Traffic mirroring | `mirrors`, `gregale mirror`, `gregale traffic` | **MISSING** | — | preview |
 | 36 | Critical route health during canaries | `route-health` | `route-health-canary-guard` preview | — | preview |
+| 177 | Verification contracts: `gregale.verify.yaml` HTTP, MCP and read-only SQL checks run against a candidate before it takes traffic (ADR-20261122220000) | `verification-contract`, `verification-contracts`, `app_verification_contracts`, `gregale release check` | `verification-contracts` preview | `verification_contracts` platform flag (off) | preview |
 | 37 | Alert-triggered rollbacks | `alert-rollbacks` | **MISSING** | — | preview |
 
 ## C. Runtime and compute

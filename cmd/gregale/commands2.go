@@ -371,6 +371,11 @@ func cmdApp(args []string) int {
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
+	// The suggestion keeps every word after the command, flags included
+	// (`app inspect --environment prod shop`), not just the positionals.
+	if fs.NArg() > 0 && appWordIsCommand(slug, args[1:]) {
+		return 1
+	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
@@ -1523,7 +1528,16 @@ func slugInUseError(ctx context.Context, client *Client, slug string) error {
 		}
 		return fmt.Errorf("slug %q is held by an app you deleted until it is purged%s; free it now with `gregale app purge %s`, or pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " after "), slug)
 	}
-	return fmt.Errorf("slug %q is already in use; pick a different --name", slug)
+	return &slugTakenError{slug: slug}
+}
+
+// slugTakenError is a 409 on create for a slug the caller does not hold:
+// another owner has it. A deploy may then take an alternative name
+// (createOrFetchAppWithAlternatives).
+type slugTakenError struct{ slug string }
+
+func (e *slugTakenError) Error() string {
+	return fmt.Sprintf("slug %q is already in use; pick a different --name", e.slug)
 }
 
 // findDeletedApp returns the caller's deleted app holding slug, or nil when
@@ -3495,9 +3509,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *vcpu != 0 {
 			createReq.VCPU = *vcpu
 		}
-		if err := createOrFetchApp(ctx, client, createReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr); err != nil {
-			return printErr("Could not create or fetch app", err)
+		requestedSlug := slug
+		var createErr error
+		slug, createErr = createOrFetchAppWithAlternatives(ctx, client, createReq, createReq, sourceDir, nil, requireAuthnPtr, appProtocolPtr, publicAuthPtr, nil)
+		if createErr != nil {
+			return printErr("Could not create or fetch app", createErr)
 		}
+		printSlugAlternativeNotice(requestedSlug, slug)
 		if jsonOutput {
 			return jsonOut(writeJSON(map[string]any{"slug": slug, "status": "ready"}))
 		}
@@ -4398,7 +4416,22 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			// exist (MCP Tasks prod re-probe 2026-11-23).
 			_, getErr := client.GetApp(ctx, slug)
 			creating := isNotFound(getErr)
-			err = createOrFetchAppWith(ctx, client, createReq, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
+			// Another owner may hold the name: deploy under the caller's
+			// suffixed alternative instead (createOrFetchAppWithAlternatives).
+			var confirmExisting func(string) bool
+			if !*createOnly {
+				confirmExisting = func(alt string) bool {
+					return guardUnlinkedExistingApp(ctx, client, alt, contextDir, *yes) == 0
+				}
+			}
+			requestedSlug := slug
+			slug, err = createOrFetchAppWithAlternatives(ctx, client, createReq, existingReq, sourceDir, confirmExisting, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
+			if errors.Is(err, errDeployToAlternativeDeclined) {
+				return 1
+			}
+			if err == nil {
+				printSlugAlternativeNotice(requestedSlug, slug)
+			}
 			if err == nil && creating {
 				rememberCreatedApp(contextDir, slug)
 			}
@@ -4441,6 +4474,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if err := deployManifestObjectStorageBindings(ctx, client, slug, sourceDir, *environment); err != nil {
 		return printErr("Manifest object-storage bindings failed", err)
+	}
+	// ADR-20261122220000: gregale.verify.yaml gates this deployment, so it
+	// is stored before the deployment is created. The contract is app-wide,
+	// so only a production deploy changes it: a staging deploy must not
+	// replace the checks that gate production.
+	if *environment == "" && verifyProductionScope(manifestScope) {
+		if err := deployVerificationContract(ctx, client, slug, sourceDir); err != nil {
+			return printErr("Verification contract not applied", err)
+		}
 	}
 	// Lifecycle is app-wide, so only a production deploy changes it, as a
 	// production push does (ADR-20261110190000 §5).

@@ -695,8 +695,15 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 				return notifier.Notify(ctx, db.NotifyDeploymentSmokeChallenge, string(payload))
 			},
 		}
+		contracts := imaged.ContractVerification{Verifier: verifier, Store: store, Released: releases.verificationContracts}
 		h.WithHostingSmoke(func(ctx context.Context, app state.App, dep state.Deployment) (apihostingreceipt.SmokeResult, error) {
-			return imaged.VerifyHostingDeploymentWithContract(ctx, verifier, store, app, dep)
+			smoke, err := imaged.VerifyHostingDeploymentWithContract(ctx, verifier, store, app, dep)
+			if err != nil {
+				return smoke, err
+			}
+			// ADR-20261122220000: the app's gregale.verify.yaml runs only
+			// after the candidate's own health and route checks pass.
+			return imaged.ApplyVerificationContract(ctx, contracts, app, dep, smoke)
 		})
 		if smokeURL == "" {
 			log.Warn("imaged: API hosting readiness smoke required but public origin is unset; deployments will fail closed")
