@@ -19,6 +19,7 @@ func (c *countingReader) Read(p []byte) (int, error) {
 
 // After a complete response, an HTTP/1 upload the guest left unread is
 // drained so net/http does not reset the connection and lose the answer.
+// adr: 047 (streaming forwarder request body pump)
 func TestDiscardForwardRequestBodyReadsToEOF(t *testing.T) {
 	const size = 4 << 20
 	body := &countingReader{r: bytes.NewReader(make([]byte, size))}
