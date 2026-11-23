@@ -78011,6 +78011,24 @@ func (q *Queries) ObjectWorkloadCredentialCountLive(ctx context.Context, db DBTX
 	return column_1, err
 }
 
+const objectWorkloadCredentialDelete = `-- name: ObjectWorkloadCredentialDelete :execrows
+DELETE FROM object_storage_workload_credentials
+WHERE caller_app_id = $1 AND id = ANY($2::uuid[])
+`
+
+type ObjectWorkloadCredentialDeleteParams struct {
+	CallerAppID pgtype.UUID
+	Ids         []pgtype.UUID
+}
+
+func (q *Queries) ObjectWorkloadCredentialDelete(ctx context.Context, db DBTX, arg ObjectWorkloadCredentialDeleteParams) (int64, error) {
+	result, err := db.Exec(ctx, objectWorkloadCredentialDelete, arg.CallerAppID, arg.Ids)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const objectWorkloadCredentialDeleteExpired = `-- name: ObjectWorkloadCredentialDeleteExpired :execrows
 DELETE FROM object_storage_workload_credentials
 WHERE id IN (
@@ -78076,6 +78094,43 @@ func (q *Queries) ObjectWorkloadCredentialInsert(ctx context.Context, db DBTX, a
 	return err
 }
 
+const objectWorkloadCredentialListLiveForApp = `-- name: ObjectWorkloadCredentialListLiveForApp :many
+SELECT id, bucket_id, permission, key_prefix FROM object_storage_workload_credentials
+WHERE caller_app_id = $1 AND expires_at > now()
+`
+
+type ObjectWorkloadCredentialListLiveForAppRow struct {
+	ID         pgtype.UUID
+	BucketID   pgtype.UUID
+	Permission string
+	KeyPrefix  pgtype.Text
+}
+
+func (q *Queries) ObjectWorkloadCredentialListLiveForApp(ctx context.Context, db DBTX, callerAppID pgtype.UUID) ([]ObjectWorkloadCredentialListLiveForAppRow, error) {
+	rows, err := db.Query(ctx, objectWorkloadCredentialListLiveForApp, callerAppID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectWorkloadCredentialListLiveForAppRow{}
+	for rows.Next() {
+		var i ObjectWorkloadCredentialListLiveForAppRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.BucketID,
+			&i.Permission,
+			&i.KeyPrefix,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const objectWorkloadCredentialResolve = `-- name: ObjectWorkloadCredentialResolve :one
 SELECT c.id, c.account_id, c.bucket_id, c.caller_app_id, c.access_key_id, c.secret_sealed, c.kid, c.permission, c.key_prefix,
        c.created_at, c.expires_at,
@@ -78088,6 +78143,9 @@ JOIN object_buckets b ON b.id = c.bucket_id AND b.account_id = c.account_id
 JOIN orgs o ON o.id = b.org_id
 WHERE c.access_key_id = $1 AND c.expires_at > now() AND b.state = 'ready' AND NOT o.deleted_pending
   AND b.environment_clone_operation_id IS NULL
+  AND EXISTS (SELECT 1 FROM apps ca WHERE ca.id = c.caller_app_id AND ca.status <> 'deleted')
+  AND EXISTS (SELECT 1 FROM instances i WHERE i.id::text = c.instance_id AND i.app_id = c.caller_app_id
+              AND i.state NOT IN ('parked','stopped','failed','evicting_account_deleting'))
   AND (CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.status IN ('active','past_due') AND o.abuse_hold_at IS NULL
        ELSE EXISTS (SELECT 1 FROM accounts a WHERE a.id = b.account_id AND a.status IN ('active','past_due') AND a.abuse_hold_at IS NULL) END)
 `
@@ -78117,9 +78175,11 @@ type ObjectWorkloadCredentialResolveRow struct {
 	BucketUpdatedAt    pgtype.Timestamptz
 }
 
-// A workload credential resolves while it has not expired, its bucket is
+// A workload credential resolves while it has not expired, its caller app
+// still exists, the instance it was issued to still holds a VM, its bucket is
 // ready and the bucket's resource owner may use object storage: the same
-// owner rule object_storage_credential_live applies to compute keys.
+// owner rule object_storage_credential_live applies to compute keys. A grant
+// that uses: drops is revoked by deleting the row (ObjectWorkloadCredentialDelete).
 func (q *Queries) ObjectWorkloadCredentialResolve(ctx context.Context, db DBTX, accessKeyID string) (ObjectWorkloadCredentialResolveRow, error) {
 	row := db.QueryRow(ctx, objectWorkloadCredentialResolve, accessKeyID)
 	var i ObjectWorkloadCredentialResolveRow

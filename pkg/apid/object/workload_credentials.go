@@ -155,6 +155,47 @@ func (s *Service) IssueWorkloadCredential(ctx context.Context, acct state.Accoun
 	}, nil
 }
 
+// RevokeUngrantedWorkloadCredentials deletes caller's live workload
+// credentials that its current `uses:` no longer grants: a bucket it dropped,
+// or a grant whose access or prefix changed. Credentials the grants still
+// cover keep working, so a guest's cached credential survives an unrelated
+// manifest change. Resolution stops honouring a deleted app or a stopped
+// instance by itself; this covers the grant edits resolution cannot see.
+func (s *Service) RevokeUngrantedWorkloadCredentials(ctx context.Context, acct state.Account, caller state.App) error {
+	store, ok := s.Host.Store().(state.ObjectWorkloadCredentialStore)
+	if !ok {
+		return nil
+	}
+	live, err := store.ListLiveObjectWorkloadCredentials(ctx, caller.ID)
+	if err != nil || len(live) == 0 {
+		return err
+	}
+	type covered struct{ bucketID, access, prefix string }
+	keep := map[covered]bool{}
+	if caller.Status != state.AppDeleted && caller.Manifest.Uses != nil {
+		for _, grant := range caller.Manifest.Uses.Normalized().Buckets {
+			_, bucket, err := s.ResolveWorkloadGrant(ctx, acct, caller, grant.Bucket)
+			if errors.Is(err, ErrWorkloadBucketNotFound) {
+				continue
+			}
+			if err != nil {
+				// Keep everything rather than revoke on a transient failure;
+				// the next apply (or expiry) catches up.
+				return err
+			}
+			keep[covered{bucket.ID, grant.Access, grant.Prefix}] = true
+		}
+	}
+	var revoke []string
+	for _, c := range live {
+		if !keep[covered{c.BucketID, c.Permission, c.KeyPrefix}] {
+			revoke = append(revoke, c.ID)
+		}
+	}
+	_, err = store.DeleteObjectWorkloadCredentials(ctx, caller.ID, revoke)
+	return err
+}
+
 // WorkloadCredentialSweepInterval is how often apid deletes expired workload
 // credentials. They stop resolving at expiry; the sweep only frees rows.
 const WorkloadCredentialSweepInterval = 5 * time.Minute

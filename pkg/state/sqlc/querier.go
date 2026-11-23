@@ -5885,12 +5885,16 @@ type Querier interface {
 	ObjectVersioningNow(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	ObjectVersioningSave(ctx context.Context, db DBTX, arg ObjectVersioningSaveParams) error
 	ObjectWorkloadCredentialCountLive(ctx context.Context, db DBTX, arg ObjectWorkloadCredentialCountLiveParams) (int32, error)
+	ObjectWorkloadCredentialDelete(ctx context.Context, db DBTX, arg ObjectWorkloadCredentialDeleteParams) (int64, error)
 	ObjectWorkloadCredentialDeleteExpired(ctx context.Context, db DBTX, arg ObjectWorkloadCredentialDeleteExpiredParams) (int64, error)
 	// ADR-20261122191423 slice 2: short-lived workload S3 credentials.
 	ObjectWorkloadCredentialInsert(ctx context.Context, db DBTX, arg ObjectWorkloadCredentialInsertParams) error
-	// A workload credential resolves while it has not expired, its bucket is
+	ObjectWorkloadCredentialListLiveForApp(ctx context.Context, db DBTX, callerAppID pgtype.UUID) ([]ObjectWorkloadCredentialListLiveForAppRow, error)
+	// A workload credential resolves while it has not expired, its caller app
+	// still exists, the instance it was issued to still holds a VM, its bucket is
 	// ready and the bucket's resource owner may use object storage: the same
-	// owner rule object_storage_credential_live applies to compute keys.
+	// owner rule object_storage_credential_live applies to compute keys. A grant
+	// that uses: drops is revoked by deleting the row (ObjectWorkloadCredentialDelete).
 	ObjectWorkloadCredentialResolve(ctx context.Context, db DBTX, accessKeyID string) (ObjectWorkloadCredentialResolveRow, error)
 	ObjectWriteInsert(ctx context.Context, db DBTX, arg ObjectWriteInsertParams) error
 	ObjectWriteKeyFenced(ctx context.Context, db DBTX, arg ObjectWriteKeyFencedParams) (bool, error)

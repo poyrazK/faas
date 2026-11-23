@@ -49,6 +49,11 @@ type ObjectWorkloadCredentialStore interface {
 	// CountLiveObjectWorkloadCredentials counts one instance's unexpired
 	// credentials for one bucket, so apid can cap how many it holds.
 	CountLiveObjectWorkloadCredentials(ctx context.Context, instanceID, bucketID string) (int, error)
+	// ListLiveObjectWorkloadCredentials returns callerAppID's unexpired
+	// credentials (ID, BucketID, Permission and KeyPrefix only).
+	ListLiveObjectWorkloadCredentials(ctx context.Context, callerAppID string) ([]ObjectWorkloadCredential, error)
+	// DeleteObjectWorkloadCredentials revokes callerAppID's credentials ids.
+	DeleteObjectWorkloadCredentials(ctx context.Context, callerAppID string, ids []string) (int64, error)
 }
 
 func validObjectWorkloadCredential(c ObjectWorkloadCredential) bool {
@@ -107,6 +112,40 @@ func (s *PgStore) CountLiveObjectWorkloadCredentials(ctx context.Context, instan
 	}
 	n, err := sqlc.New().ObjectWorkloadCredentialCountLive(ctx, s.pool, sqlc.ObjectWorkloadCredentialCountLiveParams{InstanceID: instanceID, BucketID: mustPgUUID(bucketID)})
 	return int(n), mapErr(err)
+}
+
+func (s *PgStore) ListLiveObjectWorkloadCredentials(ctx context.Context, callerAppID string) ([]ObjectWorkloadCredential, error) {
+	if !validUUID(callerAppID) {
+		return nil, ErrInvalidArgument
+	}
+	rows, err := sqlc.New().ObjectWorkloadCredentialListLiveForApp(ctx, s.pool, mustPgUUID(callerAppID))
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	out := make([]ObjectWorkloadCredential, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, ObjectWorkloadCredential{ID: pgUUIDString(row.ID), BucketID: pgUUIDString(row.BucketID), CallerAppID: callerAppID,
+			Permission: row.Permission, KeyPrefix: row.KeyPrefix.String})
+	}
+	return out, nil
+}
+
+func (s *PgStore) DeleteObjectWorkloadCredentials(ctx context.Context, callerAppID string, ids []string) (int64, error) {
+	if !validUUID(callerAppID) {
+		return 0, ErrInvalidArgument
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	pgIDs := make([]pgtype.UUID, 0, len(ids))
+	for _, id := range ids {
+		if !validUUID(id) {
+			return 0, ErrInvalidArgument
+		}
+		pgIDs = append(pgIDs, mustPgUUID(id))
+	}
+	n, err := sqlc.New().ObjectWorkloadCredentialDelete(ctx, s.pool, sqlc.ObjectWorkloadCredentialDeleteParams{CallerAppID: mustPgUUID(callerAppID), Ids: pgIDs})
+	return n, mapErr(err)
 }
 
 func (s *PgStore) resolveObjectWorkloadCredential(ctx context.Context, accessKeyID string) (ObjectS3Credential, ObjectBucket, error) {
@@ -181,6 +220,50 @@ func (m *MemStore) CountLiveObjectWorkloadCredentials(_ context.Context, instanc
 	return n, nil
 }
 
+func (m *MemStore) ListLiveObjectWorkloadCredentials(_ context.Context, callerAppID string) ([]ObjectWorkloadCredential, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	var out []ObjectWorkloadCredential
+	for _, c := range m.objectWorkloadCredentials {
+		if c.CallerAppID == callerAppID && c.ExpiresAt.After(now) {
+			out = append(out, ObjectWorkloadCredential{ID: c.ID, BucketID: c.BucketID, CallerAppID: c.CallerAppID, Permission: c.Permission, KeyPrefix: c.KeyPrefix})
+		}
+	}
+	return out, nil
+}
+
+func (m *MemStore) DeleteObjectWorkloadCredentials(_ context.Context, callerAppID string, ids []string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var n int64
+	for _, id := range ids {
+		if c, ok := m.objectWorkloadCredentials[id]; ok && c.CallerAppID == callerAppID {
+			delete(m.objectWorkloadCredentials, id)
+			n++
+		}
+	}
+	return n, nil
+}
+
+// workloadCredentialHolderLiveLocked mirrors the resolve query's caller and
+// instance checks: the caller app exists and the instance still holds a VM.
+func (m *MemStore) workloadCredentialHolderLiveLocked(c ObjectWorkloadCredential) bool {
+	app, ok := m.apps[c.CallerAppID]
+	if !ok || app.Status == AppDeleted {
+		return false
+	}
+	instance, ok := m.instances[c.InstanceID]
+	if !ok || instance.AppID != c.CallerAppID {
+		return false
+	}
+	switch State(instance.State) {
+	case StateParked, StateStopped, StateFailed, StateEvictingAccountDeleting:
+		return false
+	}
+	return true
+}
+
 // resolveObjectWorkloadCredentialLocked mirrors ObjectWorkloadCredentialResolve.
 func (m *MemStore) resolveObjectWorkloadCredentialLocked(accessKeyID string) (ObjectS3Credential, ObjectBucket, error) {
 	now := time.Now()
@@ -190,6 +273,7 @@ func (m *MemStore) resolveObjectWorkloadCredentialLocked(accessKeyID string) (Ob
 		}
 		bucket, ok := m.objectBuckets[c.BucketID]
 		if !ok || bucket.AccountID != c.AccountID || bucket.State != "ready" || !m.cloneBucketAccessibleLocked(bucket) ||
+			!m.workloadCredentialHolderLiveLocked(c) ||
 			!m.objectCredentialLiveLocked(ObjectS3Credential{ManagedAppID: c.CallerAppID, BucketID: c.BucketID, AccountID: c.AccountID, Status: ObjectS3CredentialStatusActive}, bucket) {
 			return ObjectS3Credential{}, ObjectBucket{}, ErrNotFound
 		}

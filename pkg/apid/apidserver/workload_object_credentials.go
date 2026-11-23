@@ -1,6 +1,7 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -52,6 +53,25 @@ func (s *server) issueWorkloadObjectCredential(w http.ResponseWriter, r *http.Re
 		}
 	}
 	api.WriteProblem(w, workloadCredentialProblem(caller, req.Bucket, grant.App, err))
+}
+
+// revokeUngrantedWorkloadCredentials revokes, after a project apply, the
+// workload S3 credentials of changed apps that their new `uses:` no longer
+// grants (ADR-20261122191423). Removed apps need nothing: a deleted caller's
+// credentials stop resolving. A failure is logged; the credentials then
+// lapse within the hour at the latest.
+func (s *server) revokeUngrantedWorkloadCredentials(ctx context.Context, changed []state.App) {
+	for _, app := range changed {
+		// Grants resolve against the app's resource account, as when the
+		// credential was issued.
+		acct, err := state.AppResourceAccount(ctx, s.store, app)
+		if err == nil {
+			err = s.object.RevokeUngrantedWorkloadCredentials(ctx, acct, app)
+		}
+		if err != nil {
+			s.log.Warn("revoke ungranted workload credentials", "app_id", app.ID, "err", err)
+		}
+	}
 }
 
 func workloadCredentialProblem(caller state.App, bucket, owner string, err error) *api.Problem {

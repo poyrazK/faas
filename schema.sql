@@ -86518,10 +86518,24 @@ CREATE INDEX object_storage_upload_grants_expiry_idx ON public.object_storage_up
 
 
 --
+-- Name: object_storage_workload_credentials_caller_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_storage_workload_credentials_caller_idx ON public.object_storage_workload_credentials USING btree (caller_app_id);
+
+
+--
 -- Name: object_storage_workload_credentials_expires_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX object_storage_workload_credentials_expires_idx ON public.object_storage_workload_credentials USING btree (expires_at);
+
+
+--
+-- Name: object_storage_workload_credentials_instance_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_storage_workload_credentials_instance_idx ON public.object_storage_workload_credentials USING btree (instance_id, bucket_id);
 
 
 --

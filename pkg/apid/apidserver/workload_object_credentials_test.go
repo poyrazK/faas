@@ -114,4 +114,58 @@ func TestWorkloadObjectCredentialsFollowBucketGrants(t *testing.T) {
 	if _, _, err := store.ResolveObjectS3Credential(ctx, resp.AccessKeyID); err == nil {
 		t.Fatal("swept credential still resolves")
 	}
+
+	// Revocation does not wait for expiry.
+	resolves := func(accessKeyID string) bool {
+		t.Helper()
+		_, _, err := store.ResolveObjectS3Credential(ctx, accessKeyID)
+		return err == nil
+	}
+	fresh := func() string {
+		t.Helper()
+		code, resp, problem := issue("assets")
+		if code != http.StatusOK {
+			t.Fatalf("issue: %d %+v", code, problem)
+		}
+		return resp.AccessKeyID
+	}
+	// An apply that leaves the grant alone keeps the credential; one that
+	// narrows its prefix or drops it revokes it.
+	kept := fresh()
+	(*e.S()).RevokeUngrantedWorkloadCredentials([]state.App{web})
+	if !resolves(kept) {
+		t.Fatal("unchanged grant revoked")
+	}
+	narrowed := web
+	narrowed.Manifest.Uses = &capgrant.Uses{Buckets: []capgrant.BucketGrant{{Bucket: "assets", App: "worker", Prefix: "rooms/a/", Access: "read"}}}
+	(*e.S()).RevokeUngrantedWorkloadCredentials([]state.App{narrowed})
+	if resolves(kept) {
+		t.Fatal("credential outlived a narrowed grant")
+	}
+	dropped := fresh()
+	withoutGrant := web
+	withoutGrant.Manifest.Uses = nil
+	(*e.S()).RevokeUngrantedWorkloadCredentials([]state.App{withoutGrant})
+	if resolves(dropped) {
+		t.Fatal("credential outlived a dropped grant")
+	}
+	// A stopped instance's credential stops resolving.
+	stopped := fresh()
+	if err := store.UpdateInstanceState(ctx, instance.ID, string(state.StateStopped)); err != nil {
+		t.Fatal(err)
+	}
+	if resolves(stopped) {
+		t.Fatal("credential outlived its instance")
+	}
+	if err := store.UpdateInstanceState(ctx, instance.ID, string(state.StateRunning)); err != nil {
+		t.Fatal(err)
+	}
+	// A deleted caller app's credential stops resolving.
+	deleted := fresh()
+	if _, err := store.SoftDeleteAppCascade(ctx, web.ID); err != nil {
+		t.Fatal(err)
+	}
+	if resolves(deleted) {
+		t.Fatal("credential outlived its app")
+	}
 }

@@ -30841,9 +30841,11 @@ VALUES (sqlc.arg(id), sqlc.arg(account_id), sqlc.arg(bucket_id), sqlc.arg(caller
         sqlc.arg(secret_sealed), sqlc.arg(kid), sqlc.arg(permission), sqlc.narg(key_prefix), sqlc.arg(created_at), sqlc.arg(expires_at));
 
 -- name: ObjectWorkloadCredentialResolve :one
--- A workload credential resolves while it has not expired, its bucket is
+-- A workload credential resolves while it has not expired, its caller app
+-- still exists, the instance it was issued to still holds a VM, its bucket is
 -- ready and the bucket's resource owner may use object storage: the same
--- owner rule object_storage_credential_live applies to compute keys.
+-- owner rule object_storage_credential_live applies to compute keys. A grant
+-- that uses: drops is revoked by deleting the row (ObjectWorkloadCredentialDelete).
 SELECT c.id, c.account_id, c.bucket_id, c.caller_app_id, c.access_key_id, c.secret_sealed, c.kid, c.permission, c.key_prefix,
        c.created_at, c.expires_at,
        b.app_id, b.org_id, b.name AS bucket_name, b.scope AS bucket_scope,
@@ -30855,6 +30857,9 @@ JOIN object_buckets b ON b.id = c.bucket_id AND b.account_id = c.account_id
 JOIN orgs o ON o.id = b.org_id
 WHERE c.access_key_id = $1 AND c.expires_at > now() AND b.state = 'ready' AND NOT o.deleted_pending
   AND b.environment_clone_operation_id IS NULL
+  AND EXISTS (SELECT 1 FROM apps ca WHERE ca.id = c.caller_app_id AND ca.status <> 'deleted')
+  AND EXISTS (SELECT 1 FROM instances i WHERE i.id::text = c.instance_id AND i.app_id = c.caller_app_id
+              AND i.state NOT IN ('parked','stopped','failed','evicting_account_deleting'))
   AND (CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.status IN ('active','past_due') AND o.abuse_hold_at IS NULL
        ELSE EXISTS (SELECT 1 FROM accounts a WHERE a.id = b.account_id AND a.status IN ('active','past_due') AND a.abuse_hold_at IS NULL) END);
 
@@ -30866,6 +30871,14 @@ WHERE id IN (
     ORDER BY expires_at
     LIMIT sqlc.arg(batch_limit)::int
 );
+
+-- name: ObjectWorkloadCredentialListLiveForApp :many
+SELECT id, bucket_id, permission, key_prefix FROM object_storage_workload_credentials
+WHERE caller_app_id = sqlc.arg(caller_app_id) AND expires_at > now();
+
+-- name: ObjectWorkloadCredentialDelete :execrows
+DELETE FROM object_storage_workload_credentials
+WHERE caller_app_id = sqlc.arg(caller_app_id) AND id = ANY(sqlc.arg(ids)::uuid[]);
 
 -- name: ObjectWorkloadCredentialCountLive :one
 SELECT count(*)::int FROM object_storage_workload_credentials

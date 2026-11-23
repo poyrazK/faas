@@ -32,6 +32,12 @@ COMMENT ON TABLE object_storage_workload_credentials IS 'Short-lived per-instanc
 
 CREATE INDEX IF NOT EXISTS object_storage_workload_credentials_expires_idx
     ON object_storage_workload_credentials (expires_at);
+-- apid counts one instance's live credentials per bucket on every issue, and
+-- revokes an app's credentials when its uses: drops a grant.
+CREATE INDEX IF NOT EXISTS object_storage_workload_credentials_instance_idx
+    ON object_storage_workload_credentials (instance_id, bucket_id);
+CREATE INDEX IF NOT EXISTS object_storage_workload_credentials_caller_idx
+    ON object_storage_workload_credentials (caller_app_id);
 
 -- +goose Down
 SET LOCAL lock_timeout = '5s';
