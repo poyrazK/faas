@@ -35,6 +35,8 @@
     {"path": "service-bindings", "source": "docs/service-bindings.md"},
     {"path": "service-release-graphs", "source": "docs/service-release-graphs.md"},
     {"path": "stored-workflows", "source": "docs/stored-workflow-authoring.md"},
+    {"path": "stored-workflows-operations", "source": "docs/stored-workflow-operations.md"},
+    {"path": "stored-workflows-testing", "source": "docs/stored-workflow-testing.md"},
     {"path": "auth", "source": "docs/auth.md"},
     {"path": "billing", "source": "docs/billing.md"},
     {"path": "broker-triggers", "source": "docs/broker-triggers.md", "unpublished": "preview capability; published when it reaches beta"},
