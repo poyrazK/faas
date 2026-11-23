@@ -532,17 +532,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		bodyErrCh <- nil
 		close(bodyErrCh)
 	} else {
-		var discard func() bool
-		if !grpcDuplex {
-			// The rest of an upload the guest stopped reading is drained, for
-			// at most forwardRequestBodyDiscardTimeout (see the pump). Not for
-			// gRPC: its status trailers must not wait for the client's stream.
-			// (x-faas-stream marks most ordinary requests, so it is no guide.)
-			discard = func() bool {
-				return http.NewResponseController(w).SetReadDeadline(time.Now().Add(forwardRequestBodyDiscardTimeout)) == nil
-			}
-		}
-		go pumpForwardRequestBody(ctx, r.Body, stream, touch, bodyErrCh, discard)
+		go pumpForwardRequestBody(ctx, r.Body, stream, touch, bodyErrCh)
 	}
 
 	// ADR-696: join the body pump even if the response writer or receiver
@@ -788,16 +778,20 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 
 	// Wait for the body goroutine to drain so we can
 	// distinguish a clean bidi close from a client-disconnect
-	// (which surfaces as a Send error). A guest that answered before
-	// reading the whole body leaves the pump discarding the rest of the
-	// upload; send the complete response to the client meanwhile.
-	select {
-	case <-bodyErrCh:
-	default:
-		if wroteHeader {
-			flushSafe(w)
+	// (which surfaces as a Send error).
+	<-bodyErrCh
+	// The response is complete. A guest that answered before reading the
+	// whole body left the rest of the upload unread; on HTTP/1 net/http
+	// would then close the connection with unread data, resetting it, and
+	// the hop in front (Caddy, Cloudflare) dropped the response: clients saw
+	// an empty reply for bodies above about 1 MB. Drain it, bounded in bytes
+	// and by a read deadline. HTTP/2 resets only the stream, after END_STREAM,
+	// and gRPC trailers must not wait, so neither drains.
+	if wroteHeader && r.ProtoMajor == 1 && !grpcDuplex {
+		flushSafe(w)
+		if http.NewResponseController(w).SetReadDeadline(time.Now().Add(api.ForwardRequestBodyDiscardTimeout)) == nil {
+			discardForwardRequestBody(r.Body, make([]byte, 8*1024), forwardRequestBodyDiscardMaxBytes)
 		}
-		<-bodyErrCh
 	}
 }
 
@@ -1937,15 +1931,10 @@ type forwardBodySender interface {
 
 const (
 	// forwardRequestBodyDiscardMaxBytes bounds how much of an upload the
-	// gateway reads and discards after the guest stopped taking it (see
-	// pumpForwardRequestBody). It matches the largest body any forward path
-	// accepts.
+	// gateway reads and discards after a complete response whose guest did
+	// not read the whole body (fwdStreamOnceWithEvents). It matches the
+	// largest body any forward path accepts.
 	forwardRequestBodyDiscardMaxBytes = api.RawStreamMaxRequestBytes
-	// forwardRequestBodyDiscardTimeout bounds that discard in time: a client
-	// that stops uploading after the answer cannot hold the request open.
-	// The response is already complete; past this the connection closes as
-	// it did before the discard existed.
-	forwardRequestBodyDiscardTimeout = 10 * time.Second
 )
 
 // pumpForwardRequestBody streams body to the forward stream in 8 KiB chunks
@@ -1953,19 +1942,7 @@ const (
 // which it closes. A cancelled ctx closes body through the ctxReader, so a
 // stalled upload does not hold the goroutine until the server's ReadTimeout
 // (issue #471 review F3).
-//
-// A guest may answer before reading the whole body (a 413 from a size cap,
-// or a handler that ignores the body); the stream then refuses further
-// chunks. When discard is non-nil and returns true (it arms the discard's
-// read deadline; nil or false for gRPC and other duplex streams, whose
-// trailers must not wait for the client's upload), the pump reads the rest of
-// the upload and drops it, up to forwardRequestBodyDiscardMaxBytes, before it
-// reports the send error. Leaving it unread made this server close the
-// connection with unread data, which reset it, and the hop in front (Caddy,
-// Cloudflare) dropped the response already sent: clients saw an HTTP/2
-// INTERNAL_ERROR or an empty reply for any body above about 1 MB instead of
-// the answer.
-func pumpForwardRequestBody(ctx context.Context, body io.Reader, stream forwardBodySender, touch func(), result chan<- error, discard func() bool) {
+func pumpForwardRequestBody(ctx context.Context, body io.Reader, stream forwardBodySender, touch func(), result chan<- error) {
 	defer close(result)
 	cr, stopReader := newCtxReader(ctx, body)
 	defer stopReader()
@@ -1979,9 +1956,6 @@ func pumpForwardRequestBody(ctx context.Context, body io.Reader, stream forwardB
 					BodyChunk: append([]byte(nil), buf[:n]...),
 				},
 			}); serr != nil {
-				if err == nil && discard != nil && discard() {
-					discardForwardRequestBody(cr, buf, forwardRequestBodyDiscardMaxBytes)
-				}
 				result <- serr
 				return
 			}
