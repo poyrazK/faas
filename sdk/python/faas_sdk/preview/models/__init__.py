@@ -3304,13 +3304,16 @@ from .mcp_readiness_role_catalog_format import MCPReadinessRoleCatalogFormat
 from .mcp_readiness_role_protocol_version import MCPReadinessRoleProtocolVersion
 from .mcp_readiness_snapshot import MCPReadinessSnapshot
 from .mcp_resource_policy import MCPResourcePolicy
+from .mcp_resource_policy_credential import MCPResourcePolicyCredential
 from .mcp_resource_policy_prompt_scopes_type_0 import MCPResourcePolicyPromptScopesType0
 from .mcp_resource_policy_resource_scopes_type_0 import MCPResourcePolicyResourceScopesType0
+from .mcp_resource_policy_tool_limits import MCPResourcePolicyToolLimits
 from .mcp_resource_policy_tool_scopes_type_0 import MCPResourcePolicyToolScopesType0
 from .mcp_task_compatibility_report_request import MCPTaskCompatibilityReportRequest
 from .mcp_task_compatibility_report_response import MCPTaskCompatibilityReportResponse
 from .mcp_task_handler_compatibility import MCPTaskHandlerCompatibility
 from .mcp_task_handler_deployment_workers import MCPTaskHandlerDeploymentWorkers
+from .mcp_tool_limit import MCPToolLimit
 from .mcpo_auth_retirement import MCPOAuthRetirement
 from .mcpo_auth_retirement_action import MCPOAuthRetirementAction
 from .mcpo_auth_retirement_action_action import MCPOAuthRetirementActionAction
@@ -10391,13 +10394,16 @@ __all__ = (
     "MCPReadinessRoleProtocolVersion",
     "MCPReadinessSnapshot",
     "MCPResourcePolicy",
+    "MCPResourcePolicyCredential",
     "MCPResourcePolicyPromptScopesType0",
     "MCPResourcePolicyResourceScopesType0",
+    "MCPResourcePolicyToolLimits",
     "MCPResourcePolicyToolScopesType0",
     "MCPTaskCompatibilityReportRequest",
     "MCPTaskCompatibilityReportResponse",
     "MCPTaskHandlerCompatibility",
     "MCPTaskHandlerDeploymentWorkers",
+    "MCPToolLimit",
     "MemberListResponse",
     "MFAConfirmRequest",
     "MFAConfirmResponse",

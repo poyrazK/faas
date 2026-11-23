@@ -89,7 +89,7 @@ func (h *Handler) enforceTenantRequestBudget(w http.ResponseWriter, r *http.Requ
 		decision.RetryAfterSeconds = 1
 	}
 	w.Header().Set("Retry-After", strconv.FormatInt(decision.RetryAfterSeconds, 10))
-	w.Header().Set("x-faas-rate-limit-scope", "platform-tenant")
+	w.Header().Set("X-Faas-Rate-Limit-Scope", "platform-tenant")
 	api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, "tenant_request_budget_exceeded",
 		"Customer request budget exceeded", "the platform customer has exhausted its request budget"))
 	h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
@@ -112,7 +112,7 @@ func (h *Handler) denyTenantOverdue(w http.ResponseWriter, r *http.Request, rec 
 // spend cap (ADR-20261019100331); it resumes when credit or a raised cap
 // lifts it, or next month.
 func (h *Handler) denyTenantSpendCap(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App, decision TenantRequestBudgetDecision) {
-	w.Header().Set("x-faas-rate-limit-scope", "platform-tenant-spend-cap")
+	w.Header().Set("X-Faas-Rate-Limit-Scope", "platform-tenant-spend-cap")
 	detail := "the platform customer's monthly spend cap is " + strconv.FormatInt(decision.Limit, 10) + " " + decision.SpendCurrency +
 		" millicents; requests resume next month or once credit or a higher cap covers the amount due"
 	api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeTenantSpendCapReached, "Customer spend cap reached", detail).

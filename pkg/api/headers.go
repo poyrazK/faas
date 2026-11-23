@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"net/textproto"
 	"strings"
 	"unicode/utf8"
 )
@@ -195,30 +196,46 @@ func (i PlatformIdentity) ApplyGuestHeaders(h http.Header) {
 		return
 	}
 	ClearGuestIdentityHeaders(h)
-	set := func(name, value string) {
-		if value != "" {
-			h.Set(name, value)
+	stamps := [...]struct{ name, value string }{
+		{RequestIDHeader, i.RequestID},
+		{AppIDHeader, i.AppID},
+		{DeploymentIDHeader, i.DeploymentID},
+		{TenantIDHeader, i.TenantID},
+		{PlatformTenantIDHeader, i.PlatformTenantID},
+		{InstanceIDHeader, i.InstanceID},
+		{NodeIDHeader, i.NodeID},
+		{RegionHeader, i.Region},
+		{CommitSHAHeader, i.CommitSHA},
+		{DeploymentTagHeader, i.DeploymentTag},
+		{DeploymentCreatedAtHeader, i.DeploymentCreatedAt},
+		{ImageDigestHeader, i.ImageDigest},
+		{ClientCountryHeader, i.ClientCountry},
+		{ClientUAFamilyHeader, i.ClientUAFamily},
+		{FlagKillsHeader, i.FlagKills},
+		{FlagCohortsHeader, i.FlagCohorts},
+		{"X-Faas-App", i.AppID},
+		{"X-Faas-Instance", i.InstanceID},
+		{"X-Faas-Node", i.NodeID},
+	}
+	n := 0
+	for _, s := range stamps {
+		if s.value != "" {
+			n++
 		}
 	}
-	set(RequestIDHeader, i.RequestID)
-	set(AppIDHeader, i.AppID)
-	set(DeploymentIDHeader, i.DeploymentID)
-	set(TenantIDHeader, i.TenantID)
-	set(PlatformTenantIDHeader, i.PlatformTenantID)
-	set(InstanceIDHeader, i.InstanceID)
-	set(NodeIDHeader, i.NodeID)
-	set(RegionHeader, i.Region)
-	set(CommitSHAHeader, i.CommitSHA)
-	set(DeploymentTagHeader, i.DeploymentTag)
-	set(DeploymentCreatedAtHeader, i.DeploymentCreatedAt)
-	set(ImageDigestHeader, i.ImageDigest)
-	set(ClientCountryHeader, i.ClientCountry)
-	set(ClientUAFamilyHeader, i.ClientUAFamily)
-	set(FlagKillsHeader, i.FlagKills)
-	set(FlagCohortsHeader, i.FlagCohorts)
-	set("X-Faas-App", i.AppID)
-	set("X-Faas-Instance", i.InstanceID)
-	set("X-Faas-Node", i.NodeID)
+	// h.Set allocates a one-element slice per header; every request is
+	// stamped with most of these. One backing array serves them all, and each
+	// header gets its own capacity-1 window of it, so a later Add copies
+	// instead of writing into a neighbour (net/textproto's reader does the
+	// same). The result is exactly what h.Set would leave.
+	vals := make([]string, 0, n)
+	for _, s := range stamps {
+		if s.value == "" {
+			continue
+		}
+		vals = append(vals, s.value)
+		h[textproto.CanonicalMIMEHeaderKey(s.name)] = vals[len(vals)-1 : len(vals) : len(vals)]
+	}
 }
 
 // ClearGuestIdentityHeaders removes every reserved identity header before a
@@ -231,7 +248,10 @@ func ClearGuestIdentityHeaders(h http.Header) {
 	}
 	for name := range h {
 		if IsGuestIdentityHeader(name) {
-			h.Del(name)
+			// Delete the key as stored. h.Del would canonicalize it again
+			// (a scan per header) and, for a key stored in another case,
+			// remove the canonical spelling while leaving this one behind.
+			delete(h, name)
 		}
 	}
 	// The exact-service selector is guest-authored on a managed service call,
