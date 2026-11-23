@@ -73,6 +73,11 @@ func TestRequestHealth_SameWindowAndFreshness(t *testing.T) {
 					if (strings.Contains(q, "count(count by") || strings.Contains(q, "|__other__")) && !strings.Contains(q, "count_over_time(") {
 						t.Fatalf("partial counter samples could be hidden: %s", q)
 					}
+					// Gateway-answered refusals (401 without an API key, CORS
+					// preflights) are unattributed but not release failures.
+					if strings.Contains(q, "|__other__") && (!strings.Contains(q, `deployment=~"|__other__",class="5xx"`) || !strings.Contains(q, `gateway_capacity_refusals_total{app="app"}`)) {
+						t.Fatalf("unattributed check must block on 5xx and capacity refusals only: %s", q)
+					}
 				}
 			}
 		})

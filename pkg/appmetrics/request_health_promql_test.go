@@ -59,6 +59,18 @@ func TestRequestHealth_PromQL(t *testing.T) {
 		{"first unattributed request remains visible", []map[string]any{
 			series("serving", "2xx", "0+20x5"), series("canary", "2xx", "0+20x5"), series("__other__", "5xx", "_ _ _ _ _ 7"),
 		}, []float64{200, 0, 2, 300, 7}},
+		{"gateway-answered 4xx and other unattributed non-failures do not block", []map[string]any{
+			series("serving", "2xx", "0+20x5"), series("canary", "2xx", "0+20x5"),
+			series("", "4xx", "0+1x5"), series("", "2xx", "_ _ _ _ _ 3"), series("__other__", "4xx", "_ _ _ _ _ 2"),
+		}, []float64{200, 0, 2, 300, 0}},
+		{"unattributed 5xx still blocks", []map[string]any{
+			series("serving", "2xx", "0+20x5"), series("canary", "2xx", "0+20x5"), series("", "5xx", "0+1x5"),
+		}, []float64{200, 0, 2, 300, 5}},
+		{"capacity refusals still block", []map[string]any{
+			series("serving", "2xx", "0+20x5"), series("canary", "2xx", "0+20x5"),
+			{"series": `gateway_capacity_refusals_total{app="app"}`, "values": "0+2x5"},
+			{"series": `gateway_capacity_refusals_total{app="other"}`, "values": "0+9x5"},
+		}, []float64{200, 0, 2, 300, 10}},
 		{"oldest serving-release sample controls freshness", []map[string]any{
 			series("serving", "2xx", "0+20x5"), series("canary", "2xx", "0 0 0 _ _ _"),
 		}, []float64{100, 0, 2, 120, 0}},

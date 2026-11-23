@@ -25,9 +25,10 @@ type RequestHealth struct {
 	Reason       string
 }
 
-// FetchRequestHealth reads the current serving releases only. Deployment label
-// overflow and pre-routing requests cannot be assigned to an environment; they
-// prevent confirmation rather than falling back to app-wide counters. All
+// FetchRequestHealth reads the current serving releases only. Unattributed
+// failures (deployment label overflow or pre-routing 5xx, and capacity
+// refusals) cannot be assigned to an environment; they prevent confirmation
+// rather than falling back to app-wide counters. All
 // counts share a window; coverage requires two samples for every selected
 // deployment, and freshness is the oldest selected deployment's latest sample.
 func FetchRequestHealth(ctx context.Context, client *promql.Client, appID string, deploymentIDs []string) RequestHealth {
@@ -79,10 +80,20 @@ func FetchRequestHealth(ctx context.Context, client *promql.Client, appID string
 	if err != nil || !validHealthCount(seconds) || seconds <= 0 || seconds >= float64(math.MaxInt64)/float64(time.Second) {
 		return out
 	}
-	unassignedSelector := fmt.Sprintf(`gateway_request_duration_by_deployment_seconds_count{app=%q,deployment=~"|__other__"}`, appID)
+	// Unattributed traffic blocks confirmation only when it could be a failure
+	// the selected releases are hiding: an unattributed 5xx, or a capacity 429
+	// (counted per app, never per deployment). Other unattributed responses
+	// are ones the gateway answered itself before routing — mostly platform
+	// auth refusals of a client without an API key, plus CORS preflights and
+	// edge-answered health checks. They say nothing about the release, and
+	// counting them left an app with one keyless uptime monitor "unconfirmed"
+	// for five minutes after every probe (prod 2026-11-23: a 401 GET /healthz
+	// every ~15 min). Leaving them out of the population can only raise the
+	// error rate, never hide a failure.
+	unassignedSelector := fmt.Sprintf(`gateway_request_duration_by_deployment_seconds_count{app=%q,deployment=~"|__other__",class="5xx"}`, appID)
 	// Include the current value of a newly introduced unattributed series;
 	// otherwise its first request could disappear behind an empty increase.
-	unassignedQuery := fmt.Sprintf(`(sum(increase(%s[%s])) or vector(0)) + (sum(%s unless (count_over_time(%s[%s]) >= %d)) or vector(0))`, unassignedSelector, api.AppHealthMetricsRange, unassignedSelector, unassignedSelector, api.AppHealthMetricsRange, api.AppHealthCounterMinSamples)
+	unassignedQuery := fmt.Sprintf(`(sum(increase(%s[%s])) or vector(0)) + (sum(%s unless (count_over_time(%s[%s]) >= %d)) or vector(0)) + (sum(increase(gateway_capacity_refusals_total{app=%q}[%s])) or vector(0))`, unassignedSelector, api.AppHealthMetricsRange, unassignedSelector, unassignedSelector, api.AppHealthMetricsRange, api.AppHealthCounterMinSamples, appID, api.AppHealthMetricsRange)
 	unassigned, err := client.QueryScalar(ctx, unassignedQuery)
 	if err != nil || !validHealthCount(unassigned) {
 		return out
