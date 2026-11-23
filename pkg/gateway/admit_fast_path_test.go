@@ -28,12 +28,12 @@ func (c *countingAdmitScheduler) AdmitInstance(ctx context.Context, appID, deplo
 // traffic keeps the cheap local refusal.
 func TestDeploymentSmokeAdmissionAlwaysAsksSchedd(t *testing.T) {
 	for _, tc := range []struct {
-		trigger     string
-		wantAdmits  int32
-		wantAtLocal bool
+		trigger        string
+		wantAdmits     int32
+		wantAtCapacity bool
 	}{
-		{trigger: sched.TriggerGateway, wantAdmits: 0, wantAtLocal: true},
-		{trigger: sched.TriggerDeploymentSmoke, wantAdmits: 1, wantAtLocal: false},
+		{trigger: sched.TriggerGateway, wantAdmits: 0, wantAtCapacity: true},
+		{trigger: sched.TriggerDeploymentSmoke, wantAdmits: 1, wantAtCapacity: false},
 	} {
 		t.Run(tc.trigger, func(t *testing.T) {
 			s := &countingAdmitScheduler{FakeScheduler: gateway.NewFakeScheduler("node-A")}
@@ -41,15 +41,18 @@ func TestDeploymentSmokeAdmissionAlwaysAsksSchedd(t *testing.T) {
 			b.RecordTarget("app-1", gateway.Target{NodeID: "node-A", InstanceID: "old-zero-traffic", DeploymentID: "dep-old"})
 			b.RecordTarget("app-1", gateway.Target{NodeID: "node-A", InstanceID: "live", DeploymentID: "dep-live"})
 
-			_, _, atCapacity, err := b.Admit(context.Background(), "app-1", "dep-candidate", "", tc.trigger, 2)
+			wakeID, _, atCapacity, err := b.Admit(context.Background(), "app-1", "dep-candidate", "", tc.trigger, 2)
 			if err != nil {
 				t.Fatalf("Admit: %v", err)
 			}
 			if got := s.admits.Load(); got != tc.wantAdmits {
 				t.Fatalf("schedd AdmitInstance calls = %d, want %d", got, tc.wantAdmits)
 			}
-			if tc.wantAtLocal && !atCapacity {
-				t.Fatal("ordinary admission with a full picker was not refused locally")
+			if atCapacity != tc.wantAtCapacity {
+				t.Fatalf("atCapacity = %v, want %v", atCapacity, tc.wantAtCapacity)
+			}
+			if !tc.wantAtCapacity && wakeID == "" {
+				t.Fatal("admitted smoke returned no wake id")
 			}
 		})
 	}

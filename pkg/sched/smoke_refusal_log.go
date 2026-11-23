@@ -6,33 +6,58 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // smokeRefusalLogEvery bounds the diagnostic to one line per deployment per
 // interval: a refused smoke is retried every few seconds for minutes.
 const smokeRefusalLogEvery = 30 * time.Second
 
-var smokeRefusalLogged sync.Map // appID+"/"+deploymentID -> time.Time
+// smokeRefusalThrottle remembers when each deployment's refusal was last
+// logged. Entries older than the interval are dropped whenever one is
+// claimed, so the map holds only deployments refused in the last window.
+type smokeRefusalThrottle struct {
+	mu   sync.Mutex
+	last map[string]time.Time
+}
+
+// claim reports whether key may log now, and records it atomically so two
+// concurrent refusals of one deployment log once.
+func (t *smokeRefusalThrottle) claim(key string, now time.Time) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if at, ok := t.last[key]; ok && now.Sub(at) < smokeRefusalLogEvery {
+		return false
+	}
+	if t.last == nil {
+		t.last = make(map[string]time.Time)
+	}
+	for k, at := range t.last {
+		if now.Sub(at) >= smokeRefusalLogEvery {
+			delete(t.last, k)
+		}
+	}
+	t.last[key] = now
+	return true
+}
 
 // logSmokeRefusal records why a deployment's post-readiness smoke could not
 // get an instance. The refusal surfaces to the customer as
 // deployment_verification_unavailable, and until now nothing said which
-// instances held the app's slots or which ceiling refused (MCP redeploys,
-// 2026-11-21 and 2026-11-23: 1 in 4 back-to-back redeploys of an idle
-// max_concurrency=1 app). It changes no decision.
+// instances held the app's slots or which ceiling refused
+// (ADR-20261123120000). It changes no decision.
 func (e *Engine) logSmokeRefusal(ctx context.Context, appID, deploymentID string, res WakeResult, err error) {
-	if e.log == nil {
+	if e.log == nil || !e.smokeRefusals.claim(appID+"/"+deploymentID, time.Now()) {
 		return
 	}
-	key := appID + "/" + deploymentID
-	now := time.Now()
-	if last, ok := smokeRefusalLogged.Load(key); ok && now.Sub(last.(time.Time)) < smokeRefusalLogEvery {
-		return
+	found := res.admissionBlockers
+	if err != nil {
+		found = append(append([]api.WorkerAdmissionBlocker(nil), found...), admissionBlockers(err)...)
 	}
-	smokeRefusalLogged.Store(key, now)
-
-	blockers := make([]string, 0, len(res.admissionBlockers))
-	for _, b := range res.admissionBlockers {
+	blockers := make([]string, 0, len(found))
+	for _, b := range found {
 		s := b.Code
 		if b.Resource != "" {
 			s += ":" + b.Resource
@@ -45,6 +70,10 @@ func (e *Engine) logSmokeRefusal(ctx context.Context, appID, deploymentID string
 	holders := []string{}
 	if instances, listErr := e.liveInstancesForApp(ctx, appID); listErr == nil {
 		for _, ins := range instances {
+			// The store fallback returns history; only live rows hold slots.
+			if !state.IsLive(ins.State) {
+				continue
+			}
 			holders = append(holders, fmt.Sprintf("%s:%s:%s:%s", shortID(ins.ID), shortID(ins.DeploymentID), ins.State, shortID(ins.NodeID)))
 		}
 	}

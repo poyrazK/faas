@@ -432,6 +432,8 @@ type BrokerLagReader interface {
 // one app's instances is serialised by a per-app lock so a Wake and a reaper
 // Park for the same app never race the ledger or the state machine.
 type Engine struct {
+	// smokeRefusals throttles the refused-smoke diagnostic (smoke_refusal_log.go).
+	smokeRefusals smokeRefusalThrottle
 	// environmentBranchEgress caches deployments outside any contained
 	// environment branch (ADR-20261031193635).
 	environmentBranchEgress environmentBranchEgressCache
