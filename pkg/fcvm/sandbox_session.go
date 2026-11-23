@@ -189,7 +189,7 @@ func (m *Manager) WakeSandbox(ctx context.Context, req SandboxWakeRequest) (*Ins
 		sandboxManifest: manifest, AccountID: req.AccountID, Plan: req.Plan,
 		BaseKey: req.BaseKey, LayerKey: layer, VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB,
 		CPUMillicores: req.CPUMillicores, QuietPauseAfter: req.QuietPauseAfter, Snapshot: req.Snapshot,
-		sandboxVolume: req.Volume,
+		sandboxVolume: req.Volume, sandboxSessionCapture: req.SessionCapture,
 	})
 	if err != nil {
 		return nil, err

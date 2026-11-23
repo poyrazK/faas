@@ -1098,6 +1098,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithRestorePrefetch(!cfg.DisableRestorePrefetch).
 		WithFreePageReporting(freePageReporting).
 		WithRestoreClockRealtime(restoreClockRealtime).
+		WithSandboxDiffSnapshots(cfg.SandboxDiffSnapshots, fcVersion).
 		WithCPUTemplate(cfg.CPUTemplate).
 		WithPmemBase(pmemBaseDir).
 		WithRestoreReseedThread(cfg.RestoreReseedThread).

@@ -170,9 +170,72 @@ echo "now=$(date +%s)"`)
 	if out, _ := rootExec(t, m, instance, sandboxID, "ip -4 -o addr show eth0; ping -c 2 -W 1 "+netns.GuestGateway+" >/dev/null 2>&1 && echo answered"); !strings.Contains(out, netns.GuestIP+"/") || !strings.Contains(out, "answered") {
 		t.Fatalf("no network after the resume:\n%s", out)
 	}
+	if os.Getenv("FAAS_TEST_SANDBOX_DIFF") == "1" {
+		sandboxDiffRounds(t, m, vmm, req)
+	}
 	for _, id := range []string{instance, filler.Instance} {
 		if err := m.Destroy(ctx, id); err != nil {
 			t.Fatal(err)
+		}
+	}
+}
+
+// sandboxDiffRounds pauses and resumes the restored session twice more with
+// diff captures on (ADR-20261122132055): each round writes fresh random data
+// into the guest's tmpfs, and after each resume every round's data must read
+// back intact, so pages from the restored image, the first merged diff and
+// the second all survive.
+func sandboxDiffRounds(t *testing.T, m *Manager, vmm *JailerVMM, req SandboxWakeRequest) {
+	t.Helper()
+	ctx := context.Background()
+	sums := map[string]string{}
+	for round := 1; round <= 2; round++ {
+		if !vmm.sandboxDiff.tracking(req.Instance) {
+			t.Fatalf("round %d: the restored session is not dirty-tracked", round)
+		}
+		name := fmt.Sprintf("/tmp/round%d", round)
+		out, code := userExec(t, m, req.Instance, req.SandboxID, fmt.Sprintf("head -c 33554432 /dev/urandom > %s && md5sum %s", name, name))
+		sum, _, _ := strings.Cut(strings.TrimSpace(out), " ")
+		if code != 0 || len(sum) != 32 {
+			t.Fatalf("round %d write: %q exit %d", round, out, code)
+		}
+		sums[name] = sum
+		begun := time.Now()
+		paused, kept, err := m.PauseSandbox(ctx, SandboxPause{Instance: req.Instance, SandboxID: req.SandboxID, AccountID: req.AccountID, CaptureID: uuid.NewString()})
+		if err != nil || kept {
+			t.Fatalf("round %d pause: %v (vm kept %v)", round, err, kept)
+		}
+		t.Logf("round %d: diff pause in %d ms, %d MB memory", round, time.Since(begun).Milliseconds(), paused.Info.MemBytes>>20)
+		// Upload as the first round did: this test's shared store is a local
+		// directory, whose paths the restore resolves before the cache's.
+		begun = time.Now()
+		if err := m.PublishSandboxCapture(ctx, paused.Snapshot.StorageKey); err != nil {
+			t.Fatalf("round %d upload: %v", round, err)
+		}
+		t.Logf("round %d: uploaded in %d ms", round, time.Since(begun).Milliseconds())
+		resume := req
+		resume.Snapshot, resume.SessionCapture = paused.Snapshot, true
+		begun = time.Now()
+		restored, err := m.WakeSandbox(ctx, resume)
+		if err != nil {
+			t.Fatalf("round %d resume: %v", round, err)
+		}
+		if restored.Method != WakeRestore {
+			t.Fatalf("round %d resumed by %s, want a restore: %q (%s)", round, restored.Method, restored.RestoreError, restored.RestoreFallbackReason)
+		}
+		t.Logf("round %d: resumed in %d ms", round, time.Since(begun).Milliseconds())
+		check := "cat /tmp/mem.txt"
+		for file := range sums {
+			check += "; md5sum " + file
+		}
+		out, code = userExec(t, m, req.Instance, req.SandboxID, check)
+		if code != 0 || !strings.Contains(out, "kept-in-memory") {
+			t.Fatalf("round %d: first-boot memory lost (exit %d):\n%s", round, code, out)
+		}
+		for file, sum := range sums {
+			if !strings.Contains(out, sum+"  "+file) {
+				t.Fatalf("round %d: %s changed across the diff capture:\n%s", round, file, out)
+			}
 		}
 	}
 }

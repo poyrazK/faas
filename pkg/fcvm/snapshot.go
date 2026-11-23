@@ -251,6 +251,10 @@ type RestoreSpec struct {
 	// session's workspace volume, bound in under the name its capture
 	// recorded.
 	SandboxVolume string
+	// sandboxSessionCapture marks a persistent session's restore from its
+	// own pause capture; vmmd loads it with dirty page tracking when diff
+	// captures are on (ADR-20261122132055).
+	sandboxSessionCapture bool
 	// Storage, when set, carries a sealed crash capture's memory, vmstate,
 	// private drive and backing identity (a crashcrypt.Backend decrypting
 	// on read). Those objects are copied into this instance's staging and

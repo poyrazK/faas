@@ -127,6 +127,13 @@ func verifiedSnapshotLoadCommand(spec RestoreSpec, body map[string]any) ([]byte,
 	if _, ok := body["clock_realtime"]; ok {
 		expected["clock_realtime"] = true
 	}
+	// Dirty page tracking for a sandbox session's diff captures
+	// (ADR-20261122132055) is likewise the VMM's setting: literal true only.
+	for _, key := range []string{"track_dirty_pages", "enable_diff_snapshots"} {
+		if _, ok := body[key]; ok {
+			expected[key] = true
+		}
+	}
 	got, err := json.Marshal(body)
 	if err != nil {
 		return nil, err

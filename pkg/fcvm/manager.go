@@ -4127,6 +4127,10 @@ type WakeRequest struct {
 	// sandboxVolume is a persistent sandbox session's workspace volume
 	// (ADR-20261122132055 §4), a host path WakeSandbox sets.
 	sandboxVolume string
+	// sandboxSessionCapture marks Snapshot as a persistent session's own
+	// pause capture (SandboxWakeRequest.SessionCapture); its restore tracks
+	// dirty pages for diff captures (ADR-20261122132055).
+	sandboxSessionCapture bool
 	// agentRunWaitPauseAfter is the run's model-wait pause delay, accepted
 	// only with agentRunOnly (ADR-20261027090012).
 	agentRunWaitPauseAfter time.Duration
@@ -6287,15 +6291,16 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			// path. Non-empty → Restore stages one extra drive
 			// per entry (read-only for sidecars, read-write for
 			// the main workload's drive1). Additive per ADR-016.
-			Workloads:          buildWorkloadsForRestore(req),
-			SecretsEnvJSON:     req.preparedSecretsEnvJSON,
-			APIEnvJSON:         req.preparedAPIEnvJSON,
-			ServiceDiscoveryIP: serviceDiscoveryIP,
-			Networkless:        req.networkless(),
-			KeepPaused:         req.KeepPaused,
-			AgentInput:         req.agentRunOnly,
-			InputKey:           req.agentRunInputKey,
-			SandboxVolume:      req.sandboxVolume,
+			Workloads:             buildWorkloadsForRestore(req),
+			SecretsEnvJSON:        req.preparedSecretsEnvJSON,
+			APIEnvJSON:            req.preparedAPIEnvJSON,
+			ServiceDiscoveryIP:    serviceDiscoveryIP,
+			Networkless:           req.networkless(),
+			KeepPaused:            req.KeepPaused,
+			AgentInput:            req.agentRunOnly,
+			InputKey:              req.agentRunInputKey,
+			SandboxVolume:         req.sandboxVolume,
+			sandboxSessionCapture: req.sandboxSessionCapture,
 		}
 		if timings != nil {
 			// ADR-192: hand the pre-restore Manager phases to the VMM so

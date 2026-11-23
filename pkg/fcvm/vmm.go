@@ -98,6 +98,9 @@ type JailerVMM struct {
 	// clockRealtime advances the guest's kvm-clock by the time a capture
 	// spent parked (ADR-20261109120000).
 	clockRealtime restoreClockRealtime
+	// sandboxDiff takes persistent sandbox sessions' captures as merged
+	// diffs (ADR-20261122132055).
+	sandboxDiff sandboxDiffSnapshots
 	// restoreReseedThread boots app VMs with the thread-mode reseed barrier
 	// client (ADR-20261024105607).
 	restoreReseedThread bool
@@ -2501,9 +2504,16 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	}
 	tBindTun := time.Now()
 	body := v.snapshotLoadBody(stateName, memName, !spec.KeepPaused)
+	dirtyTracking := v.sandboxDiff.loadKeyFor(spec, v.nativeRecovery != nil)
+	if dirtyTracking != "" {
+		body[dirtyTracking] = true
+	}
 	if err = v.loadRestoredSnapshot(ctx, l, root, spec, body); err != nil {
 		v.noteSnapshotLoadError(err)
 		return fmt.Errorf("vmm: load snapshot: %w", err)
+	}
+	if dirtyTracking != "" {
+		v.sandboxDiff.loaded(l.Instance)
 	}
 	if err = v.checkRestoredVCPUs(l, spec.VCPUs); err != nil {
 		return fmt.Errorf("vmm: %w", err)
@@ -3872,8 +3882,30 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 			}
 		}()
 	}
+	// A sandbox session loaded with dirty tracking captures a Diff merged
+	// over its parent image (ADR-20261122132055). Any capture resets the
+	// dirty bitmap, so the image this one produces becomes the next parent;
+	// a capture that fails after /snapshot/create leaves no valid parent.
+	diffParent, parentErr := v.sandboxDiffParent(l.Instance, root, capture != nil)
+	if parentErr != nil {
+		slog.Default().Warn("vmm: diff capture parent unavailable; taking a full capture", "instance", l.Instance, "err", parentErr)
+	}
+	parentRecorded := false
+	defer func() {
+		if diffParent != nil {
+			_ = diffParent.Close()
+		}
+		if !parentRecorded {
+			v.sandboxDiff.captured(l.Instance, nil)
+		}
+	}()
+	memSrc := filepath.Join(root, memName)
+	snapshotType := "Full"
+	if diffParent != nil {
+		snapshotType = "Diff"
+	}
 	create := map[string]any{
-		"snapshot_type": "Full",
+		"snapshot_type": snapshotType,
 		"snapshot_path": stateName,
 		"mem_file_path": memName,
 	}
@@ -3882,10 +3914,29 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		// boundary intentionally reduces this to an Internal problem, but
 		// the response body is the only useful explanation for a snapshot
 		// rejection on a bare-metal node.
-		slog.Default().Error("vmm: create snapshot failed", "instance", l.Instance, "err", err)
+		slog.Default().Error("vmm: create snapshot failed", "instance", l.Instance, "snapshot_type", snapshotType, "err", err)
 		return SnapshotInfo{}, fmt.Errorf("vmm: create snapshot: %w", err)
 	}
 	timer.mark("create")
+	if diffParent != nil {
+		merged, mergeErr := v.mergeDiffCapture(ctx, l, diffParent, memSrc)
+		if mergeErr != nil {
+			// The guest is still paused: a Full capture of it matches the
+			// drive frozen below exactly, whatever the bitmap holds.
+			slog.Default().Warn("vmm: diff capture merge failed; taking a full capture", "instance", l.Instance, "err", mergeErr)
+			create["snapshot_type"] = "Full"
+			_ = os.Remove(memSrc)
+			_ = os.Remove(filepath.Join(root, stateName))
+			if err := v.apiPut(ctx, l.Instance, "/snapshot/create", create); err != nil {
+				slog.Default().Error("vmm: create snapshot failed", "instance", l.Instance, "snapshot_type", "Full", "err", err)
+				return SnapshotInfo{}, fmt.Errorf("vmm: create snapshot after failed diff merge: %w", err)
+			}
+		} else {
+			memSrc = merged
+			defer func() { _ = os.Remove(merged) }()
+		}
+		timer.mark("merge_diff")
+	}
 	// Firecracker memory and vmstate reference the exact block contents of
 	// drive1 at this pause boundary. Freeze that private writable ext4 before
 	// the guest resumes; restoring against the deployment's pristine layer can
@@ -3982,7 +4033,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 					return SnapshotInfo{}, fmt.Errorf("vmm: prepare local snapshot path: %w", prepErr)
 				}
 				var moveErr error
-				memBytes, memContent, moveErr = publishLocalSnapshotMemory(ctx, filepath.Join(root, memName), localPath, syncLocalSnapshotMemory)
+				memBytes, memContent, moveErr = publishLocalSnapshotMemory(ctx, memSrc, localPath, syncLocalSnapshotMemory)
 				if moveErr != nil {
 					return SnapshotInfo{}, fmt.Errorf("vmm: publish local snapshot mem: %w", moveErr)
 				}
@@ -4001,12 +4052,20 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		_ = memTmp.Close()
 		defer func() { _ = os.Remove(memTmpPath) }()
 
-		memBytes, memContent, err = moveOutSparse(ctx, filepath.Join(root, memName), memTmpPath)
+		memBytes, memContent, err = moveOutSparse(ctx, memSrc, memTmpPath)
 		if err != nil {
 			return SnapshotInfo{}, fmt.Errorf("vmm: export mem: %w", err)
 		}
 	}
 	timer.mark("export_mem")
+	if v.sandboxDiff.tracking(l.Instance) {
+		exported := memTmpPath
+		if memPublishedLocally {
+			exported = memPublishedPath
+		}
+		v.sandboxDiff.captured(l.Instance, openDiffParent(exported))
+		parentRecorded = true
+	}
 	// Vmstate publication branches on VMStateStorageKey exactly like mem
 	// does on StorageKey. Same predicate shape (key + non-nil storage);
 	// the value selector is the new field's emptiness, not storage nil,
@@ -4379,6 +4438,7 @@ func (v *JailerVMM) Kill(ctx context.Context, l Lease) (err error) {
 	v.retireRing(l.Instance, !l.IsBuilder)
 	v.closeGuestVsockListeners(l.Instance)
 	v.preBoot.forget(l.Instance)
+	v.sandboxDiff.forget(l.Instance)
 	v.closeClient(l.Instance)
 	if err := v.checkOwnedJail(l.Instance); err != nil {
 		return err
