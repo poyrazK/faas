@@ -1,23 +1,11 @@
 -- filename: 20261123071905357_managed_postgres_history_billing.sql
 -- migration-compat: expand
 --
--- ADR-20261123062111: managed PostgreSQL restore history and snapshot
--- storage past the plan's included history are billed on the overage step.
---
--- 1. managed_postgres_usage accepts the snapshot_byte_seconds meter: Neon's
---    snapshot storage is recorded apart from instant-restore history, since
---    the two have different prices. The previous release never writes it.
---    The meter CHECK is replaced online, as in
---    20261121153413553_alert_rules_oom_kills_metric: a widened copy is added
---    NOT VALID under a new name and validated, the old one is dropped, the
---    old name is re-added from the copy NOT VALID and validated, and the copy
---    is dropped. Every step commits on its own and is guarded, so writers
---    never wait on a scan and a rerun after a partial failure converges.
--- 2. The delivery row records the history and snapshot byte-seconds its
---    cumulative charge billed, and the reserved step the usage, included
---    history and billed amounts it was computed from. The previous release's
---    statements do not name the columns, so its rows keep the defaults. The
---    CHECKs are added NOT VALID: every existing row holds the default 0.
+-- ADR-20261123062111: restore history and snapshots are billed on the
+-- overage step. The usage meter CHECK gains snapshot_byte_seconds, replaced
+-- online as in 20261121153413553 (widened copy NOT VALID, validate, swap).
+-- Delivery and reservation rows gain history columns (default 0, CHECKs
+-- NOT VALID); the previous release never names them. Steps are guarded.
 -- +goose NO TRANSACTION
 
 -- +goose Up
