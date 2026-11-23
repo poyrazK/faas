@@ -107,13 +107,32 @@ func startProjectRollbackHTTPRecovery(ctx context.Context, tx pgx.Tx, id string)
 // Replay the same generation after missed notifications or a gateway restart.
 // Both scheduling and publishing commit together.
 func (s *PgStore) ReplayProjectRollbackRoutes(ctx context.Context) error {
-	_, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+
+	// An ACK can commit while this batch is being selected. Reconcile from a
+	// fresh statement snapshot once the selected receipts are locked.
+	rows, err := tx.Query(ctx, `
+		SELECT generation FROM project_rollback_http_recovery
+		WHERE next_notify_at <= clock_timestamp() AND generation IS NOT NULL
+		ORDER BY next_notify_at, generation LIMIT $1 FOR UPDATE SKIP LOCKED`, api.ServiceBindingCheckBatchSize)
+	if err != nil {
+		return err
+	}
+	generations, err := pgx.CollectRows(rows, pgx.RowTo[int64])
+	if err != nil || len(generations) == 0 {
+		return err
+	}
+
+	_, err = tx.Exec(ctx, `
 		WITH due AS (
 			SELECT r.generation, r.expected_gateways, r.gateways_applied_at,
 			       r.expires_at > clock_timestamp() AND `+projectRollbackRouteCurrent+` AS watching
 			FROM project_rollback_http_recovery r
-			WHERE r.next_notify_at <= clock_timestamp()
-			ORDER BY r.next_notify_at, r.generation LIMIT $1 FOR UPDATE OF r SKIP LOCKED
+			WHERE r.generation = ANY($1::bigint[])
 		), pending AS (
 			SELECT r.generation, `+projectRollbackPendingGateways+` AS gateways
 			FROM due r WHERE r.watching AND r.gateways_applied_at IS NULL
@@ -131,8 +150,11 @@ func (s *PgStore) ReplayProjectRollbackRoutes(ctx context.Context) error {
 		)
 		SELECT pg_notify($2, jsonb_build_object(
 		    'app_id', app_id, 'deployment_id', target_id, 'generation', generation)::text)
-		FROM scheduled WHERE next_notify_at IS NOT NULL`, api.ServiceBindingCheckBatchSize, db.NotifyProjectRollbackRouteChanged)
-	return err
+		FROM scheduled WHERE next_notify_at IS NOT NULL`, generations, db.NotifyProjectRollbackRouteChanged)
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // AcknowledgeProjectRollbackHTTPRoute is called after the gateway has installed

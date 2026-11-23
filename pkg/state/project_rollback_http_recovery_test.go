@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/routehealth"
@@ -527,6 +528,12 @@ func TestPgProjectRollbackHTTPRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	exec(`UPDATE compute_nodes SET lifecycle = 'retired' WHERE name = 'rollback-edge-c'`)
+	exec(`UPDATE project_rollback_http_recovery SET next_notify_at = clock_timestamp() WHERE rollback_id = $1`, peer.ID)
+	replayWhileGatewayJoins(t, pool, peerRoute)
+	if r, err := s.ProjectRollbackHealthRoute(ctx, record.ID, peer.ID); err != nil || r.GatewaysAppliedAt != nil {
+		t.Fatalf("replay bypassed the replacement gateway: %+v, %v", r, err)
+	}
+	exec(`UPDATE compute_nodes SET lifecycle = 'retired' WHERE name = 'rollback-edge-d'`)
 	replay(peer.ID)
 	if r, err := s.ProjectRollbackHealthRoute(ctx, record.ID, peer.ID); err != nil || r.GatewaysAppliedAt == nil {
 		t.Fatalf("gateway retirement did not release the acknowledged route: %+v, %v", r, err)
@@ -704,6 +711,83 @@ func TestPgProjectRollbackHTTPRecovery(t *testing.T) {
 	}
 	read("verified")
 
+}
+
+// A view pauses only the replay connection after it has taken a statement
+// snapshot but before it locks the due receipt.
+func replayWhileGatewayJoins(t *testing.T, pool *pgxpool.Pool, route db.DeploymentRouteChangedPayload) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	if _, err := pool.Exec(ctx, `
+		CREATE FUNCTION pause_project_rollback_replay() RETURNS boolean LANGUAGE plpgsql VOLATILE AS $$
+		BEGIN
+			IF current_setting('application_name') = 'pgtest_project_rollback_replay' THEN
+				PERFORM pg_advisory_xact_lock(93473893, hashtext(current_schema()));
+			END IF;
+			RETURN true;
+		END $$;
+		ALTER TABLE project_rollback_http_recovery RENAME TO project_rollback_http_recovery_rows;
+		CREATE VIEW project_rollback_http_recovery AS
+			SELECT * FROM project_rollback_http_recovery_rows WHERE pause_project_rollback_replay();
+	`); err != nil {
+		t.Fatal(err)
+	}
+	cfg := pool.Config()
+	cfg.ConnConfig.RuntimeParams["application_name"] = "pgtest_project_rollback_replay"
+	replayPool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replayPool.Close()
+	gate, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = gate.Rollback(context.WithoutCancel(ctx)) }()
+	if _, err := gate.Exec(ctx, `SELECT pg_advisory_xact_lock(93473893, hashtext(current_schema()))`); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- state.NewPgStore(replayPool).ReplayProjectRollbackRoutes(ctx) }()
+	for deadline := time.Now().Add(5 * time.Second); ; {
+		var waiting bool
+		if err := pool.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+			    WHERE datname = current_database() AND $1 = ANY(pg_blocking_pids(pid)))`,
+			int32(gate.Conn().PgConn().PID())).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("route replay did not wait before locking the receipt")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO compute_nodes(name,target_url,vpcpus,mem_mb,max_concurrency,admission_ceiling_mb,role,lifecycle,gateway_target_url)
+		VALUES('rollback-edge-d','unix:///run/test.sock',2,1024,10,512,'compute-only','active','tcp://127.0.0.1:8080')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.NewPgStore(pool).AcknowledgeProjectRollbackHTTPRoute(ctx, route, "rollback-edge-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := gate.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		DROP VIEW project_rollback_http_recovery;
+		ALTER TABLE project_rollback_http_recovery_rows RENAME TO project_rollback_http_recovery;
+		DROP FUNCTION pause_project_rollback_replay();
+	`); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestPgProjectRollbackPauseFencesCutover(t *testing.T) {
