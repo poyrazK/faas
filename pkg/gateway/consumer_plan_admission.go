@@ -38,8 +38,14 @@ func (p ConsumerPlanPolicy) limited() bool {
 	return p.MaxRequestsPerMinute > 0 || p.MaxUnitsPerMonth > 0
 }
 
-func (p ConsumerPlanPolicy) units(route string) int64 {
-	if weight, ok := p.RouteWeights[route]; ok && weight > 0 {
+// units is what a request counts toward the monthly cap: its route weight,
+// 1 by default, and 0 for MCP protocol overhead, which is not billed
+// (ADR-20261123192254).
+func (p ConsumerPlanPolicy) units(r *http.Request) int64 {
+	if mcpProtocolOverheadFrom(r) {
+		return 0
+	}
+	if weight, ok := p.RouteWeights[billingRouteFrom(r)]; ok && weight > 0 {
 		return weight
 	}
 	return 1
@@ -122,7 +128,7 @@ func (h *Handler) enforceConsumerPlan(w http.ResponseWriter, r *http.Request, re
 	}
 	var decision ConsumerPlanDecision
 	if err == nil {
-		decision, err = h.consumerPlanStore.AdmitConsumerPlanRequest(r.Context(), app.AccountID, consumerID, policy, policy.units(billingRouteFrom(r)))
+		decision, err = h.consumerPlanStore.AdmitConsumerPlanRequest(r.Context(), app.AccountID, consumerID, policy, policy.units(r))
 	}
 	if err != nil {
 		if h.log != nil {

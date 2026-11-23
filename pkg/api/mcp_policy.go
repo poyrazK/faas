@@ -56,6 +56,37 @@ const MCPGatewayAuthorizedHeader = "Gregale-Mcp-Gateway-Authorized"
 // MCP policy tool limit.
 const CodeMCPToolRateLimited = "mcp_tool_rate_limited"
 
+// MCP billing labels (ADR-20261123192254). The gateway gives each billable
+// MCP request an ordinary "METHOD /template" billing route, so rate-card
+// route weights, monthly allowances and plan limits price and cap MCP tools
+// like HTTP routes: "MCP /tools/<name>", "MCP /prompts/<name>", the unnamed
+// "MCP /tools" and "MCP /prompts" for entries the policy does not list, and
+// "MCP /resources". Protocol overhead has no label and no billable units.
+const (
+	MCPBillingToolsPrefix    = "MCP /tools"
+	MCPBillingPromptsPrefix  = "MCP /prompts"
+	MCPBillingResourcesLabel = "MCP /resources"
+)
+
+// MCPToolBillingLabel is the billing route of a call to tool.
+func MCPToolBillingLabel(tool string) string { return MCPBillingToolsPrefix + "/" + tool }
+
+// ValidMCPBillingName reports whether an MCP tool or prompt name can appear
+// in a billing label: 1 to MCPBillingNameMaxBytes ASCII letters, digits,
+// '_', '-' or '.', the MCP tool-name alphabet.
+func ValidMCPBillingName(name string) bool {
+	if name == "" || len(name) > MCPBillingNameMaxBytes {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-' || c == '.') {
+			return false
+		}
+	}
+	return true
+}
+
 // MCPToolLimit allows Requests tools/call requests per caller in each
 // WindowSeconds window.
 type MCPToolLimit struct {

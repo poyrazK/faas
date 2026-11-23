@@ -1458,7 +1458,10 @@ const (
 	MCPTaskDefaultMaxOutstandingPerOwner = 100
 	MCPPolicyMaxEntries                  = 256
 	MCPPolicyMaxKeyBytes                 = 4096
-	MCPPolicyMaxRequestBytes             = 1 << 20
+	// MCPBillingNameMaxBytes bounds a tool or prompt name in an MCP billing
+	// label (ADR-20261123192254).
+	MCPBillingNameMaxBytes   = 128
+	MCPPolicyMaxRequestBytes = 1 << 20
 	// MCP tool limits (ADR-20261122194324): per caller and tool.
 	MCPToolLimitMaxRequests      = 100000
 	MCPToolLimitMaxWindowSeconds = 3600
