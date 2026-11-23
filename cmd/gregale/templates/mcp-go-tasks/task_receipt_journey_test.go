@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -258,10 +259,11 @@ func testTaskReceiptJourney(t *testing.T, reviewedVerb string) {
 		t.Fatal(err)
 	}
 	var receipt struct {
-		Version        int    `json:"version"`
-		EndpointSHA256 string `json:"endpointSha256"`
-		SubmissionKey  string `json:"submissionKey"`
-		RequestSHA256  string `json:"requestSha256"`
+		Version         int    `json:"version"`
+		EndpointSHA256  string `json:"endpointSha256"`
+		SubmissionKey   string `json:"submissionKey"`
+		RequestSHA256   string `json:"requestSha256"`
+		CredentialProof string `json:"credentialProof"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(file))
 	decoder.DisallowUnknownFields()
@@ -270,10 +272,15 @@ func testTaskReceiptJourney(t *testing.T, reviewedVerb string) {
 		args = `{"report":"receipt journey","request_approval":true,"steps":1}`
 	}
 	request := fmt.Sprintf(`{"arguments":%s,"deferFormInput":%t,"tool":"build_report"}`, args, reviewedVerb != "")
-	if err := decoder.Decode(&receipt); err != nil || receipt.Version != 2 ||
+	if err := decoder.Decode(&receipt); err != nil || receipt.Version != 3 ||
 		receipt.EndpointSHA256 != fmt.Sprintf("%x", sha256.Sum256([]byte(endpoint))) ||
 		receipt.RequestSHA256 != fmt.Sprintf("%x", sha256.Sum256([]byte(request))) {
 		t.Fatal("invalid private Task receipt")
+	}
+	mac := hmac.New(sha256.New, []byte(owner))
+	_, _ = mac.Write([]byte("gregale/mcp-task-receipt/v3:" + receipt.EndpointSHA256 + receipt.SubmissionKey + receipt.RequestSHA256))
+	if receipt.CredentialProof != fmt.Sprintf("%x", mac.Sum(nil)) {
+		t.Fatal("invalid Task receipt credential proof")
 	}
 	if reviewedVerb != "" {
 		waitForStatus := func(id, want string) {

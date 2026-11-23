@@ -63,12 +63,12 @@ async function readPrivateJSON(path) {
   }
 }
 
-async function saveResult(directory, filename, result) {
+async function saveResult(directory, filename, raw) {
   const temporary = join(directory, `.result-${randomUUID()}`);
   const file = await open(temporary, 'wx', 0o600);
   try {
     try {
-      await file.writeFile(JSON.stringify(result) + '\n');
+      await file.writeFile(raw);
       await file.sync();
     } finally {
       await file.close();
@@ -106,7 +106,7 @@ async function request(options, verb, args, { allowUnconfirmed = false } = {}) {
     }
     throw new Error(`gregale mcp client ${verb} did not return an outcome`);
   }
-  return { value: parseJSON(stdout), code: 0 };
+  return { value: parseJSON(stdout), code: 0, raw: stdout };
 }
 
 function matchesResult(value, taskID) {
@@ -123,13 +123,13 @@ async function readResult(options, receipt, task, selector) {
     emit({ receipt, action: 'already_saved', file });
     return;
   }
-  const { code, value } = await request(options, 'status', [...selector, '--read-result']);
+  const { code, value, raw } = await request(options, 'status', [...selector, '--read-result']);
   if (code === 3) {
     emit({ receipt, action: 'retry_status' });
     return;
   }
   if (code !== 0 || !matchesResult(value, task.taskId)) throw new Error('the completed Task result was unavailable');
-  const created = await saveResult(options.results, receipt, value);
+  const created = await saveResult(options.results, receipt, raw);
   if (!created && !matchesResult(await readPrivateJSON(destination), task.taskId)) {
     throw new Error('concurrent result belongs to a different Task or is invalid');
   }
@@ -184,9 +184,14 @@ async function watch(options, names) {
     child.once('error', () => resolve(null));
     child.once('close', resolve);
   });
-  const stop = () => child.kill('SIGINT');
+  let interrupted = false;
+  const stop = () => {
+    interrupted = true;
+    child.kill('SIGINT');
+  };
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
+  const pending = new Set(names);
   let received = false;
   try {
     for await (const line of createInterface({ input: child.stdout, crlfDelay: Infinity })) {
@@ -194,12 +199,14 @@ async function watch(options, names) {
       const name = names[names.length === 1 ? 0 : event.receiptIndex];
       if (!name) throw new Error('watch returned an unknown receipt position');
       received = true;
-      await observe(options, name, event, false);
+      if (!await observe(options, name, event, false)) pending.delete(name);
     }
     const code = await exited;
+    if (interrupted) return;
     if (code !== 0 && (!received || ![1, 3].includes(code))) {
       throw new Error('gregale mcp client watch ended without a status outcome');
     }
+    for (const receipt of pending) emit({ receipt, action: 'retry_status' });
   } finally {
     process.off('SIGINT', stop);
     process.off('SIGTERM', stop);
@@ -288,6 +295,10 @@ async function main() {
   if (!Array.isArray(inbox)) throw new Error('receipt directory did not return an inbox');
   const working = [];
   for (const item of inbox) {
+    if (item.outcome === 'invalid_receipt') {
+      emit({ receipt: item.receipt, action: 'invalid_receipt' });
+      continue;
+    }
     const receipt = checkReceiptName(item.receipt);
     if (await observe(options, receipt, item, true)) working.push(receipt);
   }

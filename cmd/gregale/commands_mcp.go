@@ -696,7 +696,7 @@ func cmdMCPRemote(command string, args []string) int {
 		if err != nil {
 			return printErr("MCP Task submission retry", err)
 		}
-		submissionKey, err = retryMCPTaskSubmission(taskReceiptPath, c.Endpoint, fingerprint)
+		submissionKey, err = retryMCPTaskSubmission(taskReceiptPath, c.Endpoint, fingerprint, c.Token)
 		if err != nil {
 			return printErr("MCP Task submission retry", err)
 		}
@@ -862,7 +862,7 @@ func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.
 			if err != nil {
 				return printErr("Save MCP Task receipt", err)
 			}
-			options.TaskSubmissionKey, err = createMCPTaskReceipt(taskReceiptPath, c.Endpoint, fingerprint)
+			options.TaskSubmissionKey, err = createMCPTaskReceipt(taskReceiptPath, c.Endpoint, fingerprint, c.Token)
 			if err != nil {
 				return printErr("Save MCP Task receipt", err)
 			}

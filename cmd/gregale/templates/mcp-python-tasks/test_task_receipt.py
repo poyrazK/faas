@@ -3,6 +3,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -253,10 +254,13 @@ class TaskReceiptJourneyTests(unittest.TestCase):
         request = json.dumps({"arguments": json.loads(form_args if reviewed_verb else original_args),
                               "deferFormInput": bool(reviewed_verb), "tool": "build_report"},
                              sort_keys=True, separators=(",", ":")).encode()
-        self.assertEqual(receipt, {"version": 2, "endpointSha256": hashlib.sha256(endpoint.encode()).hexdigest(),
-                                   "submissionKey": receipt["submissionKey"],
-                                   "requestSha256": hashlib.sha256(request).hexdigest()})
+        endpoint_digest = hashlib.sha256(endpoint.encode()).hexdigest()
+        request_digest = hashlib.sha256(request).hexdigest()
         key = receipt["submissionKey"]
+        proof = hmac.new(owner.encode(), f"gregale/mcp-task-receipt/v3:{endpoint_digest}{key}{request_digest}".encode(),
+                         hashlib.sha256).hexdigest()
+        self.assertEqual(receipt, {"version": 3, "endpointSha256": endpoint_digest, "submissionKey": key,
+                                   "requestSha256": request_digest, "credentialProof": proof})
         self.assertEqual(key[14], "7")
 
         if reviewed_verb:

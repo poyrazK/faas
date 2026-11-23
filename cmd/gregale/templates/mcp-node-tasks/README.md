@@ -369,11 +369,13 @@ node examples/task-supervisor.mjs recover --app my-mcp --token-env MCP_TOKEN \
 ```
 
 This requires a CLI that supports `--retry-submission`. The CLI checks the
-original request and uses the saved key within its one-minute window. The
-supervisor then checks for a retained Task, including after the window expires.
-It reports `submission_unresolved` if it cannot confirm a Task after a retry
-and lookup, or `retry_status` if another status check could help. Review and
-respond using the same `run` flow above.
+original request and credential before using the saved key within its
+one-minute window. The supervisor then checks for a retained Task, including
+after the window expires or the credential changes. It reports
+`submission_unresolved` if it cannot confirm a Task after a retry and lookup.
+A temporary lookup failure or an interrupted watch reports `retry_status` for
+receipts that need another status check. Review and respond using the same
+`run` flow above.
 
 Completed results are published once to private files in `results/`, using the
 receipt filename. The example checks the saved Task ID on later runs and

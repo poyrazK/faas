@@ -1,6 +1,9 @@
 package main
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -12,14 +15,18 @@ import (
 )
 
 type mcpTaskReceipt struct {
-	Version        int    `json:"version"`
-	EndpointSHA256 string `json:"endpointSha256"`
-	SubmissionKey  string `json:"submissionKey"`
-	RequestSHA256  string `json:"requestSha256,omitempty"`
+	Version         int    `json:"version"`
+	EndpointSHA256  string `json:"endpointSha256"`
+	SubmissionKey   string `json:"submissionKey"`
+	RequestSHA256   string `json:"requestSha256,omitempty"`
+	CredentialProof string `json:"credentialProof,omitempty"`
 }
 
 // The receipt carries only scalar metadata and no tool arguments.
-const mcpTaskReceiptMaxBytes = 1024
+const (
+	mcpTaskReceiptMaxBytes = 1024
+	mcpTaskReceiptVersion  = 3
+)
 
 func mcpTaskReceiptEndpoint(endpoint string) string {
 	return toolpublication.Digest([]byte(endpoint))
@@ -39,15 +46,25 @@ func mcpTaskSubmissionFingerprint(tool string, args map[string]any, deferFormInp
 	return toolpublication.Digest(body), nil
 }
 
-func createMCPTaskReceipt(path, endpoint, requestSHA256 string) (string, error) {
+// A server cannot check the original caller of a submission it never
+// accepted. Bind the short-lived retry to the bearer credential used when
+// saving the receipt, without persisting that credential.
+func (receipt mcpTaskReceipt) credentialProof(token string) string {
+	mac := hmac.New(sha256.New, []byte(token))
+	_, _ = mac.Write([]byte("gregale/mcp-task-receipt/v3:" + receipt.EndpointSHA256 + receipt.SubmissionKey + receipt.RequestSHA256))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func createMCPTaskReceipt(path, endpoint, requestSHA256, token string) (string, error) {
 	key, err := uuid.NewV7()
 	if err != nil {
 		return "", err
 	}
 	receipt := mcpTaskReceipt{
-		Version: 2, EndpointSHA256: mcpTaskReceiptEndpoint(endpoint),
+		Version: mcpTaskReceiptVersion, EndpointSHA256: mcpTaskReceiptEndpoint(endpoint),
 		SubmissionKey: key.String(), RequestSHA256: requestSHA256,
 	}
+	receipt.CredentialProof = receipt.credentialProof(token)
 	body, err := json.Marshal(receipt)
 	if err != nil {
 		return "", err
@@ -88,11 +105,15 @@ func decodeMCPTaskReceipt(body []byte, endpoint string) (mcpTaskReceipt, error) 
 	if err := decodeCustomerOperationReceipt(body, &receipt); err != nil {
 		return mcpTaskReceipt{}, errors.New("invalid MCP Task receipt")
 	}
-	if (receipt.Version != 1 && receipt.Version != 2) || receipt.SubmissionKey == "" {
+	if receipt.Version < 1 || receipt.Version > mcpTaskReceiptVersion || receipt.SubmissionKey == "" {
 		return mcpTaskReceipt{}, errors.New("invalid MCP Task receipt version or submission key")
 	}
-	if (receipt.Version == 1 && receipt.RequestSHA256 != "") || (receipt.Version == 2 && !toolpublication.ValidID(receipt.RequestSHA256)) {
+	if (receipt.Version == 1 && receipt.RequestSHA256 != "") || (receipt.Version >= 2 && !toolpublication.ValidID(receipt.RequestSHA256)) {
 		return mcpTaskReceipt{}, errors.New("invalid MCP Task receipt request fingerprint")
+	}
+	if (receipt.Version < mcpTaskReceiptVersion && receipt.CredentialProof != "") ||
+		(receipt.Version == mcpTaskReceiptVersion && !toolpublication.ValidID(receipt.CredentialProof)) {
+		return mcpTaskReceipt{}, errors.New("invalid MCP Task receipt credential proof")
 	}
 	if receipt.EndpointSHA256 != mcpTaskReceiptEndpoint(endpoint) {
 		return mcpTaskReceipt{}, errors.New("MCP Task receipt does not match the selected endpoint")
@@ -100,13 +121,13 @@ func decodeMCPTaskReceipt(body []byte, endpoint string) (mcpTaskReceipt, error) 
 	return receipt, nil
 }
 
-func retryMCPTaskSubmission(path, endpoint, requestSHA256 string) (string, error) {
+func retryMCPTaskSubmission(path, endpoint, requestSHA256, token string) (string, error) {
 	receipt, err := loadMCPTaskReceipt(path, endpoint)
 	if err != nil {
 		return "", err
 	}
-	if receipt.Version == 1 {
-		return "", errors.New("MCP Task receipt lacks a request fingerprint. Use mcp client status to recover it")
+	if receipt.Version < mcpTaskReceiptVersion {
+		return "", errors.New("MCP Task receipt lacks a credential binding. Use mcp client status to recover it")
 	}
 	if receipt.RequestSHA256 != requestSHA256 {
 		return "", errors.New("MCP Task request does not match the receipt. Supply the original tool, arguments and --defer-form-input setting")
@@ -118,6 +139,9 @@ func retryMCPTaskSubmission(path, endpoint, requestSHA256 string) (string, error
 	// The server rechecks the one-minute window using the database clock.
 	if !time.Now().Before(time.Unix(key.Time().UnixTime()).Add(time.Minute)) {
 		return "", errors.New("MCP Task submission retry window expired. Use mcp client status to check for a retained Task")
+	}
+	if !hmac.Equal([]byte(receipt.CredentialProof), []byte(receipt.credentialProof(token))) {
+		return "", errors.New("MCP Task submission retry requires the original client credential. Use mcp client status to check for a retained Task with a renewed credential")
 	}
 	return receipt.SubmissionKey, nil
 }

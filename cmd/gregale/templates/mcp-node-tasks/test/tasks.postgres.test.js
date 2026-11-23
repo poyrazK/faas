@@ -2490,7 +2490,7 @@ for (const { title, useReceipt, receiptInbox, supervisor, supervisorSubmissionFa
     resource: 'https://mcp.example/mcp', scopes: ['mcp:tools'], tool_scopes: { build_report: ['reports:read'] },
   };
   const { publicKey, privateKey } = await generateKeyPair('ES256');
-  const mint = (subject, scope = 'mcp:tools reports:read') => new SignJWT({ scope }).setProtectedHeader({ alg: 'ES256' })
+  const mint = (subject, scope = 'mcp:tools reports:read') => new SignJWT({ scope }).setJti(randomUUID()).setProtectedHeader({ alg: 'ES256' })
     .setAudience(auth.resource).setIssuer(auth.issuer).setSubject(subject).setExpirationTime('5m').sign(privateKey);
   const owner = await mint('alice');
   const foreign = await mint('bob');
@@ -2572,11 +2572,13 @@ for (const { title, useReceipt, receiptInbox, supervisor, supervisorSubmissionFa
         assert.deepEqual(metadata['io.modelcontextprotocol/clientCapabilities'].elicitation,
           deferredForm ? { form: {} } : undefined);
         assert.equal((await stat(receiptPath)).mode & 0o777, 0o600);
+        const endpointSha256 = createHash('sha256').update(endpoint).digest('hex');
+        const requestSha256 = createHash('sha256').update(JSON.stringify({
+          arguments: args, deferFormInput: Boolean(deferredForm), tool,
+        })).digest('hex');
+        const proof = createHmac('sha256', owner).update(`gregale/mcp-task-receipt/v3:${endpointSha256}${key}${requestSha256}`).digest('hex');
         assert.deepEqual(JSON.parse(await readFile(receiptPath, 'utf8')), {
-          version: 2, endpointSha256: createHash('sha256').update(endpoint).digest('hex'), submissionKey: key,
-          requestSha256: createHash('sha256').update(JSON.stringify({
-            arguments: args, deferFormInput: Boolean(deferredForm), tool,
-          })).digest('hex'),
+          version: 3, endpointSha256, submissionKey: key, requestSha256, credentialProof: proof,
         });
         if (submissionReplyFault === 'before' || supervisorSubmissionFault === 'before') {
           assert.deepEqual(await rows(), []);
@@ -2672,11 +2674,20 @@ for (const { title, useReceipt, receiptInbox, supervisor, supervisorSubmissionFa
       }
       const receiptBody = await readFile(receiptPath, 'utf8');
       const receiptFile = await stat(receiptPath);
-      const { requestSha256, ...legacyReceipt } = JSON.parse(receiptBody);
-      assert.match(requestSha256, /^[0-9a-f]{64}$/);
-      const legacyPath = join(clientDir, 'v1-receipt.json');
-      await writeFile(legacyPath, JSON.stringify({ ...legacyReceipt, version: 1 }), { mode: 0o600, flag: 'wx' });
+      const { endpointSha256, submissionKey, requestSha256 } = JSON.parse(receiptBody);
+      const legacyPaths = [
+        join(clientDir, 'v1-receipt.json'),
+        join(clientDir, 'v2-receipt.json'),
+      ];
+      await writeFile(legacyPaths[0], JSON.stringify({ version: 1, endpointSha256, submissionKey }), { mode: 0o600, flag: 'wx' });
+      await writeFile(legacyPaths[1], JSON.stringify({ version: 2, endpointSha256, submissionKey, requestSha256 }),
+        { mode: 0o600, flag: 'wx' });
+      const renewedOwner = await mint('alice');
+      const retry = [...receiptCallFor(receiptPath, { steps: 1, report: 'original' }), '--retry-submission'];
       const beforeDenials = requests.length;
+      for (const credential of [foreign, renewedOwner]) {
+        assert.equal(await cli('call', credential, 1, retry, /requires the original client credential/), '');
+      }
       for (const args of [
         [...receiptCallFor(receiptPath, { ...receiptArgs, report: 'changed' }), '--retry-submission'],
         [...receiptCall, '--defer-form-input', '--retry-submission'],
@@ -2686,22 +2697,25 @@ for (const { title, useReceipt, receiptInbox, supervisor, supervisorSubmissionFa
       }
       assert.equal(await cli('call', owner, 1, [...receiptCall, '--url', `${endpoint}/other`, '--retry-submission'],
         /receipt does not match the selected endpoint/), '');
-      assert.equal(await cli('call', owner, 1, [...receiptCallFor(legacyPath, receiptArgs), '--retry-submission'],
-        /receipt lacks a request fingerprint/), '');
+      for (const legacyPath of legacyPaths) {
+        assert.equal(await cli('call', owner, 1, [...receiptCallFor(legacyPath, receiptArgs), '--retry-submission'],
+          /receipt lacks a credential binding/), '');
+      }
       assert.equal(await cli('call', owner, 1, ['--tasks', '--tool', 'build_report', '--retry-submission'],
         /--retry-submission requires --task-receipt/), '');
       assert.equal(requests.length, beforeDenials);
       assert.deepEqual((await rows()).map(row => row.task_id), initialRows.map(row => row.task_id));
-      const retry = [...receiptCallFor(receiptPath, { steps: 1, report: 'original' }), '--retry-submission'];
       const beforeRetry = requests.length;
       const { result } = JSON.parse(await cli('call', owner, 0, retry));
       assert.equal(result.resultType, 'task');
       assert.equal(requests.slice(beforeRetry).filter(method => method === 'gregale/tasks/submit').length, 1);
       if (committedID) assert.equal(result.taskId, committedID);
       const stored = await pool.query('SELECT task_id::text, submission_key::text FROM gregale_mcp_tasks WHERE namespace=$1', [namespace]);
-      assert.deepEqual(stored.rows, [{ task_id: result.taskId, submission_key: legacyReceipt.submissionKey }]);
-      const legacyStatus = JSON.parse(await cli('status', owner, 0, ['--task-receipt', legacyPath, '--metadata-only']));
-      assert.equal(legacyStatus.taskId, result.taskId);
+      assert.deepEqual(stored.rows, [{ task_id: result.taskId, submission_key: submissionKey }]);
+      for (const path of [receiptPath, ...legacyPaths]) {
+        const status = JSON.parse(await cli('status', renewedOwner, 0, ['--task-receipt', path, '--metadata-only']));
+        assert.equal(status.taskId, result.taskId);
+      }
       assert.equal(await readFile(receiptPath, 'utf8'), receiptBody);
       assert.equal((await stat(receiptPath)).ino, receiptFile.ino);
       return;
