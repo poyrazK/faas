@@ -29,6 +29,13 @@ func TestRouteVerificationContract(t *testing.T) {
 		{"unproven 415", 415, "candidate", "", SmokeSkipped},
 		// A Go workflow function's ServeWorkflows answers a GET with 405.
 		{"workflow entry", 405, "candidate", "candidate", SmokeVerified},
+		// Prod 2026-11-22: an Express worker answered the defaulted
+		// /healthz with 422; any proven 4xx is the candidate answering.
+		{"framework validation", 422, "candidate", "candidate", SmokeVerified},
+		{"bad request", 400, "candidate", "candidate", SmokeVerified},
+		{"unproven 422", 422, "candidate", "", SmokeSkipped},
+		{"candidate overloaded", 429, "candidate", "candidate", SmokeFailed},
+		{"app error", 500, "candidate", "candidate", SmokeFailed},
 		{"old revision", 200, "old", "old", SmokeSkipped},
 		{"old revision missing root", 404, "old", "old", SmokeSkipped},
 		{"gateway not found", 404, "", "", SmokeSkipped},
