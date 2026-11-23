@@ -58,7 +58,7 @@ func writeWakePage(w http.ResponseWriter, wakeID string) {
 	w.Header().Set("X-Robots-Tag", "noindex, nofollow, noarchive")
 	w.Header().Set(wakePageHeader, "1")
 	if wakeID != "" {
-		w.Header().Set("x-faas-wake-id", wakeID)
+		w.Header().Set("X-Faas-Wake-Id", wakeID)
 	}
 	w.WriteHeader(http.StatusOK)
 

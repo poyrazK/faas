@@ -122,7 +122,7 @@ func templateGlob(template string, escape bool) (string, bool) {
 // request as another method (Express method-override, Laravel, ASP.NET Core,
 // Rack); "_method" in the query is the parameter form (Rails, Laravel,
 // Spring's HiddenHttpMethodFilter).
-var edgeRuleMethodOverrideHeaders = []string{"X-HTTP-Method-Override", "X-HTTP-Method", "X-Method-Override"}
+var edgeRuleMethodOverrideHeaders = []string{"X-Http-Method-Override", "X-Http-Method", "X-Method-Override"} // canonical spelling
 
 // EdgeRuleMethodOverride returns the method a request asks the app to run it
 // as, through a method-override header or a "_method" query parameter, when

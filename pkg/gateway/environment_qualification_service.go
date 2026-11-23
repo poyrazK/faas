@@ -143,10 +143,10 @@ func privateQualificationRequest(ctx context.Context, r *http.Request, target st
 			delete(request.Header, name)
 		}
 	}
-	request.Header.Set("x-faas-instance", target.InstanceID)
-	request.Header.Set("x-faas-app", target.AppID)
-	request.Header.Set("x-faas-wake-id", target.WakeID)
-	request.Header.Set("x-faas-protocol", "http1")
+	request.Header.Set("X-Faas-Instance", target.InstanceID)
+	request.Header.Set("X-Faas-App", target.AppID)
+	request.Header.Set("X-Faas-Wake-Id", target.WakeID)
+	request.Header.Set("X-Faas-Protocol", "http1")
 	return request
 }
 
