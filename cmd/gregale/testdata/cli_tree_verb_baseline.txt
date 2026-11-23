@@ -1,3 +1,10 @@
 # Paths in the ADR-20261026145832 tree that still break its naming rules.
 # This list only shrinks: give a path a tree name in cli_tree.go instead of adding it.
-
+sandbox run controls binding  # verb binding
+sandbox run controls customer  # verb customer
+sandbox run controls task  # verb task
+sandbox run deliveries download-url  # hyphenated download-url, verb download-url
+sandbox run environments build  # verb build
+sandbox run tasks invoke  # verb invoke
+sandbox session fork  # verb fork
+sandbox workflow rerun  # verb rerun

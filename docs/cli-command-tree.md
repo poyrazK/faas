@@ -131,6 +131,7 @@ touch them. The tables below map each earlier name.
 | `gregale release-gates` | `gregale release gate` |
 | `gregale routes` | `gregale api route` |
 | `gregale runs` | `gregale sandbox` |
+| `gregale sandbox-sessions` | `gregale sandbox session` |
 | `gregale sandbox-templates` | `gregale sandbox template` |
 | `gregale scan` | `gregale deploy --plan` |
 | `gregale scheduled-releases` | `gregale release schedule` |
