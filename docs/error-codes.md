@@ -582,7 +582,7 @@ HTTP 409 Conflict · Database switch cannot be cancelled
 
 HTTP 409 Conflict · Database switch unavailable
 
-See [Deploys](deploys.md#rollbacks-that-restore-the-database).
+See [Safe releases](releases.md#rollbacks-that-restore-the-database).
 
 ### `database_switches_active`
 
@@ -970,7 +970,7 @@ See [Errors](errors.md).
 
 HTTP 409 Conflict · Recovery plan changed
 
-See [Build stored workflows in Gregale](stored-workflow-authoring.md).
+See [Run and recover stored workflows](stored-workflow-operations.md).
 
 ### `event_storage_capacity_exhausted`
 
@@ -1960,7 +1960,7 @@ HTTP 403 Forbidden · Application standards mutation forbidden; Approver not all
 
 Ask a teammate the policy lets approve to approve this promotion, then promote with their approval.
 
-See [Account and organization management](account.md#roles), [Deploys](deploys.md#release-approvals).
+See [Account and organization management](account.md#roles), [Release approvals, freezes and schedules](release-controls.md#release-approvals).
 
 ### `org_slug_invalid`
 
@@ -2846,7 +2846,7 @@ Run `gregale project apply` or `gregale project promote` and approve the plan, o
 
 HTTP 429 Too Many Requests · Promotion queue is full
 
-See [Deploys](deploys.md#promotion-admission), [Environment promotion](environment-promotion.md).
+See [Environment promotion](environment-promotion.md#promotion-admission).
 
 ### `project_release_baseline_expired`
 
@@ -3106,7 +3106,7 @@ HTTP 409 Conflict · Release approvals need a canary; Release approvals need an 
 
 Deploy with --rollout safe or fast (or without --rollout immediate and --traffic-percent), or remove the policy with `gregale release approval disable`.
 
-See [Deploys](deploys.md#release-approvals), [Release approvals, freezes and schedules](release-controls.md).
+See [Release approvals, freezes and schedules](release-controls.md#release-approvals).
 
 ### `release_approval_decided`
 
@@ -3122,7 +3122,7 @@ HTTP 409 Conflict · Release rejected
 
 Deploy a new release; a rejection is final.
 
-See [Deploys](deploys.md#release-approvals).
+See [Release approvals, freezes and schedules](release-controls.md#release-approvals).
 
 ### `release_approval_required`
 
@@ -3130,7 +3130,7 @@ HTTP 409 Conflict · Release waiting for approval
 
 An eligible teammate approves it on its approval page in the dashboard; the rollout then continues on its next tick.
 
-See [Deploys](deploys.md#release-approvals).
+See [Release approvals, freezes and schedules](release-controls.md#release-approvals).
 
 ### `release_approval_self`
 
@@ -3140,7 +3140,7 @@ Ask an eligible teammate to approve it on the release's approval page in the das
 
 Ask another approver to approve this promotion, then promote with their approval.
 
-See [Deploys](deploys.md#release-approvals).
+See [Release approvals, freezes and schedules](release-controls.md#release-approvals).
 
 ### `release_approval_session_required`
 
@@ -3148,7 +3148,7 @@ HTTP 403 Forbidden · Approve as a person; Approve in the dashboard
 
 Approve the promotion signed in as yourself, not with an API key or token, then promote with that approval.
 
-See [Deploys](deploys.md#release-approvals).
+See [Release approvals, freezes and schedules](release-controls.md#release-approvals).
 
 ### `release_command_failed`
 
@@ -3162,7 +3162,7 @@ HTTP 409 Conflict · Too many freezes
 
 Lift freezes you no longer need with `gregale release freeze lift`.
 
-See [Deploys](deploys.md#deploy-freezes).
+See [Release approvals, freezes and schedules](release-controls.md#deploy-freezes).
 
 ### `release_freeze_not_found`
 
@@ -3176,7 +3176,7 @@ HTTP 403 Forbidden · Freeze override not allowed
 
 Ask an owner or admin to lift the freeze with `gregale release freeze lift`, or to deploy with --override-freeze.
 
-See [Deploys](deploys.md#deploy-freezes).
+See [Release approvals, freezes and schedules](release-controls.md#deploy-freezes).
 
 ### `release_frozen`
 
@@ -3184,7 +3184,7 @@ HTTP 409 Conflict · Production releases are frozen
 
 Wait for the freeze to end, lift it with `gregale release freeze lift`, or release anyway with override_freeze and a reason (CLI: --override-freeze REASON); the override is audited.
 
-See [Deploys](deploys.md#deploy-freezes), [Release approvals, freezes and schedules](release-controls.md).
+See [Release approvals, freezes and schedules](release-controls.md#deploy-freezes).
 
 ### `release_gate_limit`
 
@@ -3192,7 +3192,7 @@ HTTP 409 Conflict · Too many release gates
 
 Delete a gate you no longer need with `gregale release gate rm`.
 
-See [Deploys](deploys.md#release-gates).
+See [Safe releases](releases.md#release-gates).
 
 ### `release_gate_not_found`
 
@@ -3298,7 +3298,7 @@ HTTP 409 Conflict · Rollback crosses release commands
 
 If the target is compatible with those changes, retry with acknowledge_releases (CLI: --acknowledge-releases). To undo database changes first, restore each listed database to its restore point.
 
-See [Deploys](deploys.md#releases-that-change-the-database), [Safe releases](releases.md), [Troubleshooting](troubleshooting.md).
+See [Safe releases](releases.md#releases-that-change-the-database), [Troubleshooting](troubleshooting.md).
 
 ### `rollback_deployment_changed`
 
@@ -3320,7 +3320,7 @@ HTTP 409 Conflict · Rollback target's database changes were undone; Rollback ta
 
 Deploy that code again; its release command runs before it serves.
 
-See [Deploys](deploys.md#rollbacks-that-restore-the-database), [Safe releases](releases.md).
+See [Safe releases](releases.md#rollbacks-that-restore-the-database).
 
 ### `rollback_target_ineligible`
 

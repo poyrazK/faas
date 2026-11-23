@@ -6012,6 +6012,15 @@ type Querier interface {
 	// is taken. cold_bootable is false when the deployment has no rootfs either,
 	// which breaks spec invariant 6.2-3. Those come first, then the newest.
 	OperatorLiveDeploymentsWithoutSnapshot(ctx context.Context, db DBTX, rowLimit int32) ([]OperatorLiveDeploymentsWithoutSnapshotRow, error)
+	// The operator memory pressure report (ADR-20261123190507): RAM pressure
+	// evictions of running instances (memory_eviction), frozen instances parked
+	// under memory pressure (frozen_park, reason memory_pressure) and workload
+	// OOM kills (instances.workload_oom_failed), newest first, each with its
+	// instance's node and RAM and its app's account and plan. A transition names
+	// its instance in subject; an OOM kill names instance and app in data. The
+	// instance row may already be gone (terminal retention), so every join is
+	// optional. events_kind_at_idx serves each kind's range.
+	OperatorMemoryPressureEvents(ctx context.Context, db DBTX, arg OperatorMemoryPressureEventsParams) ([]OperatorMemoryPressureEventsRow, error)
 	OperatorNodeHasLiveInstances(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error)
 	OperatorOverviewActivity(ctx context.Context, db DBTX, auditSince pgtype.Timestamptz) (OperatorOverviewActivityRow, error)
 	// Deploys and new accounts by the coding agent the Gregale CLI reported
