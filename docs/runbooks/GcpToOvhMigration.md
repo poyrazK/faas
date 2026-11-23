@@ -113,6 +113,19 @@ What to expect:
       the host: add it to the public card in its own netplan file
       (`/etc/netplan/61-entry-ip.yaml`, `addresses: [<ip>/32]` under the
       card named in `50-cloud-init.yaml`) and check it answers ping.
+- [ ] Compute nodes that share a DHCP subnet send that subnet through the
+      gateway: OVH answers ARP between dedicated servers only sporadically,
+      so the on-link route drops replies to the other node's primary address
+      (app egress is masqueraded to it, so cross-node `*.gregale.app` calls
+      hang). Add `/etc/netplan/62-peer-via-gw.yaml` (mode 600) with, under
+      the public card, `routes:` for the two halves of the subnet (e.g.
+      `15.235.50.0/25` and `15.235.50.128/25`) `via:` the DHCP gateway, run
+      `netplan generate`, and add them live with `ip route replace`. Check
+      with an empty neighbour cache: on the serving node
+      `ip neigh del <caller primary> dev <card>`, then from the caller
+      `curl -sk --interface <caller primary> -w '%{time_connect}' https://<other entry_ipv4>/`
+      must connect. Don't use ping for this check: nftables drops ICMP on the
+      public card.
 - [ ] OVH account: 2FA on every login, API tokens scoped and listed, IPMI and
       rescue mode understood (disk encryption, ADR-20261109120000, covers
       the rescue-mode risk to data volumes).
