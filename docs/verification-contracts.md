@@ -57,8 +57,13 @@ gregale release check get --app my-api
 gregale release check delete --app my-api
 ```
 
-`gregale deploy` stores the file automatically before it creates the
-deployment. An invalid file stops the deploy.
+`gregale deploy` and GitHub pushes store the file automatically before they
+create the deployment. They read it from the app's source root (the
+directory the app builds from). An invalid file stops the deploy and, for a
+push, fails the app's GitHub check. Deleting the file does not delete the
+stored contract; use `gregale release check delete`. A pull request preview
+uses the pull request's file; a branch preview uses the app's stored
+contract.
 
 ## What runs where
 

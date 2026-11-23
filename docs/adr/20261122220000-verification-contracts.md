@@ -88,7 +88,20 @@ live.
 - The contract lives in plaintext on the app. Header values are not secret
   references in v1; the docs say not to put credentials in the file.
   Secret references are a follow-up.
-- Not in v1: queue round trips, DLQ checks and Realtime echo; contracts for
-  deployments created without the CLI (GitHub pushes, environment
-  promotions) run the app's stored contract, but nothing uploads a changed
-  file for them; public OpenAPI and SDK clients for the new routes.
+- Not in v1: queue round trips, DLQ checks and Realtime echo; public OpenAPI
+  and SDK clients for the new routes. Environment promotions and branch
+  previews run the app's stored contract.
+
+## Amendment 1 (2026-11-23): GitHub pushes apply the contract
+
+A GitHub push now applies the app's `gregale.verify.yaml` like
+`gregale deploy`: githubd reads it from the app's own source root (never the
+repository root for an app in a subdirectory, so one app's checks never land
+on another) and stores it, when its SHA-256 differs from the stored one,
+before it enqueues the build. A push can already deploy any code, so letting
+it set its own checks grants nothing a deploy did not. An invalid file fails
+the app's GitHub check and the app is not deployed; a store failure is
+retried with the delivery. A missing file keeps the stored contract. PR
+preview apps (`pr-N-*`) apply the PR's file to themselves. Branch previews
+share the parent app's ID, so they keep the parent's stored contract: an
+unmerged pull request never changes production's checks.
