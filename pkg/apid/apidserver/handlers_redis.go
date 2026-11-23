@@ -504,8 +504,9 @@ func (s *server) redisEnsureRunning(ctx context.Context, acct state.Account, app
 }
 
 // privateServiceTCPEnabled reports whether the data plane serves private
-// service TCP (ADR-576), the only way an app reaches a managed cache. An
-// installation without hot runtime configuration keeps the old behavior.
+// service TCP (ADR-576), the only way an app reaches a managed cache. The
+// switch defaults on and is a kill switch for when a node loses the listener;
+// a server without runtime configuration counts it as on.
 func (s *server) privateServiceTCPEnabled() bool {
 	return s.runtimeBool(runtimeConfigPrivateServiceTCP, true)
 }

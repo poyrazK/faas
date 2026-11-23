@@ -103,10 +103,9 @@ func imageHealthcheckExchange(ctx context.Context, socket string, probe, ackKind
 		// With the whole remaining deadline as its budget, that answer raced
 		// the host's own deadline and lost, so a HEALTHCHECK that never passed
 		// read "fresh guest command result unavailable" (agent eval
-		// 2026-11-23, voting-app P2). Keep room for the answer.
-		if budget > 2*imageHealthcheckReplyMarginMS {
-			budget -= imageHealthcheckReplyMarginMS
-		}
+		// 2026-11-23, voting-app P2). Keep room for the answer, up to half of
+		// a short budget.
+		budget -= min(imageHealthcheckReplyMarginMS, budget/2)
 	}
 	request := healthcheckproto.Request{Nonce: hex.EncodeToString(nonce[:]), BudgetMS: min(budget, healthcheckproto.MaxProbeBudgetMS), RuntimeID: runtimeID}
 	conn, err := (&net.Dialer{Timeout: 200 * time.Millisecond}).DialContext(ctx, "unix", socket)

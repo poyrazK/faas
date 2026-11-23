@@ -50,7 +50,8 @@ func TestSourceHostsNameTheVariableToRead(t *testing.T) {
 
 // TestSourceHostsKeepABoundManagedCache pins the agent eval of 2026-11-23
 // (voting-app P7): after the first apply bound REDIS_URL to a managed cache,
-// the next plan told the agent to set REDIS_URL to a Redis run elsewhere.
+// the next plan told the agent to set REDIS_URL to a Redis run elsewhere. The
+// hint names no key: a workload that hard-codes the host may not read one.
 func TestSourceHostsKeepABoundManagedCache(t *testing.T) {
 	in := featurehints.Input{ProjectSlug: "voting-app",
 		Workloads: []api.PlanWorkload{
@@ -61,7 +62,7 @@ func TestSourceHostsKeepABoundManagedCache(t *testing.T) {
 		if h.ID != featurehints.IDSourceHosts {
 			continue
 		}
-		if !strings.Contains(h.Change, "worker reads REDIS_URL, which is already set") || strings.Contains(h.Change, "elsewhere") {
+		if !strings.Contains(h.Change, "redis is already bound") || strings.Contains(h.Change, "REDIS_URL") || strings.Contains(h.Change, "elsewhere") {
 			t.Errorf("change = %s", h.Change)
 		}
 		if len(h.Commands) != 0 {

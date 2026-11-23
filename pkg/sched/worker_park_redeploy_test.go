@@ -20,11 +20,13 @@ func TestNewWorkerReleaseLiftsLivenessPark(t *testing.T) {
 		name       string
 		reason     state.ParkReason
 		parkLive   bool // park the live release itself, not an older one
+		manual     bool // the customer also ran `app park` after the liveness park
 		wantActive bool
 	}{
 		{name: "liveness park of an older release", reason: state.ParkReasonLivenessExhausted, wantActive: true},
 		{name: "liveness park of the live release", reason: state.ParkReasonLivenessExhausted, parkLive: true},
 		{name: "admin park of an older release", reason: state.ParkReasonAdminPark},
+		{name: "customer park after a liveness park", reason: state.ParkReasonLivenessExhausted, manual: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -48,6 +50,11 @@ func TestNewWorkerReleaseLiftsLivenessPark(t *testing.T) {
 			evicted := state.AppEvictedCold
 			if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Status: &evicted}); err != nil {
 				t.Fatal(err)
+			}
+			if tc.manual {
+				if _, _, err := store.BeginAppParkTransition(ctx, app.ID, state.AppActive); err != nil {
+					t.Fatal(err)
+				}
 			}
 			engine := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
 

@@ -77,9 +77,6 @@ func newPrivateTCPImageFixture(t *testing.T) *privateTCPImageFixture {
 	if _, err := store.SetComputeNodeServiceAddressReady(ctx, node.ID, true); err != nil {
 		t.Fatalf("stamp service address readiness: %v", err)
 	}
-	// Managed Redis is admitted only where the operator says private service
-	// TCP is served, as it is here.
-	releaseRuntimeFlag(t, store, "private_service_tcp_enabled")
 
 	f := &privateTCPImageFixture{h: h, pool: pool, key: h.SeedAccount(ctx, api.PlanPro)}
 	suffix := randHexSuffix()

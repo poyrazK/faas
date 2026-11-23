@@ -47,7 +47,12 @@ func appParkedLabel(app api.AppResponse) string {
 // it again" sent an agent to add a /healthz server to a worker (agent eval
 // 2026-11-23, voting-app P3).
 func appIsWorker(app api.AppResponse) bool {
-	return app.Manifest.ExecutionMode == api.ExecutionModeWorker || app.WorkloadClass == api.ExecutionModeWorker
+	return isWorker(app.Manifest.ExecutionMode, app.WorkloadClass)
+}
+
+// isWorker is appIsWorker for callers that hold only the two fields.
+func isWorker(executionMode, workloadClass string) bool {
+	return executionMode == api.ExecutionModeWorker || workloadClass == api.ExecutionModeWorker
 }
 
 // parkedDeploymentID is the deployment the app is parked on, or "" when the

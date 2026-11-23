@@ -582,7 +582,7 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 		next := "Send a request, or run `gregale app wake " + summary.App.Slug + "` to start it now."
 		severity := "info"
 		switch {
-		case summary.App.ParkedReason == "liveness_exhausted" && summary.App.ExecutionMode == api.ExecutionModeWorker:
+		case summary.App.ParkedReason == "liveness_exhausted" && isWorker(summary.App.ExecutionMode, summary.App.WorkloadClass):
 			message = "This worker is parked because its process kept exiting (a worker gets no HTTP health check); requests never start a worker."
 			next = "Fix the crash (see `gregale logs " + summary.App.Slug + " --since 1h`) and deploy: a new release starts the worker. Or run `gregale app wake " + summary.App.Slug + "`."
 			severity = "error"
@@ -590,7 +590,7 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 			message = "This app is parked because its instances repeatedly failed liveness checks or crashed; the next request starts it again."
 			next = "Fix the failure (see `gregale logs " + summary.App.Slug + " --since 1h`), deploy, then run `gregale app wake " + summary.App.Slug + "`."
 			severity = "error"
-		case summary.App.ExecutionMode == api.ExecutionModeWorker:
+		case isWorker(summary.App.ExecutionMode, summary.App.WorkloadClass):
 			message = "This worker is parked: requests do not wake a worker, so it stays stopped until you wake it."
 			next = "Run `gregale app wake " + summary.App.Slug + "` to start it."
 			severity = "error"

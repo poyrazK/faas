@@ -101,16 +101,13 @@ func (s *server) composeRedisPlan(ctx context.Context, acct state.Account, proje
 		return provisions, reasons, nil
 	}
 	store, ok := s.store.(state.ManagedValkeyStore)
-	if !ok || !s.capabilityEnabledFor(api.ManagedValkeyCapability, acct, state.App{}) || !s.privateServiceTCPEnabled() {
-		reason := composeRedisUnavailable
-		if ok && !s.privateServiceTCPEnabled() {
-			reason = composeRedisNoServiceTCP
-		}
+	if !ok || !s.capabilityEnabledFor(api.ManagedValkeyCapability, acct, state.App{}) {
 		for _, m := range candidates {
-			reasons[m.Name] = reason
+			reasons[m.Name] = composeRedisUnavailable
 		}
 		return provisions, reasons, nil
 	}
+	serviceTCP := s.privateServiceTCPEnabled()
 	existing, err := store.ListManagedValkeyCaches(ctx, acct.ID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list managed caches: %w", err)
@@ -133,6 +130,12 @@ func (s *server) composeRedisPlan(ctx context.Context, acct state.Account, proje
 		}
 		if len(bindings) == 0 {
 			reasons[m.Name] = composeRedisConfigured
+			continue
+		}
+		// Only a service that still needs a cache is held back by the
+		// switch; one already bound reads as configured above.
+		if !serviceTCP {
+			reasons[m.Name] = composeRedisNoServiceTCP
 			continue
 		}
 		provision := composeRedisProvision{service: m.Name, cache: composeRedisCacheName(projectSlug, m.Name, scope), bindings: bindings}

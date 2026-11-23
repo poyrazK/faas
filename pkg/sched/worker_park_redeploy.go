@@ -18,7 +18,7 @@ import (
 // (agent eval 2026-11-23, voting-app worker). The new release is the
 // customer's answer to the park, so it gets its own attempt; if it crash-loops
 // too, the liveness window parks it again. Admin, lifecycle and security
-// parks are left alone. It reports whether the app was reactivated.
+// parks, and a customer park on top of the liveness park, are left alone. It reports whether the app was reactivated.
 func (e *Engine) liftLivenessParkForNewWorkerRelease(ctx context.Context, app state.App, live []state.Deployment) (bool, error) {
 	if app.Status != state.AppEvictedCold || len(live) == 0 {
 		return false, nil
@@ -35,6 +35,21 @@ func (e *Engine) liftLivenessParkForNewWorkerRelease(ctx context.Context, app st
 		return false, fmt.Errorf("sched: load parked deployment for app %s: %w", app.ID, err)
 	}
 	if !newerReleaseSupersedesLivenessPark(parked, live) {
+		return false, nil
+	}
+	// The liveness stamp outlives later parks: a customer who ran `app park`
+	// on the crash-looped app wants it parked, whatever they deploy next. A
+	// customer park records a park transition; a liveness park does not. A
+	// store that cannot tell keeps the park.
+	reader, canRead := e.store.(state.AppParkTransitionReader)
+	if !canRead {
+		return false, nil
+	}
+	transitionID, err := reader.CurrentAppParkTransitionID(ctx, app.ID)
+	if err != nil {
+		return false, fmt.Errorf("sched: load park transition for app %s: %w", app.ID, err)
+	}
+	if transitionID != "" {
 		return false, nil
 	}
 	ok, err := compareAndSetAppStatus(ctx, e.store, app.ID, state.AppEvictedCold, state.AppActive)
