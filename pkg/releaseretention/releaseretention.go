@@ -118,28 +118,10 @@ func Prune(releasesRoot, currentPath string, keepPrevious int, protected ...stri
 		return candidates[i].modTime.After(candidates[j].modTime)
 	})
 
-	var currentModTime time.Time
-	for _, item := range candidates {
-		if item.id == current {
-			currentModTime = item.modTime
-		}
-	}
-
 	inUse := releasesInUse(procRoot, root)
 	previousKept := 0
 	for _, item := range candidates {
-		// ADR-20261123150000: a release that preparation staged but no
-		// activation ever switched to is not a rollback target, so it must not
-		// take a keep-previous slot from one. Keep it while it is newer than
-		// the active release (its activation may still come); prune it after.
-		// Without an active release there is nothing to be newer than; treat
-		// every directory alike then.
-		staged := !currentModTime.IsZero() && item.id != current && stagedNeverActivated(item.path)
-		if staged && item.modTime.After(currentModTime) {
-			report.Kept = append(report.Kept, item.id)
-			continue
-		}
-		if !staged && (item.id == current || previousKept < keepPrevious) {
+		if item.id == current || previousKept < keepPrevious {
 			report.Kept = append(report.Kept, item.id)
 			if item.id != current {
 				previousKept++
@@ -172,17 +154,6 @@ func Prune(releasesRoot, currentPath string, keepPrevious int, protected ...stri
 		report.Removed = append(report.Removed, item.id)
 	}
 	return report, nil
-}
-
-// stagedInstallMarker mirrors releaseinstall.StagedInstallMarkerName (kept in
-// step by TestStagedInstallMarkerNameMatchesReleaseinstall). `release install`
-// removes it when it switches to a release, so a release directory that still
-// holds it was prepared but never activated.
-const stagedInstallMarker = "staged-install.json"
-
-func stagedNeverActivated(releaseDir string) bool {
-	info, err := os.Lstat(filepath.Join(releaseDir, stagedInstallMarker))
-	return err == nil && info.Mode().IsRegular()
 }
 
 // overlayBase returns the full release a per-unit release was built over

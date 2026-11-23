@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"time"
 
@@ -140,7 +139,7 @@ func baseManifest(root string) (releasebundle.Manifest, error) {
 	}
 	files := built.Files[:0]
 	for _, file := range built.Files {
-		if !slices.Contains(releaseinstall.HostLifecycleSidecars(), file.Path) {
+		if file.Path != releaseinstall.SBOMBaselineName {
 			files = append(files, file)
 		}
 	}
@@ -174,7 +173,7 @@ func linkTree(src, dst string) error {
 		switch {
 		case entry.IsDir():
 			return os.Mkdir(out, info.Mode().Perm())
-		case rel == releasebundle.ManifestName || slices.Contains(releaseinstall.HostLifecycleSidecars(), rel):
+		case rel == releasebundle.ManifestName || rel == releaseinstall.SBOMBaselineName:
 			return nil
 		case !info.Mode().IsRegular():
 			return fmt.Errorf("%s is not a regular file", rel)

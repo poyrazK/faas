@@ -38,24 +38,30 @@ OVH S3 is not a factor: shared-base reads run at 40–70 MB/s.
 **A. Preparation stages the release; activation reuses it.**
 
 - `gregalectl release install --stage-only --tarball-path P` runs the full
-  canonical install up to, not including, the flip: cosign, hash walk,
-  extraction, retained triple, then the on-disk `releaseinstall.Verify`. It
-  then writes `<release>/staged-install.json` last: the sha256 of the
-  tarball, cosign bundle and SBoM, the signed-manifest digest and the cosign
-  identity. It never flips, runs the SBoM gate, prunes or touches the
-  database.
-- An ordinary `release install --tarball-path P` reuses a staged tree only
-  when all of these hold, and otherwise logs why and installs from the
-  tarball as before:
+  canonical install up to, not including, the flip, into a **staging area
+  beside the releases root** (`/opt/faas/staged-releases/<sha>`, same
+  filesystem): cosign, hash walk, extraction, retained triple, on-disk
+  `releaseinstall.Verify`. It then writes `staged-install.json` last: the
+  sha256 of the retained tarball, cosign bundle and SBoM, the signed-manifest
+  digest and the cosign identity. It never touches the releases root, the
+  current release or the database. It skips the active release and any
+  release already in the releases root, and it clears every other entry of
+  the staging area first (aborted rollouts' stages, interrupted stages), so
+  the area holds at most one stage.
+- An ordinary `release install --tarball-path P` moves a staged tree into
+  `<releases-root>/<sha>` with one rename only when all of these hold, and
+  otherwise logs why and installs from the tarball as before:
+  - the release is not already in the releases root;
   - the marker names this git SHA and format;
   - P and its sibling bundle/SBoM hash to the marker's digests, and so do the
-    retained copies in the release directory;
-  - the on-disk manifest's signed digest and identity match the marker;
+    retained copies;
+  - the staged manifest's signed digest and identity match the marker;
+  - every staged binary hashes to the manifest (a damaged stage falls back to
+    the full install, which repairs it, instead of failing every retry);
   - cosign verifies the retained tarball again and reports that identity.
 
-  The caller's on-disk `Verify` (every binary against the manifest), SBoM
-  gate and flip then run unchanged. A full install removes the marker before
-  extracting, so an interrupted extraction is never reused.
+  The marker is dropped after the move, the staged tree is discarded either
+  way, and the caller's on-disk `Verify`, SBoM gate and flip run unchanged.
 - node_join's prepare phase starts the stage in the background (`async`)
   beside the runtime-base pre-stage and waits for it before recording the
   prepared marker. It is best effort: a failure (or an older CLI after a
@@ -83,26 +89,21 @@ OVH S3 is not a factor: shared-base reads run at 40–70 MB/s.
   every binary is still hashed against the manifest before the flip. The
   marker and stamp are root-owned files under root-owned directories; an
   attacker who can rewrite them can already replace the binaries.
-- A release directory now exists before activation. The marker is host
-  lifecycle state like `sbom-baseline.json`: deployment-bundle verification
-  (`releaseinstall`, deploycontroller, deployctl) permits it and overlays
-  never carry it. `release install` removes it right after the flip, so a
-  directory that still holds it was never activated; retention does not let
-  such a directory take a keep-previous slot from a rollback target, keeps it
-  while it is newer than the active release and prunes it after.
+- Stages never sit in the releases root, so release retention, deploycontroller
+  rollback selection and deployment-bundle verification never see a release
+  that was prepared but not activated, and need no change. (A first version
+  staged inside the releases root behind a marker; review showed it leaking
+  into all three.)
 - The stage runs while the node serves tenants, so it runs under
   `systemd-run` with `MemoryMax=2G` and low CPU/IO weight (bhs-2 had 122 of
-  125 GB available); hitting the cap only costs the reuse.
-- A stage only marks a directory it creates (or re-checks its own marker): it
-  skips the active release and any release directory an earlier install left
-  without a marker, so retention can never take the active release or a
-  rollback target for an abandoned stage. Every flip (canonical and legacy
-  path) removes the marker.
-- `release install` takes an exclusive lock (`<releases-root>/.install.lock`)
-  for the tarball half, so a stage left running by a failed prepare play and
-  a rerun or activation never extract into the same directory at once. The
-  wait is bounded (15 min) and the stage unit has `RuntimeMaxSec=840`, so a
-  hung stage cannot hold a drained node's activation indefinitely.
+  125 GB available); hitting a limit only costs the reuse. Disk: at most one
+  staged release (≈2 GB) beside the releases root, and it becomes the
+  installed release by rename.
+- `release install --tarball-path` takes an exclusive lock on the staging
+  area (`staged-releases/.install.lock`), so a stage left running by a failed
+  prepare play and a rerun or activation never work on it at once. The wait
+  is bounded (15 min) and the stage unit has `RuntimeMaxSec=840`, so a hung
+  stage cannot hold a drained node's activation indefinitely.
 - The first release carrying this changes `node_join.yml`, so its activation
   takes the converge path once (stale contract). The install saving applies
   from that release on, because preparation runs the new CLI from the release

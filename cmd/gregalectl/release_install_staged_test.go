@@ -47,209 +47,231 @@ func writeStagedTestTriple(t *testing.T, variant string) string {
 	return path
 }
 
-func stageForTest(t *testing.T, root, tarballPath string) {
+// newReleasesRoot returns <tmp>/releases; its staging area is <tmp>/staged-releases.
+func newReleasesRoot(t *testing.T) string {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "releases")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func runInstall(t *testing.T, root, tarballPath string, stageOnly bool, identity string) (int, string, string, *releaseinstall.FixtureCosignVerifier) {
 	t.Helper()
 	var out, errOut bytes.Buffer
-	verifier := &releaseinstall.FixtureCosignVerifier{Identity: "ci-identity"}
-	if code := installOrReuseStaged(root, stagedTestSHA, tarballPath, true, verifier, &out, &errOut); code != 0 {
-		t.Fatalf("stage-only exit %d: %s", code, errOut.String())
+	verifier := &releaseinstall.FixtureCosignVerifier{Identity: identity}
+	code := installOrReuseStaged(root, stagedTestSHA, tarballPath, stageOnly, verifier, &out, &errOut)
+	return code, out.String(), errOut.String(), verifier
+}
+
+func stageForTest(t *testing.T, root, tarballPath string) {
+	t.Helper()
+	code, out, errOut, _ := runInstall(t, root, tarballPath, true, "ci-identity")
+	if code != 0 {
+		t.Fatalf("stage-only exit %d: %s", code, errOut)
 	}
-	if !strings.Contains(out.String(), `"staged": true`) || !strings.Contains(out.String(), `"reused": false`) {
-		t.Fatalf("stage-only report = %s", out.String())
+	if !strings.Contains(out, `"staged": true`) {
+		t.Fatalf("stage-only report = %s", out)
 	}
 }
 
-func TestStageOnlyExtractsAndRecordsWithoutActivating(t *testing.T) {
-	root := t.TempDir()
-	stageForTest(t, root, writeStagedTestTriple(t, "v1"))
-
-	if _, err := os.Stat(stagedInstallMarkerPath(root, stagedTestSHA)); err != nil {
-		t.Fatalf("marker: %v", err)
-	}
-	if sha, err := releaseinstall.CurrentGitSHA(root); err != nil || sha != "" {
-		t.Fatalf("stage-only flipped current: sha=%q err=%v", sha, err)
-	}
+func assertVerifies(t *testing.T, root string) {
+	t.Helper()
 	m, err := releaseinstall.Read(root, stagedTestSHA)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := releaseinstall.Verify(root, m); err != nil {
-		t.Fatalf("staged tree does not verify: %v", err)
+		t.Fatalf("tree under %s does not verify: %v", root, err)
 	}
 }
 
-func TestActivationReusesTheStagedTree(t *testing.T) {
-	root := t.TempDir()
+func assertAbsent(t *testing.T, path, what string) {
+	t.Helper()
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("%s still exists (%s): %v", what, path, err)
+	}
+}
+
+func TestStageOnlyStagesBesideTheReleasesRoot(t *testing.T) {
+	root := newReleasesRoot(t)
+	stageForTest(t, root, writeStagedTestTriple(t, "v1"))
+
+	staging := stagingRoot(root)
+	if _, err := os.Stat(stagedInstallMarkerPath(staging, stagedTestSHA)); err != nil {
+		t.Fatalf("marker: %v", err)
+	}
+	assertVerifies(t, staging)
+	// The releases root, and so retention, rollback selection and bundle
+	// verification, never see a prepared-but-not-activated release.
+	assertAbsent(t, releaseinstall.BundleRoot(root, stagedTestSHA), "a release directory")
+	if sha, err := releaseinstall.CurrentGitSHA(root); err != nil || sha != "" {
+		t.Fatalf("stage-only flipped current: sha=%q err=%v", sha, err)
+	}
+}
+
+func TestActivationMovesTheStagedTreeIntoPlace(t *testing.T) {
+	root := newReleasesRoot(t)
 	tarballPath := writeStagedTestTriple(t, "v1")
 	stageForTest(t, root, tarballPath)
-
-	probe := filepath.Join(releaseinstall.BinDir(root, stagedTestSHA), manifest.SortedHostKeys()[0])
-	before, err := os.Stat(probe)
+	staged := filepath.Join(releaseinstall.BinDir(stagingRoot(root), stagedTestSHA), manifest.SortedHostKeys()[0])
+	before, err := os.Stat(staged)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	var out, errOut bytes.Buffer
-	verifier := &releaseinstall.FixtureCosignVerifier{Identity: "ci-identity"}
-	if code := installOrReuseStaged(root, stagedTestSHA, tarballPath, false, verifier, &out, &errOut); code != -1 {
-		t.Fatalf("exit %d, want -1 (continue to the flip): %s", code, errOut.String())
+	code, _, errOut, verifier := runInstall(t, root, tarballPath, false, "ci-identity")
+	if code != -1 {
+		t.Fatalf("exit %d, want -1 (continue to the flip): %s", code, errOut)
 	}
-	if !strings.Contains(errOut.String(), "reusing the release verified and extracted during preparation") {
-		t.Fatalf("stderr = %q, want the reuse line", errOut.String())
+	if !strings.Contains(errOut, "reusing the release verified and extracted during preparation") {
+		t.Fatalf("stderr = %q, want the reuse line", errOut)
 	}
-	// Cosign still runs at activation, on the retained bytes.
-	if verifier.CallCount != 1 || verifier.CallTarball != filepath.Join(releaseinstall.BundleRoot(root, stagedTestSHA), releaseTarballName) {
-		t.Fatalf("cosign calls = %d on %q", verifier.CallCount, verifier.CallTarball)
+	if verifier.CallCount != 1 {
+		t.Fatalf("cosign calls = %d, want 1 at activation", verifier.CallCount)
 	}
-	after, err := os.Stat(probe)
+	installed := filepath.Join(releaseinstall.BinDir(root, stagedTestSHA), manifest.SortedHostKeys()[0])
+	after, err := os.Stat(installed)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !os.SameFile(before, after) {
-		t.Fatal("activation re-extracted a binary the stage already wrote")
+		t.Fatal("activation re-extracted instead of moving the staged tree")
 	}
+	assertVerifies(t, root)
+	assertAbsent(t, stagedInstallMarkerPath(root, stagedTestSHA), "the marker in the installed release")
+	assertAbsent(t, releaseinstall.BundleRoot(stagingRoot(root), stagedTestSHA), "the staged tree")
 }
 
 func TestStagedTreeIsRefusedAndReinstalled(t *testing.T) {
-	cases := map[string]func(t *testing.T, root, tarballPath string) (string, releaseinstall.CosignVerifier){
-		"different release bytes": func(t *testing.T, _, _ string) (string, releaseinstall.CosignVerifier) {
-			return writeStagedTestTriple(t, "v2"), &releaseinstall.FixtureCosignVerifier{Identity: "ci-identity"}
+	staged := func(root string) string { return releaseinstall.BundleRoot(stagingRoot(root), stagedTestSHA) }
+	cases := map[string]func(t *testing.T, root, tarballPath string) (string, string){
+		"different release bytes": func(t *testing.T, _, _ string) (string, string) {
+			return writeStagedTestTriple(t, "v2"), "ci-identity"
 		},
-		"retained tarball changed": func(t *testing.T, root, tarballPath string) (string, releaseinstall.CosignVerifier) {
-			retained := filepath.Join(releaseinstall.BundleRoot(root, stagedTestSHA), releaseTarballName)
-			if err := os.WriteFile(retained, []byte("swapped"), 0o644); err != nil {
+		"retained tarball changed": func(t *testing.T, root, tarballPath string) (string, string) {
+			if err := os.WriteFile(filepath.Join(staged(root), releaseTarballName), []byte("swapped"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			return tarballPath, &releaseinstall.FixtureCosignVerifier{Identity: "ci-identity"}
+			return tarballPath, "ci-identity"
 		},
-		"manifest edited": func(t *testing.T, root, tarballPath string) (string, releaseinstall.CosignVerifier) {
-			m, err := releaseinstall.Read(root, stagedTestSHA)
+		"manifest edited": func(t *testing.T, root, tarballPath string) (string, string) {
+			m, err := releaseinstall.Read(stagingRoot(root), stagedTestSHA)
 			if err != nil {
 				t.Fatal(err)
 			}
 			m.ManifestHash = "sha256:" + strings.Repeat("b", 64)
-			if err := releaseinstall.Write(root, m); err != nil {
+			if err := releaseinstall.Write(stagingRoot(root), m); err != nil {
 				t.Fatal(err)
 			}
-			return tarballPath, &releaseinstall.FixtureCosignVerifier{Identity: "ci-identity"}
+			return tarballPath, "ci-identity"
 		},
-		"other signer": func(_ *testing.T, _, tarballPath string) (string, releaseinstall.CosignVerifier) {
-			return tarballPath, &releaseinstall.FixtureCosignVerifier{Identity: "someone-else"}
+		// Review round 3: a damaged binary must fall back to the full
+		// install, which repairs the tree, instead of failing every retry.
+		"staged binary damaged": func(t *testing.T, root, tarballPath string) (string, string) {
+			bin := filepath.Join(releaseinstall.BinDir(stagingRoot(root), stagedTestSHA), manifest.SortedHostKeys()[0])
+			if err := os.WriteFile(bin, []byte("truncated"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			return tarballPath, "ci-identity"
 		},
-		"marker for another release": func(t *testing.T, root, tarballPath string) (string, releaseinstall.CosignVerifier) {
-			path := stagedInstallMarkerPath(root, stagedTestSHA)
-			body, err := os.ReadFile(path)
-			if err != nil {
+		"other signer": func(_ *testing.T, _, tarballPath string) (string, string) {
+			return tarballPath, "someone-else"
+		},
+		"stage never finished": func(t *testing.T, root, tarballPath string) (string, string) {
+			if err := os.Remove(stagedInstallMarkerPath(stagingRoot(root), stagedTestSHA)); err != nil {
 				t.Fatal(err)
 			}
-			body = bytes.Replace(body, []byte(stagedTestSHA), []byte(strings.Repeat("f", 40)), 1)
-			if err := os.WriteFile(path, body, 0o644); err != nil {
-				t.Fatal(err)
-			}
-			return tarballPath, &releaseinstall.FixtureCosignVerifier{Identity: "ci-identity"}
+			return tarballPath, "ci-identity"
 		},
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
-			root := t.TempDir()
-			staged := writeStagedTestTriple(t, "v1")
-			stageForTest(t, root, staged)
-			tarballPath, verifier := mutate(t, root, staged)
+			root := newReleasesRoot(t)
+			stagedFrom := writeStagedTestTriple(t, "v1")
+			stageForTest(t, root, stagedFrom)
+			tarballPath, identity := mutate(t, root, stagedFrom)
 
-			var out, errOut bytes.Buffer
-			code := installOrReuseStaged(root, stagedTestSHA, tarballPath, false, verifier, &out, &errOut)
-			if strings.Contains(errOut.String(), "reusing the release") {
-				t.Fatalf("reused a staged tree after %s: %s", name, errOut.String())
+			code, _, errOut, _ := runInstall(t, root, tarballPath, false, identity)
+			if strings.Contains(errOut, "reusing the release") {
+				t.Fatalf("reused a staged tree after %s: %s", name, errOut)
 			}
-			if !strings.Contains(errOut.String(), "not reusing the staged release") {
-				t.Fatalf("stderr = %q, want the refusal reason", errOut.String())
+			if !strings.Contains(errOut, "not reusing the staged release") {
+				t.Fatalf("stderr = %q, want the refusal reason", errOut)
 			}
+			assertAbsent(t, staged(root), "the staged tree")
 			if name == "other signer" {
-				// The full install stamps whatever identity cosign reports;
-				// the refusal is what matters here.
-				return
+				return // the full install stamps whatever cosign reports
 			}
 			if code != -1 {
-				t.Fatalf("full install exit %d: %s", code, errOut.String())
+				t.Fatalf("full install exit %d: %s", code, errOut)
 			}
-			if _, err := os.Stat(stagedInstallMarkerPath(root, stagedTestSHA)); !errors.Is(err, os.ErrNotExist) {
-				t.Fatalf("full install left the stage marker: %v", err)
-			}
-			m, err := releaseinstall.Read(root, stagedTestSHA)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := releaseinstall.Verify(root, m); err != nil {
-				t.Fatalf("reinstalled tree does not verify: %v", err)
-			}
+			assertVerifies(t, root)
 		})
 	}
 }
 
-// A binary swapped after preparation passes the marker checks by design: the
-// on-disk Verify that cmdReleaseInstall runs before the flip catches it.
-func TestTamperedStagedBinaryFailsTheOnDiskVerify(t *testing.T) {
-	root := t.TempDir()
-	tarballPath := writeStagedTestTriple(t, "v1")
-	stageForTest(t, root, tarballPath)
-	bin := filepath.Join(releaseinstall.BinDir(root, stagedTestSHA), manifest.SortedHostKeys()[0])
-	if err := os.WriteFile(bin, []byte("swapped"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	var out, errOut bytes.Buffer
-	verifier := &releaseinstall.FixtureCosignVerifier{Identity: "ci-identity"}
-	if code := installOrReuseStaged(root, stagedTestSHA, tarballPath, false, verifier, &out, &errOut); code != -1 {
-		t.Fatalf("exit %d: %s", code, errOut.String())
-	}
-	m, err := releaseinstall.Read(root, stagedTestSHA)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := releaseinstall.Verify(root, m); err == nil {
-		t.Fatal("on-disk Verify accepted a swapped staged binary")
-	}
-}
-
-// Review round 2: a stage marks only directories it creates, so retention can
-// never mistake the active release or a rollback target for an abandoned stage.
-func TestStageOnlyLeavesInstalledReleasesUnmarked(t *testing.T) {
+// Review round 2: a stage never works on a release that is installed.
+func TestStageOnlyLeavesInstalledReleasesAlone(t *testing.T) {
 	t.Run("active release", func(t *testing.T) {
-		root := t.TempDir()
+		root := newReleasesRoot(t)
 		tarballPath := writeStagedTestTriple(t, "v1")
-		stageForTest(t, root, tarballPath)
-		if err := releaseinstall.AtomicFlip(root, stagedTestSHA); err != nil {
-			t.Fatal(err)
+		if code, _, errOut, _ := runInstall(t, root, tarballPath, false, "ci-identity"); code != -1 {
+			t.Fatalf("install exit %d: %s", code, errOut)
 		}
-		if err := removeStagedInstallMarker(root, stagedTestSHA); err != nil { // as activation does
+		if err := releaseinstall.AtomicFlip(root, stagedTestSHA); err != nil {
 			t.Fatal(err)
 		}
 		assertStageSkipped(t, root, tarballPath, "active release")
 	})
-	t.Run("earlier install without a marker", func(t *testing.T) {
-		root := t.TempDir()
+	t.Run("already installed", func(t *testing.T) {
+		root := newReleasesRoot(t)
 		if err := os.MkdirAll(releaseinstall.BundleRoot(root, stagedTestSHA), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		assertStageSkipped(t, root, writeStagedTestTriple(t, "v1"), "earlier install")
+		assertStageSkipped(t, root, writeStagedTestTriple(t, "v1"), "already installed")
 	})
 }
 
 func assertStageSkipped(t *testing.T, root, tarballPath, want string) {
 	t.Helper()
-	var out, errOut bytes.Buffer
-	verifier := &releaseinstall.FixtureCosignVerifier{Identity: "ci-identity"}
-	if code := installOrReuseStaged(root, stagedTestSHA, tarballPath, true, verifier, &out, &errOut); code != 0 {
-		t.Fatalf("exit %d: %s", code, errOut.String())
+	code, out, errOut, verifier := runInstall(t, root, tarballPath, true, "ci-identity")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut)
 	}
-	if !strings.Contains(out.String(), `"staged": false`) || !strings.Contains(out.String(), want) {
-		t.Fatalf("report = %s, want a skip naming %q", out.String(), want)
+	if !strings.Contains(out, `"staged": false`) || !strings.Contains(out, want) {
+		t.Fatalf("report = %s, want a skip naming %q", out, want)
 	}
 	if verifier.CallCount != 0 {
 		t.Fatalf("cosign ran %d times for a skipped stage", verifier.CallCount)
 	}
-	if _, err := os.Stat(stagedInstallMarkerPath(root, stagedTestSHA)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("a skipped stage left a marker: %v", err)
+	assertAbsent(t, releaseinstall.BundleRoot(stagingRoot(root), stagedTestSHA), "a staged tree")
+}
+
+// Review round 3: the staging area holds at most the stage being prepared;
+// aborted rollouts' stages and interrupted stages do not pile up.
+func TestStageOnlyClearsStaleAndPartialStages(t *testing.T) {
+	root := newReleasesRoot(t)
+	staging := stagingRoot(root)
+	other := filepath.Join(staging, strings.Repeat("f", 40))
+	if err := os.MkdirAll(filepath.Join(other, "bin"), 0o755); err != nil {
+		t.Fatal(err)
 	}
+	// An interrupted stage of this release: a tree without a marker.
+	partial := releaseinstall.BinDir(staging, stagedTestSHA)
+	if err := os.MkdirAll(partial, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(partial, "half-written"), []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	stageForTest(t, root, writeStagedTestTriple(t, "v1"))
+
+	assertAbsent(t, other, "an aborted rollout's stage")
+	assertAbsent(t, filepath.Join(partial, "half-written"), "the interrupted stage's debris")
+	assertVerifies(t, staging)
 }
 
 func TestStageOnlyRequiresTarballPath(t *testing.T) {

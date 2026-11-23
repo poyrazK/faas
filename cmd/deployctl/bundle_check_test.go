@@ -31,14 +31,6 @@ func TestRunBundleCheckAcceptsInstalledSBOMBaselineOnly(t *testing.T) {
 	if err := runInstalledBundleCheck([]string{root}); err != nil {
 		t.Fatalf("installed release check rejected KGV baseline: %v", err)
 	}
-	// ADR-20261123150000: preparation's staged-install marker is the other
-	// host lifecycle sidecar.
-	if err := os.WriteFile(filepath.Join(root, releaseinstall.StagedInstallMarkerName), []byte(`{"format":1}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := runInstalledBundleCheck([]string{root}); err != nil {
-		t.Fatalf("installed release check rejected the staged-install marker: %v", err)
-	}
 
 	if err := os.WriteFile(filepath.Join(root, "unexpected"), []byte("drift"), 0o644); err != nil {
 		t.Fatal(err)

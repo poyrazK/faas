@@ -111,18 +111,6 @@ type SBOMBaseline struct {
 // deployment manifest and validated through ReadBaseline instead.
 const SBOMBaselineName = "sbom-baseline.json"
 
-// StagedInstallMarkerName is the root-level sidecar `gregalectl release
-// install --stage-only` writes after preparing a release (ADR-20261123150000).
-// Like the SBoM baseline it is host lifecycle state, not release content:
-// deployment-bundle verification permits it and overlays never carry it.
-const StagedInstallMarkerName = "staged-install.json"
-
-// HostLifecycleSidecars are the root-level files a host writes into an
-// otherwise immutable release directory after assembly.
-func HostLifecycleSidecars() []string {
-	return []string{SBOMBaselineName, StagedInstallMarkerName}
-}
-
 // CVERegression is one CRITICAL/HIGH bucket that grew between
 // the prior baseline and the new SBoM. Operator-facing error
 // messages sort by severity so the worst regression is at the

@@ -359,7 +359,7 @@ func cmdReleaseInstall(args []string) int {
 	tarballPath := fs.String("tarball-path", "", "ADR-113 canonical path: load release.tar.gz from PATH and run cosign verify-blob + SBoM CVE-baseline diff before install. Empty = use the legacy or bin-dir path.")
 	// ADR-20261123150000: rollout preparation verifies and extracts the
 	// release while the node still serves; activation reuses the tree.
-	stageOnly := fs.Bool("stage-only", false, "with --tarball-path: verify and extract the release into <releases-root>/<git-sha> and record it for reuse; never flip, gate, prune, or touch the database (ADR-20261123150000)")
+	stageOnly := fs.Bool("stage-only", false, "with --tarball-path: verify and extract the release into the staging area beside <releases-root> (staged-releases/<git-sha>) for activation to move into place; never touches <releases-root>, the current release or the database (ADR-20261123150000)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -419,11 +419,6 @@ func cmdReleaseInstall(args []string) int {
 		}
 		if err := releaseinstall.AtomicFlip(*releasesRoot, *gitSHA); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "gregalectl release install: legacy flip symlink: %v\n", err)
-			return 3
-		}
-		// ADR-20261123150000: an activated release is never "staged".
-		if err := removeStagedInstallMarker(*releasesRoot, *gitSHA); err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "gregalectl release install: %v\n", err)
 			return 3
 		}
 		// role-flag handling on the legacy path is out of scope
@@ -543,13 +538,6 @@ func cmdReleaseInstall(args []string) int {
 	}
 	if err := releaseinstall.AtomicFlip(*releasesRoot, *gitSHA); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "gregalectl release install: flip symlink: %v\n", err)
-		return 3
-	}
-	// ADR-20261123150000: an activated release is no longer "staged"; the
-	// marker's absence is what lets retention tell a rollback target from a
-	// preparation that was never activated.
-	if err := removeStagedInstallMarker(*releasesRoot, *gitSHA); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "gregalectl release install: %v\n", err)
 		return 3
 	}
 	// Open the DB pool BEFORE the role branch so PR-B's drain gate
