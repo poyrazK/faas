@@ -455,10 +455,6 @@ func hostNames(m *manifest.Manifest) string {
 	return strings.Join(out, ", ")
 }
 
-// daemonConfigFor returns the manifest's DaemonConfig for the given
-// daemon name. The manifest's Daemons struct uses underscored names
-// for gatewayd_internal and gatewayd_public; the registry uses
-// dashed names. The lookup bridges the two.
 // vmmdHostBridgeCIDR is the manifest's tenant bridge override, or "" for the
 // default bridge.
 func vmmdHostBridgeCIDR(m *manifest.Manifest) string {
@@ -468,6 +464,10 @@ func vmmdHostBridgeCIDR(m *manifest.Manifest) string {
 	return m.Daemons.Vmmd.ComputeNode.HostBridgeCIDR
 }
 
+// daemonConfigFor returns the manifest's DaemonConfig for the given
+// daemon name. The manifest's Daemons struct uses underscored names
+// for gatewayd_internal and gatewayd_public; the registry uses
+// dashed names. The lookup bridges the two.
 func daemonConfigFor(m *manifest.Manifest, registryName string) *manifest.DaemonConfig {
 	switch registryName {
 	case "vmmd":

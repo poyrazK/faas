@@ -275,8 +275,11 @@ var HostKeys = map[string]HostBlock{
 			"service_proxy_tls_cert_path",
 			"service_proxy_tls_key_path",
 			"service_proxy_tls_ca_path",
-			// ADR-576 private TCP service addresses, from the
-			// manifest's service_tcp stages on compute-only hosts.
+			// Tenant-bridge listeners on compute-only hosts: the
+			// guest service proxy (ADR-169) and the ADR-576 private
+			// TCP service addresses from the manifest's service_tcp
+			// stages. Both bind the bridge's first address.
+			"service_proxy_listen",
 			"service_tcp_listen",
 			"service_tcp_dns",
 		},

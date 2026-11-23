@@ -115,7 +115,7 @@ func renderTOML(ctx tomlRenderCtx) ([]byte, map[string]string, error) {
 		return nil, nil, err
 	}
 	if hostKey == "gatewayd_internal" {
-		if err := emitServiceTCPKeys(ctx, flat); err != nil {
+		if err := emitGuestServiceKeys(ctx, flat); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -143,15 +143,21 @@ func renderTOML(ctx tomlRenderCtx) ([]byte, map[string]string, error) {
 	return body, flat, nil
 }
 
-// emitServiceTCPKeys renders gatewayd-internal's private TCP service
-// listener (ADR-576) from the manifest's service_tcp stages. Every release
-// rollout re-renders this file, so a key the renderer leaves out is dropped
-// from production: the listener and its DNS answers vanished on each rollout
-// although the manifest enabled them (prod 2026-11-23, managed Redis caches
-// unreachable). Only compute-only hosts run tenant guests.
-func emitServiceTCPKeys(ctx tomlRenderCtx, flat map[string]string) error {
-	s := ctx.ServiceTCP
-	if s == nil || !s.Node || !s.Listener || ctx.HostRole != "compute-only" {
+// guestServiceProxyPort is the tenant-bridge guest service proxy port
+// (ADR-169), the port node_join's default service_proxy_listen uses.
+const guestServiceProxyPort = 10080
+
+// emitGuestServiceKeys renders gatewayd-internal's tenant-bridge listeners
+// on a compute-only host: the guest service proxy and, when the manifest's
+// service_tcp stages turn it on, the private TCP service listener (ADR-576).
+// Both bind the bridge's first address, which gatewayd requires of them
+// (validateServiceTCPListen), so the rendered file boots on its own. Every
+// release rollout re-renders this file, so a key the renderer leaves out is
+// dropped from production: the TCP listener and its DNS answers vanished on
+// each rollout although the manifest enabled them (prod 2026-11-23, managed
+// Redis caches unreachable).
+func emitGuestServiceKeys(ctx tomlRenderCtx, flat map[string]string) error {
+	if ctx.HostRole != "compute-only" {
 		return nil
 	}
 	bridge := api.DefaultHostBridgeCIDR()
@@ -162,8 +168,12 @@ func emitServiceTCPKeys(ctx tomlRenderCtx, flat map[string]string) error {
 		}
 		bridge = parsed
 	}
-	flat["service_tcp_listen"] = netip.AddrPortFrom(bridge.Masked().Addr().Next(), api.ServiceTCPProxyPort).String()
-	flat["service_tcp_dns"] = strconv.FormatBool(s.DNS)
+	ip := bridge.Masked().Addr().Next()
+	flat["service_proxy_listen"] = netip.AddrPortFrom(ip, guestServiceProxyPort).String()
+	if s := ctx.ServiceTCP; s != nil && s.Node && s.Listener {
+		flat["service_tcp_listen"] = netip.AddrPortFrom(ip, api.ServiceTCPProxyPort).String()
+		flat["service_tcp_dns"] = strconv.FormatBool(s.DNS)
+	}
 	return nil
 }
 
