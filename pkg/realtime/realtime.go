@@ -159,12 +159,16 @@ type Event struct {
 	Sequence              uint64    `json:"sequence"`
 	Binary                bool      `json:"binary"`
 	Data                  []byte    `json:"data,omitempty"`
-	CloseCode             int       `json:"close_code,omitempty"`
-	CloseReason           string    `json:"close_reason,omitempty"`
-	At                    time.Time `json:"at"`
-	CallbackURL           string    `json:"-"`
-	CallbackPath          string    `json:"callback_path,omitempty"`
-	CallbackAuthToken     string    `json:"-"`
+	// Text repeats a text frame's data as a string for callbacks. Data is
+	// always base64 (a JSON []byte), which apps decoding binary:false
+	// messages as plain strings misread.
+	Text              string    `json:"text,omitempty"`
+	CloseCode         int       `json:"close_code,omitempty"`
+	CloseReason       string    `json:"close_reason,omitempty"`
+	At                time.Time `json:"at"`
+	CallbackURL       string    `json:"-"`
+	CallbackPath      string    `json:"callback_path,omitempty"`
+	CallbackAuthToken string    `json:"-"`
 }
 
 // Endpoint describes one managed realtime ingress. The endpoint ID is an

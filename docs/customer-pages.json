@@ -126,7 +126,7 @@
     {"path": "preview-environments", "source": "docs/preview-environments.md", "required_text": ["pr-{N}-{slug}"]},
     {"path": "profiling", "source": "docs/profiling.md", "unpublished": "internal capability; not a customer feature"},
     {"path": "queue-pull-leases", "source": "docs/queue-pull-leases.md"},
-    {"path": "realtime", "source": "docs/realtime.md", "unpublished": "preview capability; published when it reaches beta"},
+    {"path": "realtime", "source": "docs/realtime.md"},
     {"path": "registry-credentials", "source": "docs/registry-credentials.md"},
     {"path": "responsible-disclosure", "source": "docs/compliance/responsible-disclosure.md"},
     {"path": "quickstart", "source": "docs/quickstart.md"},

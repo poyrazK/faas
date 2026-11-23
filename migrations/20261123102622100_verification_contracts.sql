@@ -1,4 +1,4 @@
--- filename: 20261122195522325_verification_contracts.sql
+-- filename: 20261123102622100_verification_contracts.sql
 -- migration-compat: expand
 -- ADR-20261122220000: verification contracts. app_verification_contracts
 -- holds each app's gregale.verify.yaml in its validated JSON form; imaged
