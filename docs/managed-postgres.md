@@ -647,10 +647,14 @@ credential may pick them up.
 Runtime logins cannot create tables, temporary objects, schemas, or roles,
 truncate tables, or bypass row-level security. Runtime grants cover existing
 public tables/sequences and future objects created by the schema owner.
-Custom schemas and function execution require explicit migration-owner grants.
+`read_write` and `session` logins, and custom roles, can also run the
+functions and procedures the schema owner has in `public`, now and later
+(ADR-20261123112326), so an app can call the functions its migrations made.
+Read-only, Data API and Auth logins cannot: new owner functions do not receive
+PUBLIC execution privileges. Custom schemas, and functions for those other
+logins, require explicit migration-owner grants.
 Existing PUBLIC-executable SECURITY DEFINER functions block credential issuance;
-review their execution grants before adoption. New owner functions do not
-receive PUBLIC execution privileges by default.
+review their execution grants before adoption.
 
 Reader issuance and cutover verification reject observed write grants through
 columns, PUBLIC, other customer schemas, sequences, SECURITY DEFINER functions,
