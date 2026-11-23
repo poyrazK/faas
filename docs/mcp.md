@@ -7574,6 +7574,12 @@ ADR-20261118140000.
   mode on or off. The plan is pinned to the current rules: apply fails with
   `plan_stale` if they changed. On a production app the apply asks a person
   first.
+- Verification contracts (toolset `release`, ADR-20261122220000):
+  `gregale_validate_verification_contract` checks a `gregale.verify.yaml`
+  offline; `gregale_get_verification_contract` reads the app's stored contract;
+  `gregale_plan_verification_contract_change` reviews `set` or `delete`, pinned
+  to the stored revision. Once set, a new deployment whose required check fails
+  is not promoted.
 - Previews (toolset `release`): `gregale_list_previews`, `gregale_get_preview`
   and `gregale_plan_preview_change` (`create` for a pull request, or
   `destroy`, which asks a person first). Previews are reached only through

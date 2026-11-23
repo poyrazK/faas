@@ -36,7 +36,7 @@ type operationPlan struct {
 	ResourceHash      string                  `json:"resource_hash,omitempty"`
 }
 
-var operationKinds = map[string]bool{"restart": true, "scale": true, "env": true, "config_rollback": true, "config_rollback_guarded": true, "cron_update": true, "cron_delete": true, "domain_delete": true, "run_command": true, "dlq_replay": true, "workflow_recovery": true, "monitoring_change": true, "edge_change": true, "preview_change": true, "event_change": true, "consumer_change": true, "workflow_publish": true}
+var operationKinds = map[string]bool{"restart": true, "scale": true, "env": true, "config_rollback": true, "config_rollback_guarded": true, "cron_update": true, "cron_delete": true, "domain_delete": true, "run_command": true, "dlq_replay": true, "workflow_recovery": true, "monitoring_change": true, "edge_change": true, "preview_change": true, "event_change": true, "consumer_change": true, "workflow_publish": true, "verify_contract_change": true}
 
 type operationArgs struct {
 	App         string `json:"app" jsonschema:"Existing app slug"`
@@ -398,6 +398,8 @@ func (m *management) runOperation(ctx context.Context, p *releasePlan, retry boo
 		return m.runCommand(ctx, p)
 	case "edge_change":
 		return m.runEdgeChange(ctx, p, retry)
+	case "verify_contract_change":
+		return m.runVerifyContractChange(ctx, p)
 	case "preview_change":
 		return m.runPreviewChange(ctx, p, retry)
 	case "event_change":

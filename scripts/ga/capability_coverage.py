@@ -296,6 +296,7 @@ RULES = [
     (r"route-lifecycle|route-removal|deprecat|sunset", "Route lifecycle review"),
     (r"route-advisor|routeadvisor|advise", "Route advisor"),
     (r"route-health", "Critical route health"),
+    (r"verification-contract|verification_contract", "Verification contracts"),
     (r"route-monitor|route-budget|routemonitor|production-route", "Production route budgets"),
     (r"route-requirement|route-polic|saved-route|requirements", "Route requirements"),
     (r"openapi|api-contract|contract-diff|apihostingcontract|deploydiff-openapi", "OpenAPI:"),

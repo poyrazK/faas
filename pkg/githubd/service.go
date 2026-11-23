@@ -884,6 +884,28 @@ func (s *Service) handleAccountPush(ctx context.Context, body []byte) (reconcile
 			}
 			continue
 		}
+		// ADR-20261122220000 amendment 1: the app's gregale.verify.yaml gates
+		// this deployment, so it is stored before the build is enqueued. An
+		// invalid file stops this app's deploy, as it stops `gregale deploy`.
+		// The contract is app-wide, so only a push that deploys production
+		// changes it: a staging branch must not replace production's checks.
+		if state.IsProductionScope(appScope) {
+			changed, contractErr := s.applyPushVerificationContract(ctx, tree.FS(), app)
+			if contractErr != nil {
+				s.Log.Warn("githubd: apply verification contract", "app_id", app.ID, "err", contractErr, "repo", ev.Repository.FullName, "sha", ev.After)
+				if s.WriteAppCheck != nil || s.WriteScopedAppCheck != nil {
+					_ = s.writeAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
+						app.Slug, appScope, githubdgrpc.CheckPhaseFailed, fmt.Sprintf("Not deployed (scope: %s): %s", appScope, contractErr.Error()))
+				}
+				if deliveryID != "" && !errors.Is(contractErr, errPushContractInvalid) {
+					deliveryErrors = append(deliveryErrors, fmt.Errorf("verification contract for app %s: %w", app.ID, contractErr))
+				}
+				continue
+			}
+			if changed {
+				s.Log.Info("githubd: push updated verification contract", "app_id", app.ID, "sha", ev.After)
+			}
+		}
 		build, err := enqueuer.Enqueue(ctx, BuildSpec{
 			App:                  app,
 			DeliveryID:           deliveryID,
@@ -2407,6 +2429,14 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 				project, ev.PullRequest.HeadSHA, ev.PullRequest.HeadRef)
 			if stageErr != nil {
 				return result, fmt.Errorf("githubd: stage preview source for %q: %w", preview.WorkloadName, stageErr)
+			}
+			// ADR-20261122220000 amendment 1: a PR preview app is verified
+			// against the PR's own gregale.verify.yaml.
+			if _, contractErr := s.applyPushVerificationContract(ctx, tree.FS(), preview); contractErr != nil {
+				if errors.Is(contractErr, errPushContractInvalid) {
+					return result, previewSetupFailure("%s could not be deployed: %s", preview.WorkloadName, contractErr.Error())
+				}
+				return result, fmt.Errorf("githubd: preview verification contract for %q: %w", preview.WorkloadName, contractErr)
 			}
 			build, enqueueErr := s.Enqueuer.Enqueue(ctx, BuildSpec{
 				App:          preview,
