@@ -55,7 +55,7 @@ Enterprise feature.
 
 ### Deploy and startup
 
-The build or the app's first start failed. `gregale logs APP` has the full output; [Troubleshooting](troubleshooting.md) walks through each symptom.
+The build or the app's start failed. `app_runtime_oom` can also appear for a release that is already serving, when an instance is killed and replaced. `gregale logs APP` has the full output; [Troubleshooting](troubleshooting.md) walks through each symptom.
 
 | Code family | Meaning | Next step |
 |---|---|---|
@@ -69,7 +69,7 @@ The build or the app's first start failed. `gregale logs APP` has the full outpu
 
 ### Requests, limits and quotas
 
-The request was refused before or while it ran. Nothing was written unless the row says otherwise.
+The request was refused before or while it ran. A refused request wrote nothing; after `request_budget_exceeded` the app may already have done part of the work.
 
 | Code family | Meaning | Next step |
 |---|---|---|
@@ -87,7 +87,7 @@ The request was refused before or while it ran. Nothing was written unless the r
 
 ### Reaching your app
 
-Gregale could not get a response from the app or a platform service. These are all 503s.
+Gregale could not get a response from the app or a platform service, so it answered 503. `transport_error` is different: the CLI raises it itself when it cannot reach Gregale's API.
 
 | Code family | Meaning | Next step |
 |---|---|---|

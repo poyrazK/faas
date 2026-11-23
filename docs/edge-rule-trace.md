@@ -14,6 +14,11 @@ environment's effective declared-route policy and environment-owned
 headers/CORS replacement; other edge-rule kinds remain application-owned.
 Without the selector, the trace uses the app's current policy as before.
 
+Environment-owned routes replace the app route contract, including an explicit
+empty allowlist; environment-owned headers and CORS edge-rule rows replace only
+their app-wide kinds while all other app rules remain in effect. The separate
+per-app default CORS setting remains app-owned.
+
 ## Scenario files
 
 ```sh
@@ -94,10 +99,7 @@ the JSON from stdin. `--config` cannot be combined with individual request
 flags; edit the scenario file when changing a request. The file is read locally
 and is not uploaded. Gregale fetches the app's current rules, evaluates them
 locally, withholds request-body contents, and redacts credential-like header
-values from trace output. Environment-owned routes replace the app route
-contract, including an explicit empty allowlist; environment-owned headers and
-CORS edge-rule rows replace only their app-wide kinds while all other app rules
-remain in effect. The separate per-app default CORS setting remains app-owned.
+values from trace output.
 
 ## What each rule kind reports
 

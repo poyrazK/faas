@@ -79,7 +79,7 @@ build inputs out of the final stage.
 | `app_not_listening` | Nothing answered on `$PORT`, or the app listens on another port. The message names both ports | Listen on the port in `$PORT`, or set `hosting.port` in `gregale.yaml` to the port the app uses. |
 | `app_loopback_bound` | The app listens on `127.0.0.1` or `localhost`, which Gregale cannot reach | Listen on `0.0.0.0`. Development servers often default to localhost; use the production start command. |
 | `app_startup_crash` | The process exited before it was ready. The message ends with its last output lines | Fix the error in those lines. `gregale logs my-api --latest-failure` has the full output. |
-| `app_runtime_oom` | The app used more memory than its limit while starting. The message carries the peak | Raise the memory to at least the peak plus 8 MB with `gregale app my-api --ram 512`, or lower the app's memory use. |
+| `app_runtime_oom` | The app used more memory than its limit while starting. The message carries the peak | Raise the memory to at least the peak plus 8 MB with `gregale app my-api --ram <MB>`, or lower the app's memory use. Your plan sets the maximum per app ([plans](plans.md)). |
 | `app_startup_timeout` | The app did not become ready in time | Start the server before slow work such as cache warm-up or migrations. Run `gregale deploy check`. |
 | `app_healthz_unauthorized` | The health path answered 401 | Make the health path answer without credentials, or set `hosting.health` to a path that does. |
 
@@ -110,13 +110,13 @@ those response bodies with its own page. Find the cause in
 failure, return 503 with your own error body instead. See
 [Errors](errors.md#502-503-and-504-responses).
 
-### 403 or 429
+### 402, 403 or 429
 
 | Code | Meaning | What to do |
 |---|---|---|
 | `ip_denied`, `geo_denied`, `waf_blocked` | An edge rule on the app refused the request | List the rules with `gregale edge rule list --app my-api`. See [Edge rules](edge-rules.md). |
 | `api_rate_limited` | The account sent more API requests this minute than its plan allows | Wait for `Retry-After` and spread requests out. |
-| `plan_*` | The plan does not include the feature or quota | Check [Plans and pricing](plans.md). |
+| `plan_*` (often 402) | The plan does not include the feature or quota | Check [Plans and pricing](plans.md). |
 
 ## The first request is slow
 
@@ -124,9 +124,9 @@ An app with no traffic scales to zero, and the next request wakes it. The
 first request pays the wake time; the ones after it run at normal speed. See
 [How scaling to zero works](cold-wake.md).
 
-- **Keep it awake for longer.** `gregale app my-api --idle 300` parks the app
-  after 5 minutes without requests. You can set up to twice your plan's
-  default.
+- **Keep it awake for longer.** `gregale app my-api --idle 120` parks the app
+  after 2 minutes without requests. The most you can set is twice your plan's
+  default: 2 minutes on Free and Hobby, 10 on Pro and 20 on Scale.
 - **Keep instances always running** (Pro and Scale): `gregale app my-api --min 1`.
   A warm instance is billed as always running.
 - **Make the wake itself faster.** Do slow setup once at startup rather than
