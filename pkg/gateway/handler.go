@@ -6340,8 +6340,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// the recorders below still see the HTTP status (grpc_platform_error.go).
 	w, finishGRPC := wrapGRPCPlatformErrors(w, r)
 	defer finishGRPC()
-	r = r.WithContext(withResponseCacheFill(r.Context(), h.responseCache))
-	r = r.WithContext(withCapacityRefusalMark(r.Context()))
+	// One request copy per group of context values below: each WithContext
+	// copies the whole *http.Request, and nothing reads r between them.
+	r = r.WithContext(withCapacityRefusalMark(withResponseCacheFill(r.Context(), h.responseCache)))
 	// These forwarding controls are authored below from the pinned app and
 	// streaming decision. A public header cannot turn ordinary HTTP into a
 	// detachable response and escape its deadline.
@@ -6403,12 +6404,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			(code >= http.StatusOK && code < http.StatusBadRequest && isLongLivedForward(r))
 	}
 	defer rec.stopTrafficResponse()
-	r = r.WithContext(withResponseRecorder(r.Context(), rec))
 	w = rec
 	// ADR-1505: the commit is armed once a monetized request is about to be
 	// forwarded; at exit it completes or aborts the response.
 	rec.usage = &usageCommitHolder{rec: rec}
-	r = r.WithContext(withUsageCommitHolder(r.Context(), rec.usage))
+	r = r.WithContext(withUsageCommitHolder(withResponseRecorder(r.Context(), rec), rec.usage))
 	defer abortUnrecordedResponse(rec.usage, rec)
 	// Semantic request span. The public listener already creates an inbound
 	// otelhttp span, but gatewayd-internal also serves the handler directly in
@@ -6460,10 +6460,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// has a real elapsed to record and the slog latency_ms field stops
 	// being effectively zero).
 	start := time.Now()
-	if accepted, ok := StartTimeFromContext(r.Context()); ok && accepted.Before(start) {
+	accepted, haveAccepted := StartTimeFromContext(r.Context())
+	if haveAccepted && accepted.Before(start) {
 		start = accepted
 	}
-	r = r.WithContext(WithStartTime(r.Context(), start)) //nolint:contextcheck // request ctx is the canonical inbound ctx at the HTTP handler boundary.
+	// TrustedTrafficIngress normally stored this exact start already; adding
+	// it again only grew the context chain (and copied the request).
+	if !haveAccepted || !start.Equal(accepted) {
+		r = r.WithContext(WithStartTime(r.Context(), start)) //nolint:contextcheck // request ctx is the canonical inbound ctx at the HTTP handler boundary.
+	}
 	// Keep a request-local sink for platform-owned runner execution markers.
 	// The forwarder consumes and redacts the headers; observe persists the
 	// bounded values with the request telemetry row.
@@ -6496,10 +6501,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !isSyntheticInvocation(r.Context()) {
 		r.Header.Set(api.InvocationIDHeader, rid)
 	}
-	r = r.WithContext(WithRequestID(r.Context(), rid)) //nolint:contextcheck // request ctx is the canonical inbound ctx at the HTTP handler boundary.
-	correlation, _ := wire.FromContext(r.Context())
+	ridCtx := WithRequestID(r.Context(), rid) //nolint:contextcheck // request ctx is the canonical inbound ctx at the HTTP handler boundary.
+	correlation, _ := wire.FromContext(ridCtx)
 	correlation.RequestID = rid
-	r = r.WithContext(wire.WithContext(r.Context(), correlation))
+	r = r.WithContext(wire.WithContext(ridCtx, correlation))
 
 	host := hostname(r.Host)
 
@@ -6617,8 +6622,7 @@ haveApp:
 	// wrote (OwnedEdgeRules): match_host is free-form, so a foreign rule
 	// could otherwise shadow this app's own gates.
 	//nolint:contextcheck // same request context, extended with the owner.
-	r = r.WithContext(WithEdgeRuleScope(r.Context(), app))
-	r = r.WithContext(withRateAdmissionEvidence(r.Context()))
+	r = r.WithContext(withRateAdmissionEvidence(WithEdgeRuleScope(r.Context(), app)))
 	if h.applyTotalDeadline(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
