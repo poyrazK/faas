@@ -2821,6 +2821,9 @@ func (e *Engine) AdmitInstance(ctx context.Context, appID, deploymentID, scope, 
 		(err == nil && res.AtCapacity && e.parkZeroTrafficSibling(ctx, appID, deploymentID, trigger == TriggerDeploymentSmoke)) {
 		res, err = e.admitInstance(ctx, appID, deploymentID, scope, trigger)
 	}
+	if trigger == TriggerDeploymentSmoke && (res.AtCapacity || err != nil) {
+		e.logSmokeRefusal(ctx, appID, deploymentID, res, err)
+	}
 	return res, err
 }
 
