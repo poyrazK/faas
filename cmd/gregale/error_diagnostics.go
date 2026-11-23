@@ -87,6 +87,11 @@ func diagnosticProblem(p api.Problem) api.Problem {
 			// The server stopped waiting, not working: a sync invoke past its
 			// wait keeps running, so a retry would run it twice.
 			p.Hint = "The work keeps running on Gregale; follow it with the command in the detail instead of retrying."
+		case p.Status == 501 && p.Title == api.InteractiveSessionsUnavailableTitle:
+			// app-tasks is listed as available while interactive sessions are
+			// off, so "feature list shows what is available" sent agents in a
+			// circle (agent eval 2026-11-23); the detail names the way round.
+			p.Hint = "Interactive sessions are off on this installation even where app-tasks is listed; use the alternative in the detail, or contact support."
 		case p.Status == 501 || p.Status >= 500 && strings.HasSuffix(p.Code, "_not_enabled"):
 			// Operator-gated features answer 501 (disposable executions, app
 			// tasks) or 503 with a *_not_enabled code (tenant surfaces, private
