@@ -177,23 +177,23 @@ func TestMCPTasksRuntimeAppOverlaysRuntimeVariables(t *testing.T) {
 
 // MCP Tasks prod re-probe 2026-11-23: a source-built observer has no entrypoint
 // in GET /v1/apps, so setup reported observer_entrypoint_not_detected forever.
-// The observer role plus a fresh heartbeat detects it; neither alone does.
+// The observer role detects it. The heartbeat plays no part: it cannot be
+// attributed to the app, and an idle observer has none until --apply keeps it
+// running.
 func TestMCPTasksObserverProcessDetectedWithoutEntrypoint(t *testing.T) {
-	role := api.AppResponse{Manifest: api.AppManifest{Env: map[string]string{"MCP_TASKS_ROLE": "observer"}}}
 	for _, tc := range []struct {
-		name      string
-		app       api.AppResponse
-		heartbeat bool
-		want      bool
+		name string
+		app  api.AppResponse
+		want bool
 	}{
-		{"role and heartbeat", role, true, true},
-		{"role without heartbeat", role, false, false},
-		{"heartbeat without role", api.AppResponse{Manifest: api.AppManifest{Env: map[string]string{"MCP_TASKS_ROLE": "worker"}}}, true, false},
-		{"entrypoint names the observer", api.AppResponse{Manifest: api.AppManifest{Entrypoint: []string{"node", "tasks-observer.js"}}}, false, true},
-		{"known entrypoint with observer role", api.AppResponse{Manifest: api.AppManifest{Entrypoint: []string{"./server"}, Env: map[string]string{"MCP_TASKS_ROLE": "observer"}}}, false, true},
-		{"known other entrypoint without role", api.AppResponse{Manifest: api.AppManifest{Entrypoint: []string{"node", "server.js"}}}, true, false},
+		{"role without entrypoint", api.AppResponse{Manifest: api.AppManifest{Env: map[string]string{"MCP_TASKS_ROLE": "observer"}}}, true},
+		{"role with blank entrypoint", api.AppResponse{Manifest: api.AppManifest{Entrypoint: []string{" "}, Env: map[string]string{"MCP_TASKS_ROLE": "observer"}}}, true},
+		{"role with known entrypoint", api.AppResponse{Manifest: api.AppManifest{Entrypoint: []string{"./server"}, Env: map[string]string{"MCP_TASKS_ROLE": "observer"}}}, true},
+		{"other role", api.AppResponse{Manifest: api.AppManifest{Env: map[string]string{"MCP_TASKS_ROLE": "worker"}}}, false},
+		{"entrypoint names the observer", api.AppResponse{Manifest: api.AppManifest{Entrypoint: []string{"node", "tasks-observer.js"}}}, true},
+		{"other entrypoint without role", api.AppResponse{Manifest: api.AppManifest{Entrypoint: []string{"node", "server.js"}}}, false},
 	} {
-		if got := main.McpTasksObserverProcessDetected(tc.app, tc.heartbeat); got != tc.want {
+		if got := main.McpTasksObserverProcessDetected(tc.app); got != tc.want {
 			t.Errorf("%s: detected = %v, want %v", tc.name, got, tc.want)
 		}
 	}

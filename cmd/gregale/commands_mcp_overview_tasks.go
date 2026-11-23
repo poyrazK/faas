@@ -163,7 +163,7 @@ func collectMCPOverviewObserver(ctx context.Context, client *Client, worker api.
 		observer, err := client.GetApp(ctx, slug)
 		if err == nil {
 			worker, observer := mcpTasksRuntimeApp(ctx, client, worker), mcpTasksRuntimeApp(ctx, client, observer)
-			view.ProcessDetected = mcpTasksObserverProcessDetected(observer, view.HeartbeatFresh)
+			view.ProcessDetected = mcpTasksObserverProcessDetected(observer)
 			view.NamespaceMatches = mcpTasksObserverNamespacesMatch(worker, observer)
 			view.MetricsTargetMatches = mcpTasksObserverMetricsTargetMatches(observer, worker.Slug)
 		}
