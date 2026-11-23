@@ -68,7 +68,7 @@ func TestPgStoreVerificationContracts(t *testing.T) {
 	}
 
 	// SQL handoff: concurrent claimers never share a row.
-	expires := time.Now().Add(time.Minute)
+	expires := time.Now().Add(5 * time.Minute)
 	var ids []string
 	for i := 0; i < 6; i++ {
 		q, err := queries.CreateVerificationQuery(ctx, state.VerificationQuery{DeploymentID: "00000000-0000-0000-0000-000000000001", AppID: app.ID, AccountID: acct.ID, CheckName: "sql", Database: "main", Query: "select 1", ExpiresAt: expires})
@@ -118,6 +118,19 @@ func TestPgStoreVerificationContracts(t *testing.T) {
 	done, err := queries.VerificationQueryByID(ctx, ids[0])
 	if err != nil || done.Status != state.VerificationQueryDone || done.FirstValue == nil || *done.FirstValue != "0" || done.RowCount != 1 {
 		t.Fatalf("done query: %+v %v", done, err)
+	}
+	// Claims nobody finished come back once they are stale; done rows never do.
+	if fresh, err := queries.ClaimVerificationQueries(ctx, time.Now(), 10); err != nil || len(fresh) != 0 {
+		t.Fatalf("live claims re-claimed: %d %v", len(fresh), err)
+	}
+	reclaimed, err := queries.ClaimVerificationQueries(ctx, time.Now().Add(api.VerificationQueryStaleClaim+time.Second), 10)
+	if err != nil || len(reclaimed) != len(ids)-1 {
+		t.Fatalf("stale reclaim = %d %v, want %d", len(reclaimed), err, len(ids)-1)
+	}
+	for _, q := range reclaimed {
+		if q.ID == ids[0] {
+			t.Fatal("a done query was reclaimed")
+		}
 	}
 	if n, err := queries.DeleteExpiredVerificationQueries(ctx, time.Now()); err != nil || n != 1 {
 		t.Fatalf("expired sweep: n=%d err=%v", n, err)
