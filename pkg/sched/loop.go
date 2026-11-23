@@ -3177,7 +3177,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 	l.engine.CompressFrozenForDensity(ctx, now)
 	l.evictForMeasuredMemory(ctx, snapshot, activityByInstance, now)
 	for _, id := range reservationEvictions(l.engine.Ledger(), now, snapshot) {
-		if err := l.engine.EvictUnderPressure(ctx, id); err != nil {
+		if err := l.engine.EvictUnderPressure(ctx, id, EvictionReasonRAMPressure); err != nil {
 			l.log.Warn("reaper: eviction", "instance", id, "err", err)
 			continue
 		}
@@ -5960,7 +5960,7 @@ func (l *Loop) evictForMeasuredMemory(ctx context.Context, snapshot []InstanceIn
 	}
 	infos := indexInstanceInfos(snapshot)
 	for _, id := range SelectMemoryEvictions(now, snapshot, used, ceiling, resident) {
-		if err := l.engine.EvictUnderPressure(ctx, id); err != nil {
+		if err := l.engine.EvictUnderPressure(ctx, id, EvictionReasonMeasuredMemory); err != nil {
 			l.log.Warn("reaper: measured memory eviction", "instance", id, "err", err)
 			continue
 		}

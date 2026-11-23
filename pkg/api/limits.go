@@ -259,6 +259,22 @@ const (
 	ObsBuildQueuePrometheusBudget = 2 * time.Second
 )
 
+// Operator memory pressure report (ADR-20261123190507). The report reads at
+// most ObsMemoryPressureEventsMax evictions, frozen parks and OOM kills in
+// the window (beyond that it says it was truncated), lists the newest
+// ObsMemoryPressureListMax and the ObsMemoryPressureAppsMax most affected
+// apps. A node's measured memory older than ObsMemoryMeasurementStaleSeconds
+// is stale; a node at or above MeasuredEvictionTargetPercent of its ceiling
+// is near it.
+const (
+	ObsMemoryPressureEventsMax       = 20000
+	ObsMemoryPressureListMax         = 100
+	ObsMemoryPressureAppsMax         = 25
+	ObsMemoryMeasurementStaleSeconds = 30
+	ObsMemoryPressureWindowDefault   = 24 * time.Hour
+	ObsMemoryPressureWindowMax       = 7 * 24 * time.Hour
+)
+
 // Customer attention signals (ADR-20261113123000): when a customer is
 // probably stuck. Thresholds are platform-wide, not per plan.
 const (
