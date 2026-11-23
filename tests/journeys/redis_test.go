@@ -114,7 +114,10 @@ func (j *redisJourney) resize(t *testing.T) {
 		t.Fatalf("redis resize returned an unexpected change: %s", compact(doc))
 	}
 	want := "maxmemory:" + strconv.Itoa(96<<20)
-	eventually(t, "the cache runs at 96 MB", 10*time.Minute, 10*time.Second, func() (bool, string) {
+	// The new VM takes every connection as soon as it has the data. A
+	// gradual rollout here kept the old VM serving for 7m40s, past the
+	// handoff's 300 s write pause (prod 2026-11-23), so a slow cutover fails.
+	eventually(t, "the cache runs at 96 MB", 3*time.Minute, 5*time.Second, func() (bool, string) {
 		replies, problem := j.try("INFO memory")
 		if problem != "" {
 			return false, problem

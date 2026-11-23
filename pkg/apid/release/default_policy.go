@@ -98,6 +98,14 @@ func defaultEligible(app state.App, req *api.CreateDeploymentRequest) bool {
 	if app.Manifest.ReleasePolicy == api.ReleasePolicyImmediate || app.PreviewOfSlug != "" {
 		return false
 	}
+	if req.Image == api.ManagedValkeyImage {
+		// A managed cache's resize or update hands its data to a new VM that
+		// must take every connection at once (ADR-20261116192126). A canary
+		// kept the old VM serving for minutes beside it, past the handoff's
+		// write pause, so writes it acknowledged were dropped with it (prod
+		// journey 2026-11-23); a 5xx rollback would return to a stale copy.
+		return false
+	}
 	if mode := app.Manifest.ExecutionMode; mode != "" && mode != api.ExecutionModeRequest {
 		// Services already roll out behind schedd's readiness gate; workers
 		// and jobs serve no request traffic to compare.

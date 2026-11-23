@@ -59,6 +59,8 @@ func TestApplyDefaultReleasePolicy(t *testing.T) {
 		{name: "immediate app policy opts out", store: serving,
 			app: state.App{Manifest: state.AppManifest{ReleasePolicy: api.ReleasePolicyImmediate}}},
 		{name: "preview app stays immediate", store: serving, app: state.App{PreviewOfSlug: "api"}},
+		{name: "managed cache handoff stays immediate", store: serving,
+			req: api.CreateDeploymentRequest{Image: api.ManagedValkeyImage}},
 		{name: "service app keeps scheduler rollout", store: serving,
 			app: state.App{Manifest: state.AppManifest{ExecutionMode: api.ExecutionModeService}}},
 		{name: "named environment scope stays immediate", store: serving, req: api.CreateDeploymentRequest{Scope: "staging"}},
