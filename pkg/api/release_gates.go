@@ -140,7 +140,7 @@ func ErrReleaseGateLimit(observed int) *Problem {
 	return NewProblem(http.StatusConflict, CodeReleaseGateLimit, "Too many release gates",
 		fmt.Sprintf("An app can have %d release gates; this one has %d.", ReleaseGatesPerAppMax, observed)).
 		WithHint("Delete a gate you no longer need with `gregale release gate rm`.").
-		WithDocs(docsBase + "/deploys#release-gates")
+		WithDocs(docsBase + "/releases#release-gates")
 }
 
 // ErrReleaseGateNotFound reports a missing gate.

@@ -1434,6 +1434,9 @@ var InspectData = inspectData
 var InspectOpenAPI = inspectOpenAPI
 var InspectProductPilotHelp = inspectProductPilotHelp
 var InspectRecommendations = inspectRecommendations
+var AppParkedLabel = appParkedLabel
+var WriteParkedNotice = writeParkedNotice
+var StartupCrashCauseHint = startupCrashCauseHint
 var InspectRuntime = inspectRuntime
 var InspectResources = inspectResources
 var InspectUnavailable = inspectUnavailable
@@ -3069,6 +3072,9 @@ func RealtimeVerbsDiscoveredBy(hidden ...string) []string {
 	}
 	return names
 }
+
+// LeadingDeploymentID exposes the traffic verbs' positional-id fold (prod hunt r32).
+var LeadingDeploymentID = leadingDeploymentID
 
 // adr: 20261123110137
 var WithMCPReplayGate = withMCPReplayGate

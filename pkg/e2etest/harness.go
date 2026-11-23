@@ -177,6 +177,8 @@ type Harness struct {
 	scheddEnv        []string
 	scheddConfigPath string
 	vmmdLaunchEnv    []string
+	// vmmdConfigPath is the vmmd.toml the harness wrote.
+	vmmdConfigPath string
 	// vmmdJournalDir is vmmd's resource journal directory.
 	vmmdJournalDir string
 	// nativeRuntimeSnapshotRoot is vmmd's private tree for native runtime
@@ -407,6 +409,7 @@ failure_report_dir = %q
 			t.Fatalf("e2etest: write vmmd.toml: %v", err)
 		}
 		env := append(vmmdEnv(dbURL, cfgPath, h.ScheddSock), extraEnv...)
+		h.vmmdConfigPath = cfgPath
 		h.vmmdLaunchEnv = append([]string(nil), env...)
 		h.procs = append(h.procs, startProc(t, bin, "vmmd", env))
 		// vmmd reconciles netns, jails and its journal before it listens;
@@ -2216,6 +2219,22 @@ func (h *Harness) PlannedRestartVMMD(stopTimeout time.Duration) error {
 
 // VMMDResourceJournalDir is the directory vmmd keeps its resource journal in.
 func (h *Harness) VMMDResourceJournalDir() string { return h.vmmdJournalDir }
+
+// VMMDConfigPath is the vmmd.toml the harness's vmmd runs with.
+func (h *Harness) VMMDConfigPath() string { return h.vmmdConfigPath }
+
+// VMMDPID is the live vmmd child's process ID, as a service manager reports
+// its MainPID (the unit lane's adoption proof reads its environment).
+func (h *Harness) VMMDPID() (int, error) {
+	if h != nil {
+		for _, proc := range h.procs {
+			if proc != nil && proc.Process != nil && proc.ProcessState == nil && isVMMDProc(proc) {
+				return proc.Process.Pid, nil
+			}
+		}
+	}
+	return 0, fmt.Errorf("e2etest: live vmmd process not found")
+}
 
 // SetVMMDEnv changes one variable of the retained vmmd launch recipe; the
 // next PlannedRestartVMMD starts the successor with it. Launch entries come
