@@ -183,6 +183,8 @@ func (c *Client) request(ctx context.Context, method string, params map[string]a
 	defer func() { _ = res.Body.Close() }()
 	x := Exchange{WakeTier: res.Header.Get(wire.WakeHeader), SessionID: res.Header.Get("Mcp-Session-Id"), StreamingStatus: api.StreamingStatus(res.Header.Get(api.StreamingStatusHeader)), HTTPStatus: res.StatusCode, AuthChallenge: res.Header.Get("WWW-Authenticate")}
 	if res.StatusCode < 200 || res.StatusCode > 299 {
+		// Error exchanges report their latency too: 0 ms read as "never sent".
+		x.DurationMS = time.Since(start).Milliseconds()
 		if rpcErr := jsonRPCErrorCode(res, id); rpcErr != nil {
 			return x, rpcErr
 		}
