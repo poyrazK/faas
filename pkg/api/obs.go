@@ -595,6 +595,124 @@ type ObsUnsnapshottedDeployment struct {
 	LastStaleAt  *time.Time `json:"last_stale_at,omitempty"`
 }
 
+// ObsBuildQueueReport is GET /v1/admin/obs/build-queue (ADR-20261123163340):
+// the queued and running builds, builder slot use per node, and the
+// durations, failures and cache outcomes of builds finished in the window.
+// SlotsState is observed, unavailable (Prometheus failed) or not_configured;
+// node rows still carry the database's running count without it.
+type ObsBuildQueueReport struct {
+	AsOf                time.Time              `json:"as_of"`
+	WindowSeconds       int                    `json:"window_seconds"`
+	BuildTimeoutSeconds int                    `json:"build_timeout_seconds"`
+	WaitWarnSeconds     int                    `json:"wait_warn_seconds"`
+	ActiveTruncated     bool                   `json:"active_truncated"`
+	FinishedTruncated   bool                   `json:"finished_truncated"`
+	SlotsState          string                 `json:"slots_state"`
+	Totals              ObsBuildQueueTotals    `json:"totals"`
+	Kinds               []ObsBuildKindStat     `json:"kinds"`
+	Failures            []ObsBuildFailureCount `json:"failures"`
+	Nodes               []ObsBuilderNodeSlots  `json:"nodes"`
+	Queued              []ObsBuildRow          `json:"queued"`
+	Running             []ObsBuildRow          `json:"running"`
+	Slowest             []ObsBuildRow          `json:"slowest"`
+	RecentFailures      []ObsBuildRow          `json:"recent_failures"`
+}
+
+// ObsBuildQueueTotals summarises the queue now and the window's finished
+// builds. Deferred builds (not_before in the future) are counted apart from
+// Queued. Held counts the queued builds waiting on an identical build
+// (coalesced_with, ADR-20261102100000); they are in Queued but not in
+// OldestWaitSeconds or WaitingOverWarn. Durations run from start to finish
+// and waits from enqueue (or a later not_before) to start, in seconds. A
+// build requeued after a preemption keeps its enqueue time, so its wait
+// includes its earlier attempts.
+type ObsBuildQueueTotals struct {
+	Queued             int     `json:"queued"`
+	Deferred           int     `json:"deferred"`
+	Held               int     `json:"held"`
+	Running            int     `json:"running"`
+	OldestWaitSeconds  float64 `json:"oldest_wait_seconds"`
+	WaitingOverWarn    int     `json:"waiting_over_warn"`
+	RunningOverTimeout int     `json:"running_over_timeout"`
+	Finished           int     `json:"finished"`
+	Succeeded          int     `json:"succeeded"`
+	Failed             int     `json:"failed"`
+	Cancelled          int     `json:"cancelled"`
+	DurationP50Seconds float64 `json:"duration_p50_seconds"`
+	DurationP95Seconds float64 `json:"duration_p95_seconds"`
+	WaitP50Seconds     float64 `json:"wait_p50_seconds"`
+	WaitP95Seconds     float64 `json:"wait_p95_seconds"`
+	CacheHits          int     `json:"cache_hits"`
+	CacheMisses        int     `json:"cache_misses"`
+	CacheInvalidated   int     `json:"cache_invalidated"`
+	Preempted          int     `json:"preempted"`
+}
+
+// ObsBuildKindStat is the queue and the window's outcomes for one build kind.
+type ObsBuildKindStat struct {
+	Kind               string  `json:"kind"`
+	Queued             int     `json:"queued"`
+	Running            int     `json:"running"`
+	Finished           int     `json:"finished"`
+	Failed             int     `json:"failed"`
+	DurationP95Seconds float64 `json:"duration_p95_seconds"`
+}
+
+// ObsBuildFailureCount counts the window's failed builds by failure_class;
+// a failed build with none is "unclassified".
+type ObsBuildFailureCount struct {
+	Class string `json:"class"`
+	Count int    `json:"count"`
+}
+
+// ObsBuilderNodeSlots is one compute node's builder slots. RunningBuilds
+// comes from the database. The slot fields come from builderd's gauges and
+// are meaningful only when Observed: Limit is the enforced maximum, Reserved
+// the guaranteed slots, ActiveReserved builds in faas-cp-build.slice (of
+// which Opportunistic run beyond the reserved count) and ActiveBorrowed
+// builds in faas-borrowed.slice (ADR-20261118154632). Conflicting means more
+// than one builderd target reported for the node, so no slot figure is
+// trusted and Observed is false.
+type ObsBuilderNodeSlots struct {
+	Node           string `json:"node"`
+	RunningBuilds  int    `json:"running_builds"`
+	Observed       bool   `json:"observed"`
+	Conflicting    bool   `json:"conflicting"`
+	Limit          int    `json:"limit"`
+	Reserved       int    `json:"reserved"`
+	InUse          int    `json:"in_use"`
+	ActiveReserved int    `json:"active_reserved"`
+	Opportunistic  int    `json:"opportunistic"`
+	ActiveBorrowed int    `json:"active_borrowed"`
+}
+
+// ObsBuildRow is one build in the report. WaitSeconds runs to its start, or
+// to now while it is queued, and includes earlier attempts of a requeued
+// build; DurationSeconds runs from its start to its finish, or to now while
+// it is running. Coalesced is set when the build waits on (or waited on) an
+// identical build.
+type ObsBuildRow struct {
+	ID              string     `json:"id"`
+	DeploymentID    string     `json:"deployment_id"`
+	AppID           string     `json:"app_id,omitempty"`
+	AppSlug         string     `json:"app_slug,omitempty"`
+	AccountID       string     `json:"account_id,omitempty"`
+	Kind            string     `json:"kind"`
+	Status          string     `json:"status"`
+	FailureClass    string     `json:"failure_class,omitempty"`
+	CacheStatus     string     `json:"cache_status,omitempty"`
+	Node            string     `json:"node,omitempty"`
+	SourceBytes     int64      `json:"source_bytes"`
+	Preemptions     int        `json:"preemptions"`
+	Coalesced       bool       `json:"coalesced"`
+	EnqueuedAt      time.Time  `json:"enqueued_at"`
+	NotBefore       *time.Time `json:"not_before,omitempty"`
+	StartedAt       *time.Time `json:"started_at,omitempty"`
+	FinishedAt      *time.Time `json:"finished_at,omitempty"`
+	WaitSeconds     float64    `json:"wait_seconds"`
+	DurationSeconds float64    `json:"duration_seconds"`
+}
+
 // ObsAuditActivityRow is the safe metadata-only projection of audit_log.
 // Data is deliberately omitted; the global audit page remains the explicit
 // high-detail path for an operator who is authorized to inspect it.
