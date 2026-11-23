@@ -19,16 +19,21 @@ console.info = console.error;
 // (invoke, handleOne, inGregaleRequestContext) and node internals followed
 // every handler error (prod hunt r31), as the Python adapter already trims.
 const fsModule = await import("node:fs");
-let adapterFileURL = urlModule.pathToFileURL(process.argv[1]).href;
+// An ES module's frames name it by file URL and a CommonJS one's by plain
+// path; either may be the real path behind a symlinked directory.
+const adapterNames = [process.argv[1]];
 try {
-  // Stack frames name the module's real path (a symlinked dir differs).
-  adapterFileURL = urlModule.pathToFileURL(fsModule.realpathSync(process.argv[1])).href;
+  adapterNames.push(fsModule.realpathSync(process.argv[1]));
 } catch {}
+for (const name of adapterNames.slice()) {
+  adapterNames.push(urlModule.pathToFileURL(name).href);
+}
 function customerStack(err) {
   if (!(err && err.stack)) return err;
   const lines = String(err.stack).split("\n");
   const frame = (line) => line.trimStart().startsWith("at ");
-  const platform = (line) => line.includes(adapterFileURL) || line.includes("node:internal/");
+  const platform = (line) => line.includes("node:internal/") ||
+    adapterNames.some((name) => line.includes("(" + name + ":") || line.includes("at " + name + ":"));
   const kept = lines.filter((line) => !frame(line) || !platform(line));
   return kept.some(frame) ? kept.join("\n") : err.stack;
 }

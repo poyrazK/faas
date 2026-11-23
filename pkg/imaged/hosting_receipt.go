@@ -100,6 +100,10 @@ func HostingHealthPath(app state.App, dep state.Deployment) string {
 // connectivity.
 func VerifyHostingDeployment(ctx context.Context, verifier apihostingreceipt.Verifier, app state.App, dep state.Deployment) (apihostingreceipt.SmokeResult, error) {
 	if routeConnectivitySmoke(app, dep) {
+		if runnerFunctionHealth(app, dep) {
+			// The same lenient route check, on the runner's own path.
+			return verifier.VerifyDeploymentRouteAt(ctx, app.Slug, defaultHealthzPath, dep.ID)
+		}
 		return verifier.VerifyDeploymentRoute(ctx, app.Slug, dep.ID)
 	}
 	return verifier.VerifyDeployment(ctx, app.Slug, HostingHealthPath(app, dep), dep.ID)
@@ -185,7 +189,8 @@ func hostingSmokeFailure(smoke apihostingreceipt.SmokeResult) error {
 // that the route reaches the candidate.
 func routeConnectivitySmoke(app state.App, dep state.Deployment) bool {
 	if runnerFunctionHealth(app, dep) {
-		return false
+		// Checked on the runner's /healthz (VerifyHostingDeployment).
+		return true
 	}
 	profile := hostingReceiptProfile(app, dep)
 	if isDirectOCIImage(app, dep) && profile.HealthPath == "" || profile.HealthDefaulted {
