@@ -5507,6 +5507,8 @@ from .put_outbound_request_policy_request import PutOutboundRequestPolicyRequest
 from .put_outbound_runs_binding_request import PutOutboundRunsBindingRequest
 from .put_postgres_changes_connection_body import PutPostgresChangesConnectionBody
 from .put_postgres_changes_request import PutPostgresChangesRequest
+from .put_verification_contract_request import PutVerificationContractRequest
+from .put_verification_contract_request_contract import PutVerificationContractRequestContract
 from .put_webhook_workflow_binding_request import PutWebhookWorkflowBindingRequest
 from .put_webhook_workflow_binding_request_filter import PutWebhookWorkflowBindingRequestFilter
 from .queue_binding_canary import QueueBindingCanary
@@ -6964,6 +6966,8 @@ from .usage_summary_response import UsageSummaryResponse
 from .usage_summary_response_egress_billing_mode import UsageSummaryResponseEgressBillingMode
 from .validate_stored_workflow_request import ValidateStoredWorkflowRequest
 from .validate_stored_workflow_response import ValidateStoredWorkflowResponse
+from .verification_contract import VerificationContract
+from .verification_contract_contract import VerificationContractContract
 from .vulnerability import Vulnerability
 from .vulnerability_severity import VulnerabilitySeverity
 from .wake_timeline_app import WakeTimelineApp
@@ -12430,6 +12434,8 @@ __all__ = (
     "PutOutboundRunsBindingRequest",
     "PutPostgresChangesConnectionBody",
     "PutPostgresChangesRequest",
+    "PutVerificationContractRequest",
+    "PutVerificationContractRequestContract",
     "PutWebhookWorkflowBindingRequest",
     "PutWebhookWorkflowBindingRequestFilter",
     "QueueBindingCanary",
@@ -13835,6 +13841,8 @@ __all__ = (
     "UsageSummaryResponseEgressBillingMode",
     "ValidateStoredWorkflowRequest",
     "ValidateStoredWorkflowResponse",
+    "VerificationContract",
+    "VerificationContractContract",
     "Vulnerability",
     "VulnerabilitySeverity",
     "WakeTimelineApp",
