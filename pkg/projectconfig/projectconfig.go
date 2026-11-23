@@ -48,12 +48,12 @@ func (c Config) HasServiceSettings() bool {
 
 // Service is one service's project-wide settings.
 type Service struct {
-	ServicePolicy string   `yaml:"service_policy,omitempty" json:"service_policy,omitempty"`
-	Visibility    string   `yaml:"visibility,omitempty" json:"visibility,omitempty"`
+	ServicePolicy string `yaml:"service_policy,omitempty" json:"service_policy,omitempty"`
+	Visibility    string `yaml:"visibility,omitempty" json:"visibility,omitempty"`
 	// Access is who may call the service's public URL: "public" or "key"
 	// (ADR-20261124090000).
-	Access string `yaml:"access,omitempty" json:"access,omitempty"`
-	DependsOn     []string `yaml:"depends_on,omitempty" json:"depends_on,omitempty"`
+	Access    string   `yaml:"access,omitempty" json:"access,omitempty"`
+	DependsOn []string `yaml:"depends_on,omitempty" json:"depends_on,omitempty"`
 }
 
 // Validate checks values that do not depend on the scanned services. Service
