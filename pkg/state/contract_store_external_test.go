@@ -27,6 +27,9 @@ type contractTestStore interface {
 	state.ExecutionAdmissionStore
 	state.Store // teststorecheck:allow the one Store-sized interface the contracts alias
 	state.RollbackTrafficStore
+	state.APIConsumerEnvironmentStore
+	state.APIConsumerPlanStore
+	state.APIConsumerTrialStore
 	state.WorkflowRunStartStore
 	cloneFlagFixtureStore
 	projectEnvironmentQualificationStore
