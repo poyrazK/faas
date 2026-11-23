@@ -416,8 +416,18 @@ func sourceHostFix(wl api.PlanWorkload, host string, managed map[string]api.Plan
 		}
 		if m.Kind != "postgres" && m.Kind != "bucket" {
 			key := strings.ToUpper(strings.ReplaceAll(m.Kind, "-", "_")) + "_URL"
-			return fmt.Sprintf("%s reads %s, set to a %s you run elsewhere", wl.Name, key, m.Kind),
-				"gregale env set --app " + slug(wl) + " " + key + "=<external " + m.Kind + " URL>"
+			// A Compose redis bound to a managed cache by an earlier apply
+			// comes back unprovisioned as "configured"; telling the agent to
+			// run Redis elsewhere contradicted the cache it had (agent eval
+			// 2026-11-23, voting-app P7).
+			if m.NotProvisionedReason == api.ComposeRedisConfiguredReason {
+				return fmt.Sprintf("%s reads %s, which is already set", wl.Name, key), ""
+			}
+			fix := fmt.Sprintf("%s reads %s, set to a %s you run elsewhere", wl.Name, key, m.Kind)
+			if m.NotProvisionedReason != "" {
+				fix += " (" + m.NotProvisionedReason + ")"
+			}
+			return fix, "gregale env set --app " + slug(wl) + " " + key + "=<external " + m.Kind + " URL>"
 		}
 	}
 	depends := ""

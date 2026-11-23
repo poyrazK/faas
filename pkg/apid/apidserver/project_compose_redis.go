@@ -26,7 +26,7 @@ const (
 	composeRedisNoServiceTCP  = "managed Redis needs private TCP between services, which this installation has not enabled"
 	composeRedisPlan          = "the plan includes no more managed Redis caches"
 	composeRedisNotReferenced = "no selected service uses it"
-	composeRedisConfigured    = "every service that uses it already has its key set"
+	composeRedisConfigured    = api.ComposeRedisConfiguredReason
 )
 
 type composeRedisBinding struct {
