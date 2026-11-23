@@ -14,27 +14,57 @@ async function readJWKSet(response) {
       const { done, value } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > MAX_JWKS_BYTES) throw new Error('JWKS response is too large');
+      if (size > MAX_JWKS_BYTES) throw jwksFailure('JWKS response is too large', false);
       chunks.push(value);
     }
   } catch (error) {
     void reader.cancel().catch(() => {});
-    throw error;
+    // A connection lost mid-body can pass; an oversized document cannot.
+    if (error?.message === 'JWKS response is too large') throw error;
+    throw jwksFailure('JWKS body read failed', true);
   } finally {
     reader.releaseLock();
   }
   return JSON.parse(Buffer.concat(chunks, size).toString('utf8'));
 }
 
+// A token that could not be checked because the provider's JWKS could not be
+// fetched: the server's failure, not a wrong token. It is answered with
+// error_description "signing keys unavailable" and Retry-After.
+export class SigningKeysUnavailableError extends Error {
+  constructor() {
+    super('signing keys unavailable');
+    this.signingKeysUnavailable = true;
+  }
+}
+
+// Marks a JWKS fetch failure that can pass (network, timeout, provider
+// 5xx/429). A 404 or a bad document is configuration that retrying cannot fix.
+const transientJWKSFailure = Symbol('transientJWKSFailure');
+
+function jwksFailure(message, transient) {
+  const error = new Error(message);
+  if (transient) error[transientJWKSFailure] = true;
+  return error;
+}
+
 function createJWKResolver(url) {
   let retryAt = 0;
-  return createRemoteJWKSet(new URL(url), {
+  let lastTransient = false;
+  const remote = createRemoteJWKSet(new URL(url), {
     timeoutDuration: 5000,
     [customFetch]: async (...args) => {
-      if (performance.now() < retryAt) throw new Error('JWKS refresh is cooling down');
+      if (performance.now() < retryAt) throw jwksFailure('JWKS refresh is cooling down', lastTransient);
       try {
-        const response = await fetch(...args);
-        if (response.status !== 200) throw new Error('JWKS refresh failed');
+        let response;
+        try {
+          response = await fetch(...args);
+        } catch (error) {
+          throw jwksFailure(`JWKS fetch failed: ${error?.name ?? 'error'}`, true);
+        }
+        if (response.status !== 200) {
+          throw jwksFailure('JWKS refresh failed', response.status >= 500 || response.status === 429);
+        }
         const jwks = await readJWKSet(response);
         createLocalJWKSet(jwks); // Validate the payload before considering the fetch successful.
         return new Response(JSON.stringify(jwks), { status: 200 });
@@ -43,10 +73,22 @@ function createJWKResolver(url) {
         // backoff. Keep it short: a transient failure (the issuer waking, a
         // network blip) must not reject every valid token for 30 s.
         retryAt = performance.now() + JWKS_FAILURE_BACKOFF_MS;
+        lastTransient = Boolean(error?.[transientJWKSFailure]);
         throw error;
       }
     },
   });
+  // The error this verification got (jose hands every coalesced waiter the
+  // same one) decides: a transient fetch failure means the token was not
+  // checked, so it is not reported as wrong.
+  return async (...args) => {
+    try {
+      return await remote(...args);
+    } catch (error) {
+      if (error?.[transientJWKSFailure] || error?.code === 'ERR_JWKS_TIMEOUT') throw new SigningKeysUnavailableError();
+      throw error;
+    }
+  };
 }
 
 // Only call this with authInfo created by the verified bearer-token middleware.
@@ -118,11 +160,17 @@ export function createAuth(config, keyResolver) {
   if (!auth.scopes.length) throw new Error('Set nonempty OAuth scopes');
   const metadataURL = new URL(`/.well-known/oauth-protected-resource${config.endpoint}`, auth.resource).href;
   const resolver = keyResolver ?? createJWKResolver(auth.jwks_url);
-  function reject(res, status, error, scopes = auth.scopes) {
-    const challenge = `Bearer resource_metadata="${metadataURL}", scope="${scopes.join(' ')}"${error ? `, error="${error}"` : ''}`;
+  function reject(res, status, error, scopes = auth.scopes, description = '') {
+    const challenge = `Bearer resource_metadata="${metadataURL}", scope="${scopes.join(' ')}"${error ? `, error="${error}"` : ''}${description ? `, error_description="${description}"` : ''}`;
     res.setHeader('WWW-Authenticate', challenge);
     res.setHeader('Cache-Control', 'no-store');
-    return res.status(status).json({ error: error || 'authentication_required' });
+    const body = { error: error || 'authentication_required' };
+    if (description) {
+      // The server could not check the token; the same token may succeed.
+      res.setHeader('Retry-After', '1');
+      body.error_description = description;
+    }
+    return res.status(status).json(body);
   }
   const scopesSupported = [...new Set([
     ...auth.scopes,
@@ -150,7 +198,8 @@ export function createAuth(config, keyResolver) {
           extra: { subject: payload.sub },
         };
         return next();
-      } catch {
+      } catch (error) {
+        if (error?.signingKeysUnavailable) return reject(res, 401, 'invalid_token', auth.scopes, error.message);
         return reject(res, 401, 'invalid_token');
       }
     },
