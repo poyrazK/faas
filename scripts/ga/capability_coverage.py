@@ -328,6 +328,8 @@ RULES = [
     (r"domain|certificate|tls|acme|cert", "Custom domains"),
     # --- runtime
     (r"workload-identity|oidc", "Workload identity"),
+    # ADR-20261122191423: gregale.yaml `uses:` grants authorize binding tokens.
+    (r"^capgrant$", "Workload identity"),
     (r"secret|seal", "Secrets:"),
     (r"env-diff|^env|environment-variable|env-var|/env$", "Env vars:"),
     (r"chaos|scenario|rehearse", "Scenario tests"),
