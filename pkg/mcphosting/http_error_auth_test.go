@@ -55,6 +55,7 @@ func TestMCP401KeepsServerErrorCode(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resp := authResponse(http.StatusUnauthorized, tc.challenge, tc.body, tc.token)
+			defer func() { _ = resp.Body.Close() }()
 			if !strings.HasPrefix(tc.body, "{") {
 				resp.Header.Set("Content-Type", "text/html")
 			}
@@ -72,8 +73,10 @@ func TestMCP401KeepsServerErrorCode(t *testing.T) {
 // A body of unknown length (one that may never end) is not read.
 func TestMCP401SkipsBodyOfUnknownLength(t *testing.T) {
 	resp := authResponse(http.StatusUnauthorized, `Bearer realm="x"`, `{"error":"invalid_token"}`, true)
+	_ = resp.Body.Close()
 	resp.ContentLength = -1
 	resp.Body = io.NopCloser(blockingReader{})
+	defer func() { _ = resp.Body.Close() }()
 	if p := problemOf(t, httpResponseError(resp)); p.Code != "authentication_required" {
 		t.Fatalf("code = %q, want the fallback without reading the body", p.Code)
 	}
@@ -84,7 +87,9 @@ type blockingReader struct{}
 func (blockingReader) Read([]byte) (int, error) { select {} }
 
 func TestMCP403InsufficientScopeNamesScope(t *testing.T) {
-	p := problemOf(t, httpResponseError(authResponse(http.StatusForbidden, `Bearer error="insufficient_scope", scope="read write"`, `{}`, true)))
+	resp := authResponse(http.StatusForbidden, `Bearer error="insufficient_scope", scope="read write"`, `{}`, true)
+	defer func() { _ = resp.Body.Close() }()
+	p := problemOf(t, httpResponseError(resp))
 	if p.Code != "insufficient_scope" || !strings.Contains(p.Detail, "read write") {
 		t.Fatalf("problem = %+v", p)
 	}
