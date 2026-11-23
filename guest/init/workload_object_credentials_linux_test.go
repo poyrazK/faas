@@ -98,6 +98,41 @@ func TestWorkloadObjectCredentialsRefusals(t *testing.T) {
 	}
 }
 
+// A refusal is kept for a while: a stage instance whose SDK refreshes on
+// every client must not send apid a request each time.
+func TestWorkloadObjectCredentialsCachesRefusals(t *testing.T) {
+	now := time.Date(2026, 11, 23, 0, 0, 0, 0, time.UTC)
+	asked := 0
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked++
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Binding not allowed", "stage"))
+	}))
+	defer apiServer.Close()
+	rememberWorkloadAPIURL([]string{"GREGALE_API_URL=" + strings.Replace(apiServer.URL, "http://", "https://", 1)})
+	defer rememberWorkloadAPIURL([]string{"GREGALE_API_URL=" + defaultWorkloadAPIURL})
+	identity := func(string) (workloadIdentityGuestResponse, error) {
+		return workloadIdentityGuestResponse{AccessToken: "eyJ.t"}, nil
+	}
+	creds := newWorkloadObjectCredentials(identity, &http.Client{Transport: rewriteToHTTP{}}, func() time.Time { return now }, func() uint64 { return 0 })
+	get := func() *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		creds.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, workloadObjectCredentialsPath, nil))
+		return rec
+	}
+	if rec := get(); rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "binding_not_allowed") {
+		t.Fatalf("refusal: %d %s", rec.Code, rec.Body)
+	}
+	get()
+	if asked != 1 {
+		t.Fatalf("refusal not cached: %d", asked)
+	}
+	now = now.Add(workloadObjectCredentialsRefusalTTL)
+	get()
+	if asked != 2 {
+		t.Fatalf("refusal cached past its TTL: %d", asked)
+	}
+}
+
 func TestRememberWorkloadAPIURLAcceptsHTTPSOnly(t *testing.T) {
 	defer rememberWorkloadAPIURL([]string{"GREGALE_API_URL=" + defaultWorkloadAPIURL})
 	rememberWorkloadAPIURL([]string{"GREGALE_API_URL=http://evil.example"})

@@ -56,9 +56,19 @@ func currentWorkloadAPIURL() string {
 
 type identityFetcher func(audience string) (workloadIdentityGuestResponse, error)
 
-// workloadObjectCredentialsTimeout bounds one exchange with apid, so a hung
-// connection fails the request instead of stalling the SDK.
-const workloadObjectCredentialsTimeout = 10 * time.Second
+const (
+	// workloadObjectCredentialsTimeout bounds one exchange with apid, so a
+	// hung connection fails the request instead of stalling the SDK.
+	workloadObjectCredentialsTimeout = 10 * time.Second
+	// workloadObjectCredentialsWriteTimeout replaces the proxy server's
+	// shorter WriteTimeout for this route: it covers a token fetch from the
+	// host plus one apid exchange, with room to write the answer.
+	workloadObjectCredentialsWriteTimeout = workloadIdentityFetchTimeout + workloadObjectCredentialsTimeout + 2*time.Second
+	// workloadObjectCredentialsRefusalTTL keeps apid's refusal of a bucket
+	// (not granted, not a production instance) for a while, so SDKs that
+	// refresh on every client do not send apid a request each time.
+	workloadObjectCredentialsRefusalTTL = 30 * time.Second
+)
 
 type workloadObjectCredentials struct {
 	identity   identityFetcher
@@ -73,8 +83,11 @@ type workloadObjectCredentials struct {
 	flight singleflight.Group
 }
 
+// cachedObjectCredential is a credential, or apid's refusal when code is set.
 type cachedObjectCredential struct {
 	body       []byte
+	status     int
+	code       string
 	expiration time.Time
 }
 
@@ -107,18 +120,18 @@ func (c *workloadObjectCredentials) ServeHTTP(w http.ResponseWriter, r *http.Req
 		writeIdentityGuestError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	if body, ok := c.cached(bucket); ok {
-		writeObjectCredential(w, body)
-		return
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(workloadObjectCredentialsWriteTimeout))
+	result, ok := c.cached(bucket)
+	if !ok {
+		v, _, _ := c.flight.Do(bucket, func() (any, error) {
+			if result, ok := c.cached(bucket); ok {
+				return result, nil
+			}
+			body, status, code := c.fetch(r, bucket)
+			return objectCredentialResult{body: body, status: status, code: code}, nil
+		})
+		result = v.(objectCredentialResult)
 	}
-	v, _, _ := c.flight.Do(bucket, func() (any, error) {
-		if body, ok := c.cached(bucket); ok {
-			return objectCredentialResult{body: body}, nil
-		}
-		body, status, code := c.fetch(r, bucket)
-		return objectCredentialResult{body: body, status: status, code: code}, nil
-	})
-	result := v.(objectCredentialResult)
 	if result.code != "" {
 		writeIdentityGuestError(w, result.status, result.code)
 		return
@@ -127,8 +140,9 @@ func (c *workloadObjectCredentials) ServeHTTP(w http.ResponseWriter, r *http.Req
 }
 
 // cached returns bucket's credential while it is valid for more than the
-// refresh margin. A restore since the last call empties the cache first.
-func (c *workloadObjectCredentials) cached(bucket string) ([]byte, bool) {
+// refresh margin, or apid's recent refusal of it. A restore since the last
+// call empties the cache first.
+func (c *workloadObjectCredentials) cached(bucket string) (objectCredentialResult, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if gen := c.generation(); gen != c.gen {
@@ -137,16 +151,31 @@ func (c *workloadObjectCredentials) cached(bucket string) ([]byte, bool) {
 		c.client.CloseIdleConnections()
 	}
 	cached, ok := c.cache[bucket]
-	if !ok || !c.now().Add(workloadObjectCredentialsMargin).Before(cached.expiration) {
-		return nil, false
+	if !ok {
+		return objectCredentialResult{}, false
 	}
-	return cached.body, true
+	if cached.code != "" {
+		if !c.now().Before(cached.expiration) {
+			return objectCredentialResult{}, false
+		}
+		return objectCredentialResult{status: cached.status, code: cached.code}, true
+	}
+	if !c.now().Add(workloadObjectCredentialsMargin).Before(cached.expiration) {
+		return objectCredentialResult{}, false
+	}
+	return objectCredentialResult{body: cached.body}, true
 }
 
-func (c *workloadObjectCredentials) store(bucket string, body []byte, expiration time.Time) {
+func (c *workloadObjectCredentials) store(bucket string, entry cachedObjectCredential) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.cache[bucket] = cachedObjectCredential{body: body, expiration: expiration}
+	c.cache[bucket] = entry
+}
+
+// refuse caches apid's refusal of bucket and returns it.
+func (c *workloadObjectCredentials) refuse(bucket string, status int, code string) ([]byte, int, string) {
+	c.store(bucket, cachedObjectCredential{status: status, code: code, expiration: c.now().Add(workloadObjectCredentialsRefusalTTL)})
+	return nil, status, code
 }
 
 // fetch exchanges a bindings token for a credential at apid.
@@ -173,7 +202,7 @@ func (c *workloadObjectCredentials) fetch(r *http.Request, bucket string) ([]byt
 	}
 	switch {
 	case resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusBadRequest:
-		return nil, resp.StatusCode, "bucket_not_granted"
+		return c.refuse(bucket, resp.StatusCode, objectCredentialRefusalCode(body))
 	case resp.StatusCode != http.StatusOK:
 		return nil, http.StatusServiceUnavailable, "credentials_unavailable"
 	}
@@ -181,8 +210,19 @@ func (c *workloadObjectCredentials) fetch(r *http.Request, bucket string) ([]byt
 	if json.Unmarshal(body, &parsed) != nil || parsed.AccessKeyID == "" || parsed.SecretAccessKey == "" || parsed.Expiration.IsZero() {
 		return nil, http.StatusServiceUnavailable, "credentials_unavailable"
 	}
-	c.store(bucket, body, parsed.Expiration)
+	c.store(bucket, cachedObjectCredential{body: body, expiration: parsed.Expiration})
 	return body, 0, ""
+}
+
+// objectCredentialRefusalCode names apid's refusal for the SDK: a caller
+// that may not use bindings at all (api.CodeForbidden, e.g. a stage
+// instance) is told so instead of being told the bucket is not granted.
+func objectCredentialRefusalCode(body []byte) string {
+	var problem api.Problem
+	if json.Unmarshal(body, &problem) == nil && problem.Code == api.CodeForbidden {
+		return "binding_not_allowed"
+	}
+	return "bucket_not_granted"
 }
 
 func writeObjectCredential(w http.ResponseWriter, body []byte) {

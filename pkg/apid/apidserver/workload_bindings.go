@@ -2,6 +2,8 @@ package apidserver
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -71,7 +73,7 @@ func (s *server) bindingRoute(kind capgrant.Kind, resource bindingResource, keye
 				// Receipts of different caller apps must not replay each
 				// other's responses under the shared resource account.
 				r.Header = r.Header.Clone()
-				r.Header.Set("Idempotency-Key", "binding:"+call.Caller.ID+":"+key)
+				r.Header.Set("Idempotency-Key", bindingIdempotencyKey(call.Caller.ID, key))
 			}
 			s.requireAPIRequestBudget(next)(w, r, acct)
 		}))
@@ -84,6 +86,14 @@ func (s *server) bindingRoute(kind capgrant.Kind, resource bindingResource, keye
 	}
 }
 
+// bindingIdempotencyKey scopes a caller's Idempotency-Key to the caller app.
+// It is a fixed 72 bytes, so any key the routes accept (≤128 bytes) still
+// fits their cap after scoping.
+func bindingIdempotencyKey(callerID, key string) string {
+	sum := sha256.Sum256([]byte(callerID + "\x00" + key))
+	return "binding:" + hex.EncodeToString(sum[:])
+}
+
 // bindingRoutesDisabled answers a binding token while cross_app_bindings is
 // off as a route that does not exist: a 401 would count against the shared
 // per-IP auth-failure limiter, and SDKs on one node retrying a credential
@@ -94,6 +104,16 @@ func bindingRoutesDisabled() *api.Problem {
 
 func bindingUnauthorized(detail string) *api.Problem {
 	return api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized, "Workload identity required",
+		"a live gregale:bindings workload token from a production instance is required: "+detail)
+}
+
+// bindingCallerRefused answers a correctly signed token whose caller may not
+// use bindings (a stage instance, a stopped one, a deleted app). It is 403,
+// not 401: these callers retry on every SDK credential refresh, and a 401
+// counts against the shared per-IP auth-failure limiter, which would lock
+// the node's other tenants out of apid.
+func bindingCallerRefused(detail string) *api.Problem {
+	return api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Binding not allowed",
 		"a live gregale:bindings workload token from a production instance is required: "+detail)
 }
 
@@ -158,7 +178,7 @@ func (s *server) authorizeBindingCall(r *http.Request, kind capgrant.Kind, resou
 func (s *server) verifyBindingCaller(r *http.Request) (state.App, string, state.Account, *api.Problem) {
 	verifier := s.workloadTrust()
 	if verifier == nil {
-		return state.App{}, "", state.Account{}, bindingUnauthorized("workload trust is not configured")
+		return state.App{}, "", state.Account{}, bindingRoutesDisabled()
 	}
 	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	claims, err := verifier.Verify(token, workloadidentity.BindingsAudience, time.Now())
@@ -168,22 +188,22 @@ func (s *server) verifyBindingCaller(r *http.Request) (state.App, string, state.
 	ctx := r.Context()
 	caller, err := s.store.AppByID(ctx, claims.AppID)
 	if err != nil || caller.AccountID != claims.AccountID || caller.Status == state.AppDeleted {
-		return state.App{}, "", state.Account{}, bindingUnauthorized("the token's app does not exist")
+		return state.App{}, "", state.Account{}, bindingCallerRefused("the token's app does not exist")
 	}
 	instance, err := s.store.InstanceByID(ctx, claims.InstanceID)
 	if err != nil || instance.AppID != caller.ID || !state.State(instance.State).CountsForConcurrency() {
-		return state.App{}, "", state.Account{}, bindingUnauthorized("the token's instance is not live")
+		return state.App{}, "", state.Account{}, bindingCallerRefused("the token's instance is not live")
 	}
 	if !state.ProductionDeploymentScope(claims.Environment) {
-		return state.App{}, "", state.Account{}, bindingUnauthorized("stage and branch deployments cannot use binding tokens yet")
+		return state.App{}, "", state.Account{}, bindingCallerRefused("stage and branch deployments cannot use binding tokens yet")
 	}
 	deployment, err := s.store.DeploymentByID(ctx, instance.DeploymentID)
 	if err != nil || deployment.AppID != caller.ID || !state.ProductionDeploymentScope(deployment.Scope) {
-		return state.App{}, "", state.Account{}, bindingUnauthorized("the token's instance does not run a production deployment")
+		return state.App{}, "", state.Account{}, bindingCallerRefused("the token's instance does not run a production deployment")
 	}
 	callerAcct, err := state.AppResourceAccount(ctx, s.store, caller)
 	if err != nil || !callerAcct.Active() {
-		return state.App{}, "", state.Account{}, bindingUnauthorized("the caller's account is not active")
+		return state.App{}, "", state.Account{}, bindingCallerRefused("the caller's account is not active")
 	}
 	return caller, instance.ID, callerAcct, nil
 }

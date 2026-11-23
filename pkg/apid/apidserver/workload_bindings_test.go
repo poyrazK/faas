@@ -127,9 +127,10 @@ func TestBindingTokensFollowUsesGrants(t *testing.T) {
 		t.Fatalf("self queue without a grant: %d", code)
 	}
 	// A token naming a stage environment is refused before the instance's
-	// deployment is read.
-	if code, _ := send("assetforge-worker", "transforms", bearer(live, "staging", workloadidentity.BindingsAudience)); code != http.StatusUnauthorized {
-		t.Fatalf("staging token: %d", code)
+	// deployment is read. It is a 403, not a 401: a correctly signed token
+	// must not count against the shared per-IP auth-failure limiter.
+	if code, p := send("assetforge-worker", "transforms", bearer(live, "staging", workloadidentity.BindingsAudience)); code != http.StatusForbidden || p.Code != api.CodeForbidden {
+		t.Fatalf("staging token: %d %+v", code, p)
 	}
 	if code, _ := send("assetforge-worker", "transforms", bearer(live, "", workloadidentity.QueuesAudience)); code != http.StatusUnauthorized {
 		t.Fatalf("queues audience: %d", code)
@@ -171,5 +172,13 @@ func TestBindingTokensFollowUsesGrants(t *testing.T) {
 	// which answers for the missing endpoint.
 	if code, p := publish("room:1"); code == http.StatusUnauthorized || p.Code == apidserver.CodeBindingNotGranted {
 		t.Fatalf("granted channel refused by the binding check: %d %+v", code, p)
+	}
+	// A 128-byte Idempotency-Key, the most the route accepts, still fits
+	// after the binding route scopes it to the caller app.
+	keyed := map[string]string{"Authorization": token["Authorization"], "Idempotency-Key": strings.Repeat("k", 128)}
+	rec := e.Do(t, http.MethodPost, "/v1/apps/assetforge-web/realtime/endpoints/"+uuid.NewString()+"/channels/room:1/publish",
+		map[string]any{"event": "update", "data": "{}"}, keyed)
+	if strings.Contains(rec.Body.String(), "Idempotency-Key") {
+		t.Fatalf("scoped idempotency key rejected: %d %s", rec.Code, rec.Body)
 	}
 }

@@ -90,6 +90,9 @@ func workloadIdentityTokenHandler(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(response)
 }
 
+// workloadIdentityFetchTimeout bounds one token request to the host.
+const workloadIdentityFetchTimeout = 4 * time.Second
+
 // fetchWorkloadIdentity asks the host for a token over AF_VSOCK. A host
 // refusal comes back in response.Error with a nil error.
 func fetchWorkloadIdentity(audience string) (workloadIdentityGuestResponse, error) {
@@ -98,7 +101,7 @@ func fetchWorkloadIdentity(audience string) (workloadIdentityGuestResponse, erro
 		return workloadIdentityGuestResponse{}, err
 	}
 	defer func() { _ = conn.Close() }()
-	_ = conn.SetDeadline(time.Now().Add(4 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(workloadIdentityFetchTimeout))
 	reqBody, _ := json.Marshal(workloadIdentityGuestRequest{Audience: audience})
 	if err := writeIdentityFrame(conn, reqBody); err != nil {
 		return workloadIdentityGuestResponse{}, err
