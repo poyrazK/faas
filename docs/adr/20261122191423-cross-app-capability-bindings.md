@@ -91,7 +91,14 @@ their own grant model when environment branches add identity scoping). The
 target app is the one in the path and must belong to the caller's resource
 account. The caller's manifest must hold a grant for the target and the
 resource. Refusals are 403 `binding_not_granted` naming the missing grant
-(what to add to `uses:`), or 401 for a bad token. The handler then runs as
+(what to add to `uses:`), 401 only for a token whose signature, audience or
+expiry fails, and 403 `insufficient_scope` for a correctly signed token whose
+caller may not use bindings (a stage deployment, a stopped instance, a deleted
+app, an inactive account). Only 401 counts against the shared per-IP
+auth-failure limiter, so an SDK on a refused instance retrying on every
+credential refresh cannot lock its node's other tenants out of apid. An
+Idempotency-Key is scoped to the caller app by hashing it with the caller's
+ID (a fixed 72 bytes), so any key the route accepts still fits. The handler then runs as
 the target's resource account, exactly as an API key of that account would,
 so plan limits, budgets and idempotency apply unchanged. Audit records the
 caller app and instance as the actor.
@@ -116,7 +123,15 @@ static key in its environment:
   and compute keys are `GRGA`). Environment clones, credential inventories
   and the per-bucket key cap never see it. The secret is sealed to the
   Storage domain, as for other S3 credentials. apid deletes expired rows
-  every five minutes; an expired row stops resolving at once.
+  every five minutes; an expired row stops resolving at once. One instance
+  holds at most `api.WorkloadObjectCredentialsPerInstanceBucket` (8) live
+  credentials per bucket; the lifetime is `api.WorkloadObjectCredentialTTL`.
+- **Revocation.** A credential also stops resolving once its caller app is
+  deleted (which covers `project destroy`) or its instance no longer holds a
+  VM (parked, stopped, failed, evicted). `project apply` deletes a changed
+  app's credentials that its new `uses:` no longer covers (a dropped bucket,
+  or a grant whose access or prefix changed) and keeps the rest, so an
+  unrelated manifest change does not break a guest's cached credential.
 - **Gateway.** `ResolveObjectS3Credential` resolves a `GRGW` key from that
   table and returns it shaped as a compute-binding key (`ManagedAppID` is
   the caller, `KeyPrefix` the grant's prefix), so s3-gatewayd's existing
@@ -124,16 +139,20 @@ static key in its environment:
 - **Guest.** guest-init serves `GET http://127.0.0.1:2773/v1/credentials/object-storage[?bucket=]`
   on its loopback identity listener: it fetches a gregale:bindings token over
   vsock, calls apid (the workload's `GREGALE_API_URL`, https only) and caches
-  the answer until five minutes before `Expiration`. The answer is the AWS
+  the answer until five minutes before `Expiration`; apid's refusal of a
+  bucket is cached for 30 seconds. The answer is the AWS
   container credential shape (`AccessKeyId`, `SecretAccessKey`, `Token`,
   `Expiration`) plus `Bucket`, `KeyPrefix`, `Endpoint` and `Region`.
 - **Env.** `project apply` sets `AWS_CONTAINER_CREDENTIALS_FULL_URI` to that
-  URL for a service with a bucket grant and removes the platform's value when
-  the grant goes; a value the customer set is left alone. AWS SDKs accept a
-  loopback http container-credential URI and refresh before expiry.
+  URL for a service with exactly one bucket grant and removes the platform's
+  value otherwise; a value the customer set is left alone and is not reported
+  as drift. AWS SDKs accept a loopback http container-credential URI and
+  refresh before expiry.
 
-A single endpoint serves one credential per bucket; a service with several
-bucket grants selects one with `?bucket=` (one client per bucket).
+A single endpoint serves one credential per bucket. A service with several
+bucket grants gets no platform default, because the endpoint without
+`?bucket=` cannot pick one; it configures one S3 client per bucket with the
+URL plus `?bucket=NAME`.
 
 ### 4. Data resources in `project apply` (slice 3)
 
@@ -150,8 +169,10 @@ cache are not yet declarative; they stay follow-ups behind their own flags
 `gregale project destroy <slug> (--dry-run | --yes) [--include-data]` plans
 from the delete preview, each app's buckets and Postgres bindings, then:
 
-1. with `--include-data`, deletes each app's buckets (the API still refuses
-   a non-empty bucket);
+1. with `--include-data`, deletes each app's buckets. The API deletes only
+   empty buckets, so the plan checks each one and keeps a bucket that still
+   holds an object, version or delete marker, together with its app and the
+   project, naming the commands that empty it;
 2. deletes apps that own no remaining bucket (their bindings go with them);
 3. with `--include-data`, deletes managed PostgreSQL databases whose every
    binding belonged to the project's apps (deletion protection still
