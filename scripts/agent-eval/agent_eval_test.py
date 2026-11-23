@@ -485,7 +485,7 @@ class ProjectGregale:
         if path == "/v1/apps/ui":
             return {"canonical_url": "https://ui.gregale.dev/", "parked_deployment": {"parked_reason": "liveness_exhausted", "parked_at": "2026-11-12T16:59:17Z"}}
         if path == "/v1/apps/orders":
-            return {"canonical_url": "", "parked_deployment": {"parked_reason": "liveness_exhausted", "parked_at": "2026-11-12T20:10:00Z"}}
+            return {"canonical_url": "", "status": "evicted_cold", "parked_deployment": {"parked_reason": "liveness_exhausted", "parked_at": "2026-11-12T20:10:00Z"}}
         if path == "/v1/apps/ui/health":
             return {"serving_deployment_ids": ["d1"]}
         if path == "/v1/apps/orders/health":
@@ -755,6 +755,62 @@ class GradeTests(unittest.TestCase):
             graded = ev.grade_features(task, ["ls", "gregale deploy --dry-run"], Path(d), {"apps": ["ui"], "projects": ["shop"]})
         self.assertEqual(graded, {"features_used": ["project", "preflight", "health-config"], "features_missed": ["logs"], "feature_score": 0.75})
         self.assertIsNone(ev.grade_features({}, [], Path("."), {})["feature_score"])
+
+    def test_feature_unless_first_deploy_live(self):
+        # G3 (2026-11-23): Gregale found the uvicorn command itself, so pinning
+        # it was a fix the agent did not need.
+        task = {"features": [{"id": "start-command-pinned", "kind": "file", "glob": "*", "pattern": "uvicorn", "unless": "first_deploy_live"}]}
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(ev.grade_features(task, [], Path(d), {}, first_live=True)["features_used"], ["start-command-pinned"])
+            self.assertEqual(ev.grade_features(task, [], Path(d), {}, first_live=False)["features_missed"], ["start-command-pinned"])
+
+    def test_first_deploy_live(self):
+        class G:
+            def __init__(self, rows):
+                self.rows = rows
+
+            def get(self, path):
+                return {"items": self.rows}
+        since = "2026-11-23T10:00:00Z"
+        first_failed = [{"created_at": "2026-11-23T10:05:00Z", "status": "failed"}, {"created_at": "2026-11-23T10:09:00Z", "status": "live"}]
+        first_live = [{"created_at": "2026-11-23T10:05:00Z", "status": "superseded"}, {"created_at": "2026-11-23T10:09:00Z", "status": "live"},
+                      {"created_at": "2026-11-22T10:00:00Z", "status": "failed"}]
+        self.assertFalse(ev.first_deploy_live(G(first_failed), ["web"], since))
+        self.assertTrue(ev.first_deploy_live(G(first_live), ["web"], since))
+        self.assertFalse(ev.first_deploy_live(G(first_live), [], since))
+
+    def test_no_traps_grades_the_end_state(self):
+        # G4 (voting-app 2026-11-23): a HEALTHCHECK experiment the agent
+        # replaced with a working release is not a trap it was left in.
+        class G:
+            def __init__(self, app, rows):
+                self.app, self.rows = app, rows
+
+            def get(self, path):
+                return {"items": self.rows} if path.endswith("deployments?limit=20") else self.app
+        since = "2026-11-23T10:00:00Z"
+        experiment = {"created_at": "2026-11-23T10:05:00Z", "status": "failed", "error_code": "app_startup_timeout"}
+        fixed = {"created_at": "2026-11-23T10:09:00Z", "status": "live"}
+        task = {"checks": [{"kind": "no_traps"}]}
+        recovered = ev.run_checks(task, "s", Path("."), "", G({"status": "active"}, [experiment, fixed]), created={"apps": ["worker"]}, since=since)
+        self.assertTrue(recovered[0]["ok"], recovered)
+        stuck = ev.run_checks(task, "s", Path("."), "", G({"status": "active"}, [fixed, dict(experiment, created_at="2026-11-23T10:20:00Z")]),
+                              created={"apps": ["worker"]}, since=since)
+        self.assertEqual(stuck[0]["detail"], "worker:app_startup_timeout")
+        parked = {"status": "evicted_cold", "parked_deployment": {"parked_at": "2026-11-23T10:30:00Z", "parked_reason": "liveness_exhausted"}}
+        self.assertFalse(ev.run_checks(task, "s", Path("."), "", G(parked, [fixed]), created={"apps": ["worker"]}, since=since)[0]["ok"])
+        woken = dict(parked, status="active")
+        self.assertTrue(ev.run_checks(task, "s", Path("."), "", G(woken, [fixed]), created={"apps": ["worker"]}, since=since)[0]["ok"])
+
+    def test_prefixed_compose_apps_are_the_runs(self):
+        # Codex 2026-11-23: `--prefix retail-sample-` named four apps the
+        # agent never typed whole.
+        g = ev.CliGregale("/bin/gregale")
+        evidence = "gregale project deploy --prefix retail-sample- --yes\ngregale deploy --prefix a"
+        touched = {"apps": ["retail-sample-cart", "retail-sample-orders", "other-cart", "alpha"], "projects": []}
+        mine, others = ev.attribute(g, touched, evidence)
+        self.assertEqual(mine["apps"], ["retail-sample-cart", "retail-sample-orders"])
+        self.assertEqual(others["apps"], ["other-cart", "alpha"])
 
     def test_anti_patterns(self):
         commands = ["curl -sS -X POST https://api.gregale.dev/v1/apps/ui/deployments -F source=@ui.tgz", "tar -czf ui.tgz -C src/ui .",

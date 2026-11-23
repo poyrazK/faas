@@ -199,7 +199,7 @@
     "features": [
       {"id": "preflight", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*(--dry-run|--diff|--plan|\\bdoctor\\b|\\bdeploy\\s+check\\b)"},
       {"id": "diagnose-with-gregale", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*\\b(logs|inspect|health|status|release\\s+(get|logs|timeline|attempt))\\b"},
-      {"id": "start-command-pinned", "kind": "file", "glob": "*", "pattern": "(?m)^(web:|\\s+start:)\\s*uvicorn\\b[^\\n]*\\bPORT\\b"}
+      {"id": "start-command-pinned", "kind": "file", "glob": "*", "pattern": "(?m)^(web:|\\s+start:)\\s*uvicorn\\b[^\\n]*\\bPORT\\b", "unless": "first_deploy_live"}
     ],
     "follow_up": "Yes, go ahead with what you recommend.",
     "budget_usd": 4.0,

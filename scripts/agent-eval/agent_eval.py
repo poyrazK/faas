@@ -52,6 +52,10 @@ FEATURE_STATES = ("project_created",)
 DEFAULT_API = "https://api.gregale.dev"
 # Failure codes that mean the agent walked into a known platform trap.
 DEFAULT_TRAPS = ("liveness_exhausted", "app_startup_timeout")
+# App statuses that mean parked (the API's and the CLI's spelling).
+PARKED_STATUSES = ("evicted_cold", "parked")
+# Conditions under which a feature is not needed (see grade_features).
+FEATURE_UNLESS = ("first_deploy_live",)
 # Ways of working around the CLI that count against a run.
 ANTI_PATTERNS = {
     "raw_api_call": re.compile(r"\b(curl|wget|https?|xh)\b[^\n]*(api\.gregale\.dev|/v1/(apps|projects|deployments))"),
@@ -108,6 +112,8 @@ def load_tasks(path: Path = TASKS) -> list[dict]:
         for feature in task.get("features", []):
             if not re.fullmatch(r"[a-z][a-z0-9-]{1,40}", feature.get("id", "")) or feature.get("kind") not in FEATURE_KINDS:
                 raise EvalError(f"{tid}: feature {feature.get('id')!r} needs a slug id and a kind in {FEATURE_KINDS}")
+            if feature.get("unless") is not None and feature["unless"] not in FEATURE_UNLESS:
+                raise EvalError(f"{tid}: feature {feature['id']} has unknown unless {feature['unless']!r}")
             if feature["kind"] == "state" and feature.get("state") not in FEATURE_STATES:
                 raise EvalError(f"{tid}: unknown state feature {feature.get('state')!r}")
             if feature["kind"] != "state":
@@ -585,10 +591,21 @@ def attribute(gregale: "Gregale", touched: dict, evidence: str, slug: str | None
         return touched, {"apps": [], "projects": []}
     mine: dict = {"apps": [], "projects": []}
     others: dict = {"apps": [], "projects": []}
+    prefixes = _slug_prefixes(evidence)
     for kind in ("apps", "projects"):
         for name in touched.get(kind, []):
-            (mine if name == slug or _named(name, evidence) else others)[kind].append(name)
+            named = name == slug or _named(name, evidence) or (kind == "apps" and name.startswith(prefixes))
+            (mine if named else others)[kind].append(name)
     return mine, others
+
+
+def _slug_prefixes(evidence: str) -> tuple:
+    """App slug prefixes the agent asked for (`--prefix retail-sample-`): a
+    Compose deploy names its apps <prefix><service>, a name the agent never
+    typed whole (Codex 2026-11-23, retail-store). Prefixes under four
+    characters are ignored so a stray `--prefix a` does not claim the account."""
+    found = re.findall(r"--prefix[=\s]+['\"]?([a-z0-9][a-z0-9-]*)", evidence)
+    return tuple(sorted({p for p in found if len(p) >= 4}))
 
 
 def deletable(gregale: "Gregale", before: dict | None, created: dict, slug: str | None, evidence: str = "") -> tuple[dict, str | None]:
@@ -714,20 +731,39 @@ def _app_url(app: dict) -> str:
     return (app.get("canonical_url") or app.get("url") or "").rstrip("/")
 
 
-def _app_evidence(gregale, slug: str, since: str = "") -> str:
-    """The app's park and its deployments since the run started, as text for
-    trap codes. Older parks and deployments belong to someone else's run."""
+def _app_final_evidence(gregale, slug: str, since: str = "") -> str:
+    """The app's state at the end of the run, as text for trap codes: its
+    park, if it is still parked from this run, and its latest deployment since
+    the run started. A failed release the agent replaced with a working one
+    was the agent experimenting, not a trap it was left in (voting-app,
+    2026-11-23: a deliberate HEALTHCHECK experiment failed the run)."""
     parts = []
     try:
-        parked = gregale.get(f"/v1/apps/{slug}").get("parked_deployment") or {}
-        if (parked.get("parked_at") or "") >= since:
+        app = gregale.get(f"/v1/apps/{slug}")
+        parked = app.get("parked_deployment") or {}
+        if app.get("status") in PARKED_STATUSES and (parked.get("parked_at") or "") >= since:
             parts.append(json.dumps(parked))
-        for deployment in _rows(gregale.get(f"/v1/apps/{slug}/deployments?limit=20")):
-            if (deployment.get("created_at") or "") >= since:
-                parts.append(json.dumps(deployment))
+        recent = [d for d in _rows(gregale.get(f"/v1/apps/{slug}/deployments?limit=20")) if (d.get("created_at") or "") >= since]
+        if recent:
+            parts.append(json.dumps(max(recent, key=lambda d: d.get("created_at") or "")))
     except (OSError, ValueError, AttributeError, urllib.error.URLError) as error:
         parts.append(f"unreadable {slug}: {error}")
     return "\n".join(parts)
+
+
+def first_deploy_live(gregale, apps: list[str], since: str = "") -> bool:
+    """Whether every app the run created went live on its first deployment
+    (`live` now, or `superseded` by a later one)."""
+    if not apps:
+        return False
+    try:
+        for slug in apps:
+            recent = [d for d in _rows(gregale.get(f"/v1/apps/{slug}/deployments?limit=50")) if (d.get("created_at") or "") >= since]
+            if not recent or min(recent, key=lambda d: d.get("created_at") or "").get("status") not in ("live", "superseded"):
+                return False
+    except (OSError, ValueError, AttributeError, urllib.error.URLError):
+        return False
+    return True
 
 
 def run_checks(task: dict, slug: str, project: Path, answer: str, gregale, fetch=None, http_deadline_s: float = 120, created: dict | None = None,
@@ -769,7 +805,7 @@ def run_checks(task: dict, slug: str, project: Path, answer: str, gregale, fetch
                     ok, detail = _http_or_private(gregale, app, url + check.get("path", "/"), check, http_deadline_s, fetch)
             elif kind == "no_traps":
                 codes = check.get("codes") or list(DEFAULT_TRAPS)
-                hit = sorted({f"{app}:{code}" for app in created_apps for code in codes if code in _app_evidence(gregale, app, since)})
+                hit = sorted({f"{app}:{code}" for app in created_apps for code in codes if code in _app_final_evidence(gregale, app, since)})
                 ok, detail = not hit, ",".join(hit)
         except (OSError, KeyError, ValueError, subprocess.TimeoutExpired, urllib.error.URLError) as error:
             detail = f"check error: {error}"
@@ -831,14 +867,20 @@ def _project_files_text(project: Path, glob: str, limit: int = 2_000_000) -> str
     return "\n".join(text)
 
 
-def grade_features(task: dict, commands: list[str], project: Path, created: dict, tools: list[str] | None = None) -> dict:
+def grade_features(task: dict, commands: list[str], project: Path, created: dict, tools: list[str] | None = None,
+                   first_live: bool = False) -> dict:
     """Which of the task's applicable Gregale features the run used. A command
     feature also counts when the agent called one of its equivalent MCP
-    tools (`tools`, matched on the tool name's suffix)."""
+    tools (`tools`, matched on the tool name's suffix). A feature with
+    `"unless": "first_deploy_live"` is a fix the agent needs only when
+    Gregale's detection falls short, so it counts as used when the first
+    deploy went live without it."""
     used, missed = [], []
     joined = "\n".join(commands)
     for feature in task.get("features", []):
-        if feature["kind"] == "command":
+        if feature.get("unless") == "first_deploy_live" and first_live:
+            hit = True
+        elif feature["kind"] == "command":
             hit = re.search(feature["pattern"], joined, re.MULTILINE) is not None or any(
                 name.endswith(tool) for name in tools or [] for tool in feature.get("tools", []))
         elif feature["kind"] == "file":
@@ -1020,7 +1062,9 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
         record["checks"] = run_checks(task, slug, project, metrics["answer"], gregale, created=created, since=record["started_at"],
                                       expected_app_id=record.get("initial_app_id"))
         record["success"] = all(check["ok"] for check in record["checks"])
-        record.update(grade_features(task, metrics["commands"], project, created, tools=list(metrics.get("tool_calls") or {})))
+        record["first_deploy_live"] = first_deploy_live(gregale, created.get("apps", []), record["started_at"])
+        record.update(grade_features(task, metrics["commands"], project, created, tools=list(metrics.get("tool_calls") or {}),
+                                     first_live=record["first_deploy_live"]))
         record["anti_patterns"] = grade_anti_patterns(metrics["commands"])
         record["wrote_outside_run"] = writes_outside(metrics.get("written_paths") or [], run_dir, project, AGENT_OWN_DIRS[agent])
         if record["wrote_outside_run"]:
