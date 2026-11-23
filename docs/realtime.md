@@ -323,6 +323,9 @@ where realtime holds real capacity on our servers:
   is open. A refused connection gets HTTP 429 with code
   `realtime_connection_limit`, the limit and the number open. Close idle
   connections, share one connection per browser tab, or upgrade the plan.
+- **One client address:** Gregale's edge holds at most 512 open connections
+  from one client IP address on each node, and resets connections past that.
+  Users behind one shared address, such as an office NAT, share those 512.
 - **One node, one account:** an account may hold at most half of a single
   realtime node's connections, so one busy account cannot fill a node. This
   refusal names the per-node limit; retry with backoff, and new connections may
