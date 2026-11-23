@@ -3156,7 +3156,7 @@ See [Functions and runtimes](functions.md).
 
 HTTP 503 Service Unavailable · Request budget exceeded; Request timed out
 
-See [Edge rules](edge-rules.md), [Errors](errors.md), [Host an MCP server](mcp-hosting.md), [Troubleshooting](troubleshooting.md).
+See [Edge rules](edge-rules.md), [Errors](errors.md), [Host an MCP server](mcp-hosting.md).
 
 ### `request_too_large`
 
