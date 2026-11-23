@@ -1,4 +1,4 @@
--- filename: 20261123122034623_managed_postgres_suspend_timeouts.sql
+-- filename: 20261123171250100_managed_postgres_suspend_timeouts.sql
 -- migration-compat: expand
 --
 -- A customer may choose how long a scale-to-zero managed PostgreSQL database

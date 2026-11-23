@@ -34586,6 +34586,35 @@ CREATE TABLE public.app_udp_listeners (
 
 
 --
+-- Name: app_verification_contracts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_verification_contracts (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    contract jsonb NOT NULL,
+    contract_sha256 text NOT NULL,
+    byte_size integer NOT NULL,
+    check_count integer NOT NULL,
+    revision bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_verification_contracts_byte_size_check CHECK (((byte_size >= 1) AND (byte_size <= 262144))),
+    CONSTRAINT app_verification_contracts_check_count_check CHECK (((check_count >= 1) AND (check_count <= 32))),
+    CONSTRAINT app_verification_contracts_contract_check CHECK ((jsonb_typeof(contract) = 'object'::text)),
+    CONSTRAINT app_verification_contracts_contract_sha256_check CHECK ((contract_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT app_verification_contracts_revision_check CHECK ((revision >= 1))
+);
+
+
+--
+-- Name: TABLE app_verification_contracts; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.app_verification_contracts IS 'Per-app gregale.verify.yaml contract (validated JSON) run against deployment candidates before promotion (ADR-20261122220000).';
+
+
+--
 -- Name: app_wake_transitions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -39685,6 +39714,46 @@ CREATE TABLE public.deployment_submission_receipts (
     CONSTRAINT deployment_submission_receipts_accepted_at_check CHECK (isfinite(accepted_at)),
     CONSTRAINT deployment_submission_receipts_attempt_id_check CHECK ((attempt_id ~ '^[0-9a-f]{32}$'::text))
 );
+
+
+--
+-- Name: deployment_verification_queries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_verification_queries (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    check_name text NOT NULL,
+    database_name text NOT NULL,
+    query text NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    row_count integer,
+    has_first boolean,
+    first_value text,
+    error_code text,
+    error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    claimed_at timestamp with time zone,
+    completed_at timestamp with time zone,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT deployment_verification_queries_check_name_check CHECK (((octet_length(check_name) >= 1) AND (octet_length(check_name) <= 64))),
+    CONSTRAINT deployment_verification_queries_database_name_check CHECK (((octet_length(database_name) >= 1) AND (octet_length(database_name) <= 63))),
+    CONSTRAINT deployment_verification_queries_error_check CHECK ((octet_length(error) <= 512)),
+    CONSTRAINT deployment_verification_queries_error_code_check CHECK ((octet_length(error_code) <= 64)),
+    CONSTRAINT deployment_verification_queries_first_value_check CHECK ((octet_length(first_value) <= 1024)),
+    CONSTRAINT deployment_verification_queries_query_check CHECK (((octet_length(query) >= 1) AND (octet_length(query) <= 65536))),
+    CONSTRAINT deployment_verification_queries_row_count_check CHECK ((row_count >= 0)),
+    CONSTRAINT deployment_verification_queries_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'done'::text])))
+);
+
+
+--
+-- Name: TABLE deployment_verification_queries; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.deployment_verification_queries IS 'Read-only SQL checks imaged hands to apid during candidate verification; result is row count and first value only (ADR-20261122220000).';
 
 
 --
@@ -65584,6 +65653,14 @@ ALTER TABLE ONLY public.app_udp_listeners
 
 
 --
+-- Name: app_verification_contracts app_verification_contracts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_verification_contracts
+    ADD CONSTRAINT app_verification_contracts_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: app_wake_transitions app_wake_transitions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -68085,6 +68162,14 @@ ALTER TABLE ONLY public.deployment_sidecar_secret_reload_signals
 
 ALTER TABLE ONLY public.deployment_submission_receipts
     ADD CONSTRAINT deployment_submission_receipts_pkey PRIMARY KEY (app_id, attempt_id);
+
+
+--
+-- Name: deployment_verification_queries deployment_verification_queries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_verification_queries
+    ADD CONSTRAINT deployment_verification_queries_pkey PRIMARY KEY (id);
 
 
 --
@@ -80145,6 +80230,13 @@ CREATE UNIQUE INDEX app_udp_listeners_public_port_uniq ON public.app_udp_listene
 
 
 --
+-- Name: app_verification_contracts_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_verification_contracts_account_idx ON public.app_verification_contracts USING btree (account_id);
+
+
+--
 -- Name: app_wake_transitions_pending_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -82239,6 +82331,20 @@ CREATE INDEX deployment_sidecar_layers_storage_key_idx ON public.deployment_side
 --
 
 CREATE INDEX deployment_submission_receipts_deployment_idx ON public.deployment_submission_receipts USING btree (deployment_id);
+
+
+--
+-- Name: deployment_verification_queries_expires_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_verification_queries_expires_idx ON public.deployment_verification_queries USING btree (expires_at);
+
+
+--
+-- Name: deployment_verification_queries_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_verification_queries_pending_idx ON public.deployment_verification_queries USING btree (created_at) WHERE (status = 'pending'::text);
 
 
 --
@@ -100720,6 +100826,14 @@ ALTER TABLE ONLY public.app_udp_listeners
 
 
 --
+-- Name: app_verification_contracts app_verification_contracts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_verification_contracts
+    ADD CONSTRAINT app_verification_contracts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: app_wake_transitions app_wake_transitions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -103669,6 +103783,14 @@ ALTER TABLE ONLY public.deployment_submission_receipts
 
 ALTER TABLE ONLY public.deployment_submission_receipts
     ADD CONSTRAINT deployment_submission_receipts_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_verification_queries deployment_verification_queries_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_verification_queries
+    ADD CONSTRAINT deployment_verification_queries_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

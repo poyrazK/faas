@@ -2450,7 +2450,7 @@ See [Environment variables](env.md).
 
 HTTP 403 Forbidden · Project secret limit reached
 
-See [Delivered secrets](secrets.md#project-environment-secrets).
+See [Secrets](secrets.md#project-environment-secrets).
 
 ### `plan_limit_ram`
 
@@ -2462,7 +2462,7 @@ See [Plans and pricing](plans.md#at-a-glance).
 
 HTTP 403 Forbidden · Secret count limit reached
 
-See [Delivered secrets](secrets.md).
+See [Secrets](secrets.md).
 
 ### `plan_limit_trusted_signers`
 
@@ -2874,7 +2874,7 @@ Bind the bucket in an environment whose release does not pin secrets, or release
 
 Bind the database in an environment whose release does not pin secrets, or release without pinned secrets first.
 
-See [Delivered secrets](secrets.md).
+See [Secrets](secrets.md).
 
 ### `project_required`
 
@@ -3334,13 +3334,13 @@ HTTP 410 Gone · Secret entry unavailable
 
 HTTP 400 Bad Request · Invalid secret key
 
-See [Delivered secrets](secrets.md).
+See [Secrets](secrets.md).
 
 ### `secret_not_found`
 
 HTTP 400 Bad Request · Secret not set; Secret unavailable
 
-See [Delivered secrets](secrets.md).
+See [Secrets](secrets.md).
 
 ### `secret_reference_conflict`
 
@@ -3356,7 +3356,7 @@ See [Environment variables](env.md).
 
 HTTP 422 Unprocessable Entity · Secret-shaped values found in uploaded source
 
-See [Delivered secrets](secrets.md).
+See [Secrets](secrets.md).
 
 ### `secret_store_unavailable`
 
@@ -3366,7 +3366,7 @@ HTTP 503 Service Unavailable · Secret storage unavailable
 
 HTTP 413 Request Entity Too Large · Secret value too large
 
-See [Delivered secrets](secrets.md).
+See [Secrets](secrets.md).
 
 ### `security_posture_blocked`
 

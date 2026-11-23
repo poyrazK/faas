@@ -6183,6 +6183,30 @@
       ]
     },
     {
+      "id": "verification-contracts",
+      "name": "Verification contracts",
+      "category": "delivery",
+      "description": "Declare HTTP, MCP and read-only SQL checks in gregale.verify.yaml; Gregale runs them against each new deployment before it takes traffic and returns one pass/fail report.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/verification-contracts",
+      "acceptance_test": "pkg/verifycontract/contract_test.go::TestRunSkipsMutationsInProductionAndBlocksOnRequiredFailures",
+      "consumers": [
+        "imaged"
+      ],
+      "routes": [
+        "/v1/apps/{}/verification-contract"
+      ],
+      "cli": [
+        "verify"
+      ]
+    },
+    {
       "id": "wake-page",
       "name": "Wake page",
       "category": "runtime",

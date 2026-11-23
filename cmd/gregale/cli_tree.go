@@ -128,6 +128,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"release approve", "approvals approve"},
 	{"release reject", "approvals reject"},
 	{"release freeze", "freeze"},
+	{"release check", "verify"},
 	{"release gate", "release-gates"},
 	{"release schedule", "scheduled-releases"},
 	{"release mirror", "mirror"},

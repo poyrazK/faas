@@ -4475,6 +4475,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if err := deployManifestObjectStorageBindings(ctx, client, slug, sourceDir, *environment); err != nil {
 		return printErr("Manifest object-storage bindings failed", err)
 	}
+	// ADR-20261122220000: gregale.verify.yaml gates this deployment, so it
+	// is stored before the deployment is created. The contract is app-wide,
+	// so only a production deploy changes it: a staging deploy must not
+	// replace the checks that gate production.
+	if *environment == "" && verifyProductionScope(manifestScope) {
+		if err := deployVerificationContract(ctx, client, slug, sourceDir); err != nil {
+			return printErr("Verification contract not applied", err)
+		}
+	}
 	// Lifecycle is app-wide, so only a production deploy changes it, as a
 	// production push does (ADR-20261110190000 §5).
 	if resolvedShape == shapeFunction && *environment == "" && *image == "" && !isFunctionSetMember(ctx) {
