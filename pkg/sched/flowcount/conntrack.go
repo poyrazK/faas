@@ -170,7 +170,9 @@ func (r *Reader) Warm(ctx context.Context, instances []state.Instance) error {
 	r.mu.Lock()
 	cacheFresh := !r.failed && !r.cacheAt.IsZero() && time.Since(r.cacheAt) < r.ttl
 	var out []byte
+	reused := false
 	if cacheFresh && r.cachedOut != nil {
+		reused = true
 		// Cache is fresh: re-parse the cached conntrack output against the
 		// new warm list. This is the load-bearing bit — re-using `out` but
 		// recomputing counts means a re-used IP slot (pkg/fcvm/alloc.go
@@ -205,7 +207,15 @@ func (r *Reader) Warm(ctx context.Context, instances []state.Instance) error {
 	r.hostIndex = hostIndex
 	r.counts = counts
 	r.summaries = summaries
-	r.cacheAt = time.Now()
+	// cacheAt is when the conntrack table was read, not when it was last
+	// re-parsed. Refreshing it on a cache hit kept the snapshot fresh forever
+	// for any caller that warms more often than the TTL: vmmd's capacity
+	// publisher warms every second, so one conntrack read served a vmmd's
+	// whole lifetime and stale flows kept idle instances from parking until
+	// vmmd restarted (metering review 2026-11-23).
+	if !reused {
+		r.cacheAt = time.Now()
+	}
 	r.cachedOut = out
 	r.failed = false
 	r.mu.Unlock()

@@ -316,6 +316,36 @@ func TestReader_CacheTTLTriggersRefresh(t *testing.T) {
 	}
 }
 
+// A caller that warms more often than the TTL (vmmd's capacity publisher warms
+// every second) must still get a fresh conntrack read once the TTL has passed
+// since the last real read. Refreshing the cache time on every cache hit froze
+// the snapshot for the reader's lifetime, so flows that had ended kept idle
+// instances from parking (metering review 2026-11-23).
+func TestReader_FrequentWarmsStillRefreshAfterTTL(t *testing.T) {
+	runner := &fakeRunner{out: []byte(cannedConntrack)}
+	r := NewReader(runner, WithTTL(30*time.Millisecond))
+	insts := makeInstances([2]string{"10.100.0.5", "inst-A"})
+	deadline := time.Now().Add(120 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if err := r.Warm(context.Background(), insts); err != nil {
+			t.Fatalf("Warm: %v", err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if calls := runner.calls.Load(); calls < 3 {
+		t.Fatalf("conntrack reads over 4 TTLs of 5 ms warms = %d, want at least 3", calls)
+	}
+	// The ended flow must disappear once conntrack no longer lists it.
+	runner.out = nil
+	time.Sleep(40 * time.Millisecond)
+	if err := r.Warm(context.Background(), insts); err != nil {
+		t.Fatalf("Warm: %v", err)
+	}
+	if open, err := r.Open(context.Background(), "inst-A"); err != nil || open != 0 {
+		t.Fatalf("Open after the flow ended = %d, %v; want 0", open, err)
+	}
+}
+
 func TestReader_FailedWarmLatchesUntilSuccess(t *testing.T) {
 	runner := &fakeRunner{err: errors.New("conntrack timeout")}
 	r := NewReader(runner, WithTTL(time.Hour))
