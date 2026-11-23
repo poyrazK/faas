@@ -1420,6 +1420,12 @@ HTTP 400 Bad Request · Source must be one of: cold_boot, manual_upload; Source 
 
 HTTP 400 Bad Request · Invalid State
 
+### `invalid_suspend_timeout`
+
+HTTP 422 Unprocessable Entity · Invalid suspend timeout
+
+See [Managed PostgreSQL](postgres.md#plans).
+
 ### `invalid_traffic_percent`
 
 HTTP 422 Unprocessable Entity · Invalid traffic_percent
