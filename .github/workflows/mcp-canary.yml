@@ -61,8 +61,18 @@ jobs:
 
       - name: Decide whether this run redeploys
         id: mode
+        env:
+          HAS_KEY: ${{ secrets.MCP_CANARY_KEY != '' }}
         run: |
           set -euo pipefail
+          # Until MCP_CANARY_KEY is set the hourly schedule is a no-op rather
+          # than an hourly failure; a manual run still fails loudly.
+          if [[ "$HAS_KEY" != true && "${{ github.event_name }}" == schedule ]]; then
+            echo "::notice::MCP_CANARY_KEY is not set; the canary is not enabled yet (docs/ops/mcp-canary.md)"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
           deploy=false
           if [[ "${{ github.event_name }}" == workflow_dispatch ]]; then
             deploy="${{ inputs.deploy }}"
@@ -73,6 +83,7 @@ jobs:
 
       - name: Probe MCP hosting
         id: probe
+        if: steps.mode.outputs.enabled == 'true'
         env:
           MCP_CANARY_KEY: ${{ secrets.MCP_CANARY_KEY }}
           CANARY_FALLBACK_WEBHOOK_URL: ${{ secrets.CANARY_FALLBACK_WEBHOOK_URL }}
@@ -86,7 +97,7 @@ jobs:
           python3 -I scripts/ops/mcp_canary.py "${args[@]}"
 
       - name: Report scheduled success to the independent monitor
-        if: success() && github.event_name == 'schedule' && github.run_attempt == '1'
+        if: success() && steps.mode.outputs.enabled == 'true' && github.event_name == 'schedule' && github.run_attempt == '1'
         timeout-minutes: 1
         env:
           CANARY_HEARTBEAT_URL: ${{ secrets.MCP_CANARY_HEARTBEAT_URL }}
