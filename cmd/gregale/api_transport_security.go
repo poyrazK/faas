@@ -84,7 +84,7 @@ func validateAcceptedAPIBase(raw string) (string, error) {
 }
 
 // displayAPIBase drops URL credentials, query and fragment so an API base
-// can be printed. FAAS_API is not validated like saved config and may carry
+// can be printed. GREGALE_API_URL / FAAS_API is not validated like saved config and may carry
 // user:password@ (or a token as the user name).
 func displayAPIBase(raw string) string {
 	u, err := url.Parse(raw)

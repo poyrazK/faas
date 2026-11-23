@@ -736,7 +736,7 @@ PostgreSQL 16 `psql` client and the current `gregale` binary.
 
 ```sh
 export FAAS_ENVIRONMENT=staging
-export FAAS_API=https://your-staging-control-api.example
+export GREGALE_API_URL=https://your-staging-control-api.example
 # Authenticate gregale for the approved staging account through its normal flow.
 python3 tests/data-pipelines/staging_canary.py \
   --pipeline PIPELINE_ID \

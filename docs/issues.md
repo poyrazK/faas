@@ -1078,10 +1078,10 @@ export GREGALE_ISSUES_SMOKE_DEPLOYMENT_A=DEPLOYMENT_UUID_A
 export GREGALE_ISSUES_SMOKE_DEPLOYMENT_B=DEPLOYMENT_UUID_B
 export GREGALE_TOKEN='your-Gregale-API-key-with-issue-read-access'
 
-FAAS_API="$GREGALE_API_URL" gregale debug issue token create --app "$GREGALE_APP" \
+gregale debug issue token create --app "$GREGALE_APP" \
   --deployment "$GREGALE_ISSUES_SMOKE_DEPLOYMENT_A" \
   --environment "$GREGALE_ISSUES_SMOKE_ENVIRONMENT" --name issues-smoke-a --expires-in 24h
-FAAS_API="$GREGALE_API_URL" gregale debug issue token create --app "$GREGALE_APP" \
+gregale debug issue token create --app "$GREGALE_APP" \
   --deployment "$GREGALE_ISSUES_SMOKE_DEPLOYMENT_B" \
   --environment "$GREGALE_ISSUES_SMOKE_ENVIRONMENT" --name issues-smoke-b --expires-in 24h
 

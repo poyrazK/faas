@@ -45,7 +45,7 @@ gregale queue send --app my-worker --queue-name jobs --payload '{"image":"cat.pn
 ```
 
 ```bash
-curl -X POST "$GREGALE_API/v1/apps/my-worker/queues/send" \
+curl -X POST "$GREGALE_API_URL/v1/apps/my-worker/queues/send" \
   -H "Authorization: Bearer $KEY" \
   -d '{"queue_name":"jobs","payload":{"image":"cat.png"}}'
 ```
@@ -55,7 +55,7 @@ Each send is an API request, and an account makes at most 1,200 (Hobby), 3,000
 once:
 
 ```bash
-curl -X POST "$GREGALE_API/v1/apps/my-worker/queues/send-batch" \
+curl -X POST "$GREGALE_API_URL/v1/apps/my-worker/queues/send-batch" \
   -H "Authorization: Bearer $KEY" \
   -d '{"queue_name":"jobs","messages":[{"payload":{"image":"a.png"}},{"payload":{"image":"b.png"}}]}'
 ```
