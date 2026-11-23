@@ -381,6 +381,15 @@ func (c *LocalCacheBackend) LocalPath(key string) (string, bool, error) {
 // file or this wrapper supplied a cache hit. It never calls parent.Get, so a
 // cache hit cannot fall through to a remote existence check or blob copy.
 func (c *LocalCacheBackend) LocalPathWithSource(key string) (string, LocalPathSource, bool, error) {
+	// A local-only entry has no parent copy yet: a local parent would name
+	// a path that does not exist until the upload (ADR-20261122132055 §2).
+	if c.LocalOnly(key) {
+		cacheFile, _ := c.cacheFileFor(key)
+		if regularFileExists(cacheFile) {
+			c.touchCacheFile(cacheFile)
+			return cacheFile, LocalPathSourceCache, true, nil
+		}
+	}
 	if resolver, ok := c.parent.(LocalPathSourceResolver); ok {
 		if p, source, local, err := resolver.LocalPathWithSource(key); err == nil && local && !isDriveDeltaPayload(key, p) {
 			return p, source, true, nil

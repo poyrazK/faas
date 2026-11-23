@@ -189,6 +189,7 @@ Each step is one PR on the sandbox branches until the owner asks for PRs. Every 
 - **Upload.** vmmd then copies the capture to the cache's parent store in the background and drops the marks, retrying with backoff (2 s up to 5 min, giving up after 24 h); a vmmd restart publishes whatever is still marked. Its duration is the `vmmd` operation `SandboxCaptureUpload` (standing in for `sandbox_session_capture_upload_seconds`). A capture deleted while it uploads is deleted again from the parent.
 - **Durability.** agentd's sweep turns `durability: node` into `remote` once the shared store holds every object of the capture (the backing only when the pause reported one, `has_backing`). The capture's row is the record of it.
 - **Resume.** A `remote` capture resumes on its node when it has room and anywhere on the pool otherwise. A `node` capture resumes only on its node (`require_node`): schedd answers `capacity` when it is busy and agentd retries; a capture whose node is gone resumes cold.
+- **Local paths.** A node-first capture object is local-only until its upload, so the node cache resolves it to its own copy. A local-disk shared store names a path for every key, and restores before the upload used to stage from that missing path and cold-boot.
 - **Not yet:** captures sealed to the account (follows snapshot sealing 3d-3, still behind its flag); the cold resume from the volume (step 5, so it still starts from a fresh workspace).
 
 ## Open questions
