@@ -72,7 +72,7 @@ deferred. Snapshot-copy checks compare scale-to-zero against always-on,
 not the exact timeout, so a changed setting is not drift.
 
 Customer override (same day): a customer sets a scale-to-zero database's own
-timeout with `gregale postgres suspend-after set DB 1m..1h|default`
+timeout with `gregale postgres suspend-timeout set DB 1m..1h|default`
 (`PUT /v1/postgres/databases/{id}/suspend-timeout`). It lives in
 `managed_postgres_suspend_timeouts` (one row per database, 60..3600 s), not
 in the database's spec, so resize and compute-policy journals, their JSON

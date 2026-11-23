@@ -34,8 +34,8 @@ Operators: see the [operator guide](managed-postgres.md).
   from 1 minute to 1 hour:
 
   ```sh
-  gregale postgres suspend-after set orders-db 5m
-  gregale postgres suspend-after set orders-db default
+  gregale postgres suspend-timeout set orders-db 5m
+  gregale postgres suspend-timeout set orders-db default
   ```
 
   A suspended database takes the new time at once; a running one takes it

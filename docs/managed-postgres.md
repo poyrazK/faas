@@ -141,7 +141,7 @@ gregalectl config set -key managed_postgres_policy -yes -reason "launch limits" 
   scale-to-zero database's compute stays up after its last activity; every
   wake bills at least this much compute. New databases and compute-policy
   changes use it at once. A customer may give a database its own value
-  (`gregale postgres suspend-after`, 1 min to 1 h); the default covers the
+  (`gregale postgres suspend-timeout`, 1 min to 1 h); the default covers the
   rest. A sweep every 5 minutes on each apid, independent of usage metering,
   moves existing Neon databases onto their value, writing only an endpoint
   that is suspended and not held, so a running compute is never touched and

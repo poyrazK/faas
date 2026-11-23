@@ -63,7 +63,7 @@ type SetManagedPostgresSuspendTimeoutParams struct {
 }
 
 // Customer-chosen scale-to-zero suspend timeouts (gregale postgres
-// suspend-after). No row is the platform default. apid checks the caller owns
+// suspend-timeout). No row is the platform default. apid checks the caller owns
 // the database before writing.
 func (q *Queries) SetManagedPostgresSuspendTimeout(ctx context.Context, db DBTX, arg SetManagedPostgresSuspendTimeoutParams) error {
 	_, err := db.Exec(ctx, setManagedPostgresSuspendTimeout, arg.DatabaseID, arg.Seconds)

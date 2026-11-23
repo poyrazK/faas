@@ -1,5 +1,5 @@
 -- Customer-chosen scale-to-zero suspend timeouts (gregale postgres
--- suspend-after). No row is the platform default. apid checks the caller owns
+-- suspend-timeout). No row is the platform default. apid checks the caller owns
 -- the database before writing.
 
 -- name: SetManagedPostgresSuspendTimeout :exec

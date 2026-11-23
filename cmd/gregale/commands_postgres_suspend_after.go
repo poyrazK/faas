@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const postgresSuspendAfterUsage = "usage: gregale postgres suspend-after set DATABASE DURATION|default   (DURATION 1m..1h, e.g. 2m)"
+const postgresSuspendAfterUsage = "usage: gregale postgres suspend-timeout set DATABASE DURATION|default   (DURATION 1m..1h, e.g. 2m)"
 
 // parsePostgresSuspendAfter reads 1m..1h in whole seconds, or default (nil).
 func parsePostgresSuspendAfter(value string) (*int64, bool) {
@@ -31,7 +31,7 @@ func parsePostgresSuspendAfter(value string) (*int64, bool) {
 // cmdPostgresSuspendAfter sets how long a scale-to-zero database stays up
 // after its last activity; every wake bills at least this much compute.
 func cmdPostgresSuspendAfter(args []string) int {
-	fs := newFlagSet("postgres suspend-after", flag.ContinueOnError)
+	fs := newFlagSet("postgres suspend-timeout", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}

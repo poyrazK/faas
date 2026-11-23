@@ -1227,7 +1227,7 @@ const ManagedPostgresOverageCeilingMultiplier = 2
 
 // ManagedPostgresSuspendTimeoutMinSeconds and ...MaxSeconds bound the suspend
 // timeout a customer chooses for a scale-to-zero database (gregale postgres
-// suspend-after): past an hour a database is close to always-on, which plans
+// suspend-timeout): past an hour a database is close to always-on, which plans
 // sell separately. The managed_postgres_suspend_timeouts CHECK matches.
 // Docs: docs/postgres.md.
 const (
@@ -1236,7 +1236,7 @@ const (
 )
 
 // ManagedPostgresSuspendTimeoutDocsURL is cited by the out-of-range error.
-const ManagedPostgresSuspendTimeoutDocsURL = "https://gregale.dev/docs/postgres#suspend-after"
+const ManagedPostgresSuspendTimeoutDocsURL = "https://gregale.dev/docs/postgres#plans"
 
 // ManagedPostgresNeonScaleMillicentsPerComputeUnitHour is what Neon's Scale
 // plan charges Gregale per CU-hour ($0.222, neon.com/pricing on 2026-11-02),

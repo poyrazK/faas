@@ -15,7 +15,7 @@ import (
 // stays up after its last activity. Every wake pays at least this much
 // compute. The platform default is an operator setting (managed_postgres_policy
 // suspend_timeout_seconds); a customer may choose a database's own value
-// (gregale postgres suspend-after), kept apart from the database's spec so
+// (gregale postgres suspend-timeout), kept apart from the database's spec so
 // resize and compute-policy journals never see it. SuspendTimeoutSweeper
 // moves each database's compute onto its value.
 const (
