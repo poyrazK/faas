@@ -78804,6 +78804,172 @@ func (q *Queries) OperationEffectDeliveryAllowed(ctx context.Context, db DBTX, d
 	return i, err
 }
 
+const operatorActiveBuilds = `-- name: OperatorActiveBuilds :many
+SELECT b.id::text AS id, b.deployment_id::text AS deployment_id,
+       COALESCE(d.app_id::text, '')::text AS app_id, COALESCE(a.slug, '')::text AS app_slug,
+       COALESCE(a.account_id::text, '')::text AS account_id,
+       b.kind, b.status, COALESCE(b.failure_class, '')::text AS failure_class, b.source_bytes,
+       b.enqueued_at, b.not_before, b.started_at, b.finished_at,
+       COALESCE(b.cache_status, '')::text AS cache_status,
+       COALESCE(b.builder_node_name, '')::text AS builder_node_name, b.preemptions,
+       COALESCE(b.coalesced_with::text, '')::text AS coalesced_with
+FROM builds b
+LEFT JOIN deployments d ON d.id = b.deployment_id
+LEFT JOIN apps a ON a.id = d.app_id
+WHERE b.status IN ('queued', 'running')
+ORDER BY (b.status = 'running') DESC, (b.not_before IS NOT NULL AND b.not_before > now()),
+         COALESCE(b.not_before, b.enqueued_at), b.id
+LIMIT $1::int
+`
+
+type OperatorActiveBuildsRow struct {
+	ID              string
+	DeploymentID    string
+	AppID           string
+	AppSlug         string
+	AccountID       string
+	Kind            string
+	Status          string
+	FailureClass    string
+	SourceBytes     int64
+	EnqueuedAt      pgtype.Timestamptz
+	NotBefore       pgtype.Timestamptz
+	StartedAt       pgtype.Timestamptz
+	FinishedAt      pgtype.Timestamptz
+	CacheStatus     string
+	BuilderNodeName string
+	Preemptions     int32
+	CoalescedWith   string
+}
+
+// The operator build queue report (ADR-20261123163340): queued and running
+// builds with their app. Running builds come first (slots bound them, so a
+// long backlog never cuts them), then due queued builds the longest waiting
+// first (from not_before when deferred), then builds deferred to a later
+// not_before. The caller asks for one row more than it keeps to learn whether
+// it was cut.
+func (q *Queries) OperatorActiveBuilds(ctx context.Context, db DBTX, rowLimit int32) ([]OperatorActiveBuildsRow, error) {
+	rows, err := db.Query(ctx, operatorActiveBuilds, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorActiveBuildsRow{}
+	for rows.Next() {
+		var i OperatorActiveBuildsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.DeploymentID,
+			&i.AppID,
+			&i.AppSlug,
+			&i.AccountID,
+			&i.Kind,
+			&i.Status,
+			&i.FailureClass,
+			&i.SourceBytes,
+			&i.EnqueuedAt,
+			&i.NotBefore,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CacheStatus,
+			&i.BuilderNodeName,
+			&i.Preemptions,
+			&i.CoalescedWith,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const operatorFinishedBuildsSince = `-- name: OperatorFinishedBuildsSince :many
+SELECT b.id::text AS id, b.deployment_id::text AS deployment_id,
+       COALESCE(d.app_id::text, '')::text AS app_id, COALESCE(a.slug, '')::text AS app_slug,
+       COALESCE(a.account_id::text, '')::text AS account_id,
+       b.kind, b.status, COALESCE(b.failure_class, '')::text AS failure_class, b.source_bytes,
+       b.enqueued_at, b.not_before, b.started_at, b.finished_at,
+       COALESCE(b.cache_status, '')::text AS cache_status,
+       COALESCE(b.builder_node_name, '')::text AS builder_node_name, b.preemptions,
+       COALESCE(b.coalesced_with::text, '')::text AS coalesced_with
+FROM builds b
+LEFT JOIN deployments d ON d.id = b.deployment_id
+LEFT JOIN apps a ON a.id = d.app_id
+WHERE b.finished_at >= $1::timestamptz
+  AND b.status IN ('succeeded', 'failed', 'cancelled')
+ORDER BY b.finished_at DESC, b.id DESC
+LIMIT $2::int
+`
+
+type OperatorFinishedBuildsSinceParams struct {
+	Since    pgtype.Timestamptz
+	RowLimit int32
+}
+
+type OperatorFinishedBuildsSinceRow struct {
+	ID              string
+	DeploymentID    string
+	AppID           string
+	AppSlug         string
+	AccountID       string
+	Kind            string
+	Status          string
+	FailureClass    string
+	SourceBytes     int64
+	EnqueuedAt      pgtype.Timestamptz
+	NotBefore       pgtype.Timestamptz
+	StartedAt       pgtype.Timestamptz
+	FinishedAt      pgtype.Timestamptz
+	CacheStatus     string
+	BuilderNodeName string
+	Preemptions     int32
+	CoalescedWith   string
+}
+
+// Builds that reached a terminal status at or after since, newest first,
+// for the build queue report's durations, failures and cache outcomes.
+// builds_finished_at_idx serves the range.
+func (q *Queries) OperatorFinishedBuildsSince(ctx context.Context, db DBTX, arg OperatorFinishedBuildsSinceParams) ([]OperatorFinishedBuildsSinceRow, error) {
+	rows, err := db.Query(ctx, operatorFinishedBuildsSince, arg.Since, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorFinishedBuildsSinceRow{}
+	for rows.Next() {
+		var i OperatorFinishedBuildsSinceRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.DeploymentID,
+			&i.AppID,
+			&i.AppSlug,
+			&i.AccountID,
+			&i.Kind,
+			&i.Status,
+			&i.FailureClass,
+			&i.SourceBytes,
+			&i.EnqueuedAt,
+			&i.NotBefore,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CacheStatus,
+			&i.BuilderNodeName,
+			&i.Preemptions,
+			&i.CoalescedWith,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const operatorLiveDeploymentsWithoutSnapshot = `-- name: OperatorLiveDeploymentsWithoutSnapshot :many
 SELECT d.id::text AS deployment_id, d.app_id::text AS app_id, a.slug AS app_slug,
        a.account_id::text AS account_id, (d.rootfs_key <> '')::boolean AS cold_bootable,

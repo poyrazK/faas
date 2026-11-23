@@ -8868,6 +8868,14 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// An Info line also spends the request-log budget: past it the line is
 	// not built (see requestLogBudget).
 	decision := trafficDecisionEvidence(r.Context(), status, false)
+	if status >= http.StatusOK && status < http.StatusMultipleChoices && decision.path == "public_http" &&
+		decision.outcome == "upstream_response" && !decision.edgeResponse && !decision.deploymentPinned &&
+		decision.cache != "hit" && !strings.HasPrefix(decision.cache, "stale_") &&
+		target.InstanceID != "" && target.DeploymentID != "" && truncatedResponse(r) == nil && !isRouteProbe(r.Context()) {
+		if backend, ok := h.backend.(*PGBackend); ok {
+			backend.observeProjectRollbackResponse(r.Context(), appID, target.DeploymentID, startTime(r), time.Now())
+		}
+	}
 	level := requestLogLevel(code, cold)
 	if requestLog := h.log; requestLog != nil && requestLog.Enabled(r.Context(), level) && h.requestLogBudget.admit(level, h.metrics) {
 		if suppressed := h.requestLogBudget.takeSuppressed(); suppressed > 0 {

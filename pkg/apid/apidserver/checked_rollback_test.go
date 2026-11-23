@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/statetest"
+	"github.com/onebox-faas/faas/pkg/storage"
 )
 
 func checkedRollbackAPIFixture(t *testing.T) (testEnv, state.App, state.Deployment, state.Deployment) {
@@ -214,4 +216,33 @@ func TestCheckedRollbackPersistFailureIsLogged(t *testing.T) {
 	if !strings.Contains(logs.String(), "checked rollback: persist") || !strings.Contains(logs.String(), "statement timeout") || !strings.Contains(logs.String(), target.ID) {
 		t.Fatalf("log = %s, want the store error with the rollback target", logs.String())
 	}
+}
+
+func TestCheckedRollbackPreflightIsReadOnlyAndChecksArtifact(t *testing.T) {
+	e, app, target, current := checkedRollbackAPIFixture(t)
+	query := url.Values{"target_deployment_id": {target.ID}, "expected_current_deployment_id": {current.ID}}
+	path := "/v1/apps/" + app.Slug + "/rollbacks/preflight?" + query.Encode()
+	before, err := e.store.DeploymentByID(t.Context(), target.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := e.do(t, http.MethodGet, path, nil, nil)
+	if got.Code != http.StatusOK || strings.TrimSpace(got.Body.String()) != "[]" {
+		t.Fatalf("preflight ready: %d %s", got.Code, got.Body)
+	}
+
+	e.s.rollbackArtifactVerifier = stubRollbackArtifactVerifier{err: storage.ErrNotFound}
+	got = e.do(t, http.MethodGet, path, nil, nil)
+	var problem api.Problem
+	if got.Code != http.StatusConflict || json.Unmarshal(got.Body.Bytes(), &problem) != nil || problem.Code != api.CodeRollbackTargetUnavailable {
+		t.Fatalf("preflight missing artifact: %d %s", got.Code, got.Body)
+	}
+	after, err := e.store.DeploymentByID(t.Context(), target.ID)
+	if err != nil || before.Status != after.Status || before.TrafficPercent != after.TrafficPercent {
+		t.Fatalf("preflight changed target: before=%s/%d after=%s/%d err=%v", before.Status, before.TrafficPercent, after.Status, after.TrafficPercent, err)
+	}
+	if pending, err := e.store.ListPendingCheckedRollbacks(t.Context()); err != nil || len(pending) != 0 {
+		t.Fatalf("preflight created rollback intent: %v %v", pending, err)
+	}
+	assertPromotionWeights(t, e, target, current, 100)
 }

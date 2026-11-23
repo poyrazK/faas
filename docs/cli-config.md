@@ -606,13 +606,15 @@ For example, this previews a deployment using the `staging` connection and the
 gregale --profile staging deploy --size small --dry-run
 ```
 
-`FAAS_API` and `FAAS_TOKEN` still override the selected connection's endpoint
-and credential. When `FAAS_TOKEN` replaces an explicit `--profile` or a saved
+`FAAS_API` and `GREGALE_TOKEN` still override the selected connection's endpoint
+and credential. When `GREGALE_TOKEN` replaces an explicit `--profile` or a saved
 login, the command prints a one-line warning on stderr (stdout, including
 `--json` output, is unchanged). `login` and `start` refuse to run while
-`FAAS_TOKEN` is set, because the login they save would never be used;
-`login --token "$FAAS_TOKEN"` with the same value is still accepted. JSON
+`GREGALE_TOKEN` is set, because the login they save would never be used;
+`login --token "$GREGALE_TOKEN"` with the same value is still accepted. JSON
 preferences remain shared across connections.
+`FAAS_TOKEN`, the variable's earlier name, still works; when both are set,
+`GREGALE_TOKEN` wins. The Terraform provider reads `GREGALE_TOKEN` too.
 `gregale config set api-base <url>` updates the selected connection; changing
 its endpoint does not clear its stored credential, so log in again when changing
 to a different server. `gregale context` reports the effective profile and API
@@ -648,7 +650,7 @@ gregale --profile staging profile check --timeout 5s --json
 `profile check` makes one read-only `GET /v1/account` request using the selected
 endpoint and credential. It reports the profile, setting sources, endpoint
 reachability, authentication result, and account ID, email, plan, and status.
-It explains `FAAS_API` and `FAAS_TOKEN` overrides without printing credentials
+It explains `FAAS_API` and `GREGALE_TOKEN` overrides without printing credentials
 or raw server error details. It does not change saved settings or credentials.
 
 The default timeout is `10s`; `--timeout` accepts a positive Go duration.
@@ -673,7 +675,7 @@ Argument and configuration errors use the normal stderr error output.
 ## Shared command error diagnostics
 
 `login`, `apps`, and `deploy` use the shared CLI error renderer. Authentication
-hints name the selected profile and explain when `FAAS_TOKEN` overrides its
+hints name the selected profile and explain when `GREGALE_TOKEN` overrides its
 stored credential. An explicitly supplied login token gets a token replacement
 hint. Permission, rate-limit, and server errors receive recovery hints when the
 API has not supplied one. Existing server codes and specific hints are retained.

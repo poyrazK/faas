@@ -38,7 +38,7 @@ uses. A few public routes sit outside it:
 Send an API key (`fp_live_…`) as a bearer token:
 
 ```bash
-curl -sH "Authorization: Bearer $FAAS_TOKEN" https://api.gregale.dev/v1/apps
+curl -sH "Authorization: Bearer $GREGALE_TOKEN" https://api.gregale.dev/v1/apps
 ```
 
 Each operation in the spec lists the scopes it needs. See

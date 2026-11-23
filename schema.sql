@@ -14672,6 +14672,26 @@ $$;
 
 
 --
+-- Name: finish_project_rollback_undo_artifact_holds(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.finish_project_rollback_undo_artifact_holds() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.status = 'blocked' THEN
+        UPDATE project_rollback_undo_artifact_holds
+        SET expires_at = clock_timestamp() + interval '24 hours'
+        WHERE operation_id = NEW.id AND expires_at IS NULL;
+    ELSIF NEW.status = 'complete' THEN
+        DELETE FROM project_rollback_undo_artifact_holds WHERE operation_id = NEW.id;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: forbid_runtime_upgrade_native_public_startup_truncate(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -18168,6 +18188,38 @@ $$;
 
 
 --
+-- Name: guard_legacy_project_rollback_pause(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_legacy_project_rollback_pause() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE request_id text := nullif(current_setting('faas.checked_rollback_request', true), '');
+        paused boolean;
+BEGIN
+    IF request_id IS NULL OR NEW.status <> 'live'
+       OR NEW.traffic_percent <= (CASE WHEN OLD.status = 'live' THEN OLD.traffic_percent ELSE 0 END)
+    THEN
+        RETURN NEW;
+    END IF;
+    SELECT p.receipt ? 'pause_requested_at' INTO paused
+    FROM deployment_rollback_operations r
+    JOIN project_rollback_operations p ON (p.status = 'running' OR p.receipt ? 'pause_requested_at')
+       AND p.receipt->'steps' @> jsonb_build_array(jsonb_build_object(
+           'attempt_id', r.id, 'app_id', r.app_id, 'target_deployment_id', r.target_deployment_id,
+           'expected_current_deployment_id', r.current_deployment_id))
+    WHERE r.id = request_id::uuid AND r.app_id = NEW.app_id AND r.target_deployment_id = NEW.id
+      AND r.project_rollback_id IS NULL AND r.status IN ('ready', 'blocked')
+    FOR UPDATE OF p;
+    IF paused THEN
+        RAISE EXCEPTION 'project rollback is paused'
+            USING ERRCODE = '23514', CONSTRAINT = 'checked_rollback_required';
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_managed_postgres_accounting_intent(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -19343,6 +19395,90 @@ END $$;
 
 
 --
+-- Name: guard_project_rollback_artifact_deletion(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_project_rollback_artifact_deletion() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF project_rollback_protects_artifact(OLD.storage_key) THEN
+        RETURN NULL;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_project_rollback_live_traffic(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_project_rollback_live_traffic() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.status = 'live' AND NEW.traffic_percent > (CASE WHEN OLD.status = 'live' THEN OLD.traffic_percent ELSE 0 END)
+       AND EXISTS (
+           SELECT 1 FROM deployment_rollback_operations r
+           JOIN project_rollback_operations p ON p.id = r.project_rollback_id
+           WHERE r.app_id = NEW.app_id AND r.target_deployment_id = NEW.id
+             AND r.status NOT IN ('complete', 'failed') AND p.receipt->>'verify_live_traffic' = 'true'
+             AND r.id::text IS DISTINCT FROM current_setting('faas.project_rollback_live_traffic_verified', true)
+       ) THEN
+        RAISE EXCEPTION 'project rollback requires live-traffic health authorization'
+            USING ERRCODE = '23514', CONSTRAINT = 'checked_rollback_required';
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_project_rollback_pre_cutover_health(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_project_rollback_pre_cutover_health() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.status = 'live' AND NEW.traffic_percent > (CASE WHEN OLD.status = 'live' THEN OLD.traffic_percent ELSE 0 END)
+       AND EXISTS (
+           SELECT 1 FROM deployment_rollback_operations r
+           JOIN project_rollback_operations p ON p.id = r.project_rollback_id
+           WHERE r.app_id = NEW.app_id AND r.target_deployment_id = NEW.id
+             AND r.status NOT IN ('complete', 'failed') AND p.receipt->>'verify_before_cutover' = 'true'
+             AND r.id::text IS DISTINCT FROM current_setting('faas.project_rollback_pre_cutover_verified', true)
+       ) THEN
+        RAISE EXCEPTION 'project rollback requires pre-cutover health authorization'
+            USING ERRCODE = '23514', CONSTRAINT = 'checked_rollback_required';
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_project_rollback_preparation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_project_rollback_preparation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.status = 'live' AND NEW.traffic_percent > (CASE WHEN OLD.status = 'live' THEN OLD.traffic_percent ELSE 0 END)
+       AND EXISTS (
+           SELECT 1 FROM deployment_rollback_operations r
+           WHERE r.app_id = NEW.app_id AND r.target_deployment_id = NEW.id AND r.project_rollback_id IS NOT NULL
+             AND r.status NOT IN ('complete', 'failed')
+             AND r.id::text IS DISTINCT FROM current_setting('faas.project_rollback_cutover', true)
+       ) THEN
+        RAISE EXCEPTION 'project rollback preparation has not released this target'
+            USING ERRCODE = '23514', CONSTRAINT = 'checked_rollback_required';
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_promotion_control_publication(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -20290,6 +20426,29 @@ BEGIN
   END IF;
  END IF;
  RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_verified_project_rollback(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_verified_project_rollback() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.status = 'live' AND NEW.traffic_percent > (CASE WHEN OLD.status = 'live' THEN OLD.traffic_percent ELSE 0 END)
+       AND EXISTS (
+           SELECT 1 FROM deployment_rollback_operations r
+           JOIN project_rollback_operations p ON p.id = r.project_rollback_id
+           WHERE r.app_id = NEW.app_id AND r.target_deployment_id = NEW.id
+             AND r.status NOT IN ('complete', 'failed') AND p.receipt->>'verify' = 'true'
+             AND r.id::text IS DISTINCT FROM current_setting('faas.project_rollback_verified_cutover', true)
+       ) THEN
+        RAISE EXCEPTION 'verified project rollback requires health authorization'
+            USING ERRCODE = '23514', CONSTRAINT = 'checked_rollback_required';
+    END IF;
+    RETURN NEW;
 END $$;
 
 
@@ -24488,6 +24647,137 @@ END $$;
 
 
 --
+-- Name: preserve_project_rollback_health_policy(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.preserve_project_rollback_health_policy() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.receipt->>'verify' = 'true' AND (
+        NEW.receipt->>'verify' IS DISTINCT FROM 'true'
+        OR NEW.receipt->'health_probes' IS DISTINCT FROM OLD.receipt->'health_probes'
+    ) THEN
+        RETURN NULL;
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: preserve_project_rollback_live_traffic_policy(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.preserve_project_rollback_live_traffic_policy() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.receipt->>'verify_live_traffic' = 'true' AND (
+        NEW.receipt->>'verify_live_traffic' IS DISTINCT FROM 'true'
+        OR NEW.receipt->'live_traffic_policies' IS DISTINCT FROM OLD.receipt->'live_traffic_policies'
+    ) THEN
+        RETURN NULL;
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: preserve_project_rollback_live_traffic_undo(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.preserve_project_rollback_live_traffic_undo() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.receipt->>'undo_on_live_traffic_failure' = 'true' AND (
+        NEW.receipt->>'undo_on_live_traffic_failure' IS DISTINCT FROM 'true'
+        OR (
+            OLD.receipt #>> '{auto_undo,trigger}' = 'live_traffic'
+            AND NEW.receipt ? 'auto_undo'
+            AND ((NEW.receipt->'auto_undo') - 'status' - 'problem')
+                IS DISTINCT FROM ((OLD.receipt->'auto_undo') - 'status' - 'problem')
+        )
+    ) THEN
+        RETURN NULL;
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: preserve_project_rollback_pause(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.preserve_project_rollback_pause() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.receipt ? 'pause_requested_at' AND (
+        (NEW.receipt->>'pause_requested_at' IS DISTINCT FROM OLD.receipt->>'pause_requested_at'
+         AND NOT (OLD.status = 'blocked' AND NEW.status = 'running' AND
+                  NEW.receipt->>'phase' IS NOT DISTINCT FROM 'preparing'))
+        OR (OLD.status = 'running' AND
+            (NEW.receipt->>'phase' IS DISTINCT FROM 'releasing' OR NEW.status = 'complete'))
+    ) THEN
+        RETURN NULL;
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: preserve_project_rollback_pre_cutover_policy(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.preserve_project_rollback_pre_cutover_policy() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.receipt->>'verify_before_cutover' = 'true'
+       AND NEW.receipt->>'verify_before_cutover' IS DISTINCT FROM 'true' THEN
+        RETURN NULL;
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: preserve_project_rollback_stabilization(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.preserve_project_rollback_stabilization() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.receipt ? 'stabilize_for_seconds'
+       AND NEW.receipt->'stabilize_for_seconds' IS DISTINCT FROM OLD.receipt->'stabilize_for_seconds' THEN
+        RETURN NULL;
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: preserve_project_rollback_undo_link(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.preserve_project_rollback_undo_link() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF (OLD.receipt ? 'undo_operation_id' AND (
+            NEW.receipt->>'undo_operation_id' IS DISTINCT FROM OLD.receipt->>'undo_operation_id'
+            OR NEW.status <> OLD.status
+        )) OR (OLD.receipt ? 'undo_of' AND NEW.receipt->>'undo_of' IS DISTINCT FROM OLD.receipt->>'undo_of')
+    THEN
+        RETURN NULL;
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
 -- Name: private_network_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -24804,6 +25094,27 @@ BEGIN
     END IF;
     RETURN OLD;
 END;
+$$;
+
+
+--
+-- Name: project_rollback_protects_artifact(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.project_rollback_protects_artifact(key text) RETURNS boolean
+    LANGUAGE sql
+    AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM project_rollback_deploy_protections
+        WHERE (storage_keys @> ARRAY[key] OR
+               (left(key, 5) = 'sigs/' AND right(key, 4) = '.sig'
+                AND storage_keys @> ARRAY[substring(key from 6 for greatest(length(key) - 9, 0))]))
+          AND expires_at > clock_timestamp()
+    ) OR EXISTS (
+        SELECT 1 FROM project_rollback_undo_artifact_holds
+        WHERE storage_keys @> ARRAY[key]
+          AND (expires_at IS NULL OR expires_at > clock_timestamp())
+    );
 $$;
 
 
@@ -27471,6 +27782,84 @@ CREATE FUNCTION public.retain_object_version_history_latch() RETURNS trigger
 BEGIN
  IF OLD.recovery_versions_observed THEN NEW.recovery_versions_observed:=true; END IF;
  RETURN NEW;
+END $$;
+
+
+--
+-- Name: retain_project_rollback_phase(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.retain_project_rollback_phase() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.receipt ? 'phase' AND NOT (NEW.receipt ? 'phase') THEN
+        NEW.receipt := NEW.receipt || jsonb_build_object(
+            'phase', OLD.receipt->'phase', 'preparation_deadline', OLD.receipt->'preparation_deadline');
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: retain_project_rollback_plan_hash(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.retain_project_rollback_plan_hash() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.receipt ? 'plan_hash' THEN
+        NEW.receipt := NEW.receipt || jsonb_build_object('plan_hash', OLD.receipt->'plan_hash');
+    END IF;
+    IF OLD.receipt ? 'resume_plan_hash' AND NOT (OLD.status = 'blocked' AND NEW.status = 'running') THEN
+        NEW.receipt := NEW.receipt || jsonb_build_object('resume_plan_hash', OLD.receipt->'resume_plan_hash');
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: retain_project_rollback_preparation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.retain_project_rollback_preparation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        SELECT p.id INTO NEW.project_rollback_id
+        FROM apps a JOIN project_rollback_operations p ON p.project_id = a.project_id
+        WHERE a.id = NEW.app_id AND p.status = 'running'
+          AND p.receipt->>'phase' IN ('preparing', 'cutover', 'releasing')
+          AND EXISTS (
+              SELECT 1 FROM jsonb_array_elements(p.receipt->'steps') AS step
+              WHERE step->>'attempt_id' = NEW.id::text AND step->>'app_id' = NEW.app_id::text
+                AND step->>'target_deployment_id' = NEW.target_deployment_id::text
+                AND step->>'expected_current_deployment_id' = NEW.current_deployment_id::text
+          );
+    ELSE
+        NEW.project_rollback_id := OLD.project_rollback_id;
+    END IF;
+    IF NEW.project_rollback_id IS NOT NULL THEN
+        NEW.receipt := NEW.receipt || jsonb_build_object('project_rollback_id', NEW.project_rollback_id);
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: retain_project_rollback_start_request(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.retain_project_rollback_start_request() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.start_request_id IS NOT NULL THEN
+        NEW.receipt := NEW.receipt || jsonb_build_object('request_id', NEW.start_request_id);
+    END IF;
+    RETURN NEW;
 END $$;
 
 
@@ -39434,6 +39823,7 @@ CREATE TABLE public.deployment_rollback_operations (
     status text NOT NULL,
     receipt jsonb NOT NULL,
     updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    project_rollback_id uuid,
     CONSTRAINT deployment_rollback_operations_check CHECK ((target_deployment_id <> current_deployment_id)),
     CONSTRAINT deployment_rollback_operations_check1 CHECK (((receipt ?& ARRAY['id'::text, 'app_id'::text, 'scope'::text, 'target_deployment_id'::text, 'current_deployment_id'::text, 'status'::text]) AND ((receipt ->> 'id'::text) = (id)::text) AND ((receipt ->> 'app_id'::text) = (app_id)::text) AND ((receipt ->> 'scope'::text) = scope) AND ((receipt ->> 'target_deployment_id'::text) = (target_deployment_id)::text) AND ((receipt ->> 'current_deployment_id'::text) = (current_deployment_id)::text) AND ((receipt ->> 'status'::text) = status))),
     CONSTRAINT deployment_rollback_operations_public_receipt_check CHECK (((jsonb_typeof(receipt) = 'object'::text) AND (octet_length(((receipt - '_release_review'::text))::text) <= 16384) AND ((NOT (receipt ? '_release_review'::text)) OR (jsonb_typeof((receipt -> '_release_review'::text)) = ANY (ARRAY['array'::text, 'null'::text]))))),
@@ -55511,6 +55901,17 @@ CREATE TABLE public.project_binding_verification_runs (
 
 
 --
+-- Name: project_deploy_rollback_members; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_deploy_rollback_members (
+    deployment_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    deploy_group_id uuid NOT NULL
+);
+
+
+--
 -- Name: project_environment_approvals; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -58063,6 +58464,74 @@ CREATE TABLE public.project_release_worker_drains (
     instance_id uuid NOT NULL,
     requested_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT project_release_worker_drains_requested_at_check CHECK (isfinite(requested_at))
+);
+
+
+--
+-- Name: project_rollback_deploy_protections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_rollback_deploy_protections (
+    project_id uuid NOT NULL,
+    deploy_group_id uuid NOT NULL,
+    manifest_hash text NOT NULL,
+    deployment_ids text[] NOT NULL,
+    storage_keys text[] NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    layer_bytes bigint NOT NULL,
+    CONSTRAINT project_rollback_deploy_protections_layer_bytes_check CHECK ((layer_bytes > 0))
+);
+
+
+--
+-- Name: project_rollback_http_recovery; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_rollback_http_recovery (
+    rollback_id uuid NOT NULL,
+    operation_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    target_id uuid NOT NULL,
+    service boolean NOT NULL,
+    generation bigint,
+    routing_committed_at timestamp with time zone,
+    expected_gateways text[] DEFAULT '{}'::text[] NOT NULL,
+    acknowledged_gateways text[] DEFAULT '{}'::text[] NOT NULL,
+    gateways_applied_at timestamp with time zone,
+    first_success_at timestamp with time zone,
+    expires_at timestamp with time zone,
+    next_notify_at timestamp with time zone
+);
+
+
+--
+-- Name: project_rollback_operations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_rollback_operations (
+    id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    status text NOT NULL,
+    version bigint DEFAULT 0 NOT NULL,
+    next_run_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    receipt jsonb NOT NULL,
+    start_request_id uuid,
+    start_request_options jsonb,
+    CONSTRAINT project_rollback_operations_status_check CHECK ((status = ANY (ARRAY['running'::text, 'blocked'::text, 'complete'::text]))),
+    CONSTRAINT project_rollback_start_request_pair CHECK (((start_request_id IS NULL) = (start_request_options IS NULL)))
+);
+
+
+--
+-- Name: project_rollback_undo_artifact_holds; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_rollback_undo_artifact_holds (
+    operation_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    storage_keys text[] NOT NULL,
+    expires_at timestamp with time zone,
+    CONSTRAINT project_rollback_undo_artifact_holds_storage_keys_check CHECK ((cardinality(storage_keys) > 0))
 );
 
 
@@ -75019,6 +75488,14 @@ ALTER TABLE ONLY public.project_binding_verification_runs
 
 
 --
+-- Name: project_deploy_rollback_members project_deploy_rollback_members_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_deploy_rollback_members
+    ADD CONSTRAINT project_deploy_rollback_members_pkey PRIMARY KEY (deployment_id);
+
+
+--
 -- Name: project_environment_approvals project_environment_approvals_approval_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -76296,6 +76773,46 @@ ALTER TABLE ONLY public.project_release_stages
 
 ALTER TABLE ONLY public.project_release_worker_drains
     ADD CONSTRAINT project_release_worker_drains_pkey PRIMARY KEY (instance_id);
+
+
+--
+-- Name: project_rollback_deploy_protections project_rollback_deploy_protections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_rollback_deploy_protections
+    ADD CONSTRAINT project_rollback_deploy_protections_pkey PRIMARY KEY (project_id, deploy_group_id, manifest_hash);
+
+
+--
+-- Name: project_rollback_http_recovery project_rollback_http_recovery_generation_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_rollback_http_recovery
+    ADD CONSTRAINT project_rollback_http_recovery_generation_key UNIQUE (generation);
+
+
+--
+-- Name: project_rollback_http_recovery project_rollback_http_recovery_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_rollback_http_recovery
+    ADD CONSTRAINT project_rollback_http_recovery_pkey PRIMARY KEY (rollback_id);
+
+
+--
+-- Name: project_rollback_operations project_rollback_operations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_rollback_operations
+    ADD CONSTRAINT project_rollback_operations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: project_rollback_undo_artifact_holds project_rollback_undo_artifact_holds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_rollback_undo_artifact_holds
+    ADD CONSTRAINT project_rollback_undo_artifact_holds_pkey PRIMARY KEY (operation_id, deployment_id);
 
 
 --
@@ -88047,6 +88564,13 @@ CREATE INDEX project_binding_verification_runs_project_time_idx ON public.projec
 
 
 --
+-- Name: project_deploy_rollback_members_group_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_deploy_rollback_members_group_idx ON public.project_deploy_rollback_members USING btree (project_id, deploy_group_id);
+
+
+--
 -- Name: project_environment_approvals_id_lookup_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -88366,6 +88890,62 @@ CREATE INDEX project_release_sets_history_idx ON public.project_release_sets USI
 --
 
 CREATE INDEX project_release_stages_scope ON public.project_release_stages USING btree (project_id, environment_slug, expires_at);
+
+
+--
+-- Name: project_rollback_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_rollback_due ON public.project_rollback_operations USING btree (next_run_at, id) WHERE (status = 'running'::text);
+
+
+--
+-- Name: project_rollback_history_by_project; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_rollback_history_by_project ON public.project_rollback_operations USING btree (project_id);
+
+
+--
+-- Name: project_rollback_http_recovery_operation; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_rollback_http_recovery_operation ON public.project_rollback_http_recovery USING btree (operation_id);
+
+
+--
+-- Name: project_rollback_http_recovery_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_rollback_http_recovery_pending ON public.project_rollback_http_recovery USING btree (next_notify_at, generation) WHERE (next_notify_at IS NOT NULL);
+
+
+--
+-- Name: project_rollback_one_running; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX project_rollback_one_running ON public.project_rollback_operations USING btree (project_id) WHERE (status = 'running'::text);
+
+
+--
+-- Name: project_rollback_protection_keys_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_rollback_protection_keys_idx ON public.project_rollback_deploy_protections USING gin (storage_keys);
+
+
+--
+-- Name: project_rollback_start_request_once; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX project_rollback_start_request_once ON public.project_rollback_operations USING btree (project_id, start_request_id) WHERE (start_request_id IS NOT NULL);
+
+
+--
+-- Name: project_rollback_undo_artifact_keys_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_rollback_undo_artifact_keys_idx ON public.project_rollback_undo_artifact_holds USING gin (storage_keys);
 
 
 --
@@ -94676,6 +95256,13 @@ CREATE TRIGGER financial_usage_retention AFTER INSERT OR UPDATE ON public.usage_
 
 
 --
+-- Name: project_rollback_operations finish_project_rollback_undo_artifact_holds; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER finish_project_rollback_undo_artifact_holds AFTER UPDATE OF status ON public.project_rollback_operations FOR EACH ROW WHEN ((old.status IS DISTINCT FROM new.status)) EXECUTE FUNCTION public.finish_project_rollback_undo_artifact_holds();
+
+
+--
 -- Name: function_migration_destinations function_migration_destination_capacity_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -94886,10 +95473,52 @@ CREATE TRIGGER guard_event_subscription_environment_scope BEFORE INSERT OR UPDAT
 
 
 --
+-- Name: deployments guard_legacy_project_rollback_pause; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_legacy_project_rollback_pause BEFORE UPDATE OF status, traffic_percent ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_legacy_project_rollback_pause();
+
+
+--
 -- Name: managed_postgres_databases guard_managed_postgres_accounting_intent; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER guard_managed_postgres_accounting_intent BEFORE UPDATE OF accounting_required ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_accounting_intent();
+
+
+--
+-- Name: layer_artifact_retention guard_project_rollback_artifact_deletion; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_project_rollback_artifact_deletion BEFORE UPDATE OF state ON public.layer_artifact_retention FOR EACH ROW WHEN (((old.state = 'retained'::text) AND (new.state = 'deleting'::text))) EXECUTE FUNCTION public.guard_project_rollback_artifact_deletion();
+
+
+--
+-- Name: deployments guard_project_rollback_preparation; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_project_rollback_preparation BEFORE UPDATE OF status, traffic_percent ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_project_rollback_preparation();
+
+
+--
+-- Name: deployments guard_verified_project_rollback; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_verified_project_rollback BEFORE UPDATE OF status, traffic_percent ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_verified_project_rollback();
+
+
+--
+-- Name: deployments guard_verified_project_rollback_pre_cutover_health; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_verified_project_rollback_pre_cutover_health BEFORE UPDATE OF status, traffic_percent ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_project_rollback_pre_cutover_health();
+
+
+--
+-- Name: deployments guard_verified_project_rollback_traffic; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_verified_project_rollback_traffic BEFORE UPDATE OF status, traffic_percent ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_project_rollback_live_traffic();
 
 
 --
@@ -96881,6 +97510,55 @@ CREATE TRIGGER pr_preview_set_account_trg BEFORE INSERT OR UPDATE OF root_app_id
 
 
 --
+-- Name: project_rollback_operations preserve_project_rollback_health_policy; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER preserve_project_rollback_health_policy BEFORE UPDATE OF receipt ON public.project_rollback_operations FOR EACH ROW EXECUTE FUNCTION public.preserve_project_rollback_health_policy();
+
+
+--
+-- Name: project_rollback_operations preserve_project_rollback_live_traffic_policy; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER preserve_project_rollback_live_traffic_policy BEFORE UPDATE OF receipt ON public.project_rollback_operations FOR EACH ROW EXECUTE FUNCTION public.preserve_project_rollback_live_traffic_policy();
+
+
+--
+-- Name: project_rollback_operations preserve_project_rollback_live_traffic_undo; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER preserve_project_rollback_live_traffic_undo BEFORE UPDATE OF receipt ON public.project_rollback_operations FOR EACH ROW EXECUTE FUNCTION public.preserve_project_rollback_live_traffic_undo();
+
+
+--
+-- Name: project_rollback_operations preserve_project_rollback_pause; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER preserve_project_rollback_pause BEFORE UPDATE OF status, receipt ON public.project_rollback_operations FOR EACH ROW EXECUTE FUNCTION public.preserve_project_rollback_pause();
+
+
+--
+-- Name: project_rollback_operations preserve_project_rollback_pre_cutover_policy; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER preserve_project_rollback_pre_cutover_policy BEFORE UPDATE OF receipt ON public.project_rollback_operations FOR EACH ROW EXECUTE FUNCTION public.preserve_project_rollback_pre_cutover_policy();
+
+
+--
+-- Name: project_rollback_operations preserve_project_rollback_stabilization; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER preserve_project_rollback_stabilization BEFORE UPDATE OF receipt ON public.project_rollback_operations FOR EACH ROW EXECUTE FUNCTION public.preserve_project_rollback_stabilization();
+
+
+--
+-- Name: project_rollback_operations preserve_project_rollback_undo_link; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER preserve_project_rollback_undo_link BEFORE UPDATE OF status, receipt ON public.project_rollback_operations FOR EACH ROW EXECUTE FUNCTION public.preserve_project_rollback_undo_link();
+
+
+--
 -- Name: private_network_peerings private_network_peering_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -97340,6 +98018,34 @@ CREATE TRIGGER reserved_ip_inventory_set_updated_at_trg BEFORE UPDATE ON public.
 --
 
 CREATE TRIGGER reserved_ip_leases_set_updated_at_trg BEFORE UPDATE ON public.reserved_ip_leases FOR EACH ROW EXECUTE FUNCTION public.reserved_ip_leases_set_updated_at();
+
+
+--
+-- Name: project_rollback_operations retain_project_rollback_phase; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER retain_project_rollback_phase BEFORE UPDATE ON public.project_rollback_operations FOR EACH ROW EXECUTE FUNCTION public.retain_project_rollback_phase();
+
+
+--
+-- Name: project_rollback_operations retain_project_rollback_plan_hash; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER retain_project_rollback_plan_hash BEFORE UPDATE OF receipt ON public.project_rollback_operations FOR EACH ROW EXECUTE FUNCTION public.retain_project_rollback_plan_hash();
+
+
+--
+-- Name: deployment_rollback_operations retain_project_rollback_preparation; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER retain_project_rollback_preparation BEFORE INSERT OR UPDATE ON public.deployment_rollback_operations FOR EACH ROW EXECUTE FUNCTION public.retain_project_rollback_preparation();
+
+
+--
+-- Name: project_rollback_operations retain_project_rollback_start_request; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER retain_project_rollback_start_request BEFORE INSERT OR UPDATE OF receipt ON public.project_rollback_operations FOR EACH ROW EXECUTE FUNCTION public.retain_project_rollback_start_request();
 
 
 --
@@ -111405,6 +112111,22 @@ ALTER TABLE ONLY public.project_binding_verification_runs
 
 
 --
+-- Name: project_deploy_rollback_members project_deploy_rollback_members_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_deploy_rollback_members
+    ADD CONSTRAINT project_deploy_rollback_members_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_deploy_rollback_members project_deploy_rollback_members_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_deploy_rollback_members
+    ADD CONSTRAINT project_deploy_rollback_members_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
 -- Name: project_environment_approvals project_environment_approvals_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -113162,6 +113884,46 @@ ALTER TABLE ONLY public.project_release_stages
 
 ALTER TABLE ONLY public.project_release_worker_drains
     ADD CONSTRAINT project_release_worker_drains_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.instances(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_rollback_deploy_protections project_rollback_deploy_protections_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_rollback_deploy_protections
+    ADD CONSTRAINT project_rollback_deploy_protections_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_rollback_http_recovery project_rollback_http_recovery_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_rollback_http_recovery
+    ADD CONSTRAINT project_rollback_http_recovery_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_rollback_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_rollback_http_recovery project_rollback_http_recovery_rollback_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_rollback_http_recovery
+    ADD CONSTRAINT project_rollback_http_recovery_rollback_id_fkey FOREIGN KEY (rollback_id) REFERENCES public.deployment_rollback_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_rollback_operations project_rollback_operations_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_rollback_operations
+    ADD CONSTRAINT project_rollback_operations_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_rollback_undo_artifact_holds project_rollback_undo_artifact_holds_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_rollback_undo_artifact_holds
+    ADD CONSTRAINT project_rollback_undo_artifact_holds_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_rollback_operations(id) ON DELETE CASCADE;
 
 
 --

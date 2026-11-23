@@ -70,6 +70,9 @@ var routeActions = map[string]authz.OrgAction{
 	"POST /v1/apps/{slug}/deployments":                    authz.OrgActionDeployApp,
 	"POST /v1/apps/{slug}/deployments/{id}/cancel":        authz.OrgActionDeployApp,
 	"POST /v1/apps/{slug}/deployments/clear-obsolete":     authz.OrgActionDeployApp,
+	"GET /v1/apps/{slug}/verification-contract":           authz.OrgActionReadApp,
+	"PUT /v1/apps/{slug}/verification-contract":           authz.OrgActionDeployApp,
+	"DELETE /v1/apps/{slug}/verification-contract":        authz.OrgActionDeployApp,
 	"GET /v1/deployments/{id}":                            authz.OrgActionReadApp,
 	"GET /v1/deployments/{id}/logs":                       authz.OrgActionReadAppLogs,
 	"GET /v1/deployments/{id}/stages":                     authz.OrgActionReadApp,
@@ -114,6 +117,7 @@ var routeActions = map[string]authz.OrgAction{
 	// state. Release gates and the route-health guard stop releases, so only
 	// owners and admins change them, as with the approval policy.
 	"POST /v1/apps/{slug}/rollback":                             authz.OrgActionDeployApp,
+	"GET /v1/apps/{slug}/rollbacks/preflight":                   authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/rollbacks/{operation}":                 authz.OrgActionReadApp,
 	"POST /v1/apps/{slug}/rollouts/recover":                     authz.OrgActionDeployApp,
 	"GET /v1/apps/{slug}/rollouts/{id}/observation":             authz.OrgActionReadApp,

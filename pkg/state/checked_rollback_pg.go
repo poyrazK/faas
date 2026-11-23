@@ -113,7 +113,9 @@ func (s *PgStore) createCheckedRollbackOnce(ctx context.Context, acct, app, targ
 	if err != nil {
 		return api.RollbackOperation{}, err
 	}
-	if id != "" {
+	if project, ok := projectRollbackAdmissionFrom(ctx); ok {
+		id = project.step.AttemptID
+	} else if id != "" {
 		q := sqlc.New()
 		if _, err = q.LockCheckedRollbackApp(ctx, tx, sqlc.LockCheckedRollbackAppParams{AppID: mustPgUUID(app), AccountID: mustPgUUID(acct)}); err != nil {
 			return api.RollbackOperation{}, mapErr(err)
@@ -178,6 +180,26 @@ func (s *PgStore) createCheckedRollbackTx(ctx context.Context, tx pgx.Tx, acct, 
 	if err := rollbackCurrentMatches(ctx, tx, r); err != nil {
 		return r, err
 	}
+	if project, ok := projectRollbackAdmissionFrom(ctx); ok {
+		parent, err := lockProjectRollbackClaim(ctx, tx, project.operation)
+		if err != nil {
+			return r, err
+		}
+		a, err := appByIDDB(ctx, tx, app)
+		if err != nil {
+			return r, err
+		}
+		serving, err := rollbackFacts(ctx, tx, app, current)
+		if err != nil {
+			return r, err
+		}
+		if err := project.validate(parent, a, d, serving); err != nil {
+			return r, err
+		}
+		if parent.Phase == api.ProjectRollbackPreparing {
+			r.ProjectRollbackID = parent.ID
+		}
+	}
 	if err := checkAppRollbackGraphTx(ctx, tx, app, r.Scope, target); err != nil {
 		return r, err
 	}
@@ -206,6 +228,14 @@ func (s *PgStore) createCheckedRollbackTx(ctx context.Context, tx pgx.Tx, acct, 
 	err = q.InsertCheckedRollback(ctx, tx, sqlc.InsertCheckedRollbackParams{ID: mustPgUUID(r.ID), AppID: mustPgUUID(app), Scope: r.Scope, TargetID: mustPgUUID(target), CurrentID: mustPgUUID(current), Status: r.Status, Receipt: raw})
 	if err != nil {
 		return r, mapErr(err)
+	}
+	if project, ok := projectRollbackAdmissionFrom(ctx); ok &&
+		(facts.ExecutionMode == "" || facts.ExecutionMode == api.ExecutionModeRequest || r.Service) {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO project_rollback_http_recovery (rollback_id, operation_id, app_id, target_id, service)
+			VALUES ($1, $2, $3, $4, $5)`, r.ID, project.operation, app, target, r.Service); err != nil {
+			return r, err
+		}
 	}
 	handoff, _ := json.Marshal(rollbackHandoff(r))
 	rolloutState := "pending"
@@ -337,6 +367,23 @@ func (s *PgStore) CommitCheckedRollback(ctx context.Context, snapshot api.Rollba
 	if err = pgAuthorizeBindingRelease(ctx, tx); err != nil {
 		return r, err
 	}
+	if r.ProjectRollbackID != "" {
+		if err = checkMCPTaskCompatibilityCutoverTx(ctx, tx, r.AppID, r.Scope, d.ID); err != nil {
+			return r, err
+		}
+		if r.Service {
+			ready, desired, err := pgServiceRolloutReadyReplicas(ctx, tx, r.AppID, d.ID)
+			if err != nil {
+				return r, err
+			}
+			if len(ready) < ServiceRolloutReadyTarget(desired, 100) {
+				return r, ErrServiceRolloutNotReady
+			}
+		}
+		if err = authorizeProjectRollbackCutover(ctx, tx, r); err != nil {
+			return r, err
+		}
+	}
 	if r.Service {
 		d, err = s.beginServiceRolloutCutoverTx(WithServiceRolloutBindingRequest(ctx, r.ID), tx, d.ID)
 		if err != nil {
@@ -376,6 +423,9 @@ func (s *PgStore) CommitCheckedRollback(ctx context.Context, snapshot api.Rollba
 	if err = saveCheckedRollback(ctx, tx, r); err != nil {
 		return r, err
 	}
+	if err = startProjectRollbackHTTPRecovery(ctx, tx, r.ID); err != nil {
+		return r, err
+	}
 	if err = q.NotifyCheckedRollbackCutover(ctx, tx, sqlc.NotifyCheckedRollbackCutoverParams{AppID: r.AppID, TargetID: r.TargetDeploymentID, CurrentID: r.CurrentDeploymentID}); err != nil {
 		return r, err
 	}
@@ -399,7 +449,8 @@ func (s *PgStore) UpdateCheckedRollback(ctx context.Context, snapshot api.Rollba
 	if err != nil {
 		return err
 	}
-	if r.Status != snapshot.Status || rollbackTerminal(r) || !validRollbackStatusUpdate(r, status) {
+	if r.Status != snapshot.Status || rollbackTerminal(r) || !validRollbackStatusUpdate(r, status) ||
+		r.ProjectRollbackID != "" && !r.UpdatedAt.Equal(snapshot.UpdatedAt) {
 		return ErrCheckedRollbackChanged
 	}
 	d, err := rollbackFacts(ctx, tx, r.AppID, r.TargetDeploymentID)
@@ -421,8 +472,21 @@ func (s *PgStore) UpdateCheckedRollback(ctx context.Context, snapshot api.Rollba
 		return err
 	}
 	if status == "failed" && d.TrafficPercent == 0 {
+		releasePreparation := r.ProjectRollbackID != "" || code == api.CodeProjectRollbackPaused
+		if releasePreparation {
+			if _, err = tx.Exec(ctx, `UPDATE deployments SET service_rollout_handoff = '{}'::jsonb WHERE id = $1`, d.ID); err != nil {
+				return err
+			}
+		}
 		if err = q.FailCheckedRollbackTarget(ctx, tx, mustPgUUID(d.ID)); err != nil {
 			return err
+		}
+		if releasePreparation {
+			if _, err = tx.Exec(ctx, `SELECT pg_notify($2,
+				jsonb_build_object('app_id', app_id, 'deployment_id', id, 'status', status)::text)
+				FROM deployments WHERE id = $1`, d.ID, db.NotifyDeploymentChanged); err != nil {
+				return err
+			}
 		}
 	}
 	return tx.Commit(ctx)

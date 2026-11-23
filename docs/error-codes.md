@@ -2448,7 +2448,7 @@ See [Environment variables](env.md).
 
 HTTP 403 Forbidden · Project secret limit reached
 
-See [Delivered secrets](secrets.md#project-environment-secrets).
+See [Secrets](secrets.md#project-environment-secrets).
 
 ### `plan_limit_ram`
 
@@ -2460,7 +2460,7 @@ See [Plans and pricing](plans.md#at-a-glance).
 
 HTTP 403 Forbidden · Secret count limit reached
 
-See [Delivered secrets](secrets.md).
+See [Secrets](secrets.md).
 
 ### `plan_limit_trusted_signers`
 
@@ -2860,7 +2860,7 @@ HTTP 409 Conflict · Deployment control conflicted
 
 ### `project_release_rollback_required`
 
-HTTP 409 Conflict · Project release rollback required
+HTTP 409 Conflict · Project release owns traffic; Project release rollback required
 
 Roll back the project environment release, then retry this app rollback if needed.
 
@@ -2872,7 +2872,7 @@ Bind the bucket in an environment whose release does not pin secrets, or release
 
 Bind the database in an environment whose release does not pin secrets, or release without pinned secrets first.
 
-See [Delivered secrets](secrets.md).
+See [Secrets](secrets.md).
 
 ### `project_required`
 
@@ -2881,6 +2881,86 @@ HTTP 409 Conflict · Project required
 ### `project_retry_changed`
 
 HTTP 409 Conflict · Project retry stopped
+
+### `project_rollback_already_complete`
+
+HTTP 409 Conflict · Rollback already complete
+
+### `project_rollback_auto_undo_blocked`
+
+HTTP 409 Conflict · Automatic rollback undo paused
+
+### `project_rollback_conflict`
+
+HTTP 409 Conflict · Project rollback already running; Project rollback conflict; Rollback resume unavailable
+
+### `project_rollback_health_failed`
+
+HTTP 409 Conflict · Rollback health verification paused
+
+### `project_rollback_health_probe_required`
+
+HTTP 409 Conflict · Health probe required
+
+### `project_rollback_health_timeout`
+
+HTTP 409 Conflict · Rollback health verification paused
+
+### `project_rollback_live_traffic_failed`
+
+HTTP 409 Conflict · Rollback live-traffic verification paused
+
+### `project_rollback_live_traffic_required`
+
+HTTP 409 Conflict · Production error budget required; Request telemetry required
+
+### `project_rollback_live_traffic_timeout`
+
+HTTP 409 Conflict · Rollback live-traffic verification paused
+
+### `project_rollback_paused`
+
+HTTP 409 Conflict · Project rollback paused
+
+### `project_rollback_plan_changed`
+
+HTTP 409 Conflict · Reviewed resume plan changed; Reviewed rollback plan changed; Reviewed undo plan changed
+
+### `project_rollback_pre_cutover_health_failed`
+
+HTTP 409 Conflict · Pre-cutover health verification failed
+
+### `project_rollback_pre_cutover_health_timeout`
+
+HTTP 409 Conflict · Pre-cutover health verification failed
+
+### `project_rollback_preparation_expired`
+
+HTTP 409 Conflict · Rollback preparation expired
+
+### `project_rollback_preparation_released`
+
+The response's `title` and `detail` describe the failure.
+
+### `project_rollback_prepared`
+
+The response's `title` and `detail` describe the failure.
+
+### `project_rollback_request_reused`
+
+HTTP 409 Conflict · Rollback request ID already used
+
+### `project_rollback_undo_artifacts_unavailable`
+
+The response's `title` and `detail` describe the failure.
+
+### `project_rollback_undo_started`
+
+HTTP 409 Conflict · Rollback undo already accepted
+
+### `project_rollback_undo_unavailable`
+
+HTTP 409 Conflict · Rollback undo unavailable
 
 ### `project_selection_empty`
 
@@ -3332,13 +3412,13 @@ HTTP 410 Gone · Secret entry unavailable
 
 HTTP 400 Bad Request · Invalid secret key
 
-See [Delivered secrets](secrets.md).
+See [Secrets](secrets.md).
 
 ### `secret_not_found`
 
 HTTP 400 Bad Request · Secret not set; Secret unavailable
 
-See [Delivered secrets](secrets.md).
+See [Secrets](secrets.md).
 
 ### `secret_reference_conflict`
 
@@ -3354,7 +3434,7 @@ See [Environment variables](env.md).
 
 HTTP 422 Unprocessable Entity · Secret-shaped values found in uploaded source
 
-See [Delivered secrets](secrets.md).
+See [Secrets](secrets.md).
 
 ### `secret_store_unavailable`
 
@@ -3364,7 +3444,7 @@ HTTP 503 Service Unavailable · Secret storage unavailable
 
 HTTP 413 Request Entity Too Large · Secret value too large
 
-See [Delivered secrets](secrets.md).
+See [Secrets](secrets.md).
 
 ### `security_posture_blocked`
 

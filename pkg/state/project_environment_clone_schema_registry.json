@@ -5789,6 +5789,7 @@
       "app_id",
       "current_deployment_id",
       "id",
+      "project_rollback_id",
       "receipt",
       "scope",
       "status",
@@ -16475,6 +16476,15 @@
     "kind": "operational"
   },
   {
+    "table": "project_deploy_rollback_members",
+    "kind": "operational",
+    "columns": [
+      "deploy_group_id",
+      "deployment_id",
+      "project_id"
+    ]
+  },
+  {
     "table": "project_environment_approvals",
     "columns": [
       "account_id",
@@ -18222,6 +18232,62 @@
     "columns": [
       "instance_id",
       "requested_at"
+    ]
+  },
+  {
+    "table": "project_rollback_deploy_protections",
+    "columns": [
+      "deploy_group_id",
+      "deployment_ids",
+      "expires_at",
+      "layer_bytes",
+      "manifest_hash",
+      "project_id",
+      "storage_keys"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_rollback_http_recovery",
+    "kind": "operational",
+    "columns": [
+      "acknowledged_gateways",
+      "app_id",
+      "expected_gateways",
+      "expires_at",
+      "first_success_at",
+      "gateways_applied_at",
+      "generation",
+      "next_notify_at",
+      "operation_id",
+      "rollback_id",
+      "routing_committed_at",
+      "service",
+      "target_id"
+    ]
+  },
+  {
+    "table": "project_rollback_operations",
+    "kind": "operational",
+    "columns": [
+      "id",
+      "next_run_at",
+      "project_id",
+      "receipt",
+      "start_request_id",
+      "start_request_options",
+      "status",
+      "version"
+    ]
+  },
+  {
+    "table": "project_rollback_undo_artifact_holds",
+    "kind": "operational",
+    "columns": [
+      "deployment_id",
+      "expires_at",
+      "operation_id",
+      "storage_keys"
     ]
   },
   {
