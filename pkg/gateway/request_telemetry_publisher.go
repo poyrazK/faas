@@ -214,7 +214,7 @@ func (p *requestTelemetryPublisher) run(ctx context.Context) {
 		// Either way the last heartbeat reports what the drain lost.
 		dropped := p.DroppedTotal() + p.recorder.OverwrittenTotal()
 		delivered := p.drainFinal()
-		p.reportFinalCoverage(delivered && p.DroppedTotal()+p.recorder.OverwrittenTotal() == dropped)
+		p.reportFinalCoverage(ctx, delivered && p.DroppedTotal()+p.recorder.OverwrittenTotal() == dropped)
 		p.finalCancel()
 		close(p.doneCh)
 	}()
@@ -840,8 +840,9 @@ const requestTelemetryCleanStopTimeout = 2 * time.Second
 // reportFinalCoverage sends the stopping publisher's last heartbeat: the
 // rows its final drain gave up on would otherwise never be reported. It runs
 // after the drain, whose budget may be spent, so it has its own.
-func (p *requestTelemetryPublisher) reportFinalCoverage(clean bool) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(p.finalCtx), requestTelemetryCleanStopTimeout)
+// ctx is the actor's, already cancelled when it stops; only its values carry.
+func (p *requestTelemetryPublisher) reportFinalCoverage(ctx context.Context, clean bool) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), requestTelemetryCleanStopTimeout)
 	defer cancel()
 	p.reportCoverageWith(ctx, clean)
 }
