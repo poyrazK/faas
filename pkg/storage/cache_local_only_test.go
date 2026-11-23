@@ -7,6 +7,7 @@ package storage_test
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -77,5 +78,37 @@ func TestLocalOnlyDeleteDropsTheMark(t *testing.T) {
 	}
 	if published, err := cache.PublishLocal(ctx, key); err != nil || published || parent.puts.Load() != 0 {
 		t.Fatalf("publish of a deleted key = %v, %v (%d parent puts)", published, err, parent.puts.Load())
+	}
+}
+
+// A local parent names a path for every key. Until the upload, a local-only
+// entry's path is the cache's copy; after it, the parent's.
+func TestLocalOnlyEntryLocalPathBeforeAndAfterUpload(t *testing.T) {
+	ctx := context.Background()
+	parent, err := storage.NewLocalStorageBackend(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache, err := storage.NewLocalCacheBackend(parent, filepath.Join(t.TempDir(), "cache"), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const drive = "snap/sandbox-session-acct/captures/c1/v2/drive"
+	if err := storage.NodeFirst(cache).Put(ctx, drive, strings.NewReader("drive")); err != nil {
+		t.Fatal(err)
+	}
+	path, source, ok, err := cache.LocalPathWithSource(drive)
+	if err != nil || !ok || source != storage.LocalPathSourceCache || !strings.HasPrefix(path, cache.Root()) {
+		t.Fatalf("before the upload: %q %q %v %v; want the cache's copy", path, source, ok, err)
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != "drive" {
+		t.Fatalf("before the upload reads %q, %v", data, err)
+	}
+	if _, err := cache.PublishLocal(ctx, drive); err != nil {
+		t.Fatal(err)
+	}
+	path, source, ok, err = cache.LocalPathWithSource(drive)
+	if err != nil || !ok || source != storage.LocalPathSourceBackend || strings.HasPrefix(path, cache.Root()) {
+		t.Fatalf("after the upload: %q %q %v %v; want the parent's copy", path, source, ok, err)
 	}
 }
