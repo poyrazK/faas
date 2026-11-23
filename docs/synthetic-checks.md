@@ -41,7 +41,7 @@ gregale alert check status --app shop CHECK_ID
 ```
 
 ```
-health — GET https://shop.gregale.dev/healthz every 5 minutes, expecting 2xx
+health — GET https://shop.gregale.app/healthz every 5 minutes, expecting 2xx
   Uptime:   99.65% (24h, 288 runs) · 99.90% (7d)
   Latency:  p95 840 ms over 24h of successful runs, including wakes
   Recent runs:

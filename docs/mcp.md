@@ -5937,7 +5937,7 @@ Before adding sensitive catalog entries, change `auth` in `gregale-mcp.json`:
   "mode": "external-oauth",
   "issuer": "https://identity.example.com",
   "jwks_url": "https://identity.example.com/.well-known/jwks.json",
-  "resource": "https://my-mcp.gregale.dev/mcp",
+  "resource": "https://my-mcp.gregale.app/mcp",
   "scopes": ["mcp:tools"],
   "tool_scopes": {
     "greet": [],
