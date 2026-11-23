@@ -29,6 +29,8 @@ add fields of their own, such as `retry_after_seconds`.
 The [error code reference](error-codes.md) lists every code with the HTTP
 status it is sent with, its title and hint, and the page that explains it.
 This page covers the codes you are most likely to meet and what to do next.
+For a deployment that failed, start with
+[Fix a failed deploy](troubleshoot-deploys.md).
 
 On app and API requests, Gregale sends its own timeouts and failed
 connections to your app as 503 rather than 502 or 504. The response carries

@@ -85,6 +85,7 @@
     {"path": "environment-branches", "source": "docs/environment-branches.md", "unpublished": "dark capability; published when environment branches are turned on"},
     {"path": "environment-gitops", "source": "docs/environment-gitops.md", "unpublished": "preview capability; published when it reaches beta"},
     {"path": "error-codes", "source": "docs/error-codes.md"},
+    {"path": "troubleshoot-deploys", "source": "docs/troubleshoot-deploys.md"},
     {"path": "errors", "source": "docs/errors.md"},
     {"path": "event-driven", "source": "docs/event-driven.md"},
     {"path": "events", "source": "docs/events.md", "unpublished": "preview capability; published when it reaches beta"},
