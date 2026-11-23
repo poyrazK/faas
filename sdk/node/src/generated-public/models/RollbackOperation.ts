@@ -19,6 +19,10 @@ export type RollbackOperation = {
   blockers?: Array<BindingCheckFinding>;
   created_at: string;
   updated_at: string;
+  /**
+   * Project operation holding this exact rollback for coordinated cutover.
+   */
+  project_rollback_id?: string;
   completed_at?: string | null;
   audit_id?: string;
   /**

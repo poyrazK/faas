@@ -3107,7 +3107,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// --repo is the headless source-ref deploy path (issue #739 /
 	// ADR-092). The previous M7.5 dashboard browser flow was deleted
 	// in PR-B; the server resolves the install token from
-	// github_installations, so CI runs need only FAAS_TOKEN + --ref.
+	// github_installations, so CI runs need only GREGALE_TOKEN + --ref.
 	if *repo != "" {
 		if err := validateRepoDeployFlags(explicit); err != nil {
 			return printErr("Invalid flags", err)
@@ -5410,6 +5410,10 @@ func cmdTrafficSet(args []string) int {
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
+	slug, err := leadingDeploymentID(slug, deployment)
+	if err != nil {
+		return printErr("Invalid arguments", err)
+	}
 	if err := mergeLeadingSlug(app, slug); err != nil {
 		return printErr("Invalid arguments", err)
 	}
@@ -5478,6 +5482,10 @@ func cmdTrafficPromote(args []string) int {
 	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
+	}
+	slug, err := leadingDeploymentID(slug, deployment)
+	if err != nil {
+		return printErr("Invalid arguments", err)
 	}
 	if err := mergeLeadingSlug(app, slug); err != nil {
 		return printErr("Invalid arguments", err)
@@ -8687,6 +8695,9 @@ func renderDeployFailure(d api.DeploymentResponse) int {
 					_, _ = fmt.Fprintf(os.Stderr, "    %s\n", line)
 				}
 			}
+			if hint := startupCrashCauseHint(d.ErrorCode, d.Error); hint != "" {
+				_, _ = fmt.Fprintf(os.Stderr, "  %s\n", hint)
+			}
 			if d.Error == "infra" {
 				return 3
 			}
@@ -8756,6 +8767,27 @@ func startupCrashExcerpt(detail string) []string {
 	end := min(start+8, len(lines))
 	return lines[start:end]
 }
+
+// startupCrashCauseHint names the fix for a crash cause the generic crash
+// copy cannot: a serving DATABASE_URL that may not change the schema. The
+// voting-app worker created its table at startup and died on SQLSTATE 42501
+// "permission denied for schema public"; the deploy showed only the generic
+// crash fix, so the agent spent turns finding MIGRATION_DATABASE_URL (agent
+// eval 2026-11-23).
+func startupCrashCauseHint(code, detail string) string {
+	if code != api.CodeAppStartupCrash || !postgresSchemaDenied.MatchString(detail) {
+		return ""
+	}
+	return "PostgreSQL refused a schema change: the serving DATABASE_URL cannot create or alter tables. " +
+		"Attach the database with `gregale postgres attach <db> <app> --env MIGRATION_DATABASE_URL --access migration` " +
+		"and run the change in release.command (gregale.yaml), which receives that credential."
+}
+
+// postgresSchemaDenied matches PostgreSQL's wording for a refused schema
+// change: creating in a schema, or altering an object the role does not own.
+// A bare 42501 also covers "permission denied for table", a missing DML
+// grant that a migration credential does not fix.
+var postgresSchemaDenied = regexp.MustCompile(`(?i)permission denied for schema \S+|must be owner of (table|schema|sequence|view|materialized view|index|type|function) \S+`)
 
 // mapFailureMessage returns the user-facing copy for one of the four
 // failure classes UX §2.4 enumerates. Anything else falls back to

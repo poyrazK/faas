@@ -5922,6 +5922,13 @@ type Querier interface {
 	// one linear chain: a run starts one step attempt at a time.
 	OperationTimelineStepAttempts(ctx context.Context, db DBTX, arg OperationTimelineStepAttemptsParams) ([]OperationTimelineStepAttemptsRow, error)
 	OperationWebhookTenantStatus(ctx context.Context, db DBTX, arg OperationWebhookTenantStatusParams) (OperationWebhookTenantStatusRow, error)
+	// The operator build queue report (ADR-20261123163340): queued and running
+	// builds with their app. Running builds come first (slots bound them, so a
+	// long backlog never cuts them), then due queued builds the longest waiting
+	// first (from not_before when deferred), then builds deferred to a later
+	// not_before. The caller asks for one row more than it keeps to learn whether
+	// it was cut.
+	OperatorActiveBuilds(ctx context.Context, db DBTX, rowLimit int32) ([]OperatorActiveBuildsRow, error)
 	OperatorAlertAdvanceRules(ctx context.Context, db DBTX, rules []byte) ([]string, error)
 	OperatorAlertCollection(ctx context.Context, db DBTX) (OperatorAlertCollectionRow, error)
 	OperatorAlertCollectionFailed(ctx context.Context, db DBTX, at pgtype.Timestamptz) error
@@ -5978,6 +5985,10 @@ type Querier interface {
 	// Bound each indexed source per verified target before merging. Account rows
 	// are deliberately excluded: an account match is not incident correlation.
 	OperatorContextTimeline(ctx context.Context, db DBTX, arg OperatorContextTimelineParams) ([]OperatorContextTimelineRow, error)
+	// Builds that reached a terminal status at or after since, newest first,
+	// for the build queue report's durations, failures and cache outcomes.
+	// builds_finished_at_idx serves the range.
+	OperatorFinishedBuildsSince(ctx context.Context, db DBTX, arg OperatorFinishedBuildsSinceParams) ([]OperatorFinishedBuildsSinceRow, error)
 	OperatorImagePreparationProgressSnapshot(ctx context.Context, db DBTX, nodeID string) ([]OperatorImagePreparationProgressSnapshotRow, error)
 	// Each branch uses an exact-resource index and is independently bounded before
 	// the merge. Payload references use the partial operator-resource index.
@@ -5989,6 +6000,15 @@ type Querier interface {
 	// is taken. cold_bootable is false when the deployment has no rootfs either,
 	// which breaks spec invariant 6.2-3. Those come first, then the newest.
 	OperatorLiveDeploymentsWithoutSnapshot(ctx context.Context, db DBTX, rowLimit int32) ([]OperatorLiveDeploymentsWithoutSnapshotRow, error)
+	// The operator memory pressure report (ADR-20261123190507): RAM pressure
+	// evictions of running instances (memory_eviction), frozen instances parked
+	// under memory pressure (frozen_park, reason memory_pressure) and workload
+	// OOM kills (instances.workload_oom_failed), newest first, each with its
+	// instance's node and RAM and its app's account and plan. A transition names
+	// its instance in subject; an OOM kill names instance and app in data. The
+	// instance row may already be gone (terminal retention), so every join is
+	// optional. events_kind_at_idx serves each kind's range.
+	OperatorMemoryPressureEvents(ctx context.Context, db DBTX, arg OperatorMemoryPressureEventsParams) ([]OperatorMemoryPressureEventsRow, error)
 	OperatorNodeHasLiveInstances(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error)
 	OperatorOverviewActivity(ctx context.Context, db DBTX, auditSince pgtype.Timestamptz) (OperatorOverviewActivityRow, error)
 	// Deploys and new accounts by the coding agent the Gregale CLI reported

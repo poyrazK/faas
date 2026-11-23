@@ -1434,6 +1434,9 @@ var InspectData = inspectData
 var InspectOpenAPI = inspectOpenAPI
 var InspectProductPilotHelp = inspectProductPilotHelp
 var InspectRecommendations = inspectRecommendations
+var AppParkedLabel = appParkedLabel
+var WriteParkedNotice = writeParkedNotice
+var StartupCrashCauseHint = startupCrashCauseHint
 var InspectRuntime = inspectRuntime
 var InspectResources = inspectResources
 var InspectUnavailable = inspectUnavailable
@@ -3090,4 +3093,17 @@ func RunMCPGate(ctx context.Context, store MCPGateStore, namespace, releaseID, c
 	g := &mcpGate{store: store, namespace: namespace, releaseID: releaseID, timeout: timeout, poll: time.Millisecond,
 		checkpointPath: checkpointPath, migrate: migrate, start: start, drain: drain}
 	return g.run(ctx)
+}
+
+// LeadingDeploymentID exposes the traffic verbs' positional-id fold (prod hunt r32).
+var LeadingDeploymentID = leadingDeploymentID
+
+// adr: 20261123110137
+var WithMCPReplayGate = withMCPReplayGate
+
+// RunMCPReplayGateForTest runs the deploy replay gate and returns its skip
+// reason and verdict.
+func RunMCPReplayGateForTest(ctx context.Context, endpoint, candidate, serving string, gate *mcpSmokeGate) (string, bool) {
+	report, ok := runMCPReplayGate(ctx, endpoint, candidate, serving, "", gate)
+	return report.Skipped, ok
 }

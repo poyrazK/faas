@@ -242,6 +242,39 @@ const (
 	ObsSnapshotFleetAvgPageMB   = 200
 )
 
+// Operator build queue report (ADR-20261123163340). The report reads at most
+// ObsBuildQueueActiveMax queued and running builds and ObsBuildQueueFinishedMax
+// builds finished in the window (beyond either it says it was truncated). A
+// build waiting longer than ObsBuildQueueWaitWarnSeconds is flagged, and a
+// running one past BuildTimeoutSeconds is overdue. Builder slot use comes from
+// builderd's gauges in Prometheus under ObsBuildQueuePrometheusBudget.
+const (
+	ObsBuildQueueActiveMax        = 500
+	ObsBuildQueueFinishedMax      = 20000
+	ObsBuildQueueListMax          = 50
+	ObsBuildQueueSlowestMax       = 25
+	ObsBuildQueueWaitWarnSeconds  = 300
+	ObsBuildQueueWindowDefault    = 24 * time.Hour
+	ObsBuildQueueWindowMax        = 7 * 24 * time.Hour
+	ObsBuildQueuePrometheusBudget = 2 * time.Second
+)
+
+// Operator memory pressure report (ADR-20261123190507). The report reads at
+// most ObsMemoryPressureEventsMax evictions, frozen parks and OOM kills in
+// the window (beyond that it says it was truncated), lists the newest
+// ObsMemoryPressureListMax and the ObsMemoryPressureAppsMax most affected
+// apps. A node's measured memory older than ObsMemoryMeasurementStaleSeconds
+// is stale; a node at or above MeasuredEvictionTargetPercent of its ceiling
+// is near it.
+const (
+	ObsMemoryPressureEventsMax       = 20000
+	ObsMemoryPressureListMax         = 100
+	ObsMemoryPressureAppsMax         = 25
+	ObsMemoryMeasurementStaleSeconds = 30
+	ObsMemoryPressureWindowDefault   = 24 * time.Hour
+	ObsMemoryPressureWindowMax       = 7 * 24 * time.Hour
+)
+
 // Customer attention signals (ADR-20261113123000): when a customer is
 // probably stuck. Thresholds are platform-wide, not per plan.
 const (
@@ -1452,8 +1485,10 @@ const (
 	MCPReplayMaxRuns      = 5
 	// ConsumerKeyMCPScopeMaxBytes bounds one "mcp:<scope>" consumer-key scope.
 	ConsumerKeyMCPScopeMaxBytes = 128
-	MCPReleaseMaxRoles          = 32
-	MCPReleasePolicyMaxBytes    = 64 << 10
+	// ConsumerKeyNameMaxBytes bounds a consumer key's name.
+	ConsumerKeyNameMaxBytes  = 64
+	MCPReleaseMaxRoles       = 32
+	MCPReleasePolicyMaxBytes = 64 << 10
 )
 
 // Historical replay preview bounds retained-envelope reads (ADR-645).

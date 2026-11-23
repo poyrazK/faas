@@ -59,7 +59,12 @@ function installPostgresLifecycle() {
 // Hook response bodies are consumed before resource drainage and host ACK.
 // They are internal lifecycle responses and never enter the customer body.
 async function finishCustomerLifecycle(value, signal) {
-  const status = Number(value?.statusCode ?? value?.status ?? 200);
+  // Same status reading as a request (node.go): a non-HTTP status value such
+  // as { status: "ok" } is data, not NaN (prod hunt r32 review).
+  const code = [value?.statusCode, value?.status]
+    .map((item) => (Number.isInteger(item) ? item : typeof item === "string" && /^[0-9]{3}$/.test(item) ? Number(item) : undefined))
+    .find((item) => item !== undefined && item >= 100 && item <= 599);
+  const status = code ?? 200;
   const body = value && typeof value === "object" && "body" in value ? value.body : value;
   if (body && typeof body.getReader === "function") {
     const reader = body.getReader();

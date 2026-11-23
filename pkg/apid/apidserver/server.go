@@ -3494,6 +3494,7 @@ func (s *server) handler() http.Handler {
 	// through writeJSON. Returns build_sbom_unavailable (503) when
 	// the imaged syft populator hasn't run for this build.
 	mux.HandleFunc("GET /v1/builds/{id}/sbom", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getBuildSbom)))
+	mux.HandleFunc("GET /v1/apps/{slug}/rollbacks/preflight", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.preflightCheckedRollback)))
 	mux.HandleFunc("GET /v1/apps/{slug}/rollbacks/{operation}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getCheckedRollback)))
 	mux.HandleFunc("POST /v1/apps/{slug}/rollback", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.rollbackApp)))))
 	// ADR-20261023181931: rollbacks that restore the database.
@@ -4004,6 +4005,17 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProjects))))
 	mux.HandleFunc("POST /v1/projects/{slug}/release-secrets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.stageProjectReleaseSecrets))))
 	mux.HandleFunc("GET /v1/projects/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProject))))
+	mux.HandleFunc("GET /v1/projects/{slug}/rollbacks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProjectRollbacks))))
+	mux.HandleFunc("GET /v1/projects/{slug}/rollbacks/preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.previewProjectRollback))))
+	mux.HandleFunc("GET /v1/projects/{slug}/rollbacks/targets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProjectRollbackTargets))))
+	mux.HandleFunc("POST /v1/projects/{slug}/rollbacks/targets/{deploy}/protection", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.protectProjectRollbackDeploy))))
+	mux.HandleFunc("POST /v1/projects/{slug}/rollbacks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.startProjectRollback))))
+	mux.HandleFunc("GET /v1/projects/{slug}/rollbacks/{operation}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectRollback))))
+	mux.HandleFunc("POST /v1/projects/{slug}/rollbacks/{operation}/resume", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.resumeProjectRollback))))
+	mux.HandleFunc("GET /v1/projects/{slug}/rollbacks/{operation}/resume/preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.previewProjectRollbackResume))))
+	mux.HandleFunc("POST /v1/projects/{slug}/rollbacks/{operation}/pause", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.pauseProjectRollback))))
+	mux.HandleFunc("POST /v1/projects/{slug}/rollbacks/{operation}/undo", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.undoProjectRollback))))
+	mux.HandleFunc("GET /v1/projects/{slug}/rollbacks/{operation}/undo/preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.previewProjectRollbackUndo))))
 	mux.HandleFunc("POST /v1/projects/{slug}/deployment-readiness", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeploymentReadSurface...)(s.checkProjectDeployment))))
 	mux.HandleFunc("PATCH /v1/projects/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateProject))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProjectEnvironments))))
@@ -4658,6 +4670,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics/timeseries", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAnalyticsTimeseries)))
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics/route-customers", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRouteCustomerUsage)))
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics/route-resources", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRouteResources)))
+	mux.HandleFunc("GET /v1/apps/{slug}/mcp-tool-insights", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getMCPToolInsights)))
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAnalytics)))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/coverage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugTelemetryCoverageHandler))))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/dependencies", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugDependencyLatencyHandler))))
@@ -4925,6 +4938,12 @@ func (s *server) handler() http.Handler {
 	// Fleet snapshot health report (ADR-20261122135018).
 	mux.HandleFunc("GET /v1/admin/obs/snapshot-health",
 		s.authLimited(s.requireOperatorSessionRead(s.obsSnapshotHealth)))
+	// Build queue and builder slot report (ADR-20261123163340).
+	mux.HandleFunc("GET /v1/admin/obs/build-queue",
+		s.authLimited(s.requireOperatorSessionRead(s.obsBuildQueue)))
+	// Memory pressure: node headroom, evictions and OOM kills (ADR-20261123190507).
+	mux.HandleFunc("GET /v1/admin/obs/memory-pressure",
+		s.authLimited(s.requireOperatorSessionRead(s.obsMemoryPressure)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/heartbeats",
 		s.authLimited(s.requireOperatorRead(s.obsNodeHeartbeats)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/probe-notifications",

@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
@@ -802,6 +803,13 @@ func (s *Service) handleAccountPush(ctx context.Context, body []byte) (reconcile
 	boundToEnqueue, boundSkipped := s.filterByPath(boundApps, boundChangedFiles, filterMode)
 	skipped = append(skipped, boundSkipped...)
 	deliveryID := webhookDeliveryID(ctx)
+	var projectDeployGroup string
+	if deployProject && (deploymentScope == "" || deploymentScope == api.DefaultEnvScope || deploymentScope == "production") {
+		projectDeployGroup = uuid.NewString()
+		if deliveryID != "" {
+			projectDeployGroup = uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale:github-project-deploy:"+deliveryID)).String()
+		}
+	}
 	githubSourceRef := ""
 	var githubInstallationID int64
 	if !isTag {
@@ -906,7 +914,12 @@ func (s *Service) handleAccountPush(ctx context.Context, body []byte) (reconcile
 				s.Log.Info("githubd: push updated verification contract", "app_id", app.ID, "sha", ev.After)
 			}
 		}
+		group := projectDeployGroup
+		if appBound[app.ID] {
+			group = ""
+		}
 		build, err := enqueuer.Enqueue(ctx, BuildSpec{
+			ProjectDeployGroupID: group,
 			App:                  app,
 			DeliveryID:           deliveryID,
 			CommitSHA:            ev.After,

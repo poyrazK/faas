@@ -1001,6 +1001,13 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 	if safe {
 		environment = "production"
 	}
+	var deployGroup string
+	if !safe && reconcileProductionEnvironment(environment) {
+		deployGroup = uuid.NewString()
+		if tracker != nil {
+			deployGroup = uuid.MustParse(tracker.Receipt.AttemptID).String()
+		}
+	}
 	if environment == "production" && !safe {
 		environment = state.DefaultEnvScope
 	}
@@ -1271,6 +1278,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		}
 		readinessCheck, livenessCheck := projectReadinessOverrides(app.Manifest, acct.Plan)
 		enqParams := apidsource.EnqueueParams{
+			ProjectDeployGroupID:      deployGroup,
 			TrafficPercentExplicit:    safe,
 			OperationID:               operationID,
 			BuildDependencies:         buildDependencies,

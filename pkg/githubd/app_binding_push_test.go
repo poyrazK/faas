@@ -188,6 +188,9 @@ func TestPushDeploysAppBoundBesideProject(t *testing.T) {
 		t.Fatalf("enqueued %v, want the project's app and the app-bound worker %v", got, want)
 	}
 	for _, call := range rec.calls {
+		if (call.appID == members[0].ID) != (call.projectDeployGroup != "") {
+			t.Fatalf("app %s has unexpected project deploy identity %q", call.appID, call.projectDeployGroup)
+		}
 		if call.appID == worker.ID && call.scope != state.DefaultEnvScope {
 			t.Fatalf("worker deployed to scope %q, want %q", call.scope, state.DefaultEnvScope)
 		}

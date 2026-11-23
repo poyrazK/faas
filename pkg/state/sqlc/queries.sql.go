@@ -78588,6 +78588,172 @@ func (q *Queries) OperationEffectDeliveryAllowed(ctx context.Context, db DBTX, d
 	return i, err
 }
 
+const operatorActiveBuilds = `-- name: OperatorActiveBuilds :many
+SELECT b.id::text AS id, b.deployment_id::text AS deployment_id,
+       COALESCE(d.app_id::text, '')::text AS app_id, COALESCE(a.slug, '')::text AS app_slug,
+       COALESCE(a.account_id::text, '')::text AS account_id,
+       b.kind, b.status, COALESCE(b.failure_class, '')::text AS failure_class, b.source_bytes,
+       b.enqueued_at, b.not_before, b.started_at, b.finished_at,
+       COALESCE(b.cache_status, '')::text AS cache_status,
+       COALESCE(b.builder_node_name, '')::text AS builder_node_name, b.preemptions,
+       COALESCE(b.coalesced_with::text, '')::text AS coalesced_with
+FROM builds b
+LEFT JOIN deployments d ON d.id = b.deployment_id
+LEFT JOIN apps a ON a.id = d.app_id
+WHERE b.status IN ('queued', 'running')
+ORDER BY (b.status = 'running') DESC, (b.not_before IS NOT NULL AND b.not_before > now()),
+         COALESCE(b.not_before, b.enqueued_at), b.id
+LIMIT $1::int
+`
+
+type OperatorActiveBuildsRow struct {
+	ID              string
+	DeploymentID    string
+	AppID           string
+	AppSlug         string
+	AccountID       string
+	Kind            string
+	Status          string
+	FailureClass    string
+	SourceBytes     int64
+	EnqueuedAt      pgtype.Timestamptz
+	NotBefore       pgtype.Timestamptz
+	StartedAt       pgtype.Timestamptz
+	FinishedAt      pgtype.Timestamptz
+	CacheStatus     string
+	BuilderNodeName string
+	Preemptions     int32
+	CoalescedWith   string
+}
+
+// The operator build queue report (ADR-20261123163340): queued and running
+// builds with their app. Running builds come first (slots bound them, so a
+// long backlog never cuts them), then due queued builds the longest waiting
+// first (from not_before when deferred), then builds deferred to a later
+// not_before. The caller asks for one row more than it keeps to learn whether
+// it was cut.
+func (q *Queries) OperatorActiveBuilds(ctx context.Context, db DBTX, rowLimit int32) ([]OperatorActiveBuildsRow, error) {
+	rows, err := db.Query(ctx, operatorActiveBuilds, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorActiveBuildsRow{}
+	for rows.Next() {
+		var i OperatorActiveBuildsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.DeploymentID,
+			&i.AppID,
+			&i.AppSlug,
+			&i.AccountID,
+			&i.Kind,
+			&i.Status,
+			&i.FailureClass,
+			&i.SourceBytes,
+			&i.EnqueuedAt,
+			&i.NotBefore,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CacheStatus,
+			&i.BuilderNodeName,
+			&i.Preemptions,
+			&i.CoalescedWith,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const operatorFinishedBuildsSince = `-- name: OperatorFinishedBuildsSince :many
+SELECT b.id::text AS id, b.deployment_id::text AS deployment_id,
+       COALESCE(d.app_id::text, '')::text AS app_id, COALESCE(a.slug, '')::text AS app_slug,
+       COALESCE(a.account_id::text, '')::text AS account_id,
+       b.kind, b.status, COALESCE(b.failure_class, '')::text AS failure_class, b.source_bytes,
+       b.enqueued_at, b.not_before, b.started_at, b.finished_at,
+       COALESCE(b.cache_status, '')::text AS cache_status,
+       COALESCE(b.builder_node_name, '')::text AS builder_node_name, b.preemptions,
+       COALESCE(b.coalesced_with::text, '')::text AS coalesced_with
+FROM builds b
+LEFT JOIN deployments d ON d.id = b.deployment_id
+LEFT JOIN apps a ON a.id = d.app_id
+WHERE b.finished_at >= $1::timestamptz
+  AND b.status IN ('succeeded', 'failed', 'cancelled')
+ORDER BY b.finished_at DESC, b.id DESC
+LIMIT $2::int
+`
+
+type OperatorFinishedBuildsSinceParams struct {
+	Since    pgtype.Timestamptz
+	RowLimit int32
+}
+
+type OperatorFinishedBuildsSinceRow struct {
+	ID              string
+	DeploymentID    string
+	AppID           string
+	AppSlug         string
+	AccountID       string
+	Kind            string
+	Status          string
+	FailureClass    string
+	SourceBytes     int64
+	EnqueuedAt      pgtype.Timestamptz
+	NotBefore       pgtype.Timestamptz
+	StartedAt       pgtype.Timestamptz
+	FinishedAt      pgtype.Timestamptz
+	CacheStatus     string
+	BuilderNodeName string
+	Preemptions     int32
+	CoalescedWith   string
+}
+
+// Builds that reached a terminal status at or after since, newest first,
+// for the build queue report's durations, failures and cache outcomes.
+// builds_finished_at_idx serves the range.
+func (q *Queries) OperatorFinishedBuildsSince(ctx context.Context, db DBTX, arg OperatorFinishedBuildsSinceParams) ([]OperatorFinishedBuildsSinceRow, error) {
+	rows, err := db.Query(ctx, operatorFinishedBuildsSince, arg.Since, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorFinishedBuildsSinceRow{}
+	for rows.Next() {
+		var i OperatorFinishedBuildsSinceRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.DeploymentID,
+			&i.AppID,
+			&i.AppSlug,
+			&i.AccountID,
+			&i.Kind,
+			&i.Status,
+			&i.FailureClass,
+			&i.SourceBytes,
+			&i.EnqueuedAt,
+			&i.NotBefore,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CacheStatus,
+			&i.BuilderNodeName,
+			&i.Preemptions,
+			&i.CoalescedWith,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const operatorLiveDeploymentsWithoutSnapshot = `-- name: OperatorLiveDeploymentsWithoutSnapshot :many
 SELECT d.id::text AS deployment_id, d.app_id::text AS app_id, a.slug AS app_slug,
        a.account_id::text AS account_id, (d.rootfs_key <> '')::boolean AS cold_bootable,
@@ -78632,6 +78798,95 @@ func (q *Queries) OperatorLiveDeploymentsWithoutSnapshot(ctx context.Context, db
 			&i.ColdBootable,
 			&i.CreatedAt,
 			&i.LastStaleAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const operatorMemoryPressureEvents = `-- name: OperatorMemoryPressureEvents :many
+SELECT e.at, e.kind, COALESCE(e.data->>'reason', '')::text AS reason,
+       COALESCE(i.id::text, e.subject::text, e.data->>'instance_id', '')::text AS instance_id,
+       COALESCE(a.id::text, '')::text AS app_id, COALESCE(a.slug, '')::text AS app_slug,
+       COALESCE(a.account_id::text, '')::text AS account_id, COALESCE(ac.plan, '')::text AS plan,
+       COALESCE(i.node_id::text, '')::text AS node_id, COALESCE(n.name, '')::text AS node_name,
+       COALESCE(i.ram_mb, 0)::int AS ram_mb,
+       COALESCE(CASE WHEN e.data->>'peak_mb' ~ '^[0-9]{1,9}$' THEN (e.data->>'peak_mb')::int END, 0)::int AS peak_mb,
+       COALESCE(CASE WHEN e.data->>'plan_mb' ~ '^[0-9]{1,9}$' THEN (e.data->>'plan_mb')::int END, 0)::int AS plan_mb,
+       (COALESCE(e.data->>'deployment_failed', '') = 'true')::boolean AS deployment_failed
+FROM events e
+LEFT JOIN instances i ON i.id = COALESCE(e.subject,
+       CASE WHEN e.data->>'instance_id' ~ '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$' THEN (e.data->>'instance_id')::uuid END)
+LEFT JOIN apps a ON a.id = COALESCE(i.app_id,
+       CASE WHEN e.data->>'app_id' ~ '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$' THEN (e.data->>'app_id')::uuid END)
+LEFT JOIN accounts ac ON ac.id = a.account_id
+LEFT JOIN compute_nodes n ON n.id = i.node_id
+WHERE e.kind IN ('memory_eviction', 'frozen_park', 'instances.workload_oom_failed')
+  AND e.at >= $1::timestamptz
+  AND (e.kind <> 'frozen_park' OR e.data->>'reason' = 'memory_pressure')
+ORDER BY e.at DESC, e.id DESC
+LIMIT $2::int
+`
+
+type OperatorMemoryPressureEventsParams struct {
+	Since    pgtype.Timestamptz
+	RowLimit int32
+}
+
+type OperatorMemoryPressureEventsRow struct {
+	At               pgtype.Timestamptz
+	Kind             string
+	Reason           string
+	InstanceID       string
+	AppID            string
+	AppSlug          string
+	AccountID        string
+	Plan             string
+	NodeID           string
+	NodeName         string
+	RamMb            int32
+	PeakMb           int32
+	PlanMb           int32
+	DeploymentFailed bool
+}
+
+// The operator memory pressure report (ADR-20261123190507): RAM pressure
+// evictions of running instances (memory_eviction), frozen instances parked
+// under memory pressure (frozen_park, reason memory_pressure) and workload
+// OOM kills (instances.workload_oom_failed), newest first, each with its
+// instance's node and RAM and its app's account and plan. A transition names
+// its instance in subject; an OOM kill names instance and app in data. The
+// instance row may already be gone (terminal retention), so every join is
+// optional. events_kind_at_idx serves each kind's range.
+func (q *Queries) OperatorMemoryPressureEvents(ctx context.Context, db DBTX, arg OperatorMemoryPressureEventsParams) ([]OperatorMemoryPressureEventsRow, error) {
+	rows, err := db.Query(ctx, operatorMemoryPressureEvents, arg.Since, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorMemoryPressureEventsRow{}
+	for rows.Next() {
+		var i OperatorMemoryPressureEventsRow
+		if err := rows.Scan(
+			&i.At,
+			&i.Kind,
+			&i.Reason,
+			&i.InstanceID,
+			&i.AppID,
+			&i.AppSlug,
+			&i.AccountID,
+			&i.Plan,
+			&i.NodeID,
+			&i.NodeName,
+			&i.RamMb,
+			&i.PeakMb,
+			&i.PlanMb,
+			&i.DeploymentFailed,
 		); err != nil {
 			return nil, err
 		}

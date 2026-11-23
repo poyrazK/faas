@@ -3478,6 +3478,23 @@
       ]
     },
     {
+      "id": "mcp-tool-insights",
+      "name": "MCP tool insights",
+      "category": "observability",
+      "description": "Per-tool MCP calls, failures, argument mismatches and estimated compute over the last hour, from the hosted MCP protocol telemetry.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261123110137-mcp-replay-gate-insights-api-mcp-keys",
+      "acceptance_test": "pkg/apid/mcpinsights/mcpinsights_test.go::TestRow",
+      "parent": "mcp-hosting",
+      "routes": [
+        "/v1/apps/{}/mcp-tool-insights"
+      ],
+      "cli": [
+        "mcp insights"
+      ]
+    },
+    {
       "id": "mcp-tool-invocations",
       "name": "Registered MCP tool invocation",
       "category": "runtime",

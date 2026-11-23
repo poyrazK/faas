@@ -10,7 +10,7 @@
 //
 // Pass a bearer token to NewClient:
 //
-//	c, err := faas.NewClient("https://api.example.com", os.Getenv("FAAS_TOKEN"))
+//	c, err := faas.NewClient("https://api.example.com", os.Getenv("GREGALE_TOKEN"))
 //	if err != nil {
 //	    return err
 //	}

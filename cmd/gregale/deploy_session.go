@@ -192,11 +192,15 @@ func lockDeploySession(path string) (*flock.Flock, error) {
 }
 
 func (s *savedDeploySession) save() error {
-	data, err := json.MarshalIndent(s.record, "", "  ")
+	return writePrivateDeployState(s.path, s.record)
+}
+
+func writePrivateDeployState(path string, record any) error {
+	data, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(s.path)
+	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -216,7 +220,7 @@ func (s *savedDeploySession) save() error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(f.Name(), s.path); err != nil {
+	if err := os.Rename(f.Name(), path); err != nil {
 		return err
 	}
 	return api.SyncPrivateDeploymentSessionDirectory(dir)
