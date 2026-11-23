@@ -8992,7 +8992,7 @@ func (s *PgStore) CountDeploymentOutcomesSince(ctx context.Context, since time.T
 			            where t.deployment_id = d.id
 			              and t.kind = 'release'
 			              and (
-			                (t.exit_code is not null and t.exit_code <> all($3::int[]))
+			                (t.exit_code is not null and not (t.exit_code = any($3::int[]) and coalesce(t.stderr_tail, '') ~ $8))
 			                or t.status = 'timed_out'
 			                or (t.status = 'cancelled' and t.cancel_requested_at is not null)
 			              )
@@ -9016,7 +9016,7 @@ func (s *PgStore) CountDeploymentOutcomesSince(ctx context.Context, since time.T
 			count(distinct tenant) filter (where platform_failed)
 		  from outcomes`, since.UTC(), api.CustomerCausedDeploymentFailureCodes(), api.PlatformReleaseExitCodes,
 		api.CodeReleaseCommandFailed, api.CodeDeploymentSmokeFailed, api.CustomerCausedSmokeErrorCode,
-		nonNilStrings(excludedAccounts)).Scan(&out.Succeeded, &out.Failed, &out.FailedAccounts)
+		nonNilStrings(excludedAccounts), api.PlatformToolMissingPattern).Scan(&out.Succeeded, &out.Failed, &out.FailedAccounts)
 	return out, err
 }
 
@@ -9050,7 +9050,7 @@ func (s *PgStore) LatestPlatformDeploymentOutcome(ctx context.Context, excludedA
 		          where t.deployment_id = d.id
 		            and t.kind = 'release'
 		            and (
-		              (t.exit_code is not null and t.exit_code <> all($2::int[]))
+		              (t.exit_code is not null and not (t.exit_code = any($2::int[]) and coalesce(t.stderr_tail, '') ~ $7))
 		              or t.status = 'timed_out'
 		              or (t.status = 'cancelled' and t.cancel_requested_at is not null)
 		            )
@@ -9063,7 +9063,7 @@ func (s *PgStore) LatestPlatformDeploymentOutcome(ctx context.Context, excludedA
 		 order by observed_at desc, d.created_at desc
 		 limit 1`, api.CustomerCausedDeploymentFailureCodes(), api.PlatformReleaseExitCodes,
 		api.CodeReleaseCommandFailed, api.CodeDeploymentSmokeFailed, api.CustomerCausedSmokeErrorCode,
-		nonNilStrings(excludedAccounts)).Scan(&out.Succeeded, &out.ObservedAt)
+		nonNilStrings(excludedAccounts), api.PlatformToolMissingPattern).Scan(&out.Succeeded, &out.ObservedAt)
 	if err != nil {
 		return LatestDeploymentOutcome{}, mapErr(err)
 	}

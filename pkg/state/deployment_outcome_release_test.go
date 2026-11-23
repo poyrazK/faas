@@ -23,21 +23,23 @@ func TestDeploymentOutcomesAttributeReleaseCommandExit(t *testing.T) {
 		id     string
 		status AppTaskStatus
 		exit   *int
+		stderr string
 		cancel *time.Time
 	}{
-		{"exit1", AppTaskFailed, exitCode(1), nil},
-		{"exit3", AppTaskFailed, exitCode(3), nil},
-		{"own-timeout", AppTaskTimedOut, nil, nil},
-		{"owner-cancel", AppTaskCancelled, nil, &cancelAt},
-		{"platform-cancel", AppTaskCancelled, nil, nil},
-		{"not-found", AppTaskFailed, exitCode(127), nil},
-		{"no-task", "", nil, nil},
+		{"exit1", AppTaskFailed, exitCode(1), "", nil},
+		{"exit3", AppTaskFailed, exitCode(3), "", nil},
+		{"own-timeout", AppTaskTimedOut, nil, "", nil},
+		{"owner-cancel", AppTaskCancelled, nil, "", &cancelAt},
+		{"platform-cancel", AppTaskCancelled, nil, "", nil},
+		{"npm-not-found", AppTaskFailed, exitCode(127), "/bin/sh: 1: npm: not found\n", nil},
+		{"customer-typo", AppTaskFailed, exitCode(127), "/bin/sh: 1: nmp: not found\n", nil},
+		{"no-task", "", nil, "", nil},
 	} {
 		appID := "app-" + tc.id
 		m.apps[appID] = App{ID: appID, AccountID: "acct-1"}
 		m.putDeploymentLocked(tc.id, Deployment{ID: tc.id, AppID: appID, Status: DeployFailed, ErrorCode: api.CodeReleaseCommandFailed, CreatedAt: now})
 		if tc.status != "" {
-			m.appTasks["t-"+tc.id] = AppTask{ID: "t-" + tc.id, AppID: appID, DeploymentID: tc.id, Kind: AppTaskKindRelease, Status: tc.status, ExitCode: tc.exit, CancelRequested: tc.cancel}
+			m.appTasks["t-"+tc.id] = AppTask{ID: "t-" + tc.id, AppID: appID, DeploymentID: tc.id, Kind: AppTaskKindRelease, Status: tc.status, ExitCode: tc.exit, StderrTail: tc.stderr, CancelRequested: tc.cancel}
 		}
 	}
 	m.mu.Unlock()
@@ -46,7 +48,8 @@ func TestDeploymentOutcomesAttributeReleaseCommandExit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// platform-cancel, not-found and no-task stay platform evidence.
+	// platform-cancel, npm-not-found and no-task stay platform evidence; a
+	// typo in the customer's own command is theirs.
 	if counts.Failed != 3 || counts.FailedAccounts != 1 {
 		t.Fatalf("outcomes = %+v, want 3 platform release failures on 1 account", counts)
 	}

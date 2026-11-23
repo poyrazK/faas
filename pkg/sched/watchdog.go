@@ -47,6 +47,16 @@ const (
 	// SnapshotSweepBudget is the spec §6.1 budget for SNAPSHOTTING.
 	// Matches park budget published in the spec.
 	SnapshotSweepBudget = 20 * time.Second
+
+	// coldBootRPCGrace is how long past the cold-boot sweep budget the
+	// watchdog waits so the boot's own vmmd call, whose deadline is
+	// ColdBootTimeout (35 s, spec §6.1 30 s + jailer setup), answers first.
+	// Without it the watchdog stopped every never-ready guest at 30 s and
+	// stamped a generic cold_boot_timeout before vmmd's readiness verdict
+	// (app_loopback_bound, the port the app listens on) arrived; prod
+	// 2026-11-23: a 127.0.0.1 app and a hard-coded-port app both got
+	// "didn't become ready in time", blamed on the platform.
+	coldBootRPCGrace = ColdBootTimeout - ColdBootSweepBudget + 2*time.Second
 )
 
 // DefaultWatchdogInterval is the per-second cadence Loop.Run drives
@@ -182,13 +192,13 @@ func (w *Watchdog) sweepBucket(ctx context.Context, now time.Time, st state.Stat
 		// WAKING indefinitely and consume the app's concurrency reservation.
 		// After the combined restore + cold-boot budget, the normal WAKING
 		// kill path is the safe recovery.
-		if st == state.StateWaking && !ins.StartedAt.IsZero() && now.Sub(ins.StartedAt) < WakingSweepBudget+ColdBootSweepBudget {
+		if st == state.StateWaking && !ins.StartedAt.IsZero() && now.Sub(ins.StartedAt) < WakingSweepBudget+ColdBootSweepBudget+coldBootRPCGrace {
 			continue
 		}
 		// The fallback cold boot gets the app's startup window, as the wake's
 		// RPC budget does (ADR-20261114120000).
 		if st == state.StateWaking && !ins.StartedAt.IsZero() {
-			if extra := w.startupWatchdogExtension(ctx, ins); extra > 0 && now.Sub(ins.StartedAt) < WakingSweepBudget+ColdBootSweepBudget+extra {
+			if extra := w.startupWatchdogExtension(ctx, ins); extra > 0 && now.Sub(ins.StartedAt) < WakingSweepBudget+ColdBootSweepBudget+coldBootRPCGrace+extra {
 				continue
 			}
 		}
@@ -214,8 +224,10 @@ func (w *Watchdog) sweepBucket(ctx context.Context, now time.Time, st state.Stat
 		// window (a deploy prime or any later wake, ADR-20261114120000) gets
 		// the matching reprieve, so the watchdog does not kill a slow-starting
 		// boot that its RPC budget still allows.
+		// Every cold boot also gets coldBootRPCGrace, so vmmd's own verdict
+		// (why the app was not ready) lands before the watchdog's generic one.
 		if st == state.StateColdBooting && !ins.StartedAt.IsZero() {
-			if extra := w.startupWatchdogExtension(ctx, ins); extra > 0 && now.Sub(ins.StartedAt) < budget+extra {
+			if now.Sub(ins.StartedAt) < budget+coldBootRPCGrace+w.startupWatchdogExtension(ctx, ins) {
 				continue
 			}
 		}

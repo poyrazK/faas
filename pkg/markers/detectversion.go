@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -418,4 +420,28 @@ func versionFromGoModDirective(body string) string {
 		return ""
 	}
 	return m[1]
+}
+
+// NodePackageJSONProblemAtRoot reports why the source's package.json cannot
+// be parsed, or "" when it parses or is absent (or larger than the marker
+// read cap, which the build then judges). Railpack builds an invalid
+// package.json into an image with no app layer and the deploy then failed
+// with an internal "runtime base does not match the build artifact" error
+// blamed on the platform (prod 2026-11-23).
+func NodePackageJSONProblemAtRoot(path, sourceRoot string) string {
+	raw, ok := readTarballFilesAtRoot(path, sourceRoot, "package.json")["package.json"]
+	if !ok {
+		return ""
+	}
+	var v map[string]any
+	err := json.Unmarshal([]byte(raw), &v)
+	if err == nil {
+		return ""
+	}
+	var syntax *json.SyntaxError
+	if errors.As(err, &syntax) {
+		line := 1 + strings.Count(raw[:min(int(syntax.Offset), len(raw))], "\n")
+		return fmt.Sprintf("package.json is not valid JSON: %s (line %d)", syntax.Error(), line)
+	}
+	return "package.json is not a JSON object: " + err.Error()
 }
