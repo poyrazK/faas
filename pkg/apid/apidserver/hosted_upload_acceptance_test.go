@@ -41,7 +41,8 @@ func TestHostedUploadNativeAcceptance(t *testing.T) {
 		t.Fatal("the native upload rehearsal requires absolute paths to Gregale and Python with FastAPI and Uvicorn")
 	}
 	ctx := t.Context()
-	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
+	spool := t.TempDir()
+	t.Setenv("FAAS_SPOOL_ROOT", spool)
 	t.Setenv("FAAS_SCAN_SPOOL_ROOT", t.TempDir())
 	pool := pgtest.OpenMigrated(t)
 	mustHostedTaskAcceptance(t, db.MigrateUp(ctx, pool))
@@ -222,7 +223,7 @@ func TestHostedUploadNativeAcceptance(t *testing.T) {
 	mustHostedTaskAcceptance(t, err)
 	assertHostedTaskEqual(t, "committed", committed.Status)
 	assertHostedTaskEqual(t, outcome.DeploymentID, committed.DeploymentID.String)
-	runtimeURL := startCommittedFastAPI(t, python, committed.PartPath)
+	runtimeURL := startCommittedFastAPI(t, python, spool, committed.PartPath)
 	const targetPath = "/items/5?q=gregale"
 	gatewayMux.HandleFunc("POST /v1/internal/apps/"+app.Slug+"/response-check", func(w http.ResponseWriter, r *http.Request) {
 		var target api.DeploymentResponseCheckRequest
@@ -282,10 +283,12 @@ func fastAPIUploadArchive(t *testing.T) []byte {
 	return apidserver.BuildTestTarGz(t, headers, files)
 }
 
-func startCommittedFastAPI(t *testing.T, python, archivePath string) string {
+func startCommittedFastAPI(t *testing.T, python, spool, archivePath string) string {
 	t.Helper()
 	dir := t.TempDir()
-	file, err := os.Open(archivePath)
+	relativeArchive, err := filepath.Rel(spool, archivePath)
+	mustHostedTaskAcceptance(t, err)
+	file, err := os.OpenInRoot(spool, relativeArchive)
 	mustHostedTaskAcceptance(t, err)
 	defer file.Close()
 	compressed, err := gzip.NewReader(file)
