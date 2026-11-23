@@ -103,7 +103,7 @@ type guideSearchResult struct {
 // guideCommandEntries are the searchable commands: every discoverable
 // command and verb, then every guide step, which carries the task words a
 // person would use.
-func guideCommandEntries() ([]mcpmanagement.SearchEntry, map[string]guideCommandHit) {
+func guideCommandEntries(ctx context.Context) ([]mcpmanagement.SearchEntry, map[string]guideCommandHit) {
 	var entries []mcpmanagement.SearchEntry
 	hits := map[string]guideCommandHit{}
 	add := func(hit guideCommandHit, body string, weight float64) {
@@ -126,7 +126,7 @@ func guideCommandEntries() ([]mcpmanagement.SearchEntry, map[string]guideCommand
 			add(guideCommandHit{Command: command + " " + mdFlagLabel(f), Summary: f.Short}, f.Name+"\n"+f.Short+"\n"+context, weight)
 		}
 	}
-	for _, c := range customerCliCommands() {
+	for _, c := range customerCliCommandsContext(ctx) {
 		if len(c.Subcommands) == 0 {
 			command := strings.Join(append([]string{"gregale", c.Name}, c.Positionals...), " ")
 			add(guideCommandHit{Command: command, Summary: c.Short, Example: first(c.Examples)},
@@ -182,10 +182,11 @@ func guideDocsCacheDir() string {
 	return filepath.Join(base, "gregale", "docs")
 }
 
-// searchGuideCommands ranks the commands for a question, without the network.
-func searchGuideCommands(query string) []guideCommandHit {
+// searchGuideCommands ranks the commands for a question; the network is
+// read only for the capability view, bounded by ctx.
+func searchGuideCommands(ctx context.Context, query string) []guideCommandHit {
 	hits := []guideCommandHit{}
-	entries, byID := guideCommandEntries()
+	entries, byID := guideCommandEntries(ctx)
 	seen := map[string]bool{}
 	for _, id := range mcpmanagement.NewSearchIndex(entries).Search(expandGuideQuery(query), guideSearchCommands*3) {
 		hit := byID[id]
@@ -203,7 +204,7 @@ func searchGuideCommands(query string) []guideCommandHit {
 }
 
 func searchGuide(ctx context.Context, query string) guideSearchResult {
-	result := guideSearchResult{Query: query, Commands: searchGuideCommands(query), Docs: []guideDocsHit{}}
+	result := guideSearchResult{Query: query, Commands: searchGuideCommands(ctx, query), Docs: []guideDocsHit{}}
 	view := discoveryCapabilityViewContext(ctx)
 	docs, err := mcpmanagement.SearchLocalDocs(ctx, query, guideSearchDocs, mcpmanagement.LocalDocsOptions{
 		CacheDir: guideDocsCacheDir(),

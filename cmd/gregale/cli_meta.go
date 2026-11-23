@@ -30,6 +30,7 @@
 package main
 
 import (
+	"context"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -114,8 +115,14 @@ type cliCommand struct {
 // hidden operator and legacy entries still need completion/man/dispatch
 // coverage, and earlier names still run.
 func customerCliCommands() []cliCommand {
+	return customerCliCommandsContext(context.Background())
+}
+
+// customerCliCommandsContext is customerCliCommands for a caller with a
+// request context, which bounds the capability read.
+func customerCliCommandsContext(ctx context.Context) []cliCommand {
 	var commands []cliCommand
-	for _, command := range customerAudience(discoverableCliCommands()) {
+	for _, command := range customerAudience(discoverableCliCommandsContext(ctx)) {
 		if !cliTreeEarlierName(command.Name) {
 			commands = append(commands, command)
 		}

@@ -241,7 +241,8 @@ func cmdGuide(args []string) int {
 	if fs.NArg() > 1 || !ok {
 		query := strings.TrimSpace(strings.Join(fs.Args(), " "))
 		if query == "" || len(query) > 200 {
-			return printErr("Invalid guide question", fmt.Errorf("ask in 1 to 200 characters, e.g. gregale guide \"open an outbound port\""))
+			PrintUsage(osStderr, "usage: gregale guide [<task> | \"<question>\"] [--json]  (a question is 1 to 200 characters)", "guide")
+			return 1
 		}
 		return cmdGuideSearch(query)
 	}
