@@ -111,9 +111,15 @@ func mcpExpectedGatewayAction(cfg mcphosting.Config, algorithms []string, apiBas
 		issuer, jwks, algorithms = base+api.MCPConsumerKeyIssuerPath, base+api.MCPConsumerKeyJWKSPath, []string{"ES256"}
 		policy.Credential = api.MCPCredentialConsumerKey
 	case mcphosting.AuthOAuthProxy:
-		jwks, algorithms = mcphosting.OAuthProxyJWKSURL(issuer), []string{"ES256"}
+		if cfg.Auth.ExternalIssuer() {
+			// External OpenID Connect issuers sign with RSA or ECDSA keys
+			// (ADR-20261123192254).
+			algorithms = []string{"RS256", "ES256"}
+		} else {
+			jwks, algorithms = mcphosting.OAuthProxyJWKSURL(issuer), []string{"ES256"}
+		}
 	}
-	return api.EdgeRuleJWTAction{Issuer: issuer, Audience: []string{cfg.Auth.Resource}, JWKSURL: jwks, Algorithms: algorithms, MCP: policy}
+	return api.EdgeRuleJWTAction{Issuer: issuer, Audience: []string{cfg.Auth.TokenAudience()}, JWKSURL: jwks, Algorithms: algorithms, MCP: policy}
 }
 
 func mcpAuditSet(values []string) []string {
