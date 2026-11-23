@@ -22,4 +22,9 @@ func TestAvailabilityQueryExcluding(t *testing.T) {
 	if !strings.Contains(got, "or vector(100)") {
 		t.Fatalf("an all-excluded window must still read as available:\n%s", got)
 	}
+	// A regexp metacharacter is escaped for the regexp and its backslash
+	// again for the PromQL string literal.
+	if got := apidserver.AvailabilityQueryExcluding([]string{"a.b"}); !strings.Contains(got, `app!~"a\\.b"`) {
+		t.Fatalf("metacharacter not escaped for PromQL:\n%s", got)
+	}
 }

@@ -1,6 +1,9 @@
 package api
 
-import "regexp"
+import (
+	"regexp"
+	"strings"
+)
 
 // customerCausedDeploymentFailureCodes are deployments.error_code values whose
 // detection evidence places the failure in the customer's own workload or
@@ -67,18 +70,38 @@ func IsCustomerCausedDeploymentFailure(code string) bool {
 //     as do unproven or unreachable checks.
 
 // PlatformReleaseExitCodes are release-task exit codes that remain platform
-// evidence although the command itself ran, when the task's stderr matches
-// PlatformToolMissingPattern.
+// evidence although the task ended with an exit: when guest-init could not
+// start the command (PlatformReleaseStartFailureCodes, or no stderr at all),
+// or the task's stderr matches PlatformToolMissingPattern.
 var PlatformReleaseExitCodes = []int{126, 127}
+
+// PlatformReleaseStartFailureCodes are app-task failure codes guest-init
+// records with exit 126/127 when the command never ran: its executable was
+// not found or its working directory could not be prepared
+// (guest/init/app_task_linux.go). Their stderr is empty.
+var PlatformReleaseStartFailureCodes = []string{"command_not_found", "command_start_failed"}
 
 // PlatformToolMissingPattern matches a shell or env(1) report that a runtime
 // tool the platform's bases provide is missing or not executable:
 // "/bin/sh: 1: npm: not found", "/usr/bin/env: 'node': No such file or
-// directory". It is a POSIX-style pattern both Go's regexp and PostgreSQL's ~
-// accept, so the status aggregate and the stores agree.
-const PlatformToolMissingPattern = `(^|[^A-Za-z0-9_.-])'?(npm|npx|node|nodejs|corepack|yarn|pnpm|bun|python|python3|pip|pip3|uv|uvx|poetry|pipenv|mise|sh|bash)'?(: not found|: command not found|: No such file or directory|: Permission denied)`
+// directory". The tool must stand as a bare word: a customer's own path that
+// ends in a tool name ("./.venv/bin/python: not found") is theirs. It is a
+// POSIX-style pattern both Go's regexp and PostgreSQL's ~ accept, so the
+// status aggregate and the stores agree.
+const PlatformToolMissingPattern = `(^|[^A-Za-z0-9_./-])'?(npm|npx|node|nodejs|corepack|yarn|pnpm|bun|python|python3|pip|pip3|uv|uvx|poetry|pipenv|mise|sh|bash)'?(: not found|: command not found|: No such file or directory|: Permission denied)`
 
 var platformToolMissing = regexp.MustCompile(PlatformToolMissingPattern)
+
+// platformReleaseExit reports whether an exit-126/127 release task's evidence
+// points at the platform.
+func platformReleaseExit(failureCode, stderr string) bool {
+	for _, code := range PlatformReleaseStartFailureCodes {
+		if failureCode == code {
+			return true
+		}
+	}
+	return strings.TrimSpace(stderr) == "" || platformToolMissing.MatchString(stderr)
+}
 
 // StartupCleanExitMarker is the text vmmd puts in an app_startup_crash
 // detail when the app's process exited with status 0: it ran to completion
@@ -92,13 +115,14 @@ const StartupCleanExitMarker = "the app's process exited with status 0 (a clean 
 const CustomerCausedSmokeErrorCode = "smoke_http_status"
 
 // IsCustomerCausedReleaseTask reports whether a failed release task ended
-// for the customer's command rather than the platform: an exit other than a
-// platform tool going missing (stderr is the task's captured stderr tail),
+// for the customer's command rather than the platform: an exit other than
+// the platform failing to start it or a platform tool going missing
+// (failureCode is the task's failure code, stderr its captured stderr tail),
 // the command's own timeout, or a cancel its owner requested.
-func IsCustomerCausedReleaseTask(exitCode *int, stderr string, timedOut, ownerCancelled bool) bool {
+func IsCustomerCausedReleaseTask(exitCode *int, failureCode, stderr string, timedOut, ownerCancelled bool) bool {
 	if exitCode != nil {
 		for _, code := range PlatformReleaseExitCodes {
-			if *exitCode == code && platformToolMissing.MatchString(stderr) {
+			if *exitCode == code && platformReleaseExit(failureCode, stderr) {
 				return false
 			}
 		}

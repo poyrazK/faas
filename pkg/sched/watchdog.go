@@ -29,10 +29,11 @@ import (
 // SNAPSHOTTING (parked_at is stamped on entry into SNAPSHOTTING in
 // snapshotAndPark; see engine.go).
 //
-// These values mirror Wake's per-call vmmd deadlines from commit 1
-// (WakingTimeout, ColdBootTimeout) within ±1s. The minor slack lets
-// the per-call deadline fire first and transition the row to its
-// terminal state cleanly; the watchdog is a backstop for cases where
+// The watchdog itself waits coldBootRPCGrace past these budgets
+// (ADR-20261123140000) so Wake's per-call vmmd deadlines
+// (WakingTimeout, ColdBootTimeout) always fire first and transition the
+// row to its terminal state with vmmd's typed verdict; the watchdog is a
+// backstop for cases where
 // the per-call deadline doesn't (e.g. the vmmd call hangs but Wake
 // has since returned nil — the only way the row stays in WAKING).
 const (

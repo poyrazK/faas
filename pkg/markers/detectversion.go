@@ -249,6 +249,12 @@ func readTarballFilesAtRoot(path, sourceRoot string, entryNames ...string) map[s
 		}
 		// The first entry with a name decides it, as before.
 		delete(needles, name)
+		// An in-archive link has no body here; the build guest resolves it.
+		// Reading it as an empty file made a linked package.json look
+		// invalid (ADR-20261029103512 accepts in-archive links).
+		if hdr.Typeflag == tar.TypeSymlink || hdr.Typeflag == tar.TypeLink {
+			continue
+		}
 		// Cap read. io.LimitReader silently truncates at N; we use
 		// ReadAll with a hard cap so a 1 GB file doesn't OOM the
 		// build goroutine.
@@ -428,11 +434,17 @@ func versionFromGoModDirective(body string) string {
 // package.json into an image with no app layer and the deploy then failed
 // with an internal "runtime base does not match the build artifact" error
 // blamed on the platform (prod 2026-11-23).
+//
+// Only what no Node package manager would read is a problem: a UTF-8 byte
+// order mark (npm and Node's require strip it), comments and trailing commas
+// (Bun accepts them) are blanked out first, keeping byte offsets so the
+// reported line stays right.
 func NodePackageJSONProblemAtRoot(path, sourceRoot string) string {
 	raw, ok := readTarballFilesAtRoot(path, sourceRoot, "package.json")["package.json"]
 	if !ok {
 		return ""
 	}
+	raw = lenientJSON(raw)
 	var v map[string]any
 	err := json.Unmarshal([]byte(raw), &v)
 	if err == nil {
