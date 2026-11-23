@@ -23,6 +23,7 @@ import (
 // Reasons a Compose redis service is not provided.
 const (
 	composeRedisUnavailable   = "managed Redis is not available to this account"
+	composeRedisNoServiceTCP  = "managed Redis needs private TCP between services, which this installation has not enabled"
 	composeRedisPlan          = "the plan includes no more managed Redis caches"
 	composeRedisNotReferenced = "no selected service uses it"
 	composeRedisConfigured    = "every service that uses it already has its key set"
@@ -100,9 +101,13 @@ func (s *server) composeRedisPlan(ctx context.Context, acct state.Account, proje
 		return provisions, reasons, nil
 	}
 	store, ok := s.store.(state.ManagedValkeyStore)
-	if !ok || !s.capabilityEnabledFor(api.ManagedValkeyCapability, acct, state.App{}) {
+	if !ok || !s.capabilityEnabledFor(api.ManagedValkeyCapability, acct, state.App{}) || !s.privateServiceTCPEnabled() {
+		reason := composeRedisUnavailable
+		if ok && !s.privateServiceTCPEnabled() {
+			reason = composeRedisNoServiceTCP
+		}
 		for _, m := range candidates {
-			reasons[m.Name] = composeRedisUnavailable
+			reasons[m.Name] = reason
 		}
 		return provisions, reasons, nil
 	}

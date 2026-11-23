@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -12,8 +14,64 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// TestRedisRefusedWithoutPrivateServiceTCP pins the agent eval of 2026-11-23:
+// a release converge dropped the private TCP listener on every node, yet
+// managed Redis stayed listed and `redis create` made a cache that no app
+// could reach. With private_service_tcp_enabled off, the capability is
+// unavailable and create is refused before anything is made.
+func TestRedisRefusedWithoutPrivateServiceTCP(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(strconv.FormatBool(enabled), func(t *testing.T) {
+			e := setupSecrets(t, api.PlanPro)
+			setPrivateServiceTCP(t, e, enabled)
+
+			recorder := httptest.NewRecorder()
+			e.s.getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), e.acct)
+			var caps api.CapabilitiesResponse
+			if err := json.Unmarshal(recorder.Body.Bytes(), &caps); err != nil {
+				t.Fatal(err)
+			}
+			i := slices.IndexFunc(caps.Capabilities, func(c api.CapabilityStatus) bool { return c.Key == api.ManagedValkeyCapability })
+			if i < 0 || caps.Capabilities[i].Enabled != enabled {
+				t.Fatalf("managed-redis capability = %+v; want enabled=%v", caps.Capabilities, enabled)
+			}
+
+			rec := e.do(t, "POST", "/v1/redis", api.CreateRedisCacheRequest{Name: "sessions", MemoryMB: 256}, nil)
+			want := http.StatusCreated
+			if !enabled {
+				want = http.StatusNotImplemented
+			}
+			if rec.Code != want {
+				t.Fatalf("create = %d %s; want %d", rec.Code, rec.Body.String(), want)
+			}
+			_, err := e.store.AppBySlug(context.Background(), "sessions")
+			if exists := err == nil; exists != enabled {
+				t.Fatalf("cache app exists=%v (err %v); want %v", exists, err, enabled)
+			}
+		})
+	}
+}
+
+// setupRedis is setupSecrets on an installation that serves private
+// service TCP, which managed Redis needs.
+func setupRedis(t *testing.T, plan api.Plan) testEnv {
+	t.Helper()
+	e := setupSecrets(t, plan)
+	setPrivateServiceTCP(t, e, true)
+	return e
+}
+
+func setPrivateServiceTCP(t *testing.T, e testEnv, enabled bool) {
+	t.Helper()
+	manager := newRuntimeConfigManager(func(string) string { return "" })
+	if err := manager.apply(runtimeConfigPrivateServiceTCP, json.RawMessage(strconv.FormatBool(enabled))); err != nil {
+		t.Fatal(err)
+	}
+	e.s.WithRuntimeConfigManager(manager)
+}
+
 func TestRedisCacheCreateBindDelete(t *testing.T) {
-	e := setupSecrets(t, api.PlanPro)
+	e := setupRedis(t, api.PlanPro)
 	ctx := context.Background()
 
 	rec := e.do(t, "POST", "/v1/redis", api.CreateRedisCacheRequest{Name: "sessions", MemoryMB: 256}, nil)
@@ -79,7 +137,7 @@ func TestRedisCacheCreateBindDelete(t *testing.T) {
 }
 
 func TestRedisCacheRestartKeepsSnapshots(t *testing.T) {
-	e := setupSecrets(t, api.PlanPro)
+	e := setupRedis(t, api.PlanPro)
 	if rec := e.do(t, "POST", "/v1/redis", api.CreateRedisCacheRequest{Name: "sessions"}, nil); rec.Code != http.StatusCreated {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
 	}
@@ -107,7 +165,7 @@ func TestRedisCacheRestartKeepsSnapshots(t *testing.T) {
 }
 
 func TestRedisCacheResizeAndUpgradeHandOff(t *testing.T) {
-	e := setupSecrets(t, api.PlanPro)
+	e := setupRedis(t, api.PlanPro)
 	ctx := context.Background()
 	if rec := e.do(t, "POST", "/v1/redis", api.CreateRedisCacheRequest{Name: "sessions", MemoryMB: 256}, nil); rec.Code != http.StatusCreated {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
@@ -156,13 +214,13 @@ func TestRedisCacheResizeAndUpgradeHandOff(t *testing.T) {
 }
 
 func TestRedisCachePlanGates(t *testing.T) {
-	free := setupSecrets(t, api.PlanFree)
+	free := setupRedis(t, api.PlanFree)
 	if rec := free.do(t, "POST", "/v1/redis", api.CreateRedisCacheRequest{Name: "c1"}, nil); rec.Code != http.StatusForbidden ||
 		!strings.Contains(rec.Body.String(), api.CodeManagedRedisNotInPlan) {
 		t.Fatalf("free: %d %s", rec.Code, rec.Body.String())
 	}
 
-	hobby := setupSecrets(t, api.PlanHobby)
+	hobby := setupRedis(t, api.PlanHobby)
 	for _, tc := range []struct {
 		name string
 		req  api.CreateRedisCacheRequest

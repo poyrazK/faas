@@ -152,6 +152,9 @@ func (s *server) provisionRedisCache(r *http.Request, acct state.Account, req ap
 	if !ok {
 		return state.App{}, state.ManagedValkeyCache{}, api.ErrCapacity("managed Redis is unavailable on this installation")
 	}
+	if !s.privateServiceTCPEnabled() {
+		return state.App{}, state.ManagedValkeyCache{}, errPrivateServiceTCPOff()
+	}
 	req = redisCacheDefaults(acct.Plan, req)
 	if problem := s.redisCacheAdmission(r, store, acct, req); problem != nil {
 		return state.App{}, state.ManagedValkeyCache{}, problem
@@ -498,4 +501,17 @@ func (s *server) redisEnsureRunning(ctx context.Context, acct state.Account, app
 	}
 	return api.NewProblem(http.StatusServiceUnavailable, "cache_waking", "Redis cache is waking",
 		"the cache did not wake in time; it is unchanged, retry the command")
+}
+
+// privateServiceTCPEnabled reports whether the data plane serves private
+// service TCP (ADR-576), the only way an app reaches a managed cache. An
+// installation without hot runtime configuration keeps the old behavior.
+func (s *server) privateServiceTCPEnabled() bool {
+	return s.runtimeBool(runtimeConfigPrivateServiceTCP, true)
+}
+
+// errPrivateServiceTCPOff refuses a cache that no app could connect to.
+func errPrivateServiceTCPOff() *api.Problem {
+	return api.NewProblem(http.StatusNotImplemented, api.CodeNotImplemented, "Managed Redis unavailable",
+		"managed Redis needs private TCP between services, which is not enabled on this Gregale installation right now; contact support, or set REDIS_URL to a Redis you run elsewhere")
 }
