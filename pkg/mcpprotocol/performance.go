@@ -3,6 +3,7 @@ package mcpprotocol
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -15,6 +16,10 @@ import (
 )
 
 const MinSamples = 20
+
+// ErrNotObserved means the app has reported no MCP telemetry in the window:
+// nothing to show, as opposed to a failed read.
+var ErrNotObserved = errors.New("MCP telemetry not observed")
 
 // ToolPerformance exposes only the reviewed tool vocabulary. Percentiles are
 // approximate histogram estimates and are absent below the traffic threshold.
@@ -44,6 +49,16 @@ type Reader interface {
 // Callers must resolve app ownership before passing its UUID. Missing sources
 // and incomplete reads are errors, never healthy zero-valued snapshots.
 func Fetch(ctx context.Context, reader Reader, appID string, now time.Time) (Performance, error) {
+	return fetch(ctx, reader, appID, now, true)
+}
+
+// FetchTools is Fetch without the dashboard's chart range queries: the
+// per-tool table only, so a failed chart read cannot fail it.
+func FetchTools(ctx context.Context, reader Reader, appID string, now time.Time) (Performance, error) {
+	return fetch(ctx, reader, appID, now, false)
+}
+
+func fetch(ctx context.Context, reader Reader, appID string, now time.Time, withCharts bool) (Performance, error) {
 	var result Performance
 	if _, err := uuid.Parse(appID); err != nil || reader == nil {
 		return result, fmt.Errorf("MCP performance unavailable")
@@ -68,6 +83,9 @@ func Fetch(ctx context.Context, reader Reader, appID string, now time.Time) (Per
 	}
 	charts := []string{`sum(rate(vmmd_mcp_protocol_requests_total` + selector + `[5m]))`, fmt.Sprintf(`sum(rate(vmmd_mcp_protocol_requests_total{app_id=%q,outcome=~"rpc_error|tool_error|authorization_error|internal_error|timeout|invalid_params"}[5m]))`, appID), `histogram_quantile(0.95,sum by (le) (rate(vmmd_mcp_protocol_execution_seconds_bucket` + selector + `[5m]))) and on() (sum(increase(vmmd_mcp_protocol_execution_seconds_count` + selector + `[5m])) >= 20)`}
 	chartRows := make([][]promql.QueryRangeSample, 3)
+	if !withCharts {
+		charts = nil
+	}
 	for i, q := range charts {
 		wg.Add(1)
 		go func() {
@@ -91,7 +109,7 @@ func Fetch(ctx context.Context, reader Reader, appID string, now time.Time) (Per
 		}
 	}
 	if len(rows[0]) != 1 || !finite(rows[0][0].Value) || rows[0][0].Value <= 0 || rows[0][0].Value > float64(now.Add(time.Minute).Unix()) {
-		return Performance{}, fmt.Errorf("MCP telemetry not observed")
+		return Performance{}, ErrNotObserved
 	}
 	result.LastEvent = time.Unix(int64(rows[0][0].Value), 0).UTC()
 	for _, tool := range observedTools(rows[1]) {
