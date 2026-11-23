@@ -243,7 +243,8 @@ func (s *server) createConsumerKey(w http.ResponseWriter, r *http.Request, acct 
 	}
 	if strings.TrimSpace(req.Name) == "" || len(req.Name) > api.ConsumerKeyNameMaxBytes || len(req.Scopes) == 0 {
 		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid consumer key", "name must be 1-64 characters and scopes must not be empty"))
+			"Invalid consumer key", fmt.Sprintf("name must be 1-%d bytes (got %d) and scopes must not be empty (got %d)", api.ConsumerKeyNameMaxBytes, len(req.Name), len(req.Scopes))).
+			WithDocs("https://gregale.dev/docs/api-monetization"))
 		return
 	}
 	if problem := s.consumerKeyScopesProblem(acct.ID, req.Scopes); problem != nil {

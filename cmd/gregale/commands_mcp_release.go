@@ -487,7 +487,7 @@ func finishMCPDeployWithSmoke(ctx context.Context, c *Client, slug, id string, c
 					replay, ok := runMCPReplayGate(ctx, endpoint, candidate, serving, token, smoke)
 					receipt["replay"] = replay
 					if !ok {
-						receipt["promotion_error"] = "MCP replay found a breaking catalog change or a new error; candidate remains unpromoted"
+						receipt["promotion_error"] = mcpReplayGateError(replay)
 						if code := jsonOut(writeJSON(receipt)); code != 0 {
 							return code
 						}

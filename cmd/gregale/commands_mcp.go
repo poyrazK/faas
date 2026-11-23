@@ -886,6 +886,9 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	if err != nil {
 		return printErr("MCP smoke fixtures", err)
 	}
+	if o.replay && o.publicationID != "" {
+		return printErr("MCP replay", errors.New("--replay does not apply to a private publication; its candidate is verified by owner-approved platform tests"))
+	}
 	if smoke, err = withMCPReplayGate(smoke, o.replay); err != nil {
 		return printErr("MCP replay", err)
 	}

@@ -31,6 +31,9 @@ func cmdMCPInsights(args []string) int {
 	if fs.NArg() != 0 || *slug == "" {
 		return printErr("MCP insights", errors.New("--app is required"))
 	}
+	if *timeout <= 0 {
+		return printErr("MCP insights", errors.New("--timeout must be positive"))
+	}
 	c, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -66,11 +69,11 @@ func renderMCPInsights(w io.Writer, r api.MCPToolInsightsResponse) {
 			p95 = fmt.Sprintf("%.0f ms", *t.P95MS)
 		}
 		total += t.EstimatedMillicents
-		_, _ = fmt.Fprintf(tw, "%s\t%.0f\t%.0f\t%.0f\t%s\t%.1f\t%s\n", t.Tool, t.Calls, t.Errors, t.Mismatches, p95, t.GBSeconds, formatMillicentsUSD(t.EstimatedMillicents))
+		_, _ = fmt.Fprintf(tw, "%s\t%.1f\t%.1f\t%.1f\t%s\t%.1f\t%s\n", t.Tool, t.Calls, t.Errors, t.Mismatches, p95, t.GBSeconds, formatMillicentsUSD(t.EstimatedMillicents))
 	}
 	_ = tw.Flush()
 	_, _ = fmt.Fprintf(w, "Total:   ≤ %s at the overage rate; usage inside the plan's included GB-hours costs nothing extra.\n", formatMillicentsUSD(total))
-	_, _ = fmt.Fprintln(w, "Mismatches are calls whose arguments did not match the tool's input schema.")
+	_, _ = fmt.Fprintln(w, "Counts are Prometheus estimates and may be fractional. Mismatches are calls whose arguments did not match the tool's input schema.")
 }
 
 // formatMillicentsUSD prints integer millicents (1/100,000 USD) as dollars.
@@ -104,6 +107,9 @@ func cmdMCPKeys(args []string) int {
 	if fs.NArg() != 0 || *slug == "" {
 		return printErr("MCP keys", errors.New(mcpKeysUsage))
 	}
+	if *timeout <= 0 {
+		return printErr("MCP keys", errors.New("--timeout must be positive"))
+	}
 	c, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -130,6 +136,9 @@ func cmdMCPKeys(args []string) int {
 	case "revoke":
 		if *consumer == "" || *key == "" {
 			return printErr("MCP keys", errors.New("--consumer and --key are required"))
+		}
+		if err := requireMCPKey(ctx, c, *slug, *consumer, *key); err != nil {
+			return printErr("MCP keys", err)
 		}
 		revoked, err := c.RevokeConsumerKey(ctx, *slug, *consumer, *key)
 		if err != nil {
@@ -252,4 +261,23 @@ func renderMCPKeys(w io.Writer, keys []api.ConsumerKeyResponse) {
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", k.ID, k.Prefix, k.Name, strings.Join(k.Scopes, ","), used, state)
 	}
 	_ = tw.Flush()
+}
+
+// requireMCPKey refuses to revoke a key that grants no mcp: scope, so the MCP
+// command cannot revoke an app's billing or admin key by mistake.
+func requireMCPKey(ctx context.Context, c *Client, slug, consumer, keyID string) error {
+	list, err := c.ListConsumerKeys(ctx, slug, consumer)
+	if err != nil {
+		return err
+	}
+	for _, k := range list.Keys {
+		if k.ID != keyID {
+			continue
+		}
+		if len(api.ConsumerKeyMCPScopes(k.Scopes)) == 0 {
+			return fmt.Errorf("key %s grants no mcp: scope; revoke it with gregale api consumer key revoke", keyID)
+		}
+		return nil
+	}
+	return fmt.Errorf("key %s is not a key of consumer %s", keyID, consumer)
 }

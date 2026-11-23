@@ -17,7 +17,7 @@ import (
 // error means the read itself failed.
 func Read(ctx context.Context, reader mcpprotocol.Reader, slug, appID string, memoryMB int, now time.Time) (api.MCPToolInsightsResponse, error) {
 	resp := api.MCPToolInsightsResponse{App: slug, Window: "1h", ObservedAt: now, MemoryMB: memoryMB, Tools: []api.MCPToolInsight{}}
-	snapshot, err := mcpprotocol.Fetch(ctx, reader, appID, now)
+	snapshot, err := mcpprotocol.FetchTools(ctx, reader, appID, now)
 	if errors.Is(err, mcpprotocol.ErrNotObserved) {
 		resp.Telemetry = api.MCPToolInsightsTelemetryNotObserved
 		return resp, nil
