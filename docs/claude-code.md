@@ -15,7 +15,7 @@ gregale login
 `gregale login` opens your browser once, and Claude Code uses that login for
 every `gregale` command it runs. Where nobody can open a browser, such as a
 container or CI, put a scoped key in Claude Code's environment as
-`FAAS_TOKEN` instead; see
+`GREGALE_TOKEN` instead; see
 [Give the agent its own key](agents.md#give-the-agent-its-own-key).
 
 ## Tell Claude Code how the project deploys

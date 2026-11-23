@@ -63,7 +63,8 @@ import (
 // builderd never fetches it. SourceBytes is the on-disk size
 // of the staged tarball.
 type BuildSpec struct {
-	App state.App
+	App                  state.App
+	ProjectDeployGroupID string
 	// DeliveryID is the authenticated X-GitHub-Delivery value for the
 	// durable inbox item currently being dispatched. The apid bridge derives
 	// stable deployment/build IDs from (delivery, app), making a reclaimed

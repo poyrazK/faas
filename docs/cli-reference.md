@@ -2060,21 +2060,76 @@ Preview or delete a project
 
 ### project rollback
 
-Roll the latest project deploy back, callers first
+Roll back a recorded project deploy, callers first
 
-`gregale project rollback [--dry-run] [--yes] [--all] [--acknowledge-releases] [--timeout <DURATION>] <slug>`
+`gregale project rollback [--dry-run] [--yes] [--history] [--targets] [--protect-deploy <UUID>] [--ttl <DURATION>] [--status <OPERATION_ID>] [--preview-resume <OPERATION_ID>] [--resume <OPERATION_ID>] [--pause <OPERATION_ID>] [--preview-undo <OPERATION_ID>] [--undo <OPERATION_ID>] [--all] [--to-deploy <UUID>] [--verify] [--verify-before-cutover] [--stabilize-for <DURATION>] [--verify-live-traffic] [--undo-on-health-failure] [--undo-on-live-traffic-failure] [--acknowledge-releases] [--plan-hash <SHA256>] [--request-id <UUID>] [--timeout <DURATION>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--dry-run` | print the rollback plan |  |
-| `--yes` | roll the latest deploy back |  |
-| `--all` | roll back every service, not only those the latest deploy changed |  |
+| `--yes` | start the server rollback and wait |  |
+| `--history` | list recent project rollbacks and undos |  |
+| `--targets` | list recorded deploys eligible for rollback preview |  |
+| `--protect-deploy <UUID>` | retain a recorded deploy&#39;s rollback artifacts |  |
+| `--ttl <DURATION>` | rollback artifact protection duration (default 168h) |  |
+| `--status <OPERATION_ID>` | inspect the server rollback receipt |  |
+| `--preview-resume <OPERATION_ID>` | preview the remaining steps of a paused rollback or undo |  |
+| `--resume <OPERATION_ID>` | retry a blocked rollback or follow a running one |  |
+| `--pause <OPERATION_ID>` | pause a running project rollback or undo |  |
+| `--preview-undo <OPERATION_ID>` | preview the exact undo of a paused rollback |  |
+| `--undo <OPERATION_ID>` | restore the original revisions from a paused rollback |  |
+| `--all` | select each serving service and its current predecessor |  |
+| `--to-deploy <UUID>` | restore the revisions recorded for a project deploy |  |
+| `--verify` | verify configured HTTP health probes between cutovers |  |
+| `--verify-before-cutover` | probe prepared revisions before moving project traffic |  |
+| `--stabilize-for <DURATION>` | require healthy post-cutover probes for this duration |  |
+| `--verify-live-traffic` | verify configured production 5xx budgets after cutover |  |
+| `--undo-on-health-failure` | undo switched services on a confirmed health probe 5xx |  |
+| `--undo-on-live-traffic-failure` | undo switched services on a sustained production 5xx breach |  |
 | `--acknowledge-releases` | accept rolling back across release commands |  |
+| `--plan-hash <SHA256>` | apply the plan printed by --dry-run, --preview-resume, or --preview-undo |  |
+| `--request-id <UUID>` | reuse a rollback start request UUID |  |
 | `--timeout <DURATION>` | wait per service (default 10m) |  |
 
-Only services the latest deploy changed roll back unless --all; services added since and services already rolled back are left as they are.
+By default, select the exact services and predecessors recorded for the latest serving project deploy.
 
-Stops at the first service that fails; run it again to finish.
+Use --targets to list recent deploy IDs. Pass --to-deploy with --dry-run or --yes to restore the recorded revisions for that deploy.
+
+Use --protect-deploy to retain the artifacts for a known-good deploy. --ttl defaults to 168h and accepts 1s to 168h. The --targets list shows expiry and retained layer bytes.
+
+Dry run reports preflight blockers for every targeted service. The server warms and checks every target before moving traffic. The receipt shows preparation progress and any blockers.
+
+The server continues after the CLI exits. Use --status with the operation ID to inspect progress from any authorized connection.
+
+Run --dry-run and pass its plan hash to --yes --plan-hash with the same options to apply the reviewed plan. If the plan changed, review a fresh preview.
+
+The CLI prints a request ID before submitting a rollback. To retry a start after a lost response, use --yes with the same --request-id and options.
+
+Use --history to find recent rollback and undo receipts. The running operation appears first, followed by the most recent receipts, up to 20 in total.
+
+Use --verify to check configured HTTP health probes after each cutover. A failed check pauses the operation. Fix the service and use --resume to recheck it before continuing.
+
+Use --verify-before-cutover with --verify to probe all configured prepared target revisions at zero traffic before the first cutover. A failed probe or missing verification by the preparation deadline holds traffic.
+
+Use --stabilize-for with --verify to require a 1s to 60s window of healthy probes after each cutover. The next cutover waits for the current service to pass.
+
+Use --verify-live-traffic with --verify to check configured production 5xx budgets on restored services. A budget breach or insufficient evidence by the deadline holds the next cutover.
+
+Use --undo-on-health-failure with --verify to undo switched services after a confirmed health probe 5xx. Use --status with the linked undo ID to follow it.
+
+Use --undo-on-live-traffic-failure with --verify-live-traffic to undo switched services when a sustained production 5xx breach is confirmed again before undo.
+
+Use --pause with a running operation ID to stop further cutovers. Gregale settles committed handoffs and releases unused preparations before reporting the pause.
+
+Use --preview-resume with a paused operation ID to see completed and pending cutovers, blockers, and which verification will run. Pass its hash to --resume --plan-hash to continue the same operation only if the reviewed plan still matches.
+
+Use --undo with a paused rollback ID to restore the original revisions for services that switched. Undo has its own operation ID. Use --status or --resume with that ID to follow it.
+
+Use --preview-undo with a paused rollback ID to see the restored revisions and crossed release runs in reverse cutover order. Pass its plan hash to --undo --plan-hash with the same release acknowledgement to apply the reviewed undo.
+
+Status and undo preview show the artifact hold for each revision that an undo can restore. The hold lasts while the rollback runs and for 24 hours after it pauses. An accepted undo takes over any active holds while it runs.
+
+The receipt shows when HTTP routing committed, when gateways applied it, and when a successful request reached the restored revision.
 
 ### project health
 

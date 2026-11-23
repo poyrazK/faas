@@ -3107,7 +3107,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// --repo is the headless source-ref deploy path (issue #739 /
 	// ADR-092). The previous M7.5 dashboard browser flow was deleted
 	// in PR-B; the server resolves the install token from
-	// github_installations, so CI runs need only FAAS_TOKEN + --ref.
+	// github_installations, so CI runs need only GREGALE_TOKEN + --ref.
 	if *repo != "" {
 		if err := validateRepoDeployFlags(explicit); err != nil {
 			return printErr("Invalid flags", err)

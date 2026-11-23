@@ -10,7 +10,7 @@ endpoint with that profile's stored credential and displays the account identity
 before asking to switch (default: no). Failed checks leave the active profile
 unchanged. Use `--timeout 5s` to adjust the connection check deadline.
 
-Run without a prefix `--profile` flag or `FAAS_API` / `FAAS_TOKEN` overrides so
+Run without a prefix `--profile` flag or `FAAS_API` / `GREGALE_TOKEN` overrides so
 the check reflects the saved endpoint and its own credential. Terminal input
 and output are required. Scripts can use `gregale config profile use <name>` and
 `gregale config profile check` separately.

@@ -2282,6 +2282,12 @@ func (c *Client) GetProject(ctx context.Context, slug string) (ProjectResponse, 
 	return out, c.do(ctx, http.MethodGet, "/v1/projects/"+url.PathEscape(slug), nil, &out)
 }
 
+// GetProjectWithRollback requests exact production deployment membership.
+func (c *Client) GetProjectWithRollback(ctx context.Context, slug string) (ProjectResponse, error) {
+	var out ProjectResponse
+	return out, c.do(ctx, http.MethodGet, "/v1/projects/"+url.PathEscape(slug)+"?include_rollback=true", nil, &out)
+}
+
 // UpdateProject changes a project's repository or production branch.
 func (c *Client) UpdateProject(ctx context.Context, slug string, req UpdateProjectRequest) (ProjectResponse, error) {
 	var out ProjectResponse
@@ -5165,7 +5171,7 @@ func (c *Client) PostAuthLogin(ctx context.Context, email, password string) (Pro
 // ACTIONS_ID_TOKEN_REQUEST_TOKEN from GitHub Actions) for a
 // short-lived opaque bearer (5 min TTL, fp_oidc_ prefix). Used by
 // the CI deploy path so customers can swap the long-lived
-// FAAS_TOKEN secret for keyless OIDC. The wire contract is
+// GREGALE_TOKEN secret for keyless OIDC. The wire contract is
 // PR-A (ADR-101 / issue #270); PR-B adds the CLI flag + Action
 // input that drives this call.
 //

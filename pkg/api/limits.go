@@ -242,6 +242,23 @@ const (
 	ObsSnapshotFleetAvgPageMB   = 200
 )
 
+// Operator build queue report (ADR-20261123163340). The report reads at most
+// ObsBuildQueueActiveMax queued and running builds and ObsBuildQueueFinishedMax
+// builds finished in the window (beyond either it says it was truncated). A
+// build waiting longer than ObsBuildQueueWaitWarnSeconds is flagged, and a
+// running one past BuildTimeoutSeconds is overdue. Builder slot use comes from
+// builderd's gauges in Prometheus under ObsBuildQueuePrometheusBudget.
+const (
+	ObsBuildQueueActiveMax        = 500
+	ObsBuildQueueFinishedMax      = 20000
+	ObsBuildQueueListMax          = 50
+	ObsBuildQueueSlowestMax       = 25
+	ObsBuildQueueWaitWarnSeconds  = 300
+	ObsBuildQueueWindowDefault    = 24 * time.Hour
+	ObsBuildQueueWindowMax        = 7 * 24 * time.Hour
+	ObsBuildQueuePrometheusBudget = 2 * time.Second
+)
+
 // Customer attention signals (ADR-20261113123000): when a customer is
 // probably stuck. Thresholds are platform-wide, not per plan.
 const (

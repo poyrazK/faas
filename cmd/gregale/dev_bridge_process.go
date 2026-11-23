@@ -30,7 +30,7 @@ func bridgeProcessEnvironment(inherited []string, port int, sessionID, sessionUR
 	values := make(map[string]string)
 	for _, entry := range inherited {
 		if key, value, ok := strings.Cut(entry, "="); ok {
-			if key == "FAAS_TOKEN" || key == "GREGALE_API_TOKEN" || strings.HasPrefix(key, "GREGALE_DEV_BRIDGE_") || strings.HasPrefix(key, "GREGALE_SERVICE_") {
+			if key == "FAAS_TOKEN" || key == tokenEnvVar || key == "GREGALE_API_TOKEN" || strings.HasPrefix(key, "GREGALE_DEV_BRIDGE_") || strings.HasPrefix(key, "GREGALE_SERVICE_") {
 				continue
 			}
 			values[key] = value

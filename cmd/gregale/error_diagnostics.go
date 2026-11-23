@@ -25,7 +25,7 @@ func redactErrorText(text string) string {
 
 func errorTextRedactor() func(string) string {
 	// Formatting an error must not emit credential-store diagnostics of its own.
-	secrets := []string{loginErrorCredential, strings.TrimSpace(os.Getenv("FAAS_TOKEN")), loadTokenWithDiagnostics(io.Discard)}
+	secrets := []string{loginErrorCredential, strings.TrimSpace(os.Getenv(tokenEnvVar)), strings.TrimSpace(os.Getenv(legacyTokenEnvVar)), loadTokenWithDiagnostics(io.Discard)}
 	if endpoint, err := url.Parse(os.Getenv("FAAS_API")); err == nil && endpoint.User != nil {
 		if password, ok := endpoint.User.Password(); ok && password != "" {
 			secrets = append(secrets, password, url.QueryEscape(password), url.PathEscape(password))
@@ -49,8 +49,8 @@ func authenticationHint() string {
 	if loginErrorCredential != "" {
 		return "Provide a valid credential with " + command + " login --token-stdin."
 	}
-	if os.Getenv("FAAS_TOKEN") != "" {
-		return "Replace or unset FAAS_TOKEN; it overrides the selected profile's stored credential."
+	if name := envTokenName(); name != "" {
+		return "Replace or unset " + name + "; it overrides the selected profile's stored credential."
 	}
 	return "Run " + command + " login, then retry."
 }
@@ -103,7 +103,7 @@ func diagnosticProblem(p api.Problem) api.Problem {
 		case p.Status >= 500:
 			p.Hint = "Check Gregale's service status and run gregale config profile check. Inspect deployment status before retrying a deploy."
 		}
-	} else if p.Status == 401 && loginErrorCredential == "" && os.Getenv("FAAS_TOKEN") != "" && !strings.Contains(p.Hint, "FAAS_TOKEN") {
+	} else if p.Status == 401 && loginErrorCredential == "" && envTokenName() != "" && !strings.Contains(p.Hint, envTokenName()) {
 		p.Hint += " " + authenticationHint()
 	}
 	return redactProblem(p)
