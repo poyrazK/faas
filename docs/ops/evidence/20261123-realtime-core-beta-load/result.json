@@ -1,0 +1,47 @@
+{
+  "connections": 500,
+  "channel_group": 125,
+  "handshake_ms": {
+    "count": 500,
+    "p50": 498.585,
+    "p95": 553.02,
+    "p99": 1049.422,
+    "max": 1049.899
+  },
+  "handshake_retries": 0,
+  "hold_seconds": 90.000082916,
+  "dropped_during_hold": 0,
+  "principal_fan_out": {
+    "messages": 10,
+    "recipients": 375,
+    "expected_deliveries": 3750,
+    "delivered": 3750,
+    "missing": 0,
+    "delivery_latency_ms": {
+      "count": 3750,
+      "p50": 178.696,
+      "p95": 221.245,
+      "p99": 222.645,
+      "max": 223.136
+    }
+  },
+  "channel_fan_out": {
+    "messages": 10,
+    "recipients": 125,
+    "expected_deliveries": 1250,
+    "delivered": 1250,
+    "missing": 0,
+    "delivery_latency_ms": {
+      "count": 1250,
+      "p50": 168.126,
+      "p95": 188.266,
+      "p99": 190.642,
+      "max": 191.268
+    }
+  },
+  "connected_at_end": 500,
+  "listed_in_inventory": 500,
+  "realtime_nodes_queried": 2,
+  "api": "https://api.gregale.dev",
+  "started_at": "2026-11-23T08:19:20.749772Z"
+}

@@ -840,6 +840,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_PADDLE_SANDBOX", Owners: []string{"shared"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid)"},
 	{Name: "FAAS_PADDLE_WEBHOOK_SECRET", Owners: []string{"shared"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid)"},
 	{Name: "FAAS_PADDLE_WEBHOOK_TOLERANCE_SECONDS", Owners: []string{"shared"}, Source: EnvSourceDefault},
+	{Name: "FAAS_PEER_ENTRY_ADDRS", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "ADR-20261123100000: comma-separated IPv4 entry addresses of the other compute edges; vmmd's runtime host policy DNATs a guest's 443 call to one onto this node's own IPv4 entry address, like the boot policy; written by the vmmd egress drop-in from faas_peer_entry_addrs"},
 	{Name: "FAAS_PERSISTENT_PROTOCOL_V1", Owners: []string{"guest"}, Source: EnvSourceGuest},
 	{Name: "FAAS_PERSISTENT_WORKER", Owners: []string{"shared"}, Source: EnvSourceInternal, Note: "set by the builder path for its own worker process"},
 	{Name: "FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS", Owners: []string{"apid", "shared"}, Source: EnvSourceDefault, Note: "comma-separated account UUIDs, or *, that may set scaling_policy.per_instance_concurrency (ADR-20261022203523); unset admits none, and a stored value keeps applying until it is set to 0"},

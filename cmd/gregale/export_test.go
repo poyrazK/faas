@@ -1487,6 +1487,7 @@ var McpNativeWorkerLogs = mcpNativeWorkerLogs
 var McpTasksObserverConfigEnvNames = mcpTasksObserverConfigEnvNames
 var McpTasksObserverCredential = mcpTasksObserverCredential
 var McpTasksRuntimeApp = mcpTasksRuntimeApp
+var McpTasksObserverProcessDetected = mcpTasksObserverProcessDetected
 var PrintReleaseTaskOutput = printReleaseTaskOutput
 var McpTasksObserverEntrypointDetected = mcpTasksObserverEntrypointDetected
 var McpTasksObserverHeartbeatIsFresh = mcpTasksObserverHeartbeatIsFresh
@@ -3029,6 +3030,12 @@ var (
 func WaitForDevPostgres(ctx context.Context, session api.DevSessionResponse, timeout, poll time.Duration, get func(context.Context) (api.DevSessionResponse, error), waiting func(string)) (api.DevSessionResponse, error) {
 	return waitForDevPostgres(ctx, session, timeout, poll, get, waiting)
 }
+
+// ADR-20261122194324: gateway-enforced MCP access modes.
+var (
+	MCPAuthEnableConfig  = mcpAuthEnableConfig
+	AuditMCPGatewayRules = auditMCPGatewayRules
+)
 
 // RealtimePreviewInView is realtimePreviewInView for the tier defaults
 // (tier) or for an account view that hides hidden.

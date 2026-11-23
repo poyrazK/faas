@@ -276,8 +276,12 @@ func cmdDeployments(args []string) int {
 	if stdoutIsTTY() {
 		renderDeploymentHeader(osStdout, *wide)
 	}
+	serving := servingReleaseApps(page.Items)
 	for _, d := range page.Items {
 		d.Status = listedReleaseStatus(d)
+		if d.Status == "live" && d.TrafficPercent == 0 && serving[d.AppID] {
+			d.Status = "standby"
+		}
 		if parkedApp, ok := parked[d.ID]; ok && parkedApp.ID == d.AppID {
 			d.Status = parkedReleaseStatus(d.Status)
 		}

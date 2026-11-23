@@ -760,6 +760,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PADDLE_SANDBOX` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_PADDLE_WEBHOOK_SECRET` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_PADDLE_WEBHOOK_TOLERANCE_SECONDS` | shared | `default` |  |  | `` |  |
+| `FAAS_PEER_ENTRY_ADDRS` | vmmd | `dropin` |  |  | `` | ADR-20261123100000: comma-separated IPv4 entry addresses of the other compute edges; vmmd's runtime host policy DNATs a guest's 443 call to one onto this node's own IPv4 entry address, like the boot policy; written by the vmmd egress drop-in from faas_peer_entry_addrs |
 | `FAAS_PERSISTENT_PROTOCOL_V1` | guest | `guest` |  |  | `` |  |
 | `FAAS_PERSISTENT_WORKER` | shared | `internal` |  |  | `` | set by the builder path for its own worker process |
 | `FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS` | apid, shared | `default` |  |  | `` | comma-separated account UUIDs, or *, that may set scaling_policy.per_instance_concurrency (ADR-20261022203523); unset admits none, and a stored value keeps applying until it is set to 0 |

@@ -307,8 +307,6 @@ func inspectMCPTasksObserver(ctx context.Context, client *api.Client, worker, ob
 		},
 		Violations: []string{},
 	}
-	result.ObserverProcessDetected = mcpTasksObserverEntrypointDetected(observer.Manifest.Entrypoint) ||
-		mcpTasksObserverRoleConfigured(observer.Manifest.Env, observer.Manifest.Entrypoint)
 	result.ObserverMinimumConfigured = observer.Manifest.WorkerReplicas != nil && observer.Manifest.WorkerReplicas.Min >= 1
 	result.NamespaceMatches = mcpTasksObserverNamespacesMatch(worker, observer)
 	result.ObserverMetricsTargetMatches = mcpTasksObserverMetricsTargetMatches(observer, worker.Slug)
@@ -334,6 +332,10 @@ func inspectMCPTasksObserver(ctx context.Context, client *api.Client, worker, ob
 			result.ObserverHeartbeatFresh = true
 			break
 		}
+	}
+	result.ObserverProcessDetected = mcpTasksObserverProcessDetected(observer)
+	if result.ObserverProcessDetected && !mcpTasksObserverEntrypointDetected(observer.Manifest.Entrypoint) && mcpTasksObserverEntrypointUnknown(observer.Manifest.Entrypoint) {
+		result.ManualChecks = append(result.ManualChecks, "The observer was detected from MCP_TASKS_ROLE=observer; its start command is not visible here. Confirm it runs the tasks observer (the starter uses `npm run start:tasks-observer`).")
 	}
 
 	observerAndWorkerUsable := mcpTasksObserverAppUsable(worker) && mcpTasksObserverAppUsable(observer) && worker.ID != observer.ID
@@ -404,16 +406,29 @@ func mcpTasksObserverEntrypointDetected(entrypoint []string) bool {
 	return false
 }
 
-func mcpTasksObserverRoleConfigured(env map[string]string, entrypoint []string) bool {
-	if strings.TrimSpace(env["MCP_TASKS_ROLE"]) != "observer" {
-		return false
+// mcpTasksObserverProcessDetected reports whether observer runs the task
+// observer: its entrypoint names it, or the app sets MCP_TASKS_ROLE=observer.
+// The role counts with any entrypoint, and also when none is visible: a
+// source-built app's start command lives on its deployment, so GET /v1/apps
+// carries no entrypoint and the check could never pass (MCP Tasks prod
+// re-probe 2026-11-23). The heartbeat is not evidence here: it is read from the
+// worker's metrics and cannot be attributed to this app, and requiring it would
+// stop --apply from keeping an idle observer running.
+func mcpTasksObserverProcessDetected(observer api.AppResponse) bool {
+	if mcpTasksObserverEntrypointDetected(observer.Manifest.Entrypoint) {
+		return true
 	}
+	return strings.TrimSpace(observer.Manifest.Env["MCP_TASKS_ROLE"]) == "observer"
+}
+
+// mcpTasksObserverEntrypointUnknown reports whether no start command is visible.
+func mcpTasksObserverEntrypointUnknown(entrypoint []string) bool {
 	for _, arg := range entrypoint {
 		if strings.TrimSpace(arg) != "" {
-			return true
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 // mcpTasksObserverCredential reports how env reaches the app: a secret

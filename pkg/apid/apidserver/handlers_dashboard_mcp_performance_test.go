@@ -59,7 +59,8 @@ func TestDashboardMCPPerformanceOwnershipBeforeQuery(t *testing.T) {
 	if err == nil || len(snapshot.Tools) > 0 {
 		t.Fatal("missing telemetry reported as healthy")
 	}
-	if requests.Load() != 13 {
+	// 13 operation queries + tool argument mismatches + tool execution seconds (ADR-20261122194324).
+	if requests.Load() != 15 {
 		t.Fatalf("unexpected query fanout: %d", requests.Load())
 	}
 }

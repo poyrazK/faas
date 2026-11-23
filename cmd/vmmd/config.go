@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -532,6 +533,11 @@ type ComputeNodeConfig struct {
 	// PublicIngressCIDRs, which the drop-in sends beside it for a vmmd that
 	// predates this field.
 	PublicEntryAddrs []string `toml:"public_entry_addrs"`
+	// PeerEntryAddrs are the other compute edges' IPv4 entry addresses, as
+	// the nftables role renders for faas_peer_entry_addrs
+	// (ADR-20261123100000): a guest's 443 call to one is DNATed to this
+	// node's own entry address, so app-to-app calls stay on the node.
+	PeerEntryAddrs []string `toml:"peer_entry_addrs"`
 	// OverlayCIDR is the per-host overlay subnet the vmmd overlay
 	// detector prefers when multiple IPv4 candidates come back from
 	// `tailscale ip -4` (Mega-PR-B Commit 3). Defaults to
@@ -951,6 +957,9 @@ func loadConfig(path string, readConfig func(string) ([]byte, error)) (*Config, 
 	}
 	if v := os.Getenv("FAAS_PUBLIC_ENTRY_ADDRS"); v != "" {
 		c.ComputeNode.PublicEntryAddrs = splitNonEmpty(v)
+	}
+	if v := os.Getenv("FAAS_PEER_ENTRY_ADDRS"); v != "" {
+		c.ComputeNode.PeerEntryAddrs = splitNonEmpty(v)
 	}
 	if v := os.Getenv("FAAS_PRIVATE_INGRESS_TCP_PORTS"); v != "" {
 		ports, perr := parseTCPPorts(v)
@@ -1403,6 +1412,18 @@ func validatePublicEntryAddrs(cfg ComputeNodeConfig) error {
 			return fmt.Errorf("vmmd: public_entry_addrs[%d] %q must be a plain address in canonical form (%s)", i, raw, addr.Unmap().WithZone(""))
 		}
 	}
+	for i, raw := range cfg.PeerEntryAddrs {
+		addr, err := netip.ParseAddr(raw)
+		if err != nil {
+			return fmt.Errorf("vmmd: peer_entry_addrs[%d] %q invalid: %w", i, raw, err)
+		}
+		if !addr.Is4() || addr.String() != raw {
+			return fmt.Errorf("vmmd: peer_entry_addrs[%d] %q must be a plain IPv4 address in canonical form", i, raw)
+		}
+		if slices.Contains(cfg.PublicEntryAddrs, raw) {
+			return fmt.Errorf("vmmd: peer_entry_addrs[%d] %q is this node's own entry address", i, raw)
+		}
+	}
 	return nil
 }
 
@@ -1539,6 +1560,11 @@ func runtimeHostPolicy(cfg ComputeNodeConfig, bridge netip.Prefix, serviceHTTPS 
 	for _, raw := range cfg.PublicEntryAddrs {
 		if addr, err := netip.ParseAddr(raw); err == nil {
 			policy.PublicEntryAddrs = append(policy.PublicEntryAddrs, addr)
+		}
+	}
+	for _, raw := range cfg.PeerEntryAddrs {
+		if addr, err := netip.ParseAddr(raw); err == nil {
+			policy.PeerEntryAddrs = append(policy.PeerEntryAddrs, addr)
 		}
 	}
 	if cfg.ServiceTCPEnabled {

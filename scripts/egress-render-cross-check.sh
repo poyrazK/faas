@@ -45,6 +45,7 @@ render_go() {
     render_flags+=(--public-ingress-cidrs "$(cat "$SRC_ROOT/deploy/ansible/roles/nftables/files/cloudflare-ips-v4.txt" "$SRC_ROOT/deploy/ansible/roles/nftables/files/cloudflare-ips-v6.txt" | paste -sd, -)")
   fi
   if [[ -n "${11:-}" ]]; then render_flags+=(--public-entry-addrs "${11}"); fi
+  if [[ -n "${12:-}" ]]; then render_flags+=(--peer-entry-addrs "${12}"); fi
   local out
   out=$(cd "$SRC_ROOT" && FAAS_PUBLIC_IFACE="$iface" FAAS_MASQUERADE_CIDR="$cidr" \
         FAAS_OVERLAY_CIDRS="$overlay" FAAS_MASQUERADE_CIDR_V6="$v6" \
@@ -76,12 +77,14 @@ render_jinja() {
   local public_forwarding="${9:-}"
   local cloudflare_origin="${10:-}"
   local entry_addrs="${11:-}"
+  local peer_addrs="${12:-}"
   python3 -c "
 from jinja2 import Template
 overlay = '$overlay'
 o_list = [c.strip() for c in overlay.split(',')] if overlay else []
 cf = '$cloudflare_origin' == '1'
 entry = '$entry_addrs'
+peers = '$peer_addrs'
 roles = '$SRC_ROOT/deploy/ansible/roles/nftables/files/'
 cf_v4 = open(roles + 'cloudflare-ips-v4.txt').read().splitlines() if cf else []
 cf_v6 = open(roles + 'cloudflare-ips-v6.txt').read().splitlines() if cf else []
@@ -100,6 +103,7 @@ print(Template(open('$JINJA2').read(), trim_blocks=True).render(
     faas_cloudflare_ipv4_cidrs=cf_v4,
     faas_cloudflare_ipv6_cidrs=cf_v6,
     faas_public_entry_addrs=[a.strip() for a in entry.split(',')] if entry else [],
+    faas_peer_entry_addrs=[a.strip() for a in peers.split(',')] if peers else [],
 ), end='')
 " 2>/dev/null | python3 -c "import sys; sys.stdout.write(sys.stdin.read().rstrip('\n') + '\n')"
 }
@@ -231,6 +235,13 @@ main() {
         # The vmmd drop-in sends Cloudflare's ranges beside the entry
         # addresses (for a vmmd that predates them); the entry rules win.
         "public-entry-over-cloudflare|eth0|10.100.0.0/16||||||||1|203.0.113.10"
+        # ADR-20261123100000: guests' 443 calls to the other compute edges'
+        # entry addresses hairpin to this node's own; alone and beside the
+        # service/database NAT. (No IPv6-entry rows: the v6 backstop's /64
+        # keying is a separate template drift; pkg/netns covers a node with
+        # no IPv4 entry address.)
+        "peer-entry-hairpin|eth0|10.100.0.0/16|||||||||203.0.113.10|203.0.113.11"
+        "peer-entry-hairpin-nat|ens5|10.101.0.0/16|203.0.113.0/24|||10.101.0.1|1|10.101.0.1|||198.51.100.7|198.51.100.8,198.51.100.9"
       )
       ;;
     *)
@@ -239,10 +250,10 @@ main() {
       ;;
   esac
   for row in "${rows[@]}"; do
-    IFS='|' read -r label iface cidr overlay v6 tenant svc_bridge svc_https db_bridge public_forwarding cloudflare_origin entry_addrs <<< "$row"
+    IFS='|' read -r label iface cidr overlay v6 tenant svc_bridge svc_https db_bridge public_forwarding cloudflare_origin entry_addrs peer_addrs <<< "$row"
     local go_out jinja_out
-    go_out=$(render_go "$iface" "$cidr" "$overlay" "$v6" "$tenant" "$svc_bridge" "$svc_https" "$db_bridge" "$public_forwarding" "$cloudflare_origin" "$entry_addrs")
-    jinja_out=$(render_jinja "$iface" "$cidr" "$overlay" "$v6" "$tenant" "$svc_bridge" "$svc_https" "$db_bridge" "$public_forwarding" "$cloudflare_origin" "$entry_addrs")
+    go_out=$(render_go "$iface" "$cidr" "$overlay" "$v6" "$tenant" "$svc_bridge" "$svc_https" "$db_bridge" "$public_forwarding" "$cloudflare_origin" "$entry_addrs" "$peer_addrs")
+    jinja_out=$(render_jinja "$iface" "$cidr" "$overlay" "$v6" "$tenant" "$svc_bridge" "$svc_https" "$db_bridge" "$public_forwarding" "$cloudflare_origin" "$entry_addrs" "$peer_addrs")
     if ! compare "$label" "$go_out" "$jinja_out"; then
       status=1
     fi

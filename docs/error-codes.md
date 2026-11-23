@@ -2964,6 +2964,18 @@ HTTP 429 Too Many Requests · Rate limit exceeded; Pre-auth rate limit exceeded
 
 See [Edge rules](edge-rules.md).
 
+### `realtime_connection_limit`
+
+HTTP 429 Too Many Requests · Realtime connection limit reached
+
+See [Managed realtime](realtime.md#fair-use-limits).
+
+### `realtime_group_bound_to_trigger`
+
+HTTP 409 Conflict · Consumer group already bound; Consumer group is bound to a trigger
+
+See [Managed realtime](realtime.md#function-triggers).
+
 ### `realtime_unavailable`
 
 HTTP 503 Service Unavailable · Managed realtime temporarily unavailable
@@ -2971,6 +2983,12 @@ HTTP 503 Service Unavailable · Managed realtime temporarily unavailable
 Retry the connection in a few seconds.
 
 See [Plans and pricing](plans.md#managed-realtime), [Errors](errors.md).
+
+### `realtime_write_rate_limited`
+
+HTTP 429 Too Many Requests · Realtime write rate limited
+
+See [Managed realtime](realtime.md#fair-use-limits).
 
 ### `recent_sign_in_required`
 

@@ -160,7 +160,7 @@ func TestMCPCandidatePromotion(t *testing.T) {
 						return
 					}
 					source := mcphosting.Config{Auth: mcphosting.AuthConfig{Issuer: "https://identity.example", JWKSURL: "https://identity.example/jwks", Resource: "https://my-mcp.example/mcp", Scopes: []string{"mcp:tools"}}}
-					action := mcpExpectedGatewayAction(source, []string{"RS256", "ES256"})
+					action := mcpExpectedGatewayAction(source, []string{"RS256", "ES256"}, "")
 					if tc.accessAudit == "drift" {
 						action.MCP.ToolScopes = map[string][]string{}
 					}

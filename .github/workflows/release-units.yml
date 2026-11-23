@@ -467,6 +467,18 @@ jobs:
           path: ${{ runner.temp }}/release-sha
           if-no-files-found: error
           retention-days: 30
+      # Names the full release this unit release is built over, so the
+      # preflight stands down while production runs another one (a new tag
+      # not yet deployed by cd-platform) instead of the planner refusing the
+      # lane and freezing deploys (deploy_preflight.py `base`).
+      - name: Upload the base marker
+        if: steps.detect.outputs.eligible == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unit-release-base-${{ steps.base.outputs.sha }}
+          path: ${{ runner.temp }}/release-sha
+          if-no-files-found: error
+          retention-days: 30
 
   # Fills the release build cache for this base release, once, while the
   # deploy lanes run: every binary a unit lane can ship and the tools a unit

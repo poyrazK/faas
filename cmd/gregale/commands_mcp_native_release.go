@@ -732,7 +732,7 @@ func mcpNativeVerifyEndpoint(ctx context.Context, c *Client, p mcpNativeReleaseP
 		if e != nil {
 			return e
 		}
-		if cfg.Auth.Mode == "external-oauth" && cfg.Auth.Resource != canonical {
+		if cfg.Auth.Mode != mcphosting.AuthOpen && cfg.Auth.Resource != canonical {
 			return errors.New("promoted OAuth resource differs from canonical endpoint")
 		}
 		preview, e := c.GetDeploymentURL(ctx, s.WebDeployment)

@@ -62,3 +62,19 @@ func EnvironmentBranchDatabaseTTL(branch state.ProjectEnvironmentBranch, point t
 func EnvironmentBranchLifetimeProblem(branch state.ProjectEnvironmentBranch, hasCopies bool, expiresAt time.Time) *api.Problem {
 	return environmentBranchLifetimeProblem(branch, hasCopies, expiresAt)
 }
+
+// Branch data copies still in progress (environment_branch_data.go).
+var (
+	ErrDatabaseCopyInProgress           = errDatabaseCopyInProgress
+	ErrEnvironmentBranchDataInProgress  = errEnvironmentBranchDataInProgress
+	ErrEnvironmentBranchBucketLimit     = errEnvironmentBranchBucketLimit
+	EnvironmentBranchDataInProgress     = environmentBranchDataInProgress
+	EnvironmentBranchDataInProgressWait = environmentBranchDataInProgressDelay
+)
+
+func (r *server) WakeEnvironmentBranchData() { r.wakeEnvironmentBranchData() }
+
+// EnvironmentBranchDataWakeChannel is the reconciler's wake-up channel.
+func (r *server) EnvironmentBranchDataWakeChannel() <-chan struct{} {
+	return r.environmentBranchDataWakeChannel()
+}

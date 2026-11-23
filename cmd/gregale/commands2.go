@@ -4390,14 +4390,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			if resolvedSimplePlan != nil {
 				existingReq.ExecutionMode = ""
 			}
-			creating := false
 			if !*createOnly {
 				if code := guardUnlinkedExistingApp(ctx, client, slug, contextDir, *yes); code != 0 {
 					return code
 				}
-				_, getErr := client.GetApp(ctx, slug)
-				creating = isNotFound(getErr)
 			}
+			// --create-only links the directory too: the MCP Tasks README
+			// reserves each role with it and then deploys, and the unlinked
+			// deploy warned it would replace a running release that did not
+			// exist (MCP Tasks prod re-probe 2026-11-23).
+			_, getErr := client.GetApp(ctx, slug)
+			creating := isNotFound(getErr)
 			err = createOrFetchAppWith(ctx, client, createReq, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
 			if err == nil && creating {
 				rememberCreatedApp(contextDir, slug)
@@ -8630,6 +8633,11 @@ func renderDeployFailure(d api.DeploymentResponse) int {
 		}
 		if lifted := mapFailureProblem(problem); lifted != "" {
 			PrintFail(os.Stderr, "%s", lifted)
+			// A process that exited 0 did not crash: it finished. Say so,
+			// since the catalog copy above reads as a crash.
+			if d.ErrorCode == api.CodeAppStartupCrash && strings.Contains(d.Error, api.StartupCleanExitMarker) {
+				_, _ = fmt.Fprintln(os.Stderr, "  your start command exited with status 0: it ran to completion instead of serving.\n  Start a long-running server in the foreground that listens on $PORT (a Dockerfile needs a CMD or ENTRYPOINT that does).")
+			}
 			// The catalog copy says the crash output "is in the error
 			// detail" but never showed it; on prod the real cause
 			// ("Error: X is not set", nginx's [emerg] line) was only

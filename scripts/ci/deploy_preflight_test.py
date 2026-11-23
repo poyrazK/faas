@@ -44,6 +44,8 @@ class FakeGitHub:
         self.released_by = []
         # run id -> the commit its marker names (actions/runs/{id}/artifacts).
         self.markers = {}
+        # run id -> the full release its base marker names.
+        self.bases = {}
 
     def get(self, path, params=None):
         self.requests.append(path)
@@ -64,8 +66,10 @@ class FakeGitHub:
         if path == "actions/runs":
             return {"workflow_runs": self.active[params["status"]]}
         if path.startswith("actions/runs/") and path.endswith("/artifacts"):
-            sha = self.markers.get(int(path.split("/")[2]))
-            return {"artifacts": [{"name": dp.RELEASE_MARKER + sha}] if sha else []}
+            run = int(path.split("/")[2])
+            sha, base = self.markers.get(run), self.bases.get(run)
+            return {"artifacts": ([{"name": dp.RELEASE_MARKER + sha}] if sha else []) +
+                                 ([{"name": dp.BASE_MARKER + base}] if base else [])}
         if path in self.runs:
             return self.runs[path]
         if path.startswith("actions/runs/") and path.endswith("/jobs"):
@@ -380,10 +384,49 @@ class FollowBuildTest(PreflightCase):
         self.assertEqual(len([p for p in self.gh.requests if p == "issues"]), 6)
 
 
+class BaseTest(PreflightCase):
+    """The control plane must run the full release the unit release is
+    built over; a newer tag not yet deployed stands the lane down."""
+    BASE = "e" * 40
+
+    def built(self, base, host_base):
+        self.gh.jobs[ME] = [job(dp.BUILD_JOB)]
+        self.gh.markers[ME] = SHA
+        if base:
+            self.gh.bases[ME] = base
+        self.host = healthy_host()
+        if host_base is not None:
+            self.host["base"] = host_base
+
+    def test_same_base_goes(self):
+        self.built(self.BASE, self.BASE)
+        code, go, summary = self.run_preflight(follow=True)
+        self.assertEqual((code, go), (0, True))
+        self.assertIn("runs the full release this unit release is built over", summary)
+
+    def test_an_undeployed_newer_tag_stands_down_without_failing(self):
+        self.built(self.BASE, "f" * 40)
+        code, go, summary = self.run_preflight(follow=True)
+        self.assertEqual((code, go), (0, False))
+        self.assertIn("deploy that release with cd-platform first", summary)
+        self.assertIn("Stood down", summary)
+
+    def test_unknown_base_leaves_it_to_the_planner(self):
+        for base, host_base in ((self.BASE, None), (self.BASE, ""), (None, self.BASE)):
+            with self.subTest(base=base, host_base=host_base):
+                self.setUp()
+                self.built(base, host_base)
+                self.assertEqual(self.run_preflight(follow=True)[:2], (0, True))
+
+
 class WatchCapTest(PreflightCase):
     def watched(self, releases, owner="90"):
         self.host = healthy_host()
         self.host["watch"] = {"owner_run": owner, "hosts": {"control-plane": {"releases": releases}}}
+
+    def full(self):
+        """As many unwatched releases as the cap allows (release_units.json)."""
+        return ["abcdef0123456789"[i] * 40 for i in range(dp.MAX_UNWATCHED)]
 
     def test_open_watch_below_the_cap_lets_the_deploy_join_it(self):
         self.watched(["a" * 40])
@@ -392,7 +435,7 @@ class WatchCapTest(PreflightCase):
         self.assertIn("run 90's watch covers the unwatched releases", summary)
 
     def test_at_the_cap_waits_for_the_running_watch(self):
-        self.watched(["a" * 40, "c" * 40])
+        self.watched(self.full())
         self.gh.runs["actions/runs/90"] = {"status": "in_progress", "html_url": "https://r/90"}
 
         def watch_done(t):
@@ -405,14 +448,14 @@ class WatchCapTest(PreflightCase):
         self.assertIn("watch: 600 s", summary)
 
     def test_at_the_cap_with_no_watch_running_fails_and_says_how_to_adopt(self):
-        self.watched(["a" * 40, "c" * 40])
+        self.watched(self.full())
         self.gh.runs["actions/runs/90"] = {"status": "completed", "conclusion": "failure"}
         code, go, summary = self.run_preflight()
         self.assertEqual((code, go), (1, False))
         self.assertIn("adopt=true", summary)
 
     def test_cap_comes_from_the_release_units_config(self):
-        self.assertEqual(dp.MAX_UNWATCHED, 2)
+        self.assertEqual(dp.MAX_UNWATCHED, 4)
 
 
 class MainTest(unittest.TestCase):

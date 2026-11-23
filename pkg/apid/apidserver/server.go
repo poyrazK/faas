@@ -138,8 +138,12 @@ import (
 type server struct {
 	privateTools     *toolregistry.PrivateExecutor
 	privateToolsOnce sync.Once
-	sales            sales.Service
-	customerSupport  *support.Service
+	// environmentBranchDataWake wakes the branch data reconciler when a
+	// branch is created with pending data (environment_branch_data.go).
+	environmentBranchDataWake     chan struct{}
+	environmentBranchDataWakeOnce sync.Once
+	sales                         sales.Service
+	customerSupport               *support.Service
 	// customerErrors records API problems returned to customers
 	// (ADR-20261112170000); nil without PostgreSQL.
 	customerErrors *customererrors.Recorder
@@ -6104,6 +6108,9 @@ func (s *server) handler() http.Handler {
 		CountStatuses: []int{middleware.CountEveryAttempt},
 	})(http.HandlerFunc(s.serviceCallerKeys)))
 	mux.HandleFunc("GET /v1/status", s.publicStatusOverviewHandler)
+	// ADR-20261122194324: the empty key set an api-key MCP policy names so
+	// gateways that predate consumer-key MCP policies refuse every token.
+	mux.HandleFunc("GET "+api.MCPConsumerKeyJWKSPath, serveMCPConsumerKeyJWKS)
 	// ADR-1506: an app's customer reads its own billing with its consumer
 	// key; no account credential is involved.
 	mux.Handle("GET /v1/consumer-billing/{slug}", selfVerified(s.consumerBilling.Summary))
