@@ -484,7 +484,7 @@ func writeJSONProblem(p api.Problem) error {
 }
 
 func writeJSONProblemTo(w io.Writer, p api.Problem) error {
-	whycopy.Complete(&p, whycopy.Values{})
+	_ = whycopy.Complete(&p, whycopy.Values{})
 	b, err := json.Marshal(struct {
 		api.Problem
 		RequestID string `json:"request_id,omitempty"`
@@ -504,7 +504,7 @@ func writeJSONProblemWithExit(w io.Writer, p api.Problem, code int) error {
 func writeJSONProblemWithCLI(w io.Writer, p api.Problem, code int, advice *cliFlagDiagnostic) error {
 	// fix_commands and retryable even from a server that predates them
 	// (ADR-20261123230000); p is a copy.
-	whycopy.Complete(&p, whycopy.Values{})
+	_ = whycopy.Complete(&p, whycopy.Values{})
 	b, err := json.Marshal(struct {
 		api.Problem
 		Category  string             `json:"category"`
