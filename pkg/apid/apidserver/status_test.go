@@ -772,34 +772,6 @@ func TestStatus_AllQueriesFail(t *testing.T) {
 	}
 }
 
-// A short operator-declared degraded incident must still mark its day even
-// though SummarizeDay ignores brief telemetry degradation.
-func TestDeclaredDegradedOnDay(t *testing.T) {
-	day := time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
-	now := day.Add(72 * time.Hour)
-	start := day.Add(10 * time.Hour)
-	end := start.Add(45 * time.Minute)
-	incidents := []state.StatusIncident{{
-		Kind: publicstatus.KindIncident, Impact: publicstatus.StateDegraded,
-		Components: []publicstatus.Component{publicstatus.ComponentAppExecution},
-		PostedAt:   start.Add(5 * time.Minute), StartsAt: &start, ResolvedAt: &end,
-	}}
-	if !declaredDegradedOnDay(incidents, publicstatus.ComponentAppExecution, day, now) {
-		t.Fatal("45-minute degraded incident did not mark its day")
-	}
-	if declaredDegradedOnDay(incidents, publicstatus.ComponentNetworking, day, now) {
-		t.Fatal("incident marked a component it does not cover")
-	}
-	if declaredDegradedOnDay(incidents, publicstatus.ComponentAppExecution, day.AddDate(0, 0, 1), now) {
-		t.Fatal("resolved incident marked the next day")
-	}
-	open := incidents[0]
-	open.ResolvedAt = nil
-	if !declaredDegradedOnDay([]state.StatusIncident{open}, publicstatus.ComponentAppExecution, day.AddDate(0, 0, 2), now) {
-		t.Fatal("open incident did not mark today")
-	}
-}
-
 // Slow wakes are an App execution problem; they must not paint Networking
 // degraded on the public page.
 func TestWakeP95BreachDegradesAppExecutionNotNetworking(t *testing.T) {

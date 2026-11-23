@@ -146,9 +146,46 @@ func TestSummarizeDayIgnoresBriefDegradation(t *testing.T) {
 	if obs := SummarizeDay(day, full(15, "")[:20], 20); obs.State != StateDegraded {
 		t.Fatalf("early-day sustained state = %q, want degraded", obs.State)
 	}
+	// Launch day with 12 expected intervals, all degraded: degraded.
+	if obs := SummarizeDay(day, full(12, "")[:12], 12); obs.State != StateDegraded {
+		t.Fatalf("short fully degraded day state = %q, want degraded", obs.State)
+	}
 	// Maintenance still shows, and brief degradation does not outrank it.
 	if obs := SummarizeDay(day, full(3, StateMaintenance), 288); obs.State != StateMaintenance {
 		t.Fatalf("maintenance day state = %q, want maintenance", obs.State)
+	}
+}
+
+// A short declared incident (or the degraded phase of one later escalated)
+// must still mark its day although SummarizeDay ignores brief degradation.
+func TestApplyDeclaredIncidents(t *testing.T) {
+	day := time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
+	green := DailyObservation{Date: day, State: StateOperational}
+	start := day.Add(10 * time.Hour)
+	spans := []DeclaredSpan{{Start: start, End: start.Add(45 * time.Minute), Components: []Component{ComponentAppExecution}}}
+	if got := ApplyDeclaredIncidents(green, ComponentAppExecution, spans).State; got != StateDegraded {
+		t.Fatalf("45-minute incident day = %q, want degraded", got)
+	}
+	if got := ApplyDeclaredIncidents(green, ComponentNetworking, spans).State; got != StateOperational {
+		t.Fatalf("uncovered component = %q, want operational", got)
+	}
+	next := DailyObservation{Date: day.Add(24 * time.Hour), State: StateOperational}
+	if got := ApplyDeclaredIncidents(next, ComponentAppExecution, spans).State; got != StateOperational {
+		t.Fatalf("next day = %q, want operational", got)
+	}
+	// Resolved exactly at midnight does not touch the following day.
+	midnight := []DeclaredSpan{{Start: day.Add(22 * time.Hour), End: day.Add(24 * time.Hour), Components: []Component{ComponentAppExecution}}}
+	if got := ApplyDeclaredIncidents(next, ComponentAppExecution, midnight).State; got != StateOperational {
+		t.Fatalf("day after midnight resolution = %q, want operational", got)
+	}
+	// An outage day keeps its worse state; an unknown day stays unknown.
+	outage := DailyObservation{Date: day, State: StatePartialOutage}
+	if got := ApplyDeclaredIncidents(outage, ComponentAppExecution, spans).State; got != StatePartialOutage {
+		t.Fatalf("outage day = %q, want partial_outage", got)
+	}
+	unknown := DailyObservation{Date: day, State: StateUnknown}
+	if got := ApplyDeclaredIncidents(unknown, ComponentAppExecution, spans).State; got != StateUnknown {
+		t.Fatalf("unknown day = %q, want unknown", got)
 	}
 }
 

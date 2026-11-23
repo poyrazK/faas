@@ -25,7 +25,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -605,7 +604,6 @@ func (s *server) publicStatusOverviewHandler(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	active, upcoming, resolved := []state.StatusIncident{}, []state.StatusIncident{}, []state.StatusIncident{}
-	declaredDegraded := []state.StatusIncident{}
 	eventsAvailable := true
 	if s.store != nil {
 		events, err := s.store.ListPublicStatusEvents(r.Context(), state.StatusEventListOptions{Limit: 200})
@@ -621,9 +619,6 @@ func (s *server) publicStatusOverviewHandler(w http.ResponseWriter, r *http.Requ
 			}
 		}
 		for _, event := range events {
-			if event.Kind == publicstatus.KindIncident && event.Impact == publicstatus.StateDegraded {
-				declaredDegraded = append(declaredDegraded, event)
-			}
 			switch {
 			case event.Kind == publicstatus.KindIncident && event.ResolvedAt == nil:
 				active = append(active, event)
@@ -659,6 +654,7 @@ func (s *server) publicStatusOverviewHandler(w http.ResponseWriter, r *http.Requ
 			s.log.Warn("status: daily history unavailable", "err", err)
 		}
 	}
+	declared := s.declaredIncidentSpans(r.Context(), startDay, active, now)
 	components := make([]api.PublicStatusComponent, 0, 5)
 	launchAt, launchErr := configuredPublicStatusLaunchAt(os.Getenv)
 	if launchErr != nil {
@@ -683,11 +679,7 @@ func (s *server) publicStatusOverviewHandler(w http.ResponseWriter, r *http.Requ
 				}
 			}
 			observation := publicstatus.SummarizeDay(day, selected, expected)
-			if observation.State != publicstatus.StateUnknown && declaredDegradedOnDay(declaredDegraded, component, day, now) {
-				// SummarizeDay ignores brief telemetry degradation; a degraded
-				// incident an operator declared always marks its days.
-				observation.State = publicstatus.Worse(observation.State, publicstatus.StateDegraded)
-			}
+			observation = publicstatus.ApplyDeclaredIncidents(observation, component, declared)
 			dailyDomain = append(dailyDomain, observation)
 			status := string(observation.State)
 			if !launchAt.IsZero() && expected == 0 && day.Before(launchAt) {
@@ -911,12 +903,23 @@ func (s *server) runStatusEvaluationOnce(ctx context.Context) {
 	}
 }
 
-// declaredDegradedOnDay reports whether one of the declared degraded incidents
-// covers component and overlaps the UTC day. Open incidents run until now.
-func declaredDegradedOnDay(incidents []state.StatusIncident, component publicstatus.Component, day, now time.Time) bool {
-	dayEnd := day.Add(24 * time.Hour)
+// declaredIncidentSpans lists the operator-declared incidents that can touch
+// the public day bars: every incident updated since startDay plus the active
+// ones (an open incident may not have been updated inside the window). It is
+// a separate query so the 200-event cap of the overview list cannot push an
+// older incident off its day.
+func (s *server) declaredIncidentSpans(ctx context.Context, startDay time.Time, active []state.StatusIncident, now time.Time) []publicstatus.DeclaredSpan {
+	incidents := append([]state.StatusIncident{}, active...)
+	if s.store != nil {
+		recent, err := s.store.ListPublicStatusEvents(ctx, state.StatusEventListOptions{Kind: publicstatus.KindIncident, Since: startDay, Limit: 200})
+		if err != nil {
+			s.log.Warn("status: declared incident history unavailable", "err", err)
+		}
+		incidents = append(incidents, recent...)
+	}
+	spans := make([]publicstatus.DeclaredSpan, 0, len(incidents))
 	for _, incident := range incidents {
-		if !slices.Contains(incident.Components, component) {
+		if incident.Kind != publicstatus.KindIncident {
 			continue
 		}
 		start := incident.PostedAt
@@ -927,11 +930,9 @@ func declaredDegradedOnDay(incidents []state.StatusIncident, component publicsta
 		if incident.ResolvedAt != nil {
 			end = *incident.ResolvedAt
 		}
-		if start.Before(dayEnd) && !end.Before(day) {
-			return true
-		}
+		spans = append(spans, publicstatus.DeclaredSpan{Start: start, End: end, Components: incident.Components})
 	}
-	return false
+	return spans
 }
 
 func statusEventOverlays(events []state.StatusIncident) []publicstatus.Overlay {
