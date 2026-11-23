@@ -3,6 +3,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -298,12 +300,27 @@ func printAgentHint(w io.Writer) {
 
 var agentHintPrinted bool
 
+// agentSessionEnv names the variables that identify one agent session, so
+// a new session gets the pointer even when another one saw it this hour.
+var agentSessionEnv = []string{"CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID"}
+
 // agentHintMarker is the file whose mtime records the last pointer; empty
-// keeps no record. A variable so tests use their own.
+// keeps no record. One file per agent session when the agent names its
+// session, else one per user. A variable so tests use their own.
 var agentHintMarker = func() string {
 	base, err := os.UserCacheDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(base, "gregale", "agent-hint")
+	return filepath.Join(base, "gregale", agentHintMarkerName(os.Getenv))
+}
+
+func agentHintMarkerName(getenv func(string) string) string {
+	for _, name := range agentSessionEnv {
+		if id := getenv(name); id != "" {
+			sum := sha256.Sum256([]byte(name + "=" + id))
+			return "agent-hint-" + hex.EncodeToString(sum[:8])
+		}
+	}
+	return "agent-hint"
 }

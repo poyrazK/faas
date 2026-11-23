@@ -83,9 +83,14 @@ func Retryable(p *api.Problem) *bool {
 		return &yes
 	}
 	switch {
-	case p.Status == http.StatusTooManyRequests, p.Status == http.StatusBadGateway,
+	case p.Status == http.StatusRequestTimeout, p.Status == http.StatusTooEarly,
+		p.Status == http.StatusTooManyRequests, p.Status == http.StatusBadGateway,
 		p.Status == http.StatusServiceUnavailable, p.Status == http.StatusGatewayTimeout:
 		return &yes
+	case p.Status == http.StatusConflict, p.Status == http.StatusLocked:
+		// A conflict or lock may clear on its own (another deploy finishing)
+		// or need a change; without Retry-After the caller cannot tell.
+		return nil
 	case p.Status >= 400 && p.Status < 500:
 		return &no
 	}
@@ -94,14 +99,19 @@ func Retryable(p *api.Problem) *bool {
 
 // Complete fills p's fix with v, sets FixCommands from it and, when unset,
 // Retryable. Safe to call again with more values: a filled placeholder is
-// gone, and the commands are recomputed.
+// gone, and the commands are recomputed. Commands a server already sent
+// stay unless filling changed the fix: the CLI completes every problem it
+// prints, and must not drop what an API sent.
 func Complete(p *api.Problem, v Values) *api.Problem {
 	if p == nil {
 		return nil
 	}
-	p.Fix = Fill(p.Fix, v)
+	fix := Fill(p.Fix, v)
+	if len(p.FixCommands) == 0 || fix != p.Fix {
+		p.FixCommands = Commands(fix)
+	}
+	p.Fix = fix
 	p.Hint = Fill(p.Hint, v)
-	p.FixCommands = Commands(p.Fix)
 	if p.Retryable == nil {
 		p.Retryable = Retryable(p)
 	}

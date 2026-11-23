@@ -46,6 +46,22 @@ func TestCommandsLeaveOutTemplates(t *testing.T) {
 	}
 }
 
+// The CLI completes every problem it prints with no values; commands an API
+// sent stay as sent.
+func TestCompleteKeepsSentCommands(t *testing.T) {
+	sent := []string{"gregale logs api --deployment dep-1"}
+	p := &api.Problem{Status: 422, Fix: "• read `gregale logs api`", FixCommands: slices.Clone(sent)}
+	whycopy.Complete(p, whycopy.Values{})
+	if !slices.Equal(p.FixCommands, sent) {
+		t.Fatalf("FixCommands = %q; want the sent %q", p.FixCommands, sent)
+	}
+	p = &api.Problem{Status: 422, Fix: "• read `gregale logs <slug>`", FixCommands: []string{"stale"}}
+	whycopy.Complete(p, whycopy.Values{App: "api"})
+	if !slices.Equal(p.FixCommands, []string{"gregale logs api"}) {
+		t.Fatalf("FixCommands = %q; want recomputed from the filled fix", p.FixCommands)
+	}
+}
+
 func TestRetryable(t *testing.T) {
 	seconds := int64(5)
 	for _, tc := range []struct {
@@ -54,7 +70,11 @@ func TestRetryable(t *testing.T) {
 	}{
 		{api.Problem{Status: 429}, ptr(true)},
 		{api.Problem{Status: 503}, ptr(true)},
+		{api.Problem{Status: 408}, ptr(true)},
+		{api.Problem{Status: 425}, ptr(true)},
 		{api.Problem{Status: 409, RetryAfterSeconds: &seconds}, ptr(true)},
+		{api.Problem{Status: 409}, nil},
+		{api.Problem{Status: 423}, nil},
 		{api.Problem{Status: 422}, ptr(false)},
 		{api.Problem{Status: 500}, nil},
 	} {

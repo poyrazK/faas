@@ -39,23 +39,39 @@ func recentFailureLogs(ctx context.Context, client failureLogClient, slug, deplo
 	}
 	ctx, cancel := context.WithTimeout(ctx, failureLogTimeout)
 	defer cancel()
-	body, err := client.StreamAppLogs(ctx, slug, deploymentID, false, api.LogFilter{})
-	if err != nil && deploymentID != "" {
-		body, err = client.StreamAppLogs(ctx, slug, "", false, api.LogFilter{})
+	lines, refused := readFailureLogs(ctx, client, slug, deploymentID)
+	if refused && len(lines) == 0 && deploymentID != "" {
+		// The Free plan refuses ?deployment= inside a successful stream
+		// (plan_deployment_filter_not_allowed); the app's own lines are the
+		// next best thing.
+		lines, _ = readFailureLogs(ctx, client, slug, "")
 	}
+	return lines
+}
+
+// readFailureLogs reads one log page. refused reports a request the API
+// turned down, as an HTTP error or an in-stream error event.
+func readFailureLogs(ctx context.Context, client failureLogClient, slug, deploymentID string) (lines []api.LogExcerpt, refused bool) {
+	body, err := client.StreamAppLogs(ctx, slug, deploymentID, false, api.LogFilter{})
 	if err != nil {
-		return nil
+		return nil, true
 	}
 	defer func() { _ = body.Close() }()
 	dec := api.NewDecoder(body)
 	dec.SetCloseFn(body.Close)
 	defer func() { _ = dec.Close() }()
-	var lines []api.LogExcerpt
 	_, _ = consumeLogStream(ctx, dec.Events(), dec.Errors(), func(e api.Event) (bool, int) {
 		switch e.Event {
-		case "degraded", "end", "error":
-			// No running instance, the page ended, or the stream failed.
+		case "error":
+			refused = true
 			return true, 0
+		case "degraded", "end":
+			// No running instance, or the page ended.
+			return true, 0
+		case "", "log":
+		default:
+			// ping, gap and other control frames are not log lines.
+			return false, 0
 		}
 		if line, ok := failureLogExcerpt(e.Data); ok {
 			lines = append(lines, line)
@@ -65,32 +81,22 @@ func recentFailureLogs(ctx context.Context, client failureLogClient, slug, deplo
 		}
 		return false, 0
 	})
-	return lines
+	return lines, refused
 }
 
-// failureLogExcerpt reads one log frame: the platform's JSON record, or a
-// plain line.
+// failureLogExcerpt reads one log frame (api.LogEvent); a frame without a
+// line is not a log line.
 func failureLogExcerpt(data string) (api.LogExcerpt, bool) {
-	data = strings.TrimSpace(data)
-	if data == "" {
+	var row api.LogEvent
+	if json.Unmarshal([]byte(strings.TrimSpace(data)), &row) != nil {
 		return api.LogExcerpt{}, false
 	}
-	var record struct {
-		Line   *string `json:"line"`
-		Stream string  `json:"stream"`
-		TS     string  `json:"ts"`
-		Level  string  `json:"level"`
-	}
-	excerpt := api.LogExcerpt{Message: data}
-	if strings.HasPrefix(data, "{") && json.Unmarshal([]byte(data), &record) == nil && record.Line != nil {
-		excerpt = api.LogExcerpt{Timestamp: record.TS, Level: record.Level, Source: record.Stream, Message: *record.Line}
-	}
-	excerpt.Message = strings.TrimRight(excerpt.Message, "\r\n")
-	if excerpt.Message == "" {
+	message := strings.TrimRight(row.Line, "\r\n")
+	if message == "" {
 		return api.LogExcerpt{}, false
 	}
-	if len(excerpt.Message) > failureLogMaxLine {
-		excerpt.Message = clip(excerpt.Message, failureLogMaxLine)
+	if len(message) > failureLogMaxLine {
+		message = clip(message, failureLogMaxLine)
 	}
-	return excerpt, true
+	return api.LogExcerpt{Timestamp: row.WrittenAt, Level: row.Level, Source: row.Stream, Message: message}, true
 }

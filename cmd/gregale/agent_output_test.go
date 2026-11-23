@@ -26,17 +26,42 @@ func TestDeployDoctorShowsFindingsAndCountsTheRest(t *testing.T) {
 		{Name: "dep-install", Status: "skipped", Reason: "requires the platform build environment"},
 	}}
 	var out strings.Builder
-	main.RenderDoctorDeploy(&out, rep)
+	main.RenderDoctorDeploy(&out, rep, false)
 	got := out.String()
 	for _, hidden := range []string{"port-bind", "arch", "runtime-oom", "requires deployed-app RAM telemetry"} {
 		if strings.Contains(got, hidden) {
 			t.Errorf("deploy doctor lists %q:\n%s", hidden, got)
 		}
 	}
-	for _, want := range []string{"env-required", "DATABASE_URL is read but not set", "2 other check(s) passed, 2 skipped until the app is deployed; `gregale doctor` lists every check"} {
+	for _, want := range []string{"env-required", "DATABASE_URL is read but not set", "2 other check(s) passed, 2 skipped; `gregale doctor` lists every check"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("deploy doctor lacks %q:\n%s", want, got)
 		}
+	}
+}
+
+// Under --doctor-strict the deploy already blocks on errors only: the footer
+// does not tell the reader to add --strict. With no findings listed, the
+// summary does not say "other".
+func TestDeployDoctorStrictFooterAndCleanSummary(t *testing.T) {
+	warn := main.DoctorReport{Path: "/src", Checks: []main.DoctorCheck{
+		{Name: "port-bind", Status: "ok"},
+		{Name: "env-required", Status: "warn", Hint: "DATABASE_URL is read but not set"},
+	}}
+	var out strings.Builder
+	main.RenderDoctorDeploy(&out, warn, true)
+	if got := out.String(); strings.Contains(got, "run with --strict") || !strings.Contains(got, "--doctor-strict blocks error-class checks only") {
+		t.Errorf("strict footer:\n%s", got)
+	}
+
+	clean := main.DoctorReport{Path: "/src", Checks: []main.DoctorCheck{
+		{Name: "port-bind", Status: "ok"},
+		{Name: "runtime-oom", Status: "skipped", Reason: "requires deployed-app RAM telemetry"},
+	}}
+	out.Reset()
+	main.RenderDoctorDeploy(&out, clean, false)
+	if got := out.String(); strings.Contains(got, "other") || !strings.Contains(got, "1 check(s) passed, 1 skipped;") {
+		t.Errorf("clean summary:\n%s", got)
 	}
 }
 
@@ -81,8 +106,16 @@ func TestProjectFailureShowsLogsAndFilledFix(t *testing.T) {
 				ErrorFix: "• read what it printed (`gregale logs <slug> --since 30m`)\n• check secrets (`gregale secrets list --app <slug>`)"})
 		case "/v1/apps/voting-demo-worker/logs":
 			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = io.WriteString(w, "data: {\"line\":\"starting worker\",\"stream\":\"stdout\"}\n\n"+
-				"data: {\"line\":\"permission denied for schema public\",\"stream\":\"stderr\"}\n\n"+
+			if r.URL.Query().Get("deployment") != "" {
+				// The Free plan refuses the deployment filter inside a
+				// successful stream; the CLI reads the app's lines instead.
+				_, _ = io.WriteString(w, "event: error\ndata: {\"code\":\"plan_deployment_filter_not_allowed\"}\n\nevent: end\ndata: {}\n\n")
+				return
+			}
+			_, _ = io.WriteString(w, "event: log\ndata: {\"line\":\"starting worker\",\"stream\":\"stdout\"}\n\n"+
+				"event: ping\ndata: {}\n\n"+
+				"event: gap\ndata: {\"reason\":\"ring_overflow\"}\n\n"+
+				"event: log\ndata: {\"line\":\"permission denied for schema public\",\"stream\":\"stderr\"}\n\n"+
 				"event: end\ndata: {}\n\n")
 		default:
 			http.NotFound(w, r)

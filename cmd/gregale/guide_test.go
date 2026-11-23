@@ -121,7 +121,7 @@ func TestAgentHintOnlyOnStderr(t *testing.T) {
 	}
 	t.Setenv("CLAUDECODE", "1")
 	t.Setenv("GREGALE_NO_AGENT_HINT", "")
-	main.ResetAgentHint()
+	main.ResetAgentHint(t)
 	main.ResetJSONOut(t)
 	stdout, stderr, restore := main.SwapIO(t)
 	_ = main.Run([]string{"guide", "--help"})
@@ -131,7 +131,7 @@ func TestAgentHintOnlyOnStderr(t *testing.T) {
 	}
 
 	t.Setenv("GREGALE_NO_AGENT_HINT", "1")
-	main.ResetAgentHint()
+	main.ResetAgentHint(t)
 	main.ResetJSONOut(t)
 	_, stderr, restore = main.SwapIO(t)
 	_ = main.Run([]string{"guide", "no-such-task"})
@@ -189,4 +189,22 @@ func containsString(items []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// Each agent session keeps its own hourly record, so a new session sees the
+// pointer even when another session saw it this hour.
+func TestAgentHintMarkerPerSession(t *testing.T) {
+	env := func(kv map[string]string) func(string) string {
+		return func(k string) string { return kv[k] }
+	}
+	a := main.AgentHintMarkerName(env(map[string]string{"CLAUDE_CODE_SESSION_ID": "a"}))
+	b := main.AgentHintMarkerName(env(map[string]string{"CLAUDE_CODE_SESSION_ID": "b"}))
+	codex := main.AgentHintMarkerName(env(map[string]string{"CODEX_THREAD_ID": "a"}))
+	none := main.AgentHintMarkerName(env(nil))
+	if a == b || a == codex || a == none || none != "agent-hint" {
+		t.Fatalf("markers a=%q b=%q codex=%q none=%q", a, b, codex, none)
+	}
+	if again := main.AgentHintMarkerName(env(map[string]string{"CLAUDE_CODE_SESSION_ID": "a"})); again != a {
+		t.Fatalf("same session got %q then %q", a, again)
+	}
 }

@@ -3695,12 +3695,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 					Exit   int          `json:"exit"`
 				}{rep, 1})
 			} else {
-				renderDoctorDeploy(osStderr, rep)
+				renderDoctorDeploy(osStderr, rep, true)
 			}
 			return 1
 		}
 		if *doctorStrict && rep.HasStrictWarnings() && !jsonOutput {
-			renderDoctorDeploy(osStderr, rep)
+			renderDoctorDeploy(osStderr, rep, true)
 		}
 		if !*doctorStrict && (rep.HasErrors() || rep.HasWarnings() || rep.HasProfileWarnings()) {
 			renderDoctorDeployPreflight(rep, jsonOutput)
