@@ -28,6 +28,9 @@ from tasks import DurableTaskRuntime, check_task_schema, check_task_submission_i
 import test_task_execution
 
 
+GREGALE_TEST_BINARY = os.environ.get("MCP_TASKS_TEST_GREGALE", "")
+
+
 @unittest.skipUnless(os.environ.get("MCP_TASKS_TEST_DATABASE_URL"), "requires PostgreSQL")
 class TaskSubmissionPostgresTests(unittest.TestCase):
     setUp = test_task_execution.TaskExecutionPostgresTests.setUp
@@ -79,7 +82,7 @@ class TaskSubmissionPostgresTests(unittest.TestCase):
         self.assertFalse(check_task_submission_index(runtime.pool))
 
 
-@unittest.skipUnless(os.environ.get("MCP_TASKS_TEST_GREGALE") and os.environ.get("MCP_TASKS_TEST_DATABASE_URL"),
+@unittest.skipUnless(GREGALE_TEST_BINARY and os.environ.get("MCP_TASKS_TEST_DATABASE_URL"),
                      "requires the Gregale CLI and PostgreSQL")
 class TaskReceiptJourneyTests(unittest.TestCase):
     setUp = test_task_execution.TaskExecutionPostgresTests.setUp
@@ -217,7 +220,7 @@ class TaskReceiptJourneyTests(unittest.TestCase):
 
         def cli(verb, token, code, *args):
             timeout_args = () if verb == "watch" else ("--timeout", "6s")
-            result = subprocess.run([os.environ["MCP_TASKS_TEST_GREGALE"], "mcp", "client", verb, "--url", endpoint,
+            result = subprocess.run([GREGALE_TEST_BINARY, "mcp", "client", verb, "--url", endpoint,
                                      "--token-env", "GREGALE_JOURNEY_TOKEN", *timeout_args, "--json", *args],
                                     cwd=client_dir, env={"XDG_CONFIG_HOME": str(client_dir), "GREGALE_JOURNEY_TOKEN": token},
                                     capture_output=True, text=True, timeout=10)
