@@ -9,7 +9,7 @@ export const DEFAULT_API_BASE = 'https://api.gregale.dev';
 /** A session as the API shows it. */
 export type SandboxView = {
   id: string;
-  state: 'queued' | 'starting' | 'ready' | 'frozen' | 'closed' | 'expired' | 'failed';
+  state: 'queued' | 'starting' | 'ready' | 'frozen' | 'pausing' | 'paused' | 'resuming' | 'closed' | 'expired' | 'failed';
   kind: string;
   preset: string;
   ram_mb: number;
@@ -21,6 +21,8 @@ export type SandboxView = {
   token?: string;
   token_expires_at?: string;
   snapshot_id?: string;
+  paused_at?: string;
+  forked_from?: string;
 };
 
 /** An exposed port as the API shows it. */
