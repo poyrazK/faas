@@ -198,9 +198,11 @@ func (s *Store) readClaim(ctx context.Context, id, token string) (SandboxClaim, 
 	}
 	volumeBackup, forkOf := row.VolumeBackupID, ""
 	if row.ForkCaptureID != "" {
+		// Before the upload only the capture's node holds it (same-node
+		// forks, ADR-20261122132055 §3).
 		resume = &SandboxCapture{ID: row.CaptureID, NodeID: row.CaptureNodeID, StorageKey: row.CaptureStorageKey,
 			VMStateStorageKey: row.CaptureVmstateStorageKey, FCVersion: row.CaptureFcVersion, MemBytes: row.CaptureMemBytes,
-			Remote: true}
+			Remote: row.CaptureUploaded}
 		volumeBackup, forkOf = row.CaptureVolumeBackupID, row.CaptureSessionID
 	}
 	return SandboxClaim{ForkOf: forkOf, Kind: row.Kind, VCPU: int(row.Vcpu), Resuming: row.State == SandboxResuming, Resume: resume,
@@ -342,6 +344,13 @@ func (s *Store) SetSandboxFrozen(ctx context.Context, id, token string, frozen b
 func (s *Store) RequeueSandbox(ctx context.Context, id, token string) error {
 	n, err := s.q.RequeueSandboxSession(ctx, s.pool, sqlc.RequeueSandboxSessionParams{SessionID: id, LeaseToken: token})
 	return fenced(n, err, "requeue session")
+}
+
+// RequeueSandboxForkElsewhere puts a fork its capture's node refused back in
+// the queue to start on any node once the shared store holds the capture.
+func (s *Store) RequeueSandboxForkElsewhere(ctx context.Context, id, token string) error {
+	n, err := s.q.RequeueSandboxForkElsewhere(ctx, s.pool, sqlc.RequeueSandboxForkElsewhereParams{SessionID: id, LeaseToken: token})
+	return fenced(n, err, "requeue fork elsewhere")
 }
 
 // FinishSandbox ends a held session in state, one of SandboxClosed,

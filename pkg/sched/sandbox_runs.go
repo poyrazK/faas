@@ -110,8 +110,9 @@ type SandboxResume struct {
 	Snapshot    AgentRunSnapshot
 	NodeID      string
 	RequireNode bool
-	// Fork: the capture is another session's (ADR-20261122132055 §3), which
-	// the shared store holds; the session starts from it whatever its kind.
+	// Fork: the capture is another session's (ADR-20261122132055 §3); the
+	// session starts from it whatever its kind. With RequireNode the shared
+	// store does not hold it yet and only its node can restore it.
 	Fork bool
 }
 
@@ -404,6 +405,13 @@ func (r *AgentRunner) RunSandbox(ctx context.Context, a SandboxAdmission, placed
 		// holds a node-only capture while it uploads: the resume waits for
 		// the upload rather than cold-booting (§7).
 		req.PreferredNodeIDs = []string{a.Resume.NodeID}
+		if a.Resume.RequireNode && a.Resume.Fork && !r.poolNodeActive(ctx, a.Resume.NodeID) {
+			// A fork pinned to its capture's node has no capture anywhere
+			// else yet: refuse it, and agentd waits for the upload instead
+			// of booting a fork without its source's memory.
+			return api.NewProblem(503, api.CodeCapacity, "Capture node unavailable",
+				"the fork's capture is only on node "+a.Resume.NodeID+", which is not taking sessions")
+		}
 		if a.Resume.RequireNode && !r.poolNodeActive(ctx, a.Resume.NodeID) && !r.poolNodeLeaving(ctx, a.Resume.NodeID) {
 			resume := *a.Resume
 			resume.RequireNode = false
@@ -493,7 +501,7 @@ func (a SandboxAdmission) validate() error {
 	}
 	switch {
 	case a.Resume != nil && (!a.Persistent && !a.Resume.Fork || a.WorkspaceKey != "" || a.Task != nil || a.Resume.Snapshot.StorageKey == "" ||
-		a.Resume.RequireNode && (a.Resume.NodeID == "" || a.Resume.Fork)):
+		a.Resume.RequireNode && a.Resume.NodeID == ""):
 		return &AgentRunInvalidError{Reason: "only a persistent session or a fork resumes, from its capture and without a workspace archive or task"}
 	case a.Volume.GB < 0 || a.Volume.GB > 0 && (!a.Persistent && !a.fork() || a.Task != nil || a.WorkspaceKey != "" || a.Volume.GB > api.SandboxVolumeMaxGB[idx]) ||
 		a.Volume.GB == 0 && (a.Volume.BackupID != "" || a.Volume.BackupEvery != 0 || a.Volume.SourceSandboxID != "") ||
