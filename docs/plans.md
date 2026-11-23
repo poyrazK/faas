@@ -1,7 +1,5 @@
 # Plans and pricing
 
-<!-- GENERATED — do not edit by hand; regenerate with `make pricing-md`. -->
-
 These are the same limits the API enforces: this page is generated from them. Prices are monthly, shown in US dollars and before tax: the billing provider adds any sales tax or VAT that applies where you live at checkout. Usage beyond the included GB-RAM-hours is billed at $0.05 per GB-RAM-hour on paid plans.
 
 ## At a glance

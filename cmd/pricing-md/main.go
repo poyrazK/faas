@@ -31,7 +31,6 @@ func run(w io.Writer) error {
 func render() string {
 	var b strings.Builder
 	b.WriteString("# Plans and pricing\n\n")
-	b.WriteString("<!-- GENERATED — do not edit by hand; regenerate with `make pricing-md`. -->\n\n")
 	b.WriteString("These are the same limits the API enforces: this page is generated from them. Prices are monthly, shown in US dollars and before tax: the billing provider adds any sales tax or VAT that applies where you live at checkout. Usage beyond the included GB-RAM-hours is billed at " + formatPrice(api.OverageMillicentsPerGBHour) + " per GB-RAM-hour on paid plans.\n\n")
 	b.WriteString("## At a glance\n\n")
 	b.WriteString("What each plan gets: how many apps you can deploy, how much RAM each instance has, and the rest of its limits. [What each limit means](#what-each-limit-means) explains every column.\n\n")
