@@ -23,7 +23,14 @@ var procRoot = "/proc"
 
 // DefaultKeepPrevious is the number of non-active releases retained after a
 // successful deployment. The active release is always retained separately.
-const DefaultKeepPrevious = 3
+// The unit lane's post-deploy watch lets a host hold up to
+// scripts/ci/release_units.json watch.max_unwatched releases not yet watched
+// clean, and a breach rolls back to the release before them, so that
+// known-good release must still be retained: max_unwatched stays below this
+// (TestUnwatchedReleasesLeaveTheKnownGoodRetained). 5 since 2026-11-23 (was
+// 3, with max_unwatched 2), so merge bursts do not queue behind the watch
+// (ADR-20261122170000); a release is about 2 GB.
+const DefaultKeepPrevious = 5
 
 // Report describes a retention pass. Removed entries are release IDs, not
 // arbitrary paths; the implementation only removes direct, SHA-named child
