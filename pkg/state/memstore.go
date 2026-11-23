@@ -742,6 +742,11 @@ type MemStore struct {
 	// buildPreemptions counts the times borrowed builder slots gave a build
 	// back to the queue (builds.preemptions, ADR-20261118154632).
 	buildPreemptions map[string]int
+	// buildNodeName records the node that claimed a running build
+	// (builds.builder_node_name, ADR-20261110210000) with that claim's start,
+	// so a requeued and reclaimed build names none until recorded again;
+	// allocated on first use.
+	buildNodeName map[string]memBuildNode
 	// ADR-740 developer live patches; allocated on first use.
 	devSourceManifests   map[string]DevSourceManifest
 	devSourceManifestSeq int64

@@ -24,15 +24,19 @@ func TestBuildQueueAndRunning(t *testing.T) {
 		{ID: "q-later", Kind: "railpack", Status: "queued", EnqueuedAt: ago(time.Hour), NotBefore: now.Add(time.Minute)},
 		// Became due two minutes ago: waits from not_before, not enqueue.
 		{ID: "q-due", Kind: "railpack", Status: "queued", EnqueuedAt: ago(time.Hour), NotBefore: ago(2 * time.Minute)},
+		// Held behind an identical build: queued and listed, but its long
+		// wait is deliberate.
+		{ID: "q-held", Kind: "tarball", Status: "queued", CoalescedWith: "r-long", EnqueuedAt: ago(30 * time.Minute)},
 		{ID: "r-long", Kind: "railpack", Status: "running", NodeName: "fsn-2", EnqueuedAt: ago(20 * time.Minute), StartedAt: ago(16 * time.Minute)},
 		{ID: "r-short", Kind: "github", Status: "running", EnqueuedAt: ago(time.Minute), StartedAt: ago(30 * time.Second)},
 	}, Slots: map[string]api.ObsBuilderNodeSlots{"fsn-2": {Limit: 3, Reserved: 1, InUse: 1, ActiveReserved: 1}, "fsn-3": {Limit: 2, Reserved: 1}}}
 	out := buildqueue.Build(in)
 	tot := out.Totals
-	if tot.Queued != 3 || tot.Deferred != 1 || tot.Running != 2 || tot.WaitingOverWarn != 1 || tot.RunningOverTimeout != 1 || tot.OldestWaitSeconds != 600 {
+	if tot.Queued != 4 || tot.Deferred != 1 || tot.Held != 1 || tot.Running != 2 || tot.WaitingOverWarn != 1 || tot.RunningOverTimeout != 1 || tot.OldestWaitSeconds != 600 {
 		t.Fatalf("totals = %+v", tot)
 	}
-	if out.Queued[0].ID != "q-old" || out.Queued[1].ID != "q-due" || out.Queued[1].WaitSeconds != 120 {
+	// The deferred build is counted, not listed.
+	if len(out.Queued) != 4 || out.Queued[0].ID != "q-held" || !out.Queued[0].Coalesced || out.Queued[1].ID != "q-old" || out.Queued[2].ID != "q-due" || out.Queued[2].WaitSeconds != 120 {
 		t.Fatalf("queued order = %+v", out.Queued)
 	}
 	if out.Running[0].ID != "r-long" || out.Running[0].DurationSeconds != 960 || out.Running[0].WaitSeconds != 240 {
@@ -112,20 +116,30 @@ func TestBuildEmptyReportHasStableShape(t *testing.T) {
 
 func TestSlotsFromSamples(t *testing.T) {
 	g := func(name, node, kind string, v float64) promql.VectorSample {
-		l := map[string]string{"__name__": name, "node": node, "job": "builderd"}
+		l := map[string]string{"__name__": name, "node": node, "job": "builderd", "instance": node + ":9102"}
 		if kind != "" {
 			l["kind"] = kind
 		}
 		return promql.VectorSample{Labels: l, Value: v}
 	}
+	at := func(s promql.VectorSample, instance string) promql.VectorSample {
+		s.Labels["instance"] = instance
+		return s
+	}
 	got := buildqueue.SlotsFromSamples([]promql.VectorSample{
 		g("builderd_build_slots_limit", "fsn-2", "", 4), g("builderd_build_slots_reserved", "fsn-2", "", 1),
 		g("builderd_build_slots_in_use", "fsn-2", "", 3), g("builderd_build_slots_active", "fsn-2", "reserved", 2),
 		g("builderd_build_slots_active", "fsn-2", "borrowed", 1), g("builderd_build_slots_limit", "", "", 9),
+		// Two targets claim fsn-4: neither is trusted.
+		at(g("builderd_build_slots_limit", "fsn-4", "", 2), "10.0.0.4:9102"), at(g("builderd_build_slots_limit", "fsn-4", "", 8), "10.0.0.5:9102"),
 	})
 	want := api.ObsBuilderNodeSlots{Limit: 4, Reserved: 1, InUse: 3, ActiveReserved: 2, Opportunistic: 1, ActiveBorrowed: 1}
-	if len(got) != 1 || got["fsn-2"] != want {
+	if len(got) != 2 || got["fsn-2"] != want || got["fsn-4"] != (api.ObsBuilderNodeSlots{Conflicting: true}) {
 		t.Fatalf("slots = %+v", got)
+	}
+	nodes := buildqueue.Build(buildqueue.Input{Now: now, Window: time.Hour, Slots: got}).Nodes
+	if len(nodes) != 2 || !nodes[0].Observed || nodes[1].Node != "fsn-4" || nodes[1].Observed || !nodes[1].Conflicting {
+		t.Fatalf("nodes = %+v", nodes)
 	}
 	if _, state := buildqueue.ReadSlots(context.Background(), nil); state != buildqueue.SlotsNotConfigured {
 		t.Fatalf("nil client state = %q", state)

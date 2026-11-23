@@ -47,11 +47,17 @@ It reads two new optional store queries, `state.BuildQueueReportReader`
 (sqlc, no migration):
 
 - `OperatorActiveBuilds` returns queued and running builds with their app,
-  longest waiting first, up to `ObsBuildQueueActiveMax` (500). The read
-  uses `builds_queued_count_idx` and `builds_running_started_idx`.
+  up to `ObsBuildQueueActiveMax` (500). It orders them in three groups:
+  - running builds first. Slots bound them, so a long backlog never cuts
+    them out of the counts;
+  - then due queued builds, the longest waiting first, from `not_before`
+    when deferred;
+  - then builds deferred to a later `not_before`.
+  The read uses `builds_queued_count_idx` and `builds_running_started_idx`.
 - `OperatorFinishedBuildsSince` returns builds that finished in the window,
-  newest first, up to `ObsBuildQueueFinishedMax` (20,000). The read uses
-  `builds_finished_at_idx`.
+  newest first (`finished_at DESC, id DESC`), up to
+  `ObsBuildQueueFinishedMax` (20,000). A backward scan of
+  `builds_finished_at_idx` serves it.
 
 Slot use comes from builderd's existing gauges, read in one PromQL instant
 query within `ObsBuildQueuePrometheusBudget` (2 s):
@@ -65,6 +71,11 @@ Metrics discovery gives every builderd target a `node` label. builderd
 labels a slot only reserved or borrowed, so the report derives
 opportunistic slots as the reserved-slice builds beyond the reserved count.
 
+Rows are folded per node and per target. If more than one target reports
+the same node, the node is marked `conflicting` and none of its slot
+figures are trusted. That happens when two builderds share a node name, or
+when a restarted builderd's old series is still inside the lookback.
+
 If Prometheus is unconfigured or fails, `slots_state` says so, and each
 node row keeps only the database's running count.
 
@@ -72,7 +83,12 @@ node row keeps only the database's running count.
 
 - **Queue totals:**
   - queued builds;
-  - deferred builds (`not_before` still ahead), counted apart from queued;
+  - deferred builds (`not_before` still ahead), counted apart from queued
+    and not listed;
+  - held builds: queued builds waiting on an identical build
+    (`coalesced_with`, ADR-20261102100000). They are in the queued count
+    and list, but their wait is deliberate, so they do not raise the
+    oldest wait or the warn count;
   - running builds;
   - the oldest wait;
   - builds waiting longer than `ObsBuildQueueWaitWarnSeconds` (5 min);
@@ -97,12 +113,20 @@ node row keeps only the database's running count.
 
 ## Consequences
 
+- **Wait after a preemption:** a build requeued after a preemption keeps its
+  original enqueue time (ADR-20261118154632), and no requeue time is
+  recorded. Its wait therefore includes its earlier attempts. The report
+  states this rather than adding a column.
+
 - **Console:** gets a Build queue page under On call.
 - **Node attribution:** only running builds are attributed to a node. The
   `builds_builder_node_scope` trigger clears `builder_node_name` when a
   build leaves running, so finished builds carry no node, and failures are
   not broken down by node. A running build whose claim has not recorded a
   node yet is listed under "unrecorded".
+- **MemStore parity:** the memory store now implements
+  `state.BuildNodeRecorder`. It records the claiming node for the current
+  claim only, as the trigger does.
 - **Read cost:** no migration. Both reads are bounded and use existing
   indexes, and only operators read them, on demand.
 - **Existing signals stay:** the queue depth gauge, its alerts and the

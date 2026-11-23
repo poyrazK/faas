@@ -78601,7 +78601,8 @@ FROM builds b
 LEFT JOIN deployments d ON d.id = b.deployment_id
 LEFT JOIN apps a ON a.id = d.app_id
 WHERE b.status IN ('queued', 'running')
-ORDER BY b.enqueued_at, b.id
+ORDER BY (b.status = 'running') DESC, (b.not_before IS NOT NULL AND b.not_before > now()),
+         COALESCE(b.not_before, b.enqueued_at), b.id
 LIMIT $1::int
 `
 
@@ -78626,8 +78627,11 @@ type OperatorActiveBuildsRow struct {
 }
 
 // The operator build queue report (ADR-20261123163340): queued and running
-// builds with their app, the longest waiting first. The caller asks for one
-// row more than it keeps to learn whether it was cut.
+// builds with their app. Running builds come first (slots bound them, so a
+// long backlog never cuts them), then due queued builds the longest waiting
+// first (from not_before when deferred), then builds deferred to a later
+// not_before. The caller asks for one row more than it keeps to learn whether
+// it was cut.
 func (q *Queries) OperatorActiveBuilds(ctx context.Context, db DBTX, rowLimit int32) ([]OperatorActiveBuildsRow, error) {
 	rows, err := db.Query(ctx, operatorActiveBuilds, rowLimit)
 	if err != nil {
@@ -78680,7 +78684,7 @@ LEFT JOIN deployments d ON d.id = b.deployment_id
 LEFT JOIN apps a ON a.id = d.app_id
 WHERE b.finished_at >= $1::timestamptz
   AND b.status IN ('succeeded', 'failed', 'cancelled')
-ORDER BY b.finished_at DESC, b.id
+ORDER BY b.finished_at DESC, b.id DESC
 LIMIT $2::int
 `
 

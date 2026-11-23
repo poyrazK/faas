@@ -45,15 +45,21 @@ func readSlots(ctx context.Context, q VectorQuerier) (map[string]api.ObsBuilderN
 
 // SlotsFromSamples folds the gauges into one row per node. Opportunistic is
 // the reserved-slice builds beyond the reserved count: builderd labels a
-// build only reserved or borrowed.
+// build only reserved or borrowed. A node reported by more than one target
+// (two builderds, or a restarted one whose old series is still in the
+// lookback) is marked Conflicting with no slot figures, not merged.
 func SlotsFromSamples(samples []promql.VectorSample) map[string]api.ObsBuilderNodeSlots {
-	out := map[string]api.ObsBuilderNodeSlots{}
+	byTarget := map[string]map[string]api.ObsBuilderNodeSlots{}
 	for _, s := range samples {
 		node := s.Labels["node"]
 		if node == "" {
 			continue
 		}
-		row, v := out[node], int(s.Value)
+		if byTarget[node] == nil {
+			byTarget[node] = map[string]api.ObsBuilderNodeSlots{}
+		}
+		target := s.Labels["instance"]
+		row, v := byTarget[node][target], int(s.Value)
 		switch s.Labels["__name__"] {
 		case "builderd_build_slots_limit":
 			row.Limit = v
@@ -69,11 +75,18 @@ func SlotsFromSamples(samples []promql.VectorSample) map[string]api.ObsBuilderNo
 				row.ActiveBorrowed = v
 			}
 		}
-		out[node] = row
+		byTarget[node][target] = row
 	}
-	for node, row := range out {
-		row.Opportunistic = max(0, row.ActiveReserved-row.Reserved)
-		out[node] = row
+	out := make(map[string]api.ObsBuilderNodeSlots, len(byTarget))
+	for node, targets := range byTarget {
+		if len(targets) > 1 {
+			out[node] = api.ObsBuilderNodeSlots{Conflicting: true}
+			continue
+		}
+		for _, row := range targets {
+			row.Opportunistic = max(0, row.ActiveReserved-row.Reserved)
+			out[node] = row
+		}
 	}
 	return out
 }

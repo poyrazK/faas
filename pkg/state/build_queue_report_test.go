@@ -26,12 +26,16 @@ func TestBuildQueueReportStores(t *testing.T) {
 				CreateDeployment(context.Context, state.Deployment) (state.Deployment, error)
 				CreateBuild(context.Context, string, state.DeploymentKind, int64, string) (state.Build, error)
 				UpdateBuildStatus(context.Context, string, state.BuildStatus, state.FailureClass, bool, bool) error
+				RecordBuildNode(context.Context, string, string) error
 			} = state.NewMemStore()
-			// Moves a build through running to its status. The Postgres store
-			// also records the claiming node the way builderd does.
+			// Moves a build through running, where builderd records its
+			// node, to its status.
 			advance := func(b state.Build, status state.BuildStatus, fc state.FailureClass) {
 				t.Helper()
 				if err := s.UpdateBuildStatus(ctx, b.ID, state.BuildRunning, "", true, false); err != nil {
+					t.Fatal(err)
+				}
+				if err := s.RecordBuildNode(ctx, b.ID, "fsn-2"); err != nil {
 					t.Fatal(err)
 				}
 				if status != state.BuildRunning {
@@ -47,7 +51,7 @@ func TestBuildQueueReportStores(t *testing.T) {
 				advance = func(b state.Build, status state.BuildStatus, fc state.FailureClass) {
 					t.Helper()
 					memAdvance(b, status, fc)
-					if _, err := pool.Exec(ctx, `UPDATE builds SET builder_node_name = 'fsn-2', preemptions = 1 WHERE id = $1`, b.ID); err != nil {
+					if _, err := pool.Exec(ctx, `UPDATE builds SET preemptions = 1 WHERE id = $1`, b.ID); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -85,20 +89,23 @@ func TestBuildQueueReportStores(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(act) != 2 || act[0].ID != waiting.ID || act[0].Status != "queued" || act[0].AppSlug != "bq-waiting" || act[0].AccountID != acct.ID {
+			// Running builds come first even though this one was enqueued
+			// later: a long backlog never cuts them.
+			if len(act) != 2 || act[1].ID != waiting.ID || act[1].Status != "queued" || act[1].AppSlug != "bq-waiting" || act[1].AccountID != acct.ID || act[1].NodeName != "" {
 				t.Fatalf("active = %+v", act)
 			}
-			if act[1].ID != running.ID || act[1].StartedAt.IsZero() || act[1].Kind != "tarball" || act[1].SourceBytes != 2048 {
-				t.Fatalf("running = %+v", act[1])
+			if act[0].ID != running.ID || act[0].StartedAt.IsZero() || act[0].Kind != "tarball" || act[0].SourceBytes != 2048 || act[0].NodeName != "fsn-2" {
+				t.Fatalf("running = %+v", act[0])
 			}
-			if backend == "postgres" && (act[1].NodeName != "fsn-2" || act[1].Preemptions != 1) {
-				t.Fatalf("running node = %+v", act[1])
+			if backend == "postgres" && act[0].Preemptions != 1 {
+				t.Fatalf("running preemptions = %+v", act[0])
 			}
 			done, err := s.OperatorFinishedBuildsSince(ctx, time.Now().Add(-time.Hour), 10)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(done) != 2 || done[0].ID != oom.ID || done[0].FailureClass != "oom" || done[1].ID != ok.ID || done[1].Status != "succeeded" {
+			// A finished build names no node: it left running.
+			if len(done) != 2 || done[0].ID != oom.ID || done[0].FailureClass != "oom" || done[0].NodeName != "" || done[1].ID != ok.ID || done[1].Status != "succeeded" {
 				t.Fatalf("finished = %+v", done)
 			}
 			if done, err := s.OperatorFinishedBuildsSince(ctx, time.Now().Add(time.Hour), 10); err != nil || len(done) != 0 {

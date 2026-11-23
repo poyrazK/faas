@@ -620,11 +620,16 @@ type ObsBuildQueueReport struct {
 
 // ObsBuildQueueTotals summarises the queue now and the window's finished
 // builds. Deferred builds (not_before in the future) are counted apart from
-// Queued. Durations run from start to finish and waits from enqueue (or a
-// later not_before) to start, in seconds.
+// Queued. Held counts the queued builds waiting on an identical build
+// (coalesced_with, ADR-20261102100000); they are in Queued but not in
+// OldestWaitSeconds or WaitingOverWarn. Durations run from start to finish
+// and waits from enqueue (or a later not_before) to start, in seconds. A
+// build requeued after a preemption keeps its enqueue time, so its wait
+// includes its earlier attempts.
 type ObsBuildQueueTotals struct {
 	Queued             int     `json:"queued"`
 	Deferred           int     `json:"deferred"`
+	Held               int     `json:"held"`
 	Running            int     `json:"running"`
 	OldestWaitSeconds  float64 `json:"oldest_wait_seconds"`
 	WaitingOverWarn    int     `json:"waiting_over_warn"`
@@ -665,11 +670,14 @@ type ObsBuildFailureCount struct {
 // are meaningful only when Observed: Limit is the enforced maximum, Reserved
 // the guaranteed slots, ActiveReserved builds in faas-cp-build.slice (of
 // which Opportunistic run beyond the reserved count) and ActiveBorrowed
-// builds in faas-borrowed.slice (ADR-20261118154632).
+// builds in faas-borrowed.slice (ADR-20261118154632). Conflicting means more
+// than one builderd target reported for the node, so no slot figure is
+// trusted and Observed is false.
 type ObsBuilderNodeSlots struct {
 	Node           string `json:"node"`
 	RunningBuilds  int    `json:"running_builds"`
 	Observed       bool   `json:"observed"`
+	Conflicting    bool   `json:"conflicting"`
 	Limit          int    `json:"limit"`
 	Reserved       int    `json:"reserved"`
 	InUse          int    `json:"in_use"`
@@ -679,8 +687,10 @@ type ObsBuilderNodeSlots struct {
 }
 
 // ObsBuildRow is one build in the report. WaitSeconds runs to its start, or
-// to now while it is queued; DurationSeconds runs from its start to its
-// finish, or to now while it is running.
+// to now while it is queued, and includes earlier attempts of a requeued
+// build; DurationSeconds runs from its start to its finish, or to now while
+// it is running. Coalesced is set when the build waits on (or waited on) an
+// identical build.
 type ObsBuildRow struct {
 	ID              string     `json:"id"`
 	DeploymentID    string     `json:"deployment_id"`

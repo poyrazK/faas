@@ -62,7 +62,10 @@ type kindAcc struct {
 }
 
 // active counts the queued and running builds. A queued build whose
-// not_before is still ahead is deferred, not waiting.
+// not_before is still ahead is deferred: counted apart and not listed. A
+// queued build waiting on an identical build is held: it is queued and
+// listed, but its wait is deliberate, so it does not raise the oldest wait
+// or the warn count.
 func active(in Input, t *api.ObsBuildQueueTotals, kind func(string) *kindAcc, running map[string]int) (queued, runs []api.ObsBuildRow) {
 	queued, runs = []api.ObsBuildRow{}, []api.ObsBuildRow{}
 	for _, b := range in.Active {
@@ -71,15 +74,19 @@ func active(in Input, t *api.ObsBuildQueueTotals, kind func(string) *kindAcc, ru
 		case string(state.BuildQueued):
 			if b.NotBefore.After(in.Now) {
 				t.Deferred++
-			} else {
-				t.Queued++
-				kind(b.Kind).queued++
-				t.OldestWaitSeconds = math.Max(t.OldestWaitSeconds, r.WaitSeconds)
-				if r.WaitSeconds > api.ObsBuildQueueWaitWarnSeconds {
-					t.WaitingOverWarn++
-				}
+				continue
 			}
+			t.Queued++
+			kind(b.Kind).queued++
 			queued = append(queued, r)
+			if r.Coalesced {
+				t.Held++
+				continue
+			}
+			t.OldestWaitSeconds = math.Max(t.OldestWaitSeconds, r.WaitSeconds)
+			if r.WaitSeconds > api.ObsBuildQueueWaitWarnSeconds {
+				t.WaitingOverWarn++
+			}
 		case string(state.BuildRunning):
 			t.Running++
 			kind(b.Kind).running++
@@ -197,7 +204,7 @@ func kindStats(kinds map[string]*kindAcc) []api.ObsBuildKindStat {
 func nodeSlots(running map[string]int, slots map[string]api.ObsBuilderNodeSlots) []api.ObsBuilderNodeSlots {
 	byNode := map[string]api.ObsBuilderNodeSlots{}
 	for node, s := range slots {
-		s.Node, s.Observed = node, true
+		s.Node, s.Observed = node, !s.Conflicting
 		byNode[node] = s
 	}
 	for node, n := range running {
