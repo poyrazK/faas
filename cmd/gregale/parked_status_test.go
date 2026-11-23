@@ -54,6 +54,27 @@ func TestParkedStatusLabels(t *testing.T) {
 	}
 }
 
+// TestWorkerLivenessParkSaysCrashLooped pins the agent eval of 2026-11-23
+// (voting-app P3): "parked: liveness failed" on a worker sent the agent to
+// add a /healthz server, though workers get no HTTP probe and only crashes
+// park them.
+func TestWorkerLivenessParkSaysCrashLooped(t *testing.T) {
+	declared := livenessParkedApp("worker", "a1", "d1")
+	declared.Manifest.ExecutionMode = api.ExecutionModeWorker
+	compose := livenessParkedApp("worker", "a2", "d2")
+	compose.WorkloadClass = api.ExecutionModeWorker
+	for _, app := range []api.AppResponse{declared, compose} {
+		if got := appParkedLabel(app); got != "parked: crash-looped" {
+			t.Errorf("worker label = %q", got)
+		}
+		var out bytes.Buffer
+		writeParkedNotice(&out, app)
+		if !strings.Contains(out.String(), "process kept exiting") || strings.Contains(out.String(), "liveness checks") {
+			t.Errorf("worker notice = %q", out.String())
+		}
+	}
+}
+
 func TestStatusNamesLivenessPark(t *testing.T) {
 	out := captureParkedStdout(t)
 	app := livenessParkedApp("retail-ui", "a1", "d1")
