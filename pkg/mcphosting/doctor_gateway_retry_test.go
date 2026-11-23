@@ -77,3 +77,32 @@ func TestDoctorGivesUpAfterBoundedGatewayRetries(t *testing.T) {
 		t.Fatalf("negative duration %d", report.Discovery.DurationMS)
 	}
 }
+
+// A valid token can be refused once while the server first fetches its
+// provider's signing keys (prod 2026-11-22: 2 of 4 external-OAuth deploys
+// failed verification on one 401). A probe with a token retries a bounded
+// number of 401s; it still fails when they persist.
+func TestDiscoveryRetriesUnauthorizedOnlyWithAToken(t *testing.T) {
+	old := doctorAuthRetryDelay
+	doctorAuthRetryDelay = time.Millisecond
+	t.Cleanup(func() { doctorAuthRetryDelay = old })
+
+	h, discovers := discoverOnlyHandler(t, 2, http.StatusUnauthorized)
+	c := testClient(t, h)
+	c.Token = "valid-token"
+	if _, _, err := discoverCatalogRetrying(context.Background(), c); err != nil || discovers.Load() != 3 {
+		t.Fatalf("err=%v after %d discovers, want success on the third", err, discovers.Load())
+	}
+
+	h, discovers = discoverOnlyHandler(t, 100, http.StatusUnauthorized)
+	c = testClient(t, h)
+	c.Token = "revoked-token"
+	if _, _, err := discoverCatalogRetrying(context.Background(), c); err == nil || discovers.Load() != 1+doctorAuthRetries {
+		t.Fatalf("err=%v after %d discovers, want failure after %d", err, discovers.Load(), 1+doctorAuthRetries)
+	}
+
+	h, discovers = discoverOnlyHandler(t, 100, http.StatusUnauthorized)
+	if _, _, err := discoverCatalogRetrying(context.Background(), testClient(t, h)); err == nil || discovers.Load() != 1 {
+		t.Fatalf("tokenless probe retried a 401: err=%v after %d discovers", err, discovers.Load())
+	}
+}

@@ -48,7 +48,7 @@ func Doctor(ctx context.Context, c *Client, legacy bool, streamTool string, args
 			return report
 		}
 	}
-	catalog, x, err := discoverCatalogRetryingGateway(ctx, c)
+	catalog, x, err := discoverCatalogRetrying(ctx, c)
 	x.Result = nil // Tool schemas are represented once, in Report.Tools.
 	report.Discovery = x
 	add("modern_catalog_discovery", err)
@@ -123,13 +123,36 @@ const doctorGatewayRetries = 2
 
 var doctorGatewayRetryDelay = time.Second
 
-func discoverCatalogRetryingGateway(ctx context.Context, c *Client) (Catalog, Exchange, error) {
+// doctorAuthRetries bounds how often discovery is repeated after a 401 when
+// the probe presents a bearer token. An OAuth server's first token check
+// fetches the provider's signing keys, and a slow or briefly unreachable
+// provider answered the first verification 401 although the token was valid;
+// the whole release then failed (2 of 4 external-OAuth deploys on prod,
+// 2026-11-22). About 12 s keeps this inside the 30 s verification budget. A
+// probe without a token never retries a 401: that is the expected challenge.
+const doctorAuthRetries = 4
+
+var doctorAuthRetryDelay = 3 * time.Second
+
+func discoverCatalogRetrying(ctx context.Context, c *Client) (Catalog, Exchange, error) {
 	catalog, x, err := c.DiscoverCatalog(ctx)
-	for attempt := 0; attempt < doctorGatewayRetries && err != nil && transientGatewayStatus(x.HTTPStatus); attempt++ {
+	gatewayRetries, authRetries := 0, 0
+	for err != nil {
+		var delay time.Duration
+		switch {
+		case transientGatewayStatus(x.HTTPStatus) && gatewayRetries < doctorGatewayRetries:
+			gatewayRetries++
+			delay = doctorGatewayRetryDelay
+		case x.HTTPStatus == http.StatusUnauthorized && c.Token != "" && authRetries < doctorAuthRetries:
+			authRetries++
+			delay = doctorAuthRetryDelay
+		default:
+			return catalog, x, err
+		}
 		select {
 		case <-ctx.Done():
 			return catalog, x, err
-		case <-time.After(doctorGatewayRetryDelay):
+		case <-time.After(delay):
 		}
 		catalog, x, err = c.DiscoverCatalog(ctx)
 	}
