@@ -4117,11 +4117,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-830: Gregale-owned hosts keep the forced static set; on customer
 	// hosts this hop sets nothing so the app's own value is the only copy
 	// gatewayd-public sees, and gatewayd-public fills defaults.
+	// The CSP gate also needs a platform host: on app and custom-domain
+	// hosts the apid paths (/login, /docs, /dashboard, /v1/…) belong to the
+	// app (ADR-480), and the dashboard's nonce policy blocked those pages'
+	// inline and CDN scripts (prod hunt r32).
 	domains := deps.domains
 	publicHandler = httpsec.ForSurface(
 		func(r *http.Request) httpsec.Surface { return httpsec.ClassifyHostIn(r.Host, domains) },
 		false,
-		httpsec.Nonce(func(r *http.Request) bool { return isApidPath(r.URL.Path) }, publicHandler),
+		httpsec.Nonce(dashboardCSPGate, publicHandler),
 	)
 
 	// HSTS is seeded from the environment before the listener is built and

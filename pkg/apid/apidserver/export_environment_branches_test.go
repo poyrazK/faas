@@ -78,3 +78,11 @@ func (r *server) WakeEnvironmentBranchData() { r.wakeEnvironmentBranchData() }
 func (r *server) EnvironmentBranchDataWakeChannel() <-chan struct{} {
 	return r.environmentBranchDataWakeChannel()
 }
+
+// DescribeUnservedEnvironmentBranchWorkload reports a branch workload with no
+// live deployment as the branch status does at now.
+func (r *server) DescribeUnservedEnvironmentBranchWorkload(ctx context.Context, branch state.ProjectEnvironmentBranch, appID string, now time.Time) (api.ProjectEnvironmentBranchWorkload, error) {
+	var workload api.ProjectEnvironmentBranchWorkload
+	err := r.describeUnservedEnvironmentBranchWorkload(ctx, branch, appID, &workload, now)
+	return workload, err
+}

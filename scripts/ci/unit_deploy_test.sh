@@ -111,6 +111,60 @@ bash -n "$test_root/data-only.sh" || fail "data-only activation script does not 
 grep -Fq "deploy --only '' --expect-current" "$test_root/data-only.sh" || fail "data-only plan does not deploy with an empty --only"
 if grep -q unit-release-verify "$test_root/data-only.sh"; then fail "data-only plan verifies units it did not restart"; fi
 
+# 1c. A plan that restarts vmmd (the compute lane, docs/adr/20261123122457-
+#     compute-unit-lane.md) asks the staged candidate whether it adopts
+#     every live guest before anything changes, stands down (exit 3) when it
+#     does not, and after the restart requires a clean adoption report or
+#     rolls the node back. Other plans never run either.
+if grep -q adoption "$test_root/activate.sh"; then fail "a plan without vmmd runs the adoption proof"; fi
+jq '.units = ["vmmd", "schedd"] | .only = ["vmmd", "schedd"] | .verify = ["vmmd=http://127.0.0.1:9104/readyz"]
+    | .replace = {"bin/vmmd": "bin/vmmd", "bin/schedd": "bin/schedd", "bin/deployctl": "bin/deployctl",
+                  "unit-versions.json": "unit-versions.json"}' "$plan" > "$test_root/vmmd.json"
+bash "$helper" script "$test_root/vmmd.json" "$stage" "$test_root/vmmd.sh"
+bash -n "$test_root/vmmd.sh" || fail "vmmd activation script does not parse"
+line() { grep -nF -- "$1" "$test_root/vmmd.sh" | head -1 | cut -d: -f1; }
+check="$(line "$stage/bin/vmmd adoption-check --config /etc/faas/vmmd.toml")"
+handoff="$(line "FAAS_VMMD_ADOPT_RUNNING_VMS=(1|t|T|true|TRUE|True)")"
+standdown="$(line 'stand_down "the candidate vmmd does not adopt every live guest')"
+overlay="$(line "$stage/bin/deployctl unit-overlay")"
+deploy="$(line "bin/deployctl deploy --only 'vmmd,schedd'")"
+# shellcheck disable=SC2016 # the literal text the script carries
+report="$(line '/opt/faas/current/bin/vmmd adoption-report --wait 90s --already-gone "$adoption_gone"')"
+rollback="$(line "$stage/bin/deployctl rollback --only 'vmmd,schedd'")"
+for n in check handoff standdown overlay deploy report rollback; do
+  [[ -n "${!n}" ]] || fail "vmmd activation script lacks its $n step: $(cat "$test_root/vmmd.sh")"
+done
+(( handoff < check && check < standdown && standdown < overlay && overlay < deploy && deploy < report && report < rollback )) \
+  || fail "vmmd activation order must be hand-off, check, stand-down, overlay, deploy, report, rollback"
+grep -Fq 'exit 3' "$test_root/vmmd.sh" || fail "a refused adoption must stand down with exit 3"
+if grep -Eq 'force-park|drain' "$test_root/vmmd.sh"; then fail "the lane must never park or drain a guest"; fi
+
+# 1c. (cont.) The proof runs: the stand-down leaves the node untouched when
+#     the serving vmmd does not hand off, and when the candidate refuses.
+proof="$test_root/proof"
+mkdir -p "$proof/bin" "$proof/proc/77"
+sed -n '/^stand_down()/,/^adoption_gone=/p' "$test_root/vmmd.sh" \
+  | sed -e "s#/proc/#$proof/proc/#g" -e "s#$stage/bin/vmmd#$proof/bin/vmmd#g" -e 's/sleep 10/:/' > "$proof/check.sh"
+cat > "$proof/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+echo 77
+EOF
+cat > "$proof/bin/vmmd" <<'EOF'
+#!/usr/bin/env bash
+echo "${PROOF_OUT:-{\}}"
+exit "${PROOF_RC:-0}"
+EOF
+chmod +x "$proof/bin/systemctl" "$proof/bin/vmmd"
+run_proof() { PATH="$proof/bin:$PATH" bash -c "set -euo pipefail; source '$proof/check.sh'; echo gone=\$adoption_gone"; }
+printf 'FAAS_VMMD_ADOPTION_RECORD=true\0' > "$proof/proc/77/environ"
+rc=0; run_proof >/dev/null 2>&1 || rc=$?
+[[ "$rc" == 3 ]] || fail "a serving vmmd without adopt_running_vms must stand down with 3, got $rc"
+printf 'FAAS_VMMD_ADOPTION_RECORD=true\0FAAS_VMMD_ADOPT_RUNNING_VMS=true\0' > "$proof/proc/77/environ"
+rc=0; PROOF_RC=3 PROOF_OUT='{"reason":"adoption is off"}' run_proof >/dev/null 2>&1 || rc=$?
+[[ "$rc" == 3 ]] || fail "a refused adoption must stand down with 3, got $rc"
+got="$(PROOF_OUT='{"gone":[{"instance":"i-1"},{"instance":"i-2"}]}' run_proof 2>/dev/null | tail -1)"
+[[ "$got" == "gone=i-1,i-2" ]] || fail "a clean adoption must pass on the gone guests, got $got"
+
 # 2. A converge plan re-activates the active overlay without assembling one.
 jq '.action = "converge" | .replace = {} | .release_id = .expect_current' "$plan" > "$test_root/converge.json"
 bash "$helper" script "$test_root/converge.json" "$stage" "$test_root/converge.sh"
