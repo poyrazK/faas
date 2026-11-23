@@ -13,6 +13,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/alerts"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/webhookout"
 )
 
@@ -23,8 +24,8 @@ func (f handoffDispatchFunc) Dispatch(ctx context.Context, target webhookout.Tar
 }
 
 type fireClaimHook struct {
-	*state.MemStore
-	after func()
+	MemStore *state.MemStore
+	after    func()
 }
 
 func (s fireClaimHook) ClaimAlertFire(ctx context.Context, ruleID, key string, payload []byte, observed float64, at time.Time) (string, bool, error) {
@@ -51,12 +52,12 @@ func TestObserveOnlySettlesFireClaimedDuringModeChange(t *testing.T) {
 	now := rule.UpdatedAt.Add(time.Minute)
 	dispatch := &recordingDispatcher{result: webhookout.Result{StatusCode: 200}}
 	ev := alerts.NewEvaluator(alerts.EvaluatorOptions{
-		Store: fireClaimHook{MemStore: store, after: func() {
+		Store: statetest.NewMem(fireClaimHook{MemStore: store, after: func() {
 			_, err := store.UpdateAlertRule(t.Context(), rule.ID, state.UpdateAlertRuleParams{ObserveOnly: new(true)})
 			if err != nil {
 				t.Error(err)
 			}
-		}},
+		}}),
 		Identity:   func() *age.X25519Identity { return ident },
 		PromQL:     &anomalyProm{currentSamples: 400, pastSamples: 100, trafficDays: 7},
 		Dispatcher: dispatch, Now: func() time.Time { return now }, Log: discardLog(),

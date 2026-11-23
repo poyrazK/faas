@@ -27,6 +27,8 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"ClaimAlertFire":                         true,
+	"ListDeploymentPromotions":               true,
 	"AdmitExecution":                         true,
 	"CompleteSnapshotPrimeHandoff":           true,
 	"GetEdgeRuleByID":                        true,
@@ -309,6 +311,22 @@ var memDispatched = map[string]bool{
 	"ListConsumerKeysForApp":                        true,
 	"GetSLO":                                        true,
 	"CountOpenAPIDocsByAccount":                     true,
+}
+
+func (s *Mem) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (string, bool, error) {
+	if override, ok := s.over.(interface {
+		ClaimAlertFire(context.Context, string, string, []byte, float64, time.Time) (string, bool, error)
+	}); ok {
+		return override.ClaimAlertFire(ctx, ruleID, idempotencyKey, payload, observed, at)
+	}
+	return s.MemStore.ClaimAlertFire(ctx, ruleID, idempotencyKey, payload, observed, at)
+}
+
+func (s *Mem) ListDeploymentPromotions(ctx context.Context, accountID, appID, scope string, before time.Time, limit int) ([]state.DeploymentPromotion, error) {
+	if override, ok := s.over.(state.DeploymentPromotionHistoryStore); ok {
+		return override.ListDeploymentPromotions(ctx, accountID, appID, scope, before, limit)
+	}
+	return s.MemStore.ListDeploymentPromotions(ctx, accountID, appID, scope, before, limit)
 }
 
 func (s *Mem) GetEdgeRuleByID(ctx context.Context, id string) (state.EdgeRule, error) {

@@ -169,6 +169,7 @@ var registry = []Spec{
 	)},
 	{Domain: Alerting, Readers: []string{"meterd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("alert_rules", "webhook_secret_sealed"),
+		cols("alert_webhook_stand_downs", "webhook_secret_sealed"),
 		cols("notification_channels", "target_sealed"),
 		cols("mcp_readiness_pagerduty_policies", "integration_key_sealed"),
 		cols("mcp_readiness_fallback_policies", "integration_key_sealed", "webhook_secret_sealed"),

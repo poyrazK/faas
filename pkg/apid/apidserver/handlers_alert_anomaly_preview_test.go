@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/promql"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type anomalyPreviewTransport func(*http.Request) (*http.Response, error)
@@ -23,8 +24,8 @@ type anomalyPreviewTransport func(*http.Request) (*http.Response, error)
 func (f anomalyPreviewTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 type anomalyPreviewPromotionStore struct {
-	state.Store
-	list func(context.Context, string, string, string, time.Time, int) ([]state.DeploymentPromotion, error)
+	MemStore *state.MemStore
+	list     func(context.Context, string, string, string, time.Time, int) ([]state.DeploymentPromotion, error)
 }
 
 func TestAlertObserveOnlyEnvironmentRoute(t *testing.T) {
@@ -146,8 +147,8 @@ func TestAlertAnomalyP95LatencyPreviewRoute(t *testing.T) {
 	replayStart := time.Now().UTC().Truncate(time.Minute).Add(-3 * time.Hour)
 	promotedAt := replayStart.Add(10 * time.Minute)
 	promotionReads := 0
-	e.s.store = anomalyPreviewPromotionStore{
-		Store: e.store,
+	e.s.store = statetest.NewMem(anomalyPreviewPromotionStore{
+		MemStore: e.store,
 		list: func(_ context.Context, accountID, appID, scope string, before time.Time, limit int) ([]state.DeploymentPromotion, error) {
 			promotionReads++
 			if accountID != e.acct.ID || appID != app.ID || scope != state.DefaultEnvScope ||
@@ -160,7 +161,7 @@ func TestAlertAnomalyP95LatencyPreviewRoute(t *testing.T) {
 				{DeploymentID: "older", PromotedAt: replayStart.Add(-time.Hour)},
 			}, nil
 		},
-	}
+	})
 	path := "/v1/apps/orders/alerts/anomaly-preview?metric=latency_p95_ms&window_spec=5m&comparison="
 	replay := "&incident_replay_start=" + url.QueryEscape(replayStart.Format(time.RFC3339))
 	queries := 0
@@ -508,15 +509,15 @@ func TestAlertAnomalyEnvironmentPreviewRoute(t *testing.T) {
 	}
 	e.s.anomalyAlertsEnabled = true
 	replayStart := time.Now().UTC().Truncate(time.Minute).Add(-3 * time.Hour)
-	e.s.store = anomalyPreviewPromotionStore{
-		Store: e.store,
+	e.s.store = statetest.NewMem(anomalyPreviewPromotionStore{
+		MemStore: e.store,
 		list: func(_ context.Context, accountID, appID, scope string, _ time.Time, _ int) ([]state.DeploymentPromotion, error) {
 			if accountID != e.acct.ID || appID != app.ID {
 				t.Fatalf("unexpected deployment history owner: %s %s", accountID, appID)
 			}
 			return []state.DeploymentPromotion{{DeploymentID: scope + "-release", PromotedAt: replayStart.Add(10 * time.Minute)}}, nil
 		},
-	}
+	})
 	scope := ""
 	warming := false
 	reads := 0
