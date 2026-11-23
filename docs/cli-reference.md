@@ -9867,7 +9867,7 @@ gregale mcp server diff --before baseline.json --after candidate.json --check --
 
 ### mcp client
 
-tools · call · complete · prompts · render · resources · read · watch · status · wait · cancel
+tools · call · complete · prompts · render · resources · read · watch · status · wait · respond · cancel
 
 #### mcp client tools
 
@@ -9901,7 +9901,7 @@ gregale mcp client tools --app my-mcp
 
 Execute one discovered tool; opt in to input requests or durable tasks
 
-`gregale mcp client call [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--interactive] [--input-responses-file <PATH>] [--tasks] [--task-submission-key <UUID>] [--task-receipt <FILE>] [--defer-form-input] [--wait] [<slug>]`
+`gregale mcp client call [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--interactive] [--input-responses-file <PATH>] [--tasks] [--task-submission-key <UUID>] [--task-receipt <FILE>] [--retry-submission] [--defer-form-input] [--wait] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -9923,6 +9923,7 @@ Execute one discovered tool; opt in to input requests or durable tasks
 | `--tasks` | accept modern MCP task handles for later inspection |  |
 | `--task-submission-key <UUID>` | saved UUIDv7 for retrying a Task submission (requires --tasks) |  |
 | `--task-receipt <FILE>` | save a private Task receipt before submission (requires --tasks) |  |
+| `--retry-submission` | retry the original Task submission using an existing --task-receipt |  |
 | `--defer-form-input` | allow a keyed Task to request forms for a later wait |  |
 | `--wait` | wait for a task result; request cancellation on timeout |  |
 
@@ -10076,9 +10077,9 @@ gregale mcp client read --app my-mcp --uri 'file:///reports/current'
 
 #### mcp client watch
 
-Watch one resource URI for content updates
+Watch a resource for content updates or a Task receipt for status
 
-`gregale mcp client watch [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] --uri <URI> [--interval <DURATION>]`
+`gregale mcp client watch [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--uri <URI>] [--task-receipt <FILE>] [--interval <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -10086,20 +10087,22 @@ Watch one resource URI for content updates
 | `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
 | `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
 | `--token-env <ENV>` | environment variable containing an MCP client token |  |
-| `--uri <URI>` | resource URI to read and watch | required |
+| `--uri <URI>` | resource URI to read and watch |  |
+| `--task-receipt <FILE>` | private Task receipt for a metadata-only watch (repeatable) |  |
 | `--interval <DURATION>` | poll and stream reconciliation interval (default 30s) |  |
 
 Examples:
 
 ```sh
 gregale mcp client watch --app my-mcp --uri 'file:///reports/current'
+gregale mcp client watch --app my-mcp --token-env MCP_TOKEN --task-receipt ./task.json
 ```
 
 #### mcp client status
 
 Read the status or result of a previously returned task handle
 
-`gregale mcp client status [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--task-id <ID>] [--metadata-only] [--task-submission-key <UUID>] [--task-receipt <FILE>] [--write-input-template <FILE>] [<slug>]`
+`gregale mcp client status [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--task-id <ID>] [--metadata-only] [--read-result] [--task-submission-key <UUID>] [--task-receipt <FILE>] [--receipt-dir <DIR>] [--write-input-template <FILE>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -10118,8 +10121,10 @@ Read the status or result of a previously returned task handle
 | `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
 | `--task-id <ID>` | opaque task ID (task-get, task-wait or task-cancel) |  |
 | `--metadata-only` | show Task metadata and next action |  |
+| `--read-result` | read a completed Task result from a private receipt |  |
 | `--task-submission-key <UUID>` | find a retained Task by saved UUIDv7 |  |
-| `--task-receipt <FILE>` | find a retained Task from a private receipt |  |
+| `--task-receipt <FILE>` | find a retained Task from a private receipt (repeatable with --metadata-only) |  |
+| `--receipt-dir <DIR>` | list private Task receipts in one directory (with --metadata-only) |  |
 | `--write-input-template <FILE>` | write pending forms to a new private file |  |
 
 Examples:
@@ -10163,11 +10168,33 @@ gregale mcp client wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe
 gregale mcp client wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840 --interactive
 ```
 
+#### mcp client respond
+
+Submit reviewed Task input and return a status snapshot
+
+`gregale mcp client respond [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] --task-receipt <FILE> --reviewed-input-file <FILE> [--timeout <DURATION>] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--task-receipt <FILE>` | private receipt for the retained Task | required |
+| `--reviewed-input-file <FILE>` | answer forms from a reviewed private Task input template | required |
+| `--timeout <DURATION>` | total request timeout (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp client respond --app my-mcp --token-env MCP_TOKEN --task-receipt ./task.json --reviewed-input-file ./reviewed-input.json
+```
+
 #### mcp client cancel
 
 Request cooperative cancellation of a previously returned task
 
-`gregale mcp client cancel [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--task-id <ID>] [<slug>]`
+`gregale mcp client cancel [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--task-id <ID>] [--task-receipt <FILE>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -10185,11 +10212,13 @@ Request cooperative cancellation of a previously returned task
 | `--name <NAME>` | connection name (config) |  |
 | `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
 | `--task-id <ID>` | opaque task ID (task-get, task-wait or task-cancel) |  |
+| `--task-receipt <FILE>` | cancel a retained Task from a private receipt instead of supplying the Task ID |  |
 
 Examples:
 
 ```sh
 gregale mcp client cancel --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840
+gregale mcp client cancel --app my-mcp --task-receipt ./task.json --token-env MCP_TOKEN
 ```
 
 ### mcp readiness
