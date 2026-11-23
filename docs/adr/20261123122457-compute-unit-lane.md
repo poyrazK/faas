@@ -234,3 +234,12 @@ later commits.
 4. **Production canary.** The first run is a manual dispatch of a
    vmmd-only commit while the owner watches. The lane becomes automatic
    after one clean run on both nodes.
+   `compute_lane.enabled` stays false until then, because automatic deploys
+   are on: with it true, the first compute-only merge after a full release
+   would restart vmmd on production unwatched. The canary is a
+   `release-units` dispatch with `deploy_environment` and
+   `compute_lane: true`, which turns the lane on for that run only (in the
+   run's copy of the table) and has its own build concurrency group, so
+   the 10-minute schedule cannot cancel it. It needs a range with no
+   compute role or unit-file change since the base, so it runs after the
+   next full release, once a compute-only commit has merged.
