@@ -66,13 +66,21 @@ class AuthConfigurationError(ValueError):
     pass
 
 
+SIGNING_KEYS_UNAVAILABLE = "signing keys unavailable"
+
+
 class AuthFailure(Exception):
-    def __init__(self, status, code, scopes=None, challenge=True):
+    # description is the challenge's error_description. retryable marks a
+    # failure on this server's side (its signing keys could not be fetched),
+    # answered with Retry-After so a client may send the same token again.
+    def __init__(self, status, code, scopes=None, challenge=True, description="", retryable=False):
         super().__init__(code)
         self.status = status
         self.code = code
         self.scopes = list(scopes or [])
         self.challenge = challenge
+        self.description = description
+        self.retryable = retryable
 
 
 class AuthContext(set):
@@ -304,6 +312,13 @@ class Authenticator:
             subject = claims.get("sub")
             if not isinstance(subject, str) or not subject:
                 raise ValueError("invalid subject")
+        except jwt.PyJWKClientConnectionError:
+            # The provider's JWKS could not be fetched: the token was not
+            # checked, so it is not reported as simply wrong.
+            raise AuthFailure(
+                401, "invalid_token", self.base_scopes,
+                description=SIGNING_KEYS_UNAVAILABLE, retryable=True,
+            ) from None
         except Exception:
             raise AuthFailure(401, "invalid_token", self.base_scopes) from None
 

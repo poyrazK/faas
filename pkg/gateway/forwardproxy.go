@@ -778,8 +778,17 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 
 	// Wait for the body goroutine to drain so we can
 	// distinguish a clean bidi close from a client-disconnect
-	// (which surfaces as a Send error).
-	<-bodyErrCh
+	// (which surfaces as a Send error). A guest that answered before
+	// reading the whole body leaves the pump discarding the rest of the
+	// upload; send the complete response to the client meanwhile.
+	select {
+	case <-bodyErrCh:
+	default:
+		if wroteHeader {
+			flushSafe(w)
+		}
+		<-bodyErrCh
+	}
 }
 
 // grpcTrailersOnlyFields are the status fields a gRPC server sends in a
@@ -1916,11 +1925,26 @@ type forwardBodySender interface {
 	CloseSend() error
 }
 
+// forwardRequestBodyDiscardMaxBytes bounds how much of an upload the gateway
+// reads and discards after the guest stopped taking it (see
+// pumpForwardRequestBody). It matches the largest body any forward path
+// accepts.
+var forwardRequestBodyDiscardMaxBytes = api.RawStreamMaxRequestBytes
+
 // pumpForwardRequestBody streams body to the forward stream in 8 KiB chunks
 // and reports the first error (client disconnect, send failure) on result,
 // which it closes. A cancelled ctx closes body through the ctxReader, so a
 // stalled upload does not hold the goroutine until the server's ReadTimeout
 // (issue #471 review F3).
+//
+// A guest may answer before reading the whole body (a 413 from a size cap,
+// or a handler that ignores the body); the stream then refuses further
+// chunks. The pump keeps reading the rest of the upload and discards it,
+// up to forwardRequestBodyDiscardMaxBytes and within ctx, before it reports
+// the send error. Leaving it unread made this server close the connection
+// with unread data, which reset it, and the hop in front (Caddy, Cloudflare)
+// dropped the response already sent: clients saw an HTTP/2 INTERNAL_ERROR
+// or an empty reply for any body above about 1 MB instead of the answer.
 func pumpForwardRequestBody(ctx context.Context, body io.Reader, stream forwardBodySender, touch func(), result chan<- error) {
 	defer close(result)
 	cr, stopReader := newCtxReader(ctx, body)
@@ -1935,6 +1959,9 @@ func pumpForwardRequestBody(ctx context.Context, body io.Reader, stream forwardB
 					BodyChunk: append([]byte(nil), buf[:n]...),
 				},
 			}); serr != nil {
+				if err == nil {
+					discardForwardRequestBody(cr, buf, touch)
+				}
 				result <- serr
 				return
 			}
@@ -1947,6 +1974,24 @@ func pumpForwardRequestBody(ctx context.Context, body io.Reader, stream forwardB
 		if err != nil {
 			_ = stream.CloseSend()
 			result <- err
+			return
+		}
+	}
+}
+
+// discardForwardRequestBody reads and drops the rest of a request body the
+// guest no longer accepts, up to forwardRequestBodyDiscardMaxBytes. It stops
+// at the end of the body, on any read error (including the ctxReader's
+// cancellation), or at the cap, past which the connection closes as before.
+func discardForwardRequestBody(body io.Reader, buf []byte, touch func()) {
+	var read int64
+	for read < forwardRequestBodyDiscardMaxBytes {
+		n, err := body.Read(buf)
+		if n > 0 {
+			read += int64(n)
+			touch()
+		}
+		if err != nil {
 			return
 		}
 	}

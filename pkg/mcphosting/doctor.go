@@ -125,7 +125,18 @@ var doctorGatewayRetryDelay = time.Second
 
 func discoverCatalogRetryingGateway(ctx context.Context, c *Client) (Catalog, Exchange, error) {
 	catalog, x, err := c.DiscoverCatalog(ctx)
-	for attempt := 0; attempt < doctorGatewayRetries && err != nil && transientGatewayStatus(x.HTTPStatus); attempt++ {
+	keysRetried := false
+	for attempt := 0; attempt < doctorGatewayRetries && err != nil; attempt++ {
+		switch {
+		case transientGatewayStatus(x.HTTPStatus):
+		case !keysRetried && signingKeysUnavailableError(err):
+			// The server could not fetch its authorization server's JWKS,
+			// typically on a fresh candidate's first request; the token was
+			// never checked. One more try, after the server's backoff.
+			keysRetried = true
+		default:
+			return catalog, x, err
+		}
 		select {
 		case <-ctx.Done():
 			return catalog, x, err

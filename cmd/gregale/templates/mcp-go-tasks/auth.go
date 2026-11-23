@@ -72,7 +72,17 @@ type authFailure struct {
 	status int
 	error  string
 	scopes []string
+	// description is the challenge's error_description. retryable marks a
+	// failure on this server's side (its signing keys could not be fetched),
+	// answered with Retry-After so a client may send the same token again.
+	description string
+	retryable   bool
 }
+
+// errSigningKeysUnavailable marks a token that could not be checked because
+// the authorization server's JWKS could not be fetched, as opposed to a token
+// that is wrong.
+var errSigningKeysUnavailable = errors.New("signing keys unavailable")
 
 type scopePolicy struct {
 	configured bool
@@ -362,6 +372,9 @@ func (a *authenticator) authenticate(authorization string) (*authContext, *authF
 		return nil, &authFailure{status: http.StatusUnauthorized, error: "authentication_required", scopes: a.baseScopes}
 	}
 	claims, err := a.keyResolver.verify(match[1], a.issuer, a.resource)
+	if errors.Is(err, errSigningKeysUnavailable) {
+		return nil, &authFailure{status: http.StatusUnauthorized, error: "invalid_token", scopes: a.baseScopes, description: errSigningKeysUnavailable.Error(), retryable: true}
+	}
 	if err != nil {
 		return nil, &authFailure{status: http.StatusUnauthorized, error: "invalid_token", scopes: a.baseScopes}
 	}
@@ -530,10 +543,20 @@ func (a *authenticator) writeFailure(w http.ResponseWriter, failure *authFailure
 		if failure.error != "" && failure.error != "authentication_required" {
 			challenge += fmt.Sprintf(`, error=%q`, failure.error)
 		}
+		if failure.description != "" {
+			challenge += fmt.Sprintf(`, error_description=%q`, failure.description)
+		}
 		w.Header().Set("WWW-Authenticate", challenge)
 	}
+	if failure.retryable {
+		w.Header().Set("Retry-After", "1")
+	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, failure.status, map[string]string{"error": failure.error})
+	body := map[string]string{"error": failure.error}
+	if failure.description != "" {
+		body["error_description"] = failure.description
+	}
+	writeJSON(w, failure.status, body)
 }
 
 type jwkResolver struct {
@@ -736,7 +759,7 @@ func (r *jwkResolver) resolve(kid, algorithm string) (crypto.PublicKey, error) {
 			since := now.Sub(r.lastRefresh)
 			if r.lastFailed && since < jwksFailureBackoff {
 				r.mu.Unlock()
-				return nil, errors.New("could not fetch JWKS")
+				return nil, errSigningKeysUnavailable
 			}
 			if !r.lastFailed && since < jwksUnknownKeyThrottle {
 				r.mu.Unlock()
@@ -749,6 +772,9 @@ func (r *jwkResolver) resolve(kid, algorithm string) (crypto.PublicKey, error) {
 		// Network I/O never holds the cache lock. Fresh cached keys remain
 		// available while other callers share this one bounded refresh.
 		keys, err := r.fetch()
+		if err != nil {
+			err = fmt.Errorf("%w: %v", errSigningKeysUnavailable, err)
+		}
 		r.mu.Lock()
 		r.lastRefresh = time.Now()
 		r.lastFailed = err != nil
