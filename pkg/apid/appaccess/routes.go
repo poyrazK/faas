@@ -95,14 +95,9 @@ var routeActions = map[string]authz.OrgAction{
 	"GET /v1/apps/{slug}/release-approval-policy":    authz.OrgActionReadApp,
 	"PUT /v1/apps/{slug}/release-approval-policy":    authz.OrgActionManageAppSecurity,
 	"DELETE /v1/apps/{slug}/release-approval-policy": authz.OrgActionManageAppSecurity,
-	// Verification contracts gate promotion (ADR-20261122220000): reading one
-	// is reading the app; changing or removing one changes a release gate.
-	"GET /v1/apps/{slug}/verification-contract":    authz.OrgActionReadApp,
-	"PUT /v1/apps/{slug}/verification-contract":    authz.OrgActionManageAppSecurity,
-	"DELETE /v1/apps/{slug}/verification-contract": authz.OrgActionManageAppSecurity,
-	"GET /v1/apps/{slug}/release-approvals":        authz.OrgActionReadApp,
-	"GET /v1/deployments/{id}/approvals":           authz.OrgActionReadApp,
-	"POST /v1/deployments/{id}/approvals":          authz.OrgActionApproveAppRelease,
+	"GET /v1/apps/{slug}/release-approvals":          authz.OrgActionReadApp,
+	"GET /v1/deployments/{id}/approvals":             authz.OrgActionReadApp,
+	"POST /v1/deployments/{id}/approvals":            authz.OrgActionApproveAppRelease,
 	// A check after a release command with an unknown outcome (ADR-1448 amendment 1).
 	"POST /v1/deployments/{id}/release-outcome": authz.OrgActionDeployApp,
 	// Release diff (ADR-20261021101117).

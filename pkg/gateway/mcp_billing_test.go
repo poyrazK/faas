@@ -6,6 +6,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -104,5 +105,27 @@ func TestMCPBillingRelabelsJWTTenantCandidate(t *testing.T) {
 	h.applyMCPBilling(anonymous, App{ID: "app-1"}, consumerKeyMCPRule().MCP, mcpCall{method: "tools/call", name: "search"})
 	if billingRouteFrom(anonymous) != "" || anonymous.Context().Value(billingRouteCandidateKey{}) != nil {
 		t.Fatal("anonymous traffic carries no billing label")
+	}
+}
+
+func TestEnforceConsumerPlanRouteLimitDenial(t *testing.T) {
+	app := App{ID: "app-1", AccountID: "acct-1"}
+	store := &fakeConsumerPlanStore{
+		policy:   ConsumerPlanPolicy{RouteLimits: map[string]api.APIConsumerPlanRouteLimit{"MCP /tools/generate": {MaxRequestsPerMonth: 100}}},
+		decision: ConsumerPlanDecision{Scope: "route_month", Limit: 100, Observed: 100, RetryAfterSeconds: 3600},
+	}
+	h := (&Handler{apiMonetization: monetizationOn}).WithConsumerPlanStore(store)
+	w, r := httptest.NewRecorder(), planRequest("MCP /tools/generate")
+	if h.enforceConsumerPlan(w, r, &statusRecorder{}, app, false) {
+		t.Fatal("capped tool admitted")
+	}
+	if len(store.admitRoutes) != 1 || store.admitRoutes[0] != "MCP /tools/generate" {
+		t.Fatalf("admission routes = %v", store.admitRoutes)
+	}
+	body := w.Body.String()
+	if w.Code != http.StatusTooManyRequests || w.Header().Get("X-Faas-Rate-Limit-Scope") != "consumer-plan-route-month" ||
+		!strings.Contains(body, "100 requests per month on MCP /tools/generate") || !strings.Contains(body, `"limit":100`) ||
+		!strings.Contains(body, "route-limits") {
+		t.Fatalf("code=%d scope=%q body=%s", w.Code, w.Header().Get("X-Faas-Rate-Limit-Scope"), body)
 	}
 }
