@@ -416,8 +416,9 @@ closed by a later slice:
   pause, so the old VM could acknowledge writes that were dropped with it. A
   canary or 5xx rollback has nothing to offer a cache anyway: the old VM's
   copy goes stale as soon as the handoff starts. `release.ApplyDefault` now
-  leaves deployments of `api.ManagedValkeyImage` immediate, and the prod
-  journey fails a resize whose cutover takes over 3 minutes.
+  leaves every deploy of a cache app immediate (ADR-1446 amendment of
+  2026-11-23), and the prod journey fails a resize whose handoff takes over
+  3 minutes.
 - **Unchanged:** the stateful-image deny-list. `valkey` is not on it today,
   and adding it would break customers who deploy Valkey themselves. That is
   left for an owner decision.
