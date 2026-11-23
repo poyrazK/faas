@@ -104,3 +104,15 @@ class TaskMetricsPublisherTests(unittest.TestCase):
                 logged = error.call_args.args[0]
                 self.assertEqual(json.loads(logged), want)
                 self.assertNotIn("secret", logged)
+
+
+class WorkerReceiptTests(unittest.TestCase):
+    def test_receipt_names_registry_id_and_drain_budget(self):
+        """The CLI release gate reads this receipt (ADR-20261123160000)."""
+        import uuid
+        from types import SimpleNamespace
+        from tasks import DurableTaskRuntime
+        worker = SimpleNamespace(_worker_id=uuid.UUID("11111111-1111-4111-8111-111111111111"), drain_timeout=45)
+        self.assertEqual(json.loads(DurableTaskRuntime.worker_receipt(worker)), {
+            "event": "mcp_task_worker_started", "workerID": "11111111-1111-4111-8111-111111111111",
+            "claimFence": False, "shutdownTimeoutMs": 45000})

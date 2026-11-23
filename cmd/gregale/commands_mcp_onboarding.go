@@ -246,10 +246,10 @@ func mcpStackReadme(options mcpInitOptions) string {
 	guide.WriteString("Verify the observer and queue before requesting scale-to-zero:\n\n```sh\n")
 	fmt.Fprintf(&guide, "gregale mcp observer setup --app %s-observer --worker-app %s-worker --config ./observer/gregale-mcp.json\ngregale mcp tasks setup --app %s-worker --observer-app %s-observer --min 0\n# Apply only after the preview reports a ready observer and fresh heartbeat:\ngregale mcp tasks setup --app %s-worker --observer-app %s-observer --min 0 --apply\n", options.Name, options.Name, options.Name, options.Name, options.Name, options.Name)
 	guide.WriteString("```\n\nThe observer and database remain running when workers reach zero. ")
-	if options.Runtime == "node" {
-		guide.WriteString("For later worker replacements, use `gregale mcp server tasks deploy` with a separate candidate worker application and the previous worker apps in the release plan. Keep its journal outside the source directories. ")
-	} else {
-		guide.WriteString("Go/Python worker replacements require a manual rollout; the automated Task release gate supports Node workers only. Run explicit migrations first, retain the keys and handler versions needed by existing Tasks, and deploy replacement workers into a separate application with at least one replica. Verify fresh worker-handler registrations, queue progress and the observer heartbeat before gracefully retiring previous workers. See the runtime README for upgrade details. ")
+	guide.WriteString("For later worker replacements, use `gregale mcp server tasks deploy` with a separate candidate worker application and the previous worker apps in the release plan. Keep its journal outside the source directories. ")
+	if options.Runtime != "node" {
+		// ADR-20261123160000: the CLI gates Go/Python releases itself.
+		guide.WriteString("For Go/Python workers the CLI runs the release gate itself: it drains previous workers only after each replacement registers every handler version that unfinished Tasks need. Recovery, quarantine and retirement of a failed Go/Python release stay manual; see the runtime README. ")
 	}
 	guide.WriteString("Handlers with external side effects must be idempotent by Task ID.\n\nMCP hosting remains preview until native lifecycle and real provider/client qualification evidence is recorded.\n")
 	return guide.String()

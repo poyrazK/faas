@@ -1,6 +1,26 @@
 package main
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+	"time"
+)
+
+// mcpTaskWorkerReceipt is the startup receipt `gregale mcp server tasks
+// deploy` reads from worker logs to learn each replacement's registry ID and
+// how long an older generation needs to drain. It is refreshed with every
+// capability heartbeat so it outlives the bounded per-instance log ring.
+// claimFence is false: this runtime has no database-side claim fence, so the
+// CLI's quarantine and retirement flows (which need one) stay Node-only.
+func mcpTaskWorkerReceipt(workerID string, drainTimeout time.Duration) string {
+	body, _ := json.Marshal(struct {
+		Event             string `json:"event"`
+		WorkerID          string `json:"workerID"`
+		ClaimFence        bool   `json:"claimFence"`
+		ShutdownTimeoutMS int64  `json:"shutdownTimeoutMs"`
+	}{"mcp_task_worker_started", workerID, false, drainTimeout.Milliseconds()})
+	return string(body)
+}
 
 func (runtime *mcpTaskRuntime) markWorkerDraining(ctx context.Context) error {
 	runtime.workerRegistryMu.Lock()

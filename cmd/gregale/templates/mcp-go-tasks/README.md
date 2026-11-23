@@ -286,18 +286,22 @@ replicas.
 
 ## Worker upgrades
 
-The automated `gregale mcp server tasks deploy` gate supports Node workers only.
-Go workers require a manual rollout:
+`gregale mcp server tasks deploy` replaces Go workers without dropping Tasks.
+The CLI runs the release gate itself (ADR-20261123160000): it takes the
+namespace's release lock, runs `go run . tasks-migrate apply` with
+`MCP_TASK_MIGRATION_DATABASE_URL`, deploys the candidate worker app, waits until
+each replacement is registered, heartbeating and serving every handler version
+that unfinished Tasks need, then drains the previous worker apps. Workers log an
+`mcp_task_worker_started` receipt (worker ID and drain budget) that the CLI reads;
+a generation deployed before the receipt existed must be replaced manually once.
+Export `MCP_TASK_NAMESPACE`, the worker's database binding and the migration
+binding before running it, and keep the release journal outside the sources.
 
-1. Run explicit schema migrations with the migration binding. Retain the owner
-   keys, payload keys and handler versions needed by existing Tasks on every writer.
-2. Deploy replacement workers into a separate app with at least one replica and
-   the same namespace, database and execution policy. Verify the replacements
-   start successfully, publish fresh worker-handler registrations and advance work.
-3. Point the observer at the replacement worker app with an app-scoped
-   `metrics:write` token. Verify its fresh heartbeat before enabling scale-to-zero
-   for that app. Gracefully retire previous workers after checking compatibility
-   and replacement readiness. Keep external effects idempotent by Task ID.
+Retain the owner keys, payload keys and handler versions needed by existing
+Tasks on every writer. Recovery, quarantine and retirement of a failed Go
+release are manual: restore the previous worker app's replicas, then retire the
+candidate after checking replacement readiness. Keep external effects idempotent
+by Task ID.
 
 ## Graceful shutdown
 

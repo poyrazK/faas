@@ -65,3 +65,13 @@ func TestTaskHeartbeatRechecksExpiryAfterRowLock(t *testing.T) {
 		})
 	}
 }
+
+// The CLI's release gate maps instances to registry IDs and drain budgets
+// through this receipt (ADR-20261123160000).
+func TestTaskWorkerReceiptNamesRegistryIDAndDrainBudget(t *testing.T) {
+	got := mcpTaskWorkerReceipt("11111111-1111-4111-8111-111111111111", 45*time.Second)
+	want := `{"event":"mcp_task_worker_started","workerID":"11111111-1111-4111-8111-111111111111","claimFence":false,"shutdownTimeoutMs":45000}`
+	if got != want {
+		t.Fatalf("receipt = %s, want %s", got, want)
+	}
+}
