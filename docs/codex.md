@@ -15,7 +15,7 @@ gregale login
 `gregale login` opens your browser once; run it yourself, in your own
 terminal. Codex then uses that login for every `gregale` command it runs.
 Where nobody can open a browser, put a scoped key in Codex's environment as
-`FAAS_TOKEN` instead; see
+`GREGALE_TOKEN` instead; see
 [Give the agent its own key](agents.md#give-the-agent-its-own-key).
 
 The CLI needs to reach Gregale over the network. If Codex runs commands in

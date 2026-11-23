@@ -23,7 +23,7 @@ gregale --non-interactive --json whoami
 - Command not found: ask the user to install the CLI
   (https://gregale.dev/docs/cli) and stop.
 - Exit code `2`: no valid credential. Ask the user to run `gregale login` or
-  to set `FAAS_TOKEN` in your environment, then stop. Never ask them to paste
+  to set `GREGALE_TOKEN` in your environment, then stop. Never ask them to paste
   a token into the conversation.
 
 ## 2. Read the project's instructions
@@ -127,7 +127,7 @@ rolled back, say which release serves now and why.
 
 ## Rules
 
-- Never print, store or pass `FAAS_TOKEN` as a command argument.
+- Never print, store or pass `GREGALE_TOKEN` as a command argument.
 - Ask before deleting apps, rolling back production or changing environment
   variables. Preview deletions with `--dry-run`, and never add `--yes` on the
   user's behalf.
