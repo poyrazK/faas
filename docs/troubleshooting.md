@@ -97,7 +97,7 @@ The most common causes behind those codes:
 
 - **A missing environment variable or secret.** The app crashes reading a
   variable that is not set. Add it with `gregale env set --app my-api NAME=value`,
-  or for a credential see [Delivered secrets](secrets.md), then deploy again.
+  or for a credential see [Secrets](secrets.md), then deploy again.
 - **The process exits when it is done.** A web app must keep running. A start
   command that runs a script and exits with code 0 still fails, because
   nothing is left to serve. For run-to-completion work, use a [job](jobs.md)
