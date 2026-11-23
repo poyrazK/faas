@@ -2902,6 +2902,7 @@ export type { PutOutboundDailyRequestBudgetRequest } from './models/PutOutboundD
 export type { PutOutboundRequestPolicyRequest } from './models/PutOutboundRequestPolicyRequest.js';
 export type { PutOutboundRunsBindingRequest } from './models/PutOutboundRunsBindingRequest.js';
 export type { PutPostgresChangesRequest } from './models/PutPostgresChangesRequest.js';
+export type { PutVerificationContractRequest } from './models/PutVerificationContractRequest.js';
 export type { PutWebhookWorkflowBindingRequest } from './models/PutWebhookWorkflowBindingRequest.js';
 export type { QueueBindingCanary } from './models/QueueBindingCanary.js';
 export type { QueueBindingResponse } from './models/QueueBindingResponse.js';
@@ -3642,6 +3643,7 @@ export type { UsageResponse } from './models/UsageResponse.js';
 export type { UsageSummaryResponse } from './models/UsageSummaryResponse.js';
 export type { ValidateStoredWorkflowRequest } from './models/ValidateStoredWorkflowRequest.js';
 export type { ValidateStoredWorkflowResponse } from './models/ValidateStoredWorkflowResponse.js';
+export type { VerificationContract } from './models/VerificationContract.js';
 export type { Vulnerability } from './models/Vulnerability.js';
 export type { WakeTimelineApp } from './models/WakeTimelineApp.js';
 export type { WakeTimelineEvent } from './models/WakeTimelineEvent.js';
