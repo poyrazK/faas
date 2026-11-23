@@ -471,12 +471,13 @@ func (e *Evaluator) runOnce(ctx context.Context, scheduled, now time.Time) (Stat
 		return stats, fmt.Errorf("alerts: list enabled: %w", err)
 	}
 	stats.Evaluated = len(rules)
-	e.anomaly.begin(ctx, scheduled)
+	e.anomaly.begin(scheduled)
 	e.deliverWebhookStandDowns(ctx, now, &stats)
 
 	for _, account := range e.evalAccounts(ctx, groupByAccount(rules), now) {
 		stats.add(account)
 	}
+	e.warmAnomalyBaselines(ctx)
 	e.recordRuleOutcomes(stats)
 	if err := ctx.Err(); err != nil {
 		return stats, err

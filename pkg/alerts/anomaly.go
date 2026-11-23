@@ -51,18 +51,17 @@ func (f anomalyBaselineFrame) at(check time.Time) (anomalyBaseline, bool) {
 // Share matching reads within a tick and retain aligned historical checkpoints
 // across ticks. The frame retains time-of-day changes inside the cache period.
 type anomalyState struct {
-	mu      sync.Mutex
-	at      time.Time
-	reads   map[anomalyKey]*anomalyRead
-	frames  map[anomalyKey]anomalyBaselineFrame
-	warming map[anomalyKey]bool
-	runCtx  context.Context
+	mu        sync.Mutex
+	at        time.Time
+	reads     map[anomalyKey]*anomalyRead
+	frames    map[anomalyKey]anomalyBaselineFrame
+	warming   map[anomalyKey]bool
+	requested []anomalyKey
 }
 
-func (s *anomalyState) begin(ctx context.Context, now time.Time) {
+func (s *anomalyState) begin(now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.runCtx = ctx
 	at := now.UTC().Truncate(time.Second)
 	if !s.at.Equal(at) || s.reads == nil {
 		s.at = at
@@ -194,38 +193,51 @@ func (e *Evaluator) anomalyBaselineFor(ctx context.Context, rule state.AlertRule
 	}
 	close(read.done)
 	if read.ok {
-		e.warmAnomalyBaselines(key, at)
+		e.anomaly.requestWarm(key)
 	}
 	return read.baseline, read.ok
 }
 
-// Warming is best effort and uses its own deadline. The next check takes the
-// exact-read path whenever the frame is missing, unfinished or off-grid.
-func (e *Evaluator) warmAnomalyBaselines(key anomalyKey, at time.Time) {
-	s := &e.anomaly
+func (s *anomalyState) requestWarm(key anomalyKey) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, attempted := s.frames[key]; attempted || s.warming[key] || len(s.warming) >= anomalyWarmLimit || s.runCtx.Err() != nil {
+	if _, attempted := s.frames[key]; attempted || s.warming[key] || len(s.warming) >= anomalyWarmLimit {
 		return
 	}
 	if s.warming == nil {
 		s.warming = make(map[anomalyKey]bool)
 	}
 	s.warming[key] = true
-	ctx, cancel := context.WithTimeout(s.runCtx, anomalyWarmBudget)
-	go func() {
-		defer cancel()
-		frame := e.prefetchAnomalyBaselines(ctx, key, at)
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		delete(s.warming, key)
-		if s.at.Before(at.Add(api.AnomalyBaselineCacheTTL)) {
-			if s.frames == nil {
-				s.frames = make(map[anomalyKey]anomalyBaselineFrame)
-			}
-			s.frames[key] = frame
+	s.requested = append(s.requested, key)
+}
+
+// Cache warming starts after the current reads finish and shares the
+// evaluator loop's lifetime. A missing or unfinished frame uses a direct read.
+func (e *Evaluator) warmAnomalyBaselines(ctx context.Context) {
+	s := &e.anomaly
+	s.mu.Lock()
+	at, requested := s.at, s.requested
+	s.requested = nil
+	s.mu.Unlock()
+	for _, key := range requested {
+		go e.warmAnomalyBaseline(ctx, key, at)
+	}
+}
+
+func (e *Evaluator) warmAnomalyBaseline(ctx context.Context, key anomalyKey, at time.Time) {
+	warmCtx, cancel := context.WithTimeout(ctx, anomalyWarmBudget)
+	defer cancel()
+	frame := e.prefetchAnomalyBaselines(warmCtx, key, at)
+	s := &e.anomaly
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.warming, key)
+	if ctx.Err() == nil && s.at.Before(at.Add(api.AnomalyBaselineCacheTTL)) {
+		if s.frames == nil {
+			s.frames = make(map[anomalyKey]anomalyBaselineFrame)
 		}
-	}()
+		s.frames[key] = frame
+	}
 }
 
 func (e *Evaluator) prefetchAnomalyBaselines(ctx context.Context, key anomalyKey, first time.Time) anomalyBaselineFrame {
