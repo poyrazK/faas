@@ -1610,8 +1610,15 @@ class MCPHandler(BaseHTTPRequestHandler):
             )
             if failure.code != "authentication_required":
                 challenge += f', error="{failure.code}"'
+            if failure.description:
+                challenge += f', error_description="{failure.description}"'
             headers["WWW-Authenticate"] = challenge
-        self.send_json(failure.status, {"error": failure.code}, headers)
+        body = {"error": failure.code}
+        if failure.description:
+            body["error_description"] = failure.description
+        if failure.retryable:
+            headers["Retry-After"] = "1"
+        self.send_json(failure.status, body, headers)
 
     def send_rpc(self, status, value, protocol=None):
         observation = getattr(self, "_protocol_observation", None)

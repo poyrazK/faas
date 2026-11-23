@@ -10354,6 +10354,11 @@ const (
 	// the same Hobby+ plans) so an LLM-style upgrade stream has
 	// the same headroom.
 	RawStreamMaxRequestBytes int64 = 100 * 1024 * 1024
+	// ForwardRequestBodyDiscardTimeout bounds how long the gateway drains
+	// an HTTP/1 upload the guest left unread after answering, so the
+	// connection ends cleanly instead of resetting (and losing the answer)
+	// without a stalled client holding the request open.
+	ForwardRequestBodyDiscardTimeout = 10 * time.Second
 
 	// RawStreamMaxResponseBytes (issue #676 / ADR-080 follow-up,
 	// PR-C) bounds the per-session egress bytes on the raw-bytes
