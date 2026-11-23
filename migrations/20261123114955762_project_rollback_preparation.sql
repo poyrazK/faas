@@ -1,12 +1,12 @@
 -- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
-ALTER TABLE deployment_rollback_operations ADD COLUMN project_rollback_id uuid;
+ALTER TABLE deployment_rollback_operations ADD COLUMN IF NOT EXISTS project_rollback_id uuid;
 
 -- An older controller may still be handling a checked rollback during a
 -- rollout. Protect the preparation marker and the project receipt on disk.
 -- +goose StatementBegin
-CREATE FUNCTION retain_project_rollback_preparation() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION retain_project_rollback_preparation() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_OP = 'INSERT' THEN
         SELECT p.id INTO NEW.project_rollback_id
@@ -29,12 +29,22 @@ BEGIN
 END $$;
 -- +goose StatementEnd
 
-CREATE TRIGGER retain_project_rollback_preparation
-    BEFORE INSERT OR UPDATE ON deployment_rollback_operations
-    FOR EACH ROW EXECUTE FUNCTION retain_project_rollback_preparation();
+-- +goose StatementBegin
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgrelid = 'deployment_rollback_operations'::regclass AND tgname = 'retain_project_rollback_preparation'
+    ) THEN
+        CREATE TRIGGER retain_project_rollback_preparation
+            BEFORE INSERT OR UPDATE ON deployment_rollback_operations
+            FOR EACH ROW EXECUTE FUNCTION retain_project_rollback_preparation();
+    END IF;
+END $$;
+-- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE FUNCTION retain_project_rollback_phase() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION retain_project_rollback_phase() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF OLD.receipt ? 'phase' AND NOT (NEW.receipt ? 'phase') THEN
         NEW.receipt := NEW.receipt || jsonb_build_object(
@@ -44,11 +54,21 @@ BEGIN
 END $$;
 -- +goose StatementEnd
 
-CREATE TRIGGER retain_project_rollback_phase BEFORE UPDATE ON project_rollback_operations
-    FOR EACH ROW EXECUTE FUNCTION retain_project_rollback_phase();
+-- +goose StatementBegin
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgrelid = 'project_rollback_operations'::regclass AND tgname = 'retain_project_rollback_phase'
+    ) THEN
+        CREATE TRIGGER retain_project_rollback_phase BEFORE UPDATE ON project_rollback_operations
+            FOR EACH ROW EXECUTE FUNCTION retain_project_rollback_phase();
+    END IF;
+END $$;
+-- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE FUNCTION guard_project_rollback_preparation() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_project_rollback_preparation() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF NEW.status = 'live' AND NEW.traffic_percent > (CASE WHEN OLD.status = 'live' THEN OLD.traffic_percent ELSE 0 END)
        AND EXISTS (
@@ -64,9 +84,19 @@ BEGIN
 END $$;
 -- +goose StatementEnd
 
-CREATE TRIGGER guard_project_rollback_preparation
-    BEFORE UPDATE OF status,traffic_percent ON deployments
-    FOR EACH ROW EXECUTE FUNCTION guard_project_rollback_preparation();
+-- +goose StatementBegin
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgrelid = 'deployments'::regclass AND tgname = 'guard_project_rollback_preparation'
+    ) THEN
+        CREATE TRIGGER guard_project_rollback_preparation
+            BEFORE UPDATE OF status,traffic_percent ON deployments
+            FOR EACH ROW EXECUTE FUNCTION guard_project_rollback_preparation();
+    END IF;
+END $$;
+-- +goose StatementEnd
 
 -- +goose Down
 SET LOCAL lock_timeout = '5s';

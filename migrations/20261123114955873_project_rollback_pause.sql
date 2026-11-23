@@ -5,7 +5,7 @@ SET LOCAL lock_timeout = '5s';
 -- A controller using an older receipt format cannot reopen an accepted
 -- pause. Only a resume from a settled pause can clear the pause marker.
 -- +goose StatementBegin
-CREATE FUNCTION preserve_project_rollback_pause() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION preserve_project_rollback_pause() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF OLD.receipt ? 'pause_requested_at' AND (
         (NEW.receipt->>'pause_requested_at' IS DISTINCT FROM OLD.receipt->>'pause_requested_at'
@@ -20,15 +20,25 @@ BEGIN
 END $$;
 -- +goose StatementEnd
 
-CREATE TRIGGER preserve_project_rollback_pause
-    BEFORE UPDATE OF status, receipt ON project_rollback_operations
-    FOR EACH ROW EXECUTE FUNCTION preserve_project_rollback_pause();
+-- +goose StatementBegin
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgrelid = 'project_rollback_operations'::regclass AND tgname = 'preserve_project_rollback_pause'
+    ) THEN
+        CREATE TRIGGER preserve_project_rollback_pause
+            BEFORE UPDATE OF status, receipt ON project_rollback_operations
+            FOR EACH ROW EXECUTE FUNCTION preserve_project_rollback_pause();
+    END IF;
+END $$;
+-- +goose StatementEnd
 
 -- Early durable project rollbacks did not link their checked children.
 -- Match their saved attempt and deployment pair, then take the same
 -- receipt lock that the pause takes before permitting a traffic increase.
 -- +goose StatementBegin
-CREATE FUNCTION guard_legacy_project_rollback_pause() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_legacy_project_rollback_pause() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE request_id text := nullif(current_setting('faas.checked_rollback_request', true), '');
         paused boolean;
 BEGIN
@@ -54,9 +64,19 @@ BEGIN
 END $$;
 -- +goose StatementEnd
 
-CREATE TRIGGER guard_legacy_project_rollback_pause
-    BEFORE UPDATE OF status,traffic_percent ON deployments
-    FOR EACH ROW EXECUTE FUNCTION guard_legacy_project_rollback_pause();
+-- +goose StatementBegin
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgrelid = 'deployments'::regclass AND tgname = 'guard_legacy_project_rollback_pause'
+    ) THEN
+        CREATE TRIGGER guard_legacy_project_rollback_pause
+            BEFORE UPDATE OF status,traffic_percent ON deployments
+            FOR EACH ROW EXECUTE FUNCTION guard_legacy_project_rollback_pause();
+    END IF;
+END $$;
+-- +goose StatementEnd
 
 -- +goose Down
 SET LOCAL lock_timeout = '5s';

@@ -389,8 +389,8 @@ func TestProjectRollbackChecksDownstreamBeforeCreatingReceipt(t *testing.T) {
 }
 
 type projectRollbackHealthTestStore struct {
-	*state.MemStore
-	routes map[string]api.ProjectRollbackTraffic
+	*state.MemStore // teststorecheck:allow implements state.ProjectRollbackHealthStore, which statetest.Mem would hide
+	routes          map[string]api.ProjectRollbackTraffic
 }
 
 func (s *projectRollbackHealthTestStore) ProjectRollbackHealthRoute(_ context.Context, _, attempt string) (api.ProjectRollbackTraffic, error) {

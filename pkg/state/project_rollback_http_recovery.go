@@ -139,34 +139,51 @@ func (s *PgStore) ReplayProjectRollbackRoutes(ctx context.Context) error {
 // the exact target in its routing caches. Old notification-only ACKs cannot
 // advance this receipt.
 func (s *PgStore) AcknowledgeProjectRollbackHTTPRoute(ctx context.Context, route db.DeploymentRouteChangedPayload, node string) (time.Time, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+
+	// Take the receipt lock before reading the roster. A statement that waits
+	// here can otherwise see a newer receipt alongside an older roster snapshot.
+	var rollbackID string
+	err = tx.QueryRow(ctx, `
+		SELECT rollback_id::text FROM project_rollback_http_recovery
+		WHERE generation = $1 AND app_id = $2 AND target_id = $3
+		  AND first_success_at IS NULL AND expires_at > clock_timestamp()
+		FOR UPDATE`, route.Generation, route.AppID, route.DeploymentID).Scan(&rollbackID)
+	if err != nil {
+		return time.Time{}, mapErr(err)
+	}
+
 	var expires time.Time
-	// Reconcile before the barrier can pass, even when the ACK beats replay.
-	// Lock the receipt so concurrent ACKs and replay carry forward each ACK.
-	err := s.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		WITH matched AS (
 			SELECT r.rollback_id, r.acknowledged_gateways,
 			       CASE WHEN r.gateways_applied_at IS NULL THEN `+projectRollbackPendingGateways+`
 			            ELSE r.expected_gateways END AS expected
 			FROM project_rollback_http_recovery r
-			WHERE r.generation = $1 AND r.app_id = $2 AND r.target_id = $3
-			  AND r.first_success_at IS NULL
-			  AND EXISTS (SELECT 1 FROM compute_nodes WHERE name = $4 AND lifecycle <> 'retired')
-			  AND NOT EXISTS (SELECT 1 FROM compute_node_db_logins WHERE login = session_user AND node_name <> $4)
+			WHERE r.rollback_id = $1
+			  AND EXISTS (SELECT 1 FROM compute_nodes WHERE name = $2 AND lifecycle <> 'retired')
+			  AND NOT EXISTS (SELECT 1 FROM compute_node_db_logins WHERE login = session_user AND node_name <> $2)
 			  AND r.expires_at > clock_timestamp() AND `+projectRollbackRouteCurrent+`
-			FOR UPDATE OF r
 		), accepted AS (
 			SELECT rollback_id, expected, ARRAY(
-				SELECT g FROM unnest(expected) AS g WHERE g = $4 OR g = ANY(acknowledged_gateways)
+				SELECT g FROM unnest(expected) AS g WHERE g = $2 OR g = ANY(acknowledged_gateways)
 			) AS acknowledged
-			FROM matched WHERE $4 = ANY(expected)
+			FROM matched WHERE $2 = ANY(expected)
 		)
 		UPDATE project_rollback_http_recovery r
 		SET expected_gateways = accepted.expected, acknowledged_gateways = accepted.acknowledged,
 		    gateways_applied_at = CASE WHEN accepted.expected <@ accepted.acknowledged
 		        THEN coalesce(r.gateways_applied_at, clock_timestamp()) ELSE r.gateways_applied_at END
 		FROM accepted WHERE r.rollback_id = accepted.rollback_id
-		RETURNING r.expires_at`, route.Generation, route.AppID, route.DeploymentID, node).Scan(&expires)
-	return expires, mapErr(err)
+		RETURNING r.expires_at`, rollbackID, node).Scan(&expires)
+	if err != nil {
+		return time.Time{}, mapErr(err)
+	}
+	return expires, mapErr(tx.Commit(ctx))
 }
 
 func (s *PgStore) RecordProjectRollbackHTTPResponse(ctx context.Context, route db.DeploymentRouteChangedPayload, node string, startedAt, succeededAt time.Time) (bool, error) {

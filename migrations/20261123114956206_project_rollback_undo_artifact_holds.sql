@@ -2,7 +2,7 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 
-CREATE TABLE project_rollback_undo_artifact_holds (
+CREATE TABLE IF NOT EXISTS project_rollback_undo_artifact_holds (
     operation_id uuid NOT NULL REFERENCES project_rollback_operations(id) ON DELETE CASCADE,
     deployment_id uuid NOT NULL,
     storage_keys text[] NOT NULL CHECK (cardinality(storage_keys) > 0),
@@ -10,7 +10,7 @@ CREATE TABLE project_rollback_undo_artifact_holds (
     PRIMARY KEY (operation_id, deployment_id)
 );
 
-CREATE INDEX project_rollback_undo_artifact_keys_idx
+CREATE INDEX IF NOT EXISTS project_rollback_undo_artifact_keys_idx
     ON project_rollback_undo_artifact_holds USING gin (storage_keys);
 
 -- +goose StatementBegin
@@ -31,7 +31,7 @@ $$;
 
 -- A worker can settle a pause after a restart or while an older binary
 -- is still running. Stamp the deadline in the transaction that settles it.
-CREATE FUNCTION finish_project_rollback_undo_artifact_holds() RETURNS trigger
+CREATE OR REPLACE FUNCTION finish_project_rollback_undo_artifact_holds() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
     IF NEW.status = 'blocked' THEN
@@ -46,10 +46,20 @@ END;
 $$;
 -- +goose StatementEnd
 
-CREATE TRIGGER finish_project_rollback_undo_artifact_holds
-    AFTER UPDATE OF status ON project_rollback_operations
-    FOR EACH ROW WHEN (OLD.status IS DISTINCT FROM NEW.status)
-    EXECUTE FUNCTION finish_project_rollback_undo_artifact_holds();
+-- +goose StatementBegin
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgrelid = 'project_rollback_operations'::regclass AND tgname = 'finish_project_rollback_undo_artifact_holds'
+    ) THEN
+        CREATE TRIGGER finish_project_rollback_undo_artifact_holds
+            AFTER UPDATE OF status ON project_rollback_operations
+            FOR EACH ROW WHEN (OLD.status IS DISTINCT FROM NEW.status)
+            EXECUTE FUNCTION finish_project_rollback_undo_artifact_holds();
+    END IF;
+END $$;
+-- +goose StatementEnd
 
 -- +goose Down
 SET LOCAL lock_timeout = '5s';

@@ -2,7 +2,7 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 
-CREATE TABLE project_rollback_operations (
+CREATE TABLE IF NOT EXISTS project_rollback_operations (
     id uuid PRIMARY KEY,
     project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     status text NOT NULL CHECK (status IN ('running', 'blocked', 'complete')),
@@ -11,9 +11,9 @@ CREATE TABLE project_rollback_operations (
     receipt jsonb NOT NULL
 );
 
-CREATE UNIQUE INDEX project_rollback_one_running
+CREATE UNIQUE INDEX IF NOT EXISTS project_rollback_one_running
     ON project_rollback_operations (project_id) WHERE status = 'running';
-CREATE INDEX project_rollback_due
+CREATE INDEX IF NOT EXISTS project_rollback_due
     ON project_rollback_operations (next_run_at, id) WHERE status = 'running';
 
 -- +goose Down

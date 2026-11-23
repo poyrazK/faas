@@ -3,7 +3,7 @@
 SET LOCAL lock_timeout = '5s';
 
 -- +goose StatementBegin
-CREATE FUNCTION preserve_project_rollback_live_traffic_policy() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION preserve_project_rollback_live_traffic_policy() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF OLD.receipt->>'verify_live_traffic' = 'true' AND (
         NEW.receipt->>'verify_live_traffic' IS DISTINCT FROM 'true'
@@ -15,13 +15,23 @@ BEGIN
 END $$;
 -- +goose StatementEnd
 
-CREATE TRIGGER preserve_project_rollback_live_traffic_policy
-    BEFORE UPDATE OF receipt ON project_rollback_operations
-    FOR EACH ROW EXECUTE FUNCTION preserve_project_rollback_live_traffic_policy();
+-- +goose StatementBegin
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgrelid = 'project_rollback_operations'::regclass AND tgname = 'preserve_project_rollback_live_traffic_policy'
+    ) THEN
+        CREATE TRIGGER preserve_project_rollback_live_traffic_policy
+            BEFORE UPDATE OF receipt ON project_rollback_operations
+            FOR EACH ROW EXECUTE FUNCTION preserve_project_rollback_live_traffic_policy();
+    END IF;
+END $$;
+-- +goose StatementEnd
 
 -- Older checked workers know the probe gate but cannot authorize this gate.
 -- +goose StatementBegin
-CREATE FUNCTION guard_project_rollback_live_traffic() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_project_rollback_live_traffic() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF NEW.status = 'live' AND NEW.traffic_percent > (CASE WHEN OLD.status = 'live' THEN OLD.traffic_percent ELSE 0 END)
        AND EXISTS (
@@ -38,9 +48,19 @@ BEGIN
 END $$;
 -- +goose StatementEnd
 
-CREATE TRIGGER guard_verified_project_rollback_traffic
-    BEFORE UPDATE OF status,traffic_percent ON deployments
-    FOR EACH ROW EXECUTE FUNCTION guard_project_rollback_live_traffic();
+-- +goose StatementBegin
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgrelid = 'deployments'::regclass AND tgname = 'guard_verified_project_rollback_traffic'
+    ) THEN
+        CREATE TRIGGER guard_verified_project_rollback_traffic
+            BEFORE UPDATE OF status,traffic_percent ON deployments
+            FOR EACH ROW EXECUTE FUNCTION guard_project_rollback_live_traffic();
+    END IF;
+END $$;
+-- +goose StatementEnd
 
 -- +goose Down
 SET LOCAL lock_timeout = '5s';

@@ -1,6 +1,7 @@
 package state_test
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -325,18 +326,61 @@ func TestPgProjectRollbackHTTPRecovery(t *testing.T) {
 	read("awaiting_gateways")
 	exec(`UPDATE compute_nodes SET lifecycle = 'active' WHERE name = 'rollback-edge-a'`)
 
-	// Edge B acknowledged before retirement. An ACK from A before replay
-	// must count the replacement C instead of completing the old roster.
 	exec(`UPDATE compute_nodes SET lifecycle = 'retired' WHERE name = 'rollback-edge-b'`)
-	exec(`INSERT INTO compute_nodes(name,target_url,vpcpus,mem_mb,max_concurrency,admission_ceiling_mb,role,lifecycle,gateway_target_url)
-	      VALUES('rollback-edge-c','unix:///run/test.sock',2,1024,10,512,'compute-only','active','tcp://127.0.0.1:8080')`)
 	exec(`UPDATE project_rollback_http_recovery SET expires_at = clock_timestamp() - interval '1 second',
 		next_notify_at = NULL WHERE rollback_id = $1`, child.ID)
 	if r, err := s.ProjectRollbackHealthRoute(ctx, record.ID, child.ID); err != nil ||
 		r.RouteGeneration == nil || *r.RouteGeneration != route.Generation {
 		t.Fatalf("rearmed gateway wait after retirement = %+v, %v", r, err)
 	}
-	if err := ack(route, "rollback-edge-a"); err != nil {
+	holder, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = holder.Rollback(context.WithoutCancel(ctx)) }()
+	if _, err := holder.Exec(ctx, `SELECT rollback_id FROM project_rollback_http_recovery WHERE rollback_id = $1 FOR UPDATE`, child.ID); err != nil {
+		t.Fatal(err)
+	}
+	ackCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.AcknowledgeProjectRollbackHTTPRoute(ackCtx, route, "rollback-edge-a")
+		done <- err
+	}()
+	for deadline := time.Now().Add(5 * time.Second); ; {
+		var waiting bool
+		if err := pool.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+			    WHERE datname = current_database() AND $1 = ANY(pg_blocking_pids(pid)))`,
+			int32(holder.Conn().PgConn().PID())).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("gateway acknowledgement did not wait on the receipt lock")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// Commit the replacement and the same roster replay would publish while
+	// the ACK is blocked. A must still see C when it acquires the lock.
+	if _, err := holder.Exec(ctx, `
+		INSERT INTO compute_nodes(name,target_url,vpcpus,mem_mb,max_concurrency,admission_ceiling_mb,role,lifecycle,gateway_target_url)
+		VALUES('rollback-edge-c','unix:///run/test.sock',2,1024,10,512,'compute-only','active','tcp://127.0.0.1:8080')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := holder.Exec(ctx, `
+		UPDATE project_rollback_http_recovery
+		SET expected_gateways = ARRAY['rollback-edge-a','rollback-edge-c'], acknowledged_gateways = '{}'
+		WHERE rollback_id = $1`, child.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := holder.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
 	read("awaiting_gateways")
