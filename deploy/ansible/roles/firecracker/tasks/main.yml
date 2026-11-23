@@ -507,6 +507,42 @@
     - (faas_box_role | default('single-box')) == 'compute-only'
     - not (faas_image_seed | default(false) | bool)
 
+# ADR-20261112030000 amendment 1: kernels are content-addressed. vmmd boots
+# kernel/<fc_version>-<sha256> when FAAS_VMMD_KERNEL_DIGEST is set, so a
+# release can change the kernel's bytes under the same Firecracker version.
+# The local copy serves the local storage backend; remote backends get the
+# same key from `gregalectl artifact publish`. The version-only copy above
+# stays for vmmds that predate the digest.
+- name: firecracker — publish content-addressed kernel artifact for vmmd
+  ansible.builtin.copy:
+    src: "/srv/fc/base/vmlinux-{{ fc_kernel_version }}"
+    dest: "/srv/fc/kernel/{{ fc_release | regex_replace('^v', '') }}-{{ vmlinux_sum.stdout.split()[0] | lower }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: firecracker — ensure the vmmd drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-vmmd.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: firecracker — tell vmmd which kernel digest to boot
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/faas-vmmd.service.d/99-faas-kernel.conf
+    content: |
+      [Service]
+      # Managed by Ansible (firecracker role). ADR-20261112030000 amendment 1:
+      # vmmd boots kernel/<fc_version>-<this digest>.
+      Environment=FAAS_VMMD_KERNEL_DIGEST={{ vmlinux_sum.stdout.split()[0] | lower }}
+    owner: root
+    group: root
+    mode: "0644"
+  notify: firecracker reload systemd
+
 - name: firecracker — verify installed Firecracker binary matches the release manifest
   ansible.builtin.command: sha256sum /usr/local/bin/firecracker-{{ fc_release }}-{{ fc_arch }}
   register: firecracker_sum

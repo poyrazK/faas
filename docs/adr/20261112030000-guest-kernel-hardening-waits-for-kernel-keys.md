@@ -45,3 +45,33 @@ them behind a switch that defaults off, and no deployment sets one.
   (Ansible's line edits do not undo themselves). Its local kernel is not
   digest-checked and runs no tenant VMs.
 - Releases from main can roll to compute again.
+
+## Amendment 1 (2026-11-21): kernel keys are content-addressed
+
+Status: proposed. Unblocks the no-module kernel; does not ship it.
+
+- **Key.** `storagekey.KernelForDigest(fcVersion, digest)` is
+  `kernel/<fc_version>-<sha256>`. It is one path segment, so the OCI backend
+  maps it to the tag `<fc_version>-<sha256>` (71 characters) and back.
+  `kernel/<fc_version>` stays as the version-only alias.
+- **vmmd** boots the content-addressed key when `kernel_digest` (vmmd.toml) or
+  `FAAS_VMMD_KERNEL_DIGEST` is set, and the version-only key otherwise. An
+  invalid digest fails startup. A job boot that names
+  `kernel/<this node's fc_version>`, which schedd sends today, boots the node's
+  own key, so jobs and app VMs share a kernel and schedd does not change.
+  Execution runtimes keep their release-owned `FAAS_EXECUTION_*_KERNEL_KEY`.
+- **Ansible** (firecracker role) copies the release kernel to
+  `/srv/fc/kernel/<fc_version>-<sha256>` for the local backend and writes
+  `faas-vmmd.service.d/99-faas-kernel.conf` with the verified digest.
+- **`gregalectl artifact publish`** writes the content-addressed key, which is
+  immutable as before. It writes the version-only alias only when the alias is
+  empty; an alias holding an earlier release's kernel is kept and reported as
+  `legacy_key_state: kept` instead of failing the release (the rc.338
+  failure). `artifact verify` checks the content-addressed key.
+- **Skew.** N-1 vmmds keep reading the alias, which holds the kernel they were
+  released with. A snapshot captured on one kernel and offered to a node on the
+  other is refused by the backing check (ADR-510) and cold-boots, as before.
+- **Order.** This ships first with the rc.337 kernel bytes, so nothing changes
+  for running nodes except the key they read. The no-module build returns in
+  a later release, and its rollout makes every app snapshot stale once: plan
+  it outside launch week, with the cold-boot wave watched.

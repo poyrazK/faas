@@ -22,6 +22,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/role"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/vmmdmount"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -329,6 +330,14 @@ type Config struct {
 	// is detected (cmd/vmmd/main.go). Overridable via toml for tests
 	// that pin a specific kernel key.
 	KernelKey string `toml:"kernel_key"`
+	// KernelDigest is the release kernel's sha256 (the signed manifest's
+	// release.kernel_digest). When set and kernel_key is not, vmmd boots
+	// the content-addressed key kernel/<fc_version>-<digest>
+	// (ADR-20261112030000 amendment 1), so a release can change the
+	// kernel's bytes under the same Firecracker version. Ansible sets it
+	// with FAAS_VMMD_KERNEL_DIGEST, which overrides the TOML. Empty keeps
+	// the version-only key kernel/<fc_version>.
+	KernelDigest string `toml:"kernel_digest"`
 	// KernelPath mirrors pkg/fcvm.Paths.Kernel. Deprecated: with #96
 	// (PR #116) the kernel flows through StorageBackend like every
 	// other artifact. Kept for source compatibility with existing
@@ -832,6 +841,12 @@ func loadConfig(path string, readConfig func(string) ([]byte, error)) (*Config, 
 			}
 			*sw.dst = on
 		}
+	}
+	if v := strings.TrimSpace(os.Getenv("FAAS_VMMD_KERNEL_DIGEST")); v != "" {
+		c.KernelDigest = v
+	}
+	if c.KernelDigest != "" && storagekey.KernelForDigest("v", c.KernelDigest) == "" {
+		return nil, fmt.Errorf("vmmd: kernel_digest must be 64 hexadecimal characters (got %q)", c.KernelDigest)
 	}
 	// Native recovery refuses the cache until its claims are journaled
 	// (ADR-568), so the default must not stop such a node from starting.

@@ -360,10 +360,15 @@ other bare-metal providers. The local source build remains only for
 image-seed/dev bootstrap, with deterministic build metadata.
 
 The release workflow also publishes that same file through the configured
-shared storage backend at `kernel/<firecracker_version>` before the node join
-starts. `gregalectl artifact publish` is immutable and idempotent: it refuses
-to overwrite an existing object whose SHA-256 differs from the signed
-`release.kernel_digest`. `node_join.yml` runs `gregalectl artifact verify` with
+shared storage backend at `kernel/<firecracker_version>-<kernel_digest>`
+before the node join starts (ADR-20261112030000 amendment 1). `gregalectl
+artifact publish` is immutable and idempotent: it refuses to overwrite an
+existing object whose SHA-256 differs from the signed `release.kernel_digest`.
+It also fills the version-only alias `kernel/<firecracker_version>` when that
+is empty, and keeps it when it holds an earlier release's kernel. The
+firecracker role writes `FAAS_VMMD_KERNEL_DIGEST` into
+`faas-vmmd.service.d/99-faas-kernel.conf`, so vmmd boots the
+content-addressed key. `node_join.yml` runs `gregalectl artifact verify` with
 the staged `storage.env` and manifest before bootstrap/service restart, which
 both catches a missing remote artifact early and prewarms the node cache.
 This is the required path for remote-only OCI mode; local `/srv/fc/kernel` is

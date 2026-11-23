@@ -46,6 +46,25 @@ func TestLoadConfigPublicIfaceEnvConfiguresRuntimePolicy(t *testing.T) {
 
 // adr: 372 — the tenant egress gateway interface reaches the runtime host
 // policy, so wake-time rebuilds keep tenant egress on the tunnel.
+// ADR-20261112030000 amendment 1: the kernel digest comes from the
+// firecracker role's drop-in, and a malformed one stops vmmd instead of
+// booting a key nothing published.
+func TestLoadConfigKernelDigestFromEnvironment(t *testing.T) {
+	digest := strings.Repeat("ab", 32)
+	t.Setenv("FAAS_VMMD_KERNEL_DIGEST", digest)
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.KernelDigest != digest {
+		t.Fatalf("KernelDigest = %q, want %q", cfg.KernelDigest, digest)
+	}
+	t.Setenv("FAAS_VMMD_KERNEL_DIGEST", "not-a-digest")
+	if _, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml")); err == nil || !strings.Contains(err.Error(), "kernel_digest") {
+		t.Fatalf("LoadConfig error = %v, want kernel_digest validation error", err)
+	}
+}
+
 func TestLoadConfigTenantEgressIfaceConfiguresRuntimePolicy(t *testing.T) {
 	t.Setenv("FAAS_TENANT_EGRESS_IFACE", "wg-tenant")
 	t.Setenv("FAAS_HOST_BRIDGE_CIDR", "10.100.0.0/16")
