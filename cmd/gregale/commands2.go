@@ -371,6 +371,9 @@ func cmdApp(args []string) int {
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
+	if appWordIsCommand(slug, fs.Args()) {
+		return 1
+	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
