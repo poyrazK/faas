@@ -25,6 +25,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -604,6 +605,7 @@ func (s *server) publicStatusOverviewHandler(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	active, upcoming, resolved := []state.StatusIncident{}, []state.StatusIncident{}, []state.StatusIncident{}
+	declaredDegraded := []state.StatusIncident{}
 	eventsAvailable := true
 	if s.store != nil {
 		events, err := s.store.ListPublicStatusEvents(r.Context(), state.StatusEventListOptions{Limit: 200})
@@ -619,6 +621,9 @@ func (s *server) publicStatusOverviewHandler(w http.ResponseWriter, r *http.Requ
 			}
 		}
 		for _, event := range events {
+			if event.Kind == publicstatus.KindIncident && event.Impact == publicstatus.StateDegraded {
+				declaredDegraded = append(declaredDegraded, event)
+			}
 			switch {
 			case event.Kind == publicstatus.KindIncident && event.ResolvedAt == nil:
 				active = append(active, event)
@@ -678,6 +683,11 @@ func (s *server) publicStatusOverviewHandler(w http.ResponseWriter, r *http.Requ
 				}
 			}
 			observation := publicstatus.SummarizeDay(day, selected, expected)
+			if observation.State != publicstatus.StateUnknown && declaredDegradedOnDay(declaredDegraded, component, day, now) {
+				// SummarizeDay ignores brief telemetry degradation; a degraded
+				// incident an operator declared always marks its days.
+				observation.State = publicstatus.Worse(observation.State, publicstatus.StateDegraded)
+			}
 			dailyDomain = append(dailyDomain, observation)
 			status := string(observation.State)
 			if !launchAt.IsZero() && expected == 0 && day.Before(launchAt) {
@@ -899,6 +909,29 @@ func (s *server) runStatusEvaluationOnce(ctx context.Context) {
 	if rollupSucceeded {
 		s.statusMetrics.markRollupSuccess(time.Now())
 	}
+}
+
+// declaredDegradedOnDay reports whether one of the declared degraded incidents
+// covers component and overlaps the UTC day. Open incidents run until now.
+func declaredDegradedOnDay(incidents []state.StatusIncident, component publicstatus.Component, day, now time.Time) bool {
+	dayEnd := day.Add(24 * time.Hour)
+	for _, incident := range incidents {
+		if !slices.Contains(incident.Components, component) {
+			continue
+		}
+		start := incident.PostedAt
+		if incident.StartsAt != nil {
+			start = *incident.StartsAt
+		}
+		end := now
+		if incident.ResolvedAt != nil {
+			end = *incident.ResolvedAt
+		}
+		if start.Before(dayEnd) && !end.Before(day) {
+			return true
+		}
+	}
+	return false
 }
 
 func statusEventOverlays(events []state.StatusIncident) []publicstatus.Overlay {

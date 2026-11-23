@@ -78,8 +78,9 @@ func TestSummarizeDayAndThirtyDayUptimeRespectCoverage(t *testing.T) {
 		buckets = append(buckets, b)
 	}
 	obs := SummarizeDay(day, buckets, 10)
-	if obs.State != StateDegraded || obs.CoveragePct != 80 || obs.UptimePct == nil || math.Abs(*obs.UptimePct-100) > 0.001 {
-		t.Fatalf("observation = %#v, want degraded, 80%% coverage, 100%% uptime", obs)
+	// One degraded interval is below DailyDegradedMinIntervals.
+	if obs.State != StateOperational || obs.CoveragePct != 80 || obs.UptimePct == nil || math.Abs(*obs.UptimePct-100) > 0.001 {
+		t.Fatalf("observation = %#v, want operational, 80%% coverage, 100%% uptime", obs)
 	}
 
 	low := SummarizeDay(day, buckets[:7], 10)
@@ -135,6 +136,15 @@ func TestSummarizeDayIgnoresBriefDegradation(t *testing.T) {
 	// One outage interval is never thresholded away.
 	if obs := SummarizeDay(day, full(0, StatePartialOutage), 288); obs.State != StatePartialOutage {
 		t.Fatalf("brief outage state = %q, want partial_outage", obs.State)
+	}
+	// The bar is an absolute count: a partial day (today) with 20%
+	// degraded so far stays operational, and once 15 intervals are degraded
+	// it stays degraded however many healthy intervals follow.
+	if obs := SummarizeDay(day, full(4, "")[:20], 20); obs.State != StateOperational {
+		t.Fatalf("early-day state = %q, want operational", obs.State)
+	}
+	if obs := SummarizeDay(day, full(15, "")[:20], 20); obs.State != StateDegraded {
+		t.Fatalf("early-day sustained state = %q, want degraded", obs.State)
 	}
 	// Maintenance still shows, and brief degradation does not outrank it.
 	if obs := SummarizeDay(day, full(3, StateMaintenance), 288); obs.State != StateMaintenance {
