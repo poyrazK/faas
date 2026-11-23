@@ -148,11 +148,20 @@ func loadManagedPostgres(ctx context.Context, pool *pgxpool.Pool, getenv func(st
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
+	suspendTimeouts, err := managedpostgres.NewSuspendTimeoutSweeper(registry, store, log)
+	if err != nil {
+		return nil, nil, nil, nil, nil, nil, err
+	}
 	var fleet *managedpostgres.Service
 	billingAllowances := managedpg.OverageAllowances(managedPostgresCapLimits(store, accountStore, overage), accountStore, time.Now)
 	usageOptions.AfterSweep = func(ctx context.Context) {
 		if _, err := capEnforcer.Enforce(ctx); err != nil && ctx.Err() == nil {
 			log.Warn("managed postgres compute cap sweep failed", "error", err)
+		}
+		// Existing databases follow managed_postgres_policy
+		// suspend_timeout_seconds; a converged fleet costs nothing.
+		if summary, err := suspendTimeouts.Sweep(ctx); err != nil && ctx.Err() == nil {
+			log.Warn("managed postgres suspend timeout sweep failed", "error", err, "changed", summary.Changed, "failed", summary.Failed)
 		}
 		deliverManagedPostgresOverage(ctx, store, hooks.charges(), billingAllowances, managedPostgresPlanSpans(accountStore), hooks.egress(), managedPostgresCapRoom(accountStore, hooks.charges()), log)
 		observeManagedPostgresFleet(ctx, fleet, metrics, log)

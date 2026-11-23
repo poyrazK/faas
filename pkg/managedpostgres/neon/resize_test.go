@@ -92,7 +92,7 @@ func resizeHTTPProvider(t *testing.T, f *resizeHTTPFixture) *Provider {
 			if !f.policy && (len(payload) != 1 || len(compute) != 2 || compute["autoscaling_limit_min_cu"] != 0.25 || compute["autoscaling_limit_max_cu"] != 1) {
 				t.Error("resize changed fields outside compute", payload)
 			}
-			if f.policy && (len(payload) != 1 || len(compute) != 1 || (compute["suspend_timeout_seconds"] != -1 && compute["suspend_timeout_seconds"] != 300)) {
+			if f.policy && (len(payload) != 1 || len(compute) != 1 || (compute["suspend_timeout_seconds"] != -1 && compute["suspend_timeout_seconds"] != 120)) {
 				t.Error("policy changed compute capacity", payload)
 			}
 			f.patches++

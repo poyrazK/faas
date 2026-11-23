@@ -137,6 +137,14 @@ gregalectl config set -key managed_postgres_policy -yes -reason "launch limits" 
   an unknown backend, an invalid merged usage policy). A stored value that
   stops fitting after a file change is logged at start and the file's values
   serve until it is fixed.
+- `suspend_timeout_seconds` (60..604800, default 120) is how long a
+  scale-to-zero database's compute stays up after its last activity; every
+  wake bills at least this much compute. New databases and compute-policy
+  changes use it at once. The hourly usage sweep moves existing Neon databases
+  onto it, writing only an endpoint that is suspended and not held, so a
+  running compute is never touched and a busy database converges the next
+  time it is idle. Once every database matches, the sweep stops reading Neon
+  until the value changes or apid restarts.
 - `gregalectl config set -key managed_postgres_policy -value '{}'` goes back
   to the file's values; `gregalectl config rollback` restores an earlier
   version.

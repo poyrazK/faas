@@ -53,3 +53,17 @@ receipts (platform flags, builder slots).
 - The provider registry file shrinks to backends, metering and health;
   Ansible stops carrying commercial values.
 - Usage metering and cap modes still need a restart to change.
+
+## Amendment 2026-11-23: scale-to-zero suspend timeout
+
+The Neon suspend timeout was hard-coded at 300 s, so every wake billed at
+least five minutes of compute and anything touching a database more often
+than that kept it awake. It is now the policy field `suspend_timeout_seconds`
+(60..604800, default 120). The registry pushes it to providers that implement
+`SuspendTimeoutSetter` at start and on every applied policy; new databases,
+restores and compute-policy changes use it at once. Existing databases are
+moved by `SuspendTimeoutSweeper`, run after the usage sweep: it PATCHes only a
+primary endpoint that is suspended, enabled and not changing, so a serving or
+held compute is never touched, and it stops reading the provider once the
+fleet matches. Snapshot-copy checks compare scale-to-zero against always-on,
+not the exact timeout, so a changed setting is not drift.

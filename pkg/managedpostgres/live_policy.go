@@ -28,6 +28,10 @@ type LivePolicy struct {
 	Fleet                  *FleetConfig        `json:"fleet,omitempty"`
 	Usage                  *LiveUsageLimits    `json:"usage,omitempty"`
 	ProductionApproval     *ProductionApproval `json:"production_approval,omitempty"`
+	// SuspendTimeoutSeconds is how long a scale-to-zero database stays up
+	// after its last activity (suspend_timeout.go); omitted is
+	// DefaultSuspendTimeoutSeconds.
+	SuspendTimeoutSeconds *int64 `json:"suspend_timeout_seconds,omitempty"`
 }
 
 // LiveUsageLimits are the usage ceilings and provider rates an operator may
@@ -67,6 +71,9 @@ func ParseLivePolicy(raw json.RawMessage) (LivePolicy, error) {
 	}
 	if n := policy.MaxDatabasesPerAccount; n != nil && (*n < 1 || *n > 100) {
 		return LivePolicy{}, errors.New("managed postgres policy: max_databases_per_account must be 1..100")
+	}
+	if n := policy.SuspendTimeoutSeconds; n != nil && !validSuspendTimeout(*n) {
+		return LivePolicy{}, fmt.Errorf("managed postgres policy: suspend_timeout_seconds must be %d..%d", MinSuspendTimeoutSeconds, MaxSuspendTimeoutSeconds)
 	}
 	if policy.Fleet != nil {
 		if _, err := policy.Fleet.policy(); err != nil {
@@ -120,6 +127,9 @@ type effectivePolicy struct {
 	// approval is the live production approval; nil falls back to the
 	// environment's.
 	approval *ProductionApproval
+	// suspendTimeoutSeconds is the scale-to-zero suspend timeout; 0 is
+	// DefaultSuspendTimeoutSeconds.
+	suspendTimeoutSeconds int64
 }
 
 // filePolicy is the registry file's part of the policy, kept so a live
@@ -168,6 +178,7 @@ func (r *Registry) ApplyLivePolicy(policy LivePolicy) error {
 		return err
 	}
 	r.policy.current.Store(next)
+	r.pushSuspendTimeout(r.SuspendTimeoutSeconds())
 	if changed := r.policy.changed.Load(); changed != nil && *changed != nil {
 		(*changed)()
 	}
@@ -190,7 +201,11 @@ func (r *Registry) mergeLivePolicy(policy LivePolicy) (*effectivePolicy, error) 
 		return nil, ErrUnavailable
 	}
 	file := r.policy.file
-	next := effectivePolicy{provisioningEnabled: file.provisioningEnabled, maxDatabasesPerAccount: file.maxDatabasesPerAccount}
+	next := effectivePolicy{provisioningEnabled: file.provisioningEnabled, maxDatabasesPerAccount: file.maxDatabasesPerAccount,
+		suspendTimeoutSeconds: DefaultSuspendTimeoutSeconds}
+	if policy.SuspendTimeoutSeconds != nil {
+		next.suspendTimeoutSeconds = *policy.SuspendTimeoutSeconds
+	}
 	if policy.ProvisioningEnabled != nil {
 		next.provisioningEnabled = *policy.ProvisioningEnabled
 	}
