@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
@@ -48,7 +50,10 @@ func TestVerificationContractRoutes(t *testing.T) {
 	if rec := e.Do(t, http.MethodPut, path, invalid, nil); rec.Code < 400 || rec.Code >= 500 {
 		t.Fatalf("invalid contract: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := e.Do(t, http.MethodDelete, path, nil, nil); rec.Code != http.StatusNoContent {
+	if rec := e.Do(t, http.MethodDelete, path+"?expected_revision=99", nil, nil); rec.Code != http.StatusConflict {
+		t.Fatalf("stale delete: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := e.Do(t, http.MethodDelete, path+"?expected_revision=1", nil, nil); rec.Code != http.StatusNoContent {
 		t.Fatalf("delete: %d %s", rec.Code, rec.Body.String())
 	}
 	if rec := e.Do(t, http.MethodGet, path, nil, nil); rec.Code != http.StatusNotFound {
@@ -73,6 +78,11 @@ func (p verifyQueryProvider) QueryReadOnly(_ context.Context, req managedpostgre
 		return managedpostgres.ReadOnlyQueryResult{}, &managedpostgres.QueryError{SQLState: "42601", Message: "syntax error"}
 	}
 	v := p.value
+	if req.SQL == "long" {
+		// 1200 bytes of two-byte characters: a byte cut at 1024 would land
+		// inside a character.
+		v = strings.Repeat("é", 600)
+	}
 	return managedpostgres.ReadOnlyQueryResult{Columns: []managedpostgres.QueryColumn{{Name: "count", Type: "int8"}}, Rows: [][]*string{{&v}}, RowCount: 1}, nil
 }
 
@@ -128,6 +138,7 @@ func TestVerificationQueryWorkerRunsReadOnlySQL(t *testing.T) {
 		return q.ID
 	}
 	ok, unbound, missing, broken := queue("main", "select count(*) from orders"), queue("other", "select 1"), queue("nope", "select 1"), queue("main", "broken")
+	long := queue("main", "long")
 	(*e.S()).RunVerificationQueriesOnce(t.Context())
 
 	got, _ := store.VerificationQueryByID(t.Context(), ok)
@@ -142,8 +153,11 @@ func TestVerificationQueryWorkerRunsReadOnlySQL(t *testing.T) {
 	if got, _ := store.VerificationQueryByID(t.Context(), broken); got.ErrorCode != verifycontract.CodeQueryFailed {
 		t.Fatalf("broken query = %+v", got)
 	}
-	if len(ran) != 2 {
-		t.Fatalf("provider ran %q; only the bound database's two queries may run", ran)
+	if got, _ := store.VerificationQueryByID(t.Context(), long); got.FirstValue == nil || !utf8.ValidString(*got.FirstValue) || len(*got.FirstValue) > api.VerificationFirstValueMaxBytes {
+		t.Fatalf("long value not cut on a character boundary: %+v", got)
+	}
+	if len(ran) != 3 {
+		t.Fatalf("provider ran %q; only the bound database's three queries may run", ran)
 	}
 	for _, sql := range ran {
 		if sql == "select 1" {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/url"
+	"strconv"
 	"time"
 )
 
@@ -42,6 +43,12 @@ func (c *Client) PutVerificationContract(ctx context.Context, slug string, req P
 	return out, err
 }
 
-func (c *Client) DeleteVerificationContract(ctx context.Context, slug string) error {
-	return c.do(ctx, "DELETE", verificationContractPath(slug), nil, nil)
+// DeleteVerificationContract removes the app's contract; a non-nil
+// expectedRevision must match the stored revision.
+func (c *Client) DeleteVerificationContract(ctx context.Context, slug string, expectedRevision *int64) error {
+	path := verificationContractPath(slug)
+	if expectedRevision != nil {
+		path += "?expected_revision=" + strconv.FormatInt(*expectedRevision, 10)
+	}
+	return c.do(ctx, "DELETE", path, nil, nil)
 }

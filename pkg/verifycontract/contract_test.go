@@ -166,7 +166,7 @@ func (f *fakeExec) HTTP(_ context.Context, c HTTPCheck) (HTTPResponse, error) {
 	return f.http(c)
 }
 func (f *fakeExec) MCP(_ context.Context, c MCPCheck, allow bool) error { return f.mcp(c, allow) }
-func (f *fakeExec) SQL(_ context.Context, c SQLCheck) (SQLResult, error) {
+func (f *fakeExec) SQL(_ context.Context, _ string, c SQLCheck) (SQLResult, error) {
 	return f.sql(c)
 }
 

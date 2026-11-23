@@ -8,6 +8,7 @@ package apidserver
 import (
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -72,7 +73,7 @@ func (s *server) putVerificationContract(w http.ResponseWriter, r *http.Request,
 	}
 	raw, sum, err := contract.Canonical()
 	if err != nil {
-		api.WriteProblem(w, api.ErrValidation("contract could not be encoded"))
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return
 	}
 	stored, err := store.PutAppVerificationContract(r.Context(), state.VerificationContract{
@@ -106,7 +107,21 @@ func (s *server) deleteVerificationContract(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	err := store.DeleteAppVerificationContract(r.Context(), app.ID, app.AccountID)
+	var expected *int64
+	if raw := r.URL.Query().Get("expected_revision"); raw != "" {
+		revision, parseErr := strconv.ParseInt(raw, 10, 64)
+		if parseErr != nil || revision < 1 {
+			api.WriteProblem(w, api.ErrValidation("expected_revision must be a positive integer"))
+			return
+		}
+		expected = &revision
+	}
+	err := store.DeleteAppVerificationContract(r.Context(), app.ID, app.AccountID, expected)
+	if errors.Is(err, state.ErrVerificationContractRevision) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "verification_contract_changed",
+			"Verification contract changed", "the stored contract's revision is not expected_revision; read it again"))
+		return
+	}
 	if errors.Is(err, state.ErrNotFound) {
 		s.notFound(w, "the app has no verification contract")
 		return

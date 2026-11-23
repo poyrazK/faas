@@ -18,31 +18,30 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // FileName is the contract's conventional name at the root of a project.
 const FileName = "gregale.verify.yaml"
 
-// Limits. They bound the work one deployment's verification can ask for; they
-// are abuse limits, not plan tiers.
+// Limits live in pkg/api/limits.go (ADR-20261122220000).
 const (
 	Version               = 1
-	MaxContractBytes      = 256 << 10
-	MaxChecks             = 32
-	DefaultTimeoutSeconds = 30
-	MaxTimeoutSeconds     = 120
-	MaxPathBytes          = 2048
-	MaxHeaders            = 16
-	MaxHeaderValueBytes   = 1024
-	MaxBodyBytes          = 64 << 10
-	MaxStatuses           = 16
-	MaxBodyContains       = 16
-	MaxJSONAssertions     = 32
-	MaxSQLBytes           = 64 << 10
-	// MaxResponseBytes is how much of a response body is read for body and
-	// JSON assertions. A larger body is truncated and its JSON assertions fail.
-	MaxResponseBytes = 1 << 20
-	DefaultMCPPath   = "/mcp"
+	MaxContractBytes      = api.VerificationContractMaxBytes
+	MaxChecks             = api.VerificationContractMaxChecks
+	DefaultTimeoutSeconds = api.VerificationContractDefaultTimeoutSecs
+	MaxTimeoutSeconds     = api.VerificationContractMaxTimeoutSecs
+	MaxPathBytes          = api.VerificationContractMaxPathBytes
+	MaxHeaders            = api.VerificationContractMaxHeaders
+	MaxHeaderValueBytes   = api.VerificationContractMaxHeaderValueBytes
+	MaxBodyBytes          = api.VerificationContractMaxBodyBytes
+	MaxStatuses           = api.VerificationContractMaxStatuses
+	MaxBodyContains       = api.VerificationContractMaxBodyContains
+	MaxJSONAssertions     = api.VerificationContractMaxJSONAssertions
+	MaxSQLBytes           = api.VerificationContractMaxSQLBytes
+	MaxResponseBytes      = api.VerificationContractMaxResponseBytes
+	DefaultMCPPath        = "/mcp"
 )
 
 // Check kinds.
@@ -255,6 +254,11 @@ func (c Contract) Canonical() ([]byte, string, error) {
 	raw, err := json.Marshal(c)
 	if err != nil {
 		return nil, "", err
+	}
+	// JSON escaping can make the stored form larger than the file that
+	// passed the size check; the stored form is what the limit bounds.
+	if len(raw) > MaxContractBytes {
+		return nil, "", invalidf("contract encodes to %d bytes, more than %d", len(raw), MaxContractBytes)
 	}
 	sum := sha256.Sum256(raw)
 	return raw, hex.EncodeToString(sum[:]), nil

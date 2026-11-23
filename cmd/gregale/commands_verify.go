@@ -202,7 +202,7 @@ func verifyDelete(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	if err := client.DeleteVerificationContract(context.Background(), slug); err != nil {
+	if err := client.DeleteVerificationContract(context.Background(), slug, nil); err != nil {
 		return printErr("Could not delete verification contract", err)
 	}
 	if jsonOutput {
@@ -264,4 +264,10 @@ func deployVerificationContract(ctx context.Context, client *api.Client, slug, s
 		PrintOK(osStdout, "Verification contract applied: %d checks run before this deployment takes traffic", stored.CheckCount)
 	}
 	return nil
+}
+
+// verifyProductionScope mirrors state.IsProductionScope: the production
+// serving lane is the unscoped, default or production scope.
+func verifyProductionScope(scope string) bool {
+	return scope == "" || scope == "default" || scope == "production"
 }

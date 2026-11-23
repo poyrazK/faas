@@ -83,6 +83,7 @@ func (s *CandidateSession) awaitRouting(ctx context.Context, path string, interv
 	if interval <= 0 {
 		interval = 250 * time.Millisecond
 	}
+	var lastErr error
 	for {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.URL(path), nil)
 		if err != nil {
@@ -94,11 +95,15 @@ func (s *CandidateSession) awaitRouting(ctx context.Context, path string, interv
 			_ = resp.Body.Close()
 			return nil
 		}
+		// Report why routing failed, not the deadline that ended the wait.
+		if ctx.Err() == nil || lastErr == nil {
+			lastErr = err
+		}
 		timer := time.NewTimer(interval)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return fmt.Errorf("candidate routing was not proven: %w", err)
+			return fmt.Errorf("candidate routing was not proven: %w", lastErr)
 		case <-timer.C:
 		}
 	}
@@ -118,8 +123,48 @@ type candidateTransport struct {
 	token        string
 }
 
+// candidateRefusalRetry is the pause between attempts when a gateway has not
+// received the session's challenge yet.
+const candidateRefusalRetry = 250 * time.Millisecond
+
+// RoundTrip sends req pinned to the candidate. A fleet has several gateways
+// and the challenge reaches each one separately: one that has not received
+// it yet refuses the request 503 without forwarding it (ADR-20261122220000),
+// so the request is sent again until a gateway serves it or the request's
+// context ends. Retrying is safe for any method because a refused request
+// never reached the app.
 func (t *candidateTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	for {
+		resp, err := t.roundTripOnce(req)
+		if err == nil || !errors.Is(err, errGatewayRefusedChallenge) {
+			return resp, err
+		}
+		if req.Body != nil && req.GetBody == nil {
+			return nil, err
+		}
+		timer := time.NewTimer(candidateRefusalRetry)
+		select {
+		case <-req.Context().Done():
+			timer.Stop()
+			return nil, err
+		case <-timer.C:
+		}
+	}
+}
+
+// errGatewayRefusedChallenge marks a gateway that did not know the session's
+// challenge and so did not forward the request.
+var errGatewayRefusedChallenge = fmt.Errorf("%w: the gateway has not received the challenge yet", ErrCandidateUnproven)
+
+func (t *candidateTransport) roundTripOnce(req *http.Request) (*http.Response, error) {
 	out := req.Clone(req.Context())
+	if req.GetBody != nil {
+		body, err := req.GetBody()
+		if err != nil {
+			return nil, err
+		}
+		out.Body = body
+	}
 	out.Header.Set(PlatformSmokeHeader, "1")
 	out.Header.Set(PlatformSmokeDeploymentHeader, t.deploymentID)
 	out.Header.Set(PlatformSmokeTokenHeader, t.token)
@@ -129,6 +174,11 @@ func (t *candidateTransport) RoundTrip(req *http.Request) (*http.Response, error
 	resp, err := t.base.RoundTrip(out)
 	if err != nil {
 		return nil, err
+	}
+	if resp.StatusCode == http.StatusServiceUnavailable && resp.Header.Get(ServedDeploymentHeader) == "" && resp.Header.Get(ServedResponseHeader) == "" {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		_ = resp.Body.Close()
+		return nil, errGatewayRefusedChallenge
 	}
 	proof := resp.Header.Get(ServedResponseHeader)
 	if resp.Header.Get(ServedDeploymentHeader) != t.deploymentID ||

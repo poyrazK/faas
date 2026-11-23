@@ -101,6 +101,16 @@ func ApplyVerificationContract(ctx context.Context, cv ContractVerification, app
 		return smoke, ctx.Err()
 	}
 	smoke.VerificationContract = &report
+	// A run whose only blocking checks could not reach the candidate or the
+	// database is the platform's outage, not the candidate's verdict: retry
+	// it through the hosting verification recovery window like other
+	// unavailable evidence. Any failed assertion is the candidate's verdict.
+	if report.Status != verifycontract.StatusPassed && platformOnlyFailure(report) {
+		retry, err := contractUnavailable(smoke, apihostingreceipt.SmokeErrorContractUnavailable,
+			fmt.Errorf("verification contract checks could not run: %s", strings.Join(report.Blocking(), ", ")))
+		retry.VerificationContract = &report
+		return retry, err
+	}
 	if report.Status != verifycontract.StatusPassed {
 		smoke.Status = apihostingreceipt.SmokeFailed
 		smoke.ErrorCode = apihostingreceipt.SmokeErrorVerificationContractFailed
@@ -223,7 +233,7 @@ func (e *contractExecutor) MCP(ctx context.Context, check verifycontract.MCPChec
 	}
 }
 
-func (e *contractExecutor) SQL(ctx context.Context, check verifycontract.SQLCheck) (verifycontract.SQLResult, error) {
+func (e *contractExecutor) SQL(ctx context.Context, name string, check verifycontract.SQLCheck) (verifycontract.SQLResult, error) {
 	if e.queries == nil {
 		return verifycontract.SQLResult{}, &verifycontract.CheckError{Code: verifycontract.CodeQueryUnavailable, Message: "SQL checks are not available on this node"}
 	}
@@ -233,7 +243,7 @@ func (e *contractExecutor) SQL(ctx context.Context, check verifycontract.SQLChec
 	}
 	created, err := e.queries.CreateVerificationQuery(ctx, state.VerificationQuery{
 		DeploymentID: e.dep.ID, AppID: e.app.ID, AccountID: e.app.AccountID,
-		CheckName: "sql", Database: check.Database, Query: check.Query, ExpiresAt: expires,
+		CheckName: name, Database: check.Database, Query: check.Query, ExpiresAt: expires,
 	})
 	if err != nil {
 		if ctx.Err() != nil {
@@ -274,4 +284,26 @@ func (e *contractExecutor) SQL(ctx context.Context, check verifycontract.SQLChec
 			return verifycontract.SQLResult{}, &verifycontract.CheckError{Code: q.ErrorCode, Message: q.Error}
 		}
 	}
+}
+
+// platformOnlyFailure reports whether every blocking check errored for a
+// platform reason (the request or the database query could not run) rather
+// than an answer of the candidate.
+func platformOnlyFailure(report verifycontract.Report) bool {
+	blocking := 0
+	for _, c := range report.Checks {
+		if !c.Required || (c.Status != verifycontract.StatusFailed && c.Status != verifycontract.StatusError) {
+			continue
+		}
+		blocking++
+		if c.Status != verifycontract.StatusError {
+			return false
+		}
+		switch c.Code {
+		case verifycontract.CodeRequestFailed, verifycontract.CodeQueryUnavailable:
+		default:
+			return false
+		}
+	}
+	return blocking > 0
 }

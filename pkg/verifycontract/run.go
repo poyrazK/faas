@@ -15,7 +15,8 @@ type Executor interface {
 	// tool call whose tool does not declare readOnlyHint must then return a
 	// *CheckError with CodeMCPToolNotReadOnly without calling the tool.
 	MCP(ctx context.Context, check MCPCheck, allowMutatingTools bool) error
-	SQL(ctx context.Context, check SQLCheck) (SQLResult, error)
+	// SQL runs one read-only SQL check; name is the check's name.
+	SQL(ctx context.Context, name string, check SQLCheck) (SQLResult, error)
 }
 
 // SQLResult is what a read-only query returned.
@@ -97,7 +98,7 @@ func runCheck(ctx context.Context, check Check, exec Executor, production bool, 
 		err = exec.MCP(ctx, *check.MCP, !production)
 	case check.SQL != nil:
 		var res SQLResult
-		res, err = exec.SQL(ctx, *check.SQL)
+		res, err = exec.SQL(ctx, check.Name, *check.SQL)
 		if err == nil {
 			failures = EvaluateSQL(check.SQL.Expect, res.RowCount, res.HasFirst, res.First)
 		}

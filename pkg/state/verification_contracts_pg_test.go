@@ -56,10 +56,14 @@ func TestPgStoreVerificationContracts(t *testing.T) {
 	if err != nil || got.SHA256 != sum || got.CheckCount != 1 || len(got.Contract) == 0 {
 		t.Fatalf("get: %+v %v", got, err)
 	}
-	if err := contracts.DeleteAppVerificationContract(ctx, app.ID, other.ID); !errors.Is(err, state.ErrNotFound) {
+	if err := contracts.DeleteAppVerificationContract(ctx, app.ID, other.ID, nil); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cross-account delete: %v", err)
 	}
-	if err := contracts.DeleteAppVerificationContract(ctx, app.ID, acct.ID); err != nil {
+	stale := int64(1)
+	if err := contracts.DeleteAppVerificationContract(ctx, app.ID, acct.ID, &stale); !errors.Is(err, state.ErrVerificationContractRevision) {
+		t.Fatalf("stale delete: %v", err)
+	}
+	if err := contracts.DeleteAppVerificationContract(ctx, app.ID, acct.ID, &second.Revision); err != nil {
 		t.Fatal(err)
 	}
 

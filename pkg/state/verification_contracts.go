@@ -15,6 +15,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // VerificationContract is one app's stored contract.
@@ -40,7 +42,9 @@ type VerificationContractStore interface {
 	PutAppVerificationContract(ctx context.Context, c VerificationContract, expectedRevision *int64) (VerificationContract, error)
 	// AppVerificationContract returns ErrNotFound when the app has none.
 	AppVerificationContract(ctx context.Context, appID string) (VerificationContract, error)
-	DeleteAppVerificationContract(ctx context.Context, appID, accountID string) error
+	// DeleteAppVerificationContract removes the contract; a non-nil
+	// expectedRevision must match the stored revision.
+	DeleteAppVerificationContract(ctx context.Context, appID, accountID string, expectedRevision *int64) error
 }
 
 // Verification query states.
@@ -68,6 +72,7 @@ type VerificationQuery struct {
 	Error        string
 	CreatedAt    time.Time
 	ExpiresAt    time.Time
+	claimedAt    time.Time // MemStore only
 }
 
 // VerificationQueryStore is the SQL check handoff.
@@ -75,7 +80,9 @@ type VerificationQueryStore interface {
 	CreateVerificationQuery(ctx context.Context, q VerificationQuery) (VerificationQuery, error)
 	VerificationQueryByID(ctx context.Context, id string) (VerificationQuery, error)
 	// ClaimVerificationQueries moves up to limit pending, unexpired queries
-	// to running and returns them. Concurrent claimers never share a row.
+	// to running and returns them, and takes back running queries whose
+	// claim is older than api.VerificationQueryStaleClaim (their apid
+	// stopped). Concurrent claimers never share a row.
 	ClaimVerificationQueries(ctx context.Context, now time.Time, limit int) ([]VerificationQuery, error)
 	// CompleteVerificationQuery records a running query's outcome.
 	CompleteVerificationQuery(ctx context.Context, q VerificationQuery) error
@@ -152,15 +159,25 @@ func (s *PgStore) AppVerificationContract(ctx context.Context, appID string) (Ve
 	return c, nil
 }
 
-func (s *PgStore) DeleteAppVerificationContract(ctx context.Context, appID, accountID string) error {
-	tag, err := s.pool.Exec(ctx, `delete from app_verification_contracts where app_id = $1 and account_id = $2`, appID, accountID)
+func (s *PgStore) DeleteAppVerificationContract(ctx context.Context, appID, accountID string, expectedRevision *int64) error {
+	tag, err := s.pool.Exec(ctx, `delete from app_verification_contracts
+		where app_id = $1 and account_id = $2 and ($3::bigint is null or revision = $3)`, appID, accountID, expectedRevision)
 	if err != nil {
 		return fmt.Errorf("state: delete verification contract: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+	if tag.RowsAffected() > 0 {
+		return nil
 	}
-	return nil
+	if expectedRevision != nil {
+		var exists bool
+		if err := s.pool.QueryRow(ctx, `select exists(select 1 from app_verification_contracts where app_id = $1 and account_id = $2)`, appID, accountID).Scan(&exists); err != nil {
+			return fmt.Errorf("state: delete verification contract: %w", err)
+		}
+		if exists {
+			return ErrVerificationContractRevision
+		}
+	}
+	return ErrNotFound
 }
 
 const verificationQueryCols = `id, deployment_id, app_id, account_id, check_name, database_name, query, status,
@@ -202,9 +219,9 @@ func (s *PgStore) VerificationQueryByID(ctx context.Context, id string) (Verific
 func (s *PgStore) ClaimVerificationQueries(ctx context.Context, now time.Time, limit int) ([]VerificationQuery, error) {
 	rows, err := s.pool.Query(ctx, `update deployment_verification_queries set status = 'running', claimed_at = $1
 		where id in (select id from deployment_verification_queries
-			where status = 'pending' and expires_at > $1 order by created_at
-			limit $2 for update skip locked)
-		returning `+verificationQueryCols, now, limit)
+			where (status = 'pending' or (status = 'running' and claimed_at < $3)) and expires_at > $1
+			order by created_at limit $2 for update skip locked)
+		returning `+verificationQueryCols, now, limit, now.Add(-api.VerificationQueryStaleClaim))
 	if err != nil {
 		return nil, fmt.Errorf("state: claim verification queries: %w", err)
 	}
@@ -279,12 +296,15 @@ func (m *MemStore) AppVerificationContract(_ context.Context, appID string) (Ver
 	return c, nil
 }
 
-func (m *MemStore) DeleteAppVerificationContract(_ context.Context, appID, accountID string) error {
+func (m *MemStore) DeleteAppVerificationContract(_ context.Context, appID, accountID string, expectedRevision *int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	c, ok := m.verificationContracts[appID]
 	if !ok || c.AccountID != accountID {
 		return ErrNotFound
+	}
+	if expectedRevision != nil && *expectedRevision != c.Revision {
+		return ErrVerificationContractRevision
 	}
 	delete(m.verificationContracts, appID)
 	return nil
@@ -321,8 +341,9 @@ func (m *MemStore) ClaimVerificationQueries(_ context.Context, now time.Time, li
 		if len(out) >= limit {
 			break
 		}
-		if q.Status == VerificationQueryPending && q.ExpiresAt.After(now) {
-			q.Status = VerificationQueryRunning
+		stale := q.Status == VerificationQueryRunning && q.claimedAt.Before(now.Add(-api.VerificationQueryStaleClaim))
+		if (q.Status == VerificationQueryPending || stale) && q.ExpiresAt.After(now) {
+			q.Status, q.claimedAt = VerificationQueryRunning, now
 			m.verificationQueries[id] = q
 			out = append(out, q)
 		}

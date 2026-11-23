@@ -887,18 +887,24 @@ func (s *Service) handleAccountPush(ctx context.Context, body []byte) (reconcile
 		// ADR-20261122220000 amendment 1: the app's gregale.verify.yaml gates
 		// this deployment, so it is stored before the build is enqueued. An
 		// invalid file stops this app's deploy, as it stops `gregale deploy`.
-		if changed, contractErr := s.applyPushVerificationContract(ctx, tree.FS(), app); contractErr != nil {
-			s.Log.Warn("githubd: apply verification contract", "app_id", app.ID, "err", contractErr, "repo", ev.Repository.FullName, "sha", ev.After)
-			if s.WriteAppCheck != nil || s.WriteScopedAppCheck != nil {
-				_ = s.writeAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
-					app.Slug, appScope, githubdgrpc.CheckPhaseFailed, fmt.Sprintf("Not deployed (scope: %s): %s", appScope, contractErr.Error()))
+		// The contract is app-wide, so only a push that deploys production
+		// changes it: a staging branch must not replace production's checks.
+		if state.IsProductionScope(appScope) {
+			changed, contractErr := s.applyPushVerificationContract(ctx, tree.FS(), app)
+			if contractErr != nil {
+				s.Log.Warn("githubd: apply verification contract", "app_id", app.ID, "err", contractErr, "repo", ev.Repository.FullName, "sha", ev.After)
+				if s.WriteAppCheck != nil || s.WriteScopedAppCheck != nil {
+					_ = s.writeAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
+						app.Slug, appScope, githubdgrpc.CheckPhaseFailed, fmt.Sprintf("Not deployed (scope: %s): %s", appScope, contractErr.Error()))
+				}
+				if deliveryID != "" && !errors.Is(contractErr, errPushContractInvalid) {
+					deliveryErrors = append(deliveryErrors, fmt.Errorf("verification contract for app %s: %w", app.ID, contractErr))
+				}
+				continue
 			}
-			if deliveryID != "" && !errors.Is(contractErr, errPushContractInvalid) {
-				deliveryErrors = append(deliveryErrors, fmt.Errorf("verification contract for app %s: %w", app.ID, contractErr))
+			if changed {
+				s.Log.Info("githubd: push updated verification contract", "app_id", app.ID, "sha", ev.After)
 			}
-			continue
-		} else if changed {
-			s.Log.Info("githubd: push updated verification contract", "app_id", app.ID, "sha", ev.After)
 		}
 		build, err := enqueuer.Enqueue(ctx, BuildSpec{
 			App:                  app,

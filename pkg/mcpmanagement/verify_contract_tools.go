@@ -156,14 +156,14 @@ func (m *management) runVerifyContractChange(ctx context.Context, p *releasePlan
 		expected := req.ExpectedRevision
 		return m.client.PutVerificationContract(ctx, p.App, api.PutVerificationContractRequest{Contract: req.Contract, ExpectedRevision: &expected})
 	case "delete":
-		current, err := m.client.GetVerificationContract(ctx, p.App)
-		if err != nil {
-			return nil, err
-		}
-		if current.Revision != req.ExpectedRevision {
-			return nil, invalid("plan_stale", "the verification contract changed after this plan; plan again")
-		}
-		if err := m.client.DeleteVerificationContract(ctx, p.App); err != nil {
+		// The revision is checked by the delete itself, so a contract set
+		// after this plan was reviewed is never removed.
+		expected := req.ExpectedRevision
+		if err := m.client.DeleteVerificationContract(ctx, p.App, &expected); err != nil {
+			var apiErr *api.APIError
+			if errors.As(err, &apiErr) && apiErr.Problem.Status == http.StatusConflict {
+				return nil, invalid("plan_stale", "the verification contract changed after this plan; plan again")
+			}
 			return nil, err
 		}
 		return map[string]any{"app": p.App, "deleted": true}, nil
