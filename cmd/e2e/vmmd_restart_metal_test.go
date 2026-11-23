@@ -373,7 +373,11 @@ func restageGuestBindSource(t *testing.T, journalDir, instance string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A staged file the record owns (the guest's reflinked writable layer,
+	// kind "clone") is the guest's own, never a cache file a release
+	// re-stages: replacing it is tampering, and adoption rightly refuses it.
 	var sources []string
+	staged := map[string]bool{}
 	for _, p := range paths {
 		body, err := os.ReadFile(p)
 		if err != nil {
@@ -391,11 +395,13 @@ func restageGuestBindSource(t *testing.T, journalDir, instance string) string {
 		for _, a := range rec.Assets {
 			if a.Kind == "bind" && a.Source != "" {
 				sources = append(sources, a.Source)
+			} else if a.Kind != "bind" && a.Path != "" {
+				staged[a.Path] = true
 			}
 		}
 	}
 	for _, src := range sources {
-		if strings.HasPrefix(src, "/srv/fc/base/") || strings.Contains(filepath.Base(src), "vmlinux") || strings.HasPrefix(src, "/dev/") {
+		if staged[src] || strings.HasPrefix(src, "/srv/fc/base/") || strings.Contains(filepath.Base(src), "vmlinux") || strings.HasPrefix(src, "/dev/") {
 			continue
 		}
 		info, err := os.Stat(src)
