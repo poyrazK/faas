@@ -8,30 +8,42 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// deliverWebhookStandDowns gives prior episodes their terminal webhook before
-// evaluating the current rules. The whole pass shares one delivery budget.
-func (e *Evaluator) deliverWebhookStandDowns(ctx context.Context, now time.Time, stats *Stats) {
+// startWebhookStandDowns snapshots existing terminal events before this tick
+// can claim any fires. Transport runs alongside the account evaluations.
+func (e *Evaluator) startWebhookStandDowns(ctx context.Context, now time.Time) <-chan Stats {
+	result := make(chan Stats, 1)
 	store, ok := e.store.(state.AlertWebhookStandDownStore)
 	if !ok {
-		return
+		result <- Stats{}
+		return result
 	}
-	batchCtx, cancel := context.WithTimeout(ctx, api.AlertWebhookBudget)
-	defer cancel()
-	due, err := store.DueAlertWebhookStandDowns(batchCtx, now, api.AlertChannelResolveRetryBatch)
+	readCtx, cancel := context.WithTimeout(ctx, api.AlertObserveBudget)
+	due, err := store.DueAlertWebhookStandDowns(readCtx, now, api.AlertChannelResolveRetryBatch)
+	cancel()
 	if err != nil {
 		e.log.Warn("alerts: list webhook stand-downs", "err", err)
-		return
 	}
-	if len(due) == 0 {
-		return
+	if len(due) == 0 || err != nil {
+		result <- Stats{}
+		return result
 	}
+	go func(ctx context.Context) {
+		result <- e.deliverWebhookStandDowns(ctx, store, now, due)
+	}(ctx)
+	return result
+}
+
+func (e *Evaluator) deliverWebhookStandDowns(ctx context.Context, store state.AlertWebhookStandDownStore, now time.Time, due []state.AlertWebhookStandDown) Stats {
+	batchCtx, cancel := context.WithTimeout(ctx, api.AlertWebhookBudget)
+	defer cancel()
+	var stats Stats
 	pool := newWebhookPool()
 	sendCtx := withWebhookPool(batchCtx, pool)
 	for _, notice := range due {
 		if batchCtx.Err() != nil {
 			break
 		}
-		e.send(sendCtx, stats, func(stats *Stats) {
+		e.send(sendCtx, &stats, func(stats *Stats) {
 			if batchCtx.Err() != nil {
 				return
 			}
@@ -53,4 +65,5 @@ func (e *Evaluator) deliverWebhookStandDowns(ctx context.Context, now time.Time,
 		})
 	}
 	stats.add(pool.wait())
+	return stats
 }

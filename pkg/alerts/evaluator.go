@@ -472,7 +472,7 @@ func (e *Evaluator) runOnce(ctx context.Context, scheduled, now time.Time) (Stat
 	}
 	stats.Evaluated = len(rules)
 	e.anomaly.begin(scheduled)
-	e.deliverWebhookStandDowns(ctx, now, &stats)
+	webhookStandDowns := e.startWebhookStandDowns(ctx, now)
 
 	for _, account := range e.evalAccounts(ctx, groupByAccount(rules), now) {
 		stats.add(account)
@@ -496,7 +496,9 @@ func (e *Evaluator) runOnce(ctx context.Context, scheduled, now time.Time) (Stat
 	e.standDownStranded(ctx, e.now(), &stats)
 	stats.ChannelResolvesRetried, stats.ChannelResolvesAbandoned = e.retryChannelResolves(ctx, e.now())
 	stats.ChannelStandDownsDelivered, stats.ChannelStandDownsAbandoned = e.deliverChannelStandDowns(ctx, e.now())
-	stats.ChannelFiresRetried = e.retryChannelFires(ctx, e.now())
+	stats.add(<-webhookStandDowns)
+	e.deliverDeferredAlertFires(ctx, e.now(), &stats)
+	stats.ChannelFiresRetried += e.retryChannelFires(ctx, e.now())
 	stats.DeliveriesPurged = e.purgeDeliveries(ctx, e.now())
 	return stats, nil
 }
@@ -697,6 +699,10 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 		// one of those before recovering is announced too
 		// (ADR-20261104142830).
 		if rule.State != state.AlertStateOk {
+			held, ok := e.deferredFireRecipients(ctx, rule.ID, rule.LastFiredAt)
+			if !ok {
+				return
+			}
 			var changed, wasFiring bool
 			var err error
 			if anomalyEvidence.Reason == api.AlertAnomalyRecoveryConfirmed {
@@ -717,8 +723,8 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 				}
 				// ADR-749: channels hear the recovery so PagerDuty can
 				// close the incident the fire opened.
-				e.notifyChannels(ctx, rule, alertchannels.EventResolve, observed, now)
-				if rule.NotifyResolved && rule.WebhookURL != "" {
+				e.notifyChannels(ctx, rule, alertchannels.EventResolve, observed, now, held.ChannelIDs)
+				if rule.NotifyResolved && rule.WebhookURL != "" && held.WebhookURL != rule.WebhookURL {
 					e.deliverResolve(ctx, rule, &observed, "", now, stats)
 				}
 			}
@@ -825,37 +831,28 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 		e.ops.AlertEvalFiredTotal()()
 	}
 
-	// The alert_deliveries row is now created AND stamped with the
-	// full envelope (payloadBytes + observed + fired_at) by
-	// ClaimAlertFire itself — both PgStore and MemStore insert the
-	// row inside their claim path (parity contract from PR #409
-	// review). ClaimAlertFire returns the new row's UUID so we can
-	// transition it to delivered/failed via
-	// UpdateAlertDeliveryStatus. Previously the evaluator called
-	// RecordAlertDelivery here too, which collided with the row
-	// ClaimAlertFire had just inserted and short-circuited the
-	// dispatch (CI run 30436032609: 'alerts: record delivery' state:
-	// conflict + 'receiver never received a delivery within 11 s').
-	_ = payloadBytes // envelope is already stamped on the row
-
-	// Flip state to firing on a successful claim. ok→firing audit
-	// is emitted AFTER the delivery succeeds (mirrors the resolved
-	// emission pattern — we only audit terminal transitions).
-	if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateFiring, now); err != nil {
-		e.log.Warn("alerts: set state firing", "rule", rule.ID, "err", err)
+	// The claim has opened the episode and recorded which recipients must
+	// wait for the previous episode. Other recipients and actions proceed.
+	held, ok := e.deferredFireRecipients(ctx, rule.ID, now)
+	if !ok {
+		return
 	}
-
-	// ADR-749: notification channels receive the fire independently of
-	// the webhook. A channel-only rule (no webhook URL) records its
-	// delivery from the channel outcome and skips the webhook path.
-	attempted, delivered := e.notifyChannels(ctx, rule, alertchannels.EventFire, observed, now)
+	attempted, delivered := e.notifyChannels(ctx, rule, alertchannels.EventFire, observed, now, held.ChannelIDs)
 	if rule.WebhookURL == "" {
+		if delivered == 0 && len(held.ChannelIDs) != 0 {
+			e.runAction(ctx, rule, deliveryID, observed, now, stats)
+			return // The deferred recipients determine the delivery outcome.
+		}
 		result := webhookout.Result{Attempts: 1, StatusCode: http.StatusOK}
 		if delivered == 0 {
 			result.StatusCode = 0
 			result.Err = fmt.Errorf("no notification channel accepted the alert (%d attempted)", attempted)
 		}
-		e.recordResult(ctx, rule, deliveryID, observed, result, now, stats)
+		_ = e.recordResult(ctx, rule, deliveryID, observed, result, now, stats)
+		e.runAction(ctx, rule, deliveryID, observed, now, stats)
+		return
+	}
+	if held.WebhookURL == rule.WebhookURL {
 		e.runAction(ctx, rule, deliveryID, observed, now, stats)
 		return
 	}
@@ -876,28 +873,16 @@ func (e *Evaluator) repeatNotificationCooldownUntil(ctx context.Context, rule st
 	return until
 }
 
-func (e *Evaluator) deliverAlert(ctx context.Context, rule state.AlertRule, deliveryID string, observed float64, payloadMap map[string]any, now time.Time, stats *Stats) {
-	// SAFE-RELEASES-B fan-out: when the rule's action column is
-	// anything other than the 'webhook' default (or empty), route
-	// the same fire to the in-process ActionExecutor. Both paths
-	// are independent — a webhook 5xx never blocks the rollback,
-	// and a rollback failure never blocks the webhook.
-	//
-	// The action runs before the webhook (bug hunt H78): after it, a
-	// receiver that never answered held the rollback for the whole
-	// webhook budget, retries included, and a webhook secret that
-	// failed to open skipped the rollback entirely.
-	//
-	// The action is gated by the cool-down bucket that
-	// ClaimAlertFire enforces: a duplicate inside the cool-down
-	// window already returned at the `if !won` branch.
-	//
-	// Not serialised across accounts (ADR-20261109153000): one account's
-	// rules run in one goroutine, so actions on an app never overlap, and
-	// a slow action costs only its own account's tick budget. A global
-	// lock here used to hold every account's fires behind one rollback.
+func (e *Evaluator) deliverAlert(ctx context.Context, rule state.AlertRule, deliveryID string, observed float64, payload map[string]any, now time.Time, stats *Stats) {
+	// The action is once per fire. It runs before the independent webhook
+	// transport so an unresponsive receiver cannot hold it up.
 	e.runAction(ctx, rule, deliveryID, observed, now, stats)
+	e.send(ctx, stats, func(stats *Stats) {
+		e.sendAlertWebhook(ctx, rule, deliveryID, observed, payload, now, stats)
+	})
+}
 
+func (e *Evaluator) sendAlertWebhook(ctx context.Context, rule state.AlertRule, deliveryID string, observed float64, payloadMap map[string]any, now time.Time, stats *Stats) bool {
 	// Unseal the webhook secret. A nil identity or a namespace
 	// mismatch is a hard skip — we never dispatch without a valid
 	// signature, and we never re-open a future-namespace blob.
@@ -911,20 +896,20 @@ func (e *Evaluator) deliverAlert(ctx context.Context, rule state.AlertRule, deli
 		e.log.Warn("alerts: no host age identity; skipping dispatch",
 			"rule", rule.ID, "name", rule.Name)
 		stats.SkippedNoIdentity++
-		return
+		return false
 	}
 	ns, plaintext, err := secretbox.OpenBytesMulti(openIdents, rule.WebhookSecretSealed)
 	if err != nil {
 		e.log.Warn("alerts: open webhook secret; skipping dispatch",
 			"rule", rule.ID, "err", err)
 		e.recordFailure(ctx, rule, deliveryID, 0, "secret open failed: "+err.Error())
-		return
+		return false
 	}
 	if ns != AlertSecretNamespace && ns != legacyAlertSecretNamespace {
 		e.log.Warn("alerts: webhook secret namespace mismatch; skipping dispatch",
 			"rule", rule.ID, "got_namespace", ns, "want", AlertSecretNamespace)
 		e.recordFailure(ctx, rule, deliveryID, 0, "namespace mismatch: "+ns)
-		return
+		return false
 	}
 
 	// Build the webhook Event. The Dispatcher's header set pins
@@ -947,21 +932,10 @@ func (e *Evaluator) deliverAlert(ctx context.Context, rule state.AlertRule, deli
 		}
 	}
 
-	// The delivery, retries included, gets AlertWebhookBudget
-	// (ADR-20261028101615) and runs on the account's webhook pool, so an
-	// unresponsive receiver delays neither every account nor this account's
-	// next rules (ADR-20261110090000). webhookout.Dispatcher only reads its
-	// options while dispatching. Recording the result uses the tick's
-	// context, so a delivery cut short is still recorded as failed.
-	e.send(ctx, stats, func(stats *Stats) {
-		dctx, cancel := context.WithTimeout(ctx, api.AlertWebhookBudget)
-		result := e.dispatch.Dispatch(dctx, webhookout.Target{
-			URL:    rule.WebhookURL,
-			Signer: e.newSigner(plaintext),
-		}, evt)
-		cancel()
-		e.recordResult(ctx, rule, deliveryID, observed, result, now, stats)
-	})
+	dctx, cancel := context.WithTimeout(ctx, api.AlertWebhookBudget)
+	result := e.dispatch.Dispatch(dctx, webhookout.Target{URL: rule.WebhookURL, Signer: e.newSigner(plaintext)}, evt)
+	cancel()
+	return e.recordResult(ctx, rule, deliveryID, observed, result, now, stats) == nil
 }
 
 // openIdentities returns the host identities that open webhook secrets,
@@ -1777,7 +1751,7 @@ func deliveryFailureText(result webhookout.Result) string {
 
 // successful delivery the alert.delivered audit is emitted; on a
 // failure, alert.failed.
-func (e *Evaluator) recordResult(ctx context.Context, rule state.AlertRule, deliveryID string, observed float64, result webhookout.Result, now time.Time, stats *Stats) {
+func (e *Evaluator) recordResult(ctx context.Context, rule state.AlertRule, deliveryID string, observed float64, result webhookout.Result, now time.Time, stats *Stats) error {
 	status := state.AlertDeliveryFailed
 	lastErr := ""
 	deliveredAt := (*time.Time)(nil)
@@ -1802,7 +1776,7 @@ func (e *Evaluator) recordResult(ctx context.Context, rule state.AlertRule, deli
 	if err := e.store.UpdateAlertDeliveryStatus(ctx, deliveryID, status, result.Attempts, result.StatusCode, lastErr, deliveredAt); err != nil {
 		e.log.Warn("alerts: update delivery status",
 			"rule", rule.ID, "delivery_id", deliveryID, "err", err)
-		return
+		return err
 	}
 
 	if e.audit != nil {
@@ -1819,6 +1793,7 @@ func (e *Evaluator) recordResult(ctx context.Context, rule state.AlertRule, deli
 			"observed":    observed,
 		})
 	}
+	return nil
 }
 
 // recordFailure records a non-dispatch failure (secret open, namespace

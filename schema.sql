@@ -18168,6 +18168,30 @@ $$;
 
 
 --
+-- Name: guard_live_alert_delivery_scope(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_live_alert_delivery_scope() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    rule_scope text;
+    observing boolean;
+BEGIN
+    IF NOT NEW.is_test THEN
+        SELECT r.environment_scope, r.observe_only INTO rule_scope, observing
+          FROM alert_rules r WHERE r.id = NEW.rule_id FOR UPDATE;
+        IF observing OR coalesce(NEW.payload->>'environment_scope', '') <> rule_scope THEN
+            RAISE check_violation USING MESSAGE = 'live alert delivery does not match the current rule mode or scope',
+                CONSTRAINT = 'alert_deliveries_live_scope';
+        END IF;
+    END IF;
+    RETURN NEW;
+END
+$$;
+
+
+--
 -- Name: guard_managed_postgres_accounting_intent(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -20159,6 +20183,24 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+
+
+--
+-- Name: guard_scoped_alert_rule_state(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_scoped_alert_rule_state() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.environment_scope <> '' AND NEW.observe_only = OLD.observe_only
+       AND NEW.state IS DISTINCT FROM OLD.state
+       AND current_setting('faas.scoped_alert_state', true) IS DISTINCT FROM 'on' THEN
+        RETURN NULL;
+    END IF;
+    RETURN NEW;
+END
+$$;
 
 
 --
@@ -32019,6 +32061,22 @@ CREATE TABLE public.alert_channel_stand_downs (
     CONSTRAINT alert_channel_stand_downs_attempts_check CHECK ((attempts >= 0)),
     CONSTRAINT alert_channel_stand_downs_last_error_check CHECK ((char_length(last_error) <= 512)),
     CONSTRAINT alert_channel_stand_downs_reason_check CHECK ((reason = ANY (ARRAY['disabled'::text, 'not_released'::text, 'app_deleted'::text, 'deleted'::text])))
+);
+
+
+--
+-- Name: alert_deferred_fires; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.alert_deferred_fires (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    delivery_id uuid NOT NULL,
+    channel_id uuid,
+    webhook_url text DEFAULT ''::text NOT NULL,
+    channel_only boolean DEFAULT false NOT NULL,
+    started boolean DEFAULT false NOT NULL,
+    next_attempt_at timestamp with time zone NOT NULL,
+    CONSTRAINT alert_deferred_fires_check CHECK (((channel_id IS NOT NULL) <> (webhook_url <> ''::text)))
 );
 
 
@@ -64530,6 +64588,14 @@ ALTER TABLE ONLY public.alert_channel_stand_downs
 
 
 --
+-- Name: alert_deferred_fires alert_deferred_fires_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_deferred_fires
+    ADD CONSTRAINT alert_deferred_fires_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: alert_deliveries alert_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -79217,6 +79283,20 @@ CREATE INDEX alert_channel_stand_downs_due_idx ON public.alert_channel_stand_dow
 
 
 --
+-- Name: alert_deferred_fires_delivery_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_deferred_fires_delivery_idx ON public.alert_deferred_fires USING btree (delivery_id);
+
+
+--
+-- Name: alert_deferred_fires_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_deferred_fires_due_idx ON public.alert_deferred_fires USING btree (next_attempt_at);
+
+
+--
 -- Name: alert_deliveries_fired_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -91139,6 +91219,13 @@ CREATE TRIGGER accounts_traffic_security_epoch AFTER INSERT OR DELETE OR UPDATE 
 
 
 --
+-- Name: alert_deliveries alert_deliveries_live_scope; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER alert_deliveries_live_scope BEFORE INSERT ON public.alert_deliveries FOR EACH ROW EXECUTE FUNCTION public.guard_live_alert_delivery_scope();
+
+
+--
 -- Name: alert_presets alert_presets_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -91157,6 +91244,13 @@ CREATE TRIGGER alert_rules_channel_stand_downs BEFORE DELETE ON public.alert_rul
 --
 
 CREATE TRIGGER alert_rules_keep_episodes BEFORE DELETE ON public.alert_rules FOR EACH ROW EXECUTE FUNCTION public.alert_episodes_keep_deleted_rule();
+
+
+--
+-- Name: alert_rules alert_rules_scoped_state; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER alert_rules_scoped_state BEFORE UPDATE OF state ON public.alert_rules FOR EACH ROW EXECUTE FUNCTION public.guard_scoped_alert_rule_state();
 
 
 --
@@ -98925,6 +99019,14 @@ ALTER TABLE ONLY public.alert_channel_stand_downs
 
 ALTER TABLE ONLY public.alert_channel_stand_downs
     ADD CONSTRAINT alert_channel_stand_downs_channel_id_fkey FOREIGN KEY (channel_id) REFERENCES public.notification_channels(id) ON DELETE CASCADE;
+
+
+--
+-- Name: alert_deferred_fires alert_deferred_fires_delivery_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_deferred_fires
+    ADD CONSTRAINT alert_deferred_fires_delivery_id_fkey FOREIGN KEY (delivery_id) REFERENCES public.alert_deliveries(id) ON DELETE CASCADE;
 
 
 --

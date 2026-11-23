@@ -55,7 +55,7 @@ func (e *Evaluator) SetChannels(sender ChannelSender, outcome func(kind, outcome
 // concurrently and best effort: one failing channel never blocks another,
 // the webhook, or the rule's action. Each outcome is recorded on its
 // channel. It returns how many channels were attempted and delivered.
-func (e *Evaluator) notifyChannels(ctx context.Context, rule state.AlertRule, event string, observed float64, now time.Time) (attempted, delivered int) {
+func (e *Evaluator) notifyChannels(ctx context.Context, rule state.AlertRule, event string, observed float64, now time.Time, held map[string]bool) (attempted, delivered int) {
 	if e.channels == nil || channelsOff(ctx) {
 		return 0, 0
 	}
@@ -83,10 +83,7 @@ func (e *Evaluator) notifyChannels(ctx context.Context, rule state.AlertRule, ev
 	fire := event == alertchannels.EventFire
 	ready := chans[:0]
 	for _, ch := range chans {
-		if e.channelStandDownPending(ctx, rule.ID, ch.ID, fire) {
-			if fire {
-				e.deferChannelFire(rule, ch, observed, now)
-			}
+		if held[ch.ID] || e.channelStandDownPending(ctx, rule.ID, ch.ID, fire) {
 			continue
 		}
 		ready = append(ready, ch)

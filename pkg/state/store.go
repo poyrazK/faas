@@ -4011,6 +4011,8 @@ type Store interface {
 	// observed envelope — the INSERT writes '{}' so the dashboard's
 	// `payload ->> 'metric'` query is safe.
 	//
+	// The claim also opens the live episode and persists any destinations
+	// waiting for an earlier terminal notification.
 	// On won=true the returned deliveryID is the inserted row's UUID;
 	// callers pass that to UpdateAlertDeliveryStatus after the
 	// dispatch. On won=false the deliveryID is empty (the caller

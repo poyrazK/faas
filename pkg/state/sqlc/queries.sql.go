@@ -1398,6 +1398,43 @@ func (q *Queries) AlertChannelStandDownPending(ctx context.Context, db DBTX, arg
 	return pending, err
 }
 
+const alertDeferredFireRecipients = `-- name: AlertDeferredFireRecipients :many
+SELECT coalesce(f.channel_id::text, '')::text AS channel_id, f.webhook_url
+  FROM alert_deferred_fires f JOIN alert_deliveries d ON d.id = f.delivery_id
+ WHERE d.rule_id = $1::uuid AND d.fired_at = $2::timestamptz
+   AND (f.channel_id IS NOT NULL OR (NOT f.started AND d.status = 'pending'))
+`
+
+type AlertDeferredFireRecipientsParams struct {
+	RuleID  pgtype.UUID
+	FiredAt pgtype.Timestamptz
+}
+
+type AlertDeferredFireRecipientsRow struct {
+	ChannelID  string
+	WebhookUrl string
+}
+
+func (q *Queries) AlertDeferredFireRecipients(ctx context.Context, db DBTX, arg AlertDeferredFireRecipientsParams) ([]AlertDeferredFireRecipientsRow, error) {
+	rows, err := db.Query(ctx, alertDeferredFireRecipients, arg.RuleID, arg.FiredAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AlertDeferredFireRecipientsRow{}
+	for rows.Next() {
+		var i AlertDeferredFireRecipientsRow
+		if err := rows.Scan(&i.ChannelID, &i.WebhookUrl); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const alertRuleEpisodeOpen = `-- name: AlertRuleEpisodeOpen :one
 SELECT EXISTS (SELECT 1 FROM alert_episodes e WHERE e.rule_id = $1::uuid AND e.resolved_at IS NULL)::boolean AS open
 `
@@ -17260,6 +17297,73 @@ func (q *Queries) DueAlertWebhookStandDowns(ctx context.Context, db DBTX, arg Du
 	return items, nil
 }
 
+const dueDeferredAlertFires = `-- name: DueDeferredAlertFires :many
+SELECT f.id::text AS id, d.id::text AS delivery_id, d.rule_id::text AS rule_id,
+       coalesce(f.channel_id::text, '')::text AS channel_id, f.webhook_url, f.channel_only,
+       d.fired_at, d.status, d.payload, d.observed_value,
+       CASE WHEN f.channel_id IS NULL THEN EXISTS (
+           SELECT 1 FROM alert_webhook_stand_downs s WHERE s.rule_id = d.rule_id AND s.webhook_url = f.webhook_url
+       ) ELSE EXISTS (
+           SELECT 1 FROM alert_channel_stand_downs s
+            WHERE s.rule_id = d.rule_id AND s.channel_id = f.channel_id AND s.observation_transition
+       ) END::boolean AS blocked
+  FROM alert_deferred_fires f JOIN alert_deliveries d ON d.id = f.delivery_id
+ WHERE f.next_attempt_at <= $1::timestamptz
+ ORDER BY f.next_attempt_at, f.id
+ LIMIT $2::integer
+`
+
+type DueDeferredAlertFiresParams struct {
+	Now     pgtype.Timestamptz
+	MaxRows int32
+}
+
+type DueDeferredAlertFiresRow struct {
+	ID            string
+	DeliveryID    string
+	RuleID        string
+	ChannelID     string
+	WebhookUrl    string
+	ChannelOnly   bool
+	FiredAt       pgtype.Timestamptz
+	Status        string
+	Payload       []byte
+	ObservedValue float64
+	Blocked       bool
+}
+
+func (q *Queries) DueDeferredAlertFires(ctx context.Context, db DBTX, arg DueDeferredAlertFiresParams) ([]DueDeferredAlertFiresRow, error) {
+	rows, err := db.Query(ctx, dueDeferredAlertFires, arg.Now, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DueDeferredAlertFiresRow{}
+	for rows.Next() {
+		var i DueDeferredAlertFiresRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.DeliveryID,
+			&i.RuleID,
+			&i.ChannelID,
+			&i.WebhookUrl,
+			&i.ChannelOnly,
+			&i.FiredAt,
+			&i.Status,
+			&i.Payload,
+			&i.ObservedValue,
+			&i.Blocked,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const dueManagedPostgresLifecycleDatabases = `-- name: DueManagedPostgresLifecycleDatabases :many
 SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at FROM managed_postgres_databases
 WHERE clone_resource_role='target' AND (state IN ('deleting','updating') OR ($1::boolean AND state IN ('provisioning','failed')))
@@ -25095,6 +25199,22 @@ func (q *Queries) FinishDatabaseVMUpgrade(ctx context.Context, db DBTX, arg Fini
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const finishDeferredAlertFire = `-- name: FinishDeferredAlertFire :one
+WITH removed AS (
+    DELETE FROM alert_deferred_fires WHERE id = $1::uuid RETURNING id, delivery_id
+)
+SELECT NOT EXISTS (
+    SELECT 1 FROM alert_deferred_fires f JOIN removed ON f.delivery_id = removed.delivery_id AND f.id <> removed.id
+)::boolean AS last_recipient
+`
+
+func (q *Queries) FinishDeferredAlertFire(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, finishDeferredAlertFire, id)
+	var last_recipient pgtype.Bool
+	err := row.Scan(&last_recipient)
+	return last_recipient, err
 }
 
 const finishDevBridgeWebhookReplay = `-- name: FinishDevBridgeWebhookReplay :execrows
@@ -82543,6 +82663,10 @@ SELECT r.id, r.app_id, r.name, r.metric, r.comparison, r.threshold, r.window_spe
   FROM alert_rules r
  WHERE r.id = $2::uuid AND r.notify_resolved AND r.webhook_url <> ''
    AND EXISTS (SELECT 1 FROM alert_episodes e WHERE e.rule_id = r.id AND e.resolved_at IS NULL)
+   AND NOT EXISTS (
+       SELECT 1 FROM alert_deferred_fires f JOIN alert_deliveries d ON d.id = f.delivery_id
+        WHERE d.rule_id = r.id AND d.fired_at = r.last_fired_at AND f.webhook_url = r.webhook_url AND NOT f.started AND d.status = 'pending'
+   )
 `
 
 type QueueAlertWebhookStandDownParams struct {
@@ -83541,6 +83665,30 @@ func (q *Queries) QueueConsumerUpdateTrigger(ctx context.Context, db DBTX, arg Q
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const queueDeferredAlertFires = `-- name: QueueDeferredAlertFires :exec
+WITH live AS (
+    SELECT d.id, d.fired_at, r.id AS rule_id, r.webhook_url
+      FROM alert_deliveries d JOIN alert_rules r ON r.id = d.rule_id
+     WHERE d.id = $1::uuid
+)
+INSERT INTO alert_deferred_fires (delivery_id, channel_id, webhook_url, channel_only, next_attempt_at)
+SELECT live.id, b.channel_id, '', live.webhook_url = '', live.fired_at
+  FROM live JOIN alert_rule_channels b ON b.rule_id = live.rule_id
+  JOIN alert_channel_stand_downs s ON s.rule_id = b.rule_id AND s.channel_id = b.channel_id
+ WHERE s.observation_transition
+UNION ALL
+SELECT live.id, NULL::uuid, live.webhook_url, false, live.fired_at FROM live
+ WHERE live.webhook_url <> '' AND EXISTS (
+    SELECT 1 FROM alert_webhook_stand_downs s WHERE s.rule_id = live.rule_id AND s.webhook_url = live.webhook_url
+ )
+`
+
+// Hold only the destinations that still owe a terminal event.
+func (q *Queries) QueueDeferredAlertFires(ctx context.Context, db DBTX, deliveryID pgtype.UUID) error {
+	_, err := db.Exec(ctx, queueDeferredAlertFires, deliveryID)
+	return err
 }
 
 const queueDepthForBinding = `-- name: QueueDepthForBinding :one
@@ -98374,12 +98522,16 @@ func (q *Queries) RecordCustomDomainVerificationCheck(ctx context.Context, db DB
 }
 
 const recordCustomerAlertAnomalyEvaluation = `-- name: RecordCustomerAlertAnomalyEvaluation :execrows
+WITH scope_aware AS (
+ SELECT set_config('faas.scoped_alert_state', 'on', true)
+)
 UPDATE alert_rules SET
  last_evaluated_at=$1::timestamptz,
  latest_anomaly_evaluation=$2::jsonb,
  updated_at=CASE WHEN state <> $3::text
                  THEN greatest(updated_at,$1::timestamptz) ELSE updated_at END,
  state=coalesce($3::text,state)
+FROM scope_aware
 WHERE id=$4 AND enabled AND comparison IN ('above_baseline','below_baseline')
  AND updated_at=$5::timestamptz
  AND (recovery_confirmation_checks = 1 OR last_evaluated_at IS NOT DISTINCT FROM $6::timestamptz)
@@ -106580,6 +106732,20 @@ func (q *Queries) RetryCustomerOperationBlobCleanup(ctx context.Context, db DBTX
 	return result.RowsAffected(), nil
 }
 
+const retryDeferredAlertFire = `-- name: RetryDeferredAlertFire :exec
+UPDATE alert_deferred_fires SET next_attempt_at = $1::timestamptz WHERE id = $2::uuid
+`
+
+type RetryDeferredAlertFireParams struct {
+	NextAttemptAt pgtype.Timestamptz
+	ID            pgtype.UUID
+}
+
+func (q *Queries) RetryDeferredAlertFire(ctx context.Context, db DBTX, arg RetryDeferredAlertFireParams) error {
+	_, err := db.Exec(ctx, retryDeferredAlertFire, arg.NextAttemptAt, arg.ID)
+	return err
+}
+
 const retryExternalTriggerRecordByOperator = `-- name: RetryExternalTriggerRecordByOperator :execrows
 update trigger_records r set state='pending', attempts=0, last_error=null,
   next_fire_at=clock_timestamp(), claim_generation=claim_generation+1, claim_expires_at=null, operator_replay=true
@@ -111849,6 +112015,30 @@ func (q *Queries) StartDatabaseRestoreDrill(ctx context.Context, db DBTX, arg St
 		arg.SourceID,
 		arg.TargetAt,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const startDeferredWebhookFire = `-- name: StartDeferredWebhookFire :execrows
+WITH live AS (
+    SELECT f.id
+      FROM alert_deferred_fires f
+      JOIN alert_deliveries d ON d.id = f.delivery_id
+      JOIN alert_rules r ON r.id = d.rule_id
+     WHERE f.id = $1::uuid AND f.channel_id IS NULL
+       AND r.enabled AND NOT r.observe_only AND r.state = 'firing'
+       AND r.last_fired_at = d.fired_at AND r.webhook_url = f.webhook_url AND d.status = 'pending'
+       AND NOT EXISTS (SELECT 1 FROM alert_webhook_stand_downs s WHERE s.rule_id = r.id AND s.webhook_url = f.webhook_url)
+     FOR UPDATE OF r
+)
+UPDATE alert_deferred_fires f SET started = true FROM live WHERE f.id = live.id
+`
+
+// Serialize handing the webhook to transport with edits that end its episode.
+func (q *Queries) StartDeferredWebhookFire(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, startDeferredWebhookFire, id)
 	if err != nil {
 		return 0, err
 	}

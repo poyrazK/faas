@@ -647,6 +647,16 @@ type AlertChannelStandDown struct {
 	ObservationTransition bool
 }
 
+type AlertDeferredFire struct {
+	ID            pgtype.UUID
+	DeliveryID    pgtype.UUID
+	ChannelID     pgtype.UUID
+	WebhookUrl    string
+	ChannelOnly   bool
+	Started       bool
+	NextAttemptAt pgtype.Timestamptz
+}
+
 type AlertDelivery struct {
 	ID                      pgtype.UUID
 	RuleID                  pgtype.UUID

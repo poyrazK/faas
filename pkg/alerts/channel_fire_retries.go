@@ -62,11 +62,6 @@ func (e *Evaluator) trackChannelFire(rule state.AlertRule, ch state.Notification
 	e.fireRetries.pending[key] = fireRetry{ruleID: rule.ID, channelID: ch.ID, observed: observed, firedAt: now, attempts: 1, next: now.Add(fireRetryBackoff(1))}
 }
 
-// deferChannelFire lets a due stand-down run before the fire retry in this tick.
-func (e *Evaluator) deferChannelFire(rule state.AlertRule, ch state.NotificationChannel, observed float64, now time.Time) {
-	e.queueChannelFire(fireRetry{ruleID: rule.ID, channelID: ch.ID, observed: observed, firedAt: now, next: now})
-}
-
 func (e *Evaluator) queueChannelFire(r fireRetry) {
 	e.fireRetries.mu.Lock()
 	defer e.fireRetries.mu.Unlock()

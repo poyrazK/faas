@@ -76,7 +76,7 @@ type memWebhookStandDown struct {
 }
 
 func (m *MemStore) queueAlertWebhookStandDownLocked(rule AlertRule, at time.Time) {
-	if !rule.NotifyResolved || rule.WebhookURL == "" || !m.alertRuleEpisodeOpenLocked(rule.ID) {
+	if !rule.NotifyResolved || rule.WebhookURL == "" || !m.alertRuleEpisodeOpenLocked(rule.ID) || m.hasUnsentDeferredWebhookLocked(rule) {
 		return
 	}
 	if m.alertWebhookStandDowns == nil {

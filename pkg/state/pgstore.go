@@ -17344,6 +17344,16 @@ func (s *PgStore) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey str
 	); err != nil {
 		return "", false, fmt.Errorf("state: claim alert fire stamp write %s: %w", ruleID, err)
 	}
+	// The mode edit locks the same row. It either sees this open episode
+	// and queues its terminal events, or it wins before this fire is claimed.
+	var changed int
+	if err := tx.QueryRow(ctx, setAlertRuleStateSQL, ruleID, string(AlertStateFiring), at.UTC(),
+		uuid.NewString(), alertEpisodeKeep, nil).Scan(&changed); err != nil {
+		return "", false, fmt.Errorf("state: open claimed alert episode: %w", err)
+	}
+	if err := sqlc.New().QueueDeferredAlertFires(ctx, tx, mustPgUUID(deliveryID)); err != nil {
+		return "", false, fmt.Errorf("state: queue deferred alert fires: %w", err)
+	}
 	won = true
 
 	if err := tx.Commit(ctx); err != nil {

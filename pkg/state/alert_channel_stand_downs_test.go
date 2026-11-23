@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -264,4 +266,88 @@ func TestPgStore_StandDowns(t *testing.T) {
 	s, ctx := pgStore(t)
 	acct, app, _ := seedLiveDeploy(t, s, ctx)
 	checkStandDowns(t, ctx, s, pgSampleAlertRule(acct, app))
+}
+
+func TestPgStore_AlertScopeDeliveryGuard(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	acct, app, _ := seedLiveDeploy(t, s, ctx)
+	rule := pgSampleAlertRule(acct, app)
+	rule.Metric, rule.Comparison, rule.Threshold = state.AlertMetricRequestCount, state.AlertAboveBaseline, 3
+	rule.EnvironmentScope, rule.NotifyResolved = "staging", true
+	rule, err := s.CreateAlertRule(ctx, rule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	insert := func(key, payload string, test bool) error {
+		// The old meterd claims a delivery with this insert and doesn't
+		// read the rule's scope. Exercise the database guard directly.
+		_, err := pool.Exec(ctx, `
+			INSERT INTO alert_deliveries (rule_id, account_id, app_id, idempotency_key, payload, status, observed_value, fired_at, is_test)
+			SELECT id, account_id, app_id, $2, $3::jsonb, 'pending', 100, now(), $4 FROM alert_rules WHERE id = $1
+		`, rule.ID, key, payload, test)
+		return err
+	}
+	reject := func(key, payload string) {
+		t.Helper()
+		err := insert(key, payload, false)
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.ConstraintName != "alert_deliveries_live_scope" {
+			t.Fatalf("live insert %s: got %v, want the database scope guard", key, err)
+		}
+	}
+	reject("legacy", `{}`)
+	reject("other-scope", `{"environment_scope":"production"}`)
+	if err := insert("explicit-test", `{}`, true); err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte(`{"environment_scope":"staging","event":"alert.fired"}`)
+	first := rule.UpdatedAt.Add(time.Minute)
+	if _, won, err := s.ClaimAlertFire(ctx, rule.ID, "scoped-fire", payload, 100, first); err != nil || !won {
+		t.Fatalf("scoped fire: won=%v err=%v", won, err)
+	}
+	if open, err := s.AlertRuleEpisodeOpen(ctx, rule.ID); err != nil || !open {
+		t.Fatalf("claimed episode open=%v err=%v", open, err)
+	}
+	if tag, err := pool.Exec(ctx, `UPDATE alert_rules SET state = 'ok' WHERE id = $1`, rule.ID); err != nil || tag.RowsAffected() != 0 {
+		t.Fatalf("legacy app-wide state update affected %d scoped rules, err=%v", tag.RowsAffected(), err)
+	}
+	if _, err := s.UpdateAlertRule(ctx, rule.ID, state.UpdateAlertRuleParams{ObserveOnly: new(true)}); err != nil {
+		t.Fatal(err)
+	}
+	reject("observe-only", string(payload))
+	if _, err := s.UpdateAlertRule(ctx, rule.ID, state.UpdateAlertRuleParams{ObserveOnly: new(false)}); err != nil {
+		t.Fatal(err)
+	}
+	second := first.Add(time.Minute)
+	if _, won, err := s.ClaimAlertFire(ctx, rule.ID, "new-episode", payload, 100, second); err != nil || !won {
+		t.Fatalf("new scoped fire: won=%v err=%v", won, err)
+	}
+	held, err := s.AlertDeferredFireRecipients(ctx, rule.ID, second)
+	if err != nil || held.WebhookURL != rule.WebhookURL {
+		t.Fatalf("webhook was held=%v, err=%v", held.WebhookURL != "", err)
+	}
+	fires, err := s.DueDeferredAlertFires(ctx, second, 10)
+	if err != nil || len(fires) != 1 || !fires[0].Blocked {
+		t.Fatalf("deferred fires=%d err=%v, want one blocked fire", len(fires), err)
+	}
+	if started, err := s.StartDeferredWebhookFire(ctx, fires[0].ID); err != nil || started {
+		t.Fatalf("blocked webhook started=%v err=%v", started, err)
+	}
+	notices, err := s.DueAlertWebhookStandDowns(ctx, second, 10)
+	if err != nil || len(notices) != 1 {
+		t.Fatalf("stand-down notices=%d err=%v", len(notices), err)
+	}
+	if err := s.DeleteAlertWebhookStandDown(ctx, notices[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if started, err := s.StartDeferredWebhookFire(ctx, fires[0].ID); err != nil || !started {
+		t.Fatalf("unblocked webhook started=%v err=%v", started, err)
+	}
+	if _, err := s.UpdateAlertRule(ctx, rule.ID, state.UpdateAlertRuleParams{ObserveOnly: new(true)}); err != nil {
+		t.Fatal(err)
+	}
+	notices, err = s.DueAlertWebhookStandDowns(ctx, second.Add(time.Minute), 10)
+	if err != nil || len(notices) != 1 {
+		t.Fatalf("stand-down notices after dispatch starts=%d err=%v", len(notices), err)
+	}
 }

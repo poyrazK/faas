@@ -158,6 +158,7 @@ type Querier interface {
 	// A new fire can supersede ordinary stand-downs. On entering Observe only,
 	// the old episode's terminal notice must go out before the channel opens another.
 	AlertChannelStandDownPending(ctx context.Context, db DBTX, arg AlertChannelStandDownPendingParams) (bool, error)
+	AlertDeferredFireRecipients(ctx context.Context, db DBTX, arg AlertDeferredFireRecipientsParams) ([]AlertDeferredFireRecipientsRow, error)
 	AlertRuleEpisodeOpen(ctx context.Context, db DBTX, ruleID pgtype.UUID) (bool, error)
 	// Customers with at least min_count matching events since since_at, in
 	// customer order, at most max_rows (ADR 20261119102741 §3).
@@ -1430,6 +1431,7 @@ type Querier interface {
 	// Cohorts whose refresh was requested or whose last refresh is older than
 	// stale_before, oldest request first, with the account's plan.
 	DueAnalyticsCohorts(ctx context.Context, db DBTX, arg DueAnalyticsCohortsParams) ([]DueAnalyticsCohortsRow, error)
+	DueDeferredAlertFires(ctx context.Context, db DBTX, arg DueDeferredAlertFiresParams) ([]DueDeferredAlertFiresRow, error)
 	DueManagedPostgresCutoverSourceFences(ctx context.Context, db DBTX, arg DueManagedPostgresCutoverSourceFencesParams) ([]ManagedPostgresCutover, error)
 	DueManagedPostgresLifecycleDatabases(ctx context.Context, db DBTX, arg DueManagedPostgresLifecycleDatabasesParams) ([]ManagedPostgresDatabase, error)
 	DueStorageObjectDeletions(ctx context.Context, db DBTX, arg DueStorageObjectDeletionsParams) ([]DueStorageObjectDeletionsRow, error)
@@ -2371,6 +2373,7 @@ type Querier interface {
 	// the one it leaves (SET sees the old row). backup_at is its first base
 	// backup on the new major; NULL when none was taken.
 	FinishDatabaseVMUpgrade(ctx context.Context, db DBTX, arg FinishDatabaseVMUpgradeParams) (int64, error)
+	FinishDeferredAlertFire(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.Bool, error)
 	FinishDevBridgeWebhookReplay(ctx context.Context, db DBTX, arg FinishDevBridgeWebhookReplayParams) (int64, error)
 	FinishEnvironmentGitOpsRun(ctx context.Context, db DBTX, arg FinishEnvironmentGitOpsRunParams) (int64, error)
 	FinishEnvironmentGitSourcePoll(ctx context.Context, db DBTX, arg FinishEnvironmentGitSourcePollParams) (int64, error)
@@ -6547,6 +6550,8 @@ type Querier interface {
 	QueueConsumerReviveBinding(ctx context.Context, db DBTX, arg QueueConsumerReviveBindingParams) (QueueBinding, error)
 	QueueConsumerUpdateBinding(ctx context.Context, db DBTX, arg QueueConsumerUpdateBindingParams) (QueueBinding, error)
 	QueueConsumerUpdateTrigger(ctx context.Context, db DBTX, arg QueueConsumerUpdateTriggerParams) (int64, error)
+	// Hold only the destinations that still owe a terminal event.
+	QueueDeferredAlertFires(ctx context.Context, db DBTX, deliveryID pgtype.UUID) error
 	// QueueStateForBinding's depth up to row_limit per branch: the binding's own
 	// messages, then legacy unassigned work under its name. Each branch reads an
 	// index range and stops at the limit; the caller clamps the sum.
@@ -8016,6 +8021,7 @@ type Querier interface {
 	RetryAlertWebhookStandDown(ctx context.Context, db DBTX, arg RetryAlertWebhookStandDownParams) error
 	RetryCustomDomainVerificationClaim(ctx context.Context, db DBTX, arg RetryCustomDomainVerificationClaimParams) (int64, error)
 	RetryCustomerOperationBlobCleanup(ctx context.Context, db DBTX, arg RetryCustomerOperationBlobCleanupParams) (int64, error)
+	RetryDeferredAlertFire(ctx context.Context, db DBTX, arg RetryDeferredAlertFireParams) error
 	RetryDeploymentDependencyGate(ctx context.Context, db DBTX, arg RetryDeploymentDependencyGateParams) error
 	RetryExternalTriggerRecordByOperator(ctx context.Context, db DBTX, arg RetryExternalTriggerRecordByOperatorParams) (int64, error)
 	RetryProductionQueueDeadLetter(ctx context.Context, db DBTX, arg RetryProductionQueueDeadLetterParams) (Invocation, error)
@@ -8615,6 +8621,8 @@ type Querier interface {
 	StartCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg StartCustomerOperationWorkflowStepParams) ([]byte, error)
 	// ADR-1027 restore drills (pkg/dbsched drill.go). schedd is the only writer.
 	StartDatabaseRestoreDrill(ctx context.Context, db DBTX, arg StartDatabaseRestoreDrillParams) (int64, error)
+	// Serialize handing the webhook to transport with edits that end its episode.
+	StartDeferredWebhookFire(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	StartEnvironmentWorkloadRetirement(ctx context.Context, db DBTX, arg StartEnvironmentWorkloadRetirementParams) (EnvironmentWorkloadRetirement, error)
 	// Starts a draft while the environment runs fewer than max_running. The
 	// telemetry cursor starts just before the start minute: gateways collapse

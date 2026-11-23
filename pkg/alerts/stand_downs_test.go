@@ -115,11 +115,14 @@ func TestEvaluator_ObserveOnlyRepromotionResolvesPagerDutyBeforeRefiring(t *test
 	live := edit(false, nil)
 	now := live.UpdatedAt.Add(time.Minute)
 	channels := &recordingChannels{fail: map[string]error{}}
-	ev := alerts.NewEvaluator(alerts.EvaluatorOptions{
-		Store: store, PromQL: &anomalyProm{currentSamples: 400, pastSamples: 100, trafficDays: 7},
-		Identity: func() *age.X25519Identity { return ident }, Now: func() time.Time { return now },
-		Channels: channels, Log: discardLog(), Dispatcher: &recordingDispatcher{result: webhookout.Result{StatusCode: 200}},
-	})
+	newEvaluator := func() *alerts.Evaluator {
+		return alerts.NewEvaluator(alerts.EvaluatorOptions{
+			Store: store, PromQL: &anomalyProm{currentSamples: 400, pastSamples: 100, trafficDays: 7},
+			Identity: func() *age.X25519Identity { return ident }, Now: func() time.Time { return now },
+			Channels: channels, Log: discardLog(), Dispatcher: &recordingDispatcher{result: webhookout.Result{StatusCode: 200}},
+		})
+	}
+	ev := newEvaluator()
 	if stats, err := ev.RunOnce(ctx); err != nil || stats.Fired != 1 || len(channels.sent) != 1 {
 		t.Fatalf("initial PagerDuty fire: stats=%+v sent=%+v err=%v", stats, channels.sent, err)
 	}
@@ -136,7 +139,7 @@ func TestEvaluator_ObserveOnlyRepromotionResolvesPagerDutyBeforeRefiring(t *test
 	}
 	channels.fail[alertchannels.KindPagerDuty] = nil
 	now = now.Add(time.Minute)
-	stats, err := ev.RunOnce(ctx)
+	stats, err := newEvaluator().RunOnce(ctx)
 	if err != nil || len(channels.sent) != 4 || stats.ChannelStandDownsDelivered != 1 || stats.ChannelFiresRetried != 1 {
 		t.Fatalf("recovered PagerDuty: stats=%+v sent=%+v err=%v", stats, channels.sent, err)
 	}

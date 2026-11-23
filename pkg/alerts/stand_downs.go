@@ -61,7 +61,9 @@ func (e *Evaluator) standDown(ctx context.Context, rule state.AlertRule, reason 
 		})
 	}
 	if rule.NotifyResolved && rule.WebhookURL != "" {
-		e.deliverResolve(ctx, rule, nil, reason, now, stats)
+		if held, ok := e.deferredFireRecipients(ctx, rule.ID, rule.LastFiredAt); ok && held.WebhookURL != rule.WebhookURL {
+			e.deliverResolve(ctx, rule, nil, reason, now, stats)
+		}
 	}
 }
 

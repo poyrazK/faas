@@ -22256,12 +22256,16 @@ DELETE FROM alert_observation_checks WHERE rule_id=sqlc.arg(id);
 
 -- name: RecordCustomerAlertAnomalyEvaluation :execrows
 -- A skipped observation leaves any open alert episode alone.
+WITH scope_aware AS (
+ SELECT set_config('faas.scoped_alert_state', 'on', true)
+)
 UPDATE alert_rules SET
  last_evaluated_at=sqlc.arg(evaluated_at)::timestamptz,
  latest_anomaly_evaluation=sqlc.narg(evidence)::jsonb,
  updated_at=CASE WHEN state <> sqlc.narg(skipped_state)::text
                  THEN greatest(updated_at,sqlc.arg(evaluated_at)::timestamptz) ELSE updated_at END,
  state=coalesce(sqlc.narg(skipped_state)::text,state)
+FROM scope_aware
 WHERE id=sqlc.arg(id) AND enabled AND comparison IN ('above_baseline','below_baseline')
  AND updated_at=sqlc.arg(expected_updated_at)::timestamptz
  AND (recovery_confirmation_checks = 1 OR last_evaluated_at IS NOT DISTINCT FROM sqlc.narg(expected_last_evaluated_at)::timestamptz)
@@ -22367,6 +22371,71 @@ SELECT EXISTS (
      WHERE rule_id = sqlc.arg(rule_id)::uuid AND channel_id = sqlc.arg(channel_id)::uuid AND observation_transition
 )::boolean AS pending;
 
+-- name: QueueDeferredAlertFires :exec
+-- Hold only the destinations that still owe a terminal event.
+WITH live AS (
+    SELECT d.id, d.fired_at, r.id AS rule_id, r.webhook_url
+      FROM alert_deliveries d JOIN alert_rules r ON r.id = d.rule_id
+     WHERE d.id = sqlc.arg(delivery_id)::uuid
+)
+INSERT INTO alert_deferred_fires (delivery_id, channel_id, webhook_url, channel_only, next_attempt_at)
+SELECT live.id, b.channel_id, '', live.webhook_url = '', live.fired_at
+  FROM live JOIN alert_rule_channels b ON b.rule_id = live.rule_id
+  JOIN alert_channel_stand_downs s ON s.rule_id = b.rule_id AND s.channel_id = b.channel_id
+ WHERE s.observation_transition
+UNION ALL
+SELECT live.id, NULL::uuid, live.webhook_url, false, live.fired_at FROM live
+ WHERE live.webhook_url <> '' AND EXISTS (
+    SELECT 1 FROM alert_webhook_stand_downs s WHERE s.rule_id = live.rule_id AND s.webhook_url = live.webhook_url
+ );
+
+-- name: AlertDeferredFireRecipients :many
+SELECT coalesce(f.channel_id::text, '')::text AS channel_id, f.webhook_url
+  FROM alert_deferred_fires f JOIN alert_deliveries d ON d.id = f.delivery_id
+ WHERE d.rule_id = sqlc.arg(rule_id)::uuid AND d.fired_at = sqlc.arg(fired_at)::timestamptz
+   AND (f.channel_id IS NOT NULL OR (NOT f.started AND d.status = 'pending'));
+
+-- name: DueDeferredAlertFires :many
+SELECT f.id::text AS id, d.id::text AS delivery_id, d.rule_id::text AS rule_id,
+       coalesce(f.channel_id::text, '')::text AS channel_id, f.webhook_url, f.channel_only,
+       d.fired_at, d.status, d.payload, d.observed_value,
+       CASE WHEN f.channel_id IS NULL THEN EXISTS (
+           SELECT 1 FROM alert_webhook_stand_downs s WHERE s.rule_id = d.rule_id AND s.webhook_url = f.webhook_url
+       ) ELSE EXISTS (
+           SELECT 1 FROM alert_channel_stand_downs s
+            WHERE s.rule_id = d.rule_id AND s.channel_id = f.channel_id AND s.observation_transition
+       ) END::boolean AS blocked
+  FROM alert_deferred_fires f JOIN alert_deliveries d ON d.id = f.delivery_id
+ WHERE f.next_attempt_at <= sqlc.arg(now)::timestamptz
+ ORDER BY f.next_attempt_at, f.id
+ LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: StartDeferredWebhookFire :execrows
+-- Serialize handing the webhook to transport with edits that end its episode.
+WITH live AS (
+    SELECT f.id
+      FROM alert_deferred_fires f
+      JOIN alert_deliveries d ON d.id = f.delivery_id
+      JOIN alert_rules r ON r.id = d.rule_id
+     WHERE f.id = sqlc.arg(id)::uuid AND f.channel_id IS NULL
+       AND r.enabled AND NOT r.observe_only AND r.state = 'firing'
+       AND r.last_fired_at = d.fired_at AND r.webhook_url = f.webhook_url AND d.status = 'pending'
+       AND NOT EXISTS (SELECT 1 FROM alert_webhook_stand_downs s WHERE s.rule_id = r.id AND s.webhook_url = f.webhook_url)
+     FOR UPDATE OF r
+)
+UPDATE alert_deferred_fires f SET started = true FROM live WHERE f.id = live.id;
+
+-- name: FinishDeferredAlertFire :one
+WITH removed AS (
+    DELETE FROM alert_deferred_fires WHERE id = sqlc.arg(id)::uuid RETURNING id, delivery_id
+)
+SELECT NOT EXISTS (
+    SELECT 1 FROM alert_deferred_fires f JOIN removed ON f.delivery_id = removed.delivery_id AND f.id <> removed.id
+)::boolean AS last_recipient;
+
+-- name: RetryDeferredAlertFire :exec
+UPDATE alert_deferred_fires SET next_attempt_at = sqlc.arg(next_attempt_at)::timestamptz WHERE id = sqlc.arg(id)::uuid;
+
 -- name: QueueAlertWebhookStandDown :exec
 -- Snapshot the pre-edit destination and payload while its live episode is open.
 INSERT INTO alert_webhook_stand_downs
@@ -22376,7 +22445,11 @@ SELECT r.id, r.app_id, r.name, r.metric, r.comparison, r.threshold, r.window_spe
        r.webhook_url, r.webhook_secret_sealed, sqlc.arg(at)::timestamptz, sqlc.arg(at)::timestamptz
   FROM alert_rules r
  WHERE r.id = sqlc.arg(rule_id)::uuid AND r.notify_resolved AND r.webhook_url <> ''
-   AND EXISTS (SELECT 1 FROM alert_episodes e WHERE e.rule_id = r.id AND e.resolved_at IS NULL);
+   AND EXISTS (SELECT 1 FROM alert_episodes e WHERE e.rule_id = r.id AND e.resolved_at IS NULL)
+   AND NOT EXISTS (
+       SELECT 1 FROM alert_deferred_fires f JOIN alert_deliveries d ON d.id = f.delivery_id
+        WHERE d.rule_id = r.id AND d.fired_at = r.last_fired_at AND f.webhook_url = r.webhook_url AND NOT f.started AND d.status = 'pending'
+   );
 
 -- name: DueAlertWebhookStandDowns :many
 SELECT id, rule_id, app_id, rule_name, metric, comparison, threshold, window_spec, environment_scope,

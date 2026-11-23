@@ -769,6 +769,19 @@
     "kind": "operational"
   },
   {
+    "table": "alert_deferred_fires",
+    "columns": [
+      "channel_id",
+      "channel_only",
+      "delivery_id",
+      "id",
+      "next_attempt_at",
+      "started",
+      "webhook_url"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "alert_deliveries",
     "columns": [
       "account_id",

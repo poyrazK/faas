@@ -507,6 +507,7 @@ type MemStore struct {
 	alertChannelResolveRetries    map[alertChannelRetryKey]AlertChannelResolveRetry // ADR-20261031144636
 	alertChannelStandDowns        map[alertChannelRetryKey]memStandDown             // ADR-20261104142830
 	alertWebhookStandDowns        map[string]memWebhookStandDown
+	alertDeferredFires            map[string]memDeferredAlertFire
 	appSLOs                       map[string][]SLO // app id → definitions (ADR-747), lazily made
 	sloHours                      map[string]map[time.Time]memSLOHour
 	syntheticChecks               map[string][]SyntheticCheck // app id → checks (ADR-748), lazily made
@@ -26075,6 +26076,11 @@ func (m *MemStore) deleteAlertRuleLocked(id string) {
 	m.keepDeletedRuleEpisodesLocked(m.alertRules[id], time.Now().UTC())
 	m.clearAlertChannelResolveRetriesLocked(func(k alertChannelRetryKey) bool { return k.rule == id })
 	delete(m.alertRules, id)
+	for key, fire := range m.alertDeferredFires {
+		if fire.RuleID == id {
+			delete(m.alertDeferredFires, key)
+		}
+	}
 	for key, notice := range m.alertWebhookStandDowns {
 		if notice.Rule.ID == id {
 			delete(m.alertWebhookStandDowns, key)
@@ -27204,6 +27210,12 @@ func (m *MemStore) ClaimAlertFire(_ context.Context, ruleID, idempotencyKey stri
 			ObservedValue:  observed,
 			FiredAt:        at.UTC(),
 		}
+		if r.State != AlertStateFiring {
+			r.State, r.UpdatedAt = AlertStateFiring, at.UTC()
+			m.alertRules[ruleID] = r
+			m.recordAlertEpisodeLocked(r, at.UTC())
+		}
+		m.queueDeferredAlertFiresLocked(r, m.alertDeliveries[idempotencyKey])
 		m.captureAlertRollbackLocked(id, r, observed, at)
 		return id, true, nil
 	}
