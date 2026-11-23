@@ -316,6 +316,14 @@ now 4 and release retention keeps 5 previous releases
 known-good release installed; a test keeps the cap below retention. Cost:
 two more releases on disk per host, about 4 GB.
 
+**Base check** (2026-11-23). The build takes the newest tag as the base
+full release, but a tag (rc.374) can exist before cd-platform deploys it.
+The planner then refuses the lane (N±1) and the failed lane freezes
+deploys. The build now also uploads `unit-release-base-<sha>`, the
+preflight reads the full release the control plane runs (`preflight-state`
+`base`), and on a mismatch it stands down green: "deploy that release with
+cd-platform first". Unknown on either side leaves it to the planner.
+
 ### 5. Full releases stay manual
 
 The owner cuts full releases. A stalled lane says so in every run's
