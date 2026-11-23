@@ -294,6 +294,12 @@ func (c *operatorHTTPClient) verifyMFA(ctx context.Context, totp string) error {
 		return errors.New("TOTP code is required")
 	}
 	if err := c.doJSON(ctx, http.MethodPost, "/v1/account/mfa/verify", api.MFAVerifyRequest{Totp: strings.TrimSpace(totp)}, nil, true, nil); err != nil {
+		// 409 mfa_required: the account has no confirmed authenticator, so no
+		// code can verify. A new operator has to finish setup in the browser.
+		var httpErr *operatorHTTPError
+		if errors.As(err, &httpErr) && httpErr.Status == http.StatusConflict && httpErr.Code == api.CodeMFARequired {
+			return fmt.Errorf("this account has no confirmed authenticator yet: finish setup at %s/dashboard/account/mfa, then run 'gregalectl auth login' again", c.baseURL)
+		}
 		return err
 	}
 	c.session.SteppedUpAt = time.Now().UTC()

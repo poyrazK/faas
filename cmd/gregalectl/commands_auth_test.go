@@ -132,6 +132,25 @@ func TestOperatorHTTPErrorExplainsStepUp(t *testing.T) {
 	}
 }
 
+// A new operator's session is mfa_pending but the account has no confirmed
+// authenticator: /verify answers 409 mfa_required, and the CLI must send them
+// to browser setup instead of echoing the raw problem.
+func TestOperatorVerifyMFAPointsAnUnenrolledOperatorToSetup(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeTestJSON(w, http.StatusConflict, api.Problem{Status: http.StatusConflict, Code: api.CodeMFARequired,
+			Detail: "finish /v1/account/mfa/confirm before verifying or using recovery codes"})
+	}))
+	defer server.Close()
+	sess := operatorSession{BaseURL: server.URL, Cookie: "opaque-session"}
+	err := newOperatorHTTPClient(&sess).verifyMFA(t.Context(), "123456")
+	if err == nil || !strings.Contains(err.Error(), server.URL+"/dashboard/account/mfa") {
+		t.Fatalf("error = %v", err)
+	}
+	if !sess.SteppedUpAt.IsZero() {
+		t.Fatal("a refused verify must not stamp a step-up")
+	}
+}
+
 // apid accepts each TOTP code once (RFC 6238 §5.2). Logging in spends the
 // code; a forced step-up that reuses it must say the code was already used
 // and keep the saved session, and the next code must step up and save the
