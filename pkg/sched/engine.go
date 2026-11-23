@@ -1881,6 +1881,10 @@ type WakeResult struct {
 	InstanceID        string
 	NodeID            string // compute_nodes.id (uuid), empty only on error
 	Method            vmmdpb.WakeMethod
+	// StartupOOM: the app ran out of memory while this wake booted it
+	// (vmmd WakeResponse.startup_oom). Gateways keep such a wake out of the
+	// platform wake SLO. False on the already-running fast path.
+	StartupOOM bool
 	// WakeID is the per-wake-attempt correlation handle (gaps analysis
 	// 2026-07-23). UUIDv7 minted at Phase 2 before CreateInstance;
 	// gatewayd-internal propagates it back to the client as x-faas-wake-id and
@@ -4859,7 +4863,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 
 	bootInput.identity.InstanceID = fresh.ID
 	bootInput.identity.NodeID = fresh.NodeID
-	return WakeResult{InstanceID: bootInput.insID, NodeID: fresh.NodeID, Method: out.Method, WakeID: bootInput.wakeID, Port: bootInput.spec.Port, DeploymentID: bootInput.depID, RequestCount: fresh.RequestCount, Identity: bootInput.identity}, nil
+	return WakeResult{InstanceID: bootInput.insID, NodeID: fresh.NodeID, Method: out.Method, StartupOOM: out.StartupOOM, WakeID: bootInput.wakeID, Port: bootInput.spec.Port, DeploymentID: bootInput.depID, RequestCount: fresh.RequestCount, Identity: bootInput.identity}, nil
 }
 
 // recordBootCharacterization persists the workload class a cold boot's

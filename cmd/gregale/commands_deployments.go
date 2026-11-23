@@ -686,6 +686,15 @@ func cmdDeploymentGet(args []string) int {
 		return 1
 	}
 	id := pos[0]
+	if id == "list" || id == "ls" || id == "history" {
+		// Prod hunt r30: `deployment list --app X` printed the one-release
+		// usage; the list lives under `release`.
+		hint := "gregale release list"
+		if *appFlag != "" {
+			hint += " --app " + *appFlag
+		}
+		return printErr("Unknown deployment verb", fmt.Errorf("deployment shows one release; to list releases run: %s", hint))
+	}
 	if !validDeploymentReadRef(id) {
 		PrintUsage(os.Stderr, "usage: gregale deployment <id|vN|latest> [--app SLUG] [--show-scan] [--show-secret-scan]   (id is 32 hex chars, a vN revision, or latest)", "deployment")
 		return 1

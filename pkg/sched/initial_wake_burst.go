@@ -120,6 +120,6 @@ func coordinateWakeResult(result WakeResult) *CoordInstance {
 		InstanceID: result.InstanceID, NodeID: result.NodeID,
 		DeploymentID: result.DeploymentID, WakeID: result.WakeID,
 		Port: int32(result.Port), ColdBoot: result.Method == vmmdpb.WakeMethod_WAKE_COLD_BOOT,
-		Identity: result.Identity,
+		StartupOOM: result.StartupOOM, Identity: result.Identity,
 	}
 }

@@ -5840,7 +5840,7 @@ func (h *Handler) setupStreamingWriter(w http.ResponseWriter, rec *statusRecorde
 	onFlush := func(cumulative int64) {
 		delta := cumulative - lastReported
 		lastReported = cumulative
-		if delta <= 0 {
+		if delta <= 0 || rec.isPlatformResponse() {
 			return
 		}
 		if h.egressSink != nil && target.InstanceID != "" {
@@ -7591,7 +7591,10 @@ haveApp:
 		wakeMethod        WakeMethod
 		platformWakeStart time.Time
 		platformWakeTrace *wakePhaseTrace
-		err               error
+		// startupOOM collects the instances whose wake reported that the
+		// app ran out of memory while booting; set only on wake paths.
+		startupOOM *sched.StartupOOMRecorder
+		err        error
 	)
 
 	// PickWarm is the combined warm-path decision for the production backend. A
@@ -7704,6 +7707,7 @@ haveApp:
 				platformWakeStart = time.Now()
 				platformWakeTrace = newWakePhaseTrace(platformWakeStart)
 				wakeCtx := withWakePhaseTrace(r.Context(), platformWakeTrace)
+				wakeCtx = withStartupOOMRecorder(wakeCtx, &startupOOM)
 				if acceptsWakePage(r) {
 					var cancel context.CancelFunc
 					wakeCtx, cancel = context.WithTimeout(wakeCtx, time.Duration(api.WakePageAfterMs)*time.Millisecond)
@@ -7725,7 +7729,7 @@ haveApp:
 					return
 				}
 			} else {
-				admittedWakeID, method, atCapacity, admitErr = h.backend.Admit(r.Context(), app.ID, exactDeploymentID, exactDeploymentScope, exactDeploymentTrigger, maxInstances+api.RolloutConcurrencyGrant)
+				admittedWakeID, method, atCapacity, admitErr = h.backend.Admit(withStartupOOMRecorder(r.Context(), &startupOOM), app.ID, exactDeploymentID, exactDeploymentScope, exactDeploymentTrigger, maxInstances+api.RolloutConcurrencyGrant)
 			}
 			settled := false
 			if admitErr == nil && atCapacity {
@@ -7808,6 +7812,7 @@ haveApp:
 		// booting. API clients retain the plan-derived wait budget.
 		wakeCtx := r.Context()
 		wakeCtx = withWakePhaseTrace(wakeCtx, platformWakeTrace)
+		wakeCtx = withStartupOOMRecorder(wakeCtx, &startupOOM)
 		// A thaw prefers the frozen instance this session is pinned to
 		// (ADR-1151): its in-memory state is why the app keeps affinity.
 		wakeCtx = sched.WithPreferredInstance(wakeCtx, preferredInstanceID)
@@ -7920,7 +7925,7 @@ haveApp:
 	routing, hasPublicRouting := publicRoutingSnapshot(r.Context())
 	if !exactDeployment || hasPublicRouting {
 		//nolint:contextcheck // request ctx at handler boundary.
-		burstWaitCtx, cancelBurstWait := context.WithTimeout(r.Context(), burstCapacityWait(app))
+		burstWaitCtx, cancelBurstWait := context.WithTimeout(withStartupOOMRecorder(r.Context(), &startupOOM), burstCapacityWait(app))
 		defer cancelBurstWait()
 		var burstErr error
 		if hasPublicRouting {
@@ -7961,7 +7966,7 @@ haveApp:
 		if platformWakeStart.IsZero() {
 			platformWakeStart = time.Now()
 		}
-		fanoutCtx, fanoutSpan := pkgtrace.StartSpan(r.Context(), "gateway.wake_fanout",
+		fanoutCtx, fanoutSpan := pkgtrace.StartSpan(withStartupOOMRecorder(r.Context(), &startupOOM), "gateway.wake_fanout",
 			attribute.String("app_id", app.ID),
 			attribute.String("deployment_id", pick.ColdBucket),
 		)
@@ -8664,11 +8669,10 @@ haveApp:
 	}
 	// ADR-046 (per-instance egress metering, telemetry only):
 	// record the response body bytes that egressed the gateway on
-	// this instance. Gated on 2xx/3xx because 4xx/5xx the
-	// ReverseProxy never actually wrote the response body to the
-	// wire (it short-circuited on the upstream reject) — billing
-	// bytes that didn't egress would be wrong on both ends of the
-	// financial model. nil-safe for unit tests.
+	// this instance. An app's own 4xx/5xx body egresses like any
+	// other and is billed; a response the gateway wrote itself
+	// (statusRecorder.isPlatformResponse) is not. nil-safe for
+	// unit tests.
 	if !probe {
 		h.recordEgress(rec, completionTarget, app)
 	}
@@ -8706,8 +8710,18 @@ haveApp:
 		if cold && wakeMethod != WakeMethodUnspecified {
 			h.metrics.ObserveColdBootWithTrace(app.ID, firstByteAt.Sub(wakeStart), target.NodeID, traceID)
 			if !platformWakeStart.IsZero() {
-				h.metrics.ObservePlatformWakeWithTrace(firstByteAt.Sub(platformWakeStart), traceID)
-				platformWakeTrace.observe(h.metrics, firstByteAt)
+				if startupOOM.Any() {
+					// The app ran out of memory while a wake this request
+					// admitted booted it: the kernel's OOM kill, not the
+					// platform, set the latency this request waited out,
+					// whichever instance the final pick routed it to. The
+					// app's own wake latency (above) keeps it; the phase
+					// breakdown follows the SLO series it decomposes.
+					h.metrics.ObservePlatformWakeExcluded(platformWakeExcludedStartupOOM)
+				} else {
+					h.metrics.ObservePlatformWakeWithTrace(firstByteAt.Sub(platformWakeStart), traceID)
+					platformWakeTrace.observe(h.metrics, firstByteAt)
+				}
 			}
 			// Wake-locality classifier (PR scale-out readiness). Increment
 			// AFTER the first-byte observation so the 350 ms measurement
@@ -9135,10 +9149,12 @@ func (h *Handler) routeSetFor(appID string, enabled bool) *routeLabelSet {
 // recordEgress attributes response body bytes to the (instanceID,
 // minute) bucket in h.egressSink. Called after the proxy ServeHTTP
 // returns so the recorder has observed every body chunk that hit
-// the wire. The 2xx/3xx gate mirrors what the gateway actually
-// delivered to the caller: 4xx/5xx responses never reach the body
-// stage on the ReverseProxy path (it short-circuits to the error
-// branch), so trying to count their bytes would over-attribute.
+// the wire. Every status the app answered counts: an app's own 404
+// page or 500 body leaves the platform like any other response, and
+// since gateway response bytes are billed app egress
+// (ADR-20261121210517) skipping them made error statuses a free
+// channel (metering review 2026-11-23). Only bytes the gateway wrote
+// itself (writeForwarderProblem marks the recorder) are left out.
 //
 // PR-B streaming path: when the recorder is armed with a flusher
 // (rec.flusher != nil, set by setupStreamingWriter), the per-flush
@@ -9168,7 +9184,7 @@ func (h *Handler) recordEgress(rec *statusRecorder, target Target, app App) {
 	if rec.flusher != nil {
 		return
 	}
-	if rec.status < 200 || rec.status >= 400 {
+	if rec.status < 200 || rec.isPlatformResponse() {
 		return
 	}
 	if rec.Bytes <= 0 {
@@ -9456,6 +9472,12 @@ type statusRecorder struct {
 	http.ResponseWriter
 	status      int
 	wroteHeader bool
+	// platformResponse marks a response the gateway wrote itself (a
+	// forwarder problem), not the app: its bytes are not app egress.
+	platformResponse bool
+	// platformProblem is whether the committed headers carried
+	// api.ErrorCodeHeader (prepareResponseHeaders).
+	platformProblem bool
 	// headerAt is when the response headers were committed: a long-lived
 	// response's latency (ADR-20261109153000).
 	headerAt                 time.Time
@@ -9540,6 +9562,50 @@ type statusRecorder struct {
 // per-chunk read deadlines during request-body admission.
 func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 
+// markPlatformResponse flags the statusRecorder under w (through any
+// Unwrap chain) as carrying a gateway-written response. An uncommitted retry
+// attempt keeps the mark itself until it commits or is discarded.
+func markPlatformResponse(w http.ResponseWriter) {
+	for w != nil {
+		if rec, ok := w.(*statusRecorder); ok {
+			// Once the app's status is on the wire the response is the
+			// app's; a later platform write must not unbill it.
+			if !rec.wroteHeader {
+				rec.platformResponse = true
+			}
+			return
+		}
+		if rw, ok := w.(*retryWriter); ok {
+			if !rw.committed {
+				rw.platformResponse = true
+				return
+			}
+		}
+		u, ok := w.(interface{ Unwrap() http.ResponseWriter })
+		if !ok {
+			return
+		}
+		w = u.Unwrap()
+	}
+}
+
+// isPlatformResponse reports whether the gateway, not the app, wrote this
+// response: either a writer marked it, or it carries api.ErrorCodeHeader,
+// which api.WriteProblem stamps and both proxy paths strip from a guest's
+// response (ADR-20261030115139). Its bytes are not billed app egress.
+func (s *statusRecorder) isPlatformResponse() bool {
+	if s.platformResponse {
+		return true
+	}
+	if s.wroteHeader {
+		return s.platformProblem
+	}
+	if s.ResponseWriter == nil {
+		return false
+	}
+	return s.ResponseWriter.Header().Get(api.ErrorCodeHeader) != ""
+}
+
 // ProblemHTMLRequest lets the shared API problem writer negotiate the
 // browser-facing error page for gateway requests. API handlers do not use this
 // wrapper, so their RFC 7807 JSON responses remain unchanged.
@@ -9584,6 +9650,9 @@ func (s *statusRecorder) prepareResponseHeaders(code int) {
 		// reading it here is race-free relative to the underlying
 		// ResponseWriter.
 		s.ContentType = s.ResponseWriter.Header().Get("Content-Type")
+		// Who wrote the response is fixed when its headers commit; a header
+		// set afterwards never unbills bytes already sent.
+		s.platformProblem = s.ResponseWriter.Header().Get(api.ErrorCodeHeader) != ""
 		s.headCachePrivate = s.sharedCachePrivate || responseForbidsSharedCaching(s.Header())
 		// ADR-089 / issue #561 PR 4: apply any EdgeRuleHeaderOp
 		// mutations the applyEdgeRuleHeaders helper installed

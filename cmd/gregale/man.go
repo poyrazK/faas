@@ -621,9 +621,30 @@ func suggestSubcommand(query string, c cliCommand) (string, bool) {
 		}
 	}
 	if tied || bestDist > maxDist || bestName == "" {
-		return "", false
+		return intentSubcommand(query, c)
 	}
 	return bestName, true
+}
+
+// subcommandIntents maps a verb people reach for to the verbs a command may
+// use for the same act, most likely first. `app deploy-token revoke` listed
+// the verbs and asked whether "revoke" was an app; delete is the verb that
+// revokes a token (prod hunt r29).
+var subcommandIntents = map[string][]string{
+	"revoke":  {"delete", "rm"},
+	"remove":  {"delete", "rm"},
+	"destroy": {"delete", "rm"},
+	"new":     {"create", "add"},
+}
+
+// intentSubcommand suggests the command's own verb for an intent synonym.
+func intentSubcommand(query string, c cliCommand) (string, bool) {
+	for _, candidate := range subcommandIntents[query] {
+		if _, ok := findCliSubcommand(c.Subcommands, candidate); ok {
+			return candidate, true
+		}
+	}
+	return "", false
 }
 
 // maybeSuggestSub writes a one-line "Did you mean X?" hint to

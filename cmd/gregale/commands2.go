@@ -371,6 +371,11 @@ func cmdApp(args []string) int {
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
+	// The suggestion keeps every word after the command, flags included
+	// (`app inspect --environment prod shop`), not just the positionals.
+	if fs.NArg() > 0 && appWordIsCommand(slug, args[1:]) {
+		return 1
+	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
