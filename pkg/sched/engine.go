@@ -8176,8 +8176,13 @@ func (e *Engine) ReconcileDeletedApp(ctx context.Context, appID string) (int, er
 
 // Evict destroys a RUNNING instance under RAM pressure (spec §4.3). Unlike Park
 // it does not snapshot — the next wake cold-boots (ADR-005), so the state lands
-// in STOPPED rather than PARKED.
+// in STOPPED rather than PARKED. Rollouts also stop replicas through it; the
+// pressure paths go through EvictUnderPressure, which records why.
 func (e *Engine) Evict(ctx context.Context, instanceID string) error {
+	return e.evict(ctx, instanceID, "state_transition", "")
+}
+
+func (e *Engine) evict(ctx context.Context, instanceID, kind, reason string) error {
 	ins, err := e.lockedInStates(ctx, instanceID, state.StateRunning, state.StateFrozen)
 	if err != nil || ins == nil {
 		return err
@@ -8199,7 +8204,7 @@ func (e *Engine) Evict(ctx context.Context, instanceID string) error {
 		return fmt.Errorf("sched: evict: destroy %s: %w", instanceID, err)
 	}
 	e.ledger.Release(instanceID)
-	e.transition(ctx, instanceID, ins.AppID, state.StateStopped)
+	e.transitionWithKind(ctx, instanceID, ins.AppID, state.StateStopped, kind, reason)
 	if ins.Mode == string(state.InstanceModeWorker) {
 		e.scheduleWorkerReconcile(ctx, ins.DeploymentID)
 	}
