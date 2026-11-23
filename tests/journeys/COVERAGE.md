@@ -79,8 +79,12 @@ and output, workspace file write/read/list with paths and symlinks outside
 an idle freeze and the thaw on the next command (logged, not yet budgeted),
 workspace persist and a second session started from it, a private preview
 port reachable with its token and 404 without it, and close revoking the data
-plane. Persist and previews skip when their switches are off
-(`sandbox_unsupported`, `sandbox_previews_off`). The OpenAI Agents SDK client
+plane. On its own persistent session (ADR-20261122132055) it pauses, resumes
+with a file and a running process kept (not `resumed_cold`), and forks one
+ephemeral session that holds both. Persist, previews and persistent sessions
+skip when their switches are off (`sandbox_unsupported`,
+`sandbox_previews_off`) or the plan has none (`SandboxPersistentMax`,
+`SandboxForkMax`). The OpenAI Agents SDK client
 and the E2B shim are not driven here yet.
 
 Application Auth (ADR-1190) is dark-launched, so it is not a GA row either.

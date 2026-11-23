@@ -26,6 +26,9 @@ import (
 //   - leave the session idle until it freezes, then thaw it with a command;
 //   - persist the workspace and start a second session from it;
 //   - expose a guest port and reach it only with its preview token;
+//   - pause a persistent session, resume it with its memory and workspace
+//     kept, and fork it (ADR-20261122132055; skipped where persistent
+//     sessions are off);
 //   - close the session and see its data-plane token stop working.
 //
 // It skips when sandbox sessions are not released to the account or are
@@ -88,6 +91,7 @@ func TestSandboxes(t *testing.T) {
 	s.check("idle_freeze_and_thaw", j.freezeAndThaw)
 	s.check("persist_and_restore_workspace", j.persistAndRestore)
 	s.check("private_preview_port", j.previewPort)
+	s.check("persistent_pause_resume_fork", j.persistent)
 	s.step("close_session", j.close)
 }
 
