@@ -652,7 +652,9 @@ func TestUnitReleaseIsTestedAsShippedAndCapped(t *testing.T) {
 		`python3 "$RUNNER_TEMP/unit-tools/tested_tree.py" --commit "$RELEASE_SHA"`,
 		"Build unit binaries",
 		"Sign unit release with GitHub OIDC",
-		"name: unit-release-sha-${{ steps.detect.outputs.release_sha }}")
+		"name: unit-release-sha-${{ steps.detect.outputs.release_sha }}",
+		// The preflight's base check reads the full release it is built over.
+		"name: unit-release-base-${{ steps.base.outputs.sha }}")
 	for _, required := range []string{
 		`BLAST_CAP: "5"`,
 		"unset DATABASE_URL SPLIT_DATABASE_URL",
