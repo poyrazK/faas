@@ -595,6 +595,121 @@ type ObsUnsnapshottedDeployment struct {
 	LastStaleAt  *time.Time `json:"last_stale_at,omitempty"`
 }
 
+// ObsMemoryPressureReport is GET /v1/admin/obs/memory-pressure
+// (ADR-20261123190507): each compute node's measured and booked memory
+// against its admission ceiling, and the RAM pressure evictions, frozen parks
+// under memory pressure and workload OOM kills in the window, by node, by
+// reason and by app. Measured memory is admission's charge from the node's
+// own scheduler (ADR-909); booked is Σ(ram_mb + 8) of its live instances,
+// capped at OvercommitPercent of the ceiling under measured admission.
+type ObsMemoryPressureReport struct {
+	AsOf                    time.Time               `json:"as_of"`
+	WindowSeconds           int                     `json:"window_seconds"`
+	OvercommitPercent       int                     `json:"overcommit_percent"`
+	EvictionTargetPercent   int                     `json:"eviction_target_percent"`
+	MeasurementStaleSeconds int                     `json:"measurement_stale_seconds"`
+	Truncated               bool                    `json:"truncated"`
+	Totals                  ObsMemoryPressureTotals `json:"totals"`
+	Nodes                   []ObsMemoryNode         `json:"nodes"`
+	Reasons                 []ObsMemoryReasonCount  `json:"reasons"`
+	Apps                    []ObsMemoryApp          `json:"apps"`
+	Events                  []ObsMemoryEvent        `json:"events"`
+}
+
+// ObsMemoryPressureTotals sums the fleet now and the window's events.
+// MeasuredMB, UsedMB and Frozen come from node memory reports and cover only
+// nodes with a fresh one (not stale or unmeasured); UsedMB sums the memory
+// each node is graded on (its UsedMB, else its MeasuredMB).
+type ObsMemoryPressureTotals struct {
+	Nodes        int   `json:"nodes"`
+	NodesOver    int   `json:"nodes_over"`
+	NodesNear    int   `json:"nodes_near"`
+	NodesStale   int   `json:"nodes_stale"`
+	CeilingMB    int64 `json:"ceiling_mb"`
+	MeasuredMB   int64 `json:"measured_mb"`
+	UsedMB       int64 `json:"used_mb"`
+	BookedMB     int64 `json:"booked_mb"`
+	Running      int64 `json:"running"`
+	Frozen       int   `json:"frozen"`
+	Evictions    int   `json:"evictions"`
+	FrozenParks  int   `json:"frozen_parks"`
+	OOMKills     int   `json:"oom_kills"`
+	AppsAffected int   `json:"apps_affected"`
+}
+
+// ObsMemoryNode is one compute node. State is over (memory above the
+// ceiling), near (memory at or above the eviction target, or bookings at the
+// overcommit cap), ok, stale (the last measurement is too old) or unmeasured
+// (no report). The memory graded is UsedMB (vmmd's summed cgroup memory, what
+// schedd's measured-memory eviction compares with the ceiling) when the node
+// reports it, else MeasuredMB (admission's charge). MeasuredMB, UsedMB,
+// MeasuredAt and MeasurementAgeSeconds are absent without a report. Event counts cover the window
+// and only events whose instance row still names the node.
+type ObsMemoryNode struct {
+	NodeID                string     `json:"node_id"`
+	Name                  string     `json:"name"`
+	Active                bool       `json:"active"`
+	State                 string     `json:"state"`
+	MemMB                 int        `json:"mem_mb"`
+	CeilingMB             int        `json:"ceiling_mb"`
+	BookedMB              int64      `json:"booked_mb"`
+	BookedLimitMB         int64      `json:"booked_limit_mb"`
+	MeasuredMB            *int       `json:"measured_mb,omitempty"`
+	UsedMB                *int       `json:"used_mb,omitempty"`
+	MeasuredAt            *time.Time `json:"measured_at,omitempty"`
+	MeasurementAgeSeconds *float64   `json:"measurement_age_seconds,omitempty"`
+	Running               int64      `json:"running"`
+	Waking                int64      `json:"waking"`
+	ColdBooting           int64      `json:"cold_booting"`
+	Frozen                int        `json:"frozen"`
+	Evictions             int        `json:"evictions"`
+	FrozenParks           int        `json:"frozen_parks"`
+	OOMKills              int        `json:"oom_kills"`
+}
+
+// ObsMemoryReasonCount counts the window's events by kind (eviction,
+// frozen_park or oom_kill) and reason.
+type ObsMemoryReasonCount struct {
+	Kind   string `json:"kind"`
+	Reason string `json:"reason"`
+	Count  int    `json:"count"`
+}
+
+// ObsMemoryApp is one app's evictions, frozen parks and OOM kills in the
+// window. MaxPeakMB and PlanMB come from its OOM kills.
+type ObsMemoryApp struct {
+	AppID       string    `json:"app_id"`
+	AppSlug     string    `json:"app_slug,omitempty"`
+	AccountID   string    `json:"account_id,omitempty"`
+	Plan        string    `json:"plan,omitempty"`
+	Evictions   int       `json:"evictions"`
+	FrozenParks int       `json:"frozen_parks"`
+	OOMKills    int       `json:"oom_kills"`
+	MaxPeakMB   int       `json:"max_peak_mb,omitempty"`
+	PlanMB      int       `json:"plan_mb,omitempty"`
+	LastAt      time.Time `json:"last_at"`
+}
+
+// ObsMemoryEvent is one eviction, frozen park or OOM kill. Kind is eviction,
+// frozen_park or oom_kill. PeakMB, PlanMB and DeploymentFailed are set on
+// OOM kills only; instance fields are empty once the instance row is gone.
+type ObsMemoryEvent struct {
+	At               time.Time `json:"at"`
+	Kind             string    `json:"kind"`
+	Reason           string    `json:"reason,omitempty"`
+	InstanceID       string    `json:"instance_id,omitempty"`
+	AppID            string    `json:"app_id,omitempty"`
+	AppSlug          string    `json:"app_slug,omitempty"`
+	AccountID        string    `json:"account_id,omitempty"`
+	Plan             string    `json:"plan,omitempty"`
+	NodeID           string    `json:"node_id,omitempty"`
+	NodeName         string    `json:"node_name,omitempty"`
+	RAMMB            int       `json:"ram_mb,omitempty"`
+	PeakMB           int       `json:"peak_mb,omitempty"`
+	PlanMB           int       `json:"plan_mb,omitempty"`
+	DeploymentFailed bool      `json:"deployment_failed,omitempty"`
+}
+
 // ObsBuildQueueReport is GET /v1/admin/obs/build-queue (ADR-20261123163340):
 // the queued and running builds, builder slot use per node, and the
 // durations, failures and cache outcomes of builds finished in the window.

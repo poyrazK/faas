@@ -4945,6 +4945,9 @@ func (s *server) handler() http.Handler {
 	// Build queue and builder slot report (ADR-20261123163340).
 	mux.HandleFunc("GET /v1/admin/obs/build-queue",
 		s.authLimited(s.requireOperatorSessionRead(s.obsBuildQueue)))
+	// Memory pressure: node headroom, evictions and OOM kills (ADR-20261123190507).
+	mux.HandleFunc("GET /v1/admin/obs/memory-pressure",
+		s.authLimited(s.requireOperatorSessionRead(s.obsMemoryPressure)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/heartbeats",
 		s.authLimited(s.requireOperatorRead(s.obsNodeHeartbeats)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/probe-notifications",
