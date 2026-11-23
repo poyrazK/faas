@@ -617,6 +617,9 @@ type ObsMemoryPressureReport struct {
 }
 
 // ObsMemoryPressureTotals sums the fleet now and the window's events.
+// MeasuredMB, UsedMB and Frozen come from node memory reports and cover only
+// nodes with a fresh one (not stale or unmeasured); UsedMB sums the memory
+// each node is graded on (its UsedMB, else its MeasuredMB).
 type ObsMemoryPressureTotals struct {
 	Nodes        int   `json:"nodes"`
 	NodesOver    int   `json:"nodes_over"`
@@ -624,6 +627,7 @@ type ObsMemoryPressureTotals struct {
 	NodesStale   int   `json:"nodes_stale"`
 	CeilingMB    int64 `json:"ceiling_mb"`
 	MeasuredMB   int64 `json:"measured_mb"`
+	UsedMB       int64 `json:"used_mb"`
 	BookedMB     int64 `json:"booked_mb"`
 	Running      int64 `json:"running"`
 	Frozen       int   `json:"frozen"`
@@ -633,11 +637,13 @@ type ObsMemoryPressureTotals struct {
 	AppsAffected int   `json:"apps_affected"`
 }
 
-// ObsMemoryNode is one compute node. State is over (measured above the
-// ceiling), near (measured at or above the eviction target, or bookings at
-// the overcommit cap), ok, stale (the last measurement is too old) or
-// unmeasured (no report). MeasuredMB, UsedMB (vmmd's summed cgroup memory)
-// and MeasuredAt are absent without a report. Event counts cover the window
+// ObsMemoryNode is one compute node. State is over (memory above the
+// ceiling), near (memory at or above the eviction target, or bookings at the
+// overcommit cap), ok, stale (the last measurement is too old) or unmeasured
+// (no report). The memory graded is UsedMB (vmmd's summed cgroup memory, what
+// schedd's measured-memory eviction compares with the ceiling) when the node
+// reports it, else MeasuredMB (admission's charge). MeasuredMB, UsedMB,
+// MeasuredAt and MeasurementAgeSeconds are absent without a report. Event counts cover the window
 // and only events whose instance row still names the node.
 type ObsMemoryNode struct {
 	NodeID                string     `json:"node_id"`
@@ -651,7 +657,7 @@ type ObsMemoryNode struct {
 	MeasuredMB            *int       `json:"measured_mb,omitempty"`
 	UsedMB                *int       `json:"used_mb,omitempty"`
 	MeasuredAt            *time.Time `json:"measured_at,omitempty"`
-	MeasurementAgeSeconds float64    `json:"measurement_age_seconds"`
+	MeasurementAgeSeconds *float64   `json:"measurement_age_seconds,omitempty"`
 	Running               int64      `json:"running"`
 	Waking                int64      `json:"waking"`
 	ColdBooting           int64      `json:"cold_booting"`

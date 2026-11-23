@@ -43,7 +43,11 @@ trigger:
 - `ram_pressure`: reservations went over the ceiling.
 
 `Engine.Evict`, which rollouts also use to stop replicas, keeps
-`state_transition`. Frozen instances keep their `frozen_park` row.
+`state_transition`. Frozen instances keep their `frozen_park` row: under
+pressure with reason `memory_pressure`, and through `Engine.Evict` (a
+replica that froze before the rollout locked it) with reason `superseded`,
+which earlier was also recorded as `memory_pressure`. The kind and the
+reason are constants in `pkg/state` that sched and the report query share.
 
 The event is still one row per transition, so customer audit counts do not
 change. Nothing filters on `state_transition` to detect evictions.
@@ -73,13 +77,18 @@ change. Nothing filters on `state_transition` to detect evictions.
 `pkg/apid/memorypressure` (ADR-982) grades each node into one of five
 states:
 
-- `over`: measured memory is above the ceiling;
-- `near`: measured memory is at or above `MeasuredEvictionTargetPercent`
+- `over`: memory is above the ceiling;
+- `near`: memory is at or above `MeasuredEvictionTargetPercent`
   (90%) of the ceiling, or bookings are at the overcommit cap;
 - `ok`;
 - `stale`: the last measurement is older than
   `ObsMemoryMeasurementStaleSeconds` (30 s);
 - `unmeasured`: the node has no report.
+
+The memory graded is vmmd's used memory when the node reports it, because
+that is what schedd's measured-memory eviction compares with the ceiling;
+otherwise admission's measured charge. Fleet totals of measured memory,
+used memory and frozen VMs count only nodes with a fresh report.
 
 It also reports:
 

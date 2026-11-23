@@ -18,7 +18,7 @@ const minFrozenCompressFreedBytes = 16 << 20
 // an ordinary stop; a frozen one keeps its frozen_park row with reason
 // memory_pressure.
 const (
-	MemoryEvictionEventKind = "memory_eviction"
+	MemoryEvictionEventKind = state.MemoryPressureKindEviction
 	// EvictionReasonMeasuredMemory: the node's measured memory went over
 	// its admission ceiling (ADR-909).
 	EvictionReasonMeasuredMemory = "measured_memory"
@@ -36,11 +36,11 @@ func (e *Engine) EvictUnderPressure(ctx context.Context, instanceID, reason stri
 		return err
 	}
 	if frozen == nil {
-		return e.evict(ctx, instanceID, MemoryEvictionEventKind, reason)
+		return e.evict(ctx, instanceID, MemoryEvictionEventKind, reason, state.MemoryPressureParkReason)
 	}
 	defer e.unlockApp(frozen.AppID)
 	if e.compressFrozenLocked(ctx, *frozen, frozenCompressPressure) != frozenCompressed {
-		e.parkFrozenLocked(ctx, *frozen, "memory_pressure")
+		e.parkFrozenLocked(ctx, *frozen, state.MemoryPressureParkReason)
 	}
 	return nil
 }

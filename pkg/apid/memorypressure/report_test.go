@@ -21,21 +21,31 @@ func report(id string, measured int, age time.Duration, frozen int) state.NodeMe
 	return state.NodeMemoryReport{NodeID: id, MeasuredMB: measured, FrozenInstances: frozen, MeasuredAt: now.Add(-age)}
 }
 
+func withUsed(r state.NodeMemoryReport, used int) state.NodeMemoryReport {
+	r.UsedMB = &used
+	return r
+}
+
 func TestNodeStates(t *testing.T) {
 	out := memorypressure.Build(memorypressure.Input{Now: now, Window: 24 * time.Hour,
-		Nodes: []state.OperatorCapacityNode{node("1", 60000), node("2", 30000), node("3", 119000), node("4", 1000), node("5", 1000), node("6", 1000)},
+		Nodes: []state.OperatorCapacityNode{node("1", 60000), node("2", 30000), node("3", 119000), node("4", 1000), node("5", 1000), node("6", 1000),
+			node("7", 1000), node("8", 1000)},
 		Reports: []state.NodeMemoryReport{
 			report("1", 20000, time.Second, 4), // ok
 			report("2", 48000, time.Second, 0), // over the ceiling
 			report("3", 20000, time.Second, 0), // bookings at the 250% cap
 			report("4", 43000, time.Second, 0), // inside the 90% eviction band
-			report("5", 50000, time.Minute, 0), // stale: not counted as over
+			report("5", 50000, time.Minute, 7), // stale: not counted as over, its frozen VMs not totalled
+			// vmmd's used memory is what measured eviction compares, so it
+			// wins over admission's charge both ways.
+			withUsed(report("7", 40000, time.Second, 0), 49000), // over
+			withUsed(report("8", 48000, time.Second, 0), 20000), // ok
 		}})
 	byID := map[string]api.ObsMemoryNode{}
 	for _, n := range out.Nodes {
 		byID[n.NodeID] = n
 	}
-	want := map[string]string{"1": "ok", "2": "over", "3": "near", "4": "near", "5": "stale", "6": "unmeasured"}
+	want := map[string]string{"1": "ok", "2": "over", "3": "near", "4": "near", "5": "stale", "6": "unmeasured", "7": "over", "8": "ok"}
 	for id, st := range want {
 		if byID[id].State != st {
 			t.Errorf("node %s state = %q, want %q (%+v)", id, byID[id].State, st, byID[id])
@@ -44,11 +54,15 @@ func TestNodeStates(t *testing.T) {
 	if out.Nodes[0].NodeID != "2" || out.Nodes[len(out.Nodes)-1].State != "ok" {
 		t.Fatalf("order = %+v", out.Nodes)
 	}
-	if byID["3"].BookedLimitMB != 119000 || byID["1"].Frozen != 4 || byID["6"].MeasuredMB != nil {
+	if byID["3"].BookedLimitMB != 119000 || byID["1"].Frozen != 4 || byID["6"].MeasuredMB != nil || byID["6"].MeasurementAgeSeconds != nil {
 		t.Fatalf("node fields = %+v %+v %+v", byID["3"], byID["1"], byID["6"])
 	}
+	if age := byID["5"].MeasurementAgeSeconds; age == nil || *age != 60 {
+		t.Fatalf("stale age = %v", age)
+	}
 	tot := out.Totals
-	if tot.Nodes != 6 || tot.NodesOver != 1 || tot.NodesNear != 2 || tot.NodesStale != 1 || tot.MeasuredMB != 131000 || tot.Frozen != 4 || tot.Running != 18 {
+	if tot.Nodes != 8 || tot.NodesOver != 2 || tot.NodesNear != 2 || tot.NodesStale != 1 || tot.MeasuredMB != 219000 || tot.UsedMB != 200000 ||
+		tot.Frozen != 4 || tot.Running != 24 {
 		t.Fatalf("totals = %+v", tot)
 	}
 }

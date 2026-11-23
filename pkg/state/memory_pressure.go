@@ -22,6 +22,9 @@ const (
 	MemoryPressureKindFrozenPark = "frozen_park"
 	// MemoryPressureKindOOMKill is a workload OOM kill (ADR-121).
 	MemoryPressureKindOOMKill = "instances.workload_oom_failed"
+	// MemoryPressureParkReason is the frozen_park reason schedd records when
+	// it parks a frozen instance under memory pressure.
+	MemoryPressureParkReason = "memory_pressure"
 )
 
 // MemoryPressureReader is an optional read capability for the operator
@@ -103,7 +106,7 @@ func (m *MemStore) OperatorMemoryPressureEvents(_ context.Context, since time.Ti
 		}
 		var d memoryPressureData
 		_ = json.Unmarshal(e.Data, &d)
-		if e.Kind == MemoryPressureKindFrozenPark && d.Reason != "memory_pressure" {
+		if e.Kind == MemoryPressureKindFrozenPark && d.Reason != MemoryPressureParkReason {
 			continue
 		}
 		ev := MemoryPressureEvent{At: e.At, Kind: e.Kind, Reason: d.Reason, InstanceID: d.InstanceID, AppID: d.AppID,

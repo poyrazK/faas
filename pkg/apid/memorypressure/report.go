@@ -75,7 +75,9 @@ func Build(in Input) api.ObsMemoryPressureReport {
 
 // node grades one node: over its ceiling, near it (inside the eviction band
 // or with bookings at the overcommit cap), ok, or without a usable
-// measurement.
+// measurement. The memory graded is what schedd's measured-memory eviction
+// compares with the ceiling: vmmd's UsedMB when reported, else admission's
+// MeasuredMB.
 func node(n state.OperatorCapacityNode, reports map[string]state.NodeMemoryReport, now time.Time) api.ObsMemoryNode {
 	row := api.ObsMemoryNode{NodeID: n.ID, Name: n.Name, Active: n.Active, MemMB: n.MemMB, CeilingMB: n.AdmissionCeilingMB,
 		BookedMB: n.RAMUsedMB, BookedLimitMB: int64(n.AdmissionCeilingMB) * api.MeasuredAdmissionMaxOvercommitPercent / 100,
@@ -86,14 +88,15 @@ func node(n state.OperatorCapacityNode, reports map[string]state.NodeMemoryRepor
 	}
 	measured, at := r.MeasuredMB, r.MeasuredAt
 	row.MeasuredMB, row.UsedMB, row.MeasuredAt, row.Frozen = &measured, r.UsedMB, &at, r.FrozenInstances
-	row.MeasurementAgeSeconds = math.Max(0, math.Round(now.Sub(at).Seconds()*10)/10)
-	ceiling := int64(n.AdmissionCeilingMB)
+	age := math.Max(0, math.Round(now.Sub(at).Seconds()*10)/10)
+	row.MeasurementAgeSeconds = &age
+	ceiling, used := int64(n.AdmissionCeilingMB), int64(gradedMB(row))
 	switch {
-	case row.MeasurementAgeSeconds > api.ObsMemoryMeasurementStaleSeconds:
+	case age > api.ObsMemoryMeasurementStaleSeconds:
 		row.State = StateStale
-	case int64(measured) > ceiling:
+	case used > ceiling:
 		row.State = StateOver
-	case int64(measured)*100 >= ceiling*api.MeasuredEvictionTargetPercent || row.BookedMB >= row.BookedLimitMB:
+	case used*100 >= ceiling*api.MeasuredEvictionTargetPercent || row.BookedMB >= row.BookedLimitMB:
 		row.State = StateNear
 	default:
 		row.State = StateOK
@@ -101,14 +104,29 @@ func node(n state.OperatorCapacityNode, reports map[string]state.NodeMemoryRepor
 	return row
 }
 
+// gradedMB is the memory a measured node is graded on: UsedMB when reported,
+// else MeasuredMB.
+func gradedMB(n api.ObsMemoryNode) int {
+	if n.UsedMB != nil {
+		return *n.UsedMB
+	}
+	if n.MeasuredMB != nil {
+		return *n.MeasuredMB
+	}
+	return 0
+}
+
+// total adds n to the fleet totals; report-derived figures (measured, used,
+// frozen) count only nodes with a fresh report.
 func total(t *api.ObsMemoryPressureTotals, n api.ObsMemoryNode) {
 	t.Nodes++
 	t.CeilingMB += int64(n.CeilingMB)
 	t.BookedMB += n.BookedMB
 	t.Running += n.Running
-	t.Frozen += n.Frozen
 	if n.MeasuredMB != nil && n.State != StateStale {
 		t.MeasuredMB += int64(*n.MeasuredMB)
+		t.UsedMB += int64(gradedMB(n))
+		t.Frozen += n.Frozen
 	}
 	switch n.State {
 	case StateOver:
