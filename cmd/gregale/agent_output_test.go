@@ -2,8 +2,14 @@ package main_test
 
 import (
 	"bytes"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	main "github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -60,5 +66,61 @@ func TestSecretDeliveryOverviewIsOneLine(t *testing.T) {
 				t.Fatalf("overview = %q; want next command shown = %v", got, tc.next)
 			}
 		})
+	}
+}
+
+// The voting-app worker's failure (2026-11-23 agent eval): the progress
+// shows the app's last log lines and a fix that names the app, and the JSON
+// event carries runnable commands and the lines.
+func TestProjectFailureShowsLogsAndFilledFix(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/deployments/worker":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "worker", Status: "failed",
+				Error: "snapshot prime failed: app_startup_crash: workload stopped during startup", ErrorCode: "app_startup_crash",
+				ErrorFix: "• read what it printed (`gregale logs <slug> --since 30m`)\n• check secrets (`gregale secrets list --app <slug>`)"})
+		case "/v1/apps/voting-demo-worker/logs":
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, "data: {\"line\":\"starting worker\",\"stream\":\"stdout\"}\n\n"+
+				"data: {\"line\":\"permission denied for schema public\",\"stream\":\"stderr\"}\n\n"+
+				"event: end\ndata: {}\n\n")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	apply := func() api.ApplyResponse {
+		return api.ApplyResponse{Builds: []api.AppliedBuild{{Slug: "voting-demo-worker", DeploymentID: "worker"}}}
+	}
+
+	var human bytes.Buffer
+	main.WaitForProjectApplyTimeouts(main.WithProjectWaitProgress(t.Context(), &human, false), main.NewClient(srv.URL, "token"), apply(), 20*time.Second)
+	got := human.String()
+	for _, want := range []string{"last log lines:", "| permission denied for schema public", "`gregale logs voting-demo-worker --since 30m`"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("progress lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "<slug>") {
+		t.Errorf("progress still shows <slug>:\n%s", got)
+	}
+
+	var machine bytes.Buffer
+	main.WaitForProjectApplyTimeouts(main.WithProjectWaitProgress(t.Context(), &machine, true), main.NewClient(srv.URL, "token"), apply(), 20*time.Second)
+	var event struct {
+		Stage        string           `json:"stage"`
+		FixCommands  []string         `json:"fix_commands"`
+		RelevantLogs []api.LogExcerpt `json:"relevant_logs"`
+	}
+	for _, line := range strings.Split(strings.TrimSpace(machine.String()), "\n") {
+		if err := json.Unmarshal([]byte(line), &event); err == nil && event.Stage == "failed" {
+			break
+		}
+	}
+	if !slices.Equal(event.FixCommands, []string{"gregale logs voting-demo-worker --since 30m", "gregale secrets list --app voting-demo-worker"}) {
+		t.Errorf("fix_commands = %q", event.FixCommands)
+	}
+	if len(event.RelevantLogs) != 2 || event.RelevantLogs[1].Message != "permission denied for schema public" || event.RelevantLogs[1].Source != "stderr" {
+		t.Errorf("relevant_logs = %+v", event.RelevantLogs)
 	}
 }
