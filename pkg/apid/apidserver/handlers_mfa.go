@@ -436,6 +436,15 @@ func (s *server) confirmMFAFirstFactor(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, api.ErrCapacity("could not check enrollment credentials"))
 		return false
 	}
+	// A client that sends no password (older dashboards) is not a wrong guess:
+	// say what is missing and leave the sign-in failure budget alone, so a
+	// user retrying setup is not locked out of signing in.
+	if password == "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Password required",
+			"enter your current password with the authenticator code to finish MFA setup (current_password), or finish setup at /dashboard/account/mfa on the API host"))
+		return false
+	}
 	if s.refuseWhileLoginLimited(w, r, acct.Email) {
 		return false
 	}

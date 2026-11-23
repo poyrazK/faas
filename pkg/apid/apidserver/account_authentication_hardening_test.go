@@ -113,11 +113,19 @@ func TestAccountMFASetupRequiresExistingPassword(t *testing.T) {
 	if challengeResult.Code != 409 {
 		t.Fatalf("unconfirmed HTML challenge: %d", challengeResult.Code)
 	}
-	for _, proof := range []string{"", "incorrect-password"} {
+	// A missing password is a client gap, not a wrong guess: 400 that names
+	// the field, never 401 (which would spend the sign-in failure budget).
+	for _, tc := range []struct {
+		proof string
+		want  int
+	}{{"", 400}, {"incorrect-password", 401}} {
 		token, cookies := accountSecurityCSRF(t, h, cookie, "mfa_confirm")
-		rec := accountSecurityJSON(t, h, cookie, "POST", "/v1/account/mfa/confirm", api.MFAConfirmRequest{Totp: code, CurrentPassword: proof, CSRFToken: token}, cookies...)
-		if rec.Code != 401 || accountSecurityCookie(rec) != nil {
-			t.Fatalf("unauthorized confirmation: %d %s", rec.Code, rec.Body)
+		rec := accountSecurityJSON(t, h, cookie, "POST", "/v1/account/mfa/confirm", api.MFAConfirmRequest{Totp: code, CurrentPassword: tc.proof, CSRFToken: token}, cookies...)
+		if rec.Code != tc.want || accountSecurityCookie(rec) != nil {
+			t.Fatalf("unauthorized confirmation %q: %d %s", tc.proof, rec.Code, rec.Body)
+		}
+		if tc.proof == "" && !strings.Contains(rec.Body.String(), "current_password") {
+			t.Fatalf("missing-password detail does not name the field: %s", rec.Body)
 		}
 	}
 	before, err := st.AccountByID(t.Context(), acct.ID)
