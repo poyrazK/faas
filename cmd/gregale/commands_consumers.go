@@ -131,7 +131,7 @@ func cmdConsumers(args []string) int {
 	var f consumerFlags
 	fs.StringVar(&f.externalRef, "external-ref", "", "stable consumer reference (create)")
 	fs.StringVar(&f.name, "name", "", "consumer or key display name")
-	fs.StringVar(&f.scopes, "scopes", "write", "comma-separated key scopes: read, write, admin (key-create)")
+	fs.StringVar(&f.scopes, "scopes", "write", "comma-separated key scopes: read, write, admin, billing, mcp:<scope> (key-create)")
 	fs.StringVar(&f.expires, "expires", "", "key or credit expiry, RFC3339 (key-create, credit-grant)")
 	fs.StringVar(&f.since, "since", "", "usage window start (RFC3339)")
 	fs.StringVar(&f.until, "until", "", "usage window end (RFC3339)")
@@ -288,8 +288,8 @@ func buildConsumerKeyRequest(f consumerFlags) (api.CreateConsumerKeyRequest, err
 	}
 	for _, scope := range strings.Split(f.scopes, ",") {
 		scope = strings.TrimSpace(scope)
-		if scope != "read" && scope != "write" && scope != "admin" && scope != api.ConsumerScopeBilling {
-			return req, fmt.Errorf("unknown scope %q; use read, write, admin, or billing", scope)
+		if scope != "read" && scope != "write" && scope != "admin" && scope != api.ConsumerScopeBilling && !api.ValidConsumerKeyMCPScope(scope) {
+			return req, fmt.Errorf("unknown scope %q; use read, write, admin, billing, or mcp:<scope>", scope)
 		}
 		req.Scopes = append(req.Scopes, scope)
 	}

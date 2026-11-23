@@ -376,7 +376,7 @@ debug requests, crash snapshots or forks; those answer `403` and need an API
 key. The OIDC bearer the deploy Action uses has the same limits. Browser sessions with MFA enabled need verification from the last
 five minutes when minting or rotating one. CLI requests use their scoped
 bearer credential. The token is shown once;
-store it as `FAAS_TOKEN` in the CI secret store.
+store it as `GREGALE_TOKEN` in the CI secret store.
 
 A deploy token can also manage its app's edge rules, but only for that app's
 own hosts: a rule's `match_host` must be `@app`, the app's
@@ -398,7 +398,7 @@ gregale app deploy-token rotate <token-id> --app my-api   # the old token stops 
 gregale app deploy-token delete <token-id> --app my-api
 ```
 
-With the token in `FAAS_TOKEN`, `gregale deploy --name my-api … --wait` reads
+With the token in `GREGALE_TOKEN`, `gregale deploy --name my-api … --wait` reads
 the app, deploys it and follows the deployment to the end. The token reaches
 no other app, and it cannot read build logs: the wait reports the
 deployment's status and failure reason instead. Use a key with `apps:read`

@@ -9,7 +9,7 @@ connected to your account.
 ## Prerequisites
 
 - `FAAS_API` — the API URL (`https://api.gregale.dev`, the default).
-- `FAAS_TOKEN` — a deploy-time API key (the `deploy` scope, or
+- `GREGALE_TOKEN` — a deploy-time API key (the `deploy` scope, or
   admin).
 - `gregale connect` completed once on a workstation (browser
   available) so Gregale already has the GitHub App installation
@@ -24,7 +24,7 @@ installation and fetch source through Gregale.
 
 ```bash
 FAAS_API=https://api.gregale.dev \
-FAAS_TOKEN=$FAAS_TOKEN \
+GREGALE_TOKEN=$GREGALE_TOKEN \
 gregale deploy --repo acme/hello --ref $(git rev-parse HEAD)
 ```
 

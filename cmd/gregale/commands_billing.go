@@ -13,7 +13,7 @@
 //
 // This is the CLI companion to GET /dashboard/billing's provider-neutral
 // billing portal button. Same URL, same auth chain (Bearer via
-// FAAS_TOKEN / OS keychain). Future subcommands (`retry`, `cancel`,
+// GREGALE_TOKEN / OS keychain). Future subcommands (`retry`, `cancel`,
 // `add-card`, `plan-via-portal`) land here per issue #265 without
 // touching the top-level dispatch in main.go.
 

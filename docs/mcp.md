@@ -411,7 +411,7 @@ listed.
 Use an absolute executable path if the client cannot find `gregale` on its PATH.
 To select a named connection, place the prefix before the command, for example
 `["--profile", "staging", "mcp", "serve", "--transport", "stdio"]`.
-`FAAS_API` and `FAAS_TOKEN` retain their normal precedence over saved settings.
+`FAAS_API` and `GREGALE_TOKEN` retain their normal precedence over saved settings.
 Use the profile's stored login or supply a scoped token through the client's
 environment; do not put tokens in command arguments or commit them to a client
 configuration. A missing credential fails startup on stderr. API authorization
@@ -635,7 +635,7 @@ and behavioral fixtures:
 `access_mode` must match `gregale-mcp.json`. Open access requires no token
 reference. External OAuth requires `token_env`, naming an existing `MCP_*`
 client-token variable in the local CLI environment. Tokens are never accepted
-as tool arguments or inferred from the account's `FAAS_TOKEN`. Ordinary publication
+as tool arguments or inferred from the account's `GREGALE_TOKEN`. Ordinary publication
 excludes durable MCP Tasks, which retain their dedicated stack release flow.
 The explicit access declaration is required because the built-in example
 starters initially use open access.
@@ -4193,7 +4193,7 @@ access. Native resource capability flags still apply. An older server without
 `GET /v1/apps/{slug}/resource-inventory` returns an unavailable read; the bridge
 does not fall back to account inventory. Counts exclude other apps and scopes.
 
-For local read-only inspection with an app-bound token in `FAAS_TOKEN`:
+For local read-only inspection with an app-bound token in `GREGALE_TOKEN`:
 
 ```sh
 gregale mcp serve --tools core,provision
@@ -7574,6 +7574,12 @@ ADR-20261118140000.
   mode on or off. The plan is pinned to the current rules: apply fails with
   `plan_stale` if they changed. On a production app the apply asks a person
   first.
+- Verification contracts (toolset `release`, ADR-20261122220000):
+  `gregale_validate_verification_contract` checks a `gregale.verify.yaml`
+  offline; `gregale_get_verification_contract` reads the app's stored contract;
+  `gregale_plan_verification_contract_change` reviews `set` or `delete`, pinned
+  to the stored revision. Once set, a new deployment whose required check fails
+  is not promoted.
 - Previews (toolset `release`): `gregale_list_previews`, `gregale_get_preview`
   and `gregale_plan_preview_change` (`create` for a pull request, or
   `destroy`, which asks a person first). Previews are reached only through

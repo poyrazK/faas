@@ -149,6 +149,7 @@ touch them. The tables below map each earlier name.
 | `gregale trusted-publishers` | `gregale registry key` |
 | `gregale upload-cache` | `gregale config upload-cache` |
 | `gregale usage` | `gregale billing usage` |
+| `gregale verify` | `gregale release check` |
 | `gregale wake` | `gregale app wake` |
 | `gregale wake-ahead` | `gregale app wake-ahead` |
 | `gregale wake-timeline` | `gregale app wake-timeline` |

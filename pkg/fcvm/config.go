@@ -345,6 +345,10 @@ type ColdBootSpec struct {
 	// only for functions) with api.FunctionRunnerBootArg so guest-init skips
 	// characterization's L7 probes, which would run the customer's handler.
 	FunctionRunner bool
+	// RawTCPListener boots a guest whose routed port is a raw TCP server
+	// (WakeRequest.RoutedPortRawTCP) with api.RawTCPListenerBootArg so
+	// guest-init does not send its HTTP and gRPC probes to it.
+	RawTCPListener bool
 	// WorkerPushDelivery lets a worker-mode app with a push queue binding
 	// bind its private delivery port at startup (WakeRequest field).
 	WorkerPushDelivery bool
@@ -555,6 +559,9 @@ func BuildColdBootConfig(s ColdBootSpec, slot int) VMConfig {
 	}
 	if s.FunctionRunner && !s.Networkless {
 		bootArgs = strings.TrimSpace(bootArgs) + " " + api.FunctionRunnerBootArg
+	}
+	if s.RawTCPListener && !s.Networkless {
+		bootArgs = strings.TrimSpace(bootArgs) + " " + api.RawTCPListenerBootArg
 	}
 	return VMConfig{
 		BootSource:        BootSource{KernelImagePath: s.KernelKey, BootArgs: bootArgs},

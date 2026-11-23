@@ -273,6 +273,9 @@ type MemStore struct {
 	invocationAttemptHistory             map[int64]retainedInvocationAttempt
 	nextInvocationAttemptID              int64
 	checkedRollbacks                     map[string]api.RollbackOperation
+	projectRollbackOperations            map[string]ProjectRollbackRecord
+	projectRollbackProtections           map[projectRollbackProtectionKey]projectRollbackProtectionRecord
+	projectRollbackUndoArtifactHolds     map[string]map[string]projectRollbackUndoArtifactHold
 	checkedRollbackReleaseReviews        map[string][]ReleaseRun
 	plainRollbackReleaseReviews          map[string][]ReleaseRun
 	alertRollbacks                       map[string]api.AlertRollback
@@ -576,9 +579,12 @@ type MemStore struct {
 	outboundAIQualityAlerts       map[string][]OutboundAIQualityAlert
 	outboundAppBindings           map[string]OutboundAppBinding
 	outboundCredentials           map[string][]byte
-	mu                            sync.Mutex
-	outboundProbePolicies         map[string]api.OutboundBindingProbePolicy
-	outboundCredentialRevisions   map[string]int64
+	// ADR-20261122220000 verification contracts and their SQL handoff.
+	verificationContracts       map[string]VerificationContract
+	verificationQueries         map[string]VerificationQuery
+	mu                          sync.Mutex
+	outboundProbePolicies       map[string]api.OutboundBindingProbePolicy
+	outboundCredentialRevisions map[string]int64
 	// egressFlows is the ADR-371 egress flow log.
 	egressFlows               []EgressFlowRecord
 	accounts                  map[string]Account
@@ -742,6 +748,11 @@ type MemStore struct {
 	// buildPreemptions counts the times borrowed builder slots gave a build
 	// back to the queue (builds.preemptions, ADR-20261118154632).
 	buildPreemptions map[string]int
+	// buildNodeName records the node that claimed a running build
+	// (builds.builder_node_name, ADR-20261110210000) with that claim's start,
+	// so a requeued and reclaimed build names none until recorded again;
+	// allocated on first use.
+	buildNodeName map[string]memBuildNode
 	// ADR-740 developer live patches; allocated on first use.
 	devSourceManifests   map[string]DevSourceManifest
 	devSourceManifestSeq int64
@@ -4254,6 +4265,12 @@ func (m *MemStore) deleteProjectLocked(projectID string) error {
 		}
 	}
 	delete(m.projects, projectID)
+	for id, operation := range m.projectRollbackOperations {
+		if operation.ProjectID == projectID {
+			delete(m.projectRollbackOperations, id)
+			delete(m.projectRollbackUndoArtifactHolds, id)
+		}
+	}
 	for id, receipt := range m.environmentRollbackReceipts {
 		if receipt.ProjectID == projectID {
 			delete(m.environmentRollbackReceipts, id)
@@ -9178,6 +9195,13 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 	proposed[d.ID] = d
 	if err := appTrafficBindingError(m.checkMemTrafficBindingLocked(ctx, app.AccountID, nil, app.ID, memTrafficPolicyChange{Deployments: proposed})); err != nil {
 		return Deployment{}, 0, err
+	}
+	if d.ProjectDeployGroupID != "" {
+		if app.ProjectID == "" || !projectRollbackGroupEligible(d.ProjectDeployGroupID, normalizedDeploymentScope(d.Scope)) {
+			return Deployment{}, 0, ErrInvalidArgument
+		}
+		d.projectDeployProjectID = app.ProjectID
+		proposed[d.ID] = d
 	}
 	m.recordRecoveryPredecessorLocked(d)
 	if reviewedSpec.ID != "" {

@@ -354,6 +354,7 @@ jobs:
           python3 scripts/ci/rollback_drill_test.py
           python3 scripts/ci/unit_watch_record_test.py
           python3 scripts/ci/unit_watch_test.py
+          python3 scripts/ci/ops_restart_hosted_mcp_test.py
       - name: synthetic-canary SSH and notification fallback tests
         run: make canary-transport-test
       - name: serving-probe failure diagnostics and transport tests

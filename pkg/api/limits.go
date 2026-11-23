@@ -242,6 +242,23 @@ const (
 	ObsSnapshotFleetAvgPageMB   = 200
 )
 
+// Operator build queue report (ADR-20261123163340). The report reads at most
+// ObsBuildQueueActiveMax queued and running builds and ObsBuildQueueFinishedMax
+// builds finished in the window (beyond either it says it was truncated). A
+// build waiting longer than ObsBuildQueueWaitWarnSeconds is flagged, and a
+// running one past BuildTimeoutSeconds is overdue. Builder slot use comes from
+// builderd's gauges in Prometheus under ObsBuildQueuePrometheusBudget.
+const (
+	ObsBuildQueueActiveMax        = 500
+	ObsBuildQueueFinishedMax      = 20000
+	ObsBuildQueueListMax          = 50
+	ObsBuildQueueSlowestMax       = 25
+	ObsBuildQueueWaitWarnSeconds  = 300
+	ObsBuildQueueWindowDefault    = 24 * time.Hour
+	ObsBuildQueueWindowMax        = 7 * 24 * time.Hour
+	ObsBuildQueuePrometheusBudget = 2 * time.Second
+)
+
 // Customer attention signals (ADR-20261113123000): when a customer is
 // probably stuck. Thresholds are platform-wide, not per plan.
 const (
@@ -1452,8 +1469,10 @@ const (
 	MCPReplayMaxRuns      = 5
 	// ConsumerKeyMCPScopeMaxBytes bounds one "mcp:<scope>" consumer-key scope.
 	ConsumerKeyMCPScopeMaxBytes = 128
-	MCPReleaseMaxRoles          = 32
-	MCPReleasePolicyMaxBytes    = 64 << 10
+	// ConsumerKeyNameMaxBytes bounds a consumer key's name.
+	ConsumerKeyNameMaxBytes  = 64
+	MCPReleaseMaxRoles       = 32
+	MCPReleasePolicyMaxBytes = 64 << 10
 )
 
 // Historical replay preview bounds retained-envelope reads (ADR-645).
@@ -2657,6 +2676,42 @@ const (
 // HostingVerificationRecoveryWindow bounds unavailable public verification for
 // one candidate. Restarts cannot renew this operational budget.
 const HostingVerificationRecoveryWindow = 5 * time.Minute
+
+// Verification contract bounds (ADR-20261122220000) are abuse limits on the
+// work one deployment's gregale.verify.yaml can ask for, not plan tiers.
+// docs/verification-contracts.md states the customer-visible ones.
+const (
+	VerificationContractMaxBytes            = 256 << 10
+	VerificationContractMaxChecks           = 32
+	VerificationContractDefaultTimeoutSecs  = 30
+	VerificationContractMaxTimeoutSecs      = 120
+	VerificationContractMaxPathBytes        = 2048
+	VerificationContractMaxHeaders          = 16
+	VerificationContractMaxHeaderValueBytes = 1024
+	VerificationContractMaxBodyBytes        = 64 << 10
+	VerificationContractMaxStatuses         = 16
+	VerificationContractMaxBodyContains     = 16
+	VerificationContractMaxJSONAssertions   = 32
+	VerificationContractMaxSQLBytes         = 64 << 10
+	// VerificationContractMaxResponseBytes is how much of a check's response
+	// body is read for body and JSON assertions.
+	VerificationContractMaxResponseBytes = 1 << 20
+	// VerificationQueryWorkers bounds the SQL checks one apid runs at once.
+	VerificationQueryWorkers = 8
+	// VerificationQueryStaleClaim returns a claimed SQL check to the queue
+	// when the apid that claimed it stopped without finishing it. A live
+	// worker finishes a check within its 30 s query call plus
+	// VerificationQueryBusyWait, so a claim older than this is abandoned.
+	VerificationQueryStaleClaim = 90 * time.Second
+	// VerificationQueryBusyWait bounds how long a SQL check waits for another
+	// query of the same database to end.
+	VerificationQueryBusyWait = 5 * time.Second
+	// VerificationQueryRetention keeps expired SQL handoff rows this long.
+	VerificationQueryRetention = time.Hour
+	// VerificationFirstValueMaxBytes bounds the first value a SQL check
+	// returns to imaged.
+	VerificationFirstValueMaxBytes = 1024
+)
 
 // Route customer analytics bounds are structural safeguards, not plan quotas.
 const (

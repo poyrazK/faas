@@ -1952,6 +1952,49 @@ WHERE d.status = 'live' AND d.deleted_at IS NULL AND a.status = 'active'
 ORDER BY (d.rootfs_key = '') DESC, d.created_at DESC, d.id
 LIMIT sqlc.arg(row_limit)::int;
 
+-- name: OperatorActiveBuilds :many
+-- The operator build queue report (ADR-20261123163340): queued and running
+-- builds with their app. Running builds come first (slots bound them, so a
+-- long backlog never cuts them), then due queued builds the longest waiting
+-- first (from not_before when deferred), then builds deferred to a later
+-- not_before. The caller asks for one row more than it keeps to learn whether
+-- it was cut.
+SELECT b.id::text AS id, b.deployment_id::text AS deployment_id,
+       COALESCE(d.app_id::text, '')::text AS app_id, COALESCE(a.slug, '')::text AS app_slug,
+       COALESCE(a.account_id::text, '')::text AS account_id,
+       b.kind, b.status, COALESCE(b.failure_class, '')::text AS failure_class, b.source_bytes,
+       b.enqueued_at, b.not_before, b.started_at, b.finished_at,
+       COALESCE(b.cache_status, '')::text AS cache_status,
+       COALESCE(b.builder_node_name, '')::text AS builder_node_name, b.preemptions,
+       COALESCE(b.coalesced_with::text, '')::text AS coalesced_with
+FROM builds b
+LEFT JOIN deployments d ON d.id = b.deployment_id
+LEFT JOIN apps a ON a.id = d.app_id
+WHERE b.status IN ('queued', 'running')
+ORDER BY (b.status = 'running') DESC, (b.not_before IS NOT NULL AND b.not_before > now()),
+         COALESCE(b.not_before, b.enqueued_at), b.id
+LIMIT sqlc.arg(row_limit)::int;
+
+-- name: OperatorFinishedBuildsSince :many
+-- Builds that reached a terminal status at or after since, newest first,
+-- for the build queue report's durations, failures and cache outcomes.
+-- builds_finished_at_idx serves the range.
+SELECT b.id::text AS id, b.deployment_id::text AS deployment_id,
+       COALESCE(d.app_id::text, '')::text AS app_id, COALESCE(a.slug, '')::text AS app_slug,
+       COALESCE(a.account_id::text, '')::text AS account_id,
+       b.kind, b.status, COALESCE(b.failure_class, '')::text AS failure_class, b.source_bytes,
+       b.enqueued_at, b.not_before, b.started_at, b.finished_at,
+       COALESCE(b.cache_status, '')::text AS cache_status,
+       COALESCE(b.builder_node_name, '')::text AS builder_node_name, b.preemptions,
+       COALESCE(b.coalesced_with::text, '')::text AS coalesced_with
+FROM builds b
+LEFT JOIN deployments d ON d.id = b.deployment_id
+LEFT JOIN apps a ON a.id = d.app_id
+WHERE b.finished_at >= sqlc.arg(since)::timestamptz
+  AND b.status IN ('succeeded', 'failed', 'cancelled')
+ORDER BY b.finished_at DESC, b.id DESC
+LIMIT sqlc.arg(row_limit)::int;
+
 -- name: ListRecentEventsForAccount :many
 -- ADR-091 §3.7 / PR #3 — per-account events drill-down. Backed by
 -- the partial index events_actor_account_idx on

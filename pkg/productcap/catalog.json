@@ -3364,13 +3364,13 @@
       "name": "MCP hosting",
       "category": "runtime",
       "description": "Scaffold and deploy stateless Streamable HTTP MCP servers with explicit client access, protocol diagnostics, verified tool discovery, and optional PostgreSQL-backed durable Tasks that can run in a separate Gregale worker app.",
-      "maturity": "preview",
+      "maturity": "beta",
       "plans": [
         "hobby",
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/mcp",
+      "docs_url": "/docs/mcp-hosting",
       "acceptance_test": "cmd/gregale/commands_mcp_test.go::TestMCPCLIJourney",
       "routes": [
         "/dashboard/apps/{}/mcp-catalog-monitor",
@@ -3415,13 +3415,13 @@
       "name": "MCP readiness monitoring",
       "category": "runtime",
       "description": "Monitor MCP server readiness with incidents, maintenance and notifications.",
-      "maturity": "preview",
+      "maturity": "beta",
       "plans": [
         "hobby",
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/mcp",
+      "docs_url": "/docs/mcp-hosting",
       "acceptance_test": "pkg/apid/apidserver/handlers_dashboard_mcp_alerts_test.go::TestMCPReadinessAlertScopeAPIRoundTrip",
       "parent": "mcp-hosting",
       "routes": [
@@ -3475,6 +3475,23 @@
       "parent": "mcp-hosting",
       "routes": [
         "/v1/tool-grants"
+      ]
+    },
+    {
+      "id": "mcp-tool-insights",
+      "name": "MCP tool insights",
+      "category": "observability",
+      "description": "Per-tool MCP calls, failures, argument mismatches and estimated compute over the last hour, from the hosted MCP protocol telemetry.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261123110137-mcp-replay-gate-insights-api-mcp-keys",
+      "acceptance_test": "pkg/apid/mcpinsights/mcpinsights_test.go::TestRow",
+      "parent": "mcp-hosting",
+      "routes": [
+        "/v1/apps/{}/mcp-tool-insights"
+      ],
+      "cli": [
+        "mcp insights"
       ]
     },
     {
@@ -6180,6 +6197,30 @@
       ],
       "cli": [
         "app udp"
+      ]
+    },
+    {
+      "id": "verification-contracts",
+      "name": "Verification contracts",
+      "category": "delivery",
+      "description": "Declare HTTP, MCP and read-only SQL checks in gregale.verify.yaml; Gregale runs them against each new deployment before it takes traffic and returns one pass/fail report.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/verification-contracts",
+      "acceptance_test": "pkg/verifycontract/contract_test.go::TestRunSkipsMutationsInProductionAndBlocksOnRequiredFailures",
+      "consumers": [
+        "imaged"
+      ],
+      "routes": [
+        "/v1/apps/{}/verification-contract"
+      ],
+      "cli": [
+        "verify"
       ]
     },
     {

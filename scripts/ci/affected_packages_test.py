@@ -164,6 +164,7 @@ class TextContractTest(unittest.TestCase):
         repo = str(pathlib.Path(__file__).parents[2])
         for pkg, paths in (
             ("pkg/mcpmanagement", ("docs/customer-pages.json", "docs/auth.md", "docs/runtimes/node24.md")),
+            ("pkg/docsindex", ("docs/customer-pages.json", "docs/redis.md")),
             ("pkg/gregalemanifest", ("docs/crons.md",)),
             ("pkg/legal", ("docs/DPA.md",)),
         ):
