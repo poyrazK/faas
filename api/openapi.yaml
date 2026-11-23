@@ -104530,7 +104530,7 @@ components:
           type: object
           maxProperties: 50
           additionalProperties: { $ref: '#/components/schemas/APIConsumerPlanRouteLimit' }
-          description: "Per-consumer caps on single billing routes, keyed by route label: \"POST /v1/generate\" for an HTTP route, or \"MCP /tools/<name>\" for one MCP tool. At most 50."
+          description: "Per-consumer caps on single billing routes, keyed by route label: an HTTP method and path template, or \"MCP /tools/<name>\" for one MCP tool. At most 50."
           example: { "MCP /tools/generate": { max_requests_per_month: 1000 } }
 
     APIConsumerPlanRouteLimit:

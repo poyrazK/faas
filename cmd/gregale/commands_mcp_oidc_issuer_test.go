@@ -81,16 +81,15 @@ func TestMCPAuthEnableConfigExternalIssuer(t *testing.T) {
 
 func TestMCPToolKeyScopes(t *testing.T) {
 	dir := t.TempDir()
-	write := func(mode string) {
+	write := func(auth string) {
 		t.Helper()
-		body := `{"version":1,"endpoint":"/mcp","transport":"streamable-http","mode":"stateless","allowed_origins":[],
-"auth":{"mode":"` + mode + `","resource":"https://tools.example/mcp","scopes":["tools"],
-"tool_scopes":{"search":[],"delete":["admin"],"export":["admin","export"]}}}`
+		body := `{"version":1,"endpoint":"/mcp","transport":"streamable-http","mode":"stateless","allowed_origins":[],"auth":` + auth + `}`
 		if err := os.WriteFile(filepath.Join(dir, mcphosting.ConfigFile), []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	write(mcphosting.AuthAPIKey)
+	write(`{"mode":"api-key","resource":"https://tools.example/mcp","scopes":["tools"],
+"tool_scopes":{"search":[],"delete":["admin"],"export":["admin","export"]}}`)
 	for _, tc := range []struct {
 		tools []string
 		want  string
@@ -111,7 +110,7 @@ func TestMCPToolKeyScopes(t *testing.T) {
 			t.Fatalf("%v = %v, %v; want %s", tc.tools, got, err, tc.want)
 		}
 	}
-	write(mcphosting.AuthOpen)
+	write(`{"mode":"open","tool_scopes":{"search":[]}}`)
 	if _, err := main.MCPToolKeyScopes(dir, []string{"search"}); err == nil || !strings.Contains(err.Error(), "not api-key") {
 		t.Fatalf("an open server must be refused: %v", err)
 	}

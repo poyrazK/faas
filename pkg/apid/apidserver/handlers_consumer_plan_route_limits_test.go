@@ -31,7 +31,8 @@ func TestAPIConsumerPlanRouteLimits(t *testing.T) {
 	}
 	cleared := map[string]api.APIConsumerPlanRouteLimit{}
 	res = e.Do(t, http.MethodPut, plans+"/"+plan.ID, api.UpdateAPIConsumerPlanLimitsRequest{MaxRequestsPerMinute: 60, RouteLimits: &cleared}, nil)
-	if err := json.Unmarshal(res.Body.Bytes(), &plan); err != nil || res.Code != http.StatusOK || plan.RouteLimits == nil || len(plan.RouteLimits) != 0 {
+	var clearedPlan api.APIConsumerPlanResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &clearedPlan); err != nil || res.Code != http.StatusOK || clearedPlan.RouteLimits == nil || len(clearedPlan.RouteLimits) != 0 {
 		t.Fatalf("an empty route_limits must clear them: %d %s", res.Code, res.Body)
 	}
 }

@@ -16,7 +16,7 @@ type CreateAPIConsumerPlanRequest struct {
 	// consumer.usage_threshold webhook fires (ADR-849), at most 5.
 	AlertThresholdsPercent []int32 `json:"alert_thresholds_percent,omitempty"`
 	// RouteLimits cap single billing routes per consumer, keyed by route
-	// label such as "POST /v1/generate" or an MCP tool's
+	// label: an HTTP method and path template, or an MCP tool's
 	// "MCP /tools/<name>" (ADR-20261123192254). At most 50.
 	RouteLimits map[string]APIConsumerPlanRouteLimit `json:"route_limits,omitempty"`
 }
