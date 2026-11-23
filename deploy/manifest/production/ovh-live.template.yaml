@@ -36,7 +36,11 @@
 #   masqueraded to that address, so an app calling *.gregale.app served by
 #   the other node's entry_ipv4 hung about half the time. The /25s are more
 #   specific than the /24; the DHCP scope-link /32 for .254 still reaches
-#   the gateway itself. See docs/runbooks/GcpToOvhMigration.md.
+#   the gateway itself. See docs/runbooks/GcpToOvhMigration.md. Since
+#   ADR-20261123100000 the converge also hairpins guests' calls to the other
+#   nodes' entry addresses onto the local edge (faas_peer_entry_addrs, from
+#   entry_ipv4 below), so app calls no longer cross between the servers; the
+#   routes stay for nodes without an entry address and host traffic.
 #
 # The control plane keeps the address fsn-1.gregale.dev. During the planned
 # switchover (docs/runbooks/ControlPlaneFailover.md, step 4) only the host's
