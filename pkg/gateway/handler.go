@@ -7591,7 +7591,10 @@ haveApp:
 		wakeMethod        WakeMethod
 		platformWakeStart time.Time
 		platformWakeTrace *wakePhaseTrace
-		err               error
+		// startupOOM collects the instances whose wake reported that the
+		// app ran out of memory while booting; set only on wake paths.
+		startupOOM *sched.StartupOOMRecorder
+		err        error
 	)
 
 	// PickWarm is the combined warm-path decision for the production backend. A
@@ -7704,6 +7707,7 @@ haveApp:
 				platformWakeStart = time.Now()
 				platformWakeTrace = newWakePhaseTrace(platformWakeStart)
 				wakeCtx := withWakePhaseTrace(r.Context(), platformWakeTrace)
+				wakeCtx = withStartupOOMRecorder(wakeCtx, &startupOOM)
 				if acceptsWakePage(r) {
 					var cancel context.CancelFunc
 					wakeCtx, cancel = context.WithTimeout(wakeCtx, time.Duration(api.WakePageAfterMs)*time.Millisecond)
@@ -7725,7 +7729,7 @@ haveApp:
 					return
 				}
 			} else {
-				admittedWakeID, method, atCapacity, admitErr = h.backend.Admit(r.Context(), app.ID, exactDeploymentID, exactDeploymentScope, exactDeploymentTrigger, maxInstances+api.RolloutConcurrencyGrant)
+				admittedWakeID, method, atCapacity, admitErr = h.backend.Admit(withStartupOOMRecorder(r.Context(), &startupOOM), app.ID, exactDeploymentID, exactDeploymentScope, exactDeploymentTrigger, maxInstances+api.RolloutConcurrencyGrant)
 			}
 			settled := false
 			if admitErr == nil && atCapacity {
@@ -7808,6 +7812,7 @@ haveApp:
 		// booting. API clients retain the plan-derived wait budget.
 		wakeCtx := r.Context()
 		wakeCtx = withWakePhaseTrace(wakeCtx, platformWakeTrace)
+		wakeCtx = withStartupOOMRecorder(wakeCtx, &startupOOM)
 		// A thaw prefers the frozen instance this session is pinned to
 		// (ADR-1151): its in-memory state is why the app keeps affinity.
 		wakeCtx = sched.WithPreferredInstance(wakeCtx, preferredInstanceID)
@@ -7920,7 +7925,7 @@ haveApp:
 	routing, hasPublicRouting := publicRoutingSnapshot(r.Context())
 	if !exactDeployment || hasPublicRouting {
 		//nolint:contextcheck // request ctx at handler boundary.
-		burstWaitCtx, cancelBurstWait := context.WithTimeout(r.Context(), burstCapacityWait(app))
+		burstWaitCtx, cancelBurstWait := context.WithTimeout(withStartupOOMRecorder(r.Context(), &startupOOM), burstCapacityWait(app))
 		defer cancelBurstWait()
 		var burstErr error
 		if hasPublicRouting {
@@ -7961,7 +7966,7 @@ haveApp:
 		if platformWakeStart.IsZero() {
 			platformWakeStart = time.Now()
 		}
-		fanoutCtx, fanoutSpan := pkgtrace.StartSpan(r.Context(), "gateway.wake_fanout",
+		fanoutCtx, fanoutSpan := pkgtrace.StartSpan(withStartupOOMRecorder(r.Context(), &startupOOM), "gateway.wake_fanout",
 			attribute.String("app_id", app.ID),
 			attribute.String("deployment_id", pick.ColdBucket),
 		)
@@ -8706,8 +8711,18 @@ haveApp:
 		if cold && wakeMethod != WakeMethodUnspecified {
 			h.metrics.ObserveColdBootWithTrace(app.ID, firstByteAt.Sub(wakeStart), target.NodeID, traceID)
 			if !platformWakeStart.IsZero() {
-				h.metrics.ObservePlatformWakeWithTrace(firstByteAt.Sub(platformWakeStart), traceID)
-				platformWakeTrace.observe(h.metrics, firstByteAt)
+				if startupOOM.Any() {
+					// The app ran out of memory while a wake this request
+					// admitted booted it: the kernel's OOM kill, not the
+					// platform, set the latency this request waited out,
+					// whichever instance the final pick routed it to. The
+					// app's own wake latency (above) keeps it; the phase
+					// breakdown follows the SLO series it decomposes.
+					h.metrics.ObservePlatformWakeExcluded(platformWakeExcludedStartupOOM)
+				} else {
+					h.metrics.ObservePlatformWakeWithTrace(firstByteAt.Sub(platformWakeStart), traceID)
+					platformWakeTrace.observe(h.metrics, firstByteAt)
+				}
 			}
 			// Wake-locality classifier (PR scale-out readiness). Increment
 			// AFTER the first-byte observation so the 350 ms measurement

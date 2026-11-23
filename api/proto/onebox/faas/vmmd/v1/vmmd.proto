@@ -1308,6 +1308,12 @@ message WakeResponse {
   // refuses a new deployment's prime that reports it. Older vmmd never sets
   // it; it refused such boots outright.
   bool base_scan_grace = 21;
+  // The guest reported that the kernel killed a workload process for memory
+  // (ADR-121) before this wake returned, yet the instance still became ready.
+  // The wake's latency is then the app's memory exhaustion, not the
+  // platform's: gateways keep it out of the platform wake SLO. Older vmmd
+  // never sets it.
+  bool startup_oom = 22;
 }
 
 // WakeMethod is whether a wake was a snapshot restore or a cold boot.
