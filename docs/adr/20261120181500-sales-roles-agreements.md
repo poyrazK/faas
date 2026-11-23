@@ -21,7 +21,8 @@ companies. Changing staff must not need a deploy.
 | --- | --- | --- | --- |
 | Own code, own customers, own leads and tasks | yes | yes | yes |
 | Every salesperson's customers, leads, tasks, reports, inquiry routing | no | yes | yes |
-| Add, change or remove managers and salespeople | no | yes | yes |
+| Add, deactivate or reactivate salespeople | no | yes | yes |
+| Add, change or remove managers; promote a salesperson | no | no | yes |
 | Set a salesperson's commission agreement | no | no | yes |
 | Move a customer's sales credit to another salesperson | no | no | yes |
 | Record or void a commission payout | no | no | yes |
@@ -29,8 +30,8 @@ companies. Changing staff must not need a deploy.
 A salesperson sees commission rate, estimate and payout status only for their
 own customers. Owner admins come only from `FAAS_SALES_ADMIN_EMAILS`, so no
 UI action can remove the last admin. Managers and salespeople are stored in
-`sales_team_members` and managed by a sales manager or an owner admin
-(2026-11-23 amendment: managers run the team day to day. The team list omits
+`sales_team_members`. Owner admins manage everyone
+(2026-11-23 amendment: sales managers manage salespeople only. The team list omits
 agreements for managers, who still see the rate frozen on each customer they
 can read. Nobody can change their own role or deactivate themselves). The existing
 `FAAS_SALES_MANAGER_EMAILS` and `FAAS_SALES_EMAILS` lists still grant those

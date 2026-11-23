@@ -30,7 +30,7 @@ func (f *teamFake) TeamMembers(context.Context, []string) ([]referrals.TeamMembe
 	if f.members != nil {
 		return f.members, nil
 	}
-	return []referrals.TeamMember{{AccountID: "22222222-2222-2222-2222-222222222222", Email: "seller@example.com", AccountStatus: "active", EmailVerified: true, MFAEnrolled: true}}, nil
+	return []referrals.TeamMember{{AccountID: "22222222-2222-2222-2222-222222222222", Email: "seller@example.com", StoredRole: referrals.RoleRep, StoredActive: true, Version: 1, AccountStatus: "active", EmailVerified: true, MFAEnrolled: true}}, nil
 }
 func (f *teamFake) AccountIDByEmail(context.Context, string) (string, error) {
 	return "22222222-2222-2222-2222-222222222222", nil
@@ -170,6 +170,56 @@ func TestManagersManageTheTeam(t *testing.T) {
 			}
 			if list != 200 || add != 200 || remove != 200 || len(f.saved) != 2 {
 				t.Fatal(role, list, add, remove, f.saved)
+			}
+		})
+	}
+}
+
+// Managers manage salespeople only; managers stay with owner admins.
+func TestManagersCannotManageManagers(t *testing.T) {
+	member := "22222222-2222-2222-2222-222222222222"
+	manager := []referrals.TeamMember{{AccountID: member, Email: "seller@example.com", StoredRole: referrals.RoleManager, StoredActive: true, Version: 1}}
+	configManager := []referrals.TeamMember{{AccountID: member, Email: "boss@example.com", StoredRole: referrals.RoleRep, StoredActive: true, Version: 1}}
+	update := func(body string) *http.Request {
+		return newRequest("PUT", "/v1/sales/admin/team/"+member, body, map[string]string{"member": member})
+	}
+	for _, tt := range []struct {
+		name    string
+		members []referrals.TeamMember
+		run     func(*Service, *httptest.ResponseRecorder, state.Account)
+	}{
+		{"add a manager", nil, func(s *Service, w *httptest.ResponseRecorder, a state.Account) {
+			s.AddMember(w, newRequest("POST", "/v1/sales/admin/team", `{"email":"alt@example.com","role":"manager"}`, nil), a)
+		}},
+		{"promote a salesperson", nil, func(s *Service, w *httptest.ResponseRecorder, a state.Account) {
+			s.UpdateMember(w, update(`{"role":"manager","active":true,"version":1}`), a)
+		}},
+		{"deactivate a manager", manager, func(s *Service, w *httptest.ResponseRecorder, a state.Account) {
+			s.UpdateMember(w, update(`{"role":"rep","active":false,"version":1}`), a)
+		}},
+		{"demote a manager", manager, func(s *Service, w *httptest.ResponseRecorder, a state.Account) {
+			s.UpdateMember(w, update(`{"role":"rep","active":true,"version":1}`), a)
+		}},
+		{"touch a config manager's rep row", configManager, func(s *Service, w *httptest.ResponseRecorder, a state.Account) {
+			s.UpdateMember(w, update(`{"role":"rep","active":false,"version":1}`), a)
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			s, f, acct := teamFixture(referrals.RoleManager)
+			f.members = tt.members
+			s.Config.Members["boss@example.com"] = true // config manager
+			w := httptest.NewRecorder()
+			tt.run(s, w, acct)
+			if w.Code != 403 || len(f.saved) != 0 {
+				t.Fatal(w.Code, f.saved, w.Body.String())
+			}
+			// An owner admin may do the same.
+			s, f, acct = teamFixture(referrals.RoleAdmin)
+			f.members = tt.members
+			w = httptest.NewRecorder()
+			tt.run(s, w, acct)
+			if w.Code != 200 || len(f.saved) != 1 {
+				t.Fatal("admin", w.Code, f.saved, w.Body.String())
 			}
 		})
 	}

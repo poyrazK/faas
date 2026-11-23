@@ -92,16 +92,48 @@ func validStoredRole(role string) bool {
 	return role == referrals.RoleManager || role == referrals.RoleRep
 }
 
-// AddMember grants an existing Gregale account the manager or rep role
-// (managers and owner admins).
+// managersOnlyReps refuses a manager acting on anything but a salesperson.
+// Adding, changing or removing managers stays with owner admins.
+func managersOnlyReps(w http.ResponseWriter) {
+	api.WriteProblem(w, api.NewProblem(403, api.CodeForbidden, "Owner admin required", "Sales managers can add, deactivate and reactivate salespeople. Ask an owner admin to add, change or remove a manager."))
+}
+
+// repRecord reports whether account's stored row is a salesperson that holds
+// no stronger role anywhere. The update that follows only applies at the
+// caller's version, and any change to the row bumps it, so a row changed
+// after this read fails as a conflict instead of being overwritten.
+func (s *Service) repRecord(ctx context.Context, store referrals.TeamStore, account string) (bool, error) {
+	team, err := s.roster(ctx)
+	if err != nil {
+		return false, err
+	}
+	members, err := store.TeamMembers(ctx, s.configRoster().emails())
+	if err != nil {
+		return false, err
+	}
+	for _, m := range members {
+		if m.AccountID == account {
+			effective := team.role(m.Email)
+			return m.StoredRole == referrals.RoleRep && (effective == "" || effective == referrals.RoleRep), nil
+		}
+	}
+	return false, nil
+}
+
+// AddMember grants an existing Gregale account the manager or rep role.
+// Owner admins add either; managers add salespeople only.
 func (s *Service) AddMember(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	store, _, ok := s.teamStore(w, r, acct, false)
+	store, scope, ok := s.teamStore(w, r, acct, false)
 	if !ok {
 		return
 	}
 	var in memberInput
 	if !decode(w, r, &in) || in.Active != nil || in.Version != 0 || !validStoredRole(in.Role) {
 		invalid(w, "Send an email and a role of manager or rep.")
+		return
+	}
+	if !scope.Admin() && in.Role != referrals.RoleRep {
+		managersOnlyReps(w)
 		return
 	}
 	email := strings.ToLower(strings.TrimSpace(in.Email))
@@ -134,9 +166,10 @@ func (s *Service) AddMember(w http.ResponseWriter, r *http.Request, acct state.A
 
 // UpdateMember changes a portal member's role or deactivates/reactivates it.
 // Config-granted roles are unaffected; the strongest grant still applies.
-// Managers and owner admins may do this.
+// Owner admins change anyone; managers deactivate or reactivate salespeople
+// and cannot promote them.
 func (s *Service) UpdateMember(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	store, _, ok := s.teamStore(w, r, acct, false)
+	store, scope, ok := s.teamStore(w, r, acct, false)
 	if !ok {
 		return
 	}
@@ -152,6 +185,21 @@ func (s *Service) UpdateMember(w http.ResponseWriter, r *http.Request, acct stat
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), api.ReferralReadTimeout)
 	defer cancel()
+	if !scope.Admin() {
+		if in.Role != referrals.RoleRep {
+			managersOnlyReps(w)
+			return
+		}
+		rep, err := s.repRecord(ctx, store, account)
+		if err != nil {
+			unavailable(w)
+			return
+		}
+		if !rep {
+			managersOnlyReps(w)
+			return
+		}
+	}
 	if err := store.SaveTeamMember(ctx, acct.ID, account, in.Role, *in.Active, in.Version); err != nil {
 		pipelineError(w, err)
 		return
