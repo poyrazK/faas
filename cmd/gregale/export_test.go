@@ -3069,3 +3069,13 @@ func RealtimeVerbsDiscoveredBy(hidden ...string) []string {
 	}
 	return names
 }
+
+// adr: 20261123110137
+var WithMCPReplayGate = withMCPReplayGate
+
+// RunMCPReplayGateForTest runs the deploy replay gate and returns its skip
+// reason and verdict.
+func RunMCPReplayGateForTest(ctx context.Context, endpoint, candidate, serving string, gate *mcpSmokeGate) (string, bool) {
+	report, ok := runMCPReplayGate(ctx, endpoint, candidate, serving, "", gate)
+	return report.Skipped, ok
+}

@@ -1469,8 +1469,10 @@ const (
 	MCPReplayMaxRuns      = 5
 	// ConsumerKeyMCPScopeMaxBytes bounds one "mcp:<scope>" consumer-key scope.
 	ConsumerKeyMCPScopeMaxBytes = 128
-	MCPReleaseMaxRoles          = 32
-	MCPReleasePolicyMaxBytes    = 64 << 10
+	// ConsumerKeyNameMaxBytes bounds a consumer key's name.
+	ConsumerKeyNameMaxBytes  = 64
+	MCPReleaseMaxRoles       = 32
+	MCPReleasePolicyMaxBytes = 64 << 10
 )
 
 // Historical replay preview bounds retained-envelope reads (ADR-645).

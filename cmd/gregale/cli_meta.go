@@ -2173,7 +2173,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "verify",
 		DocSlug: "verification-contracts",
-		Short:   "Check new deployments against gregale.verify.yaml before they take traffic",
+		Short:   "Check new deployments against gregale.verify.yaml before traffic",
 		Examples: []string{
 			"gregale release check validate",
 			"gregale release check set --app my-api",
