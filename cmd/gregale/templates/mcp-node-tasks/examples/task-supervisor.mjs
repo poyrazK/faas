@@ -95,17 +95,18 @@ function invocation(options, verb, args) {
   return ['mcp', 'client', verb, ...options.connection, '--json', ...args];
 }
 
-async function request(options, verb, args) {
-  let stdout, code = 0;
+async function request(options, verb, args, { allowUnconfirmed = false } = {}) {
+  let stdout;
   try {
     ({ stdout } = await exec(cli, invocation(options, verb, args), { maxBuffer: maxJSONBytes }));
   } catch (error) {
-    if (![1, 3].includes(error.code) || !error.stdout?.trim()) {
-      throw new Error(`gregale mcp client ${verb} did not return an outcome`);
+    if ([1, 3].includes(error.code)) {
+      if (error.stdout?.trim()) return { code: error.code, value: parseJSON(error.stdout) };
+      if (allowUnconfirmed) return { code: error.code };
     }
-    ({ code, stdout } = error);
+    throw new Error(`gregale mcp client ${verb} did not return an outcome`);
   }
-  return { value: parseJSON(stdout), code };
+  return { value: parseJSON(stdout), code: 0 };
 }
 
 function matchesResult(value, taskID) {
@@ -206,19 +207,53 @@ async function watch(options, names) {
   }
 }
 
+async function jobArguments(path) {
+  const filename = resolve(path);
+  const state = await lstat(filename).catch(() => undefined);
+  if (!state?.isFile() || state.mode & 0o077) {
+    throw new Error('the job file must be a private, regular JSON file');
+  }
+  return ['--arguments-file', filename];
+}
+
+function reportCall(selector, argumentsFlag) {
+  return ['--tasks', '--defer-form-input', '--tool', 'build_report', ...selector, ...argumentsFlag];
+}
+
+async function recover(options, receipt, argumentsFlag) {
+  const selector = ['--task-receipt', join(options.receipts, receipt)];
+  const retry = await request(options, 'call', [...reportCall(selector, argumentsFlag), '--retry-submission'],
+    { allowUnconfirmed: true });
+  const taskID = retry.value?.result?.taskId;
+  if (retry.code === 0 && !taskID) throw new Error('submission retry did not return a Task handle');
+
+  // A lost retry reply and a closed submission window can both leave a
+  // retained Task. Read just the selected receipt before advancing it.
+  const { code, value: task } = await request(options, 'status', [...selector, '--metadata-only'],
+    { allowUnconfirmed: true });
+  if (code !== 0) {
+    emit({ receipt, action: code === 3 || retry.code === 0 ? 'retry_status' : 'submission_unresolved' });
+    return;
+  }
+  if (!task?.taskId || (retry.code === 0 && task.taskId !== taskID)) {
+    throw new Error('receipt status does not match the recovered Task');
+  }
+  if (await observe(options, receipt, task, false)) await watch(options, [receipt]);
+}
+
 async function main() {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
       url: { type: 'string' }, app: { type: 'string' }, 'token-env': { type: 'string' },
-      dir: { type: 'string' }, receipt: { type: 'string' }, report: { type: 'string' },
+      dir: { type: 'string' }, receipt: { type: 'string' }, report: { type: 'string' }, 'job-file': { type: 'string' },
     },
   });
   const [command] = positionals;
-  if (positionals.length !== 1 || !['submit', 'run'].includes(command) ||
+  if (positionals.length !== 1 || !['submit', 'recover', 'run'].includes(command) ||
       Boolean(values.url) === Boolean(values.app) || !values.dir || !values['token-env'] ||
       !process.env[values['token-env']]) {
-    throw new Error('use submit or run with --url or --app, --dir, and a populated --token-env');
+    throw new Error('use submit, recover or run with --url or --app, --dir, and a populated --token-env');
   }
   const directory = resolve(values.dir);
   const options = {
@@ -229,16 +264,26 @@ async function main() {
 
   if (command === 'submit') {
     const receipt = checkReceiptName(values.receipt);
-    if (!values.report) throw new Error('submit requires --report and --receipt');
-    const { code, value } = await request(options, 'call', [
-      '--tasks', '--defer-form-input', '--task-receipt', join(options.receipts, receipt), '--tool', 'build_report',
-      '--arguments', JSON.stringify({ report: values.report, steps: 1, request_approval: true }),
-    ]);
-    if (code !== 0 || !value.result?.taskId) throw new Error('submission outcome was unavailable; run the supervisor to read the receipt');
+    if (Boolean(values.report) === Boolean(values['job-file'])) {
+      throw new Error('submit requires --receipt and either --report or --job-file');
+    }
+    const argumentsFlag = values['job-file'] ? await jobArguments(values['job-file']) :
+      ['--arguments', JSON.stringify({ report: values.report, steps: 1, request_approval: true })];
+    const selector = ['--task-receipt', join(options.receipts, receipt)];
+    const { code, value } = await request(options, 'call', reportCall(selector, argumentsFlag), { allowUnconfirmed: true });
+    if (code !== 0 || !value.result?.taskId) throw new Error('submission outcome was unavailable; use recover with the original job file');
     emit({ receipt, action: 'submitted', taskId: value.result.taskId });
     return;
   }
-  if (values.report || values.receipt) throw new Error('use --report and --receipt with submit');
+  if (command === 'recover') {
+    if (values.report || !values['job-file']) throw new Error('recover requires --receipt and --job-file');
+    const receipt = checkReceiptName(values.receipt);
+    await recover(options, receipt, await jobArguments(values['job-file']));
+    return;
+  }
+  if (values.report || values.receipt || values['job-file']) {
+    throw new Error('run uses the workspace receipt directory; use recover to select one receipt');
+  }
   const { value: inbox } = await request(options, 'status', ['--metadata-only', '--receipt-dir', options.receipts]);
   if (!Array.isArray(inbox)) throw new Error('receipt directory did not return an inbox');
   const working = [];

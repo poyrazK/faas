@@ -2447,7 +2447,7 @@ test('quarantine fences new claims across heartbeats while preserving active lea
   assert.equal((await pool.query('SELECT draining FROM gregale_mcp_task_workers WHERE namespace=$1 AND worker_id=$2', [namespace, bad])).rows[0].draining, true);
 });
 
-for (const { title, useReceipt, receiptInbox, supervisor, deferredForm, submissionReplyFault, formReplyFault, reviewedInput, respondOnce, cancelReplyFault, timeout } of [
+for (const { title, useReceipt, receiptInbox, supervisor, supervisorSubmissionFault, deferredForm, submissionReplyFault, formReplyFault, reviewedInput, respondOnce, cancelReplyFault, timeout } of [
   { title: 'keyed Task submission recovers the committed handle after a lost CLI reply', timeout: 75_000 },
   { title: 'Task receipt submission retry creates one Task after a lost request before commit', useReceipt: true, submissionReplyFault: 'before', timeout: 35_000 },
   { title: 'Task receipt submission retry returns the original Task after a lost reply after commit', useReceipt: true, submissionReplyFault: 'after', timeout: 35_000 },
@@ -2455,6 +2455,8 @@ for (const { title, useReceipt, receiptInbox, supervisor, deferredForm, submissi
   { title: 'private Task receipt resumes deferred form input after the submitting CLI dies', useReceipt: true, deferredForm: true, timeout: 35_000 },
   { title: 'receipt directory recovers the original Tasks after the submitting CLI dies', useReceipt: true, receiptInbox: true, deferredForm: true, timeout: 35_000 },
   { title: 'Task supervisor restarts after submission and approval and saves one result', useReceipt: true, supervisor: true, deferredForm: true, formReplyFault: 'after', timeout: 45_000 },
+  { title: 'Task supervisor recovers an interrupted submission before commit and saves one result', useReceipt: true, supervisor: true, deferredForm: true, supervisorSubmissionFault: 'before', timeout: 45_000 },
+  { title: 'Task supervisor recovers a lost submission reply after commit and saves one result', useReceipt: true, supervisor: true, deferredForm: true, supervisorSubmissionFault: 'after', timeout: 45_000 },
   { title: 'receipt wait recovers a form reply lost after commit', useReceipt: true, deferredForm: true, formReplyFault: 'after', timeout: 35_000 },
   { title: 'receipt wait reports pending input for a form reply lost before commit', useReceipt: true, deferredForm: true, formReplyFault: 'before', timeout: 35_000 },
   { title: 'reviewed Task input stays bound to the original Task and form after restart', useReceipt: true, deferredForm: true, reviewedInput: true, timeout: 45_000 },
@@ -2544,7 +2546,9 @@ for (const { title, useReceipt, receiptInbox, supervisor, deferredForm, submissi
     const method = req.headers['mcp-method'];
     requests.push(method);
     if (method === 'subscriptions/listen' && watchGates.length) watchGates[subscriptions++]?.resolve();
-    if (method === 'subscriptions/listen' && supervisor) finishSupervisorReport.resolve();
+    if (method === 'subscriptions/listen' && supervisor && requests.includes('tasks/update')) {
+      finishSupervisorReport.resolve();
+    }
     const dropSubmission = dropFirstReply && method === 'gregale/tasks/submit';
     const dropFormReply = method === 'tasks/update' && pendingFormReplyFault;
     const dropCancelReply = method === 'tasks/cancel' && pendingCancelReplyFault;
@@ -2574,7 +2578,7 @@ for (const { title, useReceipt, receiptInbox, supervisor, deferredForm, submissi
             arguments: args, deferFormInput: Boolean(deferredForm), tool,
           })).digest('hex'),
         });
-        if (submissionReplyFault === 'before') {
+        if (submissionReplyFault === 'before' || supervisorSubmissionFault === 'before') {
           assert.deepEqual(await rows(), []);
           await killCLI(submittingCLI);
           return;
@@ -2628,8 +2632,8 @@ for (const { title, useReceipt, receiptInbox, supervisor, deferredForm, submissi
         timeout: 12_000,
       });
     }
-    async function runSupervisor() {
-      const { stdout, stderr } = await startSupervisor('run');
+    async function runSupervisor(command = 'run', args = []) {
+      const { stdout, stderr } = await startSupervisor(command, args);
       assert.ok(!stdout.includes(owner) && !stderr.includes(owner), 'supervisor leaked a caller token');
       return stdout.trim().split('\n').map(line => JSON.parse(line));
     }
@@ -2645,8 +2649,11 @@ for (const { title, useReceipt, receiptInbox, supervisor, deferredForm, submissi
     const receiptCallFor = (path, args) => ['--tool', 'build_report', '--tasks', '--task-receipt', path,
       '--arguments', JSON.stringify(args), ...(deferredForm ? ['--defer-form-input'] : [])];
     const receiptCall = receiptCallFor(receiptPath, receiptArgs);
+    const jobFile = join(clientDir, 'report-job.json');
+    if (supervisorSubmissionFault) await writeFile(jobFile, JSON.stringify(receiptArgs), { mode: 0o600, flag: 'wx' });
     if (useReceipt) {
-      const pending = supervisor ? startSupervisor('submit', ['--report', 'original', '--receipt', 'task-receipt.json']) :
+      const reportArgs = supervisorSubmissionFault ? ['--job-file', jobFile] : ['--report', 'original'];
+      const pending = supervisor ? startSupervisor('submit', [...reportArgs, '--receipt', 'task-receipt.json']) :
         startCLI('call', owner, receiptCall);
       submittingCLI = pending.child;
       await assert.rejects(pending, error => error.signal === 'SIGKILL' && error.stdout === '');
@@ -2699,14 +2706,46 @@ for (const { title, useReceipt, receiptInbox, supervisor, deferredForm, submissi
       assert.equal((await stat(receiptPath)).ino, receiptFile.ino);
       return;
     }
-    assert.ok(committedID, 'the first CLI reply must be dropped after a confirmed PostgreSQL commit');
     const selector = useReceipt ? ['--task-receipt', receiptPath] : ['--task-submission-key', key];
     if (supervisor) {
-      await eventually(async () => (await rows())[0]?.status === 'input_required', 'worker did not persist the review form');
       const receipt = 'task-receipt.json';
       const reviewFile = join('reviews', receipt);
       const resultFile = join('results', receipt);
-      assert.deepEqual(await runSupervisor(), [{ receipt, action: 'review_required', file: reviewFile }]);
+      const reviewRequired = [{ receipt, action: 'review_required', file: reviewFile }];
+      const receiptBody = await readFile(receiptPath, 'utf8');
+      const receiptFile = await stat(receiptPath);
+      if (supervisorSubmissionFault) {
+        if (supervisorSubmissionFault === 'before') {
+          assert.deepEqual(await rows(), []);
+          assert.deepEqual(await runSupervisor(), [{ receipt, action: 'unavailable' }]);
+          const changedJob = join(clientDir, 'changed-job.json');
+          await writeFile(changedJob, JSON.stringify({ ...receiptArgs, report: 'changed' }), { mode: 0o600, flag: 'wx' });
+          const beforeChanged = requests.length;
+          assert.deepEqual(await runSupervisor('recover', ['--receipt', receipt, '--job-file', changedJob]),
+            [{ receipt, action: 'submission_unresolved' }]);
+          assert.deepEqual(requests.slice(beforeChanged), ['server/discover', 'gregale/tasks/lookup']);
+          assert.deepEqual(await rows(), []);
+        } else {
+          assert.ok(committedID, 'the first reply must be dropped after PostgreSQL commits');
+        }
+        const beforeRecovery = requests.length;
+        assert.deepEqual(await runSupervisor('recover', ['--receipt', receipt, '--job-file', jobFile]), reviewRequired);
+        assert.equal(requests.slice(beforeRecovery).filter(method => method === 'gregale/tasks/submit').length, 1);
+        const persisted = await pool.query('SELECT task_id::text, submission_key::text FROM gregale_mcp_tasks WHERE namespace=$1',
+          [namespace]);
+        assert.equal(persisted.rows.length, 1);
+        const task = persisted.rows[0];
+        if (committedID) assert.equal(task.task_id, committedID);
+        assert.equal(task.submission_key, JSON.parse(receiptBody).submissionKey);
+        committedID = task.task_id;
+        assert.equal(await readFile(receiptPath, 'utf8'), receiptBody);
+        assert.equal((await stat(receiptPath)).ino, receiptFile.ino);
+      } else {
+        assert.ok(committedID, 'the first reply must be dropped after PostgreSQL commits');
+        await eventually(async () => (await rows())[0]?.status === 'input_required', 'worker did not persist the review form');
+        assert.deepEqual(await runSupervisor(), reviewRequired);
+      }
+
       assert.equal(requests.filter(method => method === 'tasks/update').length, 0);
       const reviewPath = join(supervisorDir, reviewFile);
       const template = JSON.parse(await readFile(reviewPath, 'utf8'));
@@ -2716,15 +2755,18 @@ for (const { title, useReceipt, receiptInbox, supervisor, deferredForm, submissi
       template.forms.approval.response = { action: 'accept', content: { approved: true } };
       await writeFile(reviewPath, JSON.stringify(template));
 
-      const pending = startSupervisor('run');
-      respondingSupervisor = pending.child;
-      await assert.rejects(pending, error => error.signal === 'SIGKILL' && error.stdout === '');
-      assert.ifError(proxyError);
+      if (formReplyFault) {
+        const pending = startSupervisor('run');
+        respondingSupervisor = pending.child;
+        await assert.rejects(pending, error => error.signal === 'SIGKILL' && error.stdout === '');
+        assert.ifError(proxyError);
+      }
       const beforeResume = requests.length;
       assert.deepEqual(await runSupervisor(), [{ receipt, action: 'result_saved', file: resultFile }]);
       assert.ok(requests.slice(beforeResume).includes('subscriptions/listen'));
       assert.equal(requests.filter(method => method === 'tasks/update').length, 1);
-      assert.equal(requests.filter(method => method === 'gregale/tasks/submit').length, 2, 'one submission relayed by the test server');
+      assert.equal(requests.filter(method => method === 'gregale/tasks/submit').length,
+        supervisorSubmissionFault === 'after' ? 3 : 2, 'submission attempts include the relay when the initial call commits');
       const destination = join(supervisorDir, resultFile);
       const before = await stat(destination);
       const saved = await readFile(destination);
@@ -2740,9 +2782,22 @@ for (const { title, useReceipt, receiptInbox, supervisor, deferredForm, submissi
       assert.equal((await stat(destination)).ino, before.ino);
       assert.deepEqual(await readFile(destination), saved);
       assert.deepEqual(await readdir(join(supervisorDir, 'results')), [receipt]);
-      assert.deepEqual(await rows(), [{ task_id: committedID, status: 'completed', attempt_count: 1, has_result: true }]);
+      const completedRows = [{ task_id: committedID, status: 'completed', attempt_count: 1, has_result: true }];
+      assert.deepEqual(await rows(), completedRows);
+      if (supervisorSubmissionFault === 'before') {
+        const expiredReceipt = 'expired-recovery.json';
+        await writeFile(join(receiptDir, expiredReceipt), JSON.stringify({
+          ...JSON.parse(receiptBody), submissionKey: makeKey(Date.now() - 61_000),
+        }), { mode: 0o600, flag: 'wx' });
+        const beforeExpiry = requests.length;
+        assert.deepEqual(await runSupervisor('recover', ['--receipt', expiredReceipt, '--job-file', jobFile]),
+          [{ receipt: expiredReceipt, action: 'submission_unresolved' }]);
+        assert.deepEqual(requests.slice(beforeExpiry), ['server/discover', 'gregale/tasks/lookup']);
+        assert.deepEqual(await rows(), completedRows);
+      }
       return;
     }
+    assert.ok(committedID, 'the first CLI reply must be dropped after a confirmed PostgreSQL commit');
     if (receiptInbox) {
       async function submitInboxReceipt(name, credential) {
         const { result } = JSON.parse(await cli('call', credential, 0,
