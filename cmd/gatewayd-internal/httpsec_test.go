@@ -23,6 +23,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 )
 
@@ -174,6 +175,43 @@ func TestHttpsec_HSTSEnabledEnvHelper(t *testing.T) {
 		t.Run(c.raw, func(t *testing.T) {
 			if got := httpsec.HSTSEnabledFromEnv(getenv(c.raw)); got != c.want {
 				t.Errorf("HSTSEnabledFromEnv(%q) = %v, want %v", c.raw, got, c.want)
+			}
+		})
+	}
+}
+
+// Prod hunt r32: an app's own /login, /docs or /v1/... page answered with
+// the dashboard's nonce CSP, so the browser blocked the page's inline and
+// CDN scripts. On an app or custom-domain host those paths belong to the
+// app (ADR-480); only Gregale-owned hosts get the dashboard policy.
+func TestHttpsec_DashboardCSPOnlyOnPlatformHosts(t *testing.T) {
+	domains := hostidentity.Domains{Platform: "gregale.dev", Apps: "gregale.app"}
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	h := httpsec.ForSurface(
+		func(r *http.Request) httpsec.Surface { return httpsec.ClassifyHostIn(r.Host, domains) },
+		false,
+		httpsec.Nonce(dashboardCSPGate, inner),
+	)
+	for _, tc := range []struct {
+		host, path string
+		want       bool
+	}{
+		{"api.gregale.dev", "/login", true},
+		{"gregale.dev", "/dashboard/", true},
+		{"api.gregale.dev", "/v1/apps", true},
+		{"api.gregale.dev", "/hello", false},
+		{"shop.gregale.app", "/login", false},
+		{"shop.gregale.app", "/docs", false},
+		{"shop.gregale.app", "/v1/apps", false},
+		{"shop.example.com", "/dashboard/", false},
+	} {
+		t.Run(tc.host+tc.path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			req.Host = tc.host
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if got := rec.Header().Get("Content-Security-Policy") != ""; got != tc.want {
+				t.Fatalf("CSP present = %v, want %v", got, tc.want)
 			}
 		})
 	}
