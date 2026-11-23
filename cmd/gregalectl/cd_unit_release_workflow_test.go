@@ -558,6 +558,12 @@ func TestUnitDeploysAreWatchedAndPauseAfterARollback(t *testing.T) {
 		"Stage the unit release on the control plane",
 		`unit_deploy.sh watch-open "$UNIT_PLAN" control-plane`,
 		"Activate the unit release",
+		// A failed activation gate with the release live rolls it back
+		// (2026-11-23: it left apid on the new release).
+		`"$activation_script" || status=$?`,
+		`if [[ "$(scripts/ci/unit_deploy.sh state | jq -r .current)" == "$release_id" ]]; then`,
+		`scripts/ci/unit_deploy.sh rollback "$UNIT_PLAN" "$REMOTE_STAGE"`,
+		`exit "$status"`,
 		"Hold the units on the SLO gate",
 		"if: failure() && steps.watch_open.outcome == 'success'",
 		"unit_deploy.sh watch-revert control-plane",
