@@ -807,6 +807,10 @@ func firecrackerControlLine(line []byte) bool {
 		// IOError(Os { code: 32, kind: BrokenPipe … }))". It reached a
 		// function's customer log on production-us rc.336 (Hunt 32 H32-69).
 		"vsock: error ",
+		// Firecracker's logger rate limiter summarising lines it dropped:
+		// "3 messages were suppressed due to rate limiting". It reached a
+		// Node app's followed log on production rc.369 (prod hunt r25).
+		"messages were suppressed due to rate limiting",
 	} {
 		if strings.Contains(body, marker) {
 			return true
@@ -7559,7 +7563,7 @@ var supervisedWorkloadMarkers = []string{
 const guestCleanExitMarker = " exited cleanly (status 0, policy="
 
 // cleanExitDetail explains a workload that ended on its own with status 0.
-const cleanExitDetail = "; the app's process exited with status 0 (a clean exit is not restarted). Keep the server process running in the foreground and listening on $PORT"
+const cleanExitDetail = "; " + api.StartupCleanExitMarker + ". Keep the server process running in the foreground and listening on $PORT"
 
 // cleanExitHint is cleanExitDetail when guest-init's clean-exit line is among
 // lines.

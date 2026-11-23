@@ -3,8 +3,16 @@ import { performance } from 'node:perf_hooks';
 
 export const protocolContext = new AsyncLocalStorage();
 const methods = new Set(['initialize', 'server/discover', 'ping', 'tools/list', 'tools/call', 'resources/list', 'resources/templates/list', 'resources/read', 'prompts/list', 'prompts/get', 'completion/complete', 'tasks/get', 'tasks/cancel', 'tasks/update', 'subscriptions/listen']);
+// Only tools this server registered keep their name, so callers cannot
+// choose telemetry labels by calling tools that do not exist.
 const tools = new Set(['greet', 'add', 'stream_demo', 'build_report']);
+export const labelTool = name => { if (typeof name === 'string') tools.add(name); };
 export const toolLabel = name => tools.has(name) ? name : 'other';
+
+// The MCP SDK answers arguments that fail a tool's input schema with a tool
+// error whose text starts "Input validation error"; telemetry reports those
+// calls as invalid_params.
+const argumentsMismatch = (message, result) => message.method === 'tools/call' && typeof result?.content?.[0]?.text === 'string' && /^(MCP error -32602: )?Input validation error: Invalid arguments for tool /.test(result.content[0].text);
 
 export function observeProtocolRequest(req, res, log) {
   const message = req.body;
@@ -23,7 +31,7 @@ export function observeProtocolRequest(req, res, log) {
       if (value?.method === 'notifications/subscriptions/acknowledged') { executionEnd ??= performance.now(); return; }
       if (!value || value.id !== message.id || (!Object.hasOwn(value, 'error') && !Object.hasOwn(value, 'result')) || outcome) return;
       executionEnd ??= performance.now();
-      outcome = Object.hasOwn(value, 'error') ? 'rpc_error' : value.result?.isError === true ? 'tool_error' : value.result?.resultType === 'task' ? 'task_created' : 'success';
+      outcome = Object.hasOwn(value, 'error') ? (value.error?.code === -32602 && message.method === 'tools/call' ? 'invalid_params' : 'rpc_error') : value.result?.isError === true ? (argumentsMismatch(message, value.result) ? 'invalid_params' : 'tool_error') : value.result?.resultType === 'task' ? 'task_created' : 'success';
     },
     failed(reason) { termination = reason; },
     finish(streamOutcome = termination || 'complete') {

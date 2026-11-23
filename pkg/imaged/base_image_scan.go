@@ -3,7 +3,6 @@ package imaged
 // adr: 435
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -328,7 +327,7 @@ func writeProducedBaseScanCompatibility(ctx context.Context, be storage.StorageB
 	if err != nil {
 		return err
 	}
-	return be.Put(ctx, wire.ScanKeyForBaseKey(key), bytes.NewReader(raw))
+	return putSharedBaseSidecar(ctx, be, wire.ScanKeyForBaseKey(key), raw)
 }
 
 // fixableCriticalSince is the start of vmmd's boot grace for a base whose scan

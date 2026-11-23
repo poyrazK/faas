@@ -50,6 +50,21 @@ func TestPgProjectEnvironmentBranchDataClaim(t *testing.T) {
 	if err != nil || claimed.DataAttempts != 1 || claimed.DataError != "restore not ready" {
 		t.Fatalf("reclaim = %+v, %v", claimed, err)
 	}
+	// A copy still in progress is checked again without spending an attempt.
+	if err := s.DeferProjectEnvironmentBranchData(ctx, branch.EnvironmentID, uuid.NewString(), now.Add(3*time.Hour)); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("defer without the lease: %v", err)
+	}
+	if err := s.DeferProjectEnvironmentBranchData(ctx, branch.EnvironmentID, lease, now.Add(2*time.Hour+time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ClaimProjectEnvironmentBranchData(ctx, uuid.NewString(), now.Add(2*time.Hour), time.Minute); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("deferred branch claimed early: %v", err)
+	}
+	lease = uuid.NewString()
+	claimed, err = s.ClaimProjectEnvironmentBranchData(ctx, lease, now.Add(2*time.Hour+2*time.Second), time.Minute)
+	if err != nil || claimed.DataAttempts != 1 || claimed.DataState != state.EnvironmentBranchDataPending {
+		t.Fatalf("claim after defer = %+v, %v; want attempts still 1", claimed, err)
+	}
 	if err := s.CompleteProjectEnvironmentBranchData(ctx, branch.EnvironmentID, lease); err != nil {
 		t.Fatal(err)
 	}

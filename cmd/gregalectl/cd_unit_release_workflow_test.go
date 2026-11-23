@@ -59,7 +59,11 @@ func TestUnitReleaseIsSignedOnlyByMainAndVerifiedBeforeUse(t *testing.T) {
 	for _, required := range []string{
 		"cosign sign-blob --yes",
 		`--certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release-units.yml@refs/heads/main"`,
-		"scripts/ci/affected_units.py --base",
+		// Head's selection rules, copied before a prefix release moves the
+		// checkout (docs/adr/20261122170000-continuous-unit-lane.md).
+		`cp -R scripts/ci "$tools"`,
+		`python3 "$tools/affected_units.py" --base "$BASE" --head HEAD --output`,
+		`python3 "$tools/affected_units.py" --base "$BASE" --head "$target" --code`,
 		"scripts/build-unit-release.sh",
 		"if: steps.detect.outputs.eligible == 'true'",
 	} {
@@ -502,23 +506,37 @@ func TestUnitDeployWaitsForAdmission(t *testing.T) {
 	release := readWorkflow(t, "release-units.yml")
 	preflight := jobBlock(t, release, "preflight")
 	for _, required := range []string{
-		"needs: [build]",
-		"needs.build.outputs.eligible == 'true'",
-		"(inputs.deploy_environment != '' || (github.event_name == 'push' && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != ''))",
+		"inputs.deploy_environment != '' || ((github.event_name == 'push' || github.event_name == 'schedule') && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != '')",
 		"issues: read",
+		"actions: read",
 		"go: ${{ steps.preflight.outputs.go }}",
-		"python3 preflight-src/scripts/ci/deploy_preflight.py --wait 40m --interval 60s",
+		// Beside the build (ADR-20261122170000): it waits for this run's
+		// build and reads the released commit, which a stalled lane keeps
+		// behind main's head, from the build's marker.
+		"python3 preflight-src/scripts/ci/deploy_preflight.py --follow-build",
+		"--wait 40m --interval 60s --poll 10s",
 	} {
 		if !strings.Contains(preflight, required) {
 			t.Errorf("release-units preflight is missing %q", required)
 		}
 	}
-	for _, forbidden := range []string{"issues: write", "contents: write", "actions: write", "id-token: write", "StrictHostKeyChecking=no"} {
+	for _, forbidden := range []string{
+		"issues: write", "contents: write", "actions: write", "id-token: write", "StrictHostKeyChecking=no",
+		// A preflight after the build puts its runner pickup, checkout and
+		// first round on the deploy's critical path.
+		"needs:",
+	} {
 		if strings.Contains(preflight, forbidden) {
 			t.Errorf("release-units preflight must not have %q", forbidden)
 		}
 	}
-	orderedIn(t, "release-units preflight", preflight, "Set up SSH", "COMPUTE_KNOWN_HOSTS", "deploy_preflight.py")
+	orderedIn(t, "release-units preflight", preflight, "Set up SSH", "COMPUTE_KNOWN_HOSTS",
+		// No automatic deploy without the critical smoke checks (ADR-20261122170000 §3a).
+		"- name: Require the critical smoke checks for an automatic deploy",
+		"if: github.event_name != 'workflow_dispatch'",
+		`if [[ -z "$UNIT_SMOKE_API_KEY" || -z "$UNIT_SMOKE_APP" ]]; then`,
+		"exit 1",
+		"deploy_preflight.py")
 	deploy := jobBlock(t, release, "deploy")
 	for _, required := range []string{"needs: [build, preflight]", "needs.preflight.outputs.go == 'true'"} {
 		if !strings.Contains(deploy, required) {
@@ -540,6 +558,12 @@ func TestUnitDeploysAreWatchedAndPauseAfterARollback(t *testing.T) {
 		"Stage the unit release on the control plane",
 		`unit_deploy.sh watch-open "$UNIT_PLAN" control-plane`,
 		"Activate the unit release",
+		// A failed activation gate with the release live rolls it back
+		// (2026-11-23: it left apid on the new release).
+		`"$activation_script" || status=$?`,
+		`if [[ "$(scripts/ci/unit_deploy.sh state | jq -r .current)" == "$release_id" ]]; then`,
+		`scripts/ci/unit_deploy.sh rollback "$UNIT_PLAN" "$REMOTE_STAGE"`,
+		`exit "$status"`,
 		"Hold the units on the SLO gate",
 		"if: failure() && steps.watch_open.outcome == 'success'",
 		"unit_deploy.sh watch-revert control-plane",
@@ -604,14 +628,80 @@ func TestUnitDeploysAreWatchedAndPauseAfterARollback(t *testing.T) {
 func TestUnitReleaseBuildIsSupersededOnlyByARunDeployingToTheSamePlace(t *testing.T) {
 	release := readWorkflow(t, "release-units.yml")
 	build := jobBlock(t, release, "build")
-	const group = "group: release-units-build-${{ inputs.deploy_environment || (github.event_name == 'push' && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT) || 'build-only' }}"
+	const group = "group: release-units-build-${{ inputs.deploy_environment || ((github.event_name == 'push' || github.event_name == 'schedule') && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT) || 'build-only' }}"
 	if !strings.Contains(build, group) {
 		t.Fatalf("the build job's concurrency group must be keyed by the deploy target; want %q", group)
 	}
 	if strings.Contains(build, "group: release-units-build\n") {
 		t.Error("a single build group lets a build-only push cancel a dispatched deploy")
 	}
-	if !strings.Contains(release, "(inputs.deploy_environment != '' || (github.event_name == 'push' && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != ''))") {
+	if !strings.Contains(release, "inputs.deploy_environment != '' || ((github.event_name == 'push' || github.event_name == 'schedule') && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != '')") {
 		t.Error("the preflight's deploy condition changed; key the build group the same way")
+	}
+}
+
+// TestUnitReleaseIsTestedAsShippedAndCapped (ADR-20261122170000 §3a): the
+// build tests the exact tree it releases before it builds, with no
+// database URL, and a release carries at most BLAST_CAP commits beyond what
+// production last took.
+func TestUnitReleaseIsTestedAsShippedAndCapped(t *testing.T) {
+	build := jobBlock(t, readWorkflow(t, "release-units.yml"), "build")
+	orderedIn(t, "release-units build", build,
+		`python3 "$tools/last_deployed.py"`,
+		"Test the shipped tree",
+		`python3 "$RUNNER_TEMP/unit-tools/tested_tree.py" --commit "$RELEASE_SHA"`,
+		"Build unit binaries",
+		"Sign unit release with GitHub OIDC",
+		"name: unit-release-sha-${{ steps.detect.outputs.release_sha }}",
+		// The preflight's base check reads the full release it is built over.
+		"name: unit-release-base-${{ steps.base.outputs.sha }}")
+	for _, required := range []string{
+		`BLAST_CAP: "5"`,
+		"unset DATABASE_URL SPLIT_DATABASE_URL",
+		"export FAAS_SKIP_PG_TESTS=1",
+		// Bounded compiler memory on the control plane's build runner: the
+		// heavy test packages compile as ci-light compiles them.
+		`"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1"`,
+		`"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver_test=-dwarf=false -c=1"`,
+		"GOMEMLIMIT: 4GiB",
+		`go test -p 2 -ldflags=-w -count=1 -timeout=10m "${pkgs[@]}"`,
+		`go test -p 2 -ldflags=-w -count=1 -timeout=8m -run "$run" "$pkg"`,
+	} {
+		if !strings.Contains(build, required) {
+			t.Errorf("release-units build is missing %q", required)
+		}
+	}
+}
+
+// TestWatchBreachConvergesHostConfigBack (ADR-20261122170000, "Config
+// rollback"): a breach that rolled back a release which converged host roles
+// converges them back through cd-controlplane, which then deploys nothing
+// else and never converges back over its own rollback.
+func TestWatchBreachConvergesHostConfigBack(t *testing.T) {
+	watch := readWorkflow(t, "cd-unit-watch.yml")
+	restore := jobBlock(t, watch, "restore-host-config")
+	for _, required := range []string{
+		"needs: [watch]",
+		"needs.watch.outputs.host_config_rollback_to != ''",
+		"uses: ./.github/workflows/cd-controlplane.yml",
+		"units_lane: control-plane",
+		"host_config_rollback_to: ${{ needs.watch.outputs.host_config_rollback_to }}",
+	} {
+		if !strings.Contains(restore, required) {
+			t.Errorf("cd-unit-watch restore-host-config is missing %q", required)
+		}
+	}
+	if !strings.Contains(jobBlock(t, watch, "watch"), "host_config_rollback_to: ${{ steps.watch.outputs.host_config_rollback_to }}") {
+		t.Error("cd-unit-watch watch must expose host_config_rollback_to")
+	}
+	cp := readWorkflow(t, "cd-controlplane.yml")
+	converge := jobBlock(t, cp, "converge-host-config")
+	orderedIn(t, "cd-controlplane converge-host-config", converge,
+		`--rollback-to "$HOST_CONFIG_ROLLBACK_TO"`,
+		`scripts/ci/unit_deploy.sh watch-host-config "$PREVIOUS" "$UNITS_SHA"`,
+		`git worktree add --detach "$work/known-good" "$HOST_CONFIG_ROLLBACK_TO"`,
+		"if: failure() && env.HOST_CONFIG_STARTED == 'true' && env.HOST_CONFIG_ROLLBACK_TO == ''")
+	if !strings.Contains(jobBlock(t, cp, "deploy-units"), "&& inputs.host_config_rollback_to == ''") {
+		t.Error("cd-controlplane deploy-units must not run when converging host roles back")
 	}
 }

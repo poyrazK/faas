@@ -252,7 +252,7 @@ build-release-unit: ## Build one release binary: UNIT=<cmd> VERSION=unit-<commit
 	@case "$(VERSION)" in unit-*) ;; *) echo "VERSION=$(VERSION) must be unit-<commit>"; exit 2;; esac
 	@mkdir -p $(BINDIR)
 	@CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) $(if $(filter $(UNIT),$(DAEMONS)),-tags $(DAEMON_TAGS)) \
-	  -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/$(UNIT) ./cmd/$(UNIT)
+	  -ldflags '$(LDFLAGS) -s -w -buildid=' -o $(BINDIR)/$(UNIT) ./cmd/$(UNIT)
 
 # Issue #295: images.yml attests an SPDX SBOM for every platform image,
 # release.yml one for the CLI archives, and the release ships release.sbom.json

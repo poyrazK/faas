@@ -76,9 +76,9 @@ func printSecretUpdateNextSteps(app, scope, wakeID string, keys ...string) {
 	}
 	_, _ = fmt.Fprintf(osStdout, "\nApp: %s; scope: %s\nReview secret metadata and delivery (POSIX shells):\n  %s\n", oneLine(app), oneLine(scopeOrDefault(scope)), command)
 	if wakeID != "" {
-		_, _ = fmt.Fprintf(osStdout, "Follow the requested restart:\n  %s app %s restart status --wake-id %s --wait\n", recoveryCLI(), recoveryArgument(app), recoveryArgument(wakeID))
+		_, _ = fmt.Fprintf(osStdout, "Follow the requested restart:\n  %s app restart status %s --wake-id %s --wait\n", recoveryCLI(), recoveryArgument(app), recoveryArgument(wakeID))
 		return
 	}
 	_, _ = fmt.Fprintln(osStdout, "To apply on a fresh boot, review the serving deployment scope first. A restart affects the app's active workloads.")
-	_, _ = fmt.Fprintf(osStdout, "  %s app %s restart --fresh --wait\n", recoveryCLI(), recoveryArgument(app))
+	_, _ = fmt.Fprintf(osStdout, "  %s app restart %s --fresh --wait\n", recoveryCLI(), recoveryArgument(app))
 }

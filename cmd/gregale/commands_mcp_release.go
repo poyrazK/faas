@@ -258,7 +258,7 @@ func prepareMCPCandidate(ctx context.Context, c *Client, slug, id string, cfg mc
 	if err != nil {
 		return "", "", "", err
 	}
-	if cfg.Auth.Mode == "external-oauth" && cfg.Auth.Resource != endpoint {
+	if cfg.Auth.Mode != mcphosting.AuthOpen && cfg.Auth.Resource != endpoint {
 		return "", "", "", fmt.Errorf("auth.resource must match the canonical endpoint %s", endpoint)
 	}
 	if app.MaintenanceMode {

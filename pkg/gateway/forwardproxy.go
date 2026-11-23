@@ -817,6 +817,19 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// distinguish a clean bidi close from a client-disconnect
 	// (which surfaces as a Send error).
 	<-bodyErrCh
+	// The response is complete. A guest that answered before reading the
+	// whole body left the rest of the upload unread; on HTTP/1 net/http
+	// would then close the connection with unread data, resetting it, and
+	// the hop in front (Caddy, Cloudflare) dropped the response: clients saw
+	// an empty reply for bodies above about 1 MB. Drain it, bounded in bytes
+	// and by a read deadline. HTTP/2 resets only the stream, after END_STREAM,
+	// and gRPC trailers must not wait, so neither drains.
+	if wroteHeader && r.ProtoMajor == 1 && !grpcDuplex {
+		flushSafe(w)
+		if http.NewResponseController(w).SetReadDeadline(time.Now().Add(api.ForwardRequestBodyDiscardTimeout)) == nil {
+			discardForwardRequestBody(r.Body, make([]byte, 8*1024), forwardRequestBodyDiscardMaxBytes)
+		}
+	}
 }
 
 // grpcTrailersOnlyFields are the status fields a gRPC server sends in a
@@ -1954,6 +1967,14 @@ type forwardBodySender interface {
 	CloseSend() error
 }
 
+const (
+	// forwardRequestBodyDiscardMaxBytes bounds how much of an upload the
+	// gateway reads and discards after a complete response whose guest did
+	// not read the whole body (fwdStreamOnceWithEvents). It matches the
+	// largest body any forward path accepts.
+	forwardRequestBodyDiscardMaxBytes = api.RawStreamMaxRequestBytes
+)
+
 // pumpForwardRequestBody streams body to the forward stream in 8 KiB chunks
 // and reports the first error (client disconnect, send failure) on result,
 // which it closes. A cancelled ctx closes body through the ctxReader, so a
@@ -1985,6 +2006,22 @@ func pumpForwardRequestBody(ctx context.Context, body io.Reader, stream forwardB
 		if err != nil {
 			_ = stream.CloseSend()
 			result <- err
+			return
+		}
+	}
+}
+
+// discardForwardRequestBody reads and drops the rest of a request body the
+// guest no longer accepts, up to limit bytes. It stops at the end of the
+// body, on any read error (the discard's read deadline, the ctxReader's
+// cancellation), or at the cap, past which the connection closes as before.
+// It does not refresh the session's idle timer: discarding is not activity.
+func discardForwardRequestBody(body io.Reader, buf []byte, limit int64) {
+	var read int64
+	for read < limit {
+		n, err := body.Read(buf)
+		read += int64(n)
+		if err != nil {
 			return
 		}
 	}

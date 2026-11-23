@@ -708,6 +708,12 @@ explicit `--watch-command` enables watch mode; it cannot be combined with
 `--watch=false`. Settings are resolved when starting the loop; restart it to
 change the selected mode.
 
+A new watch-mode environment gets 1024 MB of RAM, or your plan's RAM when that
+is smaller: a development server compiles on demand and needs far more memory
+than the production server. Watch mode needs at least 512 MB. An environment
+that already exists keeps its size; run `gregale dev --stop` once to recreate
+it at the watch size.
+
 Detection picks the following commands:
 
 | Your app | Command |

@@ -36,6 +36,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/buildpublisher"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/markers"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
@@ -968,6 +969,13 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		// A reviewed source selection replaces the shared app build setting,
 		// including clearing a Dockerfile for autodetected source builds.
 		dockerfilePath = frozen.Source.Dockerfile
+	}
+	if fw == FrameworkNode && dockerfilePath == "" {
+		if problem := markers.NodePackageJSONProblemAtRoot(dep.SourcePath, dep.SourceRoot); problem != "" {
+			err := fmt.Errorf("builderd: %s", problem)
+			b.markFailed(ctx, build, state.FailureUserError, problem+"; fix the file and deploy again", buildStart)
+			return BuildResult{}, err
+		}
 	}
 	goCommand, goCommandErr := selectGoCommand(app, dockerfilePath, fw)
 	if goCommandErr != nil {

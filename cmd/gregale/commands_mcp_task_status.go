@@ -31,6 +31,10 @@ func runMCPTaskMetadataStatus(ctx context.Context, client *mcphosting.Client, ta
 	if err != nil {
 		return mcpTaskMetadataReadFailure(taskID, exchange.HTTPStatus, err)
 	}
+	return jsonOut(writeJSON(mcpTaskSnapshot(task)))
+}
+
+func mcpTaskSnapshot(task mcphosting.Task) mcpTaskStatusMetadata {
 	status := mcpTaskStatusMetadata{
 		TaskID: task.TaskID, Status: task.Status, LastUpdatedAt: task.LastUpdatedAt, NextAction: "none",
 	}
@@ -43,7 +47,17 @@ func runMCPTaskMetadataStatus(ctx context.Context, client *mcphosting.Client, ta
 	case "completed":
 		status.NextAction = "read_result"
 	}
-	return jsonOut(writeJSON(status))
+	return status
+}
+
+func mcpTaskInputUpdateStatus(update *mcphosting.TaskInputUpdateUnconfirmedError) int {
+	if update.Task.Status == "" {
+		return mcpTaskRetryStatus(update.Task.TaskID, update)
+	}
+	if code := jsonOut(writeJSON(mcpTaskSnapshot(update.Task))); code != 0 {
+		return code
+	}
+	return exitCodeForStatus(http.StatusServiceUnavailable)
 }
 
 func mcpTaskMetadataReadFailure(taskID string, httpStatus int, err error) int {
@@ -58,17 +72,7 @@ func mcpTaskMetadataReadFailure(taskID string, httpStatus int, err error) int {
 	}
 	if httpStatus == http.StatusRequestTimeout || httpStatus == http.StatusTooManyRequests ||
 		httpStatus >= http.StatusInternalServerError || httpStatus == 0 && isTransportError(err) {
-		status := mcpTaskStatusMetadata{TaskID: taskID, Status: "unknown", NextAction: "retry_status"}
-		if upstream != nil && upstream.Problem.RetryAfterSeconds != nil {
-			seconds := *upstream.Problem.RetryAfterSeconds
-			if seconds >= 0 && seconds <= math.MaxInt64/int64(time.Second/time.Millisecond) {
-				status.PollIntervalMS = seconds * int64(time.Second/time.Millisecond)
-			}
-		}
-		if code := jsonOut(writeJSON(status)); code != 0 {
-			return code
-		}
-		return exitCodeForStatus(http.StatusServiceUnavailable)
+		return mcpTaskRetryStatus(taskID, err)
 	}
 	if upstream != nil {
 		// The MCP transport constructs this from the HTTP status and keeps
@@ -76,4 +80,19 @@ func mcpTaskMetadataReadFailure(taskID string, httpStatus int, err error) int {
 		return printErr("MCP task status", upstream)
 	}
 	return printErr("MCP task status", errors.New("the server did not confirm the requested Task status"))
+}
+
+func mcpTaskRetryStatus(taskID string, err error) int {
+	status := mcpTaskStatusMetadata{TaskID: taskID, Status: "unknown", NextAction: "retry_status"}
+	var upstream *api.APIError
+	if errors.As(err, &upstream) && upstream.Problem.RetryAfterSeconds != nil {
+		seconds := *upstream.Problem.RetryAfterSeconds
+		if seconds >= 0 && seconds <= math.MaxInt64/int64(time.Second/time.Millisecond) {
+			status.PollIntervalMS = seconds * int64(time.Second/time.Millisecond)
+		}
+	}
+	if code := jsonOut(writeJSON(status)); code != 0 {
+		return code
+	}
+	return exitCodeForStatus(http.StatusServiceUnavailable)
 }

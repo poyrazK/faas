@@ -54,7 +54,17 @@ func (e *RetainedServiceSpansExporter) ExportSpans(_ context.Context, spans []sd
 		}
 		attrs := attrsToMap(span.Attributes())
 
-		accountID, err := uuid.Parse(strings.TrimSpace(attrs[retainedSpanAccountIDAttribute]))
+		rawAccountID := strings.TrimSpace(attrs[retainedSpanAccountIDAttribute])
+		if rawAccountID == "" {
+			// The service proxy stamps the account only after the tenant
+			// authorizer admits the caller. A call refused or unroutable
+			// before that (a caller outside x-gregale-allow-callers, a target
+			// with no live release) has no trusted owner to retain it for.
+			// Each such call logged a WARN calling the identity invalid: 55
+			// of them for one Compose test project on rc.371 (prod hunt r27).
+			continue
+		}
+		accountID, err := uuid.Parse(rawAccountID)
 		if err != nil {
 			e.log.Warn("retained service span dropped: account identity is invalid", "span", span.Name())
 			continue

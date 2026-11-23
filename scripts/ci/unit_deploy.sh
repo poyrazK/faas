@@ -33,6 +33,7 @@
 #                                                (0 pass, 1 breach, 3 inconclusive, 4 superseded)
 #   unit_deploy.sh watch-close                   remove the record if this run owns it (exit 4 if not)
 #   unit_deploy.sh watch-adopt                   take over a record no watch runs for, a window from now
+#   unit_deploy.sh watch-host-config PREV COMMIT note a host-config step in the record (breach converges back)
 #   unit_deploy.sh watch-stage DEPLOYCTL         stage deployctl and the unit verifier on the deploy host
 #   unit_deploy.sh watch-rollback ENTRY STAGE    put the deploy host back on its record entry's
 #                                                known-good release (exit 5: the host changed since)
@@ -183,8 +184,13 @@ cmd_stage() {
 # deployctl deploy applies the overlay's migrations first, so a failed
 # migration stops the script before any restart.
 cmd_script() {
-  local plan="$1" stage="$2" out="$3" release_id expect only commit release_dir files="" specs=""
+  local plan="$1" stage="$2" out="$3" release_id expect only commit release_dir files="" specs="" parallel
   release_id="$(plan_field "$plan" .release_id)"
+  # Parallel activation (cmd/deployctl/restart_waves.go). An environment
+  # variable: a deployctl from before it ignores it and restarts one at a
+  # time.
+  parallel="$(jq -er '.activation.parallel' "$repo_root/scripts/ci/release_units.json")"
+  [[ "$parallel" =~ ^([1-9]|1[0-6])$ ]] || die "release_units.json activation.parallel must be 1..16: $parallel"
   expect="$(plan_field "$plan" .expect_current)"
   only="$(jq -r '.only | join(",")' "$plan")"
   [[ "$release_id" =~ ^[0-9a-f]{40}$ && "$expect" =~ ^[0-9a-f]{40}$ ]] || die "plan release ids must be 40 hex: $release_id, $expect"
@@ -204,7 +210,7 @@ cmd_script() {
       commit="$(plan_field "$plan" .commit)"
       echo "${stage}/bin/deployctl unit-overlay --release-id ${release_id} --expect-current ${expect} --commit ${commit}${files}"
     fi
-    echo "${release_dir}/bin/deployctl deploy --only '${only}' --expect-current ${expect} ${release_id}"
+    echo "DEPLOYCTL_RESTART_PARALLEL=${parallel} ${release_dir}/bin/deployctl deploy --only '${only}' --expect-current ${expect} ${release_id}"
     echo "if [[ -n \"\${ROLLOUT_ACTIVATION_MARKER:-}\" ]]; then touch \"\$ROLLOUT_ACTIVATION_MARKER\"; fi"
     # A plan that only applies migrations restarts and verifies no unit.
     if [[ -n "$specs" ]]; then
@@ -386,15 +392,18 @@ watch=null
 if [[ -s "$record" ]] && jq -e '.kind == "gregale-unit-watch"' "$record" >/dev/null 2>&1; then
   watch="$(jq -c '{owner_run, hosts: (.hosts | map_values({releases, known_good, current}))}' "$record")"
 fi
+# The full release the control plane runs: the planner refuses a unit release
+# built over another one, so the preflight stands down on it first.
+base="$(jq -r '.git_sha // empty' "$(readlink -f /opt/faas/current)/release-manifest.json" 2>/dev/null)"
 err="$(mktemp)" body="$(mktemp)"
 # The alert list can outgrow one command-line argument: jq reads it from a file.
 if curl -fsS --max-time 10 -o "$body" "$prometheus/api/v1/alerts" 2>"$err" \
-    && jq -ce --arg lock "$lock_state" --argjson watch "$watch" 'select(.status == "success" and (.data.alerts | type) == "array")
-        | {lock: $lock, watch: $watch, prometheus: {ok: true, alerts: .data.alerts}}' "$body" 2>>"$err"; then
+    && jq -ce --arg lock "$lock_state" --argjson watch "$watch" --arg base "$base" 'select(.status == "success" and (.data.alerts | type) == "array")
+        | {lock: $lock, watch: $watch, base: $base, prometheus: {ok: true, alerts: .data.alerts}}' "$body" 2>>"$err"; then
   :
 else
-  jq -cn --arg lock "$lock_state" --argjson watch "$watch" --arg error "$(tr '\n' ' ' < "$err" | cut -c1-300)" \
-    '{lock: $lock, watch: $watch, prometheus: {ok: false, error: (if $error == "" then "no alert list in the answer" else $error end)}}'
+  jq -cn --arg lock "$lock_state" --argjson watch "$watch" --arg base "$base" --arg error "$(tr '\n' ' ' < "$err" | cut -c1-300)" \
+    '{lock: $lock, watch: $watch, base: $base, prometheus: {ok: false, error: (if $error == "" then "no alert list in the answer" else $error end)}}'
 fi
 rm -f -- "$err" "$body"
 REMOTE
@@ -477,6 +486,15 @@ cmd_watch_close() { watch_record_run close -- --owner "$(watch_owner)"; }
 # then watches a full window from now.
 cmd_watch_adopt() { watch_record_run adopt -- --owner "$(watch_owner)" --now "$(cmd_now)"; }
 
+# watch-host-config PREVIOUS COMMIT: before a host-config step converges
+# COMMIT over PREVIOUS (the control plane's role record), note it in the
+# watch record, so a breach converges the roles back
+# (docs/adr/20261122170000-continuous-unit-lane.md, "Config rollback").
+cmd_watch_host_config() {
+  [[ "${1:-}" =~ ^[0-9a-f]{40}$ && "${2:-}" =~ ^[0-9a-f]{40}$ ]] || die "watch-host-config needs two 40-hex commits"
+  watch_record_run host-config -- --owner "$(watch_owner)" --previous "$1" --commit "$2" --now "$(cmd_now)"
+}
+
 # watch: run the SLO gate in watch mode on the control plane for every unit
 # the record holds, from the first unwatched activation until `window` after
 # the last. Exits 0 (pass), 1 (breach), 3 (inconclusive) or 4 (another run
@@ -504,12 +522,14 @@ if ! jq -e --arg o "$owner" '.owner_run == $o' "$record" >/dev/null 2>&1; then
 fi
 # Gate arguments are flags and unit/component names only: the record is
 # written from plans, and this runner evaluates them.
-jq -e '[.hosts[].gate[][] | test("^(--)?[a-z0-9-]+$")] | all' "$record" >/dev/null || { echo "unit-watch: unexpected gate argument in the record"; exit 2; }
-deployed_at="$(jq '[.hosts[].first_activation] | min' "$record")"
-end=$(( $(jq '[([.hosts[].last_activation] | max), (.watch_from // 0)] | max' "$record") + window ))
+# The control plane's host configuration (.host_config) is watched beside
+# the hosts' units, with the platform SLOs (ADR-20261122170000).
+jq -e '[(.hosts[].gate[][]), ((.host_config.gate // [])[][]) | test("^(--)?[a-z0-9-]+$")] | all' "$record" >/dev/null || { echo "unit-watch: unexpected gate argument in the record"; exit 2; }
+deployed_at="$(jq '[(.hosts[].first_activation), (.host_config.first_activation // empty)] | min' "$record")"
+end=$(( $(jq '[([(.hosts[].last_activation), (.host_config.last_activation // empty)] | max), (.watch_from // 0)] | max' "$record") + window ))
 duration=$(( end - $(date +%s) ))
 (( duration >= interval )) || duration="$interval"
-echo "unit-watch: watching $(jq -r '[.hosts | keys[]] | join(", ")' "$record") for ${duration}s (since the first unwatched activation at $deployed_at)"
+echo "unit-watch: watching $(jq -r '[(.hosts | keys[]), (if .host_config then "host configuration" else empty end)] | join(", ")' "$record") for ${duration}s (since the first unwatched activation at $deployed_at)"
 pids=()
 while read -r unit_args; do
   eval "set -- $unit_args"
@@ -517,7 +537,7 @@ while read -r unit_args; do
     --interval "${interval}s" --max-blind-rounds "$blind" --prometheus-url "$prometheus" \
     --watch-record "$record" --owner "$owner" &
   pids+=("$!")
-done < <(jq -r '[.hosts[].gate[]] | unique[] | map(@sh) | join(" ")' "$record")
+done < <(jq -r '[(.hosts[].gate[]), ((.host_config.gate // [])[])] | unique[] | map(@sh) | join(" ")' "$record")
 worst=0
 for pid in "${pids[@]}"; do
   wait "$pid"
@@ -650,6 +670,52 @@ jq -n --arg current "$(basename "$current")" \
 REMOTE
 }
 
+# rollback-readiness: read-only facts a rollback depends on, as JSON, for
+# scripts/ci/rollback_drill.py (docs/adr/20261122170000-continuous-unit-
+# lane.md, "Rollback drill"): the active release, the activation history's
+# last two entries (deployctl rollback restores the one before the active),
+# whether that predecessor and the watch record's known-good control-plane
+# release are still installed with a manifest and binaries, and whether the
+# host-config record exists. Changes nothing.
+cmd_rollback_readiness() {
+  local target dir link record
+  target="$(deploy_target)"
+  dir="$(host_config_dir)"
+  link="$(host_current_release)"
+  record="$(watch_record_path)"
+  remote UNIT "$target" "$(as_root "$target") -s -- '$dir' '$link' '$record'" <<'REMOTE'
+set -uo pipefail
+dir="$1" link="$2" record="$3"
+releases="$(dirname "$(readlink -f "$link" 2>/dev/null || echo /opt/faas/releases/none)")"
+installed() { # installed RELEASE_ID -> true when it has a manifest and binaries
+  [[ -n "$1" && -s "$releases/$1/release-manifest.json" && -d "$releases/$1/bin" ]] \
+    && jq -e 'type == "object"' "$releases/$1/release-manifest.json" >/dev/null 2>&1
+}
+current=""
+[[ -e "$link" || -L "$link" ]] && current="$(basename "$(readlink -f "$link")")"
+history="$releases/.activation-history.json"
+last="" prev=""
+if jq -e '.releases | type == "array"' "$history" >/dev/null 2>&1; then
+  last="$(jq -r '.releases[-1] // ""' "$history")"
+  prev="$(jq -r '.releases[-2] // ""' "$history")"
+fi
+known=""
+if jq -e '.kind == "gregale-unit-watch"' "$record" >/dev/null 2>&1; then
+  known="$(jq -r '.hosts["control-plane"].known_good // ""' "$record")"
+fi
+hc=false
+jq -e '.kind == "gregale-host-config" and (.commit | test("^[0-9a-f]{40}$"))' "$dir/control-plane-roles.json" >/dev/null 2>&1 && hc=true
+retained="$(find "$releases" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | wc -l | tr -d ' ')"
+jq -n --arg current "$current" --arg last "$last" --arg prev "$prev" --arg known "$known" \
+  --argjson prev_ok "$(installed "$prev" && echo true || echo false)" \
+  --argjson known_ok "$( [[ -z "$known" ]] && echo null || { installed "$known" && echo true || echo false; })" \
+  --argjson host_config "$hc" --argjson retained "${retained:-0}" \
+  '{current: $current, history_last: $last, predecessor: $prev, predecessor_installed: $prev_ok,
+    watch_known_good: (if $known == "" then null else $known end), watch_known_good_installed: $known_ok,
+    host_config_record: $host_config, retained: $retained}'
+REMOTE
+}
+
 cmd_host_manifest() {
   local state="$1" out="$2" target want got
   target="$(deploy_target)"
@@ -734,6 +800,7 @@ case "$command" in
   host-restart-script) cmd_host_restart_script "$@" ;;
   host-restarted) cmd_host_restarted "$@" ;;
   host-record) cmd_host_record "$@" ;;
+  rollback-readiness) cmd_rollback_readiness "$@" ;;
   preflight-state) cmd_preflight_state "$@" ;;
   watch-open) cmd_watch_open "$@" ;;
   watch-revert) cmd_watch_revert "$@" ;;
@@ -741,8 +808,9 @@ case "$command" in
   watch) cmd_watch "$@" ;;
   watch-close) cmd_watch_close "$@" ;;
   watch-adopt) cmd_watch_adopt "$@" ;;
+  watch-host-config) cmd_watch_host_config "$@" ;;
   watch-stage) cmd_watch_stage "$@" ;;
   watch-rollback) cmd_watch_rollback "$@" ;;
   pin-node) cmd_pin_node "$@" ;;
-  *) echo "usage: $0 state|stage|script|run|now|gate|rollback|cleanup|host-state|host-manifest|host-stage|host-restart-script|host-restarted|host-record|preflight-state|watch-open|watch-revert|watch-record|watch|watch-close|watch-adopt|watch-stage|watch-rollback|pin-node ..." >&2; exit 2 ;;
+  *) echo "usage: $0 state|stage|script|run|now|gate|rollback|cleanup|host-state|host-manifest|host-stage|host-restart-script|host-restarted|host-record|rollback-readiness|preflight-state|watch-open|watch-revert|watch-record|watch|watch-close|watch-adopt|watch-host-config|watch-stage|watch-rollback|pin-node ..." >&2; exit 2 ;;
 esac
