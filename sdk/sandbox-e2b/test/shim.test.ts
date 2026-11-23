@@ -24,8 +24,13 @@ type Exec = {
   cols?: number;
 };
 
+const FORK = 'f0f0f0f0-0000-4000-8000-000000000001';
+
 class FakeGregale {
   state = 'queued';
+  kind = 'ephemeral';
+  controls: string[] = [];
+  forkReq?: Record<string, unknown>;
   created?: Record<string, unknown>;
   patched?: Record<string, unknown>;
   deleted = 0;
@@ -49,12 +54,26 @@ class FakeGregale {
     if (auth === 'Bearer key-1') {
       if (method === 'POST' && path === '/v1/sandboxes') {
         this.created = JSON.parse(text);
+        if (this.created?.kind) this.kind = String(this.created.kind);
         return json(201, this.view());
+      }
+      if (method === 'GET' && path === `/v1/sandboxes/${FORK}`) return json(200, { ...this.view(), id: FORK, state: 'ready', kind: 'ephemeral', forked_from: ID });
+      if (method === 'POST' && /^\/(pause|resume|fork)$/.test(path.slice(base.length))) {
+        const op = path.slice(base.length);
+        this.controls.push(op);
+        if (op === '/pause') this.state = 'pausing';
+        else if (op === '/resume') this.state = 'resuming';
+        else if (op === '/fork') {
+          this.forkReq = JSON.parse(text);
+          return json(201, { forks: [{ ...this.view(), id: FORK, state: 'queued', kind: 'ephemeral', forked_from: ID }] });
+        }
+        return json(202, this.view());
       }
       if (method === 'GET' && path === '/v1/sandboxes') return json(200, { items: [this.view()], next_before: '' });
       if (path === `/v1/sandboxes/${'1'.repeat(8)}-0000-0000-0000-000000000000`) return json(404, { code: 'sandbox_not_found', status: 404 });
       if (method === 'GET' && path === base) {
-        if (this.state === 'queued') this.state = 'ready';
+        if (this.state === 'queued' || this.state === 'resuming') this.state = 'ready';
+        else if (this.state === 'pausing') this.state = 'paused';
         return json(200, this.view());
       }
       if (method === 'PATCH' && path === base) {
@@ -191,6 +210,7 @@ class FakeGregale {
     return {
       id: ID,
       state: this.state,
+      kind: this.kind,
       preset: 'codex',
       ram_mb: 2048,
       network: { mode: 'registries' },
@@ -198,7 +218,7 @@ class FakeGregale {
       expires_at: '2026-11-05T04:00:00Z',
       created_at: '2026-11-05T00:00:00Z',
       labels: { team: 'evals' },
-      ...(this.state === 'closed' ? {} : { token: 'sbx-1', token_expires_at: new Date(Date.now() + 900_000).toISOString() }),
+      ...(this.state !== 'ready' && this.state !== 'frozen' && this.state !== 'queued' ? {} : { token: 'sbx-1', token_expires_at: new Date(Date.now() + 900_000).toISOString() }),
     };
   }
 }
@@ -377,4 +397,26 @@ test('background commands take stdin and its end', async () => {
     { handle: 'c1', eof: true },
   ]);
   await assert.rejects(sbx.commands.sendStdin(42, 'x'), NotFoundError);
+});
+
+test('a persistent session pauses, resumes on connect and forks', async () => {
+  const { fake, opts } = setup();
+  const sbx = await Sandbox.create({ ...opts, kind: 'persistent', volumeGb: 10, vcpu: 2 });
+  assert.equal(fake.created?.kind, 'persistent');
+  assert.equal(fake.created?.volume_gb, 10);
+  assert.equal(fake.created?.vcpu, 2);
+  assert.equal(await sbx.betaPause(), true);
+  assert.equal(fake.state, 'paused');
+  assert.equal((await sbx.getInfo()).state, 'paused');
+  assert.equal(await sbx.isRunning(), false);
+  assert.equal(await Sandbox.betaPause(ID, opts), false, 'already paused');
+  const page = await Sandbox.list({ ...opts, query: { state: ['paused'] } }).nextItems();
+  assert.deepEqual(page.map((i) => [i.sandboxId, i.state]), [[ID, 'paused']]);
+  const back = await Sandbox.connect(ID, opts);
+  assert.deepEqual(fake.controls, ['/pause', '/resume']);
+  assert.equal(fake.state, 'ready');
+  assert.equal(await back.isRunning(), true);
+  const forks = await back.fork(1, { metadata: { run: 'a' } });
+  assert.deepEqual(fake.forkReq, { count: 1, labels: { run: 'a' } });
+  assert.deepEqual(forks.map((f) => f.sandboxId), [FORK]);
 });

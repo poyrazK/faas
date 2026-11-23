@@ -12,7 +12,10 @@ from typing import Any, Dict, Optional, Tuple
 from .api import Api, ApiError, Response, to_sandbox_error
 from .errors import SandboxNotFoundException, TimeoutException
 
-LIVE = {"queued", "starting", "ready", "frozen"}
+#: The states of a persistent session that has no running VM (ADR-20261122132055).
+PAUSED = {"pausing", "paused", "resuming"}
+# A paused persistent session is live: it resumes.
+LIVE = {"queued", "starting", "ready", "frozen"} | PAUSED
 PLACED = {"ready", "frozen"}
 MARGIN_S = 60.0
 
