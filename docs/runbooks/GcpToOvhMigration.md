@@ -112,9 +112,11 @@ What to expect:
       ADR-20261103163954 §2), routed to that server. No role puts it on
       the host: add it to the public card in its own netplan file
       (`/etc/netplan/61-entry-ip.yaml`, `addresses: [<ip>/32]` under the
-      card named in `50-cloud-init.yaml`) and check it accepts TCP from
-      outside (`curl -sk -o /dev/null -w '%{time_connect}' https://<ip>/`
-      connects). Don't use ping: nftables drops ICMP on the public card.
+      card named in `50-cloud-init.yaml`). Check `ip addr show` lists it;
+      once the converge has run (nftables + gatewayd-public listening on
+      443), check from outside that
+      `curl -sk -o /dev/null --connect-timeout 5 -w '%{time_connect}' https://<ip>/`
+      connects. Don't use ping: nftables drops ICMP on the public card.
 - [ ] Every host whose public DHCP subnet holds another fleet host (on
       2026-11-23: bhs-2 and bhs-3 in 15.235.50.0/24; bhs-1 is alone in
       149.56.23.0/24 and needs nothing) sends that subnet through the
@@ -133,10 +135,12 @@ What to expect:
       `GatewayOnLink=true`, and add them live with
       `ip route replace <half> via <gw> dev <card> onlink`. After the next
       planned reboot, check that `ip route` shows both halves. Check with an
-      empty neighbour cache: on the serving node
+      empty neighbour cache, 10 times in each direction (the fault was
+      intermittent, so one success proves nothing): on the serving node
       `ip neigh del <caller primary> dev <card>`, then from the caller
-      `curl -sk --interface <caller primary> -w '%{time_connect}' https://<other entry_ipv4>/`
-      must connect. Don't use ping for this check.
+      `curl -sk -o /dev/null --connect-timeout 5 --interface <caller primary> -w '%{time_connect}\n' https://<other entry_ipv4>/`
+      must print a non-zero time every run. Don't use ping for this check.
+      IPv4 only: `*.gregale.app` publishes no AAAA records (2026-11-23).
 - [ ] OVH account: 2FA on every login, API tokens scoped and listed, IPMI and
       rescue mode understood (disk encryption, ADR-20261109120000, covers
       the rescue-mode risk to data volumes).
