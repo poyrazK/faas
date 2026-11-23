@@ -244,10 +244,28 @@ Each step is one PR on the sandbox branches until the owner asks for PRs. Every 
 - **Docs and journey.** `docs/sandbox-migration.md` has a pause, resume and fork section. `TestSandboxes` gains `persistent_pause_resume_fork`, on its own session: a file and a running process survive a pause and resume (not `resumed_cold`), and an ephemeral fork holds both. It skips where persistent sessions are off or the plan has none.
 - **Not yet:** session create in the CLI; `fork` with labels in the CLI; an async Python client.
 
+### Amendment: diff captures merged at capture time (built dark)
+
+§3's "Diffs" said a pause captures only the pages written since the last restore, merged into a full image in the background. As built, the merge happens during the capture and costs little, so no chain and no background job exist:
+
+- **Load.** A session restored from its capture loads with KVM dirty page tracking (`track_dirty_pages` on Firecracker 1.14+, `enable_diff_snapshots` before). Only a session's restore from its own pause capture tracks (a resume, or a fork's restore); app wakes, template restores, native recovery and sealed restores do not. The verified load accepts the field only as the literal `true`.
+- **Capture.** vmmd keeps a parent image for each tracked VM. Until the first capture, the parent is the restored image already staged in the jail. The next capture asks Firecracker for a `Diff`, which writes only the dirtied pages. While the guest is still paused, vmmd clones the parent (FICLONE on the node's XFS) into a temp file under `TMPDIR` and writes the diff's data extents over it. A dirtied page that is now all zeros becomes a hole. The result is an ordinary full memory image, which goes through the same export, cache, upload and restore as a Full capture. Restores never read a chain.
+- **Parent after a capture.** Any capture resets Firecracker's dirty bitmap, Full or Diff. The image a capture produces therefore becomes the next parent. vmmd holds it open, so the published temp file and cache eviction cannot remove it under a running session (fork sources keep running). An image on tmpfs is not held, since it would pin a guest's worth of RAM; the next capture is then Full. A capture that fails after `/snapshot/create` drops the parent, so the next capture is Full.
+- **Fallback.** A failed merge (a size mismatch, I/O) retakes a Full capture of the still-paused guest. A Full capture does not depend on the bitmap, so it matches the drive frozen at the same pause. A cold-booted session, or one with no parent, captures Full as before.
+- **Switch.** vmmd's `sandbox_diff_snapshots` (`FAAS_SANDBOX_DIFF_SNAPSHOTS=1`), off by default. Measure on the reference node with Firecracker 1.17 before turning it on. The cost to weigh is KVM's dirty logging on every guest write while a session runs.
+- **Measured** (2026-11-23, EC2 m7i-flex box, Firecracker 1.10, laid out as production: tmpfs jail, XFS `/srv/fc`; `TestMetalSandboxPauseAndResume` with `FAAS_TEST_SANDBOX_DIFF=1`). Each round writes 32 MiB of random data in the guest, so about 40 MB of pages are dirty.
+
+  | Session RAM | Full pause (create + export) | Diff pause (create + merge) | Resume |
+  |---|---|---|---|
+  | 1 GB | 1.40 s (706 + 448 ms) | 0.25 s (16–19 + 22–27 ms) | 166–180 ms |
+  | 4 GB | 3.76 s (2360 + 1270 ms) | 0.25–0.28 s (20–25 + 27–31 ms) | 159–213 ms |
+
+  Pause time now follows the pages written since the last restore, not the session's RAM. The upload to the shared store still sends the full image, about 0.9–2.6 s.
+
 ## Open questions
 
 1. **Prices:** GB-month for stored bytes and the free allowance, alongside `k` and the 256 MB floor.
 2. **Fork tree storage:** dedup of shared capture pages across forks beyond the shared base image. Measure first.
-3. **Diff snapshot chain length** before a background merge; measure restore time against chain length on the reference node.
+3. ~~**Diff snapshot chain length** before a background merge.~~ Answered by the diff capture amendment: captures merge at capture time, so there is no chain. Still open: the CPU cost of dirty page tracking on a busy session, measured on Firecracker 1.17.
 4. **Cross-CPU restores:** a capture is pinned to `cpu_template`/`cpu_model` (ADR-20261024225612). On a pool with mixed CPUs, does resume prefer a matching node or fall back to cold? Proposed: prefer, then cold.
 5. **GPU** stays phase 3 (ADR-20261027090014 §5).
