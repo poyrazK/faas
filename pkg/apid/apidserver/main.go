@@ -851,6 +851,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runPromotionHealthWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runMailOutbox(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runHostingReconciler(ctx) })
+		// ADR-20261122220000: read-only SQL checks imaged queues while it
+		// verifies a candidate.
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runVerificationQueryWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runSafeReleaseEmergencyAbort(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runServiceRolloutBindingWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runCheckedRollbackWorker(ctx) })

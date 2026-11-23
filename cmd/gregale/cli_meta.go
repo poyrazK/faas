@@ -2164,6 +2164,32 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    "verify",
+		DocSlug: "verification-contracts",
+		Short:   "Check new deployments against gregale.verify.yaml before they take traffic",
+		Examples: []string{
+			"gregale release check validate",
+			"gregale release check set --app my-api",
+			"gregale release check get --app my-api --json",
+		},
+		Subcommands: []cliSub{
+			{Name: "validate", Short: "Validate gregale.verify.yaml locally", Flags: []cliFlag{
+				{Name: "file", Short: "contract file (default gregale.verify.yaml)", Value: "PATH"},
+			}},
+			{Name: "set", Short: "Store the contract on an app; new deployments must pass it", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+				{Name: "file", Short: "contract file (default gregale.verify.yaml)", Value: "PATH"},
+				{Name: "expected-revision", Short: "refuse unless the stored revision matches (0: none stored)", Value: "N"},
+			}},
+			{Name: "get", Short: "Show an app's stored contract", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+			}},
+			{Name: "delete", Short: "Remove an app's contract", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+			}},
+		},
+	},
+	{
 		Name:    "freeze",
 		DocSlug: "freeze",
 		Short:   "Pause production releases for a window, weekly, or after rollbacks",

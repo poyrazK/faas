@@ -956,6 +956,7 @@ func renderDeploymentHostingReceiptFor(w io.Writer, raw json.RawMessage, functio
 	if receipt.Smoke.Error != "" {
 		_, _ = fmt.Fprintf(w, "%-14s %s\n", "hosting_detail:", receipt.Smoke.Error)
 	}
+	renderVerificationContractReport(w, receipt.Smoke.VerificationContract)
 }
 
 // cmdDeploymentSetMinInstances implements `gregale deployment

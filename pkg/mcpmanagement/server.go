@@ -278,6 +278,7 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	registerPostgresQueries(s, m)
 	registerAsyncMonitoring(s, m)
 	registerEdgeRules(s, m)
+	registerVerificationContracts(s, m)
 	registerPreviewsObjectsTests(s, m)
 	registerEventsConsumers(s, m)
 	registerAuditBudgets(s, m)
