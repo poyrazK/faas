@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -16,7 +17,7 @@ import (
 const ObjectWorkloadCredentialAccessKeyPrefix = "GRGW"
 
 // ObjectWorkloadCredentialMaxTTL is the longest a workload credential lives.
-const ObjectWorkloadCredentialMaxTTL = time.Hour
+const ObjectWorkloadCredentialMaxTTL = api.WorkloadObjectCredentialTTL
 
 // ObjectWorkloadCredentialManagedPrefix marks a resolved workload credential
 // in the ObjectS3Credential shape the gateway authorizes.

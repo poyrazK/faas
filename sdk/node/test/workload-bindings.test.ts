@@ -7,7 +7,7 @@ function fake(opts: { firstStatus?: number } = {}) {
   let minted = 0;
   let apiCalls = 0;
   const fetchImpl = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-    const url = new URL(String(input));
+    const url = new URL(input instanceof Request ? input.url : String(input));
     if (url.hostname === '127.0.0.1') {
       minted += 1;
       calls.push({ url: `identity:${url.searchParams.get('audience')}`, auth: null });
@@ -30,8 +30,8 @@ test('bindingFetch adds a cached gregale:bindings token and replaces API keys', 
   await fetch('https://api.gregale.dev/v1/apps/web/delayed-tasks', { method: 'POST', body: '{}' });
   assert.equal(f.minted(), 1);
   assert.deepEqual(f.calls.map(c => c.url), [`identity:${BINDINGS_AUDIENCE}`, '/v1/apps/worker/queues/send', '/v1/apps/web/delayed-tasks']);
-  assert.equal(f.calls[1].auth, 'Bearer eyJ.token.1');
-  assert.equal(f.calls[2].auth, 'Bearer eyJ.token.1');
+  assert.equal(f.calls[1]?.auth, 'Bearer eyJ.token.1');
+  assert.equal(f.calls[2]?.auth, 'Bearer eyJ.token.1');
 });
 
 test('a 401 refreshes the token and retries once', async () => {
@@ -57,4 +57,32 @@ test('tokens refresh before expiry', async () => {
 test('only loopback endpoints are accepted', () => {
   assert.throws(() => new BindingTokenSource({ identityEndpoint: 'https://169.254.169.254/token' }), /loopback/);
   assert.throws(() => new BindingTokenSource({ identityEndpoint: '' }), /FAAS_WORKLOAD_IDENTITY_ENDPOINT/);
+});
+
+test('a Request carrying its own body is not replayed after a 401', async () => {
+  const f = fake({ firstStatus: 401 });
+  const fetch = bindingFetch({ identityEndpoint: endpoint, fetch: f.fetchImpl });
+  const response = await fetch(new Request('https://api.gregale.dev/v1/apps/worker/queues/send', { method: 'POST', body: '{}' }));
+  assert.equal(response.status, 401);
+  assert.equal(f.calls.filter((c) => !c.url.startsWith('identity:')).length, 1);
+});
+
+test('one caller aborting does not fail the shared token load', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const fetchImpl = async (input: string | URL | Request): Promise<Response> => {
+    if (new URL(String(input)).hostname === '127.0.0.1') {
+      await gate;
+      return Response.json({ access_token: 'eyJ.token.1', expires_in: 300 });
+    }
+    return Response.json({ id: 'msg' }, { status: 201 });
+  };
+  const source = new BindingTokenSource({ identityEndpoint: endpoint, fetch: fetchImpl });
+  const controller = new AbortController();
+  const aborted = source.get(controller.signal);
+  const other = source.get();
+  controller.abort();
+  release();
+  await assert.rejects(aborted);
+  assert.equal(await other, 'eyJ.token.1');
 });

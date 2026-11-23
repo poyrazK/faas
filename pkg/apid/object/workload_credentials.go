@@ -20,12 +20,11 @@ import (
 // WorkloadCredentialTTL is how long a workload credential lives
 // (ADR-20261122191423 slice 2). The guest's credential endpoint refreshes it
 // before Expiration, as AWS SDKs do for container credentials.
-const WorkloadCredentialTTL = time.Hour
+const WorkloadCredentialTTL = api.WorkloadObjectCredentialTTL
 
 // MaxLiveWorkloadCredentials caps one instance's unexpired credentials for one
-// bucket. guest-init caches each for ~55 minutes, so a well-behaved instance
-// holds one or two; the cap bounds rows a looping workload can create.
-const MaxLiveWorkloadCredentials = 8
+// bucket (api.WorkloadObjectCredentialsPerInstanceBucket).
+const MaxLiveWorkloadCredentials = api.WorkloadObjectCredentialsPerInstanceBucket
 
 var (
 	// ErrWorkloadBucketNotFound is a granted bucket that does not exist (or

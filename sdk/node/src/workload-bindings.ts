@@ -15,6 +15,8 @@ export const BINDINGS_AUDIENCE = 'gregale:bindings';
 const TOKEN_REFRESH_MARGIN_MS = 60_000;
 const DEFAULT_LIFETIME_MS = 300_000;
 const MAX_TOKEN_BYTES = 8192;
+/** Bounds one token fetch from the loopback endpoint. */
+const IDENTITY_TIMEOUT_MS = 10_000;
 
 export interface BindingFetchOptions {
   /** Loopback token endpoint; defaults to FAAS_WORKLOAD_IDENTITY_ENDPOINT. */
@@ -50,15 +52,17 @@ export class BindingTokenSource {
   /** Returns a valid token, fetching a new one when the cached one is due. */
   async get(signal?: AbortSignal): Promise<string> {
     if (this.token && this.now() < this.token.refreshAt) return this.token.value;
-    this.pending ??= this.load(signal).finally(() => { this.pending = undefined; });
-    return this.pending;
+    // The load is shared by every concurrent caller, so it takes no caller's
+    // signal: one caller aborting must not fail the others.
+    this.pending ??= this.load().finally(() => { this.pending = undefined; });
+    return abortable(this.pending, signal);
   }
 
   /** Drops the cached token so the next call fetches a fresh one. */
   invalidate(): void { this.token = undefined; }
 
-  private async load(signal?: AbortSignal): Promise<string> {
-    const response = await this.fetchImpl(this.identityURL, { signal, redirect: 'error', cache: 'no-store' });
+  private async load(): Promise<string> {
+    const response = await this.fetchImpl(this.identityURL, { signal: AbortSignal.timeout(IDENTITY_TIMEOUT_MS), redirect: 'error', cache: 'no-store' });
     if (!response.ok) throw new Error(`Workload identity unavailable (${response.status})`);
     const text = await response.text();
     if (text.length > 16_384) throw new Error('Invalid workload identity response');
@@ -87,9 +91,32 @@ export function bindingFetch(options: BindingFetchOptions = {}): typeof globalTh
   };
   return async (input, init) => {
     const response = await send(input, init);
-    const replayable = init?.body === undefined || init.body === null || typeof init.body === 'string';
-    if (response.status !== 401 || !replayable) return response;
+    if (response.status !== 401 || !replayable(input, init)) return response;
     source.invalidate();
     return send(input, init);
   };
+}
+
+/**
+ * Reports whether a request can be sent again: its body is absent or a
+ * string. A stream, or a Request carrying its own body, is consumed by the
+ * first send.
+ */
+function replayable(input: string | URL | Request, init: RequestInit | undefined): boolean {
+  if (init?.body !== undefined && init.body !== null) return typeof init.body === 'string';
+  return !(input instanceof Request) || input.body === null;
+}
+
+/** Settles with promise, or rejects with signal's reason once it aborts. */
+function abortable<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => { signal.removeEventListener('abort', onAbort); resolve(value); },
+      (err) => { signal.removeEventListener('abort', onAbort); reject(err); },
+    );
+  });
 }
