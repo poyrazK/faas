@@ -148,6 +148,10 @@ func followAppRestart(ctx, signalCtx context.Context, client restartStatusClient
 		// was processed (microservices-demo feedback, 2026-11-16).
 		if health, ok := client.(appReadinessClient); ok {
 			if readyErr := waitAppReadiness(ctx, health, slug, options.interval); readyErr != nil {
+				var parked errAppParkedWhileWaiting
+				if errors.As(readyErr, &parked) {
+					return printErr("Restart completed; app parked", readyErr)
+				}
 				if signalCtx.Err() == nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 					return printErr("Restart completed; app not ready yet", fmt.Errorf("stopped waiting after %s; check: gregale app health %s", options.timeout, slug))
 				}
@@ -270,15 +274,58 @@ type appReadinessClient interface {
 	GetAppHealth(ctx context.Context, slug string) (api.AppHealthResponse, error)
 }
 
+// appStateReader reads the app itself; the API client satisfies it.
+type appStateReader interface {
+	GetApp(ctx context.Context, slug string) (api.AppResponse, error)
+}
+
+// errAppParkedWhileWaiting ends a readiness wait: the app was parked for a
+// failure, so no replica will become ready until someone acts.
+type errAppParkedWhileWaiting struct{ app api.AppResponse }
+
+func (e errAppParkedWhileWaiting) Error() string {
+	return fmt.Sprintf("%s is %s, so it will not become ready on its own; see why: gregale logs %s --since 15m",
+		e.app.Slug, appParkedLabel(e.app), e.app.Slug)
+}
+
+// failureParked reports a park no wait outlasts: a crash loop or a security
+// scan, not an idle park.
+func failureParked(app api.AppResponse) bool {
+	if app.Status != appStatusParked || app.ParkedDeployment == nil {
+		return false
+	}
+	switch app.ParkedDeployment.ParkedReason {
+	case "liveness_exhausted", "security_scan_regressed":
+		return true
+	}
+	return false
+}
+
 // waitAppReadiness polls app health until its readiness check passes (or the
-// app intentionally runs no replicas). ctx bounds the wait.
+// app intentionally runs no replicas). ctx bounds the wait. It prints the
+// readiness detail as it changes, and stops when the app is parked for a
+// failure: a crash-looping worker held `app restart --project --wait` for the
+// whole timeout with no output (agent eval 2026-11-23, voting-app P9).
 func waitAppReadiness(ctx context.Context, client appReadinessClient, slug string, interval time.Duration) error {
+	lastDetail := ""
 	for {
 		health, err := client.GetAppHealth(ctx, slug)
 		if err == nil {
 			for _, check := range health.Checks {
-				if check.Code == "readiness" && (check.Status == "pass" || check.Status == "not_applicable") {
+				if check.Code != "readiness" {
+					continue
+				}
+				if check.Status == "pass" || check.Status == "not_applicable" {
 					return nil
+				}
+				if check.Detail != lastDetail && !jsonOutput {
+					_, _ = fmt.Fprintf(osStderr, "Waiting for %s to become ready: %s\n", slug, check.Detail)
+					lastDetail = check.Detail
+				}
+			}
+			if reader, ok := client.(appStateReader); ok {
+				if app, appErr := reader.GetApp(ctx, slug); appErr == nil && failureParked(app) {
+					return errAppParkedWhileWaiting{app: app}
 				}
 			}
 		} else if ctx.Err() != nil {
