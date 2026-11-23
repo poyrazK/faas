@@ -16,6 +16,7 @@ import (
 type teamFake struct {
 	*fakeStore
 	roster    map[string]string
+	members   []referrals.TeamMember
 	saved     []string
 	moved     string
 	payouts   int
@@ -26,6 +27,9 @@ type teamFake struct {
 
 func (f *teamFake) TeamRoster(context.Context) (map[string]string, error) { return f.roster, nil }
 func (f *teamFake) TeamMembers(context.Context, []string) ([]referrals.TeamMember, error) {
+	if f.members != nil {
+		return f.members, nil
+	}
 	return []referrals.TeamMember{{AccountID: "22222222-2222-2222-2222-222222222222", Email: "seller@example.com", AccountStatus: "active", EmailVerified: true, MFAEnrolled: true}}, nil
 }
 func (f *teamFake) AccountIDByEmail(context.Context, string) (string, error) {
@@ -144,6 +148,57 @@ func mustRoster(t *testing.T, s *Service) roster {
 	return r
 }
 
+func TestManagersManageTheTeam(t *testing.T) {
+	member := "22222222-2222-2222-2222-222222222222"
+	for _, role := range []string{referrals.RoleRep, referrals.RoleManager, referrals.RoleAdmin} {
+		t.Run(role, func(t *testing.T) {
+			s, f, acct := teamFixture(role)
+			w := httptest.NewRecorder()
+			s.AdminTeam(w, newRequest("GET", "/v1/sales/admin/team", "", nil), acct)
+			list := w.Code
+			w = httptest.NewRecorder()
+			s.AddMember(w, newRequest("POST", "/v1/sales/admin/team", `{"email":"seller@example.com","role":"rep"}`, nil), acct)
+			add := w.Code
+			w = httptest.NewRecorder()
+			s.UpdateMember(w, newRequest("PUT", "/v1/sales/admin/team/"+member, `{"role":"rep","active":false,"version":1}`, map[string]string{"member": member}), acct)
+			remove := w.Code
+			if role == referrals.RoleRep {
+				if list != 403 || add != 403 || remove != 403 || len(f.saved) != 0 {
+					t.Fatal("rep managed the team", list, add, remove, f.saved)
+				}
+				return
+			}
+			if list != 200 || add != 200 || remove != 200 || len(f.saved) != 2 {
+				t.Fatal(role, list, add, remove, f.saved)
+			}
+		})
+	}
+}
+
+func TestManagersDoNotSeeCommissionTerms(t *testing.T) {
+	bps := int32(1500)
+	for _, role := range []string{referrals.RoleManager, referrals.RoleAdmin} {
+		s, f, acct := teamFixture(role)
+		f.members = []referrals.TeamMember{{AccountID: "22222222-2222-2222-2222-222222222222", Email: "seller@example.com", CommissionBPS: &bps}}
+		w := httptest.NewRecorder()
+		s.AdminTeam(w, newRequest("GET", "/v1/sales/admin/team", "", nil), acct)
+		body := w.Body.String()
+		terms := strings.Contains(body, `"commission_bps":1500`) || strings.Contains(body, "default_commission_bps")
+		if w.Code != 200 || terms != (role == referrals.RoleAdmin) {
+			t.Fatal(role, w.Code, body)
+		}
+	}
+}
+
+func TestManagersCannotDeactivateThemselves(t *testing.T) {
+	s, f, acct := teamFixture(referrals.RoleManager)
+	w := httptest.NewRecorder()
+	s.UpdateMember(w, newRequest("PUT", "/v1/sales/admin/team/"+acct.ID, `{"role":"manager","active":false,"version":1}`, map[string]string{"member": acct.ID}), acct)
+	if w.Code != 400 || len(f.saved) != 0 {
+		t.Fatal(w.Code, f.saved, w.Body.String())
+	}
+}
+
 func TestOwnerAdminOnlyActions(t *testing.T) {
 	type action struct {
 		name, method, path, body string
@@ -153,11 +208,6 @@ func TestOwnerAdminOnlyActions(t *testing.T) {
 	customer := "33333333-3333-3333-3333-333333333333"
 	member := "22222222-2222-2222-2222-222222222222"
 	actions := []action{
-		{"team", "GET", "/v1/sales/admin/team", "", nil, func(s *Service, w *httptest.ResponseRecorder, r *http.Request, a state.Account) { s.AdminTeam(w, r, a) }},
-		{"add member", "POST", "/v1/sales/admin/team", `{"email":"seller@example.com","role":"rep"}`, nil, func(s *Service, w *httptest.ResponseRecorder, r *http.Request, a state.Account) { s.AddMember(w, r, a) }},
-		{"update member", "PUT", "/v1/sales/admin/team/" + member, `{"role":"manager","active":true,"version":1}`, map[string]string{"member": member}, func(s *Service, w *httptest.ResponseRecorder, r *http.Request, a state.Account) {
-			s.UpdateMember(w, r, a)
-		}},
 		{"agreement", "POST", "/v1/sales/admin/team/" + member + "/agreements", `{"commission_bps":1500,"note":"2026 contract"}`, map[string]string{"member": member}, func(s *Service, w *httptest.ResponseRecorder, r *http.Request, a state.Account) {
 			s.AddAgreement(w, r, a)
 		}},
