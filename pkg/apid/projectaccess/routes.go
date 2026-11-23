@@ -15,6 +15,17 @@ var routeActions = map[string]authz.OrgAction{
 	"PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings":                   authz.OrgActionConfigureQueues,
 	"GET /v1/projects":                                                               authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}":                                                        authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/rollbacks":                                              authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/rollbacks/preview":                                      authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/rollbacks/targets":                                      authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/rollbacks/targets/{deploy}/protection":                 authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/rollbacks":                                             authz.OrgActionDeployProject,
+	"GET /v1/projects/{slug}/rollbacks/{operation}":                                  authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/rollbacks/{operation}/resume":                          authz.OrgActionDeployProject,
+	"GET /v1/projects/{slug}/rollbacks/{operation}/resume/preview":                   authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/rollbacks/{operation}/pause":                           authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/rollbacks/{operation}/undo":                            authz.OrgActionDeployProject,
+	"GET /v1/projects/{slug}/rollbacks/{operation}/undo/preview":                     authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}/environments":                                           authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}/environments/{environment}":                             authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}/environments/{environment}/releases":                    authz.OrgActionReadProject,
@@ -84,6 +95,13 @@ var routeActions = map[string]authz.OrgAction{
 	"POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/start":  authz.OrgActionDeployProject,
 	"POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/stop":   authz.OrgActionDeployProject,
 	"POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/ship":   authz.OrgActionDeployProject,
+	// Layers and holdouts use the same project actions as experiments.
+	"GET /v1/projects/{slug}/environments/{environment}/experiment-layers":          authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/environments/{environment}/experiment-layers":         authz.OrgActionDeployProject,
+	"DELETE /v1/projects/{slug}/environments/{environment}/experiment-layers/{key}": authz.OrgActionDeployProject,
+	"GET /v1/projects/{slug}/environments/{environment}/experiment-holdout":         authz.OrgActionReadProject,
+	"PUT /v1/projects/{slug}/environments/{environment}/experiment-holdout":         authz.OrgActionDeployProject,
+	"GET /v1/projects/{slug}/environments/{environment}/experiment-holdout/report":  authz.OrgActionReadProject,
 	// Product analytics reads (ADR-20261117084505) follow the flag reads;
 	// funnel and retention take their query as a POST body. Cohorts
 	// (ADR-20261119102741) target flags, so writing one deploys like a flag.

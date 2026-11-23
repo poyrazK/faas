@@ -31,7 +31,7 @@ export async function prepareHostedReplay(options, env = process.env) {
   const requests = scenarios.flatMap(scenario => scenario.requests)
   if (!requests.length || new Set(requests.map(request => identities[request.identity].subject)).size < 2) throw new Error('Hosted authorization verification must exercise two distinct subjects with nonempty scenarios.')
   if (options.fingerprint && requests.some(request => request.expectedSchemaFingerprint && request.expectedSchemaFingerprint !== options.fingerprint)) throw new Error('Required authorization scenarios must target the verified candidate fingerprint.')
-  const secrets = [refreshToken, refreshToken ? createHash('sha256').update(refreshToken).digest('hex') : '', ...Object.values(identities).map(identity => identity.token), env.FAAS_TOKEN, env.GREGALE_DATA_API_ACCESS_TOKEN].filter(Boolean)
+  const secrets = [refreshToken, refreshToken ? createHash('sha256').update(refreshToken).digest('hex') : '', ...Object.values(identities).map(identity => identity.token), env.GREGALE_TOKEN, env.FAAS_TOKEN, env.GREGALE_DATA_API_ACCESS_TOKEN].filter(Boolean)
   return { identities, scenarios, refreshToken, secrets }
 }
 

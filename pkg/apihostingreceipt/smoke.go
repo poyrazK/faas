@@ -41,6 +41,10 @@ const (
 	// parked it for liveness exhaustion while the probe retried. It is the
 	// app's verdict, not an outage.
 	SmokeErrorCandidateCrashLoop = "smoke_candidate_crash_loop"
+	// SmokeErrorVerificationContractFailed means a required check of the
+	// app's gregale.verify.yaml failed against the candidate
+	// (ADR-20261122220000). The receipt carries the full report.
+	SmokeErrorVerificationContractFailed = "smoke_verification_contract_failed"
 )
 
 const (

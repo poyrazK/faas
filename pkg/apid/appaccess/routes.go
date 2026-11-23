@@ -18,32 +18,32 @@ var routeActions = map[string]authz.OrgAction{
 	// authorize its app (ADR-20261030125501 §3). A callback URL keeps working
 	// after the member who asked for it leaves, so issuing and revoking take
 	// the permission of the app's other credentials.
-	"POST /v1/uploads":                                                             authz.OrgActionDeployApp,
-	"GET /v1/uploads/{id}":                                                         authz.OrgActionDeployApp,
-	"PATCH /v1/uploads/{id}":                                                       authz.OrgActionDeployApp,
-	"POST /v1/uploads/{id}/commit":                                                 authz.OrgActionDeployApp,
-	"DELETE /v1/uploads/{id}":                                                      authz.OrgActionDeployApp,
-	"POST /v1/agent-callbacks":                                                     authz.OrgActionManageAppSecurity,
-	"POST /v1/execution-files/{id}/agent-grants":                                   authz.OrgActionManageAppSecurity,
-	"POST /v1/agent-callbacks/revocations":                                         authz.OrgActionManageAppSecurity,
-	"POST /v1/apps/{slug}/run-artifact-deliveries/{route}":                         authz.ManageObjectStorage,
-	"GET /v1/apps/{slug}/run-artifact-deliveries/{route}/{delivery}":               authz.ReadObjectStorage,
+	"POST /v1/uploads":                                               authz.OrgActionDeployApp,
+	"GET /v1/uploads/{id}":                                           authz.OrgActionDeployApp,
+	"PATCH /v1/uploads/{id}":                                         authz.OrgActionDeployApp,
+	"POST /v1/uploads/{id}/commit":                                   authz.OrgActionDeployApp,
+	"DELETE /v1/uploads/{id}":                                        authz.OrgActionDeployApp,
+	"POST /v1/agent-callbacks":                                       authz.OrgActionManageAppSecurity,
+	"POST /v1/execution-files/{id}/agent-grants":                     authz.OrgActionManageAppSecurity,
+	"POST /v1/agent-callbacks/revocations":                           authz.OrgActionManageAppSecurity,
+	"POST /v1/apps/{slug}/run-artifact-deliveries/{route}":           authz.ManageObjectStorage,
+	"GET /v1/apps/{slug}/run-artifact-deliveries/{route}/{delivery}": authz.ReadObjectStorage,
 	"POST /v1/apps/{slug}/run-artifact-deliveries/{route}/{delivery}/download-url": authz.ManageObjectStorage,
-	"GET /v1/apps/{slug}":                                                          authz.OrgActionReadApp,
-	"GET /v1/apps/{slug}/resource-inventory":                                       authz.OrgActionReadApp,
-	"GET /v1/apps/{slug}/operation-preview":                                        authz.OrgActionReadApp,
-	"GET /v1/apps/{slug}/costs":                                                    authz.OrgActionReadApp,
-	"POST /v1/apps/{slug}/env/batch":                                               authz.OrgActionConfigureApp,
-	"GET /v1/apps/{slug}/scaling":                                                  authz.OrgActionReadApp,
-	"POST /v1/apps/{slug}/scaling":                                                 authz.OrgActionConfigureApp,
-	"GET /v1/apps/{slug}/scaling/requests/{request_id}":                            authz.OrgActionReadApp,
-	"PATCH /v1/apps/{slug}":                                                        authz.OrgActionConfigureApp,
-	"PATCH /v1/apps/{slug}/labels":                                                 authz.OrgActionConfigureApp,
-	"DELETE /v1/apps/{slug}":                                                       authz.OrgActionDeleteApp,
-	"POST /v1/apps/{slug}/restore":                                                 authz.OrgActionDeleteApp,
-	"POST /v1/apps/{slug}/park":                                                    authz.OrgActionDeployApp,
-	"POST /v1/apps/{slug}/park/conditional":                                        authz.OrgActionDeployApp,
-	"POST /v1/apps/{slug}/wake":                                                    authz.OrgActionDeployApp,
+	"GET /v1/apps/{slug}":                               authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/resource-inventory":            authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/operation-preview":             authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/costs":                         authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/env/batch":                    authz.OrgActionConfigureApp,
+	"GET /v1/apps/{slug}/scaling":                       authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/scaling":                      authz.OrgActionConfigureApp,
+	"GET /v1/apps/{slug}/scaling/requests/{request_id}": authz.OrgActionReadApp,
+	"PATCH /v1/apps/{slug}":                             authz.OrgActionConfigureApp,
+	"PATCH /v1/apps/{slug}/labels":                      authz.OrgActionConfigureApp,
+	"DELETE /v1/apps/{slug}":                            authz.OrgActionDeleteApp,
+	"POST /v1/apps/{slug}/restore":                      authz.OrgActionDeleteApp,
+	"POST /v1/apps/{slug}/park":                         authz.OrgActionDeployApp,
+	"POST /v1/apps/{slug}/park/conditional":             authz.OrgActionDeployApp,
+	"POST /v1/apps/{slug}/wake":                         authz.OrgActionDeployApp,
 	// A restart parks and wakes the app, so it takes their permission
 	// (bug hunt 2026-10-28 B36).
 	"POST /v1/apps/{slug}/restart":                        authz.OrgActionDeployApp,
@@ -92,9 +92,14 @@ var routeActions = map[string]authz.OrgAction{
 	"GET /v1/apps/{slug}/release-approval-policy":    authz.OrgActionReadApp,
 	"PUT /v1/apps/{slug}/release-approval-policy":    authz.OrgActionManageAppSecurity,
 	"DELETE /v1/apps/{slug}/release-approval-policy": authz.OrgActionManageAppSecurity,
-	"GET /v1/apps/{slug}/release-approvals":          authz.OrgActionReadApp,
-	"GET /v1/deployments/{id}/approvals":             authz.OrgActionReadApp,
-	"POST /v1/deployments/{id}/approvals":            authz.OrgActionApproveAppRelease,
+	// Verification contracts gate promotion (ADR-20261122220000): reading one
+	// is reading the app; changing or removing one changes a release gate.
+	"GET /v1/apps/{slug}/verification-contract":    authz.OrgActionReadApp,
+	"PUT /v1/apps/{slug}/verification-contract":    authz.OrgActionManageAppSecurity,
+	"DELETE /v1/apps/{slug}/verification-contract": authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/release-approvals":        authz.OrgActionReadApp,
+	"GET /v1/deployments/{id}/approvals":           authz.OrgActionReadApp,
+	"POST /v1/deployments/{id}/approvals":          authz.OrgActionApproveAppRelease,
 	// A check after a release command with an unknown outcome (ADR-1448 amendment 1).
 	"POST /v1/deployments/{id}/release-outcome": authz.OrgActionDeployApp,
 	// Release diff (ADR-20261021101117).
@@ -114,6 +119,7 @@ var routeActions = map[string]authz.OrgAction{
 	// state. Release gates and the route-health guard stop releases, so only
 	// owners and admins change them, as with the approval policy.
 	"POST /v1/apps/{slug}/rollback":                             authz.OrgActionDeployApp,
+	"GET /v1/apps/{slug}/rollbacks/preflight":                   authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/rollbacks/{operation}":                 authz.OrgActionReadApp,
 	"POST /v1/apps/{slug}/rollouts/recover":                     authz.OrgActionDeployApp,
 	"GET /v1/apps/{slug}/rollouts/{id}/observation":             authz.OrgActionReadApp,
@@ -224,6 +230,7 @@ var routeActions = map[string]authz.OrgAction{
 	"GET /v1/apps/{slug}/analytics/timeseries":      authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/analytics/route-customers": authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/analytics/route-resources": authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/mcp-tool-insights":         authz.OrgActionReadApp,
 
 	// Credentials a company app issues (ADR-20261026151103 amendment 1).
 	// Each one is shown once to the member who mints or sets it and keeps

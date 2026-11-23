@@ -66,10 +66,11 @@ func cmdStart(args []string) (code int) {
 		return printErr("Interactive session required", errors.New("run gregale start in a terminal; use gregale deploy for scripts"))
 	}
 	// start signs in when the saved login is missing or rejected, and a login
-	// saved under FAAS_TOKEN would never be used (nor would a 401 from
-	// FAAS_TOKEN be fixed by one). gregale deploy works with FAAS_TOKEN.
+	// saved under a token variable would never be used (nor would a 401 from
+	// the variable be fixed by one). gregale deploy works with the variable.
 	if envToken() != "" {
-		return printErr("FAAS_TOKEN is set", errors.New("gregale start uses and saves its own login, which FAAS_TOKEN overrides; run 'unset FAAS_TOKEN' and retry, or use gregale deploy, which authenticates with FAAS_TOKEN"))
+		name := envTokenName()
+		return printErr(name+" is set", fmt.Errorf("gregale start uses and saves its own login, which %s overrides; run 'unset %s' and retry, or use gregale deploy, which authenticates with %s", name, name, name))
 	}
 	source := "."
 	if fs.NArg() == 1 {

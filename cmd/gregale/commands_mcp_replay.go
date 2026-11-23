@@ -149,3 +149,66 @@ func printMCPReplay(r mcphosting.ReplayReport) {
 		PrintWarn(osStdout, "Candidate replay failed: a breaking catalog change, a new error, or an unreadable deployment")
 	}
 }
+
+// withMCPReplayGate adds the deploy-time replay gate (ADR-20261123110137) to
+// smoke, creating a fixture-less gate when none was given.
+func withMCPReplayGate(smoke *mcpSmokeGate, replay bool) (*mcpSmokeGate, error) {
+	if !replay {
+		return smoke, nil
+	}
+	if !mcpGatewayPreviewCLI() {
+		return nil, errors.New("--replay is a preview; set FAAS_MCP_GATEWAY_PREVIEW_ENABLED=1")
+	}
+	if smoke == nil {
+		smoke = &mcpSmokeGate{}
+	}
+	smoke.replay = true
+	return smoke, nil
+}
+
+// mcpReplayGateReport is the replay section of a deploy receipt.
+type mcpReplayGateReport struct {
+	Skipped string                   `json:"skipped,omitempty"`
+	Report  *mcphosting.ReplayReport `json:"report,omitempty"`
+}
+
+// runMCPReplayGate replays the candidate against the serving endpoint with
+// the gate's prompt fixtures. It never calls a tool: --allow-tool-execution
+// consents to one call on the candidate, not to calls on the serving
+// production deployment, so tool fixtures are reported as skipped (manual
+// `mcp server replay --allow-tool` names production tools explicitly). A
+// first deployment has nothing to compare with and passes. It compares the
+// catalog the --token-env credential sees; release-policy roles keep their
+// own catalog checks in verifyMCPRoles.
+func runMCPReplayGate(ctx context.Context, endpoint, candidate, serving, token string, gate *mcpSmokeGate) (mcpReplayGateReport, bool) {
+	if serving == "" {
+		return mcpReplayGateReport{Skipped: "no serving deployment to compare with"}, true
+	}
+	options := mcphosting.ReplayOptions{}
+	if len(gate.suite.Cases) > 0 {
+		options.Fixtures = &gate.suite
+	}
+	// Its own budget: earlier gates may have spent most of the verification
+	// deadline, and a deadline hit between the serving and candidate calls
+	// would read as a new error on a good candidate.
+	replayCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+	defer cancel()
+	servingClient, err := mcphosting.NewClient(endpoint, token, mcphosting.ProtocolVersion)
+	if err != nil {
+		return mcpReplayGateReport{Report: &mcphosting.ReplayReport{Problems: []string{"serving endpoint: " + err.Error()}}}, false
+	}
+	candidateClient, err := mcphosting.NewClient(candidate, token, mcphosting.ProtocolVersion)
+	if err != nil {
+		return mcpReplayGateReport{Report: &mcphosting.ReplayReport{Problems: []string{"candidate endpoint: " + err.Error()}}}, false
+	}
+	report := mcphosting.Replay(replayCtx, servingClient, candidateClient, options)
+	return mcpReplayGateReport{Report: &report}, report.OK
+}
+
+// mcpReplayGateError is the receipt's promotion_error for a failed gate.
+func mcpReplayGateError(r mcpReplayGateReport) string {
+	if r.Report != nil && len(r.Report.Problems) > 0 {
+		return "MCP replay could not read a deployment (" + r.Report.Problems[0] + "); candidate remains unpromoted"
+	}
+	return "MCP replay found a breaking catalog change or a new error; candidate remains unpromoted"
+}

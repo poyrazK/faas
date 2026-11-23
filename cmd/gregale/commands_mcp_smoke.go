@@ -14,6 +14,10 @@ import (
 type mcpSmokeGate struct {
 	suite      mcphosting.SmokeSuite
 	allowTools bool
+	// replay compares the candidate with the serving deployment before
+	// promotion (ADR-20261123110137); a gate may carry replay with no
+	// fixtures, and then runs no smoke cases.
+	replay bool
 }
 
 func loadMCPSmokeGate(path string, allowTools bool) (*mcpSmokeGate, error) {

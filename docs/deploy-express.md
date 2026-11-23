@@ -79,7 +79,7 @@ gregale logs my-api
 gregale env set --app my-api SESSION_SECRET="$SESSION_SECRET"
 ```
 
-Values arrive in `process.env`. See [Delivered secrets](secrets.md).
+Values arrive in `process.env`. See [Secrets](secrets.md).
 
 ## Add PostgreSQL
 

@@ -113,7 +113,7 @@ After installation, follow the first-request example for your language:
 [Go](https://github.com/gregale-dev/gregale-go#quick-start),
 [Node](https://github.com/gregale-dev/gregale-js/tree/main/packages/sdk-node#first-request),
 or [Python](https://github.com/gregale-dev/gregale-python#usage). Give the program
-your existing credential through `FAAS_TOKEN`; the account/app examples only
+your existing credential through `GREGALE_TOKEN`; the account/app examples only
 read existing resources. `FAAS_API` optionally selects another API endpoint.
 
 Before updating a public SDK repository, Gregale CI builds its public tree and

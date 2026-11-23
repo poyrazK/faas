@@ -192,12 +192,8 @@ func splitMCPScopes(value string) []string {
 // mcpAuthNext lists what the owner does after enabling a mode.
 func mcpAuthNext(cfg mcphosting.Config, slug string) []string {
 	if cfg.Auth.Mode == mcphosting.AuthAPIKey {
-		grants := make([]string, 0, len(cfg.Auth.Scopes))
-		for _, scope := range cfg.Auth.Scopes {
-			grants = append(grants, api.ConsumerKeyMCPScopePrefix+scope)
-		}
 		return []string{
-			fmt.Sprintf("Give a caller a key: gregale api consumer key create %s CONSUMER_ID --name NAME --scopes %s", slug, strings.Join(grants, ",")),
+			fmt.Sprintf("Give a caller a key: gregale mcp server keys create --app %s --new-consumer CALLER --name NAME", slug),
 			"Callers send it as Authorization: Bearer ck_…",
 			fmt.Sprintf("Deploy: gregale mcp server deploy --name %s --token-env MCP_CONSUMER_KEY", slug),
 		}
