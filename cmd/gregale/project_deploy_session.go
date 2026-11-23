@@ -221,7 +221,9 @@ func renderProjectDeployReceiptWithTimeouts(plan api.PlanResponse, apply api.App
 		}
 	} else {
 		code = renderProjectApplyResultWithTimeouts(osStdout, plan, apply, timeouts)
-		if session != nil {
+		// Resume reconnects to a deploy still in flight; after every app went
+		// live there is nothing to resume, and the line read as a next step.
+		if session != nil && (code != 0 || status.waitTimedOut > 0) {
 			PrintProgress(osStdout, "Saved project deploy %s; resume with: %s", session.record.ID, session.resumeCommand())
 		}
 		if receipt.RetryCommand != "" {

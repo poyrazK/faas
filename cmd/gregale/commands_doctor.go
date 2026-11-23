@@ -184,7 +184,7 @@ func renderDoctorDeployPreflight(rep doctorReport, jsonMode bool) {
 		return
 	}
 	if rep.HasErrors() || rep.HasStrictWarnings() {
-		renderDoctorHuman(osStderr, rep)
+		renderDoctorDeploy(osStderr, rep)
 	}
 	if rep.HasProfileWarnings() {
 		var advisory []frameworkprofile.Warning
@@ -1106,6 +1106,18 @@ func renderDoctorHuman(w io.Writer, rep doctorReport) {
 // renderDoctorHumanExit renders the report; failing says the command exits 1
 // on it, so the footer does not suggest --strict to make it fail.
 func renderDoctorHumanExit(w io.Writer, rep doctorReport, failing bool) {
+	renderDoctorReport(w, rep, failing, false)
+}
+
+// renderDoctorDeploy is the report as deploy prints it: findings only, with
+// the passed and skipped checks counted on one line. `gregale doctor` lists
+// every check; deploy output is read by people and agents alike, and the
+// 2026-11-23 agent eval saw agents cut it with tail on most deploys.
+func renderDoctorDeploy(w io.Writer, rep doctorReport) {
+	renderDoctorReport(w, rep, rep.HasErrors(), true)
+}
+
+func renderDoctorReport(w io.Writer, rep doctorReport, failing, compact bool) {
 	renderDoctorReadiness(w, rep)
 	if rep.Image != nil {
 		renderDoctorImage(w, rep.Image)
@@ -1135,9 +1147,14 @@ func renderDoctorHumanExit(w io.Writer, rep doctorReport, failing bool) {
 	_, _ = fmt.Fprintln(w, strings.Repeat("─", 60))
 	hasFinding := false
 	hasSkipped := false
+	passed, skipped := 0, 0
 	for _, c := range rep.Checks {
 		switch c.Status {
 		case "ok":
+			passed++
+			if compact {
+				continue
+			}
 			if Enabled() {
 				_, _ = fmt.Fprintf(w, "  ✓ %s — ok\n", c.Name)
 			} else {
@@ -1177,6 +1194,10 @@ func renderDoctorHumanExit(w io.Writer, rep doctorReport, failing bool) {
 			}
 		case "skipped":
 			hasSkipped = true
+			skipped++
+			if compact {
+				continue
+			}
 			_, _ = fmt.Fprintf(w, "  %s — skipped\n", c.Name)
 			if c.Reason != "" {
 				_, _ = fmt.Fprintf(w, "    reason: %s\n", c.Reason)
@@ -1196,6 +1217,13 @@ func renderDoctorHumanExit(w io.Writer, rep doctorReport, failing bool) {
 		if len(warning.Sources) > 0 {
 			_, _ = fmt.Fprintf(w, "    sources: %s\n", strings.Join(warning.Sources, ", "))
 		}
+	}
+	if compact && passed+skipped > 0 {
+		summary := fmt.Sprintf("  %d other check(s) passed", passed)
+		if skipped > 0 {
+			summary += fmt.Sprintf(", %d skipped until the app is deployed", skipped)
+		}
+		_, _ = fmt.Fprintf(w, "%s; `gregale doctor` lists every check\n", summary)
 	}
 	if !hasFinding {
 		_, _ = fmt.Fprintln(w)
