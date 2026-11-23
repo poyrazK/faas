@@ -218,6 +218,30 @@ func mcpCLICommand() cliCommand {
 			{Name: "runs", Short: "times to send each probe (1-5, default 3)", Value: "N"},
 			{Name: "timeout", Short: "overall deadline (default 2m)", Value: "DURATION"},
 		}, Examples: []string{"gregale mcp server replay --app my-mcp --candidate <uuid> --token-env MCP_TOKEN", "gregale mcp server replay --app my-mcp --candidate <uuid> --fixtures fixtures.json --allow-tool search"}},
+		{Name: "insights", Short: "Show per-tool calls, failures, argument mismatches and estimated compute for the last hour", Notes: []string{"Cost is an upper bound at the overage rate; usage inside the plan's included GB-hours costs nothing extra."}, Flags: []cliFlag{
+			{Name: "app", Short: "app slug", Value: "SLUG", Req: true},
+			{Name: "timeout", Short: "API deadline (default 30s)", Value: "DURATION"},
+		}, Examples: []string{"gregale mcp server insights --app my-mcp", "gregale mcp server insights --app my-mcp --json"}},
+		{Name: "keys", Short: "Issue, list and revoke consumer keys for an api-key MCP server", Subcommands: []cliSub{
+			{Name: "create", Short: "Create a key with mcp: scopes (default the endpoint scopes in gregale-mcp.json)", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "SLUG", Req: true},
+				{Name: "name", Short: "key name", Value: "NAME", Req: true},
+				{Name: "consumer", Short: "existing API consumer ID", Value: "ID"},
+				{Name: "new-consumer", Short: "create an API consumer with this name", Value: "NAME"},
+				{Name: "scopes", Short: "comma-separated MCP scopes without the mcp: prefix", Value: "SCOPES"},
+				{Name: "expires", Short: "key expiry, RFC3339", Value: "TIME"},
+				{Name: "path", Short: "MCP source directory (default .)", Value: "DIR"},
+			}, Examples: []string{"gregale mcp server keys create --app my-mcp --new-consumer acme --name prod", "gregale mcp server keys create --app my-mcp --consumer <id> --name ci --scopes tools,admin"}},
+			{Name: "list", Short: "List a consumer's MCP keys", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "SLUG", Req: true},
+				{Name: "consumer", Short: "API consumer ID", Value: "ID", Req: true},
+			}},
+			{Name: "revoke", Short: "Revoke an MCP key", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "SLUG", Req: true},
+				{Name: "consumer", Short: "API consumer ID", Value: "ID", Req: true},
+				{Name: "key", Short: "key ID", Value: "ID", Req: true},
+			}},
+		}},
 		{Name: "access", Short: "Audit MCP access-policy drift and admission evidence", Subcommands: []cliSub{{Name: "audit", Short: "Compare source and role policy with stored account gateway rules", Flags: []cliFlag{
 			{Name: "app", Short: "MCP application slug", Value: "SLUG", Req: true},
 			{Name: "path", Short: "reviewed source directory (default .)", Value: "DIR"},

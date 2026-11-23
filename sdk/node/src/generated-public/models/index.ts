@@ -574,6 +574,8 @@ export type { LogExcerpt } from './LogExcerpt.js';
 export type { MCPPolicyConvergenceSnapshot } from './MCPPolicyConvergenceSnapshot.js';
 export type { MCPReadinessExpectation } from './MCPReadinessExpectation.js';
 export type { MCPResourcePolicy } from './MCPResourcePolicy.js';
+export type { MCPToolInsight } from './MCPToolInsight.js';
+export type { MCPToolInsightsResponse } from './MCPToolInsightsResponse.js';
 export type { MCPToolLimit } from './MCPToolLimit.js';
 export type { MFAConfirmRequest } from './MFAConfirmRequest.js';
 export type { MFAConfirmResponse } from './MFAConfirmResponse.js';

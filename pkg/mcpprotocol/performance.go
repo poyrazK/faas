@@ -3,6 +3,7 @@ package mcpprotocol
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -15,6 +16,10 @@ import (
 )
 
 const MinSamples = 20
+
+// ErrNotObserved means the app has reported no MCP telemetry in the window:
+// nothing to show, as opposed to a failed read.
+var ErrNotObserved = errors.New("MCP telemetry not observed")
 
 // ToolPerformance exposes only the reviewed tool vocabulary. Percentiles are
 // approximate histogram estimates and are absent below the traffic threshold.
@@ -91,7 +96,7 @@ func Fetch(ctx context.Context, reader Reader, appID string, now time.Time) (Per
 		}
 	}
 	if len(rows[0]) != 1 || !finite(rows[0][0].Value) || rows[0][0].Value <= 0 || rows[0][0].Value > float64(now.Add(time.Minute).Unix()) {
-		return Performance{}, fmt.Errorf("MCP telemetry not observed")
+		return Performance{}, ErrNotObserved
 	}
 	result.LastEvent = time.Unix(int64(rows[0][0].Value), 0).UTC()
 	for _, tool := range observedTools(rows[1]) {

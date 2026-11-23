@@ -149,3 +149,58 @@ func printMCPReplay(r mcphosting.ReplayReport) {
 		PrintWarn(osStdout, "Candidate replay failed: a breaking catalog change, a new error, or an unreadable deployment")
 	}
 }
+
+// withMCPReplayGate adds the deploy-time replay gate (ADR-20261123110137) to
+// smoke, creating a fixture-less gate when none was given.
+func withMCPReplayGate(smoke *mcpSmokeGate, replay bool) (*mcpSmokeGate, error) {
+	if !replay {
+		return smoke, nil
+	}
+	if !mcpGatewayPreviewCLI() {
+		return nil, errors.New("--replay is a preview; set FAAS_MCP_GATEWAY_PREVIEW_ENABLED=1")
+	}
+	if smoke == nil {
+		smoke = &mcpSmokeGate{}
+	}
+	smoke.replay = true
+	return smoke, nil
+}
+
+// mcpReplayGateReport is the replay section of a deploy receipt.
+type mcpReplayGateReport struct {
+	Skipped string                   `json:"skipped,omitempty"`
+	Report  *mcphosting.ReplayReport `json:"report,omitempty"`
+}
+
+// runMCPReplayGate replays the candidate against the serving endpoint with
+// the gate's fixtures. Tool fixtures run only when tool execution was allowed
+// for the smoke fixtures. A first deployment has nothing to compare with and
+// passes.
+func runMCPReplayGate(ctx context.Context, endpoint, candidate, serving, token string, gate *mcpSmokeGate) (mcpReplayGateReport, bool) {
+	if serving == "" {
+		return mcpReplayGateReport{Skipped: "no serving deployment to compare with"}, true
+	}
+	options := mcphosting.ReplayOptions{}
+	if len(gate.suite.Cases) > 0 {
+		options.Fixtures = &gate.suite
+	}
+	if gate.allowTools {
+		for _, c := range gate.suite.Cases {
+			if c.Kind == "tool" {
+				options.AllowTools = append(options.AllowTools, c.Target)
+			}
+		}
+	}
+	replayCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	servingClient, err := mcphosting.NewClient(endpoint, token, mcphosting.ProtocolVersion)
+	if err != nil {
+		return mcpReplayGateReport{Report: &mcphosting.ReplayReport{Problems: []string{"serving endpoint: " + err.Error()}}}, false
+	}
+	candidateClient, err := mcphosting.NewClient(candidate, token, mcphosting.ProtocolVersion)
+	if err != nil {
+		return mcpReplayGateReport{Report: &mcphosting.ReplayReport{Problems: []string{"candidate endpoint: " + err.Error()}}}, false
+	}
+	report := mcphosting.Replay(replayCtx, servingClient, candidateClient, options)
+	return mcpReplayGateReport{Report: &report}, report.OK
+}

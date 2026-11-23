@@ -1278,6 +1278,9 @@ from .mcp_resource_policy_prompt_scopes_type_0 import MCPResourcePolicyPromptSco
 from .mcp_resource_policy_resource_scopes_type_0 import MCPResourcePolicyResourceScopesType0
 from .mcp_resource_policy_tool_limits import MCPResourcePolicyToolLimits
 from .mcp_resource_policy_tool_scopes_type_0 import MCPResourcePolicyToolScopesType0
+from .mcp_tool_insight import MCPToolInsight
+from .mcp_tool_insights_response import MCPToolInsightsResponse
+from .mcp_tool_insights_response_telemetry import MCPToolInsightsResponseTelemetry
 from .mcp_tool_limit import MCPToolLimit
 from .member_list_response import MemberListResponse
 from .mfa_confirm_request import MFAConfirmRequest
@@ -4298,6 +4301,9 @@ __all__ = (
     "MCPResourcePolicyResourceScopesType0",
     "MCPResourcePolicyToolLimits",
     "MCPResourcePolicyToolScopesType0",
+    "MCPToolInsight",
+    "MCPToolInsightsResponse",
+    "MCPToolInsightsResponseTelemetry",
     "MCPToolLimit",
     "MemberListResponse",
     "MFAConfirmRequest",
