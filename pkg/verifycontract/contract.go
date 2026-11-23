@@ -399,7 +399,7 @@ func (e HTTPExpect) validate() error {
 	}
 	for pointer := range e.JSON {
 		if _, err := parsePointer(pointer); err != nil {
-			return fmt.Errorf("expect.json key %q: %v", pointer, err)
+			return fmt.Errorf("expect.json key %q: %w", pointer, err)
 		}
 	}
 	return nil

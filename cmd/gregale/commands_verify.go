@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -245,8 +246,10 @@ func deployVerificationContract(ctx context.Context, client *api.Client, slug, s
 		return nil
 	}
 	path := filepath.Join(sourceDir, verifycontract.FileName)
-	if _, err := os.Stat(path); err != nil {
+	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
 		return nil
+	} else if err != nil {
+		return fmt.Errorf("%s: %w", verifycontract.FileName, err)
 	}
 	contract, err := readVerifyContract(path)
 	if err != nil {

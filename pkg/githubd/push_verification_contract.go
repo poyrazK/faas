@@ -56,11 +56,11 @@ func (s *Service) applyPushVerificationContract(ctx context.Context, fsys fs.FS,
 	}
 	contract, err := verifycontract.ParseYAML(raw)
 	if err != nil {
-		return false, fmt.Errorf("%w: %s: %v", errPushContractInvalid, file, err)
+		return false, fmt.Errorf("%w: %s: %w", errPushContractInvalid, file, err)
 	}
 	canonical, sum, err := contract.Canonical()
 	if err != nil {
-		return false, fmt.Errorf("%w: %s: %v", errPushContractInvalid, file, err)
+		return false, fmt.Errorf("%w: %s: %w", errPushContractInvalid, file, err)
 	}
 	stored, err := contracts.AppVerificationContract(ctx, app.ID)
 	if err != nil && !errors.Is(err, state.ErrNotFound) {

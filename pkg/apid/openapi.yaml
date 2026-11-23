@@ -31907,6 +31907,68 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/verification-contract:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getVerificationContract
+      summary: Read an app's stored verification contract.
+      description: "Returns the gregale.verify.yaml contract (as JSON) that production deployments of the app are checked against before they take traffic (ADR-20261122220000). 404 when no contract is stored or the verification-contracts capability is not released to the account. Requires app read access."
+      x-since: 2026-11
+      responses:
+        '200':
+          description: The app's current verification contract.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VerificationContract' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [apps]
+      operationId: setVerificationContract
+      summary: Store or replace an app's verification contract.
+      description: "Validates and stores the contract. Every later production deployment runs its HTTP, MCP and read-only SQL checks against the candidate; a failing required check blocks promotion. expected_revision makes the write conditional: 0 creates only, a positive revision replaces only that revision, and a mismatch answers 409. Requires deploy write access."
+      x-since: 2026-11
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutVerificationContractRequest' }
+      responses:
+        '200':
+          description: The verification contract after the write.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VerificationContract' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [apps]
+      operationId: deleteVerificationContract
+      summary: Delete an app's verification contract.
+      description: "Removes the stored contract; later deployments promote on the platform smoke alone. expected_revision makes the delete conditional and a mismatch answers 409. Requires deploy write access."
+      x-since: 2026-11
+      parameters:
+        - name: expected_revision
+          in: query
+          description: Delete only if the stored contract is at this revision.
+          schema: { type: integer, format: int64, minimum: 1 }
+      responses:
+        '204':
+          description: The contract was deleted.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/route-monitor/report:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -89868,6 +89930,34 @@ components:
         method: {"type": "string", "enum": ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], "description": "Omitted matches every method."}
         path: {"type": "string", "maxLength": 240, "description": "Route template such as /users/{id}, or an edge-rule glob such as /exports/*."}
         class: {"type": "string", "enum": ["critical", "bulk"]}
+    VerificationContract:
+      description: An app's stored gregale.verify.yaml contract and its revision.
+      type: object
+      required: [app_id, contract, contract_sha256, check_count, revision, updated_at]
+      properties:
+        app_id: { type: string, format: uuid }
+        contract:
+          type: object
+          additionalProperties: true
+          description: The stored gregale.verify.yaml contract as JSON (version, checks).
+        contract_sha256: { type: string, description: "SHA-256 of the canonical contract encoding." }
+        check_count: { type: integer }
+        revision: { type: integer, format: int64 }
+        updated_at: { type: string, format: date-time }
+    PutVerificationContractRequest:
+      description: Body that stores or replaces an app's verification contract.
+      type: object
+      required: [contract]
+      properties:
+        contract:
+          type: object
+          additionalProperties: true
+          description: The gregale.verify.yaml contract to store, as JSON (version, checks).
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 0
+          description: "0 creates only; a positive value replaces only that revision."
     RoutePrioritiesResponse:
       type: object
       description: "An app's effective route priorities and where they come from."
