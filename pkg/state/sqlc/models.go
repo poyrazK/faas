@@ -2189,6 +2189,19 @@ type AppUdpListener struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
+// Per-app gregale.verify.yaml contract (validated JSON) run against deployment candidates before promotion (ADR-20261122220000).
+type AppVerificationContract struct {
+	AppID          pgtype.UUID
+	AccountID      pgtype.UUID
+	Contract       []byte
+	ContractSha256 string
+	ByteSize       int32
+	CheckCount     int32
+	Revision       int64
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
 type AppWakeTransition struct {
 	ID           pgtype.UUID
 	AppID        pgtype.UUID
@@ -4843,6 +4856,7 @@ type DeploymentRollbackOperation struct {
 	Status              string
 	Receipt             []byte
 	UpdatedAt           pgtype.Timestamptz
+	ProjectRollbackID   pgtype.UUID
 }
 
 type DeploymentRoutePolicySnapshot struct {
@@ -4964,6 +4978,27 @@ type DeploymentSubmissionReceipt struct {
 	AttemptID    string
 	DeploymentID pgtype.UUID
 	AcceptedAt   pgtype.Timestamptz
+}
+
+// Read-only SQL checks imaged hands to apid during candidate verification; result is row count and first value only (ADR-20261122220000).
+type DeploymentVerificationQuery struct {
+	ID           pgtype.UUID
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	CheckName    string
+	DatabaseName string
+	Query        string
+	Status       string
+	RowCount     pgtype.Int4
+	HasFirst     pgtype.Bool
+	FirstValue   pgtype.Text
+	ErrorCode    pgtype.Text
+	Error        pgtype.Text
+	CreatedAt    pgtype.Timestamptz
+	ClaimedAt    pgtype.Timestamptz
+	CompletedAt  pgtype.Timestamptz
+	ExpiresAt    pgtype.Timestamptz
 }
 
 type DevBridgeSession struct {
@@ -9478,38 +9513,45 @@ type ManagedPostgresLiveLoginAttempt struct {
 
 // Cumulative managed PostgreSQL overage charge delivered per billing provider, usage subject and UTC month; written only by apid (ADR-20261031110037).
 type ManagedPostgresOverageDelivery struct {
-	Provider                 string
-	SubjectID                pgtype.UUID
-	PeriodStart              pgtype.Timestamptz
-	Live                     bool
-	BilledUnitSeconds        int64
-	DeliveredMillicents      int64
-	UpdatedAt                pgtype.Timestamptz
-	BilledStorageByteSeconds int64
-	BilledEgressBytes        int64
+	Provider                  string
+	SubjectID                 pgtype.UUID
+	PeriodStart               pgtype.Timestamptz
+	Live                      bool
+	BilledUnitSeconds         int64
+	DeliveredMillicents       int64
+	UpdatedAt                 pgtype.Timestamptz
+	BilledStorageByteSeconds  int64
+	BilledEgressBytes         int64
+	BilledHistoryByteSeconds  int64
+	BilledSnapshotByteSeconds int64
 }
 
 // A managed PostgreSQL overage step reserved before it is sent to the billing provider; written only by apid (ADR-20261101143527).
 type ManagedPostgresOveragePending struct {
-	Provider                 string
-	SubjectID                pgtype.UUID
-	PeriodStart              pgtype.Timestamptz
-	Live                     bool
-	StepAt                   pgtype.Timestamptz
-	UsedUnitSeconds          int64
-	AllowanceUnitSeconds     int64
-	BilledUnitSeconds        int64
-	FromMillicents           int64
-	TargetMillicents         int64
-	UsedStorageByteSeconds   int64
-	StoragePoolBytes         int64
-	BilledStorageByteSeconds int64
-	PreviousMillicents       int64
-	PreviousLive             bool
-	UsedEgressBytes          int64
-	AppEgressBytes           int64
-	EgressAllowanceBytes     int64
-	BilledEgressBytes        int64
+	Provider                  string
+	SubjectID                 pgtype.UUID
+	PeriodStart               pgtype.Timestamptz
+	Live                      bool
+	StepAt                    pgtype.Timestamptz
+	UsedUnitSeconds           int64
+	AllowanceUnitSeconds      int64
+	BilledUnitSeconds         int64
+	FromMillicents            int64
+	TargetMillicents          int64
+	UsedStorageByteSeconds    int64
+	StoragePoolBytes          int64
+	BilledStorageByteSeconds  int64
+	PreviousMillicents        int64
+	PreviousLive              bool
+	UsedEgressBytes           int64
+	AppEgressBytes            int64
+	EgressAllowanceBytes      int64
+	BilledEgressBytes         int64
+	UsedHistoryByteSeconds    int64
+	UsedSnapshotByteSeconds   int64
+	IncludedHistoryBytes      int64
+	BilledHistoryByteSeconds  int64
+	BilledSnapshotByteSeconds int64
 }
 
 // Notices for managed PostgreSQL databases suspended past their plan; written only by apid (ADR-20261102125208).
@@ -13498,6 +13540,12 @@ type ProjectBindingVerificationRun struct {
 	ExpiresAt       pgtype.Timestamptz
 }
 
+type ProjectDeployRollbackMember struct {
+	DeploymentID  pgtype.UUID
+	ProjectID     pgtype.UUID
+	DeployGroupID pgtype.UUID
+}
+
 type ProjectEnvironment struct {
 	ID                     pgtype.UUID
 	AccountID              pgtype.UUID
@@ -14875,6 +14923,50 @@ type ProjectReleaseStage struct {
 type ProjectReleaseWorkerDrain struct {
 	InstanceID  pgtype.UUID
 	RequestedAt pgtype.Timestamptz
+}
+
+type ProjectRollbackDeployProtection struct {
+	ProjectID     pgtype.UUID
+	DeployGroupID pgtype.UUID
+	ManifestHash  string
+	DeploymentIds []string
+	StorageKeys   []string
+	ExpiresAt     pgtype.Timestamptz
+	LayerBytes    int64
+}
+
+type ProjectRollbackHttpRecovery struct {
+	RollbackID           pgtype.UUID
+	OperationID          pgtype.UUID
+	AppID                pgtype.UUID
+	TargetID             pgtype.UUID
+	Service              bool
+	Generation           pgtype.Int8
+	RoutingCommittedAt   pgtype.Timestamptz
+	ExpectedGateways     []string
+	AcknowledgedGateways []string
+	GatewaysAppliedAt    pgtype.Timestamptz
+	FirstSuccessAt       pgtype.Timestamptz
+	ExpiresAt            pgtype.Timestamptz
+	NextNotifyAt         pgtype.Timestamptz
+}
+
+type ProjectRollbackOperation struct {
+	ID                  pgtype.UUID
+	ProjectID           pgtype.UUID
+	Status              string
+	Version             int64
+	NextRunAt           pgtype.Timestamptz
+	Receipt             []byte
+	StartRequestID      pgtype.UUID
+	StartRequestOptions []byte
+}
+
+type ProjectRollbackUndoArtifactHold struct {
+	OperationID  pgtype.UUID
+	DeploymentID pgtype.UUID
+	StorageKeys  []string
+	ExpiresAt    pgtype.Timestamptz
 }
 
 type ProjectSubmission struct {

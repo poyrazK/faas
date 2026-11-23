@@ -133,3 +133,29 @@ func (review mcpTaskInputReview) respond(_ context.Context, live mcphosting.Inpu
 	}
 	return *form.Response, nil
 }
+
+func runMCPTaskInputResponse(ctx context.Context, client *mcphosting.Client, submissionKey string, review mcpTaskInputReview) int {
+	task, exchange, err := client.GetTaskBySubmissionKey(ctx, submissionKey)
+	if err != nil {
+		return mcpTaskMetadataReadFailure("", exchange.HTTPStatus, err)
+	}
+	if task.TaskID != review.TaskID {
+		return printErr("MCP Task input review", errors.New("MCP Task input review belongs to a different Task"))
+	}
+	if task.Status != "input_required" {
+		return jsonOut(writeJSON(mcpTaskSnapshot(task)))
+	}
+	task, exchange, err = client.GetTask(ctx, task.TaskID)
+	if err != nil {
+		return mcpTaskMetadataReadFailure(review.TaskID, exchange.HTTPStatus, err)
+	}
+	current, err := client.RespondToTask(ctx, task, review.respond)
+	var unconfirmed *mcphosting.TaskInputUpdateUnconfirmedError
+	if errors.As(err, &unconfirmed) {
+		return mcpTaskInputUpdateStatus(unconfirmed)
+	}
+	if err != nil {
+		return printErr("MCP Task input response", err)
+	}
+	return jsonOut(writeJSON(mcpTaskSnapshot(current)))
+}

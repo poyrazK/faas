@@ -493,7 +493,10 @@ func selectInspectDeployments(deployments []api.DeploymentResponse) (current, ne
 		}
 	}
 	latest := &deployments[0]
-	if current.ID != latest.ID && latest.Status == "failed" && latest.TrafficPercent == 0 {
+	// A canary the rollout aborted stays "live" at 0%: health answered "No
+	// urgent issues" after the latest deploy was rolled back (prod hunt r31).
+	aborted := latest.Status == "live" && latest.RolloutState == "aborted"
+	if current.ID != latest.ID && (latest.Status == "failed" || aborted) && latest.TrafficPercent == 0 {
 		newerFailedCandidate = latest
 	}
 	return current, newerFailedCandidate
@@ -582,11 +585,15 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 		next := "Send a request, or run `gregale app wake " + summary.App.Slug + "` to start it now."
 		severity := "info"
 		switch {
+		case summary.App.ParkedReason == "liveness_exhausted" && isWorker(summary.App.ExecutionMode, summary.App.WorkloadClass):
+			message = "This worker is parked because its process kept exiting (a worker gets no HTTP health check); requests never start a worker."
+			next = "Fix the crash (see `gregale logs " + summary.App.Slug + " --since 1h`) and deploy: a new release starts the worker. Or run `gregale app wake " + summary.App.Slug + "`."
+			severity = "error"
 		case summary.App.ParkedReason == "liveness_exhausted":
 			message = "This app is parked because its instances repeatedly failed liveness checks or crashed; the next request starts it again."
 			next = "Fix the failure (see `gregale logs " + summary.App.Slug + " --since 1h`), deploy, then run `gregale app wake " + summary.App.Slug + "`."
 			severity = "error"
-		case summary.App.ExecutionMode == api.ExecutionModeWorker:
+		case isWorker(summary.App.ExecutionMode, summary.App.WorkloadClass):
 			message = "This worker is parked: requests do not wake a worker, so it stays stopped until you wake it."
 			next = "Run `gregale app wake " + summary.App.Slug + "` to start it."
 			severity = "error"
@@ -628,9 +635,15 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 	}
 	if summary.Release.NewerFailedCandidate != nil {
 		candidate := summary.Release.NewerFailedCandidate
-		add("newer_candidate_failed", "warning",
-			"A newer zero-traffic deployment candidate failed; the serving release remains active.",
-			"Run `gregale inspect "+summary.App.Slug+" --errors` for candidate "+candidate.DeploymentID+" failure details.")
+		if candidate.RolloutState == "aborted" {
+			add("newer_candidate_failed", "warning",
+				"The newest deployment "+candidate.DeploymentID+" was rolled back during its rollout; the previous release still serves.",
+				"Run `gregale release timeline "+candidate.DeploymentID+" --app "+summary.App.Slug+"` for why it stopped.")
+		} else {
+			add("newer_candidate_failed", "warning",
+				"A newer zero-traffic deployment candidate failed; the serving release remains active.",
+				"Run `gregale inspect "+summary.App.Slug+" --errors` for candidate "+candidate.DeploymentID+" failure details.")
+		}
 	}
 	// An image deploy runs the image's own ENTRYPOINT/CMD: there is no source
 	// to detect a framework from and no Dockerfile to add, so a healthy nginx

@@ -101,12 +101,14 @@ func TestGuideCommand(t *testing.T) {
 		t.Fatalf("exit=%d json=%q", code, stdout.String())
 	}
 
+	// A word that names no task is a question (ADR-20261123180000).
+	t.Setenv("GREGALE_DOCS_OFFLINE", "1")
 	main.ResetJSONOut(t)
-	_, stderr, restore := main.SwapIO(t)
-	code = main.Run([]string{"guide", "no-such-task"})
+	stdout, _, restore = main.SwapIO(t)
+	code = main.Run([]string{"guide", "egress", "ports"})
 	restore()
-	if code == 0 || !strings.Contains(stderr(), "tasks: ") {
-		t.Fatalf("exit=%d stderr=%q", code, stderr())
+	if code != 0 || !strings.Contains(stdout.String(), "egress-ports") {
+		t.Fatalf("exit=%d stdout=%q", code, stdout.String())
 	}
 }
 

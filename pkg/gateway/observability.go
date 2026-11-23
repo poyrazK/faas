@@ -102,7 +102,7 @@ func requestIDFrom(r *http.Request) string {
 	if v, ok := r.Context().Value(requestIDKey{}).(string); ok && v != "" {
 		return v
 	}
-	if v := r.Header.Get("x-faas-request-id"); v != "" {
+	if v := r.Header.Get("X-Faas-Request-Id"); v != "" {
 		return v
 	}
 	return newRequestID()

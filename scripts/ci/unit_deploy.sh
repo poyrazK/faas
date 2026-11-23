@@ -203,15 +203,33 @@ cmd_script() {
   while read -r spec; do
     specs+=" $(printf '%q' "$spec")"
   done < <(jq -r '.verify[]' "$plan")
+  local adopts=false
+  if jq -e '.units | index("vmmd")' "$plan" >/dev/null; then
+    adopts=true
+  fi
   {
     echo 'set -euo pipefail'
     actor_line
+    # vmmd restarts only behind its adoption proof, checked before anything
+    # changes (docs/adr/20261123122457-compute-unit-lane.md, decision 3).
+    if [[ "$adopts" == true ]]; then
+      adoption_check_lines "$stage"
+    fi
     if [[ -n "$files" ]]; then
       commit="$(plan_field "$plan" .commit)"
       echo "${stage}/bin/deployctl unit-overlay --release-id ${release_id} --expect-current ${expect} --commit ${commit}${files}"
     fi
     echo "DEPLOYCTL_RESTART_PARALLEL=${parallel} ${release_dir}/bin/deployctl deploy --only '${only}' --expect-current ${expect} ${release_id}"
     echo "if [[ -n \"\${ROLLOUT_ACTIVATION_MARKER:-}\" ]]; then touch \"\$ROLLOUT_ACTIVATION_MARKER\"; fi"
+    if [[ "$adopts" == true ]]; then
+      # A refusal, a fenced claim or no report in time: schedd already
+      # fails the guests the new vmmd does not hold, so roll back now.
+      echo "if ! /opt/faas/current/bin/vmmd adoption-report --wait 90s --already-gone \"\$adoption_gone\"; then"
+      echo "  echo 'unit-lane: the restarted vmmd did not report a clean adoption; rolling the node back' >&2"
+      echo "  ${stage}/bin/deployctl rollback --only '${only}' $(rollback_flags "$plan")"
+      echo '  exit 1'
+      echo 'fi'
+    fi
     # A plan that only applies migrations restarts and verifies no unit.
     if [[ -n "$specs" ]]; then
       echo "if ! bash ${stage}/unit-release-verify.sh ${release_dir}${specs}; then"
@@ -222,6 +240,41 @@ cmd_script() {
       echo 'fi'
     fi
   } > "$out"
+}
+
+# The no-drain proof node_join runs around a full release's vmmd restart
+# (docs/adr/20261017-vmmd-restart-adoption.md), emitted for a unit release
+# that restarts vmmd. The staged candidate judges the serving vmmd's journal
+# and live guests with the adoption switches the serving process runs with
+# (a unit release changes no compute role, so the restart keeps them).
+# Retries while only guests are refused (ADR 20261116191802). Anything but a
+# full adoption stands down before the overlay exists: exit 3, nothing on
+# the node changed, no guest parked or drained (owner decision 2026-11-23).
+adoption_check_lines() {
+  local stage="$1"
+  cat <<EOF
+stand_down() { echo "unit-lane: standing down on this node, nothing changed: \$*" >&2; exit 3; }
+vmmd_pid="\$(systemctl show faas-vmmd -p MainPID --value)"
+[[ "\${vmmd_pid:-0}" -gt 0 ]] || stand_down "vmmd is not running"
+adopt_env=()
+while IFS= read -r kv; do adopt_env+=("\$kv"); done < <(tr '\\0' '\\n' < "/proc/\$vmmd_pid/environ" |
+  grep -E '^FAAS_VMMD_(ADOPTION_RECORD|ADOPT_RUNNING_VMS|ADOPT_ADMITTED_RUNTIMES|FLAT_TENANT_CGROUPS)=' || true)
+printf '%s\\n' "\${adopt_env[@]}" | grep -Eqx 'FAAS_VMMD_ADOPT_RUNNING_VMS=(1|t|T|true|TRUE|True)' ||
+  stand_down "the serving vmmd does not hand its guests off (adopt_running_vms is off)"
+adoption_rc=3
+for attempt in 1 2 3 4 5 6 7; do
+  adoption_rc=0
+  adoption="\$(env "\${adopt_env[@]}" ${stage}/bin/vmmd adoption-check --config /etc/faas/vmmd.toml)" || adoption_rc=\$?
+  [[ "\$adoption_rc" -eq 3 ]] || break
+  # A node-level refusal names a top-level reason; waiting does not help.
+  if printf '%s' "\$adoption" | jq -e '(.reason // "") != ""' >/dev/null 2>&1; then break; fi
+  echo "unit-lane: adoption-check attempt \$attempt/7 refused guests; retrying in 10s" >&2
+  [[ "\$attempt" -lt 7 ]] && sleep 10
+done
+printf '%s\\n' "\$adoption"
+[[ "\$adoption_rc" -eq 0 ]] || stand_down "the candidate vmmd does not adopt every live guest (adoption-check exit \$adoption_rc)"
+adoption_gone="\$(printf '%s' "\$adoption" | jq -r '[.gone[]?.instance | select(type == "string")] | join(",")')"
+EOF
 }
 
 cmd_run() {
@@ -392,15 +445,18 @@ watch=null
 if [[ -s "$record" ]] && jq -e '.kind == "gregale-unit-watch"' "$record" >/dev/null 2>&1; then
   watch="$(jq -c '{owner_run, hosts: (.hosts | map_values({releases, known_good, current}))}' "$record")"
 fi
+# The full release the control plane runs: the planner refuses a unit release
+# built over another one, so the preflight stands down on it first.
+base="$(jq -r '.git_sha // empty' "$(readlink -f /opt/faas/current)/release-manifest.json" 2>/dev/null)"
 err="$(mktemp)" body="$(mktemp)"
 # The alert list can outgrow one command-line argument: jq reads it from a file.
 if curl -fsS --max-time 10 -o "$body" "$prometheus/api/v1/alerts" 2>"$err" \
-    && jq -ce --arg lock "$lock_state" --argjson watch "$watch" 'select(.status == "success" and (.data.alerts | type) == "array")
-        | {lock: $lock, watch: $watch, prometheus: {ok: true, alerts: .data.alerts}}' "$body" 2>>"$err"; then
+    && jq -ce --arg lock "$lock_state" --argjson watch "$watch" --arg base "$base" 'select(.status == "success" and (.data.alerts | type) == "array")
+        | {lock: $lock, watch: $watch, base: $base, prometheus: {ok: true, alerts: .data.alerts}}' "$body" 2>>"$err"; then
   :
 else
-  jq -cn --arg lock "$lock_state" --argjson watch "$watch" --arg error "$(tr '\n' ' ' < "$err" | cut -c1-300)" \
-    '{lock: $lock, watch: $watch, prometheus: {ok: false, error: (if $error == "" then "no alert list in the answer" else $error end)}}'
+  jq -cn --arg lock "$lock_state" --argjson watch "$watch" --arg base "$base" --arg error "$(tr '\n' ' ' < "$err" | cut -c1-300)" \
+    '{lock: $lock, watch: $watch, base: $base, prometheus: {ok: false, error: (if $error == "" then "no alert list in the answer" else $error end)}}'
 fi
 rm -f -- "$err" "$body"
 REMOTE

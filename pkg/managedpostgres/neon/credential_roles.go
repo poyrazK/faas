@@ -247,6 +247,11 @@ func (m *sqlCredentialRoles) Ensure(ctx context.Context, material managedpostgre
 			"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO " + name,
 			"ALTER DEFAULT PRIVILEGES FOR ROLE " + owner + " IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO " + name,
 			"ALTER DEFAULT PRIVILEGES FOR ROLE " + owner + " IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO " + name,
+			// PUBLIC has no EXECUTE on the owner's functions (initializeCredentialSchema),
+			// so the app's own login gets it on those in public: an app calls the
+			// functions its migrations made (ADR-20261123112326).
+			"GRANT EXECUTE ON ALL ROUTINES IN SCHEMA public TO " + name,
+			"ALTER DEFAULT PRIVILEGES FOR ROLE " + owner + " IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO " + name,
 		}
 		if role.access == managedpostgres.CredentialReadOnly {
 			queries = []string{

@@ -16,12 +16,14 @@ profile, revokes the CLI key of the login it replaces. Use `gregale key list`
 device; CLI sessions are labelled `cli-login` and never expose their plaintext
 after creation.
 
-For CI, create a scoped project or organization token and expose it as `FAAS_TOKEN`, or pass it once with `gregale login --token "$FAAS_TOKEN"`. Prefer the narrowest scope and a short expiration. Do not commit tokens or pass them as command-line arguments where process listings can expose them.
-Tokens supplied through `FAAS_TOKEN` or `gregale login --token` remain
+For CI, create a scoped project or organization token and expose it as `GREGALE_TOKEN`, or pass it once with `gregale login --token "$GREGALE_TOKEN"`. Prefer the narrowest scope and a short expiration. Do not commit tokens or pass them as command-line arguments where process listings can expose them.
+Tokens supplied through `GREGALE_TOKEN` or `gregale login --token` remain
 non-owning: logout clears local state but does not revoke a shared CI key.
-`FAAS_TOKEN` outranks a saved login, so `gregale login` and `gregale start`
+`GREGALE_TOKEN` outranks a saved login, so `gregale login` and `gregale start`
 refuse to run while it is set (unless `--token` passes the same value), and
-`gregale logout` says when `FAAS_TOKEN` is still active.
+`gregale logout` says when `GREGALE_TOKEN` is still active.
+`FAAS_TOKEN`, the variable's earlier name, still works; when both are set,
+`GREGALE_TOKEN` wins. The Terraform provider reads `GREGALE_TOKEN` too.
 
 For a Runs-only agent, mint an account key with `runs:write` instead of the
 default full-access `admin` key:

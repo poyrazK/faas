@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -532,6 +533,11 @@ type ComputeNodeConfig struct {
 	// PublicIngressCIDRs, which the drop-in sends beside it for a vmmd that
 	// predates this field.
 	PublicEntryAddrs []string `toml:"public_entry_addrs"`
+	// PeerEntryAddrs are the other compute edges' IPv4 entry addresses, as
+	// the nftables role renders for faas_peer_entry_addrs
+	// (ADR-20261123100000): a guest's 443 call to one is DNATed to this
+	// node's own entry address, so app-to-app calls stay on the node.
+	PeerEntryAddrs []string `toml:"peer_entry_addrs"`
 	// OverlayCIDR is the per-host overlay subnet the vmmd overlay
 	// detector prefers when multiple IPv4 candidates come back from
 	// `tailscale ip -4` (Mega-PR-B Commit 3). Defaults to
@@ -568,6 +574,18 @@ type ComputeNodeConfig struct {
 	// nftables role's faas_database_route_enabled and gatewayd-internal's
 	// database_route_listen.
 	DatabaseRouteEnabled bool `toml:"database_route_enabled"`
+	// InternalEgressCIDRs and InternalEgressHosts are public destinations
+	// that are still Gregale's own, so a guest's traffic to them is internal
+	// egress, not billed (ADR-20261114100000 amendment 2026-11-23): the
+	// nodes' entry addresses (app-to-app calls, object storage and telemetry
+	// by public hostname) and the managed PostgreSQL provider's regional
+	// endpoints, whose traffic the database's own egress allowance covers.
+	// Hosts are re-resolved every few minutes; addresses seen in the last day
+	// stay internal so DNS rotation does not bill a long session. A namespace
+	// takes the set current when it is prepared. FAAS_VMMD_INTERNAL_EGRESS_CIDRS
+	// and FAAS_VMMD_INTERNAL_EGRESS_HOSTS (comma-separated) win.
+	InternalEgressCIDRs []string `toml:"internal_egress_cidrs"`
+	InternalEgressHosts []string `toml:"internal_egress_hosts"`
 	// PrivateNetworkTransportInterface is the underlay NIC used for VXLAN
 	// packets. Empty falls back to OverlayInterface, which keeps the common
 	// Tailscale/WireGuard deployment concise.
@@ -952,6 +970,9 @@ func loadConfig(path string, readConfig func(string) ([]byte, error)) (*Config, 
 	if v := os.Getenv("FAAS_PUBLIC_ENTRY_ADDRS"); v != "" {
 		c.ComputeNode.PublicEntryAddrs = splitNonEmpty(v)
 	}
+	if v := os.Getenv("FAAS_PEER_ENTRY_ADDRS"); v != "" {
+		c.ComputeNode.PeerEntryAddrs = splitNonEmpty(v)
+	}
 	if v := os.Getenv("FAAS_PRIVATE_INGRESS_TCP_PORTS"); v != "" {
 		ports, perr := parseTCPPorts(v)
 		if perr != nil {
@@ -993,6 +1014,15 @@ func loadConfig(path string, readConfig func(string) ([]byte, error)) (*Config, 
 			return nil, fmt.Errorf("vmmd: FAAS_VMMD_DATABASE_ROUTE_ENABLED %q invalid: %w", v, perr)
 		}
 		c.ComputeNode.DatabaseRouteEnabled = parsed
+	}
+	if v, ok := os.LookupEnv("FAAS_VMMD_INTERNAL_EGRESS_CIDRS"); ok {
+		c.ComputeNode.InternalEgressCIDRs = splitCommaList(v)
+	}
+	if v, ok := os.LookupEnv("FAAS_VMMD_INTERNAL_EGRESS_HOSTS"); ok {
+		c.ComputeNode.InternalEgressHosts = splitCommaList(v)
+	}
+	if _, err := parseInternalEgressCIDRs(c.ComputeNode.InternalEgressCIDRs); err != nil {
+		return nil, err
 	}
 	if v := os.Getenv("FAAS_PRIVATE_NETWORK_TRANSPORT_MTU"); v != "" {
 		mtu, err := strconv.Atoi(v)
@@ -1403,6 +1433,18 @@ func validatePublicEntryAddrs(cfg ComputeNodeConfig) error {
 			return fmt.Errorf("vmmd: public_entry_addrs[%d] %q must be a plain address in canonical form (%s)", i, raw, addr.Unmap().WithZone(""))
 		}
 	}
+	for i, raw := range cfg.PeerEntryAddrs {
+		addr, err := netip.ParseAddr(raw)
+		if err != nil {
+			return fmt.Errorf("vmmd: peer_entry_addrs[%d] %q invalid: %w", i, raw, err)
+		}
+		if !addr.Is4() || addr.String() != raw {
+			return fmt.Errorf("vmmd: peer_entry_addrs[%d] %q must be a plain IPv4 address in canonical form", i, raw)
+		}
+		if slices.Contains(cfg.PublicEntryAddrs, raw) {
+			return fmt.Errorf("vmmd: peer_entry_addrs[%d] %q is this node's own entry address", i, raw)
+		}
+	}
 	return nil
 }
 
@@ -1539,6 +1581,11 @@ func runtimeHostPolicy(cfg ComputeNodeConfig, bridge netip.Prefix, serviceHTTPS 
 	for _, raw := range cfg.PublicEntryAddrs {
 		if addr, err := netip.ParseAddr(raw); err == nil {
 			policy.PublicEntryAddrs = append(policy.PublicEntryAddrs, addr)
+		}
+	}
+	for _, raw := range cfg.PeerEntryAddrs {
+		if addr, err := netip.ParseAddr(raw); err == nil {
+			policy.PeerEntryAddrs = append(policy.PeerEntryAddrs, addr)
 		}
 	}
 	if cfg.ServiceTCPEnabled {

@@ -760,6 +760,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PADDLE_SANDBOX` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_PADDLE_WEBHOOK_SECRET` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_PADDLE_WEBHOOK_TOLERANCE_SECONDS` | shared | `default` |  |  | `` |  |
+| `FAAS_PEER_ENTRY_ADDRS` | vmmd | `dropin` |  |  | `` | ADR-20261123100000: comma-separated IPv4 entry addresses of the other compute edges; vmmd's runtime host policy DNATs a guest's 443 call to one onto this node's own IPv4 entry address, like the boot policy; written by the vmmd egress drop-in from faas_peer_entry_addrs |
 | `FAAS_PERSISTENT_PROTOCOL_V1` | guest | `guest` |  |  | `` |  |
 | `FAAS_PERSISTENT_WORKER` | shared | `internal` |  |  | `` | set by the builder path for its own worker process |
 | `FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS` | apid, shared | `default` |  |  | `` | comma-separated account UUIDs, or *, that may set scaling_policy.per_instance_concurrency (ADR-20261022203523); unset admits none, and a stored value keeps applying until it is set to 0 |
@@ -779,6 +780,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_POLAR_HOBBY_PRODUCT_ID` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_POLAR_MANAGED_POSTGRES_BILLING_FROM` | shared | `secrets-env` |  |  | `` | UTC-month activation boundary for managed PostgreSQL overage (ADR-20261031110037); delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
 | `FAAS_POLAR_MANAGED_POSTGRES_BILLING_MODE` | shared | `secrets-env` |  |  | `` | off (default), shadow, or live; apid charges managed PostgreSQL overage; delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
+| `FAAS_POLAR_MANAGED_POSTGRES_HISTORY_BILLING_FROM` | shared | `secrets-env` |  |  | `` | first UTC month managed PostgreSQL restore history past the included history is charged; empty charges none (ADR-20261123062111); delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
 | `FAAS_POLAR_MANAGED_POSTGRES_METER_ID` | shared | `secrets-env` |  |  | `` | separate Polar meter UUID summing charge_millicents; delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
 | `FAAS_POLAR_MANAGED_POSTGRES_USAGE_EVENT_NAME` | shared | `secrets-env` |  |  | `` | defaults to faas_managed_postgres_usage; delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
 | `FAAS_POLAR_METER_ID` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
@@ -1208,6 +1210,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_VMMD_DBURL` | vmmd | `envfile` |  |  | `` |  |
 | `FAAS_VMMD_EDGE_HEADER_SECRETS` | vmmd | `dropin` |  | off | `` | ADR-20261110210000 slice 3i: secretd opens sealed edge-rule request header values a gateway names in a forward through the control plane's secretd at FAAS_SECRETD_TARGET, as this node for the instance's app (cached 5 minutes); off refuses such forwards. vmmd_service renders it from faas_vmmd_edge_header_secrets |
 | `FAAS_VMMD_FLAT_TENANT_CGROUPS` | vmmd | `dropin` |  | false | `` | ADR-20261109172421 step 6.5: true launches new tenant VMs directly under faas-tenant.slice instead of their plan's sub-slice (overrides vmmd.toml flat_tenant_cgroups; not with native_process_recovery); ansible vmmd_flat_tenant_cgroups, default false; turn off and let flat VMs park before rolling vmmd back past the release that added it |
+| `FAAS_VMMD_INTERNAL_EGRESS_CIDRS` | vmmd | `dropin` |  |  | `` | ADR-20261114100000 amendment: comma-separated IPv4 CIDRs/addresses whose guest traffic is internal, not billed egress; overrides compute_node.internal_egress_cidrs |
+| `FAAS_VMMD_INTERNAL_EGRESS_HOSTS` | vmmd | `dropin` |  |  | `` | ADR-20261114100000 amendment: comma-separated hostnames vmmd re-resolves into the internal egress set (managed Postgres, Gregale public entry); overrides compute_node.internal_egress_hosts |
 | `FAAS_VMMD_LISTEN_ADDR` | vmmd | `dropin` |  |  | `` |  |
 | `FAAS_VMMD_LOCAL_DATA_SOCKET` | vmmd | `default` |  |  | `` | optional boolean switch (ADR-20261030230157): vmmd also serves /run/faas/vmmd-data.sock to this node's gatewayd-internal, by peer uid and for its forwarding RPCs only; overrides TOML local_data_socket; default off, and off removes the socket |
 | `FAAS_VMMD_LOG_ARCHIVE_SPOOL_ROOT` | vmmd, shared | `default` |  |  | `` | optional compute-side spool override; defaults to /var/log/faas/vmmd-archive so vmmd and apid do not share active files on single-box hosts |

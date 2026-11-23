@@ -23,6 +23,7 @@ package wire
 import (
 	"context"
 	"strconv"
+	"strings"
 
 	"google.golang.org/grpc/metadata"
 )
@@ -86,6 +87,34 @@ func WithCorrelationOutgoing(ctx context.Context, fields CorrelationFields) cont
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	pairs := correlationPairs(fields)
+	if len(pairs) == 0 {
+		return ctx
+	}
+	// FromOutgoingContext returns a fresh copy, so the pairs are appended
+	// into it directly: the same keys and values, in the same order, as
+	// metadata.Join(prev, metadata.Pairs(pairs...)), without the second and
+	// third maps.
+	md, ok := metadata.FromOutgoingContext(ctx)
+	if !ok {
+		md = make(metadata.MD, len(pairs)/2)
+	}
+	appendMDPairs(md, pairs)
+	return metadata.NewOutgoingContext(ctx, md)
+}
+
+// appendMDPairs appends kv pairs to md as metadata.Pairs then Join would:
+// lowercased keys, values in pair order after any already present.
+func appendMDPairs(md metadata.MD, kv []string) {
+	for i := 0; i+1 < len(kv); i += 2 {
+		key := strings.ToLower(kv[i])
+		md[key] = append(md[key], kv[i+1])
+	}
+}
+
+// correlationPairs is the outgoing key/value list for fields, empty fields
+// skipped.
+func correlationPairs(fields CorrelationFields) []string {
 	pairs := make([]string, 0, 12)
 	if fields.RequestID != "" {
 		pairs = append(pairs, mdKeyRequestID, fields.RequestID)
@@ -148,15 +177,7 @@ func WithCorrelationOutgoing(ctx context.Context, fields CorrelationFields) cont
 	if fields.TriggerClass != "" {
 		pairs = append(pairs, mdKeyWakeTriggerClass, fields.TriggerClass)
 	}
-	if len(pairs) == 0 {
-		return ctx
-	}
-	md := metadata.Pairs(pairs...)
-	prev, ok := metadata.FromOutgoingContext(ctx)
-	if ok {
-		md = metadata.Join(prev, md)
-	}
-	return metadata.NewOutgoingContext(ctx, md)
+	return pairs
 }
 
 // CorrelationFromIncoming reads the correlation fields from the inbound

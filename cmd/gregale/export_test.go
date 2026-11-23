@@ -1220,6 +1220,14 @@ var CoveragePolicy = coveragePolicy
 var CreateDevSetupManifest = createDevSetupManifest
 var CreateDurableProjectVerification = createDurableProjectVerification
 var CreateOrFetchApp = createOrFetchApp
+
+// DeployAppWithAlternatives runs the deploy's name resolution: slug, or the
+// caller's suffixed alternative when another owner holds slug.
+func DeployAppWithAlternatives(ctx context.Context, client *Client, slug, sourceDir string) (string, error) {
+	req := api.CreateAppRequest{Slug: slug}
+	return createOrFetchAppWithAlternatives(ctx, client, req, req, sourceDir, nil, nil, nil, nil, nil)
+}
+
 var CreateTestAsyncRoutes = createTestAsyncRoutes
 var CurrentUploadOffset = currentUploadOffset
 var CustomerCliCommands = customerCliCommands
@@ -1426,6 +1434,9 @@ var InspectData = inspectData
 var InspectOpenAPI = inspectOpenAPI
 var InspectProductPilotHelp = inspectProductPilotHelp
 var InspectRecommendations = inspectRecommendations
+var AppParkedLabel = appParkedLabel
+var WriteParkedNotice = writeParkedNotice
+var StartupCrashCauseHint = startupCrashCauseHint
 var InspectRuntime = inspectRuntime
 var InspectResources = inspectResources
 var InspectUnavailable = inspectUnavailable
@@ -2647,6 +2658,7 @@ var RoutesAppFlagAsPositional = routesAppFlagAsPositional
 
 var RenderProject = renderProject
 var InspectAttention = inspectAttention
+var SelectInspectDeployments = selectInspectDeployments
 var RemoveCLITestSandbox = removeCLITestSandbox
 var WorkerScalingMetrics = workerScalingMetrics
 var WorkerMetricLabel = workerMetricLabel
@@ -3031,6 +3043,12 @@ func WaitForDevPostgres(ctx context.Context, session api.DevSessionResponse, tim
 	return waitForDevPostgres(ctx, session, timeout, poll, get, waiting)
 }
 
+// ADR-20261122194324: gateway-enforced MCP access modes.
+var (
+	MCPAuthEnableConfig  = mcpAuthEnableConfig
+	AuditMCPGatewayRules = auditMCPGatewayRules
+)
+
 // RealtimePreviewInView is realtimePreviewInView for the tier defaults
 // (tier) or for an account view that hides hidden.
 func RealtimePreviewInView(tier bool, hidden ...string) bool {
@@ -3053,4 +3071,14 @@ func RealtimeVerbsDiscoveredBy(hidden ...string) []string {
 		}
 	}
 	return names
+}
+
+// adr: 20261123110137
+var WithMCPReplayGate = withMCPReplayGate
+
+// RunMCPReplayGateForTest runs the deploy replay gate and returns its skip
+// reason and verdict.
+func RunMCPReplayGateForTest(ctx context.Context, endpoint, candidate, serving string, gate *mcpSmokeGate) (string, bool) {
+	report, ok := runMCPReplayGate(ctx, endpoint, candidate, serving, "", gate)
+	return report.Skipped, ok
 }

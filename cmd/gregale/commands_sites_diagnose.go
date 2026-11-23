@@ -72,8 +72,8 @@ func cmdSitesDiagnose(args []string) int {
 func hostingDiagnosticClient(site, trust string) (*api.Client, error) {
 	if trust != "" {
 		enabled := os.Getenv("FAAS_FRONTEND_HOSTING_OIDC_ENABLED")
-		if !hostingAutomationWorkstationEnabled() || enabled != "1" && enabled != "true" || os.Getenv("FAAS_TOKEN") != "" {
-			return nil, errors.New("enable automation/OIDC workstation flags and omit FAAS_TOKEN for GitHub identity")
+		if !hostingAutomationWorkstationEnabled() || enabled != "1" && enabled != "true" || envTokenName() != "" {
+			return nil, errors.New("enable automation/OIDC workstation flags and omit GREGALE_TOKEN and FAAS_TOKEN for GitHub identity")
 		}
 		return api.NewGitHubHostingOIDCClient(apiBase(), site, trust, os.Getenv("ACTIONS_ID_TOKEN_REQUEST_URL"), os.Getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN"))
 	}

@@ -65,10 +65,12 @@ func TestGRPCCallerGetsUnavailableForPlatform502(t *testing.T) {
 
 func TestGRPCCallerGetsUnavailableForBridgePlainText502(t *testing.T) {
 	conn := serveH2C(t, func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "guest h2c roundtrip: http2: client conn could not be established", http.StatusBadGateway)
+		// The bridge's own 502 body (cmd/vmmd-stream-bridge/bad_gateway.go);
+		// it no longer carries the transport error (prod hunt r30).
+		http.Error(w, "Bad gateway: the app closed the connection or did not send a response", http.StatusBadGateway)
 	})
 	st, _ := status.FromError(healthCheck(t, conn))
-	if st.Code() != codes.Unavailable || !strings.Contains(st.Message(), "guest h2c roundtrip") {
+	if st.Code() != codes.Unavailable || !strings.Contains(st.Message(), "app closed the connection") {
 		t.Fatalf("got %v %q, want Unavailable naming the bridge error", st.Code(), st.Message())
 	}
 }

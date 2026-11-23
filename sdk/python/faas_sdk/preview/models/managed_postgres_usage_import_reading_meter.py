@@ -6,6 +6,7 @@ ManagedPostgresUsageImportReadingMeter = Literal[
     "egress_bytes",
     "history_byte_seconds",
     "operations",
+    "snapshot_byte_seconds",
     "storage_byte_seconds",
 ]
 
@@ -15,6 +16,7 @@ MANAGED_POSTGRES_USAGE_IMPORT_READING_METER_VALUES: set[ManagedPostgresUsageImpo
     "egress_bytes",
     "history_byte_seconds",
     "operations",
+    "snapshot_byte_seconds",
     "storage_byte_seconds",
 }
 

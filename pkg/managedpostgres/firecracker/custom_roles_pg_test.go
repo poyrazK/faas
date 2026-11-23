@@ -108,6 +108,9 @@ func TestCustomRoleBatchesRunWindmillStyleRoles(t *testing.T) {
 		"CREATE POLICY see_own ON job TO " + user + " USING (owner = current_setting('session.user', true))",
 		"GRANT ALL ON job TO " + user + ", " + admin,
 		"INSERT INTO job (owner) VALUES ('alice'), ('bob')",
+		// Windmill calls set_session_context() without granting it: PUBLIC
+		// has no EXECUTE here (ADR-20261123112326).
+		"CREATE FUNCTION set_session_context(username text) RETURNS void LANGUAGE sql AS $fn$ SELECT set_config('session.user', username, true) $fn$",
 	} {
 		if _, err := mig.Exec(ctx, sql); err != nil {
 			t.Fatalf("%s: %v", sql, err)
@@ -124,14 +127,17 @@ func TestCustomRoleBatchesRunWindmillStyleRoles(t *testing.T) {
 		if _, err := tx.Exec(ctx, "SET LOCAL ROLE "+role); err != nil {
 			t.Fatalf("SET LOCAL ROLE %s: %v", role, err)
 		}
-		if _, err := tx.Exec(ctx, "SELECT set_config('session.user', 'alice', true)"); err != nil {
-			t.Fatal(err)
+		if _, err := tx.Exec(ctx, "SELECT set_session_context('alice')"); err != nil {
+			t.Fatalf("set_session_context as %s: %v", role, err)
 		}
 		var n int
 		if err := tx.QueryRow(ctx, "SELECT count(*) FROM job").Scan(&n); err != nil {
 			t.Fatal(err)
 		}
 		return n
+	}
+	if _, err := rw.Exec(ctx, "SELECT set_session_context('alice')"); err != nil {
+		t.Fatalf("read_write login cannot run the migration's function: %v", err)
 	}
 	if n := count(user); n != 1 {
 		t.Fatalf("user saw %d rows, want 1", n)

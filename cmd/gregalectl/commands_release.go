@@ -357,8 +357,15 @@ func cmdReleaseInstall(args []string) int {
 	// exercised in production — without this flag, the cosign
 	// half is whitebox-only.
 	tarballPath := fs.String("tarball-path", "", "ADR-113 canonical path: load release.tar.gz from PATH and run cosign verify-blob + SBoM CVE-baseline diff before install. Empty = use the legacy or bin-dir path.")
+	// ADR-20261123150000: rollout preparation verifies and extracts the
+	// release while the node still serves; activation reuses the tree.
+	stageOnly := fs.Bool("stage-only", false, "with --tarball-path: verify and extract the release into the staging area beside <releases-root> (staged-releases/<git-sha>) for activation to move into place; never touches <releases-root>, the current release or the database (ADR-20261123150000)")
 	if err := fs.Parse(args); err != nil {
 		return 1
+	}
+	if *stageOnly && *tarballPath == "" {
+		_, _ = fmt.Fprintln(os.Stderr, "gregalectl release install: --stage-only requires --tarball-path")
+		return 2
 	}
 	if *gitSHA == "" {
 		_, _ = fmt.Fprintln(os.Stderr, "gregalectl release install: --git-sha is required")
@@ -378,9 +385,9 @@ func cmdReleaseInstall(args []string) int {
 	// for Tarball.Verify (the cosign verifier in
 	// pkg/releaseinstall/cosign.go).
 	if *tarballPath != "" {
-		if err := installViaTarball(*releasesRoot, *gitSHA, *tarballPath); err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "gregalectl release install: %v\n", err)
-			return 3
+		verifier := releaseinstall.NewExecCosignVerifier(releaseinstall.DefaultGitHubOIDC())
+		if code := installOrReuseStaged(*releasesRoot, *gitSHA, *tarballPath, *stageOnly, verifier, os.Stdout, os.Stderr); code >= 0 {
+			return code
 		}
 		// Fall through to the role-templating + DB-write path
 		// below; the load-bearing gates (cosign, SBoM, catalog)
@@ -768,7 +775,7 @@ func sbomOnDiskPath(releasesRoot, gitSHA string) (string, error) {
 	return p, nil
 }
 
-// installViaTarball is the canonical ADR-113 install path. It
+// installViaTarballWithVerifier is the canonical ADR-113 install path. It
 // loads the canonical triple (tarball + cosign bundle + SBoM) from
 // the on-disk path the operator supplies via --tarball-path, runs
 // the cosign verifier (the load-bearing trust bit from PR-A
@@ -781,22 +788,13 @@ func sbomOnDiskPath(releasesRoot, gitSHA string) (string, error) {
 // cosign verifier (cosign.go) is whitebox-only — issue #597's
 // "verify on the host before install" never actually verifies.
 //
+// The production caller passes the strict GitHub OIDC verifier
+// (releaseinstall.NewExecCosignVerifier); tests pass fixtures.
+//
 // On the production host the cosign binary is on PATH (the Packer
 // image bakes it; ADR-113 cluster table). For air-gap boxes the
 // flag's complement is --tarball-path pointing at a pre-staged
 // triple on the operator's media.
-func installViaTarball(releasesRoot, gitSHA, tarballPath string) error {
-	return installViaTarballWithVerifier(
-		releasesRoot,
-		gitSHA,
-		tarballPath,
-		releaseinstall.NewExecCosignVerifier(releaseinstall.DefaultGitHubOIDC()),
-	)
-}
-
-// installViaTarballWithVerifier is split from installViaTarball so the
-// complete extraction + retention path can be tested without weakening the
-// production default, which always uses the strict GitHub OIDC verifier.
 func installViaTarballWithVerifier(releasesRoot, gitSHA, tarballPath string, verifier releaseinstall.CosignVerifier) error {
 	// 1. Read the on-disk triple.
 	tbBody, err := os.ReadFile(tarballPath)
@@ -857,7 +855,11 @@ func installViaTarballWithVerifier(releasesRoot, gitSHA, tarballPath string, ver
 
 	// 4. Extract the tarball into <releases-root>/<git-sha>/bin/.
 	// On success the on-disk bin tree matches the manifest's
-	// per-binary sha256.
+	// per-binary sha256. A previous stage's marker goes first, so a tree
+	// interrupted below is never reused (ADR-20261123150000).
+	if err := removeStagedInstallMarker(releasesRoot, gitSHA); err != nil {
+		return err
+	}
 	if err := tb.Extract(releasesRoot); err != nil {
 		return fmt.Errorf("tarball extract: %w", err)
 	}

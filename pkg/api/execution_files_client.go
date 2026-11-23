@@ -41,7 +41,7 @@ func (c *Client) UploadExecutionFile(ctx context.Context, id string, body io.Rea
 		req.Body = http.NoBody
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
-	req.Header.Set("X-Content-SHA256", digest)
+	req.Header.Set("X-Content-Sha256", digest)
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}

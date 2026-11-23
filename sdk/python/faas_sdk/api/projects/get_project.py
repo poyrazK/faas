@@ -8,18 +8,27 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.problem import Problem
 from ...models.project_response import ProjectResponse
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     slug: str,
+    *,
+    include_rollback: bool | Unset = UNSET,
 ) -> dict[str, Any]:
+
+    params: dict[str, Any] = {}
+
+    params["include_rollback"] = include_rollback
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "get",
         "url": "/v1/projects/{slug}".format(
             slug=quote(str(slug), safe=""),
         ),
+        "params": params,
     }
 
     return _kwargs
@@ -69,11 +78,13 @@ def sync_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    include_rollback: bool | Unset = UNSET,
 ) -> Response[Problem | ProjectResponse]:
     """Inspect a project, its workloads, exclusions, and latest status.
 
     Args:
         slug (str):
+        include_rollback (bool | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -85,6 +96,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        include_rollback=include_rollback,
     )
 
     response = client.get_httpx_client().request(
@@ -98,11 +110,13 @@ def sync(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    include_rollback: bool | Unset = UNSET,
 ) -> Problem | ProjectResponse | None:
     """Inspect a project, its workloads, exclusions, and latest status.
 
     Args:
         slug (str):
+        include_rollback (bool | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -115,6 +129,7 @@ def sync(
     return sync_detailed(
         slug=slug,
         client=client,
+        include_rollback=include_rollback,
     ).parsed
 
 
@@ -122,11 +137,13 @@ async def asyncio_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    include_rollback: bool | Unset = UNSET,
 ) -> Response[Problem | ProjectResponse]:
     """Inspect a project, its workloads, exclusions, and latest status.
 
     Args:
         slug (str):
+        include_rollback (bool | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -138,6 +155,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        include_rollback=include_rollback,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -149,11 +167,13 @@ async def asyncio(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    include_rollback: bool | Unset = UNSET,
 ) -> Problem | ProjectResponse | None:
     """Inspect a project, its workloads, exclusions, and latest status.
 
     Args:
         slug (str):
+        include_rollback (bool | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -167,5 +187,6 @@ async def asyncio(
         await asyncio_detailed(
             slug=slug,
             client=client,
+            include_rollback=include_rollback,
         )
     ).parsed
