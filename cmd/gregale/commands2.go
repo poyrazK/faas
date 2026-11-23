@@ -4387,14 +4387,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			if resolvedSimplePlan != nil {
 				existingReq.ExecutionMode = ""
 			}
-			creating := false
 			if !*createOnly {
 				if code := guardUnlinkedExistingApp(ctx, client, slug, contextDir, *yes); code != 0 {
 					return code
 				}
-				_, getErr := client.GetApp(ctx, slug)
-				creating = isNotFound(getErr)
 			}
+			// --create-only links the directory too: the MCP Tasks README
+			// reserves each role with it and then deploys, and the unlinked
+			// deploy warned it would replace a running release that did not
+			// exist (MCP Tasks prod re-probe 2026-11-23).
+			_, getErr := client.GetApp(ctx, slug)
+			creating := isNotFound(getErr)
 			err = createOrFetchAppWith(ctx, client, createReq, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
 			if err == nil && creating {
 				rememberCreatedApp(contextDir, slug)
