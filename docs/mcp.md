@@ -5718,6 +5718,22 @@ Exit code 3 means at least one entry needs a retry. Exit code 1 covers other
 unavailable or invalid entries. The array is returned in all three cases once
 the batch starts. A single receipt still returns the Task metadata object.
 
+To recover an inbox after restart, point metadata status at a directory
+containing the application's receipts.
+
+```sh
+gregale mcp client status --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --metadata-only --receipt-dir ./receipts
+```
+
+Directory mode always returns an array sorted by filename, including when
+the directory is empty or has one receipt. Each outcome includes the relative
+filename in `receipt`. The scan covers direct files of any extension and
+skips subdirectories and the CLI's temporary publication files. Entries must
+be private regular files for the selected endpoint. Malformed, mismatched, or
+unreadable entries receive `invalid_receipt`. The current credential and the
+usual batch exit codes apply to the whole scan.
+
 To watch Task status from a receipt, use `client watch` with the same endpoint
 and the caller's current credential.
 

@@ -42,6 +42,7 @@ func mcpCLICommand() cliCommand {
 		cliFlag{Name: "read-result", Short: "read a completed Task result from a private receipt"},
 		cliFlag{Name: "task-submission-key", Short: "find a retained Task by saved UUIDv7", Value: "UUID"},
 		cliFlag{Name: "task-receipt", Short: "find a retained Task from a private receipt (repeatable with --metadata-only)", Value: "FILE"},
+		cliFlag{Name: "receipt-dir", Short: "list private Task receipts in one directory (with --metadata-only)", Value: "DIR"},
 		cliFlag{Name: "write-input-template", Short: "write pending forms to a new private file", Value: "FILE"},
 	)
 	for i := range callFlags {

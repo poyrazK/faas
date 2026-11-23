@@ -461,8 +461,15 @@ func cmdMCPRemote(command string, args []string) int {
 	promptName := fs.String("prompt", "", "prompt name to render (prompt-get only)")
 	taskID := fs.String("task-id", "", "opaque task ID (task-get, task-wait or task-cancel)")
 	var metadataOnly, readResult bool
-	var inputTemplatePath, reviewedInputPath string
+	var inputTemplatePath, reviewedInputPath, receiptDir string
 	if command == "task-get" {
+		fs.Func("receipt-dir", "list private Task receipts in one directory (with --metadata-only)", func(path string) error {
+			if path == "" || receiptDir != "" {
+				return errors.New("provide one directory path for --receipt-dir")
+			}
+			receiptDir = path
+			return nil
+		})
 		fs.BoolVar(&metadataOnly, "metadata-only", false, "show Task metadata and next action")
 		fs.BoolVar(&readResult, "read-result", false, "read a completed Task result from a private receipt")
 		fs.Func("write-input-template", "write pending forms to a new private file", func(value string) error {
@@ -523,6 +530,9 @@ func cmdMCPRemote(command string, args []string) int {
 		return printErr("Invalid MCP task flags", errors.New("choose --task-receipt or --task-submission-key"))
 	}
 	keyed := submissionKey != "" || taskReceiptPath != ""
+	if receiptDir != "" && (!metadataOnly || keyed || *taskID != "") {
+		return printErr("Invalid MCP task flags", errors.New("--receipt-dir requires --metadata-only and is a separate Task selector"))
+	}
 	if deferFormInput && !keyed {
 		return printErr("Invalid MCP task flags", errors.New("--defer-form-input requires --task-receipt or --task-submission-key"))
 	}
@@ -547,7 +557,7 @@ func cmdMCPRemote(command string, args []string) int {
 	if *taskID != "" && command != "task-get" && command != "task-wait" && command != "task-cancel" {
 		return printErr("Invalid MCP task flags", errors.New("--task-id is supported only by mcp task-get, mcp task-wait and mcp task-cancel"))
 	}
-	if command == "task-get" && ((*taskID == "" && !keyed) || *legacy) {
+	if command == "task-get" && ((*taskID == "" && !keyed && receiptDir == "") || *legacy) {
 		return printErr("Invalid MCP task flags", errors.New("modern task-get requires --task-id or a keyed Task selector"))
 	}
 	if command == "task-wait" || command == "task-cancel" {
@@ -605,8 +615,14 @@ func cmdMCPRemote(command string, args []string) int {
 	if (inputTemplatePath != "" || reviewedInputPath != "") && token == "" {
 		return printErr("MCP Task input review", errors.New("task input review requires a client credential from --token-env"))
 	}
+	if receiptDir != "" {
+		if token == "" {
+			return printErr("MCP Task receipt directory", errors.New("--receipt-dir requires a client credential from --token-env"))
+		}
+		return runMCPTaskReceiptDirectoryStatus(ctx, c, receiptDir)
+	}
 	if len(taskReceiptPaths) > 1 {
-		return runMCPTaskReceiptBatchStatus(ctx, c, taskReceiptPaths)
+		return runMCPTaskReceiptBatchStatus(ctx, c, taskReceiptPaths, nil)
 	}
 	if taskReceiptPath != "" && command != "call" {
 		submissionKey, err = readMCPTaskReceipt(taskReceiptPath, c.Endpoint)

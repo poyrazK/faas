@@ -16,6 +16,9 @@ type mcpTaskReceipt struct {
 	SubmissionKey  string `json:"submissionKey"`
 }
 
+// The receipt has three scalar fields and carries no tool arguments.
+const mcpTaskReceiptMaxBytes = 1024
+
 func mcpTaskReceiptEndpoint(endpoint string) string {
 	digest := sha256.Sum256([]byte(endpoint))
 	return hex.EncodeToString(digest[:])
@@ -41,11 +44,22 @@ func createMCPTaskReceipt(path, endpoint string) (string, error) {
 }
 
 func readMCPTaskReceipt(path, endpoint string) (string, error) {
-	// The receipt has three scalar fields and carries no tool arguments.
-	body, err := readCustomerOperationPrivateReceiptBound(path, 1024)
+	body, err := readCustomerOperationPrivateReceiptBound(path, mcpTaskReceiptMaxBytes)
 	if err != nil {
 		return "", err
 	}
+	return decodeMCPTaskReceipt(body, endpoint)
+}
+
+func readMCPTaskReceiptAt(root *os.Root, name, endpoint string) (string, error) {
+	body, err := readCustomerOperationPrivateReceiptAt(root, name, mcpTaskReceiptMaxBytes)
+	if err != nil {
+		return "", err
+	}
+	return decodeMCPTaskReceipt(body, endpoint)
+}
+
+func decodeMCPTaskReceipt(body []byte, endpoint string) (string, error) {
 	var receipt mcpTaskReceipt
 	if err := decodeCustomerOperationReceipt(body, &receipt); err != nil {
 		return "", errors.New("invalid MCP Task receipt")

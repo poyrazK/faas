@@ -2447,10 +2447,11 @@ test('quarantine fences new claims across heartbeats while preserving active lea
   assert.equal((await pool.query('SELECT draining FROM gregale_mcp_task_workers WHERE namespace=$1 AND worker_id=$2', [namespace, bad])).rows[0].draining, true);
 });
 
-for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, respondOnce, cancelReplyFault, timeout } of [
+for (const { title, useReceipt, receiptInbox, deferredForm, formReplyFault, reviewedInput, respondOnce, cancelReplyFault, timeout } of [
   { title: 'keyed Task submission recovers the committed handle after a lost CLI reply', timeout: 75_000 },
   { title: 'private Task receipt resumes waiting after the CLI dies and the retry window closes', useReceipt: true, timeout: 90_000 },
   { title: 'private Task receipt resumes deferred form input after the submitting CLI dies', useReceipt: true, deferredForm: true, timeout: 35_000 },
+  { title: 'receipt directory recovers the original Tasks after the submitting CLI dies', useReceipt: true, receiptInbox: true, deferredForm: true, timeout: 35_000 },
   { title: 'receipt wait recovers a form reply lost after commit', useReceipt: true, deferredForm: true, formReplyFault: 'after', timeout: 35_000 },
   { title: 'receipt wait reports pending input for a form reply lost before commit', useReceipt: true, deferredForm: true, formReplyFault: 'before', timeout: 35_000 },
   { title: 'reviewed Task input stays bound to the original Task and form after restart', useReceipt: true, deferredForm: true, reviewedInput: true, timeout: 45_000 },
@@ -2464,7 +2465,7 @@ for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, res
   timeout,
 }, async t => {
   const { execFile } = await import('node:child_process');
-  const { mkdtemp, readFile, rm, stat, writeFile } = await import('node:fs/promises');
+  const { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } = await import('node:fs/promises');
   const { createServer } = await import('node:http');
   const { tmpdir } = await import('node:os');
   const { resolve } = await import('node:path');
@@ -2473,8 +2474,10 @@ for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, res
   const binary = resolve(process.env.MCP_TASKS_TEST_GREGALE);
   const run = promisify(execFile);
   const clientDir = await mkdtemp(join(tmpdir(), 'gregale-task-submission-'));
-  const receiptPath = join(clientDir, 'task-receipt.json');
   t.after(() => rm(clientDir, { recursive: true, force: true }));
+  const receiptDir = receiptInbox ? join(clientDir, 'receipts') : clientDir;
+  if (receiptInbox) await mkdir(receiptDir, { mode: 0o700 });
+  const receiptPath = join(receiptDir, 'task-receipt.json');
   const { store, pool, namespace } = await harness(t, { ttlMs: 120_000 });
   const auth = {
     mode: 'external-oauth', issuer: 'https://issuer.example', jwks_url: 'https://issuer.example/jwks',
@@ -2617,6 +2620,66 @@ for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, res
     assert.ifError(proxyError);
     assert.ok(committedID, 'the first CLI reply must be dropped after a confirmed PostgreSQL commit');
     const selector = useReceipt ? ['--task-receipt', receiptPath] : ['--task-submission-key', key];
+    if (receiptInbox) {
+      async function submitInboxReceipt(name, credential) {
+        const { result } = JSON.parse(await cli('call', credential, 0,
+          receiptCallFor(join(receiptDir, name), { report: name, steps: 1 })));
+        return result.taskId;
+      }
+      const readyName = 'ready report.receipt';
+      const readyID = await submitInboxReceipt(readyName, owner);
+      const foreignID = await submitInboxReceipt('foreign.json', foreign);
+      const expiredID = await submitInboxReceipt('expired.json', owner);
+      await eventually(async () => {
+        const states = new Map((await rows()).map(row => [row.task_id, row.status]));
+        return states.get(committedID) === 'input_required' &&
+          [readyID, foreignID, expiredID].every(id => states.get(id) === 'completed');
+      }, 'worker did not persist the expected inbox states');
+      await pool.query('UPDATE gregale_mcp_tasks SET expires_at=clock_timestamp() WHERE namespace=$1 AND task_id=$2', [namespace, expiredID]);
+
+      const statusArgs = ['--metadata-only', '--receipt-dir', receiptDir];
+      const subdir = join(receiptDir, 'archive');
+      await mkdir(subdir, { mode: 0o700 });
+      const beforeEmpty = requests.length;
+      assert.deepEqual(JSON.parse(await cli('status', owner, 0, ['--metadata-only', '--receipt-dir', subdir])), []);
+      assert.equal(requests.length, beforeEmpty);
+
+      const original = JSON.parse(await readFile(receiptPath, 'utf8'));
+      const privateFile = { mode: 0o600, flag: 'wx' };
+      await writeFile(join(subdir, 'nested.receipt'), JSON.stringify(original), privateFile);
+      await writeFile(join(receiptDir, `.gregale-submission-${randomUUID()}`), JSON.stringify(original), privateFile);
+      await writeFile(join(receiptDir, 'bad.json'), 'private malformed receipt', privateFile);
+      await writeFile(join(receiptDir, 'wrong-endpoint.json'), JSON.stringify({
+        ...original, endpointSha256: createHash('sha256').update(`${endpoint}/other`).digest('hex'),
+      }), privateFile);
+      await symlink(receiptPath, join(receiptDir, 'symlink.json'));
+
+      const beforeInvalid = requests.length;
+      assert.equal(await cli('status', owner, 1, [...statusArgs, ...selector]), '');
+      assert.equal(await cli('status', owner, 1, [...statusArgs, '--read-result']), '');
+      assert.equal(await cli('status', owner, 1, ['--receipt-dir', receiptDir]), '');
+      assert.equal(requests.length, beforeInvalid);
+
+      const persisted = await rows();
+      const beforeScan = requests.length;
+      const inbox = JSON.parse(await cli('status', owner, 1, statusArgs));
+      assert.deepEqual(requests.slice(beforeScan), ['server/discover', ...Array(4).fill('gregale/tasks/lookup')]);
+      const ready = inbox[3].task, paused = inbox[5].task;
+      for (const task of [ready, paused]) assert.ok(Number.isFinite(Date.parse(task.lastUpdatedAt)));
+      assert.deepEqual(inbox, [
+        { receipt: 'bad.json', outcome: 'invalid_receipt' },
+        { receipt: 'expired.json', outcome: 'unavailable' },
+        { receipt: 'foreign.json', outcome: 'unavailable' },
+        { receipt: readyName, outcome: 'available', task: { taskId: readyID, status: 'completed', lastUpdatedAt: ready.lastUpdatedAt, nextAction: 'read_result' } },
+        { receipt: 'symlink.json', outcome: 'invalid_receipt' },
+        { receipt: 'task-receipt.json', outcome: 'available', task: { taskId: committedID, status: 'input_required', lastUpdatedAt: paused.lastUpdatedAt, nextAction: 'provide_input' } },
+        { receipt: 'wrong-endpoint.json', outcome: 'invalid_receipt' },
+      ]);
+      const nested = JSON.parse(await cli('status', owner, 0, ['--metadata-only', '--receipt-dir', subdir]));
+      assert.deepEqual(nested, [{ receipt: 'nested.receipt', outcome: 'available', task: paused }]);
+      assert.deepEqual(await rows(), persisted);
+      return;
+    }
     const lookup = (credential, code) => cli('status', credential, code, [...selector, '--metadata-only']);
     async function watch(status, nextAction) {
       await eventually(async () => (await rows()).some(row => row.task_id === committedID && row.status === 'running'),

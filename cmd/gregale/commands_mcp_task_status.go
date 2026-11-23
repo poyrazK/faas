@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"math"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -21,15 +24,39 @@ type mcpTaskStatusMetadata struct {
 }
 
 type mcpTaskReceiptStatusResult struct {
+	Receipt string                 `json:"receipt,omitempty"`
 	Outcome string                 `json:"outcome"`
 	Task    *mcpTaskStatusMetadata `json:"task,omitempty"`
 }
 
-func runMCPTaskReceiptBatchStatus(ctx context.Context, client *mcphosting.Client, receipts []string) int {
+func runMCPTaskReceiptDirectoryStatus(ctx context.Context, client *mcphosting.Client, dir string) int {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return printErr("MCP Task receipt directory", err)
+	}
+	defer func() { _ = root.Close() }()
+	entries, err := fs.ReadDir(root.FS(), ".")
+	if err != nil {
+		return printErr("MCP Task receipt directory", err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() && !strings.HasPrefix(entry.Name(), customerOperationReceiptTempPrefix) {
+			names = append(names, entry.Name())
+		}
+	}
+	return runMCPTaskReceiptBatchStatus(ctx, client, names, root)
+}
+
+// A non-nil root keeps directory entries inside the directory that was listed.
+func runMCPTaskReceiptBatchStatus(ctx context.Context, client *mcphosting.Client, receipts []string, root *os.Root) int {
 	results := make([]mcpTaskReceiptStatusResult, len(receipts))
 	exit := 0
 	for i, receipt := range receipts {
-		result, code := readMCPTaskReceiptStatus(ctx, client, receipt)
+		result, code := readMCPTaskReceiptStatus(ctx, client, receipt, root)
+		if root != nil {
+			result.Receipt = receipt
+		}
 		results[i] = result
 		exit = max(exit, code)
 	}
@@ -39,11 +66,17 @@ func runMCPTaskReceiptBatchStatus(ctx context.Context, client *mcphosting.Client
 	return exit
 }
 
-func readMCPTaskReceiptStatus(ctx context.Context, client *mcphosting.Client, receipt string) (mcpTaskReceiptStatusResult, int) {
+func readMCPTaskReceiptStatus(ctx context.Context, client *mcphosting.Client, receipt string, root *os.Root) (mcpTaskReceiptStatusResult, int) {
 	if err := ctx.Err(); err != nil {
 		return mcpTaskReceiptLookupOutcome(mcphosting.Task{}, mcphosting.Exchange{}, err)
 	}
-	key, err := readMCPTaskReceipt(receipt, client.Endpoint)
+	var key string
+	var err error
+	if root == nil {
+		key, err = readMCPTaskReceipt(receipt, client.Endpoint)
+	} else {
+		key, err = readMCPTaskReceiptAt(root, receipt, client.Endpoint)
+	}
 	if err != nil {
 		return mcpTaskReceiptStatusResult{Outcome: "invalid_receipt"}, 1
 	}
