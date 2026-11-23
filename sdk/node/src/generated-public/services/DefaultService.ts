@@ -6,9 +6,6 @@ import type { FireCronRequestResponse } from '../models/FireCronRequestResponse.
 import type { MCPAdmissionEvidence } from '../models/MCPAdmissionEvidence.js';
 import type { MCPAdmissionHistoryResponse } from '../models/MCPAdmissionHistoryResponse.js';
 import type { MCPConnectionHealthSnapshot } from '../models/MCPConnectionHealthSnapshot.js';
-import type { MCPOAuthRetirement } from '../models/MCPOAuthRetirement.js';
-import type { MCPOAuthRetirementAction } from '../models/MCPOAuthRetirementAction.js';
-import type { MCPOAuthRetirementsResponse } from '../models/MCPOAuthRetirementsResponse.js';
 import type { MCPReadinessEvidence } from '../models/MCPReadinessEvidence.js';
 import type { MCPReadinessIncidentTimeline } from '../models/MCPReadinessIncidentTimeline.js';
 import type { MCPReadinessOverride } from '../models/MCPReadinessOverride.js';
@@ -480,62 +477,6 @@ export class DefaultService {
       errors: {
         400: `Invalid UUID or pagination filter`,
         404: `Deployment missing or owned by another account`,
-      },
-    });
-  }
-  /**
-   * Read administrator-only OAuth retirement history including deleted applications
-   * @returns MCPOAuthRetirementsResponse Up to fifty retirement records with sealed data omitted
-   * @throws ApiError
-   */
-  public static listMcpoAuthRetirements({
-    offset,
-  }: {
-    /**
-     * Bounded history page offset
-     */
-    offset?: number,
-  }): CancelablePromise<MCPOAuthRetirementsResponse> {
-    return __request(this?.clientConfig ?? OpenAPI, {
-      method: 'GET',
-      url: '/v1/mcp-oauth-retirements',
-      query: {
-        'offset': offset,
-      },
-      errors: {
-        400: `Invalid offset`,
-        403: `Administrator access required`,
-      },
-    });
-  }
-  /**
-   * Retry retirement or record provider-side manual revocation; administrator access and MFA policy apply
-   * @returns MCPOAuthRetirement Updated public retirement status
-   * @throws ApiError
-   */
-  public static recoverMcpoAuthRetirement({
-    id,
-    requestBody,
-  }: {
-    /**
-     * Account-owned retirement identifier
-     */
-    id: string,
-    requestBody: MCPOAuthRetirementAction,
-  }): CancelablePromise<MCPOAuthRetirement> {
-    return __request(this?.clientConfig ?? OpenAPI, {
-      method: 'POST',
-      url: '/v1/mcp-oauth-retirements/{id}',
-      path: {
-        'id': id,
-      },
-      body: requestBody,
-      mediaType: 'application/json',
-      errors: {
-        400: `Invalid recovery action or unavailable credentials`,
-        403: `Administrator access or MFA requirement not satisfied`,
-        404: `Retirement unavailable to this account`,
-        409: `Retirement is leased, terminal or expired`,
       },
     });
   }

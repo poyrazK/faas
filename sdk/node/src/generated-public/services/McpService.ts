@@ -21,8 +21,6 @@ import type { MCPReadinessPagerDutyAcknowledgementEvents } from '../models/MCPRe
 import type { MCPReadinessPagerDutyAcknowledgementPolicy } from '../models/MCPReadinessPagerDutyAcknowledgementPolicy.js';
 import type { MCPReadinessPagerDutyPolicy } from '../models/MCPReadinessPagerDutyPolicy.js';
 import type { MCPReadinessReminderDefaults } from '../models/MCPReadinessReminderDefaults.js';
-import type { MCPTaskCompatibilityReportRequest } from '../models/MCPTaskCompatibilityReportRequest.js';
-import type { MCPTaskCompatibilityReportResponse } from '../models/MCPTaskCompatibilityReportResponse.js';
 import type { SetMCPReadinessFallbackRequest } from '../models/SetMCPReadinessFallbackRequest.js';
 import type { SetMCPReadinessPagerDutyAcknowledgementsRequest } from '../models/SetMCPReadinessPagerDutyAcknowledgementsRequest.js';
 import type { SetMCPReadinessPagerDutyRequest } from '../models/SetMCPReadinessPagerDutyRequest.js';
@@ -740,64 +738,6 @@ export class McpService {
         403: `Cancelling maintenance requires admin scope and MFA`,
         404: `Maintenance window does not belong to the requested application`,
         409: `The maintenance window ended before cancellation`,
-      },
-    });
-  }
-  /**
-   * Publish an MCP task handler compatibility snapshot
-   * Replaces the app's bounded observer snapshot with aggregate waiting-task and live-worker counts by tool and handler version. The report contains no task IDs, owners, or payloads; timestamps are assigned by Gregale.
-   * @returns void
-   * @throws ApiError
-   */
-  public static putMcpTaskCompatibilityReport({
-    slug,
-    requestBody,
-  }: {
-    /**
-     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
-     */
-    slug: string,
-    requestBody: MCPTaskCompatibilityReportRequest,
-  }): CancelablePromise<void> {
-    return __request(this?.clientConfig ?? OpenAPI, {
-      method: 'PUT',
-      url: '/v1/apps/{slug}/mcp-task-compatibility',
-      path: {
-        'slug': slug,
-      },
-      body: requestBody,
-      mediaType: 'application/json',
-      errors: {
-        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
-        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
-        404: `code: not_found`,
-        413: `Request body exceeds 128 KiB.`,
-        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
-      },
-    });
-  }
-  /**
-   * Read the latest MCP task handler compatibility snapshot
-   * Returns the latest bounded observer snapshot, including server-computed freshness. An unpublished snapshot is returned as published=false and stale=true.
-   * @returns MCPTaskCompatibilityReportResponse Latest snapshot or an explicit unpublished/stale response.
-   * @throws ApiError
-   */
-  public static getMcpTaskCompatibilityReport({
-    slug,
-  }: {
-    /**
-     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
-     */
-    slug: string,
-  }): CancelablePromise<MCPTaskCompatibilityReportResponse> {
-    return __request(this?.clientConfig ?? OpenAPI, {
-      method: 'GET',
-      url: '/v1/apps/{slug}/mcp-task-compatibility',
-      path: {
-        'slug': slug,
-      },
-      errors: {
-        404: `code: not_found`,
       },
     });
   }
