@@ -139,7 +139,7 @@ func (h *Handler) enforceConsumerPlan(w http.ResponseWriter, r *http.Request, re
 	}
 	suppressFinancialUsage(r)
 	w.Header().Set("Retry-After", strconv.FormatInt(max(1, decision.RetryAfterSeconds), 10))
-	w.Header().Set("x-faas-rate-limit-scope", "consumer-plan-"+decision.Scope)
+	w.Header().Set("X-Faas-Rate-Limit-Scope", "consumer-plan-"+decision.Scope)
 	detail := "the consumer's plan allows " + strconv.FormatInt(decision.Limit, 10) + " requests per minute"
 	if decision.Scope == "month" {
 		detail = "the consumer's plan allows " + strconv.FormatInt(decision.Limit, 10) + " units per month; " +
@@ -154,7 +154,7 @@ func (h *Handler) enforceConsumerPlan(w http.ResponseWriter, r *http.Request, re
 // request is never billed.
 func (h *Handler) denyOverdue(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App, policy ConsumerPlanPolicy) {
 	suppressFinancialUsage(r)
-	w.Header().Set("x-faas-rate-limit-scope", "consumer-invoice-overdue")
+	w.Header().Set("X-Faas-Rate-Limit-Scope", "consumer-invoice-overdue")
 	detail := "an invoice due " + policy.OverdueDueAt.UTC().Format(time.DateOnly) + " is unpaid; requests resume once it is paid"
 	api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeConsumerInvoiceOverdue, "Invoice overdue", detail).
 		WithDocs("https://gregale.dev/docs/api-monetization#overdue-invoices"))
@@ -165,7 +165,7 @@ func (h *Handler) denyOverdue(w http.ResponseWriter, r *http.Request, rec *statu
 // carrying the cap and the amount due; the request is never billed.
 func (h *Handler) denySpendCapped(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App, policy ConsumerPlanPolicy) {
 	suppressFinancialUsage(r)
-	w.Header().Set("x-faas-rate-limit-scope", "consumer-spend-cap")
+	w.Header().Set("X-Faas-Rate-Limit-Scope", "consumer-spend-cap")
 	detail := "the consumer's monthly spend cap is " + strconv.FormatInt(policy.SpendCapMillicents, 10) + " " + policy.SpendCurrency +
 		" millicents; " + strconv.FormatInt(policy.SpendDueMillicents, 10) + " are due this month after prepaid credit"
 	api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeConsumerSpendCapReached, "Spend cap reached", detail).
