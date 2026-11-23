@@ -23,8 +23,12 @@ being useful on their own:
 
 1. **Replay gate on deploy.** `gregale mcp server deploy --replay` runs
    replay after the smoke fixtures and before the traffic switch. It reuses
-   `--fixtures`; tool fixtures are replayed only with `--allow-tool-execution`,
-   the same consent the smoke gate needs. A breaking catalog change, a probe
+   the prompt fixtures in `--fixtures` and never calls a tool:
+   `--allow-tool-execution` consents to one call on the candidate, not to
+   repeated calls on the serving production deployment, so tool fixtures are
+   reported as skipped (manual `mcp server replay --allow-tool` names
+   production tools explicitly). On an authenticated server it needs
+   `--token-env`, because both deployments must answer. A breaking catalog change, a probe
    that newly fails, or an unreadable deployment leaves the candidate
    unpromoted, and the receipt carries the replay report. A first deployment
    has nothing to compare with and passes with `skipped`. The flag is opt-in

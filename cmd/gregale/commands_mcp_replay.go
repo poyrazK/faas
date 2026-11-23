@@ -173,9 +173,11 @@ type mcpReplayGateReport struct {
 }
 
 // runMCPReplayGate replays the candidate against the serving endpoint with
-// the gate's fixtures. Tool fixtures run only when tool execution was allowed
-// for the smoke fixtures. A first deployment has nothing to compare with and
-// passes.
+// the gate's prompt fixtures. It never calls a tool: --allow-tool-execution
+// consents to one call on the candidate, not to calls on the serving
+// production deployment, so tool fixtures are reported as skipped (manual
+// `mcp server replay --allow-tool` names production tools explicitly). A
+// first deployment has nothing to compare with and passes.
 func runMCPReplayGate(ctx context.Context, endpoint, candidate, serving, token string, gate *mcpSmokeGate) (mcpReplayGateReport, bool) {
 	if serving == "" {
 		return mcpReplayGateReport{Skipped: "no serving deployment to compare with"}, true
@@ -183,13 +185,6 @@ func runMCPReplayGate(ctx context.Context, endpoint, candidate, serving, token s
 	options := mcphosting.ReplayOptions{}
 	if len(gate.suite.Cases) > 0 {
 		options.Fixtures = &gate.suite
-	}
-	if gate.allowTools {
-		for _, c := range gate.suite.Cases {
-			if c.Kind == "tool" {
-				options.AllowTools = append(options.AllowTools, c.Target)
-			}
-		}
 	}
 	replayCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()

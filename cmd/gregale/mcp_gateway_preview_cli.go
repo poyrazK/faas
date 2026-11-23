@@ -31,10 +31,25 @@ func withoutMCPGatewayPreview(command cliCommand) cliCommand {
 	}
 	subs := make([]cliSub, 0, len(command.Subcommands))
 	for _, sub := range command.Subcommands {
-		if !mcpGatewayPreviewSubcommands[sub.Name] {
-			subs = append(subs, sub)
+		if mcpGatewayPreviewSubcommands[sub.Name] {
+			continue
 		}
+		if sub.Name == "deploy" {
+			sub.Flags = withoutFlag(sub.Flags, "replay")
+		}
+		subs = append(subs, sub)
 	}
 	command.Subcommands = subs
 	return command
+}
+
+// withoutFlag is flags without name, in a new slice.
+func withoutFlag(flags []cliFlag, name string) []cliFlag {
+	out := make([]cliFlag, 0, len(flags))
+	for _, f := range flags {
+		if f.Name != name {
+			out = append(out, f)
+		}
+	}
+	return out
 }

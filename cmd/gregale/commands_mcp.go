@@ -913,6 +913,9 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	if cfg.Auth.Mode != mcphosting.AuthOpen && token == "" && o.publicationID == "" {
 		return printErr("MCP verification", fmt.Errorf("%s deploy requires --token-env with a %s for verification", cfg.Auth.Mode, mcpVerificationCredential(cfg.Auth.Mode)))
 	}
+	if o.replay && cfg.Auth.Mode != mcphosting.AuthOpen && token == "" {
+		return printErr("MCP replay", fmt.Errorf("--replay on a %s server requires --token-env with a %s for both deployments", cfg.Auth.Mode, mcpVerificationCredential(cfg.Auth.Mode)))
+	}
 	if o.validateEndpoint != "" {
 		report, validationErr := validateMCPEndpoint(context.Background(), o.validateEndpoint, token, mcphosting.ProtocolVersion, 30*time.Second)
 		if validationErr != nil {

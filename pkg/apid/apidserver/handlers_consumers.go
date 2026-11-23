@@ -241,7 +241,7 @@ func (s *server) createConsumerKey(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
-	if strings.TrimSpace(req.Name) == "" || len(req.Name) > 64 || len(req.Scopes) == 0 {
+	if strings.TrimSpace(req.Name) == "" || len(req.Name) > api.ConsumerKeyNameMaxBytes || len(req.Scopes) == 0 {
 		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
 			"Invalid consumer key", "name must be 1-64 characters and scopes must not be empty"))
 		return

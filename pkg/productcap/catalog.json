@@ -3383,6 +3383,7 @@
         "/dashboard/mcp",
         "/v1/apps/{}/deployments/{}/instances/{}/mcp-health",
         "/v1/apps/{}/deployments/{}/instances/{}/mcp-probe",
+        "/v1/apps/{}/mcp-tool-insights",
         "/v1/deployments/{}/mcp-admissions",
         "/v1/mcp",
         "/v1/mcp-connection-health"

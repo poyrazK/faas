@@ -166,6 +166,9 @@ func mcpKeyCreate(ctx context.Context, c *Client, o mcpKeyCreateOptions) int {
 	}
 	created, err := c.CreateConsumerKey(ctx, o.slug, consumerID, req)
 	if err != nil {
+		if o.newConsumer != "" {
+			PrintWarn(osStderr, "Consumer %s (%s) was created; retry with --consumer %s", o.newConsumer, consumerID, consumerID)
+		}
 		return printErr("Could not create key", err)
 	}
 	if jsonOutput {
@@ -181,8 +184,8 @@ func mcpKeyCreate(ctx context.Context, c *Client, o mcpKeyCreateOptions) int {
 // --scopes the endpoint scopes from an api-key gregale-mcp.json are used.
 func mcpKeyRequest(o mcpKeyCreateOptions) (api.CreateConsumerKeyRequest, error) {
 	req := api.CreateConsumerKeyRequest{Name: strings.TrimSpace(o.name)}
-	if req.Name == "" {
-		return req, errors.New("--name is required")
+	if req.Name == "" || len(req.Name) > api.ConsumerKeyNameMaxBytes {
+		return req, fmt.Errorf("--name is required and at most %d bytes", api.ConsumerKeyNameMaxBytes)
 	}
 	names := splitMCPScopes(o.scopes)
 	if len(names) == 0 {
@@ -198,6 +201,9 @@ func mcpKeyRequest(o mcpKeyCreateOptions) (api.CreateConsumerKeyRequest, error) 
 			return req, fmt.Errorf("%s auth mode is %q, not api-key; run `gregale mcp server auth enable --mode api-key` or pass --scopes", mcphosting.ConfigFile, cfg.Auth.Mode)
 		}
 		names = cfg.Auth.Scopes
+	}
+	if len(names) == 0 {
+		return req, fmt.Errorf("no MCP scopes: pass --scopes or set auth.scopes in %s", mcphosting.ConfigFile)
 	}
 	for _, n := range names {
 		scope := api.ConsumerKeyMCPScopePrefix + strings.TrimPrefix(n, api.ConsumerKeyMCPScopePrefix)
