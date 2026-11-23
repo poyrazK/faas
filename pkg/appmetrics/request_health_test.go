@@ -22,7 +22,7 @@ func TestRequestHealth_SameWindowAndFreshness(t *testing.T) {
 		{"5xx failure", "class=\"5xx\"", SourceDegraded},
 		{"coverage failure", "count(count by", SourceDegraded},
 		{"freshness failure", "timestamp(", SourceDegraded},
-		{"unattributed failure", "|__other__", SourceDegraded},
+		{"unattributed failure", "__other__", SourceDegraded},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			queries := []string{}
@@ -43,7 +43,7 @@ func TestRequestHealth_SameWindowAndFreshness(t *testing.T) {
 				if strings.Contains(q, "count(count by") {
 					value = 1
 				}
-				if strings.Contains(q, "|__other__") {
+				if strings.Contains(q, "__other__") {
 					value = 0
 				}
 				_, _ = fmt.Fprintf(w, `{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"%g"]}]}}`, value)
@@ -64,14 +64,19 @@ func TestRequestHealth_SameWindowAndFreshness(t *testing.T) {
 					t.Fatalf("%d queries", len(queries))
 				}
 				for _, q := range queries {
-					if !strings.Contains(q, "gateway_request_duration_by_deployment_seconds_count") || !strings.Contains(q, `app="app"`) || !strings.Contains(q, "deployment=~") {
+					if !strings.Contains(q, "gateway_request_duration_by_deployment_seconds_count") || !strings.Contains(q, `app="app"`) || !strings.Contains(q, "deployment=") {
 						t.Fatalf("unscoped query: %s", q)
 					}
 					if strings.Contains(q, "quantile") || strings.Contains(q, "wake") {
 						t.Fatalf("unrelated signal queried: %s", q)
 					}
-					if (strings.Contains(q, "count(count by") || strings.Contains(q, "|__other__")) && !strings.Contains(q, "count_over_time(") {
+					if (strings.Contains(q, "count(count by") || strings.Contains(q, "__other__")) && !strings.Contains(q, "count_over_time(") {
 						t.Fatalf("partial counter samples could be hidden: %s", q)
+					}
+					// Gateway-answered refusals (401 without an API key, CORS
+					// preflights) are unattributed but not release failures.
+					if strings.Contains(q, "__other__") && (!strings.Contains(q, `deployment="__other__"}`) || !strings.Contains(q, `deployment="",class="5xx"}`)) {
+						t.Fatalf("unattributed check must block on any overflow and on pre-routing 5xx only: %s", q)
 					}
 				}
 			}
@@ -91,7 +96,7 @@ func TestRequestHealth_IncompleteOrInvalidEvidence(t *testing.T) {
 		name, signal, value, reason string
 	}{
 		{"missing release samples", "count(count by", "1", "request_coverage_incomplete"},
-		{"overflow or pre-routing requests", "|__other__", "0.1", "request_coverage_incomplete"},
+		{"overflow or pre-routing requests", "__other__", "0.1", "request_coverage_incomplete"},
 		{"invalid count", "sum(increase", "NaN", "request_evidence_unavailable"},
 		{"invalid coverage", "count(count by", "NaN", "request_evidence_unavailable"},
 		{"invalid timestamp", "timestamp(", "1e20", "request_evidence_unavailable"},
@@ -106,7 +111,7 @@ func TestRequestHealth_IncompleteOrInvalidEvidence(t *testing.T) {
 					value = "2"
 				case strings.Contains(q, "timestamp("):
 					value = "1791201600"
-				case strings.Contains(q, "|__other__"), strings.Contains(q, `class="5xx"`):
+				case strings.Contains(q, "__other__"), strings.Contains(q, `class="5xx"`):
 					value = "0"
 				}
 				if strings.Contains(q, tt.signal) {
