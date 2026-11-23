@@ -330,6 +330,15 @@ func (s *server) resetProjectEnvironmentBranch(w http.ResponseWriter, r *http.Re
 		return
 	}
 	ctx := r.Context()
+	// The branch is made again under the same slug, so the old one's
+	// credentials leave its scope now rather than with the reconciler.
+	if err := s.releaseEnvironmentBranchCredentials(ctx, branch); err != nil {
+		if s.log != nil {
+			s.log.Error("environment branch credentials could not be released for reset", "environment_id", branch.EnvironmentID, "err", err)
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not release the branch's database and bucket credentials; the branch was not reset, try again"))
+		return
+	}
 	if err := store.DeleteProjectEnvironmentBranch(ctx, acct.ID, project.ID, branch.Slug); err != nil {
 		if errors.Is(err, state.ErrProjectEnvironmentBranchChildren) {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeEnvironmentBranchHasBranches, "Environment branch has branches",

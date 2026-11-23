@@ -84,17 +84,18 @@ func (p *Provider) Usage(ctx context.Context, providerResourceID string, window 
 	if err := validateConsumptionCoverage(response.Projects[0], window); err != nil {
 		return managedpostgres.Usage{}, err
 	}
-	compute, storage, history, egress, err := sumConsumption(response.Projects[0])
+	totals, err := sumConsumption(response.Projects[0])
 	if err != nil {
 		return managedpostgres.Usage{}, err
 	}
 	usage := managedpostgres.Usage{
 		Window: window,
 		Readings: []managedpostgres.MeterReading{
-			{Meter: managedpostgres.MeterComputeUnitSeconds, Quantity: compute},
-			{Meter: managedpostgres.MeterStorageByteSeconds, Quantity: storage},
-			{Meter: managedpostgres.MeterHistoryByteSeconds, Quantity: history},
-			{Meter: managedpostgres.MeterEgressBytes, Quantity: egress},
+			{Meter: managedpostgres.MeterComputeUnitSeconds, Quantity: totals.compute},
+			{Meter: managedpostgres.MeterStorageByteSeconds, Quantity: totals.storage},
+			{Meter: managedpostgres.MeterHistoryByteSeconds, Quantity: totals.history},
+			{Meter: managedpostgres.MeterSnapshotByteSeconds, Quantity: totals.snapshots},
+			{Meter: managedpostgres.MeterEgressBytes, Quantity: totals.egress},
 		},
 	}
 	if err := usage.Validate(); err != nil {
@@ -185,17 +186,26 @@ func validateConsumptionCoverage(project projectConsumption, window managedpostg
 	return nil
 }
 
-func sumConsumption(project projectConsumption) (int64, int64, int64, int64, error) {
+// consumptionTotals is a project's consumption over the window: compute in
+// CU-seconds, branch storage, instant-restore history and snapshot storage in
+// byte-seconds, and public egress in bytes. Restore history and snapshots are
+// apart because Neon prices them differently (ADR-20261123062111).
+type consumptionTotals struct {
+	compute, storage, history, snapshots, egress int64
+}
+
+func sumConsumption(project projectConsumption) (consumptionTotals, error) {
 	var compute int64
 	var storageByteMonths int64
 	var historyByteMonths int64
+	var snapshotByteMonths int64
 	var egress int64
 	for _, period := range project.Periods {
 		for _, timeframe := range period.Consumption {
 			seen := make(map[string]bool, len(timeframe.Metrics))
 			for _, metric := range timeframe.Metrics {
 				if metric.Name == "" || seen[metric.Name] || metric.Value == nil || *metric.Value < 0 {
-					return 0, 0, 0, 0, managedpostgres.ErrUnavailable
+					return consumptionTotals{}, managedpostgres.ErrUnavailable
 				}
 				seen[metric.Name] = true
 				value := *metric.Value
@@ -205,8 +215,10 @@ func sumConsumption(project projectConsumption) (int64, int64, int64, int64, err
 					compute, err = addQuantity(compute, value)
 				case "root_branch_bytes_month", "child_branch_bytes_month":
 					storageByteMonths, err = addQuantity(storageByteMonths, value)
-				case "instant_restore_bytes_month", "snapshot_storage_bytes_month":
+				case "instant_restore_bytes_month":
 					historyByteMonths, err = addQuantity(historyByteMonths, value)
+				case "snapshot_storage_bytes_month":
+					snapshotByteMonths, err = addQuantity(snapshotByteMonths, value)
 				case "public_network_transfer_bytes":
 					egress, err = addQuantity(egress, value)
 				case "private_network_transfer_bytes":
@@ -216,23 +228,26 @@ func sumConsumption(project projectConsumption) (int64, int64, int64, int64, err
 					// (ADR-20261110160000) and is not billed as egress
 					// overage, which is priced from Neon's public transfer.
 				default:
-					return 0, 0, 0, 0, managedpostgres.ErrUnavailable
+					return consumptionTotals{}, managedpostgres.ErrUnavailable
 				}
 				if err != nil {
-					return 0, 0, 0, 0, err
+					return consumptionTotals{}, err
 				}
 			}
 		}
 	}
-	storage, err := byteMonthsToSeconds(storageByteMonths)
-	if err != nil {
-		return 0, 0, 0, 0, err
+	totals := consumptionTotals{compute: compute, egress: egress}
+	for _, c := range []struct {
+		byteMonths int64
+		out        *int64
+	}{{storageByteMonths, &totals.storage}, {historyByteMonths, &totals.history}, {snapshotByteMonths, &totals.snapshots}} {
+		seconds, err := byteMonthsToSeconds(c.byteMonths)
+		if err != nil {
+			return consumptionTotals{}, err
+		}
+		*c.out = seconds
 	}
-	history, err := byteMonthsToSeconds(historyByteMonths)
-	if err != nil {
-		return 0, 0, 0, 0, err
-	}
-	return compute, storage, history, egress, nil
+	return totals, nil
 }
 
 // Neon v2 reports byte-months, normalized to a fixed 744-hour billing month.

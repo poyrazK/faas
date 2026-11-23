@@ -123,24 +123,36 @@ const doctorGatewayRetries = 2
 
 var doctorGatewayRetryDelay = time.Second
 
+// doctorSigningKeyRetries bounds how often discovery is repeated while the
+// server reports that it could not fetch its authorization server's signing
+// keys (401 invalid_token "signing keys unavailable"): the token was never
+// checked. One retry a second later still failed releases whose identity
+// provider was slow or briefly unreachable (2 of 4 external-OAuth deploys on
+// prod, 2026-11-22). About 12 s keeps this inside the 30 s verification
+// budget. A 401 for any other reason, such as a bad token, is not retried.
+const doctorSigningKeyRetries = 4
+
+var doctorSigningKeyRetryDelay = 3 * time.Second
+
 func discoverCatalogRetryingGateway(ctx context.Context, c *Client) (Catalog, Exchange, error) {
 	catalog, x, err := c.DiscoverCatalog(ctx)
-	keysRetried := false
-	for attempt := 0; attempt < doctorGatewayRetries && err != nil; attempt++ {
+	gatewayRetries, keyRetries := 0, 0
+	for err != nil {
+		var delay time.Duration
 		switch {
-		case transientGatewayStatus(x.HTTPStatus):
-		case !keysRetried && signingKeysUnavailableError(err):
-			// The server could not fetch its authorization server's JWKS,
-			// typically on a fresh candidate's first request; the token was
-			// never checked. One more try, after the server's backoff.
-			keysRetried = true
+		case transientGatewayStatus(x.HTTPStatus) && gatewayRetries < doctorGatewayRetries:
+			gatewayRetries++
+			delay = doctorGatewayRetryDelay
+		case signingKeysUnavailableError(err) && keyRetries < doctorSigningKeyRetries:
+			keyRetries++
+			delay = doctorSigningKeyRetryDelay
 		default:
 			return catalog, x, err
 		}
 		select {
 		case <-ctx.Done():
 			return catalog, x, err
-		case <-time.After(doctorGatewayRetryDelay):
+		case <-time.After(delay):
 		}
 		catalog, x, err = c.DiscoverCatalog(ctx)
 	}

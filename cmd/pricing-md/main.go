@@ -31,7 +31,6 @@ func run(w io.Writer) error {
 func render() string {
 	var b strings.Builder
 	b.WriteString("# Plans and pricing\n\n")
-	b.WriteString("<!-- GENERATED — do not edit by hand; regenerate with `make pricing-md`. -->\n\n")
 	b.WriteString("These are the same limits the API enforces: this page is generated from them. Prices are monthly, shown in US dollars and before tax: the billing provider adds any sales tax or VAT that applies where you live at checkout. Usage beyond the included GB-RAM-hours is billed at " + formatPrice(api.OverageMillicentsPerGBHour) + " per GB-RAM-hour on paid plans.\n\n")
 	b.WriteString("## At a glance\n\n")
 	b.WriteString("What each plan gets: how many apps you can deploy, how much RAM each instance has, and the rest of its limits. [What each limit means](#what-each-limit-means) explains every column.\n\n")
@@ -114,6 +113,7 @@ func render() string {
 	fmt.Fprintf(&b, "\nThe connection limit counts open WebSocket and SSE connections across all of an account's endpoints. One account may also hold at most %d%% of a single realtime node's connections; see [realtime fair use](realtime.md#fair-use-limits).\n",
 		api.RealtimeAccountNodeSharePercent)
 	renderObjectStorage(&b)
+	renderManagedPostgres(&b)
 	b.WriteString("\n## Choose a plan\n\n")
 	b.WriteString("Start on **Free** for a small public API or a trial. **Hobby** unlocks the paid observability, async, and data surfaces. **Pro** is the normal production tier for teams, while **Scale** raises the app, concurrency, RAM, and usage ceilings. Feature maturity and entitlement are listed in the [capability matrix](capabilities.md).\n\n")
 	b.WriteString("Plan changes are safe to preview with `gregale billing plan`; quota errors include the exact observed value, limit, and next action.\n")
@@ -142,6 +142,39 @@ func renderObjectStorage(b *strings.Builder) {
 	}
 	fmt.Fprintf(b, "\nIncluded storage is the average over the month, so 20 GiB held for half a month uses 10 GiB of it. A lower spend cap lowers how much a paid plan stores: a $0 cap stops at the included storage. Need more than the plan stores? Ask support to raise your account's ceiling; your spend cap still applies. At the ceiling, uploads are refused, and downloads stop while you store more than it until you delete objects. A downgrade waits until your data fits. Every plan stores up to %s objects per account, counting retained versions. Egress counts the bytes Gregale serves from your buckets, through `s3.gregale.dev`, signed URLs and public buckets; a public object served from the CDN's cache does not count. At the egress limit, requests other than deletes are refused until the month ends; at the request limit, every request is refused until the month ends. See [object storage](object-storage.md#limits).\n",
 		formatCount(api.MaxObjectStorageAccountKeys))
+}
+
+// renderManagedPostgres lists each plan's managed PostgreSQL allowances and
+// the overage prices past them (ADR-20261102072425, ADR-20261110160000,
+// ADR-20261123062111). docs/postgres.md states the same figures.
+func renderManagedPostgres(b *strings.Builder) {
+	b.WriteString("\n## Managed PostgreSQL\n\n")
+	b.WriteString("Each paid plan includes [managed PostgreSQL](postgres.md) databases, with storage pooled across them and a monthly compute allowance. Restore history and snapshots are included up to the size of the storage pool, averaged over the month.\n\n")
+	b.WriteString("| Plan | Databases | Pooled storage | Compute per month | Included restore history |\n")
+	b.WriteString("|---|---:|---:|---:|---:|\n")
+	for _, plan := range api.Plans {
+		l, ok := api.ManagedPostgresLimitsFor(plan)
+		if !ok || !api.ManagedPostgresIncluded(plan) {
+			fmt.Fprintf(b, "| **%s** | — | — | — | — |\n", titlePlan(plan))
+			continue
+		}
+		fmt.Fprintf(b, "| **%s** | %d | %s | %s CU-hours | %s |\n", titlePlan(plan), l.DatabasesMax, formatGiB(l.StorageLimitBytes),
+			formatThousands(l.MonthlyComputeUnitSeconds/3600), formatGiB(api.ManagedPostgresIncludedHistoryBytes(l.StorageLimitBytes)))
+	}
+	fmt.Fprintf(b, "\nWith overage on (`gregale postgres overage on`), compute past the allowance costs %s per CU-hour, storage past the pool %s per GiB-month, restore history past the included history %s per GB-month and snapshots past it %s per GB-month. Restore history uses the included history first. With egress overage on, a database's egress past its own 500 GB costs %s per GB. Overage counts toward your [spend cap](billing.md#spend-cap). A GB is 10^9 bytes. See [usage and limits](postgres.md#usage-and-limits).\n",
+		formatExactPrice(api.ManagedPostgresOverageMillicentsPerComputeUnitHour), formatExactPrice(api.ManagedPostgresStorageOverageMillicentsPerGiBMonth),
+		formatExactPrice(api.ManagedPostgresRestoreHistoryOverageMillicentsPerGBMonth), formatExactPrice(api.ManagedPostgresSnapshotOverageMillicentsPerGBMonth),
+		formatExactPrice(api.ManagedPostgresEgressOverageMillicentsPerGB))
+}
+
+// formatExactPrice renders a unit price to the millicent, with at least
+// cents: 23310 → "$0.2331", 9450 → "$0.0945", 50000 → "$0.50".
+func formatExactPrice(millicents int64) string {
+	frac := fmt.Sprintf("%05d", millicents%100_000)
+	for len(frac) > 2 && frac[len(frac)-1] == '0' {
+		frac = frac[:len(frac)-1]
+	}
+	return fmt.Sprintf("%s%d.%s", api.BillingCurrencySymbol, millicents/100_000, frac)
 }
 
 func formatGiB(bytes int64) string {

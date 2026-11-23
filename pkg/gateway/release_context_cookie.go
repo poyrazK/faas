@@ -90,7 +90,7 @@ func consumeManagedReleaseSubprotocol(r *http.Request) (releaseID string, presen
 		return "", false, false
 	}
 	var appProtocols []string
-	for _, value := range r.Header.Values("Sec-WebSocket-Protocol") {
+	for _, value := range r.Header.Values("Sec-Websocket-Protocol") {
 		for _, item := range strings.Split(value, ",") {
 			protocol := strings.TrimSpace(item)
 			if !strings.HasPrefix(protocol, api.ManagedReleaseSubprotocolPrefix) {
@@ -116,9 +116,9 @@ func consumeManagedReleaseSubprotocol(r *http.Request) (releaseID string, presen
 	if !present {
 		return "", false, false
 	}
-	r.Header.Del("Sec-WebSocket-Protocol")
+	r.Header.Del("Sec-Websocket-Protocol")
 	if len(appProtocols) > 0 {
-		r.Header.Set("Sec-WebSocket-Protocol", strings.Join(appProtocols, ", "))
+		r.Header.Set("Sec-Websocket-Protocol", strings.Join(appProtocols, ", "))
 	}
 	return releaseID, true, invalid
 }
