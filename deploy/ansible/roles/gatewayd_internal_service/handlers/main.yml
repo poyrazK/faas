@@ -39,17 +39,26 @@
   listen: restart faas-gatewayd-internal listeners
   when: not (faas_join_defer_service_handlers | default(false) | bool)
 
-- name: gatewayd_internal_service — try-restart faas-gatewayd-internal
-  ansible.builtin.command: systemctl try-restart faas-gatewayd-internal.service  # noqa: command-instead-of-module (systemd module has no try-restart)
+- name: gatewayd_internal_service — reload or restart faas-gatewayd-internal
+  # Hand off (ADR-1736) when nothing systemd reads changed, else restart:
+  # a restart cuts long MCP calls and SSE streams (ADR-20261123110000).
+  ansible.builtin.command: /usr/local/sbin/faas-reload-or-restart faas-gatewayd-internal.service gatewayd-internal
   changed_when: true
   listen: restart faas-gatewayd-internal
   when: not (faas_join_defer_service_handlers | default(false) | bool)
 
 - name: restart faas-realtimed
-  ansible.builtin.systemd:
-    name: faas-realtimed
-    state: restarted
-    daemon_reload: true
+  # Realtime sessions survive a converge by hand-off; a stopped realtimed is
+  # still started, as `state: restarted` did (ADR-20261123110000).
+  ansible.builtin.shell: |
+    set -eu
+    systemctl daemon-reload
+    if systemctl is-active --quiet faas-realtimed.service; then
+      /usr/local/sbin/faas-reload-or-restart faas-realtimed.service realtimed
+    else
+      systemctl restart faas-realtimed.service
+    fi
+  changed_when: true
   listen: restart faas-realtimed
   when: not (faas_join_defer_service_handlers | default(false) | bool)
 

@@ -13,6 +13,9 @@
 #   - enable the unit (`systemctl enable --now faas-gatewayd-public`)
 #   - run the daemon (Caddy reverse-proxy upstream is the trigger)
 
+- name: gatewayd_public_service — install the reload-or-restart helper
+  ansible.builtin.include_tasks: ../../_shared/tasks/reload_or_restart_helper.yml
+
 - name: gatewayd_public_service — configure optional TCP certificate directory
   ansible.builtin.import_tasks: tcp_tls.yml
 

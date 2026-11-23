@@ -360,6 +360,11 @@ jobs:
       - name: signed component hotfix controller contracts
         run: bash scripts/ops/request_evidence_hotfix_test.sh
 
+      # Gateway converge handlers hand off instead of cutting long requests
+      # when nothing systemd reads changed (ADR-20261123110000).
+      - name: gateway reload-or-restart helper
+        run: bash deploy/ansible/roles/_shared/files/faas-reload-or-restart_test.sh
+
       # cd-compute and cd-controlplane reuse one cached Ansible toolchain per
       # pin on the fleet runner; a stale or half-built cache must never run.
       - name: CD Ansible toolchain cache

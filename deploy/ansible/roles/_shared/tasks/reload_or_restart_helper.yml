@@ -1,0 +1,11 @@
+---
+# Installs faas-reload-or-restart, which the gateway roles' restart handlers
+# use so a converge hands a running daemon off (ADR-1736) instead of cutting
+# its long requests and streams. See ADR-20261123110000.
+- name: install faas-reload-or-restart
+  ansible.builtin.copy:
+    src: ../../_shared/files/faas-reload-or-restart
+    dest: /usr/local/sbin/faas-reload-or-restart
+    owner: root
+    group: root
+    mode: "0755"

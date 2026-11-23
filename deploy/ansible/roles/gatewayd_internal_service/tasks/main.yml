@@ -8,6 +8,9 @@
 # lose the bind-mount). The unit also permits IPv4/IPv6 for outbound customer
 # log-drain delivery while keeping inbound traffic loopback-only.
 
+- name: gatewayd_internal_service — install the reload-or-restart helper
+  ansible.builtin.include_tasks: ../../_shared/tasks/reload_or_restart_helper.yml
+
 - name: gatewayd_internal_service — install systemd unit
   notify: restart faas-gatewayd-internal
   ansible.builtin.copy:

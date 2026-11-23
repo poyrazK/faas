@@ -9,8 +9,10 @@
     - restart faas-gatewayd-public-edge
     - restart faas-cloudflared
 
-- name: gatewayd_public_edge_service — try-restart faas-gatewayd-public-edge
-  ansible.builtin.command: systemctl try-restart faas-gatewayd-public-edge.service  # noqa: command-instead-of-module (systemd module has no try-restart)
+- name: gatewayd_public_edge_service — reload or restart faas-gatewayd-public-edge
+  # Hand off (ADR-1736) when nothing systemd reads changed, else restart:
+  # a restart cuts long MCP calls and SSE streams (ADR-20261123110000).
+  ansible.builtin.command: /usr/local/sbin/faas-reload-or-restart faas-gatewayd-public-edge.service gatewayd-public
   changed_when: true
   listen: restart faas-gatewayd-public-edge
   when: not (faas_join_defer_service_handlers | default(false) | bool)
