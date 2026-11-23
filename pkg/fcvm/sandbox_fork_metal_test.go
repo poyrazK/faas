@@ -88,17 +88,26 @@ echo started`); code != 0 || !strings.Contains(out, "started") {
 	if out, code := userExec(t, m, req.Instance, source, `echo after-fork > /workspace/source-only.txt && sync && echo ok`); code != 0 || !strings.Contains(out, "ok") {
 		t.Fatalf("the source stopped running after the fork: %q exit %d", out, code)
 	}
-	if err := m.PublishSandboxCapture(ctx, forked.Snapshot.StorageKey); err != nil {
-		t.Fatalf("upload capture: %v", err)
-	}
-	if _, err := forked.Volume.Upload(ctx, shared); err != nil {
-		t.Fatalf("upload volume: %v", err)
+	// Same-node forks (FAAS_TEST_SANDBOX_FORK_LOCAL=1) start from the node's
+	// copies before anything reaches the shared store.
+	local := os.Getenv("FAAS_TEST_SANDBOX_FORK_LOCAL") == "1"
+	if !local {
+		if err := m.PublishSandboxCapture(ctx, forked.Snapshot.StorageKey); err != nil {
+			t.Fatalf("upload capture: %v", err)
+		}
+		if _, err := forked.Volume.Upload(ctx, shared); err != nil {
+			t.Fatalf("upload volume: %v", err)
+		}
 	}
 
 	ips := map[string]string{src.Lease.HostIP.String(): req.Instance}
 	for _, name := range []string{"a", "b"} {
 		id := "sbx-fork-" + name
+		volBegun := time.Now()
 		vol, err := volumes.RestoreBackupFrom(ctx, shared, account, source, id, forked.Volume.ID)
+		if err == nil {
+			t.Logf("fork %s volume in %d ms (local %v)", name, time.Since(volBegun).Milliseconds(), local)
+		}
 		if err != nil {
 			t.Fatalf("fork %s volume: %v", name, err)
 		}
@@ -135,6 +144,21 @@ echo mine > /workspace/other-fork.txt && sync`)
 	}
 	if out, code := userExec(t, m, req.Instance, source, `test -e /workspace/other-fork.txt && echo leaked; echo checked`); code != 0 || strings.Contains(out, "leaked") {
 		t.Fatalf("a fork's write reached the source:\n%s", out)
+	}
+	if local {
+		for _, key := range sandboxCaptureKeys(forked.Snapshot.StorageKey)[:3] {
+			if rc, err := shared.Get(ctx, key); err == nil {
+				_ = rc.Close()
+				t.Fatalf("the shared store has %s: the forks did not start from the node's copy", key)
+			}
+		}
+		// The upload still works after forks started from the clone.
+		if err := m.PublishSandboxCapture(ctx, forked.Snapshot.StorageKey); err != nil {
+			t.Fatalf("upload capture after local forks: %v", err)
+		}
+		if _, err := forked.Volume.Upload(ctx, shared); err != nil {
+			t.Fatalf("upload volume after local forks: %v", err)
+		}
 	}
 	for _, id := range []string{"sbx-fork-vm-a", "sbx-fork-vm-b", req.Instance} {
 		if err := m.Destroy(ctx, id); err != nil {
