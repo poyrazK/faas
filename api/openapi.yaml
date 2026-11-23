@@ -31914,7 +31914,7 @@ paths:
       tags: [apps]
       operationId: getVerificationContract
       summary: Read an app's stored verification contract.
-      description: "Returns the gregale.verify.yaml contract (as JSON) that production deployments of the app are checked against before they take traffic (ADR-20261122220000). 404 when no contract is stored or the verification-contracts capability is not released to the account. Requires app read access."
+      description: "Returns the gregale.verify.yaml contract (as JSON) that production deployments of the app are checked against before they take traffic. 404 when no contract is stored or the verification-contracts capability is not released to the account. Requires app read access."
       x-since: 2026-11
       responses:
         '200':
