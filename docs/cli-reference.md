@@ -4784,6 +4784,32 @@ Read compute policy change progress
 
 `gregale postgres compute-policy status <database> <request_uuid>`
 
+### postgres suspend-after
+
+Set how long an idle scale-to-zero database stays up (1m-1h, or default)
+
+`gregale postgres suspend-after <set> <database> <duration|default>`
+
+Examples:
+
+```sh
+gregale postgres suspend-after set orders-db 2m
+gregale postgres suspend-after set orders-db default
+```
+
+#### postgres suspend-after set
+
+Set how long an idle scale-to-zero database stays up (1m-1h, or default)
+
+`gregale postgres suspend-after set <database> <duration|default>`
+
+Examples:
+
+```sh
+gregale postgres suspend-after set orders-db 2m
+gregale postgres suspend-after set orders-db default
+```
+
 ### postgres resize
 
 Durably resize compute; clients may disconnect
