@@ -921,6 +921,8 @@ func TestProjectRollbackPreparationBudgetsPendingVerification(t *testing.T) {
 	healthySince := now.Add(-stabilizeFor)
 	generation := int64(1)
 	op := state.ProjectRollbackRecord{ProjectRollbackOperation: api.ProjectRollbackOperation{
+		Status:              "blocked",
+		Phase:               api.ProjectRollbackReleasing,
 		StabilizeForSeconds: int(stabilizeFor / time.Second),
 		Steps: []api.ProjectRollbackStep{
 			{Status: "skipped", Health: &api.ProjectRollbackHealth{Status: "pending"}},
