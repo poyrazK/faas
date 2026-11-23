@@ -8,6 +8,7 @@ permissions: {}
 concurrency:
   group: production-us-platform-rollout
   cancel-in-progress: false
+  queue: max
 
 jobs:
   restart:
@@ -56,13 +57,13 @@ jobs:
           for _ in {1..30}; do
             # The root route may return an HTTP error. Any HTTP response shows
             # that the bridge has opened its listener after loading state.
-            if systemctl is-active --quiet "$unit" &&
-              curl --silent --noproxy '*' --max-time 2 --output /dev/null http://127.0.0.1:8787/; then
-              after="$(systemctl show --property=InvocationID --value "$unit")"
-              if [[ -n "$after" && "$after" != "$before" ]]; then
-                printf 'Hosted MCP bridge invocation changed from %s to %s\n' "$before" "$after"
-                exit 0
-              fi
+            candidate="$(systemctl show --property=InvocationID --value "$unit")"
+            if [[ -n "$candidate" && "$candidate" != "$before" ]] &&
+              curl --silent --noproxy '*' --max-time 2 --output /dev/null http://127.0.0.1:8787/ &&
+              systemctl is-active --quiet "$unit" &&
+              [[ "$(systemctl show --property=InvocationID --value "$unit")" == "$candidate" ]]; then
+              printf 'Hosted MCP bridge invocation changed from %s to %s\n' "$before" "$candidate"
+              exit 0
             fi
             sleep 2
           done
