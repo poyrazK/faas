@@ -53,5 +53,7 @@ faas_runner_memory_max: ""
 faas_runner_gomaxprocs: ""
 faas_runner_protect_system: full
 # The build runner's job hook that kills Go processes a cancelled job left
-# (templates/faas-build-runner-job-cleanup.sh.j2); build runners only.
-faas_runner_job_cleanup_hook: /usr/local/bin/faas-build-runner-job-cleanup
+# (templates/faas-build-runner-job-cleanup.sh.j2); build runners only. The
+# runner runs a hook only by extension (.sh, .ps1, .js): without one every
+# job fails at "Set up runner" (2026-11-22).
+faas_runner_job_cleanup_hook: /usr/local/bin/faas-build-runner-job-cleanup.sh
