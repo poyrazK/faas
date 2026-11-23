@@ -8645,6 +8645,9 @@ func renderDeployFailure(d api.DeploymentResponse) int {
 					_, _ = fmt.Fprintf(os.Stderr, "    %s\n", line)
 				}
 			}
+			if hint := startupCrashCauseHint(d.Error); hint != "" {
+				_, _ = fmt.Fprintf(os.Stderr, "  %s\n", hint)
+			}
 			if d.Error == "infra" {
 				return 3
 			}
@@ -8713,6 +8716,23 @@ func startupCrashExcerpt(detail string) []string {
 	}
 	end := min(start+8, len(lines))
 	return lines[start:end]
+}
+
+// startupCrashCauseHint names the fix for a crash cause the generic crash
+// copy cannot: a serving DATABASE_URL that may not change the schema. The
+// voting-app worker created its table at startup and died on SQLSTATE 42501
+// "permission denied for schema public"; the deploy showed only the generic
+// crash fix, so the agent spent turns finding MIGRATION_DATABASE_URL (agent
+// eval 2026-11-23).
+func startupCrashCauseHint(detail string) string {
+	lower := strings.ToLower(detail)
+	if strings.Contains(lower, "42501") || strings.Contains(lower, "permission denied for schema") ||
+		strings.Contains(lower, "must be owner of") {
+		return "PostgreSQL refused a schema change: the serving DATABASE_URL cannot create or alter tables. " +
+			"Attach the database with `gregale postgres attach <db> <app> --env MIGRATION_DATABASE_URL --access migration` " +
+			"and run the change in release.command (gregale.yaml), which receives that credential."
+	}
+	return ""
 }
 
 // mapFailureMessage returns the user-facing copy for one of the four

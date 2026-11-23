@@ -2764,3 +2764,20 @@ func TestCmdTrafficStatusSeparatesScopes(t *testing.T) {
 		t.Errorf("scopes were summed into one total: %s", output)
 	}
 }
+
+// TestStartupCrashCauseHintNamesMigrationCredential pins the agent eval of
+// 2026-11-23 (voting-app P6): a worker creating its table with the serving
+// DATABASE_URL died on 42501 and the deploy gave only generic crash advice.
+func TestStartupCrashCauseHintNamesMigrationCredential(t *testing.T) {
+	npgsql := "workload stopped during startup (guest 7d70 exited before becoming ready): " +
+		"Npgsql.PostgresException (0x80004005): 42501: permission denied for schema public\n  SqlState: 42501"
+	if hint := startupCrashCauseHint(npgsql); !strings.Contains(hint, "MIGRATION_DATABASE_URL") || !strings.Contains(hint, "release.command") {
+		t.Fatalf("hint = %q", hint)
+	}
+	if hint := startupCrashCauseHint("psycopg.errors.InsufficientPrivilege: must be owner of table votes"); hint == "" {
+		t.Fatal("must be owner of: no hint")
+	}
+	if hint := startupCrashCauseHint("Error: PORT is not set"); hint != "" {
+		t.Fatalf("unrelated crash got %q", hint)
+	}
+}
