@@ -1020,6 +1020,12 @@ func pinMCPCandidateRevisionWithSubmit(ctx context.Context, c *Client, o mcpDepl
 		return api.DeploymentResponse{}, "", err
 	}
 	health := probeMCPCatalogHealth(ctx, preview, 5*time.Second)
+	if health.EdgeAnswered && !health.Supported {
+		// The gateway answers an app's health path itself, so the public
+		// probe never reaches the server's catalog digest; --require-catalog-pin
+		// then refused every first deploy. Read it from a replica instead.
+		health = probeMCPCatalogReplicaForPin(ctx, c, o.slug, candidate.ID, preview, health)
+	}
 	digest, err := mcpCatalogDigestForPin(health)
 	if err != nil {
 		return api.DeploymentResponse{}, "", err

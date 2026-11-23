@@ -104,6 +104,14 @@ gregale postgres attach orders my-api --env DATABASE_URL
 - A bound app can reach its database on every plan. Other destinations on port
   5432 stay closed unless the app declares that egress port (Pro and Scale).
 
+> **Schema changes need a second binding.** The default `read_write` access
+> can read and write rows in `public` but cannot `CREATE`, `ALTER` or `DROP`
+> anything, so a migration run at app startup fails with `permission denied`.
+> Attach the database again with `--access migration --env MIGRATION_DATABASE_URL`
+> and run your migration tool as a release task pointed at that URL. Serving
+> instances never receive it. The access levels are listed under
+> [Connect from your laptop](#connect-from-your-laptop).
+
 ### Declare the database in gregale.yaml
 
 Instead of `gregale postgres attach`, you can declare the database in

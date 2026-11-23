@@ -37,6 +37,9 @@ type mcpCatalogHealthReport struct {
 	CatalogRevision *int64 `json:"catalog_revision,omitempty"`
 	CatalogSHA256   string `json:"catalog_sha256,omitempty"`
 	Error           string `json:"error,omitempty"`
+	// EdgeAnswered marks a /healthz the gateway answered itself (it does for
+	// an app's health path) instead of forwarding to the MCP server.
+	EdgeAnswered bool `json:"edge_answered,omitempty"`
 }
 
 type mcpCatalogFleetHealthReport struct {
@@ -120,6 +123,7 @@ func probeMCPCatalogHealth(ctx context.Context, endpoint string, timeout time.Du
 	}
 	parsed := parseMCPCatalogHealth(body, resp.StatusCode, "")
 	parsed.HealthURL = healthURL
+	parsed.EdgeAnswered = strings.EqualFold(resp.Header.Get("X-Faas-Health-Source"), "edge")
 	return parsed
 }
 
@@ -941,4 +945,28 @@ func valueMCPRevision(revision *int64) int64 {
 		return 0
 	}
 	return *revision
+}
+
+// probeMCPCatalogReplicaForPin reads /healthz from one running replica of the
+// candidate through the platform's exact-instance probe, which the gateway's
+// edge health answer does not intercept. It returns fallback when no replica
+// answers, keeping the public probe's diagnosis.
+func probeMCPCatalogReplicaForPin(ctx context.Context, c *Client, slug, deploymentID, endpoint string, fallback mcpCatalogHealthReport) mcpCatalogHealthReport {
+	if c == nil {
+		return fallback
+	}
+	instances, err := c.ListInstances(ctx, slug)
+	if err != nil {
+		return fallback
+	}
+	healthURL, err := mcpHealthURL(endpoint)
+	if err != nil {
+		return fallback
+	}
+	for _, instanceID := range mcpDeploymentReplicaIDs(instances, deploymentID) {
+		if report, checked := probeMCPCatalogInstance(ctx, c, slug, canonicalMCPUUID(deploymentID), instanceID, healthURL, 5*time.Second); checked {
+			return report
+		}
+	}
+	return fallback
 }
