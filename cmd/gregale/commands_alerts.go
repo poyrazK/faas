@@ -88,6 +88,7 @@ func cmdAlertList(args []string) int {
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
+	fillLinkedApp(slug)
 	if *slug == "" {
 		PrintUsage(os.Stderr, "usage: gregale alert list --app <slug>", "alerts")
 		return 1
@@ -243,6 +244,7 @@ func requireAlertCreateFlags(slug, name, metric, comparison, windowSpec, webhook
 	if hasChannels && *webhookURL == "" && *webhookSecret == "" {
 		webhookMissing = false
 	}
+	fillLinkedApp(slug)
 	if *slug == "" || *name == "" || *metric == "" || *comparison == "" ||
 		*windowSpec == "" || webhookMissing || math.IsNaN(*threshold) {
 		// The compacted usage line ends in "[flags]" and no longer shows the
@@ -317,6 +319,7 @@ func cmdAlertInfo(args []string) int {
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
+	fillLinkedApp(slug)
 	if *slug == "" || fs.NArg() != 1 {
 		PrintUsage(os.Stderr, "usage: gregale alert get --app <slug> <alert-id>", "alerts")
 		return 1
@@ -414,6 +417,7 @@ func cmdAlertDeliveries(args []string) int {
 		}
 		return cmdAlertDeliveriesInteractive(app)
 	}
+	fillLinkedApp(slug)
 	if *slug == "" || fs.NArg() != 1 || *limit < 1 || *limit > 100 {
 		PrintUsage(os.Stderr, "usage: gregale alert deliveries <alert-id> --app <slug> [--limit N] [--include-test]", "alerts")
 		return 1
@@ -537,6 +541,7 @@ func cmdAlertUpdate(args []string) int {
 		return cmdAlertUpdateInteractive(app)
 	}
 
+	fillLinkedApp(slug)
 	if *slug == "" || fs.NArg() != 1 {
 		PrintUsage(os.Stderr, "usage: gregale alert update --app <slug> [--name <text>] [--enabled=false] [--metric <v>] [--comparison <op>] [--threshold <num>] [--window-spec <w>] [--action <webhook|rollback|demote|promote>] [--webhook-url <url>] [--webhook-secret-stdin|--webhook-secret <s>] [--cooldown-minutes N] <alert-id>", "alerts")
 		return 1
@@ -686,6 +691,7 @@ func cmdAlertRm(args []string) int {
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
+	fillLinkedApp(slug)
 	if *slug == "" || fs.NArg() != 1 {
 		PrintUsage(os.Stderr, "usage: gregale alert delete --app <slug> <alert-id> [--yes]", "alerts")
 		return 1
@@ -722,6 +728,7 @@ func cmdAlertRotateSecret(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	fillLinkedApp(slug)
 	if *slug == "" || fs.NArg() != 1 {
 		PrintUsage(os.Stderr, "usage: gregale alert secret rotate --app <slug> --from-stdin <alert-id>", "alerts")
 		return 1

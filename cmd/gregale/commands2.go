@@ -5965,6 +5965,10 @@ func cmdCrons(args []string) int {
 		if rejectUnexpectedFlagArgs(fs) {
 			return 1
 		}
+		if *selector == "" {
+			// A selector spans the account; only a plain list takes the link.
+			fillLinkedApp(slug)
+		}
 		if *slug == "" && *selector == "" {
 			PrintUsage(os.Stderr, "usage: gregale cron list --app <slug> | -l SELECTOR [--app <slug>]", "crons")
 			return 1
