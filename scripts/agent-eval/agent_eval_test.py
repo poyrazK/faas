@@ -9,6 +9,7 @@ Transcripts follow the shapes `claude -p --output-format stream-json` and
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import types
@@ -261,6 +262,25 @@ class CheckTests(unittest.TestCase):
             self.assertEqual(urls, ["https://eval-app.gregale.dev/"])
             failed = ev.run_checks(task, "eval-app", Path(d), "no idea", FakeGregale(["d2"], "d2"), fetch=lambda url: (500, "broken"), http_deadline_s=0)
         self.assertEqual([r["ok"] for r in failed], [False, False, True, False])
+
+    def test_private_app_is_graded_on_its_serving_deployment(self):
+        # Apps are private by default: a public GET gets 401, so the grader asks
+        # the serving deployment (not the latest, a bad release after a rollback).
+        class PrivateGregale(FakeGregale):
+            verified = []
+
+            def cli(self, *args, **kwargs):
+                self.verified.append(args[2])
+                body = "hello from gregale" if args[2] == "d1" else "broken"
+                return subprocess.CompletedProcess(args, 0, json.dumps({"http_status": 200, "body": body}), "")
+
+        task = {"checks": [{"kind": "http", "path": "/", "status": 200, "contains": "hello from gregale"}]}
+        g = PrivateGregale(["d1"], "d2")
+        with mock.patch.object(ev, "_fetch", return_value=(401, "this app requires an API key")), \
+                tempfile.TemporaryDirectory() as d:
+            results = ev.run_checks(task, "eval-app", Path(d), "", g, http_deadline_s=0)
+        self.assertTrue(results[0]["ok"], results)
+        self.assertEqual(g.verified, ["d1"])
 
     def test_http_check_retries_through_a_cold_wake(self):
         responses = iter([(503, "waking"), (200, "hello from gregale")])

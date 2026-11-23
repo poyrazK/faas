@@ -675,6 +675,31 @@ def http_check(url: str, check: dict, deadline_s: float = 120, fetch=None) -> tu
         time.sleep(5)
 
 
+def private_http_check(gregale, slug: str, check: dict) -> tuple[bool, str]:
+    """Apps are private by default (ADR-20261116120000), so a public GET gets
+    401. Ask the latest serving deployment as the owner instead."""
+    # The serving deployment, not the latest: after a rollback the latest is
+    # the bad release.
+    health = gregale.get(f"/v1/apps/{slug}/health")
+    latest = (health.get("serving_deployment_ids") or [None])[0]
+    if not latest:
+        return False, "private app has no serving deployment"
+    result = gregale.cli("release", "verify", latest, "--app", slug, "--path", check.get("path", "/"), timeout=90)
+    if result.returncode != 0:
+        return False, f"private: release verify failed: {(result.stderr or result.stdout)[:160]!r}"
+    evidence = json.loads(result.stdout)
+    status, body = evidence.get("http_status"), str(evidence.get("body") or "")
+    ok = status == check.get("status", 200) and check.get("contains", "") in body
+    return ok, f"private {status}: {body[:120]!r}"
+
+
+def _http_or_private(gregale, slug: str, url: str, check: dict, deadline_s: float, fetch) -> tuple[bool, str]:
+    ok, detail = http_check(url, check, deadline_s=deadline_s, fetch=fetch)
+    if not ok and detail.startswith("401") and fetch is None:
+        return private_http_check(gregale, slug, check)
+    return ok, detail
+
+
 def _fetch(url: str) -> tuple[int, str]:
     try:
         with urllib.request.urlopen(url, timeout=30) as response:
@@ -719,7 +744,7 @@ def run_checks(task: dict, slug: str, project: Path, answer: str, gregale, fetch
                 ok = check["text"] in (project / check["file"]).read_text()
             elif kind == "http":
                 url = _app_url(gregale.get(f"/v1/apps/{slug}")) + check.get("path", "/")
-                ok, detail = http_check(url, check, deadline_s=http_deadline_s, fetch=fetch)
+                ok, detail = _http_or_private(gregale, slug, url, check, http_deadline_s, fetch)
             elif kind == "owner_response":
                 ok, detail = owner_response_check(gregale, slug, check, expected_app_id)
             elif kind == "serving":
@@ -735,12 +760,13 @@ def run_checks(task: dict, slug: str, project: Path, answer: str, gregale, fetch
                 ok, detail = bool(created_apps) and not idle, f"not serving: {','.join(idle)}" if idle else f"{len(created_apps)} serving"
             elif kind == "app_http":
                 matches = [app for app in created_apps if re.search(check["match"], app)]
-                urls = [_app_url(gregale.get(f"/v1/apps/{app}")) for app in matches]
-                urls = [url for url in urls if url]
-                if not urls:
+                pairs = [(app, _app_url(gregale.get(f"/v1/apps/{app}"))) for app in matches]
+                pairs = [(app, url) for app, url in pairs if url]
+                if not pairs:
                     detail = f"no created public app matches {check['match']!r}"
                 else:
-                    ok, detail = http_check(urls[0] + check.get("path", "/"), check, deadline_s=http_deadline_s, fetch=fetch)
+                    app, url = pairs[0]
+                    ok, detail = _http_or_private(gregale, app, url + check.get("path", "/"), check, http_deadline_s, fetch)
             elif kind == "no_traps":
                 codes = check.get("codes") or list(DEFAULT_TRAPS)
                 hit = sorted({f"{app}:{code}" for app in created_apps for code in codes if code in _app_evidence(gregale, app, since)})
