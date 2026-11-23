@@ -32,8 +32,8 @@ const (
 	environmentBranchDataLease       = 10 * time.Minute
 	environmentBranchDataBatch       = 10
 	environmentBranchDataMaxAttempts = 20
-	// A copy or binding the provider is still making is checked again after
-	// environmentBranchDataInProgressRetry without spending an attempt, for
+	// A copy or binding the provider is still making is checked again
+	// without spending an attempt (environmentBranchDataInProgressDelay), for
 	// environmentBranchDataInProgressBudget from the branch's creation. A
 	// Neon point-in-time branch is usually ready within seconds, and the
 	// doubling retry delay of a failed attempt kept such branches pending
@@ -52,8 +52,16 @@ func (s *server) runEnvironmentBranchDataReconciler(ctx context.Context) {
 		return
 	}
 	wake := s.environmentBranchDataWakeChannel()
+	var lastSweep time.Time
 	for {
-		soon, err := s.reconcileEnvironmentBranchDataPass(ctx, store, time.Now().UTC())
+		now := time.Now().UTC()
+		// Fast passes for copies in progress skip the orphan sweeps, which
+		// keep the ordinary interval.
+		sweep := now.Sub(lastSweep) >= environmentBranchDataInterval
+		if sweep {
+			lastSweep = now
+		}
+		soon, err := s.reconcileEnvironmentBranchDataPass(ctx, store, now, sweep)
 		if err != nil && ctx.Err() == nil && s.log != nil {
 			s.log.Warn("environment branch data reconcile failed", "err", err)
 		}
@@ -91,30 +99,30 @@ func (s *server) wakeEnvironmentBranchData() {
 // reconcileEnvironmentBranchData deletes orphaned copies, then copies the
 // data of due branches, one bounded batch of each.
 func (s *server) reconcileEnvironmentBranchData(ctx context.Context, store state.ProjectEnvironmentBranchDataStore, now time.Time) error {
-	_, err := s.reconcileEnvironmentBranchDataPass(ctx, store, now)
+	_, err := s.reconcileEnvironmentBranchDataPass(ctx, store, now, true)
 	return err
+}
+
+// environmentBranchDataInProgressDelay is when a copy still in progress is
+// checked again: every second while a quick copy is expected, then less
+// often, so a slow restore does not cost a provider round trip a second.
+func environmentBranchDataInProgressDelay(age time.Duration) time.Duration {
+	switch {
+	case age < 30*time.Second:
+		return environmentBranchDataInProgressRetry
+	case age < 2*time.Minute:
+		return 2 * time.Second
+	default:
+		return environmentBranchDataInterval
+	}
 }
 
 // reconcileEnvironmentBranchDataPass is one reconcile; soon reports a copy
 // still in progress, which the reconciler checks again shortly.
-func (s *server) reconcileEnvironmentBranchDataPass(ctx context.Context, store state.ProjectEnvironmentBranchDataStore, now time.Time) (soon bool, _ error) {
-	errs := s.reconcileOrphanedEnvironmentBranchBuckets(ctx, now)
-	for range environmentBranchDataBatch {
-		lease := uuid.NewString()
-		row, err := store.ClaimOrphanedProjectEnvironmentBranchDatabase(ctx, lease, now, environmentBranchDataLease)
-		if errors.Is(err, state.ErrNotFound) {
-			break
-		}
-		if err != nil {
-			return soon, errors.Join(errs, err)
-		}
-		if err := s.deleteEnvironmentBranchDatabase(ctx, row); err != nil {
-			errs = errors.Join(errs, fmt.Errorf("delete branch database copy %s: %w", row.CopyName, err))
-			continue // the lease lapses and a later pass retries
-		}
-		if err := store.RemoveProjectEnvironmentBranchDatabase(ctx, row.ID, lease); err != nil {
-			errs = errors.Join(errs, err)
-		}
+func (s *server) reconcileEnvironmentBranchDataPass(ctx context.Context, store state.ProjectEnvironmentBranchDataStore, now time.Time, sweep bool) (soon bool, _ error) {
+	var errs error
+	if sweep {
+		errs = s.reconcileOrphanedEnvironmentBranchDatabasesAndBuckets(ctx, store, now)
 	}
 	for range environmentBranchDataBatch {
 		lease := uuid.NewString()
@@ -135,7 +143,7 @@ func (s *server) reconcileEnvironmentBranchDataPass(ctx context.Context, store s
 			continue
 		}
 		if environmentBranchDataInProgress(copyErr) && now.Sub(branch.CreatedAt) < environmentBranchDataInProgressBudget {
-			if err := store.DeferProjectEnvironmentBranchData(ctx, branch.EnvironmentID, lease, now.Add(environmentBranchDataInProgressRetry)); err != nil {
+			if err := store.DeferProjectEnvironmentBranchData(ctx, branch.EnvironmentID, lease, now.Add(environmentBranchDataInProgressDelay(now.Sub(branch.CreatedAt)))); err != nil {
 				errs = errors.Join(errs, err)
 			}
 			soon = true
@@ -157,6 +165,30 @@ func (s *server) reconcileEnvironmentBranchDataPass(ctx context.Context, store s
 
 func environmentBranchDataInProgress(err error) bool {
 	return errors.Is(err, errEnvironmentBranchDataInProgress) || errors.Is(err, errDatabaseCopyInProgress)
+}
+
+// reconcileOrphanedEnvironmentBranchDatabasesAndBuckets deletes one bounded
+// batch of the database copies and buckets of branches that are gone.
+func (s *server) reconcileOrphanedEnvironmentBranchDatabasesAndBuckets(ctx context.Context, store state.ProjectEnvironmentBranchDataStore, now time.Time) error {
+	errs := s.reconcileOrphanedEnvironmentBranchBuckets(ctx, now)
+	for range environmentBranchDataBatch {
+		lease := uuid.NewString()
+		row, err := store.ClaimOrphanedProjectEnvironmentBranchDatabase(ctx, lease, now, environmentBranchDataLease)
+		if errors.Is(err, state.ErrNotFound) {
+			break
+		}
+		if err != nil {
+			return errors.Join(errs, err)
+		}
+		if err := s.deleteEnvironmentBranchDatabase(ctx, row); err != nil {
+			errs = errors.Join(errs, fmt.Errorf("delete branch database copy %s: %w", row.CopyName, err))
+			continue // the lease lapses and a later pass retries
+		}
+		if err := store.RemoveProjectEnvironmentBranchDatabase(ctx, row.ID, lease); err != nil {
+			errs = errors.Join(errs, err)
+		}
+	}
+	return errs
 }
 
 // reconcileOrphanedEnvironmentBranchBuckets empties and deletes one bounded
@@ -359,8 +391,11 @@ func (s *server) copyEnvironmentBranchDatabases(ctx context.Context, store state
 			if err != nil {
 				return fmt.Errorf("bind database copy for workload %q: %w", plan.app.Slug, err)
 			}
-			if binding.State != managedpostgres.BindingStateReady || binding.DatabaseID != copied.ID {
+			if binding.DatabaseID == copied.ID && binding.State == managedpostgres.BindingStateProvisioning {
 				return fmt.Errorf("database copy binding for workload %q is not ready: %w%w", plan.app.Slug, errEnvironmentBranchDataInProgress, managedpostgres.ErrUnavailable)
+			}
+			if binding.State != managedpostgres.BindingStateReady || binding.DatabaseID != copied.ID {
+				return fmt.Errorf("database copy binding for workload %q is not ready: %w", plan.app.Slug, managedpostgres.ErrUnavailable)
 			}
 		}
 	}

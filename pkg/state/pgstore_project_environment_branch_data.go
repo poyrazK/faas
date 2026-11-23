@@ -85,7 +85,7 @@ func (s *PgStore) RetryProjectEnvironmentBranchData(ctx context.Context, environ
 func (s *PgStore) DeferProjectEnvironmentBranchData(ctx context.Context, environmentID, leaseToken string, next time.Time) error {
 	return s.releaseProjectEnvironmentBranchData(ctx, `
 		update project_environment_branches
-		   set data_next_attempt_at = $3, data_lease_token = null, data_lease_until = null
+		   set data_error = '', data_next_attempt_at = $3, data_lease_token = null, data_lease_until = null
 		 where environment_id = $1 and data_lease_token = $2 and data_state = 'pending'`,
 		environmentID, leaseToken, next.UTC())
 }

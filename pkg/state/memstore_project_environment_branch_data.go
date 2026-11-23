@@ -81,7 +81,7 @@ func (m *MemStore) DeferProjectEnvironmentBranchData(_ context.Context, environm
 	if err != nil {
 		return err
 	}
-	b.dataNextAttemptAt, b.DataLeaseToken, b.dataLeaseUntil = next, "", time.Time{}
+	b.DataError, b.dataNextAttemptAt, b.DataLeaseToken, b.dataLeaseUntil = "", next, "", time.Time{}
 	m.projectEnvironmentBranches[environmentID] = b
 	return nil
 }

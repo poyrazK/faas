@@ -56,6 +56,8 @@ $add$;
 ALTER TABLE runtime_environment_scaling_states VALIDATE CONSTRAINT runtime_environment_scaling_states_scope_v2_check;
 ALTER TABLE runtime_environment_scaling_states DROP CONSTRAINT IF EXISTS runtime_environment_scaling_states_scope_check;
 
+RESET lock_timeout;
+
 -- +goose Down
 -- Forward-only: restoring the three-character checks would fail every row of
 -- a short-scope deployment.
