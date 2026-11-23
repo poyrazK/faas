@@ -2,7 +2,7 @@
 
 - **Status:** proposed (needs owner approval before any code)
 - **Date:** 2026-11-22
-- **Amends:** the deployment prime (spec §7 `snapshot_prepare`) for developer environments only
+- **Amends:** the deployment prime (spec §6, `snapshot_prepare`) for developer environments only
 - **Related:** ADR-005 (cold boot always legal), ADR-063 (shared authoritative snapshot blob), ADR-740 (live patches), ADR-1170 (watch mode), ADR-20261115213230 (snapshot drive deltas)
 
 This record has a date-and-time identifier because numbered ADRs collide
@@ -46,23 +46,40 @@ so every node can wake it. A developer environment is different:
 
 ## Decision
 
-For a developer environment (`PreviewOfSlug != ""` and `PreviewPrNumber == 0`),
-behind the platform flag `dev_prime_serves` (default off):
+For a `gregale dev` environment, behind the platform flag `dev_prime_serves`
+(default off). `state.IsDeveloperApp` (`PreviewOfSlug != ""` and
+`PreviewPrNumber == 0`) is not enough on its own: environment-branch member
+apps have the same shape. The gate is an app created by
+`PUT /v1/dev/sessions/{project}` that is **not** an environment-branch member,
+and the implementation adds an explicit marker for it rather than inferring it.
 
 1. **The prime instance becomes the live instance.** After the prime's health
    check passes, schedd promotes the deployment and moves the prime instance
    to `RUNNING` as an ordinary serving instance of the new deployment, instead
    of `RUNNING → SNAPSHOTTING → PARKED`. `gregale dev` reports `ready` at that
    point.
+   - **Concurrency (invariant 1).** While the previous deployment drains, the
+     serving prime and the old instances overlap. The serving prime counts
+     against the app's `max_concurrency`; the overlap is allowed only under
+     the existing `RolloutConcurrencyGrant` (1), which this ADR extends to
+     this one case. If the grant is already in use, the prime parks as today.
+     The invariant-1 property test covers the path.
+   - **Billing.** Metering starts at promotion, not at prime boot. The cold
+     boot and health check stay unbilled platform work, as they are today.
+     The capacity ledger entry and ownership row are moved to the serving
+     instance explicitly at promotion.
 2. **No snapshot is captured on the critical path.** The environment's first
    capture happens at its first idle park, through the normal park path, which
    uploads synchronously as ADR-063 requires before the snapshot row is
    written. Nothing is recorded as a usable snapshot before its blobs are in
    the shared store, so ADR-063's durability rule is unchanged.
-3. **Cold boot stays the fallback (ADR-005).** If the promoted instance dies
-   before its first park, the next request cold-boots the deployment, as it
-   does today for a deployment whose snapshot was evicted. For a developer
-   environment that costs one dev-server start, not correctness.
+3. **Cold boot stays the fallback (ADR-005).** Until the first park
+   succeeds, the deployment has no snapshot. A second instance (scale-out),
+   a restart of the promoted one, or a wake after a failed first park
+   cold-boots and pays the dev server's first compile again. For a developer
+   environment that costs time, not correctness. A background capture after
+   promotion would close the gap; it is deferred until the rollout shows
+   whether scale-out happens often in developer environments.
 4. **Rollback is unchanged in shape.** A failed health check fails the
    deployment as today, and the previous deployment keeps serving. A
    successful promotion drains the previous deployment's instances as any
@@ -74,16 +91,14 @@ behind the platform flag `dev_prime_serves` (default off):
 ## Consequences
 
 - Expected first-sync boot for the measured Next.js app: health plus first
-  compile (a few seconds at 1024 MB) instead of 35–40 s. The ~25 s capture
+  compile instead of 35–40 s. The first compile at 1024 MB is not measured
+  yet; it lies between 31.8 s (512 MB) and 2.3 s (2048 MB). Rollout step 2
+  measures it. The ~25 s capture
   moves to the first idle park, when nobody is waiting.
 - A rebuilt developer deployment (not a live patch) goes live just as fast.
   `edit_to_live` for such edits drops by the capture time.
 - The development server's in-memory compile cache survives into the first
   requests, because there is no restore between health and traffic.
-- Placement and accounting are the open risk. Implementation must show that
-  the prime's admission, capacity ledger entry, ownership row and metering
-  become those of an ordinary serving instance after the switch, or move it
-  there explicitly.
 - The first park of a developer environment now pays the capture. Parks run
   off the request path, and a park that fails leaves the instance to be cold
   booted next time.
