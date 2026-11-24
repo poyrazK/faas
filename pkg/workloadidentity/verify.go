@@ -41,6 +41,11 @@ const AgentsAudience = "gregale:agents"
 // DataAPIEventsAudience isolates change hook publications (ADR-20261022121642).
 const DataAPIEventsAudience = "gregale:data-api:events"
 
+// BindingsAudience authorizes producer calls (queue send, realtime publish,
+// delayed tasks) on the caller or a sibling app under the caller's
+// gregale.yaml `uses:` grants (ADR-20261122191423).
+const BindingsAudience = "gregale:bindings"
+
 type Verifier struct {
 	keys   jose.JSONWebKeySet
 	issuer string

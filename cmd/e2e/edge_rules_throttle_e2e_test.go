@@ -27,6 +27,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
+	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -147,7 +148,7 @@ func TestEdgeRulesThrottle_E2E_ConsumerDimensionsAreIndependent(t *testing.T) {
 		t.Fatalf("decode app: %v body=%s", err, rawApp)
 	}
 
-	createConsumerKey := func(externalRef string) string {
+	createConsumerKey := func(externalRef string) (string, string) {
 		t.Helper()
 		rawConsumer, status := doReq(t, h, accountKey, http.MethodPost,
 			"/v1/apps/"+slug+"/consumers", api.CreateAPIConsumerRequest{
@@ -174,10 +175,25 @@ func TestEdgeRulesThrottle_E2E_ConsumerDimensionsAreIndependent(t *testing.T) {
 		if key.Key == "" {
 			t.Fatalf("create key for %s returned no plaintext", externalRef)
 		}
-		return key.Key
+		return consumer.ID, key.Key
 	}
-	consumerAKey := createConsumerKey("customer-a")
-	consumerBKey := createConsumerKey("customer-b")
+	consumerAID, consumerAKey := createConsumerKey("customer-a")
+	consumerBID, consumerBKey := createConsumerKey("customer-b")
+	// The gateway's default central rate-limit mode charges each consumer to
+	// one of MaxKeysPerRule counter shards, and consumers that share a shard
+	// share a bucket by design. Use the largest cap that keeps these two
+	// random consumers apart: with a fixed cap of 100 the independence check
+	// below failed whenever their shards collided (about 1 run in 100).
+	shard := func(consumerID string, maxKeys int) uint64 {
+		return gateway.DimensionalThrottleShard(api.ThrottleKeyByConsumerID, consumerID, maxKeys)
+	}
+	maxKeys := 100
+	for maxKeys > 1 && shard(consumerAID, maxKeys) == shard(consumerBID, maxKeys) {
+		maxKeys--
+	}
+	if maxKeys < 2 {
+		t.Fatalf("consumers %s and %s share every counter shard", consumerAID, consumerBID)
+	}
 
 	synthHost := "edgectl-throttle-consumers.edge-e2e.example"
 	seedRouteSubstitute(t, context.Background(), pool, accountID, app.ID, synthHost, slug)
@@ -185,7 +201,7 @@ func TestEdgeRulesThrottle_E2E_ConsumerDimensionsAreIndependent(t *testing.T) {
 		RequestsPerSecond: 0.01,
 		Burst:             1,
 		KeyBy:             api.ThrottleKeyByConsumerID,
-		MaxKeysPerRule:    100,
+		MaxKeysPerRule:    maxKeys,
 		MissingKeyPolicy:  api.ThrottleMissingKeyReject,
 	})
 	if err != nil {

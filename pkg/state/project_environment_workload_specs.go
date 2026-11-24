@@ -362,6 +362,10 @@ var workloadAppFieldPolicies = map[string]WorkloadFieldPolicy{
 	// The database's own counter for EgressAllowlist and EgressPorts
 	// (#6742); a clone's row starts its own.
 	"EgressAllowlistRevision": WorkloadFieldOperational,
+
+	// A create-request flag for joining ProjectID (#7860); never persisted,
+	// so a clone has nothing to copy.
+	"AddToProject": WorkloadFieldIdentity,
 }
 
 func WorkloadAppFieldPolicies() map[string]WorkloadFieldPolicy {

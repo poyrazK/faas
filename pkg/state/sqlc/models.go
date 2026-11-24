@@ -11440,6 +11440,22 @@ type ObjectStorageVersionInventoryEntry struct {
 	Bytes        int64
 }
 
+// Short-lived per-instance S3 credentials for buckets granted by gregale.yaml uses:; written by apid, resolved by s3-gatewayd, swept by apid after expiry (ADR-20261122191423).
+type ObjectStorageWorkloadCredential struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	BucketID     pgtype.UUID
+	CallerAppID  pgtype.UUID
+	InstanceID   string
+	AccessKeyID  string
+	SecretSealed []byte
+	Kid          string
+	Permission   string
+	KeyPrefix    pgtype.Text
+	CreatedAt    pgtype.Timestamptz
+	ExpiresAt    pgtype.Timestamptz
+}
+
 type ObjectStorageWriteAdmission struct {
 	ID                pgtype.UUID
 	BucketID          pgtype.UUID

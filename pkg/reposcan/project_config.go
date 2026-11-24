@@ -117,6 +117,10 @@ func applyProjectConfig(fsys fs.FS, workloads []Workload) ([]string, error) {
 			w.Unpublished = false
 		}
 		w.DependsOn = mergeDependsOn(w.DependsOn, service.DependsOn)
+		if service.Uses != nil {
+			uses := service.Uses.Normalized()
+			w.Uses = &uses
+		}
 	}
 	return warnings, nil
 }
