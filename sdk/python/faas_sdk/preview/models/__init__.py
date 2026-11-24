@@ -3038,6 +3038,7 @@ from .managed_postgres_usage_response import ManagedPostgresUsageResponse
 from .managed_postgres_usage_response_compute_cap_state import ManagedPostgresUsageResponseComputeCapState
 from .managed_postgres_usage_response_egress_state import ManagedPostgresUsageResponseEgressState
 from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsageResponseGuardrailState
+from .managed_postgres_usage_response_history_state import ManagedPostgresUsageResponseHistoryState
 from .managed_postgres_usage_response_hold import ManagedPostgresUsageResponseHold
 from .managed_realtime_access_request import ManagedRealtimeAccessRequest
 from .managed_realtime_access_request_action import ManagedRealtimeAccessRequestAction
@@ -10194,6 +10195,7 @@ __all__ = (
     "ManagedPostgresUsageResponseComputeCapState",
     "ManagedPostgresUsageResponseEgressState",
     "ManagedPostgresUsageResponseGuardrailState",
+    "ManagedPostgresUsageResponseHistoryState",
     "ManagedPostgresUsageResponseHold",
     "ManagedRealtimeAccessRequest",
     "ManagedRealtimeAccessRequestAction",

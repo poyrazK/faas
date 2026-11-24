@@ -327,7 +327,10 @@ type server struct {
 	managedPostgresCapMode managedpostgres.CapEnforcementMode
 	// managedPostgresPlanExcessOn is true while the cap sweep suspends
 	// databases past their plan (ADR-20261102125208), so the views say so.
-	managedPostgresPlanExcessOn    bool
+	managedPostgresPlanExcessOn bool
+	// managedPostgresHistoryMode is FAAS_MANAGED_POSTGRES_HISTORY_LIMIT, read
+	// by the usage views (ADR-20261123062111 D2).
+	managedPostgresHistoryMode     managedpostgres.CapEnforcementMode
 	managedPostgresHealthCollector *managedpostgres.HealthCollector
 	// managedPostgresSQLProber probes the canary databases (ADR-20261029172812); nil when unconfigured.
 	managedPostgresSQLProber  *managedpostgres.SQLProber

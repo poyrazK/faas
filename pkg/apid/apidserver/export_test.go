@@ -615,8 +615,18 @@ var ManagedPostgresPlanAllows = managedPostgresPlanAllows
 var ManagedPostgresProblem = managedPostgresProblem
 var ManagedPostgresSpecFromRequest = managedPostgresSpecFromRequest
 var ManagedPostgresUsageCeilings = managedPostgresUsageCeilings
-var ManagedPostgresUsageOperatorView = managedPostgresUsageOperatorView
-var ManagedPostgresUsageView = managedPostgresUsageView
+
+// ManagedPostgresUsageOperatorView and ManagedPostgresUsageView build the
+// usage views with the history limit off (ADR-20261123062111 D2 has its own
+// test).
+func ManagedPostgresUsageOperatorView(accountID string, summary managedpostgres.UsageSummary, limits api.ManagedPostgresPlanLimits, capMode managedpostgres.CapEnforcementMode, overage bool) (api.ManagedPostgresUsageOperatorResponse, error) {
+	return managedPostgresUsageOperatorView(accountID, summary, limits, capMode, managedpostgres.CapEnforcementOff, overage)
+}
+
+func ManagedPostgresUsageView(summary managedpostgres.UsageSummary, limits api.ManagedPostgresPlanLimits, capMode managedpostgres.CapEnforcementMode, overage bool) api.ManagedPostgresUsageResponse {
+	return managedPostgresUsageView(summary, limits, capMode, managedpostgres.CapEnforcementOff, overage)
+}
+
 var ManagedPostgresUsageHoldView = managedPostgresUsageHoldView
 var ManagedPostgresView = managedPostgresView
 var ManagedWorkflowCanConsumeFailedDependencies = managedWorkflowCanConsumeFailedDependencies
