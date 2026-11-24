@@ -19,11 +19,28 @@ func notFinalizedProblem() *api.Problem {
 // ExportAppConsumerStatement exports a finalized app consumer statement as
 // an invoice in the account's billing provider (ADR-1502, ADR-1507).
 func (s *Service) ExportAppConsumerStatement(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.writeAppConsumerStatementInvoice(w, r, acct, nil)
+}
+
+// ExportAppConsumerStatementDraft exports through Stripe's draft-only path.
+func (s *Service) ExportAppConsumerStatementDraft(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	var req struct {
+		Livemode *bool `json:"livemode"`
+	}
+	if err := httpkit.DecodeJSON(r, &req); err != nil || req.Livemode == nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid Stripe mode",
+			"livemode must be the boolean Stripe mode reviewed before export"))
+		return
+	}
+	s.writeAppConsumerStatementInvoice(w, r, acct, req.Livemode)
+}
+
+func (s *Service) writeAppConsumerStatementInvoice(w http.ResponseWriter, r *http.Request, acct state.Account, draftLivemode *bool) {
 	exports, ok := s.statementInvoiceStore(w, acct)
 	if !ok {
 		return
 	}
-	src, providerName, problem := s.apiConsumerStatementInvoiceSource(w, r, acct)
+	src, providerName, problem := s.apiConsumerStatementInvoiceSource(w, r, acct, draftLivemode)
 	if src == nil {
 		if problem != nil {
 			api.WriteProblem(w, problem)
@@ -43,6 +60,9 @@ func (s *Service) ExportAppConsumerStatement(w http.ResponseWriter, r *http.Requ
 // uses the consumer's external_ref.
 func (s *Service) ExportAppConsumer(ctx context.Context, acct state.Account, consumer state.APIConsumer,
 	statement state.APIConsumerUsageStatement, provider, customer string) (state.StatementInvoiceExport, *api.Problem) {
+	if statement.Status != state.APIConsumerUsageStatementFinalized {
+		return state.StatementInvoiceExport{}, notFinalizedProblem()
+	}
 	exports, ok := s.Host.Store().(state.StatementInvoiceExportStore)
 	if !ok {
 		return state.StatementInvoiceExport{}, api.ErrInternal("statement invoice exports are unavailable")
@@ -68,7 +88,7 @@ func (s *Service) exportAppConsumer(ctx context.Context, acct state.Account, exp
 // apiConsumerStatementInvoiceSource loads a finalized app consumer
 // statement, prices its invoice lines and reads the target provider. A nil
 // source with a nil problem means a response was already written.
-func (s *Service) apiConsumerStatementInvoiceSource(w http.ResponseWriter, r *http.Request, acct state.Account) (*statementInvoiceSource, string, *api.Problem) {
+func (s *Service) apiConsumerStatementInvoiceSource(w http.ResponseWriter, r *http.Request, acct state.Account, draftLivemode *bool) (*statementInvoiceSource, string, *api.Problem) {
 	app, consumer, statements, ok := s.Host.ConsumerStatements(w, r, acct)
 	if !ok {
 		return nil, "", nil
@@ -84,28 +104,30 @@ func (s *Service) apiConsumerStatementInvoiceSource(w http.ResponseWriter, r *ht
 	if statement.Status != state.APIConsumerUsageStatementFinalized {
 		return nil, "", notFinalizedProblem()
 	}
-	req, problem := decodeStatementInvoiceRequest(r)
-	if problem != nil {
-		return nil, "", problem
+	req := api.CreateStatementInvoiceRequest{Provider: state.BillingProviderStripe}
+	if draftLivemode == nil {
+		decoded, problem := decodeStatementInvoiceRequest(r)
+		if problem != nil {
+			return nil, "", problem
+		}
+		req = decoded
 	}
 	src, problem := s.appConsumerInvoiceSource(r.Context(), acct, consumer, statement, req.Customer)
 	if problem != nil {
 		return nil, "", problem
 	}
+	src.draftLivemode = draftLivemode
 	return &src, req.Provider, nil
 }
 
-// appConsumerInvoiceSource prices a finalized app consumer statement's
-// invoice lines and binds its handoff.
+// appConsumerInvoiceSource prices an app consumer statement's invoice lines
+// and binds its handoff. Export entry points require a finalized statement.
 func (s *Service) appConsumerInvoiceSource(ctx context.Context, acct state.Account, consumer state.APIConsumer,
 	statement state.APIConsumerUsageStatement, requestedCustomer string) (statementInvoiceSource, *api.Problem) {
 	handoffs, okHandoffs := s.Host.Store().(state.APIConsumerUsageStatementHandoffStore)
 	cards, okCards := s.Host.Store().(state.APIConsumerRateCardStore)
 	if !okHandoffs || !okCards {
 		return statementInvoiceSource{}, api.ErrInternal("API consumer usage statements are unavailable")
-	}
-	if statement.Status != state.APIConsumerUsageStatementFinalized {
-		return statementInvoiceSource{}, notFinalizedProblem()
 	}
 	appCards, err := cards.ListAPIConsumerRateCardsForApp(ctx, acct.ID, statement.AppID)
 	if err != nil {
@@ -119,6 +141,8 @@ func (s *Service) appConsumerInvoiceSource(ctx context.Context, acct state.Accou
 		start: statement.PeriodStart, end: statement.PeriodEnd, requestedCustomer: requestedCustomer, externalRef: consumer.ExternalRef, invoice: invoice}
 	if handoff, err := handoffs.GetAPIConsumerUsageStatementHandoff(ctx, acct.ID, statement.AppID, statement.ConsumerID, statement.ID); err == nil {
 		src.existingHandoff = handoff.ExternalInvoiceID
+	} else if !errors.Is(err, state.ErrNotFound) {
+		return statementInvoiceSource{}, api.ErrInternal("could not check the usage statement handoff")
 	}
 	src.handoff = func(ctx context.Context, invoiceID string) error {
 		_, _, err := handoffs.CreateAPIConsumerUsageStatementHandoff(ctx, state.APIConsumerUsageStatementHandoffInput{

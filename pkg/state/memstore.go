@@ -639,6 +639,7 @@ type MemStore struct {
 	// apiConsumers is keyed by APIConsumer.ID. A separate map keeps the
 	// stable customer identity independent from rotatable credentials.
 	apiConsumers                         map[string]APIConsumer
+	apiConsumerStripeLinks               map[string]map[stripeConsumerScope]string
 	apiConsumerTrials                    map[string]APIConsumerTrial               // ADR-1314
 	apiConsumerSignupSettings            map[string]APIConsumerSignupSettings      // ADR-20261021143000, by app ID
 	apiConsumerSignups                   map[string]APIConsumerSignup              // ADR-20261021143000
@@ -1368,10 +1369,11 @@ type MemStore struct {
 	statementInvoiceExports map[string]StatementInvoiceExport
 	// billingRuns, billingRunItems (run ID → item key) and
 	// billingRunSchedules (account ID) back billing runs (ADR-1503).
-	billingRuns            map[string]BillingRun
-	billingRunItems        map[string]map[string]BillingRunItem
-	billingRunSchedules    map[string]BillingRunSchedule
-	apiConsumerUsageEvents map[string]usageEventIdentity
+	billingRuns             map[string]BillingRun
+	billingRunItems         map[string]map[string]BillingRunItem
+	billingRunUsageRechecks map[string]bool
+	billingRunSchedules     map[string]BillingRunSchedule
+	apiConsumerUsageEvents  map[string]usageEventIdentity
 	// apiConsumerRateCards is keyed by card ID. The production table is
 	// append-only and unique on (app_id, effective_from); MemStore mirrors
 	// both invariants for handler tests.
@@ -21759,8 +21761,8 @@ func (m *MemStore) SetOverageCapCentsForTest(accountID string, cents int64) {
 	m.overageCapCents[accountID] = cents
 }
 
-// SetClockForTest replaces the wall-clock source
-// CurrentMonthOverageCents uses to compute the UTC month-start
+// SetClockForTest replaces the clock used by time-sensitive MemStore paths.
+// CurrentMonthOverageCents uses it to compute the UTC month-start
 // cutoff. Tests that pin a fixture time for AppendUsage (so the
 // derived overage is computable at a deterministic monthly bucket)
 // MUST also pin the same fixture here, otherwise real wall-clock
@@ -25159,6 +25161,7 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 	for cid, c := range m.apiConsumers {
 		if c.AccountID == id {
 			delete(m.apiConsumers, cid)
+			delete(m.apiConsumerStripeLinks, cid)
 			delete(m.platformTenantByConsumer, cid)
 		}
 	}

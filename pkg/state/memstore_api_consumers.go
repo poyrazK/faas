@@ -42,7 +42,7 @@ func (m *MemStore) CreateAPIConsumer(_ context.Context, accountID, appID, extern
 			return APIConsumer{}, ErrConflict
 		}
 	}
-	now := time.Now().UTC()
+	now := m.clock().UTC()
 	c := APIConsumer{
 		ID:          uuid.NewString(),
 		AccountID:   accountID,

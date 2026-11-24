@@ -151,6 +151,11 @@ var featureRouteActions = map[string]authz.OrgAction{
 	"GET /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice":   authz.OrgActionManageAppSecurity,
 	"POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice":  authz.OrgActionManageAppSecurity,
 	"GET /v1/apps/{slug}/consumers/{consumer_id}/usage/quote":                               authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/monetization-funnel":                                               authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/consumers/{consumer_id}/billing-progress":                          authz.OrgActionManageAppSecurity,
+
+	"POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice/draft": authz.OrgActionManageAppSecurity,
+
 	// crash-snapshots
 	"GET /v1/apps/{slug}/crash-snapshots":            authz.OrgActionManageAppSecurity,
 	"POST /v1/apps/{slug}/crash-snapshots":           authz.OrgActionManageAppSecurity,

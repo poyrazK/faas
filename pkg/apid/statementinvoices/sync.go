@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -73,6 +75,24 @@ func (s *Service) syncInvoice(ctx context.Context, payments state.StatementInvoi
 	if !s.released(export.AccountID) {
 		return payments.DeferStatementInvoiceSync(ctx, export.ID, now.Add(api.APIMonetizationUnreleasedRetry))
 	}
+	if export.Provider == state.BillingProviderStripe {
+		// Serialize the provider read and write with owner refreshes and reviewed sends.
+		token := uuid.NewString()
+		current, err := exports.ClaimStatementInvoiceExport(ctx, export.AccountID, export.ID, token, time.Now().Add(api.StatementInvoiceExportClaimTTL))
+		if errors.Is(err, state.ErrStatementInvoiceExportInProgress) || errors.Is(err, state.ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		defer func() {
+			_ = exports.ReleaseStatementInvoiceExport(context.WithoutCancel(ctx), export.AccountID, export.ID, token)
+		}()
+		if current.NextStatusSyncAt == nil {
+			return nil
+		}
+		export = current
+	}
 	p := s.provider(export.Provider)
 	cacheKey := export.AccountID + "/" + export.Provider
 	conn, ok := conns[cacheKey]
@@ -99,6 +119,11 @@ func (s *Service) syncInvoice(ctx context.Context, payments state.StatementInvoi
 	if err != nil || !known {
 		return payments.DeferStatementInvoiceSync(ctx, export.ID, now.Add(api.StatementInvoiceSyncRetry))
 	}
+	return s.recordInvoicePayment(ctx, payments, export, payment, s.now())
+}
+
+func (s *Service) recordInvoicePayment(ctx context.Context, payments state.StatementInvoicePaymentStore,
+	export state.StatementInvoiceExport, payment state.StatementInvoicePayment, now time.Time) error {
 	prev, err := payments.RecordStatementInvoicePayment(ctx, export.ID, payment, now, nextInvoiceSync(payment, now))
 	if err != nil {
 		return fmt.Errorf("record statement invoice payment: %w", err)

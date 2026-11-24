@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -233,5 +235,206 @@ func TestBillingRunScheduleStartsMonthlyRun(t *testing.T) {
 	}
 	if res := f.e.Do(t, http.MethodDelete, "/v1/account/billing-run-schedule", nil, nil); res.Code != http.StatusNoContent {
 		t.Fatalf("delete schedule: %d", res.Code)
+	}
+}
+
+func TestDraftBillingRunScheduleGuardsVersion(t *testing.T) {
+	f := newBillingRunFixture(t)
+	const path = "/v1/account/billing-run-schedule"
+	const draft = path + "/draft"
+	put := func(path string, body any, want int) api.BillingRunScheduleResponse {
+		t.Helper()
+		res := f.e.Do(t, http.MethodPut, path, body, nil)
+		if res.Code != want {
+			t.Fatalf("put %s: %d %s, want %d", path, res.Code, res.Body, want)
+		}
+		var schedule api.BillingRunScheduleResponse
+		if want == http.StatusOK {
+			if err := json.Unmarshal(res.Body.Bytes(), &schedule); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return schedule
+	}
+	remove := func(version time.Time, want int) {
+		t.Helper()
+		target := draft + "?expected_updated_at=" + url.QueryEscape(version.Format(time.RFC3339Nano))
+		if res := f.e.Do(t, http.MethodDelete, target, nil, nil); res.Code != want {
+			t.Fatalf("delete: %d %s, want %d", res.Code, res.Body, want)
+		}
+	}
+
+	collecting := put(path, api.PutBillingRunScheduleRequest{Export: "stripe"}, http.StatusOK)
+	put(draft, api.PutDraftBillingRunScheduleRequest{}, http.StatusConflict)
+	put(draft, api.PutDraftBillingRunScheduleRequest{ExpectedUpdatedAt: &collecting.UpdatedAt}, http.StatusConflict)
+	remove(collecting.UpdatedAt, http.StatusConflict)
+	res := f.e.Do(t, http.MethodGet, path, nil, nil)
+	var current api.BillingRunScheduleResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &current); err != nil || res.Code != http.StatusOK ||
+		current.Export != "stripe" || !current.Finalize || !current.UpdatedAt.Equal(collecting.UpdatedAt) {
+		t.Fatalf("collecting schedule changed: %d %s", res.Code, res.Body)
+	}
+	if res := f.e.Do(t, http.MethodDelete, path, nil, nil); res.Code != http.StatusNoContent {
+		t.Fatalf("clear fixture: %d %s", res.Code, res.Body)
+	}
+
+	created := put(draft, api.PutDraftBillingRunScheduleRequest{}, http.StatusOK)
+	if created.Finalize || created.Export != "none" || !created.HoldOnGaps || created.DelayHours != 24 {
+		t.Fatalf("draft defaults: %+v", created)
+	}
+	put(draft, api.PutDraftBillingRunScheduleRequest{}, http.StatusConflict)
+	delay := 6
+	updated := put(draft, api.PutDraftBillingRunScheduleRequest{DelayHours: &delay, ExpectedUpdatedAt: &created.UpdatedAt}, http.StatusOK)
+	if updated.DelayHours != 6 || updated.NextMonth != created.NextMonth ||
+		!updated.NextRunAt.Equal(created.NextRunAt.Add(-18*time.Hour)) || !updated.UpdatedAt.After(created.UpdatedAt) {
+		t.Fatalf("delay edit: %+v", updated)
+	}
+	put(draft, api.PutDraftBillingRunScheduleRequest{ExpectedUpdatedAt: &created.UpdatedAt}, http.StatusConflict)
+	remove(created.UpdatedAt, http.StatusConflict)
+	remove(updated.UpdatedAt, http.StatusNoContent)
+	remove(updated.UpdatedAt, http.StatusConflict)
+	if servedPaths(t, f.e)[draft] {
+		t.Fatal("draft schedule escaped the internal OpenAPI filter")
+	}
+}
+
+func TestScheduledDraftRunHoldsUsageGapsWithoutProviderCalls(t *testing.T) {
+	f := newBillingRunFixture(t)
+	hour := time.Now().UTC().Add(-3 * time.Hour).Truncate(time.Hour)
+	f.month = time.Date(hour.Year(), hour.Month(), 1, 0, 0, 0, 0, time.UTC)
+	service := (*f.e.S()).BillingRuns()
+	service.Now = func() time.Time { return f.month.Add(time.Minute) }
+	var calls atomic.Int64
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(provider.Close)
+	(*f.e.S()).StatementInvoices().Stripe = &stripeinvoice.Client{BaseURL: provider.URL, HTTP: provider.Client()}
+
+	const slug = "scheduled-drafts"
+	apidserver.MustSeedApp(t, f.e, slug)
+	if res := f.e.Do(t, http.MethodPost, "/v1/apps/"+slug+"/rate-cards", api.CreateAPIConsumerRateCardRequest{
+		PriceMillicentsPerUnit: 10_000, Currency: "USD", EffectiveFrom: &f.month,
+	}, nil); res.Code != http.StatusCreated {
+		t.Fatalf("rate card: %d %s", res.Code, res.Body)
+	}
+	f.consumer(t, slug, "cus_READY", 4, "")
+	gap := f.consumer(t, slug, "cus_GAP", 4, "")
+	(*f.e.Store()).SeedAPIConsumerTelemetryHour((*f.e.Acct()).ID, gap.AppID, gap.ID, hour, 7)
+
+	res := f.e.Do(t, http.MethodPut, "/v1/account/billing-run-schedule/draft", api.PutDraftBillingRunScheduleRequest{}, nil)
+	var sched api.BillingRunScheduleResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &sched); err != nil || res.Code != http.StatusOK || sched.NextMonth != f.month.Format("2006-01") {
+		t.Fatalf("set schedule: %d %s", res.Code, res.Body)
+	}
+	service.Now = func() time.Time { return sched.NextRunAt.Add(time.Minute) }
+	for range 3 {
+		if err := service.RunOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res = f.e.Do(t, http.MethodGet, "/v1/account/billing-runs", nil, nil)
+	var list api.BillingRunListResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &list); err != nil || res.Code != http.StatusOK || len(list.Runs) != 1 {
+		t.Fatalf("list: %d %s", res.Code, res.Body)
+	}
+	run := list.Runs[0]
+	if run.Trigger != "schedule" || run.Status != "completed" || run.Finalize || run.Export != "none" ||
+		run.Counts.Drafted != 1 || run.Counts.Held != 1 || calls.Load() != 0 {
+		t.Fatalf("run = %+v, provider calls = %d", run, calls.Load())
+	}
+	items := f.items(t, run.ID)
+	if items["cus_READY"].StatementID == "" || items["cus_GAP"].Completeness != "gaps_detected" || items["cus_GAP"].Reason == "" {
+		t.Fatalf("items = %+v", items)
+	}
+
+	path := "/v1/account/billing-runs/" + run.ID + "/usage-holds/" + gap.ID
+	readHold := func(method string) api.BillingRunUsageHold {
+		t.Helper()
+		res := f.e.Do(t, method, path, nil, nil)
+		var hold api.BillingRunUsageHold
+		if err := json.Unmarshal(res.Body.Bytes(), &hold); err != nil || res.Code != http.StatusOK {
+			t.Fatalf("%s usage hold: %d %s", method, res.Code, res.Body)
+		}
+		return hold
+	}
+	original := readHold(http.MethodGet)
+	if len(original.Hours) != 1 || original.HeldAt == nil || original.MissingRequests <= 0 ||
+		!original.Hours[0].Hour.Equal(hour) || original.Hours[0].TelemetryRequestsAtHold != 7 {
+		t.Fatalf("original hold: %+v", original)
+	}
+	store, accountID := *f.e.Store(), (*f.e.Acct()).ID
+	release, acquired, err := store.TryLockBillingRunUsageRecheck(context.Background(), run.ID, gap.ID)
+	if err != nil || !acquired {
+		t.Fatalf("lock usage hold: acquired=%v err=%v", acquired, err)
+	}
+	res = f.e.Do(t, http.MethodPost, path, nil, nil)
+	release(context.Background())
+	if res.Code != http.StatusConflict {
+		t.Fatalf("concurrent usage recheck: %d %s", res.Code, res.Body)
+	}
+	store.SeedAPIConsumerTelemetryHour(accountID, gap.AppID, gap.ID, hour, 1)
+	raised := readHold(http.MethodPost)
+	if raised.Hours[0].TelemetryRequestsAtHold != 7 || raised.Hours[0].RequiredRequests != 8 {
+		t.Fatalf("higher observation lost original evidence: %+v", raised)
+	}
+	// Simulate telemetry expiry by removing every retained observation.
+	store.SeedAPIConsumerTelemetryHour(accountID, gap.AppID, gap.ID, hour, -8)
+	expired := readHold(http.MethodPost)
+	if expired.Item.Outcome != "held" || expired.MissingRequests != raised.MissingRequests ||
+		expired.Item.StatementID != original.Item.StatementID {
+		t.Fatalf("expired usage hold: %+v", expired)
+	}
+	// Ledger evidence for a different hour cannot satisfy the captured gap.
+	record := func(at time.Time, units int64) {
+		t.Helper()
+		_, err := store.RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{
+			EventID: uuid.NewString(), AccountID: accountID, AppID: gap.AppID, ConsumerKey: gap.ID,
+			WindowStart: at, RequestCount: units, BillableUnits: units,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	wrongHour := f.month
+	if wrongHour.Equal(hour) {
+		wrongHour = wrongHour.Add(time.Hour)
+	}
+	record(wrongHour, raised.MissingRequests)
+	if hold := readHold(http.MethodPost); hold.Item.Outcome != "held" || hold.MissingRequests != raised.MissingRequests {
+		t.Fatalf("wrong hour cleared hold: %+v", hold)
+	}
+	record(hour, raised.MissingRequests)
+	recovered := readHold(http.MethodPost)
+	if recovered.Item.Outcome != "drafted" || recovered.Item.UsageRecoveredAt == nil || recovered.MissingRequests != 0 ||
+		recovered.Item.Revision <= original.Item.Revision || recovered.Item.StatementID == original.Item.StatementID ||
+		recovered.Hours[0].LedgerRequests != 8 || recovered.Hours[0].TelemetryRequestsAtHold != 7 ||
+		recovered.Item.AmountMillicents == nil || *recovered.Item.AmountMillicents != (4+2*raised.MissingRequests)*10_000 {
+		t.Fatalf("recovered usage hold: %+v", recovered)
+	}
+	if again := readHold(http.MethodPost); again.Item.StatementID != recovered.Item.StatementID ||
+		again.Item.Revision != recovered.Item.Revision || !again.Item.UsageRecoveredAt.Equal(*recovered.Item.UsageRecoveredAt) {
+		t.Fatalf("recheck changed the recovered draft: %+v", again)
+	}
+	revisions, err := store.ListAPIConsumerUsageStatementRevisions(context.Background(), accountID, gap.AppID, gap.ID, f.month, run.PeriodEnd)
+	if err != nil || len(revisions) != 2 {
+		t.Fatalf("statement revisions: %+v %v", revisions, err)
+	}
+	res = f.e.Do(t, http.MethodGet, "/v1/account/billing-runs/"+run.ID+"/draft-exports", nil, nil)
+	var review api.BillingRunDraftExportReview
+	if err := json.Unmarshal(res.Body.Bytes(), &review); err != nil || res.Code != http.StatusOK {
+		t.Fatalf("draft approval review: %d %s", res.Code, res.Body)
+	}
+	var ready bool
+	for _, row := range review.Items {
+		if row.ConsumerID == gap.ID {
+			ready = row.Status == "ready" && row.StatementID == recovered.Item.StatementID
+		}
+	}
+	after := f.drain(t, run.ID)
+	if !ready || after.Counts.Drafted != 2 || after.Counts.Held != 0 ||
+		f.items(t, run.ID)["cus_READY"].StatementID != items["cus_READY"].StatementID || calls.Load() != 0 {
+		t.Fatalf("recovery did not reach draft approval: run=%+v review=%+v provider calls=%d", after, review, calls.Load())
 	}
 }

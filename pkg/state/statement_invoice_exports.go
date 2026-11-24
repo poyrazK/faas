@@ -80,6 +80,8 @@ type BillingConnection struct {
 	KeyLast4     string
 	Livemode     bool
 	APIURL       string
+	// StripeAccountID is the account verified with this credential, for customer links.
+	StripeAccountID string
 	// Collection is the connection's collection mode (ADR-1311), and
 	// DaysUntilDue when a sent invoice falls due.
 	Collection   string
@@ -135,6 +137,7 @@ type StatementInvoiceExport struct {
 	// handoff, before calling the provider: an overlapping statement then
 	// cannot be handed off or exported (ADR-20261020211500).
 	HandoffReserved bool
+	StripeIssue     *StripeInvoiceIssue
 
 	// claimToken and claimedUntil hold the MemStore's claim.
 	claimToken   string
@@ -160,6 +163,9 @@ func (e StatementInvoiceExport) Overdue(now time.Time) bool {
 // StatementInvoiceExportStore persists billing connections and exports.
 type StatementInvoiceExportStore interface {
 	PutBillingConnection(context.Context, BillingConnection) (BillingConnection, error)
+	// PutBillingConnectionIf creates when expected is zero, and otherwise
+	// replaces only the matching version. A failed precondition is ErrConflict.
+	PutBillingConnectionIf(ctx context.Context, c BillingConnection, expected time.Time) (BillingConnection, error)
 	GetBillingConnection(ctx context.Context, accountID, provider string) (BillingConnection, error)
 	DeleteBillingConnection(ctx context.Context, accountID, provider string) error
 	// BeginStatementInvoiceExport records an export or returns the existing
@@ -238,6 +244,14 @@ func normalizeCollection(mode string, days int) (string, int) {
 }
 
 func (m *MemStore) PutBillingConnection(_ context.Context, c BillingConnection) (BillingConnection, error) {
+	return m.putBillingConnection(c, nil)
+}
+
+func (m *MemStore) PutBillingConnectionIf(_ context.Context, c BillingConnection, expected time.Time) (BillingConnection, error) {
+	return m.putBillingConnection(c, &expected)
+}
+
+func (m *MemStore) putBillingConnection(c BillingConnection, expected *time.Time) (BillingConnection, error) {
 	c.Collection, c.DaysUntilDue = normalizeCollection(c.Collection, c.DaysUntilDue)
 	if err := validateBillingConnection(c); err != nil {
 		return BillingConnection{}, err
@@ -249,8 +263,15 @@ func (m *MemStore) PutBillingConnection(_ context.Context, c BillingConnection) 
 	}
 	now := time.Now().UTC()
 	key := c.AccountID + "/" + c.Provider
-	if prior, ok := m.billingConnections[key]; ok {
+	prior, exists := m.billingConnections[key]
+	if expected != nil && (exists == expected.IsZero() || exists && !prior.UpdatedAt.Equal(*expected)) {
+		return BillingConnection{}, ErrConflict
+	}
+	if exists {
 		c.CreatedAt = prior.CreatedAt
+		if !now.After(prior.UpdatedAt) {
+			now = prior.UpdatedAt.Add(time.Nanosecond)
+		}
 	} else {
 		c.CreatedAt = now
 	}
@@ -439,21 +460,43 @@ func (m *MemStore) GetStatementInvoiceExport(_ context.Context, accountID, sourc
 
 // --- PgStore ---
 
+const insertBillingConnectionSQL = `insert into account_billing_connections
+	(account_id, provider, sealed_secret, key_last4, livemode, api_url, collection, days_until_due, automatic_tax, stripe_account_id)
+	values ($1::uuid, $2, $3, $4, $5, nullif($6, ''), $7, $8, $9, nullif($10, ''))`
+
 func (s *PgStore) PutBillingConnection(ctx context.Context, c BillingConnection) (BillingConnection, error) {
+	return s.putBillingConnection(ctx, c, insertBillingConnectionSQL+`
+		on conflict (account_id, provider) do update
+		   set sealed_secret = excluded.sealed_secret, key_last4 = excluded.key_last4,
+		       livemode = excluded.livemode, api_url = excluded.api_url, collection = excluded.collection,
+		       days_until_due = excluded.days_until_due, automatic_tax = excluded.automatic_tax,
+		       stripe_account_id = excluded.stripe_account_id,
+		       updated_at = greatest(now(), account_billing_connections.updated_at + interval '1 microsecond')`)
+}
+
+func (s *PgStore) PutBillingConnectionIf(ctx context.Context, c BillingConnection, expected time.Time) (BillingConnection, error) {
+	if expected.IsZero() {
+		return s.putBillingConnection(ctx, c, insertBillingConnectionSQL+` on conflict (account_id, provider) do nothing`)
+	}
+	return s.putBillingConnection(ctx, c, `update account_billing_connections
+		set sealed_secret = $3, key_last4 = $4, livemode = $5, api_url = nullif($6, ''),
+		    collection = $7, days_until_due = $8, automatic_tax = $9,
+		    stripe_account_id = nullif($10, ''),
+		    updated_at = greatest(now(), updated_at + interval '1 microsecond')
+		where account_id = $1::uuid and provider = $2 and updated_at = $11`, expected)
+}
+
+func (s *PgStore) putBillingConnection(ctx context.Context, c BillingConnection, query string, extra ...any) (BillingConnection, error) {
 	c.Collection, c.DaysUntilDue = normalizeCollection(c.Collection, c.DaysUntilDue)
 	if err := validateBillingConnection(c); err != nil {
 		return BillingConnection{}, err
 	}
-	err := s.pool.QueryRow(ctx, `insert into account_billing_connections
-			(account_id, provider, sealed_secret, key_last4, livemode, api_url, collection, days_until_due, automatic_tax)
-		values ($1::uuid, $2, $3, $4, $5, nullif($6, ''), $7, $8, $9)
-		on conflict (account_id, provider) do update
-		   set sealed_secret = excluded.sealed_secret, key_last4 = excluded.key_last4,
-		       livemode = excluded.livemode, api_url = excluded.api_url, collection = excluded.collection,
-		       days_until_due = excluded.days_until_due, automatic_tax = excluded.automatic_tax, updated_at = now()
-		returning created_at, updated_at`,
-		c.AccountID, c.Provider, c.SealedSecret, c.KeyLast4, c.Livemode, c.APIURL, c.Collection, c.DaysUntilDue, c.AutomaticTax).
-		Scan(&c.CreatedAt, &c.UpdatedAt)
+	args := append([]any{c.AccountID, c.Provider, c.SealedSecret, c.KeyLast4, c.Livemode, c.APIURL,
+		c.Collection, c.DaysUntilDue, c.AutomaticTax, c.StripeAccountID}, extra...)
+	err := s.pool.QueryRow(ctx, query+` returning created_at, updated_at`, args...).Scan(&c.CreatedAt, &c.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return BillingConnection{}, ErrConflict
+	}
 	if err != nil {
 		return BillingConnection{}, fmt.Errorf("put billing connection: %w", err)
 	}
@@ -464,9 +507,10 @@ func (s *PgStore) PutBillingConnection(ctx context.Context, c BillingConnection)
 func (s *PgStore) GetBillingConnection(ctx context.Context, accountID, provider string) (BillingConnection, error) {
 	c := BillingConnection{AccountID: accountID, Provider: provider}
 	err := s.pool.QueryRow(ctx, `select sealed_secret, key_last4, livemode, coalesce(api_url, ''), collection, days_until_due,
-		automatic_tax, created_at, updated_at
+		automatic_tax, coalesce(stripe_account_id, ''), created_at, updated_at
 		from account_billing_connections where account_id = $1::uuid and provider = $2`, accountID, provider).
-		Scan(&c.SealedSecret, &c.KeyLast4, &c.Livemode, &c.APIURL, &c.Collection, &c.DaysUntilDue, &c.AutomaticTax, &c.CreatedAt, &c.UpdatedAt)
+		Scan(&c.SealedSecret, &c.KeyLast4, &c.Livemode, &c.APIURL, &c.Collection, &c.DaysUntilDue,
+			&c.AutomaticTax, &c.StripeAccountID, &c.CreatedAt, &c.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return BillingConnection{}, ErrNotFound
 	}
@@ -492,7 +536,7 @@ const statementInvoiceExportCols = `id, account_id, source_kind, statement_id, p
 	coalesce(provider_invoice_id, ''), currency, amount_minor, livemode, created_at, completed_at,
 	coalesce(payment_status, ''), amount_paid_minor, amount_remaining_minor, due_at, paid_at,
 	coalesce(hosted_invoice_url, ''), status_synced_at, next_status_sync_at, overdue_notified_at, collection, days_until_due, automatic_tax,
-	attempt, rejected_at, handoff_reserved`
+	attempt, rejected_at, handoff_reserved, stripe_issue`
 
 func scanStatementInvoiceExport(row pgx.Row) (StatementInvoiceExport, error) {
 	var e StatementInvoiceExport
@@ -500,7 +544,7 @@ func scanStatementInvoiceExport(row pgx.Row) (StatementInvoiceExport, error) {
 		&e.ProviderInvoiceID, &e.Currency, &e.AmountMinor, &e.Livemode, &e.CreatedAt, &e.CompletedAt,
 		&e.PaymentStatus, &e.AmountPaidMinor, &e.AmountRemainingMinor, &e.DueAt, &e.PaidAt,
 		&e.HostedInvoiceURL, &e.StatusSyncedAt, &e.NextStatusSyncAt, &e.OverdueNotifiedAt, &e.Collection, &e.DaysUntilDue, &e.AutomaticTax,
-		&e.Attempt, &e.RejectedAt, &e.HandoffReserved)
+		&e.Attempt, &e.RejectedAt, &e.HandoffReserved, &e.StripeIssue)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return StatementInvoiceExport{}, ErrNotFound
 	}

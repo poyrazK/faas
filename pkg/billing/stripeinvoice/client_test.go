@@ -10,6 +10,54 @@ import (
 	"time"
 )
 
+func TestVerifyCustomerIdentity(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer rk_test_fixture" {
+			t.Errorf("unexpected verification request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		switch r.URL.Path {
+		case "/v1/account":
+			_, _ = fmt.Fprint(w, `{"id":"acct_Scope"}`)
+		case "/v1/customers/cus_Test":
+			_, _ = fmt.Fprint(w, `{"id":"cus_Test","livemode":false}`)
+		case "/v1/customers/cus_Deleted":
+			_, _ = fmt.Fprint(w, `{"id":"cus_Deleted","livemode":false,"deleted":true}`)
+		case "/v1/customers/cus_MissingMode":
+			_, _ = fmt.Fprint(w, `{"id":"cus_MissingMode"}`)
+		case "/v1/customers/cus_Mismatched":
+			_, _ = fmt.Fprint(w, `{"id":"cus_Other","livemode":false}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
+	ctx := context.Background()
+	const key = "rk_test_fixture"
+	if account, err := c.AccountID(ctx, key); err != nil || account != "acct_Scope" {
+		t.Fatalf("account identity = %q, %v", account, err)
+	}
+	for _, tc := range []struct {
+		id, name string
+		live     bool
+		want     bool
+	}{
+		{"cus_Test", "matching mode", false, true},
+		{"cus_Test", "wrong mode", true, false},
+		{"cus_Deleted", "deleted", false, false},
+		{"cus_MissingMode", "missing mode", false, false},
+		{"cus_Mismatched", "mismatched ID", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got, err := c.VerifyCustomer(ctx, key, tc.id, tc.live); err != nil || got != tc.want {
+				t.Fatalf("verify = %v, %v; want %v", got, err, tc.want)
+			}
+		})
+	}
+}
+
 // adr: 1502
 func TestClientRequestsAndErrors(t *testing.T) {
 	var gotForm map[string]string

@@ -14,6 +14,7 @@ import (
 // monetizationRoutes samples every family of API monetization routes.
 var monetizationRoutes = []struct{ method, path string }{
 	{http.MethodGet, "/v1/apps/shop/rate-cards"},
+	{http.MethodGet, "/v1/apps/shop/monetization-funnel"},
 	{http.MethodPost, "/v1/apps/shop/consumer-plans"},
 	{http.MethodPut, "/v1/apps/shop/consumer-billing-policy"},
 	{http.MethodGet, "/v1/apps/shop/consumer-overdue-holds"},
@@ -24,6 +25,7 @@ var monetizationRoutes = []struct{ method, path string }{
 	{http.MethodPut, "/v1/apps/shop/consumers/c1/spend-cap"},
 	{http.MethodDelete, "/v1/apps/shop/consumers/c1/trial"},
 	{http.MethodPut, "/v1/account/billing-connections/stripe"},
+	{http.MethodPut, "/v1/account/billing-connections/stripe/setup"},
 	{http.MethodPost, "/v1/account/billing-runs"},
 	{http.MethodGet, "/v1/account/billing-run-schedule"},
 	{http.MethodGet, "/v1/account/statement-invoices"},

@@ -160,6 +160,63 @@ func (s *Service) PutBillingConnection(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	s.saveBillingConnection(w, r, acct, store, name, p, req, nil)
+}
+
+func stripeSetupConflict() *api.Problem {
+	return api.NewProblem(http.StatusConflict, api.CodeConflict, "Stripe connection changed",
+		"Reload the connection and review its current key before trying again.")
+}
+
+func (s *Service) PutStripeSetup(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	const name = state.BillingProviderStripe
+	store, ok := s.statementInvoiceStore(w, acct)
+	if !ok {
+		return
+	}
+	var req api.PutStripeSetupRequest
+	if err := httpkit.DecodeJSON(r, &req); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
+		return
+	}
+	p := s.provider(name)
+	key := strings.TrimSpace(req.SecretKey)
+	if !strings.HasPrefix(key, "rk_test_") && !strings.HasPrefix(key, "rk_live_") {
+		api.WriteProblem(w, providerProblem(http.StatusUnprocessableEntity, "Invalid Stripe restricted key",
+			"Use a Stripe restricted key beginning with rk_test_ or rk_live_."))
+		return
+	}
+	input := api.PutBillingConnectionRequest{SecretKey: key}
+	var expected time.Time
+	if req.ExpectedUpdatedAt != nil {
+		expected = *req.ExpectedUpdatedAt
+		prior, err := store.GetBillingConnection(r.Context(), acct.ID, name)
+		switch {
+		case errors.Is(err, state.ErrNotFound):
+			api.WriteProblem(w, stripeSetupConflict())
+			return
+		case err != nil:
+			api.WriteProblem(w, api.ErrInternal("could not read the Stripe connection"))
+			return
+		case !prior.UpdatedAt.Equal(expected):
+			api.WriteProblem(w, stripeSetupConflict())
+			return
+		}
+		if strings.HasPrefix(key, "rk_live_") != prior.Livemode {
+			api.WriteProblem(w, providerProblem(http.StatusUnprocessableEntity, "Stripe mode must match",
+				"Use a restricted key for the mode of the existing connection."))
+			return
+		}
+		input.Collection, input.AutomaticTax = prior.Collection, prior.AutomaticTax
+		if prior.Collection == state.CollectionSend {
+			input.DaysUntilDue = prior.DaysUntilDue
+		}
+	}
+	s.saveBillingConnection(w, r, acct, store, name, p, input, &expected)
+}
+
+func (s *Service) saveBillingConnection(w http.ResponseWriter, r *http.Request, acct state.Account, store state.StatementInvoiceExportStore,
+	name string, p provider, req api.PutBillingConnectionRequest, expected *time.Time) {
 	conn, problem := parseConnection(name, p, req)
 	if problem != nil {
 		api.WriteProblem(w, problem)
@@ -174,9 +231,28 @@ func (s *Service) PutBillingConnection(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, api.ErrInternal("could not store the "+p.title()+" key"))
 		return
 	}
-	stored, err := store.PutBillingConnection(r.Context(), state.BillingConnection{AccountID: acct.ID, Provider: name,
+	candidate := state.BillingConnection{AccountID: acct.ID, Provider: name,
 		SealedSecret: sealed, KeyLast4: conn.key[len(conn.key)-4:], Livemode: conn.livemode, APIURL: conn.apiURL,
-		Collection: conn.collection, DaysUntilDue: conn.daysUntilDue, AutomaticTax: conn.automaticTax})
+		Collection: conn.collection, DaysUntilDue: conn.daysUntilDue, AutomaticTax: conn.automaticTax}
+	if name == state.BillingProviderStripe {
+		// Legacy invoice-only keys can still connect. Re-identify a known
+		// account when rotating its key so its links remain available.
+		if prior, err := store.GetBillingConnection(r.Context(), acct.ID, name); err == nil && prior.StripeAccountID != "" {
+			identityCtx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+			candidate.StripeAccountID, _ = s.stripeInvoiceClient().AccountID(identityCtx, conn.key)
+			cancel()
+		}
+	}
+	var stored state.BillingConnection
+	if expected == nil {
+		stored, err = store.PutBillingConnection(r.Context(), candidate)
+	} else {
+		stored, err = store.PutBillingConnectionIf(r.Context(), candidate, *expected)
+		if errors.Is(err, state.ErrConflict) {
+			api.WriteProblem(w, stripeSetupConflict())
+			return
+		}
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("could not store the "+p.title()+" key"))
 		return
@@ -297,6 +373,8 @@ type statementInvoiceSource struct {
 	invoice           billing.StatementInvoice
 	existingHandoff   string
 	handoff           func(ctx context.Context, invoiceID string) error
+	draftLivemode     *bool
+	draftConnectionAt time.Time
 }
 
 func statementInvoiceExportResponse(e state.StatementInvoiceExport) api.StatementInvoiceExportResponse {
@@ -309,6 +387,9 @@ func statementInvoiceExportResponse(e state.StatementInvoiceExport) api.Statemen
 	if e.ProviderInvoiceID != "" {
 		out.DashboardURL = dashboardURL(e.Provider, e.Livemode, e.ProviderInvoiceID)
 	}
+	if issue := e.StripeIssue; issue != nil {
+		out.StripeSendPending, out.StripeIssuedAt, out.StripeSentAt = issue.SentAt == nil, issue.IssuedAt, issue.SentAt
+	}
 	return out
 }
 
@@ -319,6 +400,14 @@ func exportConflict(detail string) *api.Problem {
 func exportInProgress() *api.Problem {
 	return api.NewProblem(http.StatusConflict, api.CodeStatementInvoiceExportInProgress, "Statement invoice export in progress",
 		"another attempt is exporting this statement; retry once it finishes")
+}
+
+func draftCollectionConflict() *api.Problem {
+	return exportConflict("a Stripe draft requires draft collection mode on the connection and any unfinished export")
+}
+
+func draftModeConflict() *api.Problem {
+	return exportConflict("the Stripe test or live mode differs from the reviewed export")
 }
 
 // exportStatementInvoice creates the statement's invoice in the provider,
@@ -338,6 +427,17 @@ func (s *Service) exportStatementInvoice(ctx context.Context, acct state.Account
 		return state.StatementInvoiceExport{}, exportConflict("the statement was already exported to " + prior.Provider)
 	}
 	if err == nil && prior.Status == state.StatementInvoiceExportCompleted {
+		if src.draftLivemode != nil {
+			if prior.Collection != "none" {
+				return state.StatementInvoiceExport{}, exportConflict("this statement already has an export configured to collect")
+			}
+			if prior.Livemode != *src.draftLivemode {
+				return state.StatementInvoiceExport{}, draftModeConflict()
+			}
+			if !src.draftConnectionAt.IsZero() && prior.Customer != src.requestedCustomer {
+				return state.StatementInvoiceExport{}, exportConflict("the Stripe customer differs from the reviewed export")
+			}
+		}
 		return prior, nil
 	}
 	if src.existingHandoff != "" && (err != nil || prior.ProviderInvoiceID != src.existingHandoff) {
@@ -360,6 +460,17 @@ func (s *Service) exportStatementInvoice(ctx context.Context, acct state.Account
 	if problem != nil {
 		return state.StatementInvoiceExport{}, problem
 	}
+	if src.draftLivemode != nil {
+		if conn.collection != "none" {
+			return state.StatementInvoiceExport{}, draftCollectionConflict()
+		}
+		if conn.livemode != *src.draftLivemode {
+			return state.StatementInvoiceExport{}, draftModeConflict()
+		}
+	}
+	if !src.draftConnectionAt.IsZero() && !conn.updatedAt.Equal(src.draftConnectionAt) {
+		return state.StatementInvoiceExport{}, exportConflict("the Stripe connection changed; review the draft again")
+	}
 	export, resumed, err := store.BeginStatementInvoiceExport(ctx, state.StatementInvoiceExport{AccountID: acct.ID, SourceKind: src.kind,
 		StatementID: src.statementID, Provider: providerName, Customer: src.customer,
 		Currency: src.invoice.Currency, AmountMinor: src.invoice.TotalMinor, Livemode: conn.livemode,
@@ -381,6 +492,19 @@ func (s *Service) exportStatementInvoice(ctx context.Context, acct state.Account
 	defer func() { _ = store.ReleaseStatementInvoiceExport(context.WithoutCancel(ctx), acct.ID, export.ID, token) }()
 	// The claim reads the export as the attempt before it left it.
 	export = claimed
+	// A concurrent export can pin a different collection mode before the
+	// claim. Guard the pinned mode before any operation on the provider.
+	if src.draftLivemode != nil && export.Collection != "none" {
+		return state.StatementInvoiceExport{}, draftCollectionConflict()
+	}
+	if !src.draftConnectionAt.IsZero() {
+		if export.Provider != providerName || export.Customer != src.customer || export.Livemode != conn.livemode {
+			return state.StatementInvoiceExport{}, exportConflict("the existing invoice differs from the reviewed Stripe draft")
+		}
+		if export.Status != state.StatementInvoiceExportCompleted && conn.updatedAt.After(export.CreatedAt) {
+			return state.StatementInvoiceExport{}, exportConflict("the Stripe connection changed after this export started")
+		}
+	}
 	if export.Status == state.StatementInvoiceExportCompleted {
 		return export, nil
 	}
@@ -455,7 +579,7 @@ func (s *Service) openConnection(ctx context.Context, store state.StatementInvoi
 	if !ok {
 		return connection{}, api.ErrInternal("could not open the stored " + p.title() + " key; reconnect " + p.title())
 	}
-	return connection{key: key, apiURL: stored.APIURL, livemode: stored.Livemode, collection: stored.Collection,
+	return connection{key: key, apiURL: stored.APIURL, livemode: stored.Livemode, updatedAt: stored.UpdatedAt, collection: stored.Collection,
 		daysUntilDue: stored.DaysUntilDue, automaticTax: stored.AutomaticTax}, nil
 }
 
