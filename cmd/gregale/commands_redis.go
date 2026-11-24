@@ -101,7 +101,7 @@ func cmdRedisCreate(args []string) int {
 		return jsonOut(writeJSON(cache))
 	}
 	_, _ = fmt.Fprintf(osStdout, "Created Redis cache %s (%d MB, %s) at %s:%d\n", cache.Name, cache.MemoryMB, cache.EvictionPolicy, cache.Host, cache.Port)
-	_, _ = fmt.Fprintf(osStdout, "Connect an app: gregale redis bind %s --app APP (before the app's first deploy works too)\n", cache.Name)
+	_, _ = fmt.Fprintf(osStdout, "Connect an app: gregale redis bind %s --app APP\n", cache.Name)
 	return 0
 }
 
@@ -145,45 +145,37 @@ func cmdRedisBind(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	ctx := context.Background()
-	created, err := ensureRedisBindTarget(ctx, client, fs.Arg(0), *app)
-	if err != nil {
-		return printErr("Could not bind Redis cache", err)
-	}
 	binding, err := client.BindRedisCache(ctx, fs.Arg(0), api.BindRedisCacheRequest{App: *app, EnvKey: *envKey})
 	if err != nil {
-		return printErr("Could not bind Redis cache", err)
+		return printErr("Could not bind Redis cache", redisBindError(ctx, client, fs.Arg(0), *app, err))
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(binding))
-	}
-	if created {
-		_, _ = fmt.Fprintf(osStdout, "Created app %s and set %s on it; its first deploy starts with the cache connected.\n", binding.App, binding.EnvKey)
-		return 0
 	}
 	_, _ = fmt.Fprintf(osStdout, "Set %s on %s; it takes effect at the app's next deploy or wake.\n", binding.EnvKey, binding.App)
 	return 0
 }
 
-// ensureRedisBindTarget creates the app a cache is bound to when it does not
-// exist yet, so an app that needs REDIS_URL at startup has it on its first
-// deploy instead of failing that deploy's health check. It checks the cache
-// first, so a mistyped cache name never leaves an empty app behind.
-func ensureRedisBindTarget(ctx context.Context, client *api.Client, cache, app string) (bool, error) {
-	if _, err := client.GetRedisCache(ctx, cache); err != nil {
-		return false, err
+// redisBindError explains a bind to an app that does not exist yet. A cache
+// binds only to an existing app, and an app that reads REDIS_URL at startup
+// fails its first deploy's health check without it (prod trial 2026-11-24),
+// so the error spells out the order that works. Bind does not create the app
+// itself: it cannot know the app's shape, plan or lifecycle, which the first
+// deploy sets.
+func redisBindError(ctx context.Context, client *api.Client, cache, app string, err error) error {
+	if !isNotFound(err) {
+		return err
 	}
-	if _, err := client.GetApp(ctx, app); err == nil || !isNotFound(err) {
-		return false, err
+	if _, cacheErr := client.GetRedisCache(ctx, cache); cacheErr != nil {
+		return err
 	}
-	if _, err := client.CreateApp(ctx, buildCreateRequest(app, shapeApp, "", nil, nil)); err != nil {
-		var ae *api.APIError
-		if errors.As(err, &ae) && ae.Problem.Status == http.StatusConflict {
-			// Created by a concurrent deploy; bind to it.
-			return false, nil
-		}
-		return false, fmt.Errorf("create app %s: %w", app, err)
+	if _, appErr := client.GetApp(ctx, app); appErr == nil || !isNotFound(appErr) {
+		return err
 	}
-	return true, nil
+	problem := api.Problem{Status: http.StatusNotFound, Code: api.CodeNotFound, Title: "App does not exist yet",
+		Detail: fmt.Sprintf("a cache binds only to an existing app, and %s has not been deployed; an app that needs Redis to start fails its first deploy's health check, which the deploy after binding fixes", app),
+		Hint:   fmt.Sprintf("Deploy it once with `gregale deploy --name %s`, then bind the cache and deploy again.", app)}
+	return &api.APIError{Problem: problem}
 }
 
 func cmdRedisResize(args []string) int {

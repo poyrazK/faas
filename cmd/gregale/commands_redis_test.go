@@ -39,65 +39,59 @@ func TestCmdRedisListJSON(t *testing.T) {
 	}
 }
 
-// TestCmdRedisBindCreatesMissingApp pins binding before an app's first deploy:
+// TestCmdRedisBindExplainsMissingApp pins binding before an app's first deploy:
 // an app that reads REDIS_URL at startup failed its first deploy's health
-// check because bind needed the app to exist (prod trial 2026-11-24). Bind now
-// creates the app, and never does so for a cache that does not exist.
-func TestCmdRedisBindCreatesMissingApp(t *testing.T) {
-	notFound := `{"status":404,"code":"not_found","title":"Not found","detail":"no such app"}`
+// check because bind needed the app to exist (prod trial 2026-11-24). Bind
+// never creates the app, which only a deploy can shape; it names the order
+// that works, and never blames a missing cache on the app.
+func TestCmdRedisBindExplainsMissingApp(t *testing.T) {
+	notFound := `{"status":404,"code":"not_found","title":"Not found","detail":"not found"}`
+	// 4 is the CLI's not-found exit code.
 	tests := []struct {
 		name       string
 		cacheFound bool
 		appFound   bool
 		wantCode   int
-		wantCreate bool
-		wantBind   bool
-		wantOut    string
+		wantStdout string
+		wantStderr string
+		notStderr  string
 	}{
-		{name: "missing app is created", cacheFound: true, wantCode: 0, wantCreate: true, wantBind: true, wantOut: "Created app web and set REDIS_URL"},
-		{name: "existing app is bound", cacheFound: true, appFound: true, wantCode: 0, wantBind: true, wantOut: "Set REDIS_URL on web"},
-		// 4 is the CLI's not-found exit code.
-		{name: "missing cache creates nothing", wantCode: 4},
+		{name: "existing app is bound", cacheFound: true, appFound: true, wantCode: 0, wantStdout: "Set REDIS_URL on web"},
+		{name: "missing app names the order", cacheFound: true, wantCode: 4, wantStderr: "Deploy it once with `gregale deploy --name web`, then bind the cache and deploy again."},
+		{name: "missing cache is not blamed on the app", wantCode: 4, notStderr: "does not exist yet"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var created, bound bool
+			var created bool
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				switch {
-				case r.Method == http.MethodGet && r.URL.Path == "/v1/redis/sessions":
-					if !tt.cacheFound {
-						w.WriteHeader(http.StatusNotFound)
-						_, _ = w.Write([]byte(notFound))
-						return
-					}
+				case r.Method == http.MethodGet && r.URL.Path == "/v1/redis/sessions" && tt.cacheFound:
 					_, _ = w.Write([]byte(`{"name":"sessions","memory_mb":64}`))
-				case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/web":
-					if !tt.appFound {
-						w.WriteHeader(http.StatusNotFound)
-						_, _ = w.Write([]byte(notFound))
-						return
-					}
+				case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/web" && tt.appFound:
 					_, _ = w.Write([]byte(`{"id":"app-1","slug":"web"}`))
 				case r.Method == http.MethodPost && r.URL.Path == "/v1/apps":
 					created = true
-					w.WriteHeader(http.StatusCreated)
-					_, _ = w.Write([]byte(`{"id":"app-1","slug":"web"}`))
-				case r.Method == http.MethodPost && r.URL.Path == "/v1/redis/sessions/bindings":
-					bound = true
+					w.WriteHeader(http.StatusTeapot)
+				case r.Method == http.MethodPost && r.URL.Path == "/v1/redis/sessions/bindings" && tt.cacheFound && tt.appFound:
 					_, _ = w.Write([]byte(`{"cache":"sessions","app":"web","env_key":"REDIS_URL"}`))
 				default:
-					http.NotFound(w, r)
+					w.WriteHeader(http.StatusNotFound)
+					_, _ = w.Write([]byte(notFound))
 				}
 			}))
 			defer srv.Close()
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "fp_live_test")
 			main.WithCwd(t, t.TempDir())
+			stderr, restore := main.CaptureStderr(t)
 			var out bytes.Buffer
 			code := main.CaptureStdoutSwap(t, &out, func() int { return main.CmdRedis([]string{"bind", "sessions", "--app", "web"}) })
-			if code != tt.wantCode || created != tt.wantCreate || bound != tt.wantBind || !strings.Contains(out.String(), tt.wantOut) {
-				t.Fatalf("exit = %d created = %v bound = %v out = %q; want %d %v %v %q", code, created, bound, out.String(), tt.wantCode, tt.wantCreate, tt.wantBind, tt.wantOut)
+			restore()
+			errOut := stderr.String()
+			if code != tt.wantCode || created || !strings.Contains(out.String(), tt.wantStdout) || !strings.Contains(errOut, tt.wantStderr) ||
+				(tt.notStderr != "" && strings.Contains(errOut, tt.notStderr)) {
+				t.Fatalf("exit = %d created = %v stdout = %q stderr = %q", code, created, out.String(), errOut)
 			}
 		})
 	}

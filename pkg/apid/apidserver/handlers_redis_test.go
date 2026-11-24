@@ -150,6 +150,11 @@ func TestRedisCacheResizeAndUpgradeHandOff(t *testing.T) {
 			t.Fatalf("shrink refusal = %s", rec.Body.String())
 		}
 	}
+	// A shrink that also changes the policy keeps the policy in the hint.
+	if rec := e.do(t, "PATCH", "/v1/redis/sessions", api.UpdateRedisCacheRequest{MemoryMB: 128, EvictionPolicy: "allkeys-lfu"}, map[string]string{"Idempotency-Key": "shrink-policy"}); rec.Code != http.StatusConflict ||
+		!strings.Contains(rec.Body.String(), "--memory 128 --eviction-policy allkeys-lfu --evict") {
+		t.Fatalf("shrink with policy refusal: %d %s", rec.Code, rec.Body.String())
+	}
 	rec := e.do(t, "PATCH", "/v1/redis/sessions", api.UpdateRedisCacheRequest{MemoryMB: 512}, map[string]string{"Idempotency-Key": "grow"})
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("grow: %d %s", rec.Code, rec.Body.String())

@@ -282,11 +282,11 @@ func (s *server) updateRedisCache(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 	if problem := firstProblem(api.ValidateManagedValkeyMemory(acct.Plan, next.MemoryMB), api.ValidateManagedValkeyEvictionPolicy(next.EvictionPolicy)); problem != nil {
-		s.refuseRedisChange(w, app, problem)
+		s.refuseRedisChange(w, app, problem, nil)
 		return
 	}
 	if next.MemoryMB < cache.MemoryMB && !req.Evict {
-		s.refuseRedisChange(w, app, errRedisShrinkNeedsEvict(app.Slug, cache.MemoryMB, next.MemoryMB))
+		s.refuseRedisChange(w, app, errRedisShrinkNeedsEvict(app.Slug, cache, next), nil)
 		return
 	}
 	s.handOffRedisCache(w, r, acct, app, next)
@@ -294,16 +294,30 @@ func (s *server) updateRedisCache(w http.ResponseWriter, r *http.Request, acct s
 
 // errRedisShrinkNeedsEvict refuses a shrink the caller did not allow to evict
 // keys, and names the flag that allows it.
-func errRedisShrinkNeedsEvict(name string, fromMB, toMB int) *api.Problem {
+func errRedisShrinkNeedsEvict(name string, cache, next state.ManagedValkeyCache) *api.Problem {
+	command := fmt.Sprintf("gregale redis resize %s --memory %d", name, next.MemoryMB)
+	if next.EvictionPolicy != cache.EvictionPolicy {
+		command += " --eviction-policy " + next.EvictionPolicy
+	}
 	return api.NewProblem(http.StatusConflict, "cache_shrink_needs_evict", "Shrinking needs --evict",
-		fmt.Sprintf("%s holds up to %d MB and would shrink to %d MB, which may not fit its data; set evict to let the cache drop keys by its eviction policy", name, fromMB, toMB)).
-		WithHint(fmt.Sprintf("Run gregale redis resize %s --memory %d --evict.", name, toMB))
+		fmt.Sprintf("%s holds up to %d MB and would shrink to %d MB, which may not fit its data; set evict to let the cache drop keys by its eviction policy", name, cache.MemoryMB, next.MemoryMB)).
+		WithHint("Run " + command + " --evict.")
 }
 
 // refuseRedisChange writes a refused cache change and logs it, so a refusal a
 // customer reports can be found by the cache's app ID.
-func (s *server) refuseRedisChange(w http.ResponseWriter, app state.App, problem *api.Problem) {
-	s.log.Info("apid: redis cache change refused", "app_id", app.ID, "status", problem.Status, "code", problem.Code, "detail", problem.Detail)
+// cause is the underlying error behind a server-side refusal, or nil; a 5xx
+// refusal logs at Warn so it surfaces next to other failures.
+func (s *server) refuseRedisChange(w http.ResponseWriter, app state.App, problem *api.Problem, cause error) {
+	attrs := []any{"app_id", app.ID, "status", problem.Status, "code", problem.Code, "detail", problem.Detail}
+	if cause != nil {
+		attrs = append(attrs, "err", cause)
+	}
+	if problem.Status >= http.StatusInternalServerError {
+		s.log.Warn("apid: redis cache change refused", attrs...)
+	} else {
+		s.log.Info("apid: redis cache change refused", attrs...)
+	}
 	api.WriteProblem(w, problem)
 }
 
@@ -326,7 +340,7 @@ func (s *server) handOffRedisCache(w http.ResponseWriter, r *http.Request, acct 
 	}
 	previous, err := store.GetManagedValkeyCache(r.Context(), app.ID)
 	if err != nil {
-		s.refuseRedisChange(w, app, api.ErrCapacity("could not load Redis cache"))
+		s.refuseRedisChange(w, app, api.ErrCapacity("could not load Redis cache"), err)
 		return
 	}
 	previousRAM := app.RAMMB
@@ -343,14 +357,14 @@ func (s *server) handOffRedisCache(w http.ResponseWriter, r *http.Request, acct 
 	// would cold-boot empty and the copy would be empty (native run
 	// redis-20261118T095202). Wake it first, while the RAM still matches.
 	if problem := s.redisEnsureRunning(r.Context(), acct, app); problem != nil {
-		s.refuseRedisChange(w, app, problem)
+		s.refuseRedisChange(w, app, problem, nil)
 		return
 	}
 	ram := api.ManagedValkeyVMRAMMB(next.MemoryMB)
 	if ram != app.RAMMB {
 		updated, err := s.store.UpdateApp(r.Context(), app.ID, state.UpdateAppParams{RAMMB: &ram})
 		if err != nil {
-			s.refuseRedisChange(w, app, api.ErrCapacity("could not resize Redis cache"))
+			s.refuseRedisChange(w, app, api.ErrCapacity("could not resize Redis cache"), err)
 			return
 		}
 		app = updated
@@ -358,7 +372,7 @@ func (s *server) handOffRedisCache(w http.ResponseWriter, r *http.Request, acct 
 	cache, err := store.UpdateManagedValkeyCache(r.Context(), app.ID, next.MemoryMB, next.EvictionPolicy)
 	if err != nil {
 		rollback(r.Context())
-		s.refuseRedisChange(w, app, api.ErrCapacity("could not record Redis cache change"))
+		s.refuseRedisChange(w, app, api.ErrCapacity("could not record Redis cache change"), err)
 		return
 	}
 	until := timeNow().Unix() + api.ManagedValkeyHandoffWindowS
@@ -375,11 +389,11 @@ func (s *server) handOffRedisCache(w http.ResponseWriter, r *http.Request, acct 
 		rollback(r.Context())
 		var problem api.Problem
 		if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil || problem.Code == "" {
-			s.refuseRedisChange(w, app, api.ErrCapacity("could not deploy the Redis cache change"))
+			s.refuseRedisChange(w, app, api.ErrCapacity("could not deploy the Redis cache change"), err)
 			return
 		}
 		problem.Status = rec.Code
-		s.refuseRedisChange(w, app, &problem)
+		s.refuseRedisChange(w, app, &problem, nil)
 		return
 	}
 	var dep api.DeploymentResponse
@@ -408,7 +422,7 @@ func (s *server) restartRedisCache(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 	if app.Status != state.AppActive {
-		s.refuseRedisChange(w, app, redisRestartRefusal(app))
+		s.refuseRedisChange(w, app, redisRestartRefusal(app), nil)
 		return
 	}
 	query := r.URL.Query()
