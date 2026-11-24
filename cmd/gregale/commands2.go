@@ -6530,8 +6530,11 @@ func cmdKeys(args []string) int {
 				return printErr("Invalid scopes", err)
 			}
 		}
-		if agent := api.CodingAgentFromEnv(os.Getenv); agent != "" && !slices.Contains(scopes, api.ScopeAgent) {
-			fmt.Fprintf(os.Stderr, "Warning: %s is creating a key without the agent scope: Gregale will not ask a person before it deletes, deploys to production or changes billing, and will not hold its always-on cost to an agent budget. Add --agent for a key the agent uses.\n", agent)
+		// A read-only key cannot delete, deploy or bill, so the warning
+		// below misstated what it could do (prod hunt r45).
+		readOnly := len(scopes) > 0 && !slices.ContainsFunc(scopes, func(s string) bool { return !strings.HasSuffix(s, ":read") })
+		if agent := api.CodingAgentFromEnv(os.Getenv); agent != "" && !readOnly && !slices.Contains(scopes, api.ScopeAgent) {
+			_, _ = fmt.Fprintf(osStderr, "Warning: %s is creating a key without the agent scope: Gregale will not ask a person before it deletes, deploys to production or changes billing, and will not hold its always-on cost to an agent budget. Add --agent for a key the agent uses.\n", agent)
 		}
 		client, err := authedClient()
 		if err != nil {

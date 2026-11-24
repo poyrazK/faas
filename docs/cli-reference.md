@@ -8233,14 +8233,14 @@ Search your account&#39;s audit log
 
 List audit events
 
-`gregale audit list [--kind-prefix <PREFIX>] [--app <SLUG>] [--app-id <UUID>] [--since <RFC3339>] [--limit <N>] [--include-anonymous] [--verbose]`
+`gregale audit list [--kind-prefix <PREFIX>] [--app <SLUG>] [--app-id <UUID>] [--since <DURATION|RFC3339>] [--limit <N>] [--include-anonymous] [--verbose]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--kind-prefix <PREFIX>` | filter by kind prefix |  |
 | `--app <SLUG>` | filter by app slug |  |
 | `--app-id <UUID>` | filter by app UUID |  |
-| `--since <RFC3339>` | RFC3339 lower bound |  |
+| `--since <DURATION|RFC3339>` | lower bound: a duration such as 1h, or RFC3339 |  |
 | `--limit <N>` | maximum rows (1..100; default 50) |  |
 | `--include-anonymous` | include rows without a subject |  |
 | `--verbose` | expand stateless advisory rows |  |

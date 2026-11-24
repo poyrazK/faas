@@ -85,7 +85,7 @@ func cmdAuditEventsList(args []string) int {
 	// Every other command names an app by slug; `--app h14-py` answered
 	// "unknown flag" on production-us rc.294 (Hunt 14 H14-64).
 	appSlug := fs.String("app", "", "filter to one app's events, by slug")
-	since := fs.String("since", "", "RFC 3339 lower bound on `at`")
+	since := fs.String("since", "", "lower bound on `at`: a duration such as 1h, or RFC 3339")
 	limit := fs.Int("limit", 50, "max rows (1..100; server caps at 100)")
 	includeAnon := fs.Bool("include-anonymous", false, "also surface subject=NULL rows (operator post-mortem)")
 	verbose := fs.Bool("verbose", false, "expand stateless.advisory rows into 5 columns (instance, count, paths, sample_pid, last_ts)")
@@ -93,15 +93,18 @@ func cmdAuditEventsList(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 || (*appSlug != "" && *appID != "") {
-		printCommandValidation(os.Stderr, "usage: gregale audit list [--kind-prefix P] [--app <slug> | --app-id <uuid>] [--since RFC3339] [--limit N] [--include-anonymous] [--verbose]\n")
+		printCommandValidation(os.Stderr, "usage: gregale audit list [--kind-prefix P] [--app <slug> | --app-id <uuid>] [--since 1h|RFC3339] [--limit N] [--include-anonymous] [--verbose]\n")
 		return 1
 	}
 	if err := validateCLILimit("limit", *limit, 100); err != nil {
 		return printErr("Invalid --limit", err)
 	}
 	if *since != "" {
-		if _, err := time.Parse(time.RFC3339, *since); err != nil {
-			return printErr("Invalid --since", fmt.Errorf("must be RFC 3339 (e.g. 2026-07-25T00:00:00Z): %w", err))
+		// `--since 5m` works for logs; audit refused it (prod hunt r45).
+		if d, err := time.ParseDuration(*since); err == nil && d > 0 {
+			*since = time.Now().UTC().Add(-d).Format(time.RFC3339)
+		} else if _, err := time.Parse(time.RFC3339, *since); err != nil {
+			return printErr("Invalid --since", fmt.Errorf("must be a duration such as 1h or RFC 3339 (e.g. 2026-07-25T00:00:00Z); got %q", *since))
 		}
 	}
 

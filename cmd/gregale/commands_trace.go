@@ -57,7 +57,7 @@ func cmdTrace(args []string) int {
 	// Prod hunt r39: `trace list` looked up a request named "list" and
 	// answered "request telemetry not found".
 	if id == "list" || id == "ls" {
-		return printErr("trace takes one id", errors.New("`gregale trace` looks up one trace or request ID; to find recent requests and their IDs run gregale logs --source http"))
+		return printErr("trace takes one id", errors.New("`gregale debug trace` looks up one trace or request ID; to find recent requests and their IDs run gregale logs --source http"))
 	}
 	if lower := strings.ToLower(id); validTraceID(lower) {
 		id = lower

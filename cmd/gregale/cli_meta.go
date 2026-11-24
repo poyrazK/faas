@@ -1417,7 +1417,7 @@ var cliCommands = []cliCommand{
 				{Name: "kind-prefix", Short: "filter by kind prefix", Value: "PREFIX"},
 				{Name: "app", Short: "filter by app slug", Value: "SLUG"},
 				{Name: "app-id", Short: "filter by app UUID", Value: "UUID"},
-				{Name: "since", Short: "RFC3339 lower bound", Value: "RFC3339"},
+				{Name: "since", Short: "lower bound: a duration such as 1h, or RFC3339", Value: "DURATION|RFC3339"},
 				{Name: "limit", Short: "maximum rows (1..100; default 50)", Value: "N"},
 				{Name: "include-anonymous", Short: "include rows without a subject"},
 				{Name: "verbose", Short: "expand stateless advisory rows"},
