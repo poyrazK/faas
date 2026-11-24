@@ -205,7 +205,7 @@ func cmdClaim(args []string) int {
 		if jsonOutput && !jsonUsageHelp {
 			return
 		}
-		PrintUsage(os.Stderr, "usage: gregale claim", "auth")
+		PrintUsage(os.Stderr, "usage: gregale claim", "claimable-deploys")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
