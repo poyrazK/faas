@@ -29,7 +29,7 @@ case "${runtime_image}" in
     ;;
   sandbox-desktop)
     fixture_name=handler.py
-    fixture_body='import shutil; assert all(shutil.which(p) for p in ("Xvfb", "xfce4-session", "x11vnc", "websockify", "xdotool", "import", "wmctrl", "chromium", "gregale-desktop")); print("runtime-smoke-ok")'
+    fixture_body='import shutil; assert all(shutil.which(p) for p in ("Xvfb", "xfwm4", "xfce4-panel", "xfdesktop", "xfsettingsd", "dbus-run-session", "x11vnc", "websockify", "xdotool", "import", "wmctrl", "chromium", "gregale-desktop")); print("runtime-smoke-ok")'
     runtime_command=(/usr/bin/python3 -I "/tmp/gregale-runtime-smoke/${fixture_name}")
     ;;
   runner-python312|runner-python313)

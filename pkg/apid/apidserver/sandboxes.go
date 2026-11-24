@@ -2,6 +2,7 @@ package apidserver
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/sandboxtoken"
 	"github.com/onebox-faas/faas/pkg/state"
 	agentstore "github.com/onebox-faas/faas/pkg/state/agents"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 )
 
 // configureSandboxes wires ADR-20261027090013's sandbox session intents.
@@ -25,6 +27,12 @@ func (s *server) configureSandboxes(pool *pgxpool.Pool, getenv func(string) stri
 	if err != nil {
 		return err
 	}
+	// ADR-20261124075005 §3a: the desktop boots the platform drive named by
+	// the image's digest, so an unpinned reference cannot start.
+	desktopImage := strings.TrimSpace(getenv("FAAS_SANDBOX_DESKTOP_IMAGE"))
+	if desktopImage != "" && storagekey.SandboxDesktopImageForRef(desktopImage) == "" {
+		return fmt.Errorf("apid: FAAS_SANDBOX_DESKTOP_IMAGE must be pinned by sha256 digest; got %q", desktopImage)
+	}
 	h := &sandboxes.Handler{
 		PreviewDomain: domain,
 		// ADR-20261112121456 §6: web egress is on only where the operator
@@ -33,7 +41,7 @@ func (s *server) configureSandboxes(pool *pgxpool.Pool, getenv func(string) stri
 		// ADR-20261027090013 step 14: the code interpreter is on once the
 		// operator names its published image.
 		CodeInterpreterImage: strings.TrimSpace(getenv("FAAS_SANDBOX_CODE_INTERPRETER_IMAGE")),
-		DesktopImage:         strings.TrimSpace(getenv("FAAS_SANDBOX_DESKTOP_IMAGE")),
+		DesktopImage:         desktopImage,
 		// ADR-20261122132055: persistent sessions are on once agentd,
 		// schedd and vmmd pause and resume them.
 		Persistent: strings.TrimSpace(getenv("FAAS_SANDBOX_PERSISTENT")) == "1",

@@ -274,21 +274,42 @@ func sandboxBrowserCommands(req SandboxWakeRequest) SandboxWakeRequest {
 // Chromium's files are in the snapshot's page cache and nothing that runs is
 // (ADR-20261116182615 §2).
 func prewarmSandboxBrowser(ctx context.Context, dialer SandboxDialer, instance string) error {
-	ctx, cancel := context.WithTimeout(ctx, sandboxBrowserPrewarmTimeout+sandboxTemplateStartSlack)
+	return prewarmSandbox(ctx, dialer, instance, "browser", []string{sandboxBrowserStartCmd, "--prewarm"}, sandboxBrowserPrewarmTimeout)
+}
+
+// The desktop's prewarm (ADR-20261124075005 §3b): gregale-desktop in the
+// platform desktop image starts the desktop, waits for it, opens and closes
+// Chromium, then stops everything and removes the X server's socket and
+// lock, so a restored desktop starts fresh from a warm page cache.
+const (
+	sandboxDesktopCmd            = "/usr/local/bin/gregale-desktop"
+	sandboxDesktopPrewarmTimeout = 120 * time.Second
+)
+
+// prewarmSandboxDesktop runs gregale-desktop prewarm in a capture's VM as
+// the session's user.
+func prewarmSandboxDesktop(ctx context.Context, dialer SandboxDialer, instance string) error {
+	return prewarmSandbox(ctx, dialer, instance, "desktop", []string{sandboxDesktopCmd, "prewarm"}, sandboxDesktopPrewarmTimeout)
+}
+
+// prewarmSandbox runs one prewarm command in a capture's VM with a plain
+// exec and needs it to exit 0 within timeout.
+func prewarmSandbox(ctx context.Context, dialer SandboxDialer, instance, what string, argv []string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout+sandboxTemplateStartSlack)
 	defer cancel()
 	conn, err := dialer.DialSandbox(ctx, instance)
 	if err != nil {
-		return fmt.Errorf("fcvm: sandbox %s browser prewarm: %w", instance, err)
+		return fmt.Errorf("fcvm: sandbox %s %s prewarm: %w", instance, what, err)
 	}
 	defer func() { _ = conn.Close() }()
 	var res sandboxproto.ExecResult
-	op := sandboxproto.Request{Op: sandboxproto.OpExec, Argv: []string{sandboxBrowserStartCmd, "--prewarm"},
-		TimeoutMillis: sandboxBrowserPrewarmTimeout.Milliseconds(), MaxOutputBytes: sandboxBrowserPrewarmOutputBytes}
+	op := sandboxproto.Request{Op: sandboxproto.OpExec, Argv: argv,
+		TimeoutMillis: timeout.Milliseconds(), MaxOutputBytes: sandboxBrowserPrewarmOutputBytes}
 	if err := sandboxproto.Do(ctx, conn, op, func(uint32, []byte) error { return nil }, &res); err != nil {
-		return fmt.Errorf("fcvm: sandbox %s browser prewarm: %w", instance, err)
+		return fmt.Errorf("fcvm: sandbox %s %s prewarm: %w", instance, what, err)
 	}
 	if res.ExitCode != 0 || res.TimedOut || res.Signal != 0 {
-		return fmt.Errorf("fcvm: sandbox %s browser prewarm exited %d (signal %d, timed out %v)", instance, res.ExitCode, res.Signal, res.TimedOut)
+		return fmt.Errorf("fcvm: sandbox %s %s prewarm exited %d (signal %d, timed out %v)", instance, what, res.ExitCode, res.Signal, res.TimedOut)
 	}
 	return nil
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	agentstore "github.com/onebox-faas/faas/pkg/state/agents"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 )
 
 // desktop turns preset desktop into an image session of the platform's
@@ -18,13 +19,21 @@ func (h *Handler) desktop(body *createBody) *api.Problem {
 		return nil
 	}
 	switch {
-	case h.DesktopImage == "":
+	case storagekey.SandboxDesktopImageForRef(h.DesktopImage) == "":
 		return api.ErrSandboxUnsupported("preset", "sandbox desktops are not available on this platform yet")
 	case body.Image != "" || body.Template != "" || body.Pull != "" || body.RegistryAuth != nil || body.Browser:
 		return api.ErrValidation("preset desktop takes no image, template, pull, registry_auth or browser")
 	}
 	body.Preset, body.Image, body.desktop = "", h.DesktopImage, true
 	return nil
+}
+
+// desktopDrive points a desktop at the platform desktop drive instead of an
+// image-run job: the agent pool's imaged publishes it once for every account
+// (ADR-20261124075005 §3a).
+func (h *Handler) desktopDrive(a *agentstore.SandboxAdmission) {
+	a.ImageRef, a.ImageJobID = h.DesktopImage, ""
+	a.DesktopImageKey = storagekey.SandboxDesktopImageForRef(h.DesktopImage)
 }
 
 // validDesktop admits a desktop on a plan that has them, with its screen

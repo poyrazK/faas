@@ -43,7 +43,7 @@ case "${runtime_image}" in
   sandbox-desktop)
     # ADR-20261124075005 §3: the desktop, its VNC and noVNC servers, the
     # input and screenshot tools, and the one command that drives them.
-    required=(etc/passwd usr/bin/python3 usr/local/bin/gregale-desktop usr/bin/Xvfb usr/bin/xfce4-session
+    required=(etc/passwd usr/bin/python3 usr/local/bin/gregale-desktop usr/bin/Xvfb usr/bin/xfwm4 usr/bin/xfce4-panel usr/bin/xfdesktop usr/bin/dbus-run-session
       usr/bin/x11vnc usr/bin/websockify usr/share/novnc/vnc.html usr/share/novnc/index.html usr/bin/xdotool
       usr/bin/wmctrl usr/bin/chromium workspace)
     ;;

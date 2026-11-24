@@ -286,25 +286,81 @@ func ParentBaseAliases() []string {
 // Warm sandbox session snapshots (ADR-20261027090013 §12). A preset's
 // snapshot holds only platform drives, so every account's sessions share
 // it; a template's holds the account's own image, so its namespace names
-// the account and no other account's session restores it.
-const sandboxPresetSnapshotNamespace = "sandbox-preset"
+// the account and no other account's session restores it. A desktop's holds
+// the platform desktop drive, which every account boots, so its namespace
+// is shared too (ADR-20261124075005 §3b).
+const (
+	sandboxPresetSnapshotNamespace  = "sandbox-preset"
+	sandboxDesktopSnapshotNamespace = "sandbox-desktop"
+)
 
-// SandboxSnapshotNamespace is the capture namespace of a session's warm
-// snapshot: accountID's own for an image session, the shared preset one
-// otherwise.
-func SandboxSnapshotNamespace(accountID string, image bool) string {
-	if image {
+// SandboxSnapshotNamespace is the capture namespace of the warm snapshot of
+// a session that boots imageKey ("" for a preset session): the shared
+// desktop one for a platform desktop drive, accountID's own for any other
+// image, the shared preset one otherwise.
+func SandboxSnapshotNamespace(accountID, imageKey string) string {
+	switch {
+	case IsSandboxDesktopImage(imageKey):
+		return sandboxDesktopSnapshotNamespace
+	case imageKey != "":
 		return "sandbox-template-" + accountID
 	}
 	return sandboxPresetSnapshotNamespace
 }
 
 // IsSandboxSnapshotKey reports whether key is a capture memory key a session
-// of accountID may restore (snap/<namespace>/captures/<id>/v2/mem).
-func IsSandboxSnapshotKey(key, accountID string, image bool) bool {
-	rest, ok := strings.CutPrefix(key, "snap/"+SandboxSnapshotNamespace(accountID, image)+"/captures/")
+// of accountID that boots imageKey may restore
+// (snap/<namespace>/captures/<id>/v2/mem).
+func IsSandboxSnapshotKey(key, accountID, imageKey string) bool {
+	rest, ok := strings.CutPrefix(key, "snap/"+SandboxSnapshotNamespace(accountID, imageKey)+"/captures/")
 	id, ok2 := strings.CutSuffix(rest, "/v2/mem")
 	return ok && ok2 && id != "" && !strings.ContainsAny(id, "/.")
+}
+
+// sandboxDesktopImagePrefix starts the key of a platform desktop drive.
+const sandboxDesktopImagePrefix = "base/sandbox-desktop-"
+
+// SandboxDesktopImage is where the agent pool's imaged publishes the
+// platform desktop image as a full-rootfs drive, named by the image's
+// manifest digest ("sha256:<64 hex>"), so a new image takes a new key
+// (ADR-20261124075005 §3a). It is "" for a digest of another form.
+func SandboxDesktopImage(digest string) string {
+	hexDigest, ok := strings.CutPrefix(digest, "sha256:")
+	if !ok || !isLowerHex(hexDigest, 64) {
+		return ""
+	}
+	return sandboxDesktopImagePrefix + hexDigest + ".ext4"
+}
+
+// SandboxDesktopImageForRef is SandboxDesktopImage of a digest-pinned
+// reference (registry/repo[:tag]@sha256:<64 hex>), the form
+// FAAS_SANDBOX_DESKTOP_IMAGE takes; "" for a reference without one.
+func SandboxDesktopImageForRef(ref string) string {
+	_, digest, ok := strings.Cut(ref, "@")
+	if !ok {
+		return ""
+	}
+	return SandboxDesktopImage(digest)
+}
+
+// IsSandboxDesktopImage reports whether key is a platform desktop drive's
+// key: the only platform drive vmmd boots as a session's image.
+func IsSandboxDesktopImage(key string) bool {
+	rest, ok := strings.CutPrefix(key, sandboxDesktopImagePrefix)
+	hexDigest, ok2 := strings.CutSuffix(rest, ".ext4")
+	return ok && ok2 && isLowerHex(hexDigest, 64)
+}
+
+func isLowerHex(s string, n int) bool {
+	if len(s) != n {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // SandboxSessionSnapshotNamespace is the capture namespace of accountID's

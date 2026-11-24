@@ -7,6 +7,7 @@ package agents_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -133,6 +134,32 @@ func TestSandboxDesktopResolution(t *testing.T) {
 	}
 	claim, found, err := s.ClaimSandbox(ctx, "agentd", "tok", ttl, maxLive(5))
 	if err != nil || !found || claim.ID != sb.ID || claim.DesktopResolution != "1280x800" {
+		t.Fatalf("claim = %+v, %v, %v", claim, found, err)
+	}
+}
+
+// ADR-20261124075005 §3a: a desktop boots the platform desktop drive with
+// no image-run job; agentd claims it with that drive as its image, and the
+// column holds only a desktop drive key, on a desktop.
+func TestSandboxDesktopImageKey(t *testing.T) {
+	_, s := agentdFixture(t)
+	ctx := context.Background()
+	key := "base/sandbox-desktop-" + strings.Repeat("ab", 32) + ".ext4"
+	ref := "ghcr.io/onebox-faas/sandbox-desktop@sha256:" + strings.Repeat("ab", 32)
+	for name, a := range map[string]agents.SandboxAdmission{
+		"not a desktop drive": {ImageRef: ref, DesktopResolution: "1280x800", DesktopImageKey: "jobs/x/rootfs.ext4"},
+		"not a desktop":       {ImageRef: ref, DesktopImageKey: key},
+	} {
+		if _, err := s.CreateSandbox(ctx, sandboxAdmission(a)); err == nil {
+			t.Errorf("%s: stored", name)
+		}
+	}
+	sb, err := s.CreateSandbox(ctx, sandboxAdmission(agents.SandboxAdmission{ImageRef: ref, DesktopResolution: "1280x800", DesktopImageKey: key}))
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	claim, found, err := s.ClaimSandbox(ctx, "agentd", "tok", ttl, maxLive(5))
+	if err != nil || !found || claim.ID != sb.ID || claim.ImageKey != key || claim.ImageMissing {
 		t.Fatalf("claim = %+v, %v, %v", claim, found, err)
 	}
 }

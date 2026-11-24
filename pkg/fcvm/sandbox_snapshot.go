@@ -7,6 +7,8 @@ package fcvm
 // cold boot and its processes begin after the reseed (invariant 5). A
 // template's snapshot is taken before its start command (owner decision,
 // 2026-11-10); restored sessions run the commands by template_start. The
+// browser shape and the platform desktop are prewarmed and stopped before
+// the capture, so their files are in its page cache and nothing runs. The
 // capture couples drive1 (v2 keys), so a restore sees the exact drive the
 // memory was captured with. A missing, stale or failed snapshot falls back
 // to a cold boot (ADR-005).
@@ -20,6 +22,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 )
 
 // sandboxReadyMarker is the console line guest-init prints once the sandbox
@@ -70,14 +73,8 @@ func (m *Manager) CaptureSandboxSnapshot(ctx context.Context, c SandboxCapture) 
 	if err := waiter.WaitSandboxReady(ctx, c.Wake.Instance, agentRunReadyWindow); err != nil {
 		return nil, SnapshotInfo{}, fmt.Errorf("fcvm: sandbox capture: wait for guest-init: %w", err)
 	}
-	if c.Wake.Browser {
-		dialer, ok := m.vmm.(SandboxDialer)
-		if !ok {
-			return nil, SnapshotInfo{}, errors.New("fcvm: the vmm cannot dial sandbox sessions")
-		}
-		if err := prewarmSandboxBrowser(ctx, dialer, c.Wake.Instance); err != nil {
-			return nil, SnapshotInfo{}, err
-		}
+	if err := m.prewarmCapture(ctx, c.Wake); err != nil {
+		return nil, SnapshotInfo{}, err
 	}
 	memKey := state.SnapshotCaptureMemKey(c.Namespace, "", c.CaptureID)
 	spec := SnapshotSpec{StorageKey: memKey, VMStateStorageKey: state.SnapshotVMStateKey(state.Snapshot{StorageKey: memKey})}
@@ -90,6 +87,26 @@ func (m *Manager) CaptureSandboxSnapshot(ctx context.Context, c SandboxCapture) 
 	}
 	return &Snapshot{StorageKey: memKey, VMStateStorageKey: spec.VMStateStorageKey, FCVersion: m.fcVersion,
 		MemBytes: info.MemBytes, Networkless: c.Wake.Network == api.SandboxNetworkNone}, info, nil
+}
+
+// prewarmCapture runs a capture's prewarm, if its shape has one: the
+// browser shape's (ADR-20261116182615 §2) or the platform desktop's
+// (ADR-20261124075005 §3b). Either leaves nothing running.
+func (m *Manager) prewarmCapture(ctx context.Context, wake SandboxWakeRequest) error {
+	var prewarm func(context.Context, SandboxDialer, string) error
+	switch {
+	case wake.Browser:
+		prewarm = prewarmSandboxBrowser
+	case storagekey.IsSandboxDesktopImage(wake.ImageKey):
+		prewarm = prewarmSandboxDesktop
+	default:
+		return nil
+	}
+	dialer, ok := m.vmm.(SandboxDialer)
+	if !ok {
+		return errors.New("fcvm: the vmm cannot dial sandbox sessions")
+	}
+	return prewarm(ctx, dialer, wake.Instance)
 }
 
 // WaitSandboxReady waits for guest-init's sandbox-ready console line.

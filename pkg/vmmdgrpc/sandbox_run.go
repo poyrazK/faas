@@ -647,10 +647,12 @@ func sandboxStartFromProto(start *vmmdpb.RunSandboxStart) (fcvm.SandboxWakeReque
 	default:
 		return fcvm.SandboxWakeRequest{}, invalid("network_mode must be none, registries or web")
 	}
-	// Only a materialized job image or a sandbox template build boots as a
-	// session's drive1, never another app's layer, a base or a snapshot.
-	if wake.ImageKey != "" && !storagekey.IsJobLayer(wake.ImageKey) && !storagekey.IsSandboxTemplateLayer(wake.ImageKey) {
-		return fcvm.SandboxWakeRequest{}, invalid("image_key must be a job image or sandbox template artifact")
+	// Only a materialized job image, a sandbox template build or the
+	// platform desktop drive (ADR-20261124075005 §3a) boots as a session's
+	// drive1, never another app's layer, another base or a snapshot.
+	if wake.ImageKey != "" && !storagekey.IsJobLayer(wake.ImageKey) && !storagekey.IsSandboxTemplateLayer(wake.ImageKey) &&
+		!storagekey.IsSandboxDesktopImage(wake.ImageKey) {
+		return fcvm.SandboxWakeRequest{}, invalid("image_key must be a job image, sandbox template artifact or platform desktop drive")
 	}
 	// Commands ride in sandbox.json on the private copy of an image drive;
 	// the platform sandbox layer carries none.
@@ -703,7 +705,7 @@ func sandboxStartFromProto(start *vmmdpb.RunSandboxStart) (fcvm.SandboxWakeReque
 		return fcvm.SandboxWakeRequest{}, invalid("forked_from goes only with a session capture")
 	}
 	if snap := start.GetSnapshot(); snap != nil {
-		if !storagekey.IsSandboxSnapshotKey(snap.GetStorageKey(), wake.AccountID, wake.ImageKey != "") ||
+		if !storagekey.IsSandboxSnapshotKey(snap.GetStorageKey(), wake.AccountID, wake.ImageKey) ||
 			snap.GetVmstateStorageKey() != state.SnapshotVMStateKey(state.Snapshot{StorageKey: snap.GetStorageKey()}) ||
 			snap.GetFcVersion() == "" || snap.GetMemBytes() < 1 {
 			return fcvm.SandboxWakeRequest{}, invalid("snapshot must be a sandbox capture of this session's kind, with its keys, version and size")
@@ -734,7 +736,7 @@ func (s *Server) CaptureSandboxSnapshot(ctx context.Context, req *vmmdpb.Capture
 		ImageKey: req.GetImageKey(), VcpuCount: req.GetVcpuCount(), MemSizeMib: req.GetMemSizeMib(),
 		CpuMillicores: req.GetCpuMillicores(), NetworkMode: req.GetNetworkMode(), Browser: req.GetBrowser()})
 	if problem == nil {
-		if req.GetNamespace() != storagekey.SandboxSnapshotNamespace(wake.AccountID, wake.ImageKey != "") {
+		if req.GetNamespace() != storagekey.SandboxSnapshotNamespace(wake.AccountID, wake.ImageKey) {
 			problem = api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid sandbox capture",
 				"the namespace must be the session kind's own")
 		}

@@ -15,6 +15,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/sandboxproto"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 )
 
 // browserGuestVMM answers sandbox calls like guest-init and records them.
@@ -102,6 +103,33 @@ func TestBrowserPrewarmRunsAPlainExec(t *testing.T) {
 	vmm.exitCode = 1
 	if err := prewarmSandboxBrowser(t.Context(), vmm, "sbx-capture"); err == nil {
 		t.Fatal("a failed prewarm was accepted")
+	}
+}
+
+// adr: 20261124075005 §3b — a capture of the platform desktop drive runs
+// gregale-desktop prewarm as the session's user; other image captures run
+// no prewarm.
+func TestCapturePrewarmsTheDesktop(t *testing.T) {
+	vmm := &browserGuestVMM{fakeVMM: &fakeVMM{}}
+	m := newTestManager(&fakeInputRunner{}, vmm)
+	wake := browserWake("sbx-capture")
+	wake.Browser, wake.ImageKey = false, storagekey.SandboxDesktopImage("sha256:"+strings.Repeat("ef", 32))
+	if err := m.prewarmCapture(t.Context(), wake); err != nil {
+		t.Fatalf("prewarm: %v", err)
+	}
+	ops := vmm.ops()
+	if len(ops) != 1 || ops[0].Op != sandboxproto.OpExec || !slices.Equal(ops[0].Argv, []string{"/usr/local/bin/gregale-desktop", "prewarm"}) ||
+		ops[0].RunAs == sandboxproto.RunAsRoot {
+		t.Fatalf("desktop prewarm ran %+v; want one exec of gregale-desktop prewarm as the user", ops)
+	}
+	wake.ImageKey = "jobs/11111111-1111-4111-8111-111111111111.ext4"
+	if err := m.prewarmCapture(t.Context(), wake); err != nil || len(vmm.ops()) != 1 {
+		t.Fatalf("a job image capture prewarmed: %v %+v", err, vmm.ops())
+	}
+	vmm.exitCode = 1
+	wake.ImageKey = storagekey.SandboxDesktopImage("sha256:" + strings.Repeat("ef", 32))
+	if err := m.prewarmCapture(t.Context(), wake); err == nil {
+		t.Fatal("a failed desktop prewarm was accepted")
 	}
 }
 

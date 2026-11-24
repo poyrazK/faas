@@ -910,6 +910,23 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	for _, base := range agentBases {
 		log.Info("imaged agent base ready", "digest", base.ConfigDigest, "skipped", base.Skipped)
 	}
+	// ADR-20261124075005 §3a: the platform desktop drive. Its first stage
+	// pulls and builds about 1.7 GB, so a serving imaged stages it in the
+	// background; a failure leaves desktops failing to wake, not imaged down.
+	stageDesktop := func(ctx context.Context) {
+		key, existed, err := h.EnsureSandboxDesktopDrive(ctx, arch, getenv)
+		switch {
+		case err != nil:
+			log.Warn("imaged: stage the sandbox desktop drive", "err", err)
+		case key != "":
+			log.Info("imaged sandbox desktop drive ready", "key", key, "skipped", existed)
+		}
+	}
+	if prestageOnlyFromEnv(getenv) {
+		stageDesktop(ctx)
+	} else {
+		go stageDesktop(ctx)
+	}
 	if prestageOnlyFromEnv(getenv) {
 		// ADR-20261024191249: the rolled vmmd must be able to boot every
 		// runtime base the release configures, not only those of the apps

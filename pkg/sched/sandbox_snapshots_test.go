@@ -17,6 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 )
 
 type capture struct {
@@ -188,6 +189,46 @@ func TestSandboxWarmSnapshots(t *testing.T) {
 	}
 	if s := session("acct", build2); s.Snapshot == nil {
 		t.Fatal("the rebuilt template's new snapshot was not used")
+	}
+}
+
+// adr: 20261124075005 §3b — the platform desktop drive's warm snapshot is
+// one slot shared by every account, in the desktop namespace, and a
+// restored desktop still runs its start and ready commands.
+func TestSandboxDesktopWarmSnapshotIsShared(t *testing.T) {
+	runner, router, _ := snapshotFixture(t, true)
+	ctx := context.Background()
+	drive := storagekey.SandboxDesktopImage("sha256:" + strings.Repeat("cd", 32))
+	session := func(id, account string) sched.SandboxSpec {
+		t.Helper()
+		a := sandboxAdmission()
+		a.SandboxID, a.AccountID, a.ImageKey = id, account, drive
+		a.StartCmd, a.ReadyCmd, a.ReadyTimeout = "gregale-desktop start --resolution 1280x800", "gregale-desktop wait", 45*time.Second
+		if err := runner.RunSandbox(ctx, a, nil, sched.SandboxHooks{}, make(chan sched.SandboxControl)); err != nil {
+			t.Fatal(err)
+		}
+		return router.lastSpec()
+	}
+	if s := session("11111111-2222-3333-4444-000000000001", "acct"); s.Snapshot != nil {
+		t.Fatal("the first desktop restored a snapshot")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for len(router.captures()) < 1 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	got := router.captures()
+	if len(got) != 1 || got[0].namespace != "sandbox-desktop" || got[0].spec.ImageKey != drive || got[0].spec.StartCmd != "" {
+		t.Fatalf("desktop captures %+v", got)
+	}
+	for ledgerBusy := true; ledgerBusy && time.Now().Before(deadline); {
+		router.mu.Lock()
+		ledgerBusy = router.ledger.ResidentFor(got[0].spec.Instance)
+		router.mu.Unlock()
+		time.Sleep(5 * time.Millisecond)
+	}
+	s := session("11111111-2222-3333-4444-000000000002", "other")
+	if s.Snapshot == nil || !strings.HasPrefix(s.Snapshot.StorageKey, "snap/sandbox-desktop/") || s.StartCmd == "" {
+		t.Fatalf("another account's desktop %+v", s)
 	}
 }
 

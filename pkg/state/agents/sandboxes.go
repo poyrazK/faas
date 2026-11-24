@@ -133,6 +133,10 @@ type SandboxAdmission struct {
 	// DesktopResolution makes the session a desktop of the platform
 	// desktop image at this screen, WIDTHxHEIGHT (ADR-20261124075005 §2).
 	DesktopResolution string
+	// DesktopImageKey is the platform desktop drive the desktop boots
+	// (ADR-20261124075005 §3a); ImageRef then names the image, and there is
+	// no ImageJobID.
+	DesktopImageKey string
 	// Task makes the session a sandbox task (ADR-20261116182615 §3).
 	Task *SandboxTask
 	// Ports are exposed with the session (ExposeSandboxPort's rows).
@@ -208,7 +212,8 @@ func (s *Store) insertSandbox(ctx context.Context, tx pgx.Tx, a SandboxAdmission
 		Kind: a.Kind, Preset: a.Preset, RamMb: int32(a.RAMMB), NetworkMode: a.NetworkMode, IdleTimeoutSec: int32(a.IdleTimeoutSec),
 		ExpiresAt: pgtype.Timestamptz{Time: a.ExpiresAt, Valid: true}, Labels: labels, WorkspaceSnapshotID: optText(a.WorkspaceSnapshotID),
 		ImageRef: optText(a.ImageRef), ImageJobID: optText(a.ImageJobID), TemplateID: optText(a.TemplateID), Browser: a.Browser,
-		EgressAllow: optRules(a.EgressAllow), EgressDeny: optRules(a.EgressDeny), Vcpu: optInt16(a.VCPU), VolumeGb: optInt(a.VolumeGB), DesktopResolution: optText(a.DesktopResolution)}
+		EgressAllow: optRules(a.EgressAllow), EgressDeny: optRules(a.EgressDeny), Vcpu: optInt16(a.VCPU), VolumeGb: optInt(a.VolumeGB), DesktopResolution: optText(a.DesktopResolution),
+		DesktopImageKey: optText(a.DesktopImageKey)}
 	if a.Task != nil {
 		params.TaskKind, params.TaskUrl, params.TaskMaxChars = optText(a.Task.Kind), optText(a.Task.URL), optInt(a.Task.MaxChars)
 	}

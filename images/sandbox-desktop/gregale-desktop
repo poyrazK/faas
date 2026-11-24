@@ -2,6 +2,7 @@
 """gregale-desktop: the sandbox desktop's one command (ADR-20261124075005).
 
 agentd starts the desktop with `start --resolution WxH` and polls `wait`;
+a warm snapshot's capture runs `prewarm`, which starts it once and stops it;
 agents act on it with the other subcommands, run through the sandbox exec
 operation with an argv, never shell text:
 
@@ -460,6 +461,84 @@ def cmd_start(args):
     raise RuntimeError("the X server exited; see /tmp/gregale-desktop/xvfb.log")
 
 
+PREWARM_RESOLUTION = "1024x768"
+PREWARM_READY_SEC = 60
+PREWARM_BROWSER_SEC = 45
+
+
+def own_processes():
+    """The PIDs of this user's processes other than PID 1, this one and its
+    ancestors."""
+    keep, pid = {1}, os.getpid()
+    while pid > 1:
+        keep.add(pid)
+        try:
+            with open(f"/proc/{pid}/stat", "rb") as f:
+                pid = int(f.read().rsplit(b")", 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            break
+    out = []
+    for name in os.listdir("/proc"):
+        if not name.isdigit() or int(name) in keep:
+            continue
+        try:
+            if os.stat(f"/proc/{name}").st_uid == os.getuid():
+                out.append(int(name))
+        except OSError:
+            pass
+    return out
+
+
+def stop_everything():
+    """Stops every process of this user but this one and its ancestors:
+    SIGTERM, then SIGKILL after 5 s."""
+    for sig, grace in ((signal.SIGTERM, 5.0), (signal.SIGKILL, 2.0)):
+        pids = own_processes()
+        for pid in pids:
+            try:
+                os.kill(pid, sig)
+            except OSError:
+                pass
+        deadline = time.monotonic() + grace
+        while own_processes() and time.monotonic() < deadline:
+            time.sleep(0.05)
+    if own_processes():
+        raise RuntimeError(f"processes outlived the prewarm: {own_processes()}")
+
+
+def cmd_prewarm(_args):
+    """Runs the desktop once and stops it, for a warm snapshot's capture
+    (ADR-20261124075005 §3b): the files the desktop and Chromium read end
+    up in the page cache, and nothing runs when the VM is captured. It
+    removes what a fresh start must not find: the X server's socket and
+    lock, the logs and Chromium's profile."""
+    starter = subprocess.Popen([sys.executable, "-I", os.path.realpath(__file__), "start", "--resolution", PREWARM_RESOLUTION],
+                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               start_new_session=True)
+    try:
+        deadline = time.monotonic() + PREWARM_READY_SEC
+        while not desktop_ready():
+            if starter.poll() is not None or time.monotonic() > deadline:
+                raise RuntimeError("the desktop did not start; see /tmp/gregale-desktop")
+            time.sleep(0.1)
+        detach([shutil.which("chromium") or "chromium", "about:blank"], "chromium")
+        deadline = time.monotonic() + PREWARM_BROWSER_SEC
+        while not any(True for _ in window_lines("chromium")):
+            if time.monotonic() > deadline:
+                raise RuntimeError("chromium opened no window")
+            time.sleep(0.25)
+        time.sleep(1)
+    finally:
+        stop_everything()
+    home = os.environ.get("HOME", "/tmp")
+    for path in (X_SOCKET, "/tmp/.X0-lock", LOG_DIR, os.path.join(home, ".config", "chromium"),
+                 os.path.join(home, ".cache", "chromium")):
+        if os.path.isdir(path) and not os.path.islink(path):
+            shutil.rmtree(path, ignore_errors=True)
+        elif os.path.lexists(path):
+            os.unlink(path)
+
+
 class Parser(argparse.ArgumentParser):
     def error(self, message):
         raise UsageError(message)
@@ -472,6 +551,7 @@ def parser():
     s.add_argument("--resolution", required=True)
     s = sub.add_parser("wait")
     s.add_argument("--timeout", type=float, default=8.0)
+    sub.add_parser("prewarm")
     s = sub.add_parser("screenshot")
     s.add_argument("--format", choices=["png", "jpeg"], default="png")
     s.add_argument("--quality", type=int, default=80)
@@ -512,7 +592,7 @@ def parser():
 
 INPUT_COMMANDS = {"click", "move", "down", "up", "drag", "scroll", "type", "key"}
 COMMANDS = {
-    "start": cmd_start, "wait": cmd_wait, "screenshot": cmd_screenshot, "cursor": cmd_cursor,
+    "start": cmd_start, "wait": cmd_wait, "prewarm": cmd_prewarm, "screenshot": cmd_screenshot, "cursor": cmd_cursor,
     "size": cmd_size, "launch": cmd_launch, "open": cmd_open, "windows": cmd_windows, "window": cmd_window,
 }
 

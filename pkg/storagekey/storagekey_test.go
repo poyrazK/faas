@@ -2,6 +2,7 @@ package storagekey_test
 
 import (
 	goruntime "runtime"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/storagekey"
@@ -108,24 +109,35 @@ func TestIsJobLayer(t *testing.T) {
 
 // adr: 20261027090013 §12 — a preset's warm snapshot is shared, a
 // template's is its account's own, and a template's builds share one slot.
+// adr: 20261124075005 §3b — a desktop's is shared, and only a session that
+// boots a platform desktop drive restores it.
 func TestSandboxSnapshotKeys(t *testing.T) {
 	preset := "snap/sandbox-preset/captures/abc/v2/mem"
 	tpl := "snap/sandbox-template-acct/captures/abc/v2/mem"
+	desktop := "snap/sandbox-desktop/captures/abc/v2/mem"
+	job := "jobs/11111111-1111-4111-8111-111111111111.ext4"
+	drive := storagekey.SandboxDesktopImage("sha256:" + strings.Repeat("ab", 32))
 	for _, tc := range []struct {
-		key, account string
-		image, ok    bool
+		key, account, image string
+		ok                  bool
 	}{
-		{preset, "acct", false, true},
-		{preset, "acct", true, false},
-		{tpl, "acct", true, true},
-		{tpl, "other", true, false},
-		{tpl, "acct", false, false},
-		{"snap/sandbox-preset/captures/../v2/mem", "acct", false, false},
-		{"snap/app-1/captures/abc/v2/mem", "acct", false, false},
-		{"snap/sandbox-preset/captures/abc/v1/mem", "acct", false, false},
+		{preset, "acct", "", true},
+		{preset, "acct", job, false},
+		{preset, "acct", drive, false},
+		{tpl, "acct", job, true},
+		{tpl, "other", job, false},
+		{tpl, "acct", "", false},
+		{tpl, "acct", drive, false},
+		{desktop, "acct", drive, true},
+		{desktop, "other", drive, true},
+		{desktop, "acct", job, false},
+		{desktop, "acct", "", false},
+		{"snap/sandbox-preset/captures/../v2/mem", "acct", "", false},
+		{"snap/app-1/captures/abc/v2/mem", "acct", "", false},
+		{"snap/sandbox-preset/captures/abc/v1/mem", "acct", "", false},
 	} {
 		if got := storagekey.IsSandboxSnapshotKey(tc.key, tc.account, tc.image); got != tc.ok {
-			t.Errorf("storagekey.IsSandboxSnapshotKey(%q, %q, %v) = %v", tc.key, tc.account, tc.image, got)
+			t.Errorf("storagekey.IsSandboxSnapshotKey(%q, %q, %q) = %v", tc.key, tc.account, tc.image, got)
 		}
 	}
 	a := "apps/sbt-0123456789ab/11111111-1111-4111-8111-111111111111.ext4"
@@ -133,6 +145,35 @@ func TestSandboxSnapshotKeys(t *testing.T) {
 	if storagekey.SandboxImageIdentity(a) != "apps/sbt-0123456789ab" || storagekey.SandboxImageIdentity(a) != storagekey.SandboxImageIdentity(b) ||
 		storagekey.SandboxImageIdentity("jobs/j.ext4") != "jobs/j.ext4" {
 		t.Fatal("a template's builds must share one identity, and other images keep their key")
+	}
+}
+
+// adr: 20261124075005 §3a — the platform desktop drive is named by the
+// image's manifest digest, and nothing else passes as one.
+func TestSandboxDesktopImage(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("0f", 32)
+	key := storagekey.SandboxDesktopImage(digest)
+	if key != "base/sandbox-desktop-"+strings.Repeat("0f", 32)+".ext4" || !storagekey.IsSandboxDesktopImage(key) {
+		t.Fatalf("SandboxDesktopImage(%q) = %q", digest, key)
+	}
+	if got := storagekey.SandboxDesktopImageForRef("ghcr.io/gregale/sandbox-desktop:1@" + digest); got != key {
+		t.Fatalf("SandboxDesktopImageForRef = %q, want %q", got, key)
+	}
+	if got := storagekey.SandboxDesktopImageForRef("ghcr.io/gregale/sandbox-desktop:1"); got != "" {
+		t.Fatalf("a reference without a digest gave %q", got)
+	}
+	for _, d := range []string{"", "sha256:abc", "sha512:" + strings.Repeat("0f", 32), "sha256:" + strings.Repeat("0F", 32),
+		"sha256:" + strings.Repeat("0f", 32) + "/x"} {
+		if got := storagekey.SandboxDesktopImage(d); got != "" {
+			t.Errorf("SandboxDesktopImage(%q) = %q, want empty", d, got)
+		}
+	}
+	for _, k := range []string{"", "base/sandbox-desktop-.ext4", "base/sandbox-desktop-" + strings.Repeat("0f", 32),
+		"base/sandbox-desktop-" + strings.Repeat("0f", 31) + ".ext4", "base/sandbox-desktop-../" + strings.Repeat("0f", 30) + ".ext4",
+		"jobs/11111111-1111-4111-8111-111111111111.ext4", storagekey.AgentRunLayerForArch("amd64")} {
+		if storagekey.IsSandboxDesktopImage(k) {
+			t.Errorf("IsSandboxDesktopImage(%q) = true", k)
+		}
 	}
 }
 
@@ -157,7 +198,7 @@ func TestSandboxSessionSnapshotKeys(t *testing.T) {
 			t.Errorf("IsSandboxSessionSnapshotKey(%q, %q) = %v", tc.key, tc.account, got)
 		}
 	}
-	if storagekey.IsSandboxSnapshotKey(own, "acct", false) || storagekey.IsSandboxSnapshotKey(own, "acct", true) {
+	if storagekey.IsSandboxSnapshotKey(own, "acct", "") || storagekey.IsSandboxSnapshotKey(own, "acct", "jobs/j.ext4") {
 		t.Fatal("a pause capture must never pass as a warm snapshot")
 	}
 }

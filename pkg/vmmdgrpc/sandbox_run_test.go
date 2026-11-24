@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/sandboxproto"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/vmmdgrpc"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -428,12 +430,15 @@ func (v *sandboxRunVMM) lastWake() fcvm.SandboxWakeRequest {
 // adr: 20261027090013 §12 — a session restores only a sandbox capture of
 // its own kind (a template's only for its account), with the network the
 // snapshot was taken with; a capture names its kind's namespace.
+// adr: 20261124075005 §3a, §3b — the platform desktop drive boots, and its
+// shared snapshot restores only into a session that boots it.
 func TestRunSandboxWarmSnapshots(t *testing.T) {
 	snap := func(namespace string) *vmmdpb.AgentRunSnapshot {
 		return &vmmdpb.AgentRunSnapshot{StorageKey: "snap/" + namespace + "/captures/abc/v2/mem",
 			VmstateStorageKey: "snap/" + namespace + "/captures/abc/v2/vmstate", FcVersion: "1.7.0", MemBytes: 1 << 30}
 	}
 	const image = "apps/sbt-0123456789ab/11111111-1111-4111-8111-111111111111.ext4"
+	desktop := storagekey.SandboxDesktopImage("sha256:" + strings.Repeat("ab", 32))
 	for _, tc := range []struct {
 		name  string
 		image string
@@ -444,6 +449,10 @@ func TestRunSandboxWarmSnapshots(t *testing.T) {
 		{"a template session restores its account's", image, snap("sandbox-template-acct-1"), true},
 		{"not another account's", image, snap("sandbox-template-acct-2"), false},
 		{"not a preset snapshot for a template", image, snap("sandbox-preset"), false},
+		{"a desktop session restores the shared desktop snapshot", desktop, snap("sandbox-desktop"), true},
+		{"not its account's template snapshot", desktop, snap("sandbox-template-acct-1"), false},
+		{"not the desktop snapshot for a template", image, snap("sandbox-desktop"), false},
+		{"not the desktop snapshot for a preset", "", snap("sandbox-desktop"), false},
 		{"not an app's snapshot", "", snap("app-1"), false},
 		{"not with a mismatched state key", "", &vmmdpb.AgentRunSnapshot{StorageKey: "snap/sandbox-preset/captures/abc/v2/mem",
 			VmstateStorageKey: "snap/other/vmstate", FcVersion: "1.7.0", MemBytes: 1}, false},
@@ -490,6 +499,19 @@ func TestRunSandboxWarmSnapshots(t *testing.T) {
 	req.Namespace = "sandbox-preset"
 	if _, err := cli.CaptureSandboxSnapshot(context.Background(), req); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("a template capture into the preset namespace: %v", err)
+	}
+	req.ImageKey, req.Namespace = desktop, "sandbox-desktop"
+	if resp, err := cli.CaptureSandboxSnapshot(context.Background(), req); err != nil ||
+		resp.GetSnapshot().GetStorageKey() != "snap/sandbox-desktop/captures/abc/v2/mem" {
+		t.Fatalf("desktop capture = %v, %v", resp, err)
+	}
+	req.Namespace = "sandbox-template-acct-1"
+	if _, err := cli.CaptureSandboxSnapshot(context.Background(), req); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("a desktop capture into the account's namespace: %v", err)
+	}
+	req.ImageKey, req.Namespace = "base/runner-agent-amd64.ext4", "sandbox-template-acct-1"
+	if _, err := cli.CaptureSandboxSnapshot(context.Background(), req); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("a base as the image drive: %v", err)
 	}
 }
 

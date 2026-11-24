@@ -80,8 +80,8 @@ type Handler struct {
 	// Empty, the preset is sandbox_unsupported.
 	CodeInterpreterImage string
 	// DesktopImage is FAAS_SANDBOX_DESKTOP_IMAGE: the image preset desktop
-	// boots (ADR-20261124075005 §1). Empty, the preset is
-	// sandbox_unsupported.
+	// boots (ADR-20261124075005 §1), pinned by digest (§3a). Empty, the
+	// preset is sandbox_unsupported.
 	DesktopImage string
 	// Files is the artifact store gregale_browser's screenshots are kept in
 	// (ADR-20261117065818 §5); nil: they cannot be read from this host.
@@ -130,7 +130,9 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request, acct state.Acco
 		return
 	}
 	admission, prob := h.admission(r.Context(), acct, body)
-	if prob == nil && body.Image != "" {
+	if prob == nil && body.desktop {
+		h.desktopDrive(&admission)
+	} else if prob == nil && body.Image != "" {
 		prob = h.image(r.Context(), acct, api.SandboxImageSource{Image: body.Image, Pull: body.Pull, RegistryAuth: body.RegistryAuth}, &admission)
 	}
 	if prob == nil && body.Template != "" {

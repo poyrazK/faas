@@ -186,7 +186,7 @@ func TestRunSandboxPauseThatLostTheVMEndsTheStream(t *testing.T) {
 func TestRunSandboxRestoresOnlyItsAccountsSessionCapture(t *testing.T) {
 	own := state.SnapshotCaptureMemKey(storagekey.SandboxSessionSnapshotNamespace("acct-1"), "", testCaptureID)
 	other := state.SnapshotCaptureMemKey(storagekey.SandboxSessionSnapshotNamespace("acct-2"), "", testCaptureID)
-	warm := state.SnapshotCaptureMemKey(storagekey.SandboxSnapshotNamespace("acct-1", false), "", testCaptureID)
+	warm := state.SnapshotCaptureMemKey(storagekey.SandboxSnapshotNamespace("acct-1", ""), "", testCaptureID)
 	snap := func(key string) *vmmdpb.AgentRunSnapshot {
 		return &vmmdpb.AgentRunSnapshot{StorageKey: key, VmstateStorageKey: state.SnapshotVMStateKey(state.Snapshot{StorageKey: key}),
 			FcVersion: "1.10.0", MemBytes: 1 << 30}

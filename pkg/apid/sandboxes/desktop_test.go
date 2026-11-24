@@ -1,5 +1,6 @@
-// adr: 20261124075005 §1, §5 — preset desktop boots the platform's desktop
-// image as an image session on Pro and Scale, with its screen and at least
+// adr: 20261124075005 §1, §3a, §5 — preset desktop boots the platform's
+// desktop drive, named by its pinned image digest, as an image session on
+// Pro and Scale, with its screen and at least
 // SandboxDesktopRAMMBMin, and exposes its interactive and view-only noVNC
 // ports privately when previews are on.
 package sandboxes_test
@@ -28,6 +29,11 @@ func TestCreateDesktop(t *testing.T) {
 		p.Code != api.CodeSandboxUnsupported {
 		t.Fatalf("without the image = %d %+v", code, p)
 	}
+	f.h.DesktopImage = "ghcr.io/onebox-faas/sandbox-desktop:1"
+	if code := f.call(t, f.h.Create, pro(), http.MethodPost, "/v1/sandboxes", `{"preset":"desktop"}`, "", &p); code != http.StatusUnprocessableEntity ||
+		p.Code != api.CodeSandboxUnsupported {
+		t.Fatalf("with an unpinned image = %d %+v", code, p)
+	}
 	f.h.DesktopImage = desktopImage
 
 	sb, code := f.create(t, pro(), `{"preset":"desktop"}`)
@@ -36,8 +42,10 @@ func TestCreateDesktop(t *testing.T) {
 		a.DesktopResolution != api.SandboxDesktopDefaultResolution || a.RAMMB != api.SandboxDesktopDefaultRAMMB || len(a.Ports) != 0 {
 		t.Fatalf("create = %d %+v, admitted %+v", code, sb, a)
 	}
-	if len(ensured) != 1 || ensured[0].Image != desktopImage {
-		t.Fatalf("ensured %+v", ensured)
+	// §3a: the platform drive, not a per-account image-run job.
+	if len(ensured) != 0 || a.ImageRef != desktopImage || a.ImageJobID != "" ||
+		a.DesktopImageKey != "base/sandbox-desktop-cd0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd.ext4" {
+		t.Fatalf("ensured %+v, admitted image %q job %q drive %q", ensured, a.ImageRef, a.ImageJobID, a.DesktopImageKey)
 	}
 
 	if _, code := f.create(t, pro(), `{"preset":"desktop","ram_mb":1536}`); code != http.StatusCreated || f.store.admitted.RAMMB != api.SandboxDesktopRAMMBMin {

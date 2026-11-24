@@ -2,7 +2,9 @@
 # Smoke test of the sandbox desktop image (ADR-20261124075005 rollout step 2):
 # start the desktop as the session's uid with no network, wait for it, and
 # drive it with gregale-desktop: size, a screenshot, pointer, keys, typing,
-# an app launch and its window, and both noVNC ports.
+# an app launch and its window, and both noVNC ports. Then a warm snapshot's
+# prewarm (§3b): it must leave nothing running, and a start after it must
+# come up as on a fresh boot.
 #
 #   bash images/sandbox-desktop/smoke.sh IMAGE_REF [PLATFORM]
 set -euo pipefail
@@ -10,9 +12,10 @@ set -euo pipefail
 image_ref=${1:?image reference is required}
 platform=${2:-linux/amd64}
 name="gregale-desktop-smoke-$$"
+warm="${name}-prewarm"
 out=$(mktemp -d)
 cleanup() {
-  docker rm -f "${name}" >/dev/null 2>&1 || true
+  docker rm -f "${name}" "${warm}" >/dev/null 2>&1 || true
   rm -rf "${out}"
 }
 trap cleanup EXIT
@@ -94,4 +97,26 @@ done
 
 echo "processes (RSS MB):"
 docker exec "${name}" ps -eo rss=,comm= | awk '{t+=$1; printf "  %6.1f %s\n", $1/1024, $2} END {printf "  %6.1f total\n", t/1024}' | sort -n | tail -12
+
+# Prewarm, then start again in the same container, as a restored warm
+# snapshot does. PID 1 is the container's sleep.
+docker run -d --name "${warm}" --platform "${platform}" --network none --user 1000:1000 \
+  -e HOME=/home/app --shm-size 256m --entrypoint sleep "${image_ref}" infinity >/dev/null
+started=$(date +%s%N)
+docker exec "${warm}" /usr/local/bin/gregale-desktop prewarm
+echo "prewarm in $(( ($(date +%s%N) - started) / 1000000 )) ms"
+left=$(docker exec "${warm}" ps -u 1000 -o pid=,comm= | awk '$1 != 1 && $2 != "ps"')
+[[ -z "${left}" ]] || { echo "processes outlived the prewarm: ${left}" >&2; exit 1; }
+if docker exec "${warm}" sh -c 'test -e /tmp/.X11-unix/X0 || test -e /tmp/.X0-lock || test -e /home/app/.config/chromium'; then
+  echo "the prewarm left the X socket, lock or Chromium's profile" >&2
+  exit 1
+fi
+docker exec -d "${warm}" /usr/local/bin/gregale-desktop start --resolution 800x600
+started=$(date +%s%N)
+docker exec "${warm}" /usr/local/bin/gregale-desktop wait --timeout 45
+echo "ready after prewarm in $(( ($(date +%s%N) - started) / 1000000 )) ms"
+size=$(docker exec "${warm}" /usr/local/bin/gregale-desktop size)
+[[ "${size}" == 800x600 ]] || { echo "size after prewarm = ${size}, want 800x600" >&2; exit 1; }
+(( $(docker exec "${warm}" /usr/local/bin/gregale-desktop screenshot | wc -c) > 4096 )) ||
+  { echo "the desktop after prewarm is blank" >&2; exit 1; }
 echo "sandbox-desktop smoke ok"

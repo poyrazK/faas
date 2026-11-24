@@ -961,7 +961,7 @@ UPDATE sandbox_sessions sb SET state='failed', outcome_code='image_unavailable',
     ELSE 'the image ' || sb.image_ref || ' could not be prepared' ||
       coalesce(': ' || (SELECT j.image_materialization_error FROM jobs j WHERE j.id=sb.image_job_id), '') END, 2048),
   closed_at=now(), updated_at=now()
- WHERE sb.state='queued' AND sb.image_ref IS NOT NULL
+ WHERE sb.state='queued' AND sb.image_ref IS NOT NULL AND sb.desktop_image_key IS NULL
  AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.id=sb.image_job_id AND j.account_id=sb.account_id AND j.status <> 'deleted'
    AND j.image_materialization_status <> 'failed')
  AND NOT EXISTS (SELECT 1 FROM sandbox_templates t JOIN deployments d ON d.app_id=t.app_id
@@ -970,7 +970,8 @@ UPDATE sandbox_sessions sb SET state='failed', outcome_code='image_unavailable',
 
 // A queued session whose image cannot be had never starts: its runner job
 // was evicted or deleted, its image failed to pull, or its template was
-// deleted.
+// deleted. A desktop boots the platform desktop drive and has no runner job
+// to lose (ADR-20261124075005 §3a).
 func (q *Queries) FailImageUnavailableSandboxSessions(ctx context.Context, db DBTX) (int64, error) {
 	result, err := db.Exec(ctx, failImageUnavailableSandboxSessions)
 	if err != nil {
@@ -1766,7 +1767,7 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, 
   coalesce(ws.storage_key, '')::text AS workspace_key,
   (sb.workspace_snapshot_id IS NOT NULL AND (ws.id IS NULL OR ws.state <> 'ready' OR ws.delete_requested_at IS NOT NULL))::boolean AS workspace_missing,
   coalesce(CASE WHEN j.status <> 'deleted' AND j.image_materialization_status='ready' THEN j.image_storage_key END,
-    tpl.rootfs_key, '')::text AS image_key,
+    tpl.rootfs_key, sb.desktop_image_key, '')::text AS image_key,
   (sb.image_ref IS NOT NULL)::boolean AS from_image,
   coalesce(st.start_cmd, '')::text AS start_cmd, coalesce(st.ready_cmd, '')::text AS ready_cmd,
   coalesce(st.ready_timeout_s, 0)::integer AS ready_timeout_s, sb.browser,
@@ -2490,9 +2491,9 @@ func (q *Queries) InsertSandboxAction(ctx context.Context, db DBTX, arg InsertSa
 
 const insertSandboxFork = `-- name: InsertSandboxFork :one
 INSERT INTO sandbox_sessions (account_id,tenant_id,kind,preset,ram_mb,network_mode,idle_timeout_sec,expires_at,labels,
-  image_ref,image_job_id,template_id,browser,desktop_resolution,egress_allow,egress_deny,vcpu,volume_gb,forked_from,fork_capture_id)
+  image_ref,image_job_id,template_id,browser,desktop_resolution,desktop_image_key,egress_allow,egress_deny,vcpu,volume_gb,forked_from,fork_capture_id)
 SELECT src.account_id, src.tenant_id, $1::text, src.preset, src.ram_mb, src.network_mode, src.idle_timeout_sec,
-  $2::timestamptz, $3::jsonb, src.image_ref, src.image_job_id, src.template_id, src.browser, src.desktop_resolution,
+  $2::timestamptz, $3::jsonb, src.image_ref, src.image_job_id, src.template_id, src.browser, src.desktop_resolution, src.desktop_image_key,
   src.egress_allow, src.egress_deny, src.vcpu, src.volume_gb, src.id, NULLIF($4::text, '')::uuid
  FROM sandbox_sessions src WHERE src.id=$5::text::uuid AND src.account_id=$6::text::uuid
 RETURNING id::text AS id
@@ -2525,13 +2526,14 @@ func (q *Queries) InsertSandboxFork(ctx context.Context, db DBTX, arg InsertSand
 
 const insertSandboxSession = `-- name: InsertSandboxSession :one
 INSERT INTO sandbox_sessions (account_id,tenant_id,kind,preset,ram_mb,network_mode,idle_timeout_sec,expires_at,labels,workspace_snapshot_id,
-  image_ref,image_job_id,template_id,browser,task_kind,task_url,task_max_chars,egress_allow,egress_deny,vcpu,volume_gb,desktop_resolution)
+  image_ref,image_job_id,template_id,browser,task_kind,task_url,task_max_chars,egress_allow,egress_deny,vcpu,volume_gb,desktop_resolution,
+  desktop_image_key)
 VALUES ($1::text::uuid,$2::text::uuid,$3::text,$4::text,
   $5::integer,$6::text,$7::integer,$8::timestamptz,
   $9::jsonb,$10::text::uuid,$11::text,$12::text::uuid,
   $13::text::uuid,$14::boolean,$15::text,$16::text,
   $17::integer,$18::text[],$19::text[],
-  $20::smallint,$21::integer,$22::text)
+  $20::smallint,$21::integer,$22::text,$23::text)
 RETURNING id::text AS id
 `
 
@@ -2558,6 +2560,7 @@ type InsertSandboxSessionParams struct {
 	Vcpu                pgtype.Int2
 	VolumeGb            pgtype.Int4
 	DesktopResolution   pgtype.Text
+	DesktopImageKey     pgtype.Text
 }
 
 func (q *Queries) InsertSandboxSession(ctx context.Context, db DBTX, arg InsertSandboxSessionParams) (string, error) {
@@ -2584,6 +2587,7 @@ func (q *Queries) InsertSandboxSession(ctx context.Context, db DBTX, arg InsertS
 		arg.Vcpu,
 		arg.VolumeGb,
 		arg.DesktopResolution,
+		arg.DesktopImageKey,
 	)
 	var id string
 	err := row.Scan(&id)
@@ -3069,7 +3073,8 @@ func (q *Queries) ListClaimableAgentRuns(ctx context.Context, db DBTX, maxRows i
 const listClaimableSandboxSessions = `-- name: ListClaimableSandboxSessions :many
 SELECT sb.id::text AS id, sb.account_id::text AS account_id FROM sandbox_sessions sb
  WHERE (sb.state='queued' AND sb.expires_at > now()
- AND (sb.image_ref IS NULL OR EXISTS (SELECT 1 FROM jobs j WHERE j.id=sb.image_job_id AND j.account_id=sb.account_id
+ AND (sb.image_ref IS NULL OR sb.desktop_image_key IS NOT NULL
+   OR EXISTS (SELECT 1 FROM jobs j WHERE j.id=sb.image_job_id AND j.account_id=sb.account_id
    AND j.status <> 'deleted' AND j.image_materialization_status='ready' AND j.image_storage_key IS NOT NULL)
    OR EXISTS (SELECT 1 FROM sandbox_templates t JOIN deployments d ON d.app_id=t.app_id
    WHERE t.id=sb.template_id AND t.account_id=sb.account_id AND d.status='live' AND d.rootfs_key <> ''))
@@ -3087,7 +3092,8 @@ type ListClaimableSandboxSessionsRow struct {
 // Oldest first; rows another replica holds are skipped, not waited on.
 // A session from a seller image waits until the image-run runner job has
 // its image ready, and one from a template until it has a finished build
-// (ADR-20261027090013).
+// (ADR-20261027090013). A desktop boots the platform desktop drive and is
+// claimable at once (ADR-20261124075005 §3a).
 // A paused persistent session asked to resume is claimable too
 // (ADR-20261122132055 §1). A fork is claimable once its capture exists: it
 // starts on the capture's node until that node refuses it, then waits for

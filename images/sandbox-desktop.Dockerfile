@@ -5,15 +5,17 @@
 # stays PID 1; agentd's start command, gregale-desktop start, runs as the
 # session's user (uid 1000) and brings up Xvfb on :0, Xfce, two x11vnc
 # servers on loopback (one view only) and noVNC on 6080 and 6081. Agents
-# act on the screen with gregale-desktop (xdotool, ImageMagick import,
-# wmctrl). Nothing is setuid; the microVM is the sandbox.
+# act on the screen with gregale-desktop (xdotool, the X protocol, ImageMagick,
+# wmctrl). Nothing is setuid; the microVM is the sandbox. There is no
+# xfce4-session, systemd user session or x11-xserver-utils (and so no cpp):
+# gregale-desktop starts Xfce's parts itself under dbus-run-session.
 FROM mirror.gcr.io/library/debian:13-slim@sha256:7378260c0a098d27ac206225db5e7d92b8c7c84ea7afccc86eeb513756bbd392
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      ca-certificates bash procps python3 dbus dbus-x11 dbus-user-session \
-      xvfb x11-utils x11-xserver-utils xauth xdg-utils \
-      xfce4-session xfwm4 xfce4-panel xfdesktop4 xfce4-settings xfconf thunar xfce4-terminal mousepad \
+      ca-certificates bash procps python3 dbus dbus-x11 \
+      xvfb x11-utils xauth xdg-utils \
+      xfwm4 xfce4-panel xfdesktop4 xfce4-settings xfconf thunar xfce4-terminal mousepad \
       adwaita-icon-theme-legacy hicolor-icon-theme \
       x11vnc novnc python3-websockify \
       xdotool wmctrl xclip imagemagick \

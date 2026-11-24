@@ -3,10 +3,12 @@
 // adr: 20261124075005 rollout step 4 — the sandbox desktop image boots in a
 // Firecracker session VM with agentd's start and ready commands, answers
 // gregale-desktop actions as the session's user, and keeps its desktop
-// running across a fork capture and restore. It logs the numbers the ADR
+// running across a fork capture and restore. §3b: the shared warm desktop
+// snapshot, prewarmed and stopped before its capture, restores and runs the
+// session's commands to a working desktop. It logs the numbers the ADR
 // records: cold boot to ready, the VM's resident memory idle and with
-// Chromium open, the capture's memory size and the restore to a working
-// screen.
+// Chromium open, the capture's memory size, the restore to a working screen
+// and the warm snapshot's capture and restore to ready.
 //
 //	FAAS_TEST_SANDBOX_DESKTOP_ROOT  an unpacked sandbox-desktop image
 package fcvm
@@ -27,12 +29,14 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
-// desktopImageDrive packs the unpacked desktop image as imaged publishes a
-// job image, sized to fit it.
-func desktopImageDrive(t *testing.T, root string) string {
+// desktopImageDrive packs the unpacked desktop image as imaged publishes the
+// platform desktop drive, sized to fit it, and places it in the shared store
+// under the drive's key (ADR-20261124075005 §3a).
+func desktopImageDrive(t *testing.T, root string, shared string) string {
 	t.Helper()
 	marker := filepath.Join(root, strings.TrimPrefix(api.FullRootfsMarkerPath, "/"))
 	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
@@ -48,7 +52,15 @@ func desktopImageDrive(t *testing.T, root string) string {
 	if out, err := exec.Command("mkfs.ext4", "-q", "-O", "^has_journal", "-d", root, "-L", "desktop", "-F", drive).CombinedOutput(); err != nil {
 		t.Fatalf("mkfs.ext4: %v %s", err, out)
 	}
-	return drive
+	key := storagekey.SandboxDesktopImage("sha256:" + strings.Repeat("0d", 32))
+	published := filepath.Join(shared, key)
+	if err := os.MkdirAll(filepath.Dir(published), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(drive, published); err != nil {
+		t.Fatal(err)
+	}
+	return key
 }
 
 func desktopRun(t *testing.T, m *Manager, instance, sandboxID string, args ...string) string {
@@ -105,7 +117,7 @@ func TestMetalSandboxDesktop(t *testing.T) {
 	}
 	m := NewManager(wire.ExecRunner{}, newMetalVMM(t, 180*time.Second).WithStorage(cache), Paths{Kernel: kernel}, os.Getenv("FAAS_TEST_FC_VERSION"), slog.Default(), nil)
 	m.WithStorage(cache)
-	image := desktopImageDrive(t, root)
+	image := desktopImageDrive(t, root, snapRoot)
 	ctx := context.Background()
 	const account, source = "acct-desktop", "sbx-desktop-1"
 	// agentd's commands for a 1280x800 desktop (pkg/agentd desktopCommands).
@@ -132,6 +144,12 @@ echo "uptime at check ${up}s"`)
 		t.Fatalf("size = %q", got)
 	}
 	shot := desktopScreenshot(t, m, req.Instance, source)
+	shotAt := time.Now()
+	desktopScreenshot(t, m, req.Instance, source)
+	t.Logf("screenshot round trip through exec: %d ms", time.Since(shotAt).Milliseconds())
+	clickAt := time.Now()
+	desktopRun(t, m, req.Instance, source, "click", "640", "400")
+	t.Logf("click round trip through exec: %d ms", time.Since(clickAt).Milliseconds())
 	time.Sleep(3 * time.Second)
 	t.Logf("idle desktop: VM resident %d MB, screenshot %d bytes", vmResidentMB(inst), shot)
 
@@ -194,4 +212,52 @@ echo "uptime at check ${up}s"`)
 	desktopRun(t, m, fork.Instance, fork.SandboxID, "click", "640", "400")
 	time.Sleep(3 * time.Second)
 	t.Logf("restored desktop: VM resident %d MB", vmResidentMB(finst))
+	for _, id := range []string{req.Instance, fork.Instance} {
+		if err := m.Destroy(ctx, id); err != nil {
+			t.Fatalf("destroy %s: %v", id, err)
+		}
+	}
+
+	// §3b: the warm snapshot of the shared slot — booted, prewarmed with
+	// Chromium, everything stopped, then captured — restores and runs the
+	// session's own commands at the session's own screen.
+	warm := req
+	warm.Instance, warm.SandboxID = "sbx-desktop-warm", "sbx-desktop-warm"
+	warm.StartCmd, warm.ReadyCmd, warm.ReadyTimeout = "", "", 0
+	warmAt := time.Now()
+	snap, info, err := m.CaptureSandboxSnapshot(ctx, SandboxCapture{Namespace: storagekey.SandboxSnapshotNamespace(account, image),
+		CaptureID: uuid.NewString(), Wake: warm})
+	if err != nil {
+		t.Fatalf("warm capture: %v", err)
+	}
+	t.Logf("warm capture (boot, prewarm, snapshot): %d ms, %d MB memory", time.Since(warmAt).Milliseconds(), info.MemBytes>>20)
+	session := req
+	session.Instance, session.SandboxID, session.Snapshot = "sbx-desktop-session", "sbx-desktop-3", snap
+	session.StartCmd = "gregale-desktop start --resolution 1024x768"
+	restoredAt := time.Now()
+	sinst, err := m.WakeSandbox(ctx, session)
+	if err != nil {
+		t.Fatalf("warm restore: %v", err)
+	}
+	t.Cleanup(func() { _ = m.Destroy(context.Background(), session.Instance) })
+	if sinst.Method != WakeRestore {
+		t.Fatalf("the session cold-booted (%v); want a restore of the warm snapshot", sinst.Method)
+	}
+	t.Logf("warm restore to a ready desktop: %d ms", time.Since(restoredAt).Milliseconds())
+	if got := strings.TrimSpace(desktopRun(t, m, session.Instance, session.SandboxID, "size")); got != "1024x768" {
+		t.Fatalf("restored size = %q", got)
+	}
+	desktopScreenshot(t, m, session.Instance, session.SandboxID)
+	launchedAt := time.Now()
+	desktopRun(t, m, session.Instance, session.SandboxID, "launch", "chromium", "--", "about:blank")
+	deadline = time.Now().Add(60 * time.Second)
+	for !strings.Contains(desktopRun(t, m, session.Instance, session.SandboxID, "windows", "--app", "chromium"), "hromium") {
+		if time.Now().After(deadline) {
+			t.Fatal("chromium opened no window after the warm restore")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Logf("chromium window after the warm restore: %d ms", time.Since(launchedAt).Milliseconds())
+	time.Sleep(3 * time.Second)
+	t.Logf("warm-restored desktop: VM resident %d MB", vmResidentMB(sinst))
 }

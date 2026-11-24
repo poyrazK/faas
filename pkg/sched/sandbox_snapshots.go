@@ -55,7 +55,12 @@ func sandboxDriveKey(spec SandboxSpec) string {
 func (r *AgentRunner) sandboxShape(node string, spec SandboxSpec) sandboxSnapshotShape {
 	shape := sandboxSnapshotShape{node: node, base: spec.BaseKey, drive: spec.LayerKey, vcpu: spec.VCPU, memMiB: spec.MemSizeMiB,
 		cpuMilli: spec.CPUMillicores, network: spec.Network, browser: spec.Browser}
-	if spec.ImageKey != "" {
+	switch {
+	case storagekey.IsSandboxDesktopImage(spec.ImageKey):
+		// The platform desktop drive is every account's: one slot serves
+		// them all (ADR-20261124075005 §3b).
+		shape.drive = spec.ImageKey
+	case spec.ImageKey != "":
 		// A template's snapshot holds the account's image: its slot is the
 		// account's own.
 		shape.drive, shape.account = storagekey.SandboxImageIdentity(spec.ImageKey), spec.AccountID
@@ -120,7 +125,7 @@ func (r *AgentRunner) captureSandbox(ctx context.Context, p AgentRunPlacement, s
 	capture := SandboxSpec{Instance: p.Instance, SandboxID: spec.SandboxID, AccountID: spec.AccountID, Plan: spec.Plan,
 		BaseKey: spec.BaseKey, LayerKey: spec.LayerKey, ImageKey: spec.ImageKey, VCPU: spec.VCPU, MemSizeMiB: spec.MemSizeMiB,
 		CPUMillicores: spec.CPUMillicores, Network: spec.Network, Browser: spec.Browser}
-	namespace := storagekey.SandboxSnapshotNamespace(spec.AccountID, spec.ImageKey != "")
+	namespace := storagekey.SandboxSnapshotNamespace(spec.AccountID, spec.ImageKey)
 	var snap *AgentRunSnapshot
 	router, ok := r.router.(sandboxCaptureRouter)
 	err := fmt.Errorf("sched: the vmmd router cannot capture sandbox sessions")
