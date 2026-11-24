@@ -268,8 +268,8 @@ func TestRequestTelemetryReceiverRejectsMalformedConsumerID(t *testing.T) {
 		RouteTemplate: "GET /v1/usage", Method: "GET", HttpStatus: 200,
 		LatencyMs: 20, ReceivedAtUnixMs: 1, ConsumerId: "not-a-uuid",
 	})
-	if out.GetOutcome() != rtOutcomeDBError {
-		t.Fatalf("outcome = %q, want %q", out.GetOutcome(), rtOutcomeDBError)
+	if out.GetOutcome() != rtOutcomeInvalid {
+		t.Fatalf("outcome = %q, want %q", out.GetOutcome(), rtOutcomeInvalid)
 	}
 	if len(store.inserted) != 0 {
 		t.Fatal("malformed consumer identity must not reach the database")
@@ -323,7 +323,7 @@ func TestRequestTelemetryReceiverPreservesPlatformTenantSnapshot(t *testing.T) {
 			invalid := proto.Clone(req).(*apidpb.IncrementRequestTelemetryRequest)
 			invalid.EventId = uuid.NewString()
 			invalid.ConsumerId, invalid.PlatformTenantId = tc.consumerID, tc.tenantID
-			if got := r.HandleOne(context.Background(), invalid).GetOutcome(); got != rtOutcomeDBError || len(store.usage) != 1 {
+			if got := r.HandleOne(context.Background(), invalid).GetOutcome(); got != rtOutcomeInvalid || len(store.usage) != 1 {
 				t.Fatalf("invalid attribution outcome=%q usage=%+v", got, store.usage)
 			}
 		})

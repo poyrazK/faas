@@ -81,6 +81,21 @@ func TestMetalNetnsIngressCountsOnlyAddressedIPv4(t *testing.T) {
 		}
 		return v
 	}
+	settled := func() uint64 {
+		t.Helper()
+		deadline := time.Now().Add(10 * time.Second)
+		last, since := addressed(), time.Now()
+		for time.Since(since) < 1500*time.Millisecond {
+			if time.Now().After(deadline) {
+				t.Fatalf("namespace addressed ingress still moving after 10 s (last %d)", last)
+			}
+			time.Sleep(100 * time.Millisecond)
+			if v := addressed(); v != last {
+				last, since = v, time.Now()
+			}
+		}
+		return last
+	}
 	inReceives := func() uint64 {
 		t.Helper()
 		v, err := parseSNMPField(snmp(), "Ip:", "InReceives")
@@ -104,8 +119,12 @@ func TestMetalNetnsIngressCountsOnlyAddressedIPv4(t *testing.T) {
 
 	// Resolve the namespace once so the next pings are plain unicast to it.
 	run("ping", "-c", "1", "-W", "1", "10.250.77.2")
-	time.Sleep(200 * time.Millisecond)
-	baseIn, baseTX := addressed(), vethTX()
+	// A bridge that has just come up sends its own IGMP membership reports,
+	// IPv4 multicast that it floods to every port whatever the port flags, a
+	// few times over its first second or so (on gregale-test one landed
+	// 0.1-1 s after the ping above). Production's br-tenants has long been
+	// up. Take the baseline once the reading has held still.
+	baseIn, baseTX := settled(), vethTX()
 
 	// The host's ARP for an address no namespace answers: broadcast.
 	try("ping", "-c", "1", "-W", "1", "10.250.77.77")

@@ -27,6 +27,9 @@ var errTelemetryStream = errors.New("request telemetry stream failed")
 //     says not to retry, so the row is rejected for good. Retrying it only
 //     held the publisher in backoff for a bucket that refills over a minute,
 //     delaying every other app's rows behind it;
+//   - invalid: apid will never accept the row (a malformed field, or an app
+//     or account that is gone), so it is rejected for good like rate_limited.
+//     Retrying it three times dropped the whole batch as a platform loss;
 //   - db_error, an unknown or missing outcome: retryable.
 func acknowledgeTelemetryRows(stream telemetryResponseStream, rows []gateway.RequestTelemetryRow) error {
 	accepted := map[uuid.UUID]bool{}
@@ -48,7 +51,7 @@ func acknowledgeTelemetryRows(stream telemetryResponseStream, rows []gateway.Req
 		switch outcome := response.GetOutcome(); outcome {
 		case "inserted", "not_retained":
 			accepted[rows[outcomes].EventID] = true
-		case "rate_limited":
+		case "rate_limited", "invalid":
 			rejected[rows[outcomes].EventID] = true
 		default:
 			if failure == nil {

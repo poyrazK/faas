@@ -68,6 +68,14 @@ func FetchRequestHealth(ctx context.Context, client *promql.Client, appID string
 	// increase. Exclude that partial coverage instead of hiding its errors.
 	coverageQuery := fmt.Sprintf(`count(count by (deployment) (increase(%s[%s])) and on (deployment) count by (deployment) (%s)) - (count(%s unless (count_over_time(%s[%s]) >= %d)) or vector(0))`, selector, api.AppHealthMetricsRange, selector, selector, selector, api.AppHealthMetricsRange, api.AppHealthCounterMinSamples)
 	coverage, err := client.QueryScalar(ctx, coverageQuery)
+	if errors.Is(err, promql.ErrNoData) && count == 0 {
+		// The release's series came back after a gateway restart with no
+		// request since: one scrape has no increase. That is an idle
+		// release, not missing telemetry (prod 2026-11-23: health read
+		// "unknown" for minutes after every gateway restart).
+		out.Reason = requestsUnobservedReason(ctx, client)
+		return out
+	}
 	if err != nil {
 		return out
 	}
