@@ -96,8 +96,11 @@ func TestTelemetryCoverageGapsOnlyOnLossPG(t *testing.T) {
 	if n := gapRows(); n != 0 {
 		t.Fatalf("in-flight rows wrote %d coverage gaps, want none", n)
 	}
+	time.Sleep(20 * time.Millisecond)
+	backlog := time.Now().UTC()
+	time.Sleep(20 * time.Millisecond)
 	beat(2, 0)
-	gaps, err := store.RequestTelemetryCompleteness(ctx, app.ID, now.Add(-time.Hour), time.Now().UTC())
+	gaps, err := store.RequestTelemetryCompleteness(ctx, app.ID, now.Add(-time.Hour), backlog)
 	if err != nil || len(gaps) != 1 || gaps[0] != "telemetry_ingestion_pending" {
 		t.Fatalf("window reaching into a live backlog: %v %v, want telemetry_ingestion_pending", gaps, err)
 	}

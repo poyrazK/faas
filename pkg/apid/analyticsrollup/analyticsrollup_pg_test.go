@@ -122,8 +122,9 @@ func TestRollupReadsGroupFoldAndSplitByHour(t *testing.T) {
 	for _, p := range series {
 		got += fmt.Sprintf("%d,", p.Requests)
 	}
-	if got != "105,0,1," || series[2].P50Ms != 60000 {
-		t.Fatalf("hourly requests = %s p50 of hour 3 = %d, want 105,0,1, and 60000", got, series[2].P50Ms)
+	// One request in the 30-60 s bucket: its median interpolates to 45 s.
+	if got != "105,0,1," || series[2].P50Ms != 45000 {
+		t.Fatalf("hourly requests = %s p50 of hour 3 = %d, want 105,0,1, and 45000", got, series[2].P50Ms)
 	}
 	q.Route, q.Method, q.GroupBy, q.Limit = "GET /a", "GET", "status", 10
 	groups, err = analyticsrollup.Read(ctx, store, q)
