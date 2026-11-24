@@ -29,10 +29,19 @@ import (
 // refused. It wins over a Compose completion step, as on every other deploy
 // path of the service.
 //
-// app is the app as the staged archive sees it (a Compose build context is
-// staged as the archive root, and narrowed says so); workload.RootDir is
-// repository-relative.
-func projectWorkloadReleaseCommand(staged string, workloads []reposcan.Workload, workload reposcan.Workload, app state.App, narrowed bool, manifest *gregalemanifest.Manifest) (deploymentReleaseCommand, *api.Problem) {
+// app is the app as the staged archive sees it; workload.RootDir is
+// repository-relative. narrowedRoot is the repository directory a Compose
+// build context was staged from as the archive root, or "" when the archive
+// holds the whole repository.
+//
+// A Procfile at the root of a narrowed archive is the service's own (agent
+// eval 2026-11-24: a Compose worker's worker/Procfile release: never ran,
+// because it was skipped as the repository root's). It applies only where
+// nothing else already decided: when another service builds from the same
+// context, or the service has a Compose completion step, the command stays
+// what it was before that fix, so redeploying an existing project neither
+// fails nor swaps its migration.
+func projectWorkloadReleaseCommand(staged string, workloads []reposcan.Workload, workload reposcan.Workload, app state.App, narrowedRoot string, manifest *gregalemanifest.Manifest) (deploymentReleaseCommand, *api.Problem) {
 	assigned := deploymentReleaseCommand{command: append([]string(nil), workload.ReleaseCommand...), shell: workload.ReleaseCommandShell}
 	if len(workloads) == 1 {
 		resolved, problem := resolveSourceReleaseDeclaration(staged, app, manifest)
@@ -41,13 +50,22 @@ func projectWorkloadReleaseCommand(staged string, workloads []reposcan.Workload,
 		}
 		return resolved, nil
 	}
-	declared, origin, problem := serviceOwnReleaseDeclaration(staged, workload, narrowed, manifest)
+	declared, origin, fromContextProcfile, problem := serviceOwnReleaseDeclaration(staged, workload, narrowedRoot, manifest)
 	if problem != nil || declared == "" {
 		return assigned, problem
 	}
 	dir := cleanWorkloadDir(workload.RootDir)
+	if fromContextProcfile {
+		dir = cleanWorkloadDir(narrowedRoot)
+		if workload.ReleaseService != "" {
+			return assigned, nil
+		}
+	}
 	for _, other := range workloads {
 		if other.Name != workload.Name && cleanWorkloadDir(other.RootDir) == dir {
+			if fromContextProcfile {
+				return assigned, nil
+			}
 			return deploymentReleaseCommand{}, projectReleaseDeclarationProblem(fmt.Sprintf(
 				"%s declares a release command, but services %q and %q both build from that directory, so it would run once per service. "+
 					"Move it into one service's own directory, or declare it once as a Compose service the others wait for with condition: service_completed_successfully.",
@@ -60,38 +78,40 @@ func projectWorkloadReleaseCommand(staged string, workloads []reposcan.Workload,
 }
 
 // serviceOwnReleaseDeclaration returns the release command a service declares
-// in its own directory and where it came from. The repository root Procfile
-// is reposcan's (it assigns that release: process to exactly one workload).
-func serviceOwnReleaseDeclaration(staged string, workload reposcan.Workload, narrowed bool, manifest *gregalemanifest.Manifest) (string, string, *api.Problem) {
+// in its own directory, where it came from, and whether it is the Procfile at
+// the root of a narrowed archive. The repository root Procfile is reposcan's
+// (it assigns that release: process to exactly one workload).
+func serviceOwnReleaseDeclaration(staged string, workload reposcan.Workload, narrowedRoot string, manifest *gregalemanifest.Manifest) (string, string, bool, *api.Problem) {
 	dir := cleanWorkloadDir(workload.RootDir)
 	if manifest != nil && manifest.Release != nil && manifest.Release.Command != "" {
-		return manifest.Release.Command, path.Join(dir, "gregale.yaml") + " release.command", nil
+		return manifest.Release.Command, path.Join(dir, "gregale.yaml") + " release.command", false, nil
 	}
-	if dir == "." {
-		return "", "", nil
+	narrowed := cleanWorkloadDir(narrowedRoot) != "."
+	if narrowed {
+		// The archive root is the build context, so its Procfile is the
+		// service's own. An empty app.RootDir alone does not say the
+		// archive was narrowed (nightly 11-07), so the caller does.
+		dir = cleanWorkloadDir(narrowedRoot)
+	} else if dir == "." {
+		return "", "", false, nil
 	}
-	// Only the service's own directory counts: the reader falls back to the
-	// archive root, whose Procfile reposcan already assigned to one workload.
-	// A Compose build context is staged as the archive root, so there the
-	// archive-root Procfile is the service's own; reading only dir/Procfile
-	// dropped it without a word (agent eval 2026-11-24: a Compose worker's
-	// worker/Procfile release: never ran). An empty app.RootDir alone does
-	// not say the archive was narrowed (nightly 11-07), so the caller does.
+	// Otherwise only the service's own directory counts: the reader falls
+	// back to the archive root, whose Procfile reposcan already assigned.
 	body, found, err := readServiceOwnProcfile(staged, dir, narrowed)
 	if err != nil {
-		return "", "", api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", err.Error())
+		return "", "", false, api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", err.Error())
 	}
 	if !found {
-		return "", "", nil
+		return "", "", false, nil
 	}
 	command, ok, err := reposcan.ParseProcfileReleaseCommand(body)
 	if err != nil {
-		return "", "", api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid Procfile", "release: "+err.Error())
+		return "", "", false, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid Procfile", "release: "+err.Error())
 	}
 	if !ok {
-		return "", "", nil
+		return "", "", false, nil
 	}
-	return command, path.Join(dir, "Procfile") + " release:", nil
+	return command, path.Join(dir, "Procfile") + " release:", narrowed, nil
 }
 
 func cleanWorkloadDir(dir string) string {

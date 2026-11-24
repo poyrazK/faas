@@ -28,7 +28,7 @@ func (s *server) prepareSafeProjectCommands(ctx context.Context, acct state.Acco
 		}
 		// The same per-service resolution as the apply that runs the
 		// command (ADR-20261019120007 amendment 1).
-		resolved, problem := projectWorkloadReleaseCommand(source, scan.Workloads, workload, app, false, manifest)
+		resolved, problem := projectWorkloadReleaseCommand(source, scan.Workloads, workload, app, "", manifest)
 		if problem != nil {
 			return problem
 		}

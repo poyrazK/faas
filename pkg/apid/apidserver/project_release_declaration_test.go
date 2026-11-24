@@ -93,21 +93,33 @@ func TestProjectWorkloadReleaseCommandReadsServiceDirNotAppRoot(t *testing.T) {
 // dropped as if it were the repository root's (agent eval 2026-11-24: a
 // Compose worker's worker/Procfile migration never ran, so its table was
 // never created). An archive that is not narrowed still leaves the root
-// Procfile to reposcan.
+// Procfile to reposcan. Where something else already decided (a shared build
+// context, a Compose completion step) the command stays what it was, so an
+// existing project's redeploy neither fails nor swaps its migration.
 func TestProjectWorkloadReleaseCommandReadsNarrowedComposeContext(t *testing.T) {
 	vote := reposcan.Workload{Name: "vote", RootDir: "vote"}
 	worker := reposcan.Workload{Name: "worker", RootDir: "worker"}
+	composeStep := reposcan.Workload{Name: "worker", RootDir: "worker", ReleaseCommand: []string{"./migrate"}, ReleaseService: "migrate"}
 	archive := sourceArchive(t, map[string]string{"Procfile": "release: dotnet Worker.dll migrate\n", "Program.cs": "x"})
 	for _, tc := range []struct {
-		name     string
-		narrowed bool
-		want     []string
+		name         string
+		workloads    []reposcan.Workload
+		workload     reposcan.Workload
+		narrowedRoot string
+		want         []string
 	}{
-		{name: "narrowed to the service's build context", narrowed: true, want: []string{"dotnet Worker.dll migrate"}},
-		{name: "whole repository", narrowed: false},
+		{name: "narrowed to the service's build context", workloads: []reposcan.Workload{vote, worker}, workload: worker,
+			narrowedRoot: "worker", want: []string{"dotnet Worker.dll migrate"}},
+		{name: "whole repository", workloads: []reposcan.Workload{vote, worker}, workload: worker},
+		{name: "shared build context keeps none", workloads: []reposcan.Workload{{Name: "web", RootDir: "app"}, {Name: "worker", RootDir: "app"}},
+			workload: reposcan.Workload{Name: "worker", RootDir: "app"}, narrowedRoot: "app"},
+		{name: "compose completion step kept", workloads: []reposcan.Workload{vote, composeStep}, workload: composeStep,
+			narrowedRoot: "worker", want: []string{"./migrate"}},
+		{name: "shared check uses the staged context", workloads: []reposcan.Workload{{Name: "web", RootDir: "services/worker"}, worker},
+			workload: worker, narrowedRoot: "services/worker"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			command, _, problem := apidserver.ProjectWorkloadReleaseCommandStaged(archive, []reposcan.Workload{vote, worker}, worker, state.App{}, tc.narrowed, nil)
+			command, _, problem := apidserver.ProjectWorkloadReleaseCommandStaged(archive, tc.workloads, tc.workload, state.App{}, tc.narrowedRoot, nil)
 			if problem != nil || !slices.Equal(command, tc.want) {
 				t.Fatalf("release = %v, %v; want %v", command, problem, tc.want)
 			}

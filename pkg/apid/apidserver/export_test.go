@@ -2369,13 +2369,13 @@ func ResolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gre
 // ProjectWorkloadReleaseCommand exposes a project workload's release command
 // resolution (ADR-20261019120007 amendment 1).
 func ProjectWorkloadReleaseCommand(sourcePath string, workloads []reposcan.Workload, workload reposcan.Workload, app state.App, manifest *gregalemanifest.Manifest) ([]string, bool, *api.Problem) {
-	return ProjectWorkloadReleaseCommandStaged(sourcePath, workloads, workload, app, false, manifest)
+	return ProjectWorkloadReleaseCommandStaged(sourcePath, workloads, workload, app, "", manifest)
 }
 
 // ProjectWorkloadReleaseCommandStaged is ProjectWorkloadReleaseCommand for an
-// archive that may be narrowed to the service's Compose build context.
-func ProjectWorkloadReleaseCommandStaged(sourcePath string, workloads []reposcan.Workload, workload reposcan.Workload, app state.App, narrowed bool, manifest *gregalemanifest.Manifest) ([]string, bool, *api.Problem) {
-	resolved, problem := projectWorkloadReleaseCommand(sourcePath, workloads, workload, app, narrowed, manifest)
+// archive narrowed to the Compose build context narrowedRoot ("" for none).
+func ProjectWorkloadReleaseCommandStaged(sourcePath string, workloads []reposcan.Workload, workload reposcan.Workload, app state.App, narrowedRoot string, manifest *gregalemanifest.Manifest) ([]string, bool, *api.Problem) {
+	resolved, problem := projectWorkloadReleaseCommand(sourcePath, workloads, workload, app, narrowedRoot, manifest)
 	return resolved.command, resolved.shell, problem
 }
 
