@@ -61692,6 +61692,44 @@ COMMENT ON TABLE public.sandbox_workspace_snapshots IS 'ADR-20261027090013 step 
 
 
 --
+-- Name: saved_insights; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.saved_insights (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    key text NOT NULL,
+    name text NOT NULL,
+    kind text NOT NULL,
+    query jsonb NOT NULL,
+    range_days integer NOT NULL,
+    digest text DEFAULT ''::text NOT NULL,
+    alert_comparison text DEFAULT ''::text NOT NULL,
+    alert_threshold double precision DEFAULT 0 NOT NULL,
+    channel_ids uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    alert_state text DEFAULT 'ok'::text NOT NULL,
+    last_value double precision,
+    last_run_at timestamp with time zone,
+    last_error text DEFAULT ''::text NOT NULL,
+    next_digest_at timestamp with time zone,
+    next_check_at timestamp with time zone,
+    lease_until timestamp with time zone,
+    created_by text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT saved_insights_chk CHECK (((key ~ '^[a-z][a-z0-9_-]{0,63}$'::text) AND ((length(name) >= 1) AND (length(name) <= 128)) AND (kind = ANY (ARRAY['events'::text, 'funnel'::text, 'retention'::text])) AND (jsonb_typeof(query) = 'object'::text) AND ((range_days >= 1) AND (range_days <= 400)) AND (digest = ANY (ARRAY[''::text, 'daily'::text, 'weekly'::text])) AND (alert_comparison = ANY (ARRAY[''::text, 'gt'::text, 'gte'::text, 'lt'::text, 'lte'::text])) AND (alert_threshold = alert_threshold) AND (cardinality(channel_ids) <= 5) AND (alert_state = ANY (ARRAY['ok'::text, 'firing'::text])) AND (length(last_error) <= 512) AND ((length(created_by) >= 1) AND (length(created_by) <= 256)) AND (((digest = ''::text) AND (alert_comparison = ''::text)) = (next_check_at IS NULL))))
+);
+
+
+--
+-- Name: TABLE saved_insights; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.saved_insights IS 'Named analytics queries per environment; digests and threshold alerts run by meterd (ADR-20261122190000).';
+
+
+--
 -- Name: saved_route_requirements; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -78159,6 +78197,22 @@ ALTER TABLE ONLY public.sandbox_workspace_snapshots
 
 
 --
+-- Name: saved_insights saved_insights_env_key_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.saved_insights
+    ADD CONSTRAINT saved_insights_env_key_uniq UNIQUE (environment_id, key);
+
+
+--
+-- Name: saved_insights saved_insights_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.saved_insights
+    ADD CONSTRAINT saved_insights_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: saved_route_requirements saved_route_requirements_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -90268,6 +90322,13 @@ CREATE INDEX sandbox_workspace_snapshots_expiry_idx ON public.sandbox_workspace_
 --
 
 CREATE INDEX sandbox_workspace_snapshots_pending_idx ON public.sandbox_workspace_snapshots USING btree (created_at) WHERE (state = 'pending'::text);
+
+
+--
+-- Name: saved_insights_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX saved_insights_due_idx ON public.saved_insights USING btree (next_check_at) WHERE (next_check_at IS NOT NULL);
 
 
 --
@@ -115559,6 +115620,22 @@ ALTER TABLE ONLY public.sandbox_templates
 
 ALTER TABLE ONLY public.sandbox_workspace_snapshots
     ADD CONSTRAINT sandbox_workspace_snapshots_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: saved_insights saved_insights_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.saved_insights
+    ADD CONSTRAINT saved_insights_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: saved_insights saved_insights_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.saved_insights
+    ADD CONSTRAINT saved_insights_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
 
 
 --

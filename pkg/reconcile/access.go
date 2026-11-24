@@ -36,6 +36,35 @@ func ServiceAccessRemovedAuth(plan api.Plan, mode string) (bool, string) {
 	return plan.RequireAuthnDefault(), mode
 }
 
+// AccessChange is the access a declaration leads to for one app.
+type AccessChange struct {
+	RequireAuthn   bool
+	PublicAuthMode string
+	Declared       string
+	changed        bool
+}
+
+// Changed reports whether the app's access or its recorded declaration moves.
+func (c AccessChange) Changed() bool { return c.changed }
+
+// DeclaredAccessChange is the access an app ends with when its source
+// declares declared and previously declared previous (ADR-20261124090000):
+// a declaration applies, a removed one returns the app to the plan default,
+// and an app that never declared access keeps what it has.
+func DeclaredAccessChange(declared, previous string, plan api.Plan, requireAuthn bool, mode string) AccessChange {
+	wantRequire, wantMode := requireAuthn, mode
+	switch {
+	case declared != "":
+		wantRequire, wantMode = ServiceAccessAuth(declared, plan, requireAuthn, mode)
+	case previous != "":
+		wantRequire, wantMode = ServiceAccessRemovedAuth(plan, mode)
+	}
+	return AccessChange{
+		RequireAuthn: wantRequire, PublicAuthMode: wantMode, Declared: declared,
+		changed: wantRequire != requireAuthn || wantMode != mode || declared != previous,
+	}
+}
+
 // ServiceAccessKeyAvailable reports whether the plan has the API key gate:
 // on by default (Hobby) or allowed to be turned on (Pro, Scale). Free has
 // neither.

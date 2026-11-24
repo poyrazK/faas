@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -90,6 +91,24 @@ func TestAppArgumentRejectsTwoDifferentApps(t *testing.T) {
 	*main.OsStdout, *main.OsStderr = &bytes.Buffer{}, &errOut
 	if code := main.Run([]string{"alerts", "list", "one-app", "--app", "other-app"}); code != 1 || !strings.Contains(errOut.String(), "name different apps") {
 		t.Fatalf("exit %d, stderr %q", code, errOut.String())
+	}
+}
+
+// Prod hunt r36: a deployment id after the verb was read as the app and
+// refused against --app as two different apps; it is the command's own id.
+func TestAppArgumentLeavesUUIDsToTheCommand(t *testing.T) {
+	t.Setenv("FAAS_TOKEN", "test-token")
+	oldOut, oldErr, oldIn := *main.OsStdout, *main.OsStderr, *main.OsStdin
+	t.Cleanup(func() { *main.OsStdout, *main.OsStderr, *main.OsStdin = oldOut, oldErr, oldIn })
+	const id = "c198a800-2184-41b4-a097-ca4f42de8e93"
+	_, request := appArgumentRun(t, []string{"release", "traffic", "promote", id, "--app", "zz-app"})
+	if !strings.Contains(request, id) {
+		t.Fatalf("first request %q does not name deployment %s", request, id)
+	}
+	// Without --app a UUID still names the app by its ID.
+	got, err := main.AppArgumentAsFlag([]string{"alerts", "list", id})
+	if err != nil || !slices.Contains(got, "--app") || !slices.Contains(got, id) {
+		t.Fatalf("alerts list <app-uuid> = %q, %v; want --app %s", got, err, id)
 	}
 }
 

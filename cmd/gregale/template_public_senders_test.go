@@ -58,3 +58,21 @@ func TestPublicSenderTemplatesDeployPublic(t *testing.T) {
 		t.Errorf("hello-node deploys public: %q", args)
 	}
 }
+
+// Prod hunt r37: `init --template mcp-python --deploy` ran a plain deploy, so
+// the app was private and every MCP client got 401. MCP templates deploy
+// through `mcp server deploy`, as their next steps say.
+func TestMCPTemplatesInitDeployAsMCPServers(t *testing.T) {
+	for _, name := range []string{"mcp-node", "mcp-node-tasks", "mcp-go", "mcp-go-tasks", "mcp-python", "mcp-python-tasks"} {
+		if err := templates.Materialize(name, filepath.Join(t.TempDir(), name)); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		want := []string{"--path", "/dest", "--name", "demo", "--secrets-file", "/s"}
+		if args := main.InitDeployArgs(name, "/dest", "demo", "/s"); !slices.Equal(args, want) {
+			t.Errorf("%s: init --deploy runs %q, want mcp server deploy flags %q", name, args, want)
+		}
+		if steps := strings.Join(main.NextStepsFor(name), "\n"); !strings.Contains(steps, "gregale mcp server deploy") {
+			t.Errorf("%s next steps do not use mcp server deploy:\n%s", name, steps)
+		}
+	}
+}

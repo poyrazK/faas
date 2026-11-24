@@ -74,7 +74,7 @@ func (s *Service) syncCreditPurchase(ctx context.Context, store state.APIConsume
 		return errors.New("could not read Stripe Checkout")
 	}
 	if !matchesCreditCheckout(purchase, session) {
-		return errors.New("Stripe Checkout does not match the saved purchase")
+		return errors.New("checkout session from Stripe does not match the saved purchase")
 	}
 	switch {
 	case session.Status == "complete" && session.PaymentStatus == "paid":
