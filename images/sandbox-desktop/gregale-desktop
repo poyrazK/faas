@@ -243,12 +243,18 @@ def listening(port):
         return False
 
 
-def panel_up():
-    """Whether Xfce's panel has a window, so a first screenshot shows the
-    desktop and not a bare root window."""
-    out = subprocess.run(["xdotool", "search", "--limit", "1", "--class", "xfce4-panel"], env=x_env(),
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, timeout=5)
+def mapped(window_class):
+    """Whether a window of this class is mapped on the screen."""
+    out = subprocess.run(["xdotool", "search", "--limit", "1", "--onlyvisible", "--class", window_class],
+                         env=x_env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, timeout=5)
     return out.returncode == 0
+
+
+def panel_up():
+    """Whether Xfce's desktop and panel are on the screen, so a first
+    screenshot shows the desktop and not a bare root window. Xfce's parts
+    start at once, so a window that exists may not be mapped yet."""
+    return mapped("xfdesktop") and mapped("xfce4-panel")
 
 
 def cmd_wait(_args):
@@ -264,7 +270,11 @@ def desktop_processes():
            "-noxdamage", "-ncache", "0", "-quiet"]
     web = ["websockify", "--web", NOVNC_WEB]
     return [
-        ("xfce", ["dbus-run-session", "--", "xfce4-session"]),
+        # Xfce's parts started at once under one D-Bus session, not through
+        # xfce4-session, which starts them one by one: on a cold guest that
+        # took the panel 5.5 s to appear (ADR-20261124075005, Measured).
+        ("xfce", ["dbus-run-session", "--", "/bin/sh", "-c",
+                  "xfsettingsd --no-daemon & xfwm4 & xfdesktop & xfce4-panel & wait"]),
         ("x11vnc", vnc + ["-rfbport", str(VNC_PORT)]),
         ("x11vnc-viewonly", vnc + ["-viewonly", "-rfbport", str(VNC_VIEW_ONLY_PORT)]),
         ("novnc", web + [f"127.0.0.1:{VIEW_PORT}", f"127.0.0.1:{VNC_PORT}"]),

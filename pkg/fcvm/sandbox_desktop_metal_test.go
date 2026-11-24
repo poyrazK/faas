@@ -120,6 +120,13 @@ func TestMetalSandboxDesktop(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = m.Destroy(context.Background(), req.Instance) })
 	t.Logf("desktop cold boot to ready: %d ms", time.Since(begun).Milliseconds())
+	// Where the time went, in guest seconds since boot: when the X socket,
+	// each helper's log and the start command's log first appeared.
+	breakdown, _ := userExec(t, m, req.Instance, source, `up=$(cut -d' ' -f1 /proc/uptime); boot=$(awk -v n="$(date +%s.%N)" -v u="$up" 'BEGIN{printf "%.3f", n-u}')
+for f in /tmp/gregale-start.log /tmp/.X11-unix/X0 /tmp/gregale-desktop/*.log; do
+  [ -e "$f" ] && echo "$f $(stat -c %.3W "$f") $(stat -c %.3Y "$f")"; done | awk -v b="$boot" '{w=($2>0?$2:$3); printf "%-40s created +%.2fs  last write +%.2fs\n", $1, w-b, $3-b}'
+echo "uptime at check ${up}s"`)
+	t.Logf("boot breakdown:\n%s", breakdown)
 
 	if got := strings.TrimSpace(desktopRun(t, m, req.Instance, source, "size")); got != "1280x800" {
 		t.Fatalf("size = %q", got)

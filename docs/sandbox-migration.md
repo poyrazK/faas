@@ -131,12 +131,12 @@ console.log(await desktop.stream.getUrl({ viewOnly: true })); // watch only, saf
 await desktop.kill();
 ```
 
-- **Size:** a desktop has at least 2048 MB (the default) and the plan's vCPUs. An idle desktop uses about 700 MB, and about 1.4 GB with Chromium open. It is billed like any session: RAM + 8 MB per running second.
+- **Size:** a desktop has at least 2048 MB (the default) and the plan's vCPUs. An idle desktop uses about 500 MB, and about 950 MB with Chromium open. It is billed like any session: RAM + 8 MB per running second.
 - **Screen:** `resolution` is from 640x480 to 1920x1080, 1024x768 by default. Computer-use models work best near 1024x768.
 - **Actions:** every SDK call runs `gregale-desktop` in the session: `screenshot`, `click X Y`, `move`, `down`/`up`, `drag`, `scroll`, `type -- TEXT`, `key ctrl+c`, `cursor`, `size`, `launch APP`, `open FILE_OR_URL`, `windows`, `window`. You can run it yourself through `commands.run` or `/exec`. Your own GUI programs need `DISPLAY=:0`.
 - **Live view:** the desktop exposes two private preview ports: 6080 (interactive) and 6081 (view only, its server ignores input). Each URL carries its own preview token, and a token opens only its port. A tab left open keeps the session from freezing; close it to let the session idle. `stream.stop()` unexposes both views; `stream.start()` brings them back.
 - **Pause and fork:** with `kind: 'persistent'`, a paused desktop resumes with its windows open, and forks start with the same screen.
-- **Start time:** a new desktop is ready in about 10 s; a resume or fork restores in about 2 s.
+- **Start time:** a new desktop is ready in about 5 s; a resume or fork restores in about 2–3 s.
 
 ## Move workspaces
 

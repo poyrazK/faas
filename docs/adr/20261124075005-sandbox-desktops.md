@@ -89,15 +89,19 @@ On the m7i-flex test host (nested KVM, Firecracker 1.10, 2 vCPU, 2048 MB, 1280x8
 
 | What | Result |
 |---|---|
-| Cold boot to ready (start and ready commands) | 9.2 s |
-| VM resident memory, idle desktop | 689 MB |
-| VM resident memory, Chromium and Mousepad open | 1,400 MB |
-| `move` + `cursor` round trip through exec | 182 ms |
-| Capture of the running desktop | 7.3 s; memory file 2,048 MB (the guest's size, sparse) |
-| Restore of the capture to a working desktop (windows kept) | 2.3 s |
-| VM resident memory after the restore | 596 MB |
+| Cold boot to ready (start and ready commands) | 5.3 s (8.1–9.2 s through `xfce4-session`) |
+| VM resident memory, idle desktop | 497 MB (689 MB through `xfce4-session`) |
+| VM resident memory, Chromium and Mousepad open | 923 MB (1,400 MB through `xfce4-session`) |
+| `move` + `cursor` round trip through exec | 95–182 ms |
+| Capture of the running desktop | 7.3–8.7 s; memory file 2,048 MB (the guest's size, sparse) |
+| Restore of the capture to a working desktop (windows kept) | 2.3–2.6 s |
+| VM resident memory after the restore | 465 MB |
 
-The image is 1.75 GB (1.2 GB unpacked root). In Docker on the same host the desktop is ready in 0.8–1.6 s, so most of the VM's cold boot is reading the image drive and starting Xfce cold. That is why a desktop should resume from a pause capture or warm snapshot where it can. 2048 MB is the right default: Chromium takes the VM to about 1.4 GB.
+Capture and restore are from runs with the work directory on the host's NVMe drive; on its EBS root disk they took 31 s and 6 s.
+
+The image is 1.75 GB (1.2 GB unpacked root). In Docker on the same host the desktop is ready in 0.9–1.6 s.
+
+`gregale-desktop start` runs Xfce's parts (xfsettingsd, xfwm4, xfdesktop, xfce4-panel) at once under one D-Bus session instead of through `xfce4-session`. A boot breakdown in the metal test showed `xfce4-session` starting them one by one, with the panel appearing 5.5 s after Xvfb on a cold guest. It also started the session's autostart extras, which cost about 190 MB idle. With the direct start the guest is ready about 2 s after boot, and the rest of the cold boot is Firecracker bringing the VM up and reading the image drive. `wait` requires xfdesktop's and the panel's windows to be mapped, since with everything starting at once a window can exist before it is on screen. A desktop should still resume from a pause capture or warm snapshot where it can. 2048 MB stays the default: it leaves room for a second browser or a heavier page.
 
 ### Limits (`pkg/api/limits.go`)
 
