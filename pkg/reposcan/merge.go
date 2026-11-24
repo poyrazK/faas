@@ -112,6 +112,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		platformTenantRequired    *bool
 		streaming                 *bool
 		wakeAhead                 *bool
+		access                    string
 		renamedFrom               string
 
 		schedules     []CronSchedule
@@ -281,6 +282,9 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			value := *s.wakeAhead
 			b.wakeAhead = &value
 		}
+		if b.access == "" {
+			b.access = s.access
+		}
 		if b.renamedFrom == "" {
 			b.renamedFrom = s.renamedFrom
 		}
@@ -365,6 +369,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			PlatformTenantRequired:    b.platformTenantRequired,
 			Streaming:                 b.streaming,
 			WakeAhead:                 b.wakeAhead,
+			Access:                    b.access,
 			RenamedFrom:               b.renamedFrom,
 			Unpublished:               b.det == detCompose && (len(b.ports) == 0 || b.portsLoopback),
 			InternalPorts:             b.internalPorts,

@@ -5,6 +5,8 @@ project's manifest, picks a framework, and infers how to start it. This page
 is what every framework has in common. The guides cover each one:
 
 - [Express, Fastify, Hono and NestJS](deploy-express.md) (Node)
+- [Next.js](deploy-nextjs.md) (Node)
+- [Bun](deploy-bun.md)
 - [FastAPI](deploy-fastapi.md) (Python)
 - [Django](deploy-django.md) (Python)
 - [Flask](deploy-flask.md) (Python)

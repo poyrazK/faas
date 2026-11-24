@@ -84,6 +84,35 @@ func TestRequestHealth_SameWindowAndFreshness(t *testing.T) {
 	}
 }
 
+// increase() extrapolates, so the counts are rounded; the rate is of the
+// rounded counts it is shown with (prod hunt r33: "24 of 28 requests
+// returned 5xx (86.75%)").
+func TestRequestHealth_RateMatchesShownCounts(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("query")
+		value := 28.4
+		switch {
+		case strings.Contains(q, "__other__"):
+			value = 0
+		case strings.Contains(q, `class="5xx"`):
+			value = 24.3
+		case strings.Contains(q, "timestamp("):
+			value = 1791201600
+		case strings.Contains(q, "count(count by"):
+			value = 1
+		}
+		_, _ = fmt.Fprintf(w, `{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"%g"]}]}}`, value)
+	}))
+	defer srv.Close()
+	out := FetchRequestHealth(t.Context(), promql.NewClient(srv.URL, srv.Client()), "app", []string{"serving"})
+	if out.Source != SourcePrometheus || out.RequestCount != 28 || out.ServerErrors != 24 {
+		t.Fatalf("%+v", out)
+	}
+	if got := fmt.Sprintf("%.2f", out.ErrorRatePct); got != "85.71" {
+		t.Fatalf("rate %s, want 85.71 (24 of 28)", got)
+	}
+}
+
 func TestRequestHealth_Disabled(t *testing.T) {
 	out := FetchRequestHealth(t.Context(), nil, "app", []string{"serving"})
 	if out.Source != SourceDegraded || out.AsOf != "" {

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.plan_workload_access import PlanWorkloadAccess, check_plan_workload_access
 from ..models.plan_workload_action import PlanWorkloadAction, check_plan_workload_action
 from ..models.plan_workload_class import PlanWorkloadClass, check_plan_workload_class
 from ..models.plan_workload_tier import PlanWorkloadTier, check_plan_workload_tier
@@ -57,6 +58,10 @@ class PlanWorkload:
     visibility: PlanWorkloadVisibility | Unset = UNSET
     """Present when the app is or will be internal (no public route): an existing internal app, or a new Compose
     service without `ports:`. Omitted means public."""
+    access: PlanWorkloadAccess | Unset = UNSET
+    """Declared access to the service's public URL (`x-gregale-access` in Compose or
+    `project.services.<name>.access` in gregale.yaml): `public` needs no Gregale API key, `key` needs one. Every
+    production deploy applies it. Omitted when the source declares none."""
     dockerfile: str | Unset = UNSET
     image: str | Unset = UNSET
     """Normalized prebuilt OCI image for a workload without build. Tags are resolved and pinned by the image worker
@@ -169,6 +174,10 @@ class PlanWorkload:
         visibility: str | Unset = UNSET
         if not isinstance(self.visibility, Unset):
             visibility = self.visibility
+
+        access: str | Unset = UNSET
+        if not isinstance(self.access, Unset):
+            access = self.access
 
         dockerfile = self.dockerfile
 
@@ -308,6 +317,8 @@ class PlanWorkload:
             field_dict["platform_tenant_required"] = platform_tenant_required
         if visibility is not UNSET:
             field_dict["visibility"] = visibility
+        if access is not UNSET:
+            field_dict["access"] = access
         if dockerfile is not UNSET:
             field_dict["dockerfile"] = dockerfile
         if image is not UNSET:
@@ -413,6 +424,13 @@ class PlanWorkload:
             visibility = UNSET
         else:
             visibility = check_plan_workload_visibility(_visibility)
+
+        _access = d.pop("access", UNSET)
+        access: PlanWorkloadAccess | Unset
+        if isinstance(_access, Unset):
+            access = UNSET
+        else:
+            access = check_plan_workload_access(_access)
 
         dockerfile = d.pop("dockerfile", UNSET)
 
@@ -574,6 +592,7 @@ class PlanWorkload:
             app_slug=app_slug,
             platform_tenant_required=platform_tenant_required,
             visibility=visibility,
+            access=access,
             dockerfile=dockerfile,
             image=image,
             image_healthcheck=image_healthcheck,
