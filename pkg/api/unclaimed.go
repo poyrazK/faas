@@ -50,7 +50,7 @@ func ErrClaimExpired() *Problem {
 func ErrClaimRequired() *Problem {
 	return NewProblem(http.StatusForbidden, CodeClaimRequired,
 		"Claim this account first",
-		"this app was deployed without an account. Open the claim link (gregale claim prints it) to sign up and unlock custom domains, databases, more apps and API keys.").
+		"this app was deployed without an account. Open the claim link (gregale account claim create prints it) to sign up and unlock custom domains, databases, more apps and API keys.").
 		WithDocs(docsBase + "/claimable-deploys")
 }
 

@@ -38,7 +38,7 @@ var claimPage = template.Must(template.New("claim").Parse(`<!doctype html>
 <main>
 {{if .Gone}}
 <h1>This claim link is no longer valid</h1>
-<p>The app was already claimed, the link was replaced by a newer one, or the claim window ended. Ask the agent that deployed it to run <code>gregale claim</code> for a fresh link, or deploy again after <code>gregale login</code>.</p>
+<p>The app was already claimed, the link was replaced by a newer one, or the claim window ended. Ask the agent that deployed it to run <code>gregale account claim create</code> for a fresh link, or deploy again after <code>gregale login</code>.</p>
 {{else if .Sent}}
 <h1>Check your email</h1>
 <p>We sent a confirmation link to the address you entered. Open it before {{.Expires}} to finish claiming.</p>

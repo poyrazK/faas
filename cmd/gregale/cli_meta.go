@@ -7709,7 +7709,7 @@ var cliCommands = []cliCommand{
 		Name:     "claim",
 		DocSlug:  "claimable-deploys",
 		Short:    "Print a fresh claim link for an app deployed without an account",
-		Examples: []string{"gregale claim", "gregale --json claim"},
+		Examples: []string{"gregale account claim create", "gregale --json account claim create"},
 		HelpNotes: []string{
 			"Works only with the key an anonymous deploy saved; earlier claim links stop working.",
 			"The person who opens the link and confirms an email address owns the app on the Free plan; the anonymous key then stops working.",

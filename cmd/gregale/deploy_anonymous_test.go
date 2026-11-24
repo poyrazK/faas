@@ -185,3 +185,26 @@ func TestClaimSavesTheNewLink(t *testing.T) {
 		t.Fatalf("saved key = %q, want it kept", got)
 	}
 }
+
+// `gregale --json claim` prints the claim link as JSON for agents.
+func TestClaimCommandJSON(t *testing.T) {
+	main.SetupCLIRegression(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(api.ClaimLinkResponse{ClaimURL: "https://api.example.test/claim/json", ExpiresAt: time.Now().Add(time.Hour)})
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", main.TestAPIKey('e'))
+	var out, errOut bytes.Buffer
+	oldOut, oldErr := *main.OsStdout, *main.OsStderr
+	*main.OsStdout, *main.OsStderr = &out, &errOut
+	code := main.Run([]string{"--json", "claim"})
+	*main.OsStdout, *main.OsStderr = oldOut, oldErr
+	if code != 0 {
+		t.Fatalf("exit = %d; out:\n%s%s", code, out.String(), errOut.String())
+	}
+	var link api.ClaimLinkResponse
+	if err := json.Unmarshal(out.Bytes(), &link); err != nil || link.ClaimURL != "https://api.example.test/claim/json" {
+		t.Fatalf("json output = %q (err %v)", out.String(), err)
+	}
+}

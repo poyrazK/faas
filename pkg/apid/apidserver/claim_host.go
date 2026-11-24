@@ -163,6 +163,6 @@ func refusedUnclaimedField(r *http.Request) *api.Problem {
 		return nil
 	}
 	prob := api.ErrClaimRequired()
-	prob.Detail = "setting " + field + " needs a claimed account. Open the claim link (gregale claim prints it) to sign up; until then a deploy may change only public access, protocol, size and restart settings."
+	prob.Detail = "setting " + field + " needs a claimed account. Open the claim link (gregale account claim create prints it) to sign up; until then a deploy may change only public access, protocol, size and restart settings."
 	return prob
 }
