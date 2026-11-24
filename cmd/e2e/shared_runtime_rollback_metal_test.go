@@ -186,11 +186,11 @@ func newSharedRuntimeApp(t *testing.T, slug, deployBody string) *sharedRuntimeAp
 	return addSharedRuntimeApp(t, h, pool, api.PlanHobby, slug)
 }
 
-// addSharedRuntimeApp creates slug in a new account on plan, in the harness a
-// newSharedRuntimeApp started.
+// addSharedRuntimeApp creates slug in its own account (labelled slug) on plan,
+// in the harness a newSharedRuntimeApp started.
 func addSharedRuntimeApp(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, plan api.Plan, slug string) *sharedRuntimeApp {
 	t.Helper()
-	key := h.SeedAccount(context.Background(), plan)
+	key := h.SeedAccount(context.Background(), plan, slug)
 	falsy := false
 	if got := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: slug, Type: "app", RequireAuthn: &falsy}); got != http.StatusCreated {
 		t.Fatalf("create app: status=%d", got)
