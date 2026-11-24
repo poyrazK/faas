@@ -146,6 +146,32 @@ func TestNotImplementedIsNotTemporary(t *testing.T) {
 	}
 }
 
+// Prod hunt r43: `flag list` printed "needs --project and --project" and
+// ignored the linked project.
+func TestFlagListUsesLinkedProject(t *testing.T) {
+	t.Setenv("FAAS_TOKEN", "test-token")
+	t.Chdir(t.TempDir())
+	if _, _, stderr := runCLI(t, "flag", "list"); strings.Contains(stderr, "--project and --project") {
+		t.Fatalf("flag list usage repeats --project: %q", stderr)
+	}
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got == "" {
+			got = r.URL.Path
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"title":"not found","status":404,"code":"not_found"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	linkCheckout(t)
+	_, stdout, stderr := runCLI(t, "flag", "list")
+	if !strings.Contains(got, "/demo") {
+		t.Fatalf("flag list requested %q, want the linked project demo\n%s%s", got, stdout, stderr)
+	}
+}
+
 // Prod hunt r38: bare `gregale env` listed only the clone and sync verbs,
 // not set/unset/list.
 func TestEnvUsageListsSecretVerbs(t *testing.T) {

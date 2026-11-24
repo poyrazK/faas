@@ -88,8 +88,19 @@ func cmdFlagsEdit(verb string, args []string) int {
 	case "percent":
 		want = 2
 	}
+	if *project == "" {
+		// Prod hunt r43: a linked checkout names its project.
+		if linked, linkErr := linkedProjectSlug("."); linkErr == nil {
+			*project = linked
+		}
+	}
 	if *project == "" || *environment == "" || len(positionals) != want {
-		PrintUsage(os.Stderr, fmt.Sprintf("gregale %s needs --project and %s", cliTreeSpellPath("flags "+verb), flagsEditVerbs[verb]), "flags")
+		// `flag list` printed "needs --project and --project" (prod hunt r43).
+		need := "--project (or a linked checkout)"
+		if extra := flagsEditVerbs[verb]; extra != "--project" {
+			need += " and " + extra
+		}
+		PrintUsage(os.Stderr, fmt.Sprintf("gregale %s needs %s", cliTreeSpellPath("flags "+verb), need), "flags")
 		return 1
 	}
 	client, err := authedClient()
