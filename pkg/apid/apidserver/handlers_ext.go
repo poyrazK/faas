@@ -3528,6 +3528,10 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, app))
 		return
 	}
+	if problem := s.blockedAppNameProblem(acct.ID, req.NewSlug); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	// Route rules name their target by slug, and host rules may name the
 	// app's platform hostname: fence their hosts, rename, and point them at
 	// the new slug and hostname before the fence lifts (ADR-091 amendments

@@ -165,6 +165,8 @@ export type { AppLogDrainResponse } from './AppLogDrainResponse.js';
 export type { AppManifest } from './AppManifest.js';
 export type { AppManifestHealthcheck } from './AppManifestHealthcheck.js';
 export type { AppMetricsResponse } from './AppMetricsResponse.js';
+export type { AppNameReportMatch } from './AppNameReportMatch.js';
+export type { AppNameReportResponse } from './AppNameReportResponse.js';
 export type { AppOpenAPIImportDryRunResponse } from './AppOpenAPIImportDryRunResponse.js';
 export type { AppOpenAPIImportResponse } from './AppOpenAPIImportResponse.js';
 export type { AppOpenAPIPolicyApplyResponse } from './AppOpenAPIPolicyApplyResponse.js';

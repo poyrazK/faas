@@ -218,6 +218,8 @@ export type { ApplyResponse } from './models/ApplyResponse.js';
 export type { AppManifest } from './models/AppManifest.js';
 export type { AppManifestHealthcheck } from './models/AppManifestHealthcheck.js';
 export type { AppMetricsResponse } from './models/AppMetricsResponse.js';
+export type { AppNameReportMatch } from './models/AppNameReportMatch.js';
+export type { AppNameReportResponse } from './models/AppNameReportResponse.js';
 export type { AppOpenAPIImportDryRunResponse } from './models/AppOpenAPIImportDryRunResponse.js';
 export type { AppOpenAPIImportResponse } from './models/AppOpenAPIImportResponse.js';
 export type { AppOpenAPIPolicyApplyResponse } from './models/AppOpenAPIPolicyApplyResponse.js';

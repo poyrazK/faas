@@ -4883,6 +4883,10 @@ func (s *server) handler() http.Handler {
 		s.authLimited(s.requireOperatorSessionRead(s.getAccountRisk)))
 	mux.HandleFunc("GET /v1/admin/held-links",
 		s.authLimited(s.requireOperatorSessionRead(s.listHeldLinks)))
+	// Existing apps an app name blocklist matches, for review only; names
+	// tenants' apps, so operator session only.
+	mux.HandleFunc("GET /v1/admin/app-names/report",
+		s.authLimited(s.requireOperatorSessionRead(s.appNameReport)))
 	mux.HandleFunc("GET /v1/admin/obs/overview",
 		s.authLimited(s.requireOperatorSessionRead(s.obsOverview)))
 	mux.HandleFunc("GET /v1/admin/managed-postgres/usage/{account_id}",
