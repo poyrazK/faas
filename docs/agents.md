@@ -127,6 +127,11 @@ access and works with private apps. Public access remains unverified
 Connect any MCP client to Gregale's hosted MCP server at
 `https://api.gregale.dev/mcp`. There's nothing to install and no key to copy.
 
+In Cursor or VS Code, one click adds it:
+[Add to Cursor](https://cursor.com/en/install-mcp?name=gregale&config=eyJ1cmwiOiJodHRwczovL2FwaS5ncmVnYWxlLmRldi9tY3AifQ==)
+or
+[Add to VS Code](https://vscode.dev/redirect/mcp/install?name=gregale&config=%7B%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Fapi.gregale.dev%2Fmcp%22%7D).
+
 With the Gregale CLI installed, one command sets up Claude Code, Codex,
 Cursor, VS Code, Windsurf and Antigravity, and prints the steps for Claude
 Desktop:
