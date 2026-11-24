@@ -2374,6 +2374,9 @@ type AppResponse struct {
 	// dashboards can show the "auth required" pill alongside
 	// streaming / warm-snapshot / require_signed.
 	RequireAuthn bool `json:"require_authn"`
+	// DeclaredAccess is the access the app's source declares ("public" or
+	// "key"), applied on every deploy; omitted when it declares none.
+	DeclaredAccess string `json:"declared_access,omitempty"`
 	// ConsumerAuthMode (ADR-120) is the app-level end-customer credential
 	// policy. It is "optional" by default and becomes "required" when the
 	// app owner wants every request attributed to a consumer identity.
