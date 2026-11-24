@@ -46,8 +46,28 @@ func TestIdleTailCountsTheWindowsIdleSuspends(t *testing.T) {
 					op("o4", "suspend_compute", "finished", "ep-reader", 900), op("o3", "suspend_compute", "finished", "ep-primary", 600),
 					op("o1", "suspend_compute", "finished", "ep-primary", -600)},
 			},
-			// o8 and o3 at 120 s × 0.25 CU, read with the endpoints and two pages.
-			want: managedpostgres.IdleTail{Suspends: 2, ComputeUnitSeconds: 60, Requests: 3},
+			// o8 and o3 at 120 s × 0.25 CU, plus o12's 90 s of idling before
+			// the window closed: (120 + 120 + 90) × 0.25. Read with the
+			// endpoints and two pages.
+			want: managedpostgres.IdleTail{Suspends: 2, ComputeUnitSeconds: 83, Requests: 3},
+		},
+		{
+			name:      "a suspend forced soon after a wake is not idle; an idle stretch from before the window is clipped",
+			endpoints: []map[string]any{compute("ep-primary", 1, 300)},
+			pages: [][]map[string]any{{
+				// A storage probe suspends the compute 60 s after it woke.
+				op("o4", "suspend_compute", "finished", "ep-primary", 1260), op("o3", "start_compute", "finished", "ep-primary", 1200),
+				// Idle since 09:58, suspended at 10:03: 180 s fall in the window.
+				op("o2", "suspend_compute", "finished", "ep-primary", 180), op("o1", "start_compute", "finished", "ep-primary", -400),
+			}},
+			want: managedpostgres.IdleTail{Suspends: 1, ComputeUnitSeconds: 180, Requests: 2},
+		},
+		{
+			name:      "a held compute is unsupported",
+			endpoints: []map[string]any{{"id": "ep-primary", "project_id": "quiet-river-12345678", "type": "read_write", "autoscaling_limit_min_cu": 0.25, "suspend_timeout_seconds": 120, "disabled": true}},
+			noOps:     true,
+			want:      managedpostgres.IdleTail{Requests: 1},
+			err:       managedpostgres.ErrUnsupported,
 		},
 		{
 			name:      "a config apply since the window started leaves it unpriced",

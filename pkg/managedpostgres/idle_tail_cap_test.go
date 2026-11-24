@@ -10,11 +10,14 @@ import (
 func TestReadIdleTailsSpendsARequestBudgetAndKeepsTheRestQueued(t *testing.T) {
 	usage := &usageTestProvider{fakeProvider: &fakeProvider{capabilities: testCapabilities()}}
 	tailing := &idleTailTestProvider{usageTestProvider: usage, tail: IdleTail{Requests: 2}}
-	var outcomes []string
-	collector := &UsageCollector{logger: slog.Default(), idleTailObserver: func(observation IdleTailObservation) {
-		outcomes = append(outcomes, observation.Outcome)
-	}}
 	from := time.Date(2026, 11, 24, 10, 0, 0, 0, time.UTC)
+	now := from.Add(2*time.Hour + 5*time.Minute)
+	var outcomes []string
+	collector := &UsageCollector{logger: slog.Default(), now: func() time.Time { return now },
+		policy: UsagePolicy{Window: time.Hour},
+		idleTailObserver: func(observation IdleTailObservation) {
+			outcomes = append(outcomes, observation.Outcome)
+		}}
 	pending := func(id string, window UsageWindow) pendingIdleTail {
 		return pendingIdleTail{
 			database: Database{ID: id, ProviderResourceID: "provider-db", Spec: testSpec()},
@@ -33,15 +36,24 @@ func TestReadIdleTailsSpendsARequestBudgetAndKeepsTheRestQueued(t *testing.T) {
 	}
 	// A newer window replaces a database's queued one, which is skipped.
 	next := UsageWindow{From: window.To, To: window.To.Add(time.Hour)}
-	queuedID := collector.pendingIdleTails[0].database.ID
-	latest := pending(queuedID, next).usage
+	latest := pending(collector.pendingIdleTails[0].database.ID, next).usage
 	collector.queueIdleTails([]*usageCollectionWork{{database: collector.pendingIdleTails[0].database, backend: Backend{Provider: tailing}, latest: &latest}})
 	if len(outcomes) != 30 || outcomes[29] != IdleTailSkipped || len(collector.pendingIdleTails) != 11 ||
 		!collector.pendingIdleTails[0].usage.Window.To.Equal(next.To) {
 		t.Fatalf("replace: outcomes = %v, queued = %d", outcomes, len(collector.pendingIdleTails))
 	}
-	collector.readIdleTails(context.Background())
-	if len(tailing.windows) != 40 || len(collector.pendingIdleTails) != 0 {
-		t.Fatalf("second pass: reads = %d, queued = %d", len(tailing.windows), len(collector.pendingIdleTails))
+	// A cancelled pass leaves its window queued, unobserved.
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	collector.readIdleTails(cancelled)
+	if len(outcomes) != 30 || len(collector.pendingIdleTails) != 11 {
+		t.Fatalf("cancelled: outcomes = %d, queued = %d", len(outcomes), len(collector.pendingIdleTails))
+	}
+	// Two hours later (another replica swept meanwhile) every queued window
+	// is stale and skipped.
+	now = now.Add(2 * time.Hour)
+	collector.queueIdleTails(nil)
+	if len(outcomes) != 41 || len(collector.pendingIdleTails) != 0 {
+		t.Fatalf("stale: outcomes = %d, queued = %d", len(outcomes), len(collector.pendingIdleTails))
 	}
 }

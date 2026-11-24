@@ -25,12 +25,16 @@ const (
 
 // IdleTail counts the window's idle suspends of the project's one read-write
 // compute. Neon suspends a compute after its timeout passes with no
-// activity, so each idle suspend held timeout × minimum CU. It prices the
-// window with the compute's current settings, so a window with a config
-// apply on the compute from its start until now is unsupported, as is a
-// project with a second read-write compute (a restore's branch: its usage is
-// the project's, and its class and timeout differ). It sends at most
-// maxRequests requests and reports how many it sent, also on error.
+// activity, so each idle suspend held timeout × minimum CU; the tail is the
+// part of those idle stretches inside the window. It prices the window with
+// the compute's current settings, so a window with a config apply on the
+// compute since one timeout before it began is unsupported, as is a held
+// (disabled) compute and a project with a second read-write compute (a
+// restore's branch: its usage is the project's, and its class and timeout
+// differ). A settings change Neon applies to a suspended compute without an
+// apply_config operation is not seen, and that window is priced with the new
+// settings. It sends at most maxRequests requests and reports how many it
+// sent, also on error.
 func (p *Provider) IdleTail(ctx context.Context, providerResourceID string, window managedpostgres.UsageWindow, maxRequests int) (managedpostgres.IdleTail, error) {
 	ref, err := parseResourceRef(providerResourceID)
 	if err != nil || window.From.IsZero() || !window.To.After(window.From) || maxRequests < 2 {
@@ -58,15 +62,23 @@ func (p *Provider) IdleTail(ctx context.Context, providerResourceID string, wind
 	if timeout == 0 {
 		timeout = neonPlanSuspendTimeoutSeconds
 	}
-	// No compute, or an always-on one, has no idle tail.
+	// No compute, or an always-on one, has no idle tail. A held compute was
+	// suspended by the platform, not for idleness.
 	if compute.ID == "" || timeout < 0 || compute.MinimumCU <= 0 {
 		return tail, nil
 	}
-	ops, pages, err := p.operationsSince(ctx, ref.projectID, window.From, maxRequests-1)
+	if endpointDisabled(compute) {
+		return tail, managedpostgres.ErrUnsupported
+	}
+	idle := time.Duration(timeout) * time.Second
+	// An idle suspend's idle stretch can start before the window, and one
+	// that ends after it can start inside it: read back one timeout.
+	ops, pages, err := p.operationsSince(ctx, ref.projectID, window.From.Add(-idle), maxRequests-1)
 	tail.Requests += pages
 	if err != nil {
 		return tail, err
 	}
+	var idleSeconds float64
 	for i, op := range ops {
 		if op.endpointID != compute.ID {
 			continue
@@ -74,24 +86,50 @@ func (p *Provider) IdleTail(ctx context.Context, providerResourceID string, wind
 		if op.action == "apply_config" {
 			return tail, managedpostgres.ErrUnsupported
 		}
-		if op.action == "suspend_compute" && op.status == "finished" && op.at.Before(window.To) && !restarted(ops, i) {
+		if op.action != "suspend_compute" || op.status != "finished" || !idleSuspend(ops, i, idle) {
+			continue
+		}
+		if !op.at.Before(window.From) && op.at.Before(window.To) {
 			tail.Suspends++
 		}
+		// Count only the part of [suspend - timeout, suspend] inside the
+		// window, so the tail and the window's compute cover the same time.
+		start, end := op.at.Add(-idle), op.at
+		if start.Before(window.From) {
+			start = window.From
+		}
+		if end.After(window.To) {
+			end = window.To
+		}
+		if end.After(start) {
+			idleSeconds += end.Sub(start).Seconds()
+		}
 	}
-	tail.ComputeUnitSeconds = int64(math.Round(float64(tail.Suspends*timeout) * compute.MinimumCU))
+	tail.ComputeUnitSeconds = int64(math.Round(idleSeconds * compute.MinimumCU))
 	return tail, nil
 }
 
-// restarted reports whether the suspend at ops[i] is half of a restart: the
-// compute starts again within restartGap. ops is newest first.
-func restarted(ops []timedOperation, i int) bool {
+// idleSuspend reports whether the suspend at ops[i] ended an idle stretch:
+// the compute had run for at least its timeout since it last started, and it
+// did not start again within restartGap (a restart). A suspend the platform
+// forces soon after a wake (a storage size probe, a hold) is not idle. ops is
+// newest first and reaches back one timeout before the window.
+func idleSuspend(ops []timedOperation, i int, idle time.Duration) bool {
 	suspend := ops[i]
 	for j := i - 1; j >= 0 && ops[j].at.Sub(suspend.at) <= restartGap; j-- {
 		if ops[j].endpointID == suspend.endpointID && ops[j].action == "start_compute" {
-			return true
+			return false
 		}
 	}
-	return false
+	for _, op := range ops[i+1:] {
+		if suspend.at.Sub(op.at) >= idle {
+			break
+		}
+		if op.endpointID == suspend.endpointID && op.action == "start_compute" {
+			return false
+		}
+	}
+	return true
 }
 
 type timedOperation struct {

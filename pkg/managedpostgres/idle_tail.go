@@ -34,8 +34,8 @@ const (
 	IdleTailNoCompute   = "no_compute"
 	IdleTailUnsupported = "unsupported"
 	IdleTailUnavailable = "unavailable"
-	// IdleTailSkipped is a queued window that a newer window replaced before
-	// the pass reached it.
+	// IdleTailSkipped is a queued window that a newer window replaced, or
+	// that went stale, before a pass reached it.
 	IdleTailSkipped = "skipped"
 )
 
@@ -68,11 +68,23 @@ type pendingIdleTail struct {
 
 // queueIdleTails adds the sweep's newly collected latest windows of
 // scale-to-zero databases to the windows earlier passes did not reach. A
-// database's newer window replaces its older one, which is skipped.
+// database's newer window replaces its older one, and a window that waited
+// past the next one closing (another replica held the sweep meanwhile) is
+// dropped; both are skipped, so old compute never lands in today's counters.
 func (c *UsageCollector) queueIdleTails(work []*usageCollectionWork) {
 	if c.idleTailObserver == nil {
 		return
 	}
+	oldest := c.now().UTC().Truncate(c.policy.Window).Add(-c.policy.Window)
+	kept := c.pendingIdleTails[:0]
+	for _, item := range c.pendingIdleTails {
+		if item.usage.Window.To.Before(oldest) {
+			c.idleTailObserver(idleTailObservation(item, IdleTailSkipped))
+			continue
+		}
+		kept = append(kept, item)
+	}
+	c.pendingIdleTails = kept
 	queued := make(map[string]int, len(c.pendingIdleTails))
 	for i, item := range c.pendingIdleTails {
 		queued[item.database.ID] = i
@@ -126,6 +138,10 @@ func (c *UsageCollector) readIdleTails(ctx context.Context) {
 			tail, err := reporter.IdleTail(ctx, item.database.ProviderResourceID, item.usage.Window, idleTailRequestsPerRead)
 			budget -= max(tail.Requests, 1)
 			switch {
+			case ctx.Err() != nil:
+				// Shutdown or a lost sweep: the window stays queued.
+				c.pendingIdleTails = c.pendingIdleTails[done:]
+				return
 			case err == nil:
 				observation.Outcome, observation.Tail = IdleTailRead, tail
 			case errors.Is(err, ErrUnsupported) || errors.Is(err, ErrInvalid) || errors.Is(err, ErrNotFound):
