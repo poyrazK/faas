@@ -428,6 +428,10 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 		// visibility its owner set.
 		Visibility: reposcan.NewWorkloadVisibility(w),
 	}
+	if w.Access != "" {
+		app.RequireAuthn, app.PublicAuthMode = ServiceAccessAuth(w.Access, plan, app.RequireAuthn, app.PublicAuthMode)
+		app.Manifest.DeclaredAccess = w.Access
+	}
 	applyProjectImage(&app.Manifest, w)
 	applyComposeResources(&app, w)
 	applyWorkloadCreateSettings(&app, w, plan)
@@ -453,6 +457,9 @@ func ApplyScannedWorkloadToApp(app state.App, w reposcan.Workload, available map
 	if w.PlatformTenantRequired != nil {
 		app.PlatformTenantRequired = *w.PlatformTenantRequired
 	}
+	// The auth columns themselves change in apid before the reconcile
+	// (applyProjectServiceAccess); the manifest records what was declared.
+	app.Manifest.DeclaredAccess = w.Access
 	app.RootDir = w.RootDir
 	app.WorkloadName = w.Name
 	releaseScanWorkerMode(&app.Manifest, app.WorkloadClass, w)
