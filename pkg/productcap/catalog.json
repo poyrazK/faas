@@ -5564,6 +5564,22 @@
       ]
     },
     {
+      "id": "saved-insights",
+      "name": "Saved insights",
+      "category": "observability",
+      "description": "Save analytics queries per environment, run and export them as CSV or JSON, and send their value to notification channels as daily or weekly digests and threshold alerts.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261122190000-saved-insights",
+      "acceptance_test": "pkg/apid/insights/saved_test.go::TestRunSavedValues",
+      "parent": "product-analytics",
+      "routes": [
+        "/v1/projects/{}/environments/{}/insights/saved",
+        "/v1/projects/{}/environments/{}/insights/saved/{}",
+        "/v1/projects/{}/environments/{}/insights/saved/{}/run"
+      ]
+    },
+    {
       "id": "scale-to-zero",
       "name": "Scale to zero",
       "category": "runtime",
@@ -6095,9 +6111,9 @@
     },
     {
       "id": "tcp-listeners",
-      "name": "TCP listeners",
+      "name": "Public TCP listeners",
       "category": "edge",
-      "description": "Serve raw TCP on a dedicated listener.",
+      "description": "Serve raw TCP to the internet on a dedicated public port at the edge. Private TCP between your own apps (managed Redis, internal service addresses) does not need it.",
       "maturity": "preview",
       "plans": [
         "free",
@@ -6204,9 +6220,9 @@
     },
     {
       "id": "udp-listeners",
-      "name": "UDP listeners",
+      "name": "Public UDP listeners",
       "category": "edge",
-      "description": "Serve UDP on a dedicated listener.",
+      "description": "Serve UDP to the internet on a dedicated public port at the edge.",
       "maturity": "preview",
       "plans": [
         "free",

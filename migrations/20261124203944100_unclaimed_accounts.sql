@@ -1,4 +1,4 @@
--- filename: 20261124075633281_unclaimed_accounts.sql
+-- filename: 20261124203944100_unclaimed_accounts.sql
 -- migration-compat: expand
 -- ADR-20261124080000: claimable deploys. An agent deploys with no account;
 -- apid creates a locked-down Free account for it and records it here until a

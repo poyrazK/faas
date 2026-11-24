@@ -54,6 +54,9 @@ type Service struct {
 	ServicePolicy string   `yaml:"service_policy,omitempty" json:"service_policy,omitempty"`
 	Visibility    string   `yaml:"visibility,omitempty" json:"visibility,omitempty"`
 	DependsOn     []string `yaml:"depends_on,omitempty" json:"depends_on,omitempty"`
+	// Access is who may call the service's public URL: "public" or "key"
+	// (ADR-20261124090000).
+	Access string `yaml:"access,omitempty" json:"access,omitempty"`
 	// Uses are the actions the service may take on itself or a sibling app
 	// with its workload identity instead of an API key
 	// (ADR-20261122191423).
@@ -75,6 +78,9 @@ func (c Config) Validate() error {
 		}
 		if service.Visibility != "" && service.Visibility != "public" && service.Visibility != "internal" {
 			return fmt.Errorf("service %q visibility must be public or internal, got %q", name, service.Visibility)
+		}
+		if service.Access != "" && service.Access != "public" && service.Access != "key" {
+			return fmt.Errorf("service %q access must be public or key, got %q", name, service.Access)
 		}
 		for _, dependency := range service.DependsOn {
 			if strings.TrimSpace(dependency) == "" {

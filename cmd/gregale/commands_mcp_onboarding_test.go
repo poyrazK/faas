@@ -267,12 +267,13 @@ func TestMCPTaskStackMaterializesValidRoles(t *testing.T) {
 			if !webFirst {
 				t.Fatalf("%s guide deploys web first = %v", runtime, webFirst)
 			}
-			if runtime == "node" {
-				if !bytes.Contains(guide, []byte("use `gregale mcp server tasks deploy`")) {
-					t.Fatal("Node release guidance missing")
-				}
-			} else if !bytes.Contains(guide, []byte("manual rollout")) || bytes.Contains(guide, []byte("use `gregale mcp server tasks deploy`")) {
-				t.Fatal("Go/Python guide recommends an unsupported automated release")
+			// Every runtime's workers release through the gated deploy
+			// (ADR-20261123160000); Go/Python recovery stays manual.
+			if !bytes.Contains(guide, []byte("use `gregale mcp server tasks deploy`")) {
+				t.Fatalf("%s release guidance missing", runtime)
+			}
+			if (runtime != "node") != bytes.Contains(guide, []byte("CLI runs the release gate itself")) {
+				t.Fatalf("%s guide misstates who gates the release", runtime)
 			}
 		})
 	}

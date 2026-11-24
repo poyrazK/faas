@@ -259,6 +259,34 @@ func TestJWKSelectionFiltersKeyTypeBeforeAmbiguity(t *testing.T) {
 	}
 }
 
+// A JWKS URL behind access protection answers 401/403. The token was never
+// checked, so the challenge says so ("signing keys refused") instead of
+// calling the token wrong, and carries no Retry-After: retrying cannot help.
+func TestJWKSRefusedIsLabelledAndNotRetryable(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		_, token := verificationKeyAndToken(t)
+		provider := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "protected", status)
+		}))
+		auth := testScopedAuthenticator(t, scopedAuthConfig)
+		auth.keyResolver.url, auth.keyResolver.client = provider.URL, provider.Client()
+		for attempt := range 2 { // the second answer comes from the failure backoff
+			_, failure := auth.authenticate("Bearer " + token)
+			if failure == nil || failure.retryable || failure.description != "signing keys refused" {
+				provider.Close()
+				t.Fatalf("HTTP %d attempt %d: failure = %+v", status, attempt, failure)
+			}
+		}
+		recorder := httptest.NewRecorder()
+		_, failure := auth.authenticate("Bearer " + token)
+		auth.writeFailure(recorder, failure)
+		provider.Close()
+		if recorder.Header().Get("Retry-After") != "" || !strings.Contains(recorder.Header().Get("WWW-Authenticate"), `error="invalid_token", error_description="signing keys refused"`) {
+			t.Fatalf("HTTP %d headers = %v", status, recorder.Header())
+		}
+	}
+}
+
 // One failed key-set fetch (an issuer waking, a network blip) must not reject
 // valid tokens for the 30 s unknown-kid throttle: the retry backs off ~1 s.
 func TestJWKFetchFailureBacksOffBriefly(t *testing.T) {

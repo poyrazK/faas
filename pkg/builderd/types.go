@@ -108,6 +108,7 @@ type VMRequest struct {
 	IssueSourceMaps *api.IssueSourceMapBuildConfig
 	Function        bool // handler build; allows markerless Node/Python sources
 	SharedRuntime   bool // container app built on a shared runner base (H10-140)
+	NextStandalone  bool // build Next.js apps with standalone output (ADR-20261124160000)
 	// DevWatchCommand builds a watch-mode developer image (ADR-1170).
 	DevWatchCommand string
 	// DevWatchHost is the developer app's public hostname for that image.

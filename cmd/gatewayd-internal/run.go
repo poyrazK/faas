@@ -3573,13 +3573,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			coverageNode = state.DefaultLocalNodeName
 		}
 		publisher := gateway.NewRequestTelemetryPublisher(gateway.RequestTelemetryPublisherConfig{
-			Enabled:        true,
-			FlushInterval:  5 * time.Second,
-			FlushBatchSize: 256,
-			MaxRetries:     3,
-			MinuteCollapse: osGetenv("FAAS_REQUEST_TELEMETRY_MINUTE_COLLAPSE") == "1",
-			OnDropped:      deps.metrics.AddRequestTelemetryDropped,
-			OnShipped:      deps.metrics.AddRequestTelemetryShipped,
+			Enabled:           true,
+			FlushInterval:     5 * time.Second,
+			FlushBatchSize:    256,
+			MaxRetries:        3,
+			MinuteCollapse:    osGetenv("FAAS_REQUEST_TELEMETRY_MINUTE_COLLAPSE") == "1",
+			OnDropped:         deps.metrics.AddRequestTelemetryDropped,
+			OnPlatformDropped: deps.metrics.AddRequestTelemetryPlatformDropped,
+			OnShipped:         deps.metrics.AddRequestTelemetryShipped,
 			OnCoverage: func(heartbeatCtx context.Context, report gateway.RequestTelemetryCoverage) error {
 				if rtTLSErr != nil {
 					return rtTLSErr
@@ -3608,7 +3609,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					SamplingBasisPoints: int32(report.SamplingBasisPoints), DroppedTotal: report.DroppedTotal,
 					PendingCount: int32(report.PendingCount), SourceAtUnixMs: report.SourceAt.UnixMilli(),
 					AppScoped: report.AppScoped, UnattributedDroppedTotal: report.UnattributedDroppedTotal, AppGaps: appGaps,
-					Analytics: analytics,
+					Analytics: analytics, CleanStop: report.CleanStop,
 				})
 				if err != nil {
 					return err
@@ -4773,11 +4774,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				httpsSrv.Protocols.SetHTTP2(true)
 				httpsSrv.ReadTimeout = readTimeoutOrDefault(deps.readTimeout)
 				httpsSrv.WriteTimeout = writeTimeoutOrDefault(deps.writeTimeout)
+				guestServiceServer(httpsSrv)
 				httpsDrain := addSrv(httpsSrv)
 				httpsListener, listenErr := deps.listen("tcp", httpsAddr)
 				if listenErr != nil {
 					return fmt.Errorf("gatewayd guest service HTTPS listen %s: %w", httpsAddr, listenErr)
 				}
+				httpsListener = guestServiceListener{httpsListener}
 				go func() {
 					log.Info("gatewayd guest service HTTPS listening", "addr", httpsAddr)
 					if err := httpsDrain.ServeErr(httpsSrv.ServeTLS(httpsDrain.Listener(httpsListener), "", "")); err != nil {
@@ -5209,11 +5212,13 @@ func startGuestServiceHTTPListeners(deps runDeps, addr string, handler http.Hand
 		srv.Protocols.SetUnencryptedHTTP2(true)
 		srv.ReadTimeout = readTimeoutOrDefault(deps.readTimeout)
 		srv.WriteTimeout = writeTimeoutOrDefault(deps.writeTimeout)
+		guestServiceServer(srv)
 		drain := addSrv(srv)
 		listener, err := deps.listen("tcp", httpAddr)
 		if err != nil {
 			return fmt.Errorf("gatewayd: guest service proxy listen %s: %w", httpAddr, err)
 		}
+		listener = guestServiceListener{listener}
 		go func() {
 			log.Info("gatewayd guest service proxy listening", "addr", httpAddr)
 			if err := drain.ServeErr(srv.Serve(drain.Listener(listener))); err != nil {

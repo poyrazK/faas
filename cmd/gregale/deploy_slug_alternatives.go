@@ -31,7 +31,8 @@ var errDeployToAlternativeDeclined = errors.New("deploy cancelled")
 // The conflict error stays when gregale.yaml in sourceDir names the app (its
 // triggers, routes and bindings would no longer match another name) or the
 // owner cannot be read. confirmExisting, when set, may decline updating an
-// existing alternative (the unlinked-app guard). unavailable reports that the
+// existing alternative (the unlinked-app guard). An alternative held by one
+// of the caller's own deleted apps is skipped. unavailable reports that the
 // requested name is not offered (app_name_blocklist) rather than held by
 // another owner.
 func createOrFetchAppWithAlternatives(ctx context.Context, client *Client, req, existingReq api.CreateAppRequest, sourceDir string, confirmExisting func(slug string) bool, requireAuthnPtr *bool, appProtocolPtr *string, publicAuthPtr *api.PublicAuthBlock, resolved *api.AppResponse) (slug string, unavailable bool, err error) {
@@ -64,7 +65,11 @@ func createOrFetchAppWithAlternatives(ctx context.Context, client *Client, req, 
 		altReq, altExisting := req, existingReq
 		altReq.Slug, altExisting.Slug = alt, alt
 		err = createOrFetchAppWith(ctx, client, altReq, altExisting, requireAuthnPtr, appProtocolPtr, publicAuthPtr, resolved)
-		if !errors.As(err, &taken) {
+		// An alternative the caller's own deleted app holds (they deleted
+		// the suffixed app) is skipped like a taken one: the deploy takes
+		// the next alternative instead of failing.
+		var ownDeleted *ownDeletedSlugError
+		if !errors.As(err, &taken) && !errors.As(err, &ownDeleted) {
 			return alt, unavailable, err
 		}
 	}

@@ -1122,7 +1122,14 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// build context is staged as the archive root (H10-25).
 		sourceApp := app
 		composeContext := composeDockerBuildContext(scanDir, workload, app)
+		// A release-phase-off installation keeps ignoring a build
+		// context's Procfile, as before it counted: honoring it there would
+		// refuse redeploys of projects that deployed fine.
+		var buildContext composeReleaseContext
 		if composeContext {
+			if !s.releasePhaseOff {
+				buildContext = composeReleaseContext{root: app.RootDir, archiveNarrowed: true}
+			}
 			sourceApp.RootDir = ""
 		}
 		staged, bytes, stageErr := s.stageApplyTarball(ctx, scanDir, acct.ID, project.ID, app, composeContext)
@@ -1183,7 +1190,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// release: in its own directory) applies as on a single-app deploy
 		// unless another service builds from the same directory
 		// (ADR-20261019120007 amendment 1).
-		releaseCommand, releaseProblem := projectWorkloadReleaseCommand(staged, workloads, workload, sourceApp, manifest)
+		releaseCommand, releaseProblem := projectWorkloadReleaseCommand(staged, workloads, workload, sourceApp, buildContext, manifest)
 		if releaseProblem != nil {
 			_ = os.Remove(staged)
 			res.Error = "release declaration invalid (server logs carry the detail)"
@@ -2260,6 +2267,9 @@ func (s *server) scanService(
 			if note := projectVisibilityNote(w, *existing, req.Environment == ""); note != "" {
 				warnings = append(warnings, note)
 			}
+			if note := projectAccessNote(w, *existing, acct.Plan, req.Environment == ""); note != "" {
+				warnings = append(warnings, note)
+			}
 		}
 		if s.domain != "" && pw.Visibility != api.AppVisibilityInternal && (string(w.Class) == "http" || string(w.Class) == "graphql") {
 			slug := w.AppSlug
@@ -2268,6 +2278,9 @@ func (s *server) scanService(
 			}
 			pw.PublicURL = "https://" + slug + "." + strings.TrimPrefix(s.domain, ".")
 			pw.PublicAuthMode = planWorkloadPublicAuthMode(existing, acct.Plan)
+			if w.Access != "" && (existing == nil || req.Environment == "") {
+				pw.PublicAuthMode = planWorkloadAccessAuthMode(w, existing, acct.Plan)
+			}
 			if nonProductionEnvironment {
 				// A new app's environment host is known only once it exists.
 				pw.PublicURL = ""
@@ -2943,6 +2956,9 @@ func (s *server) scanService(
 	}
 	if req.Environment == "" {
 		if problem := s.applyComposeInternalVisibility(r, acct, project.ID, filteredW); problem != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, problem
+		}
+		if problem := s.applyProjectServiceAccess(r, acct, preRemoveApps, filteredW); problem != nil {
 			return resp, state.Project{}, nil, nil, nil, nil, problem
 		}
 	}

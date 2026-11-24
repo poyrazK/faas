@@ -616,8 +616,18 @@ var ManagedPostgresPlanAllows = managedPostgresPlanAllows
 var ManagedPostgresProblem = managedPostgresProblem
 var ManagedPostgresSpecFromRequest = managedPostgresSpecFromRequest
 var ManagedPostgresUsageCeilings = managedPostgresUsageCeilings
-var ManagedPostgresUsageOperatorView = managedPostgresUsageOperatorView
-var ManagedPostgresUsageView = managedPostgresUsageView
+
+// ManagedPostgresUsageOperatorView and ManagedPostgresUsageView build the
+// usage views with the history limit off (ADR-20261123062111 D2 has its own
+// test).
+func ManagedPostgresUsageOperatorView(accountID string, summary managedpostgres.UsageSummary, limits api.ManagedPostgresPlanLimits, capMode managedpostgres.CapEnforcementMode, overage bool) (api.ManagedPostgresUsageOperatorResponse, error) {
+	return managedPostgresUsageOperatorView(accountID, summary, limits, capMode, managedpostgres.CapEnforcementOff, overage)
+}
+
+func ManagedPostgresUsageView(summary managedpostgres.UsageSummary, limits api.ManagedPostgresPlanLimits, capMode managedpostgres.CapEnforcementMode, overage bool) api.ManagedPostgresUsageResponse {
+	return managedPostgresUsageView(summary, limits, capMode, managedpostgres.CapEnforcementOff, overage)
+}
+
 var ManagedPostgresUsageHoldView = managedPostgresUsageHoldView
 var ManagedPostgresView = managedPostgresView
 var ManagedWorkflowCanConsumeFailedDependencies = managedWorkflowCanConsumeFailedDependencies
@@ -2360,7 +2370,14 @@ func ResolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gre
 // ProjectWorkloadReleaseCommand exposes a project workload's release command
 // resolution (ADR-20261019120007 amendment 1).
 func ProjectWorkloadReleaseCommand(sourcePath string, workloads []reposcan.Workload, workload reposcan.Workload, app state.App, manifest *gregalemanifest.Manifest) ([]string, bool, *api.Problem) {
-	resolved, problem := projectWorkloadReleaseCommand(sourcePath, workloads, workload, app, manifest)
+	return ProjectWorkloadReleaseCommandStaged(sourcePath, workloads, workload, app, "", false, manifest)
+}
+
+// ProjectWorkloadReleaseCommandStaged is ProjectWorkloadReleaseCommand for a
+// service whose Compose build context is contextRoot ("" for none), staged
+// on its own as the archive root when archiveNarrowed.
+func ProjectWorkloadReleaseCommandStaged(sourcePath string, workloads []reposcan.Workload, workload reposcan.Workload, app state.App, contextRoot string, archiveNarrowed bool, manifest *gregalemanifest.Manifest) ([]string, bool, *api.Problem) {
+	resolved, problem := projectWorkloadReleaseCommand(sourcePath, workloads, workload, app, composeReleaseContext{root: contextRoot, archiveNarrowed: archiveNarrowed}, manifest)
 	return resolved.command, resolved.shell, problem
 }
 
@@ -2715,3 +2732,12 @@ const StatusAPIAvailabilityQuery = statusAPIAvailabilityQuery
 
 // Claim exposes the claimable-deploys service (ADR-20261124080000).
 func (r *server) Claim() *claim.Service { return &r.claim }
+
+// StageSourceDeploymentManifest exposes the source deploy manifest staging
+// (ADR-20261124090000 amendment 1 applies access there).
+func (r *server) StageSourceDeploymentManifest(p0 *http.Request, p1 state.Account, p2 state.App, p3 *gregalemanifest.Manifest, p4 state.Deployment, p5 bool) (sourceRefManifestStaged, *api.Problem) {
+	return r.stageSourceDeploymentManifest(p0, p1, p2, p3, p4, p5)
+}
+
+// SourceRefManifestStaged is the staged manifest a rollback undoes.
+type SourceRefManifestStaged = sourceRefManifestStaged

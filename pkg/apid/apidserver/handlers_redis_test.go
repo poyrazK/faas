@@ -104,6 +104,20 @@ func TestRedisCacheRestartKeepsSnapshots(t *testing.T) {
 	if notCache := e.do(t, "POST", "/v1/redis/nope/restart", nil, map[string]string{"Idempotency-Key": "restart-2"}); notCache.Code != http.StatusNotFound {
 		t.Fatalf("restart of a missing cache = %d", notCache.Code)
 	}
+
+	// A parked cache, or one between VMs during a resize, has nothing to
+	// restart. The refusal speaks of the cache and never points at the
+	// backing app with `gregale wake`.
+	if _, err := e.store.CompareAndSetAppStatus(context.Background(), app.ID, state.AppActive, state.AppEvictedCold); err != nil {
+		t.Fatalf("park: %v", err)
+	}
+	parked := e.do(t, "POST", "/v1/redis/sessions/restart", nil, map[string]string{"Idempotency-Key": "restart-3"})
+	var problem api.Problem
+	if err := json.Unmarshal(parked.Body.Bytes(), &problem); err != nil || parked.Code != http.StatusConflict ||
+		problem.Title != "Redis cache is not running" || strings.Contains(problem.Hint, "gregale wake") ||
+		!strings.Contains(problem.Hint, "gregale redis get sessions") {
+		t.Fatalf("restart of a parked cache = %d %s", parked.Code, parked.Body.String())
+	}
 }
 
 func TestRedisCacheResizeAndUpgradeHandOff(t *testing.T) {
@@ -128,6 +142,18 @@ func TestRedisCacheResizeAndUpgradeHandOff(t *testing.T) {
 
 	if rec := e.do(t, "PATCH", "/v1/redis/sessions", api.UpdateRedisCacheRequest{MemoryMB: 128}, map[string]string{"Idempotency-Key": "shrink"}); rec.Code != http.StatusConflict {
 		t.Fatalf("shrink without evict: %d %s", rec.Code, rec.Body.String())
+	} else {
+		// The refusal names the CLI flag that allows the shrink.
+		var problem api.Problem
+		if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil || problem.Code != "cache_shrink_needs_evict" ||
+			!strings.Contains(problem.Hint, "gregale redis resize sessions --memory 128 --evict") {
+			t.Fatalf("shrink refusal = %s", rec.Body.String())
+		}
+	}
+	// A shrink that also changes the policy keeps the policy in the hint.
+	if rec := e.do(t, "PATCH", "/v1/redis/sessions", api.UpdateRedisCacheRequest{MemoryMB: 128, EvictionPolicy: "allkeys-lfu"}, map[string]string{"Idempotency-Key": "shrink-policy"}); rec.Code != http.StatusConflict ||
+		!strings.Contains(rec.Body.String(), "--memory 128 --eviction-policy allkeys-lfu --evict") {
+		t.Fatalf("shrink with policy refusal: %d %s", rec.Code, rec.Body.String())
 	}
 	rec := e.do(t, "PATCH", "/v1/redis/sessions", api.UpdateRedisCacheRequest{MemoryMB: 512}, map[string]string{"Idempotency-Key": "grow"})
 	if rec.Code != http.StatusAccepted {

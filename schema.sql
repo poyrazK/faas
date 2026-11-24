@@ -26936,7 +26936,7 @@ END $$;
 CREATE FUNCTION public.record_request_analytics_coverage(node text, boot uuid, counting boolean, unattributed_drops bigint, app_gaps jsonb) RETURNS void
     LANGUAGE plpgsql
     AS $$
-DECLARE stamp timestamptz:=clock_timestamp(); gap record;
+DECLARE stamp timestamptz:=clock_timestamp(); gap record; backlog_from timestamptz;
 BEGIN
  IF jsonb_typeof(app_gaps) IS DISTINCT FROM 'array' OR unattributed_drops IS NULL OR unattributed_drops<0 OR
   EXISTS(SELECT 1 FROM jsonb_to_recordset(app_gaps) g(app_id uuid,analytics_dropped_count bigint,analytics_pending_count integer)
@@ -26949,14 +26949,23 @@ BEGIN
   WHEN old.counting_since IS NULL OR old.boot_id<>excluded.boot_id OR old.heartbeat_at<stamp-interval '30 seconds'
    OR excluded.unattributed_dropped_total<>old.unattributed_dropped_total THEN stamp
   ELSE old.counting_since END;
- -- Omitted apps have nothing late any more.
- UPDATE request_analytics_app_gaps SET last_gap_at=stamp,pending_count=0,updated_at=stamp WHERE node_name=node AND pending_count>0;
+ -- Omitted apps have nothing late any more; reported ones are left to the
+ -- upsert, so the gap trigger still sees when their backlog began.
+ UPDATE request_analytics_app_gaps SET last_gap_at=stamp,pending_count=0,pending_since=NULL,updated_at=stamp WHERE node_name=node AND pending_count>0
+  AND app_id NOT IN (SELECT g.app_id FROM jsonb_to_recordset(app_gaps) g(app_id uuid,analytics_dropped_count bigint,analytics_pending_count integer)
+   JOIN apps a ON a.id=g.app_id AND a.status<>'deleted' WHERE coalesce(g.analytics_dropped_count,0)>0 OR coalesce(g.analytics_pending_count,0)>0);
+ SELECT least(previous_source_at,stamp) INTO backlog_from FROM request_analytics_coverage_watermarks WHERE node_name=node AND source_kind='analytics';
+ backlog_from:=coalesce(backlog_from,stamp);
  FOR gap IN SELECT g.app_id,coalesce(g.analytics_dropped_count,0) AS dropped,coalesce(g.analytics_pending_count,0) AS pending
   FROM jsonb_to_recordset(app_gaps) g(app_id uuid,analytics_dropped_count bigint,analytics_pending_count integer) ORDER BY g.app_id LOOP
  IF (gap.dropped>0 OR gap.pending>0) AND EXISTS(SELECT 1 FROM apps WHERE id=gap.app_id AND status<>'deleted') THEN
- INSERT INTO request_analytics_app_gaps AS old(node_name,app_id,last_gap_at,pending_count,updated_at)
- VALUES(node,gap.app_id,stamp,gap.pending,stamp)
- ON CONFLICT(node_name,app_id) DO UPDATE SET last_gap_at=stamp,pending_count=excluded.pending_count,updated_at=stamp;
+ -- The dropped total is cumulative: the gap trigger marks a loss only when
+ -- it grows, not for counts still in flight.
+ INSERT INTO request_analytics_app_gaps AS old(node_name,app_id,last_gap_at,pending_count,pending_since,dropped_total,updated_at)
+ VALUES(node,gap.app_id,stamp,gap.pending,CASE WHEN gap.pending>0 THEN backlog_from END,gap.dropped,stamp)
+ ON CONFLICT(node_name,app_id) DO UPDATE SET last_gap_at=stamp,pending_count=excluded.pending_count,
+  pending_since=CASE WHEN excluded.pending_count>0 THEN coalesce(old.pending_since,CASE WHEN old.pending_count>0 THEN old.last_gap_at END,backlog_from) END,
+  dropped_total=old.dropped_total+excluded.dropped_total,updated_at=stamp;
  END IF;
  END LOOP;
 END $$;
@@ -26978,10 +26987,22 @@ $$;
 --
 
 CREATE FUNCTION public.record_telemetry_coverage(node text, boot uuid, seq bigint, is_enabled boolean, sampling integer, drops bigint, pending integer, source_stamp timestamp with time zone, scoped boolean, unattributed_drops bigint, app_gaps jsonb) RETURNS void
+    LANGUAGE sql
+    AS $$
+ SELECT record_telemetry_coverage(node,boot,seq,is_enabled,sampling,drops,pending,source_stamp,scoped,unattributed_drops,app_gaps,false)
+$$;
+
+
+--
+-- Name: record_telemetry_coverage(text, uuid, bigint, boolean, integer, bigint, integer, timestamp with time zone, boolean, bigint, jsonb, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_telemetry_coverage(node text, boot uuid, seq bigint, is_enabled boolean, sampling integer, drops bigint, pending integer, source_stamp timestamp with time zone, scoped boolean, unattributed_drops bigint, app_gaps jsonb, stopped boolean) RETURNS void
     LANGUAGE plpgsql
     AS $$
-DECLARE stamp timestamptz:=clock_timestamp(); attributed_pending bigint; attributed_losses bigint; gap record;
+DECLARE stamp timestamptz:=clock_timestamp(); attributed_pending bigint; attributed_losses bigint; gap record; backlog_from timestamptz;
 BEGIN
+ IF stopped IS NULL THEN RAISE EXCEPTION 'invalid telemetry coverage stop flag' USING ERRCODE='22023'; END IF;
  IF jsonb_typeof(app_gaps) IS DISTINCT FROM 'array' OR (NOT scoped AND jsonb_array_length(app_gaps)>0) THEN
  RAISE EXCEPTION 'invalid app telemetry coverage' USING ERRCODE='22023'; END IF;
  IF EXISTS(SELECT 1 FROM jsonb_to_recordset(app_gaps) g(app_id uuid,dropped_count bigint,pending_count integer) WHERE app_id IS NULL OR app_id='00000000-0000-0000-0000-000000000000'::uuid OR dropped_count IS NULL OR dropped_count<0 OR pending_count IS NULL OR pending_count<0) OR
@@ -26994,27 +27015,44 @@ BEGIN
  -- FK app locks precede the node lock, matching promotion's app-before-node
  -- ordering. The writer cannot hold a node while waiting on a promotion app.
  PERFORM 1 FROM apps a WHERE a.id IN (SELECT app_id FROM jsonb_to_recordset(app_gaps) g(app_id uuid)) ORDER BY a.id FOR KEY SHARE;
- INSERT INTO request_telemetry_coverage AS old(node_name,boot_id,sequence,enabled,sampling_basis_points,dropped_total,pending_count,source_at,received_at,healthy_since,app_scoped,unattributed_dropped_total,unattributed_pending_count)
+ INSERT INTO request_telemetry_coverage AS old(node_name,boot_id,sequence,enabled,sampling_basis_points,dropped_total,pending_count,source_at,received_at,healthy_since,app_scoped,unattributed_dropped_total,unattributed_pending_count,clean_stop_at)
  VALUES(node,boot,seq,is_enabled,sampling,drops,pending,source_stamp,stamp,
  CASE WHEN is_enabled AND sampling=10000 AND (CASE WHEN scoped THEN unattributed_drops=0 AND pending=attributed_pending ELSE drops=0 AND pending=0 END) THEN stamp END,
- scoped,unattributed_drops,(pending-attributed_pending)::integer)
+ scoped,unattributed_drops,(pending-attributed_pending)::integer,CASE WHEN stopped THEN stamp END)
  ON CONFLICT(node_name) DO UPDATE SET boot_id=excluded.boot_id,sequence=excluded.sequence,enabled=excluded.enabled,sampling_basis_points=excluded.sampling_basis_points,
  dropped_total=excluded.dropped_total,pending_count=excluded.pending_count,source_at=excluded.source_at,received_at=excluded.received_at,
  app_scoped=excluded.app_scoped,unattributed_dropped_total=excluded.unattributed_dropped_total,unattributed_pending_count=excluded.unattributed_pending_count,
+ clean_stop_at=excluded.clean_stop_at,
  healthy_since=CASE WHEN NOT excluded.enabled OR excluded.sampling_basis_points<>10000 OR (CASE WHEN excluded.app_scoped THEN excluded.unattributed_pending_count ELSE excluded.pending_count END)<>0 THEN NULL
- WHEN old.boot_id<>excluded.boot_id OR old.received_at<stamp-interval '30 seconds' OR excluded.dropped_total<old.dropped_total OR
+ -- A new boot continues the coverage of a predecessor that stopped cleanly
+ -- (every row delivered or journaled) within the silence grace, provided it
+ -- has lost nothing it cannot attribute. Any other new boot starts fresh.
+ WHEN old.boot_id<>excluded.boot_id THEN
+  CASE WHEN old.clean_stop_at IS NOT NULL AND old.clean_stop_at>=stamp-interval '30 seconds' AND old.healthy_since IS NOT NULL
+    AND (CASE WHEN excluded.app_scoped THEN excluded.unattributed_dropped_total=0 ELSE excluded.dropped_total=0 END)
+   THEN old.healthy_since ELSE stamp END
+ WHEN old.received_at<stamp-interval '30 seconds' OR excluded.dropped_total<old.dropped_total OR
  (excluded.app_scoped AND excluded.dropped_total-old.dropped_total>attributed_losses+greatest(excluded.unattributed_dropped_total-old.unattributed_dropped_total,0)) OR (CASE WHEN excluded.app_scoped THEN old.unattributed_dropped_total<>excluded.unattributed_dropped_total ELSE old.dropped_total<>excluded.dropped_total END) THEN stamp
  ELSE coalesce(old.healthy_since,stamp) END
  WHERE excluded.source_at>old.source_at AND (old.boot_id<>excluded.boot_id OR excluded.sequence>old.sequence);
  IF NOT FOUND THEN RAISE EXCEPTION 'telemetry coverage replay or out-of-order heartbeat' USING ERRCODE='22023'; END IF;
  -- Omitted apps have no current backlog. Recovery starts at this receipt,
- -- never at the previous unhealthy heartbeat.
- UPDATE request_telemetry_app_gaps SET last_gap_at=stamp,pending_count=0,updated_at=stamp WHERE node_name=node AND pending_count>0;
+ -- never at the previous unhealthy heartbeat. Reported apps are left to the
+ -- upsert, so the gap trigger still sees when their backlog began.
+ UPDATE request_telemetry_app_gaps SET last_gap_at=stamp,pending_count=0,pending_since=NULL,updated_at=stamp WHERE node_name=node AND pending_count>0
+  AND app_id NOT IN (SELECT g.app_id FROM jsonb_to_recordset(app_gaps) g(app_id uuid,dropped_count bigint,pending_count integer)
+   JOIN apps a ON a.id=g.app_id AND a.status<>'deleted' WHERE g.dropped_count>0 OR g.pending_count>0);
+ -- A backlog that begins now holds rows the previous heartbeat did not
+ -- count as pending, so it reaches back to that heartbeat and no further.
+ SELECT least(previous_source_at,stamp) INTO backlog_from FROM request_analytics_coverage_watermarks WHERE node_name=node AND source_kind='raw';
+ backlog_from:=coalesce(backlog_from,stamp);
  FOR gap IN SELECT * FROM jsonb_to_recordset(app_gaps) g(app_id uuid,dropped_count bigint,pending_count integer) ORDER BY app_id LOOP
  IF (gap.dropped_count>0 OR gap.pending_count>0) AND EXISTS(SELECT 1 FROM apps WHERE id=gap.app_id AND status<>'deleted') THEN
- INSERT INTO request_telemetry_app_gaps AS old(node_name,app_id,last_gap_at,pending_count,dropped_total,updated_at)
- VALUES(node,gap.app_id,stamp,gap.pending_count,gap.dropped_count,stamp)
- ON CONFLICT(node_name,app_id) DO UPDATE SET last_gap_at=stamp,pending_count=excluded.pending_count,dropped_total=old.dropped_total+excluded.dropped_total,updated_at=stamp;
+ INSERT INTO request_telemetry_app_gaps AS old(node_name,app_id,last_gap_at,pending_count,pending_since,dropped_total,updated_at)
+ VALUES(node,gap.app_id,stamp,gap.pending_count,CASE WHEN gap.pending_count>0 THEN backlog_from END,gap.dropped_count,stamp)
+ ON CONFLICT(node_name,app_id) DO UPDATE SET last_gap_at=stamp,pending_count=excluded.pending_count,
+  pending_since=CASE WHEN excluded.pending_count>0 THEN coalesce(old.pending_since,CASE WHEN old.pending_count>0 THEN old.last_gap_at END,backlog_from) END,
+  dropped_total=old.dropped_total+excluded.dropped_total,updated_at=stamp;
  END IF;
  END LOOP;
 END $$;
@@ -27490,13 +27528,18 @@ END $$;
 CREATE FUNCTION public.request_analytics_record_coverage_gap() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-DECLARE first_gap timestamptz:=NEW.last_gap_at; kind text:=CASE WHEN TG_TABLE_NAME='request_analytics_app_gaps' THEN 'analytics' ELSE 'raw' END;
+DECLARE kind text:=CASE WHEN TG_TABLE_NAME='request_analytics_app_gaps' THEN 'analytics' ELSE 'raw' END;
+ lost bigint:=NEW.dropped_total; first_gap timestamptz:=least(NEW.updated_at,NEW.last_gap_at);
 BEGIN
  SELECT least(first_gap,previous_source_at) INTO first_gap FROM request_analytics_coverage_watermarks WHERE node_name=NEW.node_name AND source_kind=kind;
- first_gap:=coalesce(first_gap,NEW.last_gap_at);
- IF TG_OP='UPDATE' AND OLD.pending_count>0 THEN first_gap:=least(first_gap,OLD.last_gap_at); END IF;
+ first_gap:=least(coalesce(first_gap,NEW.updated_at),coalesce(NEW.pending_since,NEW.updated_at));
+ IF TG_OP='UPDATE' THEN
+  lost:=NEW.dropped_total-OLD.dropped_total;
+  IF OLD.pending_count>0 THEN first_gap:=least(first_gap,coalesce(OLD.pending_since,OLD.last_gap_at)); END IF;
+ END IF;
+ IF lost<=0 THEN RETURN NEW; END IF;
  INSERT INTO request_analytics_coverage_gaps(node_name,source_kind,app_id,gap_from,gap_until)
- VALUES(NEW.node_name,kind,NEW.app_id,first_gap,greatest(first_gap,NEW.updated_at))
+ VALUES(NEW.node_name,kind,NEW.app_id,first_gap,NEW.updated_at)
  ON CONFLICT(node_name,source_kind,app_id,gap_from) DO UPDATE SET gap_until=greatest(request_analytics_coverage_gaps.gap_until,EXCLUDED.gap_until);
  RETURN NEW;
 END $$;
@@ -32782,6 +32825,48 @@ COMMENT ON TABLE public.api_consumer_credit_grants IS 'Prepaid credit granted to
 
 
 --
+-- Name: api_consumer_credit_pack_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_credit_pack_settings (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    return_url text NOT NULL,
+    packs jsonb NOT NULL,
+    CONSTRAINT api_consumer_credit_pack_settings_packs_check CHECK ((jsonb_typeof(packs) = 'array'::text))
+);
+
+
+--
+-- Name: api_consumer_credit_purchases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_credit_purchases (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    consumer_id uuid NOT NULL,
+    pack_id text NOT NULL,
+    label text NOT NULL,
+    currency text NOT NULL,
+    amount_millicents bigint NOT NULL,
+    amount_minor bigint NOT NULL,
+    return_url text NOT NULL,
+    stripe_customer text NOT NULL,
+    stripe_session text,
+    livemode boolean NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    next_check_at timestamp with time zone NOT NULL,
+    CONSTRAINT api_consumer_credit_purchases_amount_millicents_check CHECK (((amount_millicents >= 1) AND (amount_millicents <= '1000000000000'::bigint))),
+    CONSTRAINT api_consumer_credit_purchases_amount_minor_check CHECK ((amount_minor > 0)),
+    CONSTRAINT api_consumer_credit_purchases_check CHECK (((status <> 'credited'::text) OR (stripe_session IS NOT NULL))),
+    CONSTRAINT api_consumer_credit_purchases_currency_check CHECK ((currency ~ '^[A-Z]{3}$'::text)),
+    CONSTRAINT api_consumer_credit_purchases_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'credited'::text, 'expired'::text])))
+);
+
+
+--
 -- Name: api_consumer_meter_usage_minutes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -32960,6 +33045,7 @@ CREATE TABLE public.api_consumer_rate_cards (
     base_fee_millicents_per_month bigint DEFAULT 0 NOT NULL,
     minimum_millicents_per_month bigint DEFAULT 0 NOT NULL,
     prorate_monthly_fees boolean DEFAULT false NOT NULL,
+    model_prices jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT api_consumer_rate_cards_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
     CONSTRAINT api_consumer_rate_cards_effective_minute_chk CHECK ((effective_from = date_trunc('minute'::text, effective_from))),
     CONSTRAINT api_consumer_rate_cards_included_units_chk CHECK ((included_units_per_month >= 0)),
@@ -33280,6 +33366,7 @@ CREATE TABLE public.api_consumer_usage_statements (
     revision integer DEFAULT 1 NOT NULL,
     credit_applied_millicents bigint DEFAULT 0 NOT NULL,
     fees jsonb DEFAULT '[]'::jsonb NOT NULL,
+    waiver jsonb,
     CONSTRAINT api_consumer_usage_statements_buckets_chk CHECK ((jsonb_typeof(buckets) = 'array'::text)),
     CONSTRAINT api_consumer_usage_statements_credit_chk CHECK (((credit_applied_millicents >= 0) AND (credit_applied_millicents <= amount_millicents))),
     CONSTRAINT api_consumer_usage_statements_currency_chk CHECK (((currency IS NULL) OR (currency ~ '^[A-Z]{3}$'::text))),
@@ -40136,6 +40223,27 @@ CREATE TABLE public.deployment_submission_receipts (
     CONSTRAINT deployment_submission_receipts_accepted_at_check CHECK (isfinite(accepted_at)),
     CONSTRAINT deployment_submission_receipts_attempt_id_check CHECK ((attempt_id ~ '^[0-9a-f]{32}$'::text))
 );
+
+
+--
+-- Name: deployment_verification_leases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_verification_leases (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    node_name text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_verification_leases_node_name_check CHECK (((octet_length(node_name) >= 1) AND (octet_length(node_name) <= 253)))
+);
+
+
+--
+-- Name: TABLE deployment_verification_leases; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.deployment_verification_leases IS 'Node verifying a deployment candidate; secretd opens contract-referenced app secrets only for it (ADR-20261122220000 amendment 2).';
 
 
 --
@@ -48988,6 +49096,26 @@ CREATE TABLE public.managed_postgres_restore_verifications (
     CONSTRAINT managed_postgres_restore_verifications_source_resource_id_check CHECK (((source_resource_id <> ''::text) AND (length(source_resource_id) <= 255))),
     CONSTRAINT managed_postgres_restore_verifications_verified_at_check CHECK (isfinite(verified_at))
 );
+
+
+--
+-- Name: managed_postgres_suspend_timeouts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_suspend_timeouts (
+    database_id uuid NOT NULL,
+    seconds integer NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT managed_postgres_suspend_timeouts_seconds_check CHECK (((seconds >= 60) AND (seconds <= 3600))),
+    CONSTRAINT managed_postgres_suspend_timeouts_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
+-- Name: TABLE managed_postgres_suspend_timeouts; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.managed_postgres_suspend_timeouts IS 'Customer-chosen scale-to-zero suspend timeout per managed PostgreSQL database; no row is the platform default; written only by apid.';
 
 
 --
@@ -59176,9 +59304,13 @@ CREATE TABLE public.request_analytics_app_gaps (
     last_gap_at timestamp with time zone NOT NULL,
     pending_count integer NOT NULL,
     updated_at timestamp with time zone NOT NULL,
+    dropped_total bigint DEFAULT 0 NOT NULL,
+    pending_since timestamp with time zone,
     CONSTRAINT request_analytics_app_gaps_check CHECK ((last_gap_at <= updated_at)),
+    CONSTRAINT request_analytics_app_gaps_dropped_total_check CHECK ((dropped_total >= 0)),
     CONSTRAINT request_analytics_app_gaps_node_name_check CHECK ((node_name <> ''::text)),
-    CONSTRAINT request_analytics_app_gaps_pending_count_check CHECK ((pending_count >= 0))
+    CONSTRAINT request_analytics_app_gaps_pending_count_check CHECK ((pending_count >= 0)),
+    CONSTRAINT request_analytics_app_gaps_pending_since_check CHECK (((pending_since IS NULL) OR ((pending_count > 0) AND (pending_since <= updated_at))))
 );
 
 
@@ -59745,10 +59877,12 @@ CREATE TABLE public.request_telemetry_app_gaps (
     pending_count integer NOT NULL,
     dropped_total bigint NOT NULL,
     updated_at timestamp with time zone NOT NULL,
+    pending_since timestamp with time zone,
     CONSTRAINT request_telemetry_app_gaps_check CHECK ((last_gap_at <= updated_at)),
     CONSTRAINT request_telemetry_app_gaps_dropped_total_check CHECK ((dropped_total >= 0)),
     CONSTRAINT request_telemetry_app_gaps_node_name_check CHECK ((node_name <> ''::text)),
-    CONSTRAINT request_telemetry_app_gaps_pending_count_check CHECK ((pending_count >= 0))
+    CONSTRAINT request_telemetry_app_gaps_pending_count_check CHECK ((pending_count >= 0)),
+    CONSTRAINT request_telemetry_app_gaps_pending_since_check CHECK (((pending_since IS NULL) OR ((pending_count > 0) AND (pending_since <= updated_at))))
 );
 
 
@@ -59770,8 +59904,10 @@ CREATE TABLE public.request_telemetry_coverage (
     app_scoped boolean DEFAULT false NOT NULL,
     unattributed_dropped_total bigint DEFAULT 0 NOT NULL,
     unattributed_pending_count integer DEFAULT 0 NOT NULL,
+    clean_stop_at timestamp with time zone,
     CONSTRAINT request_telemetry_coverage_boot_id_check CHECK ((boot_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT request_telemetry_coverage_check CHECK (((healthy_since IS NULL) OR (healthy_since <= received_at))),
+    CONSTRAINT request_telemetry_coverage_clean_stop_at_check CHECK (((clean_stop_at IS NULL) OR (clean_stop_at <= received_at))),
     CONSTRAINT request_telemetry_coverage_dropped_total_check CHECK ((dropped_total >= 0)),
     CONSTRAINT request_telemetry_coverage_node_name_check CHECK ((node_name <> ''::text)),
     CONSTRAINT request_telemetry_coverage_pending_count_check CHECK ((pending_count >= 0)),
@@ -61597,6 +61733,44 @@ COMMENT ON TABLE public.sandbox_workspace_snapshots IS 'ADR-20261027090013 step 
 
 
 --
+-- Name: saved_insights; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.saved_insights (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    key text NOT NULL,
+    name text NOT NULL,
+    kind text NOT NULL,
+    query jsonb NOT NULL,
+    range_days integer NOT NULL,
+    digest text DEFAULT ''::text NOT NULL,
+    alert_comparison text DEFAULT ''::text NOT NULL,
+    alert_threshold double precision DEFAULT 0 NOT NULL,
+    channel_ids uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    alert_state text DEFAULT 'ok'::text NOT NULL,
+    last_value double precision,
+    last_run_at timestamp with time zone,
+    last_error text DEFAULT ''::text NOT NULL,
+    next_digest_at timestamp with time zone,
+    next_check_at timestamp with time zone,
+    lease_until timestamp with time zone,
+    created_by text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT saved_insights_chk CHECK (((key ~ '^[a-z][a-z0-9_-]{0,63}$'::text) AND ((length(name) >= 1) AND (length(name) <= 128)) AND (kind = ANY (ARRAY['events'::text, 'funnel'::text, 'retention'::text])) AND (jsonb_typeof(query) = 'object'::text) AND ((range_days >= 1) AND (range_days <= 400)) AND (digest = ANY (ARRAY[''::text, 'daily'::text, 'weekly'::text])) AND (alert_comparison = ANY (ARRAY[''::text, 'gt'::text, 'gte'::text, 'lt'::text, 'lte'::text])) AND (alert_threshold = alert_threshold) AND (cardinality(channel_ids) <= 5) AND (alert_state = ANY (ARRAY['ok'::text, 'firing'::text])) AND (length(last_error) <= 512) AND ((length(created_by) >= 1) AND (length(created_by) <= 256)) AND (((digest = ''::text) AND (alert_comparison = ''::text)) = (next_check_at IS NULL))))
+);
+
+
+--
+-- Name: TABLE saved_insights; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.saved_insights IS 'Named analytics queries per environment; digests and threshold alerts run by meterd (ADR-20261122190000).';
+
+
+--
 -- Name: saved_route_requirements; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -62521,7 +62695,7 @@ CREATE TABLE public.storage_grant_audit (
     granted_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT storage_grant_audit_access_check CHECK ((access = ANY (ARRAY['read'::text, 'write'::text]))),
     CONSTRAINT storage_grant_audit_objects_check CHECK (((objects > 0) AND (objects <= 64))),
-    CONSTRAINT storage_grant_audit_subject_class_check CHECK ((subject_class = ANY (ARRAY['deployment'::text, 'sandbox_account'::text, 'job'::text, 'build'::text])))
+    CONSTRAINT storage_grant_audit_subject_class_v2_check CHECK ((subject_class = ANY (ARRAY['deployment'::text, 'sandbox_account'::text, 'job'::text, 'build'::text, 'build_output'::text, 'platform'::text])))
 );
 
 
@@ -65256,6 +65430,30 @@ ALTER TABLE ONLY public.api_consumer_credit_applications
 
 ALTER TABLE ONLY public.api_consumer_credit_grants
     ADD CONSTRAINT api_consumer_credit_grants_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: api_consumer_credit_pack_settings api_consumer_credit_pack_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_pack_settings
+    ADD CONSTRAINT api_consumer_credit_pack_settings_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: api_consumer_credit_purchases api_consumer_credit_purchases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_purchases
+    ADD CONSTRAINT api_consumer_credit_purchases_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: api_consumer_credit_purchases api_consumer_credit_purchases_stripe_session_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_purchases
+    ADD CONSTRAINT api_consumer_credit_purchases_stripe_session_key UNIQUE (stripe_session);
 
 
 --
@@ -68720,6 +68918,14 @@ ALTER TABLE ONLY public.deployment_sidecar_secret_reload_signals
 
 ALTER TABLE ONLY public.deployment_submission_receipts
     ADD CONSTRAINT deployment_submission_receipts_pkey PRIMARY KEY (app_id, attempt_id);
+
+
+--
+-- Name: deployment_verification_leases deployment_verification_leases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_verification_leases
+    ADD CONSTRAINT deployment_verification_leases_pkey PRIMARY KEY (deployment_id);
 
 
 --
@@ -72640,6 +72846,14 @@ ALTER TABLE ONLY public.managed_postgres_restore_verifications
 
 ALTER TABLE ONLY public.managed_postgres_restore_verifications
     ADD CONSTRAINT managed_postgres_restore_verifications_pkey PRIMARY KEY (database_id);
+
+
+--
+-- Name: managed_postgres_suspend_timeouts managed_postgres_suspend_timeouts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_suspend_timeouts
+    ADD CONSTRAINT managed_postgres_suspend_timeouts_pkey PRIMARY KEY (database_id);
 
 
 --
@@ -78067,6 +78281,22 @@ ALTER TABLE ONLY public.sandbox_workspace_snapshots
 
 
 --
+-- Name: saved_insights saved_insights_env_key_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.saved_insights
+    ADD CONSTRAINT saved_insights_env_key_uniq UNIQUE (environment_id, key);
+
+
+--
+-- Name: saved_insights saved_insights_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.saved_insights
+    ADD CONSTRAINT saved_insights_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: saved_route_requirements saved_route_requirements_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -80122,6 +80352,27 @@ CREATE INDEX api_consumer_credit_applications_statement_idx ON public.api_consum
 --
 
 CREATE INDEX api_consumer_credit_grants_consumer_idx ON public.api_consumer_credit_grants USING btree (consumer_id, currency, created_at);
+
+
+--
+-- Name: api_consumer_credit_purchases_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_credit_purchases_due ON public.api_consumer_credit_purchases USING btree (next_check_at, id) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: api_consumer_credit_purchases_pending_consumer; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX api_consumer_credit_purchases_pending_consumer ON public.api_consumer_credit_purchases USING btree (consumer_id) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: api_consumer_credit_purchases_pending_live_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_credit_purchases_pending_live_account ON public.api_consumer_credit_purchases USING btree (account_id) WHERE ((status = 'pending'::text) AND livemode);
 
 
 --
@@ -82968,6 +83219,13 @@ CREATE INDEX deployment_sidecar_layers_storage_key_idx ON public.deployment_side
 --
 
 CREATE INDEX deployment_submission_receipts_deployment_idx ON public.deployment_submission_receipts USING btree (deployment_id);
+
+
+--
+-- Name: deployment_verification_leases_expires_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_verification_leases_expires_idx ON public.deployment_verification_leases USING btree (expires_at);
 
 
 --
@@ -90171,6 +90429,13 @@ CREATE INDEX sandbox_workspace_snapshots_expiry_idx ON public.sandbox_workspace_
 --
 
 CREATE INDEX sandbox_workspace_snapshots_pending_idx ON public.sandbox_workspace_snapshots USING btree (created_at) WHERE (state = 'pending'::text);
+
+
+--
+-- Name: saved_insights_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX saved_insights_due_idx ON public.saved_insights USING btree (next_check_at) WHERE (next_check_at IS NOT NULL);
 
 
 --
@@ -100104,6 +100369,46 @@ ALTER TABLE ONLY public.api_consumer_credit_grants
 
 
 --
+-- Name: api_consumer_credit_pack_settings api_consumer_credit_pack_settings_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_pack_settings
+    ADD CONSTRAINT api_consumer_credit_pack_settings_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_credit_pack_settings api_consumer_credit_pack_settings_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_pack_settings
+    ADD CONSTRAINT api_consumer_credit_pack_settings_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_credit_purchases api_consumer_credit_purchases_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_purchases
+    ADD CONSTRAINT api_consumer_credit_purchases_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_credit_purchases api_consumer_credit_purchases_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_purchases
+    ADD CONSTRAINT api_consumer_credit_purchases_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_credit_purchases api_consumer_credit_purchases_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_purchases
+    ADD CONSTRAINT api_consumer_credit_purchases_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
+
+
+--
 -- Name: api_consumer_meter_usage_minutes api_consumer_meter_usage_minutes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -104656,6 +104961,22 @@ ALTER TABLE ONLY public.deployment_submission_receipts
 
 
 --
+-- Name: deployment_verification_leases deployment_verification_leases_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_verification_leases
+    ADD CONSTRAINT deployment_verification_leases_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_verification_leases deployment_verification_leases_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_verification_leases
+    ADD CONSTRAINT deployment_verification_leases_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
 -- Name: deployment_verification_queries deployment_verification_queries_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -108877,6 +109198,14 @@ ALTER TABLE ONLY public.managed_postgres_restore_verifications
 
 ALTER TABLE ONLY public.managed_postgres_restore_verifications
     ADD CONSTRAINT managed_postgres_restore_verifications_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_suspend_timeouts managed_postgres_suspend_timeouts_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_suspend_timeouts
+    ADD CONSTRAINT managed_postgres_suspend_timeouts_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
 
 
 --
@@ -115429,6 +115758,22 @@ ALTER TABLE ONLY public.sandbox_templates
 
 ALTER TABLE ONLY public.sandbox_workspace_snapshots
     ADD CONSTRAINT sandbox_workspace_snapshots_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: saved_insights saved_insights_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.saved_insights
+    ADD CONSTRAINT saved_insights_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: saved_insights saved_insights_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.saved_insights
+    ADD CONSTRAINT saved_insights_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
 
 
 --

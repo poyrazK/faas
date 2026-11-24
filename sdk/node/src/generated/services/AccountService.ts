@@ -894,7 +894,7 @@ export class AccountService {
    * read access to customers; Lago
    * an API key and, for the EU region or a self-hosted Lago, api_url. Only
    * the last four characters, the mode and the Lago API URL are ever
-   * returned.
+   * returned. Pending credit pack purchases prevent Stripe connection changes.
    *
    * @returns BillingConnectionResponse The stored connection.
    * @throws ApiError
@@ -920,6 +920,7 @@ export class AccountService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
+        409: `code: conflict`,
         422: `Not a key of this provider, a bad api_url, or the provider rejected the key.`,
         502: `The provider could not be reached (\`billing_provider_unavailable\`).`,
         503: `The provider could not be reached (\`billing_provider_unavailable\`). Sent as 503 by the public edge.`,
@@ -928,6 +929,7 @@ export class AccountService {
   }
   /**
    * Remove the account's key for one billing provider.
+   * Pending credit pack purchases prevent removing the Stripe connection.
    * @returns void
    * @throws ApiError
    */
@@ -948,6 +950,7 @@ export class AccountService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
+        409: `code: conflict`,
       },
     });
   }

@@ -119,10 +119,24 @@ func TestGrantStorageObjects_PlacementDecides(t *testing.T) {
 		"node preparing the image": {caller: "peer-node", setup: func(_ *fakeStorageStore, f *fixture) {
 			f.store.preparing = map[[2]string]bool{{"app-a", "peer-node"}: true}
 		}, objs: []*secretdpb.StorageObjectRequest{create("apps/shop/" + depA + ".ext4")}, want: codes.OK},
-		"node building the deployment":   {caller: "peer-node", setup: func(s *fakeStorageStore, _ *fixture) { s.builds[[2]string{depA, "peer-node"}] = true }, objs: []*secretdpb.StorageObjectRequest{create("layers/" + depA + ".ext4")}, want: codes.OK},
-		"unknown deployment":             {caller: "owner-node", objs: []*secretdpb.StorageObjectRequest{get("layers/22222222-2222-4222-8222-222222222222.ext4")}, want: codes.PermissionDenied},
-		"platform read anywhere":         {caller: "other-node", objs: []*secretdpb.StorageObjectRequest{get("base/base-amd64.ext4"), get("kernel/1.12.0")}, want: codes.OK},
-		"platform write refused":         {caller: "owner-node", objs: []*secretdpb.StorageObjectRequest{create("base/base-amd64.ext4")}, want: codes.PermissionDenied},
+		"node building the deployment":    {caller: "peer-node", setup: func(s *fakeStorageStore, _ *fixture) { s.builds[[2]string{depA, "peer-node"}] = true }, objs: []*secretdpb.StorageObjectRequest{create("layers/" + depA + ".ext4")}, want: codes.OK},
+		"unknown deployment":              {caller: "owner-node", objs: []*secretdpb.StorageObjectRequest{get("layers/22222222-2222-4222-8222-222222222222.ext4")}, want: codes.PermissionDenied},
+		"platform read anywhere":          {caller: "other-node", objs: []*secretdpb.StorageObjectRequest{get("base/base-amd64.ext4"), get("kernel/1.12.0")}, want: codes.OK},
+		"platform create anywhere":        {caller: "other-node", objs: []*secretdpb.StorageObjectRequest{create("base/base-amd64.ext4"), create("sigs/base/base-amd64.ext4.sig"), create("scans/base-amd64.ext4.scan.json")}, want: codes.OK},
+		"platform conditioned replace":    {caller: "other-node", objs: []*secretdpb.StorageObjectRequest{{Key: "base/base-amd64.ext4", Op: "replace", Generation: 3}, {Key: "scans/base-amd64.ext4.scan.json", Op: "replace", Etag: `"e"`}}, want: codes.OK},
+		"platform conditioned complete":   {caller: "other-node", objs: []*secretdpb.StorageObjectRequest{{Key: "base/base-amd64.ext4", Op: "complete_multipart", UploadId: "u", Etag: `"e"`}}, want: codes.OK},
+		"platform unconditioned replace":  {caller: "owner-node", objs: []*secretdpb.StorageObjectRequest{{Key: "base/base-amd64.ext4", Op: "replace"}}, want: codes.InvalidArgument},
+		"layer signature follows its app": {caller: "owner-node", objs: []*secretdpb.StorageObjectRequest{create("sigs/layers/" + depA + ".ext4.sig")}, want: codes.OK},
+		"another app's signature":         {caller: "owner-node", objs: []*secretdpb.StorageObjectRequest{get("sigs/layers/" + depB + ".ext4.sig")}, want: codes.PermissionDenied},
+		"builder creates its sbom": {caller: "peer-node", setup: func(_ *fakeStorageStore, f *fixture) {
+			f.store.builds = map[string]secretd.BuildRun{jobJ: {AppID: "app-a", Running: false, StartedAt: f.now, Node: "peer-node"}}
+		}, objs: []*secretdpb.StorageObjectRequest{create("sboms/" + jobJ + ".cdx.json")}, want: codes.OK},
+		"another node's sbom": {caller: "other-node", setup: func(_ *fakeStorageStore, f *fixture) {
+			f.store.builds = map[string]secretd.BuildRun{jobJ: {AppID: "app-a", Running: true, StartedAt: f.now, Node: "peer-node"}}
+		}, objs: []*secretdpb.StorageObjectRequest{create("sboms/" + jobJ + ".cdx.json")}, want: codes.PermissionDenied},
+		"sbom never replaced": {caller: "peer-node", setup: func(_ *fakeStorageStore, f *fixture) {
+			f.store.builds = map[string]secretd.BuildRun{jobJ: {AppID: "app-a", Running: true, StartedAt: f.now, Node: "peer-node"}}
+		}, objs: []*secretdpb.StorageObjectRequest{{Key: "sboms/" + jobJ + ".cdx.json", Op: "replace", Generation: 2}}, want: codes.PermissionDenied},
 		"sandbox session of the account": {caller: "peer-node", setup: func(s *fakeStorageStore, _ *fixture) { s.sandboxes[[2]string{acctS, "n-peer"}] = true }, objs: []*secretdpb.StorageObjectRequest{get("snap/sandbox-template-" + acctS + "/captures/" + captureC + "/v2/mem")}, want: codes.OK},
 		"no sandbox session":             {caller: "peer-node", objs: []*secretdpb.StorageObjectRequest{get("snap/sandbox-template-" + acctS + "/captures/" + captureC + "/v2/mem")}, want: codes.PermissionDenied},
 		"job lease holder": {caller: "peer-node", setup: func(_ *fakeStorageStore, f *fixture) {
@@ -206,6 +220,21 @@ func TestGrantStorageObjects_AuditAndOrder(t *testing.T) {
 	sig.signed = nil
 	if _, code := grant(f, get(mem)); code != codes.Unavailable || len(sig.signed) != 0 {
 		t.Fatalf("unrecordable grant: code %v, signed %d; want Unavailable and nothing signed", code, len(sig.signed))
+	}
+}
+
+// Platform reads stay out of the audit; platform creates and conditioned
+// replaces are recorded under the nil subject (ADR-20261117190000
+// amendment 1).
+func TestGrantStorageObjects_PlatformWritesAudited(t *testing.T) {
+	f, st, _ := storageFixture(t)
+	if _, code := grant(f, get("base/base-amd64.ext4"), create("base/new-amd64.ext4"), create("scans/new-amd64.ext4.scan.json"),
+		&secretdpb.StorageObjectRequest{Key: "base/base-amd64.ext4", Op: "replace", Etag: `"e"`}); code != codes.OK {
+		t.Fatalf("code = %v", code)
+	}
+	want := secretd.StorageGrantRecord{NodeID: "n-owner", Class: "platform", SubjectID: "00000000-0000-0000-0000-000000000000", Access: "write", Objects: 3}
+	if len(st.records) != 1 || st.records[0] != want {
+		t.Fatalf("records = %+v, want [%+v]", st.records, want)
 	}
 }
 

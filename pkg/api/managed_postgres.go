@@ -117,6 +117,8 @@ type ManagedPostgresDatabase struct {
 	ServiceClass            string                 `json:"service_class"`
 	Availability            string                 `json:"availability"`
 	ScaleToZero             bool                   `json:"scale_to_zero"`
+	SuspendTimeoutSeconds   int64                  `json:"suspend_timeout_seconds,omitempty"` // scale-to-zero only: idle seconds before suspend
+	SuspendTimeoutCustom    bool                   `json:"suspend_timeout_custom,omitempty"`  // the database's own value, not the default
 	StorageLimitBytes       int64                  `json:"storage_limit_bytes"`
 	RestoreWindowSeconds    int64                  `json:"restore_window_seconds"`
 	RestoreSourceDatabaseID string                 `json:"restore_source_database_id,omitempty"`
@@ -230,7 +232,13 @@ type ManagedPostgresUsageResponse struct {
 	// (ADR-20261123062111).
 	SnapshotByteSeconds  int64 `json:"snapshot_byte_seconds"`
 	IncludedHistoryBytes int64 `json:"included_history_bytes"`
-	EgressBytes          int64 `json:"egress_bytes"`
+	// HistoryState is limited while restore history and snapshots passed
+	// twice the included history this month with overage off: the
+	// databases keep a 24-hour restore window until the 1st of the next
+	// month, or until overage is turned on (ADR-20261123062111 D2). It is
+	// normal otherwise, and absent while the limit is not enforced.
+	HistoryState string `json:"history_state,omitempty"`
+	EgressBytes  int64  `json:"egress_bytes"`
 	// Compute caps on running databases (ADR-20261025094915). The allowance is
 	// the plan's monthly compute; the ceiling is where running databases are
 	// suspended. ComputeCapState is healthy, warning (at 80% of the allowance),

@@ -290,6 +290,21 @@ const (
 	ObsMemoryPressureWindowMax       = 7 * 24 * time.Hour
 )
 
+// Operator gateway traffic report (ADR-20261124093000). The report reads
+// gatewayd's Prometheus series over the window under
+// ObsGatewayTrafficPrometheusBudget, or ObsGatewayTrafficLongWindowBudget
+// for windows over ObsGatewayTrafficShortWindowMax, and lists the
+// ObsGatewayTrafficAppsMax most affected apps.
+const (
+	ObsGatewayTrafficAppsMax          = 25
+	ObsGatewayTrafficWindowDefault    = time.Hour
+	ObsGatewayTrafficWindowMin        = 5 * time.Minute
+	ObsGatewayTrafficWindowMax        = 7 * 24 * time.Hour
+	ObsGatewayTrafficPrometheusBudget = 3 * time.Second
+	ObsGatewayTrafficShortWindowMax   = 24 * time.Hour
+	ObsGatewayTrafficLongWindowBudget = 10 * time.Second
+)
+
 // Customer attention signals (ADR-20261113123000): when a customer is
 // probably stuck. Thresholds are platform-wide, not per plan.
 const (
@@ -1273,6 +1288,30 @@ const OperationBusinessConditionDescriptionMaxBytes = 1024
 // PostgreSQL databases before the cap suspends them (ADR-20261025094915).
 const ManagedPostgresOverageCeilingMultiplier = 2
 
+// ManagedPostgresSuspendTimeoutMinSeconds and ...MaxSeconds bound the suspend
+// timeout a customer chooses for a scale-to-zero database (gregale postgres
+// suspend-timeout): past an hour a database is close to always-on, which plans
+// sell separately. The managed_postgres_suspend_timeouts CHECK matches.
+// Docs: docs/postgres.md.
+const (
+	ManagedPostgresSuspendTimeoutMinSeconds = 60
+	ManagedPostgresSuspendTimeoutMaxSeconds = 3600
+)
+
+// ManagedPostgresSuspendTimeoutDefaultSeconds is the platform default suspend
+// timeout of a scale-to-zero database: every wake bills at least this much
+// compute. Operators change it hot (managed_postgres_policy
+// suspend_timeout_seconds) within ManagedPostgresSuspendTimeoutPolicyMin/
+// MaxSeconds, Neon's own range. Docs: docs/managed-postgres.md.
+const (
+	ManagedPostgresSuspendTimeoutDefaultSeconds   = 120
+	ManagedPostgresSuspendTimeoutPolicyMinSeconds = 60
+	ManagedPostgresSuspendTimeoutPolicyMaxSeconds = 7 * 24 * 60 * 60
+)
+
+// ManagedPostgresSuspendTimeoutDocsURL is cited by the out-of-range error.
+const ManagedPostgresSuspendTimeoutDocsURL = "https://gregale.dev/docs/postgres#plans"
+
 // ManagedPostgresNeonScaleMillicentsPerComputeUnitHour is what Neon's Scale
 // plan charges Gregale per CU-hour ($0.222, neon.com/pricing on 2026-11-02),
 // and ManagedPostgresOverageMarkupPercent what Gregale adds to the
@@ -1352,6 +1391,15 @@ const ManagedPostgresHistoryMonthSeconds int64 = 744 * 3600
 func ManagedPostgresIncludedHistoryBytes(storagePoolBytes int64) int64 {
 	return max(storagePoolBytes, 0)
 }
+
+// ManagedPostgresHistoryLimitFactor and
+// ManagedPostgresHistoryLimitedRestoreWindow bound the restore history of a
+// subject with overage off (ADR-20261123062111 D2): once its month-to-date
+// restore history and snapshots pass this many times its included history,
+// its databases keep only this restore window until the 1st of the next UTC
+// month, or until overage is turned on.
+const ManagedPostgresHistoryLimitFactor = 2
+const ManagedPostgresHistoryLimitedRestoreWindow = 24 * time.Hour
 
 // Production managed PostgreSQL provisioning (ADR-20261028103115). An
 // operator approval pins one backend for at most the approval window; the
@@ -1874,6 +1922,10 @@ const (
 	// A consumer holds at most this many grants with credit left.
 	ConsumerCreditOpenGrantsMax = 100
 	ConsumerCreditNoteMaxBytes  = 200
+	// Self-service checkout catalog limits and the lifetime of an open checkout.
+	ConsumerCreditPacksMax          = 16
+	ConsumerCreditPackLabelMaxBytes = 80
+	ConsumerCreditPurchaseTTL       = time.Hour
 	// apid rechecks each capped consumer's month to date this often, in
 	// batches; a claimed check is retried after the lease.
 	ConsumerSpendCapCheckInterval = time.Minute
@@ -2733,6 +2785,12 @@ const (
 	VerificationContractMaxBodyContains     = 16
 	VerificationContractMaxJSONAssertions   = 32
 	VerificationContractMaxSQLBytes         = 64 << 10
+	// VerificationContractMaxSecretRefs bounds the distinct app secrets one
+	// contract's check headers reference (${secret:NAME}, amendment 2).
+	VerificationContractMaxSecretRefs = 8
+	// VerificationLeaseGrace is how long past the contract's own timeout the
+	// verifying node's lease lets secretd open referenced secrets.
+	VerificationLeaseGrace = 2 * time.Minute
 	// VerificationContractMaxResponseBytes is how much of a check's response
 	// body is read for body and JSON assertions.
 	VerificationContractMaxResponseBytes = 1 << 20
@@ -3111,6 +3169,35 @@ const (
 	AnalyticsCohortMaxMinCount = 1000
 	// AnalyticsCohortRefreshInterval is how often a cohort is recomputed.
 	AnalyticsCohortRefreshInterval = time.Hour
+)
+
+// Saved insights (ADR-20261122190000).
+const (
+	// SavedInsightsMaxPerEnvironment bounds an environment's saved insights.
+	SavedInsightsMaxPerEnvironment = 50
+	// SavedInsightMaxChannels bounds the channels one saved insight sends to.
+	SavedInsightMaxChannels = 5
+	// SavedInsightAlertInterval is how often meterd checks a saved insight
+	// that has an alert.
+	SavedInsightAlertInterval = 15 * time.Minute
+	// SavedInsightDigestHourUTC is the hour digests go out: daily ones every
+	// day, weekly ones on Mondays.
+	SavedInsightDigestHourUTC = 8
+	// SavedInsightRunBatch bounds the saved insights one meterd pass runs.
+	SavedInsightRunBatch = 10
+	// SavedInsightItemBudget bounds one saved insight's run: its query
+	// (AnalyticsQueryTimeout) and at most two channel sends of 30 s each.
+	SavedInsightItemBudget = AnalyticsQueryTimeout + time.Minute
+	// SavedInsightLease is how long a claimed batch stays leased; a pass
+	// releases the items it cannot start with SavedInsightItemBudget left.
+	SavedInsightLease = SavedInsightRunBatch*SavedInsightItemBudget + time.Minute
+	// SavedInsightNotReleasedRetry is how long a saved insight of an account
+	// without saved insights waits before meterd looks at it again.
+	SavedInsightNotReleasedRetry = time.Hour
+	// SavedInsightNameMaxBytes bounds a saved insight's display name.
+	SavedInsightNameMaxBytes = 128
+	// SavedInsightRequestMaxBytes bounds a create or replace request body.
+	SavedInsightRequestMaxBytes = 32 << 10
 )
 
 // Subject units, layers and the holdout, richer metrics, bandits and
@@ -9917,6 +10004,13 @@ const (
 	GatewaydInternalControlReadTimeoutSecondsDefault  = 30 // control + unix-socket
 	GatewaydInternalControlWriteTimeoutSecondsDefault = 30 // control + unix-socket
 	GatewaydInternalControlIdleTimeoutSecondsDefault  = 60 // control + unix-socket keep-alive
+	// GatewaydInternalGuestServiceIdleTimeoutSecondsDefault closes a guest's
+	// idle connection to the service proxy (<name>.svc.gregale:10081/10080,
+	// and its HTTPS alias). Those connections carry no TCP keepalive: with
+	// Go's default of one probe every 15 s, an app holding idle service
+	// connections was woken from quiet pause four times a minute, and so was
+	// each close and the client's reconnect (ADR-384 amendment 1).
+	GatewaydInternalGuestServiceIdleTimeoutSecondsDefault = 300
 
 	// VmmdLocalDataSocket is where vmmd serves its own node's
 	// gatewayd-internal without TLS, admitting only GatewaydInternalUser by

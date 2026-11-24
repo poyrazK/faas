@@ -112,6 +112,20 @@ func (s *Server) GrantStorageObjects(ctx context.Context, req *secretdpb.GrantSt
 			access = accessWrite
 		}
 		key := storageSubject{subject: storagegrant.Resolve(r.Key), access: access}
+		// Build outputs are created by nodes, never replaced. Platform
+		// objects may be replaced, but only conditioned on the current
+		// object (Validate requires it), so no update is lost
+		// (ADR-20261117190000 amendment 1).
+		if access == accessWrite && createOnlyClass(key.subject.Class) && replaces(r) {
+			s.log.Warn("secretd: refused storage grant", "node", logsanitize.Field(name), "class", string(key.subject.Class),
+				"key", logsanitize.Field(r.Key), "why", "replace of a create-only object")
+			s.metrics.refuse(rpcGrantStorageObjects, ReasonNotAuthorized)
+			return nil, rpcErr(codes.PermissionDenied, "secretd refused: nodes create "+string(key.subject.Class)+" objects but never replace them")
+		}
+		if access == accessWrite && key.subject.Class == storagegrant.ClassPlatform {
+			// Shared objects every node reads: name each one a node writes.
+			s.log.Info("secretd: platform object write requested", "node", logsanitize.Field(name), "op", string(r.Op), "key", logsanitize.Field(r.Key))
+		}
 		if counts[key] == 0 {
 			order = append(order, key)
 		}
@@ -126,9 +140,15 @@ func (s *Server) GrantStorageObjects(ctx context.Context, req *secretdpb.GrantSt
 			}
 			return nil, err
 		}
-		if sub.subject.Class != storagegrant.ClassPlatform {
+		// Platform reads are only counted; platform writes are recorded
+		// like tenant grants, under the nil subject (amendment 1).
+		if sub.subject.Class != storagegrant.ClassPlatform || sub.access == accessWrite {
+			subjectID := sub.subject.ID
+			if sub.subject.Class == storagegrant.ClassPlatform {
+				subjectID = platformSubjectID
+			}
 			records = append(records, StorageGrantRecord{NodeID: nodeID, Class: string(sub.subject.Class),
-				SubjectID: sub.subject.ID, AppID: appID, Access: sub.access, Objects: counts[sub]})
+				SubjectID: subjectID, AppID: appID, Access: sub.access, Objects: counts[sub]})
 		}
 	}
 	// The record precedes the grant: a grant that cannot be recorded is
@@ -159,6 +179,10 @@ func (s *Server) GrantStorageObjects(ctx context.Context, req *secretdpb.GrantSt
 	return resp, nil
 }
 
+// platformSubjectID is the audit subject of platform objects, which belong
+// to no tenant.
+const platformSubjectID = "00000000-0000-0000-0000-000000000000"
+
 // admitStorage decides one subject for the caller and returns the app it
 // belongs to, if any. Every refusal is PermissionDenied and logged.
 func (s *Server) admitStorage(ctx context.Context, name, nodeID string, sub storageSubject) (string, error) {
@@ -175,10 +199,21 @@ func (s *Server) admitStorage(ctx context.Context, name, nodeID string, sub stor
 	var appID, budgetKey string
 	switch sub.subject.Class {
 	case storagegrant.ClassPlatform:
-		if sub.access == accessWrite {
-			return refuse("no node writes platform objects")
-		}
+		// Any node may write a platform object: create, or replace the
+		// object it read. Readers verify bases and kernels against signd.
 		return "", nil
+	case storagegrant.ClassBuildOutput:
+		run, err := s.store.BuildRunner(ctx, sub.subject.ID)
+		if errors.Is(err, ErrUnknownBuild) {
+			return refuse("the object's build does not exist")
+		}
+		if err != nil {
+			return lookupFailed("build", err)
+		}
+		if run.Node == "" || run.Node != name || !s.now().Before(run.StartedAt.Add(buildRunWindow)) {
+			return refuse("the caller did not run the object's build")
+		}
+		appID, budgetKey = run.AppID, run.AppID
 	case storagegrant.ClassDeployment:
 		var err error
 		appID, err = s.storage.store.DeploymentApp(ctx, sub.subject.ID)
@@ -278,4 +313,16 @@ func (s *Server) jobPlaced(ctx context.Context, name, nodeID, jobID string) (boo
 		return true, nil
 	}
 	return s.storage.store.NodeRunsJob(ctx, jobID, nodeID)
+}
+
+// createOnlyClass: nodes may create these objects but never replace them
+// (build outputs; platform objects allow conditioned replaces).
+func createOnlyClass(c storagegrant.Class) bool {
+	return c == storagegrant.ClassBuildOutput
+}
+
+// replaces reports whether r overwrites an existing object: a replace, or
+// a multipart completion conditioned on the current object.
+func replaces(r storagegrant.Request) bool {
+	return r.Op == storagegrant.OpReplace || (r.Op == storagegrant.OpCompleteMultipart && (r.ETag != "" || r.Generation != 0))
 }

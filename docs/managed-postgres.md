@@ -137,6 +137,17 @@ gregalectl config set -key managed_postgres_policy -yes -reason "launch limits" 
   an unknown backend, an invalid merged usage policy). A stored value that
   stops fitting after a file change is logged at start and the file's values
   serve until it is fixed.
+- `suspend_timeout_seconds` (60..604800, default 120) is how long a
+  scale-to-zero database's compute stays up after its last activity; every
+  wake bills at least this much compute. New databases and compute-policy
+  changes use it at once. A customer may give a database its own value
+  (`gregale postgres suspend-timeout`, 1 min to 1 h); the default covers the
+  rest. A sweep every 5 minutes on each apid, independent of usage metering,
+  moves existing Neon databases onto their value, writing only an endpoint
+  that is suspended and not held, so a running compute is never touched and
+  a busy database converges the next time it is idle. It reads Neon only for
+  databases whose row or value changed since it last confirmed them, or that
+  it had to defer.
 - `gregalectl config set -key managed_postgres_policy -value '{}'` goes back
   to the file's values; `gregalectl config rollback` restores an earlier
   version.
@@ -1349,6 +1360,45 @@ The run creates a disposable database, probes it, and deletes it. The probe:
 The command exits non-zero, and `on` refuses the file, if any observation
 fails. If the compute is suspended at the limit, the pool would stop
 databases rather than block writes, and must not be turned on as specified.
+
+### Restore history limit
+
+Restore history is billed only with overage on
+([ADR-20261123062111](adr/20261123062111-managed-postgres-restore-history-billing.md)).
+For a subject with overage off, the cap sweep bounds it instead (D2):
+
+- The limit is twice the subject's included history (its plan's storage
+  pool) held for Neon's 744-hour month. Restore history and snapshots count
+  together, from the usage ledger.
+- Past it, every ready database of the subject keeps a 24-hour restore window
+  (`history_retention_seconds` on its Neon project). Neon drops older
+  history, so the cost stops growing. Writes, reads and data are untouched.
+- The next month's usage starts under the limit, and overage on never
+  limits, so the next sweep after either writes the spec's window back.
+  History dropped while limited stays dropped.
+- A restore to a point older than the limited window is refused before a
+  target is reserved, with the reason. `gregale postgres usage` and the usage
+  API report `history_state: limited` (or `normal`) only while the limit is
+  `on`.
+- The 24-hour window reads as the database's spec wherever apid compares the
+  two, so it is not `spec_mismatch`. A window that is neither the spec's nor
+  the limited one is drift: the pass logs
+  `managed postgres restore window differs from its spec; history limit leaves it`
+  and does not touch it.
+
+`FAAS_MANAGED_POSTGRES_HISTORY_LIMIT` selects the mode:
+
+- `shadow` (the default) logs `managed postgres history limit (shadow)` with
+  the window it would set, and writes nothing.
+- `on` writes the windows that changed and logs
+  `managed postgres restore window limited` or `... restored`.
+- `off` does nothing. Windows written earlier stay; set `on` again, or write
+  the spec's window back by hand, to lift them.
+
+Before `on`: release the `postgres-overage` capability, because turning
+overage on is a limited customer's way back, and read a month of shadow
+logs. The once-a-month email to a limited account is not built yet: it
+needs internal mail on the control plane.
 
 ### Databases past a lowered plan
 

@@ -26,6 +26,7 @@ import (
 // Host is what consumer billing needs from apid.
 type Host interface {
 	Store() state.Store
+	AppRoute(w http.ResponseWriter, r *http.Request, acct state.Account) (state.App, bool)
 	// QuoteConsumerUsage prices usage in [since, until) like a statement.
 	QuoteConsumerUsage(ctx context.Context, accountID, appID, consumerID string, since, until time.Time) (billing.APIConsumerUsageQuote, error)
 	// Released reports whether API monetization is released to an account
@@ -273,6 +274,14 @@ func (s *Service) Usage(w http.ResponseWriter, r *http.Request) {
 		out.Days = append(out.Days, *day)
 	}
 	sort.Slice(out.Days, func(i, j int) bool { return out.Days[i].Date < out.Days[j].Date })
+	if r.URL.Query().Get("breakdown") == "true" {
+		routes, meters, err := UsageBreakdown(r.Context(), s.Host.Store(), c.app.AccountID, c.app.ID, c.consumer.ID, since, until, buckets)
+		if err != nil {
+			api.WriteProblem(w, api.ErrInternal("could not load usage breakdown"))
+			return
+		}
+		out.RouteBreakdown, out.MeterBreakdown = routes, meters
+	}
 	httpkit.WriteJSON(w, http.StatusOK, out)
 }
 

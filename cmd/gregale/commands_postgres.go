@@ -21,7 +21,7 @@ import (
 
 func cmdPostgres(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|create|get|status|wait|delete|recover|resize|resize-status|compute-policy|compute-policy-status|restore|branch|bindings|attach|connect|cutover|live>", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|create|get|status|wait|delete|recover|resize|resize-status|compute-policy|compute-policy-status|suspend-timeout|restore|branch|bindings|attach|connect|cutover|live>", "postgres")
 		return 1
 	}
 	switch args[0] {
@@ -62,6 +62,8 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresComputePolicy(args[1:])
 	case "compute-policy-status":
 		return cmdPostgresComputePolicyStatus(args[1:])
+	case "suspend-timeout":
+		return cmdPostgresSuspendTimeout(args[1:])
 	case "resize":
 		return cmdPostgresResize(args[1:])
 	case "resize-status":
@@ -289,6 +291,13 @@ func cmdPostgresUsage(args []string) int {
 	}
 	if result.IncludedHistoryBytes > 0 {
 		_, _ = fmt.Fprintf(osStdout, "  included_history:             %s per month\n", formatIECBytes(result.IncludedHistoryBytes))
+	}
+	switch result.HistoryState {
+	case "limited":
+		_, _ = fmt.Fprintf(osStdout, "  history_state:                limited (24 h restore window until the 1st; run `gregale postgres overage on` to keep the full window)\n")
+	case "":
+	default:
+		_, _ = fmt.Fprintf(osStdout, "  history_state:                %s\n", result.HistoryState)
 	}
 	_, _ = fmt.Fprintf(osStdout, "  egress_bytes:                 %d (%s)\n", result.EgressBytes, formatIECBytes(result.EgressBytes))
 	if result.EgressAllowanceBytes > 0 {
@@ -883,6 +892,13 @@ func renderPostgresDatabase(w io.Writer, database api.ManagedPostgresDatabase) {
 	_, _ = fmt.Fprintf(w, "  class:            %s\n", database.ServiceClass)
 	_, _ = fmt.Fprintf(w, "  availability:     %s\n", database.Availability)
 	_, _ = fmt.Fprintf(w, "  scale_to_zero:    %t\n", database.ScaleToZero)
+	if database.ScaleToZero && database.SuspendTimeoutSeconds > 0 {
+		source := "default"
+		if database.SuspendTimeoutCustom {
+			source = "set with suspend-timeout"
+		}
+		_, _ = fmt.Fprintf(w, "  suspend_timeout:  %s (%s)\n", time.Duration(database.SuspendTimeoutSeconds)*time.Second, source)
+	}
 	_, _ = fmt.Fprintf(w, "  storage_limit:    %s\n", formatPostgresStorage(database.StorageLimitBytes))
 	_, _ = fmt.Fprintf(w, "  restore_window:   %s\n", formatPostgresDuration(database.RestoreWindowSeconds))
 	_, _ = fmt.Fprintf(w, "  state:            %s\n", database.State)

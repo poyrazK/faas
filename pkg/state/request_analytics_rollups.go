@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/google/uuid"
@@ -362,10 +363,18 @@ func (s *PgStore) RequestAnalyticsRollupGroups(ctx context.Context, arg sqlc.Req
 }
 
 // RequestAnalyticsHistPercentile is the q-quantile of a rollup latency
-// histogram: the upper bound of the first bucket whose cumulative count
-// reaches q of the total, as the raw queries take the first latency
-// representative that does. It never exceeds maxMS, the largest latency
-// the histogram holds, which also stands for the overflow bucket.
+// histogram, interpolated linearly inside the bucket that holds it, as
+// Prometheus's histogram_quantile does. Taking the bucket's upper bound put a
+// 10 ms floor under every fast app and rounded each percentile up to its
+// bucket edge (prod 2026-11-24: analytics p50 10 ms where the gateway's
+// Prometheus histogram read 3.6 ms). It never exceeds maxMS, the largest
+// latency the histogram holds, which also stands for the overflow bucket.
+//
+// Raw-row analytics (RequestTelemetryAnalyticsSummary and friends) read each
+// row's latency_ms instead: exact for a request with its own row, the bucket
+// upper bound for requests a collapsed row stands for. The two answers for
+// one window can differ by up to one bucket width, raw reading high, when a
+// window moves between tiers (the rollups flag, the raw retention boundary).
 func RequestAnalyticsHistPercentile(hist []int64, maxMS int32, q float64) int {
 	var total int64
 	for _, c := range hist {
@@ -374,15 +383,25 @@ func RequestAnalyticsHistPercentile(hist []int64, maxMS int32, q float64) int {
 	if total == 0 {
 		return 0
 	}
+	target := float64(total) * q
 	var cumulative int64
 	for i, c := range hist {
-		cumulative += c
-		if float64(cumulative) >= float64(total)*q {
-			if i < len(api.RequestAnalyticsLatencyBoundsMS) {
-				return min(api.RequestAnalyticsLatencyBoundsMS[i], int(maxMS))
+		if c > 0 && float64(cumulative+c) >= target {
+			if i >= len(api.RequestAnalyticsLatencyBoundsMS) {
+				break
 			}
-			break
+			lower := 0
+			if i > 0 {
+				lower = api.RequestAnalyticsLatencyBoundsMS[i-1]
+			}
+			upper := min(api.RequestAnalyticsLatencyBoundsMS[i], int(maxMS))
+			if upper <= lower {
+				return upper
+			}
+			within := max(target-float64(cumulative), 0) / float64(c)
+			return lower + int(math.Ceil(within*float64(upper-lower)))
 		}
+		cumulative += c
 	}
 	return int(maxMS)
 }

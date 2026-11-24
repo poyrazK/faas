@@ -472,6 +472,10 @@ func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *m
 	if err := managedPostgresPlanExcessDeleteReady(planExcessDeleteMode, getenv); err != nil {
 		return nil, err
 	}
+	historyMode, err := managedpostgres.ParseHistoryLimitMode(getenv(managedpostgres.HistoryLimitEnv))
+	if err != nil {
+		return nil, err
+	}
 	options := managedpostgres.CapEnforcerOptions{
 		Mode:                 mode,
 		StorageMode:          storageMode,
@@ -485,6 +489,7 @@ func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *m
 		// The egress overage election moves the databases' hold only while
 		// their egress past the allowance is billed live (slice 3).
 		EgressBillingLive: managedPostgresChargesLive(hooks.charges()),
+		HistoryMode:       historyMode,
 	}
 	if mode == managedpostgres.CapEnforcementOn {
 		if err := managedPostgresCapNoticeReady(getenv); err != nil {
@@ -718,6 +723,7 @@ func (s *server) configureManagedPostgresCapMode(getenv func(string) string) {
 	s.managedPostgresCapMode, _ = managedpostgres.ParseCapEnforcementMode(getenv(managedpostgres.CapEnforcementEnv))
 	planExcess, _ := managedpostgres.ParsePlanExcessEnforcementMode(getenv(managedpostgres.PlanExcessEnforcementEnv))
 	s.managedPostgresPlanExcessOn = s.managedPostgresCapMode == managedpostgres.CapEnforcementOn && planExcess == managedpostgres.CapEnforcementOn
+	s.managedPostgresHistoryMode, _ = managedpostgres.ParseHistoryLimitMode(getenv(managedpostgres.HistoryLimitEnv))
 }
 
 // managedPostgresPlanExcess maps the databases the caller's plan no longer
@@ -825,6 +831,17 @@ func (s *server) runManagedPostgresUsageCollector(ctx context.Context) {
 	}
 	if err := s.managedPostgresUsageCollector.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		s.log.Error("managed postgres usage collector exited", "error", err)
+	}
+}
+
+// runManagedPostgresSuspendTimeouts moves scale-to-zero databases onto their
+// suspend timeout on its own loop, whether or not usage metering runs.
+func (s *server) runManagedPostgresSuspendTimeouts(ctx context.Context) {
+	if s.managedPostgres == nil {
+		return
+	}
+	if err := s.managedPostgres.RunSuspendTimeoutSweeper(ctx, s.log); err != nil && !errors.Is(err, context.Canceled) {
+		s.log.Error("managed postgres suspend timeout sweeper exited", "error", err)
 	}
 }
 

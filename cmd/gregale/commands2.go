@@ -1528,12 +1528,20 @@ func createOrFetchAppWith(ctx context.Context, client *Client, req, existingReq 
 func slugInUseError(ctx context.Context, client *Client, slug string) error {
 	if app, err := findDeletedApp(ctx, client, slug); err == nil && app != nil {
 		if app.RestoreEligible {
-			return fmt.Errorf("slug %q belongs to an app you deleted%s; restore it with `gregale app restore %s`, free the name now with `gregale app purge %s`, or pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " that can be restored until "), slug, slug)
+			return &ownDeletedSlugError{msg: fmt.Sprintf("slug %q belongs to an app you deleted%s; restore it with `gregale app restore %s`, free the name now with `gregale app purge %s`, or pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " that can be restored until "), slug, slug)}
 		}
-		return fmt.Errorf("slug %q is held by an app you deleted until it is purged%s; free it now with `gregale app purge %s`, or pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " after "), slug)
+		return &ownDeletedSlugError{msg: fmt.Sprintf("slug %q is held by an app you deleted until it is purged%s; free it now with `gregale app purge %s`, or pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " after "), slug)}
 	}
 	return &slugTakenError{slug: slug}
 }
+
+// ownDeletedSlugError is a 409 on create for a slug one of the caller's own
+// deleted apps still holds. A deploy that asked for the name gets the
+// restore/purge hint; a suffixed alternative held this way is skipped
+// (createOrFetchAppWithAlternatives).
+type ownDeletedSlugError struct{ msg string }
+
+func (e *ownDeletedSlugError) Error() string { return e.msg }
 
 // slugTakenError is a 409 on create for a slug the caller does not hold:
 // another owner has it. A deploy may then take an alternative name
@@ -4444,6 +4452,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 					return guardUnlinkedExistingApp(ctx, client, alt, contextDir, *yes) == 0
 				}
 			}
+			if *environment == "" {
+				if accessErr := checkManifestAccessFlags(ctx, client, slug, sourceDir, *requireAuthn, *noRequireAuthn); accessErr != nil {
+					return printErr("Manifest access conflicts with a flag", accessErr)
+				}
+			}
 			requestedSlug := slug
 			var nameUnavailable bool
 			slug, nameUnavailable, err = createOrFetchAppWithAlternatives(ctx, client, createReq, existingReq, sourceDir, confirmExisting, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
@@ -5656,6 +5669,9 @@ func cmdTrafficStatus(args []string) int {
 		return 1
 	}
 	positional, err := mergeAppFlag(positional, strings.TrimSpace(*app), 1)
+	if err == nil {
+		positional = withLinkedApp(positional, 1)
+	}
 	if err != nil {
 		return printErr("Invalid arguments", err)
 	}
@@ -5838,7 +5854,7 @@ func cmdDomains(args []string) int {
 	case subAdd:
 		fs := newFlagSet("domains add", flag.ContinueOnError)
 		domain := fs.String("domain", "", "domain to attach (or pass it as the first argument)")
-		slug := fs.String("app", "", "app slug to attach to (required)")
+		slug := fs.String("app", "", "app slug to attach to (defaults to linked context)")
 		environment := fs.String("environment", "", "project environment to route this domain to")
 		// Every other domains subcommand takes <domain> positionally, so
 		// accept `domains add <domain> --app <slug>` too, with flags before
@@ -5863,6 +5879,10 @@ func cmdDomains(args []string) int {
 		} else if fs.NArg() != 0 {
 			PrintUsage(os.Stderr, "usage: gregale domain create <domain> --app <slug> [--env <environment>]", "domains")
 			return 1
+		}
+		if *slug == "" {
+			// Prod hunt r35: a linked checkout printed only the usage line.
+			*slug, *environment = linkedAppAndEnvironment(*environment)
 		}
 		if *domain == "" || *slug == "" {
 			PrintUsage(os.Stderr, "usage: gregale domain create <domain> --app <slug> [--env <environment>]", "domains")
@@ -6045,7 +6065,7 @@ func cmdCrons(args []string) int {
 		}
 		fs := newFlagSet("crons-add", flag.ContinueOnError)
 		interactive := fs.Bool("interactive", false, "choose and review a scheduled HTTP task")
-		slug := fs.String("app", "", "app slug (required)")
+		slug := fs.String("app", "", "app slug (defaults to the linked app)")
 		schedule := fs.String("schedule", "", "cron expression (required)")
 		path := fs.String("path", "", "path the cron sends a POST to (HTTP cron only; default: /)")
 		command := fs.String("command", "", "executable for a deployment-attached command cron")
@@ -6088,8 +6108,13 @@ func cmdCrons(args []string) int {
 			}
 			return cmdCronsAddInteractive(selected)
 		}
+		if *slug == "" {
+			// Prod hunt r36: a linked checkout printed only the usage line;
+			// `cron list` already reads the link (prod hunt r33).
+			*slug, *environment = linkedAppAndEnvironment(*environment)
+		}
 		if *slug == "" || *schedule == "" {
-			PrintUsage(os.Stderr, "usage: gregale cron create --app <slug> --schedule '*/5 * * * *' (--path / | --command EXEC [--arg ARG...]) [--timezone UTC] [--skip-if-running] [--retry-max N --retry-backoff-seconds N] [--environment ENV]", "crons")
+			PrintUsage(os.Stderr, "usage: gregale cron create [--app <slug>] --schedule '*/5 * * * *' (--path / | --command EXEC [--arg ARG...]) [--timezone UTC] [--skip-if-running] [--retry-max N --retry-backoff-seconds N] [--environment ENV]", "crons")
 			return 1
 		}
 		pathSet := false
