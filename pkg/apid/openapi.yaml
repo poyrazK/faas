@@ -65500,6 +65500,143 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/projects/{slug}/environments/{environment}/insights/saved:
+    get:
+      tags: [flags]
+      operationId: listProjectSavedInsights
+      summary: List the environment's saved insights.
+      description: "Saved insights with their query, schedule, last scheduled value and alert state. Anyone who can read the project lists them. Requires the saved_insights and product_analytics platform flags."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+      responses:
+        '200':
+          description: The environment's saved insights.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SavedInsightList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    post:
+      tags: [flags]
+      operationId: createProjectSavedInsight
+      summary: Save an insight.
+      description: "Saves an events, funnel or retention query over the last range_days days, with an optional daily or weekly digest and threshold alert sent to the account's notification channels. At most 50 per environment (409 saved_insight_limit)."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SavedInsightRequest' }
+      responses:
+        '201':
+          description: The created saved insight.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SavedInsight' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/projects/{slug}/environments/{environment}/insights/saved/{key}:
+    get:
+      tags: [flags]
+      operationId: getProjectSavedInsight
+      summary: Read one saved insight.
+      description: "A saved insight's query, schedule, last scheduled value, alert state and last error."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+        - { name: key, in: path, required: true, description: Saved insight key., schema: { type: string } }
+      responses:
+        '200':
+          description: The saved insight.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SavedInsight' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    put:
+      tags: [flags]
+      operationId: replaceProjectSavedInsight
+      summary: Replace a saved insight.
+      description: "Replaces the query and schedule. Changing the query, range or alert resets the alert state to ok."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+        - { name: key, in: path, required: true, description: Key of the saved insight to replace., schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SavedInsightRequest' }
+      responses:
+        '200':
+          description: The replaced saved insight.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SavedInsight' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [flags]
+      operationId: deleteProjectSavedInsight
+      summary: Delete a saved insight.
+      description: "Its digests and alert stop."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+        - { name: key, in: path, required: true, description: Key of the saved insight to delete., schema: { type: string } }
+      responses:
+        '204': { description: The saved insight is deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/projects/{slug}/environments/{environment}/insights/saved/{key}/run:
+    get:
+      tags: [flags]
+      operationId: runProjectSavedInsight
+      summary: Run a saved insight now.
+      description: "Read-only. Runs the saved query over its last range_days days, clamped to the plan's analytics retention, and returns its value and result. format=csv returns a CSV attachment instead: one row per series point, funnel step or retention period."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+        - { name: key, in: path, required: true, description: Key of the saved insight to run., schema: { type: string } }
+        - { name: format, in: query, required: false, description: "json (default) or csv.", schema: { type: string, enum: [json, csv] } }
+      responses:
+        '200':
+          description: The saved insight's value and result.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SavedInsightResult' }
+            text/csv:
+              schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/projects/{slug}/environments/{environment}/cohorts:
     get:
       tags: [flags]
@@ -93489,6 +93626,76 @@ components:
         from: { type: string, format: date-time }
         until: { type: string, format: date-time }
         variants: { type: array, items: { $ref: '#/components/schemas/InsightRequestVariant' } }
+    InsightEventsQuery:
+      description: "A saved events insight: the event series query and the measure its value totals."
+      type: object
+      additionalProperties: false
+      required: [event]
+      properties:
+        event: { type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$' }
+        where: { type: object, maxProperties: 10, additionalProperties: { type: string } }
+        interval: { type: string, enum: [day, hour], default: day }
+        unit: { type: string, enum: [customer, subject], default: customer }
+        by: { type: string, description: "Breakdown of the series: flag:KEY or property:KEY." }
+        measure: { type: string, enum: [events, value], default: events, description: "What the insight's value totals." }
+    SavedInsightAlert:
+      description: "Fires when the saved insight's value compares to threshold; funnel and retention values are fractions."
+      type: object
+      additionalProperties: false
+      required: [comparison, threshold]
+      properties:
+        comparison: { type: string, enum: [gt, gte, lt, lte] }
+        threshold: { type: number, format: double }
+    SavedInsightRequest:
+      description: "A saved insight: exactly the query of its kind, without from or until, over the last range_days days. A digest or alert needs at least one notification channel."
+      type: object
+      additionalProperties: false
+      required: [key, kind]
+      properties:
+        key: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+        name: { type: string, maxLength: 128, description: Display name; defaults to the key. }
+        kind: { type: string, enum: [events, funnel, retention] }
+        events: { $ref: '#/components/schemas/InsightEventsQuery' }
+        funnel: { $ref: '#/components/schemas/InsightFunnelRequest' }
+        retention: { $ref: '#/components/schemas/InsightRetentionRequest' }
+        range_days: { type: integer, minimum: 1, maximum: 90, description: "Days each run covers; default 7 (28 for retention), at most the plan's analytics retention." }
+        digest: { type: string, enum: [daily, weekly], description: "Send the value to the channels at 08:00 UTC, weekly on Mondays. PagerDuty channels get no digests." }
+        alert: { $ref: '#/components/schemas/SavedInsightAlert' }
+        channel_ids: { type: array, maxItems: 5, items: { type: string, format: uuid }, description: The account's notification channels for digests and alerts. }
+    SavedInsight:
+      description: "A saved insight and its last scheduled run. Its value is an events total, a funnel's overall conversion or the first-period retention rate."
+      allOf:
+        - { $ref: '#/components/schemas/SavedInsightRequest' }
+        - type: object
+          required: [alert_state, created_by, created_at, updated_at]
+          properties:
+            alert_state: { type: string, enum: [ok, firing], description: The alert's state after the last successful scheduled run. }
+            last_value: { type: number, format: double }
+            last_run_at: { type: string, format: date-time }
+            last_error: { type: string }
+            next_digest_at: { type: string, format: date-time }
+            created_by: { type: string }
+            created_at: { type: string, format: date-time }
+            updated_at: { type: string, format: date-time }
+    SavedInsightList:
+      description: An environment's saved insights.
+      type: object
+      required: [insights]
+      properties:
+        insights: { type: array, items: { $ref: '#/components/schemas/SavedInsight' } }
+    SavedInsightResult:
+      description: One run of a saved insight.
+      type: object
+      required: [key, kind, from, until]
+      properties:
+        key: { type: string }
+        kind: { type: string, enum: [events, funnel, retention] }
+        value: { type: number, format: double, description: "Absent when there is no data: a funnel without entrants, or retention before a period has ended." }
+        from: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        events: { $ref: '#/components/schemas/InsightEventSeries' }
+        funnel: { $ref: '#/components/schemas/InsightFunnel' }
+        retention: { $ref: '#/components/schemas/InsightRetention' }
     FlagEventsRequest:
       description: A batch of runtime conversion events.
       type: object

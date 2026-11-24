@@ -5277,7 +5277,7 @@ Account object storage observations, safety policy and billing state
 
 List an app&#39;s object-storage buckets and their IDs
 
-`gregale bucket list <app>`
+`gregale bucket list [<app>]`
 
 ### bucket delete
 
@@ -5760,7 +5760,7 @@ Schedule a POST to an app path, or a deployment command
 | `--at <RFC3339>` | send one request at this RFC3339 time instead of on a schedule |  |
 | `--in <DURATION>` | send one request after this delay (such as 30m) instead of on a schedule |  |
 | `--interactive` | choose an HTTP path, schedule, and timezone, preview run times, and confirm creation |  |
-| `--app <slug>` | app slug (interactive mode can use linked app or picker) |  |
+| `--app <slug>` | app slug (defaults to linked context; interactive mode can also pick one) |  |
 | `--schedule <EXPR>` | five-field cron expression (required unless interactive) |  |
 | `--path <PATH>` | path the cron sends a POST to (mutually exclusive with --command) |  |
 | `--command <EXEC>` | executable for a deployment command cron (preview: needs app tasks) |  |
