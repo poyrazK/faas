@@ -184,7 +184,7 @@
       "type": "timeseries",
       "title": "Idle tail reads",
       "id": 4,
-      "description": "unavailable means Neon's operation list could not be read for a window; that window is left out of both sides of the share.",
+      "description": "Only read and no_compute windows count toward the share. unavailable: Neon's operation list could not be read, which ends that sweep's pass; skipped: over the pass's 60-read budget or after a failure; unsupported: a project with a restore's second compute.",
       "gridPos": {
         "h": 8,
         "w": 12,

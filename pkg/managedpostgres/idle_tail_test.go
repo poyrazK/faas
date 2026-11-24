@@ -24,7 +24,7 @@ func (p *idleTailTestProvider) IdleTail(_ context.Context, providerResourceID st
 	return p.tail, p.err
 }
 
-func idleTailFixture(t *testing.T, now time.Time, provider Provider, spec Spec) (*MemoryStore, *Registry) {
+func idleTailFixture(t *testing.T, now time.Time, provider Provider, spec Spec, databases int) (*MemoryStore, *Registry) {
 	t.Helper()
 	registry := testRegistry(t, provider, func(config *Config) {
 		config.Usage = UsageConfig{Enabled: true, CollectionIntervalSeconds: 300, WindowSeconds: 3600,
@@ -36,13 +36,19 @@ func idleTailFixture(t *testing.T, now time.Time, provider Provider, spec Spec) 
 		t.Fatal(err)
 	}
 	store := NewMemoryStore()
-	store.databases["db"] = Database{ID: "db", AccountID: "account", Name: "orders", State: StateReady,
-		Spec: spec, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint,
-		ProviderResourceID: "provider-db", CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now}
+	for i := range databases {
+		id := "db" + string(rune('a'+i))
+		store.databases[id] = Database{ID: id, AccountID: "account", Name: "orders-" + id, State: StateReady,
+			Spec: spec, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint,
+			ProviderResourceID: "provider-db", CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now}
+	}
 	return store, registry
 }
 
-func TestUsageCollectorObservesIdleTailOncePerNewWindow(t *testing.T) {
+// The sweep collects two windows of catch-up for each database; only the
+// latest is observed, after collection, and a correction-only sweep observes
+// nothing.
+func TestUsageCollectorObservesIdleTailOfTheLatestNewWindow(t *testing.T) {
 	alwaysOn := testSpec()
 	alwaysOn.ScaleToZero = false
 	readings := func(compute int64) []MeterReading {
@@ -64,9 +70,9 @@ func TestUsageCollectorObservesIdleTailOncePerNewWindow(t *testing.T) {
 		{name: "no compute needs no read", spec: testSpec(), compute: 0, want: []IdleTailObservation{
 			{Class: ClassDevelopment, Outcome: IdleTailNoCompute}, {Class: ClassDevelopment, Outcome: IdleTailNoCompute},
 		}},
-		{name: "read failure does not fail collection", spec: testSpec(), compute: 600, err: ErrUnavailable, wantRead: 2, want: []IdleTailObservation{
+		{name: "a failed read ends the pass without failing collection", spec: testSpec(), compute: 600, err: ErrUnavailable, wantRead: 1, want: []IdleTailObservation{
 			{Class: ClassDevelopment, Outcome: IdleTailUnavailable, ComputeUnitSeconds: 600},
-			{Class: ClassDevelopment, Outcome: IdleTailUnavailable, ComputeUnitSeconds: 600},
+			{Class: ClassDevelopment, Outcome: IdleTailSkipped, ComputeUnitSeconds: 600},
 		}},
 		{name: "unsupported provider", spec: testSpec(), compute: 600, plain: true, want: []IdleTailObservation{
 			{Class: ClassDevelopment, Outcome: IdleTailUnsupported, ComputeUnitSeconds: 600},
@@ -84,7 +90,7 @@ func TestUsageCollectorObservesIdleTailOncePerNewWindow(t *testing.T) {
 			if tt.plain {
 				provider = usage
 			}
-			store, registry := idleTailFixture(t, now, provider, tt.spec)
+			store, registry := idleTailFixture(t, now, provider, tt.spec, 2)
 			var got []IdleTailObservation
 			collect := func() {
 				t.Helper()
@@ -96,6 +102,7 @@ func TestUsageCollectorObservesIdleTailOncePerNewWindow(t *testing.T) {
 				if _, err := collector.Collect(ctx); err != nil {
 					t.Fatal(err)
 				}
+				collector.readIdleTails(ctx)
 			}
 			collect()
 			// The next sweep in the same hour replays corrections only.
@@ -111,6 +118,12 @@ func TestUsageCollectorObservesIdleTailOncePerNewWindow(t *testing.T) {
 			}
 			if len(tailing.windows) != tt.wantRead {
 				t.Fatalf("idle tail reads = %+v, want %d", tailing.windows, tt.wantRead)
+			}
+			latest := now.Truncate(time.Hour)
+			for _, window := range tailing.windows {
+				if !window.To.Equal(latest) {
+					t.Fatalf("read a catch-up window %+v, want only the one ending %s", window, latest)
+				}
 			}
 		})
 	}

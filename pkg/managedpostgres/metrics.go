@@ -93,11 +93,11 @@ func NewMetrics(reg prometheus.Registerer, prefix string, usageEnabled bool) (*M
 		}, []string{"class"}),
 		idleTailSuspends: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: prefix + "_managed_postgres_idle_suspends_total",
-			Help: "Scale-to-zero managed PostgreSQL compute suspends, by service class.",
+			Help: "Idle suspends of scale-to-zero managed PostgreSQL computes (restarts excluded), by service class.",
 		}, []string{"class"}),
 		idleTailTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: prefix + "_managed_postgres_idle_tail_compute_unit_seconds_total",
-			Help: "Estimated compute unit seconds scale-to-zero managed PostgreSQL databases held idle before suspending (suspend timeout x minimum CU per suspend), by service class.",
+			Help: "Estimated compute unit seconds scale-to-zero managed PostgreSQL databases held idle before suspending (suspend timeout x minimum CU per idle suspend; restarts excluded), by service class.",
 		}, []string{"class"}),
 		reconcileTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: prefix + "_managed_postgres_reconcile_total",
@@ -196,7 +196,7 @@ func NewMetrics(reg prometheus.Registerer, prefix string, usageEnabled bool) (*M
 	for _, reason := range []string{metricsDenialInvalid, metricsDenialUnavailable, metricsDenialQuota, metricsDenialStale, metricsDenialUnsupported, metricsDenialConflict} {
 		m.admissionDeniedTotal.WithLabelValues(reason).Add(0)
 	}
-	for _, outcome := range []string{IdleTailRead, IdleTailNoCompute, IdleTailUnsupported, IdleTailUnavailable} {
+	for _, outcome := range []string{IdleTailRead, IdleTailNoCompute, IdleTailUnsupported, IdleTailUnavailable, IdleTailSkipped} {
 		m.idleTailReadsTotal.WithLabelValues(outcome).Add(0)
 	}
 	for _, class := range []ServiceClass{ClassDevelopment, ClassBurstable, ClassProduction} {
@@ -333,7 +333,7 @@ func (m *Metrics) ObserveIdleTail(observation IdleTailObservation) {
 		m.idleTailComputeTotal.WithLabelValues(class).Add(float64(observation.ComputeUnitSeconds))
 		m.idleTailSuspends.WithLabelValues(class).Add(float64(observation.Tail.Suspends))
 		m.idleTailTotal.WithLabelValues(class).Add(float64(observation.Tail.ComputeUnitSeconds))
-	case IdleTailUnsupported, IdleTailUnavailable:
+	case IdleTailUnsupported, IdleTailUnavailable, IdleTailSkipped:
 	default:
 		return
 	}

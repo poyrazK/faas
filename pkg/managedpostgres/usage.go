@@ -59,8 +59,8 @@ type UsageCollectorOptions struct {
 	Observe      func(UsageCollectionObservation)
 	ObserveSweep func(UsageCollectionSummary, error)
 	// ObserveIdleTail, when set, gets each scale-to-zero database's newly
-	// collected window and its idle tail (one extra provider read when the
-	// window has compute).
+	// collected latest window and its idle tail, read in a capped pass after
+	// the sweep and AfterSweep (readIdleTails).
 	ObserveIdleTail func(IdleTailObservation)
 	// AfterSweep runs after every sweep, successful or not, on the
 	// collector's goroutine (the compute cap enforcer, ADR-20261025094915).
@@ -89,6 +89,8 @@ type UsageCollector struct {
 	exclusive    func(context.Context) (func(), bool, error)
 
 	idleTailObserver func(IdleTailObservation)
+	// pendingIdleTails is the last Collect's work for readIdleTails.
+	pendingIdleTails []pendingIdleTail
 }
 
 func NewUsageCollector(registry *Registry, store UsageStore, options UsageCollectorOptions) (*UsageCollector, error) {
@@ -193,7 +195,9 @@ func (c *UsageCollector) Collect(ctx context.Context) (summary UsageCollectionSu
 	sort.SliceStable(work, func(i, j int) bool {
 		return work[i].observedAt.Before(work[j].observedAt)
 	})
-	if err := c.collectUsageRounds(ctx, work, now, false); err != nil {
+	err := c.collectUsageRounds(ctx, work, now, false)
+	c.queueIdleTails(work)
+	if err != nil {
 		return summary, err
 	}
 	// Exhaust every eligible recovery turn before any correction request.
@@ -218,6 +222,9 @@ type usageCollectionWork struct {
 	requests        int
 	included        bool
 	err             error
+	// latest is the database's latest closed window when this sweep
+	// collected it for the first time.
+	latest *Usage
 }
 
 func (c *UsageCollector) prepareUsageCollection(ctx context.Context, database Database, to time.Time) *usageCollectionWork {
@@ -353,7 +360,11 @@ func (c *UsageCollector) collectUsageRounds(ctx context.Context, work []*usageCo
 			}
 			attempted = true
 			item.requests++
-			item.err = c.collectWindow(ctx, item.database, item.backend, from, from.Add(c.policy.Window), observedAt, !corrections)
+			var usage Usage
+			usage, item.err = c.collectWindow(ctx, item.database, item.backend, from, from.Add(c.policy.Window), observedAt)
+			if item.err == nil && !corrections && usage.Window.To.Equal(item.to) {
+				item.latest = &usage
+			}
 			if item.err == nil {
 				if corrections {
 					item.replayUntil = from
@@ -439,20 +450,18 @@ func (c *UsageCollector) recordSharedUsage(ctx context.Context, database Databas
 	return c.store.RecordSharedUsage(ctx, database.AccountID, database.ID, source.ID, c.policy.Window)
 }
 
-// collectWindow records one window; fresh marks a first collection, not a
-// correction replay.
-func (c *UsageCollector) collectWindow(ctx context.Context, database Database, backend Backend, from, to, observedAt time.Time, fresh bool) error {
+func (c *UsageCollector) collectWindow(ctx context.Context, database Database, backend Backend, from, to, observedAt time.Time) (Usage, error) {
 	usage, err := backend.Provider.Usage(ctx, database.ProviderResourceID, UsageWindow{From: from, To: to})
 	if err != nil {
-		return normalizeProviderError(err)
+		return Usage{}, normalizeProviderError(err)
 	}
 	if err := usage.Validate(); err != nil {
-		return ErrUnavailable
+		return Usage{}, ErrUnavailable
 	}
 	// PostgreSQL checkpoints can carry time.Local; compare instants rather
 	// than time.Time's location pointer or monotonic clock representation.
 	if !usage.Window.From.Equal(from) || !usage.Window.To.Equal(to) {
-		return ErrUnavailable
+		return Usage{}, ErrUnavailable
 	}
 	for _, meter := range backend.Capabilities.UsageMeters {
 		found := false
@@ -463,14 +472,14 @@ func (c *UsageCollector) collectWindow(ctx context.Context, database Database, b
 			}
 		}
 		if !found {
-			return ErrUnavailable
+			return Usage{}, ErrUnavailable
 		}
 	}
 	records := make([]UsageRecord, 0, len(usage.Readings))
 	for _, reading := range usage.Readings {
 		cost, err := c.policy.Cost(reading)
 		if err != nil {
-			return err
+			return Usage{}, err
 		}
 		record := UsageRecord{
 			AccountID: database.AccountID, DatabaseID: database.ID,
@@ -479,20 +488,17 @@ func (c *UsageCollector) collectWindow(ctx context.Context, database Database, b
 			Meter: reading.Meter, Quantity: reading.Quantity, CostMillicents: cost,
 		}
 		if err := record.Validate(); err != nil {
-			return err
+			return Usage{}, err
 		}
 		records = append(records, record)
 	}
 	if len(records) == 0 {
-		return ErrUnavailable
+		return Usage{}, ErrUnavailable
 	}
 	if err := c.store.RecordUsage(ctx, records); err != nil {
-		return err
+		return Usage{}, err
 	}
-	if fresh {
-		c.observeIdleTail(ctx, database, backend, usage)
-	}
-	return nil
+	return usage, nil
 }
 
 func (c *UsageCollector) Run(ctx context.Context) error {
@@ -533,6 +539,7 @@ func (c *UsageCollector) sweep(ctx context.Context) {
 	if c.afterSweep != nil && ctx.Err() == nil {
 		c.afterSweep(ctx)
 	}
+	c.readIdleTails(ctx)
 }
 
 // Admit rejects new database reservations when the account's observed usage
