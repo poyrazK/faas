@@ -33,7 +33,7 @@ const (
 
 	maxTitles = 3
 	maxHints  = 2
-	maxLinks  = 3
+	maxLinks  = 4
 	// More statuses than this read as noise; the entry says they vary.
 	maxStatuses = 3
 	// A code built with more distinct titles than this is a generic one

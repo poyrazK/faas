@@ -198,7 +198,7 @@ HTTP 409 Conflict or 422 Unprocessable Entity · Many operations send this code;
 
 HTTP 422 Unprocessable Entity · No process listening on $PORT; App listens on a different port
 
-See [Deployment overrides](deploy-overrides.md), [Errors](errors.md), [Deploy a web framework](frameworks.md).
+See [Deployment overrides](deploy-overrides.md), [Errors](errors.md), [Deploy a web framework](frameworks.md), [Troubleshooting](troubleshooting.md).
 
 ### `app_not_purgeable`
 
@@ -3248,7 +3248,7 @@ See [Functions and runtimes](functions.md).
 
 HTTP 503 Service Unavailable · Request budget exceeded; Request timed out
 
-See [Edge rules](edge-rules.md), [Errors](errors.md), [Host an MCP server](mcp-hosting.md).
+See [Edge rules](edge-rules.md), [Errors](errors.md), [Host an MCP server](mcp-hosting.md), [Troubleshooting](troubleshooting.md).
 
 ### `request_too_large`
 
@@ -3256,7 +3256,7 @@ HTTP 413 Request Entity Too Large · Event too large; MCP instance probe failed;
 
 For larger uploads, use a bucket signed URL (gregale storage ... signed-url).
 
-See [Event-driven workloads](event-driven.md), [Plans and pricing](plans.md), [Storage](storage.md).
+See [Event-driven workloads](event-driven.md), [Plans and pricing](plans.md), [Storage](storage.md), [Edge rules](edge-rules.md).
 
 ### `request_upload_timeout`
 
@@ -3796,7 +3796,7 @@ HTTP 401 Unauthorized · Many operations send this code; the response's `title` 
 
 Migration unavailable
 
-See [Apps](apps.md), [Billing](billing.md), [Jobs from the CLI](cli-jobs.md).
+See [Apps](apps.md), [Billing](billing.md), [Jobs from the CLI](cli-jobs.md), [Secrets and required configuration](cli-secrets.md).
 
 ### `undo_plan_changed`
 
