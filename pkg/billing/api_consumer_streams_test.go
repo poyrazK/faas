@@ -72,3 +72,69 @@ func TestQuoteConsumerUsageStreams(t *testing.T) {
 		t.Fatalf("delta = %+v, %v; want one more compute second", delta, err)
 	}
 }
+
+// adr: 1318 — each reported meter follows its effective rate-card history.
+func TestUnpricedConsumerModelUsageRespectsMeterHistory(t *testing.T) {
+	start := allowanceStart
+	active := start.Add(time.Minute)
+	retired := active.Add(time.Minute)
+	modelCard := unitCard("app:tokens", active, 2)
+	modelCard.ModelPrices = map[string]int64{"premium": 5}
+	retiredCard := unitCard("app:tokens", retired, 3)
+	standalone := unitCard("app:tokens__custom", active, 1)
+	cards := []state.APIConsumerRateCard{retiredCard, standalone, modelCard}
+	meters := map[string][]state.APIConsumerMeterUsageBucket{
+		"tokens__preview": {{WindowStart: start, Units: 10}, {WindowStart: active, Units: 20}},
+		"tokens__premium": {{WindowStart: active, Units: 30}, {WindowStart: retired, Units: 40}},
+		"tokens__custom":  {{WindowStart: active, Units: 50}},
+		"images__preview": {{WindowStart: active, Units: 60}},
+	}
+	got := UnpricedConsumerModelUsage(cards, meters, start)
+	if len(got) != 2 ||
+		got[0].Model != "preview" || got[0].BillableUnits != 20 || !got[0].WindowStart.Equal(active) ||
+		got[1].Model != "premium" || got[1].BillableUnits != 40 || !got[1].WindowStart.Equal(retired) {
+		t.Fatalf("unpriced aliases = %+v", got)
+	}
+}
+
+// adr: 949 — later usage belongs in a separate adjustment after finalization.
+func TestConsumerModelWaiverPreservesFinalizedCoverage(t *testing.T) {
+	start := allowanceStart
+	card := unitCard("app:tokens", start, 1000)
+	card.ModelPrices = map[string]int64{"premium": 5000}
+	card.IncludedUnitsPerMonth = 10
+	cards := []state.APIConsumerRateCard{card}
+	usage := []state.APIConsumerUsageBucket{usageAt(start, 2)}
+	meters := map[string][]state.APIConsumerMeterUsageBucket{
+		"tokens__premium": {{WindowStart: start, Units: 15}},
+		"tokens__preview": {{WindowStart: start, Units: 17}},
+	}
+	opts := QuoteOptions{ModelWaivers: []state.APIConsumerUsageWaiver{{
+		Unit: card.Unit, Model: "preview", Minutes: []state.APIConsumerUsageWaiverMinute{{WindowStart: start, Units: 17}},
+	}}}
+	quote, err := QuoteConsumerUsage(cards, usage, ConsumerUsageInputs{Meters: meters}, start, opts)
+	if err != nil || !quote.Priced || quote.BillableUnits != 32 || quote.AmountMillicents != 25000 ||
+		len(quote.Buckets) != 2 || quote.Buckets[1].WaivedUnits != 17 {
+		t.Fatalf("waived quote = %+v, err = %v", quote, err)
+	}
+	statement := finalizedFrom(quote)
+	statement.Currency, statement.AmountMillicents = quote.Currency, quote.AmountMillicents
+	for i, bucket := range quote.Buckets {
+		statement.Buckets[i].Model = bucket.Model
+		statement.Buckets[i].WaivedUnits = bucket.WaivedUnits
+		statement.Buckets[i].PriceMillicentsPerUnit = bucket.PriceMillicentsPerUnit
+	}
+	invoice, err := AppStatementInvoice(statement, cards)
+	if err != nil || invoice.TotalMinor != 25 || len(invoice.Lines) != 2 {
+		t.Fatalf("invoice = %+v, err = %v", invoice, err)
+	}
+	meters["tokens__preview"][0].Units += 3
+	quote, err = QuoteConsumerUsage(cards, usage, ConsumerUsageInputs{Meters: meters}, start, opts)
+	if err != nil || quote.Priced || quote.UnpricedUnits != 3 {
+		t.Fatalf("late quote = %+v, err = %v", quote, err)
+	}
+	delta, err := APIConsumerStatementDelta(quote, []state.APIConsumerUsageStatement{statement})
+	if err != nil || delta.Priced || delta.BillableUnits != 3 || delta.UnpricedUnits != 3 || delta.AmountMillicents != 0 {
+		t.Fatalf("late adjustment = %+v, err = %v", delta, err)
+	}
+}
