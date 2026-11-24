@@ -416,6 +416,8 @@ var routeExclude = map[string]bool{
 	"GET /v1/consumer-signup/{slug}/page":                                          true, // hosted HTML sign-up page over the public sign-up API (ADR-20261021143000)
 	"GET /v1/consumer-signup/{slug}/signup.js":                                     true,
 	"GET /v1/consumer-signup/{slug}/signup.css":                                    true,
+	"GET /v1/consumer-signup/{slug}/upgrade":                                       true, // hosted HTML upgrade page over the documented upgrade API (ADR-20261124094745)
+	"GET /v1/consumer-signup/{slug}/upgrade.js":                                    true,
 	"POST /v1/platform-tenant-self/product/submissions/lookup":                     true,
 	"POST /v1/product-control/customer/{slug}/session":                             true,
 	"GET /v1/product-control/customer/{slug}/account-recovery":                     true,
@@ -861,7 +863,11 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
-	"RunHistoryFilter": true, // Go-only URL query options; selectors are declared on the route.
+	// ADR-20261124094745: bodies of the consumer link path the gateway
+	// serves on an app's own host, not an apid route.
+	"LinkConsumerRequest":  true,
+	"LinkConsumerResponse": true,
+	"RunHistoryFilter":     true, // Go-only URL query options; selectors are declared on the route.
 	// ADR-20261117215858: a query result column, declared inline in the
 	// ManagedPostgresQueryResponse schema.
 	"ManagedPostgresQueryColumn":     true,
