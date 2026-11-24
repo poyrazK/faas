@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const redisUsage = "usage: gregale redis <list|create|get|bind|resize|update|restart|delete>"
+const redisUsage = "usage: gregale redis <list|create|get|bind|unbind|resize|update|restart|delete>"
 
 func cmdRedis(args []string) int {
 	if len(args) == 0 {
@@ -30,6 +30,8 @@ func cmdRedis(args []string) int {
 		return cmdRedisGet(args[1:])
 	case "bind":
 		return cmdRedisBind(args[1:])
+	case "unbind":
+		return cmdRedisUnbind(args[1:])
 	case "resize":
 		return cmdRedisResize(args[1:])
 	case "update":
@@ -153,6 +155,33 @@ func cmdRedisBind(args []string) int {
 		return jsonOut(writeJSON(binding))
 	}
 	_, _ = fmt.Fprintf(osStdout, "Set %s on %s; it takes effect at the app's next deploy or wake.\n", binding.EnvKey, binding.App)
+	return 0
+}
+
+func cmdRedisUnbind(args []string) int {
+	const usage = "usage: gregale redis unbind NAME --app APP"
+	flags, positional := splitArgsForFlags(args)
+	fs := newFlagSet("redis unbind", flag.ContinueOnError)
+	app := fs.String("app", "", "app that loses access to the cache")
+	if err := fs.Parse(append(flags, positional...)); err != nil {
+		return 1
+	}
+	if fs.NArg() != 1 || *app == "" {
+		PrintUsage(os.Stderr, usage, "redis")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	out, err := client.UnbindRedisCache(context.Background(), fs.Arg(0), *app)
+	if err != nil {
+		return printErr("Could not unbind Redis cache", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(out))
+	}
+	_, _ = fmt.Fprintf(osStdout, "%s can no longer call %s. Its connection variable is still set; remove it with `gregale env unset`.\n", out.App, out.Cache)
 	return 0
 }
 

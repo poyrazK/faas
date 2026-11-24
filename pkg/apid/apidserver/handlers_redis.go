@@ -30,6 +30,7 @@ func (s *server) registerRedisRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/redis/{name}/upgrade", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.upgradeRedisCache))))))
 	mux.HandleFunc("POST /v1/redis/{name}/restart", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.restartRedisCache)))))
 	mux.HandleFunc("POST /v1/redis/{name}/bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.requireVerifiedEmail(s.bindRedisCache)))))
+	mux.HandleFunc("DELETE /v1/redis/{name}/bindings/{app}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.unbindRedisCache))))
 }
 
 func (s *server) redisStore(w http.ResponseWriter) (state.ManagedValkeyStore, bool) {
@@ -475,6 +476,10 @@ func (s *server) bindRedisCache(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrValidation("a cache cannot be bound to itself"))
 		return
 	}
+	if problem := s.grantRedisCache(r.Context(), acct, cacheApp, target); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	limits := api.MustLimitsFor(acct.Plan)
 	if problem := s.sealAndPersist(r.Context(), acct, target, api.DefaultEnvScope, req.EnvKey,
 		api.ManagedValkeyURL(cacheApp.Slug), api.SecretClassPersistent, limits); problem != nil {
@@ -485,6 +490,52 @@ func (s *server) bindRedisCache(w http.ResponseWriter, r *http.Request, acct sta
 		"cache_app_id": cacheApp.ID, "app_id": target.ID, "env_key": req.EnvKey,
 	})
 	writeJSON(w, http.StatusOK, api.RedisCacheBinding{Cache: cacheApp.Slug, App: target.Slug, EnvKey: req.EnvKey})
+}
+
+// grantRedisCache lets app call the cache: binding grants the call
+// (ADR-20261124174500), so a project workload reaches a cache outside its
+// project under the default project policy.
+func (s *server) grantRedisCache(ctx context.Context, acct state.Account, cacheApp, app state.App) *api.Problem {
+	grants, ok := s.store.(state.ManagedValkeyGrantStore)
+	if !ok {
+		return api.ErrCapacity("managed Redis is unavailable on this installation")
+	}
+	if err := grants.GrantManagedValkeyCache(ctx, cacheApp.ID, app.ID, acct.ID); err != nil {
+		s.log.ErrorContext(ctx, "grant managed cache", "cache_app_id", cacheApp.ID, "app_id", app.ID, "err", err)
+		return api.ErrCapacity("could not record the cache binding")
+	}
+	return nil
+}
+
+// unbindRedisCache revokes an app's grant to call the cache. The app keeps
+// its connection variable until it is unset; calls are refused from now on.
+func (s *server) unbindRedisCache(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	cacheApp, _, ok := s.loadRedisCache(w, r, acct)
+	if !ok {
+		return
+	}
+	grants, ok := s.store.(state.ManagedValkeyGrantStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("managed Redis is unavailable on this installation"))
+		return
+	}
+	target, ok := s.loadApp(w, r, acct, r.PathValue("app"))
+	if !ok {
+		return
+	}
+	revoked, err := grants.RevokeManagedValkeyCacheGrant(r.Context(), cacheApp.ID, target.ID)
+	if err != nil {
+		s.log.ErrorContext(r.Context(), "revoke managed cache grant", "cache_app_id", cacheApp.ID, "app_id", target.ID, "err", err)
+		api.WriteProblem(w, api.ErrCapacity("could not remove the cache binding"))
+		return
+	}
+	if !revoked {
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found",
+			fmt.Sprintf("%s is not bound to Redis cache %s", target.Slug, cacheApp.Slug)))
+		return
+	}
+	s.audit.Emit(r.Context(), "redis.unbound", &acct.ID, map[string]any{"cache_app_id": cacheApp.ID, "app_id": target.ID})
+	writeJSON(w, http.StatusOK, api.RedisCacheUnbinding{Cache: cacheApp.Slug, App: target.Slug})
 }
 
 func redisCacheResponse(app state.App, cache state.ManagedValkeyCache) api.RedisCache {

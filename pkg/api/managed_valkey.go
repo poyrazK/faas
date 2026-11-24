@@ -324,9 +324,17 @@ type BindRedisCacheRequest struct {
 	EnvKey string `json:"env_key,omitempty"`
 }
 
-// RedisCacheBinding is the result of a binding.
+// RedisCacheBinding is the result of a binding. Binding also grants the app
+// the call to the cache (ADR-20261124174500).
 type RedisCacheBinding struct {
 	Cache  string `json:"cache"`
 	App    string `json:"app"`
 	EnvKey string `json:"env_key"`
+}
+
+// RedisCacheUnbinding answers DELETE /v1/redis/{name}/bindings/{app}: the
+// app may no longer call the cache. Its connection variable stays set.
+type RedisCacheUnbinding struct {
+	Cache string `json:"cache"`
+	App   string `json:"app"`
 }

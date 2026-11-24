@@ -22783,6 +22783,16 @@
     "kind": "operational"
   },
   {
+    "table": "managed_valkey_cache_grants",
+    "columns": [
+      "account_id",
+      "app_id",
+      "cache_app_id",
+      "created_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_valkey_caches",
     "columns": [
       "account_id",
