@@ -9,7 +9,10 @@ successful gate. Exit code 1 when any check fails, 0 otherwise.
 
 Relative checks (PostgreSQL CPU stall, platform wake p95) compare the window
 with a baseline window of the same length that ends at --baseline-end, taken
-before the stack was enabled. Both windows need at least 99% fresh evidence
+before the stack was enabled. The platform wake series excludes deployment
+smokes and startup-OOM wakes (ADR-20261123170000 and its amendment 1); a
+baseline that ends before a gateway release carrying amendment 1 still
+includes smokes, so its p95 reads high. Both windows need at least 99% fresh evidence
 at one-minute resolution. A production gate requires at least 72 hours and
 a non-overlapping baseline; shorter runs still print diagnostic results but
 cannot return GO.
@@ -29,6 +32,7 @@ import urllib.request
 SHIPPER_JOBS = 'job="promtail"'  # The control-plane shipper, including Alloy.
 MIN_WINDOW = 72 * 3600
 MIN_COVERAGE = 0.99
+MIN_PLATFORM_WAKES = 20  # Same floor as the status page wake p95.
 UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 SIZE_UNITS = {"B": 1, "KB": 1e3, "MB": 1e6, "GB": 1e9, "TB": 1e12}
 
@@ -107,6 +111,11 @@ def checks(window, retention_size, node_job="node", shipper="alloy"):
         # only permitted zero fallback; its history is checked separately.
         ("journal shipper dropped entries", f"sum(increase({drop_metric}{{{SHIPPER_JOBS}}}[{w}])) or (0 * min(up{{{SHIPPER_JOBS}}} == 1))", "<=", 0, "entries", False),
         ("PostgreSQL CPU stall vs baseline", f'avg_over_time(rate(faas_cgroup_pressure_stall_seconds_total{{{pg},resource="cpu",kind="some"}}[5m])[{w}:1m])', "delta<=", 0.05, "share", True),
+        # The platform wake series leaves out deployment smokes and startup-OOM
+        # wakes (ADR-20261123170000), so a quiet window can hold too few wakes
+        # for a p95. Name that instead of a bare non-finite p95 below; 20 is the
+        # status page's floor for publishing one.
+        ("platform wakes in window", f"sum(increase(gateway_platform_wake_latency_seconds_count[{w}]))", ">=", MIN_PLATFORM_WAKES, "wakes", False),
         ("platform wake p95 vs baseline", f"histogram_quantile(0.95, sum by (le) (increase(gateway_platform_wake_latency_seconds_bucket[{w}])))", "ratio<=", 1.10, "s", True),
     ]
 
