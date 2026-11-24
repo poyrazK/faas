@@ -554,12 +554,19 @@ func pluralY(n int) string {
 func requireTemplateSecretsBeforeFirstStart(ctx context.Context, apps interface {
 	GetApp(context.Context, string) (api.AppResponse, error)
 }, tpl, secretsFile string, createOnly bool, slug string) error {
-	if tpl == "" || secretsFile != "" || createOnly {
+	if tpl == "" || createOnly {
 		return nil
 	}
-	missing := validateTemplateSecrets(tpl, nil)
+	var missing error
+	if secretsFile == "" {
+		missing = validateTemplateSecrets(tpl, nil)
+	}
+	// A binding never comes from a secrets file, so a secrets file does not
+	// excuse it: object-storage-node deployed with its token file and crashed
+	// on startup_unavailable for want of its bucket (prod hunt r41).
 	binding := templateRequiredBindings[tpl]
-	if missing == nil && binding == "" {
+	bucket := templateRequiredBuckets[tpl]
+	if missing == nil && binding == "" && bucket == "" {
 		return nil
 	}
 	var ae *APIError
@@ -568,6 +575,9 @@ func requireTemplateSecretsBeforeFirstStart(ctx context.Context, apps interface 
 	}
 	if binding != "" {
 		return fmt.Errorf("template %s needs a managed database binding (%s) before its first start, so nothing was deployed. As README.md \"Configure and deploy\" shows: reserve the app with `gregale deploy --create-only --path . --dockerfile --name %s`, run `gregale postgres attach <database> %s --access migration --env %s`, wait until `gregale postgres bindings get <binding-id>` reports ready, run `gregale app egress-ports add %s 5432`, then deploy", tpl, binding, slug, slug, binding, slug)
+	}
+	if bucket != "" {
+		return fmt.Errorf("template %s needs a managed bucket before its first start, so nothing was deployed. As README.md shows: reserve the app with `gregale deploy --create-only --template %s --name %s`, run `%s`, then deploy with your secrets file", tpl, tpl, slug, strings.ReplaceAll(bucket, "<slug>", slug))
 	}
 	return fmt.Errorf("%w; template %s cannot start without them. Pass --secrets-file <file> on the first deploy, or reserve the app with --create-only, set them with `gregale env set --app %s ...`, then deploy", missing, tpl, slug)
 }
@@ -689,7 +699,7 @@ func nextStepsFor(tpl string) []string {
 			"Set STORAGE_APP_TOKEN from a 0600 secrets file outside the source directory; see README.md.",
 			"  cd <dest> && gregale deploy --name <slug> --secrets-file <secrets-file> --no-require-authn",
 			"  (public on purpose: the app checks STORAGE_APP_TOKEN itself, and a Gregale API key would take the same Authorization header)",
-			"Use a Bearer token for PUT/GET /objects/<key>; /readyz reports adoption and restore readiness.",
+			"Use a Bearer token for PUT/GET /objects/<key>; read /readyz (adoption and restore readiness) with `gregale release verify <deployment-id> --app <slug> --path /readyz`: the edge answers it publicly.",
 		}
 	case "object-storage-node":
 		return []string{
@@ -700,7 +710,7 @@ func nextStepsFor(tpl string) []string {
 			"Set STORAGE_APP_TOKEN from a 0600 secrets file outside the source directory; see README.md.",
 			"  cd <dest> && gregale deploy --name <slug> --secrets-file <secrets-file> --no-require-authn",
 			"  (public on purpose: the app checks STORAGE_APP_TOKEN itself, and a Gregale API key would take the same Authorization header)",
-			"Use a Bearer token for PUT/GET /objects/<key>; /readyz reports storage adoption and restore readiness.",
+			"Use a Bearer token for PUT/GET /objects/<key>; read /readyz (storage adoption and restore readiness) with `gregale release verify <deployment-id> --app <slug> --path /readyz`: the edge answers it publicly.",
 		}
 	case "s3-uploader":
 		return []string{
