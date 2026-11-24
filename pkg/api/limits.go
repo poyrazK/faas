@@ -20814,3 +20814,32 @@ const (
 )
 
 const HostedTaskBindingKeyIDMaxBytes = 64
+
+// Claimable deploys (ADR-20261124080000).
+// Defaults for the operator-tunable claimable-deploy limits. apid reads the
+// live values from its runtime config (unclaimed_deploy_ttl_hours,
+// unclaimed_accounts_live_max, unclaimed_accounts_per_address_per_day,
+// unclaimed_accounts_per_network_per_day); these are the defaults and bounds.
+const (
+	// UnclaimedDeployTTLDefault is how long an unclaimed account lives
+	// before the sweep schedules its deletion.
+	UnclaimedDeployTTLHoursDefault = 72
+	UnclaimedDeployTTLHoursMax     = 168
+	// UnclaimedAccountsLiveMaxDefault caps unclaimed accounts alive at once
+	// on the platform. 0 closes anonymous deploys without the kill switch.
+	UnclaimedAccountsLiveMaxDefault = 500
+	UnclaimedAccountsLiveMaxBound   = 100_000
+	// Per address and per /24 (/48) a day. Separate from the sign-up caps,
+	// so anonymous deploys never use up a network's human sign-ups.
+	UnclaimedAccountsPerAddressPerDayDefault = 3
+	UnclaimedAccountsPerNetworkPerDayDefault = 10
+	UnclaimedAccountsPerDayBound             = 1_000
+	// UnclaimedAccountExpiryBatch bounds one sweep.
+	UnclaimedAccountExpiryBatch = 200
+	// UnclaimedClaimEmailTTL is how long the claim confirmation mailed to
+	// the claimer stays valid.
+	UnclaimedClaimEmailTTL = time.Hour
+)
+
+// UnclaimedDeployTTLDefault is UnclaimedDeployTTLHoursDefault as a duration.
+const UnclaimedDeployTTLDefault = UnclaimedDeployTTLHoursDefault * time.Hour

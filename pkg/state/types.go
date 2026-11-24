@@ -8578,6 +8578,10 @@ type CreateAccountWithPersonalOrgParams struct {
 	// TermsAcceptance, when set, records the Terms of Service version the
 	// account accepted at sign-up in the same transaction (legal_acceptances).
 	TermsAcceptance *TermsAcceptance
+	// Unclaimed, when set, records the account as created by an anonymous
+	// deploy (ADR-20261124080000) in the same transaction, so an account
+	// never exists without the expiry that bounds it.
+	Unclaimed *UnclaimedAccountParams
 }
 
 // CreateAccountWithPersonalOrgResult bundles the freshly minted

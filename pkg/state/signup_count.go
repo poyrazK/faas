@@ -30,6 +30,9 @@ func (m *MemStore) CountVerifiedAccountsCreatedSince(_ context.Context, since ti
 	var n int64
 	for _, a := range m.accounts {
 		if !a.CreatedAt.Before(since) && a.EmailVerifiedAt != nil {
+			if u, ok := m.unclaimedAccounts[a.ID]; ok && u.ClaimedAt == nil {
+				continue
+			}
 			n++
 		}
 	}

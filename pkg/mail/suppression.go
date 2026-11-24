@@ -141,6 +141,15 @@ func (s *SuppressingSender) Send(ctx context.Context, msg Message) error {
 	log := s.log()
 	now := s.now()
 
+	// An unclaimed anonymous-deploy account's placeholder address
+	// (ADR-20261124080000) is in the reserved .invalid domain: never send
+	// to it, whatever produced the message.
+	msg.To = dropUnclaimedPlaceholders(msg.To)
+	if len(msg.To) == 0 {
+		log.Debug("mail.unclaimed_placeholder.drop", "subject", msg.Subject)
+		return nil
+	}
+
 	// Every address must clear the check before send. A message
 	// with mixed To/Cc/Bcc-lists is rare (today all senders pass
 	// a single recipient) but we honour the contract anyway.
@@ -217,4 +226,17 @@ func (s *SuppressingSender) now() func() time.Time {
 		return s.Now
 	}
 	return time.Now
+}
+
+// dropUnclaimedPlaceholders removes unclaimed accounts' placeholder
+// addresses from a recipient list.
+func dropUnclaimedPlaceholders(to []string) []string {
+	out := to[:0:0]
+	for _, addr := range to {
+		if api.IsUnclaimedPlaceholderEmail(addr) {
+			continue
+		}
+		out = append(out, addr)
+	}
+	return out
 }

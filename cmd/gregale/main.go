@@ -388,6 +388,8 @@ func run(args []string) (status int) {
 			return 1
 		}
 		return cmdLogout()
+	case "claim":
+		return cmdClaim(args[1:])
 	case "whoami":
 		if len(args) > 1 {
 			PrintUsage(os.Stderr, "usage: gregale whoami", "auth")

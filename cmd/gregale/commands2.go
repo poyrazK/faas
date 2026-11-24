@@ -2201,12 +2201,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
 	developerSync := execution.developerSource
+	anonymousDeploySession = nil
+	defer printAnonymousClaimNotice(osStderr)
 	fs := newFlagSet("deploy", flag.ContinueOnError)
 	image := fs.String("image", "", "digest-pinned image reference")
 	tarball := fs.String("tarball", "", "path to source archive (tar.gz)")
 	sourcePath := fs.String("path", "", "deploy this source directory (relative to the current directory)")
 	sourceMode := fs.String("source", "auto", "local source to deploy: auto, head, or worktree")
 	worktree := fs.Bool("worktree", false, "deploy the selected source directory from the working tree, including local changes")
+	anonymous := fs.Bool("anonymous", false, "deploy without an account when not logged in; prints a link a person opens to claim the app")
 	// Issue #739 / ADR-092: --repo pairs with --ref to drive the
 	// headless source-ref deploy (server-side foundation lives in
 	// cmd/apid/handlers_source_ref.go). The previous M7.5 dashboard
@@ -3494,7 +3497,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	var err error
 	if !*simplePlan && (localZeroConfig || explicitTarball) {
 		var authErr error
-		client, authErr = authedClientWithDeployTimeout(5 * time.Minute)
+		client, authErr = deployClientOrAnonymous(ctx, 5*time.Minute, *anonymous)
 		if authErr != nil {
 			return printErr("Not logged in", authErr)
 		}
@@ -4014,7 +4017,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 
 	if client == nil {
 		var authErr error
-		client, authErr = authedClientWithDeployTimeout(5 * time.Minute)
+		client, authErr = deployClientOrAnonymous(ctx, 5*time.Minute, *anonymous)
 		if authErr != nil {
 			return printErr("Not logged in", authErr)
 		}

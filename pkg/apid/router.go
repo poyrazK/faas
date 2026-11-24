@@ -62,6 +62,9 @@ const (
 	ApidRootHealthz     = "/healthz"
 	ApidRootReadyz      = "/readyz"
 	ApidRootCliAuth     = "/cli-auth"
+	// ApidRootClaim serves the claim pages of anonymous deploys
+	// (ADR-20261124080000) on the API host.
+	ApidRootClaim = "/claim"
 	ApidRootDocs        = "/docs"
 	// Legal pages (pkg/legal). Sign-up links them, so they must answer on
 	// the platform hosts, not fall through to app routing.
@@ -105,6 +108,7 @@ func IsApidPath(p string) bool {
 		ApidRootLogout,
 		ApidRootStatus,
 		ApidRootCliAuth,
+		ApidRootClaim,
 		ApidRootDocs,
 		ApidRootTerms,
 		ApidRootPrivacy,

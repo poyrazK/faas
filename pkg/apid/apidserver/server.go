@@ -537,6 +537,9 @@ type server struct {
 	// signups caps self-service accounts per address and network a day
 	// (signup_network_limit.go).
 	signups *signupNetworkLimiter
+	// anonSessions caps anonymous-deploy accounts per address and network
+	// a day, apart from human sign-ups (ADR-20261124080000).
+	anonSessions *signupNetworkLimiter
 	// signupGeo resolves a sign-up address to its country and network owner
 	// for the sign-up record (signup_facts.go). nil leaves both empty.
 	signupGeo *signupGeo
@@ -1695,6 +1698,7 @@ func newServerWithDeps(
 		dashboardExportLimiter: dashboardExportLimiter,
 		securityMail:           newSecurityMailLimiter(),
 		signups:                newSignupNetworkLimiter(),
+		anonSessions:           newSignupNetworkLimiter(),
 		loginFailures:          newLoginFailureLimiter(),
 		resetMail:              newBackgroundWork(api.PasswordResetMailInFlightMax),
 		apiRequests:            newAPIRequestBudget(),
@@ -5658,6 +5662,26 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /v1/auth/signup", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
 	}, s.fromTrustedOrigin(s.sales.WithSignupCode(http.HandlerFunc(s.postV1AuthSignup)))))
+	// Claimable deploys (ADR-20261124080000): an agent's anonymous
+	// session, an unclaimed account's fresh claim link, and the claim
+	// pages. Anonymous sessions count every attempt against the same
+	// per-IP auth bucket as sign-up.
+	mux.Handle("POST /v1/anonymous/sessions", s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{middleware.CountEveryAttempt},
+	}, http.HandlerFunc(s.postAnonymousSession)))
+	mux.HandleFunc("POST /v1/account/claim-link", s.authLimited(s.postClaimLink))
+	mux.Handle("GET "+claimPagePath+"/{token}", s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{http.StatusGone},
+	}, http.HandlerFunc(s.getClaimPage)))
+	mux.Handle("POST "+claimPagePath+"/{token}", s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{middleware.CountEveryAttempt},
+	}, s.fromTrustedOrigin(http.HandlerFunc(s.postClaimPage))))
+	mux.Handle("GET "+claimConfirmPath, s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{middleware.CountEveryAttempt, http.StatusGone},
+	}, http.HandlerFunc(s.getClaimConfirm)))
+	mux.Handle("POST "+claimConfirmPath, s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{middleware.CountEveryAttempt, http.StatusGone},
+	}, s.fromTrustedOrigin(http.HandlerFunc(s.postClaimConfirm))))
 	mux.Handle("POST /v1/auth/login", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
 	}, s.fromTrustedOrigin(http.HandlerFunc(s.postV1AuthLogin))))

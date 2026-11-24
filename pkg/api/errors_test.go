@@ -397,6 +397,7 @@ func TestCodeConstants_UniqueAndNonEmpty(t *testing.T) {
 		CodeImageNotFound, CodeImageEgressDenied, CodeImageManifestInvalid,
 		CodeCliAuthPending, CodeCliAuthUnavailable,
 		CodeInvalidCredentials, CodeEmailNotVerified, CodeEmailVerificationRequired, CodePasswordTooWeak,
+		CodeClaimRequired, CodeAnonymousDeploysUnavailable,
 		CodeResetTokenInvalid, CodeResetTokenExpired, CodeAccountExists,
 		// IAM-6 / ADR-061 (issue #190). One cluster per ADR table.
 		CodeOrgNotFound, CodeOrgSlugInvalid, CodeOrgSlugTaken,
