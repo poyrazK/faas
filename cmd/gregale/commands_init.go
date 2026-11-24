@@ -45,7 +45,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
@@ -395,16 +394,7 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 }
 
 func deployInitTemplate(tpl, dir, slug, secretsFile string) int {
-	args := []string{"--template", tpl, "--name", slug}
-	if tpl == templates.PrivateNode {
-		args = privateNodeDeployArgs(dir, slug)
-		if jsonOutput || !stdinIsTTY() {
-			args = append(args, "--yes")
-		}
-	}
-	if secretsFile != "" {
-		args = append(args, "--secrets-file", secretsFile)
-	}
+	args := initDeployArgs(tpl, dir, slug, secretsFile)
 	if tpl != templates.PrivateNode {
 		return cmdDeployTarball(args)
 	}
@@ -416,6 +406,26 @@ func deployInitTemplate(tpl, dir, slug, secretsFile string) int {
 			return verifyUnusedPrivateNodeProject(ctx, client, slug)
 		},
 	})
+}
+
+// initDeployArgs are the deploy flags `init --deploy` runs. A template whose
+// callers cannot present a Gregale API key deploys public, as its README and
+// next steps do (prod hunt r35: init --deploy still made them private).
+func initDeployArgs(tpl, dir, slug, secretsFile string) []string {
+	args := []string{"--template", tpl, "--name", slug}
+	if tpl == templates.PrivateNode {
+		args = privateNodeDeployArgs(dir, slug)
+		if jsonOutput || !stdinIsTTY() {
+			args = append(args, "--yes")
+		}
+	}
+	if secretsFile != "" {
+		args = append(args, "--secrets-file", secretsFile)
+	}
+	if templatesPublicOnPurpose[tpl] {
+		args = append(args, "--no-require-authn")
+	}
+	return args
 }
 
 func rememberInitTemplate(tpl, dir, slug string) error {
@@ -515,16 +525,16 @@ func requireTemplateSecretsBeforeFirstStart(ctx context.Context, apps interface 
 		return nil
 	}
 	missing := validateTemplateSecrets(tpl, nil)
-	if missing == nil {
+	binding := templateRequiredBindings[tpl]
+	if missing == nil && binding == "" {
 		return nil
 	}
 	var ae *APIError
 	if _, err := apps.GetApp(ctx, slug); !errors.As(err, &ae) || ae.Problem.Status != http.StatusNotFound {
 		return nil
 	}
-	if slices.Contains(templateRequiredSecrets[tpl], "MIGRATION_DATABASE_URL") {
-		// A migration binding comes from `postgres attach`, not a secrets file.
-		return fmt.Errorf("%w; template %s cannot start without them. Reserve the app with `gregale deploy --create-only --template %s --name %s`, attach a managed database with `gregale postgres attach <database> %s --access migration --env MIGRATION_DATABASE_URL`, then deploy", missing, tpl, tpl, slug, slug)
+	if binding != "" {
+		return fmt.Errorf("template %s needs a managed database binding (%s) before its first start, so nothing was deployed. As README.md \"Configure and deploy\" shows: reserve the app with `gregale deploy --create-only --path . --dockerfile --name %s`, run `gregale postgres attach <database> %s --access migration --env %s`, wait until `gregale postgres bindings get <binding-id>` reports ready, run `gregale app egress-ports add %s 5432`, then deploy", tpl, binding, slug, slug, binding, slug)
 	}
 	return fmt.Errorf("%w; template %s cannot start without them. Pass --secrets-file <file> on the first deploy, or reserve the app with --create-only, set them with `gregale env set --app %s ...`, then deploy", missing, tpl, slug)
 }

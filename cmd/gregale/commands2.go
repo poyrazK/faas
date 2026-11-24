@@ -5862,9 +5862,7 @@ func cmdDomains(args []string) int {
 		}
 		if *slug == "" {
 			// Prod hunt r35: a linked checkout printed only the usage line.
-			if app, err := resolveAppFlagOrContext(""); err == nil {
-				*slug = app
-			}
+			*slug, *environment = linkedDomainTarget(*environment)
 		}
 		if *domain == "" || *slug == "" {
 			PrintUsage(os.Stderr, "usage: gregale domain create <domain> --app <slug> [--env <environment>]", "domains")

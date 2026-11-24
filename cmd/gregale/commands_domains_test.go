@@ -363,7 +363,7 @@ func TestDomainsAdd_PositionalDomainWithTrailingFlags(t *testing.T) {
 // usage line; it binds the domain to the linked app.
 func TestDomainsAdd_DefaultsToLinkedApp(t *testing.T) {
 	repo := t.TempDir()
-	for path, body := range map[string]string{".git/HEAD": "ref: refs/heads/main\n", "gregale.yaml": "project:\n  name: shop\n  app: shop-web\n"} {
+	for path, body := range map[string]string{".git/HEAD": "ref: refs/heads/main\n", ".gregale/project.json": `{"version":1,"project":"shop","app":"shop-web","environment":"staging"}`} {
 		if err := os.MkdirAll(filepath.Dir(filepath.Join(repo, path)), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -378,7 +378,8 @@ func TestDomainsAdd_DefaultsToLinkedApp(t *testing.T) {
 		t.Fatalf("exit = %d, want 0", code)
 	}
 	var request api.CreateCustomDomainRequest
-	if err := json.Unmarshal((*f.SawBody()), &request); err != nil || request.AppID != "shop-web" {
+	// Review of r35: the linked environment comes with the linked app.
+	if err := json.Unmarshal((*f.SawBody()), &request); err != nil || request.AppID != "shop-web" || request.Environment != "staging" {
 		t.Fatalf("request = %+v err=%v", request, err)
 	}
 }

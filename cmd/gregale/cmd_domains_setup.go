@@ -36,9 +36,7 @@ func cmdDomainsSetup(args []string) int {
 	if *slug == "" {
 		// Prod hunt r35: `domain list` points here, and a linked checkout
 		// printed only the usage line.
-		if app, err := resolveAppFlagOrContext(""); err == nil {
-			*slug = app
-		}
+		*slug, *environment = linkedDomainTarget(*environment)
 	}
 	if fs.NArg() != 1 || !validCLISlug(*slug) || *environment != "" && !api.ValidProjectEnvironmentSlug(*environment) {
 		PrintUsage(osStderr, domainsSetupUsage, "domains")

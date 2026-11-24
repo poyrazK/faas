@@ -809,3 +809,11 @@ func TestRequireTemplateSecretsBeforeFirstStart(t *testing.T) {
 		})
 	}
 }
+
+// A migration binding comes from `postgres attach`, never a secrets file, so a
+// data-api-starter deploy's secrets file need not name it (review of r35).
+func TestValidateTemplateSecretsLeavesBindingsOut(t *testing.T) {
+	if err := main.ValidateTemplateSecrets("data-api-starter", nil); err != nil {
+		t.Fatalf("data-api-starter secrets file refused: %v", err)
+	}
+}
