@@ -93,6 +93,19 @@ func TestAppArgumentRejectsTwoDifferentApps(t *testing.T) {
 	}
 }
 
+// Prod hunt r36: a deployment id after the verb was read as the app and
+// refused against --app as two different apps; it is the command's own id.
+func TestAppArgumentLeavesUUIDsToTheCommand(t *testing.T) {
+	t.Setenv("FAAS_TOKEN", "test-token")
+	oldOut, oldErr, oldIn := *main.OsStdout, *main.OsStderr, *main.OsStdin
+	t.Cleanup(func() { *main.OsStdout, *main.OsStderr, *main.OsStdin = oldOut, oldErr, oldIn })
+	const id = "c198a800-2184-41b4-a097-ca4f42de8e93"
+	_, request := appArgumentRun(t, []string{"release", "traffic", "promote", id, "--app", "zz-app"})
+	if !strings.Contains(request, id) {
+		t.Fatalf("first request %q does not name deployment %s", request, id)
+	}
+}
+
 func TestAppArgumentHelpSaysSo(t *testing.T) {
 	oldOut := *main.OsStdout
 	t.Cleanup(func() { *main.OsStdout = oldOut })

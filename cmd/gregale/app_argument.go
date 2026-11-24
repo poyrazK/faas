@@ -81,7 +81,10 @@ func appArgumentPosition(args []string, target string) (int, bool) {
 	if at >= len(args) || !takesAppArgument(flags, positionals, children, target) {
 		return 0, false
 	}
-	if token := args[at]; strings.HasPrefix(token, "-") || !api.ValidAppSlug(token) {
+	// A UUID is an id, never an app slug: `release traffic promote <id>
+	// --app web` became `--app <id> --app web` and was refused as two apps
+	// (prod hunt r36); the command reads the id itself.
+	if token := args[at]; strings.HasPrefix(token, "-") || !api.ValidAppSlug(token) || isUUIDArgument(token) {
 		return 0, false
 	}
 	return at, true
