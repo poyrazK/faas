@@ -6843,6 +6843,7 @@ haveApp:
 		}
 		if billingAttributed {
 			r = withBillingRoute(r, h.billingRouteSetFor(app.ID).admit(preLabel))
+			r = withPlanRoute(r, preLabel)
 		} else if jwtTenantPossible {
 			r = withBillingRouteCandidate(r, preLabel)
 		}

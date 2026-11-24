@@ -105,6 +105,7 @@ export type { APIConsumerPlanAssignmentResponse } from './models/APIConsumerPlan
 export type { APIConsumerPlanChangedWebhookPayload } from './models/APIConsumerPlanChangedWebhookPayload.js';
 export type { APIConsumerPlanListResponse } from './models/APIConsumerPlanListResponse.js';
 export type { APIConsumerPlanResponse } from './models/APIConsumerPlanResponse.js';
+export type { APIConsumerPlanRouteLimit } from './models/APIConsumerPlanRouteLimit.js';
 export type { APIConsumerRateCardListResponse } from './models/APIConsumerRateCardListResponse.js';
 export type { APIConsumerRateCardResponse } from './models/APIConsumerRateCardResponse.js';
 export type { APIConsumerRateCardTier } from './models/APIConsumerRateCardTier.js';

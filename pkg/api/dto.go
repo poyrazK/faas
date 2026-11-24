@@ -9697,8 +9697,8 @@ func (a *EdgeRuleJWTAction) Validate() *Problem {
 		if err := a.MCP.Validate(); err != nil {
 			return ErrValidation(err.Error())
 		}
-		if len(a.Audience) != 1 || a.Audience[0] != a.MCP.Resource {
-			return ErrValidation("MCP JWT audience must contain exactly the canonical resource")
+		if !validMCPJWTAudience(a.Audience, a.MCP) {
+			return ErrValidation("MCP JWT audience must contain exactly the canonical resource, or the policy's declared audience")
 		}
 		u, err := url.Parse(a.Issuer)
 		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
@@ -14492,4 +14492,11 @@ type SelectedTraceLookupResponse struct {
 	InvocationsStatus    string                    `json:"invocations_status"`
 	InvocationsTruncated bool                      `json:"invocations_truncated"`
 	Partial              bool                      `json:"partial"`
+}
+
+// validMCPJWTAudience accepts exactly one audience: the canonical resource
+// (RFC 8707), or the audience the policy declares for an external issuer
+// (MCPResourcePolicy.Audience, ADR-20261123192254).
+func validMCPJWTAudience(audience []string, p *MCPResourcePolicy) bool {
+	return len(audience) == 1 && (audience[0] == p.Resource || p.Audience != "" && audience[0] == p.Audience)
 }

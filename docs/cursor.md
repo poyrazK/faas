@@ -75,8 +75,10 @@ The command returns when the previous release serves again. See
 ## The MCP server (preview)
 
 Gregale's hosted MCP server, in preview, gives Cursor Gregale's tools without
-the CLI. `gregale mcp connect --client cursor` adds it to `~/.cursor/mcp.json`,
-keeping your other servers. To add it yourself:
+the CLI.
+[Add Gregale to Cursor](https://cursor.com/en/install-mcp?name=gregale&config=eyJ1cmwiOiJodHRwczovL2FwaS5ncmVnYWxlLmRldi9tY3AifQ==)
+in one click, or run `gregale mcp connect --client cursor` to add it to
+`~/.cursor/mcp.json`, keeping your other servers. To add it yourself:
 
 ```json
 {
