@@ -290,6 +290,21 @@ const (
 	ObsMemoryPressureWindowMax       = 7 * 24 * time.Hour
 )
 
+// Operator gateway traffic report (ADR-20261124093000). The report reads
+// gatewayd's Prometheus series over the window under
+// ObsGatewayTrafficPrometheusBudget, or ObsGatewayTrafficLongWindowBudget
+// for windows over ObsGatewayTrafficShortWindowMax, and lists the
+// ObsGatewayTrafficAppsMax most affected apps.
+const (
+	ObsGatewayTrafficAppsMax          = 25
+	ObsGatewayTrafficWindowDefault    = time.Hour
+	ObsGatewayTrafficWindowMin        = 5 * time.Minute
+	ObsGatewayTrafficWindowMax        = 7 * 24 * time.Hour
+	ObsGatewayTrafficPrometheusBudget = 3 * time.Second
+	ObsGatewayTrafficShortWindowMax   = 24 * time.Hour
+	ObsGatewayTrafficLongWindowBudget = 10 * time.Second
+)
+
 // Customer attention signals (ADR-20261113123000): when a customer is
 // probably stuck. Thresholds are platform-wide, not per plan.
 const (
@@ -1352,6 +1367,15 @@ const ManagedPostgresHistoryMonthSeconds int64 = 744 * 3600
 func ManagedPostgresIncludedHistoryBytes(storagePoolBytes int64) int64 {
 	return max(storagePoolBytes, 0)
 }
+
+// ManagedPostgresHistoryLimitFactor and
+// ManagedPostgresHistoryLimitedRestoreWindow bound the restore history of a
+// subject with overage off (ADR-20261123062111 D2): once its month-to-date
+// restore history and snapshots pass this many times its included history,
+// its databases keep only this restore window until the 1st of the next UTC
+// month, or until overage is turned on.
+const ManagedPostgresHistoryLimitFactor = 2
+const ManagedPostgresHistoryLimitedRestoreWindow = 24 * time.Hour
 
 // Production managed PostgreSQL provisioning (ADR-20261028103115). An
 // operator approval pins one backend for at most the approval window; the
@@ -9921,6 +9945,13 @@ const (
 	GatewaydInternalControlReadTimeoutSecondsDefault  = 30 // control + unix-socket
 	GatewaydInternalControlWriteTimeoutSecondsDefault = 30 // control + unix-socket
 	GatewaydInternalControlIdleTimeoutSecondsDefault  = 60 // control + unix-socket keep-alive
+	// GatewaydInternalGuestServiceIdleTimeoutSecondsDefault closes a guest's
+	// idle connection to the service proxy (<name>.svc.gregale:10081/10080,
+	// and its HTTPS alias). Those connections carry no TCP keepalive: with
+	// Go's default of one probe every 15 s, an app holding idle service
+	// connections was woken from quiet pause four times a minute, and so was
+	// each close and the client's reconnect (ADR-384 amendment 1).
+	GatewaydInternalGuestServiceIdleTimeoutSecondsDefault = 300
 
 	// VmmdLocalDataSocket is where vmmd serves its own node's
 	// gatewayd-internal without TLS, admitting only GatewaydInternalUser by

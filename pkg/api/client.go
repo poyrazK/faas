@@ -1026,8 +1026,9 @@ func (c *Client) GetAPIConsumerRateCard(ctx context.Context, slug, rateCardID st
 // consumer usage and usage-quote methods. Empty bounds use the server's
 // trailing-30d default.
 type APIConsumerUsageOptions struct {
-	Since string
-	Until string
+	Since     string
+	Until     string
+	Breakdown bool
 }
 
 // GetAPIConsumerUsage returns durable minute usage for one stable API
@@ -1042,6 +1043,9 @@ func (c *Client) GetAPIConsumerUsage(ctx context.Context, slug, consumerID strin
 	}
 	if opts.Until != "" {
 		q.Set("until", opts.Until)
+	}
+	if opts.Breakdown {
+		q.Set("breakdown", "true")
 	}
 	if len(q) > 0 {
 		path += "?" + q.Encode()
@@ -1059,6 +1063,9 @@ func (c *Client) GetAPIConsumerUsageQuote(ctx context.Context, slug, consumerID 
 	}
 	if opts.Until != "" {
 		q.Set("until", opts.Until)
+	}
+	if opts.Breakdown {
+		q.Set("breakdown", "true")
 	}
 	if len(q) > 0 {
 		path += "?" + q.Encode()

@@ -951,6 +951,7 @@ type ApiConsumerRateCard struct {
 	BaseFeeMillicentsPerMonth int64
 	MinimumMillicentsPerMonth int64
 	ProrateMonthlyFees        bool
+	ModelPrices               []byte
 }
 
 // Billable units per consumer, bounded route label, and UTC minute; per-minute totals stay in api_consumer_usage_minutes.
@@ -1099,6 +1100,7 @@ type ApiConsumerUsageStatement struct {
 	Revision                int32
 	CreditAppliedMillicents int64
 	Fees                    []byte
+	Waiver                  []byte
 }
 
 type ApiConsumerUsageStatementHandoff struct {
@@ -15312,6 +15314,8 @@ type RequestAnalyticsAppGap struct {
 	LastGapAt    pgtype.Timestamptz
 	PendingCount int32
 	UpdatedAt    pgtype.Timestamptz
+	DroppedTotal int64
+	PendingSince pgtype.Timestamptz
 }
 
 type RequestAnalyticsCoverageGap struct {
@@ -15621,6 +15625,7 @@ type RequestTelemetryAppGap struct {
 	PendingCount int32
 	DroppedTotal int64
 	UpdatedAt    pgtype.Timestamptz
+	PendingSince pgtype.Timestamptz
 }
 
 type RequestTelemetryCoverage struct {
@@ -15637,6 +15642,7 @@ type RequestTelemetryCoverage struct {
 	AppScoped                bool
 	UnattributedDroppedTotal int64
 	UnattributedPendingCount int32
+	CleanStopAt              pgtype.Timestamptz
 }
 
 type RequestTelemetryDefault struct {

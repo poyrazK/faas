@@ -1560,14 +1560,42 @@ type APIConsumerUsageBucketResponse struct {
 // retained separately under the internal __anonymous__ key and is never
 // exposed through this consumer-specific endpoint.
 type APIConsumerUsageResponse struct {
-	ConsumerID    string                           `json:"consumer_id"`
-	PeriodStart   time.Time                        `json:"period_start"`
-	PeriodEnd     time.Time                        `json:"period_end"`
-	RequestCount  int64                            `json:"request_count"`
-	ErrorCount    int64                            `json:"error_count"`
-	BillableUnits int64                            `json:"billable_units"`
-	Buckets       []APIConsumerUsageBucketResponse `json:"buckets"`
-	AsOf          string                           `json:"as_of"`
+	ConsumerID     string                           `json:"consumer_id"`
+	PeriodStart    time.Time                        `json:"period_start"`
+	PeriodEnd      time.Time                        `json:"period_end"`
+	RequestCount   int64                            `json:"request_count"`
+	ErrorCount     int64                            `json:"error_count"`
+	BillableUnits  int64                            `json:"billable_units"`
+	Buckets        []APIConsumerUsageBucketResponse `json:"buckets"`
+	AsOf           string                           `json:"as_of"`
+	RouteBreakdown []APIConsumerRouteUsage          `json:"route_breakdown,omitempty"`
+	MeterBreakdown []APIConsumerMeterUsage          `json:"meter_breakdown,omitempty"`
+}
+
+// APIConsumerRouteUsage gives unweighted billable requests by route template.
+type APIConsumerRouteUsage struct {
+	Route            string `json:"route"`
+	BillableRequests int64  `json:"billable_requests"`
+}
+
+// APIConsumerMeterUsage reports the names and counts supplied by the app.
+type APIConsumerMeterUsage struct {
+	Meter string `json:"meter"`
+	Units int64  `json:"units"`
+}
+
+type APIConsumerQuoteBreakdown struct {
+	WaivedUnits            int64  `json:"waived_units,omitempty"`
+	Route                  string `json:"route,omitempty"`
+	Unit                   string `json:"unit"`
+	Model                  string `json:"model,omitempty"`
+	RateCardID             string `json:"rate_card_id,omitempty"`
+	PriceMillicentsPerUnit int64  `json:"price_millicents_per_unit"`
+	BillableUnits          int64  `json:"billable_units"`
+	IncludedUnits          int64  `json:"included_units"`
+	ChargedUnits           int64  `json:"charged_units"`
+	AmountMillicents       int64  `json:"amount_millicents"`
+	Trial                  bool   `json:"trial,omitempty"`
 }
 
 // CreateAPIConsumerRateCardRequest creates an immutable app-level request
@@ -1585,6 +1613,7 @@ type CreateAPIConsumerRateCardRequest struct {
 	// RouteWeights counts each request on a listed "METHOD /template" route
 	// as that many units (ADR-952); unlisted routes count 1.
 	RouteWeights map[string]int64 `json:"route_weights,omitempty"`
+	ModelPrices  map[string]int64 `json:"model_prices,omitempty"`
 	// PlanID adds the version to a consumer plan's price history (ADR-953);
 	// empty prices the app default plan.
 	PlanID        string     `json:"plan_id,omitempty"`
@@ -1629,6 +1658,7 @@ type APIConsumerRateCardResponse struct {
 	Tiers                  []APIConsumerRateCardTier `json:"tiers,omitempty"`
 	TierMode               string                    `json:"tier_mode"`
 	RouteWeights           map[string]int64          `json:"route_weights,omitempty"`
+	ModelPrices            map[string]int64          `json:"model_prices,omitempty"`
 	PlanID                 string                    `json:"plan_id,omitempty"`
 	// Monthly base fee and minimum spend per consumer (ADR-1316), prorated
 	// in a consumer's first month when prorate_monthly_fees (ADR-1325).
@@ -1648,6 +1678,8 @@ type APIConsumerRateCardListResponse struct {
 // APIConsumerUsageQuoteBucketResponse is one usage minute priced by the rate
 // card effective at that minute. An empty rate_card_id marks unpriced usage.
 type APIConsumerUsageQuoteBucketResponse struct {
+	WaivedUnits            int64     `json:"waived_units,omitempty"`
+	Model                  string    `json:"model,omitempty"`
 	WindowStart            time.Time `json:"window_start"`
 	BillableUnits          int64     `json:"billable_units"`
 	RateCardID             string    `json:"rate_card_id,omitempty"`
@@ -1678,18 +1710,41 @@ type APIConsumerUsageQuoteResponse struct {
 	Priced           bool                                  `json:"priced"`
 	Buckets          []APIConsumerUsageQuoteBucketResponse `json:"buckets"`
 	AsOf             string                                `json:"as_of"`
+	RouteBreakdown   []APIConsumerQuoteBreakdown           `json:"route_breakdown,omitempty"`
+	MeterBreakdown   []APIConsumerQuoteBreakdown           `json:"meter_breakdown,omitempty"`
 }
 
-// CreateAPIConsumerUsageStatementRequest snapshots the usage quote for an
-// explicit UTC-minute period. The natural period key makes retries safe.
+// APIConsumerUsageWaiverRequest selects the exact unpriced model units an
+// administrator approved from one draft.
+type APIConsumerUsageWaiverRequest struct {
+	SourceStatementID string    `json:"source_statement_id"`
+	Unit              string    `json:"unit"`
+	Model             string    `json:"model"`
+	Since             time.Time `json:"since"`
+	Until             time.Time `json:"until"`
+	Units             int64     `json:"units"`
+	Reason            string    `json:"reason"`
+}
+
+type APIConsumerUsageWaiverResponse struct {
+	APIConsumerUsageWaiverRequest
+	ApprovedBy string    `json:"approved_by"`
+	ApprovedAt time.Time `json:"approved_at"`
+}
+
+// CreateAPIConsumerUsageStatementRequest snapshots usage or approves a waiver
+// for an explicit UTC-minute period.
 type CreateAPIConsumerUsageStatementRequest struct {
-	PeriodStart *time.Time `json:"period_start"`
-	PeriodEnd   *time.Time `json:"period_end"`
+	Waiver      *APIConsumerUsageWaiverRequest `json:"waiver,omitempty"`
+	PeriodStart *time.Time                     `json:"period_start"`
+	PeriodEnd   *time.Time                     `json:"period_end"`
 }
 
 // APIConsumerUsageStatementBucketResponse is one bucket in a durable usage
 // statement. Empty pricing fields indicate explicitly unpriced usage.
 type APIConsumerUsageStatementBucketResponse struct {
+	WaivedUnits            int64     `json:"waived_units,omitempty"`
+	Model                  string    `json:"model,omitempty"`
 	WindowStart            time.Time `json:"window_start"`
 	BillableUnits          int64     `json:"billable_units"`
 	RateCardID             string    `json:"rate_card_id,omitempty"`
@@ -1725,6 +1780,7 @@ type APIConsumerStatementFeeResponse struct {
 // usage_statement.finalized webhook. Revision orders the snapshots of one
 // period; revisions after a finalized one carry only later usage.
 type APIConsumerUsageStatementResponse struct {
+	Waiver           *APIConsumerUsageWaiverResponse           `json:"waiver,omitempty"`
 	ID               string                                    `json:"id"`
 	ConsumerID       string                                    `json:"consumer_id"`
 	PeriodStart      time.Time                                 `json:"period_start"`
@@ -2318,6 +2374,9 @@ type AppResponse struct {
 	// dashboards can show the "auth required" pill alongside
 	// streaming / warm-snapshot / require_signed.
 	RequireAuthn bool `json:"require_authn"`
+	// DeclaredAccess is the access the app's source declares ("public" or
+	// "key"), applied on every deploy; omitted when it declares none.
+	DeclaredAccess string `json:"declared_access,omitempty"`
 	// ConsumerAuthMode (ADR-120) is the app-level end-customer credential
 	// policy. It is "optional" by default and becomes "required" when the
 	// app owner wants every request attributed to a consumer identity.
@@ -5624,7 +5683,7 @@ func ValidateAppCPUMillicores(cpuMillicores int) *Problem {
 		return nil
 	}
 	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidAppCPU,
-		"Invalid CPU", "cpu_millicores must be one of: 250, 500, 1000")
+		"Invalid CPU", "cpu_millicores must be one of: 250, 500, 1000").WithDocs(docsBase + "/plans#what-each-limit-means")
 }
 
 // --- G6 account self-service (spec §17 G6, ADR-021) -------------------------
@@ -7882,6 +7941,11 @@ type PlanWorkload struct {
 	// public edge: an existing internal app, or a new Compose service without
 	// `ports:` (ADR-20261022131852). Omitted means public.
 	Visibility AppVisibility `json:"visibility,omitempty"`
+	// Access is the service's declared public-URL access
+	// (ADR-20261124090000): "public" or "key", from gregale.yaml
+	// project.services.<name>.access or Compose x-gregale-access. Omitted
+	// when nothing is declared.
+	Access string `json:"access,omitempty"`
 
 	Class           string   `json:"class,omitempty"`
 	Schedule        string   `json:"schedule,omitempty"`
@@ -14499,4 +14563,25 @@ type SelectedTraceLookupResponse struct {
 // (MCPResourcePolicy.Audience, ADR-20261123192254).
 func validMCPJWTAudience(audience []string, p *MCPResourcePolicy) bool {
 	return len(audience) == 1 && (audience[0] == p.Resource || p.Audience != "" && audience[0] == p.Audience)
+}
+
+// AppNameReportResponse is GET /v1/admin/app-names/report: the existing apps
+// whose names an app name blocklist matches. source is "live"
+// (app_name_blocklist) or "preview" (the request's ?blocklist=). Nothing is
+// changed; truncated means more apps matched than were listed.
+type AppNameReportResponse struct {
+	Source    string               `json:"source"`
+	Entries   int                  `json:"entries"`
+	Matches   []AppNameReportMatch `json:"matches"`
+	Truncated bool                 `json:"truncated"`
+}
+
+// AppNameReportMatch is one existing app a blocklist entry matches.
+type AppNameReportMatch struct {
+	Slug      string `json:"slug"`
+	AppID     string `json:"app_id"`
+	AccountID string `json:"account_id"`
+	OrgID     string `json:"org_id,omitempty"`
+	Status    string `json:"status"`
+	Entry     string `json:"entry"`
 }

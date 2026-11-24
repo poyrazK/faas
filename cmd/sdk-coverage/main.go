@@ -2689,6 +2689,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/admin/egress-flows":       "ListEgressFlows",
 	"GET /v1/admin/accounts/{id}/risk": "GetAccountRisk",
 	"GET /v1/admin/held-links":         "ListHeldLinks",
+	"GET /v1/admin/app-names/report":   "GetAppNameReport",
 	// ADR-361 account abuse hold. The literal hyphen in "abuse-hold" makes
 	// the auto-derived name an illegal Go identifier; the SDK follows the
 	// spec operationIds placeAccountAbuseHold / releaseAccountAbuseHold.

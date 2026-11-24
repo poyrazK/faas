@@ -20,6 +20,19 @@ import (
 // others belong to another account (GET answers 404, POST 409).
 func slugOwnersServer(t *testing.T, mine, others map[string]bool) (*httptest.Server, *[]string) {
 	t.Helper()
+	return slugOwnersServerWithDeleted(t, mine, others, nil)
+}
+
+// slugOwnersServerWithDeleted is slugOwnersServer where deleted are slugs the
+// caller's own deleted apps still hold (GET 404, POST 409, listed in
+// /v1/deleted-apps).
+func slugOwnersServerWithDeleted(t *testing.T, mine, others map[string]bool, deleted []string) (*httptest.Server, *[]string) {
+	t.Helper()
+	deletedApps := []api.DeletedAppSummary{}
+	for _, slug := range deleted {
+		others[slug] = true
+		deletedApps = append(deletedApps, api.DeletedAppSummary{ID: "del-" + slug, Slug: slug, RestoreEligible: true})
+	}
 	var mu sync.Mutex
 	var created []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -35,7 +48,7 @@ func slugOwnersServer(t *testing.T, mine, others map[string]bool) (*httptest.Ser
 			_, _ = io.WriteString(w, `{"id":"acct-1","email":"x@example.com","plan":"free","status":"active"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/deleted-apps":
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"apps":[]}`)
+			_ = json.NewEncoder(w).Encode(map[string]any{"apps": deletedApps})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps":
 			var req api.CreateAppRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
@@ -102,6 +115,28 @@ func TestDeployFreeNameMakesNoAlternativeCalls(t *testing.T) {
 	}
 	if strings.Join(paths, ",") != "GET /v1/apps/shop,POST /v1/apps" {
 		t.Fatalf("calls %v; want one lookup and one create", paths)
+	}
+}
+
+// The caller deleted their suffixed app; it holds its slug for the restore
+// window. The next deploy of the name takes the next alternative instead of
+// failing on the deleted one.
+func TestDeploySkipsOwnDeletedAlternative(t *testing.T) {
+	alts := api.SuffixedAppSlugs("acct-1", "shop", 3)
+	srv, created := slugOwnersServerWithDeleted(t, map[string]bool{}, map[string]bool{"shop": true}, []string{alts[0]})
+	got, err := main.DeployAppWithAlternatives(context.Background(), main.NewClient(srv.URL, "fp_live_x"), "shop", "")
+	if err != nil || got != alts[1] || len(*created) != 1 {
+		t.Fatalf("got %q, %v, created %v; want %q", got, err, *created, alts[1])
+	}
+}
+
+// The name asked for itself held by the caller's own deleted app keeps the
+// restore hint: no suffix.
+func TestDeployOwnDeletedNameKeepsRestoreHint(t *testing.T) {
+	srv, created := slugOwnersServerWithDeleted(t, map[string]bool{}, map[string]bool{}, []string{"shop"})
+	_, err := main.DeployAppWithAlternatives(context.Background(), main.NewClient(srv.URL, "fp_live_x"), "shop", "")
+	if err == nil || !strings.Contains(err.Error(), "app restore shop") || len(*created) != 0 {
+		t.Fatalf("err %v, created %v; want the restore hint and no create", err, *created)
 	}
 }
 

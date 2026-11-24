@@ -1623,3 +1623,116 @@ type ServiceCapacityProtection struct {
 	FailoverSlots        int64  `json:"failover_slots"`
 	PlacementsFit        bool   `json:"placements_fit"`
 }
+
+// ObsGatewayTrafficReport is the operator gateway traffic report
+// (ADR-20261124093000): what happened to requests in the window, read from
+// gatewayd's Prometheus series. Source is observed, partial (FailedQueries
+// names the reads that failed; their sections are empty), unavailable or
+// not_configured. Counts are increase() over the window, rounded; HeldNow
+// and AdmissionLeadersNow are the current gauges.
+type ObsGatewayTrafficReport struct {
+	AsOf           time.Time                  `json:"as_of"`
+	WindowSeconds  int                        `json:"window_seconds"`
+	Source         string                     `json:"source"`
+	FailedQueries  []string                   `json:"failed_queries"`
+	Totals         ObsGatewayTrafficTotals    `json:"totals"`
+	Nodes          []ObsGatewayNodeTraffic    `json:"nodes"`
+	Statuses       []ObsGatewayStatusCount    `json:"statuses"`
+	WakeAdmission  []ObsGatewayAdmissionCount `json:"wake_admission"`
+	EdgeRejections []ObsGatewayEdgeRejection  `json:"edge_rejections"`
+	EdgeRefusals   []ObsGatewayReasonCount    `json:"edge_refusals"`
+	RetryExhausted []ObsGatewayReasonCount    `json:"retry_exhausted"`
+	Apps           []ObsGatewayAppTraffic     `json:"apps"`
+}
+
+// ObsGatewayTrafficTotals sums the fleet. PlatformErrors are 5xx the gateway
+// produced before the guest sent a byte; CapacityRefusals are 429s for an app
+// with no capacity. The Wake* counts are wake admission outcomes: an app's
+// own wake queue full, the gateway-wide wake queue full, and waits that timed
+// out.
+type ObsGatewayTrafficTotals struct {
+	Nodes                    int     `json:"nodes"`
+	Requests                 int64   `json:"requests"`
+	Status2xx                int64   `json:"status_2xx"`
+	Status3xx                int64   `json:"status_3xx"`
+	Status4xx                int64   `json:"status_4xx"`
+	Status5xx                int64   `json:"status_5xx"`
+	Status429                int64   `json:"status_429"`
+	Status502                int64   `json:"status_502"`
+	Status503                int64   `json:"status_503"`
+	Status504                int64   `json:"status_504"`
+	ErrorRatePercent         float64 `json:"error_rate_percent"`
+	PlatformErrors           int64   `json:"platform_errors"`
+	PlatformErrorRatePercent float64 `json:"platform_error_rate_percent"`
+	CapacityRefusals         int64   `json:"capacity_refusals"`
+	WakesAdmitted            int64   `json:"wakes_admitted"`
+	WakeAppQueueFull         int64   `json:"wake_app_queue_full"`
+	WakeGatewayQueueFull     int64   `json:"wake_gateway_queue_full"`
+	WakeQueueTimeouts        int64   `json:"wake_queue_timeouts"`
+	HeldNow                  int64   `json:"held_now"`
+	AdmissionLeadersNow      int64   `json:"admission_leaders_now"`
+}
+
+// ObsGatewayNodeTraffic is one node's gateway, by the scrape target's node
+// label (empty when the target has none). OverloadLevel is the compute
+// edge's 0–1 overload level when it reports one.
+type ObsGatewayNodeTraffic struct {
+	Node             string   `json:"node"`
+	Requests         int64    `json:"requests"`
+	Status5xx        int64    `json:"status_5xx"`
+	ErrorRatePercent float64  `json:"error_rate_percent"`
+	PlatformErrors   int64    `json:"platform_errors"`
+	CapacityRefusals int64    `json:"capacity_refusals"`
+	HeldNow          int64    `json:"held_now"`
+	OverloadLevel    *float64 `json:"overload_level,omitempty"`
+}
+
+// ObsGatewayStatusCount is one full HTTP status code's count.
+type ObsGatewayStatusCount struct {
+	Code  string `json:"code"`
+	Count int64  `json:"count"`
+}
+
+// ObsGatewayAdmissionCount is one wake admission outcome for a plan:
+// admitted, app_queue_full, gateway_queue_full, queue_timeout, canceled or
+// error.
+type ObsGatewayAdmissionCount struct {
+	Plan    string `json:"plan"`
+	Outcome string `json:"outcome"`
+	Count   int64  `json:"count"`
+}
+
+// ObsGatewayEdgeRejection is requests an edge gate answered before wake, by
+// gate kind and status.
+type ObsGatewayEdgeRejection struct {
+	Kind   string `json:"kind"`
+	Status string `json:"status"`
+	Count  int64  `json:"count"`
+}
+
+// ObsGatewayReasonCount is a count by reason.
+type ObsGatewayReasonCount struct {
+	Reason string `json:"reason"`
+	Count  int64  `json:"count"`
+}
+
+// ObsGatewayAppTraffic is one of the most affected apps. UnknownHost marks
+// gatewayd's row for hosts that name no app. Requests is read for exactly the
+// listed apps; it is 0 when that read failed (FailedQueries names
+// app_requests).
+type ObsGatewayAppTraffic struct {
+	AppID            string  `json:"app_id"`
+	AppSlug          string  `json:"app_slug,omitempty"`
+	AccountID        string  `json:"account_id,omitempty"`
+	Plan             string  `json:"plan,omitempty"`
+	UnknownHost      bool    `json:"unknown_host,omitempty"`
+	Requests         int64   `json:"requests"`
+	Status5xx        int64   `json:"status_5xx"`
+	Status502        int64   `json:"status_502"`
+	Status503        int64   `json:"status_503"`
+	Status504        int64   `json:"status_504"`
+	ErrorRatePercent float64 `json:"error_rate_percent"`
+	PlatformErrors   int64   `json:"platform_errors"`
+	CapacityRefusals int64   `json:"capacity_refusals"`
+	HeldNow          int64   `json:"held_now"`
+}

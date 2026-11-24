@@ -1508,6 +1508,10 @@ func createOrFetchAppWith(ctx context.Context, client *Client, req, existingReq 
 	if !errors.As(err, &ae) || ae.Problem.Status != http.StatusConflict {
 		return err
 	}
+	if ae.Problem.Code == api.CodeAppNameUnavailable {
+		// app_name_blocklist: nobody holds the name; it is not offered.
+		return &slugTakenError{slug: req.Slug, unavailable: true}
+	}
 	existing, err = client.GetApp(ctx, req.Slug)
 	if err != nil {
 		return slugInUseError(ctx, client, req.Slug)
@@ -1524,19 +1528,35 @@ func createOrFetchAppWith(ctx context.Context, client *Client, req, existingReq 
 func slugInUseError(ctx context.Context, client *Client, slug string) error {
 	if app, err := findDeletedApp(ctx, client, slug); err == nil && app != nil {
 		if app.RestoreEligible {
-			return fmt.Errorf("slug %q belongs to an app you deleted%s; restore it with `gregale app restore %s`, free the name now with `gregale app purge %s`, or pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " that can be restored until "), slug, slug)
+			return &ownDeletedSlugError{msg: fmt.Sprintf("slug %q belongs to an app you deleted%s; restore it with `gregale app restore %s`, free the name now with `gregale app purge %s`, or pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " that can be restored until "), slug, slug)}
 		}
-		return fmt.Errorf("slug %q is held by an app you deleted until it is purged%s; free it now with `gregale app purge %s`, or pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " after "), slug)
+		return &ownDeletedSlugError{msg: fmt.Sprintf("slug %q is held by an app you deleted until it is purged%s; free it now with `gregale app purge %s`, or pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " after "), slug)}
 	}
 	return &slugTakenError{slug: slug}
 }
 
+// ownDeletedSlugError is a 409 on create for a slug one of the caller's own
+// deleted apps still holds. A deploy that asked for the name gets the
+// restore/purge hint; a suffixed alternative held this way is skipped
+// (createOrFetchAppWithAlternatives).
+type ownDeletedSlugError struct{ msg string }
+
+func (e *ownDeletedSlugError) Error() string { return e.msg }
+
 // slugTakenError is a 409 on create for a slug the caller does not hold:
 // another owner has it. A deploy may then take an alternative name
 // (createOrFetchAppWithAlternatives).
-type slugTakenError struct{ slug string }
+type slugTakenError struct {
+	slug string
+	// unavailable: the platform does not offer the name (app_name_blocklist)
+	// rather than another owner holding it.
+	unavailable bool
+}
 
 func (e *slugTakenError) Error() string {
+	if e.unavailable {
+		return fmt.Sprintf("app name %q is not available; pick a different --name", e.slug)
+	}
 	return fmt.Sprintf("slug %q is already in use; pick a different --name", e.slug)
 }
 
@@ -3511,11 +3531,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 		requestedSlug := slug
 		var createErr error
-		slug, createErr = createOrFetchAppWithAlternatives(ctx, client, createReq, createReq, sourceDir, nil, requireAuthnPtr, appProtocolPtr, publicAuthPtr, nil)
+		var nameUnavailable bool
+		slug, nameUnavailable, createErr = createOrFetchAppWithAlternatives(ctx, client, createReq, createReq, sourceDir, nil, requireAuthnPtr, appProtocolPtr, publicAuthPtr, nil)
 		if createErr != nil {
 			return printErr("Could not create or fetch app", createErr)
 		}
-		printSlugAlternativeNotice(requestedSlug, slug)
+		printSlugAlternativeNotice(requestedSlug, slug, nameUnavailable)
 		if jsonOutput {
 			return jsonOut(writeJSON(map[string]any{"slug": slug, "status": "ready"}))
 		}
@@ -4424,13 +4445,19 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 					return guardUnlinkedExistingApp(ctx, client, alt, contextDir, *yes) == 0
 				}
 			}
+			if *environment == "" {
+				if accessErr := checkManifestAccessFlags(ctx, client, slug, sourceDir, *requireAuthn, *noRequireAuthn); accessErr != nil {
+					return printErr("Manifest access conflicts with a flag", accessErr)
+				}
+			}
 			requestedSlug := slug
-			slug, err = createOrFetchAppWithAlternatives(ctx, client, createReq, existingReq, sourceDir, confirmExisting, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
+			var nameUnavailable bool
+			slug, nameUnavailable, err = createOrFetchAppWithAlternatives(ctx, client, createReq, existingReq, sourceDir, confirmExisting, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
 			if errors.Is(err, errDeployToAlternativeDeclined) {
 				return 1
 			}
 			if err == nil {
-				printSlugAlternativeNotice(requestedSlug, slug)
+				printSlugAlternativeNotice(requestedSlug, slug, nameUnavailable)
 			}
 			if err == nil && creating {
 				rememberCreatedApp(contextDir, slug)
@@ -5635,6 +5662,9 @@ func cmdTrafficStatus(args []string) int {
 		return 1
 	}
 	positional, err := mergeAppFlag(positional, strings.TrimSpace(*app), 1)
+	if err == nil {
+		positional = withLinkedApp(positional, 1)
+	}
 	if err != nil {
 		return printErr("Invalid arguments", err)
 	}
@@ -5817,7 +5847,7 @@ func cmdDomains(args []string) int {
 	case subAdd:
 		fs := newFlagSet("domains add", flag.ContinueOnError)
 		domain := fs.String("domain", "", "domain to attach (or pass it as the first argument)")
-		slug := fs.String("app", "", "app slug to attach to (required)")
+		slug := fs.String("app", "", "app slug to attach to (defaults to linked context)")
 		environment := fs.String("environment", "", "project environment to route this domain to")
 		// Every other domains subcommand takes <domain> positionally, so
 		// accept `domains add <domain> --app <slug>` too, with flags before
@@ -5842,6 +5872,10 @@ func cmdDomains(args []string) int {
 		} else if fs.NArg() != 0 {
 			PrintUsage(os.Stderr, "usage: gregale domain create <domain> --app <slug> [--env <environment>]", "domains")
 			return 1
+		}
+		if *slug == "" {
+			// Prod hunt r35: a linked checkout printed only the usage line.
+			*slug, *environment = linkedDomainTarget(*environment)
 		}
 		if *domain == "" || *slug == "" {
 			PrintUsage(os.Stderr, "usage: gregale domain create <domain> --app <slug> [--env <environment>]", "domains")
@@ -5957,7 +5991,7 @@ func cmdCrons(args []string) int {
 			return cmdDelayedTaskList(rest)
 		}
 		fs := newFlagSet("crons-list", flag.ContinueOnError)
-		slug := fs.String("app", "", "app slug (required without -l)")
+		slug := fs.String("app", "", "app slug (defaults to the linked app; optional with -l)")
 		selector := addSelectorFlag(fs)
 		if err := fs.Parse(args[1:]); err != nil {
 			return 1
@@ -5965,8 +5999,12 @@ func cmdCrons(args []string) int {
 		if rejectUnexpectedFlagArgs(fs) {
 			return 1
 		}
+		if *selector == "" {
+			// A selector spans the account; only a plain list takes the link.
+			fillLinkedApp(slug)
+		}
 		if *slug == "" && *selector == "" {
-			PrintUsage(os.Stderr, "usage: gregale cron list --app <slug> | -l SELECTOR [--app <slug>]", "crons")
+			PrintUsage(os.Stderr, "usage: gregale cron list [--app <slug>] | -l SELECTOR [--app <slug>]", "crons")
 			return 1
 		}
 		client, err := authedClient()

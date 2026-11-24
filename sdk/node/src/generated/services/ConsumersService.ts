@@ -105,6 +105,7 @@ export class ConsumersService {
     slug,
     since,
     until,
+    breakdown = false,
   }: {
     /**
      * The app whose usage is read.
@@ -118,6 +119,10 @@ export class ConsumersService {
      * RFC 3339 end, at most 31 days after since (default now).
      */
     until?: string,
+    /**
+     * Include totals for your consumer, grouped by route and meter.
+     */
+    breakdown?: boolean,
   }): CancelablePromise<ConsumerBillingUsageResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
@@ -128,6 +133,7 @@ export class ConsumersService {
       query: {
         'since': since,
         'until': until,
+        'breakdown': breakdown,
       },
       errors: {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
@@ -648,6 +654,7 @@ export class ConsumersService {
     consumerId,
     since,
     until,
+    breakdown = false,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -665,6 +672,10 @@ export class ConsumersService {
      * RFC3339 exclusive upper bound, snapped to UTC midnight. Defaults to the next UTC midnight, so today is included.
      */
     until?: string,
+    /**
+     * Include separate usage totals by route and meter.
+     */
+    breakdown?: boolean,
   }): CancelablePromise<APIConsumerUsageResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
@@ -676,6 +687,7 @@ export class ConsumersService {
       query: {
         'since': since,
         'until': until,
+        'breakdown': breakdown,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
@@ -699,6 +711,7 @@ export class ConsumersService {
     consumerId,
     since,
     until,
+    breakdown = false,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -716,6 +729,10 @@ export class ConsumersService {
      * Optional RFC3339 exclusive upper bound for the quote period; defaults to the next UTC midnight, so today is included.
      */
     until?: string,
+    /**
+     * Include priced usage totals by route and meter.
+     */
+    breakdown?: boolean,
   }): CancelablePromise<APIConsumerUsageQuoteResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
@@ -727,6 +744,7 @@ export class ConsumersService {
       query: {
         'since': since,
         'until': until,
+        'breakdown': breakdown,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
@@ -823,8 +841,8 @@ export class ConsumersService {
   }
   /**
    * Snapshot an API consumer usage quote or create a late-usage adjustment.
-   * Creates an immutable, auditable statement revision for the explicit UTC-minute period. An unchanged draft replays. If usage or effective prices changed, the open draft becomes superseded and a new draft revision is created. After finalization, new units create the next revision containing only those units; no new units replay the latest revision. Finalized revisions are never rewritten.
-   * @returns APIConsumerUsageStatementResponse The latest existing revision; the period has no new usage or the draft is unchanged.
+   * Creates an immutable statement revision for the explicit UTC-minute period. An unchanged draft replays. Changes supersede an open draft and late usage after finalization creates an adjustment. An administrator can submit a waiver for the exact unpriced model units on the latest held draft. The waiver records zero-charge coverage for those units in a new revision. Repeating the approval returns its revision. Additional unpriced units require a new approval.
+   * @returns APIConsumerUsageStatementResponse An unchanged statement revision or a replay of the requested waiver approval.
    * @throws ApiError
    */
   public static createApiConsumerUsageStatement({
@@ -865,8 +883,10 @@ export class ConsumersService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         402: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
+        422: `The statement period or waiver selection is invalid.`,
       },
     });
   }

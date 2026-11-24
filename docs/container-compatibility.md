@@ -167,7 +167,9 @@ Reseed these yourself, or avoid keeping them across a snapshot:
   on every wake ([trace propagation](runtimes/trace-propagation.md#deployment-identity));
 - `Math.random` inside Node worker threads;
 - sidecars that run from their own root filesystem;
-- Bun and Deno, which do not load the Node reseed; Python started with `-S`,
+- Bun and Deno, which do not load the Node reseed (in Bun, `Math.random`
+  returns the same sequence after every wake, measured, while
+  `crypto.randomUUID` and `crypto.getRandomValues` do not repeat); Python started with `-S`,
   `-E` or `-I`, which skips the Python reseed; and any Node, Python or Java
   process started with a cleared environment. Gregale logs a warning on each
   wake when it finds such a process running, or a Go program that does not

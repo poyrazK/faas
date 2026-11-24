@@ -74,5 +74,5 @@ func renderInspectRecentChanges(w io.Writer, summary inspectSummary) {
 		_, _ = fmt.Fprintf(w, "    %s\n", command)
 	}
 	_, _ = fmt.Fprintln(w, "  Up to three latest observations from deployment submissions and pending/failed recovery operations, not a complete audit history. Timing does not establish causation.")
-	_, _ = fmt.Fprintf(w, "  Deployment history (POSIX shells):\n    %s deployments --app %s\n", recoveryCLI(), recoveryArgument(summary.App.Slug))
+	_, _ = fmt.Fprintf(w, "  Deployment history (POSIX shells):\n    %s release list --app %s\n", recoveryCLI(), recoveryArgument(summary.App.Slug))
 }

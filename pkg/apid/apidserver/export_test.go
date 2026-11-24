@@ -261,6 +261,7 @@ const RealtimedMetricsDiscoveryPath = realtimedMetricsDiscoveryPath
 const RequestAnalyticsRouteMaxLength = requestAnalyticsRouteMaxLength
 const RouteCostByRequestTime = routeCostByRequestTime
 const RouteCostByRequests = routeCostByRequests
+const RuntimeConfigAppNameBlocklist = runtimeConfigAppNameBlocklist
 const RuntimeConfigDataPlacement = runtimeConfigDataPlacement
 const RuntimeConfigDomainDoctor = runtimeConfigDomainDoctor
 const RuntimeConfigDomainDoctorTTL = runtimeConfigDomainDoctorTTL
@@ -614,8 +615,18 @@ var ManagedPostgresPlanAllows = managedPostgresPlanAllows
 var ManagedPostgresProblem = managedPostgresProblem
 var ManagedPostgresSpecFromRequest = managedPostgresSpecFromRequest
 var ManagedPostgresUsageCeilings = managedPostgresUsageCeilings
-var ManagedPostgresUsageOperatorView = managedPostgresUsageOperatorView
-var ManagedPostgresUsageView = managedPostgresUsageView
+
+// ManagedPostgresUsageOperatorView and ManagedPostgresUsageView build the
+// usage views with the history limit off (ADR-20261123062111 D2 has its own
+// test).
+func ManagedPostgresUsageOperatorView(accountID string, summary managedpostgres.UsageSummary, limits api.ManagedPostgresPlanLimits, capMode managedpostgres.CapEnforcementMode, overage bool) (api.ManagedPostgresUsageOperatorResponse, error) {
+	return managedPostgresUsageOperatorView(accountID, summary, limits, capMode, managedpostgres.CapEnforcementOff, overage)
+}
+
+func ManagedPostgresUsageView(summary managedpostgres.UsageSummary, limits api.ManagedPostgresPlanLimits, capMode managedpostgres.CapEnforcementMode, overage bool) api.ManagedPostgresUsageResponse {
+	return managedPostgresUsageView(summary, limits, capMode, managedpostgres.CapEnforcementOff, overage)
+}
+
 var ManagedPostgresUsageHoldView = managedPostgresUsageHoldView
 var ManagedPostgresView = managedPostgresView
 var ManagedWorkflowCanConsumeFailedDependencies = managedWorkflowCanConsumeFailedDependencies
@@ -840,6 +851,7 @@ var SelectDebugReplayMirrorRule = selectDebugReplayMirrorRule
 var SetS3Flag = setS3Flag
 var SeedCanaryFixture = seedCanaryFixture
 var Setup = setup
+var ValidateAppNameBlocklist = validateAppNameBlocklist
 var SetupAlerts = setupAlerts
 var SetupChangePlan = setupChangePlan
 var SetupMW = setupMW
@@ -1126,6 +1138,7 @@ func (r *runDeps) PreLoadedNodeVerifier() *wire.NodeVerifier                    
 func (r *runtimeConfigManager) Mu() *sync.RWMutex                         { return &r.mu }
 func (r *runtimeConfigManager) Versions() *map[string]int64               { return &r.versions }
 func (r *runtimeConfigManager) Apply(p0 string, p1 json.RawMessage) error { return r.apply(p0, p1) }
+func (r *runtimeConfigManager) AppNameBlocklist() []string                { return r.appNameBlocklist() }
 func (r *runtimeConfigManager) ApplyVersion(p0 string, p1 json.RawMessage, p2 int64) (bool, error) {
 	return r.applyVersion(p0, p1, p2)
 }
@@ -2708,3 +2721,12 @@ func AvailabilityQueryExcluding(appIDs []string) string { return availabilityQue
 
 // StatusAPIAvailabilityQuery exposes statusAPIAvailabilityQuery.
 const StatusAPIAvailabilityQuery = statusAPIAvailabilityQuery
+
+// StageSourceDeploymentManifest exposes the source deploy manifest staging
+// (ADR-20261124090000 amendment 1 applies access there).
+func (r *server) StageSourceDeploymentManifest(p0 *http.Request, p1 state.Account, p2 state.App, p3 *gregalemanifest.Manifest, p4 state.Deployment, p5 bool) (sourceRefManifestStaged, *api.Problem) {
+	return r.stageSourceDeploymentManifest(p0, p1, p2, p3, p4, p5)
+}
+
+// SourceRefManifestStaged is the staged manifest a rollback undoes.
+type SourceRefManifestStaged = sourceRefManifestStaged

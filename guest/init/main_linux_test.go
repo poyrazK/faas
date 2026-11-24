@@ -388,6 +388,27 @@ func TestBuildArgv(t *testing.T) {
 	}
 }
 
+// ADR-20261124160000: a shared-runtime Node build runs the Next.js
+// standalone helper after prepare, and a failed helper never fails the build.
+func TestBuildArgv_NextStandaloneHelper(t *testing.T) {
+	got := buildArgv(api.BuildManifest{
+		Framework:      api.FrameworkRailpackNode,
+		Workdir:        "/build/src",
+		OutDir:         "/build/out",
+		SharedRuntime:  true,
+		NextStandalone: true,
+		AppLayerMaxMB:  256,
+	})
+	want := "--info-out '/build/railpack-info.json' && { GREGALE_INIT_HELPER=next-standalone /proc/1/exe '/build/railpack-plan.json' '/build/src' 256 || true; } && exec /usr/local/bin/buildctl"
+	if joined := strings.Join(got, " "); !strings.Contains(joined, want) {
+		t.Fatalf("argv = %s\nwant it to contain %s", joined, want)
+	}
+	plain := buildArgv(api.BuildManifest{Framework: api.FrameworkRailpackNode, Workdir: "/build/src", OutDir: "/build/out", SharedRuntime: true})
+	if strings.Contains(strings.Join(plain, " "), nextStandaloneHelperValue) {
+		t.Fatal("helper runs without NextStandalone")
+	}
+}
+
 func TestBuildArgv_WorkspaceContextUsesSelectedWorkdir(t *testing.T) {
 	got := buildArgv(api.BuildManifest{
 		Framework:    api.FrameworkRailpackNode,

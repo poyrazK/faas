@@ -2119,6 +2119,8 @@ func (s *server) scanService(
 	preAdmissionReasons := reconcile.WorkloadAdmissionReasonsWithManaged(result.Workloads, result.Managed, acctApps, projectID)
 	preAdmissionReasons = append(preAdmissionReasons, reconcile.ProjectImageLifecycleAdmissionReasons(acct.Plan, result.Workloads)...)
 	preAdmissionReasons = append(preAdmissionReasons, reconcile.SlugHolderReasons(acct.ID, projectID, result.Workloads, slugHolders)...)
+	appNameBlocklist := s.runtimeConfig.appNameBlocklist()
+	preAdmissionReasons = append(preAdmissionReasons, reconcile.BlockedAppNameReasons(result.Workloads, acctApps, projectID, appNameBlocklist)...)
 	var admissionReasons []string
 	if len(filteredW) > 0 || len(result.Workloads) == 0 {
 		// An actually empty scan is unsafe and must carry the reconcile
@@ -2128,6 +2130,7 @@ func (s *server) scanService(
 		admissionReasons = reconcile.WorkloadAdmissionReasonsWithManaged(filteredW, filteredMc, acctApps, projectID, dependencyReferences)
 		admissionReasons = append(admissionReasons, reconcile.ProjectImageLifecycleAdmissionReasons(acct.Plan, filteredW)...)
 		admissionReasons = append(admissionReasons, reconcile.SlugHolderReasons(acct.ID, projectID, filteredW, slugHolders)...)
+		admissionReasons = append(admissionReasons, reconcile.BlockedAppNameReasons(filteredW, acctApps, projectID, appNameBlocklist)...)
 	}
 	if !reconcileProductionEnvironment(req.Environment) {
 		stageReasons := reconcile.EnvironmentWorkloadAdmissionReasons(filteredW, projectApps)
@@ -2257,6 +2260,9 @@ func (s *server) scanService(
 			if note := projectVisibilityNote(w, *existing, req.Environment == ""); note != "" {
 				warnings = append(warnings, note)
 			}
+			if note := projectAccessNote(w, *existing, acct.Plan, req.Environment == ""); note != "" {
+				warnings = append(warnings, note)
+			}
 		}
 		if s.domain != "" && pw.Visibility != api.AppVisibilityInternal && (string(w.Class) == "http" || string(w.Class) == "graphql") {
 			slug := w.AppSlug
@@ -2265,6 +2271,9 @@ func (s *server) scanService(
 			}
 			pw.PublicURL = "https://" + slug + "." + strings.TrimPrefix(s.domain, ".")
 			pw.PublicAuthMode = planWorkloadPublicAuthMode(existing, acct.Plan)
+			if w.Access != "" && (existing == nil || req.Environment == "") {
+				pw.PublicAuthMode = planWorkloadAccessAuthMode(w, existing, acct.Plan)
+			}
 			if nonProductionEnvironment {
 				// A new app's environment host is known only once it exists.
 				pw.PublicURL = ""
@@ -2940,6 +2949,9 @@ func (s *server) scanService(
 	}
 	if req.Environment == "" {
 		if problem := s.applyComposeInternalVisibility(r, acct, project.ID, filteredW); problem != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, problem
+		}
+		if problem := s.applyProjectServiceAccess(r, acct, preRemoveApps, filteredW); problem != nil {
 			return resp, state.Project{}, nil, nil, nil, nil, problem
 		}
 	}

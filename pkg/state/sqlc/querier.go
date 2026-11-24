@@ -4240,6 +4240,10 @@ type Querier interface {
 	ListEventExecutionLineageCases(ctx context.Context, db DBTX, arg ListEventExecutionLineageCasesParams) ([]EventExecutionLineageCase, error)
 	ListEventExecutionLineageRetryControlReceipts(ctx context.Context, db DBTX, arg ListEventExecutionLineageRetryControlReceiptsParams) ([]EventExecutionLineageRetryControlReceipt, error)
 	ListEventExecutionLineageRetryJobs(ctx context.Context, db DBTX, arg ListEventExecutionLineageRetryJobsParams) ([]ListEventExecutionLineageRetryJobsRow, error)
+	// Which of the given subjects have an event of one kind since a time, in one
+	// read: app health asks it of an app's recently stopped instances
+	// (liveness_failed, prod hunt r33). events_subject_idx (subject, at desc).
+	ListEventSubjectsWithKind(ctx context.Context, db DBTX, arg ListEventSubjectsWithKindParams) ([]pgtype.UUID, error)
 	ListEventSubscriptionCapacityCommands(ctx context.Context, db DBTX, arg ListEventSubscriptionCapacityCommandsParams) ([]EventSubscriptionCapacityCommand, error)
 	// EPIC #1278 / Workstream B — durable internal event subscriptions.
 	// A subscription is app-owned but keeps account_id denormalized so scheduler
@@ -7840,6 +7844,11 @@ type Querier interface {
 	// for requests dropped before persistence, so the API must not invent a
 	// capture percentage.
 	RequestTelemetryCoverage(ctx context.Context, db DBTX, arg RequestTelemetryCoverageParams) (RequestTelemetryCoverageRow, error)
+	// The latest start of continuous healthy coverage across the active gateways
+	// that reported at or after reported_since, and whether every one of them is
+	// fully recording now. A release guard whose window a gateway restart split
+	// judges the part after it instead of holding for good.
+	RequestTelemetryCoveredSince(ctx context.Context, db DBTX, reportedSince pgtype.Timestamptz) (RequestTelemetryCoveredSinceRow, error)
 	// PR-B (ADR-127 §PR-B) — regression observation persistence + dashboard
 	// read patterns. The cron in cmd/apid/debug_regression_cron.go composes
 	// RequestTelemetryBaselineP95ByRoute (above) + RequestTelemetryByDeployment

@@ -907,6 +907,13 @@ var cliCommands = []cliCommand{
 				},
 			},
 			{
+				Name:  "app-name-report",
+				Short: "List existing apps the app name blocklist matches, for review",
+				Flags: []cliFlag{
+					{Name: "blocklist", Short: "report against these entries instead of the live app_name_blocklist"},
+				},
+			},
+			{
 				Name:  "complimentary",
 				Short: "Give an account a paid plan without a subscription, or end it",
 				Flags: []cliFlag{

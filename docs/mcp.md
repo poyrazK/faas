@@ -7104,10 +7104,19 @@ serialize cooperating gate invocations; coordinate independent policy changes
 and all key-writing processes during rollout. No automatic cleanup follows a
 failed release; inspect the reported stage and reconcile candidate processes.
 
-#### Manual Go and Python worker upgrades
+#### Go and Python worker upgrades
 
-Go/Python workers require a manual rollout. The automated release gate and its
-native deployment adapter currently support generated Node workers only.
+`gregale mcp server tasks deploy` also releases Go and Python workers. Their
+starters have no admission tables, so the CLI runs the gate itself
+(ADR-20261123160000): the same release lock, journal, checkpoint and
+deployment adapters as the Node gate, the starter's own migration command
+(`go run . tasks-migrate apply` or `python3 task_schema.py apply`), and a
+readiness rule based on unfinished Tasks: each replacement must be registered,
+heartbeating since the release began and serving every `(tool, handler_version)`
+that `queued`, `running` or `input_required` Tasks need before previous workers
+drain. `recover`, `restore`, `quarantine` and `retire` need the Node gate's claim
+fence and stay Node-only; for a failed Go/Python release use the manual steps
+below.
 
 Run explicit schema migrations with the migration binding. Keep retained owner
 and payload keys, compatible handler versions and execution policy consistent

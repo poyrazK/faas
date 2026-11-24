@@ -32825,6 +32825,7 @@ components:
         history_byte_seconds: {type: integer, format: int64, minimum: 0, description: "Point-in-time restore history held this month, in byte-seconds."}
         snapshot_byte_seconds: {type: integer, format: int64, minimum: 0, description: "Snapshot storage held this month, in byte-seconds."}
         included_history_bytes: {type: integer, format: int64, minimum: 0, description: "Restore history and snapshot storage the plan includes, held for the whole month. Restore history uses it first. With overage on, history past it is billed per GB-month."}
+        history_state: {type: string, enum: [normal, limited], description: "limited while restore history and snapshots passed twice the included history this month with overage off: the databases keep a 24-hour restore window until the 1st of next month, or until overage is turned on. Absent while the history limit is not enforced."}
         egress_bytes: {type: integer, format: int64, minimum: 0}
         compute_allowance_unit_seconds:
           description: The plan's monthly compute allowance in compute-unit seconds, pooled across the account's databases.
@@ -35303,6 +35304,10 @@ components:
           description: "Per-deployment token-gate flag. When true, the gateway demands `Authorization: Bearer <token>` on every request; cross-account tokens receive 403 insufficient_scope. Pro/Scale only — Free/Hobby PATCH-true is rejected with 403 plan_require_authn_not_allowed."
           type: boolean
           example: false
+        declared_access:
+          description: "The access the app's source declares in gregale.yaml: `public` (no Gregale API key) or `key`. Every production deploy applies it. Omitted when the source declares none."
+          type: string
+          enum: [public, key]
         consumer_auth_mode:
           description: "End-customer credential policy. optional accepts anonymous requests and attributes valid consumer keys; required mandates a valid consumer key."
           type: string
@@ -46075,6 +46080,10 @@ components:
           type: string
           enum: [internal]
           description: "Present when the app is or will be internal (no public route): an existing internal app, or a new Compose service without `ports:`. Omitted means public."
+        access:
+          type: string
+          enum: [public, key]
+          description: "Declared access to the service's public URL (`x-gregale-access` in Compose or `project.services.<name>.access` in gregale.yaml): `public` needs no Gregale API key, `key` needs one. Every production deploy applies it. Omitted when the source declares none."
         root_dir:
           type: string
           example: ""

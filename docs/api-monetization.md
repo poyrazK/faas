@@ -195,6 +195,97 @@ gregale consumers rate-card-create my-api --currency EUR --price-millicents 1 --
 - **What counts.** Only billable consumer requests are counted. Anonymous
   traffic and requests your customer isn't billed for are ignored.
 
+### Price one meter by model
+
+Create a flat app-meter card with a base unit price and up to 16 model
+overrides. All reported variants share the card's included monthly units.
+
+```bash
+gregale api consumer rate-card create my-api --currency EUR --unit app:output_tokens \
+  --price-millicents 2 --included-units 1000 --model-price standard=1 --model-price premium=4
+```
+
+For `POST /generate`, report the model actually used. For example, a
+premium response reports `Gregale-Usage: output_tokens__premium=600`.
+Use `output_tokens__standard` for the standard model and plain
+`output_tokens` when the base price applies. The meter and model are
+lowercase names, each starts with a letter, and the combined name fits
+in 32 characters. Once a consumer's price history enables model rates for a
+meter, a valid alias without an effective rate appears as unpriced in the
+quote and holds statement finalization. An alias with its own effective
+standalone rate card is priced on that card. Reported base units and models
+with an effective rate consume the shared allowance. Configure overrides
+before emitting their aliases and keep them configured while the app still
+reports them. A new rate applies
+from its effective minute. An earlier pricing gap stays with its original
+billing period.
+
+Gregale rechecks the meter ledger before finalizing a priced draft.
+Usage recorded after that check belongs in a later statement revision.
+
+Allowance is assigned by UTC minute, with the base meter first and models
+in alphabetical order within a minute. Request rate cards can price the
+same traffic separately. Model overrides apply to app consumer statements.
+Customer-wide tenant statements use their own applicable rates.
+
+### Inspect a consumer's meters
+
+Add `--breakdown` to `gregale api consumer usage` to see raw billable requests
+by route and reported units by meter. Add it to `gregale api consumer quote`
+to see measured, included and charged units and the amount at each applicable
+rate. Requests that lack a route label appear under unattributed requests.
+Within a minute, the quote allocates shared request allowances and tiers to
+weighted routes first, then other routes, then unattributed requests. Routes
+in each group follow alphabetical order. That allocation preserves the
+statement's rated totals.
+
+Owner usage and quote endpoints and the customer billing usage endpoint
+accept `?breakdown=true`. Quote and finalized statement buckets include the
+model on rated model units and the immutable rate card ID.
+Where exact request audit is enabled, owners can correlate those totals with
+the verified consumer and route in `GET /v1/apps/{slug}/audit/requests`.
+
+### Approve a waiver for unpriced model usage
+
+When a model alias has no effective rate, review the held draft and decide
+whether to approve a zero charge for the recorded usage. An administrator can
+select one app meter, one alias, and a closed UTC-minute window within that
+draft's statement period. Use the exact number of unpriced units in the
+selected buckets. For example, save the following as `waiver.json` after
+substituting the draft ID, units, and minute boundaries from your statement.
+
+```json
+{
+  "source_statement_id": "6a5c870c-b450-46d8-ba06-280e49e45dc9",
+  "unit": "app:output_tokens",
+  "model": "experimental",
+  "since": "2026-11-01T14:20:00Z",
+  "until": "2026-11-01T14:21:00Z",
+  "units": 17,
+  "reason": "Approved zero charge for the launch trial"
+}
+```
+
+```bash
+gregale api consumer statement draft my-api "$CONSUMER_ID" \
+  --month 2026-11 --waiver-file waiver.json
+```
+
+Use the same statement period as the source draft. API clients send the file's
+contents as the `waiver` object in `POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements`.
+Gregale records the approver, time, reason, and exact waived units in a new
+revision. Repeating the approval returns that revision. If another draft has
+superseded the source or the unit count differs, review the latest draft and
+submit a new approval. Quotes and statement buckets expose `waived_units`.
+Finalize the new revision after all holds are resolved. Additional unpriced
+usage, including late units from the same minute, requires a fresh review.
+
+For a first Stripe test-mode invoice, use a test customer and compare the
+finalized statement's amount due against Stripe's draft invoice. Include a
+paid model and a waived model in the same statement so you can verify that
+the waived units are absent from the invoice. Retry export and confirm it
+returns the same invoice ID with the same line items and total.
+
 ### Several units at once
 
 Cards of different units price side by side. Add a compute or token card and
@@ -877,8 +968,9 @@ gregale platform-tenants statement-draft --id TENANT_ID --month 2026-09
   the total never is.
 - **App cards underneath.** An app's own free requests, tiers, route weights
   or plans don't block a cross-app statement for minutes a tenant card prices.
-  A minute only an app card prices still needs a flat app card; otherwise bill
-  those consumers with app statements.
+  For earlier minutes the statement uses the app's flat request rate in force
+  at the time. If those minutes lack a flat request rate, bill them through
+  app consumer statements or add a tenant rate that covers them.
 
 ### Customer fees, trials and overdue invoices
 

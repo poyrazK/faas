@@ -55,7 +55,7 @@ func (r *remoteServer) authorize(w http.ResponseWriter, req *http.Request) {
 	r.pruneLocked()
 	c := r.clients[query.Get("client_id")]
 	scopes, valid := r.requestedScopes(query.Get("scope"))
-	if c == nil || !slices.Contains(c.Redirects, query.Get("redirect_uri")) || query.Get("response_type") != "code" || query.Get("resource") != r.opts.ResourceURL || query.Get("code_challenge_method") != "S256" || !pkceChallenge.MatchString(query.Get("code_challenge")) || !valid || len(query.Get("state")) > 2048 {
+	if c == nil || !clientRedirectMatches(c, query.Get("redirect_uri")) || !r.redirectAllowed(query.Get("redirect_uri")) || query.Get("response_type") != "code" || query.Get("resource") != r.opts.ResourceURL || query.Get("code_challenge_method") != "S256" || !pkceChallenge.MatchString(query.Get("code_challenge")) || !valid || len(query.Get("state")) > 2048 {
 		oauthError(w, 400, "invalid_request", "Registered redirect URI, exact resource, supported scopes, code response type and S256 PKCE are required")
 		return
 	}

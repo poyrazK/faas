@@ -3018,7 +3018,7 @@ func ErrBillingContactMember() *Problem {
 // to select the plan default; an update pointer is always explicit.
 func ErrInvalidAppRAM(requestedMB int) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidAppRAM,
-		"Invalid RAM", fmt.Sprintf("ram_mb must be greater than zero; requested %d MB.", requestedMB))
+		"Invalid RAM", fmt.Sprintf("ram_mb must be greater than zero; requested %d MB.", requestedMB)).WithDocs(docsBase + "/plans#what-each-limit-means")
 }
 
 // ErrInvalidCPURAMPair rejects an explicit guest vCPU count that is not its
@@ -5546,7 +5546,7 @@ func ErrPlanLogDrainQuota(plan Plan, scope string, limit, observed int) *Problem
 
 func ErrAppLogDrainInvalid(reason string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeAppLogDrainInvalid,
-		"Invalid log drain", reason)
+		"Invalid log drain", reason).WithDocs(docsBase + "/logs#log-drains")
 }
 
 // ErrTenantSurfacesNotAllowed is returned by apid's createTenantSurface
@@ -8071,7 +8071,7 @@ func ErrPlanCustomMetricsNotAllowed(plan Plan) *Problem {
 		"Custom metrics not available on this plan",
 		fmt.Sprintf("custom application metrics are not included in the %s plan. "+
 			"Scale on a platform-measured signal (rps, cpu, concurrent_requests, "+
-			"queue_depth, queue_lag) or upgrade.", plan))
+			"queue_depth, queue_lag) or upgrade.", plan)).WithDocs(docsBase + "/plans")
 }
 
 const CodeUDPListenerLimit = "udp_listener_limit"

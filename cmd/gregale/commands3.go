@@ -168,6 +168,7 @@ func secretsList(args []string) int {
 		return jsonOut(writeJSON(resp))
 	}
 	code := renderSecretListHuman(*app, *scope, *secretClass, *olderThan, *deliveryStatus, &resp, keys...)
+	printRecentConfigGuardVerdict(context.Background(), client, *app, *scope)
 	printSecretKeyHints(*app, *scope, secretKeyHints(keys, availableKeys, secretMetadataKeys(&resp)))
 	if *scope != api.EnvScopeAllSentinel && *secretClass == "" && *deliveryStatus == "" && age == 0 {
 		printPlainVariables(osStdout, client, *app, *scope, keys)

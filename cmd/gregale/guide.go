@@ -54,7 +54,7 @@ var guidePages = []guidePage{
 		},
 		Notes: []string{
 			"A Compose file or several services: see `gregale guide compose-project`.",
-			"Public or private: on Hobby and above a new app's URL answers 401 without an API key, even after a successful deploy. Deploy with --no-require-authn when the user wants a website, a demo or a link to share, or the app was public where it ran before (Render, Heroku); keep the default for an API or anything the user did not ask to publish, and tell the user which you chose. release verify checks the deployment with owner access; it does not test anonymous access.",
+			"Public or private: on Hobby and above a new app's URL answers 401 without an API key, even after a successful deploy. When the user wants a website, a demo or a link to share, or the app was public where it ran before (Render, Heroku), add `access: public` to its gregale.yaml (every deploy keeps it public, MCP deploys too) or deploy with --no-require-authn; keep the default for an API or anything the user did not ask to publish, and tell the user which you chose. release verify checks the deployment with owner access; it does not test anonymous access.",
 			"Readiness: a health route found in the source (or hosting.health) must answer 2xx; with none, an open port is enough. Do not pass / as the health path. An app that checks the Host header (Django ALLOWED_HOSTS) needs the health route answered first; see `gregale guide health-checks`.",
 		},
 	},
@@ -65,7 +65,6 @@ var guidePages = []guidePage{
 			{Do: "Preview every service, its URL, health check and managed databases", Command: "gregale deploy --project --dry-run"},
 			{Do: "Deploy the project", Command: "gregale deploy --project --yes"},
 			{Do: "Deploy some services only", Command: "gregale deploy --project --only <service>"},
-			{Do: "Open a public service to everyone", Command: "gregale app update <app> --no-require-authn"},
 			{Do: "Restart, health-check or change every app of the project at once", Command: "gregale app restart --project <project> --fresh --wait"},
 			{Do: "Follow every service's logs", Command: "gregale logs --project <project> --follow"},
 			{Do: "Run a command in a fresh instance of a service", Command: "gregale app exec <app> -- <command>"},
@@ -73,6 +72,7 @@ var guidePages = []guidePage{
 		Notes: []string{
 			"Plain environment: values are imported only with `x-gregale-env-import: true` at the top of the Compose file; a URL that names a sibling (http://api:8080) is rewritten to its Gregale address without it. Do not copy them into Dockerfiles.",
 			"A gRPC service declares `x-gregale-app-protocol: grpc` on its Compose service.",
+			"A browser-facing service declares `x-gregale-access: public` on its Compose service (or `access: public` under project.services.<name> in gregale.yaml): its URL needs no Gregale API key, and every production deploy keeps it so. Removing the key makes the URL need a key again. Use this instead of `gregale app update <app> --no-require-authn`, which the next deploy undoes for a service that declares access.",
 			"Too many files: each service's .dockerignore applies inside its build context; list directories no service builds from (k8s, docs) in .gregaleignore.",
 			"Code that dials a Compose name (redis, db) must read $GREGALE_SERVICE_<NAME>_HOST (raw TCP) or $GREGALE_SERVICE_<NAME>_URL (HTTP); the caller lists the service in depends_on. The dry run names each place.",
 			"A postgres service becomes a managed database bound as DATABASE_URL, and a redis service a managed Redis cache bound as REDIS_URL where managed Redis is on for the account (`gregale feature list`). Gregale does not run other datastores (mysql, mongo): an app parks to a snapshot and keeps no data. Point the code at a hosted one (PlanetScale, Atlas) with an env URL.",
@@ -120,7 +120,7 @@ var guidePages = []guidePage{
 		Task: "secrets-and-env", Title: "Environment variables and secrets",
 		Summary: "Set values before the first request; the dry run lists keys the code reads that will have no value.",
 		Steps: []guideStep{
-			{Do: "Set a value (stored sealed; never shown again)", Command: "gregale env set --app <app> KEY=<value>"},
+			{Do: "Set a value or secret (stored sealed; never shown again)", Command: "gregale env set --app <app> KEY=<value>"},
 			{Do: "Push a local .env file", Command: "gregale env push --app <app> -f .env"},
 			{Do: "List an app's key names", Command: "gregale env list --app <app>"},
 			{Do: "Set one value for every service of a project environment", Command: "gregale environment secrets set <project> <environment> KEY=<value>"},

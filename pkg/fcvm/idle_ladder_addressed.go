@@ -16,11 +16,19 @@ package fcvm
 // on IPv4 packets for the namespace or the guest behind it. The guest network
 // is IPv4 (ADR-009), so IPv6 is not counted: the IPv6 router and multicast
 // listener chatter the bridge carries would count there.
+//
+// One packet the namespace sends itself is not discounted by that: when the
+// guest is paused it cannot answer the namespace's neighbour probes for it, the
+// entry fails, and the kernel reports the dropped packets (a bridge closing an
+// idle connection to the guest) with an ICMP host unreachable to the local
+// sender over lo, which counts in InReceives. On production that woke paused
+// apps 13-67 s into every pause. Those reports reach only the namespace's own
+// sockets, so the reading leaves out ICMP destination unreachable messages
+// delivered in the namespace (ADR-20261107122928 amendment 5).
 
 import (
 	"bufio"
 	"bytes"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -30,7 +38,8 @@ import (
 )
 
 // IdleLadderAddressedIngress is an optional IdleLadderNet extension: how many
-// IPv4 packets reached an instance's network namespace addressed to it. ok is
+// IPv4 packets reached an instance's network namespace addressed to it, less
+// the ICMP destination unreachable messages delivered there. ok is
 // false when there is no fresh reading; the guard then falls back to the
 // veth's ingress bytes.
 type IdleLadderAddressedIngress interface {
@@ -45,7 +54,8 @@ const netnsIngressMaxAge = 2 * time.Second
 const netnsIngressRescanEvery = 5 * time.Second
 
 // NetnsIngressReader reads each live instance's network namespace Ip
-// InReceives through its Firecracker process (/proc/<pid>/net/snmp), which
+// InReceives, less Icmp InDestUnreachs, through its Firecracker process
+// (/proc/<pid>/net/snmp), which
 // the jailer started inside the namespace. Poll reads; AddressedIngress
 // serves the latest reading without I/O, for the guard's pass.
 type NetnsIngressReader struct {
@@ -162,32 +172,48 @@ func (r *NetnsIngressReader) read(p netnsIngressProc) (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return parseIPInReceives(raw)
+	return parseAddressedIngress(raw)
 }
 
-// parseIPInReceives reads InReceives from /proc/net/snmp, whose "Ip:" lines
-// are a header of field names followed by their values.
-func parseIPInReceives(raw []byte) (uint64, error) {
-	var header []string
+// parseAddressedIngress reads Ip InReceives less Icmp InDestUnreachs from
+// /proc/net/snmp. Every ICMP message the namespace receives passed IPv4 input
+// first, so the difference never goes below zero on a consistent read.
+func parseAddressedIngress(raw []byte) (uint64, error) {
+	received, err := parseSNMPField(raw, "Ip:", "InReceives")
+	if err != nil {
+		return 0, err
+	}
+	unreachable, err := parseSNMPField(raw, "Icmp:", "InDestUnreachs")
+	if err != nil {
+		return 0, err
+	}
+	if unreachable > received {
+		return 0, fmt.Errorf("snmp: Icmp InDestUnreachs %d above Ip InReceives %d", unreachable, received)
+	}
+	return received - unreachable, nil
+}
+
+// parseSNMPField reads one counter from /proc/net/snmp, where each protocol
+// has a header line of field names followed by a line of their values, both
+// starting with prefix ("Ip:", "Icmp:").
+func parseSNMPField(raw []byte, prefix, field string) (uint64, error) {
+	var header [][]byte
 	sc := bufio.NewScanner(bytes.NewReader(raw))
 	for sc.Scan() {
 		fields := bytes.Fields(sc.Bytes())
-		if len(fields) == 0 || string(fields[0]) != "Ip:" {
+		if len(fields) == 0 || string(fields[0]) != prefix {
 			continue
 		}
 		if header == nil {
-			header = make([]string, len(fields))
-			for i, f := range fields {
-				header[i] = string(f)
-			}
+			header = fields
 			continue
 		}
 		for i, name := range header {
-			if name == "InReceives" && i < len(fields) {
+			if string(name) == field && i < len(fields) {
 				return strconv.ParseUint(string(fields[i]), 10, 64)
 			}
 		}
-		return 0, errors.New("snmp: no Ip InReceives field")
+		return 0, fmt.Errorf("snmp: no %s %s field", prefix, field)
 	}
-	return 0, errors.New("snmp: no Ip lines")
+	return 0, fmt.Errorf("snmp: no %s lines", prefix)
 }

@@ -1343,10 +1343,10 @@ var cliCommands = []cliCommand{
 				{Name: "poll-interval", Short: "poll interval (default 2s)", Value: "duration"},
 			}},
 			{Name: "list", Short: "List alert rules", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "slug"},
 			}},
 			{Name: "add", Short: "Add an alert rule", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "slug"},
 				{Name: "name", Short: "rule name (3..120 chars)", Req: true, Value: "NAME"},
 				{Name: "metric", Short: "metric (mcp_tasks_metrics_stale includes the min=0 observer heartbeat)", Value: "METRIC", ClosedSet: api.AllowedAlertRuleMetrics},
 				{Name: "comparison", Short: "gt|gte|lt|lte|above_baseline|below_baseline", Value: "OP"},
@@ -1371,7 +1371,7 @@ var cliCommands = []cliCommand{
 				{Name: "notify-resolved", Short: "also send the webhook a signed alert.resolved event when the rule recovers", Bool: true},
 			}, Examples: []string{`printf '%s\n' "$WEBHOOK_SECRET" | gregale alert create --app my-api --name p95-latency --metric latency_p95_ms --comparison gt --threshold 800 --window-spec 15m --webhook-url https://hooks.example.com/gregale --webhook-secret-stdin`, `printf '%s\n' "$WEBHOOK_SECRET" | gregale alert create --app mcp-worker --name mcp-oldest-task-age --metric mcp_tasks_oldest_age_seconds --comparison gt --threshold 300 --window-spec 5m --webhook-url https://hooks.example.com/gregale --webhook-secret-stdin`, `printf '%s\n' "$WEBHOOK_SECRET" | gregale alert create --app mcp-worker --name mcp-task-metrics-stale --metric mcp_tasks_metrics_stale --comparison gt --threshold 0 --window-spec 5m --webhook-url https://hooks.example.com/gregale --webhook-secret-stdin`}},
 			{Name: "info", Short: "Show one alert rule and its last delivery", Positionals: []string{"<alert-id>"}, Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "slug"},
 			}},
 			{Name: "deliveries", Short: "List a rule's webhook deliveries, newest first", Positionals: []string{"[<alert-id>]"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug (linked app or picker in interactive mode)", Value: "slug"},
@@ -1395,9 +1395,9 @@ var cliCommands = []cliCommand{
 				{Name: "webhook-secret-stdin", Short: "read the replacement webhook secret from stdin"},
 				{Name: "notify-resolved", Short: "send the webhook alert.resolved events (=false turns them off)", Bool: true},
 			}, Examples: []string{"gregale alert update --app my-api --interactive"}},
-			{Name: "rm", Short: "Delete one alert rule", Positionals: []string{"<alert-id>"}, Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}, {Name: "yes", Short: "accepted for consistency; rm does not prompt", Bool: true}}},
+			{Name: "rm", Short: "Delete one alert rule", Positionals: []string{"<alert-id>"}, Flags: []cliFlag{{Name: "app", Short: "app slug (defaults to the linked app)", Value: "slug"}, {Name: "yes", Short: "accepted for consistency; rm does not prompt", Bool: true}}},
 			{Name: "rotate-secret", Short: "Rotate the alert's webhook secret", Positionals: []string{"<alert-id>"}, Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "slug"},
 				{Name: "from-stdin", Short: "read the replacement secret from stdin"},
 			}},
 			// Issue #1233 / ADR-123 — alert preset catalog +
@@ -2400,7 +2400,7 @@ var cliCommands = []cliCommand{
 		Short:   "Manage scheduled HTTP requests and deployment commands",
 		Subcommands: []cliSub{
 			{Name: "next", Short: "Show upcoming expression times across app tasks", Notes: []string{"Includes state and policy caveats."}, Examples: []string{"gregale cron next --app my-api", "gregale cron next --app my-api --json"}, Flags: []cliFlag{{Name: "app", Short: "app slug (linked app or picker by default)", Value: "SLUG"}}},
-			{Name: "list", Short: "List cron rules", Flags: []cliFlag{{Name: "app", Short: "app slug (required without -l)", Value: "slug"}, {Name: "selector", ShortName: "l", Short: "only crons whose labels match (preview)", Value: "SELECTOR"}, {Name: "one-off", Short: "list one-off requests (--at or --in) instead of cron rules", Bool: true, Capability: "delayed-execution"}}},
+			{Name: "list", Short: "List cron rules", Flags: []cliFlag{{Name: "app", Short: "app slug (defaults to the linked app; optional with -l)", Value: "slug"}, {Name: "selector", ShortName: "l", Short: "only crons whose labels match (preview)", Value: "SELECTOR"}, {Name: "one-off", Short: "list one-off requests (--at or --in) instead of cron rules", Bool: true, Capability: "delayed-execution"}}},
 			{Name: "add", Short: "Schedule a POST to an app path, or a deployment command", Examples: []string{"gregale cron create --app my-api --interactive", "gregale cron create --app my-api --at 2030-01-01T09:00:00Z --path /report", "gregale cron create --app my-api --in 30m --path /reminders"}, Notes: []string{"With --at or --in, add schedules one request instead of a recurring cron and takes the flags of `gregale delayed-task add` (--payload, --method, --header, retries); --schedule and the command flags belong to recurring crons."}, Flags: []cliFlag{
 				{Name: "at", Short: "send one request at this RFC3339 time instead of on a schedule", Value: "RFC3339", Capability: "delayed-execution"},
 				{Name: "in", Short: "send one request after this delay (such as 30m) instead of on a schedule", Value: "DURATION", Capability: "delayed-execution"},
@@ -3888,10 +3888,12 @@ var cliCommands = []cliCommand{
 			{Name: "usage", Short: "Show a consumer's metered requests", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
 				{Name: "since", Short: "window start", Value: "RFC3339"},
 				{Name: "until", Short: "window end", Value: "RFC3339"},
+				{Name: "breakdown", Short: "show usage by route and meter"},
 			}},
 			{Name: "quote", Short: "Estimate a consumer's charges with current rate cards", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
 				{Name: "since", Short: "window start", Value: "RFC3339"},
 				{Name: "until", Short: "window end", Value: "RFC3339"},
+				{Name: "breakdown", Short: "show usage by route and meter"},
 			}},
 			{Name: "completeness", Short: "Check billed usage against request telemetry before invoicing", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
 				{Name: "month", Short: "calendar month", Value: "YYYY-MM"},
@@ -3906,6 +3908,7 @@ var cliCommands = []cliCommand{
 				{Name: "tier", Short: "graduated step; repeat in order, last UP_TO is inf (replaces price and included units)", Value: "UP_TO:PRICE", Repeatable: true},
 				{Name: "weight", Short: "count each request on a route as N units; unlisted routes count 1", Value: "METHOD /template=N", Repeatable: true},
 				{Name: "tool-weight", Short: "count each call of an MCP tool as N units", Value: "TOOL=N", Repeatable: true},
+				{Name: "model-price", Short: "override the unit price for a model on a flat app meter", Value: "MODEL=MILLICENTS", Repeatable: true},
 				{Name: "plan", Short: "add the price to a consumer plan instead of the app default", Value: "NAME"},
 				{Name: "effective-from", Short: "UTC minute the price starts (default next minute)", Value: "RFC3339"},
 				{Name: "unit", Short: "what the price is per: request, compute_second or response_megabyte (rounded per consumer minute), or app:<meter> for units the app reports in Gregale-Usage; cards of different units price side by side", Value: "UNIT"},
@@ -3919,6 +3922,7 @@ var cliCommands = []cliCommand{
 				{Name: "month", Short: "calendar month", Value: "YYYY-MM"},
 				{Name: "period-start", Short: "period start (UTC minute)", Value: "RFC3339"},
 				{Name: "period-end", Short: "exclusive period end (UTC minute)", Value: "RFC3339"},
+				{Name: "waiver-file", Short: "JSON approval for exact unpriced model units on a held draft", Value: "FILE"},
 			}},
 			{Name: "statement-show", Short: "Show one statement revision", Positionals: []string{"<slug>", "<consumer-id>", "<statement-id>"}},
 			{Name: "statement-finalize", Short: "Freeze a fully priced draft revision", Positionals: []string{"<slug>", "<consumer-id>", "<statement-id>"}},

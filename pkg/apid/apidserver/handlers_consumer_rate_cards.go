@@ -17,7 +17,7 @@ func apiConsumerRateCardResponse(card state.APIConsumerRateCard) api.APIConsumer
 	return api.APIConsumerRateCardResponse{
 		ID: card.ID, AppID: card.AppID, Currency: card.Currency, Unit: card.Unit,
 		PriceMillicentsPerUnit: card.PriceMillicentsPerUnit, IncludedUnitsPerMonth: card.IncludedUnitsPerMonth,
-		Tiers: apiRateCardTiers(card.Tiers), TierMode: rateCardTierMode(card.TierMode), RouteWeights: card.RouteWeights,
+		Tiers: apiRateCardTiers(card.Tiers), TierMode: rateCardTierMode(card.TierMode), RouteWeights: card.RouteWeights, ModelPrices: card.ModelPrices,
 		PlanID: card.PlanID, EffectiveFrom: card.EffectiveFrom.UTC(), CreatedAt: card.CreatedAt.UTC(),
 		BaseFeeMillicentsPerMonth: card.BaseFeeMillicentsPerMonth, MinimumMillicentsPerMonth: card.MinimumMillicentsPerMonth,
 		ProrateMonthlyFees: card.ProrateMonthlyFees,
@@ -135,6 +135,9 @@ func rateCardUnitProblem(req api.CreateAPIConsumerRateCardRequest) *api.Problem 
 	if unit != state.APIConsumerRateCardUnitRequest && len(req.RouteWeights) > 0 {
 		return invalid("route_weights apply to request cards only")
 	}
+	if err := state.ValidateAPIConsumerModelPrices(unit, req.ModelPrices, len(req.Tiers)); err != nil {
+		return invalid(err.Error())
+	}
 	return nil
 }
 
@@ -231,7 +234,7 @@ func (s *server) createAPIConsumerRateCard(w http.ResponseWriter, r *http.Reques
 	card, err := store.CreateAPIConsumerRateCardVersion(r.Context(), state.APIConsumerRateCardInput{
 		AccountID: acct.ID, AppID: app.ID, Currency: req.Currency, PriceMillicentsPerUnit: req.PriceMillicentsPerUnit,
 		IncludedUnitsPerMonth: req.IncludedUnitsPerMonth, Tiers: stateRateCardTiers(req.Tiers),
-		RouteWeights: req.RouteWeights, PlanID: req.PlanID, EffectiveFrom: effectiveFrom, Unit: req.Unit, TierMode: req.TierMode,
+		RouteWeights: req.RouteWeights, ModelPrices: req.ModelPrices, PlanID: req.PlanID, EffectiveFrom: effectiveFrom, Unit: req.Unit, TierMode: req.TierMode,
 		BaseFeeMillicentsPerMonth: req.BaseFeeMillicentsPerMonth, MinimumMillicentsPerMonth: req.MinimumMillicentsPerMonth,
 		ProrateMonthlyFees: req.ProrateMonthlyFees,
 	})
@@ -245,6 +248,10 @@ func (s *server) createAPIConsumerRateCard(w http.ResponseWriter, r *http.Reques
 				"Rate card already exists", "another rate card already uses this effective_from"))
 			return
 		}
+		if errors.Is(err, state.ErrInvalidArgument) {
+			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid rate card", err.Error()))
+			return
+		}
 		api.WriteProblem(w, api.ErrInternal("could not create API consumer rate card"))
 		return
 	}
@@ -254,6 +261,7 @@ func (s *server) createAPIConsumerRateCard(w http.ResponseWriter, r *http.Reques
 		"included_units_per_month":  card.IncludedUnitsPerMonth,
 		"tier_count":                len(card.Tiers),
 		"route_weight_count":        len(card.RouteWeights),
+		"model_price_count":         len(card.ModelPrices),
 		"plan_id":                   card.PlanID,
 		"effective_from":            card.EffectiveFrom.UTC().Format(time.RFC3339),
 	})
@@ -288,7 +296,7 @@ func (s *server) getAPIConsumerUsageQuote(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, windowErr)
 		return
 	}
-	quote, err := s.quoteConsumerUsage(r.Context(), acct.ID, app.ID, consumer.ID, since, until)
+	quote, err := s.quoteConsumerUsageWithBreakdown(r.Context(), acct.ID, app.ID, consumer.ID, since, until, r.URL.Query().Get("breakdown") == "true")
 	if err != nil {
 		s.log.ErrorContext(r.Context(), "quote api consumer usage", "app_id", app.ID, "consumer_id", consumer.ID, "err", err)
 		api.WriteProblem(w, api.ErrInternal("could not calculate API consumer usage quote"))
@@ -299,7 +307,7 @@ func (s *server) getAPIConsumerUsageQuote(w http.ResponseWriter, r *http.Request
 		Currency: quote.Currency, BillableUnits: quote.BillableUnits,
 		UnpricedUnits: quote.UnpricedUnits, AmountMillicents: quote.AmountMillicents,
 		Priced: quote.Priced, Buckets: make([]api.APIConsumerUsageQuoteBucketResponse, 0, len(quote.Buckets)),
-		AsOf: time.Now().UTC().Format(time.RFC3339Nano),
+		AsOf: time.Now().UTC().Format(time.RFC3339Nano), RouteBreakdown: quote.RouteBreakdown, MeterBreakdown: quote.MeterBreakdown,
 	}
 	for _, bucket := range quote.Buckets {
 		out.Buckets = append(out.Buckets, api.APIConsumerUsageQuoteBucketResponse{
@@ -311,6 +319,8 @@ func (s *server) getAPIConsumerUsageQuote(w http.ResponseWriter, r *http.Request
 			AmountMillicents:       bucket.AmountMillicents,
 			Trial:                  bucket.Trial,
 			Unit:                   bucket.Unit,
+			WaivedUnits:            bucket.WaivedUnits,
+			Model:                  bucket.Model,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -321,6 +331,10 @@ func (s *server) getAPIConsumerUsageQuote(w http.ResponseWriter, r *http.Request
 // monthly allowance first. The quote endpoint and consumer billing
 // self-service (ADR-1506) share it.
 func (s *server) quoteConsumerUsage(ctx context.Context, accountID, appID, consumerID string, since, until time.Time) (billing.APIConsumerUsageQuote, error) {
+	return s.quoteConsumerUsageWithBreakdown(ctx, accountID, appID, consumerID, since, until, false)
+}
+
+func (s *server) quoteConsumerUsageWithBreakdown(ctx context.Context, accountID, appID, consumerID string, since, until time.Time, breakdown bool) (billing.APIConsumerUsageQuote, error) {
 	usageStore, okUsage := s.store.(state.ConsumerUsageStore)
 	cardsStore, okCards := s.store.(state.APIConsumerRateCardStore)
 	if !okUsage || !okCards {
@@ -341,7 +355,7 @@ func (s *server) quoteConsumerUsage(ctx context.Context, accountID, appID, consu
 			return billing.APIConsumerUsageQuote{}, fmt.Errorf("list usage: %w", err)
 		}
 	}
-	inputs, err := s.consumerUsageInputs(ctx, cards, accountID, appID, consumerID, billing.MonthStart(since), until)
+	inputs, err := s.consumerUsageInputs(ctx, cards, accountID, appID, consumerID, billing.MonthStart(since), until, breakdown)
 	if err != nil {
 		return billing.APIConsumerUsageQuote{}, fmt.Errorf("load route and meter usage: %w", err)
 	}
@@ -349,7 +363,17 @@ func (s *server) quoteConsumerUsage(ctx context.Context, accountID, appID, consu
 	if err != nil {
 		return billing.APIConsumerUsageQuote{}, err
 	}
-	return billing.QuoteConsumerUsage(cards, usage, inputs, since, opts)
+	if billing.ConsumerModelRatesBefore(cards, until) && until.After(since) {
+		opts.ModelWaivers, err = s.consumerUsageWaivers(ctx, accountID, appID, consumerID, since, until)
+		if err != nil {
+			return billing.APIConsumerUsageQuote{}, err
+		}
+	}
+	quote, err := billing.QuoteConsumerUsage(cards, usage, inputs, since, opts)
+	if err == nil && breakdown {
+		quote.RouteBreakdown, quote.MeterBreakdown, err = billing.ConsumerQuoteBreakdown(quote, cards, usage, inputs.Routes)
+	}
+	return quote, err
 }
 
 func isUpperASCIICurrency(currency string) bool {
@@ -365,7 +389,7 @@ func isUpperASCIICurrency(currency string) bool {
 // minutes: route counts when a card weights routes (ADR-952), and the app's
 // reported units for each app meter a card prices (ADR-1318).
 func (s *server) consumerUsageInputs(ctx context.Context, cards []state.APIConsumerRateCard,
-	accountID, appID, consumerID string, since, until time.Time) (billing.ConsumerUsageInputs, error) {
+	accountID, appID, consumerID string, since, until time.Time, includeRoutes bool) (billing.ConsumerUsageInputs, error) {
 	var in billing.ConsumerUsageInputs
 	if !until.After(since) {
 		return in, nil
@@ -377,7 +401,7 @@ func (s *server) consumerUsageInputs(ctx context.Context, cards []state.APIConsu
 			meters[meter] = true
 		}
 	}
-	if routeStore, ok := s.store.(state.ConsumerRouteUsageStore); weighted && ok {
+	if routeStore, ok := s.store.(state.ConsumerRouteUsageStore); (weighted || includeRoutes) && ok {
 		routes, err := routeStore.ListAPIConsumerRouteUsage(ctx, accountID, appID, consumerID, since, until)
 		if err != nil {
 			return in, err
@@ -388,6 +412,11 @@ func (s *server) consumerUsageInputs(ctx context.Context, cards []state.APIConsu
 	if !ok || len(meters) == 0 {
 		return in, nil
 	}
+	if billing.ConsumerModelRatesBefore(cards, until) {
+		var err error
+		in.Meters, err = consumerReportedMeters(ctx, meterStore, accountID, appID, consumerID, since, until)
+		return in, err
+	}
 	in.Meters = map[string][]state.APIConsumerMeterUsageBucket{}
 	for meter := range meters {
 		rows, err := meterStore.ListAPIConsumerMeterUsage(ctx, accountID, appID, consumerID, meter, since, until)
@@ -397,4 +426,19 @@ func (s *server) consumerUsageInputs(ctx context.Context, cards []state.APIConsu
 		in.Meters[meter] = rows
 	}
 	return in, nil
+}
+
+// consumerReportedMeters reads reported names as well as known price streams.
+// Only a model-rated consumer needs this scan for unexpected aliases.
+func consumerReportedMeters(ctx context.Context, store state.ConsumerMeterUsageStore,
+	accountID, appID, consumerID string, since, until time.Time) (map[string][]state.APIConsumerMeterUsageBucket, error) {
+	rows, err := store.ListAPIConsumerMeterUsage(ctx, accountID, appID, consumerID, "", since, until)
+	if err != nil {
+		return nil, err
+	}
+	meters := make(map[string][]state.APIConsumerMeterUsageBucket)
+	for _, row := range rows {
+		meters[row.Meter] = append(meters[row.Meter], row)
+	}
+	return meters, nil
 }

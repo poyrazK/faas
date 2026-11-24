@@ -1619,6 +1619,14 @@ where subject = $1 and kind = $2 and at >= $3
 order by at desc
 limit $4;
 
+-- name: ListEventSubjectsWithKind :many
+-- Which of the given subjects have an event of one kind since a time, in one
+-- read: app health asks it of an app's recently stopped instances
+-- (liveness_failed, prod hunt r33). events_subject_idx (subject, at desc).
+select distinct subject::uuid as subject
+from events
+where subject = any(sqlc.arg(subjects)::uuid[]) and kind = sqlc.arg(kind) and at >= sqlc.arg(since);
+
 -- EPIC #1278 / Workstream B — durable internal event subscriptions.
 -- A subscription is app-owned but keeps account_id denormalized so scheduler
 -- fan-out can enforce tenant isolation without joining apps.
