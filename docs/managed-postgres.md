@@ -523,18 +523,23 @@ The adapter requires explicit `max_storage_bytes` and
 Neon organization plan. A value of `0` disables the point-in-time-restore
 promise. The storage ceiling must be positive.
 
-The initial service-class mapping is:
+The service-class mapping is:
 
 | Gregale class | Neon autoscaling range |
 | --- | ---: |
 | `development` | 0.25–1 CU |
 | `burstable` | 0.25–2 CU |
-| `production` | 1–4 CU |
+| `production` | 0.5–4 CU |
+
+Production started at 1 CU until
+[ADR-20261124221402](adr/20261124221402-neon-production-class-half-cu-floor.md).
 
 Only `single_zone` is advertised. Gregale does not claim a portable
 high-availability promise merely because Neon storage has internal redundancy.
-`scale_to_zero=true` uses a 300-second suspend timeout; false disables compute
-suspension. Customer requests cannot currently select `false`; the adapter
+`scale_to_zero=true` suspends after the database's own suspend timeout
+(`gregale postgres suspend-timeout set`, 1 minute to 1 hour), or the
+`managed_postgres_policy.suspend_timeout_seconds` default (120 s) when it has
+none; false disables compute suspension. Customer requests cannot currently select `false`; the adapter
 retains the provider-neutral field for a future always-on entitlement.
 PostgreSQL majors 15 through 18 are enabled. PostgreSQL 14 reached upstream
 end of life in November 2026 and is not supported (owner, 2026-11-12); Neon

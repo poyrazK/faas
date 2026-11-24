@@ -48,7 +48,9 @@ type classProfile struct {
 var profiles = map[managedpostgres.ServiceClass]classProfile{
 	managedpostgres.ClassDevelopment: {minimumCU: 0.25, maximumCU: 1},
 	managedpostgres.ClassBurstable:   {minimumCU: 0.25, maximumCU: 2},
-	managedpostgres.ClassProduction:  {minimumCU: 1, maximumCU: 4},
+	// Production starts at 0.5 CU (ADR-20261124221402): 2 GB warm at every
+	// wake for half of 1 CU's per-wake cost.
+	managedpostgres.ClassProduction: {minimumCU: 0.5, maximumCU: 4},
 }
 
 // Provider is a Neon-backed implementation of managedpostgres.Provider.
