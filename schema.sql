@@ -40184,6 +40184,27 @@ CREATE TABLE public.deployment_submission_receipts (
 
 
 --
+-- Name: deployment_verification_leases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_verification_leases (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    node_name text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_verification_leases_node_name_check CHECK (((octet_length(node_name) >= 1) AND (octet_length(node_name) <= 253)))
+);
+
+
+--
+-- Name: TABLE deployment_verification_leases; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.deployment_verification_leases IS 'Node verifying a deployment candidate; secretd opens contract-referenced app secrets only for it (ADR-20261122220000 amendment 2).';
+
+
+--
 -- Name: deployment_verification_queries; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -68762,6 +68783,14 @@ ALTER TABLE ONLY public.deployment_submission_receipts
 
 
 --
+-- Name: deployment_verification_leases deployment_verification_leases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_verification_leases
+    ADD CONSTRAINT deployment_verification_leases_pkey PRIMARY KEY (deployment_id);
+
+
+--
 -- Name: deployment_verification_queries deployment_verification_queries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -82999,6 +83028,13 @@ CREATE INDEX deployment_sidecar_layers_storage_key_idx ON public.deployment_side
 --
 
 CREATE INDEX deployment_submission_receipts_deployment_idx ON public.deployment_submission_receipts USING btree (deployment_id);
+
+
+--
+-- Name: deployment_verification_leases_expires_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_verification_leases_expires_idx ON public.deployment_verification_leases USING btree (expires_at);
 
 
 --
@@ -104684,6 +104720,22 @@ ALTER TABLE ONLY public.deployment_submission_receipts
 
 ALTER TABLE ONLY public.deployment_submission_receipts
     ADD CONSTRAINT deployment_submission_receipts_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_verification_leases deployment_verification_leases_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_verification_leases
+    ADD CONSTRAINT deployment_verification_leases_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_verification_leases deployment_verification_leases_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_verification_leases
+    ADD CONSTRAINT deployment_verification_leases_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --

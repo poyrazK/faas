@@ -300,6 +300,17 @@
     "kind": "account_identity"
   },
   {
+    "table": "deployment_verification_leases",
+    "columns": [
+      "app_id",
+      "created_at",
+      "deployment_id",
+      "expires_at",
+      "node_name"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "deployment_verification_queries",
     "columns": [
       "account_id",
