@@ -691,6 +691,45 @@ gregale consumers credit-void my-api CONSUMER_ID CREDIT_ID
   across several apps have
   [their own credit](#customer-credit-and-spend-caps).
 
+### Let consumers buy credit packs
+
+With your app's Stripe connection in place, use an owner key to configure up
+to 16 packs. The return URL is your own billing page. This example sells a
+USD 20 pack that grants USD 20 in prepaid credit.
+
+```sh
+curl -X PUT -H "Authorization: Bearer $OWNER_KEY" -H 'Content-Type: application/json' \
+  -d '{"return_url":"https://billing.example.com/credits","packs":[{"id":"starter","label":"Starter credit","currency":"USD","amount_millicents":2000000}]}' \
+  https://api.gregale.dev/v1/apps/my-api/consumer-credit-packs
+```
+
+In your billing page, use the customer's `billing`-scope consumer key to:
+
+1. List packs with `GET /v1/consumer-billing/my-api/credit-packs`.
+2. Start checkout with `POST /v1/consumer-billing/my-api/credit-purchases` and
+   a body containing `pack_id` and a client-generated `purchase_id` UUID.
+   Save the UUID and reuse it when retrying the same purchase. Send the
+   customer to the response's `checkout_url`.
+3. Read `GET /v1/consumer-billing/my-api/credit-purchases/{purchase_id}`
+   after Stripe returns to your page. Stripe returns the order in the
+   `credit_purchase_id` query parameter. Keep showing a pending state until
+   `status` is `credited` or `expired`.
+
+Gregale checks Stripe in the background, including when the customer closes
+the tab. It adds a single grant after Stripe confirms the exact payment.
+Show the refreshed prepaid credit balance from the consumer billing summary
+once the purchase returns its `credit_grant_id`. The grant applies to
+statements in the pack's currency. It has no expiry. If the consumer has a
+spend cap in that currency, Gregale schedules a fresh cap check.
+
+Customers can resume one open purchase at a time. Checkout sessions expire
+after one hour. To stop new purchases, set `packs` to `[]`; open sessions
+keep their saved terms. Keep the original Stripe account connected until its
+open purchases settle. A restricted Stripe key needs Checkout Session read
+and write access. Use Stripe test mode with an isolated test app. If you
+issue a refund in Stripe, review the grant and void its unused balance in
+Gregale.
+
 ### Spend caps
 
 Cap what a consumer can run up each month. Once the month's amount due,

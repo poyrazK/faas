@@ -442,6 +442,10 @@ export type { ConsumerBillingStatement } from './models/ConsumerBillingStatement
 export type { ConsumerBillingStatementsResponse } from './models/ConsumerBillingStatementsResponse.js';
 export type { ConsumerBillingSummaryResponse } from './models/ConsumerBillingSummaryResponse.js';
 export type { ConsumerBillingUsageResponse } from './models/ConsumerBillingUsageResponse.js';
+export type { ConsumerCreditPack } from './models/ConsumerCreditPack.js';
+export type { ConsumerCreditPackSettings } from './models/ConsumerCreditPackSettings.js';
+export type { ConsumerCreditPacksResponse } from './models/ConsumerCreditPacksResponse.js';
+export type { ConsumerCreditPurchaseResponse } from './models/ConsumerCreditPurchaseResponse.js';
 export type { ConsumerKeyListResponse } from './models/ConsumerKeyListResponse.js';
 export type { ConsumerKeyResponse } from './models/ConsumerKeyResponse.js';
 export type { ConsumerSignupFormResponse } from './models/ConsumerSignupFormResponse.js';
@@ -484,6 +488,7 @@ export type { CreateBillingRunRequest } from './models/CreateBillingRunRequest.j
 export type { CreateBindingVerificationRunRequest } from './models/CreateBindingVerificationRunRequest.js';
 export type { CreateCommitSourceRequest } from './models/CreateCommitSourceRequest.js';
 export type { CreateConsumerBillingPortalRequest } from './models/CreateConsumerBillingPortalRequest.js';
+export type { CreateConsumerCreditPurchaseRequest } from './models/CreateConsumerCreditPurchaseRequest.js';
 export type { CreateConsumerKeyRequest } from './models/CreateConsumerKeyRequest.js';
 export type { CreateConsumerSignupRequest } from './models/CreateConsumerSignupRequest.js';
 export type { CreateConsumerSignupResponse } from './models/CreateConsumerSignupResponse.js';

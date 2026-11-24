@@ -824,6 +824,11 @@ from .consumer_billing_statement import ConsumerBillingStatement
 from .consumer_billing_statements_response import ConsumerBillingStatementsResponse
 from .consumer_billing_summary_response import ConsumerBillingSummaryResponse
 from .consumer_billing_usage_response import ConsumerBillingUsageResponse
+from .consumer_credit_pack import ConsumerCreditPack
+from .consumer_credit_pack_settings import ConsumerCreditPackSettings
+from .consumer_credit_packs_response import ConsumerCreditPacksResponse
+from .consumer_credit_purchase_response import ConsumerCreditPurchaseResponse
+from .consumer_credit_purchase_response_status import ConsumerCreditPurchaseResponseStatus
 from .consumer_key_list_response import ConsumerKeyListResponse
 from .consumer_key_response import ConsumerKeyResponse
 from .consumer_key_response_scopes_item import ConsumerKeyResponseScopesItem
@@ -908,6 +913,7 @@ from .create_commit_source_request import CreateCommitSourceRequest
 from .create_commit_source_request_contract_version import CreateCommitSourceRequestContractVersion
 from .create_commit_source_request_destination import CreateCommitSourceRequestDestination
 from .create_consumer_billing_portal_request import CreateConsumerBillingPortalRequest
+from .create_consumer_credit_purchase_request import CreateConsumerCreditPurchaseRequest
 from .create_consumer_key_request import CreateConsumerKeyRequest
 from .create_consumer_key_request_scopes_item import CreateConsumerKeyRequestScopesItem
 from .create_consumer_signup_request import CreateConsumerSignupRequest
@@ -8083,6 +8089,11 @@ __all__ = (
     "ConsumerBillingStatementsResponse",
     "ConsumerBillingSummaryResponse",
     "ConsumerBillingUsageResponse",
+    "ConsumerCreditPack",
+    "ConsumerCreditPackSettings",
+    "ConsumerCreditPacksResponse",
+    "ConsumerCreditPurchaseResponse",
+    "ConsumerCreditPurchaseResponseStatus",
     "ConsumerKeyListResponse",
     "ConsumerKeyResponse",
     "ConsumerKeyResponseScopesItem",
@@ -8167,6 +8178,7 @@ __all__ = (
     "CreateCommitSourceRequestContractVersion",
     "CreateCommitSourceRequestDestination",
     "CreateConsumerBillingPortalRequest",
+    "CreateConsumerCreditPurchaseRequest",
     "CreateConsumerKeyRequest",
     "CreateConsumerKeyRequestScopesItem",
     "CreateConsumerSignupRequest",

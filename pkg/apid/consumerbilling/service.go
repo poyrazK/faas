@@ -26,6 +26,7 @@ import (
 // Host is what consumer billing needs from apid.
 type Host interface {
 	Store() state.Store
+	AppRoute(w http.ResponseWriter, r *http.Request, acct state.Account) (state.App, bool)
 	// QuoteConsumerUsage prices usage in [since, until) like a statement.
 	QuoteConsumerUsage(ctx context.Context, accountID, appID, consumerID string, since, until time.Time) (billing.APIConsumerUsageQuote, error)
 	// Released reports whether API monetization is released to an account
