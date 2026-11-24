@@ -50,6 +50,23 @@ func sharedSourceAppRuntime(app state.App, fw Framework, specs []string, dockerf
 	return runtime
 }
 
+// nextStandaloneBuild reports whether a build on the shared runner base
+// sharedRuntime ("" for none) builds Next.js apps with standalone output
+// (ADR-20261124160000); FAAS_NEXT_STANDALONE=0 turns it off.
+func nextStandaloneBuild(sharedRuntime string, env func(string) string) bool {
+	return sharedRuntime != "" && sharedruntime.NextStandaloneEnabled(env(sharedruntime.NextStandaloneEnv))
+}
+
+// planAppLayerMaxMB is the app layer cap of plan, or 0 when the plan is
+// unknown.
+func planAppLayerMaxMB(plan string) int {
+	limits, ok := api.LimitsFor(api.Plan(plan))
+	if !ok {
+		return 0
+	}
+	return limits.AppLayerMaxMB
+}
+
 // sourceVersionSpecs reads the version declarations of a Node or Python
 // source, including railpack.json's package pin, which the builder's own
 // pin would otherwise overwrite.
