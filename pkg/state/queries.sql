@@ -24078,7 +24078,9 @@ SELECT (jsonb_build_object(
     'financial_preview_command_runtimes_deployment_id_fkey', (SELECT count(*) FROM financial_preview_command_runtimes WHERE deployment_id = sqlc.arg(deployment_id)::uuid AND phase <> 'retired'),
     -- Environment branches (ADR-20261031193635) record the deployments they created.
     'project_environment_branch_deployments_deployment_id_fkey', (SELECT count(*) FROM project_environment_branch_deployments WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
-    'environment_branch_captures_deployment_id_fkey', (SELECT count(*) FROM environment_branch_captures WHERE deployment_id = sqlc.arg(deployment_id)::uuid)
+    'environment_branch_captures_deployment_id_fkey', (SELECT count(*) FROM environment_branch_captures WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    -- Project deploy rollbacks (#7923) record each deployment's deploy group.
+    'project_deploy_rollback_members_deployment_id_fkey', (SELECT count(*) FROM project_deploy_rollback_members WHERE deployment_id = sqlc.arg(deployment_id)::uuid)
 ))::jsonb AS borrowers;
 
 -- name: ReadCloneDeploymentCleanup :one
@@ -24165,7 +24167,13 @@ SELECT (jsonb_build_object(
  -- and capture objects (ADR-20261031193635) keep the id without a foreign key.
  'artifact_signatures.deployment_id', (SELECT count(*) FROM artifact_signatures WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
  'environment_branch_capture_objects.deployment_id', (SELECT count(*) FROM environment_branch_capture_objects WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
- 'project_environment_branch_deployments.source_deployment_id', (SELECT count(*) FROM project_environment_branch_deployments WHERE source_deployment_id=sqlc.arg(deployment_id)::uuid)
+ 'project_environment_branch_deployments.source_deployment_id', (SELECT count(*) FROM project_environment_branch_deployments WHERE source_deployment_id=sqlc.arg(deployment_id)::uuid),
+ -- Verification-contract SQL checks (ADR-20261122220000), route resource
+ -- minutes (ADR-20261121170000) and project rollback undo artifact holds
+ -- (#7923) keep the id without a foreign key.
+ 'deployment_verification_queries.deployment_id', (SELECT count(*) FROM deployment_verification_queries WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
+ 'instance_resource_minutes.deployment_id', (SELECT count(*) FROM instance_resource_minutes WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
+ 'project_rollback_undo_artifact_holds.deployment_id', (SELECT count(*) FROM project_rollback_undo_artifact_holds WHERE deployment_id=sqlc.arg(deployment_id)::uuid)
 ))::jsonb AS borrowers;
 
 -- name: CloneCheckpointCompensationHasWorkloadCleanup :one
