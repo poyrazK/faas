@@ -58,6 +58,68 @@ func TestPlanCardTimelineWithoutAssignmentsUsesDefaultCards(t *testing.T) {
 	}
 }
 
+// adr: 1317 — an assignment starts each unit's effective card at the boundary.
+func TestPlanCardTimelineKeepsParallelRatesAtAssignment(t *testing.T) {
+	start := allowanceStart
+	model := planCard("pro", start.Add(time.Minute), 5)
+	model.Unit = "app:tokens"
+	model.ModelPrices = map[string]int64{"premium": 20}
+	olderModel := planCard("pro", start, 1)
+	olderModel.Unit = model.Unit
+	olderModel.ModelPrices = map[string]int64{"premium": 2}
+	request := planCard("pro", start.Add(2*time.Minute), 10)
+	at := start.Add(3 * time.Minute)
+	cards := []state.APIConsumerRateCard{request, model, olderModel}
+	timeline := PlanCardTimeline(cards, []state.APIConsumerPlanAssignment{{PlanID: "pro", EffectiveFrom: at}})
+	if len(timeline) != 2 || !timeline[0].EffectiveFrom.Equal(at) || !timeline[1].EffectiveFrom.Equal(at) {
+		t.Fatalf("timeline = %+v, want both cards starting at assignment", timeline)
+	}
+	quote, err := QuoteConsumerUsage(timeline, []state.APIConsumerUsageBucket{usageAt(at, 1)}, ConsumerUsageInputs{
+		Meters: map[string][]state.APIConsumerMeterUsageBucket{"tokens__premium": {{WindowStart: at, Units: 50}}},
+	}, at, QuoteOptions{})
+	if err != nil || !quote.Priced || quote.AmountMillicents != 1010 || len(quote.Buckets) != 2 {
+		t.Fatalf("assigned plan quote = %+v, err = %v", quote, err)
+	}
+	if quote.Buckets[0].RateCardID != request.ID || quote.Buckets[1].RateCardID != model.ID || quote.Buckets[1].Model != "premium" {
+		t.Fatalf("assigned plan buckets = %+v, want request and effective model cards", quote.Buckets)
+	}
+}
+
+// adr: 953 — an earlier plan's rates end at the next assignment.
+func TestPlanCardTimelineEndsModelRateWhenLeavingPlan(t *testing.T) {
+	start := allowanceStart
+	switchAt := start.Add(time.Minute)
+	monthEnd := start.AddDate(0, 1, 0)
+	model := planCard("pro", start.Add(-time.Hour), 5)
+	model.Unit, model.ModelPrices = "app:tokens", map[string]int64{"premium": 20}
+	model.BaseFeeMillicentsPerMonth = int64(monthEnd.Sub(start) / time.Minute)
+	model.ProrateMonthlyFees = true
+	request := planCard("pro", start.Add(-time.Minute), 10)
+	defaultRequest := planCard("", start.Add(-time.Hour), 2)
+	timeline := PlanCardTimeline([]state.APIConsumerRateCard{request, model, defaultRequest}, []state.APIConsumerPlanAssignment{
+		{PlanID: "pro", EffectiveFrom: start}, {EffectiveFrom: switchAt},
+	})
+	quote, err := QuoteConsumerUsage(timeline, []state.APIConsumerUsageBucket{usageAt(start, 1), usageAt(switchAt, 1)}, ConsumerUsageInputs{
+		Meters: map[string][]state.APIConsumerMeterUsageBucket{
+			"tokens__premium": {{WindowStart: start, Units: 50}, {WindowStart: switchAt, Units: 50}},
+			"tokens__preview": {{WindowStart: switchAt, Units: 17}},
+		},
+	}, start, QuoteOptions{})
+	if err != nil || !quote.Priced || quote.UnpricedUnits != 0 || quote.AmountMillicents != 1012 || len(quote.Buckets) != 3 {
+		t.Fatalf("quote across plan switch = %+v, err = %v", quote, err)
+	}
+	if got := quote.Buckets[2]; got.RateCardID != defaultRequest.ID || !got.WindowStart.Equal(switchAt) {
+		t.Fatalf("switch minute = %+v, want default request pricing", got)
+	}
+	if MonthlyFeeCardEffectiveIn(timeline, switchAt, switchAt.Add(time.Minute)) {
+		t.Fatal("expired model card imposes a monthly statement period on the default plan")
+	}
+	fees := APIConsumerStatementFees(timeline, start, monthEnd, start.Add(-time.Hour), QuoteOptions{}, nil, quote.Buckets)
+	if len(fees) != 1 || fees[0].RateCardID != model.ID || fees[0].AmountMillicents != 1 {
+		t.Fatalf("model fees = %+v, want one millicent for one active minute", fees)
+	}
+}
+
 func TestQuotePlatformTenantUsageRejectsPlanCards(t *testing.T) {
 	if _, err := QuotePlatformTenantUsage([]state.APIConsumerRateCard{planCard("pro", allowanceStart, 1)}, nil,
 		[]state.APIConsumerUsageBucket{usageAt(allowanceStart, 1)}); err == nil {

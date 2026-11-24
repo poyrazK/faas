@@ -56,21 +56,7 @@ func ProrateMonthlyFeeBetween(amount int64, from, until time.Time) int64 {
 // minimum is in force for any minute of [start, end). Such periods must be
 // whole UTC months, so a month's fees are billed by one statement.
 func MonthlyFeeCardEffectiveIn(cards []state.APIConsumerRateCard, start, end time.Time) bool {
-	_, streams := UnitStreams(cards)
-	for _, stream := range streams {
-		ordered := append([]state.APIConsumerRateCard(nil), stream...)
-		sort.Slice(ordered, func(i, j int) bool { return ordered[i].EffectiveFrom.Before(ordered[j].EffectiveFrom) })
-		for i, card := range ordered {
-			until := end
-			if i+1 < len(ordered) {
-				until = ordered[i+1].EffectiveFrom
-			}
-			if card.MonthlyFees() && card.EffectiveFrom.Before(end) && until.After(start) {
-				return true
-			}
-		}
-	}
-	return false
+	return apiConsumerCardEffectiveIn(cards, start, end, state.APIConsumerRateCard.MonthlyFees)
 }
 
 // feeCard is a card's fee terms within its stream, reduced to what fees
@@ -82,6 +68,7 @@ type feeCard struct {
 	prorate          bool
 	hasMonthlyCharge bool
 	effectiveFrom    time.Time
+	effectiveUntil   time.Time
 	from, until      time.Time
 }
 
@@ -116,6 +103,9 @@ func feeSegments(ordered []feeCard, at, stop time.Time) []feeCard {
 			current = i
 		}
 	}
+	if current >= 0 && !ordered[current].effectiveUntil.IsZero() && !at.Before(ordered[current].effectiveUntil) {
+		current = -1
+	}
 	var out []feeCard
 	for i := max(current, 0); i < len(ordered); i++ {
 		card := ordered[i]
@@ -128,6 +118,9 @@ func feeSegments(ordered []feeCard, at, stop time.Time) []feeCard {
 		}
 		if i+1 < len(ordered) && ordered[i+1].effectiveFrom.Before(card.until) {
 			card.until = ordered[i+1].effectiveFrom
+		}
+		if !card.effectiveUntil.IsZero() && card.effectiveUntil.Before(card.until) {
+			card.until = card.effectiveUntil
 		}
 		if !card.prorate {
 			card.until = end
@@ -237,7 +230,8 @@ func APIConsumerStatementFees(cards []state.APIConsumerRateCard, start, end, con
 		for _, card := range stream {
 			ordered = append(ordered, feeCard{id: card.ID, stream: bucketUnit(StreamUnit(card.Unit)),
 				base: card.BaseFeeMillicentsPerMonth, minimum: card.MinimumMillicentsPerMonth, effectiveFrom: card.EffectiveFrom,
-				prorate: card.ProrateMonthlyFees, hasMonthlyCharge: card.MonthlyFees()})
+				effectiveUntil: card.EffectiveUntil,
+				prorate:        card.ProrateMonthlyFees, hasMonthlyCharge: card.MonthlyFees()})
 		}
 		sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].effectiveFrom.Before(ordered[j].effectiveFrom) })
 		charging = append(charging, feeSegments(ordered, at, closeAt)...)

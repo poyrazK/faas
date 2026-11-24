@@ -198,22 +198,18 @@ func quoteConsumerUsageStreams(cards []state.APIConsumerRateCard, usage []state.
 	}
 	var buckets []APIConsumerUsageChargeBucket
 	currency := ""
-	firstPriced := time.Time{}
+	pricedMinutes := make([]bool, len(usage))
 	for _, unit := range units {
-		stream := streams[unit]
-		start := stream[0].EffectiveFrom
-		for _, card := range stream {
-			if card.EffectiveFrom.Before(start) {
-				start = card.EffectiveFrom
-			}
-		}
-		if firstPriced.IsZero() || start.Before(firstPriced) {
-			firstPriced = start
-		}
+		stream := orderedAPIConsumerRateCards(streams[unit])
 		var sub []state.APIConsumerUsageBucket
-		for _, bucket := range usage {
-			if !bucket.WindowStart.Before(start) {
+		active := -1
+		for i, bucket := range usage {
+			for active+1 < len(stream) && !stream[active+1].EffectiveFrom.After(bucket.WindowStart) {
+				active++
+			}
+			if active >= 0 && !apiConsumerCardEnded(stream[active], bucket.WindowStart) {
 				sub = append(sub, bucket)
+				pricedMinutes[i] = true
 			}
 		}
 		metered, err := streamUsage(unit, stream, sub, in)
@@ -233,8 +229,8 @@ func quoteConsumerUsageStreams(cards []state.APIConsumerRateCard, usage []state.
 			buckets = append(buckets, bucket)
 		}
 	}
-	for _, bucket := range usage {
-		if minute := bucket.WindowStart.UTC(); minute.Before(firstPriced) && !minute.Before(from) {
+	for i, bucket := range usage {
+		if minute := bucket.WindowStart.UTC(); !pricedMinutes[i] && !minute.Before(from) {
 			buckets = append(buckets, APIConsumerUsageChargeBucket{WindowStart: minute, BillableUnits: bucket.BillableUnits})
 		}
 	}
@@ -299,11 +295,17 @@ func UnpricedConsumerModelUsage(cards []state.APIConsumerRateCard, meters map[st
 			standalone := streams[state.AppUnitPrefix+reported]
 			for _, row := range rows {
 				minute := row.WindowStart.UTC()
-				if row.Units == 0 || minute.Before(from) || minute.Before(history[firstModelCard].EffectiveFrom) ||
-					(len(standalone) > 0 && !minute.Before(standalone[0].EffectiveFrom)) {
+				if row.Units == 0 || minute.Before(from) || minute.Before(history[firstModelCard].EffectiveFrom) {
 					continue
 				}
 				next := sort.Search(len(history), func(i int) bool { return history[i].EffectiveFrom.After(minute) })
+				if apiConsumerCardEnded(history[next-1], minute) {
+					continue
+				}
+				exact := sort.Search(len(standalone), func(i int) bool { return standalone[i].EffectiveFrom.After(minute) })
+				if exact > 0 && !apiConsumerCardEnded(standalone[exact-1], minute) {
+					continue
+				}
 				if _, priced := history[next-1].ModelPrices[model]; !priced {
 					missing = append(missing, APIConsumerUsageChargeBucket{
 						WindowStart: minute, Unit: unit, Model: model, BillableUnits: row.Units,

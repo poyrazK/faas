@@ -328,7 +328,7 @@ func tenantStatementProblem(err error) *api.Problem {
 			"No tenant usage", "the requested period has no billable tenant-attributed usage and no monthly fee to bill")
 	case errors.Is(err, billing.ErrAPIConsumerAllowanceInTenantStatement):
 		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"App pricing needs an app statement", "an app rate card with included units, tiers, route weights, or a plan cannot price minutes no platform tenant rate card covers; add a tenant rate card in force for those minutes or bill through app consumer statements")
+			"App pricing needs an app statement", "an app rate card with included units, tiers, route weights, model prices, or a plan cannot price minutes no platform tenant rate card covers; add a tenant rate card in force for those minutes or bill through app consumer statements")
 	case errors.Is(err, billing.ErrTenantMonthPeriodRequired):
 		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
 			"Calendar month required", "a platform tenant rate card with a monthly allowance, tiers, route weights, monthly fees or a unit other than requests prices this period, so the statement must cover exactly one UTC calendar month")

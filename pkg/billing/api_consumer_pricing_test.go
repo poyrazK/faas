@@ -119,6 +119,31 @@ func TestQuotePlatformTenantUsageOverridesAppPriceAndFallsBackBeforeEffectiveMin
 	}
 }
 
+// adr: 1319 — tenant fallback depends on the app card in force in that minute.
+func TestQuotePlatformTenantUsageIgnoresModelCardOutsideFallback(t *testing.T) {
+	start := allowanceStart
+	later := start.Add(time.Minute)
+	app := planCard("", start, 10)
+	model := planCard("", later, 5)
+	model.Unit, model.ModelPrices = "app:tokens", map[string]int64{"premium": 20}
+	cards := []state.APIConsumerRateCard{model, app}
+	historical := usageAt(start, 2)
+	quote, err := QuotePlatformTenantUsage(cards, nil, []state.APIConsumerUsageBucket{historical})
+	if err != nil || !quote.Priced || quote.AmountMillicents != 20 || len(quote.Buckets) != 1 || quote.Buckets[0].RateCardID != app.ID {
+		t.Fatalf("historical quote = %+v, err = %v", quote, err)
+	}
+	current := usageAt(later, 1)
+	tenant := state.PlatformTenantRateCard{ID: uuid.NewString(), Currency: "EUR", EffectiveFrom: later, PriceMillicentsPerUnit: 25}
+	quote, err = QuotePlatformTenantUsage(cards, []state.PlatformTenantRateCard{tenant}, []state.APIConsumerUsageBucket{current, historical})
+	if err != nil || !quote.Priced || quote.AmountMillicents != 45 || len(quote.Buckets) != 2 ||
+		quote.Buckets[0].RateCardID != app.ID || quote.Buckets[1].PlatformTenantRateCardID != tenant.ID {
+		t.Fatalf("mixed tenant/fallback quote = %+v, err = %v", quote, err)
+	}
+	if _, err := QuotePlatformTenantUsage(cards, nil, []state.APIConsumerUsageBucket{current}); !errors.Is(err, ErrAPIConsumerAllowanceInTenantStatement) {
+		t.Fatalf("fallback to a model card in force: got %v, want ErrAPIConsumerAllowanceInTenantStatement", err)
+	}
+}
+
 // Priced (shown on quotes and statements) means every billable unit has a
 // price: one unpriced minute, or no usage at all, leaves the quote unpriced.
 func TestQuotePlatformTenantUsagePricedOnlyWhenEveryUnitIsPriced(t *testing.T) {

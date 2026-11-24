@@ -13,8 +13,8 @@ import (
 // first assignment and after a return to default. The result is an ordinary
 // card list, so allowances, tiers, weights, and statements price plan
 // changes from the minute they take effect, and monthly counting continues
-// across them. A segment's first card starts at the segment boundary with
-// the card ID it was created with, so statement lines stay traceable.
+// across them. Each unit's card in force at the segment boundary starts
+// there with its original ID. Cards end when the assignment segment ends.
 func PlanCardTimeline(cards []state.APIConsumerRateCard, assignments []state.APIConsumerPlanAssignment) []state.APIConsumerRateCard {
 	if len(assignments) == 0 {
 		return defaultPlanCards(cards)
@@ -44,23 +44,28 @@ func PlanCardTimeline(cards []state.APIConsumerRateCard, assignments []state.API
 
 	var out []state.APIConsumerRateCard
 	for _, seg := range segments {
-		var opening *state.APIConsumerRateCard
+		opening := make(map[string]state.APIConsumerRateCard)
 		for _, card := range bySource[seg.plan] {
+			card.EffectiveUntil = seg.end
 			inSegment := (seg.start.IsZero() || card.EffectiveFrom.After(seg.start)) && (seg.end.IsZero() || card.EffectiveFrom.Before(seg.end))
 			switch {
 			case !seg.start.IsZero() && !card.EffectiveFrom.After(seg.start):
-				c := card
-				opening = &c // the source's card in force when the segment opens
+				opening[StreamUnit(card.Unit)] = card
 			case inSegment:
 				out = append(out, card)
 			}
 		}
-		if opening != nil {
-			opening.EffectiveFrom = seg.start
-			out = append(out, *opening)
+		for _, card := range opening {
+			card.EffectiveFrom = seg.start
+			out = append(out, card)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].EffectiveFrom.Before(out[j].EffectiveFrom) })
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].EffectiveFrom.Equal(out[j].EffectiveFrom) {
+			return StreamUnit(out[i].Unit) < StreamUnit(out[j].Unit)
+		}
+		return out[i].EffectiveFrom.Before(out[j].EffectiveFrom)
+	})
 	return out
 }
 

@@ -1077,7 +1077,10 @@ type APIConsumerRateCard struct {
 	// (ADR-1325).
 	ProrateMonthlyFees bool
 	EffectiveFrom      time.Time
-	CreatedAt          time.Time
+	// EffectiveUntil is the exclusive end of a resolved plan assignment.
+	// Stored rate cards have an open end until superseded.
+	EffectiveUntil time.Time
+	CreatedAt      time.Time
 }
 
 // MonthlyFees reports whether the card charges a base fee or a minimum.
