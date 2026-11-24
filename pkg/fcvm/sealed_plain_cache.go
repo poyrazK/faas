@@ -118,6 +118,13 @@ func (c *SealedPlainCache) Ensure(ctx context.Context, captureKey, storageKey st
 			}
 			continue
 		}
+		// A fill can finish between the Lstat above and taking the lock. It
+		// renames its entry into place before it leaves inflight, so look
+		// again under the lock instead of decrypting the capture twice.
+		if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() {
+			c.mu.Unlock()
+			continue
+		}
 		f := &sealedPlainFill{done: make(chan struct{})}
 		c.inflight[name] = f
 		c.mu.Unlock()
