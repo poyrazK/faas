@@ -398,7 +398,7 @@ func (j *flagsJourney) savedInsight(t *testing.T) {
 		t.Fatalf("saved insight value = %v, want at least the %d conversions: %s", got, converted, run.stdout)
 	}
 	csv := j.tg.run(t, time.Minute, "insight", "saved", "run", "orders", "--format", "csv", "--project", j.project)
-	if csv.exit != 0 || !strings.HasPrefix(csv.stdout, "start,breakdown,events,units,value\n") {
+	if csv.exit != 0 || !strings.HasPrefix(string(csv.stdout), "start,breakdown,events,units,value\n") {
 		t.Fatalf("export saved insight: %s %q", csv.problem(), csv.stdout)
 	}
 }
