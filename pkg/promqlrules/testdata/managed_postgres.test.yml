@@ -109,3 +109,21 @@ tests:
       - eval_time: 30m
         alertname: FaasManagedPostgresCapEnforcementStale
         exp_alerts: []
+
+  - interval: 1h
+    name: "idle tail share is the day's idle compute over scale-to-zero compute, per class"
+    input_series:
+      - series: 'apid_managed_postgres_scale_to_zero_compute_unit_seconds_total{job="apid",instance="cp",class="production"}'
+        values: '0+3600x24'
+      - series: 'apid_managed_postgres_idle_tail_compute_unit_seconds_total{job="apid",instance="cp",class="production"}'
+        values: '0+360x24'
+      - series: 'apid_managed_postgres_scale_to_zero_compute_unit_seconds_total{job="apid",instance="cp",class="development"}'
+        values: '0x24'
+      - series: 'apid_managed_postgres_idle_tail_compute_unit_seconds_total{job="apid",instance="cp",class="development"}'
+        values: '0x24'
+    promql_expr_test:
+      - expr: faas_managed_postgres_idle_tail_share:ratio24h
+        eval_time: 24h
+        exp_samples:
+          - labels: 'faas_managed_postgres_idle_tail_share:ratio24h{class="production"}'
+            value: 0.1
