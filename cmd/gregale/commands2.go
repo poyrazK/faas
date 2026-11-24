@@ -371,6 +371,11 @@ func cmdApp(args []string) int {
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
+	// The suggestion keeps every word after the command, flags included
+	// (`app inspect --environment prod shop`), not just the positionals.
+	if fs.NArg() > 0 && appWordIsCommand(slug, args[1:]) {
+		return 1
+	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
@@ -1503,6 +1508,10 @@ func createOrFetchAppWith(ctx context.Context, client *Client, req, existingReq 
 	if !errors.As(err, &ae) || ae.Problem.Status != http.StatusConflict {
 		return err
 	}
+	if ae.Problem.Code == api.CodeAppNameUnavailable {
+		// app_name_blocklist: nobody holds the name; it is not offered.
+		return &slugTakenError{slug: req.Slug, unavailable: true}
+	}
 	existing, err = client.GetApp(ctx, req.Slug)
 	if err != nil {
 		return slugInUseError(ctx, client, req.Slug)
@@ -1519,11 +1528,36 @@ func createOrFetchAppWith(ctx context.Context, client *Client, req, existingReq 
 func slugInUseError(ctx context.Context, client *Client, slug string) error {
 	if app, err := findDeletedApp(ctx, client, slug); err == nil && app != nil {
 		if app.RestoreEligible {
-			return fmt.Errorf("slug %q belongs to an app you deleted%s; restore it with `gregale app restore %s`, free the name now with `gregale app purge %s`, or pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " that can be restored until "), slug, slug)
+			return &ownDeletedSlugError{msg: fmt.Sprintf("slug %q belongs to an app you deleted%s; restore it with `gregale app restore %s`, free the name now with `gregale app purge %s`, or pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " that can be restored until "), slug, slug)}
 		}
-		return fmt.Errorf("slug %q is held by an app you deleted until it is purged%s; free it now with `gregale app purge %s`, or pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " after "), slug)
+		return &ownDeletedSlugError{msg: fmt.Sprintf("slug %q is held by an app you deleted until it is purged%s; free it now with `gregale app purge %s`, or pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " after "), slug)}
 	}
-	return fmt.Errorf("slug %q is already in use; pick a different --name", slug)
+	return &slugTakenError{slug: slug}
+}
+
+// ownDeletedSlugError is a 409 on create for a slug one of the caller's own
+// deleted apps still holds. A deploy that asked for the name gets the
+// restore/purge hint; a suffixed alternative held this way is skipped
+// (createOrFetchAppWithAlternatives).
+type ownDeletedSlugError struct{ msg string }
+
+func (e *ownDeletedSlugError) Error() string { return e.msg }
+
+// slugTakenError is a 409 on create for a slug the caller does not hold:
+// another owner has it. A deploy may then take an alternative name
+// (createOrFetchAppWithAlternatives).
+type slugTakenError struct {
+	slug string
+	// unavailable: the platform does not offer the name (app_name_blocklist)
+	// rather than another owner holding it.
+	unavailable bool
+}
+
+func (e *slugTakenError) Error() string {
+	if e.unavailable {
+		return fmt.Sprintf("app name %q is not available; pick a different --name", e.slug)
+	}
+	return fmt.Sprintf("slug %q is already in use; pick a different --name", e.slug)
 }
 
 // findDeletedApp returns the caller's deleted app holding slug, or nil when
@@ -3093,7 +3127,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// --repo is the headless source-ref deploy path (issue #739 /
 	// ADR-092). The previous M7.5 dashboard browser flow was deleted
 	// in PR-B; the server resolves the install token from
-	// github_installations, so CI runs need only FAAS_TOKEN + --ref.
+	// github_installations, so CI runs need only GREGALE_TOKEN + --ref.
 	if *repo != "" {
 		if err := validateRepoDeployFlags(explicit); err != nil {
 			return printErr("Invalid flags", err)
@@ -3495,9 +3529,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *vcpu != 0 {
 			createReq.VCPU = *vcpu
 		}
-		if err := createOrFetchApp(ctx, client, createReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr); err != nil {
-			return printErr("Could not create or fetch app", err)
+		requestedSlug := slug
+		var createErr error
+		var nameUnavailable bool
+		slug, nameUnavailable, createErr = createOrFetchAppWithAlternatives(ctx, client, createReq, createReq, sourceDir, nil, requireAuthnPtr, appProtocolPtr, publicAuthPtr, nil)
+		if createErr != nil {
+			return printErr("Could not create or fetch app", createErr)
 		}
+		printSlugAlternativeNotice(requestedSlug, slug, nameUnavailable)
 		if jsonOutput {
 			return jsonOut(writeJSON(map[string]any{"slug": slug, "status": "ready"}))
 		}
@@ -3677,12 +3716,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 					Exit   int          `json:"exit"`
 				}{rep, 1})
 			} else {
-				renderDoctorHuman(osStderr, rep)
+				renderDoctorDeploy(osStderr, rep, true)
 			}
 			return 1
 		}
 		if *doctorStrict && rep.HasStrictWarnings() && !jsonOutput {
-			renderDoctorHuman(osStderr, rep)
+			renderDoctorDeploy(osStderr, rep, true)
 		}
 		if !*doctorStrict && (rep.HasErrors() || rep.HasWarnings() || rep.HasProfileWarnings()) {
 			renderDoctorDeployPreflight(rep, jsonOutput)
@@ -4387,15 +4426,34 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			if resolvedSimplePlan != nil {
 				existingReq.ExecutionMode = ""
 			}
-			creating := false
 			if !*createOnly {
 				if code := guardUnlinkedExistingApp(ctx, client, slug, contextDir, *yes); code != 0 {
 					return code
 				}
-				_, getErr := client.GetApp(ctx, slug)
-				creating = isNotFound(getErr)
 			}
-			err = createOrFetchAppWith(ctx, client, createReq, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
+			// --create-only links the directory too: the MCP Tasks README
+			// reserves each role with it and then deploys, and the unlinked
+			// deploy warned it would replace a running release that did not
+			// exist (MCP Tasks prod re-probe 2026-11-23).
+			_, getErr := client.GetApp(ctx, slug)
+			creating := isNotFound(getErr)
+			// Another owner may hold the name: deploy under the caller's
+			// suffixed alternative instead (createOrFetchAppWithAlternatives).
+			var confirmExisting func(string) bool
+			if !*createOnly {
+				confirmExisting = func(alt string) bool {
+					return guardUnlinkedExistingApp(ctx, client, alt, contextDir, *yes) == 0
+				}
+			}
+			requestedSlug := slug
+			var nameUnavailable bool
+			slug, nameUnavailable, err = createOrFetchAppWithAlternatives(ctx, client, createReq, existingReq, sourceDir, confirmExisting, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
+			if errors.Is(err, errDeployToAlternativeDeclined) {
+				return 1
+			}
+			if err == nil {
+				printSlugAlternativeNotice(requestedSlug, slug, nameUnavailable)
+			}
 			if err == nil && creating {
 				rememberCreatedApp(contextDir, slug)
 			}
@@ -4438,6 +4496,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if err := deployManifestObjectStorageBindings(ctx, client, slug, sourceDir, *environment); err != nil {
 		return printErr("Manifest object-storage bindings failed", err)
+	}
+	// ADR-20261122220000: gregale.verify.yaml gates this deployment, so it
+	// is stored before the deployment is created. The contract is app-wide,
+	// so only a production deploy changes it: a staging deploy must not
+	// replace the checks that gate production.
+	if *environment == "" && verifyProductionScope(manifestScope) {
+		if err := deployVerificationContract(ctx, client, slug, sourceDir); err != nil {
+			return printErr("Verification contract not applied", err)
+		}
 	}
 	// Lifecycle is app-wide, so only a production deploy changes it, as a
 	// production push does (ADR-20261110190000 §5).
@@ -5365,6 +5432,10 @@ func cmdTrafficSet(args []string) int {
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
+	slug, err := leadingDeploymentID(slug, deployment)
+	if err != nil {
+		return printErr("Invalid arguments", err)
+	}
 	if err := mergeLeadingSlug(app, slug); err != nil {
 		return printErr("Invalid arguments", err)
 	}
@@ -5433,6 +5504,10 @@ func cmdTrafficPromote(args []string) int {
 	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
+	}
+	slug, err := leadingDeploymentID(slug, deployment)
+	if err != nil {
+		return printErr("Invalid arguments", err)
 	}
 	if err := mergeLeadingSlug(app, slug); err != nil {
 		return printErr("Invalid arguments", err)
@@ -5904,7 +5979,7 @@ func cmdCrons(args []string) int {
 			return cmdDelayedTaskList(rest)
 		}
 		fs := newFlagSet("crons-list", flag.ContinueOnError)
-		slug := fs.String("app", "", "app slug (required without -l)")
+		slug := fs.String("app", "", "app slug (defaults to the linked app; optional with -l)")
 		selector := addSelectorFlag(fs)
 		if err := fs.Parse(args[1:]); err != nil {
 			return 1
@@ -5912,8 +5987,12 @@ func cmdCrons(args []string) int {
 		if rejectUnexpectedFlagArgs(fs) {
 			return 1
 		}
+		if *selector == "" {
+			// A selector spans the account; only a plain list takes the link.
+			fillLinkedApp(slug)
+		}
 		if *slug == "" && *selector == "" {
-			PrintUsage(os.Stderr, "usage: gregale cron list --app <slug> | -l SELECTOR [--app <slug>]", "crons")
+			PrintUsage(os.Stderr, "usage: gregale cron list [--app <slug>] | -l SELECTOR [--app <slug>]", "crons")
 			return 1
 		}
 		client, err := authedClient()
@@ -7568,7 +7647,7 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 		*archiveDate = resolvedDate
 		archiveSelector = &api.ArchiveLogSelector{InstanceID: *archiveInstance, Date: *archiveDate}
 	}
-	if logSource == logsSourceHTTP && (*follow || *grep != "" || *level != "" || *explain || archiveRequested) {
+	if logSource == logsSourceHTTP && (*grep != "" || *level != "" || *explain || archiveRequested) {
 		if inferred := logsHTTPOnlyFlagsSet(fs); !logsFlagWasSet(fs, "source") && len(inferred) > 0 {
 			// `logs h14-py --grep healthz --limit 3` never asked for HTTP logs;
 			// --limit chose them silently (Hunt 14 H14-64).
@@ -7576,11 +7655,17 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 			if len(inferred) > 1 {
 				verb = "apply"
 			}
-			PrintUsage(os.Stderr, fmt.Sprintf("%s %s only to HTTP request logs, which cannot be combined with --follow, --grep, --level, --explain, or --archive; drop %s to read runtime logs",
+			PrintUsage(os.Stderr, fmt.Sprintf("%s %s only to HTTP request logs, which cannot be combined with --grep, --level, --explain, or --archive; drop %s to read runtime logs",
 				flags, verb, flags), "logs")
 			return 2
 		}
-		PrintUsage(os.Stderr, "HTTP log queries cannot be combined with --follow, --grep, --level, --explain, or --archive", "logs")
+		PrintUsage(os.Stderr, "HTTP log queries cannot be combined with --grep, --level, --explain, or --archive", "logs")
+		return 2
+	}
+	if logSource == logsSourceHTTP && *follow && (strings.TrimSpace(*requestID) != "" || strings.TrimSpace(*traceID) != "" || *all || logsFlagWasSet(fs, "limit")) {
+		// --follow polls new request rows; a single-request lookup or a
+		// full-window read has nothing to follow.
+		PrintUsage(os.Stderr, "--follow prints new HTTP requests as they are recorded; drop --request, --trace, --limit, or --all (filter with --route, --status, or --release)", "logs")
 		return 2
 	}
 	// Validate --level early so a typo costs the customer a network
@@ -7641,6 +7726,15 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 				return code
 			}
 		}
+	}
+	if logSource == logsSourceHTTP && *follow {
+		return followHTTPLogs(context.Background(), slug, api.DebugTelemetryListOptions{
+			Since:        normalizedSince,
+			Route:        *route,
+			DeploymentID: deploymentRef,
+			Status:       *status,
+			Limit:        *limit,
+		})
 	}
 	if logSource == logsSourceHTTP {
 		return runHTTPLogsQuery(context.Background(), slug, deploymentRef, strings.TrimSpace(*requestID), strings.TrimSpace(*traceID), *route, normalizedSince, *status, *limit, *all, now)
@@ -7776,6 +7870,14 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 		collector = newExplainCollector(slug, deployment)
 	}
 	printedLines := retainedLines
+	markRuntimeLine := func() {}
+	// Only an unfiltered follow: with --grep, --level or --deployment a quiet
+	// stream says nothing about whether the app writes output.
+	if follow && archive == nil && !jsonOutput && printedLines == 0 && deployment == "" && filter.Grep == "" && filter.Level == "" {
+		var stopIdleHint func()
+		markRuntimeLine, stopIdleHint = startRuntimeFollowIdleHint(slug)
+		defer stopIdleHint()
+	}
 	parkedFallback := false
 	// reconnectAt is set when a follow stream ended on its idle timeout:
 	// `gregale logs -f` reconnects instead of exiting 0 after ten quiet
@@ -7849,6 +7951,7 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 				return false, 0
 			}
 			printedLines++
+			markRuntimeLine()
 			line := e.Data
 			if !jsonOutput {
 				line = formatRuntimeLogLine(e.Data)
@@ -8603,6 +8706,11 @@ func renderDeployFailure(d api.DeploymentResponse) int {
 		}
 		if lifted := mapFailureProblem(problem); lifted != "" {
 			PrintFail(os.Stderr, "%s", lifted)
+			// A process that exited 0 did not crash: it finished. Say so,
+			// since the catalog copy above reads as a crash.
+			if d.ErrorCode == api.CodeAppStartupCrash && strings.Contains(d.Error, api.StartupCleanExitMarker) {
+				_, _ = fmt.Fprintln(os.Stderr, "  your start command exited with status 0: it ran to completion instead of serving.\n  Start a long-running server in the foreground that listens on $PORT (a Dockerfile needs a CMD or ENTRYPOINT that does).")
+			}
 			// The catalog copy says the crash output "is in the error
 			// detail" but never showed it; on prod the real cause
 			// ("Error: X is not set", nginx's [emerg] line) was only
@@ -8612,6 +8720,9 @@ func renderDeployFailure(d api.DeploymentResponse) int {
 				for _, line := range excerpt {
 					_, _ = fmt.Fprintf(os.Stderr, "    %s\n", line)
 				}
+			}
+			if hint := startupCrashCauseHint(d.ErrorCode, d.Error); hint != "" {
+				_, _ = fmt.Fprintf(os.Stderr, "  %s\n", hint)
 			}
 			if d.Error == "infra" {
 				return 3
@@ -8682,6 +8793,27 @@ func startupCrashExcerpt(detail string) []string {
 	end := min(start+8, len(lines))
 	return lines[start:end]
 }
+
+// startupCrashCauseHint names the fix for a crash cause the generic crash
+// copy cannot: a serving DATABASE_URL that may not change the schema. The
+// voting-app worker created its table at startup and died on SQLSTATE 42501
+// "permission denied for schema public"; the deploy showed only the generic
+// crash fix, so the agent spent turns finding MIGRATION_DATABASE_URL (agent
+// eval 2026-11-23).
+func startupCrashCauseHint(code, detail string) string {
+	if code != api.CodeAppStartupCrash || !postgresSchemaDenied.MatchString(detail) {
+		return ""
+	}
+	return "PostgreSQL refused a schema change: the serving DATABASE_URL cannot create or alter tables. " +
+		"Attach the database with `gregale postgres attach <db> <app> --env MIGRATION_DATABASE_URL --access migration` " +
+		"and run the change in release.command (gregale.yaml), which receives that credential."
+}
+
+// postgresSchemaDenied matches PostgreSQL's wording for a refused schema
+// change: creating in a schema, or altering an object the role does not own.
+// A bare 42501 also covers "permission denied for table", a missing DML
+// grant that a migration credential does not fix.
+var postgresSchemaDenied = regexp.MustCompile(`(?i)permission denied for schema \S+|must be owner of (table|schema|sequence|view|materialized view|index|type|function) \S+`)
 
 // mapFailureMessage returns the user-facing copy for one of the four
 // failure classes UX §2.4 enumerates. Anything else falls back to

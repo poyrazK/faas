@@ -7882,6 +7882,11 @@ type PlanWorkload struct {
 	// public edge: an existing internal app, or a new Compose service without
 	// `ports:` (ADR-20261022131852). Omitted means public.
 	Visibility AppVisibility `json:"visibility,omitempty"`
+	// Access is the service's declared public-URL access
+	// (ADR-20261124090000): "public" or "key", from gregale.yaml
+	// project.services.<name>.access or Compose x-gregale-access. Omitted
+	// when nothing is declared.
+	Access string `json:"access,omitempty"`
 
 	Class           string   `json:"class,omitempty"`
 	Schedule        string   `json:"schedule,omitempty"`
@@ -9697,8 +9702,8 @@ func (a *EdgeRuleJWTAction) Validate() *Problem {
 		if err := a.MCP.Validate(); err != nil {
 			return ErrValidation(err.Error())
 		}
-		if len(a.Audience) != 1 || a.Audience[0] != a.MCP.Resource {
-			return ErrValidation("MCP JWT audience must contain exactly the canonical resource")
+		if !validMCPJWTAudience(a.Audience, a.MCP) {
+			return ErrValidation("MCP JWT audience must contain exactly the canonical resource, or the policy's declared audience")
 		}
 		u, err := url.Parse(a.Issuer)
 		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
@@ -14492,4 +14497,32 @@ type SelectedTraceLookupResponse struct {
 	InvocationsStatus    string                    `json:"invocations_status"`
 	InvocationsTruncated bool                      `json:"invocations_truncated"`
 	Partial              bool                      `json:"partial"`
+}
+
+// validMCPJWTAudience accepts exactly one audience: the canonical resource
+// (RFC 8707), or the audience the policy declares for an external issuer
+// (MCPResourcePolicy.Audience, ADR-20261123192254).
+func validMCPJWTAudience(audience []string, p *MCPResourcePolicy) bool {
+	return len(audience) == 1 && (audience[0] == p.Resource || p.Audience != "" && audience[0] == p.Audience)
+}
+
+// AppNameReportResponse is GET /v1/admin/app-names/report: the existing apps
+// whose names an app name blocklist matches. source is "live"
+// (app_name_blocklist) or "preview" (the request's ?blocklist=). Nothing is
+// changed; truncated means more apps matched than were listed.
+type AppNameReportResponse struct {
+	Source    string               `json:"source"`
+	Entries   int                  `json:"entries"`
+	Matches   []AppNameReportMatch `json:"matches"`
+	Truncated bool                 `json:"truncated"`
+}
+
+// AppNameReportMatch is one existing app a blocklist entry matches.
+type AppNameReportMatch struct {
+	Slug      string `json:"slug"`
+	AppID     string `json:"app_id"`
+	AccountID string `json:"account_id"`
+	OrgID     string `json:"org_id,omitempty"`
+	Status    string `json:"status"`
+	Entry     string `json:"entry"`
 }

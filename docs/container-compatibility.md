@@ -8,7 +8,7 @@ Gregale's container contract is:
 Deploy an existing image directly:
 
 ```sh
-gregale doctor --image registry.example.com/team/api@sha256:<digest>
+gregale deploy check --image registry.example.com/team/api@sha256:<digest>
 gregale deploy --image registry.example.com/team/api@sha256:<digest>
 ```
 
@@ -167,7 +167,9 @@ Reseed these yourself, or avoid keeping them across a snapshot:
   on every wake ([trace propagation](runtimes/trace-propagation.md#deployment-identity));
 - `Math.random` inside Node worker threads;
 - sidecars that run from their own root filesystem;
-- Bun and Deno, which do not load the Node reseed; Python started with `-S`,
+- Bun and Deno, which do not load the Node reseed (in Bun, `Math.random`
+  returns the same sequence after every wake, measured, while
+  `crypto.randomUUID` and `crypto.getRandomValues` do not repeat); Python started with `-S`,
   `-E` or `-I`, which skips the Python reseed; and any Node, Python or Java
   process started with a cleared environment. Gregale logs a warning on each
   wake when it finds such a process running, or a Go program that does not
@@ -607,7 +609,7 @@ It applies to the complete full-rootfs main image; the shared-base upper-layer
 path cannot prove whether a command exists in its base and retains its guest
 validation. The metadata-only doctor command below retains its fast path.
 
-`gregale doctor --image REF --json` reports `image.serving_port` as inferred
+`gregale deploy check --image REF --json` reports `image.serving_port` as inferred
 from image metadata before deployment overrides. Human output shows the same
 port. A listener finding warns when multiple TCP ports leave the default
 ambiguous or when only UDP ports are declared. `--strict` makes those warnings

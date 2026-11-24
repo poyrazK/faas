@@ -501,7 +501,7 @@ func handleH1Stream(w http.ResponseWriter, r *http.Request, guestIP string, gues
 	outboundURL := "http://" + net.JoinHostPort(guestIP, strconv.FormatUint(uint64(guestPort), 10)) + url
 	outboundReq, err := newGuestRequest(roundTripCtx, method, outboundURL, r)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("build outbound request: %v", err), http.StatusBadGateway)
+		guestBadGateway(w, r, "build outbound request", err)
 		return
 	}
 	for _, h := range extraHeaders {
@@ -521,11 +521,11 @@ func handleH1Stream(w http.ResponseWriter, r *http.Request, guestIP string, gues
 	}
 	outboundReq.Host = sanitizeCRLF(host)
 
-	resp, err := transport.RoundTrip(outboundReq)
+	resp, err := roundTripGuestH1(transport, outboundReq)
 	headerTimer.Stop()
 	if err != nil {
 		markGuestTransportError(w, r, roundTripCtx)
-		http.Error(w, fmt.Sprintf("guest h1 roundtrip: %v", err), http.StatusBadGateway)
+		guestBadGateway(w, r, "guest h1 roundtrip", err)
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -561,7 +561,7 @@ func handleH1StreamLegacy(w http.ResponseWriter, r *http.Request, ctx context.Co
 	d := net.Dialer{Timeout: guestDialTimeout()}
 	conn, err := netns.DialBridgeContext(ctx, &d, "tcp", net.JoinHostPort(guestIP, strconv.FormatUint(uint64(guestPort), 10)))
 	if err != nil {
-		http.Error(w, fmt.Sprintf("dial guest: %v", err), http.StatusBadGateway)
+		guestBadGateway(w, r, "dial guest", err)
 		return
 	}
 	defer func() { _ = conn.Close() }()
@@ -577,7 +577,7 @@ func handleH1StreamLegacy(w http.ResponseWriter, r *http.Request, ctx context.Co
 	}()
 
 	if err := writeH1RequestHead(conn, method, url, host, guestIP, guestPort, extraHeaders); err != nil {
-		http.Error(w, fmt.Sprintf("write request head: %v", err), http.StatusBadGateway)
+		guestBadGateway(w, r, "write request head", err)
 		return
 	}
 
@@ -591,7 +591,7 @@ func handleH1StreamLegacy(w http.ResponseWriter, r *http.Request, ctx context.Co
 	resp, err := http.ReadResponse(br, r)
 	_ = conn.SetReadDeadline(time.Time{})
 	if err != nil {
-		http.Error(w, fmt.Sprintf("read guest response: %v", err), http.StatusBadGateway)
+		guestBadGateway(w, r, "read guest response", err)
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()

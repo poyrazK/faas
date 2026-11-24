@@ -324,6 +324,7 @@ func (s *Service) applyUpdate(
 	manifest.PreviewServiceCallsPolicy = previewServiceCallsPolicyForWorkload(a.Workload)
 	manifest.AllowedServiceCallers = a.Workload.AllowedServiceCallers
 	manifest.AllowedServiceCallScopes = a.Workload.AllowedServiceCallScopes
+	manifest.Uses = a.Workload.Uses.Clone()
 	manifest.Ports = portsWithInternal(manifest.Ports, a.Workload.InternalPorts)
 	manifest.BuildDockerfile = a.Workload.Dockerfile
 	manifest.DockerfileBuild = a.Workload.DockerfileBuild.Clone()
@@ -409,6 +410,7 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 			PreviewServiceCallsPolicy: previewServiceCallsPolicyForWorkload(w),
 			AllowedServiceCallers:     w.AllowedServiceCallers,
 			AllowedServiceCallScopes:  w.AllowedServiceCallScopes,
+			Uses:                      w.Uses.Clone(),
 			Ports:                     portsWithInternal(nil, w.InternalPorts),
 			// ADR-829: project-created apps get the same observe-only guard
 			// as POST /v1/apps. Drafts are create-only, so existing apps keep
@@ -425,6 +427,10 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 		// Create-only, like the auth defaults: an existing app keeps the
 		// visibility its owner set.
 		Visibility: reposcan.NewWorkloadVisibility(w),
+	}
+	if w.Access != "" {
+		app.RequireAuthn, app.PublicAuthMode = ServiceAccessAuth(w.Access, plan, app.RequireAuthn, app.PublicAuthMode)
+		app.Manifest.DeclaredAccess = w.Access
 	}
 	applyProjectImage(&app.Manifest, w)
 	applyComposeResources(&app, w)
@@ -451,6 +457,9 @@ func ApplyScannedWorkloadToApp(app state.App, w reposcan.Workload, available map
 	if w.PlatformTenantRequired != nil {
 		app.PlatformTenantRequired = *w.PlatformTenantRequired
 	}
+	// The auth columns themselves change in apid before the reconcile
+	// (applyProjectServiceAccess); the manifest records what was declared.
+	app.Manifest.DeclaredAccess = w.Access
 	app.RootDir = w.RootDir
 	app.WorkloadName = w.Name
 	releaseScanWorkerMode(&app.Manifest, app.WorkloadClass, w)
@@ -466,6 +475,7 @@ func ApplyScannedWorkloadToApp(app state.App, w reposcan.Workload, available map
 	app.Manifest.PreviewServiceCallsPolicy = previewServiceCallsPolicyForWorkload(w)
 	app.Manifest.AllowedServiceCallers = w.AllowedServiceCallers
 	app.Manifest.AllowedServiceCallScopes = w.AllowedServiceCallScopes
+	app.Manifest.Uses = w.Uses.Clone()
 	app.Manifest.Ports = portsWithInternal(app.Manifest.Ports, w.InternalPorts)
 	app.Manifest.BuildDockerfile = w.Dockerfile
 	app.Manifest.DockerfileBuild = w.DockerfileBuild.Clone()

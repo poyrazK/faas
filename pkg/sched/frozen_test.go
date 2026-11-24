@@ -477,7 +477,7 @@ func TestEvictUnderPressureCompressesFrozenInstances(t *testing.T) {
 			}
 			booked := f.e.Ledger().ResidentRAMForNode(f.ins.NodeID)
 			f.vmm.compressReport, f.vmm.compressErr = tc.report, tc.err
-			if err := f.e.EvictUnderPressure(t.Context(), f.ins.ID); err != nil {
+			if err := f.e.EvictUnderPressure(t.Context(), f.ins.ID, EvictionReasonMeasuredMemory); err != nil {
 				t.Fatal(err)
 			}
 			if f.vmm.compresses != 1 || f.state(t) != tc.wantState {
@@ -531,7 +531,7 @@ func TestCompressFrozenProactiveNeverParks(t *testing.T) {
 
 func TestEvictUnderPressureEvictsRunningInstances(t *testing.T) {
 	f := newFrozenFixture(t, true)
-	if err := f.e.EvictUnderPressure(t.Context(), f.ins.ID); err != nil {
+	if err := f.e.EvictUnderPressure(t.Context(), f.ins.ID, EvictionReasonMeasuredMemory); err != nil {
 		t.Fatal(err)
 	}
 	if f.vmm.compresses != 0 || f.state(t) != state.StateStopped {

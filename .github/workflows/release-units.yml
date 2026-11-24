@@ -55,6 +55,12 @@ on:
     paths-ignore:
       - "docs/**"
       - "**/*.md"
+  # A release is capped at a few commits beyond what production last took
+  # cleanly (docs/adr/20261122170000-continuous-unit-lane.md, "Blast cap");
+  # this picks up the rest when no new merge arrives. It deploys only with
+  # automatic deploys on, and releases nothing when production is current.
+  schedule:
+    - cron: "*/10 * * * *"
   workflow_dispatch:
     inputs:
       base:
@@ -66,31 +72,57 @@ on:
         required: false
         default: ""
         type: string
+      compute_lane:
+        description: "This run only: turn the compute lane on (vmmd and the other compute daemons), the owner-watched canary of docs/adr/20261123122457-compute-unit-lane.md. release_units.json compute_lane.enabled turns it on for every run."
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
   id-token: write
   actions: read
+  pull-requests: read
 
 jobs:
   build:
     name: Build and sign changed control-plane units
-    runs-on: ubuntu-22.04
+    # A persistent build runner keeps the clone and the Go build cache warm
+    # (the build-runner bootstrap playbook, ADR-20261122170000): set
+    # UNIT_RELEASE_BUILD_RUNNER to its labels as a JSON array. It runs only
+    # this job, only for main, and holds no production credentials. Unset,
+    # the build runs on a GitHub-hosted runner and restores its caches.
+    runs-on: ${{ vars.UNIT_RELEASE_BUILD_RUNNER != '' && fromJSON(vars.UNIT_RELEASE_BUILD_RUNNER) || 'ubuntu-22.04' }}
+    # The schedule only continues automatic deploys.
+    if: github.event_name != 'schedule' || vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != ''
     # The first run over a new base also builds the base's candidates
     # (about as long as the head build); later runs restore its digests.
     timeout-minutes: 35
     concurrency:
       # Keyed by the deploy target, as the preflight's `if:` decides it.
-      group: release-units-build-${{ inputs.deploy_environment || (github.event_name == 'push' && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT) || 'build-only' }}
+      # A compute-lane canary has its own group: the 10-minute schedule or a
+      # merge (lane off) must not cancel the build the owner is watching.
+      group: release-units-build-${{ inputs.deploy_environment || ((github.event_name == 'push' || github.event_name == 'schedule') && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT) || 'build-only' }}${{ inputs.compute_lane && '-compute-canary' || '' }}
       cancel-in-progress: true
     outputs:
       eligible: ${{ steps.detect.outputs.eligible }}
       deployable: ${{ steps.detect.outputs.deployable }}
       control_plane: ${{ steps.detect.outputs.control_plane }}
       edge: ${{ steps.detect.outputs.edge }}
+      host_config: ${{ steps.detect.outputs.host_config }}
       base_sha: ${{ steps.base.outputs.sha }}
+      release_sha: ${{ steps.detect.outputs.release_sha }}
       build_cache_hit: ${{ steps.build-cache.outputs.cache-hit }}
+      self_hosted: ${{ runner.environment == 'self-hosted' }}
     steps:
+      # The persistent build runner compiles main only: a dispatch on any
+      # other ref goes to a GitHub-hosted runner by unsetting the variable.
+      - name: Refuse other refs on the build runner
+        if: runner.environment == 'self-hosted' && github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::the persistent build runner builds main only, not ${GITHUB_REF}" >&2
+          exit 1
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Unit versions walk first-parent history back to the base tag:
@@ -126,9 +158,11 @@ jobs:
       # 2026-10-21. The release build cache holds the release recipe's
       # compile results, one entry per base release, written once by the
       # warm-build-cache job below, off the deploy path. A run over a new
-      # base starts from the newest entry.
+      # base starts from the newest entry. The persistent build runner keeps
+      # its own cache and restores none.
       - name: Restore the release build cache
         id: build-cache
+        if: runner.environment == 'github-hosted'
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
@@ -142,10 +176,10 @@ jobs:
       # the light tier's cache on main, for its modules. Same paths as
       # ci-light saves, or the entry does not match.
       - id: cache-date
-        if: steps.build-cache.outputs.cache-matched-key == ''
+        if: runner.environment == 'github-hosted' && steps.build-cache.outputs.cache-matched-key == ''
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: Restore main-branch Go module cache
-        if: steps.build-cache.outputs.cache-matched-key == ''
+        if: runner.environment == 'github-hosted' && steps.build-cache.outputs.cache-matched-key == ''
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
@@ -171,25 +205,130 @@ jobs:
         id: detect
         env:
           BASE: ${{ steps.base.outputs.ref }}
+          BASE_SHA: ${{ steps.base.outputs.sha }}
           CODE_CACHE: ${{ runner.temp }}/unit-base-code.json
           OUT_DIR: ${{ runner.temp }}/gregale-units
+          GH_TOKEN: ${{ github.token }}
+          BLAST_CAP: "5"
+          UNITS_BIN_DIR: ${{ runner.temp }}/unit-bin
+          COMPUTE_LANE: ${{ inputs.compute_lane && 'on' || '' }}
         run: |
           set -euo pipefail
           mkdir -p "$OUT_DIR"
-          python3 scripts/ci/affected_units.py --base "$BASE" --head HEAD --code --code-cache "$CODE_CACHE" \
-            --workdir "$RUNNER_TEMP" --output "$OUT_DIR/report.json"
+          # Whole commits, oldest first (docs/adr/20261122170000-continuous-
+          # unit-lane.md): when the range to main's head is not eligible, the
+          # lane releases the newest commit up to which every commit is
+          # (affected_units.py lane_prefix), and never skips or splits one.
+          # The selection rules are head's (copied before the checkout
+          # moves); the release, its build and the verdict that gates it are
+          # the full analysis of that commit, checked out.
+          tools="$RUNNER_TEMP/unit-tools"
+          rm -rf "$tools" && cp -R scripts/ci "$tools"
+          # The dispatched compute-lane canary turns the lane on in the copied
+          # table, so the verdict, the build and the release agree on it.
+          if [[ "$COMPUTE_LANE" == on ]]; then
+            jq '.compute_lane.enabled = true' "$tools/release_units.json" > "$tools/release_units.json.new"
+            mv "$tools/release_units.json.new" "$tools/release_units.json"
+            echo "::notice::compute lane on for this run (owner-dispatched canary)" >&2
+          fi
+          python3 "$tools/affected_units.py" --base "$BASE" --head HEAD --output "$OUT_DIR/report-main.json"
+          target="$(git rev-parse HEAD)" stall=""
+          # The whole range's verdict wins: a commit that looks blocked on
+          # its own (a change a later commit reverts) does not stall it.
+          if [[ "$(jq -r .eligible "$OUT_DIR/report-main.json")" != true ]]; then
+            target="$(jq -r '.lane_prefix.head // empty' "$OUT_DIR/report-main.json")"
+            stall="$(jq -r '.lane_prefix.stalled_by | select(.) | "\(.commit[0:12]): \(.reasons | join("; "))"' "$OUT_DIR/report-main.json")"
+          fi
+          if [[ -n "$stall" ]]; then
+            echo "::warning::unit lane stalled behind ${stall}; $(jq -r .lane_prefix.behind "$OUT_DIR/report-main.json") commits wait for a full release" >&2
+          fi
+          # Blast cap ("Blast cap" in the ADR): at most BLAST_CAP first-parent
+          # commits beyond the commit production last took through every
+          # lane (last_deployed.py; the full release when none or when that
+          # commit predates it). Nothing is released when production already
+          # runs the selected commit; a capped release leaves the rest to the
+          # next run (a merge, or the 10-minute schedule).
+          capped="" current=""
+          if [[ -n "$target" ]]; then
+            from="$BASE_SHA"
+            last="$(python3 "$tools/last_deployed.py")"
+            if [[ -n "$last" ]] && git merge-base --is-ancestor "$BASE_SHA" "$last" 2>/dev/null \
+                && git merge-base --is-ancestor "$last" "$target" 2>/dev/null; then
+              from="$last"
+            fi
+            if [[ "$from" == "$target" ]]; then
+              current="$target" target=""
+            else
+              behind="$(git rev-list --first-parent --count "$from..$target")"
+              if (( behind > BLAST_CAP )); then
+                target="$(git rev-list --first-parent --reverse "$from..$target" | sed -n "${BLAST_CAP}p")"
+                capped="$behind commits beyond ${from:0:12}; releasing the first $BLAST_CAP, up to ${target:0:12}"
+                echo "::notice::blast cap: $capped" >&2
+              fi
+            fi
+          fi
+          if [[ -n "$current" ]]; then
+            jq --arg c "$current" '.eligible = false | .lanes |= map_values(.eligible = false)
+              | .reasons = ["production already took \($c[0:12]) through every lane"]' \
+              "$OUT_DIR/report-main.json" > "$OUT_DIR/report.json"
+          elif [[ -z "$target" ]]; then
+            cp "$OUT_DIR/report-main.json" "$OUT_DIR/report.json"
+          else
+            if [[ "$target" != "$(git rev-parse HEAD)" ]]; then
+              git checkout --quiet --detach "$target"
+            fi
+            # One build ("One build" in the ADR): the units this release
+            # carries are built once, here, with the release recipe; code
+            # selection measures those very binaries (normalised to the code
+            # build) instead of building every one of them again.
+            python3 "$tools/affected_units.py" --base "$BASE" --head "$target" --output "$OUT_DIR/report-closure.json"
+            if [[ "$(jq -r .eligible "$OUT_DIR/report-closure.json")" == true ]]; then
+              rm -rf "$UNITS_BIN_DIR"
+              release_out="$OUT_DIR/release" closure="$OUT_DIR/report-closure.json"
+              UNITS_BUILD_ONLY=1 LANES="$tools/release_units.json" REPORT="$closure" OUT_DIR="$release_out" \
+                scripts/build-unit-release.sh
+              python3 "$tools/affected_units.py" --base "$BASE" --head "$target" --code --code-cache "$CODE_CACHE" \
+                --code-from "$UNITS_BIN_DIR" --workdir "$RUNNER_TEMP" --output "$OUT_DIR/report.json"
+            else
+              cp "$OUT_DIR/report-closure.json" "$OUT_DIR/report.json"
+            fi
+          fi
+          # Empty when no commit is releasable; nothing downstream runs then.
+          echo "release_sha=${target}" >> "$GITHUB_OUTPUT"
           eligible="$(jq -r .eligible "$OUT_DIR/report.json")"
           deployable="$(jq -r '.deployable | join(",")' "$OUT_DIR/report.json")"
           {
             echo "eligible=$eligible"
             echo "deployable=$deployable"
             echo "control_plane=$(jq -r '.lanes["control-plane"].eligible' "$OUT_DIR/report.json")"
-            echo "edge=$(jq -r '.lanes.edge.eligible' "$OUT_DIR/report.json")"
+            # The compute lane rides the edge lane's per-node jobs
+            # (docs/adr/20261123122457-compute-unit-lane.md).
+            echo "edge=$(jq -r '.lanes.edge.eligible or (.lanes.compute.eligible // false)' "$OUT_DIR/report.json")"
+            # false only when the host view names the control-plane group
+            # and no role of it changed since the base full release; an
+            # unknown group (no host view) keeps the host-config job.
+            echo "host_config=$(jq -r '.host_config | (.group == null) or ((.roles | length) > 0) or .all' "$OUT_DIR/report.json")"
             echo "code_cache_new=$(jq -r '.code_selection.base_built | length > 0' "$OUT_DIR/report.json")"
           } >> "$GITHUB_OUTPUT"
           {
-            echo "## Unit release for \`${GITHUB_SHA:0:12}\` over \`$BASE\`"
+            if [[ -n "$target" ]]; then
+              echo "## Unit release for \`${target:0:12}\` over \`$BASE\`"
+            else
+              echo "## No releasable commit over \`$BASE\` (main at \`${GITHUB_SHA:0:12}\`)"
+            fi
             echo
+            if [[ -n "$stall" ]]; then
+              echo "**Lane stalled** at \`${stall}\`. Main is at \`${GITHUB_SHA:0:12}\`; $(jq -r .lane_prefix.behind "$OUT_DIR/report-main.json") commits wait for the next full release. The lane never skips or splits a commit."
+              echo
+            fi
+            if [[ -n "$capped" ]]; then
+              echo "**Blast cap:** ${capped}. The next run releases the rest."
+              echo
+            fi
+            if [[ -n "$current" ]]; then
+              echo "Production already took \`${current:0:12}\` through every lane: nothing to release."
+              echo
+            fi
             echo "| binary | lane | unit version | code since base |"
             echo "| --- | --- | --- | --- |"
             jq -r '.binaries | to_entries[] | select(.value.closure) | "| \(.key) | \(.value.lane) | `\(.value.commit[0:12])` | \(.value.code // "not built") |"' "$OUT_DIR/report.json"
@@ -227,11 +366,67 @@ jobs:
           path: ${{ runner.temp }}/unit-base-code.json
           key: unit-base-code-${{ steps.base.outputs.sha }}-${{ github.run_id }}
 
+      # Tested as shipped (docs/adr/20261122170000-continuous-unit-lane.md):
+      # without a merge queue a squash merge can land a tree no CI run saw.
+      # When the released commit's pull request held main's previous commit
+      # and ci-light passed on that exact tree, nothing more runs. Otherwise
+      # the tests ci-light would select for what CI did not see together
+      # run here, at the released commit, limited to packages the shipped
+      # daemons build from; the release is built only when they pass. No
+      # database URL reaches them: on the control plane it would be
+      # production's.
+      - name: Test the shipped tree
+        if: steps.detect.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ steps.detect.outputs.release_sha }}
+          REPORT: ${{ runner.temp }}/gregale-units/report.json
+          PLAN: ${{ runner.temp }}/gregale-units/tested-tree.json
+          # ci-light's bounded-memory compile of the heavy test packages: the
+          # apidserver test compile without it peaked at 6 GB and sat on the
+          # build runner's MemoryHigh (6G) for ten minutes, stalling the
+          # control plane's memory (PSI 22 %, 2026-11-22). With -c=1, no DWARF,
+          # GOMEMLIMIT and two packages at a time it stays near 3 GB.
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver_test=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+          GOMEMLIMIT: 4GiB
+        run: |
+          set -euo pipefail
+          unset DATABASE_URL SPLIT_DATABASE_URL PGHOST PGPASSWORD PGUSER PGDATABASE
+          export FAAS_SKIP_PG_TESTS=1
+          shipped="$(jq -r '[.lanes[] | select(.eligible) | .changed[]] | unique | join(",")' "$REPORT")"
+          python3 "$RUNNER_TEMP/unit-tools/tested_tree.py" --commit "$RELEASE_SHA" --daemons "$shipped" --output "$PLAN"
+          {
+            echo
+            echo "**Tested as shipped:** $(jq -r '"\(.verdict): \(.reason)"' "$PLAN")"
+          } >> "$GITHUB_STEP_SUMMARY"
+          [[ "$(jq -r .verdict "$PLAN")" == tested ]] && exit 0
+          status=0
+          mapfile -t pkgs < <(jq -r '.packages[]' "$PLAN")
+          if (( ${#pkgs[@]} )); then
+            echo "testing at ${RELEASE_SHA:0:12}: ${pkgs[*]}"
+            go test -p 2 -ldflags=-w -count=1 -timeout=10m "${pkgs[@]}" || status=1
+          fi
+          while IFS=$'\t' read -r pkg run; do
+            [[ -n "$pkg" ]] || continue
+            echo "testing related tests of $pkg"
+            go test -p 2 -ldflags=-w -count=1 -timeout=8m -run "$run" "$pkg" || status=1
+          done < <(jq -r '.selective[] | .package as $p | .runs[] | "\($p)\t\(.)"' "$PLAN")
+          if (( status )); then
+            echo "::error::the shipped tree fails tests CI never ran on it together; not releasing ${RELEASE_SHA:0:12}" >&2
+            echo "**Not released:** the shipped tree fails its tests (see the log)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"
+
       - name: Build unit binaries
         if: steps.detect.outputs.eligible == 'true'
         env:
           REPORT: ${{ runner.temp }}/gregale-units/report.json
           OUT_DIR: ${{ runner.temp }}/gregale-units/release
+          # The lane table the report was made with (head's), not the
+          # checked-out prefix commit's.
+          LANES: ${{ runner.temp }}/unit-tools/release_units.json
+          # The units the selection step built and measured.
+          UNITS_BIN_DIR: ${{ runner.temp }}/unit-bin
         run: scripts/build-unit-release.sh
 
       - name: Install pinned cosign
@@ -276,6 +471,32 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      # Names the released commit, so a later run's preflight finds the runs
+      # that already released it (deploy_preflight.py `current`).
+      - name: Mark the released commit
+        if: steps.detect.outputs.eligible == 'true'
+        run: echo "${{ steps.detect.outputs.release_sha }}" > "$RUNNER_TEMP/release-sha"
+      - name: Upload the release marker
+        if: steps.detect.outputs.eligible == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unit-release-sha-${{ steps.detect.outputs.release_sha }}
+          path: ${{ runner.temp }}/release-sha
+          if-no-files-found: error
+          retention-days: 30
+      # Names the full release this unit release is built over, so the
+      # preflight stands down while production runs another one (a new tag
+      # not yet deployed by cd-platform) instead of the planner refusing the
+      # lane and freezing deploys (deploy_preflight.py `base`).
+      - name: Upload the base marker
+        if: steps.detect.outputs.eligible == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unit-release-base-${{ steps.base.outputs.sha }}
+          path: ${{ runner.temp }}/release-sha
+          if-no-files-found: error
+          retention-days: 30
+
   # Fills the release build cache for this base release, once, while the
   # deploy lanes run: every binary a unit lane can ship and the tools a unit
   # release carries, compiled with the release recipe
@@ -284,7 +505,10 @@ jobs:
   warm-build-cache:
     name: Warm the release build cache
     needs: [build]
-    if: needs.build.outputs.build_cache_hit != 'true' && needs.build.outputs.base_sha != ''
+    # The persistent build runner's own cache needs no warming.
+    if: >-
+      needs.build.outputs.build_cache_hit != 'true' && needs.build.outputs.base_sha != '' &&
+      needs.build.outputs.self_hosted != 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 40
     # A cache it fails to write costs the next build time, not a deploy.
@@ -337,12 +561,20 @@ jobs:
   # commit, or 40 minutes of waiting, fails it. The step summary says what it
   # waited for. Dispatching cd-controlplane or cd-edge-units directly is the
   # repair path and skips this.
+  #
+  # It starts beside the build, not after it (ADR-20261122170000, "Preflight
+  # beside the build"): runner pickup, checkout, SSH and the first round
+  # overlap the build, and the waits for production happen while it builds.
+  # --follow-build polls this run's build job and gives its go only from a
+  # round taken after the build ended, reading the released commit from the
+  # build's marker artifact; a build that fails or releases nothing stands
+  # it down. It holds a fleet runner while the build runs, so the fleet
+  # runner host needs a second instance (faas_runner_instances) for the
+  # lanes of another run, as it already did for a preflight waiting on one.
   preflight:
     name: Check production can take a deploy
-    needs: [build]
     if: >-
-      needs.build.outputs.eligible == 'true' &&
-      (inputs.deploy_environment != '' || (github.event_name == 'push' && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != ''))
+      inputs.deploy_environment != '' || ((github.event_name == 'push' || github.event_name == 'schedule') && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != '')
     environment: ${{ inputs.deploy_environment || vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT }}
     runs-on: ${{ fromJSON((inputs.deploy_environment || vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT) == 'production-us' && '["self-hosted","linux","faas-fleet-us"]' || '["self-hosted","linux","faas-fleet"]') }}
     timeout-minutes: 50
@@ -392,6 +624,21 @@ jobs:
           }
           chmod 600 ~/.ssh/known_hosts
 
+      # An automatic deploy needs the critical smoke checks
+      # (ADR-20261122170000 §3a): without them cd-controlplane only warns, so
+      # a merge would reach production with no business-path check behind
+      # the activation. A dispatch (an owner's decision) may go without.
+      - name: Require the critical smoke checks for an automatic deploy
+        if: github.event_name != 'workflow_dispatch'
+        env:
+          UNIT_SMOKE_API_KEY: ${{ secrets.UNIT_SMOKE_API_KEY }}
+          UNIT_SMOKE_APP: ${{ vars.UNIT_SMOKE_APP }}
+        run: |
+          if [[ -z "$UNIT_SMOKE_API_KEY" || -z "$UNIT_SMOKE_APP" ]]; then
+            echo "::error::automatic unit deploys need the critical smoke checks: set UNIT_SMOKE_API_KEY and UNIT_SMOKE_APP (tests/unit-smoke-app/README.md)" >&2
+            exit 1
+          fi
+
       - name: Wait until production can take the deploy
         id: preflight
         env:
@@ -402,7 +649,11 @@ jobs:
           # lock and Prometheus's active alerts over this SSH connection.
           export UNIT_SSH_TARGET="root@${CP_HOST}" UNIT_SSH_KEY="$HOME/.ssh/deploy_key" \
             UNIT_SSH_KNOWN_HOSTS="$HOME/.ssh/known_hosts"
-          python3 preflight-src/scripts/ci/deploy_preflight.py --wait 40m --interval 60s
+          # The commit this run releases, which may be behind main's head
+          # (the lane's whole-commit prefix), comes from the build's marker:
+          # its light run is the one that must not have failed.
+          python3 preflight-src/scripts/ci/deploy_preflight.py --follow-build \
+            --wait 40m --interval 60s --poll 10s
 
   # Deploy order (docs/release-compatibility.md): the control-plane lane,
   # held on its SLO gate, then the edge lane host by host. Automatic deploys
@@ -427,6 +678,7 @@ jobs:
       deploy_environment: ${{ inputs.deploy_environment || vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT }}
       units_run_id: ${{ github.run_id }}
       units_lane: control-plane
+      host_config_changed: ${{ needs.build.outputs.host_config }}
     secrets: inherit
     permissions:
       contents: read

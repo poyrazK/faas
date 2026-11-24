@@ -40,7 +40,7 @@ func TestLeafHelpNamesPositionalArguments(t *testing.T) {
 		{"platform-tenants link-consumer", []string{"--id <UUID>", "--consumer-id <UUID>"}},
 		{"orgs members", []string{"invite", "change-role"}},
 		{"orgs members invite", []string{"--org <SLUG>", "--email <ADDR>"}},
-		{"orgs keys info", []string{"gregale org keys info --org <SLUG> <key-id>"}},
+		{"orgs keys info", []string{"gregale org key get --org <SLUG> <key-id>"}},
 		{"realtime auth", []string{"rotate", "finalize", "status"}},
 		{"queue bindings update", []string{"gregale queue bindings update <slug> <binding-id>"}},
 		{"jobs registry set", []string{"--registry <HOST>", "--user <USER>", "<job>"}},

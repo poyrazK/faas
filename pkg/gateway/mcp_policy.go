@@ -21,7 +21,7 @@ func mcpPolicyReject(w http.ResponseWriter, status int, p *api.MCPResourcePolicy
 		if status == http.StatusForbidden {
 			challenge += `, error="insufficient_scope"`
 		}
-		w.Header().Set("WWW-Authenticate", challenge)
+		w.Header().Set("Www-Authenticate", challenge)
 	}
 	api.WriteProblem(w, api.NewProblem(status, "mcp_access_denied", "MCP access denied", reason))
 	return true
@@ -39,7 +39,13 @@ func mcpPolicyMetadata(w http.ResponseWriter, r *http.Request, rule *EdgeRuleJWT
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	_ = json.NewEncoder(w).Encode(map[string]any{"resource": p.Resource, "authorization_servers": []string{rule.Issuer}, "scopes_supported": p.Scopes, "bearer_methods_supported": []string{"header"}})
+	metadata := map[string]any{"resource": p.Resource, "scopes_supported": p.Scopes, "bearer_methods_supported": []string{"header"}}
+	if !p.ConsumerKey() {
+		// A consumer-key server has no authorization server: callers get
+		// their key from the owner (ADR-20261122194324).
+		metadata["authorization_servers"] = []string{rule.Issuer}
+	}
+	_ = json.NewEncoder(w).Encode(metadata)
 	return true
 }
 
@@ -66,6 +72,9 @@ func (h *Handler) applyMCPResourcePolicy(w http.ResponseWriter, r *http.Request,
 	if mcpPolicyPreflight(w, r) {
 		return true
 	}
+	if p.ConsumerKey() {
+		return h.applyMCPConsumerKeyPolicy(w, r, app, rule)
+	}
 	claims, handled := h.authenticateMCPResource(w, r, app, rule)
 	if handled {
 		return true
@@ -74,8 +83,12 @@ func (h *Handler) applyMCPResourcePolicy(w http.ResponseWriter, r *http.Request,
 	if !api.MCPHasScopes(p.Scopes, granted) {
 		return mcpPolicyReject(w, http.StatusForbidden, p, "Required endpoint scope is missing")
 	}
-	if status, reason := mcpPolicyRequest(r, p, granted); status != 0 {
+	status, reason, call := mcpPolicyRequest(r, p, granted)
+	if status != 0 {
 		return mcpPolicyReject(w, status, p, reason)
+	}
+	if h.mcpToolLimited(w, r, app, rule, call.tool(), "sub\x00"+claims.Subject) {
+		return true
 	}
 	authenticated := authenticatedFrom(r.Context())
 	authenticated.JWTSubject, authenticated.JWTClaims = claims.Subject, claims.Custom
@@ -85,6 +98,8 @@ func (h *Handler) applyMCPResourcePolicy(w http.ResponseWriter, r *http.Request,
 	ctx, cancel := context.WithDeadline(withAuthenticated(r.Context(), authenticated), claims.Exp)
 	context.AfterFunc(r.Context(), cancel)
 	*r = *r.WithContext(ctx)
+	h.applyMCPBilling(r, app, p, call)
+	r.Header.Set(api.MCPGatewayAuthorizedHeader, rule.ID)
 	h.jwtEmit(r.Context(), "jwt", "match", rule.ID, r.Host, nil, nil)
 	return false
 }
@@ -168,19 +183,21 @@ func (h *Handler) authenticateMCPResource(w http.ResponseWriter, r *http.Request
 }
 
 // Inspect the original JSON-RPC envelope and restore its exact bytes for the
-// guest. Caller-supplied MCP-Method/MCP-Name headers cannot grant access.
-func mcpPolicyRequest(r *http.Request, p *api.MCPResourcePolicy, scopes []string) (int, string) {
+// guest. Caller-supplied MCP-Method/MCP-Name headers cannot grant access. The
+// third result is the allowed request's method and entry name, for tool
+// limits and billing labels.
+func mcpPolicyRequest(r *http.Request, p *api.MCPResourcePolicy, scopes []string) (int, string, mcpCall) {
 	if r.Method != http.MethodPost {
-		return 0, ""
+		return 0, "", mcpCall{}
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, api.MCPPolicyMaxRequestBytes+1))
 	if err != nil || len(body) > api.MCPPolicyMaxRequestBytes {
-		return http.StatusRequestEntityTooLarge, "MCP request exceeds the gateway policy body limit"
+		return http.StatusRequestEntityTooLarge, "MCP request exceeds the gateway policy body limit", mcpCall{}
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	var envelope map[string]json.RawMessage
 	if json.Unmarshal(body, &envelope) != nil || !mcpPolicyFieldsUnambiguous(body, "method", "params") {
-		return http.StatusBadRequest, "A single JSON-RPC method is required"
+		return http.StatusBadRequest, "A single JSON-RPC method is required", mcpCall{}
 	}
 	readString := func(fields map[string]json.RawMessage, key string) string {
 		var value string
@@ -189,11 +206,11 @@ func mcpPolicyRequest(r *http.Request, p *api.MCPResourcePolicy, scopes []string
 	}
 	method := readString(envelope, "method")
 	if method == "" {
-		return http.StatusBadRequest, "A single JSON-RPC method is required"
+		return http.StatusBadRequest, "A single JSON-RPC method is required", mcpCall{}
 	}
 	var params map[string]json.RawMessage
 	if raw := envelope["params"]; len(raw) != 0 && json.Unmarshal(raw, &params) != nil {
-		return http.StatusBadRequest, "MCP params must be an object"
+		return http.StatusBadRequest, "MCP params must be an object", mcpCall{}
 	}
 	var fields []string
 	switch method {
@@ -207,7 +224,7 @@ func mcpPolicyRequest(r *http.Request, p *api.MCPResourcePolicy, scopes []string
 		fields = []string{"notifications"}
 	}
 	if len(fields) > 0 && len(envelope["params"]) > 0 && !mcpPolicyFieldsUnambiguous(envelope["params"], fields...) {
-		return http.StatusBadRequest, "Ambiguous MCP request parameters"
+		return http.StatusBadRequest, "Ambiguous MCP request parameters", mcpCall{}
 	}
 	allowed := true
 	switch method {
@@ -220,7 +237,7 @@ func mcpPolicyRequest(r *http.Request, p *api.MCPResourcePolicy, scopes []string
 	case "completion/complete":
 		var ref map[string]json.RawMessage
 		if len(params["ref"]) > 0 && !mcpPolicyFieldsUnambiguous(params["ref"], "type", "name", "uri") {
-			return http.StatusBadRequest, "Ambiguous MCP completion reference"
+			return http.StatusBadRequest, "Ambiguous MCP completion reference", mcpCall{}
 		}
 		_ = json.Unmarshal(params["ref"], &ref)
 		if readString(ref, "type") == "ref/prompt" {
@@ -231,20 +248,24 @@ func mcpPolicyRequest(r *http.Request, p *api.MCPResourcePolicy, scopes []string
 	case "subscriptions/listen":
 		var notifications map[string]json.RawMessage
 		if json.Unmarshal(params["notifications"], &notifications) != nil || !mcpPolicyFieldsUnambiguous(params["notifications"], "resourceSubscriptions") {
-			return http.StatusBadRequest, "Invalid subscription filters"
+			return http.StatusBadRequest, "Invalid subscription filters", mcpCall{}
 		}
 		var resources []string
 		if raw := notifications["resourceSubscriptions"]; len(raw) != 0 && json.Unmarshal(raw, &resources) != nil {
-			return http.StatusBadRequest, "Invalid resource subscriptions"
+			return http.StatusBadRequest, "Invalid resource subscriptions", mcpCall{}
 		}
 		for _, uri := range resources {
 			allowed = allowed && api.MCPResourceAllowed(p.ResourceScopes, uri, scopes)
 		}
 	}
 	if !allowed {
-		return http.StatusForbidden, "Catalog entry is unavailable to this caller"
+		return http.StatusForbidden, "Catalog entry is unavailable to this caller", mcpCall{}
 	}
-	return 0, ""
+	switch method {
+	case "tools/call", "prompts/get":
+		return 0, "", mcpCall{method: method, name: readString(params, "name")}
+	}
+	return 0, "", mcpCall{method: method}
 }
 
 // Security-relevant protocol fields must have one canonical spelling. Go's

@@ -463,6 +463,7 @@ func mcpNativeObserverHealthy(ctx context.Context, c *Client, p mcpNativeRelease
 	if err != nil {
 		return err
 	}
+	app = mcpTasksRuntimeApp(ctx, c, app)
 	if !mcpNativeTaskNamespaceMatches(app) {
 		return errors.New("observer must use the release's explicit MCP_TASK_NAMESPACE as a non-secret setting")
 	}
@@ -731,7 +732,7 @@ func mcpNativeVerifyEndpoint(ctx context.Context, c *Client, p mcpNativeReleaseP
 		if e != nil {
 			return e
 		}
-		if cfg.Auth.Mode == "external-oauth" && cfg.Auth.Resource != canonical {
+		if cfg.Auth.Mode != mcphosting.AuthOpen && cfg.Auth.Resource != canonical {
 			return errors.New("promoted OAuth resource differs from canonical endpoint")
 		}
 		preview, e := c.GetDeploymentURL(ctx, s.WebDeployment)

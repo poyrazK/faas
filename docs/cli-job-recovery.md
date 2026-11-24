@@ -240,7 +240,7 @@ action; its existing server identity checks remain in place.
 
 The overview also displays the effective profile and API endpoint, including
 where each setting came from. This helps distinguish a profile's configured
-endpoint from a `FAAS_API` override without another context command. JSON adds
+endpoint from a `GREGALE_API_URL` override without another context command. JSON adds
 `connection` with the same source fields and `address_redacted`. Credentials,
 query parameters, and fragments are removed from displayed URLs; malformed
 addresses are hidden. This is configuration context captured before existing

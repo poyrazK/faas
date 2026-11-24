@@ -4117,11 +4117,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-830: Gregale-owned hosts keep the forced static set; on customer
 	// hosts this hop sets nothing so the app's own value is the only copy
 	// gatewayd-public sees, and gatewayd-public fills defaults.
+	// The CSP gate also needs a platform host: on app and custom-domain
+	// hosts the apid paths (/login, /docs, /dashboard, /v1/…) belong to the
+	// app (ADR-480), and the dashboard's nonce policy blocked those pages'
+	// inline and CDN scripts (prod hunt r32).
 	domains := deps.domains
 	publicHandler = httpsec.ForSurface(
 		func(r *http.Request) httpsec.Surface { return httpsec.ClassifyHostIn(r.Host, domains) },
 		false,
-		httpsec.Nonce(func(r *http.Request) bool { return isApidPath(r.URL.Path) }, publicHandler),
+		httpsec.Nonce(dashboardCSPGate, publicHandler),
 	)
 
 	// HSTS is seeded from the environment before the listener is built and
@@ -4769,11 +4773,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				httpsSrv.Protocols.SetHTTP2(true)
 				httpsSrv.ReadTimeout = readTimeoutOrDefault(deps.readTimeout)
 				httpsSrv.WriteTimeout = writeTimeoutOrDefault(deps.writeTimeout)
+				guestServiceServer(httpsSrv)
 				httpsDrain := addSrv(httpsSrv)
 				httpsListener, listenErr := deps.listen("tcp", httpsAddr)
 				if listenErr != nil {
 					return fmt.Errorf("gatewayd guest service HTTPS listen %s: %w", httpsAddr, listenErr)
 				}
+				httpsListener = guestServiceListener{httpsListener}
 				go func() {
 					log.Info("gatewayd guest service HTTPS listening", "addr", httpsAddr)
 					if err := httpsDrain.ServeErr(httpsSrv.ServeTLS(httpsDrain.Listener(httpsListener), "", "")); err != nil {
@@ -5205,11 +5211,13 @@ func startGuestServiceHTTPListeners(deps runDeps, addr string, handler http.Hand
 		srv.Protocols.SetUnencryptedHTTP2(true)
 		srv.ReadTimeout = readTimeoutOrDefault(deps.readTimeout)
 		srv.WriteTimeout = writeTimeoutOrDefault(deps.writeTimeout)
+		guestServiceServer(srv)
 		drain := addSrv(srv)
 		listener, err := deps.listen("tcp", httpAddr)
 		if err != nil {
 			return fmt.Errorf("gatewayd: guest service proxy listen %s: %w", httpAddr, err)
 		}
+		listener = guestServiceListener{listener}
 		go func() {
 			log.Info("gatewayd guest service proxy listening", "addr", httpAddr)
 			if err := drain.ServeErr(srv.Serve(drain.Listener(listener))); err != nil {

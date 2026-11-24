@@ -24,7 +24,7 @@ import (
 
 func cmdMCP(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale mcp serve|connect|connections|approval-channels|init|capabilities|validate|test|deploy|readiness|overview|status|monitor|diagnostics|health|retirements|access|policy|tasks|doctor|tools|resources|resource-read|resource-watch|prompts|prompt-get|complete|call|task-get|task-wait|task-cancel|watch|config|lock|diff [flags]", "mcp")
+		PrintUsage(os.Stderr, "usage: gregale mcp serve|connect|connections|approval-channels|init|capabilities|validate|test|deploy|readiness|overview|status|monitor|diagnostics|health|retirements|access|policy|tasks|doctor|tools|resources|resource-read|resource-watch|prompts|prompt-get|complete|call|task-get|task-wait|task-respond|task-cancel|watch|config|lock|diff [flags]", "mcp")
 		return 1
 	}
 	switch args[0] {
@@ -74,6 +74,20 @@ func cmdMCP(args []string) int {
 		return cmdMCPAccess(args[1:])
 	case "policy":
 		return cmdMCPPolicy(args[1:])
+	case "auth", "replay", "insights", "keys":
+		if !mcpGatewayPreviewCLI() {
+			printCommandValidation(os.Stderr, "unknown mcp subcommand %q\n", args[0])
+			return unknownSubcommandChoices(os.Stderr, "mcp", nestedCliCommand("mcp"), args[0])
+		}
+		switch args[0] {
+		case "auth":
+			return cmdMCPAuth(args[1:])
+		case "insights":
+			return cmdMCPInsights(args[1:])
+		case "keys":
+			return cmdMCPKeys(args[1:])
+		}
+		return cmdMCPReplay(args[1:])
 	case "tasks":
 		return cmdMCPTasks(args[1:])
 	case "lock":
@@ -102,7 +116,7 @@ func cmdMCP(args []string) int {
 			}
 		}
 		return cmdMCPRemote("doctor", args[1:])
-	case "tools", "resources", "resource-read", "prompts", "prompt-get", "call", "task-get", "task-wait", "task-cancel", "config":
+	case "tools", "resources", "resource-read", "prompts", "prompt-get", "call", "task-get", "task-wait", "task-respond", "task-cancel", "config":
 		return cmdMCPRemote(args[0], args[1:])
 	default:
 		printCommandValidation(os.Stderr, "unknown mcp subcommand %q\n", args[0])
@@ -426,11 +440,13 @@ func cmdMCPRemote(command string, args []string) int {
 	interactive := fs.Bool("interactive", false, "answer modern MCP input forms in the terminal (call only)")
 	inputResponsesFile := fs.String("input-responses-file", "", "JSON file with elicitation responses keyed by request ID (call only)")
 	enableTasks := fs.Bool("tasks", false, "accept modern MCP task handles for later inspection (call only)")
-	var deferFormInput bool
+	var deferFormInput, retrySubmission bool
 	if command == "call" {
+		fs.BoolVar(&retrySubmission, "retry-submission", false, "retry the original Task submission using an existing private receipt")
 		fs.BoolVar(&deferFormInput, "defer-form-input", false, "allow a keyed Task to request forms for a later wait")
 	}
-	var submissionKey, taskReceiptPath string
+	var submissionKey string
+	var taskReceiptPaths []string
 	if command == "call" || command == "task-get" {
 		fs.Func("task-submission-key", "saved UUIDv7 for a keyed Task submission or status lookup", func(value string) error {
 			if value == "" {
@@ -440,12 +456,12 @@ func cmdMCPRemote(command string, args []string) int {
 			return nil
 		})
 	}
-	if command == "call" || command == "task-get" || command == "task-wait" {
-		fs.Func("task-receipt", "private Task submission receipt file", func(value string) error {
+	if command == "call" || command == "task-get" || command == "task-wait" || command == "task-respond" || command == "task-cancel" {
+		fs.Func("task-receipt", "private Task submission receipt file (repeatable for status --metadata-only)", func(value string) error {
 			if value == "" {
 				return errors.New("task receipt path is required")
 			}
-			taskReceiptPath = value
+			taskReceiptPaths = append(taskReceiptPaths, value)
 			return nil
 		})
 	}
@@ -459,10 +475,18 @@ func cmdMCPRemote(command string, args []string) int {
 	uri := fs.String("uri", "", "resource URI to read (resource-read only)")
 	promptName := fs.String("prompt", "", "prompt name to render (prompt-get only)")
 	taskID := fs.String("task-id", "", "opaque task ID (task-get, task-wait or task-cancel)")
-	var metadataOnly bool
-	var inputTemplatePath, reviewedInputPath string
+	var metadataOnly, readResult bool
+	var inputTemplatePath, reviewedInputPath, receiptDir string
 	if command == "task-get" {
+		fs.Func("receipt-dir", "list private Task receipts in one directory (with --metadata-only)", func(path string) error {
+			if path == "" || receiptDir != "" {
+				return errors.New("provide one directory path for --receipt-dir")
+			}
+			receiptDir = path
+			return nil
+		})
 		fs.BoolVar(&metadataOnly, "metadata-only", false, "show Task metadata and next action")
+		fs.BoolVar(&readResult, "read-result", false, "read a completed Task result from a private receipt")
 		fs.Func("write-input-template", "write pending forms to a new private file", func(value string) error {
 			if value == "" {
 				return errors.New("task input template path is required")
@@ -471,7 +495,7 @@ func cmdMCPRemote(command string, args []string) int {
 			return nil
 		})
 	}
-	if command == "task-wait" {
+	if command == "task-wait" || command == "task-respond" {
 		fs.Func("reviewed-input-file", "answer forms from a reviewed private Task input template", func(value string) error {
 			if value == "" {
 				return errors.New("reviewed Task input file path is required")
@@ -482,13 +506,25 @@ func cmdMCPRemote(command string, args []string) int {
 	}
 	timeout := fs.Duration("timeout", 30*time.Second, "total diagnostic timeout")
 	// `mcp tools <slug>` addresses the app the way the other leaves do
-	// (production-us hunt #5, H5-3).
+	// (production-us hunt #5, H5-3). A leading URL is the endpoint: it was
+	// taken for an app slug and answered "no such API route" (MCP Tasks prod
+	// probe 2026-11-22).
+	leadingURL := ""
+	if len(args) > 0 && (strings.HasPrefix(args[0], "https://") || strings.HasPrefix(args[0], "http://")) {
+		leadingURL, args = args[0], args[1:]
+	}
 	slug, args := peelLeadingSlug(args)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 0 {
 		return printErr("Invalid MCP flags", fmt.Errorf("unexpected positional arguments: %s", strings.Join(fs.Args(), " ")))
+	}
+	if leadingURL != "" {
+		if *endpoint != "" && *endpoint != leadingURL {
+			return printErr("Invalid MCP flags", errors.New("pass the endpoint once, as the first argument or with --url"))
+		}
+		*endpoint = leadingURL
 	}
 	if *timeout <= 0 {
 		return printErr("Invalid MCP flags", errors.New("--timeout must be positive"))
@@ -503,17 +539,30 @@ func cmdMCPRemote(command string, args []string) int {
 	if inputMode && reviewedInputPath != "" {
 		return printErr("Invalid MCP input flags", errors.New("choose --reviewed-input-file, --interactive or --input-responses-file"))
 	}
-	inputMode = inputMode || reviewedInputPath != ""
+	inputMode = inputMode || reviewedInputPath != "" && command == "task-wait"
 	if inputMode && ((command != "call" && command != "task-wait") || *legacy) {
 		return printErr("Invalid MCP input flags", errors.New("interactive input is supported only for modern mcp call and mcp task-wait"))
 	}
 	if (*enableTasks || *waitForTask) && (command != "call" || *legacy) {
 		return printErr("Invalid MCP Tasks flags", errors.New("MCP Tasks support is available only for modern mcp call"))
 	}
+	var taskReceiptPath string
+	if len(taskReceiptPaths) > 0 {
+		taskReceiptPath = taskReceiptPaths[0]
+	}
+	if len(taskReceiptPaths) > 1 && (command != "task-get" || !metadataOnly) {
+		return printErr("Invalid MCP task flags", errors.New("repeat --task-receipt only with mcp client status --metadata-only"))
+	}
 	if submissionKey != "" && taskReceiptPath != "" {
 		return printErr("Invalid MCP task flags", errors.New("choose --task-receipt or --task-submission-key"))
 	}
+	if retrySubmission && taskReceiptPath == "" {
+		return printErr("Invalid MCP task flags", errors.New("--retry-submission requires --task-receipt"))
+	}
 	keyed := submissionKey != "" || taskReceiptPath != ""
+	if receiptDir != "" && (!metadataOnly || keyed || *taskID != "") {
+		return printErr("Invalid MCP task flags", errors.New("--receipt-dir requires --metadata-only and is a separate Task selector"))
+	}
 	if deferFormInput && !keyed {
 		return printErr("Invalid MCP task flags", errors.New("--defer-form-input requires --task-receipt or --task-submission-key"))
 	}
@@ -523,8 +572,14 @@ func cmdMCPRemote(command string, args []string) int {
 	if metadataOnly && inputTemplatePath != "" {
 		return printErr("Invalid MCP task flags", errors.New("choose --metadata-only or --write-input-template"))
 	}
-	if command == "task-get" && keyed && ((!metadataOnly && inputTemplatePath == "") || *taskID != "") {
-		return printErr("Invalid MCP task flags", errors.New("keyed Task status requires --metadata-only or --write-input-template and accepts one Task selector"))
+	if readResult && taskReceiptPath == "" {
+		return printErr("Invalid MCP task flags", errors.New("--read-result requires --task-receipt"))
+	}
+	if readResult && (metadataOnly || inputTemplatePath != "") {
+		return printErr("Invalid MCP task flags", errors.New("choose --read-result, --metadata-only or --write-input-template"))
+	}
+	if command == "task-get" && keyed && ((!metadataOnly && !readResult && inputTemplatePath == "") || *taskID != "") {
+		return printErr("Invalid MCP task flags", errors.New("keyed Task status requires --metadata-only, --read-result or --write-input-template and accepts one Task selector"))
 	}
 	if *cancelOnTimeout && (command != "task-wait" || *legacy) {
 		return printErr("Invalid MCP task flags", errors.New("--cancel-on-timeout is supported only by modern task-wait"))
@@ -532,14 +587,17 @@ func cmdMCPRemote(command string, args []string) int {
 	if *taskID != "" && command != "task-get" && command != "task-wait" && command != "task-cancel" {
 		return printErr("Invalid MCP task flags", errors.New("--task-id is supported only by mcp task-get, mcp task-wait and mcp task-cancel"))
 	}
-	if (command == "task-get" || command == "task-cancel") && ((*taskID == "" && !keyed) || *legacy) {
-		return printErr("Invalid MCP task flags", errors.New("modern task-get and task-cancel require --task-id"))
+	if command == "task-get" && ((*taskID == "" && !keyed && receiptDir == "") || *legacy) {
+		return printErr("Invalid MCP task flags", errors.New("modern task-get requires --task-id or a keyed Task selector"))
 	}
-	if command == "task-wait" {
+	if command == "task-wait" || command == "task-cancel" {
 		hasTaskID, hasReceipt := *taskID != "", taskReceiptPath != ""
 		if *legacy || hasTaskID == hasReceipt {
-			return printErr("Invalid MCP task flags", errors.New("modern task-wait requires exactly one of --task-id or --task-receipt"))
+			return printErr("Invalid MCP task flags", fmt.Errorf("modern %s requires exactly one of --task-id or --task-receipt", command))
 		}
+	}
+	if command == "task-respond" && (*legacy || taskReceiptPath == "" || reviewedInputPath == "") {
+		return printErr("Invalid MCP task flags", errors.New("modern task-respond requires --task-receipt and --reviewed-input-file"))
 	}
 	if *interactive && (nonInteractive || !mcpInputIsTerminal(osStdin)) {
 		return printErr("MCP interactive input", errors.New("--interactive requires terminal stdin; use --input-responses-file for non-interactive calls"))
@@ -587,6 +645,15 @@ func cmdMCPRemote(command string, args []string) int {
 	if (inputTemplatePath != "" || reviewedInputPath != "") && token == "" {
 		return printErr("MCP Task input review", errors.New("task input review requires a client credential from --token-env"))
 	}
+	if receiptDir != "" {
+		if token == "" {
+			return printErr("MCP Task receipt directory", errors.New("--receipt-dir requires a client credential from --token-env"))
+		}
+		return runMCPTaskReceiptDirectoryStatus(ctx, c, receiptDir)
+	}
+	if len(taskReceiptPaths) > 1 {
+		return runMCPTaskReceiptBatchStatus(ctx, c, taskReceiptPaths, nil)
+	}
 	if taskReceiptPath != "" && command != "call" {
 		submissionKey, err = readMCPTaskReceipt(taskReceiptPath, c.Endpoint)
 		if err != nil {
@@ -595,6 +662,9 @@ func cmdMCPRemote(command string, args []string) int {
 	}
 	if metadataOnly {
 		return runMCPTaskMetadataStatus(ctx, c, *taskID, submissionKey)
+	}
+	if readResult {
+		return runMCPTaskReceiptResult(ctx, c, submissionKey)
 	}
 	if inputTemplatePath != "" {
 		return runMCPTaskInputTemplate(ctx, c, *taskID, submissionKey, inputTemplatePath)
@@ -605,6 +675,12 @@ func cmdMCPRemote(command string, args []string) int {
 		if err != nil {
 			return printErr("MCP Task input review", err)
 		}
+	}
+	if command == "task-respond" {
+		return runMCPTaskInputResponse(ctx, c, submissionKey, review)
+	}
+	if command == "task-cancel" && submissionKey != "" {
+		return runMCPTaskReceiptCancel(ctx, c, submissionKey)
 	}
 	if command == "task-wait" && submissionKey != "" {
 		recovered, exchange, err := c.GetTaskBySubmissionKey(ctx, submissionKey)
@@ -619,6 +695,17 @@ func cmdMCPRemote(command string, args []string) int {
 	arguments, err := mcpArguments(*inline, *file)
 	if err != nil {
 		return printErr("MCP arguments", err)
+	}
+	if retrySubmission {
+		fingerprint, err := mcpTaskSubmissionFingerprint(*tool, arguments, deferFormInput)
+		if err != nil {
+			return printErr("MCP Task submission retry", err)
+		}
+		submissionKey, err = retryMCPTaskSubmission(taskReceiptPath, c.Endpoint, fingerprint, c.Token)
+		if err != nil {
+			return printErr("MCP Task submission retry", err)
+		}
+		taskReceiptPath = ""
 	}
 	var responder mcphosting.InputResponder
 	if reviewedInputPath != "" {
@@ -755,7 +842,7 @@ func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.
 		if _, err := c.CancelTask(ctx, taskID); err != nil {
 			return printErr("MCP task cancel", err)
 		}
-		return jsonOut(writeJSON(map[string]any{"task_id": taskID, "cancellation_requested": true}))
+		return mcpTaskCancellationRequested(taskID)
 	}
 	tools, discovery, err := c.Tools(ctx)
 	if err != nil {
@@ -776,7 +863,11 @@ func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.
 			continue
 		}
 		if taskReceiptPath != "" {
-			options.TaskSubmissionKey, err = createMCPTaskReceipt(taskReceiptPath, c.Endpoint)
+			fingerprint, err := mcpTaskSubmissionFingerprint(candidate.Name, args, options.DeferFormInput)
+			if err != nil {
+				return printErr("Save MCP Task receipt", err)
+			}
+			options.TaskSubmissionKey, err = createMCPTaskReceipt(taskReceiptPath, c.Endpoint, fingerprint, c.Token)
 			if err != nil {
 				return printErr("Save MCP Task receipt", err)
 			}
@@ -817,6 +908,7 @@ type mcpDeployOptions struct {
 	expectedAppID                              string
 	requireCatalogPin                          bool
 	requireReviewedTools                       bool
+	replay                                     bool
 }
 
 func cmdMCPDeploy(args []string) int {
@@ -844,6 +936,7 @@ func cmdMCPDeploy(args []string) int {
 	fs.StringVar(&o.expectedAppID, "expected-app-id", "", "require this reviewed immutable app identity before promotion")
 	fs.BoolVar(&o.requireCatalogPin, "require-catalog-pin", false, "refuse promotion when the candidate cannot provide a catalog integrity pin")
 	fs.BoolVar(&o.requireReviewedTools, "require-reviewed-tools", false, "require discovered tools to exactly match configured tool_scopes before fixtures and promotion")
+	fs.BoolVar(&o.replay, "replay", false, "preview: compare the candidate with the serving deployment and refuse promotion on a breaking catalog change or a new error")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -857,6 +950,12 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	smoke, err := loadMCPSmokeGate(o.smokeFixtures, o.allowToolExecution)
 	if err != nil {
 		return printErr("MCP smoke fixtures", err)
+	}
+	if o.replay && o.publicationID != "" {
+		return printErr("MCP replay", errors.New("--replay does not apply to a private publication; its candidate is verified by owner-approved platform tests"))
+	}
+	if smoke, err = withMCPReplayGate(smoke, o.replay); err != nil {
+		return printErr("MCP replay", err)
 	}
 	dir, err := filepath.Abs(o.path)
 	if err != nil {
@@ -879,8 +978,11 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	if err != nil {
 		return printErr("MCP client token", err)
 	}
-	if cfg.Auth.Mode == "external-oauth" && token == "" && o.publicationID == "" {
-		return printErr("MCP verification", errors.New("external-oauth deploy requires --token-env with a client access token for verification"))
+	if cfg.Auth.Mode != mcphosting.AuthOpen && token == "" && o.publicationID == "" {
+		return printErr("MCP verification", fmt.Errorf("%s deploy requires --token-env with a %s for verification", cfg.Auth.Mode, mcpVerificationCredential(cfg.Auth.Mode)))
+	}
+	if o.replay && cfg.Auth.Mode != mcphosting.AuthOpen && token == "" {
+		return printErr("MCP replay", fmt.Errorf("--replay on a %s server requires --token-env with a %s for both deployments", cfg.Auth.Mode, mcpVerificationCredential(cfg.Auth.Mode)))
 	}
 	if o.validateEndpoint != "" {
 		report, validationErr := validateMCPEndpoint(context.Background(), o.validateEndpoint, token, mcphosting.ProtocolVersion, 30*time.Second)
@@ -917,6 +1019,9 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	}
 	if err := precheckMCPServingIngress(ctx, c, o.slug); err != nil {
 		return printErr("MCP candidate", err)
+	}
+	if err := requireMCPGatewayPolicy(ctx, c, o.slug, cfg); err != nil {
+		return printErr("MCP gateway policy", err)
 	}
 	if !jsonOutput {
 		PrintProgress(osStdout, "Deploying stateless MCP (%s client access)", cfg.Auth.Mode)
@@ -1008,6 +1113,12 @@ func pinMCPCandidateRevisionWithSubmit(ctx context.Context, c *Client, o mcpDepl
 		return api.DeploymentResponse{}, "", err
 	}
 	health := probeMCPCatalogHealth(ctx, preview, 5*time.Second)
+	if health.EdgeAnswered && !health.Supported {
+		// The gateway answers an app's health path itself, so the public
+		// probe never reaches the server's catalog digest; --require-catalog-pin
+		// then refused every first deploy. Read it from a replica instead.
+		health = probeMCPCatalogReplicaForPin(ctx, c, o.slug, candidate.ID, preview, health)
+	}
 	digest, err := mcpCatalogDigestForPin(health)
 	if err != nil {
 		return api.DeploymentResponse{}, "", err

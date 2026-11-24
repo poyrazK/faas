@@ -135,12 +135,11 @@ func validate(cat catalog) error {
 
 // render emits the full markdown document. Pure function: no
 // timestamps, no maps iterated without sort, no template strings.
-// The renderer's output is what `git diff --exit-code` checks for
-// drift against the hand-curated file.
+// Regenerate with `make subprocessor-md`; see docs/compliance/subprocessor-onboarding.md.
+// Keep maintainer instructions out of the public Markdown.
 func render(cat catalog) string {
 	var b []byte
 	b = append(b, []byte("# Sub-processors\n\n")...)
-	b = append(b, []byte("<!-- GENERATED — do not edit by hand; regenerate with `make subprocessor-md`. On-boarding checklist: subprocessor-onboarding.md. -->\n\n")...)
 	b = append(b, []byte("Gregale uses the sub-processors below to provide the service. Each one\nprocesses only the data listed in its row.\n\n")...)
 	b = append(b, []byte(fmt.Sprintf("> **Notice window:** Processor shall notify Controller at least\n> **%d days** before adding a new sub-processor. Controller may\n> object on reasonable data-protection grounds; the parties shall\n> work in good faith to resolve the objection before the change\n> takes effect (%s).\n\n",
 		cat.NoticeWindowDays, customerDPAReference(cat.DPAReference)))...)

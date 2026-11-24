@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"os"
 	"strings"
+	"syscall"
 	"testing"
 	"testing/iotest"
 
@@ -60,5 +62,29 @@ func BenchmarkSendForwardResponseBodySmall(b *testing.B) {
 	for b.Loop() {
 		sender.chunks = sender.chunks[:0]
 		_ = sendForwardResponseBody(sender, strings.NewReader("hello, world"))
+	}
+}
+
+// A guest that answers without reading the whole upload closes the bridge's
+// end of the request body. Those write failures are discarded, not reported as
+// a client body error (prod 2026-11-23: HTTP/2 INTERNAL_ERROR for >=512 KiB).
+func TestGuestStoppedReadingBodyClassification(t *testing.T) {
+	pr, pw := io.Pipe()
+	_ = pr.Close()
+	_, pipeErr := pw.Write([]byte("x"))
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"io.Pipe reader closed", pipeErr, true},
+		{"os.Pipe EPIPE", &os.PathError{Op: "write", Path: "|1", Err: syscall.EPIPE}, true},
+		{"file already closed", os.ErrClosed, true},
+		{"client cancelled", status.Error(codes.Canceled, "context canceled"), false},
+		{"other write error", errors.New("disk full"), false},
+	} {
+		if got := guestStoppedReadingBody(tc.err); got != tc.want {
+			t.Errorf("%s: guestStoppedReadingBody(%v) = %v, want %v", tc.name, tc.err, got, tc.want)
+		}
 	}
 }

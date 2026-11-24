@@ -26,7 +26,7 @@ type RequestHealth struct {
 }
 
 // FetchRequestHealth reads the current serving releases only. Deployment label
-// overflow and pre-routing requests cannot be assigned to an environment; they
+// overflow and pre-routing 5xx cannot be assigned to an environment; they
 // prevent confirmation rather than falling back to app-wide counters. All
 // counts share a window; coverage requires two samples for every selected
 // deployment, and freshness is the oldest selected deployment's latest sample.
@@ -79,10 +79,20 @@ func FetchRequestHealth(ctx context.Context, client *promql.Client, appID string
 	if err != nil || !validHealthCount(seconds) || seconds <= 0 || seconds >= float64(math.MaxInt64)/float64(time.Second) {
 		return out
 	}
-	unassignedSelector := fmt.Sprintf(`gateway_request_duration_by_deployment_seconds_count{app=%q,deployment=~"|__other__"}`, appID)
-	// Include the current value of a newly introduced unattributed series;
-	// otherwise its first request could disappear behind an empty increase.
-	unassignedQuery := fmt.Sprintf(`(sum(increase(%s[%s])) or vector(0)) + (sum(%s unless (count_over_time(%s[%s]) >= %d)) or vector(0))`, unassignedSelector, api.AppHealthMetricsRange, unassignedSelector, unassignedSelector, api.AppHealthMetricsRange, api.AppHealthCounterMinSamples)
+	// Unattributed traffic blocks confirmation unless the gateway answered it
+	// itself before routing. "__other__" is release traffic past this
+	// gateway's deployment-label cap, so any class of it blocks. The empty
+	// label is pre-routing: there only a 5xx blocks. Its 2xx/3xx/4xx are
+	// responses the gateway gave without reaching a release, mostly platform
+	// auth refusals of a client with no API key, plus CORS preflights and
+	// edge-answered health checks. They say nothing about the selected
+	// releases, yet one keyless uptime monitor left an app "unconfirmed" for
+	// five minutes after every probe (prod 2026-11-23: a 401 GET /healthz
+	// every ~15 min). These requests were never part of count or failures;
+	// this only narrows which of them withhold confirmation.
+	overflowSelector := fmt.Sprintf(`gateway_request_duration_by_deployment_seconds_count{app=%q,deployment="__other__"}`, appID)
+	preRoutingSelector := fmt.Sprintf(`gateway_request_duration_by_deployment_seconds_count{app=%q,deployment="",class="5xx"}`, appID)
+	unassignedQuery := unattributedQuery(overflowSelector) + " + " + unattributedQuery(preRoutingSelector)
 	unassigned, err := client.QueryScalar(ctx, unassignedQuery)
 	if err != nil || !validHealthCount(unassigned) {
 		return out
@@ -93,12 +103,22 @@ func FetchRequestHealth(ctx context.Context, client *promql.Client, appID string
 	}
 	out.RequestCount = int64(SafeRoundNonNeg(count))
 	out.ServerErrors = int64(SafeRoundNonNeg(failures))
-	if count > 0 {
-		out.ErrorRatePct = failures / count * 100
+	// The rate is of the counts it is shown with: increase() extrapolates,
+	// and "24 of 28 requests returned 5xx (86.75%)" read as a miscount
+	// (prod hunt r33).
+	if out.RequestCount > 0 {
+		out.ErrorRatePct = float64(out.ServerErrors) / float64(out.RequestCount) * 100
 	}
 	out.AsOf = time.Unix(0, int64(seconds*float64(time.Second))).UTC().Format(time.RFC3339Nano)
 	out.Source, out.Reason = SourcePrometheus, ""
 	return out
+}
+
+// unattributedQuery counts selector's requests in the health window. It adds
+// the current value of a newly introduced series; otherwise its first request
+// could disappear behind an empty increase.
+func unattributedQuery(selector string) string {
+	return fmt.Sprintf(`(sum(increase(%s[%s])) or vector(0)) + (sum(%s unless (count_over_time(%s[%s]) >= %d)) or vector(0))`, selector, api.AppHealthMetricsRange, selector, selector, api.AppHealthMetricsRange, api.AppHealthCounterMinSamples)
 }
 
 func validHealthCount(value float64) bool {

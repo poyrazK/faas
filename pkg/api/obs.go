@@ -515,6 +515,319 @@ type ObsWakeAppStat struct {
 	P95MS         int64  `json:"p95_ms"`
 }
 
+// ObsSnapshotHealthReport is GET /v1/admin/obs/snapshot-health
+// (ADR-20261122135018). A snapshot's footprint is its allocated mem + vmstate
+// (logical bytes from a legacy writer) plus its deployment's above-base layer,
+// as fcvm_snapshot_fleet_avg_bytes counts it; the fleet figures cover snapshots
+// that are not stale, as that gauge does. Truncated means more snapshot rows
+// existed than the report reads, so the smallest are missing from the figures.
+type ObsSnapshotHealthReport struct {
+	AsOf                   time.Time                    `json:"as_of"`
+	TargetMB               int64                        `json:"target_mb"`
+	WarnMB                 int64                        `json:"warn_mb"`
+	PageMB                 int64                        `json:"page_mb"`
+	Truncated              bool                         `json:"truncated"`
+	Totals                 ObsSnapshotTotals            `json:"totals"`
+	Tiers                  []ObsSnapshotGroup           `json:"tiers"`
+	FCVersions             []ObsSnapshotGroup           `json:"fc_versions"`
+	CPUTemplates           []ObsSnapshotGroup           `json:"cpu_templates"`
+	Largest                []ObsSnapshotRow             `json:"largest"`
+	RecentlyStale          []ObsSnapshotRow             `json:"recently_stale"`
+	Unsnapshotted          []ObsUnsnapshottedDeployment `json:"unsnapshotted"`
+	UnsnapshottedTruncated bool                         `json:"unsnapshotted_truncated"`
+}
+
+// ObsSnapshotTotals counts the fleet's snapshots. Live are not stale (some may
+// be pending deletion); NotColdBootable counts live deployments with neither a
+// usable snapshot nor a rootfs, which breaks spec invariant 6.2-3.
+type ObsSnapshotTotals struct {
+	Live            int   `json:"live"`
+	Stale           int   `json:"stale"`
+	DeletePending   int   `json:"delete_pending"`
+	LiveBytes       int64 `json:"live_bytes"`
+	AvgBytes        int64 `json:"avg_bytes"`
+	P95Bytes        int64 `json:"p95_bytes"`
+	OverWarn        int   `json:"over_warn"`
+	Unsnapshotted   int   `json:"unsnapshotted"`
+	NotColdBootable int   `json:"not_cold_bootable"`
+}
+
+// ObsSnapshotGroup is the live and stale snapshots sharing one key: a tier, a
+// Firecracker version, or a CPU template and model ("template/model").
+type ObsSnapshotGroup struct {
+	Key      string `json:"key"`
+	Live     int    `json:"live"`
+	Stale    int    `json:"stale"`
+	AvgBytes int64  `json:"avg_bytes"`
+}
+
+// ObsSnapshotRow is one snapshot with its app.
+type ObsSnapshotRow struct {
+	ID               string     `json:"id"`
+	DeploymentID     string     `json:"deployment_id"`
+	DeploymentStatus string     `json:"deployment_status"`
+	AppID            string     `json:"app_id"`
+	AppSlug          string     `json:"app_slug,omitempty"`
+	AccountID        string     `json:"account_id,omitempty"`
+	Tier             string     `json:"tier"`
+	FCVersion        string     `json:"fc_version"`
+	CPUTemplate      string     `json:"cpu_template,omitempty"`
+	CPUModel         string     `json:"cpu_model,omitempty"`
+	Stale            bool       `json:"stale"`
+	DeletePending    bool       `json:"delete_pending"`
+	SnapshotBytes    int64      `json:"snapshot_bytes"`
+	LayerBytes       int64      `json:"layer_bytes"`
+	FootprintBytes   int64      `json:"footprint_bytes"`
+	CreatedAt        time.Time  `json:"created_at"`
+	StaleAt          *time.Time `json:"stale_at,omitempty"`
+}
+
+// ObsUnsnapshottedDeployment is a live deployment of an active app with no
+// usable snapshot: every wake cold boots until one is taken. ColdBootable is
+// false when it has no rootfs either.
+type ObsUnsnapshottedDeployment struct {
+	DeploymentID string     `json:"deployment_id"`
+	AppID        string     `json:"app_id"`
+	AppSlug      string     `json:"app_slug,omitempty"`
+	AccountID    string     `json:"account_id,omitempty"`
+	ColdBootable bool       `json:"cold_bootable"`
+	CreatedAt    time.Time  `json:"created_at"`
+	LastStaleAt  *time.Time `json:"last_stale_at,omitempty"`
+}
+
+// ObsMemoryPressureReport is GET /v1/admin/obs/memory-pressure
+// (ADR-20261123190507): each compute node's measured and booked memory
+// against its admission ceiling, and the RAM pressure evictions, frozen parks
+// under memory pressure and workload OOM kills in the window, by node, by
+// reason and by app. Measured memory is admission's charge from the node's
+// own scheduler (ADR-909); booked is Σ(ram_mb + 8) of its live instances,
+// capped at OvercommitPercent of the ceiling under measured admission.
+type ObsMemoryPressureReport struct {
+	AsOf                    time.Time               `json:"as_of"`
+	WindowSeconds           int                     `json:"window_seconds"`
+	OvercommitPercent       int                     `json:"overcommit_percent"`
+	EvictionTargetPercent   int                     `json:"eviction_target_percent"`
+	MeasurementStaleSeconds int                     `json:"measurement_stale_seconds"`
+	Truncated               bool                    `json:"truncated"`
+	Totals                  ObsMemoryPressureTotals `json:"totals"`
+	Nodes                   []ObsMemoryNode         `json:"nodes"`
+	Reasons                 []ObsMemoryReasonCount  `json:"reasons"`
+	Apps                    []ObsMemoryApp          `json:"apps"`
+	Events                  []ObsMemoryEvent        `json:"events"`
+}
+
+// ObsMemoryPressureTotals sums the fleet now and the window's events.
+// MeasuredMB, UsedMB and Frozen come from node memory reports and cover only
+// nodes with a fresh one (not stale or unmeasured); UsedMB sums the memory
+// each node is graded on (its UsedMB, else its MeasuredMB).
+type ObsMemoryPressureTotals struct {
+	Nodes        int   `json:"nodes"`
+	NodesOver    int   `json:"nodes_over"`
+	NodesNear    int   `json:"nodes_near"`
+	NodesStale   int   `json:"nodes_stale"`
+	CeilingMB    int64 `json:"ceiling_mb"`
+	MeasuredMB   int64 `json:"measured_mb"`
+	UsedMB       int64 `json:"used_mb"`
+	BookedMB     int64 `json:"booked_mb"`
+	Running      int64 `json:"running"`
+	Frozen       int   `json:"frozen"`
+	Evictions    int   `json:"evictions"`
+	FrozenParks  int   `json:"frozen_parks"`
+	OOMKills     int   `json:"oom_kills"`
+	AppsAffected int   `json:"apps_affected"`
+}
+
+// ObsMemoryNode is one compute node. State is over (memory above the
+// ceiling), near (memory at or above the eviction target, or bookings at the
+// overcommit cap), ok, stale (the last measurement is too old) or unmeasured
+// (no report). The memory graded is UsedMB (vmmd's summed cgroup memory, what
+// schedd's measured-memory eviction compares with the ceiling) when the node
+// reports it, else MeasuredMB (admission's charge). MeasuredMB, UsedMB,
+// MeasuredAt and MeasurementAgeSeconds are absent without a report. Event counts cover the window
+// and only events whose instance row still names the node.
+type ObsMemoryNode struct {
+	NodeID                string     `json:"node_id"`
+	Name                  string     `json:"name"`
+	Active                bool       `json:"active"`
+	State                 string     `json:"state"`
+	MemMB                 int        `json:"mem_mb"`
+	CeilingMB             int        `json:"ceiling_mb"`
+	BookedMB              int64      `json:"booked_mb"`
+	BookedLimitMB         int64      `json:"booked_limit_mb"`
+	MeasuredMB            *int       `json:"measured_mb,omitempty"`
+	UsedMB                *int       `json:"used_mb,omitempty"`
+	MeasuredAt            *time.Time `json:"measured_at,omitempty"`
+	MeasurementAgeSeconds *float64   `json:"measurement_age_seconds,omitempty"`
+	Running               int64      `json:"running"`
+	Waking                int64      `json:"waking"`
+	ColdBooting           int64      `json:"cold_booting"`
+	Frozen                int        `json:"frozen"`
+	Evictions             int        `json:"evictions"`
+	FrozenParks           int        `json:"frozen_parks"`
+	OOMKills              int        `json:"oom_kills"`
+}
+
+// ObsMemoryReasonCount counts the window's events by kind (eviction,
+// frozen_park or oom_kill) and reason.
+type ObsMemoryReasonCount struct {
+	Kind   string `json:"kind"`
+	Reason string `json:"reason"`
+	Count  int    `json:"count"`
+}
+
+// ObsMemoryApp is one app's evictions, frozen parks and OOM kills in the
+// window. MaxPeakMB and PlanMB come from its OOM kills.
+type ObsMemoryApp struct {
+	AppID       string    `json:"app_id"`
+	AppSlug     string    `json:"app_slug,omitempty"`
+	AccountID   string    `json:"account_id,omitempty"`
+	Plan        string    `json:"plan,omitempty"`
+	Evictions   int       `json:"evictions"`
+	FrozenParks int       `json:"frozen_parks"`
+	OOMKills    int       `json:"oom_kills"`
+	MaxPeakMB   int       `json:"max_peak_mb,omitempty"`
+	PlanMB      int       `json:"plan_mb,omitempty"`
+	LastAt      time.Time `json:"last_at"`
+}
+
+// ObsMemoryEvent is one eviction, frozen park or OOM kill. Kind is eviction,
+// frozen_park or oom_kill. PeakMB, PlanMB and DeploymentFailed are set on
+// OOM kills only; instance fields are empty once the instance row is gone.
+type ObsMemoryEvent struct {
+	At               time.Time `json:"at"`
+	Kind             string    `json:"kind"`
+	Reason           string    `json:"reason,omitempty"`
+	InstanceID       string    `json:"instance_id,omitempty"`
+	AppID            string    `json:"app_id,omitempty"`
+	AppSlug          string    `json:"app_slug,omitempty"`
+	AccountID        string    `json:"account_id,omitempty"`
+	Plan             string    `json:"plan,omitempty"`
+	NodeID           string    `json:"node_id,omitempty"`
+	NodeName         string    `json:"node_name,omitempty"`
+	RAMMB            int       `json:"ram_mb,omitempty"`
+	PeakMB           int       `json:"peak_mb,omitempty"`
+	PlanMB           int       `json:"plan_mb,omitempty"`
+	DeploymentFailed bool      `json:"deployment_failed,omitempty"`
+}
+
+// ObsBuildQueueReport is GET /v1/admin/obs/build-queue (ADR-20261123163340):
+// the queued and running builds, builder slot use per node, and the
+// durations, failures and cache outcomes of builds finished in the window.
+// SlotsState is observed, unavailable (Prometheus failed) or not_configured;
+// node rows still carry the database's running count without it.
+type ObsBuildQueueReport struct {
+	AsOf                time.Time              `json:"as_of"`
+	WindowSeconds       int                    `json:"window_seconds"`
+	BuildTimeoutSeconds int                    `json:"build_timeout_seconds"`
+	WaitWarnSeconds     int                    `json:"wait_warn_seconds"`
+	ActiveTruncated     bool                   `json:"active_truncated"`
+	FinishedTruncated   bool                   `json:"finished_truncated"`
+	SlotsState          string                 `json:"slots_state"`
+	Totals              ObsBuildQueueTotals    `json:"totals"`
+	Kinds               []ObsBuildKindStat     `json:"kinds"`
+	Failures            []ObsBuildFailureCount `json:"failures"`
+	Nodes               []ObsBuilderNodeSlots  `json:"nodes"`
+	Queued              []ObsBuildRow          `json:"queued"`
+	Running             []ObsBuildRow          `json:"running"`
+	Slowest             []ObsBuildRow          `json:"slowest"`
+	RecentFailures      []ObsBuildRow          `json:"recent_failures"`
+}
+
+// ObsBuildQueueTotals summarises the queue now and the window's finished
+// builds. Deferred builds (not_before in the future) are counted apart from
+// Queued. Held counts the queued builds waiting on an identical build
+// (coalesced_with, ADR-20261102100000); they are in Queued but not in
+// OldestWaitSeconds or WaitingOverWarn. Durations run from start to finish
+// and waits from enqueue (or a later not_before) to start, in seconds. A
+// build requeued after a preemption keeps its enqueue time, so its wait
+// includes its earlier attempts.
+type ObsBuildQueueTotals struct {
+	Queued             int     `json:"queued"`
+	Deferred           int     `json:"deferred"`
+	Held               int     `json:"held"`
+	Running            int     `json:"running"`
+	OldestWaitSeconds  float64 `json:"oldest_wait_seconds"`
+	WaitingOverWarn    int     `json:"waiting_over_warn"`
+	RunningOverTimeout int     `json:"running_over_timeout"`
+	Finished           int     `json:"finished"`
+	Succeeded          int     `json:"succeeded"`
+	Failed             int     `json:"failed"`
+	Cancelled          int     `json:"cancelled"`
+	DurationP50Seconds float64 `json:"duration_p50_seconds"`
+	DurationP95Seconds float64 `json:"duration_p95_seconds"`
+	WaitP50Seconds     float64 `json:"wait_p50_seconds"`
+	WaitP95Seconds     float64 `json:"wait_p95_seconds"`
+	CacheHits          int     `json:"cache_hits"`
+	CacheMisses        int     `json:"cache_misses"`
+	CacheInvalidated   int     `json:"cache_invalidated"`
+	Preempted          int     `json:"preempted"`
+}
+
+// ObsBuildKindStat is the queue and the window's outcomes for one build kind.
+type ObsBuildKindStat struct {
+	Kind               string  `json:"kind"`
+	Queued             int     `json:"queued"`
+	Running            int     `json:"running"`
+	Finished           int     `json:"finished"`
+	Failed             int     `json:"failed"`
+	DurationP95Seconds float64 `json:"duration_p95_seconds"`
+}
+
+// ObsBuildFailureCount counts the window's failed builds by failure_class;
+// a failed build with none is "unclassified".
+type ObsBuildFailureCount struct {
+	Class string `json:"class"`
+	Count int    `json:"count"`
+}
+
+// ObsBuilderNodeSlots is one compute node's builder slots. RunningBuilds
+// comes from the database. The slot fields come from builderd's gauges and
+// are meaningful only when Observed: Limit is the enforced maximum, Reserved
+// the guaranteed slots, ActiveReserved builds in faas-cp-build.slice (of
+// which Opportunistic run beyond the reserved count) and ActiveBorrowed
+// builds in faas-borrowed.slice (ADR-20261118154632). Conflicting means more
+// than one builderd target reported for the node, so no slot figure is
+// trusted and Observed is false.
+type ObsBuilderNodeSlots struct {
+	Node           string `json:"node"`
+	RunningBuilds  int    `json:"running_builds"`
+	Observed       bool   `json:"observed"`
+	Conflicting    bool   `json:"conflicting"`
+	Limit          int    `json:"limit"`
+	Reserved       int    `json:"reserved"`
+	InUse          int    `json:"in_use"`
+	ActiveReserved int    `json:"active_reserved"`
+	Opportunistic  int    `json:"opportunistic"`
+	ActiveBorrowed int    `json:"active_borrowed"`
+}
+
+// ObsBuildRow is one build in the report. WaitSeconds runs to its start, or
+// to now while it is queued, and includes earlier attempts of a requeued
+// build; DurationSeconds runs from its start to its finish, or to now while
+// it is running. Coalesced is set when the build waits on (or waited on) an
+// identical build.
+type ObsBuildRow struct {
+	ID              string     `json:"id"`
+	DeploymentID    string     `json:"deployment_id"`
+	AppID           string     `json:"app_id,omitempty"`
+	AppSlug         string     `json:"app_slug,omitempty"`
+	AccountID       string     `json:"account_id,omitempty"`
+	Kind            string     `json:"kind"`
+	Status          string     `json:"status"`
+	FailureClass    string     `json:"failure_class,omitempty"`
+	CacheStatus     string     `json:"cache_status,omitempty"`
+	Node            string     `json:"node,omitempty"`
+	SourceBytes     int64      `json:"source_bytes"`
+	Preemptions     int        `json:"preemptions"`
+	Coalesced       bool       `json:"coalesced"`
+	EnqueuedAt      time.Time  `json:"enqueued_at"`
+	NotBefore       *time.Time `json:"not_before,omitempty"`
+	StartedAt       *time.Time `json:"started_at,omitempty"`
+	FinishedAt      *time.Time `json:"finished_at,omitempty"`
+	WaitSeconds     float64    `json:"wait_seconds"`
+	DurationSeconds float64    `json:"duration_seconds"`
+}
+
 // ObsAuditActivityRow is the safe metadata-only projection of audit_log.
 // Data is deliberately omitted; the global audit page remains the explicit
 // high-detail path for an operator who is authorized to inspect it.

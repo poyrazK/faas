@@ -45,7 +45,7 @@ Columns:
 | Tier | Rows | Meaning |
 |---|---|---|
 | `GA` | 49 | Ships in v1.0, billed, held to the "ready to charge" bar. |
-| `beta` | 31 | On for every account, labelled beta, may change, no service credits. |
+| `beta` | 32 | On for every account, labelled beta, may change, no service credits. |
 | `preview` | 46 | Off by default; released per account with a platform flag (design partners). |
 | `internal` | 42 | Hidden from customers; development frozen until after v1.0. |
 
@@ -68,7 +68,11 @@ Columns:
 - **beta** is what customers expect around that core and what already runs on
   production, but should not hold up the charge bar: canaries,
   jobs and workflows, edge rules, caching, alerts, orgs.
-- **preview** is every large standalone product (Data API, realtime, live
+  Core realtime joined beta on 2026-11-23 (ADR-20261123074615, row 112);
+  its acceptance evidence is the realtime journey and a load run against
+  production. Retained history and everything built on it stay preview
+  (row 176).
+- **preview** is every large standalone product (Data API, realtime preview, live
   queries, application Auth, AI gateway, durable entities, events and queues,
   Operations, MCP hosting) and every feature that
   is off or flagged today. Resource-holding products need proven backups and
@@ -144,6 +148,7 @@ internal hosting service and Gregale Agents are already unreachable.
 | 34 | Release commands: a command (e.g. migrations) that must succeed before a deployment takes traffic | `gregale.yaml` `release` | **MISSING** | — | beta |
 | 35 | Traffic mirroring | `mirrors`, `gregale mirror`, `gregale traffic` | **MISSING** | — | preview |
 | 36 | Critical route health during canaries | `route-health` | `route-health-canary-guard` preview | — | preview |
+| 177 | Verification contracts: `gregale.verify.yaml` HTTP, MCP and read-only SQL checks run against a candidate before it takes traffic (ADR-20261122220000) | `verification-contract`, `verification-contracts`, `app_verification_contracts`, `gregale release check` | `verification-contracts` preview | `verification_contracts` platform flag (off) | preview |
 | 37 | Alert-triggered rollbacks | `alert-rollbacks` | **MISSING** | — | preview |
 
 ## C. Runtime and compute
@@ -241,7 +246,8 @@ internal hosting service and Gregale Agents are already unreachable.
 | 174 | Managed Redis: Valkey caches on compute nodes with scale to zero, data kept across park, restart and resize (ADR-20261116192126) | `/v1/redis`, `redis`, Compose `redis`/`valkey` services, gateway RESP session | `managed-redis` preview | `pf: managed_redis` (capability flag, default off) | preview |
 | 110 | Data API | `data-api`, `/v1/apps/{slug}/data-api` | `data-api` preview (child of `managed-postgres`) | platform flag; the parent must be released too | preview |
 | 111 | Durable entities and sessions, incl. browser sessions, backup, export and restore | `entities` | **MISSING** | — | preview |
-| 112 | Realtime channels: resume, tickets, access, occupancy | realtimed, app `realtime` (110 routes) | **MISSING** | `pf: realtime_*` | preview |
+| 112 | Realtime channels: endpoints, WebSocket and SSE connections held while the app is parked, live publish, direct and principal send, connection operations | realtimed, `realtime/endpoints`, `channels/{channel}/publish`, `principals:send`, `connections` | `realtime`, `realtime-connections` beta | `pf: realtime`; fair use, outbound budget and usage recording on in the units (ADR-1323) | beta |
+| 176 | Realtime preview: retained history, resume protocol and presence, occupancy, tickets, principal access, consumer groups and workers, push, publisher credentials | `channels/{channel}/groups`, `retained-messages`, `occupancy`, `tickets`, `principals`, `push`, `publish-credentials`, `/v1/realtime/workers` | `realtime-channels`, `realtime-occupancy`, `realtime-tickets`, `realtime-access`, `realtime-workers`, `realtime-push`, `realtime-publishers` preview (children of `realtime`) | `pf: realtime_preview` plus `realtime_*` flags and daemon switches, all off on production | preview |
 | 113 | Live queries | livequeryd | **MISSING** | `pf: live_queries` | preview |
 | 114 | AI gateway | outboundd | `ai-gateway` preview | `pf: ai_gateway` | preview |
 | 115 | Outbound integrations and bindings: key pools, probes | outboundd, `/v1/outbound`, `outbound-bindings` | **MISSING** | — | preview |
@@ -309,7 +315,7 @@ internal hosting service and Gregale Agents are already unreachable.
 | 157 | Web dashboard | `pkg/dashboard` | **MISSING** | — | GA |
 | 158 | SDKs: Node, Python, Go, Kotlin, Swift; auth and data SDKs; webhook verifier, idempotency helpers | `sdk/` | **MISSING** | — | beta |
 | 159 | Public OpenAPI spec and capabilities endpoint | `/v1/openapi.json`, `/v1/capabilities` | **MISSING** | — | GA |
-| 160 | Gregale management MCP server: AI agents manage Gregale over MCP, with an OAuth server | `gregale mcp serve`, `pkg/mcpmanagement`, `/oauth/*`, `/.well-known/oauth-*`, `/v1/tool-*`, `/v1/delegated-tool-*`, `pkg/toolpublication`, `pkg/toolinvocation`, `pkg/toolgrant`, `pkg/toolconnection` | **MISSING** | — | preview |
+| 160 | Gregale management MCP server: AI agents manage Gregale over MCP, with an OAuth server | `gregale mcp serve`, `pkg/mcpmanagement`, `pkg/docsindex` (shipped docs index for docs search and `gregale guide "<text>"`), `/oauth/*`, `/.well-known/oauth-*`, `/v1/tool-*`, `/v1/delegated-tool-*`, `pkg/toolpublication`, `pkg/toolinvocation`, `pkg/toolgrant`, `pkg/toolconnection` | **MISSING** | — | preview |
 | 161 | Docs site and trust pages: DPA, subprocessors, security reporting, security.txt | `docs/customer-pages.json`, `/.well-known/security.txt` | **MISSING** | — | GA |
 
 | 169 | Native customer support: portal, staff inbox, conversations, target policies, routing, reopening and reviewed staff operations | `/dashboard/support`, `/dashboard/orgs/{org}/support`, `/v1/support`, `/v1/orgs/{org}/support`, `pkg/apid/support` | `customer-support` preview | `pf: customer_support` | preview |

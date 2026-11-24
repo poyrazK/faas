@@ -39,7 +39,7 @@ func mcpLocalCLI(profile, apiBase, token string) mcpmanagement.LocalCLI {
 		// started must not redirect a command's target. Tools pass paths and
 		// apps explicitly.
 		command.Dir = dir
-		command.Env = append(environWithout(os.Environ(), "FAAS_TOKEN", "FAAS_API", "FAAS_JSON"), "FAAS_TOKEN="+token, "FAAS_API="+apiBase)
+		command.Env = append(environWithout(os.Environ(), tokenEnvVar, "FAAS_TOKEN", apiEnvVar, "FAAS_API", "FAAS_JSON"), "FAAS_TOKEN="+token, "FAAS_API="+apiBase)
 		command.Stdin = bytes.NewReader(stdin)
 		stdout, stderr := &cappedBuffer{limit: mcpLocalCLIOutputLimit}, &cappedBuffer{limit: mcpLocalCLIOutputLimit}
 		command.Stdout, command.Stderr = stdout, stderr

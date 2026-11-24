@@ -68,7 +68,7 @@ In your Slack app's "Event Subscriptions" page, set the Request URL
 to:
 
 ```
-https://<slug>.gregale.dev/slack/events
+https://<slug>.gregale.app/slack/events
 ```
 
 Slack sends a `url_verification` challenge; the handler responds with

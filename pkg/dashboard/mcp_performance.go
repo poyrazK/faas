@@ -14,8 +14,14 @@ type MCPPerformanceView struct {
 	Coverage                    string
 	Tools                       []MCPToolPerformanceView
 	Charts                      []MCPPerformanceChart
+	// Insights shows argument mismatches and estimated compute per tool
+	// (ADR-20261122194324, mcp_tool_insights).
+	Insights bool
 }
-type MCPToolPerformanceView struct{ Tool, Calls, Errors, Cancellations, P50, P95, P99, StreamP95 string }
+type MCPToolPerformanceView struct {
+	Tool, Calls, Errors, Cancellations, P50, P95, P99, StreamP95 string
+	Mismatches, Compute                                          string
+}
 type MCPPerformanceChart struct {
 	Title, Unit string
 	Points      []MCPPerformancePoint
@@ -43,6 +49,21 @@ func MCPPerformance(snapshot mcpprotocol.Performance, now time.Time) MCPPerforma
 	view.Charts = []MCPPerformanceChart{mcpChart("RPC traffic", "calls/s", snapshot.Traffic, now, 1), mcpChart("RPC and tool failures", "failures/s", snapshot.Errors, now, 1), mcpChart("Execution p95", "ms", snapshot.Latency, now, 1000)}
 	return view
 }
+
+// MCPToolInsights adds argument mismatches and estimated compute at memoryMB
+// of plan RAM to a view built from snapshot.
+func MCPToolInsights(view *MCPPerformanceView, snapshot mcpprotocol.Performance, memoryMB int) {
+	view.Insights = true
+	for i, r := range snapshot.Tools {
+		if i >= len(view.Tools) || view.Tools[i].Tool != r.Tool {
+			return
+		}
+		estimate := mcpprotocol.EstimateToolCompute(r.ExecutionSeconds, memoryMB)
+		view.Tools[i].Mismatches = fmt.Sprintf("%.0f", r.Mismatches)
+		view.Tools[i].Compute = fmt.Sprintf("%.1f GB-s · ≤ $%d.%05d", estimate.GBSeconds, estimate.Millicents/100_000, estimate.Millicents%100_000)
+	}
+}
+
 func mcpChart(title, unit string, samples []promql.QueryRangeSample, now time.Time, scale float64) MCPPerformanceChart {
 	chart := MCPPerformanceChart{Title: title, Unit: unit}
 	peak := 0.0

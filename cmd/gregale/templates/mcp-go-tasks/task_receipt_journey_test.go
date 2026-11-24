@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -11,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -18,7 +20,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -26,15 +30,19 @@ import (
 
 // Run with the receipt-capable Gregale CLI and a disposable PostgreSQL database.
 func TestTaskReceiptRecoversLostSubmission(t *testing.T) {
-	testTaskReceiptJourney(t, false)
+	testTaskReceiptJourney(t, "")
 }
 
 func TestTaskReceiptResumesReviewedInput(t *testing.T) {
-	testTaskReceiptJourney(t, true)
+	testTaskReceiptJourney(t, "wait")
+}
+
+func TestTaskReceiptWatchesApprovalAndRecoversLostReplies(t *testing.T) {
+	testTaskReceiptJourney(t, "respond")
 }
 
 // Each journey loses its first submission reply after committing the Task.
-func testTaskReceiptJourney(t *testing.T, reviewedInput bool) {
+func testTaskReceiptJourney(t *testing.T, reviewedVerb string) {
 	t.Helper()
 	binary := os.Getenv("MCP_TASKS_TEST_GREGALE")
 	if binary == "" {
@@ -56,7 +64,11 @@ func testTaskReceiptJourney(t *testing.T, reviewedInput bool) {
 	t.Setenv("MCP_TASK_NAMESPACE", fixture.namespace)
 	t.Setenv("MCP_TASK_OWNER_KEY", strings.Repeat("x", 32))
 	config := mcpConfig{Endpoint: "/mcp", Tasks: json.RawMessage(`{"enabled":true,"poll_interval_ms":500}`)}
-	runtime, err := startMCPTaskRuntime(config, "combined")
+	var watchGates []chan struct{}
+	if reviewedVerb == "respond" {
+		watchGates = []chan struct{}{make(chan struct{}), make(chan struct{})}
+	}
+	runtime, err := startReceiptJourneyRuntime(config, watchGates)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,11 +89,53 @@ func testTaskReceiptJourney(t *testing.T, reviewedInput bool) {
 	}
 	dropped := make(chan droppedReply, 1)
 	var intercepted, changePrompt atomic.Bool
-	var updates, changedReads atomic.Int32
+	var updates, changedReads, droppedMutations, subscriptions atomic.Int32
+	var requestsMu sync.Mutex
+	var requests []string
+	takeRequests := func() []string {
+		requestsMu.Lock()
+		defer requestsMu.Unlock()
+		seen := requests
+		requests = nil
+		return seen
+	}
+	assertRequests := func(want ...string) {
+		t.Helper()
+		if seen := takeRequests(); !slices.Equal(seen, want) {
+			t.Fatalf("MCP requests = %v, want %v", seen, want)
+		}
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		method := r.Header.Get("MCP-Method")
+		if reviewedVerb == "respond" {
+			requestsMu.Lock()
+			requests = append(requests, method)
+			requestsMu.Unlock()
+		}
 		if method == "tasks/update" {
 			updates.Add(1)
+		}
+		if method == "subscriptions/listen" && len(watchGates) > 0 {
+			// The CLI has read a working snapshot before opening a stream.
+			if index := int(subscriptions.Add(1)) - 1; index < len(watchGates) {
+				close(watchGates[index])
+			}
+		}
+		if reviewedVerb == "respond" && (method == "tasks/update" || method == "tasks/cancel") {
+			reply := httptest.NewRecorder()
+			handleHTTP(config, auth, runtime, reply, r)
+			var ack struct {
+				Result struct {
+					ResultType string `json:"resultType"`
+				} `json:"result"`
+			}
+			if err := json.Unmarshal(reply.Body.Bytes(), &ack); reply.Code != http.StatusOK || err != nil || ack.Result.ResultType != "complete" {
+				t.Errorf("%s did not acknowledge the durable mutation", method)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			droppedMutations.Add(1)
+			panic(http.ErrAbortHandler)
 		}
 		if method == "tasks/get" && changePrompt.Load() {
 			reply := httptest.NewRecorder()
@@ -144,9 +198,12 @@ func testTaskReceiptJourney(t *testing.T, reviewedInput bool) {
 
 	cli := func(verb, token string, wantCode int, args ...string) []byte {
 		t.Helper()
-		invocation := append([]string{"mcp", "client", verb, "--url", endpoint,
-			"--token-env", "GREGALE_JOURNEY_TOKEN", "--timeout", "6s", "--json"}, args...)
-		cmd := exec.CommandContext(ctx, binary, invocation...)
+		invocation := []string{"mcp", "client", verb, "--url", endpoint,
+			"--token-env", "GREGALE_JOURNEY_TOKEN", "--json"}
+		if verb != "watch" {
+			invocation = append(invocation, "--timeout", "6s")
+		}
+		cmd := exec.CommandContext(ctx, binary, append(invocation, args...)...)
 		cmd.Dir = clientDir
 		cmd.Env = []string{"XDG_CONFIG_HOME=" + clientDir, "GREGALE_JOURNEY_TOKEN=" + token}
 		var stderr bytes.Buffer
@@ -174,8 +231,12 @@ func testTaskReceiptJourney(t *testing.T, reviewedInput bool) {
 	const formArgs = `{"report":"receipt journey","steps":1,"request_approval":true}`
 	submitArgs := func(path string) []string {
 		args := []string{"--tool", "build_report", "--tasks", "--task-receipt", path, "--arguments"}
-		if reviewedInput {
-			return append(args, formArgs, "--defer-form-input")
+		if reviewedVerb != "" {
+			arguments := formArgs
+			if len(watchGates) > 0 && path != receiptPath {
+				arguments = strings.Replace(arguments, "receipt journey", "separate report", 1)
+			}
+			return append(args, arguments, "--defer-form-input")
 		}
 		return append(args, originalArgs)
 	}
@@ -198,17 +259,31 @@ func testTaskReceiptJourney(t *testing.T, reviewedInput bool) {
 		t.Fatal(err)
 	}
 	var receipt struct {
-		Version        int    `json:"version"`
-		EndpointSHA256 string `json:"endpointSha256"`
-		SubmissionKey  string `json:"submissionKey"`
+		Version         int    `json:"version"`
+		EndpointSHA256  string `json:"endpointSha256"`
+		SubmissionKey   string `json:"submissionKey"`
+		RequestSHA256   string `json:"requestSha256"`
+		CredentialProof string `json:"credentialProof"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(file))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&receipt); err != nil || receipt.Version != 1 || receipt.EndpointSHA256 != fmt.Sprintf("%x", sha256.Sum256([]byte(endpoint))) {
+	args := originalArgs
+	if reviewedVerb != "" {
+		args = `{"report":"receipt journey","request_approval":true,"steps":1}`
+	}
+	request := fmt.Sprintf(`{"arguments":%s,"deferFormInput":%t,"tool":"build_report"}`, args, reviewedVerb != "")
+	if err := decoder.Decode(&receipt); err != nil || receipt.Version != 3 ||
+		receipt.EndpointSHA256 != fmt.Sprintf("%x", sha256.Sum256([]byte(endpoint))) ||
+		receipt.RequestSHA256 != fmt.Sprintf("%x", sha256.Sum256([]byte(request))) {
 		t.Fatal("invalid private Task receipt")
 	}
-	if reviewedInput {
-		waitForForm := func(id string) {
+	mac := hmac.New(sha256.New, []byte(owner))
+	_, _ = mac.Write([]byte("gregale/mcp-task-receipt/v3:" + receipt.EndpointSHA256 + receipt.SubmissionKey + receipt.RequestSHA256))
+	if receipt.CredentialProof != fmt.Sprintf("%x", mac.Sum(nil)) {
+		t.Fatal("invalid Task receipt credential proof")
+	}
+	if reviewedVerb != "" {
+		waitForStatus := func(id, want string) {
 			t.Helper()
 			formCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 			defer cancel()
@@ -221,27 +296,68 @@ func testTaskReceiptJourney(t *testing.T, reviewedInput bool) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if status == "input_required" {
+				if status == want {
 					return
 				}
 				select {
 				case <-formCtx.Done():
-					t.Fatalf("Task did not reach input_required, last status %q", status)
+					t.Fatalf("Task did not reach %q, last status %q", want, status)
 				case <-ticker.C:
 				}
 			}
 		}
-		waitForForm(committed.id)
-		templatePath := filepath.Join(clientDir, "reviewed-input.json")
-		var snapshot struct {
-			TaskID     string `json:"taskId"`
-			Status     string `json:"status"`
-			NextAction string `json:"nextAction"`
+		type statusSnapshot struct {
+			TaskID         string `json:"taskId"`
+			Status         string `json:"status"`
+			NextAction     string `json:"nextAction"`
+			LastUpdatedAt  string `json:"lastUpdatedAt"`
+			PollIntervalMS int    `json:"pollIntervalMs"`
 		}
-		if err := json.Unmarshal(cli("status", owner, 0, "--task-receipt", receiptPath,
-			"--write-input-template", templatePath), &snapshot); err != nil ||
-			snapshot.TaskID != committed.id || snapshot.Status != "input_required" || snapshot.NextAction != "provide_input" {
-			t.Fatalf("receipt did not recover the original pending form: %+v, %v", snapshot, err)
+		readSnapshot := func(body []byte) statusSnapshot {
+			t.Helper()
+			var status statusSnapshot
+			d := json.NewDecoder(bytes.NewReader(body))
+			d.DisallowUnknownFields()
+			if err := d.Decode(&status); err != nil {
+				t.Fatalf("invalid Task status metadata: %v", err)
+			}
+			if _, err := time.Parse(time.RFC3339Nano, status.LastUpdatedAt); err != nil {
+				t.Fatal("invalid Task status timestamp")
+			}
+			return status
+		}
+		watch := func(status, action string) statusSnapshot {
+			t.Helper()
+			waitForStatus(committed.id, "running")
+			lines := bytes.Split(bytes.TrimSpace(cli("watch", owner, 0, "--task-receipt", receiptPath)), []byte("\n"))
+			assertRequests("server/discover", "gregale/tasks/lookup", "subscriptions/listen", "gregale/tasks/lookup")
+			if len(lines) != 2 {
+				t.Fatalf("watch returned %d snapshots, want 2", len(lines))
+			}
+			first, last := readSnapshot(lines[0]), readSnapshot(lines[1])
+			if first.TaskID != committed.id || first.Status != "working" || first.NextAction != "poll_status" || first.PollIntervalMS <= 0 ||
+				last.TaskID != committed.id || last.Status != status || last.NextAction != action || last.PollIntervalMS != 0 {
+				t.Fatalf("unexpected Task watch snapshots: %+v, %+v", first, last)
+			}
+			return last
+		}
+		var watchedForm statusSnapshot
+		if len(watchGates) > 0 {
+			takeRequests()
+			for _, credential := range []string{foreign, reduced} {
+				cli("watch", credential, 1, "--task-receipt", receiptPath)
+				assertRequests("server/discover", "gregale/tasks/lookup")
+			}
+			watchedForm = watch("input_required", "provide_input")
+		}
+		waitForStatus(committed.id, "input_required")
+		templatePath := filepath.Join(clientDir, "reviewed-input.json")
+		snapshot := readSnapshot(cli("status", owner, 0, "--task-receipt", receiptPath, "--write-input-template", templatePath))
+		if snapshot.TaskID != committed.id || snapshot.Status != "input_required" || snapshot.NextAction != "provide_input" {
+			t.Fatalf("receipt did not recover the original pending form: %+v", snapshot)
+		}
+		if len(watchGates) > 0 && snapshot != watchedForm {
+			t.Fatalf("exported form metadata differs from watch: %+v, %+v", snapshot, watchedForm)
 		}
 		info, err := os.Lstat(templatePath)
 		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
@@ -277,10 +393,10 @@ func testTaskReceiptJourney(t *testing.T, reviewedInput bool) {
 			len(template.Forms) != 1 || approval.Message != "Approve generating this report?" || string(approval.Response) != "null" {
 			t.Fatalf("unexpected review template: %+v", template)
 		}
-		wait := func(token string, code int, path string) []byte {
-			return cli("wait", token, code, "--task-receipt", path, "--reviewed-input-file", templatePath)
+		answer := func(token string, code int, path string) []byte {
+			return cli(reviewedVerb, token, code, "--task-receipt", path, "--reviewed-input-file", templatePath)
 		}
-		wait(owner, 1, receiptPath)
+		answer(owner, 1, receiptPath)
 		approval.Response = json.RawMessage(`{"action":"accept","content":{"approved":true}}`)
 		template.Forms["approval"] = approval
 		filled, err := json.Marshal(template)
@@ -301,7 +417,7 @@ func testTaskReceiptJourney(t *testing.T, reviewedInput bool) {
 			other.Result.TaskID == "" || other.Result.TaskID == committed.id {
 			t.Fatalf("second submission did not return a distinct Task: %+v, %v", other, err)
 		}
-		waitForForm(other.Result.TaskID)
+		waitForStatus(other.Result.TaskID, "input_required")
 		otherPath := filepath.Join(clientDir, "other-input.json")
 		cli("status", owner, 0, "--task-receipt", otherReceipt, "--write-input-template", otherPath)
 		otherTemplate := readReview(otherPath)
@@ -310,14 +426,51 @@ func testTaskReceiptJourney(t *testing.T, reviewedInput bool) {
 			t.Fatal("second Task must request the same form under the same ID")
 		}
 
-		wait(owner, 1, otherReceipt)
-		wait(reduced, 1, receiptPath)
+		answer(owner, 1, otherReceipt)
+		if reviewedVerb == "respond" {
+			takeRequests()
+			for _, credential := range []string{foreign, reduced} {
+				answer(credential, 1, receiptPath)
+				assertRequests("server/discover", "gregale/tasks/lookup")
+			}
+		} else {
+			answer(reduced, 1, receiptPath)
+		}
 		changePrompt.Store(true)
-		wait(owner, 1, receiptPath)
+		answer(owner, 1, receiptPath)
 		changePrompt.Store(false)
 		if changedReads.Load() != 1 || updates.Load() != 0 {
 			t.Fatalf("expected one changed form read and zero updates before approval, got %d reads, %d updates",
 				changedReads.Load(), updates.Load())
+		}
+
+		var result []byte
+		otherStatus := "input_required"
+		if reviewedVerb == "respond" {
+			takeRequests()
+			observed := readSnapshot(answer(owner, 0, receiptPath))
+			assertRequests("server/discover", "gregale/tasks/lookup", "tasks/get", "tasks/update", "tasks/get")
+			if observed.TaskID != committed.id || observed.Status != "working" || observed.NextAction != "poll_status" {
+				t.Fatalf("unexpected status after the lost update reply: %+v", observed)
+			}
+			watch("completed", "read_result")
+			for _, credential := range []string{foreign, reduced} {
+				cli("status", credential, 1, "--task-receipt", receiptPath, "--read-result")
+				assertRequests("server/discover", "gregale/tasks/lookup")
+			}
+			result = cli("status", owner, 0, "--task-receipt", receiptPath, "--read-result")
+			assertRequests("server/discover", "gregale/tasks/lookup", "tasks/get")
+
+			waitForStatus(other.Result.TaskID, "input_required")
+			cancelled := readSnapshot(cli("cancel", owner, 0, "--task-receipt", otherReceipt))
+			assertRequests("server/discover", "gregale/tasks/lookup", "tasks/cancel", "gregale/tasks/lookup")
+			if cancelled.TaskID != other.Result.TaskID || cancelled.Status != "cancelled" || cancelled.NextAction != "none" ||
+				droppedMutations.Load() != 2 {
+				t.Fatalf("unexpected cancellation snapshot or reply loss: %+v, %d dropped replies", cancelled, droppedMutations.Load())
+			}
+			otherStatus = "cancelled"
+		} else {
+			result = answer(owner, 0, receiptPath)
 		}
 
 		var completed struct {
@@ -329,7 +482,7 @@ func testTaskReceiptJourney(t *testing.T, reviewedInput bool) {
 				} `json:"content"`
 			} `json:"result"`
 		}
-		if err := json.Unmarshal(wait(owner, 0, receiptPath), &completed); err != nil ||
+		if err := json.Unmarshal(result, &completed); err != nil ||
 			completed.TaskID != committed.id || completed.Status != "completed" || len(completed.Result.Content) != 1 ||
 			completed.Result.Content[0].Text != "Report receipt journey is ready after 1 steps." {
 			t.Fatalf("review did not complete the original Task: %+v, %v", completed, err)
@@ -337,16 +490,16 @@ func testTaskReceiptJourney(t *testing.T, reviewedInput bool) {
 		if updates.Load() != 1 {
 			t.Fatalf("expected exactly one update for the approved form, got %d", updates.Load())
 		}
-		var rows, original, pending int
+		var rows, original, second int
 		if err := fixture.pool.QueryRow(ctx, `SELECT count(*),
 		    count(*) FILTER (WHERE task_id=$2 AND submission_key=$3 AND expires_at=$4
 		        AND status='completed' AND attempt_count=1 AND result_encrypted IS NOT NULL),
-		    count(*) FILTER (WHERE task_id=$5 AND status='input_required' AND attempt_count=1 AND result_encrypted IS NULL)
+		    count(*) FILTER (WHERE task_id=$5 AND status=$6 AND attempt_count=1 AND result_encrypted IS NULL)
 		    FROM gregale_mcp_tasks WHERE namespace=$1`, fixture.namespace, committed.id, receipt.SubmissionKey,
-			committed.expires, other.Result.TaskID).Scan(&rows, &original, &pending); err != nil ||
-			rows != 2 || original != 1 || pending != 1 {
-			t.Fatalf("expected the original durable result and an untouched pending Task, got rows=%d completed=%d pending=%d err=%v",
-				rows, original, pending, err)
+			committed.expires, other.Result.TaskID, otherStatus).Scan(&rows, &original, &second); err != nil ||
+			rows != 2 || original != 1 || second != 1 {
+			t.Fatalf("expected the original durable result and a second Task in %s, got rows=%d completed=%d second=%d err=%v",
+				otherStatus, rows, original, second, err)
 		}
 		return
 	}
@@ -402,6 +555,40 @@ func testTaskReceiptJourney(t *testing.T, reviewedInput bool) {
 		t.Fatal(err)
 	}
 	lookup(owner, 1)
+}
+
+// Hold the original executor before its form and again before its replay so
+// each watch opens a subscription while the Task is still working.
+func startReceiptJourneyRuntime(config mcpConfig, gates []chan struct{}) (*mcpTaskRuntime, error) {
+	if len(gates) == 0 {
+		return startMCPTaskRuntime(config, "combined")
+	}
+	mcpTaskHandlers.Lock()
+	original := mcpTaskHandlers.entries["build_report"]
+	handler := original
+	handler.executors = maps.Clone(original.executors)
+	execute := handler.executors[handler.definition.Version]
+	var executions atomic.Int32
+	handler.executors[handler.definition.Version] = func(ctx context.Context, args map[string]any, task *MCPTaskExecutionContext) (map[string]any, error) {
+		if args["report"] == "receipt journey" {
+			if index := int(executions.Add(1)) - 1; index < len(gates) {
+				select {
+				case <-gates[index]:
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
+			}
+		}
+		return execute(ctx, args, task)
+	}
+	mcpTaskHandlers.entries["build_report"] = handler
+	mcpTaskHandlers.Unlock()
+	defer func() {
+		mcpTaskHandlers.Lock()
+		mcpTaskHandlers.entries["build_report"] = original
+		mcpTaskHandlers.Unlock()
+	}()
+	return startMCPTaskRuntime(config, "combined")
 }
 
 func taskReceiptJourneyAuth(t *testing.T) (*authenticator, func(string, string) string) {

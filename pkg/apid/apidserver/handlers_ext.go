@@ -3021,22 +3021,26 @@ func (s *server) verifyRollbackTargetArtifact(ctx context.Context, target state.
 	if strings.TrimSpace(target.RootfsKey) == "" {
 		return api.ErrRollbackTargetUnavailable(fmt.Sprintf("deployment %q has no immutable rootfs artifact key", target.ID))
 	}
+	return s.verifyRollbackArtifact(ctx, target.ID, target.RootfsKey)
+}
+
+func (s *server) verifyRollbackArtifact(ctx context.Context, deploymentID, storageKey string) *api.Problem {
 	if s.rollbackArtifactVerifier == nil {
 		return customerCapacityProblem(s.log, "verify rollback target", "Deployment temporarily unavailable",
 			"Gregale could not verify this deployment right now.",
 			"Retry in a few seconds; if it still fails, contact support.", nil)
 	}
-	err := s.rollbackArtifactVerifier.CheckPresent(ctx, target.RootfsKey, "sigs/"+target.RootfsKey+".sig")
+	err := s.rollbackArtifactVerifier.CheckPresent(ctx, storageKey, "sigs/"+storageKey+".sig")
 	if err == nil {
 		return nil
 	}
 	s.log.Warn("rollback artifact verification failed",
-		"deployment", target.ID,
-		"rootfs_key", target.RootfsKey,
+		"deployment", deploymentID,
+		"rootfs_key", storageKey,
 		"err", err)
 	var problem *api.Problem
 	if artifactstorage.IsNotFound(err) || (errors.As(err, &problem) && problem.Code == api.CodeSigInvalid) {
-		return api.ErrRollbackTargetUnavailable(fmt.Sprintf("deployment %q does not have an accessible, attested cold-boot rootfs", target.ID))
+		return api.ErrRollbackTargetUnavailable(fmt.Sprintf("deployment %q does not have an accessible, attested cold-boot rootfs", deploymentID))
 	}
 	return api.ErrCapacity("could not verify rollback target artifact").WithHeader("Retry-After", "5")
 }
@@ -3522,6 +3526,10 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		// current app shape so retries don't 4xx.
 		resp := s.appResponseWithContext(r.Context(), app, acct.Plan)
 		writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, app))
+		return
+	}
+	if problem := s.blockedAppNameProblem(acct.ID, req.NewSlug); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	// Route rules name their target by slug, and host rules may name the

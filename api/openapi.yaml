@@ -26711,6 +26711,33 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/apps/{slug}/mcp-tool-insights:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getMCPToolInsights
+      summary: Per-tool MCP calls, failures, argument mismatches and estimated compute.
+      description: |
+        Reads the last hour of the app's per-tool MCP telemetry. Execution
+        seconds are converted to GB-seconds at the app's plan RAM + 8 MB, and
+        estimated_millicents is an upper bound at the overage rate: usage
+        inside the plan's included GB-hours costs nothing extra. telemetry is
+        not_observed (with no tools) when the app reported nothing in the
+        window. Available only where MCP tool insights are enabled for the
+        account.
+      responses:
+        '200':
+          description: Per-tool MCP insights for the last hour.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPToolInsightsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/analytics/timeseries:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -31907,6 +31934,68 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/verification-contract:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getVerificationContract
+      summary: Read an app's stored verification contract.
+      description: "Returns the gregale.verify.yaml contract (as JSON) that production deployments of the app are checked against before they take traffic. 404 when no contract is stored or the verification-contracts capability is not released to the account. Requires app read access."
+      x-since: 2026-11
+      responses:
+        '200':
+          description: The app's current verification contract.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VerificationContract' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [apps]
+      operationId: setVerificationContract
+      summary: Store or replace an app's verification contract.
+      description: "Validates and stores the contract. Every later production deployment runs its HTTP, MCP and read-only SQL checks against the candidate; a failing required check blocks promotion. expected_revision makes the write conditional: 0 creates only, a positive revision replaces only that revision, and a mismatch answers 409. Requires deploy write access."
+      x-since: 2026-11
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutVerificationContractRequest' }
+      responses:
+        '200':
+          description: The verification contract after the write.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VerificationContract' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [apps]
+      operationId: deleteVerificationContract
+      summary: Delete an app's verification contract.
+      description: "Removes the stored contract; later deployments promote on the platform smoke alone. expected_revision makes the delete conditional and a mismatch answers 409. Requires deploy write access."
+      x-since: 2026-11
+      parameters:
+        - name: expected_revision
+          in: query
+          description: Delete only if the stored contract is at this revision.
+          schema: { type: integer, format: int64, minimum: 1 }
+      responses:
+        '204':
+          description: The contract was deleted.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/route-monitor/report:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -32715,6 +32804,54 @@ paths:
           $ref: '#/components/responses/RollbackConflict'
           description: 'one of: no_rollback_target | rollback_target_already_live | rollback_target_snapshot_expired | rollback_deployment_changed | rollback_operation_required | rollback_attempt_accepted | rollback_attempt_conflict'
         '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/rollbacks/preflight:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: preflightCheckedRollback
+      summary: Check an exact rollback pair before admission.
+      description: Reports known blockers for the current and target revisions. A successful check returns warnings, including any binding verification that requires a prepared target. Admission and routing recheck current conditions.
+      parameters:
+        - name: expected_current_deployment_id
+          in: query
+          required: true
+          schema: { type: string }
+          description: The expected serving deployment ID or exact revision.
+        - name: target_deployment_id
+          in: query
+          required: true
+          schema: { type: string }
+          description: The historical deployment ID or exact revision to restore.
+        - name: acknowledge_releases
+          in: query
+          schema: { type: boolean, default: false }
+          description: Include the effect of proceeding across release commands.
+      responses:
+        '200':
+          description: Preflight passed. Returns warnings, or an empty list when there are none.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/BindingCheckFinding' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: A deployment or release policy currently blocks the selected rollback pair.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+        default:
+          description: A rollback preflight check failed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/apps/{slug}/alert-rollbacks:
     parameters:
@@ -42500,6 +42637,11 @@ paths:
       tags: [projects]
       operationId: getProject
       summary: Inspect a project, its workloads, exclusions, and latest status.
+      parameters:
+        - name: include_rollback
+          in: query
+          description: Include recorded membership and predecessor revisions for the latest serving project deploy, when available.
+          schema: { type: boolean }
       responses:
         '200':
           description: Project recovery and workload state.
@@ -42551,6 +42693,424 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/rollbacks/preview:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Slug of the project whose rollback plan is being previewed.
+        schema: { type: string }
+    get:
+      tags: [projects]
+      operationId: previewProjectRollback
+      summary: Preview a project rollback and its service blockers.
+      parameters:
+        - name: to_deploy
+          in: query
+          schema: { type: string, format: uuid }
+          description: Restore the production revisions recorded for this project deploy. Used without all.
+        - name: all
+          in: query
+          schema: { type: boolean, default: false }
+          description: Select each serving service and its current predecessor.
+        - name: acknowledge_releases
+          in: query
+          schema: { type: boolean, default: false }
+          description: Acknowledge the release commands the rollback crosses.
+        - name: verify
+          in: query
+          schema: { type: boolean, default: false }
+          description: Include configured HTTP health verification in the plan.
+        - name: verify_before_cutover
+          in: query
+          schema: { type: boolean, default: false }
+          description: Include configured HTTP probes of prepared revisions before moving project traffic. Requires verify.
+        - name: stabilize_for_seconds
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 60, default: 0 }
+          description: Require this many seconds of healthy post-cutover HTTP probes before advancing. A positive value requires verify.
+        - name: verify_live_traffic
+          in: query
+          schema: { type: boolean, default: false }
+          description: Require healthy production 5xx budgets for restored revisions before advancing. Requires verify.
+        - name: undo_on_health_failure
+          in: query
+          schema: { type: boolean, default: false }
+          description: Include automatic undo of switched services on a confirmed health probe 5xx. Requires verify.
+        - name: undo_on_live_traffic_failure
+          in: query
+          schema: { type: boolean, default: false }
+          description: Include automatic undo of switched services on a reconfirmed production 5xx budget breach. Requires verify_live_traffic.
+      responses:
+        '200':
+          description: Read-only rollback plan with no operation ID. A runnable plan includes a hash that can be supplied when starting it.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectRollbackOperation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The rollback intent conflicts with current project state.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/projects/{slug}/rollbacks/targets:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Slug of the project whose recorded deploys are being listed.
+        schema: { type: string }
+    get:
+      tags: [projects]
+      operationId: listProjectRollbackTargets
+      summary: List recorded project deploys to preview for rollback.
+      description: Return up to 20 recent deploy groups whose recorded members have served and still belong to the project, with any active artifact protection. Preview checks artifact availability and current policy.
+      responses:
+        '200':
+          description: Recent deploys in order of their newest member creation time.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectRollbackTargets' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/projects/{slug}/rollbacks/targets/{deploy}/protection:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Slug of the project that owns the deploy artifacts.
+        schema: { type: string }
+      - name: deploy
+        in: path
+        required: true
+        description: ID of the recorded deploy group whose artifacts will be protected.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [projects]
+      operationId: protectProjectRollbackDeploy
+      summary: Protect the artifacts of a recorded project deploy.
+      description: Verify and hold the recorded members' root filesystems, sidecar layers, and signatures together. An active hold for the same artifacts can be extended.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProtectProjectRollbackDeployRequest' }
+      responses:
+        '200':
+          description: Artifact protection and its expiry.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectRollbackProtection' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: A recorded member is ineligible, its artifact is unavailable, or the deploy changed during verification.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/projects/{slug}/rollbacks:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Slug of the project to roll back or list rollback operations for.
+        schema: { type: string }
+    get:
+      tags: [projects]
+      operationId: listProjectRollbacks
+      summary: List recent project rollbacks and undos.
+      description: Return up to 20 receipts, with the running operation first and the rest newest first.
+      responses:
+        '200':
+          description: Recent operation summaries for this project.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectRollbackHistory' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    post:
+      tags: [projects]
+      operationId: startProjectRollback
+      summary: Start a durable project rollback.
+      description: Gregale checks all targeted services, then saves the exact plan and advances it in the background. Supply expected_plan_hash to apply a reviewed preview. An accepted request_id returns the current state of its saved receipt on retry with the same options.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectRollbackRequest' }
+      responses:
+        '200':
+          description: The plan is blocked or empty, or a retried request has a blocked or completed receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectRollbackOperation' }
+        '202':
+          description: Accepted project rollback with an operation ID.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectRollbackOperation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The intent conflicts with current project state, the reviewed plan changed, or the request ID was accepted with different options. An existing running rollback is identified in the problem.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/projects/{slug}/rollbacks/{operation}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Slug of the project that owns the rollback receipt.
+        schema: { type: string }
+      - name: operation
+        in: path
+        required: true
+        description: ID of the operation whose receipt is requested.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [projects]
+      operationId: getProjectRollback
+      summary: Read a durable project rollback receipt.
+      responses:
+        '200':
+          description: Current operation status, blockers, and service receipts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectRollbackOperation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The project cannot provide this rollback receipt in its current state.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/projects/{slug}/rollbacks/{operation}/resume:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Slug of the project whose rollback is resuming.
+        schema: { type: string }
+      - name: operation
+        in: path
+        required: true
+        description: ID of the paused rollback or undo to continue.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [projects]
+      operationId: resumeProjectRollback
+      summary: Retry a blocked project rollback using its saved plan.
+      description: Supply the resume preview hash to admit the reviewed plan. Retrying an accepted hash returns the same receipt without starting another attempt.
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectRollbackResumeRequest' }
+      responses:
+        '200':
+          description: Current receipt after requesting that the operation continue.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectRollbackOperation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The operation cannot resume, or the reviewed resume plan has changed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/projects/{slug}/rollbacks/{operation}/resume/preview:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Slug of the project whose paused rollback is being reviewed for resume.
+        schema: { type: string }
+      - name: operation
+        in: path
+        required: true
+        description: ID of the paused operation to check before resuming.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [projects]
+      operationId: previewProjectRollbackResume
+      summary: Preview the remaining steps of a paused project rollback or undo.
+      description: Returns completed and pending cutovers, planned verification, and any current blockers. A runnable preview includes a resume plan hash and the existing operation ID.
+      responses:
+        '200':
+          description: Read-only resume plan for the paused operation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectRollbackOperation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The operation is unavailable for resume preview.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/projects/{slug}/rollbacks/{operation}/pause:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Slug of the project whose rollback is being paused.
+        schema: { type: string }
+      - name: operation
+        in: path
+        required: true
+        description: ID of the running rollback or undo to pause.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [projects]
+      operationId: pauseProjectRollback
+      summary: Pause a running project rollback or undo.
+      description: Close the cutover gate, settle committed handoffs, and release unused preparations. Repeating a pause returns the same receipt.
+      responses:
+        '200':
+          description: The operation is already paused or blocked.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectRollbackOperation' }
+        '202':
+          description: The pause is recorded and cleanup is running.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectRollbackOperation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The project rollback has already completed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/projects/{slug}/rollbacks/{operation}/undo:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Slug of the project whose switched revisions are being restored.
+        schema: { type: string }
+      - name: operation
+        description: The paused project rollback to undo.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [projects]
+      operationId: undoProjectRollback
+      summary: Undo completed cutovers of a paused project rollback.
+      description: Preflight and restore the exact original revisions in reverse cutover order. Supply the preview hash to admit only the reviewed plan. Repeated requests with the same options return the same undo receipt.
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectRollbackUndoRequest' }
+      responses:
+        '200':
+          description: Previously accepted undo is blocked or complete.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectRollbackOperation' }
+        '202':
+          description: The undo is running under its own operation ID.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectRollbackOperation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Undo is unavailable, the reviewed plan changed, or a serving revision or release check conflicts with the saved rollback.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/projects/{slug}/rollbacks/{operation}/undo/preview:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Slug of the project whose inverse cutovers are being previewed.
+        schema: { type: string }
+      - name: operation
+        description: ID of the paused rollback whose completed cutovers would be undone.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [projects]
+      operationId: previewProjectRollbackUndo
+      summary: Preview the exact undo of a paused project rollback.
+      description: Returns the inverse cutovers in execution order, crossed release runs, and any blockers. A runnable preview includes a hash for undo admission.
+      parameters:
+        - name: acknowledge_releases
+          in: query
+          schema: { type: boolean, default: false }
+          description: Acknowledge the release runs crossed by the previewed undo.
+      responses:
+        '200':
+          description: The read-only undo plan, with no operation ID.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectRollbackOperation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The source cannot be undone or already has a linked undo.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
   /v1/projects/{slug}/environment-clones:
     parameters:
@@ -48129,15 +48689,13 @@ paths:
       summary: Publish a message to live or resumable channel subscribers.
       description: >-
         delivery=live (the default) fans out to live raw-frame subscribers.
-        delivery=retained is preview-only and requires
-        FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on the API; it accepts at most
-        4096 decoded bytes and requires an Idempotency-Key. Retained delivery
-        commits the message to the ordered channel log before fan-out and
-        returns its sequence. V2 subscribers read the committed log in sequence;
-        a best-effort wake reduces latency while bounded polling recovers missed
-        wakes. The retained log remains authoritative if live fan-out is
-        incomplete. The resume protocol separately requires
-        FAAS_REALTIME_RESUME_PREVIEW_ENABLED=1 on the realtime service.
+        delivery=retained is part of the realtime preview, released per
+        account; it accepts at most 4096 decoded bytes and requires an
+        Idempotency-Key. Retained delivery commits the message to the ordered
+        channel log before fan-out and returns its sequence. Resumable
+        subscribers read the committed log in sequence; a best-effort wake
+        reduces latency while bounded polling recovers missed wakes. The
+        retained log remains authoritative if live fan-out is incomplete.
 
         A supplied Idempotency-Key binds the publish to delivery mode, decoded
         payload and binary flag for 24 hours. Replays return the original
@@ -51932,6 +52490,40 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/workload/object-storage/credentials:
+    post:
+      tags: [storage]
+      operationId: workloadObjectCredentialIssue
+      summary: Trade a binding token for a one-hour S3 credential on a granted bucket.
+      description: |
+        Called by guest-init's loopback credential endpoint, not by customer
+        code. A live production instance presents its gregale:bindings
+        workload token and names a bucket its app's gregale.yaml `uses:`
+        grants (or omits the bucket when it holds exactly one bucket grant).
+        The answer is the AWS container credential shape, limited to the
+        grant's access and key prefix, and expires within the hour. Each
+        instance holds at most 8 live credentials per bucket. Gated by the
+        cross_app_bindings platform flag (off: 404).
+      security:
+        - bindingsWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ObjectWorkloadCredentialRequest' }
+      responses:
+        '200':
+          description: The credential.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectWorkloadCredentialResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /v1/apps/{slug}/queues/send:
     post:
@@ -60802,6 +61394,35 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403':
           description: 'code: admin_required — the held-link review needs an operator session with MFA.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/admin/app-names/report:
+    get:
+      tags: [admin]
+      operationId: getAppNameReport
+      summary: Existing apps an app name blocklist matches (operator-only).
+      description: |
+        Lists existing apps whose names the live `app_name_blocklist` runtime
+        setting matches, for review. Nothing is changed: existing apps keep
+        their names. With `blocklist` the report uses that list instead of the
+        live one, so an operator can see a list's effect before setting it.
+        Deleted apps that can still be restored are listed too (status
+        `deleted`): a restore brings their name back. When more than 5000 apps
+        match, the first 5000 by name are listed and `truncated` is true.
+      parameters:
+        - { name: blocklist, in: query, required: false, schema: { type: string }, description: "Entries separated by commas, spaces or newlines: exact names or patterns where * matches any characters." }
+      responses:
+        '200':
+          description: Matching apps, sorted by name.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppNameReportResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: 'code: admin_required — the app name report needs an operator session with MFA.'
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -75726,6 +76347,11 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Platform-issued short-lived RS256 workload JWT with audience gregale:flags.
+    bindingsWorkloadIdentity:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Platform-issued short-lived RS256 workload JWT with audience gregale:bindings, from a live production instance.
     bearerAuth:
       type: http
       scheme: bearer
@@ -89870,6 +90496,34 @@ components:
         method: {"type": "string", "enum": ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], "description": "Omitted matches every method."}
         path: {"type": "string", "maxLength": 240, "description": "Route template such as /users/{id}, or an edge-rule glob such as /exports/*."}
         class: {"type": "string", "enum": ["critical", "bulk"]}
+    VerificationContract:
+      description: An app's stored gregale.verify.yaml contract and its revision.
+      type: object
+      required: [app_id, contract, contract_sha256, check_count, revision, updated_at]
+      properties:
+        app_id: { type: string, format: uuid }
+        contract:
+          type: object
+          additionalProperties: true
+          description: The stored gregale.verify.yaml contract as JSON (version, checks).
+        contract_sha256: { type: string, description: "SHA-256 of the canonical contract encoding." }
+        check_count: { type: integer }
+        revision: { type: integer, format: int64 }
+        updated_at: { type: string, format: date-time }
+    PutVerificationContractRequest:
+      description: Body that stores or replaces an app's verification contract.
+      type: object
+      required: [contract]
+      properties:
+        contract:
+          type: object
+          additionalProperties: true
+          description: The gregale.verify.yaml contract to store, as JSON (version, checks).
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 0
+          description: "0 creates only; a positive value replaces only that revision."
     RoutePrioritiesResponse:
       type: object
       description: "An app's effective route priorities and where they come from."
@@ -95272,7 +95926,9 @@ components:
         storage_byte_seconds: { type: integer, format: int64, minimum: 0 }
         storage_byte_seconds_limit: { type: integer, format: int64, minimum: 0 }
         storage_byte_seconds_remaining: { type: integer, format: int64, minimum: 0 }
-        history_byte_seconds: { type: integer, format: int64, minimum: 0 }
+        history_byte_seconds: { type: integer, format: int64, minimum: 0, description: "Point-in-time restore history held this month, in byte-seconds." }
+        snapshot_byte_seconds: { type: integer, format: int64, minimum: 0, description: "Snapshot storage held this month, in byte-seconds." }
+        included_history_bytes: { type: integer, format: int64, minimum: 0, description: "Restore history and snapshot storage the plan includes, held for the whole month. Restore history uses it first. With overage on, history past it is billed per GB-month." }
         egress_bytes: { type: integer, format: int64, minimum: 0 }
         compute_allowance_unit_seconds:
           description: The plan's monthly compute allowance in compute-unit seconds, pooled across the account's databases.
@@ -95342,7 +95998,7 @@ components:
       type: object
       required: [code, meter, unit, quantity, cost_millicents]
       properties:
-        code: { type: string, enum: [managed_postgres.compute, managed_postgres.storage, managed_postgres.restore_history, managed_postgres.egress] }
+        code: { type: string, enum: [managed_postgres.compute, managed_postgres.storage, managed_postgres.restore_history, managed_postgres.snapshots, managed_postgres.egress] }
         meter: { type: string }
         unit: { type: string }
         quantity: { type: integer, format: int64, minimum: 0 }
@@ -95366,6 +96022,7 @@ components:
         storage_byte_seconds_limit: { type: integer, format: int64, minimum: 0 }
         storage_byte_seconds_remaining: { type: integer, format: int64, minimum: 0 }
         history_byte_seconds: { type: integer, format: int64, minimum: 0 }
+        snapshot_byte_seconds: { type: integer, format: int64, minimum: 0 }
         egress_bytes: { type: integer, format: int64, minimum: 0 }
         cost_millicents: { type: integer, format: int64, minimum: 0 }
         max_monthly_cost_millicents: { type: integer, format: int64, minimum: 0 }
@@ -95435,7 +96092,7 @@ components:
       additionalProperties: false
       required: [meter, quantity]
       properties:
-        meter: { type: string, enum: [active_seconds, compute_unit_seconds, storage_byte_seconds, history_byte_seconds, egress_bytes, operations] }
+        meter: { type: string, enum: [active_seconds, compute_unit_seconds, storage_byte_seconds, history_byte_seconds, snapshot_byte_seconds, egress_bytes, operations] }
         quantity: { type: integer, format: int64, minimum: 0 }
     ManagedPostgresUsageImportWindow:
       description: A complete policy-sized usage window with its actual source observation time.
@@ -97968,6 +98625,30 @@ components:
           type: array
           items: { $ref: '#/components/schemas/HeldLinkReview' }
         truncated: { type: boolean }
+
+    AppNameReportResponse:
+      description: "Existing apps an app name blocklist matches. source is live (app_name_blocklist) or preview (the request's blocklist). truncated means more apps matched than were listed."
+      type: object
+      required: [source, entries, matches, truncated]
+      properties:
+        source: { type: string, enum: [live, preview] }
+        entries: { type: integer, description: "Number of blocklist entries checked." }
+        matches:
+          type: array
+          items: { $ref: '#/components/schemas/AppNameReportMatch' }
+        truncated: { type: boolean }
+
+    AppNameReportMatch:
+      description: "An existing app whose name a blocklist entry matches."
+      type: object
+      required: [slug, app_id, account_id, status, entry]
+      properties:
+        slug: { type: string }
+        app_id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid }
+        status: { type: string }
+        entry: { type: string, description: "The blocklist entry that matched." }
 
     AccountLimits:
       description: "Plan-driven quota, resource caps, and trigger capabilities returned by GET /v1/account."
@@ -103937,6 +104618,19 @@ components:
           maxItems: 5
           items: { type: integer, format: int32, minimum: 1, maximum: 100 }
           description: "Percentages of max_units_per_month at which a consumer.usage_threshold webhook fires, once per consumer per UTC month. Requires max_units_per_month."
+        route_limits:
+          type: object
+          maxProperties: 50
+          additionalProperties: { $ref: '#/components/schemas/APIConsumerPlanRouteLimit' }
+          description: "Per-consumer caps on single billing routes, keyed by route label: an HTTP method and path template, or \"MCP /tools/<name>\" for one MCP tool. At most 50."
+          example: { "MCP /tools/generate": { max_requests_per_month: 1000 } }
+
+    APIConsumerPlanRouteLimit:
+      description: "Cap on a consumer's requests on one route. Zero is unlimited; at least one limit is positive. Each admitted request counts one, whatever the route's rate-card weight."
+      type: object
+      properties:
+        max_requests_per_minute: { type: integer, format: int64, minimum: 0, description: "Requests per consumer per UTC minute on this route; over the limit the gateway returns 429." }
+        max_requests_per_month: { type: integer, format: int64, minimum: 0, description: "Requests per consumer per UTC month on this route; over the limit the gateway returns 429 until the month ends." }
 
     UpdateAPIConsumerPlanLimitsRequest:
       description: "Replacement limits for a consumer plan. Omitting alert_thresholds_percent keeps the plan's thresholds; an empty list clears them."
@@ -103950,11 +104644,16 @@ components:
           maxItems: 5
           items: { type: integer, format: int32, minimum: 1, maximum: 100 }
           description: "Replacement alert thresholds, as percentages of max_units_per_month (at most 5). Omit to keep the current thresholds; send an empty list to remove them."
+        route_limits:
+          type: object
+          maxProperties: 50
+          additionalProperties: { $ref: '#/components/schemas/APIConsumerPlanRouteLimit' }
+          description: "Replacement route limits. Omit to keep the current ones; send an empty object to remove them."
 
     APIConsumerPlanResponse:
       description: "Named consumer plan with enforcement limits."
       type: object
-      required: [id, app_id, name, max_requests_per_minute, max_units_per_month, alert_thresholds_percent, created_at, updated_at]
+      required: [id, app_id, name, max_requests_per_minute, max_units_per_month, alert_thresholds_percent, route_limits, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
@@ -103965,6 +104664,10 @@ components:
           type: array
           items: { type: integer, format: int32, minimum: 1, maximum: 100 }
           description: "The plan's usage alert thresholds, ascending; empty means no alerts."
+        route_limits:
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/APIConsumerPlanRouteLimit' }
+          description: "The plan's per-route caps keyed by route label; empty means none."
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -109208,6 +109911,7 @@ components:
           items: { $ref: '#/components/schemas/BindingCheckFinding' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        project_rollback_id: { type: string, format: uuid, description: Project operation holding this exact rollback for coordinated cutover. }
         completed_at: { type: [string, "null"], format: date-time }
         audit_id: { type: string }
         trigger:
@@ -119966,6 +120670,7 @@ components:
         status: { type: string }
         url: { type: string, description: "The workload's stable address in the branch, which a reset keeps. Its first request starts it." }
         environment_url: { type: string, description: "The address of this incarnation of the branch; a reset gives it a new one." }
+        error: { type: string, description: "Why the workload is not serving: its branch deployment failed, or has not gone live five minutes after the branch's data was ready." }
 
     ProjectEnvironmentBranchDatabase:
       description: "One managed PostgreSQL copy a branch owns."
@@ -121367,6 +122072,319 @@ components:
               items: { type: string }
             last_reconciliation_status: { type: string }
             last_build_status: { type: string }
+            rollback_batch:
+              $ref: '#/components/schemas/ProjectRollbackBatch'
+
+    ProjectRollbackBatch:
+      description: Recorded production project deployment membership and serving predecessors.
+      type: object
+      required: [id, members]
+      properties:
+        id: { type: string, format: uuid }
+        members:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectRollbackMember' }
+
+    ProjectRollbackMember:
+      description: A service revision recorded in a production project deploy.
+      type: object
+      required: [deployment_id, revision, scope, status, previously_served]
+      properties:
+        slug: { type: string, description: App slug when the app is still attached to the project. }
+        deployment_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 0 }
+        scope: { type: string }
+        status: { type: string }
+        previously_served:
+          type: boolean
+          description: Whether the revision has a recorded end to a past serving period.
+        predecessor_id: { type: string, format: uuid }
+        predecessor_revision: { type: integer, minimum: 0 }
+
+    ProjectRollbackHistory:
+      description: Project rollback receipts ordered with any running operation first.
+      type: object
+      required: [project, project_id, operations]
+      properties:
+        project: { type: string }
+        project_id: { type: string, format: uuid }
+        operations:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/ProjectRollbackSummary' }
+
+    ProjectRollbackSummary:
+      description: Progress and receipt IDs for a recorded project rollback or undo.
+      type: object
+      required: [operation_id, status, cutovers_completed, cutovers_total]
+      properties:
+        operation_id: { type: string, format: uuid }
+        status: { type: string, description: "Current receipt status, either running, blocked, or complete." }
+        phase: { type: string }
+        cutovers_completed: { type: integer, minimum: 0 }
+        cutovers_total: { type: integer, minimum: 0, description: Number of planned service cutovers excluding skipped services. }
+        undo_of: { type: string, format: uuid }
+        undo_operation_id: { type: string, format: uuid }
+        pause_requested_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ProjectRollbackTargets:
+      description: Recorded project deploy groups available for rollback preview.
+      type: object
+      required: [project, project_id, deploys]
+      properties:
+        project: { type: string }
+        project_id: { type: string, format: uuid }
+        deploys:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/ProjectRollbackTargetDeploy' }
+
+    ProjectRollbackTargetDeploy:
+      description: A production deploy group and any active artifact protection.
+      type: object
+      required: [deploy_group_id, created_at, service_count]
+      properties:
+        deploy_group_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time, description: Creation time of the newest deployment in the group. }
+        service_count: { type: integer, minimum: 1 }
+        protection: { $ref: '#/components/schemas/ProjectRollbackProtection' }
+
+    ProtectProjectRollbackDeployRequest:
+      description: Set how long to retain the artifacts for the selected deploy group.
+      type: object
+      required: [ttl_seconds]
+      properties:
+        ttl_seconds: { type: integer, minimum: 1, maximum: 604800, description: Number of seconds to protect the artifacts from admission. }
+
+    ProjectRollbackProtection:
+      description: Saved retention window and storage size for a protected deploy group.
+      type: object
+      required: [deploy_group_id, expires_at, layer_bytes]
+      properties:
+        deploy_group_id: { type: string, format: uuid }
+        expires_at: { type: string, format: date-time }
+        layer_bytes: { type: integer, format: int64, minimum: 1, description: Bytes of unique root filesystem and sidecar layers held for this deploy. }
+
+    ProjectRollbackRequest:
+      description: Select production revisions to restore and configure rollback admission and verification.
+      type: object
+      properties:
+        all: { type: boolean, default: false }
+        acknowledge_releases: { type: boolean, default: false }
+        verify:
+          type: boolean
+          default: false
+          description: Check configured HTTP health probes after each cutover before continuing.
+        verify_before_cutover:
+          type: boolean
+          default: false
+          description: Verify configured HTTP probes of all prepared revisions at zero traffic before the first cutover. Requires verify.
+        stabilize_for_seconds:
+          type: integer
+          minimum: 0
+          maximum: 60
+          default: 0
+          description: Minimum healthy probe duration in seconds after each cutover. Nonzero values require verify.
+        verify_live_traffic:
+          type: boolean
+          default: false
+          description: Verify configured production 5xx budgets after cutover before advancing. Requires verify.
+        undo_on_health_failure:
+          type: boolean
+          default: false
+          description: Automatically undo switched services on a confirmed health probe 5xx. Requires verify.
+        undo_on_live_traffic_failure:
+          type: boolean
+          default: false
+          description: Automatically undo switched services on a reconfirmed production 5xx budget breach. Requires verify_live_traffic.
+        request_id:
+          type: string
+          format: uuid
+          description: Stable start request UUID. Repeat with the same options to read the accepted operation.
+        expected_plan_hash:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: Plan hash from a runnable preview with the same rollback options.
+        to_deploy:
+          type: string
+          format: uuid
+          description: Recorded production deploy group to restore. Omit all when selecting a deploy group.
+
+    ProjectRollbackResumeRequest:
+      description: Require a reviewed plan when resuming a paused project rollback or undo.
+      type: object
+      properties:
+        expected_plan_hash:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: Resume plan hash from a runnable preview of the same paused operation.
+
+    ProjectRollbackUndoRequest:
+      description: Review and acknowledge the inverse of a paused rollback's completed cutovers.
+      type: object
+      properties:
+        acknowledge_releases:
+          type: boolean
+          default: false
+          description: Acknowledge release commands crossed by this undo.
+        expected_plan_hash:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: Plan hash from a runnable undo preview of the same source with the same release acknowledgement.
+
+    ProjectRollbackOperation:
+      description: A rollback plan or durable receipt with per-service cutovers and verification.
+      type: object
+      required: [project, project_id, status, steps]
+      properties:
+        operation_id: { type: string, format: uuid }
+        project: { type: string }
+        project_id: { type: string, format: uuid }
+        request_id: { type: string, format: uuid, description: The request ID saved when this rollback was accepted. }
+        plan_hash: { type: string, pattern: '^[0-9a-f]{64}$', description: Hash identifying the runnable plan returned by preview or saved at admission. }
+        resume_plan_hash: { type: string, pattern: '^[0-9a-f]{64}$', description: Hash from a runnable resume preview or the latest accepted reviewed resume. }
+        undo_of: { type: string, format: uuid, description: Source rollback whose cutovers this receipt undoes. }
+        undo_operation_id: { type: string, format: uuid, description: Accepted undo operation linked to this paused rollback. }
+        deploy_group_id: { type: string, format: uuid }
+        acknowledge_releases: { type: boolean }
+        verify: { type: boolean, description: Whether configured HTTP health verification is required. }
+        verify_before_cutover: { type: boolean, description: Whether configured probes must pass before project traffic moves. }
+        stabilize_for_seconds: { type: integer, minimum: 0, maximum: 60, description: Saved duration of the post-cutover health stabilization window. }
+        verify_live_traffic: { type: boolean, description: Whether configured production 5xx budgets gate the rollback. }
+        undo_on_health_failure: { type: boolean, description: Whether a confirmed health probe 5xx can trigger automatic undo. }
+        undo_on_live_traffic_failure: { type: boolean, description: Whether a sustained production 5xx breach can trigger automatic undo. }
+        auto_undo: { $ref: '#/components/schemas/ProjectRollbackAutoUndo' }
+        status:
+          type: string
+          enum: [planned, running, blocked, complete]
+        phase: { type: string, description: "Preparation phase of the operation, either preparing, cutover, or releasing." }
+        pause_requested_at:
+          type: string
+          format: date-time
+          description: When an operator requested the current pause. Cleared on resume.
+        preparation_deadline: { type: string, format: date-time, description: Deadline for preparation, cutover, and required verification. }
+        steps:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectRollbackStep' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        recovery_ms:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Time from project rollback acceptance until the last targeted HTTP service was verified.
+
+    ProjectRollbackStep:
+      description: Planned or observed rollback for one service and its exact revision pair.
+      type: object
+      required: [service, slug, status]
+      properties:
+        service: { type: string }
+        slug: { type: string }
+        status:
+          type: string
+          enum: [planned, skipped, blocked, in_progress, rolled_back, failed]
+        from_revision: { type: integer }
+        to_revision: { type: integer }
+        reason: { type: string }
+        app_id: { type: string, format: uuid }
+        scope: { type: string }
+        expected_current_deployment_id: { type: string, format: uuid }
+        current_served_at: { type: string, format: date-time }
+        target_deployment_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        attempt_id: { type: string, format: uuid }
+        rollback_operation_id: { type: string, format: uuid }
+        preparation_status: { type: string, description: "Target preparation state such as warming, checking, ready, blocked, or released." }
+        blockers:
+          type: array
+          items: { $ref: '#/components/schemas/BindingCheckFinding' }
+        warnings:
+          type: array
+          items: { $ref: '#/components/schemas/BindingCheckFinding' }
+        crossed_releases:
+          type: array
+          description: Release runs crossed by this undo step.
+          items: { $ref: '#/components/schemas/RollbackCrossedRelease' }
+        undo_artifacts: { $ref: '#/components/schemas/ProjectRollbackUndoArtifacts' }
+        problem: { $ref: '#/components/schemas/Problem' }
+        pre_cutover_health: { $ref: '#/components/schemas/ProjectRollbackPreCutoverHealth' }
+        health: { $ref: '#/components/schemas/ProjectRollbackHealth' }
+        live_traffic: { $ref: '#/components/schemas/ProjectRollbackLiveTraffic' }
+        traffic: { $ref: '#/components/schemas/ProjectRollbackTraffic' }
+
+    ProjectRollbackUndoArtifacts:
+      type: object
+      description: The artifact hold for the exact deployment restored by an undo.
+      required: [deployment_id]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        expires_at:
+          type: string
+          format: date-time
+          description: The deadline after a pause. Omitted while the operation holds the deployment for execution.
+
+    ProjectRollbackAutoUndo:
+      description: The trigger and outcome of an automatic undo after a confirmed health failure.
+      type: object
+      required: [status, trigger_app_id]
+      properties:
+        status:
+          type: string
+          enum: [pending, ready, started, blocked]
+        trigger_app_id: { type: string, format: uuid, description: Service with the confirmed 5xx failure. }
+        trigger: { type: string, description: Identifies a live_traffic breach. Omitted for a health probe failure. }
+        route_generation: { type: integer, format: int64, description: Applied route generation for the production breach. }
+        window_start: { type: string, format: date-time, description: Start of the original live-traffic breach window. }
+        window_end: { type: string, format: date-time, description: End of the original live-traffic breach window. }
+        problem: { $ref: '#/components/schemas/Problem' }
+
+    ProjectRollbackPreCutoverHealth:
+      type: object
+      required: [status]
+      description: Durable outcome of configured HTTP probes of the prepared revision before cutover.
+      properties:
+        status: { type: string, description: "One of pending, awaiting_probe, passed, or failed." }
+        attempt_id: { type: string, format: uuid }
+        checked_at: { type: string, format: date-time }
+
+    ProjectRollbackHealth:
+      type: object
+      required: [status]
+      description: Durable outcome of the configured HTTP health probes for the exact restored route.
+      properties:
+        status: { type: string, description: "One of pending, awaiting_gateways, awaiting_probe, stabilizing, passed, or failed." }
+        deadline: { type: string, format: date-time }
+        checked_at: { type: string, format: date-time }
+        healthy_since: { type: string, format: date-time, description: First successful probe in the continuous stabilization window. }
+        route_generation: { type: integer, format: int64 }
+
+    ProjectRollbackLiveTraffic:
+      type: object
+      required: [status]
+      description: Verification of configured 5xx budgets using production requests after an exact route generation was applied.
+      properties:
+        status: { type: string, description: "One of pending, awaiting_gateways, awaiting_traffic, insufficient_traffic, evidence_unavailable, passed, or failed." }
+        reason: { type: string }
+        deadline: { type: string, format: date-time }
+        observe_after: { type: string, format: date-time, description: Earliest observation time requested when rechecking after resume. }
+        checked_at: { type: string, format: date-time }
+        route_generation: { type: integer, format: int64 }
+
+    ProjectRollbackTraffic:
+      description: Observed HTTP recovery for the exact restored deployment.
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [awaiting_cutover, awaiting_gateways, awaiting_traffic, verified, superseded, expired, unavailable]
+        route_generation: { type: integer, format: int64 }
+        routing_committed_at: { type: string, format: date-time }
+        gateways_applied_at: { type: string, format: date-time }
+        first_success_at: { type: string, format: date-time }
 
     UpdateProjectRequest:
       description: Patch for the customer-managed repository binding and production branch.
@@ -122257,6 +123275,10 @@ components:
           type: string
           enum: [internal]
           description: "Present when the app is or will be internal (no public route): an existing internal app, or a new Compose service without `ports:`. Omitted means public."
+        access:
+          type: string
+          enum: [public, key]
+          description: "Declared access to the service's public URL (`x-gregale-access` in Compose or `project.services.<name>.access` in gregale.yaml): `public` needs no Gregale API key, `key` needs one. Every production deploy applies it. Omitted when the source declares none."
         root_dir:
           type: string
           example: ""
@@ -124565,6 +125587,31 @@ components:
             - type: object
               additionalProperties: { type: array, items: { type: string } }
             - type: "null"
+        credential:
+          description: |
+            What callers present. Omitted means a bearer JWT verified against
+            the rule's issuer. consumer_key means an app consumer key whose
+            mcp:<scope> scopes satisfy the policy's scopes.
+          type: string
+          enum: [consumer_key]
+        tool_limits:
+          description: Per-caller limits on tools/call, keyed by tool name.
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/MCPToolLimit' }
+        audience:
+          description: |
+            Token audience an external OAuth issuer uses for this server when
+            it is not the resource. The rule's JWT audience must then be
+            exactly this value. Bearer-token policies only.
+          type: string
+          maxLength: 512
+    MCPToolLimit:
+      description: At most requests tools/call requests per caller in each window.
+      type: object
+      required: [requests, window_seconds]
+      properties:
+        requests: { type: integer, minimum: 1, maximum: 100000 }
+        window_seconds: { type: integer, minimum: 1, maximum: 3600 }
 
     EdgeRuleJWTAction:
       description: |
@@ -129710,6 +130757,36 @@ components:
         customers_truncated: { type: boolean, description: "More identity pairs matched than the customer detail limit." }
         other_customer_requests: { type: integer, format: int64, minimum: 0, description: "Identified requests belonging to identity pairs omitted by the detail cap." }
 
+    MCPToolInsightsResponse:
+      description: "Per-tool MCP usage and estimated compute for one app over the trailing window."
+      type: object
+      required: [app, window, observed_at, telemetry, memory_mb, tools]
+      properties:
+        app: { type: string }
+        window: { type: string, description: "Trailing window every figure covers." }
+        observed_at: { type: string, format: date-time }
+        telemetry: { type: string, enum: [reporting, not_observed] }
+        last_event: { type: string, format: date-time }
+        memory_mb: { type: integer, description: "Plan RAM; compute is estimated at memory_mb + 8." }
+        tools:
+          type: array
+          items: { $ref: '#/components/schemas/MCPToolInsight' }
+    MCPToolInsight:
+      description: "One tool's calls, failures, argument mismatches, compute and latency."
+      type: object
+      required: [tool, calls, errors, cancellations, mismatches, execution_seconds, gb_seconds, estimated_millicents]
+      properties:
+        tool: { type: string }
+        calls: { type: number }
+        errors: { type: number }
+        cancellations: { type: number }
+        mismatches: { type: number, description: "Calls whose arguments did not match the tool's input schema; also counted in errors." }
+        execution_seconds: { type: number }
+        gb_seconds: { type: number }
+        estimated_millicents: { type: integer, format: int64, description: "Upper bound at the overage rate, in 1/100,000 USD." }
+        p50_ms: { type: number }
+        p95_ms: { type: number }
+        p99_ms: { type: number }
     RouteResourcesResponse:
       type: object
       description: "Route attribution of an app's memory and CPU peaks over a window."
@@ -132554,6 +133631,24 @@ components:
         id: { type: string, format: uuid }
         cancelled_count: { type: integer, minimum: 0 }
 
+    ObjectWorkloadCredentialRequest:
+      description: Body for POST /v1/workload/object-storage/credentials.
+      type: object
+      properties:
+        bucket: { type: string, maxLength: 128, description: "Granted bucket name. Optional when the app holds exactly one bucket grant." }
+    ObjectWorkloadCredentialResponse:
+      description: A workload S3 credential in the AWS container credential shape, plus where the workload may write.
+      type: object
+      required: [AccessKeyId, SecretAccessKey, Token, Expiration, Bucket]
+      properties:
+        AccessKeyId: { type: string, pattern: '^GRGW[A-Z2-7]{16}$' }
+        SecretAccessKey: { type: string }
+        Token: { type: string }
+        Expiration: { type: string, format: date-time }
+        Bucket: { type: string }
+        KeyPrefix: { type: string }
+        Endpoint: { type: string }
+        Region: { type: string }
     QueueSendRequest:
       description: "Body for POST /v1/apps/{slug}/queues/send. Cap-checked against MaxQueueDepth. Unkeyed messages retain legacy FIFO dispatch; keyed messages use per-key ordering."
       type: object
@@ -133132,6 +134227,10 @@ components:
         observed: null
         docs_url: "https://gregale.dev/docs/errors/validation_failed"
       properties:
+        active_operation_id:
+          type: string
+          format: uuid
+          description: The running project rollback identified by a project rollback start conflict.
         run_budget:
           $ref: '#/components/schemas/RunBudgetRefusal'
         current_sequence: { type: integer, format: int64, minimum: 0, description: 'Observed channel head on realtime_sequence_conflict.' }
@@ -133271,6 +134370,21 @@ components:
             each per CLI tripwire). The CLI renders the first 5
             inline as a fenced block. Optional + omitempty.
           items: { $ref: '#/components/schemas/LogExcerpt' }
+        fix_commands:
+          type: array
+          description: |
+            The runnable commands quoted in `fix`, in order, with this
+            failure's values (app, deployment) filled in. A command that
+            still needs a value nobody knew is left out rather than shown
+            with a placeholder. Omitted when there are none.
+          items: { type: string }
+        retryable:
+          type: boolean
+          description: |
+            Whether repeating the same request can succeed without a
+            change: true for rate limits, a Retry-After and transient
+            platform errors; false when the request or the app must
+            change. Absent when unknown.
 
     LogExcerpt:
       type: object

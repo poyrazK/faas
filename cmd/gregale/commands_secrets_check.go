@@ -290,7 +290,7 @@ func buildSecretConfigurationReport(app, scope string, required []string, metada
 		report.Keys = append(report.Keys, row)
 	}
 	if report.Status == "needs attention" && report.NextCommand == "" {
-		report.NextCommand = recoveryCLI() + " inspect " + recoveryArgument(app)
+		report.NextCommand = recoveryCLI() + " app health " + recoveryArgument(app) + " --explain"
 	}
 	return report
 }

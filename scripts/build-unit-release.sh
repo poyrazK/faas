@@ -48,7 +48,12 @@ head_sha=$(jq -er .head "$report")
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/gregale-units.XXXXXX")
 trap 'rm -rf "$work"' EXIT
-mkdir -p "$work/bin" "$work/tools" "$out_dir"
+# UNITS_BIN_DIR (ADR-20261122170000, "One build"): build the units there and
+# reuse what an earlier call of this run built, so affected_units.py
+# --code-from measures the very binaries this release ships instead of
+# building them again. UNITS_BUILD_ONLY=1 stops after the units.
+bin_dir=${UNITS_BIN_DIR:-"$work/bin"}
+mkdir -p "$bin_dir" "$work/tools" "$out_dir"
 rm -f "$out_dir/units.tar.gz" "$out_dir/units-manifest.json" "$out_dir/units.cosign.bundle" "$out_dir/SHA256SUMS"
 
 while read -r unit version; do
@@ -56,10 +61,26 @@ while read -r unit version; do
     echo "build-unit-release: bad unit entry '$unit $version'" >&2
     exit 1
   }
+  # A binary of this run's own earlier call: built from this checkout with
+  # this version (the stamp file records which).
+  if [[ -n "${UNITS_BIN_DIR:-}" && -f "$bin_dir/$unit" && "$(cat "$bin_dir/.$unit.stamp" 2>/dev/null)" == "$version $head_sha" ]]; then
+    echo "reusing $unit ($version)"
+    continue
+  fi
   echo "building $unit ($version)"
+  # The release commit, explicitly: pkg/wire.GitSHA must be as long as the
+  # neutral stamp the code digests normalise to (binary_code.py).
   make -C "$repo_root" --no-print-directory build-release-unit \
-    UNIT="$unit" VERSION="$version" BINDIR="$work/bin" GOOS=linux GOARCH=amd64
+    UNIT="$unit" VERSION="$version" SOURCE_REVISION="$head_sha" BINDIR="$bin_dir" GOOS=linux GOARCH=amd64
+  printf '%s %s' "$version" "$head_sha" > "$bin_dir/.$unit.stamp"
 done < <(jq -r '.deployable[] as $u | "\($u) \(.binaries[$u].version)"' "$report")
+if [[ "${UNITS_BUILD_ONLY:-}" == 1 ]]; then
+  exit 0
+fi
+if [[ "$bin_dir" != "$work/bin" ]]; then
+  mkdir -p "$work/bin"
+  while read -r unit; do cp "$bin_dir/$unit" "$work/bin/$unit"; done < <(jq -r '.deployable[]' "$report")
+fi
 
 # The deploy controller rides in the signed release, so deploy jobs neither
 # build it nor trust a runner-built copy. Same flags as the full lane's.
@@ -93,7 +114,11 @@ report_path, lanes_path, work = sys.argv[1:]
 with open(report_path, encoding="utf-8") as fh:
     report = json.load(fh)
 with open(lanes_path, encoding="utf-8") as fh:
-    lanes = json.load(fh)["binaries"]
+    table = json.load(fh)
+lanes = table["binaries"]
+# Compute-lane helpers (ADR 20261123122457) have no unit: the overlay
+# replaces them and nothing restarts.
+helpers = set((table.get("compute_lane") or {}).get("helpers") or [])
 units = {}
 for name in report["deployable"]:
     path = os.path.join(work, "bin", name)
@@ -106,8 +131,10 @@ for name in report["deployable"]:
         "commit": entry["commit"],
         "sha256": digest,
         "size": os.path.getsize(path),
-        "services": lanes[name]["services"],
+        "services": lanes[name].get("services") or [],
     }
+    if name in helpers:
+        units[name]["helper"] = True
     # Selection by code: the status against base and the digests the plan
     # compares with what each host runs (scripts/ci/binary_code.py).
     for key in ("code", "code_digest", "base_code_digest"):

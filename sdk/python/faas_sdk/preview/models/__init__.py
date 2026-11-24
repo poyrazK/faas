@@ -168,6 +168,8 @@ from .api_consumer_plan_assignment_response import APIConsumerPlanAssignmentResp
 from .api_consumer_plan_changed_webhook_payload import APIConsumerPlanChangedWebhookPayload
 from .api_consumer_plan_list_response import APIConsumerPlanListResponse
 from .api_consumer_plan_response import APIConsumerPlanResponse
+from .api_consumer_plan_response_route_limits import APIConsumerPlanResponseRouteLimits
+from .api_consumer_plan_route_limit import APIConsumerPlanRouteLimit
 from .api_consumer_rate_card_list_response import APIConsumerRateCardListResponse
 from .api_consumer_rate_card_response import APIConsumerRateCardResponse
 from .api_consumer_rate_card_response_route_weights import APIConsumerRateCardResponseRouteWeights
@@ -301,6 +303,9 @@ from .app_manifest_secret_reload_signal_type_2_type_1 import AppManifestSecretRe
 from .app_manifest_secret_reload_signal_type_3_type_1 import AppManifestSecretReloadSignalType3Type1
 from .app_metrics_response import AppMetricsResponse
 from .app_metrics_response_range import AppMetricsResponseRange
+from .app_name_report_match import AppNameReportMatch
+from .app_name_report_response import AppNameReportResponse
+from .app_name_report_response_source import AppNameReportResponseSource
 from .app_open_api_import_dry_run_response import AppOpenAPIImportDryRunResponse
 from .app_open_api_import_response import AppOpenAPIImportResponse
 from .app_open_api_import_response_openapi_version import AppOpenAPIImportResponseOpenapiVersion
@@ -856,6 +861,7 @@ from .create_alert_rule_request_metric import CreateAlertRuleRequestMetric
 from .create_alert_rule_request_window_spec import CreateAlertRuleRequestWindowSpec
 from .create_api_consumer_credit_request import CreateAPIConsumerCreditRequest
 from .create_api_consumer_plan_request import CreateAPIConsumerPlanRequest
+from .create_api_consumer_plan_request_route_limits import CreateAPIConsumerPlanRequestRouteLimits
 from .create_api_consumer_rate_card_request import CreateAPIConsumerRateCardRequest
 from .create_api_consumer_rate_card_request_route_weights import CreateAPIConsumerRateCardRequestRouteWeights
 from .create_api_consumer_rate_card_request_tier_mode import CreateAPIConsumerRateCardRequestTierMode
@@ -3304,13 +3310,19 @@ from .mcp_readiness_role_catalog_format import MCPReadinessRoleCatalogFormat
 from .mcp_readiness_role_protocol_version import MCPReadinessRoleProtocolVersion
 from .mcp_readiness_snapshot import MCPReadinessSnapshot
 from .mcp_resource_policy import MCPResourcePolicy
+from .mcp_resource_policy_credential import MCPResourcePolicyCredential
 from .mcp_resource_policy_prompt_scopes_type_0 import MCPResourcePolicyPromptScopesType0
 from .mcp_resource_policy_resource_scopes_type_0 import MCPResourcePolicyResourceScopesType0
+from .mcp_resource_policy_tool_limits import MCPResourcePolicyToolLimits
 from .mcp_resource_policy_tool_scopes_type_0 import MCPResourcePolicyToolScopesType0
 from .mcp_task_compatibility_report_request import MCPTaskCompatibilityReportRequest
 from .mcp_task_compatibility_report_response import MCPTaskCompatibilityReportResponse
 from .mcp_task_handler_compatibility import MCPTaskHandlerCompatibility
 from .mcp_task_handler_deployment_workers import MCPTaskHandlerDeploymentWorkers
+from .mcp_tool_insight import MCPToolInsight
+from .mcp_tool_insights_response import MCPToolInsightsResponse
+from .mcp_tool_insights_response_telemetry import MCPToolInsightsResponseTelemetry
+from .mcp_tool_limit import MCPToolLimit
 from .mcpo_auth_retirement import MCPOAuthRetirement
 from .mcpo_auth_retirement_action import MCPOAuthRetirementAction
 from .mcpo_auth_retirement_action_action import MCPOAuthRetirementActionAction
@@ -3506,6 +3518,8 @@ from .object_version_retention_event_hold import ObjectVersionRetentionEventHold
 from .object_version_retention_mode import ObjectVersionRetentionMode
 from .object_version_retention_request import ObjectVersionRetentionRequest
 from .object_version_retention_result import ObjectVersionRetentionResult
+from .object_workload_credential_request import ObjectWorkloadCredentialRequest
+from .object_workload_credential_response import ObjectWorkloadCredentialResponse
 from .object_write_protection import ObjectWriteProtection
 from .object_write_receipt import ObjectWriteReceipt
 from .object_write_receipt_error_code import ObjectWriteReceiptErrorCode
@@ -4834,6 +4848,7 @@ from .plan_response import PlanResponse
 from .plan_response_scan_source import PlanResponseScanSource
 from .plan_source_host import PlanSourceHost
 from .plan_workload import PlanWorkload
+from .plan_workload_access import PlanWorkloadAccess
 from .plan_workload_action import PlanWorkloadAction
 from .plan_workload_class import PlanWorkloadClass
 from .plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
@@ -5398,6 +5413,28 @@ from .project_release_verification_percent import ProjectReleaseVerificationPerc
 from .project_release_worker import ProjectReleaseWorker
 from .project_release_worker_status import ProjectReleaseWorkerStatus
 from .project_response import ProjectResponse
+from .project_rollback_auto_undo import ProjectRollbackAutoUndo
+from .project_rollback_auto_undo_status import ProjectRollbackAutoUndoStatus
+from .project_rollback_batch import ProjectRollbackBatch
+from .project_rollback_health import ProjectRollbackHealth
+from .project_rollback_history import ProjectRollbackHistory
+from .project_rollback_live_traffic import ProjectRollbackLiveTraffic
+from .project_rollback_member import ProjectRollbackMember
+from .project_rollback_operation import ProjectRollbackOperation
+from .project_rollback_operation_status import ProjectRollbackOperationStatus
+from .project_rollback_pre_cutover_health import ProjectRollbackPreCutoverHealth
+from .project_rollback_protection import ProjectRollbackProtection
+from .project_rollback_request import ProjectRollbackRequest
+from .project_rollback_resume_request import ProjectRollbackResumeRequest
+from .project_rollback_step import ProjectRollbackStep
+from .project_rollback_step_status import ProjectRollbackStepStatus
+from .project_rollback_summary import ProjectRollbackSummary
+from .project_rollback_target_deploy import ProjectRollbackTargetDeploy
+from .project_rollback_targets import ProjectRollbackTargets
+from .project_rollback_traffic import ProjectRollbackTraffic
+from .project_rollback_traffic_status import ProjectRollbackTrafficStatus
+from .project_rollback_undo_artifacts import ProjectRollbackUndoArtifacts
+from .project_rollback_undo_request import ProjectRollbackUndoRequest
 from .project_safe_release import ProjectSafeRelease
 from .project_safe_release_status import ProjectSafeReleaseStatus
 from .project_scan_request import ProjectScanRequest
@@ -5415,6 +5452,7 @@ from .project_worker_job_sample import ProjectWorkerJobSample
 from .project_workload_response import ProjectWorkloadResponse
 from .promote_project_environment_request import PromoteProjectEnvironmentRequest
 from .promote_stored_workflow_live_baseline_request import PromoteStoredWorkflowLiveBaselineRequest
+from .protect_project_rollback_deploy_request import ProtectProjectRollbackDeployRequest
 from .public_auth_block import PublicAuthBlock
 from .public_auth_block_mode import PublicAuthBlockMode
 from .public_auth_status import PublicAuthStatus
@@ -5501,6 +5539,8 @@ from .put_outbound_request_policy_request import PutOutboundRequestPolicyRequest
 from .put_outbound_runs_binding_request import PutOutboundRunsBindingRequest
 from .put_postgres_changes_connection_body import PutPostgresChangesConnectionBody
 from .put_postgres_changes_request import PutPostgresChangesRequest
+from .put_verification_contract_request import PutVerificationContractRequest
+from .put_verification_contract_request_contract import PutVerificationContractRequestContract
 from .put_webhook_workflow_binding_request import PutWebhookWorkflowBindingRequest
 from .put_webhook_workflow_binding_request_filter import PutWebhookWorkflowBindingRequestFilter
 from .queue_binding_canary import QueueBindingCanary
@@ -6810,6 +6850,7 @@ from .update_alert_rule_request_comparison import UpdateAlertRuleRequestComparis
 from .update_alert_rule_request_metric import UpdateAlertRuleRequestMetric
 from .update_alert_rule_request_window_spec import UpdateAlertRuleRequestWindowSpec
 from .update_api_consumer_plan_limits_request import UpdateAPIConsumerPlanLimitsRequest
+from .update_api_consumer_plan_limits_request_route_limits import UpdateAPIConsumerPlanLimitsRequestRouteLimits
 from .update_app_log_drain_request import UpdateAppLogDrainRequest
 from .update_app_log_drain_request_kind import UpdateAppLogDrainRequestKind
 from .update_app_request import UpdateAppRequest
@@ -6958,6 +6999,8 @@ from .usage_summary_response import UsageSummaryResponse
 from .usage_summary_response_egress_billing_mode import UsageSummaryResponseEgressBillingMode
 from .validate_stored_workflow_request import ValidateStoredWorkflowRequest
 from .validate_stored_workflow_response import ValidateStoredWorkflowResponse
+from .verification_contract import VerificationContract
+from .verification_contract_contract import VerificationContractContract
 from .vulnerability import Vulnerability
 from .vulnerability_severity import VulnerabilitySeverity
 from .wake_timeline_app import WakeTimelineApp
@@ -7391,6 +7434,8 @@ __all__ = (
     "APIConsumerPlanChangedWebhookPayload",
     "APIConsumerPlanListResponse",
     "APIConsumerPlanResponse",
+    "APIConsumerPlanResponseRouteLimits",
+    "APIConsumerPlanRouteLimit",
     "APIConsumerRateCardListResponse",
     "APIConsumerRateCardResponse",
     "APIConsumerRateCardResponseRouteWeights",
@@ -7617,6 +7662,9 @@ __all__ = (
     "AppManifestSecretReloadSignalType3Type1",
     "AppMetricsResponse",
     "AppMetricsResponseRange",
+    "AppNameReportMatch",
+    "AppNameReportResponse",
+    "AppNameReportResponseSource",
     "AppOpenAPIImportDryRunResponse",
     "AppOpenAPIImportResponse",
     "AppOpenAPIImportResponseOpenapiVersion",
@@ -8065,6 +8113,7 @@ __all__ = (
     "CreateAlertRuleRequestWindowSpec",
     "CreateAPIConsumerCreditRequest",
     "CreateAPIConsumerPlanRequest",
+    "CreateAPIConsumerPlanRequestRouteLimits",
     "CreateAPIConsumerRateCardRequest",
     "CreateAPIConsumerRateCardRequestRouteWeights",
     "CreateAPIConsumerRateCardRequestTierMode",
@@ -10391,13 +10440,19 @@ __all__ = (
     "MCPReadinessRoleProtocolVersion",
     "MCPReadinessSnapshot",
     "MCPResourcePolicy",
+    "MCPResourcePolicyCredential",
     "MCPResourcePolicyPromptScopesType0",
     "MCPResourcePolicyResourceScopesType0",
+    "MCPResourcePolicyToolLimits",
     "MCPResourcePolicyToolScopesType0",
     "MCPTaskCompatibilityReportRequest",
     "MCPTaskCompatibilityReportResponse",
     "MCPTaskHandlerCompatibility",
     "MCPTaskHandlerDeploymentWorkers",
+    "MCPToolInsight",
+    "MCPToolInsightsResponse",
+    "MCPToolInsightsResponseTelemetry",
+    "MCPToolLimit",
     "MemberListResponse",
     "MFAConfirmRequest",
     "MFAConfirmResponse",
@@ -10587,6 +10642,8 @@ __all__ = (
     "ObjectVersionRetentionMode",
     "ObjectVersionRetentionRequest",
     "ObjectVersionRetentionResult",
+    "ObjectWorkloadCredentialRequest",
+    "ObjectWorkloadCredentialResponse",
     "ObjectWriteProtection",
     "ObjectWriteReceipt",
     "ObjectWriteReceiptErrorCode",
@@ -11803,6 +11860,7 @@ __all__ = (
     "PlanResponseScanSource",
     "PlanSourceHost",
     "PlanWorkload",
+    "PlanWorkloadAccess",
     "PlanWorkloadAction",
     "PlanWorkloadClass",
     "PlanWorkloadDependsOnConditions",
@@ -12315,6 +12373,28 @@ __all__ = (
     "ProjectReleaseWorker",
     "ProjectReleaseWorkerStatus",
     "ProjectResponse",
+    "ProjectRollbackAutoUndo",
+    "ProjectRollbackAutoUndoStatus",
+    "ProjectRollbackBatch",
+    "ProjectRollbackHealth",
+    "ProjectRollbackHistory",
+    "ProjectRollbackLiveTraffic",
+    "ProjectRollbackMember",
+    "ProjectRollbackOperation",
+    "ProjectRollbackOperationStatus",
+    "ProjectRollbackPreCutoverHealth",
+    "ProjectRollbackProtection",
+    "ProjectRollbackRequest",
+    "ProjectRollbackResumeRequest",
+    "ProjectRollbackStep",
+    "ProjectRollbackStepStatus",
+    "ProjectRollbackSummary",
+    "ProjectRollbackTargetDeploy",
+    "ProjectRollbackTargets",
+    "ProjectRollbackTraffic",
+    "ProjectRollbackTrafficStatus",
+    "ProjectRollbackUndoArtifacts",
+    "ProjectRollbackUndoRequest",
     "ProjectSafeRelease",
     "ProjectSafeReleaseStatus",
     "ProjectScanRequest",
@@ -12332,6 +12412,7 @@ __all__ = (
     "ProjectWorkloadResponse",
     "PromoteProjectEnvironmentRequest",
     "PromoteStoredWorkflowLiveBaselineRequest",
+    "ProtectProjectRollbackDeployRequest",
     "PublicAuthBlock",
     "PublicAuthBlockMode",
     "PublicAuthStatus",
@@ -12418,6 +12499,8 @@ __all__ = (
     "PutOutboundRunsBindingRequest",
     "PutPostgresChangesConnectionBody",
     "PutPostgresChangesRequest",
+    "PutVerificationContractRequest",
+    "PutVerificationContractRequestContract",
     "PutWebhookWorkflowBindingRequest",
     "PutWebhookWorkflowBindingRequestFilter",
     "QueueBindingCanary",
@@ -13695,6 +13778,7 @@ __all__ = (
     "UpdateAlertRuleRequestMetric",
     "UpdateAlertRuleRequestWindowSpec",
     "UpdateAPIConsumerPlanLimitsRequest",
+    "UpdateAPIConsumerPlanLimitsRequestRouteLimits",
     "UpdateAppLogDrainRequest",
     "UpdateAppLogDrainRequestKind",
     "UpdateAppRequest",
@@ -13823,6 +13907,8 @@ __all__ = (
     "UsageSummaryResponseEgressBillingMode",
     "ValidateStoredWorkflowRequest",
     "ValidateStoredWorkflowResponse",
+    "VerificationContract",
+    "VerificationContractContract",
     "Vulnerability",
     "VulnerabilitySeverity",
     "WakeTimelineApp",

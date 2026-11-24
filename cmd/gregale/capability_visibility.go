@@ -143,12 +143,18 @@ func capabilityReleaseAll() bool {
 // suggestions use: the account's, read again once it is an hour old, or the
 // tier defaults when logged out or never read.
 func discoveryCapabilityView() capabilityView {
+	return discoveryCapabilityViewContext(context.Background())
+}
+
+// discoveryCapabilityViewContext is discoveryCapabilityView for a caller
+// holding a context, which bounds the account view read.
+func discoveryCapabilityViewContext(ctx context.Context) capabilityView {
 	capabilityViewMemo.Lock()
 	defer capabilityViewMemo.Unlock()
 	if capabilityViewMemo.set {
 		return capabilityViewMemo.view
 	}
-	capabilityViewMemo.view, capabilityViewMemo.set = computeDiscoveryView(), true
+	capabilityViewMemo.view, capabilityViewMemo.set = computeDiscoveryView(ctx), true
 	return capabilityViewMemo.view
 }
 
@@ -174,7 +180,7 @@ func offlineCapabilityView() capabilityView {
 	return capabilityView{tier: true}
 }
 
-func computeDiscoveryView() capabilityView {
+func computeDiscoveryView(ctx context.Context) capabilityView {
 	if capabilityReleaseAll() {
 		return capabilityView{all: true}
 	}
@@ -186,7 +192,7 @@ func computeDiscoveryView() capabilityView {
 	if ok && time.Since(savedAt) < capabilityViewTTL {
 		return accountCapabilityView(hidden)
 	}
-	if fresh, read := readHiddenCapabilities(token); read {
+	if fresh, read := readHiddenCapabilitiesContext(ctx, token); read {
 		return accountCapabilityView(fresh)
 	}
 	if ok {
@@ -360,7 +366,14 @@ func (v capabilityView) withoutHiddenFlags(lines []string, flags []cliFlag) []st
 // discoverableCliCommands is the manifest discovery surfaces read: the
 // released commands without those, or the verbs, the capability view hides.
 func discoverableCliCommands() []cliCommand {
-	return discoveryCapabilityView().discoverableCommands(visibleCliCommands())
+	return discoverableCliCommandsContext(context.Background())
+}
+
+// discoverableCliCommandsContext is discoverableCliCommands for a caller
+// with a request context, which bounds the capability read.
+func discoverableCliCommandsContext(ctx context.Context) []cliCommand {
+	view := discoveryCapabilityViewContext(ctx)
+	return view.discoverableCommands(visibleCliCommandsWith(realtimePreviewInView(view)))
 }
 
 // publicReferenceCommands is the manifest the public reference documents:

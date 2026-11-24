@@ -34,10 +34,10 @@ func validateMCPAuthorizationDeclarations(role *mcpReleaseRole) error {
 
 func mcpAccessSourceChecks(cfg mcphosting.Config, roles []mcpReleaseRole) []mcphosting.Check {
 	status := "passed"
-	if cfg.Auth.Mode != "external-oauth" {
+	if cfg.Auth.Mode == mcphosting.AuthOpen {
 		status = "failed"
 	}
-	checks := []mcphosting.Check{{Name: "source_oauth", Status: status, Detail: "Access auditing requires a reviewed external-oauth source configuration."}}
+	checks := []mcphosting.Check{{Name: "source_oauth", Status: status, Detail: "Access auditing requires a reviewed external-oauth, api-key or oauth-proxy source configuration."}}
 	for _, role := range roles {
 		status = "passed"
 		if role.TokenEnv == "" || validateMCPAuthorizationDeclarations(&role) != nil || !mcpRoleCatalogListed(cfg, role) {
