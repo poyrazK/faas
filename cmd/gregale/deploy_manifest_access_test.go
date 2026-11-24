@@ -3,6 +3,8 @@ package main_test
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,9 +15,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/simpleapp"
 )
 
-type accessClient struct{ app api.AppResponse }
+type accessClient struct {
+	app api.AppResponse
+	err error
+}
 
-func (c accessClient) GetApp(context.Context, string) (api.AppResponse, error) { return c.app, nil }
+func (c accessClient) GetApp(context.Context, string) (api.AppResponse, error) { return c.app, c.err }
 
 // TestCheckManifestAccessFlags pins the single-app access key
 // (ADR-20261124090000 amendment 1): apid applies gregale.yaml's access on the
@@ -34,6 +39,7 @@ func TestCheckManifestAccessFlags(t *testing.T) {
 	for _, tc := range []struct {
 		name, yaml, previous         string
 		requireAuthn, noRequireAuthn bool
+		getErr                       error
 		wantErr                      string
 	}{
 		{name: "no flag", yaml: "access: key\n"},
@@ -42,10 +48,12 @@ func TestCheckManifestAccessFlags(t *testing.T) {
 		{name: "public contradicts --require-authn", yaml: "access: public\n", requireAuthn: true, wantErr: "contradicts"},
 		{name: "removed key contradicts --no-require-authn", previous: "public", noRequireAuthn: true, wantErr: "used to declare access: public"},
 		{name: "never declared keeps the flag", noRequireAuthn: true},
+		{name: "new app keeps the flag", noRequireAuthn: true, getErr: &api.APIError{Problem: *api.NewProblem(http.StatusNotFound, "not_found", "Not found", "no app")}},
+		{name: "lookup failure is reported", noRequireAuthn: true, getErr: errors.New("connection refused"), wantErr: "connection refused"},
 		{name: "bad value", yaml: "access: open\n", requireAuthn: true, wantErr: "not public or key"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			client := accessClient{app: api.AppResponse{Slug: "demo", DeclaredAccess: tc.previous}}
+			client := accessClient{app: api.AppResponse{Slug: "demo", DeclaredAccess: tc.previous}, err: tc.getErr}
 			err := gregale.CheckManifestAccessFlags(t.Context(), client, "demo", dir(t, tc.yaml), tc.requireAuthn, tc.noRequireAuthn)
 			if tc.wantErr == "" {
 				if err != nil {

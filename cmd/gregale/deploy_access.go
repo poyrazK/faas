@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
@@ -34,9 +36,14 @@ func checkManifestAccessFlags(ctx context.Context, client manifestAccessClient, 
 		return nil
 	}
 	current, err := client.GetApp(ctx, slug)
-	if err != nil || current.DeclaredAccess == "" {
-		// A new app, or one that never declared access: the flag holds.
-		return nil
+	var apiErr *api.APIError
+	switch {
+	case errors.As(err, &apiErr) && apiErr.Problem.Status == http.StatusNotFound:
+		return nil // a new app: the flag holds
+	case err != nil:
+		return fmt.Errorf("check %s's declared access: %w", slug, err)
+	case current.DeclaredAccess == "":
+		return nil // never declared access: the flag holds
 	}
 	return fmt.Errorf("%s used to declare access: %s in gregale.yaml, and a deploy without it returns the app to the plan default, which --no-require-authn contradicts; add `access: public` to gregale.yaml instead", slug, current.DeclaredAccess)
 }
