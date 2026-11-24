@@ -60,12 +60,14 @@ func deployClientOrAnonymous(ctx context.Context, timeout time.Duration, anonymo
 		// unclaimed account may not; refuse before starting a session.
 		return nil, errAuth(errors.New("project deploys need a Gregale account — " + authenticationHint()))
 	}
-	if key := loadAnonymousSessionToken(); key != "" {
-		// Redeploy with the open anonymous deploy rather than start another.
-		if err := checkAnonymousKey(ctx, key); err != nil {
+	if saved, ok := loadAnonymousSession(); ok {
+		// Redeploy with the open anonymous deploy rather than start another,
+		// and repeat its claim link after the deploy.
+		if err := checkAnonymousKey(ctx, saved.APIKey); err != nil {
 			return nil, err
 		}
-		return NewClientWithDeployTimeout(apiBase(), key, timeout), nil
+		anonymousDeploySession = &api.AnonymousSessionResponse{APIKey: saved.APIKey, ClaimURL: saved.ClaimURL, ExpiresAt: saved.ExpiresAt}
+		return NewClientWithDeployTimeout(apiBase(), saved.APIKey, timeout), nil
 	}
 	sess, err := createAnonymousDeploySession(ctx)
 	if err != nil {
@@ -117,21 +119,27 @@ func saveAnonymousSession(sess api.AnonymousSessionResponse) error {
 	return os.WriteFile(p, b, 0o600)
 }
 
-// loadAnonymousSessionToken returns the saved anonymous deploy key while its
-// claim window is open and it belongs to the current API, else "".
-func loadAnonymousSessionToken() string {
+// loadAnonymousSession returns the saved anonymous deploy while its claim
+// window is open and it belongs to the current API.
+func loadAnonymousSession() (savedAnonymousSession, bool) {
 	p, err := anonymousSessionPath()
 	if err != nil {
-		return ""
+		return savedAnonymousSession{}, false
 	}
 	b, err := os.ReadFile(p)
 	if err != nil {
-		return ""
+		return savedAnonymousSession{}, false
 	}
 	var saved savedAnonymousSession
 	if json.Unmarshal(b, &saved) != nil || !time.Now().Before(saved.ExpiresAt) || saved.APIBase != apiBase() || !validPersistedToken(saved.APIKey) {
-		return ""
+		return savedAnonymousSession{}, false
 	}
+	return saved, true
+}
+
+// loadAnonymousSessionToken returns the saved anonymous deploy key, or "".
+func loadAnonymousSessionToken() string {
+	saved, _ := loadAnonymousSession()
 	return saved.APIKey
 }
 
@@ -175,8 +183,9 @@ func createAnonymousDeploySession(ctx context.Context) (api.AnonymousSessionResp
 	})
 }
 
-// printAnonymousClaimNotice repeats the claim link after the deploy, where
-// the agent reading the output will look for it.
+// printAnonymousClaimNotice repeats the claim link after a successful
+// deploy, where the agent reading the output will look for it. A failed
+// deploy prints none: there may be no app to claim yet.
 func printAnonymousClaimNotice(w io.Writer) {
 	sess := anonymousDeploySession
 	if sess == nil {
@@ -233,6 +242,12 @@ func cmdClaim(args []string) int {
 			return printErr("Nothing to claim", errors.New("this login is a regular Gregale account; only an app deployed without an account has a claim link"))
 		}
 		return printErr("Could not create a claim link", err)
+	}
+	if anonymousKey != "" {
+		// Keep the saved link current: the previous one stopped working.
+		if err := saveAnonymousSession(api.AnonymousSessionResponse{APIKey: anonymousKey, ClaimURL: link.ClaimURL, ExpiresAt: link.ExpiresAt}); err != nil {
+			_, _ = fmt.Fprintf(osStderr, "warning: could not save the new claim link (%v)\n", err)
+		}
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(link))

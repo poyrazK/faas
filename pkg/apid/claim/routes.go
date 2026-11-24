@@ -2,6 +2,7 @@ package claim
 
 import (
 	"encoding/json"
+	"net/http"
 	"sort"
 	"strings"
 )
@@ -19,12 +20,28 @@ var readRoots = []string{
 	"/v1/account", "/v1/me", "/v1/whoami", "/v1/usage", "/v1/runtimes",
 }
 
+// readDenied are GET routes under the read roots that act rather than
+// read: sessions that drive app state. WebSocket upgrades are refused as a
+// class by the middleware (IsUpgrade); these are named as well, so the
+// policy holds whatever the client sends.
+var readDenied = map[string]bool{
+	"GET /v1/apps/{slug}/entities/connect":           true,
+	"GET /v1/apps/{slug}/entities/session-connect":   true,
+	"GET /v1/apps/{slug}/forks/{id}/execs":           true,
+	"GET /v1/apps/{slug}/forks/{id}/execs/{exec_id}": true,
+}
+
+// IsUpgrade reports a request asking to switch protocols (a WebSocket).
+// An unclaimed account's reads are plain HTTP; an upgraded session acts.
+func IsUpgrade(r *http.Request) bool {
+	return strings.TrimSpace(r.Header.Get("Upgrade")) != ""
+}
+
 // writeRoutes are the exact route patterns (method and path, as registered)
 // an unclaimed account may call to write. TestWriteRoutesAreRegistered keeps
 // them in step with apid's route table.
 var writeRoutes = map[string]bool{
-	// Create, deploy and remove apps.
-	"POST /v1/apps":                                   true,
+	// Deploy and remove apps (creating one is field-gated below).
 	"DELETE /v1/apps/{slug}":                          true,
 	"POST /v1/apps/{slug}/deployments":                true,
 	"POST /v1/apps/{slug}/deployments/source-tarball": true,
@@ -49,22 +66,34 @@ var writeRoutes = map[string]bool{
 	"POST /v1/account/claim-link": true,
 }
 
+// appSettings are the app settings a deploy applies, which an unclaimed
+// account may set: public access, protocol, size, timeouts, replicas and
+// restart behaviour. Egress, service bindings, warm pools, minimum
+// instances, extra ports and the rest wait for a claim.
+var appSettings = []string{
+	"require_authn", "public_auth", "app_protocol", "platform_tenant_required",
+	"resource_profile", "ram_mb", "cpu_millicores", "idle_timeout_s",
+	"max_concurrency", "execution_mode", "restart_policy", "startup_deadline_s",
+	"max_retries", "service_replicas", "stop_grace_period_s", "stop_signal",
+	"request_timeout_s", "health_path",
+}
+
 // fieldGatedRoutes are writes an unclaimed account may make with only the
-// listed top-level body fields; RefusedField names any other. App settings
-// a deploy applies (public auth, protocol, size, restart behaviour) pass;
-// egress, service bindings, minimum instances and the rest wait for a claim.
+// listed top-level body fields; RefusedField names any other. Creating an
+// app takes the same settings as changing one, plus what names its shape.
 // Project deploys are not here: they create databases and several apps, so
 // they need a claimed account.
 var fieldGatedRoutes = map[string]map[string]bool{
-	"PATCH /v1/apps/{slug}": {
-		"require_authn": true, "public_auth": true, "app_protocol": true,
-		"platform_tenant_required": true, "resource_profile": true,
-		"ram_mb": true, "cpu_millicores": true, "idle_timeout_s": true,
-		"max_concurrency": true, "execution_mode": true, "restart_policy": true,
-		"startup_deadline_s": true, "max_retries": true, "service_replicas": true,
-		"stop_grace_period_s": true, "stop_signal": true, "request_timeout_s": true,
-		"health_path": true,
-	},
+	"POST /v1/apps":         fieldSet(append([]string{"slug", "type", "runtime", "vcpu"}, appSettings...)...),
+	"PATCH /v1/apps/{slug}": fieldSet(appSettings...),
+}
+
+func fieldSet(names ...string) map[string]bool {
+	out := make(map[string]bool, len(names))
+	for _, n := range names {
+		out[n] = true
+	}
+	return out
 }
 
 // FieldGated reports whether the route is allowed only with some body
@@ -105,6 +134,9 @@ func RouteAllowed(pattern string) bool {
 	}
 	switch method {
 	case "GET", "HEAD":
+		if readDenied["GET "+path] {
+			return false
+		}
 		for _, root := range readRoots {
 			if path == root || strings.HasPrefix(path, root+"/") || strings.HasPrefix(path, root+":") {
 				return true

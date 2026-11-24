@@ -62,8 +62,12 @@ apid keeps the route table, the middleware and a `claim.Host` adapter.
   restart and delete an app; source uploads; the app's environment
   variables and secrets; and `POST /v1/account/claim-link`. A test keeps
   the list in step with the route table.
-- `PATCH /v1/apps/{slug}` is allowed with only the settings a deploy
-  applies (`claim.RefusedField`): public access (`require_authn`,
+- Reads under those roots exclude routes that act: a WebSocket upgrade
+  is refused as a class, and durable-entity connections and fork execs
+  are named.
+- `POST /v1/apps` and `PATCH /v1/apps/{slug}` are allowed with only the
+  settings a deploy applies (`claim.RefusedField`; creating also takes
+  `slug`, `type`, `runtime` and `vcpu`): public access (`require_authn`,
   `public_auth`, `platform_tenant_required`), protocol, size, timeouts,
   replicas and restart behaviour. Any other field, such as an egress allow
   list, service bindings or minimum instances, answers `403
@@ -144,6 +148,9 @@ to apid (`apid.ApidRootClaim`; it is reserved on platform hosts only):
    to queue it, the page answers 503 rather than claim a mail was sent. The answer is the same whether or not the address has an account.
    An address that already has an account gets an explanation instead of a
    link.
+   The pages send `Referrer-Policy: same-origin`, and the origin check
+   accepts `Origin: null` only with `Sec-Fetch-Site: same-origin` (a
+   browser posting this host's own page).
 3. `GET /claim/confirm` renders a button. Mail scanners that prefetch links
    consume nothing.
 4. `POST /claim/confirm` consumes the change. The store refuses an address
@@ -193,7 +200,9 @@ token file, never in the login store. Only `gregale deploy` and `gregale
 claim` use it, only while no login exists, only for the same API, and only
 until the claim window ends; other commands see no login. A redeploy checks
 the key first; a refused key (the app was claimed) is deleted and the CLI
-says to run `gregale login`. `gregale logout` removes it too. The CLI prints the claim link before the upload
+says to run `gregale login`. `gregale logout` removes it too. A redeploy with the saved key repeats
+its claim link after a successful deploy (a failed deploy prints none),
+and `gregale claim` saves the link it issues. The CLI prints the claim link before the upload
 and again after the deploy. `gregale claim` prints a fresh
 link; the previous link stops working. After the window ends it answers
 `410 claim_expired`. A server without the capability

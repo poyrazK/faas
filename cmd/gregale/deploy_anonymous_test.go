@@ -154,3 +154,34 @@ func TestClaimCommand(t *testing.T) {
 		})
 	}
 }
+
+// `gregale claim` with the anonymous key saves the new link, which a later
+// deploy repeats; the previous link stopped working.
+func TestClaimSavesTheNewLink(t *testing.T) {
+	main.SetupCLIRegression(t)
+	t.Setenv("FAAS_TOKEN", "")
+	t.Setenv("GREGALE_TOKEN", "")
+	key := main.TestAPIKey('d')
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(api.ClaimLinkResponse{ClaimURL: "https://api.example.test/claim/new", ExpiresAt: time.Now().Add(time.Hour)})
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	if err := main.SaveAnonymousSession(api.AnonymousSessionResponse{APIKey: key, ClaimURL: "https://api.example.test/claim/old", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	oldOut, oldErr := *main.OsStdout, *main.OsStderr
+	*main.OsStdout, *main.OsStderr = &out, &errOut
+	code := main.Run([]string{"claim"})
+	*main.OsStdout, *main.OsStderr = oldOut, oldErr
+	if code != 0 {
+		t.Fatalf("exit = %d; out:\n%s%s", code, out.String(), errOut.String())
+	}
+	if got := main.LoadAnonymousSessionURL(); got != "https://api.example.test/claim/new" {
+		t.Fatalf("saved claim link = %q, want the new one", got)
+	}
+	if got := main.LoadAnonymousSessionToken(); got != key {
+		t.Fatalf("saved key = %q, want it kept", got)
+	}
+}

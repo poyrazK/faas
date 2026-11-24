@@ -128,7 +128,7 @@ func (s *server) unclaimedAllowed(next accountHandler) accountHandler {
 		}
 		switch {
 		case claim.IsUnclaimed(actor):
-			if !claim.RouteAllowed(r.Pattern) {
+			if !claim.RouteAllowed(r.Pattern) || claim.IsUpgrade(r) {
 				api.WriteProblem(w, api.ErrClaimRequired())
 				return
 			}

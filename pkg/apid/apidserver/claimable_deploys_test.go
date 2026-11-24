@@ -142,6 +142,21 @@ func TestAnonymousDeployIsClaimedInPlace(t *testing.T) {
 		!strings.Contains(rec.Body.String(), api.CodeClaimRequired) || !strings.Contains(rec.Body.String(), "egress_allowlist") {
 		t.Errorf("PATCH egress_allowlist = %d %s, want claim_required naming the field", rec.Code, rec.Body.String())
 	}
+	// Creating an app takes the same settings; the rest waits for a claim.
+	if rec := claimBearer(h, http.MethodPost, "/v1/apps", sess.APIKey, `{"slug":"second-app","warm_pool_size":5}`); rec.Code != http.StatusForbidden ||
+		!strings.Contains(rec.Body.String(), "warm_pool_size") {
+		t.Errorf("POST /v1/apps warm_pool_size = %d %s, want claim_required naming the field", rec.Code, rec.Body.String())
+	}
+	// A WebSocket upgrade under a read root acts rather than reads.
+	upgrade := httptest.NewRequest(http.MethodGet, "/v1/apps/agent-app", nil)
+	upgrade.Header.Set("Authorization", "Bearer "+sess.APIKey)
+	upgrade.Header.Set("Connection", "Upgrade")
+	upgrade.Header.Set("Upgrade", "websocket")
+	upRec := httptest.NewRecorder()
+	h.ServeHTTP(upRec, upgrade)
+	if upRec.Code != http.StatusForbidden || !strings.Contains(upRec.Body.String(), api.CodeClaimRequired) {
+		t.Errorf("GET with Upgrade = %d %s, want claim_required", upRec.Code, upRec.Body.String())
+	}
 	// Account-level routes behind the plain auth chain are closed too.
 	for _, route := range []struct{ method, path string }{
 		{http.MethodDelete, "/v1/account"},
@@ -386,5 +401,33 @@ func TestClaimLinkAfterWindowIsGone(t *testing.T) {
 	rec := claimBearer(h, http.MethodPost, "/v1/account/claim-link", sess.APIKey, "")
 	if rec.Code != http.StatusGone || !strings.Contains(rec.Body.String(), api.CodeClaimExpired) {
 		t.Fatalf("claim-link after the window = %d %s, want 410 claim_expired", rec.Code, rec.Body.String())
+	}
+}
+
+// A browser posting the claim form from the page may send Origin: null;
+// with Sec-Fetch-Site: same-origin that is this host's own page.
+func TestClaimFormAcceptsSameOriginNullOrigin(t *testing.T) {
+	srv, _, _ := apidserver.V1AuthTestHarness(t)
+	h := srv.Handler()
+	_, sess := anonymousSession(t, h, "203.0.113.80:5000")
+	post := func(site string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, claimPath(sess.ClaimURL), strings.NewReader(url.Values{"email": {"browser@example.com"}}.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Origin", "null")
+		if site != "" {
+			req.Header.Set("Sec-Fetch-Site", site)
+		}
+		req.RemoteAddr = "198.51.100.8:4000"
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := post("same-origin"); rec.Code != http.StatusOK {
+		t.Fatalf("same-origin null Origin = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	for _, site := range []string{"", "same-site", "cross-site"} {
+		if rec := post(site); rec.Code != http.StatusForbidden {
+			t.Errorf("null Origin with Sec-Fetch-Site %q = %d, want 403", site, rec.Code)
+		}
 	}
 }

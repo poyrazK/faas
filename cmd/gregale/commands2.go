@@ -2197,7 +2197,7 @@ func (e deployExecution) notifyQueued(dep api.DeploymentResponse) {
 // dev` has already reserved its preview app, so it skips the create-or-fetch
 // probe; this also avoids incorrectly tripping the app-count quota while
 // redeploying an existing developer environment.
-func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp bool, executions ...deployExecution) int {
+func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp bool, executions ...deployExecution) (exitCode int) {
 	// The preflight flag is package-global because the packer lives in a
 	// separate file. Reset it per invocation so a previous strict deploy
 	// cannot suppress scans in the next CLI command or test.
@@ -2214,7 +2214,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	defer stop()
 	developerSync := execution.developerSource
 	anonymousDeploySession = nil
-	defer printAnonymousClaimNotice(osStderr)
+	defer func() {
+		if exitCode == 0 {
+			printAnonymousClaimNotice(osStderr)
+		}
+	}()
 	fs := newFlagSet("deploy", flag.ContinueOnError)
 	image := fs.String("image", "", "digest-pinned image reference")
 	tarball := fs.String("tarball", "", "path to source archive (tar.gz)")

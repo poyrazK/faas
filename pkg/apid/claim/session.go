@@ -32,28 +32,13 @@ func (s *Service) Session(w http.ResponseWriter, r *http.Request) {
 	}
 	defer clear(raw)
 	if links := s.Host.RecordSignupFacts(r.Context(), r, acct.ID, acct.Email); links > 0 {
-		// Kept (scheduled for deletion) rather than removed, so the link
-		// stays reviewable. The window ends first, so the next sweep
-		// retries a deletion that fails now and no claim lands meanwhile.
-		ctx := context.WithoutCancel(r.Context())
-		if _, err := store.EndUnclaimedWindow(ctx, acct.ID, s.now()); err != nil {
-			s.Host.Log().Error("anonymous_session.held_link_window", "err", err, "account_id", acct.ID)
-		}
-		if !s.expire(ctx, store, acct, "unclaimed_held_link") {
-			s.Host.Log().Warn("anonymous_session.held_link_expire", "account_id", acct.ID)
-		}
-		s.Host.Observe(EventRefusedHeldLink)
+		s.refuseHeldLink(context.WithoutCancel(r.Context()), store, acct)
 		api.WriteProblem(w, api.ErrAnonymousDeploysUnavailable(0))
 		return
 	}
 	key, err := s.mintKey(r, acct, expiresAt)
 	if err != nil {
-		s.Host.Log().Error("anonymous_session.key", "err", err, "account_id", acct.ID)
-		// The account is unusable without its key: remove it, so it holds
-		// no place under the caps.
-		if derr := s.Host.Store().DeleteAccount(context.WithoutCancel(r.Context()), acct.ID); derr != nil {
-			s.Host.Log().Error("anonymous_session.cleanup", "err", derr, "account_id", acct.ID)
-		}
+		s.discardAccount(context.WithoutCancel(r.Context()), acct, err)
 		api.WriteProblem(w, api.ErrCapacity("could not create the anonymous session; try again"))
 		return
 	}
@@ -67,6 +52,29 @@ func (s *Service) Session(w http.ResponseWriter, r *http.Request) {
 		AccountID: acct.ID, APIKey: key, ClaimURL: s.claimURL(r, raw),
 		ExpiresAt: expiresAt.UTC(), Limits: Limits(),
 	})
+}
+
+// refuseHeldLink ends a new account linked to an abuse-held one. It is
+// kept (scheduled for deletion) rather than removed, so the link stays
+// reviewable. The window ends first, so the next sweep retries a deletion
+// that fails now and no claim lands meanwhile.
+func (s *Service) refuseHeldLink(ctx context.Context, store state.UnclaimedAccountStore, acct state.Account) {
+	if _, err := store.EndUnclaimedWindow(ctx, acct.ID, s.now()); err != nil {
+		s.Host.Log().Error("anonymous_session.held_link_window", "err", err, "account_id", acct.ID)
+	}
+	if !s.expire(ctx, store, acct, "unclaimed_held_link") {
+		s.Host.Log().Warn("anonymous_session.held_link_expire", "account_id", acct.ID)
+	}
+	s.Host.Observe(EventRefusedHeldLink)
+}
+
+// discardAccount removes an account whose key could not be minted: it is
+// unusable without one and must hold no place under the caps.
+func (s *Service) discardAccount(ctx context.Context, acct state.Account, cause error) {
+	s.Host.Log().Error("anonymous_session.key", "err", cause, "account_id", acct.ID)
+	if err := s.Host.Store().DeleteAccount(ctx, acct.ID); err != nil {
+		s.Host.Log().Error("anonymous_session.cleanup", "err", err, "account_id", acct.ID)
+	}
 }
 
 // refusal maps a failed account creation to its answer: a cap the store

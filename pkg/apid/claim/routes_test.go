@@ -24,7 +24,16 @@ func TestRefusedField(t *testing.T) {
 			t.Errorf("RefusedField(%s) = %q, want %q", c.body, got, c.want)
 		}
 	}
-	if got := claim.RefusedField("POST /v1/apps", []byte(`{"anything":1}`)); got != "" {
+	const create = "POST /v1/apps"
+	if got := claim.RefusedField(create, []byte(`{"slug":"x","type":"function","runtime":"node22","require_authn":false,"resource_profile":"small"}`)); got != "" {
+		t.Errorf("create with deploy settings = %q, want allowed", got)
+	}
+	for _, field := range []string{"service_binding_targets", "allowed_service_callers", "warm_pool_size", "ports", "worker_replicas", "project_id"} {
+		if got := claim.RefusedField(create, []byte(`{"slug":"x","`+field+`":null}`)); got != field {
+			t.Errorf("create with %s = %q, want it refused", field, got)
+		}
+	}
+	if got := claim.RefusedField("POST /v1/apps/{slug}/deployments", []byte(`{"anything":1}`)); got != "" {
 		t.Errorf("ungated route = %q", got)
 	}
 }
@@ -49,6 +58,9 @@ func TestRouteAllowed(t *testing.T) {
 		{"POST /v1/apps/{slug}/realtime/endpoints/{id}/publish-credentials", false},
 		{"PATCH /v1/apps/{slug}", true}, // field-gated
 		{"POST /v1/projects/scan", false},
+		{"GET /v1/apps/{slug}/entities/connect", false},
+		{"GET /v1/apps/{slug}/entities/session-connect", false},
+		{"GET /v1/apps/{slug}/forks/{id}/execs", false},
 		{"POST /v1/projects", false},
 		{"DELETE /v1/account", false},
 		{"POST /v1/account/keys", false},
