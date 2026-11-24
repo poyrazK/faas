@@ -22860,5 +22860,23 @@
       "version"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "object_storage_workload_credentials",
+    "columns": [
+      "access_key_id",
+      "account_id",
+      "bucket_id",
+      "caller_app_id",
+      "created_at",
+      "expires_at",
+      "id",
+      "instance_id",
+      "key_prefix",
+      "kid",
+      "permission",
+      "secret_sealed"
+    ],
+    "kind": "operational"
   }
 ]

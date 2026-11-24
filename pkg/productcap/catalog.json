@@ -3734,7 +3734,8 @@
         "/v1/apps/{}/buckets/{}/notifications",
         "/v1/orgs/{}/apps/{}/buckets/{}/compute-bindings",
         "/v1/orgs/{}/apps/{}/buckets/{}/compute-triggers",
-        "/v1/orgs/{}/apps/{}/buckets/{}/notifications"
+        "/v1/orgs/{}/apps/{}/buckets/{}/notifications",
+        "/v1/workload/object-storage/credentials"
       ]
     },
     {
