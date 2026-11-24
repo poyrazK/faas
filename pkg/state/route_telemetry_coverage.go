@@ -56,3 +56,39 @@ func (s *PgStore) RequestTelemetryLostBetween(ctx context.Context, from, until t
 	}
 	return lost, nil
 }
+
+// RequestTelemetryCoverageReader finds the part of a release guard's window
+// that request telemetry fully covers. A gateway restart that was not clean
+// begins a new coverage interval; a guard holding its whole window would
+// hold until an operator stepped in, so it judges the window's tail instead.
+type RequestTelemetryCoverageReader interface {
+	RequestTelemetryCoveredFrom(ctx context.Context, from, until time.Time) (time.Time, bool, error)
+}
+
+// RequestTelemetryCoveredFrom returns the start of the longest tail of
+// [from, until) no gateway may have lost telemetry from: from itself when the
+// whole window is covered, else the first minute after the latest gateway's
+// coverage began. ok is false when no tail is covered.
+func (s *PgStore) RequestTelemetryCoveredFrom(ctx context.Context, from, until time.Time) (time.Time, bool, error) {
+	lost, err := s.RequestTelemetryLostBetween(ctx, from, until)
+	if err != nil || !lost {
+		return from, err == nil, err
+	}
+	row, err := sqlc.New().RequestTelemetryCoveredSince(ctx, s.pool, pgTimestamptzUTC(until.Add(-api.RouteTelemetrySilenceGrace)))
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("state: read request telemetry coverage start: %w", err)
+	}
+	if row.Nodes == 0 || !row.Healthy || !row.CoveredSince.Valid {
+		return time.Time{}, false, nil
+	}
+	// Telemetry rows are minute buckets: the minute coverage began in may
+	// hold rows recorded before it.
+	tail := row.CoveredSince.Time.UTC().Truncate(time.Minute).Add(time.Minute)
+	if !tail.After(from) || !tail.Before(until) {
+		return time.Time{}, false, nil
+	}
+	if lost, err = s.RequestTelemetryLostBetween(ctx, tail, until); err != nil || lost {
+		return time.Time{}, false, err
+	}
+	return tail, true, nil
+}

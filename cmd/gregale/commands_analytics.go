@@ -138,7 +138,9 @@ func renderRequestAnalytics(w io.Writer, response api.RequestAnalyticsResponse) 
 	// http_status_gte_400); alerts, SLOs and app health count only 5xx, so
 	// the label says which one this is (ADR-20261110090000).
 	_, _ = fmt.Fprintf(w, "Errors:     %d (%.2f%%, 4xx+5xx)\n", response.ErrorRequests, response.ErrorRatePct)
-	_, _ = fmt.Fprintf(w, "Cold boots: %d\n", response.ColdBoots)
+	// cold_boots counts requests served by a cold start, not boots: every
+	// request held during one wake counts (2026-11-24 telemetry audit).
+	_, _ = fmt.Fprintf(w, "Cold starts: %d requests served by a cold start\n", response.ColdBoots)
 	_, _ = fmt.Fprintf(w, "Latency:    p50=%dms p95=%dms p99=%dms\n", response.P50MS, response.P95MS, response.P99MS)
 	if len(response.Groups) == 0 {
 		_, _ = fmt.Fprintln(w, "Groups:     (none)")

@@ -96,12 +96,53 @@ func (s *server) evaluateRollbackOn5xx(ctx context.Context, telemetry rollbackOn
 	if serverErrors -= known; !rollbackOn5xxBreached(requests, serverErrors) {
 		return nil
 	}
-	if lost, err := s.releaseTelemetryLost(ctx, telemetry, since, until); err != nil || lost {
+	tail, covered, err := s.releaseTelemetryCoveredFrom(ctx, telemetry, since, until)
+	if err != nil || !covered {
 		// A gateway may have dropped rows in the window: the 2xx it lost
 		// would read as a higher error rate. Judge again once coverage holds.
 		return err
 	}
+	if tail.After(since) {
+		// A gateway restart split the window: judge the part after it, which
+		// must breach on its own.
+		if requests, serverErrors, err = s.rollbackOn5xxCounts(ctx, telemetry, c, tail, until); err != nil || !rollbackOn5xxBreached(requests, serverErrors) {
+			return err
+		}
+	}
 	return s.autoRollbackOn5xx(ctx, c, requests, serverErrors)
+}
+
+// rollbackOn5xxCounts reads the release's requests and the 5xx its
+// predecessor did not already return over [since, until).
+func (s *server) rollbackOn5xxCounts(ctx context.Context, telemetry rollbackOn5xxTelemetry, c state.RollbackOn5xxCandidate, since, until time.Time) (int64, int64, error) {
+	requests, serverErrors, _, _, _, _, _, err := telemetry.RequestTelemetryCircuitBreakerSummary(ctx, c.AppID, c.DeploymentID, since, until)
+	if err != nil {
+		return 0, 0, fmt.Errorf("read request telemetry: %w", err)
+	}
+	known, err := s.firstWakeKnownServerErrors(ctx, telemetry, c, since, until)
+	if err != nil {
+		return 0, 0, err
+	}
+	return requests, serverErrors - known, nil
+}
+
+// releaseTelemetryCoveredFrom returns the start of the longest tail of
+// [from, until) request telemetry fully covers, falling back to the all-or-
+// nothing loss check for a store that cannot find one.
+func (s *server) releaseTelemetryCoveredFrom(ctx context.Context, telemetry any, from, until time.Time) (time.Time, bool, error) {
+	reader, ok := telemetry.(state.RequestTelemetryCoverageReader)
+	if !ok {
+		reader, ok = s.store.(state.RequestTelemetryCoverageReader)
+	}
+	if !ok {
+		lost, err := s.releaseTelemetryLost(ctx, telemetry, from, until)
+		return from, err == nil && !lost, err
+	}
+	tail, covered, err := reader.RequestTelemetryCoveredFrom(ctx, from, until)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("read request telemetry coverage: %w", err)
+	}
+	return tail, covered, nil
 }
 
 // knownServerErrorTelemetry is the optional reader for 5xx a predecessor

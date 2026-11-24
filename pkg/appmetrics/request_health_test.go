@@ -182,3 +182,24 @@ func TestRequestHealth_UnobservedRelease(t *testing.T) {
 		})
 	}
 }
+
+// After a gateway restart a release's series has one scrape and no request:
+// count is 0 and the coverage query has no result. That is an idle release.
+func TestRequestHealth_RestartedIdleSeries(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("query")
+		result := `[{"value":[0,"0"]}]`
+		switch {
+		case strings.Contains(q, "count(count by"):
+			result = `[]`
+		case q == `count(gateway_request_duration_by_deployment_seconds_count)`:
+			result = `[{"value":[0,"4"]}]`
+		}
+		_, _ = fmt.Fprintf(w, `{"status":"success","data":{"resultType":"vector","result":%s}}`, result)
+	}))
+	defer srv.Close()
+	out := FetchRequestHealth(t.Context(), promql.NewClient(srv.URL, srv.Client()), "app", []string{"serving"})
+	if out.Source != SourceDegraded || out.Reason != RequestsUnobservedReason || out.RequestCount != 0 {
+		t.Fatalf("%+v", out)
+	}
+}
