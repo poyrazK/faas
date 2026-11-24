@@ -892,8 +892,9 @@ gregale platform-tenants statement-draft --id TENANT_ID --month 2026-09
   the total never is.
 - **App cards underneath.** An app's own free requests, tiers, route weights
   or plans don't block a cross-app statement for minutes a tenant card prices.
-  A minute only an app card prices still needs a flat app card; otherwise bill
-  those consumers with app statements.
+  For earlier minutes the statement uses the app's flat request rate in force
+  at the time. If those minutes lack a flat request rate, bill them through
+  app consumer statements or add a tenant rate that covers them.
 
 ### Customer fees, trials and overdue invoices
 

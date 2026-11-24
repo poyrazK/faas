@@ -40,9 +40,9 @@ export type { APIConsumerUsageStatementFinalizedWebhookPayload } from './APICons
 export type { APIConsumerUsageStatementHandoffResponse } from './APIConsumerUsageStatementHandoffResponse.js';
 export type { APIConsumerUsageStatementListResponse } from './APIConsumerUsageStatementListResponse.js';
 export type { APIConsumerUsageStatementResponse } from './APIConsumerUsageStatementResponse.js';
+export type { APIConsumerUsageThresholdWebhookPayload } from './APIConsumerUsageThresholdWebhookPayload.js';
 export type { APIConsumerUsageWaiverRequest } from './APIConsumerUsageWaiverRequest.js';
 export type { APIConsumerUsageWaiverResponse } from './APIConsumerUsageWaiverResponse.js';
-export type { APIConsumerUsageThresholdWebhookPayload } from './APIConsumerUsageThresholdWebhookPayload.js';
 export type { APIKeyExportResponse } from './APIKeyExportResponse.js';
 export type { APIKeyResponse } from './APIKeyResponse.js';
 export type { AccountAbuseHold } from './AccountAbuseHold.js';
