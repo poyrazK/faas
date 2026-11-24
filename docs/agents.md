@@ -92,13 +92,15 @@ as a connector.
 When the agent first connects, your browser opens:
 1. Sign in to Gregale. No account yet? Sign up with GitHub or Google on the
    same page.
-2. Choose what the agent may do: inspect apps, deploy and roll back, ask you
-   for secrets, add buckets and databases.
-3. Choose which tools it gets. "Core tools" (the default) inspects, deploys
-   and rolls back. "Diagnose and recover" adds request, regression and
-   latency diagnostics; "Deploy and operate" adds releases, domains, data,
-   crons, restarts and scaling. See [toolsets](#run-the-mcp-server-locally)
-   for what each contains.
+2. Choose what the agent may do: "Deploy and manage apps" (preselected) or
+   "Inspect only". With deploy access you can also let it ask you for
+   secrets and add buckets and databases. You confirm write access again
+   after you see the account.
+3. Choose which tools it gets. With deploy access the default is "Deploy and
+   operate": releases, domains, data, crons, restarts and scaling. "Core
+   tools" inspects, deploys and rolls back; "Diagnose and recover" adds
+   request, regression and latency diagnostics. See
+   [toolsets](#run-the-mcp-server-locally) for what each contains.
 4. Choose which apps it may use, and connect.
 
 The agent can then inspect and deploy apps, promote and roll back. It

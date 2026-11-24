@@ -106,7 +106,7 @@
     },
     "profiled": {
       "lane": "compute",
-      "services": [{"name": "profiled", "host": "compute-only", "readyz": "http://127.0.0.1:9160/readyz"}]
+      "services": [{"name": "profiled", "host": "compute-only", "optional": true, "readyz": "http://127.0.0.1:9160/readyz"}]
     },
     "hostage-gen": {"lane": "compute"},
     "mailctl": {"lane": "tool"},
@@ -122,8 +122,8 @@
     "parallel": 4
   },
   "compute_lane": {
-    "_comment": "Compute unit lane (docs/adr/20261123122457-compute-unit-lane.md). The shared and compute binaries ride the unit lane when the range has a commit that changes code only they read (needs_compute): the control-plane lane restarts their control-plane services (schedd, s3-gatewayd), and the edge lane's per-node job restarts their compute-only services, vmmd behind its adoption proof. A range that changes them only through a package every lane reads leaves them at base, as before, so a control-plane commit keeps its four-minute path and vmmd restarts only for a change of its own. helpers have no unit: the overlay replaces them and nothing restarts (vmmd starts the bridges per guest from /opt/faas/current/bin; the jail helper and guest-disk tool sit beside vmmd's executable). held run on hosts the lane does not deploy (database nodes, ADR-1027; the agent egress host; hostage-gen is an operator tool its role installs) and wait for the full release without blocking a commit (owner decision 2026-11-23). enabled stays false until cd-edge-node runs vmmd's adoption proof around its restart and a metal run passed (ADR build order 2-3): off, the lane behaves as before it (compute binaries at base, a crossing commit blocks).",
-    "enabled": false,
+    "_comment": "Compute unit lane (docs/adr/20261123122457-compute-unit-lane.md). The shared and compute binaries ride the unit lane when the range has a commit that changes code only they read (needs_compute): the control-plane lane restarts their control-plane services (schedd, s3-gatewayd), and the edge lane's per-node job restarts their compute-only services, vmmd behind its adoption proof. A range that changes them only through a package every lane reads leaves them at base, as before, so a control-plane commit keeps its four-minute path and vmmd restarts only for a change of its own. helpers have no unit: the overlay replaces them and nothing restarts (vmmd starts the bridges per guest from /opt/faas/current/bin; the jail helper and guest-disk tool sit beside vmmd's executable). held run on hosts the lane does not deploy (database nodes, ADR-1027; the agent egress host; hostage-gen is an operator tool its role installs) and wait for the full release without blocking a commit (owner decision 2026-11-23). enabled: on since 2026-11-24 (owner decision, after the metal run and the bhs-2 canary proved the adoption guard). Off, the lane behaves as before it (compute binaries at base, a crossing commit blocks); a dispatch with compute_lane=true turns it on for one run.",
+    "enabled": true,
     "helpers": ["vmmd-jail-helper", "vmmd-guestdisk", "vmmd-raw-bridge", "vmmd-tcp-bridge", "vmmd-udp-bridge", "vmmd-stream-bridge"],
     "held": ["pgproxyd", "dbbackupd", "agentproxyd", "hostage-gen"]
   },

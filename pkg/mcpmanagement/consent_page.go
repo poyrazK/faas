@@ -41,7 +41,14 @@ func consentPage(v consentView) string {
 	w(`<p class="fine">Complete sign-in and access review within `, strconv.Itoa(int(api.MCPBrowserAuthorizationTTL/time.Minute)), ` minutes of starting this connection.</p>`)
 	if v.Account == "" && v.LoginURL == "" {
 		w(`<details><summary>Tools and optional access</summary><p class="fine">Core tools cover apps, deployments, logs and health. Choosing more tools does not grant extra permissions.</p><label>Agent tools <select name="toolsets" form="gregale-connect">`)
-		for _, choice := range []struct{ value, label string }{{"core", "Core tools (default)"}, {"core,release,provision,operate", "Deploy and operate"}, {"core,diagnose,operate", "Diagnose and recover"}, {"core,build-tools,registry", "Build and publish tools"}, {"core,registry", "Discover approved tools"}, {"core,registry,invoke", "Use approved tools"}, {"all", "All available tools"}} {
+		coreLabel := "Core tools (default)"
+		if v.OfferWrites {
+			// An empty selection follows the access choice: deploy tools with
+			// deploy access, core tools when inspecting.
+			w(`<option value="" selected>Default for the access you choose</option>`)
+			coreLabel = "Core tools"
+		}
+		for _, choice := range []struct{ value, label string }{{"core", coreLabel}, {"core,release,provision,operate", "Deploy and operate"}, {"core,diagnose,operate", "Diagnose and recover"}, {"core,build-tools,registry", "Build and publish tools"}, {"core,registry", "Discover approved tools"}, {"core,registry,invoke", "Use approved tools"}, {"all", "All available tools"}} {
 			if _, err := connectionToolsets(choice.value, v.MaximumToolsets); err == nil {
 				w(`<option value="`, e(choice.value), `">`, e(choice.label), `</option>`)
 			}
@@ -104,7 +111,9 @@ func consentPage(v consentView) string {
 		}
 		w("\n", `<fieldset><legend>Environment access</legend><p>Default app inspection is included. Named environments require separate consent for the selected apps.</p>`)
 		if v.Writes {
-			w(`<p><label><input type="checkbox" name="default_write" value="yes"> Allow writes to the default environment</label></p>`)
+			// Preselected: write access to no environment could not deploy
+			// at all (ADR-20261028205920 amendment 1).
+			w(`<p><label><input type="checkbox" name="default_write" value="yes" checked> Allow writes to the default environment</label></p>`)
 		}
 		for _, env := range v.Environments {
 			value := e(env.Project) + "/" + e(env.Environment)
@@ -121,7 +130,10 @@ func consentPage(v consentView) string {
 		// The hosted bridge sends the browser to sign-in and back here.
 		w(`<p>Continue to Gregale to sign in, or to create an account with GitHub, Google or email. You come back here to review the agent's access.</p>`, "\n")
 		w("\n", `<form id="gregale-connect" method="post" action="`, e(v.ConsentAction), `">`, hidden)
-		if v.Writes {
+		if v.OfferWrites {
+			w(consentAccessChoice)
+		}
+		if v.Writes || v.OfferWrites {
 			w(consentCapabilityChoices)
 		}
 		w(`<button name="decision" value="start-login" type="submit">Continue to Gregale</button><button name="decision" value="deny" type="submit">Cancel</button></form>`)
@@ -135,7 +147,10 @@ func consentPage(v consentView) string {
 			w(`<p><a class="button" href="`, e(v.LoginURL), `"`, target, `>Sign in to Gregale</a></p>`)
 		}
 		w("\n", `<form id="gregale-connect" method="post" action="`, e(v.ConsentAction), `">`, hidden)
-		if v.Writes && v.LoginURL == "" {
+		if v.OfferWrites && v.LoginURL == "" {
+			w(consentAccessChoice)
+		}
+		if (v.Writes || v.OfferWrites) && v.LoginURL == "" {
 			w(consentCapabilityChoices)
 		}
 		decision, label := "start-login", "Start Gregale sign-in"
