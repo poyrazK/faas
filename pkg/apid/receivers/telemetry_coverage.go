@@ -19,7 +19,7 @@ func (r *requestTelemetryReceiver) RecordTelemetryCoverage(ctx context.Context, 
 	coverage := state.TelemetryCoverage{NodeName: req.GetNodeName(), BootID: req.GetBootId(), Sequence: req.GetSequence(),
 		Enabled: req.GetEnabled() && r.enabled, SamplingBasisPoints: req.GetSamplingBasisPoints(), DroppedTotal: req.GetDroppedTotal(),
 		PendingCount: req.GetPendingCount(), SourceAt: time.UnixMilli(req.GetSourceAtUnixMs()).UTC(),
-		AppScoped: req.GetAppScoped(), UnattributedDroppedTotal: req.GetUnattributedDroppedTotal()}
+		AppScoped: req.GetAppScoped(), UnattributedDroppedTotal: req.GetUnattributedDroppedTotal(), CleanStop: req.GetCleanStop()}
 	for _, gap := range req.GetAppGaps() {
 		coverage.AppGaps = append(coverage.AppGaps, state.TelemetryAppGap{AppID: gap.GetAppId(), DroppedCount: gap.GetDroppedCount(), PendingCount: gap.GetPendingCount(),
 			AnalyticsDroppedCount: gap.GetAnalyticsDroppedCount(), AnalyticsPendingCount: gap.GetAnalyticsPendingCount()})

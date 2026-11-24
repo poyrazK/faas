@@ -4,6 +4,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -123,6 +124,11 @@ func TestRequestTelemetryRejectedRowsAreNotRetried(t *testing.T) {
 	if publisher.ShippedTotal() != 1 || publisher.DroppedTotal() != 1 {
 		t.Fatalf("shipping counts: shipped %d dropped %d", publisher.ShippedTotal(), publisher.DroppedTotal())
 	}
+	// A row apid refused for its app (an ingest quota) is not a platform loss:
+	// FaasRequestTelemetryLoss reads the platform counter.
+	if n := publisher.platformDroppedTotal.Load(); n != 0 {
+		t.Fatalf("refused row counted as a platform drop: %d", n)
+	}
 	if len(coverage.AppGaps) != 1 || coverage.AppGaps[0].AppID != capped.AppID || coverage.AppGaps[0].DroppedCount != 1 {
 		t.Fatalf("rejected row missing from the loss journal: %+v", coverage)
 	}
@@ -181,5 +187,67 @@ func TestRequestTelemetryUndeliveredBatchIsPlatformLoss(t *testing.T) {
 	publisher.tick(context.Background())
 	if coverage.DroppedTotal != 3 || coverage.UnattributedDroppedTotal != 3 || len(coverage.AppGaps) != 0 {
 		t.Fatalf("coverage = %+v, want 3 unattributed drops and no app gaps", coverage)
+	}
+}
+
+// A publisher that delivers every row before it stops ends with a clean-stop
+// heartbeat, so the node's next boot continues its coverage; one whose final
+// drain gave rows up still reports them last, without claiming a clean stop.
+func TestRequestTelemetryCleanStopHeartbeat(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		fail    bool
+		refuse  bool
+		clean   bool
+		dropped bool
+	}{
+		{"delivered", false, false, true, false},
+		{"dropped in final drain", true, false, false, true},
+		// A row apid refused for its app is that app's gap, which the next
+		// boot's coverage tolerates: the stop stays clean.
+		{"refused for the app", false, true, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := NewRequestTelemetryRecorder(RequestTelemetryConfig{Enabled: true, RingSize: 8}, nil)
+			var mu sync.Mutex
+			var reports []RequestTelemetryCoverage
+			publisher := NewRequestTelemetryPublisher(RequestTelemetryPublisherConfig{Enabled: true, FlushBatchSize: 4, MaxRetries: 1,
+				FlushInterval: time.Hour, ShutdownTimeout: 200 * time.Millisecond,
+				OnCoverage: func(_ context.Context, c RequestTelemetryCoverage) error {
+					mu.Lock()
+					defer mu.Unlock()
+					reports = append(reports, c)
+					return nil
+				},
+			}, recorder, func(_ context.Context, rows []RequestTelemetryRow) error {
+				if tc.fail {
+					return errors.New("apid unavailable")
+				}
+				if tc.refuse {
+					rejected := map[uuid.UUID]bool{}
+					for _, row := range rows {
+						rejected[row.EventID] = true
+					}
+					return &RequestTelemetryDeliveryError{Rejected: rejected, Cause: errors.New("rate limited")}
+				}
+				return nil
+			}, nil)
+			publisher.Start(context.Background())
+			recorder.RecordFromObserve(makeRow())
+			publisher.Stop()
+			mu.Lock()
+			defer mu.Unlock()
+			if len(reports) == 0 {
+				t.Fatal("no coverage reported")
+			}
+			for _, r := range reports[:len(reports)-1] {
+				if r.CleanStop {
+					t.Fatalf("clean stop before the last heartbeat: %+v", reports)
+				}
+			}
+			if last := reports[len(reports)-1]; last.CleanStop != tc.clean || last.PendingCount != 0 || (last.DroppedTotal != 0) != tc.dropped {
+				t.Fatalf("last heartbeat %+v, want clean stop %v", last, tc.clean)
+			}
+		})
 	}
 }

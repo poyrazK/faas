@@ -48,7 +48,7 @@ const recordTelemetryCoverage = `-- name: RecordTelemetryCoverage :exec
 SELECT record_telemetry_coverage($1::text, $2::uuid, $3::bigint,
  $4::boolean, $5::integer, $6::bigint,
  $7::integer, $8::timestamptz,
- $9::boolean,$10::bigint,$11::jsonb)
+ $9::boolean,$10::bigint,$11::jsonb,$12::boolean)
 `
 
 type RecordTelemetryCoverageParams struct {
@@ -63,6 +63,7 @@ type RecordTelemetryCoverageParams struct {
 	AppScoped                bool
 	UnattributedDroppedTotal int64
 	AppGaps                  []byte
+	CleanStop                bool
 }
 
 func (q *Queries) RecordTelemetryCoverage(ctx context.Context, db DBTX, arg RecordTelemetryCoverageParams) error {
@@ -78,6 +79,7 @@ func (q *Queries) RecordTelemetryCoverage(ctx context.Context, db DBTX, arg Reco
 		arg.AppScoped,
 		arg.UnattributedDroppedTotal,
 		arg.AppGaps,
+		arg.CleanStop,
 	)
 	return err
 }
@@ -97,6 +99,32 @@ func (q *Queries) RequestAnalyticsCompletenessBlockers(ctx context.Context, db D
 	var column_1 []byte
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const requestTelemetryCoveredSince = `-- name: RequestTelemetryCoveredSince :one
+SELECT count(*)::bigint AS nodes,
+ coalesce(bool_and(c.enabled AND c.sampling_basis_points = 10000 AND c.healthy_since IS NOT NULL), false)::boolean AS healthy,
+ max(c.healthy_since)::timestamptz AS covered_since
+FROM request_telemetry_coverage c
+JOIN compute_nodes n ON n.name = c.node_name AND n.active
+WHERE c.source_at >= $1::timestamptz
+`
+
+type RequestTelemetryCoveredSinceRow struct {
+	Nodes        int64
+	Healthy      bool
+	CoveredSince pgtype.Timestamptz
+}
+
+// The latest start of continuous healthy coverage across the active gateways
+// that reported at or after reported_since, and whether every one of them is
+// fully recording now. A release guard whose window a gateway restart split
+// judges the part after it instead of holding for good.
+func (q *Queries) RequestTelemetryCoveredSince(ctx context.Context, db DBTX, reportedSince pgtype.Timestamptz) (RequestTelemetryCoveredSinceRow, error) {
+	row := db.QueryRow(ctx, requestTelemetryCoveredSince, reportedSince)
+	var i RequestTelemetryCoveredSinceRow
+	err := row.Scan(&i.Nodes, &i.Healthy, &i.CoveredSince)
+	return i, err
 }
 
 const routeRemovalCoverageBlockers = `-- name: RouteRemovalCoverageBlockers :one
