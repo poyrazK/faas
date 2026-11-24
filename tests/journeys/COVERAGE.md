@@ -59,6 +59,17 @@ waking, `redis restart`, and `redis resize` to 96 MB (the replication handoff).
 Many back-to-back handoffs under write load stay with the metal soak
 `TestManagedRedisHandoffSoakMetal` (`FAAS_E2E_REDIS_SOAK=1`).
 
+Verification contracts (ADR-20261122220000, row 177) are a preview behind the
+`verification-contracts` capability, so they are not a GA row either.
+`TestVerificationContracts` runs when the account's capabilities do not report
+`verification-contracts` hidden, and skips otherwise. It deploys the probe app
+with a `gregale.verify.yaml` whose checks pass, one sending an app secret in a
+header (`${secret:E2E_VERIFY_TOKEN}`, checked by its SHA-256) and one POST
+that production skips; then a release whose required check fails, which is
+refused while v1 keeps serving; then a release whose header names an unset
+secret, refused with `verify_secret_missing`. MCP and SQL checks, GitHub
+pushes and PR previews stay with the package tests.
+
 | # | GA capability | Journeys and steps | Not covered |
 |---|---|---|---|
 | 1 | Apps: create, update, rename, delete, restore | `TestAppSettingsAndRename` (update, rename), `TestDeleteAndRestore`, every `deployProbe`; `TestAppNameTakenByAnotherAccount` (a deploy under another account's name gets the same `<name>-<suffix>` app twice with a notice; rename onto it answers `app_rename_failed`; needs `GREGALE_E2E_OTHER_TOKEN`), `TestAppNameBlocked` (a blocklisted name: suffixed app, "not available" notice, rename answers `app_name_unavailable`; needs `GREGALE_E2E_BLOCKED_NAME`) | suffixed names for dashboard, MCP and project deploys (only the CLI deploy suffixes) |
