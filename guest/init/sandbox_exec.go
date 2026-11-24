@@ -49,15 +49,33 @@ func (s *sandboxServer) setSessionEnv(env map[string]string) sandboxproto.Sessio
 	return sandboxproto.SessionEnvResult{Names: names}
 }
 
-// commandEnv is the session's environment under a command's own variables.
+// forked records that this session is a fork of source and signals the
+// commands that asked to reseed (ADR-20261122132055 §3).
+func (s *sandboxServer) forked(source string) sandboxproto.ForkedResult {
+	s.envMu.Lock()
+	s.forkedFrom = source
+	s.envMu.Unlock()
+	n := s.commands.signalFork()
+	s.log.Info("sandbox: forked", "forked_from", source, "signaled", n)
+	return sandboxproto.ForkedResult{Signaled: n}
+}
+
+// commandEnv is the session's environment under a command's own variables;
+// a fork's marker goes over both.
 func (s *sandboxServer) commandEnv(requested map[string]string) map[string]string {
 	s.envMu.Lock()
 	defer s.envMu.Unlock()
-	if len(s.env) == 0 {
+	if len(s.env) == 0 && s.forkedFrom == "" {
 		return requested
 	}
 	out := maps.Clone(s.env)
+	if out == nil {
+		out = map[string]string{}
+	}
 	maps.Copy(out, requested)
+	if s.forkedFrom != "" {
+		out[sandboxproto.ForkedFromEnv] = s.forkedFrom
+	}
 	return out
 }
 

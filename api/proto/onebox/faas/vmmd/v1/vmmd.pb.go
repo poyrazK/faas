@@ -15471,7 +15471,12 @@ type RunSandboxStart struct {
 	Detachable bool `protobuf:"varint,28,opt,name=detachable,proto3" json:"detachable,omitempty"`
 	// reattach takes over a detached VM of this instance and session instead
 	// of booting one; vmmd answers NotFound when it has none.
-	Reattach      bool `protobuf:"varint,29,opt,name=reattach,proto3" json:"reattach,omitempty"`
+	Reattach bool `protobuf:"varint,29,opt,name=reattach,proto3" json:"reattach,omitempty"`
+	// forked_from is the source session of a fork restored from its fork
+	// capture (ADR-20261122132055 §3). Once the guest answers, vmmd tells it,
+	// so later commands see GREGALE_FORKED_FROM and commands that asked get
+	// SIGUSR2 to reseed. Only with session_capture. An older vmmd ignores it.
+	ForkedFrom    string `protobuf:"bytes,30,opt,name=forked_from,json=forkedFrom,proto3" json:"forked_from,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -15707,6 +15712,13 @@ func (x *RunSandboxStart) GetReattach() bool {
 		return x.Reattach
 	}
 	return false
+}
+
+func (x *RunSandboxStart) GetForkedFrom() string {
+	if x != nil {
+		return x.ForkedFrom
+	}
+	return ""
 }
 
 // RunSandboxAction is one browser action on a live session
@@ -24955,7 +24967,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"capture_id\x18\x01 \x01(\tR\tcaptureId\"0\n" +
 	"\x0fRunSandboxPause\x12\x1d\n" +
 	"\n" +
-	"capture_id\x18\x01 \x01(\tR\tcaptureId\"\xb9\b\n" +
+	"capture_id\x18\x01 \x01(\tR\tcaptureId\"\xda\b\n" +
 	"\x0fRunSandboxStart\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1d\n" +
 	"\n" +
@@ -24993,7 +25005,9 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
 	"detachable\x18\x1c \x01(\bR\n" +
 	"detachable\x12\x1a\n" +
-	"\breattach\x18\x1d \x01(\bR\breattach\"\xc9\x02\n" +
+	"\breattach\x18\x1d \x01(\bR\breattach\x12\x1f\n" +
+	"\vforked_from\x18\x1e \x01(\tR\n" +
+	"forkedFrom\"\xc9\x02\n" +
 	"\x10RunSandboxAction\x12\x1b\n" +
 	"\taction_id\x18\x01 \x01(\tR\bactionId\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x10\n" +

@@ -107,7 +107,7 @@ Control-plane routes are served by apid and gated. Data-plane routes are served 
 |---|---|---|
 | `POST /v1/sandboxes` | control | Create. Body: `{image \| preset, manifest?, ram_mb?, tenant?, network, idle_timeout_s?, snapshot_id?, env?, labels?, ports?}`. Returns `{id, state, expires_at, token}` |
 | `GET /v1/sandboxes`, `GET`/`PATCH`/`DELETE /v1/sandboxes/{id}` | control | List (filter by label); read state (re-mints the token on resume); change the idle timeout or lifetime within plan limits; close |
-| `POST /v1/sandboxes/{id}/exec` | data | `{cmd, workdir?, env?, tty?, background?, timeout_ms?, max_output_bytes?, run_as?}`. `run_as` is `user` (default) or `root` (§10). Returns `{stdout, stderr, exit_code, wall_time_s, pty_session_id?}` with SSE streaming, or `{handle}` when `background` |
+| `POST /v1/sandboxes/{id}/exec` | data | `{cmd, workdir?, env?, tty?, background?, timeout_ms?, max_output_bytes?, run_as?, reseed_on_fork?}`. `run_as` is `user` (default) or `root` (§10). `reseed_on_fork`, background only, sends the command `SIGUSR2` in each fork of the session (ADR-20261122132055 §3). Returns `{stdout, stderr, exit_code, wall_time_s, pty_session_id?}` with SSE streaming, or `{handle}` when `background` |
 | `GET …/exec`, `GET`/`DELETE …/exec/{handle}` | data | List, read the output of, and kill background commands |
 | `POST /v1/sandboxes/{id}/exec/{handle}/input` | data | Write to a background command's stdin, end its input, or resize its terminal (step 12; replaces `…/stdin` and the WebSocket) |
 | `GET`/`PUT /v1/sandboxes/{id}/files?path=`, `GET …/files:list?path=`, `POST …/files:remove`, `…/files:mkdir`, `…/files:rename` | data | Read, write, list, remove, create directories and rename inside the workspace |

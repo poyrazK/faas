@@ -1148,8 +1148,8 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 12,
-        "y": 55
+        "x": 0,
+        "y": 63
       },
       "datasource": {
         "type": "prometheus",
@@ -1203,7 +1203,125 @@
           "sort": "desc"
         }
       },
-      "description": "ADR-20261122132055: time vmmd took to capture a persistent session and end its VM, and from a paused session's claim to its VM up by source: node (its capture on its own node), remote (another node) or cold (no capture restored)."
+      "description": "ADR-20261122132055 §4: time vmmd took to back up a running persistent session's workspace volume, and the compressed bytes backups added to the store."
+    },
+    {
+      "type": "timeseries",
+      "title": "Sandbox fork capture (p95 seconds)",
+      "id": 24,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 63
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(sandbox_fork_seconds_bucket[15m])) by (le, count_bucket))",
+          "legendFormat": "{{count_bucket}} forks",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "description": "ADR-20261122132055 §3: time from agentd asking for a running session's fork capture to vmmd recording it, by how many forks the capture serves."
+    },
+    {
+      "type": "timeseries",
+      "title": "Sandbox fork starts (per hour)",
+      "id": 25,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 71
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(sandbox_forks_total[1h])) by (outcome)",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "description": "ADR-20261122132055 §3: fork starts by outcome: node (restored on its capture's node before or after the upload), remote (from the shared store on another node), cold (cold-booted), refused_node (the capture's node refused it; it waits for the upload) or orphaned (its source ended before the capture)."
     }
   ]
 }

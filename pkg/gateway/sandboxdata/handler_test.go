@@ -295,6 +295,7 @@ func TestExecRefusals(t *testing.T) {
 		{"terminal in the foreground", `{"cmd":"bash","tty":true}`, api.CodeSandboxUnsupported, http.StatusUnprocessableEntity},
 		{"no command", `{"cmd":[]}`, api.CodeValidation, http.StatusBadRequest},
 		{"guest validation", `{"cmd":"true","run_as":"nobody"}`, api.CodeValidation, http.StatusBadRequest},
+		{"reseed in the foreground", `{"cmd":"true","reseed_on_fork":true}`, api.CodeValidation, http.StatusBadRequest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
@@ -332,11 +333,20 @@ func TestBackgroundTerminalAndInput(t *testing.T) {
 		req.Rows != 30 || req.Cols != 100 {
 		t.Fatalf("guest request = %+v", req)
 	}
+	// adr: 20261122132055 §3 — a background command may ask for SIGUSR2 in forks.
+	rec = f.do(t, http.MethodPost, "/v1/sandboxes/sbx-1/exec", f.token(t, placed()),
+		strings.NewReader(`{"cmd":"worker","background":true,"reseed_on_fork":true}`))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("reseed: status = %d, body %s", rec.Code, rec.Body)
+	}
+	if req := f.vmmd.requests()[2]; !req.ReseedOnFork || !req.Background {
+		t.Fatalf("reseed guest request = %+v", req)
+	}
 	rec = f.do(t, http.MethodPost, "/v1/sandboxes/sbx-1/exec/"+handle+"/input", f.token(t, placed()), strings.NewReader(`{}`))
 	if rec.Code != http.StatusBadRequest || problemCode(t, rec) != api.CodeValidation {
 		t.Fatalf("empty input: status = %d, body %s", rec.Code, rec.Body)
 	}
-	if len(f.vmmd.requests()) != 2 {
+	if len(f.vmmd.requests()) != 3 {
 		t.Fatal("a refused input reached the node")
 	}
 }

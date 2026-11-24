@@ -53,7 +53,7 @@ func (s *Sandboxes) fork(ss *session, send func(*scheddpb.SandboxRunRequest) err
 // restore it once it is uploaded. The session runs on.
 func (s *Sandboxes) markForked(ctx context.Context, ss *session, f *scheddpb.SandboxRunForked) error {
 	ss.mu.Lock()
-	captureID, node := ss.forkID, ss.placedNode
+	captureID, node, asked := ss.forkID, ss.placedNode, ss.forkAsked
 	ss.mu.Unlock()
 	if captureID == "" {
 		return errors.New("vmmd forked a session agentd did not fork")
@@ -75,6 +75,7 @@ func (s *Sandboxes) markForked(ctx context.Context, ss *session, f *scheddpb.San
 	if forks > 0 {
 		go s.watchForkUpload(ctx, capture)
 	}
+	s.metrics.sandboxForked(forks, s.now().Sub(asked))
 	ss.mu.Lock()
 	ss.forking, ss.forkID = false, ""
 	// The renewal that asked is stale until the next one.
@@ -101,6 +102,7 @@ func (s *Sandboxes) sweepForks(ctx context.Context) error {
 	if consumed+failed > 0 {
 		s.log.Info("agentd: swept sandbox forks", "captures_consumed", consumed, "forks_failed", failed)
 	}
+	s.metrics.forkOutcome(forkOrphaned, failed)
 	if err != nil || s.scfg.Workspaces == nil {
 		return err
 	}

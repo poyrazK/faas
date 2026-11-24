@@ -3678,6 +3678,11 @@ message RunSandboxStart {
   // reattach takes over a detached VM of this instance and session instead
   // of booting one; vmmd answers NotFound when it has none.
   bool reattach = 29;
+  // forked_from is the source session of a fork restored from its fork
+  // capture (ADR-20261122132055 §3). Once the guest answers, vmmd tells it,
+  // so later commands see GREGALE_FORKED_FROM and commands that asked get
+  // SIGUSR2 to reseed. Only with session_capture. An older vmmd ignores it.
+  string forked_from = 30;
 }
 
 // RunSandboxAction is one browser action on a live session

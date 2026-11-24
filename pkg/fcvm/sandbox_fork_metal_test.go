@@ -21,6 +21,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sandboxproto"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -76,6 +77,21 @@ nohup sleep 3600 >/dev/null 2>&1 &
 echo started`); code != 0 || !strings.Contains(out, "started") {
 		t.Fatalf("prepare: %q exit %d", out, code)
 	}
+	// A background command that asked to reseed marks each fork it runs on.
+	bgCtx, bgCancel := context.WithTimeout(ctx, 30*time.Second)
+	bgConn, err := m.DialSandboxSession(bgCtx, req.Instance, source)
+	if err != nil {
+		t.Fatalf("dial sandbox: %v", err)
+	}
+	var bg sandboxproto.ExecResult
+	err = sandboxproto.Do(bgCtx, bgConn, sandboxproto.Request{Op: sandboxproto.OpExec, Background: true, ReseedOnFork: true,
+		Argv:          []string{"/bin/sh", "-c", `trap 'echo yes > /tmp/reseeded' USR2; while :; do sleep 0.1; done`},
+		TimeoutMillis: 600_000, MaxOutputBytes: 1 << 10}, func(uint32, []byte) error { return nil }, &bg)
+	_ = bgConn.Close()
+	bgCancel()
+	if err != nil || bg.Handle == "" {
+		t.Fatalf("background reseeder: %+v, %v", bg, err)
+	}
 
 	begun := time.Now()
 	forked, err := m.ForkSandbox(ctx, SandboxFork{Instance: req.Instance, SandboxID: source, AccountID: account,
@@ -113,7 +129,7 @@ echo started`); code != 0 || !strings.Contains(out, "started") {
 		}
 		fork := req
 		fork.Instance, fork.SandboxID, fork.Volume = "sbx-fork-vm-"+name, id, vol
-		fork.Snapshot, fork.SessionCapture = forked.Snapshot, true
+		fork.Snapshot, fork.SessionCapture, fork.ForkedFrom = forked.Snapshot, true, source
 		begun = time.Now()
 		inst, err := m.WakeSandbox(ctx, fork)
 		if err != nil {
@@ -132,8 +148,10 @@ echo started`); code != 0 || !strings.Contains(out, "started") {
 test -e /workspace/source-only.txt && echo saw-source-write
 test -e /workspace/other-fork.txt && echo saw-other-fork
 n=0; for p in /proc/[0-9]*; do tr '\0' ' ' < $p/cmdline 2>/dev/null | grep -q '^sleep 3600' && n=$((n+1)); done; echo "sleepers=$n"
+echo "forked=$GREGALE_FORKED_FROM"
+for i in $(seq 50); do test -s /tmp/reseeded && break; sleep 0.1; done; echo "reseeded=$(cat /tmp/reseeded 2>/dev/null)"
 echo mine > /workspace/other-fork.txt && sync`)
-		for _, want := range []string{"kept-in-memory\n", "on-the-volume\n", "sleepers=1\n"} {
+		for _, want := range []string{"kept-in-memory\n", "on-the-volume\n", "sleepers=1\n", "forked=" + source + "\n", "reseeded=yes\n"} {
 			if code != 0 || !strings.Contains(out, want) {
 				t.Fatalf("fork %s lacks %q (exit %d):\n%s", name, want, code, out)
 			}
@@ -142,8 +160,11 @@ echo mine > /workspace/other-fork.txt && sync`)
 			t.Fatalf("fork %s sees a write made after the fork:\n%s", name, out)
 		}
 	}
-	if out, code := userExec(t, m, req.Instance, source, `test -e /workspace/other-fork.txt && echo leaked; echo checked`); code != 0 || strings.Contains(out, "leaked") {
-		t.Fatalf("a fork's write reached the source:\n%s", out)
+	if out, code := userExec(t, m, req.Instance, source, `test -e /workspace/other-fork.txt && echo leaked
+test -e /tmp/reseeded && echo source-reseeded
+test -n "$GREGALE_FORKED_FROM" && echo source-marked
+echo checked`); code != 0 || strings.Contains(out, "leaked") || strings.Contains(out, "source-") {
+		t.Fatalf("a fork's write or marker reached the source:\n%s", out)
 	}
 	if local {
 		for _, key := range sandboxCaptureKeys(forked.Snapshot.StorageKey)[:3] {

@@ -112,6 +112,9 @@ type sandboxServer struct {
 	// env is the session's environment (session_env), in memory only.
 	envMu sync.Mutex
 	env   map[string]string
+	// forkedFrom is the source session when this session is a fork
+	// (forked); its commands get it as GREGALE_FORKED_FROM.
+	forkedFrom string
 	// code is the code interpreter's driver (step 14).
 	code *codeDriver
 }
@@ -158,6 +161,8 @@ func (s *sandboxServer) handle(ctx context.Context, req sandboxproto.Request, ca
 		return s.commands.input(req)
 	case sandboxproto.OpSessionEnv:
 		return s.setSessionEnv(req.Env), nil
+	case sandboxproto.OpForked:
+		return s.forked(req.ForkedFrom), nil
 	case sandboxproto.OpCodeRun:
 		return s.codeRun(ctx, req, call)
 	case sandboxproto.OpCodeContext:
