@@ -3458,10 +3458,6 @@ HTTP 409 Conflict · Run control changed
 
 HTTP 503 Service Unavailable · Safe release unavailable
 
-### `saved_insight_limit`
-
-HTTP 409 Conflict · Saved insight limit reached
-
 ### `scaling_request_conflict`
 
 HTTP 409 Conflict · Scaling request ID reused

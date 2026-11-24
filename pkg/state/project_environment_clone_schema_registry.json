@@ -22678,34 +22678,6 @@
     "kind": "operational"
   },
   {
-    "table": "saved_insights",
-    "columns": [
-      "account_id",
-      "alert_comparison",
-      "alert_state",
-      "alert_threshold",
-      "channel_ids",
-      "created_at",
-      "created_by",
-      "digest",
-      "environment_id",
-      "id",
-      "key",
-      "kind",
-      "last_error",
-      "last_run_at",
-      "last_value",
-      "lease_until",
-      "name",
-      "next_check_at",
-      "next_digest_at",
-      "query",
-      "range_days",
-      "updated_at"
-    ],
-    "kind": "operational"
-  },
-  {
     "table": "analytics_events",
     "columns": [
       "account_id",
@@ -22727,6 +22699,16 @@
       "created_at",
       "environment_id",
       "key"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_valkey_cache_grants",
+    "columns": [
+      "account_id",
+      "app_id",
+      "cache_app_id",
+      "created_at"
     ],
     "kind": "operational"
   },

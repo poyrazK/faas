@@ -46,9 +46,6 @@ const (
 	EventFire    = "fire"
 	EventResolve = "resolve"
 	EventTest    = "test"
-	// EventDigest is a scheduled report, not an incident: a saved insight's
-	// digest (ADR-20261122190000). Callers do not send it to PagerDuty.
-	EventDigest = "digest"
 )
 
 // Message is one notification. DedupKey groups a fire with its resolve
@@ -236,8 +233,6 @@ func Headline(msg Message) string {
 		return fmt.Sprintf("Resolved: %s", msg.RuleName)
 	case EventTest:
 		return "Test notification from Gregale"
-	case EventDigest:
-		return fmt.Sprintf("Digest: %s", msg.RuleName)
 	}
 	return fmt.Sprintf("Alert: %s", msg.RuleName)
 }

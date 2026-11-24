@@ -94,11 +94,6 @@ const (
 	// experiments and no raw event is stored.
 	ProductAnalytics = "product_analytics"
 
-	// SavedInsights releases saved insights, their CSV/JSON export,
-	// scheduled digests and threshold alerts (ADR-20261122190000). It
-	// needs ProductAnalytics as well.
-	SavedInsights = "saved_insights"
-
 	// RouteResourcePeaks keeps each app instance's per-minute memory and CPU
 	// and its route activity, and serves which routes the app's peaks come
 	// from (ADR-20261121170000).
@@ -462,18 +457,6 @@ var catalog = []Spec{
 		Consumers:    []string{"apid"},
 		Attributes:   []Attribute{AttributePlan, AttributeOrg},
 		HealthRoutes: []string{"GET /v1/projects/{slug}/environments/{environment}/insights/events"},
-		RetireBy:     "2027-06-30",
-	},
-	{
-		Key:        SavedInsights,
-		Capability: "saved-insights",
-		Label:      "Saved insights",
-		Description: "Save analytics queries per environment, run and export them as CSV or JSON, and send their value to notification channels " +
-			"as daily or weekly digests and threshold alerts. Off, the saved insight routes refuse and meterd sends nothing; saved rows are kept.",
-		ADR:          "ADR-20261122190000",
-		Consumers:    []string{"apid", "meterd"},
-		Attributes:   []Attribute{AttributePlan, AttributeOrg},
-		HealthRoutes: []string{"GET /v1/projects/{slug}/environments/{environment}/insights/saved"},
 		RetireBy:     "2027-06-30",
 	},
 	{

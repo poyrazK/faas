@@ -906,51 +906,6 @@ so neither `in` nor `not_in` matches. Runtime SDKs need capability
 `/v1/projects/{slug}/environments/{environment}/cohorts`; MCP agents list
 cohorts with `gregale_list_insight_cohorts` (diagnose toolset).
 
-### Save, share and export an insight
-
-A saved insight is a named events, funnel or retention query over the last
-`--days` days (default 7, 28 for retention). Anyone who can read the project
-lists and runs it; saving, replacing and deleting one needs deploy rights.
-An operator releases saved insights with the `saved_insights` platform flag
-(on top of `product_analytics`).
-
-```bash
-gregale insight saved create checkout-conv --kind funnel --step signup --step order_completed --days 14 --project shop
-gregale insight saved list --project shop
-gregale insight saved run checkout-conv --project shop
-gregale insight saved run checkout-conv --format csv --project shop > checkout-conv.csv
-```
-
-Each saved insight has one value: an events total (`--measure value` sums
-event values instead of counting events), a funnel's overall conversion, or
-the share of units that came back in the first retention period. Funnel and
-retention values are fractions (0.25 is 25%).
-
-Send the value to [notification channels](alerts.md) with a digest, an alert
-or both (up to 5 channels):
-
-```bash
-gregale insight saved create orders --kind events --event order_completed --days 1 \
-  --digest daily --alert lt:100 --channel CHANNEL_ID --project shop
-```
-
-- Digests go out at 08:00 UTC, `weekly` ones on Mondays. PagerDuty channels
-  get no digests.
-- An alert (`gt`, `gte`, `lt` or `lte` a threshold) is checked every 15
-  minutes. It notifies once when the value crosses the threshold and once
-  when it comes back. If the query fails, nothing is sent, the state is kept,
-  `last_error` says why and the insight is retried in 15 minutes; a due
-  digest goes out once a run succeeds. A funnel without entrants or
-  retention before its first period ends has no value and does not alert.
-- Replace a saved insight with `gregale insight saved create KEY --replace ...`;
-  changing its query, range or alert resets the alert state.
-
-An environment holds at most 50 saved insights. The API routes are under
-`/v1/projects/{slug}/environments/{environment}/insights/saved`
-(`GET /{key}/run?format=csv` exports). MCP agents use
-`gregale_list_saved_insights` and `gregale_run_saved_insight` (diagnose
-toolset).
-
 ## Promote a guarded rollout stage
 
 Attach a progression plan to a boolean rule that selects `true`. The rule's

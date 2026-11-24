@@ -96,7 +96,6 @@ func TestFlagsAndExperiments(t *testing.T) {
 	s.check("layer_and_holdout", j.layerAndHoldout)
 	s.check("kill_serves_fallback", j.kill)
 	s.check("product_analytics_events", j.analytics)
-	s.check("saved_insight_run_and_export", j.savedInsight)
 }
 
 // skipFlagsUnreleased skips the journey when the account cannot use Flags.
@@ -368,37 +367,4 @@ func (j *flagsJourney) analytics(t *testing.T) {
 		}
 		return units == float64(converted), compact(doc)
 	})
-}
-
-// savedInsight saves the conversion event as an insight (ADR-20261122190000),
-// runs it as a teammate would and exports it as CSV.
-func (j *flagsJourney) savedInsight(t *testing.T) {
-	converted := 0
-	for _, c := range j.customers {
-		if c.converted {
-			converted++
-		}
-	}
-	res := j.tg.run(t, time.Minute, "--json", "insight", "saved", "create", "orders", "--kind", "events", "--event", "order_completed",
-		"--days", "1", "--project", j.project)
-	if res.exit != 0 {
-		// Off for the account the routes refuse (403); off everywhere the
-		// capability gate hides them (404 no such route).
-		if strings.Contains(res.problem(), "unavailable") || strings.Contains(res.problem(), "no such API route") {
-			t.Skipf("saved insights are not enabled for this account: %s", res.problem())
-		}
-		t.Fatalf("save insight: %s", res.problem())
-	}
-	t.Cleanup(func() { j.tg.run(t, time.Minute, "insight", "saved", "delete", "orders", "--project", j.project) })
-	run := j.tg.run(t, time.Minute, "--json", "insight", "saved", "run", "orders", "--project", j.project)
-	if run.exit != 0 {
-		t.Fatalf("run saved insight: %s", run.problem())
-	}
-	if got := num(object(t, run.stdout), "value"); got < float64(converted) {
-		t.Fatalf("saved insight value = %v, want at least the %d conversions: %s", got, converted, run.stdout)
-	}
-	csv := j.tg.run(t, time.Minute, "insight", "saved", "run", "orders", "--format", "csv", "--project", j.project)
-	if csv.exit != 0 || !strings.HasPrefix(string(csv.stdout), "start,breakdown,events,units,value\n") {
-		t.Fatalf("export saved insight: %s %q", csv.problem(), csv.stdout)
-	}
 }

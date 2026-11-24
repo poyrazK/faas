@@ -80,8 +80,6 @@ var toolCapability = map[string]string{
 	"gregale_get_insight_retention": "product-analytics",
 	"gregale_get_insight_requests":  "product-analytics",
 	"gregale_list_insight_cohorts":  "product-analytics",
-	"gregale_list_saved_insights":   "saved-insights",
-	"gregale_run_saved_insight":     "saved-insights",
 }
 
 // unavailableCapabilities reads the account's hidden and disabled

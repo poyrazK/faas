@@ -105,18 +105,10 @@ var routeActions = map[string]authz.OrgAction{
 	// Product analytics reads (ADR-20261117084505) follow the flag reads;
 	// funnel and retention take their query as a POST body. Cohorts
 	// (ADR-20261119102741) target flags, so writing one deploys like a flag.
-	"GET /v1/projects/{slug}/environments/{environment}/insights/events":     authz.OrgActionReadProject,
-	"GET /v1/projects/{slug}/environments/{environment}/insights/requests":   authz.OrgActionReadProject,
-	"POST /v1/projects/{slug}/environments/{environment}/insights/funnel":    authz.OrgActionReadProject,
-	"POST /v1/projects/{slug}/environments/{environment}/insights/retention": authz.OrgActionReadProject,
-	// Saved insights (ADR-20261122190000) are shared with project readers;
-	// saving one deploys like a cohort.
-	"GET /v1/projects/{slug}/environments/{environment}/insights/saved":                                   authz.OrgActionReadProject,
-	"GET /v1/projects/{slug}/environments/{environment}/insights/saved/{key}":                             authz.OrgActionReadProject,
-	"GET /v1/projects/{slug}/environments/{environment}/insights/saved/{key}/run":                         authz.OrgActionReadProject,
-	"POST /v1/projects/{slug}/environments/{environment}/insights/saved":                                  authz.OrgActionDeployProject,
-	"PUT /v1/projects/{slug}/environments/{environment}/insights/saved/{key}":                             authz.OrgActionDeployProject,
-	"DELETE /v1/projects/{slug}/environments/{environment}/insights/saved/{key}":                          authz.OrgActionDeployProject,
+	"GET /v1/projects/{slug}/environments/{environment}/insights/events":                                  authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/insights/requests":                                authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/environments/{environment}/insights/funnel":                                 authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/environments/{environment}/insights/retention":                              authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}/environments/{environment}/cohorts":                                          authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}/environments/{environment}/cohorts/{key}":                                    authz.OrgActionReadProject,
 	"POST /v1/projects/{slug}/environments/{environment}/cohorts":                                         authz.OrgActionDeployProject,

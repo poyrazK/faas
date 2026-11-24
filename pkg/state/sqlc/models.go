@@ -10369,6 +10369,13 @@ type ManagedValkeyCach struct {
 	CreatedAt      pgtype.Timestamptz
 }
 
+type ManagedValkeyCacheGrant struct {
+	CacheAppID pgtype.UUID
+	AppID      pgtype.UUID
+	AccountID  pgtype.UUID
+	CreatedAt  pgtype.Timestamptz
+}
+
 type McpBridgeLease struct {
 	Bridge    string
 	Holder    string
@@ -16538,32 +16545,6 @@ type SandboxWorkspaceSnapshot struct {
 	DeleteRequestedAt pgtype.Timestamptz
 	CreatedAt         pgtype.Timestamptz
 	ReadyAt           pgtype.Timestamptz
-}
-
-// Named analytics queries per environment; digests and threshold alerts run by meterd (ADR-20261122190000).
-type SavedInsight struct {
-	ID              pgtype.UUID
-	AccountID       pgtype.UUID
-	EnvironmentID   pgtype.UUID
-	Key             string
-	Name            string
-	Kind            string
-	Query           []byte
-	RangeDays       int32
-	Digest          string
-	AlertComparison string
-	AlertThreshold  float64
-	ChannelIds      []pgtype.UUID
-	AlertState      string
-	LastValue       pgtype.Float8
-	LastRunAt       pgtype.Timestamptz
-	LastError       string
-	NextDigestAt    pgtype.Timestamptz
-	NextCheckAt     pgtype.Timestamptz
-	LeaseUntil      pgtype.Timestamptz
-	CreatedBy       string
-	CreatedAt       pgtype.Timestamptz
-	UpdatedAt       pgtype.Timestamptz
 }
 
 type SavedRouteRequirement struct {
