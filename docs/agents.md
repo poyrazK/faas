@@ -1,12 +1,18 @@
 # Use Gregale from coding agents
 
 Coding agents such as Claude Code, Codex and Cursor can deploy and operate
-apps on Gregale with the same CLI and API you use. Pick what you want to do:
+apps on Gregale with the same CLI and API you use.
 
-- [Set up an agent](#set-up-an-agent): connect the agent, give it project instructions, and point it at these docs.
-- [Deploy and operate from an agent](#deploy-and-operate-from-an-agent): deploy a repo, script the CLI, run jobs and publish tools.
-- [Keep an agent within limits](#keep-an-agent-within-limits): give the agent a narrow key, hold risky requests for your approval, and cap its spending.
-- [Review and undo what an agent did](#review-and-undo-what-an-agent-did): see which agents are active, what they changed, and roll a change back.
+Have a repo and want to see it work first? The
+[agent quickstart](#agent-quickstart-for-an-existing-fastapi-repo) checks
+compatibility before you sign in, then deploys and verifies a FastAPI app.
+
+Or pick what you want to do:
+
+- **Set up an agent**: [Connect an agent to Gregale](#connect-an-agent-to-gregale), [Install the Claude Code plugin](#install-the-claude-code-plugin), [Project instructions for agents](#project-instructions-for-agents), [Documentation for agents](#documentation-for-agents), [Run the MCP server locally](#run-the-mcp-server-locally).
+- **Deploy and operate from an agent**: [Agent quickstart for an existing FastAPI repo](#agent-quickstart-for-an-existing-fastapi-repo), [Run the CLI non-interactively](#run-the-cli-non-interactively), [Run jobs and retrieve artifacts](#run-jobs-and-retrieve-artifacts), [Build and publish MCP tools](#build-and-publish-mcp-tools).
+- **Keep an agent within limits**: [Give the agent its own key](#give-the-agent-its-own-key), [Approve an agent's risky requests](#approve-an-agents-risky-requests), [Limit what an agent adds to your bill](#limit-what-an-agent-adds-to-your-bill).
+- **Review and undo what an agent did**: [See your agents at a glance](#see-your-agents-at-a-glance), [See what an agent changed](#see-what-an-agent-changed), [Undo what an agent changed](#undo-what-an-agent-changed).
 
 To deploy an MCP server of your own for agents to call, see
 [Host an MCP server](mcp-hosting.md).
@@ -20,11 +26,7 @@ Starting with an empty directory and a Free account? Follow the
 [private Node quickstart](quickstart.md#deploy-a-private-node-app-on-free)
 for a small internal HTTP app and a CLI deploy, verify, and edit loop.
 
-## Set up an agent
-
-Connect the agent, give it project instructions, and point it at these docs.
-
-### Connect an agent to Gregale
+## Connect an agent to Gregale
 
 Connect any MCP client to Gregale's hosted MCP server at
 `https://api.gregale.dev/mcp`. There's nothing to install and no key to copy.
@@ -110,7 +112,7 @@ An agent with no person at a browser, such as one in CI, connects with an
 agent key instead; see
 [Headless agents](mcp.md#headless-agents-with-an-agent-key).
 
-### Install the Claude Code plugin
+## Install the Claude Code plugin
 
 The `gregale` plugin connects Claude Code to the hosted MCP server and adds
 two skills:
@@ -131,7 +133,7 @@ use the request and regression tools; with "Core tools" it runs the matching
 `gregale` CLI commands instead. The skills deploy with the `gregale` CLI, so
 install it and log in or set `GREGALE_TOKEN` first.
 
-### Project instructions for agents
+## Project instructions for agents
 
 `gregale init` writes an `AGENTS.md` into each new project. It tells coding
 agents how to deploy, check and roll back that project. Edit it like any other
@@ -163,7 +165,7 @@ See [Deploy with Claude Code](claude-code.md),
 [Deploy with Antigravity](antigravity.md) and
 [Deploy with Gemini CLI](gemini-cli.md).
 
-### Documentation for agents
+## Documentation for agents
 
 - [`https://gregale.dev/llms.txt`](https://gregale.dev/llms.txt) lists every
   documentation page with a one-line summary.
@@ -176,7 +178,7 @@ See [Deploy with Claude Code](claude-code.md),
   `gregale_get_docs_page`, in the default `core` toolset. Results link to the
   page and heading on gregale.dev.
 
-### Run the MCP server locally
+## Run the MCP server locally
 
 The hosted server is the default. Run the server on your own machine instead
 when the agent can't reach `api.gregale.dev`, or when it should deploy a
@@ -293,18 +295,14 @@ runs the matching `gregale domain create`, `add bucket`, `add postgres` or
 your DNS provider; `gregale_check_domain` reports when they verify. See
 [Provision a domain, data and crons](mcp.md#provision-a-domain-data-and-crons).
 
-## Deploy and operate from an agent
-
-Deploy a repo, script the CLI, run jobs and publish tools.
-
-### Agent quickstart for an existing FastAPI repo
+## Agent quickstart for an existing FastAPI repo
 
 Check compatibility before signing in, then use hosted MCP to deploy a copy
 and verify an application response from the exact release. This example uses
 [Render's FastAPI sample at a fixed commit](https://github.com/render-examples/fastapi/tree/f829276c68503f7afae195c3e3f778f085242cb0).
 It needs a shell for Git and the upload, and an MCP client for the Gregale tools.
 
-#### Check the public repository
+### Check the public repository
 
 ```sh
 curl -fsS -G https://api.gregale.dev/v1/preflight \
@@ -319,7 +317,7 @@ means the static checks passed. For `amber`, review the remedies in
 blocking findings and check again before deploying. Report API errors as an
 unavailable check. Preflight reads public GitHub source and runs no build.
 
-#### Prepare the source and connect
+### Prepare the source and connect
 
 ```sh
 git clone https://github.com/render-examples/fastapi.git fastapi-example
@@ -347,7 +345,7 @@ to selected apps, create an empty app in the console first and authorize that
 app. Check that the connection lists the upload, deployment wait, and
 application response tools before starting.
 
-#### Deploy from the checkout
+### Deploy from the checkout
 
 1. Call `gregale_create_source_upload` with `{"app":"fastapi-demo"}`.
    Run the returned upload command from the prepared checkout. It includes
@@ -382,7 +380,7 @@ application response tools before starting.
    `gregale_get_deployment` with that ID and `gregale_get_logs` with the app
    and deployment ID.
 
-#### Verify the exact release
+### Verify the exact release
 
 Pass the ID from the apply result to `gregale_verify_application_response`.
 
@@ -400,7 +398,7 @@ deployment ID, path, and observed status to the user. The check uses owner
 access and works with private apps. Public access remains unverified
 (`public_access_verified: false`).
 
-### Run the CLI non-interactively
+## Run the CLI non-interactively
 
 Put the global `--non-interactive` and `--json` options before the command:
 
@@ -457,7 +455,7 @@ approval exits `1`; `--non-interactive` never approves on the agent's behalf.
 See [CLI configuration](cli-config.md) for the full contract, including
 pagination and profiles.
 
-#### Which agent ran the CLI
+### Which agent ran the CLI
 
 When Claude Code, Codex, Cursor or Gemini CLI runs the CLI, the CLI adds the
 agent's name to its User-Agent, for example
@@ -467,7 +465,7 @@ customers use. The CLI sends nothing else about the agent, and the name
 never changes what a command is allowed to do. Set `DO_NOT_TRACK=1` to
 leave it out.
 
-### Run jobs and retrieve artifacts
+## Run jobs and retrieve artifacts
 
 On a local account connection, select `--tools core,execute` to inspect existing
 jobs, read their runs and task logs, and retrieve output artifacts. Add
@@ -487,7 +485,7 @@ access to account jobs. A local token still needs native account job access;
 selecting tools grants no API permissions. See [execution tools](mcp.md#execute-existing-jobs)
 for the tool catalog, retry window and download contract.
 
-### Build and publish MCP tools
+## Build and publish MCP tools
 
 Use `gregale mcp serve --tools core,build-tools --allow-writes` to let an agent
 read versioned starter files, review a local MCP project, run approved fixtures
@@ -570,11 +568,7 @@ See [hosted invocation](mcp.md#hosted-invocation-with-tool-grants) for setup and
 recovery, and [scoped tool grants](mcp.md#scoped-tool-grants) for owner commands
 and catalog-projection digests.
 
-## Keep an agent within limits
-
-Give the agent a narrow key, hold risky requests for your approval, and cap its spending.
-
-### Give the agent its own key
+## Give the agent its own key
 
 An agent that runs the `gregale` CLI, or the MCP server locally, needs a
 credential. Create a dedicated agent key instead of sharing your own login:
@@ -632,7 +626,7 @@ toolset) with `deploy`, `restart`, `scale` or `env_change` to learn whether
 its credential and connection allow it. A yes isn't a guarantee: quotas and
 the exact request are checked again when the change runs.
 
-### Approve an agent's risky requests
+## Approve an agent's risky requests
 
 An agent key, and an agent you connect to the hosted MCP server, must ask a
 person before it deletes something, deploys or rolls back a production app,
@@ -713,7 +707,7 @@ gregale webhook account add --target-url https://example.com/approvals \
 Each event names the request, the key, the category, the method and path,
 and, for a new request, its review link. It never includes the request body.
 
-### Limit what an agent adds to your bill
+## Limit what an agent adds to your bill
 
 An agent can raise what you pay every month without any traffic: by keeping
 instances warm (`min_instances`, a scaling policy's floor or schedule
@@ -798,11 +792,7 @@ rate. That covers creating such a database, turning scale-to-zero off,
 resizing it to a larger class, and restoring a copy of it. A database that
 scales to zero adds nothing; its compute, storage and egress follow use.
 
-## Review and undo what an agent did
-
-See which agents are active, what they changed, and roll a change back.
-
-### See your agents at a glance
+## See your agents at a glance
 
 `gregale mcp connection status` shows each connected agent on one line: its
 pending approval requests, the always-on cost its changes keep running
@@ -817,7 +807,7 @@ gregale mcp connection status <id>
 
 A `?` means that part could not be read; `--json` names which.
 
-### See what an agent changed
+## See what an agent changed
 
 Gregale keeps each agent's write requests (`POST`, `PUT`, `PATCH` and
 `DELETE`) for 7 days: when, method, path, the response status, and the
@@ -838,7 +828,7 @@ its own with `gregale mcp connection activity --self`, for example to check
 what it already did before repeating work. Pages hold 50 rows; pass the
 printed `--cursor` value for older ones.
 
-### Undo what an agent changed
+## Undo what an agent changed
 
 `gregale mcp connection undo` reverses an agent's changes. It first prints
 them, newest first, with what undoing each will do, and undoes them once you
