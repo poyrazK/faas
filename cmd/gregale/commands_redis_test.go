@@ -56,7 +56,8 @@ func TestCmdRedisBindCreatesMissingApp(t *testing.T) {
 	}{
 		{name: "missing app is created", cacheFound: true, wantCode: 0, wantCreate: true, wantBind: true, wantOut: "Created app web and set REDIS_URL"},
 		{name: "existing app is bound", cacheFound: true, appFound: true, wantCode: 0, wantBind: true, wantOut: "Set REDIS_URL on web"},
-		{name: "missing cache creates nothing", wantCode: 1},
+		// 4 is the CLI's not-found exit code.
+		{name: "missing cache creates nothing", wantCode: 4},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

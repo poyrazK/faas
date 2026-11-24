@@ -446,7 +446,7 @@ See [Troubleshooting](troubleshooting.md).
 
 ### `cache_shrink_needs_evict`
 
-HTTP 409 Conflict · Shrinking needs evict
+HTTP 409 Conflict · Shrinking needs --evict
 
 ### `cache_waking`
 
