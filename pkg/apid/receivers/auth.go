@@ -69,6 +69,8 @@ type authReceiver struct {
 	// consumers enrolls gateways' verified OAuth callers as API consumers;
 	// nil answers Unavailable (ADR-20261124094745).
 	consumers OAuthConsumers
+	// upgrades mints consumers' upgrade links; nil answers Unavailable.
+	upgrades UpgradeLinks
 }
 
 // sessionKeyHolder is a SessionOpener that can derive keys:

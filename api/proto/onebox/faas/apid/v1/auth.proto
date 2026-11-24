@@ -101,6 +101,25 @@ service Auth {
   // (the app does not enroll OAuth callers), ResourceExhausted (the app took
   // its sign-ups for the day) and Unavailable.
   rpc EnrollOAuthConsumer(EnrollOAuthConsumerRequest) returns (EnrollOAuthConsumerResponse);
+
+  // ConsumerUpgradeLink returns the hosted upgrade page link for a consumer
+  // that reached its plan's limit (ADR-20261124094745), or an empty url when
+  // the app does not let customers change plans. The link expires; it opens
+  // only the consumer's plan change. Errors are InvalidArgument, NotFound
+  // (no such app on the account) and Unavailable.
+  rpc ConsumerUpgradeLink(ConsumerUpgradeLinkRequest) returns (ConsumerUpgradeLinkResponse);
+}
+
+message ConsumerUpgradeLinkRequest {
+  string account_id = 1;
+  string app_id = 2;
+  string consumer_id = 3;
+}
+
+message ConsumerUpgradeLinkResponse {
+  // url is empty when the app offers no upgrade.
+  string url = 1;
+  int64 expires_at_unix_ms = 2;
 }
 
 message EnrollOAuthConsumerRequest {

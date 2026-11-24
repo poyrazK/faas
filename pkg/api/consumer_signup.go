@@ -278,6 +278,43 @@ type APIConsumerPlanChangedWebhookPayload struct {
 	ChangedAt     time.Time `json:"changed_at"`
 }
 
+// ConsumerUpgradeResponse is what the upgrade page shows a customer who
+// opened an upgrade link (ADR-20261124094745).
+type ConsumerUpgradeResponse struct {
+	App           string               `json:"app"`
+	DisplayName   string               `json:"display_name"`
+	CurrentPlanID string               `json:"current_plan_id,omitempty"`
+	Livemode      bool                 `json:"livemode"`
+	Plans         []ConsumerSignupPlan `json:"plans"`
+	// HasCard reports a saved card: moving to a paid plan needs no checkout.
+	HasCard bool `json:"has_card"`
+}
+
+// StartConsumerUpgradeRequest moves the upgrade link's customer to PlanID.
+type StartConsumerUpgradeRequest struct {
+	Token  string `json:"token"`
+	PlanID string `json:"plan_id"`
+}
+
+// ConsumerUpgradeResult is a started or finished upgrade. A paid plan for a
+// customer without a card returns CheckoutURL: Stripe Checkout returns to
+// the upgrade page, which completes the upgrade with CompleteToken.
+// Otherwise the plan changes from EffectiveFrom.
+type ConsumerUpgradeResult struct {
+	PlanID        string     `json:"plan_id"`
+	EffectiveFrom *time.Time `json:"effective_from,omitempty"`
+	CheckoutURL   string     `json:"checkout_url,omitempty"`
+	CompleteToken string     `json:"complete_token,omitempty"`
+}
+
+// CompleteConsumerUpgradeRequest finishes an upgrade after Checkout saved
+// the card.
+type CompleteConsumerUpgradeRequest struct {
+	Token             string `json:"token"`
+	CompleteToken     string `json:"complete_token"`
+	CheckoutSessionID string `json:"checkout_session_id"`
+}
+
 // APIConsumerClosedWebhookPayload is delivered with consumer.closed when a
 // customer closed their account with their own key.
 type APIConsumerClosedWebhookPayload struct {

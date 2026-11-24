@@ -109,6 +109,12 @@ func (s *Service) ChangePlan(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Already on this plan", "the consumer is already on this plan"))
 		return
 	}
+	// A customer that joined the free plan has no card to bill
+	// (ADR-20261124094745): it saves one through an upgrade link first.
+	if target != set.FreePlanID && state.APIConsumerCardless(c.consumer.ExternalRef) {
+		selfServiceUnavailable(w, "a paid plan needs a saved card; open the upgrade link from the API's plan-limit error to add one")
+		return
+	}
 	self, ok := s.Host.Store().(state.APIConsumerSelfServiceStore)
 	if !ok {
 		api.WriteProblem(w, api.ErrInternal("plan changes are unavailable"))

@@ -3,6 +3,7 @@ package receivers
 import (
 	"context"
 	"errors"
+	"time"
 	"unicode/utf8"
 
 	"google.golang.org/grpc/codes"
@@ -21,6 +22,42 @@ type OAuthConsumers interface {
 	// callee sets in's times. state.ErrAPIConsumerOAuthOff,
 	// state.ErrAPIConsumerSignupLimit and state.ErrNotFound.
 	EnrollOAuthConsumer(ctx context.Context, in state.APIConsumerEnrollment) (state.APIConsumer, bool, error)
+}
+
+// UpgradeLinks mints a consumer's upgrade page link (ADR-20261124094745):
+// apid's *consumersignup.Service.
+type UpgradeLinks interface {
+	// UpgradeLink returns "" when the app offers no upgrade, and
+	// state.ErrNotFound when the app is not the account's.
+	UpgradeLink(ctx context.Context, accountID, appID, consumerID string) (string, time.Time, error)
+}
+
+// WithUpgradeLinks lets the Auth service mint upgrade links.
+func WithUpgradeLinks(links UpgradeLinks) AuthOption {
+	return func(r *authReceiver) { r.upgrades = links }
+}
+
+// ConsumerUpgradeLink returns a consumer's upgrade page link for a gateway
+// answering a plan-limit refusal.
+func (r *authReceiver) ConsumerUpgradeLink(ctx context.Context, req *apidpb.ConsumerUpgradeLinkRequest) (*apidpb.ConsumerUpgradeLinkResponse, error) {
+	if r.upgrades == nil {
+		return nil, status.Error(codes.Unavailable, "upgrade links are not configured")
+	}
+	if req.GetAccountId() == "" || req.GetAppId() == "" || req.GetConsumerId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "account_id, app_id and consumer_id are required")
+	}
+	link, expires, err := r.upgrades.UpgradeLink(ctx, req.GetAccountId(), req.GetAppId(), req.GetConsumerId())
+	switch {
+	case errors.Is(err, state.ErrNotFound):
+		return nil, status.Error(codes.NotFound, "no such app")
+	case err != nil:
+		return nil, status.Error(codes.Unavailable, "could not mint the upgrade link")
+	}
+	resp := &apidpb.ConsumerUpgradeLinkResponse{Url: link}
+	if link != "" {
+		resp.ExpiresAtUnixMs = expires.UnixMilli()
+	}
+	return resp, nil
 }
 
 // WithOAuthConsumers lets the Auth service enroll OAuth consumers.

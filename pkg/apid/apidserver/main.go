@@ -2728,7 +2728,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// The tracing capability gates span ingest as it gates trace reads.
 	tracing := receivers.TracingReleased(srv.tracingReleased)
 	spans := spansIngest{limiter: spansLimiter, tracing: tracing, sessions: sessions, agents: srv.agentRequestsForGateways(),
-		consumers: srv.oauthConsumersForGateways()}
+		consumers: srv.oauthConsumersForGateways(), upgrades: &srv.consumerSignup}
 	// ADR-958: one in-guest span ingester shared by both SpansWriter listeners.
 	// Its flush loop writes back through WriteSpansSummary so guest spans share
 	// that path's validation, rate cap and outcome metrics.
@@ -3607,4 +3607,7 @@ type spansIngest struct {
 	// consumers enrolls gateways' OAuth callers as API consumers
 	// (ADR-20261124094745).
 	consumers receivers.OAuthConsumers
+	// upgrades mints consumers' upgrade links for gateways' plan-limit
+	// refusals (ADR-20261124094745).
+	upgrades receivers.UpgradeLinks
 }

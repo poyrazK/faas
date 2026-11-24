@@ -1066,8 +1066,12 @@ type Handler struct {
 	consumerPlanPolicies *consumerPlanPolicyCache
 	// oauthConsumers enrolls MCP OAuth callers as API consumers through
 	// apid (ADR-20261124094745); nil leaves them unattributed.
-	oauthConsumers             OAuthConsumerEnroller
-	oauthConsumerCache         *oauthConsumerCache
+	oauthConsumers     OAuthConsumerEnroller
+	oauthConsumerCache *oauthConsumerCache
+	// upgradeLinks adds upgrade_url to plan-limit refusals
+	// (ADR-20261124094745); nil leaves it out.
+	upgradeLinks               ConsumerUpgradeLinker
+	upgradeLinkCache           *upgradeLinkCache
 	tenantRequestBudgetEnabled bool
 	// apiMonetization is the API monetization release gate
 	// (ADR-20261018090210); nil keeps monetization off.

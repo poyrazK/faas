@@ -78,7 +78,11 @@ link; an OAuth consumer is identified by issuer + subject.
 - A plan-limit `429` (`consumer_plan_limit_exceeded`, including route and
   tool caps) gains `upgrade_url` when the app has sign-up on with more than
   one offered plan. On an MCP JSON-RPC request the same URL is in the error's
-  `data.upgrade_url`, which MCP clients show to the user.
+  `data.upgrade_url`, which MCP clients show to the user. (Implementation
+  note: the first slice puts it in the problem body only; the JSON-RPC
+  `data` copy is a follow-up.)
+- A customer without a card (a `signup:` or `oauth:` external_ref) cannot
+  switch itself to a paid plan with its key; the upgrade page is the way.
 - The URL is `/v1/consumer-signup/APP/upgrade?token=…`. apid mints the token
   (`Auth.ConsumerUpgradeLink`, cached by the gateway per consumer for 10
   minutes): an HMAC over (consumer, app, expiry) with apid's sign-up secret,

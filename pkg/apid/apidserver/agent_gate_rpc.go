@@ -55,7 +55,8 @@ func (a agentRequestsForGateways) DecideAgentRequest(ctx context.Context, accoun
 
 // authOptions are the Auth service's gateway calls every listener shares.
 func (s spansIngest) authOptions() []receivers.AuthOption {
-	return []receivers.AuthOption{receivers.WithAgentRequests(s.agents), receivers.WithOAuthConsumers(s.consumers)}
+	return []receivers.AuthOption{receivers.WithAgentRequests(s.agents), receivers.WithOAuthConsumers(s.consumers),
+		receivers.WithUpgradeLinks(s.upgrades)}
 }
 
 // oauthConsumersForGateways returns nil (Unavailable) when the store cannot

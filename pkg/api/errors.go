@@ -149,6 +149,9 @@ type Problem struct {
 	// upgrade. PaddleCheckoutURL remains below for backwards compatibility
 	// with older SDKs that only know the Paddle-specific field.
 	CheckoutURL string `json:"checkout_url,omitempty"`
+	// UpgradeURL opens the API's hosted upgrade page for the consumer that
+	// reached its plan's limit (ADR-20261124094745).
+	UpgradeURL string `json:"upgrade_url,omitempty"`
 	// BillingPortalURL is set on payment_required (CodePayment) errors
 	// when the customer must manage an existing subscription. It may be a
 	// provider-created session URL or an operator-controlled URL with the

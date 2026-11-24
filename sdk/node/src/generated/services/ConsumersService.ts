@@ -28,6 +28,7 @@ import type { ChangeConsumerBillingPlanRequest } from '../models/ChangeConsumerB
 import type { ClaimAPIConsumerUsageStatementRequest } from '../models/ClaimAPIConsumerUsageStatementRequest.js';
 import type { CompleteConsumerSignupRequest } from '../models/CompleteConsumerSignupRequest.js';
 import type { CompleteConsumerSignupResponse } from '../models/CompleteConsumerSignupResponse.js';
+import type { CompleteConsumerUpgradeRequest } from '../models/CompleteConsumerUpgradeRequest.js';
 import type { ConsumerBillingCloseResponse } from '../models/ConsumerBillingCloseResponse.js';
 import type { ConsumerBillingPlanChangeResponse } from '../models/ConsumerBillingPlanChangeResponse.js';
 import type { ConsumerBillingPlansResponse } from '../models/ConsumerBillingPlansResponse.js';
@@ -40,6 +41,8 @@ import type { ConsumerKeyResponse } from '../models/ConsumerKeyResponse.js';
 import type { ConsumerSignupFormResponse } from '../models/ConsumerSignupFormResponse.js';
 import type { ConsumerSignupListResponse } from '../models/ConsumerSignupListResponse.js';
 import type { ConsumerSignupSettingsResponse } from '../models/ConsumerSignupSettingsResponse.js';
+import type { ConsumerUpgradeResponse } from '../models/ConsumerUpgradeResponse.js';
+import type { ConsumerUpgradeResult } from '../models/ConsumerUpgradeResult.js';
 import type { CreateAPIConsumerCreditRequest } from '../models/CreateAPIConsumerCreditRequest.js';
 import type { CreateAPIConsumerPlanRequest } from '../models/CreateAPIConsumerPlanRequest.js';
 import type { CreateAPIConsumerRateCardRequest } from '../models/CreateAPIConsumerRateCardRequest.js';
@@ -54,6 +57,7 @@ import type { PutAPIConsumerBillingPolicyRequest } from '../models/PutAPIConsume
 import type { PutAPIConsumerSpendCapRequest } from '../models/PutAPIConsumerSpendCapRequest.js';
 import type { PutAPIConsumerTrialRequest } from '../models/PutAPIConsumerTrialRequest.js';
 import type { PutConsumerSignupRequest } from '../models/PutConsumerSignupRequest.js';
+import type { StartConsumerUpgradeRequest } from '../models/StartConsumerUpgradeRequest.js';
 import type { StatementInvoiceExportResponse } from '../models/StatementInvoiceExportResponse.js';
 import type { UpdateAPIConsumerPlanLimitsRequest } from '../models/UpdateAPIConsumerPlanLimitsRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
@@ -395,6 +399,120 @@ export class ConsumersService {
         429: `Too many completions from this address (\`consumer_signup_rate_limited\`).`,
         502: `Stripe could not be reached to confirm the card (\`billing_provider_unavailable\`).`,
         503: `The app's billing setup cannot complete sign-ups (\`consumer_signup_unavailable\`).`,
+      },
+    });
+  }
+  /**
+   * Read the plans an upgrade link's customer can move to.
+   * Needs no credential: the upgrade link's token (ADR-20261124094745)
+   * names the customer. A plan-limit `429` carries the link in
+   * `upgrade_url`.
+   *
+   * @returns ConsumerUpgradeResponse The customer's plan, the offered plans and whether it has a saved card.
+   * @throws ApiError
+   */
+  public static getConsumerUpgrade({
+    slug,
+    token,
+  }: {
+    /**
+     * The app whose plan the customer changes.
+     */
+    slug: string,
+    /**
+     * The upgrade link's token.
+     */
+    token: string,
+  }): CancelablePromise<ConsumerUpgradeResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/consumer-signup/{slug}/upgrade/plans',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'token': token,
+      },
+      errors: {
+        404: `The app takes no sign-ups, or the link is invalid or expired.`,
+        409: `The app does not let customers change plans (\`consumer_self_service_unavailable\`).`,
+        429: `Too many requests from this address (\`consumer_signup_rate_limited\`).`,
+      },
+    });
+  }
+  /**
+   * Move an upgrade link's customer to another offered plan.
+   * Needs no credential. A free plan, or any plan for a customer with a
+   * saved card, changes from the next minute. A paid plan for a customer
+   * without a card returns a Stripe Checkout URL to save one; Checkout
+   * returns to the upgrade page, which completes the upgrade.
+   *
+   * @returns ConsumerUpgradeResult The changed plan, or the Checkout to save a card first.
+   * @throws ApiError
+   */
+  public static startConsumerUpgrade({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * The app whose plan the customer changes.
+     */
+    slug: string,
+    requestBody: StartConsumerUpgradeRequest,
+  }): CancelablePromise<ConsumerUpgradeResult> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/consumer-signup/{slug}/upgrade',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        404: `The app takes no sign-ups, or the link is invalid or expired.`,
+        409: `Plan changes are off (\`consumer_self_service_unavailable\`) or one starts at the next minute already.`,
+        422: `The plan is not offered.`,
+        429: `Too many requests from this address (\`consumer_signup_rate_limited\`).`,
+        502: `Stripe could not be reached (\`billing_provider_unavailable\`).`,
+        503: `The app's billing setup cannot take cards (\`consumer_signup_unavailable\`).`,
+      },
+    });
+  }
+  /**
+   * Finish an upgrade once Checkout saved the card.
+   * Needs no credential: the upgrade link's token and the complete token
+   * from the started upgrade prove it. Makes the new Stripe customer the
+   * consumer's external_ref and changes the plan from the next minute.
+   *
+   * @returns ConsumerUpgradeResult The changed plan.
+   * @throws ApiError
+   */
+  public static completeConsumerUpgrade({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * The app whose plan the customer changes.
+     */
+    slug: string,
+    requestBody: CompleteConsumerUpgradeRequest,
+  }): CancelablePromise<ConsumerUpgradeResult> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/consumer-signup/{slug}/upgrade/complete',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        404: `The app takes no sign-ups, or a token is invalid or expired.`,
+        409: `The card is not saved yet (\`consumer_signup_checkout_incomplete\`), the consumer already has another payment account, or a plan change starts at the next minute already.`,
+        429: `Too many requests from this address (\`consumer_signup_rate_limited\`).`,
+        502: `Stripe could not be reached (\`billing_provider_unavailable\`).`,
+        503: `The app's billing setup cannot take cards (\`consumer_signup_unavailable\`).`,
       },
     });
   }

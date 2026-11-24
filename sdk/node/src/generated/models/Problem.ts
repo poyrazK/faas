@@ -103,6 +103,12 @@ export type Problem = {
    *
    */
   checkout_url?: string;
+  /**
+   * On a `consumer_plan_limit_exceeded` 429, the API's hosted page
+   * where the consumer moves to another plan (ADR-20261124094745).
+   *
+   */
+  upgrade_url?: string;
   billing_portal_url?: string;
   /**
    * Legacy Paddle-hosted checkout URL on a `payment_required`

@@ -62,7 +62,9 @@ type Host interface {
 type Service struct {
 	Host   Host
 	Stripe *stripeinvoice.Client
-	Now    func() time.Time
+	// UpgradeKey signs upgrade links (ADR-20261124094745); empty mints none.
+	UpgradeKey []byte
+	Now        func() time.Time
 	// Enabled pauses the cleanup worker while it reports false; nil runs it.
 	Enabled func() bool
 

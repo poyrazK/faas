@@ -760,6 +760,7 @@ from .commit_source_response_destination import CommitSourceResponseDestination
 from .compare_platform_tenant_self_workflow_readiness_body import ComparePlatformTenantSelfWorkflowReadinessBody
 from .complete_consumer_signup_request import CompleteConsumerSignupRequest
 from .complete_consumer_signup_response import CompleteConsumerSignupResponse
+from .complete_consumer_upgrade_request import CompleteConsumerUpgradeRequest
 from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
 from .complete_workflow_callback_response_status import CompleteWorkflowCallbackResponseStatus
@@ -826,6 +827,8 @@ from .consumer_signup_response import ConsumerSignupResponse
 from .consumer_signup_response_status import ConsumerSignupResponseStatus
 from .consumer_signup_settings_response import ConsumerSignupSettingsResponse
 from .consumer_signup_settings_response_provider import ConsumerSignupSettingsResponseProvider
+from .consumer_upgrade_response import ConsumerUpgradeResponse
+from .consumer_upgrade_result import ConsumerUpgradeResult
 from .control_application_standard_operation_request import ControlApplicationStandardOperationRequest
 from .control_data_pipeline_request import ControlDataPipelineRequest
 from .control_data_pipeline_request_action import ControlDataPipelineRequestAction
@@ -6507,6 +6510,7 @@ from .source_review_response import SourceReviewResponse
 from .source_tarball_deploy_request import SourceTarballDeployRequest
 from .source_tarball_deploy_request_tag import SourceTarballDeployRequestTag
 from .stage_project_release_request import StageProjectReleaseRequest
+from .start_consumer_upgrade_request import StartConsumerUpgradeRequest
 from .start_durable_entity_quota_migration_body import StartDurableEntityQuotaMigrationBody
 from .start_durable_entity_quota_migration_response_200 import StartDurableEntityQuotaMigrationResponse200
 from .start_durable_entity_registry_cleanup_body import StartDurableEntityRegistryCleanupBody
@@ -8010,6 +8014,7 @@ __all__ = (
     "ComparePlatformTenantSelfWorkflowReadinessBody",
     "CompleteConsumerSignupRequest",
     "CompleteConsumerSignupResponse",
+    "CompleteConsumerUpgradeRequest",
     "CompleteObjectMultipartUploadRequest",
     "CompleteWorkflowCallbackResponse",
     "CompleteWorkflowCallbackResponseStatus",
@@ -8074,6 +8079,8 @@ __all__ = (
     "ConsumerSignupResponseStatus",
     "ConsumerSignupSettingsResponse",
     "ConsumerSignupSettingsResponseProvider",
+    "ConsumerUpgradeResponse",
+    "ConsumerUpgradeResult",
     "ControlApplicationStandardOperationRequest",
     "ControlDataPipelineRequest",
     "ControlDataPipelineRequestAction",
@@ -13441,6 +13448,7 @@ __all__ = (
     "SourceTarballDeployRequest",
     "SourceTarballDeployRequestTag",
     "StageProjectReleaseRequest",
+    "StartConsumerUpgradeRequest",
     "StartDurableEntityQuotaMigrationBody",
     "StartDurableEntityQuotaMigrationResponse200",
     "StartDurableEntityRegistryCleanupBody",

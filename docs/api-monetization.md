@@ -766,8 +766,15 @@ gregale consumers signup-set my-api --display-name "Weather API" --plans free,pr
   `plan_id` returns an empty `checkout_url`; complete the sign-up at once
   with the claim token. The hosted page does this for you. No Stripe
   customer is created, so the consumer's `external_ref` is `signup:<id>`.
-- **Moving to a paid plan.** With `--customer-plan-changes`, a customer can
-  switch to a paid plan with their own key once you have a card for them.
+- **Moving to a paid plan.** With `--customer-plan-changes`, a customer
+  that reaches its plan's limit gets an `upgrade_url` in the `429
+  consumer_plan_limit_exceeded` problem. The link opens a hosted page that
+  lists your offered plans. A paid plan first saves a card with Stripe
+  Checkout; the new Stripe customer becomes the consumer's `external_ref`,
+  and the plan changes from the next minute. The link works for 24 hours
+  and opens only that customer's plan change. A customer without a card
+  cannot switch to a paid plan with its key
+  (`409 consumer_self_service_unavailable`).
 
 ### MCP callers become customers
 

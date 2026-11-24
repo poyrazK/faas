@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -18,6 +19,20 @@ var (
 	// ErrOAuthConsumerSignupLimit: the app took its sign-ups for the day.
 	ErrOAuthConsumerSignupLimit = errors.New("apidgrpc: the app took its sign-ups for the day")
 )
+
+// UpgradeLink returns the consumer's upgrade page link and when it
+// expires, or "" when the app offers no upgrade (or apid predates the
+// RPC). Any error means apid could not answer.
+func (c OAuthConsumers) UpgradeLink(ctx context.Context, accountID, appID, consumerID string) (string, time.Time, error) {
+	resp, err := c.Auth.cli.ConsumerUpgradeLink(ctx, &apidpb.ConsumerUpgradeLinkRequest{AccountId: accountID, AppId: appID, ConsumerId: consumerID})
+	switch status.Code(err) {
+	case codes.OK:
+		return resp.GetUrl(), time.UnixMilli(resp.GetExpiresAtUnixMs()), nil
+	case codes.Unimplemented, codes.NotFound:
+		return "", time.Time{}, nil
+	}
+	return "", time.Time{}, fmt.Errorf("apidgrpc: ConsumerUpgradeLink: %w", err)
+}
 
 // OAuthConsumers is how a gateway turns a verified OAuth caller of an MCP
 // server into the app's API consumer: it asks apid, the only writer of
