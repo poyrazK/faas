@@ -9864,6 +9864,11 @@ paths:
           required: false
           description: RFC 3339 end, at most 31 days after since (default now).
           schema: { type: string, format: date-time }
+        - name: breakdown
+          in: query
+          required: false
+          description: Include totals for your consumer, grouped by route and meter.
+          schema: { type: boolean, default: false }
       responses:
         '200':
           description: Requests and billable units per UTC day.
@@ -23048,6 +23053,11 @@ paths:
         required: false
         description: RFC3339 exclusive upper bound, snapped to UTC midnight. Defaults to the next UTC midnight, so today is included.
         schema: { type: string, format: date-time }
+      - name: breakdown
+        in: query
+        required: false
+        description: Include separate usage totals by route and meter.
+        schema: { type: boolean, default: false }
     get:
       tags: [consumers]
       operationId: getAPIConsumerUsage
@@ -23085,6 +23095,11 @@ paths:
         required: false
         description: Optional RFC3339 exclusive upper bound for the quote period; defaults to the next UTC midnight, so today is included.
         schema: { type: string, format: date-time }
+      - name: breakdown
+        in: query
+        required: false
+        description: Include priced usage totals by route and meter.
+        schema: { type: boolean, default: false }
     get:
       tags: [consumers]
       operationId: getAPIConsumerUsageQuote
@@ -23169,7 +23184,12 @@ paths:
       tags: [consumers]
       operationId: createAPIConsumerUsageStatement
       summary: Snapshot an API consumer usage quote or create a late-usage adjustment.
-      description: Creates an immutable, auditable statement revision for the explicit UTC-minute period. An unchanged draft replays. If usage or effective prices changed, the open draft becomes superseded and a new draft revision is created. After finalization, new units create the next revision containing only those units; no new units replay the latest revision. Finalized revisions are never rewritten.
+      description: >-
+        Creates an immutable statement revision for the explicit UTC-minute period. An unchanged draft replays.
+        Changes supersede an open draft and late usage after finalization creates an adjustment.
+        An administrator can submit a waiver for the exact unpriced model units on the latest held draft.
+        The waiver records zero-charge coverage for those units in a new revision. Repeating the approval returns its revision.
+        Additional unpriced units require a new approval.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -23179,7 +23199,7 @@ paths:
             schema: { $ref: '#/components/schemas/CreateAPIConsumerUsageStatementRequest' }
       responses:
         '200':
-          description: The latest existing revision; the period has no new usage or the draft is unchanged.
+          description: An unchanged statement revision or a replay of the requested waiver approval.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/APIConsumerUsageStatementResponse' }
@@ -23191,8 +23211,14 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PlanLimit' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: The statement period or waiver selection is invalid.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}:
     parameters:
@@ -104769,11 +104795,50 @@ components:
         error_count: { type: integer, format: int64, minimum: 0 }
         billable_units: { type: integer, format: int64, minimum: 0 }
 
+    APIConsumerRouteUsage:
+      description: Unweighted billable requests for one route over the requested period.
+      type: object
+      required: [route, billable_requests]
+      properties:
+        route: { type: string, description: Method and route template. Empty for unattributed requests. }
+        billable_requests: { type: integer, format: int64, minimum: 0 }
+
+    APIConsumerMeterUsage:
+      description: Reported units for one app meter over the requested period.
+      type: object
+      required: [meter, units]
+      properties:
+        meter: { type: string }
+        units: { type: integer, format: int64, minimum: 0 }
+
+    APIConsumerQuoteBreakdown:
+      description: Units and charge allocated to a route or meter at one rate.
+      type: object
+      required: [unit, price_millicents_per_unit, billable_units, included_units, charged_units, amount_millicents]
+      properties:
+        route: { type: string, description: Method and route template for attributed request units. }
+        unit: { type: string }
+        model: { type: string }
+        rate_card_id: { type: string, format: uuid }
+        price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+        included_units: { type: integer, format: int64, minimum: 0, description: Units covered by the flat card's monthly allowance. }
+        waived_units: { type: integer, format: int64, minimum: 0, description: Reported model units waived in this breakdown. }
+        charged_units: { type: integer, format: int64, minimum: 0 }
+        amount_millicents: { type: integer, format: int64, minimum: 0 }
+        trial: { type: boolean }
+
     APIConsumerUsageResponse:
       description: "Durable minute usage for one stable API consumer."
       type: object
       required: [consumer_id, period_start, period_end, request_count, error_count, billable_units, buckets, as_of]
       properties:
+        route_breakdown:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerRouteUsage' }
+        meter_breakdown:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerMeterUsage' }
         consumer_id: { type: string, format: uuid }
         period_start: { type: string, format: date-time }
         period_end: { type: string, format: date-time }
@@ -104799,6 +104864,11 @@ components:
           maxItems: 10
           description: "Optional graduated ladder that replaces price_millicents_per_unit and included_units_per_month. Each consumer's units are counted per UTC calendar month in minute order and priced by the step their position falls in. Bounds increase strictly, only the last step is unbounded, and only the first step may be free. Statements of periods priced by a tiered card must cover exactly one UTC calendar month."
           items: { $ref: '#/components/schemas/APIConsumerRateCardTier' }
+        model_prices:
+          type: object
+          maxProperties: 16
+          description: Model price overrides for a flat app meter. Report a configured override as meter__model and use the base meter for the base price. All models share the meter allowance.
+          additionalProperties: { type: integer, format: int64, minimum: 0 }
         route_weights:
           type: object
           maxProperties: 50
@@ -104940,6 +105010,11 @@ components:
           type: array
           items: { $ref: '#/components/schemas/APIConsumerRateCardTier' }
         tier_mode: { type: string, enum: [graduated, volume], description: "How the ladder prices a consumer's month." }
+        model_prices:
+          type: object
+          maxProperties: 16
+          description: Configured per-unit prices by model, in millicents.
+          additionalProperties: { type: integer, format: int64, minimum: 0 }
         route_weights:
           type: object
           description: "Units charged per request on a listed route; unlisted routes count 1."
@@ -104962,8 +105037,10 @@ components:
       type: object
       required: [window_start, billable_units, charged_units, amount_millicents]
       properties:
+        model: { type: string, description: Configured model for this app-meter bucket. }
         window_start: { type: string, format: date-time }
         billable_units: { type: integer, format: int64, minimum: 0 }
+        waived_units: { type: integer, format: int64, minimum: 0, description: Model units with an approved waiver in the quoted minute. }
         rate_card_id: { type: string, format: uuid }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
@@ -104981,6 +105058,12 @@ components:
       type: object
       required: [consumer_id, period_start, period_end, billable_units, unpriced_units, amount_millicents, priced, buckets, as_of]
       properties:
+        route_breakdown:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerQuoteBreakdown' }
+        meter_breakdown:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerQuoteBreakdown' }
         consumer_id: { type: string, format: uuid }
         period_start: { type: string, format: date-time }
         period_end: { type: string, format: date-time }
@@ -105013,6 +105096,29 @@ components:
         hours_checked: { type: integer, minimum: 0 }
         hours_without_telemetry: { type: integer, minimum: 0, description: "Hours with billed requests but no telemetry." }
 
+    APIConsumerUsageWaiverRequest:
+      description: The exact unpriced model usage selected for administrative approval on an app consumer draft.
+      type: object
+      required: [source_statement_id, unit, model, since, until, units, reason]
+      properties:
+        source_statement_id: { type: string, format: uuid, description: Latest held statement revision reviewed for this waiver. }
+        unit: { type: string, description: App meter being waived in app:<meter> form. }
+        model: { type: string, description: Reported alias without an effective price in the selected window. }
+        since: { type: string, format: date-time, description: Inclusive UTC-minute start within the source statement period. }
+        until: { type: string, format: date-time, description: Exclusive UTC-minute end within the source period. Must be a closed boundary. }
+        units: { type: integer, format: int64, minimum: 1, description: Exact count of remaining unpriced units for the model and window on the source draft. }
+        reason: { type: string, minLength: 1, maxLength: 500, description: Reason for approving zero charge. The API limit is 500 UTF-8 bytes. }
+
+    APIConsumerUsageWaiverResponse:
+      description: Approval attached to the statement revision that recorded the waiver.
+      allOf:
+        - $ref: '#/components/schemas/APIConsumerUsageWaiverRequest'
+        - type: object
+          required: [approved_by, approved_at]
+          properties:
+            approved_by: { type: string, format: uuid, description: Gregale account ID of the approver. }
+            approved_at: { type: string, format: date-time, description: UTC time Gregale recorded the approval. }
+
     CreateAPIConsumerUsageStatementRequest:
       description: "Explicit UTC-minute period to snapshot as an immutable usage statement."
       type: object
@@ -105020,14 +105126,19 @@ components:
       properties:
         period_start: { type: string, format: date-time }
         period_end: { type: string, format: date-time }
+        waiver:
+          description: Optional administrative approval supported on app consumer statements.
+          $ref: '#/components/schemas/APIConsumerUsageWaiverRequest'
 
     APIConsumerUsageStatementBucketResponse:
       description: "One UTC minute captured in a durable usage statement."
       type: object
       required: [window_start, billable_units, charged_units, amount_millicents]
       properties:
+        model: { type: string, description: Model priced in this statement bucket. }
         window_start: { type: string, format: date-time }
         billable_units: { type: integer, format: int64, minimum: 0 }
+        waived_units: { type: integer, format: int64, minimum: 0, description: Model units recorded at zero charge by a waiver in this revision. }
         rate_card_id: { type: string, format: uuid }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
@@ -105065,6 +105176,7 @@ components:
         unpriced_units: { type: integer, format: int64, minimum: 0 }
         amount_millicents: { type: integer, format: int64, minimum: 0 }
         priced: { type: boolean }
+        waiver: { $ref: '#/components/schemas/APIConsumerUsageWaiverResponse' }
         buckets:
           type: array
           items: { $ref: '#/components/schemas/APIConsumerUsageStatementBucketResponse' }
@@ -137007,6 +137119,12 @@ components:
       type: object
       required: [since, until, days]
       properties:
+        route_breakdown:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerRouteUsage' }
+        meter_breakdown:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerMeterUsage' }
         since: { type: string, format: date-time }
         until: { type: string, format: date-time }
         days:

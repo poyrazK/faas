@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -48,6 +49,15 @@ func (s *server) getAPIConsumerUsage(w http.ResponseWriter, r *http.Request, acc
 			WindowStart: row.WindowStart.UTC(), RequestCount: row.RequestCount,
 			ErrorCount: row.ErrorCount, BillableUnits: row.BillableUnits,
 		})
+	}
+	if r.URL.Query().Get("breakdown") == "true" {
+		routes, meters, err := consumerbilling.UsageBreakdown(r.Context(), s.store, acct.ID, app.ID, consumer.ID, since, until, rows)
+		if err != nil {
+			s.log.ErrorContext(r.Context(), "list API consumer usage breakdown", "app_id", app.ID, "consumer_id", consumer.ID, "err", err)
+			api.WriteProblem(w, api.ErrInternal("could not load API consumer usage breakdown"))
+			return
+		}
+		out.RouteBreakdown, out.MeterBreakdown = routes, meters
 	}
 	writeJSON(w, http.StatusOK, out)
 }
