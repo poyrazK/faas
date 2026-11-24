@@ -1,6 +1,6 @@
 # ADR-20261123062111: Managed PostgreSQL restore history is billed at the provider's price plus 5%
 
-- **Status:** accepted (owner, 2026-11-23: option B, with D1–D3 as recommended). Charging is implemented; D2 (the shorter restore window for accounts with overage off) is the next slice.
+- **Status:** accepted (owner, 2026-11-23: option B, with D1–D3 as recommended). Charging is implemented; D2 (the shorter restore window for accounts with overage off) is implemented behind `FAAS_MANAGED_POSTGRES_HISTORY_LIMIT` (default shadow), without its email.
 - **Date:** 2026-11-23
 - **Owner:** apid (managed PostgreSQL) and billing maintainers
 - **Closes:** the open item "The restore-history cap is undecided" in
@@ -138,7 +138,14 @@ Pro, overage on, one month: average restore history 12 GB, snapshots 1 GB.
 - **Charge.** `HistoryOverageCharge` and the plan-span sum in `pkg/managedpostgres`. A step never lowers the history the month already billed.
 - **Schema.** Migration `20261123105120100_managed_postgres_history_billing` widens the usage meter CHECK online and adds the delivery and reservation columns.
 - **Customers.** `gregale postgres usage` and the usage API show `snapshot_byte_seconds` and `included_history_bytes`.
-- **Next (D2).** Shortening the restore window needs a provider update of the history retention, a restore-point check against the shortened window, the reset on the 1st, `history_state` in `usage` and the email. Until it ships, overage-off accounts' history past the included amount stays unbilled, as before this ADR.
+- **D2 (2026-11-24).**
+  - **Sweep.** A history pass in the cap sweep (`pkg/managedpostgres/history_limit.go`), counted apart from the compute and storage passes. Per subject it compares month-to-date `history_byte_seconds + snapshot_byte_seconds` from the ledger with `api.ManagedPostgresHistoryLimitFactor` (2) times the included history held for 744 hours. Over it with overage off, each provider object the subject's ready databases live in gets `min(spec window, api.ManagedPostgresHistoryLimitedRestoreWindow)` (24 h); otherwise it gets its spec window back. The reset on the 1st and the lift on overage on need no state of their own: the next sweep sees the subject under the limit. The pass only moves a window between those two values; any other observed window is drift it logs and leaves.
+  - **Provider.** The optional `HistoryRetentionProvider`; Neon PATCHes the project's `history_retention_seconds` and confirms it by reading it back. It never writes zero (PITR off) or more than the backend's maximum.
+  - **Drift.** `SpecForObservation` reads the limited window below the spec's as the spec, as it reads a pool-lowered storage limit, so a limited database is not `spec_mismatch` and still resizes.
+  - **Restores.** `Service.RestoreWithResult` reads the source's provider window and refuses a point older than the limited one before reserving a target, naming the limit and the way back.
+  - **Usage.** `history_state` is `limited` or `normal`, present only while the mode is `on`; `gregale postgres usage` prints it.
+  - **Rollout.** `FAAS_MANAGED_POSTGRES_HISTORY_LIMIT` is off, shadow (the default) or on. Turn it on only after the `postgres-overage` capability is released, because overage on is a limited customer's way back.
+  - **Not built.** The once-a-month email: production has no internal mail on the control plane. Until it ships, a limited customer learns of it from `usage` and from a refused restore.
 
 ## Consequences
 

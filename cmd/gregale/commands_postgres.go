@@ -290,6 +290,13 @@ func cmdPostgresUsage(args []string) int {
 	if result.IncludedHistoryBytes > 0 {
 		_, _ = fmt.Fprintf(osStdout, "  included_history:             %s per month\n", formatIECBytes(result.IncludedHistoryBytes))
 	}
+	switch result.HistoryState {
+	case "limited":
+		_, _ = fmt.Fprintf(osStdout, "  history_state:                limited (24 h restore window until the 1st; run `gregale postgres overage on` to keep the full window)\n")
+	case "":
+	default:
+		_, _ = fmt.Fprintf(osStdout, "  history_state:                %s\n", result.HistoryState)
+	}
 	_, _ = fmt.Fprintf(osStdout, "  egress_bytes:                 %d (%s)\n", result.EgressBytes, formatIECBytes(result.EgressBytes))
 	if result.EgressAllowanceBytes > 0 {
 		_, _ = fmt.Fprintf(osStdout, "  egress_allowance:             %.0f GB per database\n", float64(result.EgressAllowanceBytes)/1e9)

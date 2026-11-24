@@ -479,6 +479,13 @@ databases by up to two hours.
   over the month, is billed at $0.21 per GB-month for restore history and
   $0.0945 per GB-month for snapshots (10^9 bytes). A month that billed it
   keeps the charge if you turn overage off.
+- With overage off, restore history is bounded instead of billed. Once this
+  month's restore history and snapshots pass twice the included amount,
+  `usage` shows `history_state: limited` and your databases keep only the
+  last 24 hours of history until the 1st of next month, or until you turn
+  overage on. Restoring to a point older than 24 hours is refused while
+  limited, and history dropped while limited does not come back. Writes,
+  reads and data are not affected.
 - Egress: each database has its own 500 GB (10^9 bytes) monthly egress
   allowance, separate from your apps' plan allowance. `usage` shows
   `egress_allowance_bytes` (per database) and what all the databases sent
