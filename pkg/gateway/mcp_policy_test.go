@@ -35,7 +35,7 @@ func TestMCPGatewayResourceAuthentication(t *testing.T) {
 				exp = time.Now().Add(-time.Second)
 			}
 			h := &Handler{jwtVerifier: &countingJWTVerifier{onVerify: func(_ context.Context, _ string, rule *EdgeRuleJWTResolved) (*JWTClaims, error) {
-				if len(rule.ExtractClaims) != 1 || rule.ExtractClaims[0] != "scope" {
+				if strings.Join(rule.ExtractClaims, ",") != "scope,email" {
 					t.Fatalf("scope not extracted: %+v", rule)
 				}
 				if tc.invalid {
