@@ -40,8 +40,20 @@ head -c 8 "${out}/screen-b64.png" | od -An -tx1 | grep -q '89 50 4e 47' || { ech
 gd screenshot --format jpeg --quality 60 >"${out}/screen.jpg"
 head -c 3 "${out}/screen.jpg" | od -An -tx1 | grep -q 'ff d8 ff' || { echo "screenshot is not a JPEG" >&2; exit 1; }
 echo "screenshot png $(wc -c <"${out}/screen.png") bytes, jpeg $(wc -c <"${out}/screen.jpg") bytes"
+# The PNG is read straight from the X server: ImageMagick must decode it to
+# the screen's size and nearly the pixels its own import sees (the panel
+# clock may tick in between).
+dims=$(docker exec -i "${name}" identify -format '%wx%h' png:- <"${out}/screen.png")
+[[ "${dims}" == 1280x800 ]] || { echo "screenshot decodes as ${dims}, want 1280x800" >&2; exit 1; }
+docker exec -e DISPLAY=:0 "${name}" sh -c 'import -silent -window root /tmp/im.png && gregale-desktop screenshot >/tmp/gd.png'
+differ=$(docker exec "${name}" sh -c 'compare -metric AE /tmp/im.png /tmp/gd.png null: 2>&1' | cut -d' ' -f1)
+(( ${differ%.*} < 10240 )) || { echo "screenshot differs from ImageMagick's in ${differ} pixels" >&2; exit 1; }
 
+# Moving or clicking where the pointer already is returns (xdotool's
+# mousemove --sync never did).
 gd move 100 200
+timeout 10 docker exec "${name}" gregale-desktop move 100 200 || { echo "a move to the pointer's spot hung" >&2; exit 1; }
+timeout 10 docker exec "${name}" gregale-desktop click 100 200 || { echo "a click at the pointer's spot hung" >&2; exit 1; }
 cursor=$(gd cursor)
 [[ "${cursor}" == "100 200" ]] || { echo "cursor = ${cursor}, want 100 200" >&2; exit 1; }
 gd click 640 400

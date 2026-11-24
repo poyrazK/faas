@@ -8,7 +8,9 @@ real desktop.
 import importlib.machinery
 import importlib.util
 import os
+import struct
 import unittest
+import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 _loader = importlib.machinery.SourceFileLoader("gregale_desktop", os.path.join(HERE, "gregale-desktop"))
@@ -27,16 +29,18 @@ def argv_for(*cli):
 class InputArgv(unittest.TestCase):
     def test_commands(self):
         cases = {
-            ("click", "10", "20"): ["xdotool", "mousemove", "10", "20", "click", "1"],
+            ("click", "10", "20"): ["xdotool", "mousemove", "10", "20", "mousedown", "1", "sleep", "0.02", "mouseup", "1"],
             ("click", "10", "20", "--button", "right", "--double"):
-                ["xdotool", "mousemove", "10", "20", "click", "--repeat", "2", "--delay", "80", "3"],
+                ["xdotool", "mousemove", "10", "20", "mousedown", "3", "sleep", "0.02", "mouseup", "3",
+                 "sleep", "0.08", "mousedown", "3", "sleep", "0.02", "mouseup", "3"],
             ("move", "0", "767"): ["xdotool", "mousemove", "0", "767"],
             ("down", "--button", "middle"): ["xdotool", "mousedown", "2"],
             ("up",): ["xdotool", "mouseup", "1"],
             ("drag", "1", "2", "3", "4"): ["xdotool", "mousemove", "1", "2", "mousedown", "1", "sleep", "0.1",
                                            "mousemove", "3", "4", "sleep", "0.1", "mouseup", "1"],
-            ("scroll", "down"): ["xdotool", "click", "--repeat", "1", "--delay", "30", "5"],
-            ("scroll", "left", "3"): ["xdotool", "click", "--repeat", "3", "--delay", "30", "6"],
+            ("scroll", "down"): ["xdotool", "mousedown", "5", "sleep", "0.02", "mouseup", "5"],
+            ("scroll", "left", "2"): ["xdotool", "mousedown", "6", "sleep", "0.02", "mouseup", "6",
+                                      "sleep", "0.03", "mousedown", "6", "sleep", "0.02", "mouseup", "6"],
             ("type", "--", "-rf /; $(reboot)"): ["xdotool", "type", "--clearmodifiers", "--delay", "8", "--", "-rf /; $(reboot)"],
             ("key", "enter", "ctrl+c", "ctrl+shift+T", "+"):
                 ["xdotool", "key", "--clearmodifiers", "--", "Return", "ctrl+c", "ctrl+shift+T", "plus"],
@@ -133,6 +137,50 @@ class Wait(unittest.TestCase):
 
     def test_default_stays_under_guest_init_attempt_bound(self):
         self.assertLess(gd.parser().parse_args(["wait"]).timeout, 10)
+
+
+def x_setup(byte_order=0, bpp=32, masks=(0xFF0000, 0xFF00, 0xFF), visual=0x21):
+    """A connection setup body for one 1280x800 depth-24 screen."""
+    vendor = b"The X.Org Foundation"
+    out = struct.pack("<IIIIHHBBBBBBBB", 12101011, 0x200000, 0x1FFFFF, 256, len(vendor), 65535, 1, 2,
+                      byte_order, 0, 32, 32, 8, 255) + b"\0" * 4
+    out += vendor + b"\0" * (-len(vendor) % 4)
+    out += struct.pack("<BBBxxxxx", 1, 1, 32) + struct.pack("<BBBxxxxx", 24, bpp, 32)
+    out += struct.pack("<IIIIIHHHHHHIBBBB", 0x1E3, 0x20, 0xFFFFFF, 0, 0, 1280, 800, 338, 211, 1, 1,
+                       visual, 0, 0, 24, 2)
+    out += struct.pack("<BxHxxxx", 1, 0)
+    out += struct.pack("<BxHxxxx", 24, 2)
+    out += struct.pack("<IBBHIIIxxxx", 0x20, 4, 8, 256, 0xFF, 0xFF00, 0xFF0000)
+    out += struct.pack("<IBBHIIIxxxx", 0x21, 4, 8, 256, *masks)
+    return out
+
+
+class Screenshot(unittest.TestCase):
+    def test_setup(self):
+        scr = gd.XScreen(None, x_setup())
+        self.assertEqual((scr.root, scr.width, scr.height, scr.xrgb), (0x1E3, 1280, 800, True))
+        for name, setup in {"big-endian": x_setup(byte_order=1), "24 bpp": x_setup(bpp=24),
+                            "BGR": x_setup(masks=(0xFF, 0xFF00, 0xFF0000)),
+                            "other visual": x_setup(visual=0x20)}.items():
+            with self.subTest(name):
+                self.assertFalse(gd.XScreen(None, setup).xrgb)
+
+    def test_png(self):
+        # Two pixels, B G R x in memory: red then blue.
+        rgb = gd.xrgb_to_rgb(bytes([0, 0, 255, 0, 255, 0, 0, 0]), 2)
+        self.assertEqual(bytes(rgb), bytes([255, 0, 0, 0, 0, 255]))
+        png = gd.png_bytes(2, 1, rgb)
+        self.assertTrue(png.startswith(b"\x89PNG\r\n\x1a\n"))
+        chunks, off = {}, 8
+        while off < len(png):
+            n, kind = struct.unpack_from(">I4s", png, off)
+            data = png[off + 8:off + 8 + n]
+            self.assertEqual(struct.unpack_from(">I", png, off + 8 + n)[0], zlib.crc32(kind + data))
+            chunks[kind] = data
+            off += 12 + n
+        self.assertEqual(struct.unpack(">IIBBBBB", chunks[b"IHDR"]), (2, 1, 8, 2, 0, 0, 0))
+        self.assertEqual(zlib.decompress(chunks[b"IDAT"]), b"\x00" + bytes(rgb))
+        self.assertEqual(chunks[b"IEND"], b"")
 
 
 if __name__ == "__main__":
