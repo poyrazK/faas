@@ -46,11 +46,16 @@ label.
 | --- | --- |
 | `GET /v1/admin/obs/gateway-traffic?window=1h` | `ObsGatewayTrafficReport` |
 
-`window` is 5m to 168h and defaults to 1h. The route runs fifteen instant
-PromQL queries concurrently under `ObsGatewayTrafficPrometheusBudget`
-(3 s): `increase()` over the window for counters, and the current value for
-the queue-depth and overload gauges. No store query, no migration; apid
-looks up only the slug and account of the apps it lists (at most 25).
+`window` is 5m to 168h and defaults to 1h. The route runs fourteen instant
+PromQL queries concurrently, `increase()` over the window for counters and
+the current value for the queue-depth and overload gauges. It then runs one
+more query counting requests for exactly the apps the report lists, named
+by ID (validated as UUIDs) once the list is known. Every query is evaluated
+at the same instant, so totals, nodes and apps describe one moment. The
+read gets `ObsGatewayTrafficPrometheusBudget` (3 s) for windows up to 24h
+and `ObsGatewayTrafficLongWindowBudget` (10 s) beyond. No store query, no
+migration; apid looks up only the slug and account of the apps it lists (at
+most 25).
 
 `pkg/apid/gatewaytraffic` (ADR-982) reports:
 
@@ -81,9 +86,11 @@ are in `pkg/api/limits.go` (`ObsGatewayTraffic*`).
 ## Consequences
 
 - **Console:** gets a Gateway traffic page under On call.
-- **Prometheus:** each page view runs fifteen queries over the window. The
-  per-app queries keep only apps with errors, refusals or waiters, and
-  `topk` bounds them, so a long window does not return every app.
+- **Prometheus:** each page view runs fifteen queries over the window. Every
+  per-app query keeps only apps with errors, refusals or waiters and is
+  bounded by `topk`, so a long window does not return every app. A 7-day
+  window is the heaviest read; if it misses its 10 s budget, the report
+  comes back `partial` and names the queries that missed.
 - **Retention:** a window longer than Prometheus retention reports only
   what is retained.
 - **Not covered:** per-request detail (request telemetry and the support

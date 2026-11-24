@@ -24,7 +24,8 @@ func (s *server) obsGatewayTraffic(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 	ctx := r.Context()
-	in := gatewaytraffic.Input{Now: time.Now().UTC(), Window: window, Samples: gatewaytraffic.Read(ctx, s.promqlClient, window)}
+	now := time.Now().UTC()
+	in := gatewaytraffic.Input{Now: now, Window: window, Samples: gatewaytraffic.Read(ctx, s.promqlClient, window, now)}
 	in.Lookup = func(appID string) (gatewaytraffic.AppInfo, bool) {
 		app, err := s.store.AppByID(ctx, appID)
 		if err != nil {

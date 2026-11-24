@@ -11,8 +11,10 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -51,22 +53,23 @@ const (
 	qOverload           = "overload_by_node"
 )
 
-// Queries returns the report's PromQL for a window, by name.
+func rangeOf(window time.Duration) string { return fmt.Sprintf("%ds", int(window.Seconds())) }
+
+// Queries returns the report's first-phase PromQL for a window, by name. The
+// per-app queries are bounded by topk; requests for the listed apps are a
+// second query (AppRequestsQuery) once the list is known.
 func Queries(window time.Duration) map[string]string {
-	w := fmt.Sprintf("%ds", int(window.Seconds()))
+	w := rangeOf(window)
 	inc := func(sel string) string { return "increase(" + sel + "[" + w + "])" }
 	k := strconv.Itoa(api.ObsGatewayTrafficAppsMax)
-	errApps := "(topk(" + k + `, sum by (app) (` + inc(`gateway_requests_total{code=~"5.."}`) + ") > 0)" +
-		" or topk(" + k + ", sum by (app) (" + inc("gateway_platform_errors_total") + ") > 0)" +
-		" or topk(" + k + ", sum by (app) (" + inc("gateway_capacity_refusals_total") + ") > 0))"
+	app5xx := inc(`gateway_requests_total{code=~"5.."}`)
 	return map[string]string{
 		qRequestsByNodeCode: "sum by (node, code) (" + inc("gateway_requests_total") + ")",
 		qPlatformByNode:     "sum by (node) (" + inc("gateway_platform_errors_total") + ")",
 		qRefusalsByNode:     "sum by (node) (" + inc("gateway_capacity_refusals_total") + ")",
-		qApp5xx:             `sum by (app, plan, code) (` + inc(`gateway_requests_total{code=~"5.."}`) + ") > 0",
+		qApp5xx:             "sum by (app, plan, code) (" + app5xx + ") > 0 and on (app) topk(" + k + ", sum by (app) (" + app5xx + ") > 0)",
 		qAppPlatform:        "topk(" + k + ", sum by (app, plan) (" + inc("gateway_platform_errors_total") + ") > 0)",
 		qAppRefusals:        "topk(" + k + ", sum by (app) (" + inc("gateway_capacity_refusals_total") + ") > 0)",
-		qAppRequests:        "sum by (app) (" + inc("gateway_requests_total") + ") and on (app) " + errApps,
 		qWakeAdmission:      "sum by (plan, outcome) (" + inc("gateway_wake_admission_total") + ")",
 		qEdgeRejections:     "sum by (kind, status) (" + inc("gateway_edge_rejections_total") + ") > 0",
 		qEdgeRefused:        "sum by (reason) (" + inc("gatewayd_public_edge_refused_total") + ") > 0",
@@ -78,9 +81,28 @@ func Queries(window time.Duration) map[string]string {
 	}
 }
 
+// appLabel is an app label AppRequestsQuery may name: an app ID (a UUID)
+// or gatewayd's unknown-host row. Anything else stays out of the regex.
+var appLabel = regexp.MustCompile(`^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|-)$`)
+
+// AppRequestsQuery counts requests in the window for exactly the listed
+// apps, or "" when none can be named.
+func AppRequestsQuery(window time.Duration, appIDs []string) string {
+	var ids []string
+	for _, id := range appIDs {
+		if appLabel.MatchString(id) {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return ""
+	}
+	return `sum by (app) (increase(gateway_requests_total{app=~"` + strings.Join(ids, "|") + `"}[` + rangeOf(window) + "]))"
+}
+
 // VectorQuerier is the slice of the Prometheus client the report uses.
 type VectorQuerier interface {
-	QueryVector(ctx context.Context, query string) ([]promql.VectorSample, error)
+	QueryVectorAt(ctx context.Context, query string, at time.Time) ([]promql.VectorSample, error)
 }
 
 // Samples is what Read returned: each query's samples by name, the names
@@ -91,28 +113,37 @@ type Samples struct {
 	Source  string
 }
 
-// Read runs every query concurrently under ObsGatewayTrafficPrometheusBudget.
-// A missing client is not_configured; every query failing is unavailable;
-// some failing is partial, and the report names them.
-func Read(ctx context.Context, client *promql.Client, window time.Duration) Samples {
+// Budget is the Prometheus time a window's read gets.
+func Budget(window time.Duration) time.Duration {
+	if window > api.ObsGatewayTrafficShortWindowMax {
+		return api.ObsGatewayTrafficLongWindowBudget
+	}
+	return api.ObsGatewayTrafficPrometheusBudget
+}
+
+// Read runs the first-phase queries concurrently, then counts requests for
+// the apps the report will list, all evaluated at at and under Budget. A
+// missing client is not_configured; every query failing is unavailable; some
+// failing is partial, and the report names them.
+func Read(ctx context.Context, client *promql.Client, window time.Duration, at time.Time) Samples {
 	if client == nil || client.BaseURL() == "" {
 		return Samples{Source: SourceNotConfigured, ByQuery: map[string][]promql.VectorSample{}}
 	}
-	return read(ctx, client, window)
+	return read(ctx, client, window, at)
 }
 
-func read(ctx context.Context, q VectorQuerier, window time.Duration) Samples {
-	ctx, cancel := context.WithTimeout(ctx, api.ObsGatewayTrafficPrometheusBudget)
+func read(ctx context.Context, q VectorQuerier, window time.Duration, at time.Time) Samples {
+	ctx, cancel := context.WithTimeout(ctx, Budget(window))
 	defer cancel()
 	queries := Queries(window)
-	out := Samples{ByQuery: make(map[string][]promql.VectorSample, len(queries))}
+	out := Samples{ByQuery: make(map[string][]promql.VectorSample, len(queries)+1)}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	for name, query := range queries {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			rows, err := q.QueryVector(ctx, query)
+			rows, err := q.QueryVectorAt(ctx, query, at)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -123,16 +154,35 @@ func read(ctx context.Context, q VectorQuerier, window time.Duration) Samples {
 		}()
 	}
 	wg.Wait()
+	attempted := len(queries)
+	if query := AppRequestsQuery(window, listedAppIDs(out.ByQuery)); query != "" {
+		attempted++
+		if rows, err := q.QueryVectorAt(ctx, query, at); err != nil {
+			out.Failed = append(out.Failed, qAppRequests)
+		} else {
+			out.ByQuery[qAppRequests] = rows
+		}
+	}
 	sort.Strings(out.Failed)
 	switch {
 	case len(out.Failed) == 0:
 		out.Source = SourceObserved
-	case len(out.Failed) == len(queries):
+	case len(out.Failed) == attempted:
 		out.Source = SourceUnavailable
 	default:
 		out.Source = SourcePartial
 	}
 	return out
+}
+
+// listedAppIDs is the IDs of the apps the report lists, in its order.
+func listedAppIDs(s map[string][]promql.VectorSample) []string {
+	rows := apps(s, nil)
+	ids := make([]string, len(rows))
+	for i, a := range rows {
+		ids[i] = a.AppID
+	}
+	return ids
 }
 
 // AppInfo is what the store knows about an app the report lists.
@@ -213,7 +263,9 @@ func Build(in Input) api.ObsGatewayTrafficReport {
 	out.Totals.PlatformErrorRatePercent = rate(out.Totals.PlatformErrors, out.Totals.Requests)
 	admission(&out, s[qWakeAdmission])
 	for _, r := range s[qEdgeRejections] {
-		out.EdgeRejections = append(out.EdgeRejections, api.ObsGatewayEdgeRejection{Kind: r.Labels["kind"], Status: r.Labels["status"], Count: count(r.Value)})
+		if v := count(r.Value); v > 0 {
+			out.EdgeRejections = append(out.EdgeRejections, api.ObsGatewayEdgeRejection{Kind: r.Labels["kind"], Status: r.Labels["status"], Count: v})
+		}
 	}
 	sort.Slice(out.EdgeRejections, func(i, j int) bool {
 		a, b := out.EdgeRejections[i], out.EdgeRejections[j]

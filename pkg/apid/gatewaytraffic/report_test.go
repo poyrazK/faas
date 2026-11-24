@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -121,34 +122,95 @@ func TestAppsCap(t *testing.T) {
 	}
 }
 
-type fakeProm struct{ fail []string }
+const (
+	appA = "11111111-1111-4111-8111-111111111111"
+	appB = "22222222-2222-4222-8222-222222222222"
+)
 
-func (f fakeProm) QueryVector(_ context.Context, q string) ([]promql.VectorSample, error) {
+// fakeProm answers every query at one pinned time. Per-app queries get two
+// apps with platform errors; the second-phase requests query is recorded.
+type fakeProm struct {
+	fail     []string
+	mu       sync.Mutex
+	times    map[time.Time]bool
+	requests string
+}
+
+func (f *fakeProm) QueryVectorAt(_ context.Context, q string, at time.Time) ([]promql.VectorSample, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.times == nil {
+		f.times = map[time.Time]bool{}
+	}
+	f.times[at] = true
 	for _, frag := range f.fail {
 		if strings.Contains(q, frag) {
 			return nil, errors.New("boom")
 		}
 	}
+	switch {
+	case strings.Contains(q, "app=~"):
+		f.requests = q
+		return []promql.VectorSample{row(100, "app", appA), row(7, "app", appB)}, nil
+	case strings.Contains(q, "gateway_platform_errors_total") && strings.Contains(q, "by (app, plan)"):
+		return []promql.VectorSample{row(5, "app", appA, "plan", "pro"), row(1, "app", appB, "plan", "free"), row(1, "app", "bad\"label")}, nil
+	}
 	return []promql.VectorSample{row(1, "node", "fsn-1")}, nil
 }
 
 func TestReadSources(t *testing.T) {
-	all := gatewaytraffic.ReadWith(context.Background(), fakeProm{}, time.Hour)
-	if all.Source != gatewaytraffic.SourceObserved || len(all.Failed) != 0 || len(all.ByQuery) != len(gatewaytraffic.Queries(time.Hour)) {
+	ctx := context.Background()
+	f := &fakeProm{}
+	all := gatewaytraffic.ReadWith(ctx, f, time.Hour, now)
+	if all.Source != gatewaytraffic.SourceObserved || len(all.Failed) != 0 || len(all.ByQuery) != len(gatewaytraffic.Queries(time.Hour))+1 {
 		t.Fatalf("observed = %+v", all)
 	}
-	part := gatewaytraffic.ReadWith(context.Background(), fakeProm{fail: []string{"gatewayd_public_overload_level"}}, time.Hour)
+	if len(f.times) != 1 || !f.times[now] {
+		t.Fatalf("queries not pinned to one time: %v", f.times)
+	}
+	// Requests are read for exactly the listed apps, in report order; a
+	// label that is not an app ID never reaches the regex.
+	if !strings.Contains(f.requests, `app=~"`+appA+"|"+appB+`"`) || strings.Contains(f.requests, "bad") {
+		t.Fatalf("requests query = %s", f.requests)
+	}
+	out := gatewaytraffic.Build(gatewaytraffic.Input{Now: now, Window: time.Hour, Samples: all})
+	if out.Apps[0].AppID != appA || out.Apps[0].Requests != 100 || out.Apps[1].Requests != 7 {
+		t.Fatalf("apps = %+v", out.Apps)
+	}
+	part := gatewaytraffic.ReadWith(ctx, &fakeProm{fail: []string{"gatewayd_public_overload_level"}}, time.Hour, now)
 	if part.Source != gatewaytraffic.SourcePartial || len(part.Failed) != 1 || part.Failed[0] != "overload_by_node" {
 		t.Fatalf("partial = %+v", part)
 	}
-	none := gatewaytraffic.ReadWith(context.Background(), fakeProm{fail: []string{"gateway"}}, time.Hour)
+	noReq := gatewaytraffic.ReadWith(ctx, &fakeProm{fail: []string{"app=~"}}, time.Hour, now)
+	if noReq.Source != gatewaytraffic.SourcePartial || len(noReq.Failed) != 1 || noReq.Failed[0] != "app_requests" {
+		t.Fatalf("requests failed = %+v", noReq)
+	}
+	none := gatewaytraffic.ReadWith(ctx, &fakeProm{fail: []string{"gateway"}}, time.Hour, now)
 	if none.Source != gatewaytraffic.SourceUnavailable {
 		t.Fatalf("unavailable = %+v", none)
 	}
 	if q := gatewaytraffic.Queries(90 * time.Minute)["requests_by_node_code"]; !strings.Contains(q, "[5400s]") {
 		t.Fatalf("window not in query: %s", q)
 	}
-	if gatewaytraffic.Read(context.Background(), nil, time.Hour).Source != gatewaytraffic.SourceNotConfigured {
+	if q := gatewaytraffic.Queries(time.Hour)["app_5xx_by_code"]; !strings.Contains(q, "topk(25,") {
+		t.Fatalf("app 5xx query unbounded: %s", q)
+	}
+	if gatewaytraffic.Budget(24*time.Hour) != api.ObsGatewayTrafficPrometheusBudget || gatewaytraffic.Budget(48*time.Hour) != api.ObsGatewayTrafficLongWindowBudget {
+		t.Fatal("budget by window")
+	}
+	if gatewaytraffic.AppRequestsQuery(time.Hour, []string{"x|y", ""}) != "" {
+		t.Fatal("invalid labels must not build a query")
+	}
+	if gatewaytraffic.Read(ctx, nil, time.Hour, now).Source != gatewaytraffic.SourceNotConfigured {
 		t.Fatal("nil client should be not_configured")
+	}
+}
+
+func TestEdgeRejectionsDropRoundedZeros(t *testing.T) {
+	out := gatewaytraffic.Build(gatewaytraffic.Input{Now: now, Window: time.Hour, Samples: gatewaytraffic.Samples{ByQuery: map[string][]promql.VectorSample{
+		"edge_rejections": {row(0.4, "kind", "waf", "status", "403"), row(2, "kind", "limit", "status", "429")},
+	}}})
+	if len(out.EdgeRejections) != 1 || out.EdgeRejections[0].Kind != "limit" {
+		t.Fatalf("edge rejections = %+v", out.EdgeRejections)
 	}
 }

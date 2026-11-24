@@ -1717,8 +1717,9 @@ type ObsGatewayReasonCount struct {
 }
 
 // ObsGatewayAppTraffic is one of the most affected apps. UnknownHost marks
-// gatewayd's row for hosts that name no app. Requests is set for apps with
-// 5xx, platform errors or capacity refusals.
+// gatewayd's row for hosts that name no app. Requests is read for exactly the
+// listed apps; it is 0 when that read failed (FailedQueries names
+// app_requests).
 type ObsGatewayAppTraffic struct {
 	AppID            string  `json:"app_id"`
 	AppSlug          string  `json:"app_slug,omitempty"`

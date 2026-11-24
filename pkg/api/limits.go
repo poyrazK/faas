@@ -292,14 +292,17 @@ const (
 
 // Operator gateway traffic report (ADR-20261124093000). The report reads
 // gatewayd's Prometheus series over the window under
-// ObsGatewayTrafficPrometheusBudget and lists the ObsGatewayTrafficAppsMax
-// most affected apps.
+// ObsGatewayTrafficPrometheusBudget, or ObsGatewayTrafficLongWindowBudget
+// for windows over ObsGatewayTrafficShortWindowMax, and lists the
+// ObsGatewayTrafficAppsMax most affected apps.
 const (
 	ObsGatewayTrafficAppsMax          = 25
 	ObsGatewayTrafficWindowDefault    = time.Hour
 	ObsGatewayTrafficWindowMin        = 5 * time.Minute
 	ObsGatewayTrafficWindowMax        = 7 * 24 * time.Hour
 	ObsGatewayTrafficPrometheusBudget = 3 * time.Second
+	ObsGatewayTrafficShortWindowMax   = 24 * time.Hour
+	ObsGatewayTrafficLongWindowBudget = 10 * time.Second
 )
 
 // Customer attention signals (ADR-20261113123000): when a customer is
