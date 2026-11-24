@@ -44,13 +44,27 @@ func TestBucketListDefaultsToLinkedApp(t *testing.T) {
 }
 
 // Prod hunt r36: `slo list` answered "no app named list"; the SLO verbs live
-// under `alert slo`.
+// under `alert slo`. An app named like a verb still shows its panel.
 func TestSLOVerbPointsToAlertSLO(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasPrefix(r.URL.Path, "/v1/apps/create/") {
+			_, _ = w.Write([]byte(`{"app_slug":"create","window":"24h"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"title":"not found","status":404,"code":"not_found"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	for _, verb := range []string{"list", "create", "rm"} {
+	for _, verb := range []string{"list", "rm"} {
 		code, _, stderr := runCLI(t, "slo", verb)
 		if code == 0 || !strings.Contains(stderr, "gregale alert slo") {
 			t.Errorf("slo %s = %d %q, want a pointer to gregale alert slo", verb, code, stderr)
 		}
+	}
+	if code, stdout, stderr := runCLI(t, "slo", "create"); code != 0 || !strings.Contains(stdout, "create") {
+		t.Errorf("slo create (an app named create) = %d %q %q, want its SLO panel", code, stdout, stderr)
 	}
 }

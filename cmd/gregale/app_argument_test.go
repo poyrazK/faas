@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -103,6 +104,11 @@ func TestAppArgumentLeavesUUIDsToTheCommand(t *testing.T) {
 	_, request := appArgumentRun(t, []string{"release", "traffic", "promote", id, "--app", "zz-app"})
 	if !strings.Contains(request, id) {
 		t.Fatalf("first request %q does not name deployment %s", request, id)
+	}
+	// Without --app a UUID still names the app by its ID.
+	got, err := main.AppArgumentAsFlag([]string{"alerts", "list", id})
+	if err != nil || !slices.Contains(got, "--app") || !slices.Contains(got, id) {
+		t.Fatalf("alerts list <app-uuid> = %q, %v; want --app %s", got, err, id)
 	}
 }
 

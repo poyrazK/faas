@@ -63,12 +63,12 @@ func cmdSLO(args []string) int {
 		PrintUsage(os.Stderr, sloCmdUsage, sloCmdDocsTopic)
 		return 1
 	}
+	// Prod hunt r36: `slo list` answered "no app named list"; the SLO verbs
+	// live under `alert slo`. An app may carry a verb's name, so the hint
+	// replaces only a failed lookup.
+	verb := ""
 	if len(pos) == 1 {
-		// Prod hunt r36: `slo list` answered "no app named list"; the SLO
-		// verbs live under `alert slo`.
-		if verb, ok := map[string]string{"list": "list", "ls": "list", "create": "create", "status": "status", "rm": "rm", "delete": "rm"}[pos[0]]; ok {
-			return printErr("Unknown slo verb", fmt.Errorf("`gregale slo` shows one app's SLO panel; SLO definitions live under `gregale alert slo`: run gregale alert slo %s --help", verb))
-		}
+		verb = map[string]string{"list": "list", "ls": "list", "create": "create", "status": "status", "rm": "rm", "delete": "rm"}[pos[0]]
 	}
 	slug := ""
 	if merged, mergeErr := mergeAppFlag(pos, *app, 1); mergeErr != nil {
@@ -92,6 +92,9 @@ func cmdSLO(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	s, err := client.GetAppSLO(context.Background(), slug, *window)
+	if err != nil && verb != "" {
+		return printErr("Unknown slo verb", fmt.Errorf("`gregale slo` shows one app's SLO panel; SLO definitions live under `gregale alert slo`: run gregale alert slo %s --help", verb))
+	}
 	if err != nil {
 		return printErr("Could not fetch SLO", err)
 	}

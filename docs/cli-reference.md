@@ -5251,7 +5251,7 @@ Account object storage observations, safety policy and billing state
 
 List an app&#39;s object-storage buckets and their IDs
 
-`gregale bucket list <app>`
+`gregale bucket list [<app>]`
 
 ### bucket delete
 

@@ -396,7 +396,13 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 func deployInitTemplate(tpl, dir, slug, secretsFile string) int {
 	args := initDeployArgs(tpl, dir, slug, secretsFile)
 	if templatesDeployAsMCP[tpl] {
-		return cmdMCPDeploy(args)
+		if mcpHostingAvailable() {
+			return cmdMCPDeploy(args)
+		}
+		// MCP hosting needs streaming, which the plan lacks: deploy the app as
+		// before rather than fail after the files are written.
+		_, _ = fmt.Fprintf(osStderr, "Note: MCP hosting needs a plan with streaming; deploying %s as a private app. After upgrading, run: gregale mcp server deploy --path %s --name %s\n", slug, dir, slug)
+		args = plainInitDeployArgs(tpl, dir, slug, secretsFile)
 	}
 	if tpl != templates.PrivateNode {
 		return cmdDeployTarball(args)
@@ -422,6 +428,23 @@ func initDeployArgs(tpl, dir, slug, secretsFile string) []string {
 		}
 		return args
 	}
+	return plainInitDeployArgs(tpl, dir, slug, secretsFile)
+}
+
+// mcpHostingAvailable reports whether the account's plan can host an MCP
+// server (`mcp server deploy` needs streaming). When the plan cannot be read
+// it answers true and lets the MCP deploy report the error.
+func mcpHostingAvailable() bool {
+	client, err := authedClient()
+	if err != nil {
+		return true
+	}
+	account, err := client.Whoami(context.Background())
+	return err != nil || api.Plan(account.Plan).StreamingEnabled()
+}
+
+// plainInitDeployArgs are the `gregale deploy` flags for tpl.
+func plainInitDeployArgs(tpl, dir, slug, secretsFile string) []string {
 	args := []string{"--template", tpl, "--name", slug}
 	if tpl == templates.PrivateNode {
 		args = privateNodeDeployArgs(dir, slug)

@@ -81,13 +81,26 @@ func appArgumentPosition(args []string, target string) (int, bool) {
 	if at >= len(args) || !takesAppArgument(flags, positionals, children, target) {
 		return 0, false
 	}
-	// A UUID is an id, never an app slug: `release traffic promote <id>
-	// --app web` became `--app <id> --app web` and was refused as two apps
-	// (prod hunt r36); the command reads the id itself.
-	if token := args[at]; strings.HasPrefix(token, "-") || !api.ValidAppSlug(token) || isUUIDArgument(token) {
+	if token := args[at]; strings.HasPrefix(token, "-") || !api.ValidAppSlug(token) || isUUIDArgument(token) && namesTarget(args[at+1:], target) {
 		return 0, false
 	}
 	return at, true
+}
+
+// namesTarget reports whether rest already passes --<target>. A UUID before
+// it is then the command's id, not a second app: `release traffic promote
+// <id> --app web` became `--app <id> --app web` and was refused as two apps
+// (prod hunt r36). Without --app a UUID still names the app by its ID.
+func namesTarget(rest []string, target string) bool {
+	for i := range rest {
+		if rest[i] == "--" {
+			return false
+		}
+		if _, ok := targetFlagValue(rest, i, target); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // takesAppArgument reports whether a leaf names its app only with --app.

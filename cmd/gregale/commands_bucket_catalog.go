@@ -22,7 +22,7 @@ type bucketCatalogClient interface {
 }
 
 const (
-	bucketListUsage   = "usage: gregale bucket list <app>"
+	bucketListUsage   = "usage: gregale bucket list [<app>] (defaults to the linked app)"
 	bucketDeleteUsage = "usage: gregale bucket delete <app> <bucket-id> [--yes]"
 )
 
