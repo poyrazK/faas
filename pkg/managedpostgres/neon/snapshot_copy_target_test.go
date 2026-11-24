@@ -37,11 +37,11 @@ func newSnapshotCopyFixture(t *testing.T) *snapshotCopyFixture {
 	spec.StorageLimitBytes, spec.RestoreWindowSeconds = 1<<30, 3600
 	f.project = project{ID: "project-independent", OrganizationID: capture.p.organizationID, RegionID: capture.p.regionID,
 		Name: capture.p.snapshotCopyProjectName(f.request.ResourceID), PostgresMajor: spec.PostgresMajor, HistoryRetentionSeconds: spec.RestoreWindowSeconds,
-		CreatedAt: f.request.CaptureCreatedAt.Add(time.Second).Format(time.RFC3339Nano), DefaultEndpointSettings: endpointSettingsForSpec(*spec)}
+		CreatedAt: f.request.CaptureCreatedAt.Add(time.Second).Format(time.RFC3339Nano), DefaultEndpointSettings: (&Provider{}).endpointSettingsForSpec(*spec)}
 	f.project.Settings.Quota.LogicalSizeBytes = &spec.StorageLimitBytes
 	f.branches = []branch{{ID: "br-independent", ProjectID: f.project.ID, Name: "production", Default: true, CurrentState: "ready"}}
 	disabled := false
-	settings := endpointSettingsForSpec(*spec)
+	settings := (&Provider{}).endpointSettingsForSpec(*spec)
 	f.endpoints = []endpoint{{ID: "ep-independent", ProjectID: f.project.ID, RegionID: capture.p.regionID, BranchID: "br-independent", Type: "read_write", CurrentState: "active", Disabled: &disabled,
 		MinimumCU: settings.MinimumCU, MaximumCU: settings.MaximumCU, SuspendTimeoutSecond: settings.SuspendTimeoutSecond}}
 	f.ops = []operation{{ID: "create-independent", ProjectID: f.project.ID, BranchID: "br-independent", Status: "finished"}}

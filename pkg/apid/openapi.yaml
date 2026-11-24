@@ -11110,6 +11110,30 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+  /v1/postgres/databases/{id}/suspend-timeout:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    put:
+      operationId: setManagedPostgresSuspendTimeout
+      summary: Set when a scale-to-zero database suspends
+      description: Sets how long a scale-to-zero database stays up after its last activity, from 60 to 3600 seconds, or with null returns it to the platform default. Every wake bills at least this much compute. A suspended database takes the value at once; a running one takes it the next time it suspends, without interrupting connections. Repeating the same value is harmless. seconds is required; null is the default. An always-on database answers 409 suspend_timeout_always_on; one with a change in progress answers a conflict. While operations are closed, only a shorter timeout is taken.
+      tags: [managed_postgres]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetManagedPostgresSuspendTimeoutRequest' }
+      responses:
+        '200':
+          description: The suspend timeout in force
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresSuspendTimeout' }
+        default:
+          description: Validation, conflict, entitlement or admission failure
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/postgres/databases/{id}/resize:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -73993,6 +74017,35 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/postgres/databases/{id}/suspend-timeout:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to set when a company database suspends."
+        schema: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$' }
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    put:
+      operationId: setOrgManagedPostgresSuspendTimeout
+      summary: "Set when a company scale-to-zero database suspends."
+      description: "An owner or admin sets how long a scale-to-zero company database stays up after its last activity, from 60 to 3600 seconds, or with null returns it to the platform default. A running database takes the value the next time it suspends."
+      tags: [managed_postgres]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetManagedPostgresSuspendTimeoutRequest' }
+      responses:
+        '200':
+          description: "The company database's suspend timeout in force."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresSuspendTimeout' }
+        default:
+          description: "Problem while setting when the company database suspends."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/orgs/{organization}/postgres/bindings/{id}/rotate:
     parameters:
       - name: organization
@@ -96141,6 +96194,27 @@ components:
         last_error_code: { type: string, description: "Safe policy-change diagnostic. A confirmed rejection retains the source policy; uncertain outcomes remain pending." }
         created_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time }
+    SetManagedPostgresSuspendTimeoutRequest:
+      description: How long a scale-to-zero database stays up after its last activity before it suspends.
+      type: object
+      additionalProperties: false
+      required: [seconds]
+      properties:
+        seconds:
+          type: [integer, 'null']
+          format: int64
+          minimum: 60
+          maximum: 3600
+          description: Seconds of inactivity before the database suspends; null returns it to the platform default.
+    ManagedPostgresSuspendTimeout:
+      description: A scale-to-zero database's suspend timeout. Every wake bills at least this much compute.
+      type: object
+      required: [database_id, seconds, custom, applied]
+      properties:
+        database_id: { type: string }
+        seconds: { type: integer, format: int64, description: "Seconds of inactivity before the database suspends." }
+        custom: { type: boolean, description: "True when the database has its own value; false when it follows the platform default." }
+        applied: { type: boolean, description: "False while the database is running: it takes the value the next time it suspends." }
     ResizeManagedPostgresDatabaseRequest:
       description: Canonical UUID request for a compute-class change on an existing managed PostgreSQL database.
       type: object
@@ -96177,6 +96251,8 @@ components:
         service_class: { type: string, enum: [development, burstable, production] }
         availability: { type: string, enum: [single_zone, high_availability] }
         scale_to_zero: { type: boolean }
+        suspend_timeout_seconds: { type: integer, format: int64, description: "Seconds a scale-to-zero database stays up after its last activity; absent for an always-on database." }
+        suspend_timeout_custom: { type: boolean, description: "True when the database has its own suspend timeout rather than the platform default." }
         storage_limit_bytes: { type: integer, format: int64, minimum: 0 }
         restore_window_seconds: { type: integer, format: int64, minimum: 0 }
         restore_source_database_id: { type: [string, "null"], minLength: 1, maxLength: 128 }

@@ -1288,6 +1288,30 @@ const OperationBusinessConditionDescriptionMaxBytes = 1024
 // PostgreSQL databases before the cap suspends them (ADR-20261025094915).
 const ManagedPostgresOverageCeilingMultiplier = 2
 
+// ManagedPostgresSuspendTimeoutMinSeconds and ...MaxSeconds bound the suspend
+// timeout a customer chooses for a scale-to-zero database (gregale postgres
+// suspend-timeout): past an hour a database is close to always-on, which plans
+// sell separately. The managed_postgres_suspend_timeouts CHECK matches.
+// Docs: docs/postgres.md.
+const (
+	ManagedPostgresSuspendTimeoutMinSeconds = 60
+	ManagedPostgresSuspendTimeoutMaxSeconds = 3600
+)
+
+// ManagedPostgresSuspendTimeoutDefaultSeconds is the platform default suspend
+// timeout of a scale-to-zero database: every wake bills at least this much
+// compute. Operators change it hot (managed_postgres_policy
+// suspend_timeout_seconds) within ManagedPostgresSuspendTimeoutPolicyMin/
+// MaxSeconds, Neon's own range. Docs: docs/managed-postgres.md.
+const (
+	ManagedPostgresSuspendTimeoutDefaultSeconds   = 120
+	ManagedPostgresSuspendTimeoutPolicyMinSeconds = 60
+	ManagedPostgresSuspendTimeoutPolicyMaxSeconds = 7 * 24 * 60 * 60
+)
+
+// ManagedPostgresSuspendTimeoutDocsURL is cited by the out-of-range error.
+const ManagedPostgresSuspendTimeoutDocsURL = "https://gregale.dev/docs/postgres#plans"
+
 // ManagedPostgresNeonScaleMillicentsPerComputeUnitHour is what Neon's Scale
 // plan charges Gregale per CU-hour ($0.222, neon.com/pricing on 2026-11-02),
 // and ManagedPostgresOverageMarkupPercent what Gregale adds to the

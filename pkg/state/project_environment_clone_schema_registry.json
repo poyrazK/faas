@@ -11291,6 +11291,15 @@
     "kind": "operational"
   },
   {
+    "table": "managed_postgres_suspend_timeouts",
+    "columns": [
+      "database_id",
+      "seconds",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_postgres_usage",
     "columns": [
       "account_id",

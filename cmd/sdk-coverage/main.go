@@ -826,6 +826,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/orgs/{organization}/postgres/databases/{id}/undelete":                                                    "UndeleteOrgManagedPostgresDatabase",
 	"POST /v1/orgs/{organization}/postgres/databases/{id}/resize":                                                      "ResizeOrgManagedPostgresDatabase",
 	"POST /v1/orgs/{organization}/postgres/databases/{id}/compute-policy":                                              "ChangeOrgManagedPostgresComputePolicy",
+	"PUT /v1/orgs/{organization}/postgres/databases/{id}/suspend-timeout":                                              "SetOrgManagedPostgresSuspendTimeout",
 	"POST /v1/orgs/{organization}/postgres/bindings/{id}/rotate":                                                       "RotateOrgManagedPostgresBinding",
 	"GET /v1/orgs/{organization}/postgres/usage":                                                                       "GetOrgManagedPostgresUsage",
 
@@ -1784,6 +1785,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/account/realtime-history-usage":                                          "GetManagedRealtimeHistoryUsage",
 	"GET /v1/account/usage":                                                           "AccountUsage",
 	"POST /v1/postgres/databases/{id}/compute-policy":                                 "ChangeManagedPostgresComputePolicy",
+	"PUT /v1/postgres/databases/{id}/suspend-timeout":                                 "SetManagedPostgresSuspendTimeout",
 	"GET /v1/postgres/databases/{id}/compute-policy-changes/{change_id}":              "GetManagedPostgresComputePolicyChange",
 	"POST /v1/postgres/databases/{id}/resize":                                         "ResizeManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}/resizes/{resize_id}":                             "GetManagedPostgresResize",
