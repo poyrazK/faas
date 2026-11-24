@@ -512,6 +512,7 @@ class CliGregale(Gregale):
     ROUTES = (
         (re.compile(r"^/v1/apps$"), lambda m: ["app", "list"]),
         (re.compile(r"^/v1/projects$"), lambda m: ["project", "list"]),
+        (re.compile(r"^/v1/postgres$"), lambda m: ["postgres", "list"]),
         (re.compile(r"^/v1/apps/([a-z0-9-]+)$"), lambda m: ["app", "get", m[1]]),
         (re.compile(r"^/v1/apps/([a-z0-9-]+)/health$"), lambda m: ["app", "health", m[1]]),
         (re.compile(r"^/v1/apps/([a-z0-9-]+)/deployments(\?.*)?$"), lambda m: ["release", "list", "--app", m[1], "--limit", "20"]),
@@ -537,7 +538,17 @@ class CliGregale(Gregale):
         apps = _rows(self.get("/v1/apps"))
         projects = _rows(self.get("/v1/projects"))
         return {"apps": {a["slug"] for a in apps if a.get("slug")}, "projects": {p["slug"] for p in projects if p.get("slug")},
+                "databases": self.databases(),
                 "app_ids": {a["id"]: a["slug"] for a in apps if a.get("id") and a.get("slug")}}
+
+    def databases(self) -> set:
+        """Managed Postgres database names. A run that creates one and leaves it
+        filled the account's database limit: the 2026-11-24 voting-app rerun
+        found 10/10, most of them earlier runs' databases."""
+        try:
+            return {d["name"] for d in _rows(self.get("/v1/postgres")) if isinstance(d, dict) and d.get("name")}
+        except ValueError:
+            return set()
 
     def touched_since(self, before: dict, started_at: str) -> dict:
         after = self.inventory()
@@ -549,8 +560,12 @@ class CliGregale(Gregale):
         return touched
 
 
+# What a run can create in the account, and what cleanup deletes.
+RESOURCE_KINDS = ("apps", "projects", "databases")
+
+
 def created_since(before: dict, after: dict) -> dict:
-    return {kind: sorted(after.get(kind, set()) - before.get(kind, set())) for kind in ("apps", "projects")}
+    return {kind: sorted(after.get(kind, set()) - before.get(kind, set())) for kind in RESOURCE_KINDS}
 
 
 # Project files read for the names of the apps a run deploys (Compose service
@@ -588,11 +603,11 @@ def attribute(gregale: "Gregale", touched: dict, evidence: str, slug: str | None
     (--cli-login) is shared with other sessions, so there an app or project is
     the run's only if the agent named it (or it is the harness's own slug)."""
     if not isinstance(gregale, CliGregale):
-        return touched, {"apps": [], "projects": []}
-    mine: dict = {"apps": [], "projects": []}
-    others: dict = {"apps": [], "projects": []}
+        return touched, {kind: [] for kind in RESOURCE_KINDS}
+    mine: dict = {kind: [] for kind in RESOURCE_KINDS}
+    others: dict = {kind: [] for kind in RESOURCE_KINDS}
     prefixes = _slug_prefixes(evidence)
-    for kind in ("apps", "projects"):
+    for kind in RESOURCE_KINDS:
         for name in touched.get(kind, []):
             named = name == slug or _named(name, evidence) or (kind == "apps" and name.startswith(prefixes))
             (mine if named else others)[kind].append(name)
@@ -616,7 +631,7 @@ def deletable(gregale: "Gregale", before: dict | None, created: dict, slug: str 
     if not isinstance(gregale, CliGregale):
         return created, slug
     if before is None:
-        return {"apps": [], "projects": []}, None
+        return {kind: [] for kind in RESOURCE_KINDS}, None
     new, _ = attribute(gregale, created_since(before, gregale.inventory()), evidence, slug)
     return new, slug if slug in new["apps"] else None
 
@@ -727,6 +742,19 @@ def _fetch(url: str) -> tuple[int, str]:
         return 0, str(error)
 
 
+def _app_is_serving(gregale, slug: str) -> bool:
+    """An app serves when health names a serving deployment. Health does not
+    assess workers or jobs unless app_health_workers is on (phase
+    "unsupported"); a live worker pool serves its queue, not HTTP, so the app
+    record's deployment availability decides."""
+    health = gregale.get(f"/v1/apps/{slug}/health")
+    if health.get("serving_deployment_ids"):
+        return True
+    if health.get("phase") == "unsupported":
+        return gregale.get(f"/v1/apps/{slug}").get("deployment_availability") == "live"
+    return False
+
+
 def _app_url(app: dict) -> str:
     return (app.get("canonical_url") or app.get("url") or "").rstrip("/")
 
@@ -792,7 +820,7 @@ def run_checks(task: dict, slug: str, project: Path, answer: str, gregale, fetch
                 ok = len(created_apps) >= check.get("min", 1)
                 detail = ",".join(created_apps)
             elif kind == "apps_serving":
-                idle = [app for app in created_apps if not gregale.get(f"/v1/apps/{app}/health").get("serving_deployment_ids")]
+                idle = [app for app in created_apps if not _app_is_serving(gregale, app)]
                 ok, detail = bool(created_apps) and not idle, f"not serving: {','.join(idle)}" if idle else f"{len(created_apps)} serving"
             elif kind == "app_http":
                 matches = [app for app in created_apps if re.search(check["match"], app)]
@@ -943,6 +971,11 @@ def cleanup(gregale: Gregale, created: dict, slug: str | None) -> list[str]:
             left.append(f"app:{app}")
         elif gregale.cli("app", "purge", "--yes", app, timeout=300).returncode != 0:
             left.append(f"name:{app}")
+    # Recoverable for seven days; a deleted database no longer counts against
+    # the account's database limit.
+    for database in created.get("databases", []):
+        if gregale.cli("postgres", "delete", "--yes", database, timeout=300).returncode != 0:
+            left.append(f"database:{database}")
     return left
 
 
@@ -993,7 +1026,7 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
             record["cli_sha256"] = checksum.hexdigest()
     except OSError:
         record["cli_sha256"] = None
-    created: dict = {"apps": [], "projects": []}
+    created: dict = {kind: [] for kind in RESOURCE_KINDS}
     before, evidence = None, ""
     cleanup_allowed = False
     try:

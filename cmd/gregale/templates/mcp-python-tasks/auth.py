@@ -5,7 +5,7 @@ import re
 import time
 
 import jwt
-from bounded_jwks import BoundedJWKClient
+from bounded_jwks import BoundedJWKClient, JWKSRefusedError
 
 
 SCOPE_PATTERN = re.compile(r"^[\x21\x23-\x5b\x5d-\x7e]+$")
@@ -67,6 +67,7 @@ class AuthConfigurationError(ValueError):
 
 
 SIGNING_KEYS_UNAVAILABLE = "signing keys unavailable"
+SIGNING_KEYS_REFUSED = "signing keys refused"
 
 
 class AuthFailure(Exception):
@@ -323,6 +324,13 @@ class Authenticator:
             subject = claims.get("sub")
             if not isinstance(subject, str) or not subject:
                 raise ValueError("invalid subject")
+        except JWKSRefusedError:
+            # The JWKS URL demanded credentials: configuration, not a wrong
+            # token, and retrying cannot fix it.
+            raise AuthFailure(
+                401, "invalid_token", self.base_scopes,
+                description=SIGNING_KEYS_REFUSED,
+            ) from None
         except jwt.PyJWKClientConnectionError:
             # The provider's JWKS could not be fetched: the token was not
             # checked, so it is not reported as simply wrong.

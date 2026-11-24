@@ -6088,9 +6088,9 @@
     },
     {
       "id": "tcp-listeners",
-      "name": "TCP listeners",
+      "name": "Public TCP listeners",
       "category": "edge",
-      "description": "Serve raw TCP on a dedicated listener.",
+      "description": "Serve raw TCP to the internet on a dedicated public port at the edge. Private TCP between your own apps (managed Redis, internal service addresses) does not need it.",
       "maturity": "preview",
       "plans": [
         "free",
@@ -6197,9 +6197,9 @@
     },
     {
       "id": "udp-listeners",
-      "name": "UDP listeners",
+      "name": "Public UDP listeners",
       "category": "edge",
-      "description": "Serve UDP on a dedicated listener.",
+      "description": "Serve UDP to the internet on a dedicated public port at the edge.",
       "maturity": "preview",
       "plans": [
         "free",

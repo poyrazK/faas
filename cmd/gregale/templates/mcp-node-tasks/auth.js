@@ -38,23 +38,40 @@ export class SigningKeysUnavailableError extends Error {
   }
 }
 
+// A token that could not be checked because the JWKS URL demanded
+// credentials (HTTP 401/403): configuration, not a wrong token. An
+// authorization server behind access protection (on Gregale, any app that
+// requires a key) cannot serve its public keys. Retrying cannot fix it, so it
+// is answered with error_description "signing keys refused" and no Retry-After.
+export class SigningKeysRefusedError extends Error {
+  constructor() {
+    super('signing keys refused');
+    this.signingKeysRefused = true;
+  }
+}
+
+// Marks a JWKS URL that answered 401 or 403.
+const refusedJWKSFailure = Symbol('refusedJWKSFailure');
+
 // Marks a JWKS fetch failure that can pass (network, timeout, provider
 // 5xx/429). A 404 or a bad document is configuration that retrying cannot fix.
 const transientJWKSFailure = Symbol('transientJWKSFailure');
 
-function jwksFailure(message, transient) {
+function jwksFailure(message, transient, refused = false) {
   const error = new Error(message);
   if (transient) error[transientJWKSFailure] = true;
+  if (refused) error[refusedJWKSFailure] = true;
   return error;
 }
 
 function createJWKResolver(url) {
   let retryAt = 0;
   let lastTransient = false;
+  let lastRefused = false;
   const remote = createRemoteJWKSet(new URL(url), {
     timeoutDuration: 5000,
     [customFetch]: async (...args) => {
-      if (performance.now() < retryAt) throw jwksFailure('JWKS refresh is cooling down', lastTransient);
+      if (performance.now() < retryAt) throw jwksFailure('JWKS refresh is cooling down', lastTransient, lastRefused);
       try {
         let response;
         try {
@@ -63,7 +80,7 @@ function createJWKResolver(url) {
           throw jwksFailure(`JWKS fetch failed: ${error?.name ?? 'error'}`, true);
         }
         if (response.status !== 200) {
-          throw jwksFailure('JWKS refresh failed', response.status >= 500 || response.status === 429);
+          throw jwksFailure('JWKS refresh failed', response.status >= 500 || response.status === 429, response.status === 401 || response.status === 403);
         }
         const jwks = await readJWKSet(response);
         createLocalJWKSet(jwks); // Validate the payload before considering the fetch successful.
@@ -74,6 +91,7 @@ function createJWKResolver(url) {
         // network blip) must not reject every valid token for 30 s.
         retryAt = performance.now() + JWKS_FAILURE_BACKOFF_MS;
         lastTransient = Boolean(error?.[transientJWKSFailure]);
+        lastRefused = Boolean(error?.[refusedJWKSFailure]);
         throw error;
       }
     },
@@ -86,6 +104,7 @@ function createJWKResolver(url) {
       return await remote(...args);
     } catch (error) {
       if (error?.[transientJWKSFailure] || error?.code === 'ERR_JWKS_TIMEOUT') throw new SigningKeysUnavailableError();
+      if (error?.[refusedJWKSFailure]) throw new SigningKeysRefusedError();
       throw error;
     }
   };
@@ -160,14 +179,15 @@ export function createAuth(config, keyResolver) {
   if (!auth.scopes.length) throw new Error('Set nonempty OAuth scopes');
   const metadataURL = new URL(`/.well-known/oauth-protected-resource${config.endpoint}`, auth.resource).href;
   const resolver = keyResolver ?? createJWKResolver(auth.jwks_url);
-  function reject(res, status, error, scopes = auth.scopes, description = '') {
+  function reject(res, status, error, scopes = auth.scopes, description = '', retryable = true) {
     const challenge = `Bearer resource_metadata="${metadataURL}", scope="${scopes.join(' ')}"${error ? `, error="${error}"` : ''}${description ? `, error_description="${description}"` : ''}`;
     res.setHeader('WWW-Authenticate', challenge);
     res.setHeader('Cache-Control', 'no-store');
     const body = { error: error || 'authentication_required' };
     if (description) {
-      // The server could not check the token; the same token may succeed.
-      res.setHeader('Retry-After', '1');
+      // The server could not check the token. A passing failure may let the
+      // same token succeed; a refused JWKS URL will not until it is fixed.
+      if (retryable) res.setHeader('Retry-After', '1');
       body.error_description = description;
     }
     return res.status(status).json(body);
@@ -200,6 +220,7 @@ export function createAuth(config, keyResolver) {
         return next();
       } catch (error) {
         if (error?.signingKeysUnavailable) return reject(res, 401, 'invalid_token', auth.scopes, error.message);
+        if (error?.signingKeysRefused) return reject(res, 401, 'invalid_token', auth.scopes, error.message, false);
         return reject(res, 401, 'invalid_token');
       }
     },
