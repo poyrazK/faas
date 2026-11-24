@@ -15,6 +15,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -29,12 +30,17 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 
 	"github.com/onebox-faas/faas/pkg/pki"
 )
 
 // StorageGrantsEnv opts a harness run into store grants.
 const StorageGrantsEnv = "FAAS_E2E_STORAGE_GRANTS"
+
+// MinioDataEnv, when set, is a MinIO data directory kept across tests and
+// runs (default: a fresh one per test).
+const MinioDataEnv = "FAAS_E2E_MINIO_DATA"
 
 const (
 	storageGrantsBucket = "faas-e2e-artifacts"
@@ -80,13 +86,24 @@ func (h *Harness) startStorageGrants(t *testing.T, bin, dbURL string) {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(h.TmpDir, "storage-grants")
-	if err := os.MkdirAll(filepath.Join(dir, "minio"), 0o700); err != nil {
+	dataDir := filepath.Join(dir, "minio")
+	g := &storageGrants{AccessKey: "e2e" + randHex(t, 6), SecretKey: randHex(t, 20)}
+	if persistent := os.Getenv(MinioDataEnv); persistent != "" {
+		// A store that outlives the test, as a fleet's bucket does: bases,
+		// scans and kernels published by an earlier run are reused instead
+		// of staged and scanned again inside a test's deploy deadline.
+		dataDir = persistent
+		g.AccessKey, g.SecretKey = persistentMinioCredentials(t, persistent)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	g := &storageGrants{AccessKey: "e2e" + randHex(t, 6), SecretKey: randHex(t, 20)}
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	addr := freeTCPAddr(t)
 	g.Endpoint = "http://" + addr
-	cmd := exec.Command(minio, "server", filepath.Join(dir, "minio"), "--address", addr, "--console-address", freeTCPAddr(t), "--quiet")
+	cmd := exec.Command(minio, "server", dataDir, "--address", addr, "--console-address", freeTCPAddr(t), "--quiet")
 	cmd.Env = append(os.Environ(), "MINIO_ROOT_USER="+g.AccessKey, "MINIO_ROOT_PASSWORD="+g.SecretKey)
 	minioLog, err := os.Create(filepath.Join(dir, "minio.log"))
 	if err != nil {
@@ -102,7 +119,10 @@ func (h *Harness) startStorageGrants(t *testing.T, bin, dbURL string) {
 	client := s3.New(s3.Options{Region: storageGrantsRegion, BaseEndpoint: aws.String(g.Endpoint), UsePathStyle: true,
 		Credentials: credentials.NewStaticCredentialsProvider(g.AccessKey, g.SecretKey, "")})
 	if _, err := client.CreateBucket(context.Background(), &s3.CreateBucketInput{Bucket: aws.String(storageGrantsBucket)}); err != nil {
-		t.Fatalf("e2etest: create bucket: %v", err)
+		var owned *s3types.BucketAlreadyOwnedByYou
+		if !errors.As(err, &owned) {
+			t.Fatalf("e2etest: create bucket: %v", err)
+		}
 	}
 	publishKernels(t, client)
 
@@ -303,4 +323,25 @@ func publishKernels(t *testing.T, client *s3.Client) {
 	if published == 0 {
 		t.Fatalf("e2etest: storage grants need a kernel in %s", filepath.Join(root, "kernel"))
 	}
+}
+
+// persistentMinioCredentials returns the root credentials of a persistent
+// MinIO data directory, creating them on first use: MinIO keeps its config
+// under the root credentials it started with.
+func persistentMinioCredentials(t *testing.T, dataDir string) (string, string) {
+	t.Helper()
+	path := dataDir + ".credentials"
+	if raw, err := os.ReadFile(path); err == nil {
+		if user, secret, ok := strings.Cut(strings.TrimSpace(string(raw)), ":"); ok && user != "" && secret != "" {
+			return user, secret
+		}
+		t.Fatalf("e2etest: malformed %s", path)
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	user, secret := "e2e"+randHex(t, 6), randHex(t, 20)
+	if err := os.WriteFile(path, []byte(user+":"+secret+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return user, secret
 }
