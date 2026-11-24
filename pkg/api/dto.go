@@ -5683,7 +5683,7 @@ func ValidateAppCPUMillicores(cpuMillicores int) *Problem {
 		return nil
 	}
 	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidAppCPU,
-		"Invalid CPU", "cpu_millicores must be one of: 250, 500, 1000")
+		"Invalid CPU", "cpu_millicores must be one of: 250, 500, 1000").WithDocs(docsBase + "/plans#what-each-limit-means")
 }
 
 // --- G6 account self-service (spec §17 G6, ADR-021) -------------------------

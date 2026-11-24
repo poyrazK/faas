@@ -374,8 +374,8 @@ test-apid: ## apidserver tests with bounded compiler memory (ADR-982); RUN='^Tes
 	$(GO_TEST) -count=1 $(if $(RACE),-race) $(if $(RUN),-run '$(RUN)') ./pkg/apid/apidserver/
 
 .PHONY: monetization-sandbox
-monetization-sandbox: ## API monetization end to end against real Stripe/Paddle/Lago sandboxes; keys in GREGALE_SANDBOX_* (docs/ops/api-monetization-release.md)
-	$(GO_TEST) -count=1 -tags monetization_sandbox -timeout=20m -v -run '^TestMonetizationSandbox' ./pkg/apid/apidserver/
+monetization-sandbox: ## API monetization against real provider sandboxes; RUN narrows the tests; keys in GREGALE_SANDBOX_*
+	$(GO_TEST) -count=1 -tags monetization_sandbox -timeout=20m -v -run '$(or $(RUN),^TestMonetizationSandbox)' ./pkg/apid/apidserver/
 
 .PHONY: product-control-provider-qualification
 product-control-provider-qualification: ## Qualify Product Control exports against real Stripe test mode, Paddle sandbox and a Lago test org; set FAAS_QUALIFY_* (docs/ops/product-control.md)

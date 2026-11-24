@@ -214,6 +214,12 @@ func (c *Client) QueryVectorStrict(ctx context.Context, query string) ([]VectorS
 	return c.queryVector(ctx, query, true)
 }
 
+// QueryVectorAt is QueryVector evaluated at a fixed time, so related reads
+// describe the same instant.
+func (c *Client) QueryVectorAt(ctx context.Context, query string, at time.Time) ([]VectorSample, error) {
+	return c.queryVectorAt(ctx, query, false, &at)
+}
+
 // QueryVectorStrictAt pins related evidence reads to the same evaluation time.
 // Use timestamp(selector) when original sample freshness matters: an instant
 // query's result timestamp is the evaluation time, not the scrape time.

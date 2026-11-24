@@ -192,7 +192,9 @@ func TestQueueCanaryCLIRedeployment(t *testing.T) {
 		t.Fatalf("invalid: code=%d mutations=%d", code, mutations)
 	}
 	for _, opted := range []bool{true, false} {
-		args := append([]string{}, base...)
+		// demo already exists and this directory is not linked to it, so a
+		// redeploy confirms replacing its release (guardUnlinkedExistingApp).
+		args := append(append([]string{}, base...), "--yes")
 		if opted {
 			args = append(args, "--queue-canary-binding", "default")
 		}
