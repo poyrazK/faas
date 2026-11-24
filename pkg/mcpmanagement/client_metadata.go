@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -117,10 +118,13 @@ func validClientMetadata(id string, doc clientMetadataDocument) error {
 	case doc.TokenEndpointAuthMethod != "" && doc.TokenEndpointAuthMethod != "none":
 		return fmt.Errorf("%w: only public clients (token_endpoint_auth_method none) are supported", errClientMetadata)
 	}
-	for _, grant := range doc.GrantTypes {
-		if grant != "authorization_code" && grant != "refresh_token" {
-			return fmt.Errorf("%w: unsupported grant type", errClientMetadata)
-		}
+	// grant_types lists what the client may use; the token endpoint still
+	// issues only authorization_code and refresh_token grants. A client that
+	// also lists another grant (device code, token exchange) can still sign in
+	// here, so only a document that leaves out authorization_code is refused.
+	// An empty list means authorization_code (RFC 7591 §2).
+	if len(doc.GrantTypes) > 0 && !slices.Contains(doc.GrantTypes, "authorization_code") {
+		return fmt.Errorf("%w: grant_types must include authorization_code", errClientMetadata)
 	}
 	for _, response := range doc.ResponseTypes {
 		if response != "code" {
@@ -192,6 +196,32 @@ func (r *remoteServer) resolveMetadataClient(req *http.Request, id string) error
 	}
 	r.clients[id] = &oauthClient{ID: id, Name: safetext.Truncate(safetext.Clean(doc.ClientName), 80), Redirects: redirects, Expires: expires, Metadata: true, Refresh: now.Add(ttl)}
 	return nil
+}
+
+// clientRedirectMatches reports whether an authorization request's
+// redirect_uri is one the client registered. A metadata document cannot know
+// the ephemeral port a native client listens on, so a loopback http URI the
+// document lists without a port matches that host and path on any port
+// (RFC 8252 §7.3); Claude Code's document lists http://localhost/callback.
+// Registered clients name their exact URI and keep exact matching.
+func clientRedirectMatches(c *oauthClient, redirect string) bool {
+	if slices.Contains(c.Redirects, redirect) {
+		return true
+	}
+	if !c.Metadata {
+		return false
+	}
+	got, err := url.Parse(redirect)
+	if err != nil || got.Scheme != "http" || !loopbackHost(got.Hostname()) || got.Port() == "" || got.User != nil || got.Fragment != "" {
+		return false
+	}
+	for _, registered := range c.Redirects {
+		want, err := url.Parse(registered)
+		if err == nil && want.Scheme == "http" && want.Port() == "" && want.Hostname() == got.Hostname() && want.EscapedPath() == got.EscapedPath() && want.RawQuery == got.RawQuery {
+			return true
+		}
+	}
+	return false
 }
 
 // clientHost is the site a metadata-document client proved it is.
