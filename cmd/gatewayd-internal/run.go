@@ -3573,13 +3573,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			coverageNode = state.DefaultLocalNodeName
 		}
 		publisher := gateway.NewRequestTelemetryPublisher(gateway.RequestTelemetryPublisherConfig{
-			Enabled:        true,
-			FlushInterval:  5 * time.Second,
-			FlushBatchSize: 256,
-			MaxRetries:     3,
-			MinuteCollapse: osGetenv("FAAS_REQUEST_TELEMETRY_MINUTE_COLLAPSE") == "1",
-			OnDropped:      deps.metrics.AddRequestTelemetryDropped,
-			OnShipped:      deps.metrics.AddRequestTelemetryShipped,
+			Enabled:           true,
+			FlushInterval:     5 * time.Second,
+			FlushBatchSize:    256,
+			MaxRetries:        3,
+			MinuteCollapse:    osGetenv("FAAS_REQUEST_TELEMETRY_MINUTE_COLLAPSE") == "1",
+			OnDropped:         deps.metrics.AddRequestTelemetryDropped,
+			OnPlatformDropped: deps.metrics.AddRequestTelemetryPlatformDropped,
+			OnShipped:         deps.metrics.AddRequestTelemetryShipped,
 			OnCoverage: func(heartbeatCtx context.Context, report gateway.RequestTelemetryCoverage) error {
 				if rtTLSErr != nil {
 					return rtTLSErr
@@ -3608,7 +3609,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					SamplingBasisPoints: int32(report.SamplingBasisPoints), DroppedTotal: report.DroppedTotal,
 					PendingCount: int32(report.PendingCount), SourceAtUnixMs: report.SourceAt.UnixMilli(),
 					AppScoped: report.AppScoped, UnattributedDroppedTotal: report.UnattributedDroppedTotal, AppGaps: appGaps,
-					Analytics: analytics,
+					Analytics: analytics, CleanStop: report.CleanStop,
 				})
 				if err != nil {
 					return err
