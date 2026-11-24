@@ -79,12 +79,29 @@ func TestMCPOAuthConsumerEnrollment(t *testing.T) {
 	}{
 		"revoked":     {&fakeOAuthEnroller{id: "consumer-1"}, http.StatusForbidden, "mcp_access_denied"},
 		"daily limit": {&fakeOAuthEnroller{err: apidgrpc.ErrOAuthConsumerSignupLimit}, http.StatusTooManyRequests, api.CodeConsumerSignupDailyLimit},
-		"apid down":   {&fakeOAuthEnroller{err: errors.New("unavailable")}, http.StatusServiceUnavailable, api.CodeConsumerEnrollmentUnavailable},
 	} {
 		w, _, handled := call(handler(tc.enroller, "u1"), "u1")
 		if !handled || w.Code != tc.status || !strings.Contains(w.Body.String(), tc.code) {
 			t.Errorf("%s: handled=%v status=%d body=%s", name, handled, w.Code, w.Body)
 		}
+	}
+
+	// apid down: an app not known to enroll callers keeps serving them
+	// unattributed; one that enrolled a caller fails closed.
+	down := &fakeOAuthEnroller{err: errors.New("unavailable")}
+	if _, r, handled := call(handler(down, "u1"), "u1"); handled || authenticatedFrom(r.Context()).ConsumerID != "" {
+		t.Fatal("apid down: an app not known to enroll callers was refused")
+	}
+	known := &fakeOAuthEnroller{id: "consumer-1", active: true}
+	h = handler(known, "u1")
+	call(h, "u1")
+	known.err = errors.New("unavailable")
+	h.jwtVerifier = &countingJWTVerifier{onVerify: func(context.Context, string, *EdgeRuleJWTResolved) (*JWTClaims, error) {
+		return &JWTClaims{Subject: "u2", Exp: time.Now().Add(time.Minute), Custom: map[string]string{"scope": "mcp:read"}}, nil
+	}}
+	if w, _, handled := call(h, "u2"); !handled || w.Code != http.StatusServiceUnavailable ||
+		!strings.Contains(w.Body.String(), api.CodeConsumerEnrollmentUnavailable) {
+		t.Fatalf("apid down for an enrolling app: handled=%v status=%d body=%s", handled, w.Code, w.Body)
 	}
 
 	// Without API monetization nothing is enrolled.

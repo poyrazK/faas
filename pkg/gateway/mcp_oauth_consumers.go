@@ -30,6 +30,11 @@ const (
 	// oauthConsumersOffTTL keeps an app's "off" answer, so turning OAuth
 	// consumers on takes effect within it.
 	oauthConsumersOffTTL = 5 * time.Minute
+	// oauthConsumersOnTTL keeps the mark that an app enrolls callers. While
+	// it holds, an apid outage refuses the app's callers (503) rather than
+	// serving them unattributed; an app without it, which may never have
+	// opted in, keeps serving through the outage.
+	oauthConsumersOnTTL = 24 * time.Hour
 	// oauthConsumerRefusedTTL keeps a daily-limit refusal briefly.
 	oauthConsumerRefusedTTL = 30 * time.Second
 	// oauthConsumerCacheMax bounds the cache; past it, it starts over.
@@ -77,7 +82,8 @@ func (h *Handler) WithOAuthConsumers(e OAuthConsumerEnroller) *Handler {
 }
 
 // oauthConsumer returns the consumer an OAuth caller is, from the cache or
-// apid. An empty ID with a nil error means the app does not enroll callers.
+// apid. An empty ID with a nil error means the app does not enroll callers,
+// or is not known to while apid cannot answer.
 func (h *Handler) oauthConsumer(ctx context.Context, app App, issuer, subject, email string) (oauthConsumerEntry, error) {
 	now := time.Now()
 	appKey := "app\x00" + app.ID
@@ -91,26 +97,36 @@ func (h *Handler) oauthConsumer(ctx context.Context, app App, issuer, subject, e
 	ctx, cancel := context.WithTimeout(ctx, oauthConsumerEnrollTimeout)
 	defer cancel()
 	id, active, err := h.oauthConsumers.EnrollOAuthConsumer(ctx, app.AccountID, app.ID, issuer, subject, email)
+	onKey := "on\x00" + app.ID
 	switch {
 	case errors.Is(err, apidgrpc.ErrOAuthConsumersOff):
 		e := oauthConsumerEntry{expires: now.Add(oauthConsumersOffTTL)}
 		h.oauthConsumerCache.put(appKey, e)
+		h.oauthConsumerCache.put(onKey, oauthConsumerEntry{expires: now})
 		return e, nil
 	case errors.Is(err, apidgrpc.ErrOAuthConsumerSignupLimit):
 		h.oauthConsumerCache.put(key, oauthConsumerEntry{err: err, expires: now.Add(oauthConsumerRefusedTTL)})
 		return oauthConsumerEntry{}, err
 	case err != nil:
-		return oauthConsumerEntry{}, err
+		if _, on := h.oauthConsumerCache.get(onKey, now); on {
+			return oauthConsumerEntry{}, err
+		}
+		if h.log != nil {
+			h.log.Warn("oauth consumer enrollment unavailable; serving an app not known to enroll callers", "err", err, "app_id", app.ID)
+		}
+		return oauthConsumerEntry{}, nil
 	}
 	e := oauthConsumerEntry{id: id, active: active, expires: now.Add(oauthConsumerTTL)}
 	h.oauthConsumerCache.put(key, e)
+	h.oauthConsumerCache.put(onKey, oauthConsumerEntry{expires: now.Add(oauthConsumersOnTTL)})
 	return e, nil
 }
 
 // attachOAuthConsumer stamps the verified caller's consumer on r. It reports
 // true after answering: 403 for a revoked consumer, 429 past the app's daily
-// sign-ups, and 503 when apid cannot answer, because an unattributed call
-// would be served unbilled and unlimited.
+// sign-ups, and 503 when apid cannot answer for an app known to enroll
+// callers, because an unattributed call would be served unbilled and
+// unlimited.
 func (h *Handler) attachOAuthConsumer(w http.ResponseWriter, r *http.Request, app App, rule *EdgeRuleJWTResolved, claims *JWTClaims) bool {
 	authenticated := authenticatedFrom(r.Context())
 	if h.oauthConsumers == nil || authenticated.ConsumerID != "" || !h.APIMonetizationEnabledFor(app.AccountID) {

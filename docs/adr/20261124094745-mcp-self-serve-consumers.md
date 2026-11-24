@@ -108,9 +108,13 @@ link; an OAuth consumer is identified by issuer + subject.
 - Expand-only migration: the new identity table, and sign-up settings
   columns `oauth_consumers boolean NOT NULL DEFAULT false` and
   `free_plan_id uuid` (CHECKs `NOT VALID`).
-- New RPCs on `Auth`; old apids answer `Unimplemented`, which an opted-in
-  app treats as `503` (fail closed). Apps that have not opted in never call
-  them. Deploy order: data → apid → gateway.
+- New RPCs on `Auth`; an old apid answers `Unimplemented`, which the gateway
+  reads as "this app enrolls nobody". The gateway cannot tell an opted-in app
+  from others before apid answers, so it asks for every MCP OAuth caller of a
+  monetized account and caches "off" per app for 5 minutes. When apid cannot
+  answer, an app that enrolled a caller in the last 24 hours fails closed
+  (`503`); any other app keeps serving its callers unattributed, as before
+  this ADR. Deploy order: data → apid → gateway.
 - `upgrade_url` and `data.upgrade_url` are new optional fields.
 
 ## Consequences

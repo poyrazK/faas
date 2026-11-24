@@ -36,7 +36,8 @@ func (c OAuthConsumers) EnrollOAuthConsumer(ctx context.Context, accountID, appI
 	switch status.Code(err) {
 	case codes.OK:
 		return resp.GetConsumerId(), resp.GetActive(), nil
-	case codes.FailedPrecondition:
+	case codes.FailedPrecondition, codes.Unimplemented:
+		// An apid older than the RPC enrolls nobody (ADR-20261124094745).
 		return "", false, ErrOAuthConsumersOff
 	case codes.ResourceExhausted:
 		return "", false, ErrOAuthConsumerSignupLimit
