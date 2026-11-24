@@ -112,6 +112,9 @@ func (h *Handler) sharedRuntimeAppLayersAt(ctx context.Context, runtime string, 
 		return sharedRuntimeLayers{layers: layersAsReaders(layers[start:]), cleanup: func() {}, Reason: sharedruntime.ReasonReleasePackageManager}, nil
 	}
 	report := &appLayerReport{PythonInterpreter: sharedruntime.PythonInterpreter(runtime)}
+	nodeRunner := !sharedruntime.PythonRuntime(runtime)
+	command := sharedRuntimeCommand(*manifest, app)
+	report.KeepBun = nodeRunner && sharedruntime.BunStart(command)
 	filtered, cleanup, filterErr := filterAppLayers(layers[start:], report)
 	reason := ""
 	switch {
@@ -120,16 +123,40 @@ func (h *Handler) sharedRuntimeAppLayersAt(ctx context.Context, runtime string, 
 	case len(report.Unexpected) > 0:
 		reason = "content_outside_app"
 	default:
+		if nodeRunner && report.NextStandalone && sharedruntime.NextStart(command, report.PackageJSON) {
+			// ADR-20261124160000: the standalone server needs neither
+			// node_modules nor a package manager.
+			selected, selectedCleanup, err := selectNextStandalone(filtered)
+			if err == nil {
+				cleanup()
+				setSharedRuntimeStart(manifest, sharedruntime.NextStandaloneStart, sharedruntime.RunnerPath)
+				for k, v := range sharedruntime.NextStandaloneEnvVars {
+					manifest.Env[k] = v
+				}
+				return sharedRuntimeLayers{layers: selected, cleanup: selectedCleanup}, nil
+			}
+			h.log.Info("imaged: Next.js standalone layer not used", "app", app.Slug, "err", err)
+			if err := rewindLayers(filtered); err != nil {
+				reason = "next_standalone_reread"
+				break
+			}
+		}
+		if report.KeepBun {
+			// ADR-20261124160000: Bun runs its own scripts; the layer keeps
+			// Bun's install and the runner base supplies Node.
+			if report.BunBinDir == "" {
+				reason = "bun_not_installed"
+				break
+			}
+			setSharedRuntimeStart(manifest, []string{"/bin/sh", "-c", command}, sharedruntime.BunRunnerPath(report.BunBinDir))
+			return sharedRuntimeLayers{layers: filtered, cleanup: cleanup}, nil
+		}
 		argv, why := sharedRuntimeStart(*manifest, app, runtime, report)
 		if why != "" {
 			reason = why
 			break
 		}
-		manifest.Entrypoint = argv
-		if manifest.Env == nil {
-			manifest.Env = map[string]string{}
-		}
-		manifest.Env["PATH"] = sharedruntime.RunnerPath
+		setSharedRuntimeStart(manifest, argv, sharedruntime.RunnerPath)
 		if report.PythonInterpreter != "" {
 			manifest.Env["PATH"] = sharedruntime.PythonRunnerPath
 			manifest.Env["VIRTUAL_ENV"] = "/app/.venv"
@@ -150,6 +177,29 @@ func (h *Handler) sharedRuntimeAppLayersAt(ctx context.Context, runtime string, 
 		return sharedRuntimeLayers{}, fmt.Errorf("runtime base layer boundary %d is outside artifact layer count %d", start, len(all))
 	}
 	return sharedRuntimeLayers{layers: layersAsReaders(all[start:]), cleanup: allCleanup, Reason: reason}, nil
+}
+
+// setSharedRuntimeStart points manifest at argv with PATH path.
+func setSharedRuntimeStart(manifest *api.AppManifest, argv []string, path string) {
+	manifest.Entrypoint = argv
+	if manifest.Env == nil {
+		manifest.Env = map[string]string{}
+	}
+	manifest.Env["PATH"] = path
+}
+
+// sharedRuntimeCommand is the app's start command as written: the
+// customer's start command when set, else the image's shell-form command or
+// its words joined.
+func sharedRuntimeCommand(manifest api.AppManifest, app state.App) string {
+	if command := strings.TrimSpace(app.StartCommand); command != "" {
+		return command
+	}
+	argv := manifest.Entrypoint
+	if len(argv) == 3 && (argv[0] == "/bin/sh" || argv[0] == "/bin/bash" || argv[0] == "sh" || argv[0] == "bash") && argv[1] == "-c" {
+		return argv[2]
+	}
+	return strings.Join(argv, " ")
 }
 
 // sharedRuntimeStart resolves the app's start command for the runner base,

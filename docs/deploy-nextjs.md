@@ -8,10 +8,16 @@ every framework shares is on [Deploy a web framework](frameworks.md).
 The app runs as a server, so server components, route handlers, server
 actions and middleware all work.
 
-A Next.js app needs the Hobby plan or larger. Even a small app builds to about
-340 MB, mostly `node_modules`, and the Free plan caps the app layer at 256 MB;
-a larger build fails with `app_layer_too_large`. See
-[App layer](build.md#app-layer) and [Plans and pricing](plans.md).
+A Next.js 16 app runs on every plan, Free included. When the `start` script
+is a plain `next start`, Gregale builds the app with `output: "standalone"`,
+so `next build` copies only the files the server needs into
+`.next/standalone`, and the app ships only that tree. A small app is about
+40 MB this way; with its full `node_modules` it would be about 340 MB. The
+build log shows `Applying modifyConfig from gregale-standalone`. The Free plan
+caps the app layer at 256 MB, and a larger build fails with
+`app_layer_too_large`. See [App layer](build.md#app-layer),
+[Make the app smaller](#make-the-app-smaller) and
+[Plans and pricing](plans.md).
 
 ## Prepare the app
 
@@ -79,8 +85,24 @@ The build runs in a microVM with 2048 MB of memory. A large app whose
 
 ## Make the app smaller
 
-`output: "standalone"` makes `next build` copy only the files the server
-needs. Build it with a Dockerfile so the image keeps only that output:
+Gregale builds with `output: "standalone"` and ships only `.next/standalone`,
+with `.next/static` and `public` copied into it, when all of these hold:
+
+- `next` 16 or later is in `dependencies`;
+- the `build` script runs `next build`;
+- the `start` script is exactly `next start`, with no `prestart` or
+  `poststart` script. `next start` reads `PORT`, so flags such as `-p` are
+  not needed; a start with flags, or a custom server, keeps `node_modules`;
+- the app builds on Node 24, the default. An app that declares another Node
+  version carries its own Node and its full `node_modules`.
+
+If your `next.config` sets `output` itself, Gregale leaves it as it is. Next
+traces which files the server reads. A file it reads at runtime by a computed
+path can be missing from `.next/standalone`; list it in
+`outputFileTracingIncludes`.
+
+When the conditions do not fit your app, build the standalone server with a
+Dockerfile so the image keeps only that output:
 
 ```js
 // next.config.mjs
@@ -111,9 +133,9 @@ If the app has a `public` directory, also copy it:
 `HOSTNAME=0.0.0.0` makes it listen on every interface rather than on the
 machine's host name.
 
-A small app built this way is about 230 MB instead of 340 MB, which leaves
-room for larger dependencies. On Hobby, an image built from a Dockerfile like
-this one is capped at 256 MB. See
+An image built this way carries its own Alpine and Node, so a small app is
+about 230 MB. Images that do not start from Gregale's base need a paid plan,
+and on Hobby they are capped at 256 MB. See
 [Container compatibility](container-compatibility.md) for how Gregale builds a
 Dockerfile.
 

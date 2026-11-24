@@ -1244,6 +1244,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		IssueSourceMaps:        sourceMaps,
 		Function:               app.Type == state.AppTypeFunction,
 		SharedRuntime:          sharedRuntime != "",
+		NextStandalone:         nextStandaloneBuild(sharedRuntime, os.Getenv),
 		DevWatchCommand:        watch.Command,
 		DevWatchHost:           watch.Host,
 		DependencyCacheKey:     dependencyCacheKey,

@@ -377,6 +377,41 @@ type appLayerReport struct {
 	// Python is what a package manager's `run` in the start command is
 	// checked against (ADR-1500 amendment 3); filled with PythonInterpreter.
 	Python sharedruntime.PythonLayer
+	// KeepBun keeps mise's Bun install beside /app for an app that starts
+	// through Bun (ADR-20261124160000); BunBinDir is where its bun was.
+	KeepBun   bool
+	BunBinDir string
+	// NextStandalone records a Next.js standalone server in /app.
+	NextStandalone bool
+}
+
+// keepName returns the name a kept entry has in the filtered layer: an /app
+// entry, or a Bun install entry when the report keeps Bun.
+func (r *appLayerReport) keepName(name string) (string, bool) {
+	if kept, ok := functionAppEntryName(name); ok {
+		return kept, true
+	}
+	if r == nil || !r.KeepBun || name == "" || pathpkg.IsAbs(name) {
+		return "", false
+	}
+	clean := pathpkg.Clean(name)
+	if !sharedruntime.BunInstallEntry(clean) {
+		return "", false
+	}
+	return clean, true
+}
+
+// noteKept records what a kept entry tells the shared runtime start.
+func (r *appLayerReport) noteKept(hdr *tar.Header) {
+	if r == nil {
+		return
+	}
+	switch {
+	case hdr.Name == sharedruntime.NextStandaloneServer && hdr.Typeflag == tar.TypeReg:
+		r.NextStandalone = true
+	case r.KeepBun && r.BunBinDir == "" && (hdr.Typeflag == tar.TypeReg || hdr.Typeflag == tar.TypeSymlink):
+		r.BunBinDir = sharedruntime.BunBinDir(hdr.Name)
+	}
 }
 
 const appLayerReportMaxUnexpected = 8
@@ -538,13 +573,14 @@ func filterAppLayers(layers []io.ReadCloser, report *appLayerReport) ([]io.Reade
 				_ = zr.Close()
 				return fail(fmt.Errorf("read function layer %d: %w", i, nextErr))
 			}
-			name, keep := functionAppEntryName(hdr.Name)
+			name, keep := report.keepName(hdr.Name)
 			if !keep {
 				report.dropped(hdr)
 				continue
 			}
 			copyHeader := *hdr
 			copyHeader.Name = name
+			report.noteKept(&copyHeader)
 			var content io.Reader = tr
 			if report != nil && report.PythonInterpreter != "" {
 				relinked, relinkErr := report.relinkVenv(&copyHeader, tr)
@@ -565,7 +601,7 @@ func filterAppLayers(layers []io.ReadCloser, report *appLayerReport) ([]io.Reade
 				return fail(fmt.Errorf("function layers exceed %d uncompressed bytes", maxFunctionAppUncompressedBytes))
 			}
 			if copyHeader.Typeflag == tar.TypeLink {
-				linkName, linkOK := functionAppEntryName(copyHeader.Linkname)
+				linkName, linkOK := report.keepName(copyHeader.Linkname)
 				if !linkOK {
 					_ = tw.Close()
 					_ = zw.Close()

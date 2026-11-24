@@ -72,6 +72,7 @@ func TestClassifyNode(t *testing.T) {
 		{name: "missing script", plan: platformPlan(t, nil), pkg: `{"scripts":{}}`, wantReason: ReasonMissingScript},
 		{name: "forwarded npm arguments", plan: platformPlan(t, setStart("npm run start -- --port 3000")), pkg: pkg, wantReason: ReasonNPMArguments},
 		{name: "other package manager", plan: platformPlan(t, setStart("yarn start")), pkg: pkg, wantReason: ReasonPackageManagerStart},
+		{name: "bun keeps its own install", plan: platformPlan(t, setStart("bun run start")), pkg: pkg, wantStart: []string{"/bin/sh", "-c", "bun run start"}},
 		{name: "no start command", plan: platformPlan(t, setStart("")), pkg: pkg, wantReason: ReasonNoStartCommand},
 		{name: "unreadable plan", plan: []byte("{"), pkg: pkg, wantReason: ReasonPlanUnreadable},
 	}

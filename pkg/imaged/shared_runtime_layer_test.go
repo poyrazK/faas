@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"errors"
 	"io"
+	"log/slog"
 	"maps"
 	"slices"
 	"strings"
@@ -325,6 +326,146 @@ func TestSharedRuntimeAppLayers(t *testing.T) {
 	}
 }
 
+// layerEntryNames lists the entries of filtered layers.
+func layerEntryNames(t *testing.T, layers []io.Reader) []string {
+	t.Helper()
+	var names []string
+	for _, layer := range layers {
+		zr, err := rootfs.OpenCompressedLayer(layer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tr := tar.NewReader(zr)
+		for {
+			hdr, err := tr.Next()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			names = append(names, hdr.Name)
+		}
+		_ = zr.Close()
+	}
+	slices.Sort(names)
+	return names
+}
+
+// spec: §4.6
+// ADR-20261124160000: a Next.js app started with a plain `next start` ships
+// only its standalone tree when the build wrote one, and a Bun app keeps
+// Bun's install instead of the whole mise toolchain. Anything else keeps
+// the earlier layer.
+func TestSharedRuntimeAppLayersNextAndBun(t *testing.T) {
+	const nextPkg = `{"scripts":{"build":"next build","start":"next start"},"dependencies":{"next":"16.4.6"}}`
+	const bunPkg = `{"scripts":{"start":"bun index.ts"}}`
+	base := minimalConfigBytes()
+	digest := digestFor(t, base)
+	h := &Handler{
+		oci:                   &minimalManifestPuller{manifest: oci.Manifest{Config: oci.Descriptor{Digest: digest}}, layers: map[string][]byte{digest: base}},
+		deployBaseRefOverride: "ghcr.io/test/runner-node24@sha256:" + strings.Repeat("4", 64),
+		log:                   slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	standalone := map[string]string{
+		"app/package.json":                            nextPkg,
+		"app/node_modules/next/dist/server.js":        "full",
+		"app/.next/standalone/server.js":              "server",
+		"app/.next/standalone/node_modules/next/x.js": "traced",
+		"app/.next/standalone/.next/static/a.css":     "css",
+		"mise/installs/node/24.1.0/bin/node":          "elf",
+	}
+	withPkg := func(files map[string]string, pkg string) map[string]string {
+		out := maps.Clone(files)
+		out["app/package.json"] = pkg
+		return out
+	}
+	tests := []struct {
+		name       string
+		files      map[string]string
+		start      string
+		wantReason string
+		wantArgv   []string
+		wantPath   string
+		wantNames  []string
+	}{
+		{
+			name: "next standalone", files: standalone, start: "npm run start",
+			wantArgv: sharedruntime.NextStandaloneStart, wantPath: sharedruntime.RunnerPath,
+			wantNames: []string{"app/.next/standalone/.next/static/a.css", "app/.next/standalone/node_modules/next/x.js", "app/.next/standalone/server.js"},
+		},
+		{
+			name: "next started through bun", files: withPkg(standalone, nextPkg), start: "bun run start",
+			wantArgv: sharedruntime.NextStandaloneStart, wantPath: sharedruntime.RunnerPath,
+			wantNames: []string{"app/.next/standalone/.next/static/a.css", "app/.next/standalone/node_modules/next/x.js", "app/.next/standalone/server.js"},
+		},
+		{
+			name: "next start with arguments keeps node_modules", start: "npm run start",
+			files:    withPkg(standalone, `{"scripts":{"start":"next start -p 3000"}}`),
+			wantArgv: []string{"/bin/sh", "-c", "next start -p 3000"}, wantPath: sharedruntime.RunnerPath,
+			wantNames: []string{"app/.next/standalone/.next/static/a.css", "app/.next/standalone/node_modules/next/x.js", "app/.next/standalone/server.js", "app/node_modules/next/dist/server.js", "app/package.json"},
+		},
+		{
+			name: "next without standalone output", start: "npm run start",
+			files:     map[string]string{"app/package.json": nextPkg, "app/node_modules/next/dist/server.js": "full"},
+			wantArgv:  []string{"/bin/sh", "-c", "next start"},
+			wantPath:  sharedruntime.RunnerPath,
+			wantNames: []string{"app/node_modules/next/dist/server.js", "app/package.json"},
+		},
+		{
+			name: "bun keeps bun, not node", start: "bun run start",
+			files:     map[string]string{"app/package.json": bunPkg, "app/index.ts": "Bun.serve()", "mise/installs/bun/1.3.5/bin/bun": "elf", "mise/installs/node/24.1.0/bin/node": "elf"},
+			wantArgv:  []string{"/bin/sh", "-c", "bun run start"},
+			wantPath:  sharedruntime.BunRunnerPath("/mise/installs/bun/1.3.5/bin"),
+			wantNames: []string{"app/index.ts", "app/package.json", "mise/installs/bun/1.3.5/bin/bun"},
+		},
+		{
+			name: "bun start without bun installed", start: "bun run start",
+			files:      map[string]string{"app/package.json": bunPkg, "app/index.ts": "Bun.serve()", "mise/installs/node/24.1.0/bin/node": "elf"},
+			wantReason: "bun_not_installed",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			archive := sharedRuntimeArtifactFixture(t, tt.files)
+			config, layers, cleanup, err := loadLocalOCIArchiveContext(t.Context(), archive)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cleanup()
+			entry := []string{"/bin/bash", "-c", tt.start}
+			manifest := api.AppManifest{Entrypoint: slices.Clone(entry), Env: map[string]string{"NODE_ENV": "production"}}
+			_, baseDiffIDs, err := h.runtimeBaseDiffIDs(t.Context(), RuntimeNode24, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := h.sharedRuntimeAppLayersAt(t.Context(), RuntimeNode24, baseDiffIDs, archive, config, layers, &manifest, state.App{Type: state.AppTypeApp}, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer got.cleanup()
+			if got.Reason != tt.wantReason {
+				t.Fatalf("reason = %q, want %q", got.Reason, tt.wantReason)
+			}
+			if tt.wantReason != "" {
+				if !slices.Equal(manifest.Entrypoint, entry) {
+					t.Fatalf("fallback rewrote the start command: %v", manifest.Entrypoint)
+				}
+				return
+			}
+			if !slices.Equal(manifest.Entrypoint, tt.wantArgv) || manifest.Env["PATH"] != tt.wantPath || manifest.Env["NODE_ENV"] != "production" {
+				t.Fatalf("manifest = %+v, want %q on %q", manifest, tt.wantArgv, tt.wantPath)
+			}
+			if standalone := slices.Equal(tt.wantArgv, sharedruntime.NextStandaloneStart); standalone != (manifest.Env["HOSTNAME"] == "0.0.0.0") {
+				t.Fatalf("HOSTNAME = %q for a standalone start %v", manifest.Env["HOSTNAME"], standalone)
+			}
+			if names := layerEntryNames(t, got.layers); !slices.Equal(names, tt.wantNames) {
+				t.Fatalf("layer = %q\nwant %q", names, tt.wantNames)
+			}
+		})
+	}
+}
+
 // spec: §4.6
 // ADR-1500 amendment 2: a Python export keeps only /app on the runner base,
 // with the virtualenv's scripts first on PATH. Amendment 3: a `uv run` of a
@@ -350,9 +491,9 @@ func TestSharedRuntimeAppLayersPython(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			archive := sharedRuntimeArtifactFixture(t, map[string]string{
-				"app/app.py":                                  "print('hi')",
-				"app/.venv/pyvenv.cfg":                        "home = /mise/installs/python/3.13.15/bin\n",
-				"app/.venv/bin/uvicorn":                       "#!/app/.venv/bin/python\n",
+				"app/app.py":            "print('hi')",
+				"app/.venv/pyvenv.cfg":  "home = /mise/installs/python/3.13.15/bin\n",
+				"app/.venv/bin/uvicorn": "#!/app/.venv/bin/python\n",
 				"mise/installs/python/3.13.15/bin/python3.13": "elf",
 			})
 			config, layers, cleanup, err := loadLocalOCIArchiveContext(t.Context(), archive)
