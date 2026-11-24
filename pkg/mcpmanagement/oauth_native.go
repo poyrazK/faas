@@ -119,12 +119,14 @@ func (r *remoteServer) startNativeLogin(ctx context.Context, w http.ResponseWrit
 	toolsetSpec := req.PostForm.Get("toolsets")
 	chosen := req.PostForm["capability"]
 	if r.offersWrites(flow) {
-		if req.PostForm.Get("access") == accessDeploy {
+		switch req.PostForm.Get("access") {
+		case accessDeploy:
 			writes = true
 			toolsetSpec = deployToolsets(toolsetSpec, r.opts.Toolsets)
-		} else {
+		case accessInspect:
 			// The extras need write access; ticking one and then choosing
-			// "Inspect only" must not fail the connection.
+			// "Inspect only" must not fail the connection. A form without
+			// the choice is still refused below.
 			chosen = readOnlyCapabilities(chosen)
 		}
 	}

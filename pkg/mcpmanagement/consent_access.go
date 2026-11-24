@@ -8,6 +8,9 @@ import (
 // accessDeploy is the "Deploy and manage" choice on the page before sign-in.
 const accessDeploy = "deploy"
 
+// accessInspect is the "Inspect only" choice.
+const accessInspect = "inspect"
+
 // deployToolsetSpec is the tool selection a deploy choice loads when the
 // person kept the default core tools.
 const deployToolsetSpec = "core,release,provision,operate"
@@ -17,7 +20,7 @@ const deployToolsetSpec = "core,release,provision,operate"
 // inspection, so without it every new connection (claude.ai, Cursor) could
 // read but never deploy (ADR-20261028205920 amendment 1). Deploy is
 // preselected; the review page still requires the write confirmation.
-const consentAccessChoice = `<fieldset><legend>What may this agent do?</legend><label><input type="radio" name="access" value="deploy" form="gregale-connect" checked> Deploy and manage apps (recommended). You confirm write access on the next page.</label><br><label><input type="radio" name="access" value="inspect" form="gregale-connect"> Inspect only: apps, deployments, logs and health</label></fieldset>`
+const consentAccessChoice = `<fieldset><legend>What may this agent do?</legend><label><input type="radio" name="access" value="deploy" form="gregale-connect" checked> Deploy and manage apps (recommended). You confirm write access on the next page.</label><br><label><input type="radio" name="access" value="` + accessInspect + `" form="gregale-connect"> Inspect only: apps, deployments, logs and health</label></fieldset>`
 
 // offersWrites reports whether the page before sign-in offers deploy access:
 // the bridge allows writes, the client did not already ask for them, and
