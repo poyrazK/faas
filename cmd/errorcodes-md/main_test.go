@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/whycopy"
 )
 
 // fixture writes a small module whose problems exercise each way a code
@@ -256,6 +258,31 @@ func TestCustomerStatus(t *testing.T) {
 	for in, want := range map[int]int{502: 503, 504: 503, 409: 409, 0: 0, 200: 0} {
 		if got := customerStatus(in); got != want {
 			t.Errorf("customerStatus(%d) = %d, want %d", in, got, want)
+		}
+	}
+}
+
+// A code no call site titles or hints takes its whycopy row's title and hint,
+// which is what Decorate puts on the problem; a call site's own text wins.
+func TestWhycopyFallback(t *testing.T) {
+	prev := whycopyRow
+	t.Cleanup(func() { whycopyRow = prev })
+	whycopyRow = func(code string) (whycopy.Render, bool) {
+		switch code {
+		case "omega_declared":
+			return whycopy.Render{Title: "Omega failed", Hint: "retry the omega step"}, true
+		case "plan_limit_apps":
+			return whycopy.Render{Title: "Catalog title", Hint: "catalog hint"}, true
+		}
+		return whycopy.Render{}, false
+	}
+	page := generate(t, fixture(t, ""))
+	for code, want := range map[string]string{
+		"omega_declared":  "Omega failed\n\nRetry the omega step",
+		"plan_limit_apps": "HTTP 403 Forbidden · App limit reached\n\nDelete an app or upgrade the plan\n\nSee [Plans and pricing](plans.md#apps).",
+	} {
+		if got, ok := entryOf(page, code); !ok || got != want {
+			t.Errorf("%s:\n got %q\nwant %q", code, got, want)
 		}
 	}
 }
