@@ -20,6 +20,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -251,43 +252,106 @@ type httpResult struct {
 	body string
 }
 
-// TestMonetizationSandboxStripe: draft with a credit line, a retry after a
-// refused customer, concurrent exports, send, charge with payment sync, and
-// JPY and KWD invoices in Stripe's units.
-func TestMonetizationSandboxStripe(t *testing.T) {
-	env := sandboxEnv(t)
-	key := env("GREGALE_SANDBOX_STRIPE_KEY")
+func stripeSandbox(t *testing.T) (sandboxHTTP, string) {
+	t.Helper()
+	key := sandboxEnv(t)("GREGALE_SANDBOX_STRIPE_KEY")
 	if key == "" {
 		t.Skip("GREGALE_SANDBOX_STRIPE_KEY is not set")
 	}
 	if !strings.HasPrefix(key, "sk_test_") && !strings.HasPrefix(key, "rk_test_") {
 		t.Fatal("GREGALE_SANDBOX_STRIPE_KEY must be a test-mode key (sk_test_ or rk_test_)")
 	}
-	stripe := sandboxHTTP{t: t, base: "https://api.stripe.com", form: true, header: http.Header{"Authorization": {"Bearer " + key}}}
+	return sandboxHTTP{t: t, base: "https://api.stripe.com", form: true, header: http.Header{"Authorization": {"Bearer " + key}}}, key
+}
+
+func (c sandboxHTTP) createStripeCustomer() string {
+	c.t.Helper()
+	var out struct {
+		ID string `json:"id"`
+	}
+	if code := c.call(http.MethodPost, "/v1/customers", url.Values{"email": {"sandbox+" + uuid.NewString()[:8] + "@gregale.dev"},
+		"name": {"Gregale sandbox"}, "metadata[gregale_sandbox]": {"1"}}, &out); code != http.StatusOK || out.ID == "" {
+		c.t.Fatalf("create Stripe customer: %d, id %q", code, out.ID)
+	}
+	c.t.Cleanup(func() { c.call(http.MethodDelete, "/v1/customers/"+out.ID, nil, nil) })
+	return out.ID
+}
+
+// TestMonetizationSandboxStripeMetering qualifies model prices, waiver replay,
+// and late adjustments through apid and checks the actual Stripe draft.
+func TestMonetizationSandboxStripeMetering(t *testing.T) {
+	stripe, key := stripeSandbox(t)
+	customer := stripe.createStripeCustomer()
+	f := newSandboxFixture(t)
+	f.connect("stripe", api.PutBillingConnectionRequest{SecretKey: key, Collection: state.CollectionNone})
+	checkUsageWaiver(t, *f.e.Store(), f.e.Acct().ID, f.e.Do, customer, func(path string, statement api.APIConsumerUsageStatementResponse) {
+		invoice := f.export(path, "stripe", "", http.StatusOK)
+		stripePath := "/v1/invoices/" + invoice.InvoiceID
+		if invoice.InvoiceID != "" {
+			t.Cleanup(func() {
+				if code := stripe.call(http.MethodDelete, stripePath, nil, nil); code != http.StatusOK {
+					t.Errorf("delete sandbox invoice %s: %d", invoice.InvoiceID, code)
+				}
+			})
+		}
+		checkMeteringInvoiceReplay(t, f.e.Do, path, statement, invoice)
+
+		var draft struct {
+			Status      string `json:"status"`
+			Customer    string `json:"customer"`
+			Currency    string `json:"currency"`
+			AmountDue   int64  `json:"amount_due"`
+			Total       int64  `json:"total"`
+			AutoAdvance *bool  `json:"auto_advance"`
+			Livemode    bool   `json:"livemode"`
+		}
+		if code := stripe.call(http.MethodGet, stripePath, nil, &draft); code != http.StatusOK ||
+			draft.Status != "draft" || draft.Customer != customer || !strings.EqualFold(draft.Currency, invoice.Currency) ||
+			draft.AmountDue != invoice.AmountMinor || draft.Total != invoice.AmountMinor ||
+			draft.AutoAdvance == nil || *draft.AutoAdvance || draft.Livemode {
+			t.Fatalf("Stripe invoice %s = %+v (HTTP %d), want an uncollected sandbox draft for %d cents", invoice.InvoiceID, draft, code, invoice.AmountMinor)
+		}
+
+		var page struct {
+			Data []struct {
+				Amount      int64  `json:"amount"`
+				Description string `json:"description"`
+			} `json:"data"`
+			HasMore bool `json:"has_more"`
+		}
+		if code := stripe.call(http.MethodGet, stripePath+"/lines?limit=10", nil, &page); code != http.StatusOK || page.HasMore {
+			t.Fatalf("list Stripe invoice %s lines: HTTP %d, has_more=%v", invoice.InvoiceID, code, page.HasMore)
+		}
+		lines := make([]string, 0, len(page.Data))
+		for _, item := range page.Data {
+			lines = append(lines, fmt.Sprintf("%d:%s", item.Amount, item.Description))
+		}
+		checkMeteringInvoiceLines(t, lines)
+	})
+}
+
+// TestMonetizationSandboxStripe: draft with a credit line, a retry after a
+// refused customer, concurrent exports, send, charge with payment sync, and
+// JPY and KWD invoices in Stripe's units.
+func TestMonetizationSandboxStripe(t *testing.T) {
+	stripe, key := stripeSandbox(t)
 	client := stripeinvoice.New()
 	var invoices []string
 	customer := func(withCard bool) string {
 		t.Helper()
-		var out struct {
-			ID string `json:"id"`
-		}
-		if code := stripe.call(http.MethodPost, "/v1/customers", url.Values{"email": {"sandbox+" + uuid.NewString()[:8] + "@gregale.dev"},
-			"name": {"Gregale sandbox"}, "metadata[gregale_sandbox]": {"1"}}, &out); code != http.StatusOK {
-			t.Fatalf("create Stripe customer: %d", code)
-		}
-		t.Cleanup(func() { stripe.call(http.MethodDelete, "/v1/customers/"+out.ID, nil, nil) })
+		id := stripe.createStripeCustomer()
 		if withCard {
 			var pm struct {
 				ID string `json:"id"`
 			}
-			if code := stripe.call(http.MethodPost, "/v1/payment_methods/pm_card_visa/attach", url.Values{"customer": {out.ID}}, &pm); code != http.StatusOK {
+			if code := stripe.call(http.MethodPost, "/v1/payment_methods/pm_card_visa/attach", url.Values{"customer": {id}}, &pm); code != http.StatusOK {
 				t.Fatalf("attach test card: %d", code)
 			}
-			if code := stripe.call(http.MethodPost, "/v1/customers/"+out.ID, url.Values{"invoice_settings[default_payment_method]": {pm.ID}}, nil); code != http.StatusOK {
+			if code := stripe.call(http.MethodPost, "/v1/customers/"+id, url.Values{"invoice_settings[default_payment_method]": {pm.ID}}, nil); code != http.StatusOK {
 				t.Fatalf("default payment method: %d", code)
 			}
 		}
-		return out.ID
+		return id
 	}
 	t.Cleanup(func() {
 		for _, id := range invoices {

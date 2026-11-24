@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -175,15 +176,55 @@ func TestAPIConsumerUsageWaiver(t *testing.T) {
 		(*env.S()).StatementInvoices().Stripe = &stripeinvoice.Client{BaseURL: server.URL, HTTP: server.Client()}
 		meteringResponse(t, env.Do, http.MethodPut, "/v1/account/billing-connections/stripe",
 			api.PutBillingConnectionRequest{SecretKey: "rk_test_51abcdWXYZ"}, http.StatusOK, nil)
-		checkUsageWaiver(t, *env.Store(), env.Acct().ID, env.Do, stripe)
+		checkUsageWaiver(t, *env.Store(), env.Acct().ID, env.Do, "cus_ABC123", func(path string, statement api.APIConsumerUsageStatementResponse) {
+			stripe.failNextAdd = true
+			meteringResponse(t, env.Do, http.MethodPost, path, struct{}{}, http.StatusBadGateway, nil)
+			var invoice api.StatementInvoiceExportResponse
+			meteringResponse(t, env.Do, http.MethodPost, path, struct{}{}, http.StatusOK, &invoice)
+			checkMeteringInvoiceReplay(t, env.Do, path, statement, invoice)
+			if stripe.invoices != 1 || len(stripe.items[invoice.InvoiceID]) != len(meteringInvoiceLines) {
+				t.Fatalf("invoices = %d, items = %v", stripe.invoices, stripe.items)
+			}
+			checkMeteringInvoiceLines(t, stripe.amounts)
+		})
 	})
 	t.Run("postgres", func(t *testing.T) {
 		env := apidserver.SetupPGHandler(t, api.PlanHobby)
-		checkUsageWaiver(t, *env.Store(), env.Acct().ID, env.Do, nil)
+		checkUsageWaiver(t, *env.Store(), env.Acct().ID, env.Do, "cus_ABC123", nil)
 	})
 }
 
-func checkUsageWaiver(t *testing.T, store state.Store, accountID string, do meteringRequest, stripe *fakeStripe) {
+var meteringInvoiceLines = []string{
+	"0:100 output tokens included at no charge",
+	"100:20 output tokens at 0.05 USD each",
+	"200:100 output tokens at 0.02 USD each",
+}
+
+func checkMeteringInvoiceLines(t *testing.T, got []string) {
+	t.Helper()
+	lines := slices.Clone(got)
+	slices.Sort(lines)
+	if !slices.Equal(lines, meteringInvoiceLines) {
+		t.Fatalf("invoice lines = %v, want %v", lines, meteringInvoiceLines)
+	}
+}
+
+func checkMeteringInvoiceReplay(t *testing.T, do meteringRequest, path string, statement api.APIConsumerUsageStatementResponse, invoice api.StatementInvoiceExportResponse) {
+	t.Helper()
+	// The fixture's USD prices yield exact cents, with 1,000 millicents per cent.
+	if invoice.InvoiceID == "" || invoice.Status != state.StatementInvoiceExportCompleted || invoice.StatementID != statement.ID ||
+		invoice.Currency != statement.Currency || invoice.AmountMinor*1000 != statement.AmountDueMillicents ||
+		invoice.Livemode || invoice.Collection != state.CollectionNone || !strings.Contains(invoice.DashboardURL, "/test/invoices/") {
+		t.Fatalf("invoice = %+v, want a sandbox draft for %s with %d millicents due", invoice, statement.ID, statement.AmountDueMillicents)
+	}
+	var replay api.StatementInvoiceExportResponse
+	meteringResponse(t, do, http.MethodPost, path, struct{}{}, http.StatusOK, &replay)
+	if replay.InvoiceID != invoice.InvoiceID || replay.AmountMinor != invoice.AmountMinor {
+		t.Fatalf("invoice export replay = %+v, want %s with %d cents due", replay, invoice.InvoiceID, invoice.AmountMinor)
+	}
+}
+
+func checkUsageWaiver(t *testing.T, store state.Store, accountID string, do meteringRequest, customerID string, checkInvoice func(string, api.APIConsumerUsageStatementResponse)) {
 	t.Helper()
 	ctx := context.Background()
 	app, err := store.CreateApp(ctx, state.App{AccountID: accountID, Slug: "waiver-test", Type: state.AppTypeApp,
@@ -194,7 +235,7 @@ func checkUsageWaiver(t *testing.T, store state.Store, accountID string, do mete
 	appPath := "/v1/apps/" + app.Slug
 	var consumer api.APIConsumerResponse
 	meteringResponse(t, do, http.MethodPost, appPath+"/consumers", api.CreateAPIConsumerRequest{
-		ExternalRef: "cus_ABC123", Name: "Waiver test consumer",
+		ExternalRef: customerID, Name: "Waiver test consumer",
 	}, http.StatusCreated, &consumer)
 
 	start := time.Now().UTC().Truncate(time.Minute).Add(-2 * time.Minute)
@@ -271,28 +312,37 @@ func checkUsageWaiver(t *testing.T, store state.Store, accountID string, do mete
 		quote.MeterBreakdown[2].Model != "unlisted" || quote.MeterBreakdown[2].WaivedUnits != 17 {
 		t.Fatalf("quote = %+v", quote)
 	}
-	meteringResponse(t, do, http.MethodPost, statements+"/"+approved.ID+"/finalize", nil, http.StatusOK, nil)
-	if stripe != nil {
-		exportPath := statements + "/" + approved.ID + "/invoice"
-		stripe.failNextAdd = true
-		meteringResponse(t, do, http.MethodPost, exportPath, struct{}{}, http.StatusBadGateway, nil)
-		var invoice api.StatementInvoiceExportResponse
-		meteringResponse(t, do, http.MethodPost, exportPath, struct{}{}, http.StatusOK, &invoice)
-		meteringResponse(t, do, http.MethodPost, exportPath, struct{}{}, http.StatusOK, nil)
-		if invoice.Status != "completed" || invoice.AmountMinor != 300 || !strings.Contains(invoice.DashboardURL, "/test/invoices/") ||
-			stripe.invoices != 1 || len(stripe.items[invoice.InvoiceID]) != 3 || strings.Contains(strings.Join(stripe.amounts, "\n"), ":17 ") {
-			t.Fatalf("invoice = %+v, items = %v, amounts = %v", invoice, stripe.items, stripe.amounts)
-		}
+	var finalized api.APIConsumerUsageStatementResponse
+	meteringResponse(t, do, http.MethodPost, statements+"/"+approved.ID+"/finalize", nil, http.StatusOK, &finalized)
+	if finalized.ID != approved.ID || finalized.Status != string(state.APIConsumerUsageStatementFinalized) || finalized.AmountDueMillicents != held.AmountMillicents {
+		t.Fatalf("finalized metering statement = %+v, want %s with %d millicents due", finalized, approved.ID, held.AmountMillicents)
+	}
+	if checkInvoice != nil {
+		checkInvoice(statements+"/"+finalized.ID+"/invoice", finalized)
+	}
+
+	record("standard", 5)
+	var adjustment api.APIConsumerUsageStatementResponse
+	meteringResponse(t, do, http.MethodPost, statements, period, http.StatusCreated, &adjustment)
+	if !adjustment.Priced || adjustment.Revision != 3 || adjustment.BillableUnits != 5 || adjustment.AmountMillicents != 10000 ||
+		len(adjustment.Buckets) != 1 || adjustment.Buckets[0].Model != "standard" {
+		t.Fatalf("priced late adjustment = %+v", adjustment)
+	}
+	meteringResponse(t, do, http.MethodPost, statements+"/"+adjustment.ID+"/finalize", nil, http.StatusOK, nil)
+	var original api.APIConsumerUsageStatementResponse
+	meteringResponse(t, do, http.MethodGet, statements+"/"+finalized.ID, nil, http.StatusOK, &original)
+	if original.ID != finalized.ID || original.Status != finalized.Status || original.AmountDueMillicents != finalized.AmountDueMillicents {
+		t.Fatalf("original statement after adjustment = %+v, want %+v", original, finalized)
 	}
 
 	record("unlisted", 3)
 	meteringResponse(t, do, http.MethodGet, quotePath, nil, http.StatusOK, &quote)
-	if quote.Priced || quote.UnpricedUnits != 3 || quote.AmountMillicents != held.AmountMillicents {
+	if quote.Priced || quote.UnpricedUnits != 3 || quote.AmountMillicents != held.AmountMillicents+adjustment.AmountMillicents {
 		t.Fatalf("late quote = %+v", quote)
 	}
 	var late api.APIConsumerUsageStatementResponse
 	meteringResponse(t, do, http.MethodPost, statements, period, http.StatusCreated, &late)
-	if late.Priced || late.Revision != 3 || late.UnpricedUnits != 3 || late.AmountMillicents != 0 {
+	if late.Priced || late.Revision != 4 || late.UnpricedUnits != 3 || late.AmountMillicents != 0 {
 		t.Fatalf("late adjustment = %+v", late)
 	}
 	meteringResponse(t, do, http.MethodPost, statements+"/"+late.ID+"/finalize", nil, http.StatusConflict, nil)

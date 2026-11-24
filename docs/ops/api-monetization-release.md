@@ -12,6 +12,7 @@ An account has monetization when the switch is on or the flag admits it. The fla
 ## Qualify against the providers first
 
 `make monetization-sandbox` runs the export path end to end against the real provider sandboxes:
+- model pricing, waivers, and late usage against a Stripe draft;
 - draft invoices with a credit line;
 - a retry after the provider refused the customer;
 - concurrent exports of one statement;
@@ -34,6 +35,26 @@ GREGALE_SANDBOX_LAGO_URL=https://api.getlago.com
 - **Lago.** Lago has no test mode, so point it at a test organization.
 - **Cleanup.** The test creates its own customers and voids, cancels or deletes the invoices it made.
 - **Where it runs.** It needs outbound HTTPS from the machine running it, no database.
+
+### Run the model metering pilot
+
+```sh
+make monetization-sandbox RUN=TestMonetizationSandboxStripeMetering
+```
+
+The test runs apid locally and creates a dedicated Stripe sandbox customer. It
+records usage for two priced models and one unknown model, confirms the hold,
+approves a waiver for the unknown usage, and exports a USD 3.00 draft. It
+checks that a retry returns the same invoice ID and that the draft still has
+automatic collection off and exactly the three expected lines. A late priced
+event adds only USD 0.10 to a new revision. Late unpriced usage holds the next
+revision. Stripe fixtures are cleaned up after the run. `SKIP` means the
+Stripe sandbox key is required to complete the pilot.
+
+Before enabling a design partner, repeat the flow on a test deployment that
+includes the change. Enable the account flag for the test account, send traffic
+through its gateway, and compare the statement's amount due and invoice lines
+with the Stripe sandbox draft.
 
 ## Release to selected accounts
 
