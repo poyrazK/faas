@@ -24,6 +24,9 @@ type createBody struct {
 	api.CreateSandboxRequest
 	Manifest json.RawMessage `json:"manifest"`
 	Env      json.RawMessage `json:"env"`
+	// desktop marks a create that named preset desktop, which apid turned
+	// into an image session (ADR-20261124075005 §1).
+	desktop bool
 }
 
 // notYet names each field sessions do not take yet, and what to use.
@@ -68,6 +71,7 @@ func (h *Handler) admission(ctx context.Context, acct state.Account, body create
 		func() *api.Problem { return h.applyEgress(ctx, acct, &a, in.Network) },
 		func() *api.Problem { return h.validPorts(acct, &a, in.Ports) },
 		func() *api.Problem { return h.validBrowser(acct, &a, in) },
+		func() *api.Problem { return validDesktop(acct, &a, in, body.desktop, h.PreviewDomain != "") },
 		func() *api.Problem { return resourcelabels.Problem(labels.Change{Set: in.Labels}.Validate()) },
 	}
 	for _, check := range checks {

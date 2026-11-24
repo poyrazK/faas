@@ -279,6 +279,12 @@ type CreateSandboxRequest struct {
 	// its DevTools protocol exposed privately on SandboxBrowserCDPPort
 	// (ADR-20261116182615 §1). It needs SandboxBrowserRAMMBMin.
 	Browser bool `json:"browser,omitempty"`
+	// Resolution is a desktop session's screen, WIDTHxHEIGHT, from
+	// SandboxDesktopWidthMin x SandboxDesktopHeightMin to
+	// SandboxDesktopWidthMax x SandboxDesktopHeightMax; empty is
+	// SandboxDesktopDefaultResolution. Only preset desktop takes it
+	// (ADR-20261124075005 §1).
+	Resolution string `json:"resolution,omitempty"`
 	// Pull and RegistryAuth go with Image, as on image runs: "always"
 	// re-pulls a cached image so a moved tag resolves again, and
 	// RegistryAuth is stored sealed on the image's runner job for its
@@ -308,6 +314,20 @@ const SandboxPresetTemplate = "template"
 // whose sessions run code in Jupyter kernels (ADR-20261027090013 step 14).
 // apid turns it into an image session, so sessions record preset image.
 const SandboxPresetCodeInterpreter = "code-interpreter"
+
+// SandboxPresetDesktop boots the platform's desktop image: Xfce on a virtual
+// screen, driven with gregale-desktop and watched over noVNC
+// (ADR-20261124075005). apid turns it into an image session, so sessions
+// record preset image and their desktop_resolution.
+const SandboxPresetDesktop = "desktop"
+
+// SandboxDesktopViewPort serves a desktop's interactive noVNC view and
+// SandboxDesktopViewOnlyPort its view-only one; both are exposed privately
+// with the session (ADR-20261124075005 §5).
+const (
+	SandboxDesktopViewPort     = 6080
+	SandboxDesktopViewOnlyPort = 6081
+)
 
 // SandboxTemplateRefPrefix starts the image reference a template session
 // records: template:<name>.
@@ -485,6 +505,9 @@ type Sandbox struct {
 	Template string `json:"template,omitempty"`
 	// Browser is a session created with the sandbox browser running.
 	Browser bool `json:"browser,omitempty"`
+	// Resolution is a desktop session's screen, WIDTHxHEIGHT
+	// (ADR-20261124075005 §1).
+	Resolution string `json:"resolution,omitempty"`
 	// Persistent sessions (ADR-20261122132055): the shape and volume, the
 	// pending pause or resume, when the session paused, where its capture
 	// is kept (node, then remote once uploaded), whether its last resume

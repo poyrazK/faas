@@ -80,6 +80,9 @@ type Sandbox struct {
 	// Browser is a session created with the sandbox browser running
 	// (ADR-20261116182615 §1).
 	Browser bool
+	// DesktopResolution is a desktop session's screen, WIDTHxHEIGHT
+	// (ADR-20261124075005 §2); empty for any other session.
+	DesktopResolution string
 	// EgressAllow and EgressDeny are the web-mode domain policy the session
 	// was admitted under (ADR-20261117091026 §2); empty is none.
 	EgressAllow []string
@@ -127,6 +130,9 @@ type SandboxAdmission struct {
 	TemplateID string
 	// Browser boots the session with the sandbox browser running.
 	Browser bool
+	// DesktopResolution makes the session a desktop of the platform
+	// desktop image at this screen, WIDTHxHEIGHT (ADR-20261124075005 §2).
+	DesktopResolution string
 	// Task makes the session a sandbox task (ADR-20261116182615 §3).
 	Task *SandboxTask
 	// Ports are exposed with the session (ExposeSandboxPort's rows).
@@ -202,7 +208,7 @@ func (s *Store) insertSandbox(ctx context.Context, tx pgx.Tx, a SandboxAdmission
 		Kind: a.Kind, Preset: a.Preset, RamMb: int32(a.RAMMB), NetworkMode: a.NetworkMode, IdleTimeoutSec: int32(a.IdleTimeoutSec),
 		ExpiresAt: pgtype.Timestamptz{Time: a.ExpiresAt, Valid: true}, Labels: labels, WorkspaceSnapshotID: optText(a.WorkspaceSnapshotID),
 		ImageRef: optText(a.ImageRef), ImageJobID: optText(a.ImageJobID), TemplateID: optText(a.TemplateID), Browser: a.Browser,
-		EgressAllow: optRules(a.EgressAllow), EgressDeny: optRules(a.EgressDeny), Vcpu: optInt16(a.VCPU), VolumeGb: optInt(a.VolumeGB)}
+		EgressAllow: optRules(a.EgressAllow), EgressDeny: optRules(a.EgressDeny), Vcpu: optInt16(a.VCPU), VolumeGb: optInt(a.VolumeGB), DesktopResolution: optText(a.DesktopResolution)}
 	if a.Task != nil {
 		params.TaskKind, params.TaskUrl, params.TaskMaxChars = optText(a.Task.Kind), optText(a.Task.URL), optInt(a.Task.MaxChars)
 	}
@@ -409,7 +415,7 @@ func sandboxFrom(row sqlc.ListSandboxSessionsRow) (Sandbox, error) {
 		ExpiresAt: row.ExpiresAt.Time.UTC(), OutcomeCode: row.OutcomeCode.String, OutcomeMessage: row.OutcomeMessage.String,
 		CloseRequestedAt: optTime(row.CloseRequestedAt), LastActivityAt: row.LastActivityAt.Time.UTC(),
 		CreatedAt: row.CreatedAt.Time.UTC(), UpdatedAt: row.UpdatedAt.Time.UTC(), ClosedAt: optTime(row.ClosedAt),
-		NodeID: row.NodeID, InstanceID: row.InstanceID, WorkspaceSnapshotID: row.WorkspaceSnapshotID, ImageRef: row.ImageRef, Browser: row.Browser,
+		NodeID: row.NodeID, InstanceID: row.InstanceID, WorkspaceSnapshotID: row.WorkspaceSnapshotID, ImageRef: row.ImageRef, Browser: row.Browser, DesktopResolution: row.DesktopResolution,
 		EgressAllow: row.EgressAllow, EgressDeny: row.EgressDeny, VCPU: int(row.Vcpu), VolumeGB: int(row.VolumeGb),
 		PauseRequestedAt: optTime(row.PauseRequestedAt), ResumeRequestedAt: optTime(row.ResumeRequestedAt), PausedAt: optTime(row.PausedAt),
 		Durability: row.Durability, ResumedCold: row.ResumedCold, ForkedFrom: row.ForkedFrom, StoredBytes: row.StoredBytes}

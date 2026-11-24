@@ -119,6 +119,24 @@ func TestSandboxBrowserFlag(t *testing.T) {
 	}
 }
 
+// ADR-20261124075005 §2: a desktop session's screen reaches its view and
+// agentd's claim, and the column holds only WIDTHxHEIGHT.
+func TestSandboxDesktopResolution(t *testing.T) {
+	_, s := agentdFixture(t)
+	ctx := context.Background()
+	if _, err := s.CreateSandbox(ctx, sandboxAdmission(agents.SandboxAdmission{DesktopResolution: "1280x800; reboot"})); err == nil {
+		t.Fatal("a resolution that is not WIDTHxHEIGHT was stored")
+	}
+	sb, err := s.CreateSandbox(ctx, sandboxAdmission(agents.SandboxAdmission{DesktopResolution: "1280x800"}))
+	if err != nil || sb.DesktopResolution != "1280x800" {
+		t.Fatalf("create = %+v, %v", sb, err)
+	}
+	claim, found, err := s.ClaimSandbox(ctx, "agentd", "tok", ttl, maxLive(5))
+	if err != nil || !found || claim.ID != sb.ID || claim.DesktopResolution != "1280x800" {
+		t.Fatalf("claim = %+v, %v, %v", claim, found, err)
+	}
+}
+
 func TestSweepableSandboxSnapshots(t *testing.T) {
 	pool, s := agentdFixture(t)
 	ctx := context.Background()

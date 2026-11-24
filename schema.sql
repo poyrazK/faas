@@ -60823,7 +60823,9 @@ CREATE TABLE public.sandbox_sessions (
     fork_capture_id uuid,
     fork_requested_at timestamp with time zone,
     fork_local_refused_at timestamp with time zone,
+    desktop_resolution text,
     CONSTRAINT sandbox_sessions_closed_check CHECK (((state = ANY (ARRAY['closed'::text, 'expired'::text, 'failed'::text])) = (closed_at IS NOT NULL))),
+    CONSTRAINT sandbox_sessions_desktop_resolution_check CHECK (((desktop_resolution IS NULL) OR (desktop_resolution ~ '^[1-9][0-9]{2,3}x[1-9][0-9]{2,3}$'::text))),
     CONSTRAINT sandbox_sessions_durability_check CHECK (((durability IS NULL) OR (durability = ANY (ARRAY['node'::text, 'remote'::text])))),
     CONSTRAINT sandbox_sessions_idle_timeout_sec_check CHECK (((idle_timeout_sec >= 1) AND (idle_timeout_sec <= 86400))),
     CONSTRAINT sandbox_sessions_image_ref_check CHECK (((image_ref IS NULL) OR ((char_length(image_ref) >= 1) AND (char_length(image_ref) <= 512)))),
@@ -60886,6 +60888,13 @@ COMMENT ON COLUMN public.sandbox_sessions.task_kind IS 'ADR-20261116182615: the 
 --
 
 COMMENT ON COLUMN public.sandbox_sessions.task_output IS 'ADR-20261116182615: the task command''s standard output, capped at SandboxTaskOutputMaxBytes.';
+
+
+--
+-- Name: COLUMN sandbox_sessions.desktop_resolution; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.sandbox_sessions.desktop_resolution IS 'ADR-20261124075005: a desktop session''s screen as WIDTHxHEIGHT; agentd starts gregale-desktop at it. NULL: not a desktop.';
 
 
 --

@@ -16334,6 +16334,8 @@ type SandboxSession struct {
 	ForkCaptureID      pgtype.UUID
 	ForkRequestedAt    pgtype.Timestamptz
 	ForkLocalRefusedAt pgtype.Timestamptz
+	// ADR-20261124075005: a desktop session's screen as WIDTHxHEIGHT; agentd starts gregale-desktop at it. NULL: not a desktop.
+	DesktopResolution pgtype.Text
 }
 
 type SandboxSessionCapture struct {

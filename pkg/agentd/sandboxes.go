@@ -380,6 +380,9 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 		EgressAllow: claim.EgressAllow, EgressDeny: claim.EgressDeny, WebDomainLog: claim.Network == api.SandboxNetworkWeb,
 		Persistent: persistent,
 	}
+	if cmd, ready, timeout, ok := desktopCommands(claim); ok {
+		start.StartCmd, start.ReadyCmd, start.ReadyTimeoutMs = cmd, ready, timeout.Milliseconds()
+	}
 	if claim.VolumeGB > 0 {
 		// The session's /workspace is its volume, backed up while a
 		// persistent session runs (ADR-20261122132055 §4). A fork's starts

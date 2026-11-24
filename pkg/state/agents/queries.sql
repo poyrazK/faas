@@ -488,13 +488,13 @@ SELECT count(*)::integer FROM sandbox_sessions WHERE account_id=sqlc.arg(account
 
 -- name: InsertSandboxSession :one
 INSERT INTO sandbox_sessions (account_id,tenant_id,kind,preset,ram_mb,network_mode,idle_timeout_sec,expires_at,labels,workspace_snapshot_id,
-  image_ref,image_job_id,template_id,browser,task_kind,task_url,task_max_chars,egress_allow,egress_deny,vcpu,volume_gb)
+  image_ref,image_job_id,template_id,browser,task_kind,task_url,task_max_chars,egress_allow,egress_deny,vcpu,volume_gb,desktop_resolution)
 VALUES (sqlc.arg(account_id)::text::uuid,sqlc.narg(tenant_id)::text::uuid,sqlc.arg(kind)::text,sqlc.arg(preset)::text,
   sqlc.arg(ram_mb)::integer,sqlc.arg(network_mode)::text,sqlc.arg(idle_timeout_sec)::integer,sqlc.arg(expires_at)::timestamptz,
   sqlc.arg(labels)::jsonb,sqlc.narg(workspace_snapshot_id)::text::uuid,sqlc.narg(image_ref)::text,sqlc.narg(image_job_id)::text::uuid,
   sqlc.narg(template_id)::text::uuid,sqlc.arg(browser)::boolean,sqlc.narg(task_kind)::text,sqlc.narg(task_url)::text,
   sqlc.narg(task_max_chars)::integer,sqlc.narg(egress_allow)::text[],sqlc.narg(egress_deny)::text[],
-  sqlc.narg(vcpu)::smallint,sqlc.narg(volume_gb)::integer)
+  sqlc.narg(vcpu)::smallint,sqlc.narg(volume_gb)::integer,sqlc.narg(desktop_resolution)::text)
 RETURNING id::text AS id;
 
 -- name: CountPersistentSandboxSessions :one
@@ -509,6 +509,7 @@ SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '
   idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
   coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id,
   coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref, browser,
+  coalesce(desktop_resolution, '')::text AS desktop_resolution,
   coalesce(egress_allow, '{}')::text[] AS egress_allow, coalesce(egress_deny, '{}')::text[] AS egress_deny,
   coalesce(vcpu, 0)::integer AS vcpu, coalesce(volume_gb, 0)::integer AS volume_gb, pause_requested_at, resume_requested_at,
   paused_at, coalesce(durability, '')::text AS durability, resumed_cold, coalesce(forked_from::text, '')::text AS forked_from,
@@ -526,6 +527,7 @@ SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '
   idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
   coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id,
   coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref, browser,
+  coalesce(desktop_resolution, '')::text AS desktop_resolution,
   coalesce(egress_allow, '{}')::text[] AS egress_allow, coalesce(egress_deny, '{}')::text[] AS egress_deny,
   coalesce(vcpu, 0)::integer AS vcpu, coalesce(volume_gb, 0)::integer AS volume_gb, pause_requested_at, resume_requested_at,
   paused_at, coalesce(durability, '')::text AS durability, resumed_cold, coalesce(forked_from::text, '')::text AS forked_from,
@@ -613,6 +615,7 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, 
   (sb.image_ref IS NOT NULL)::boolean AS from_image,
   coalesce(st.start_cmd, '')::text AS start_cmd, coalesce(st.ready_cmd, '')::text AS ready_cmd,
   coalesce(st.ready_timeout_s, 0)::integer AS ready_timeout_s, sb.browser,
+  coalesce(sb.desktop_resolution, '')::text AS desktop_resolution,
   coalesce(sb.task_kind, '')::text AS task_kind, coalesce(sb.task_url, '')::text AS task_url,
   coalesce(sb.task_max_chars, 0)::integer AS task_max_chars,
   coalesce(sb.egress_allow, '{}')::text[] AS egress_allow, coalesce(sb.egress_deny, '{}')::text[] AS egress_deny,
@@ -960,9 +963,9 @@ SELECT state, (task_kind IS NOT NULL)::boolean AS is_task,
 -- A fork is a new session with its source's machine, network, image and
 -- volume size, queued until its capture is uploaded.
 INSERT INTO sandbox_sessions (account_id,tenant_id,kind,preset,ram_mb,network_mode,idle_timeout_sec,expires_at,labels,
-  image_ref,image_job_id,template_id,browser,egress_allow,egress_deny,vcpu,volume_gb,forked_from,fork_capture_id)
+  image_ref,image_job_id,template_id,browser,desktop_resolution,egress_allow,egress_deny,vcpu,volume_gb,forked_from,fork_capture_id)
 SELECT src.account_id, src.tenant_id, sqlc.arg(kind)::text, src.preset, src.ram_mb, src.network_mode, src.idle_timeout_sec,
-  sqlc.arg(expires_at)::timestamptz, sqlc.arg(labels)::jsonb, src.image_ref, src.image_job_id, src.template_id, src.browser,
+  sqlc.arg(expires_at)::timestamptz, sqlc.arg(labels)::jsonb, src.image_ref, src.image_job_id, src.template_id, src.browser, src.desktop_resolution,
   src.egress_allow, src.egress_deny, src.vcpu, src.volume_gb, src.id, NULLIF(sqlc.arg(fork_capture_id)::text, '')::uuid
  FROM sandbox_sessions src WHERE src.id=sqlc.arg(source_id)::text::uuid AND src.account_id=sqlc.arg(account_id)::text::uuid
 RETURNING id::text AS id;

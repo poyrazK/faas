@@ -33,6 +33,7 @@ func (s *server) configureSandboxes(pool *pgxpool.Pool, getenv func(string) stri
 		// ADR-20261027090013 step 14: the code interpreter is on once the
 		// operator names its published image.
 		CodeInterpreterImage: strings.TrimSpace(getenv("FAAS_SANDBOX_CODE_INTERPRETER_IMAGE")),
+		DesktopImage:         strings.TrimSpace(getenv("FAAS_SANDBOX_DESKTOP_IMAGE")),
 		// ADR-20261122132055: persistent sessions are on once agentd,
 		// schedd and vmmd pause and resume them.
 		Persistent: strings.TrimSpace(getenv("FAAS_SANDBOX_PERSISTENT")) == "1",

@@ -1661,6 +1661,7 @@ SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '
   idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
   coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id,
   coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref, browser,
+  coalesce(desktop_resolution, '')::text AS desktop_resolution,
   coalesce(egress_allow, '{}')::text[] AS egress_allow, coalesce(egress_deny, '{}')::text[] AS egress_deny,
   coalesce(vcpu, 0)::integer AS vcpu, coalesce(volume_gb, 0)::integer AS volume_gb, pause_requested_at, resume_requested_at,
   paused_at, coalesce(durability, '')::text AS durability, resumed_cold, coalesce(forked_from::text, '')::text AS forked_from,
@@ -1702,6 +1703,7 @@ type GetSandboxSessionRow struct {
 	WorkspaceSnapshotID string
 	ImageRef            string
 	Browser             bool
+	DesktopResolution   string
 	EgressAllow         []string
 	EgressDeny          []string
 	Vcpu                int32
@@ -1742,6 +1744,7 @@ func (q *Queries) GetSandboxSession(ctx context.Context, db DBTX, arg GetSandbox
 		&i.WorkspaceSnapshotID,
 		&i.ImageRef,
 		&i.Browser,
+		&i.DesktopResolution,
 		&i.EgressAllow,
 		&i.EgressDeny,
 		&i.Vcpu,
@@ -1767,6 +1770,7 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, 
   (sb.image_ref IS NOT NULL)::boolean AS from_image,
   coalesce(st.start_cmd, '')::text AS start_cmd, coalesce(st.ready_cmd, '')::text AS ready_cmd,
   coalesce(st.ready_timeout_s, 0)::integer AS ready_timeout_s, sb.browser,
+  coalesce(sb.desktop_resolution, '')::text AS desktop_resolution,
   coalesce(sb.task_kind, '')::text AS task_kind, coalesce(sb.task_url, '')::text AS task_url,
   coalesce(sb.task_max_chars, 0)::integer AS task_max_chars,
   coalesce(sb.egress_allow, '{}')::text[] AS egress_allow, coalesce(sb.egress_deny, '{}')::text[] AS egress_deny,
@@ -1810,6 +1814,7 @@ type GetSandboxSessionClaimRow struct {
 	ReadyCmd                 string
 	ReadyTimeoutS            int32
 	Browser                  bool
+	DesktopResolution        string
 	TaskKind                 string
 	TaskUrl                  string
 	TaskMaxChars             int32
@@ -1855,6 +1860,7 @@ func (q *Queries) GetSandboxSessionClaim(ctx context.Context, db DBTX, sessionID
 		&i.ReadyCmd,
 		&i.ReadyTimeoutS,
 		&i.Browser,
+		&i.DesktopResolution,
 		&i.TaskKind,
 		&i.TaskUrl,
 		&i.TaskMaxChars,
@@ -2484,9 +2490,9 @@ func (q *Queries) InsertSandboxAction(ctx context.Context, db DBTX, arg InsertSa
 
 const insertSandboxFork = `-- name: InsertSandboxFork :one
 INSERT INTO sandbox_sessions (account_id,tenant_id,kind,preset,ram_mb,network_mode,idle_timeout_sec,expires_at,labels,
-  image_ref,image_job_id,template_id,browser,egress_allow,egress_deny,vcpu,volume_gb,forked_from,fork_capture_id)
+  image_ref,image_job_id,template_id,browser,desktop_resolution,egress_allow,egress_deny,vcpu,volume_gb,forked_from,fork_capture_id)
 SELECT src.account_id, src.tenant_id, $1::text, src.preset, src.ram_mb, src.network_mode, src.idle_timeout_sec,
-  $2::timestamptz, $3::jsonb, src.image_ref, src.image_job_id, src.template_id, src.browser,
+  $2::timestamptz, $3::jsonb, src.image_ref, src.image_job_id, src.template_id, src.browser, src.desktop_resolution,
   src.egress_allow, src.egress_deny, src.vcpu, src.volume_gb, src.id, NULLIF($4::text, '')::uuid
  FROM sandbox_sessions src WHERE src.id=$5::text::uuid AND src.account_id=$6::text::uuid
 RETURNING id::text AS id
@@ -2519,13 +2525,13 @@ func (q *Queries) InsertSandboxFork(ctx context.Context, db DBTX, arg InsertSand
 
 const insertSandboxSession = `-- name: InsertSandboxSession :one
 INSERT INTO sandbox_sessions (account_id,tenant_id,kind,preset,ram_mb,network_mode,idle_timeout_sec,expires_at,labels,workspace_snapshot_id,
-  image_ref,image_job_id,template_id,browser,task_kind,task_url,task_max_chars,egress_allow,egress_deny,vcpu,volume_gb)
+  image_ref,image_job_id,template_id,browser,task_kind,task_url,task_max_chars,egress_allow,egress_deny,vcpu,volume_gb,desktop_resolution)
 VALUES ($1::text::uuid,$2::text::uuid,$3::text,$4::text,
   $5::integer,$6::text,$7::integer,$8::timestamptz,
   $9::jsonb,$10::text::uuid,$11::text,$12::text::uuid,
   $13::text::uuid,$14::boolean,$15::text,$16::text,
   $17::integer,$18::text[],$19::text[],
-  $20::smallint,$21::integer)
+  $20::smallint,$21::integer,$22::text)
 RETURNING id::text AS id
 `
 
@@ -2551,6 +2557,7 @@ type InsertSandboxSessionParams struct {
 	EgressDeny          []string
 	Vcpu                pgtype.Int2
 	VolumeGb            pgtype.Int4
+	DesktopResolution   pgtype.Text
 }
 
 func (q *Queries) InsertSandboxSession(ctx context.Context, db DBTX, arg InsertSandboxSessionParams) (string, error) {
@@ -2576,6 +2583,7 @@ func (q *Queries) InsertSandboxSession(ctx context.Context, db DBTX, arg InsertS
 		arg.EgressDeny,
 		arg.Vcpu,
 		arg.VolumeGb,
+		arg.DesktopResolution,
 	)
 	var id string
 	err := row.Scan(&id)
@@ -3366,6 +3374,7 @@ SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '
   idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
   coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id,
   coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref, browser,
+  coalesce(desktop_resolution, '')::text AS desktop_resolution,
   coalesce(egress_allow, '{}')::text[] AS egress_allow, coalesce(egress_deny, '{}')::text[] AS egress_deny,
   coalesce(vcpu, 0)::integer AS vcpu, coalesce(volume_gb, 0)::integer AS volume_gb, pause_requested_at, resume_requested_at,
   paused_at, coalesce(durability, '')::text AS durability, resumed_cold, coalesce(forked_from::text, '')::text AS forked_from,
@@ -3414,6 +3423,7 @@ type ListSandboxSessionsRow struct {
 	WorkspaceSnapshotID string
 	ImageRef            string
 	Browser             bool
+	DesktopResolution   string
 	EgressAllow         []string
 	EgressDeny          []string
 	Vcpu                int32
@@ -3467,6 +3477,7 @@ func (q *Queries) ListSandboxSessions(ctx context.Context, db DBTX, arg ListSand
 			&i.WorkspaceSnapshotID,
 			&i.ImageRef,
 			&i.Browser,
+			&i.DesktopResolution,
 			&i.EgressAllow,
 			&i.EgressDeny,
 			&i.Vcpu,

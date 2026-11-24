@@ -47,6 +47,9 @@ type SandboxClaim struct {
 	// Browser boots a preset session with the sandbox browser running
 	// (ADR-20261116182615 §1).
 	Browser bool
+	// DesktopResolution is a desktop session's screen, WIDTHxHEIGHT:
+	// agentd starts the desktop at it (ADR-20261124075005 §2).
+	DesktopResolution string
 	// Task is the session's sandbox task, if it is one
 	// (ADR-20261116182615 §3).
 	Task *SandboxTask
@@ -209,7 +212,7 @@ func (s *Store) readClaim(ctx context.Context, id, token string) (SandboxClaim, 
 		VolumeGB: int(row.VolumeGb), VolumeBackupID: volumeBackup, ID: row.ID, AccountID: row.AccountID, Plan: row.Plan, RAMMB: int(row.RamMb), Network: row.NetworkMode,
 		WorkspaceKey: row.WorkspaceKey, WorkspaceMissing: row.WorkspaceMissing, ImageKey: row.ImageKey,
 		ImageMissing: row.FromImage && row.ImageKey == "", StartCmd: row.StartCmd, ReadyCmd: row.ReadyCmd,
-		ReadyTimeout: time.Duration(row.ReadyTimeoutS) * time.Second, Browser: row.Browser, Task: task, EgressAllow: row.EgressAllow, EgressDeny: row.EgressDeny, LeaseToken: token,
+		ReadyTimeout: time.Duration(row.ReadyTimeoutS) * time.Second, Browser: row.Browser, DesktopResolution: row.DesktopResolution, Task: task, EgressAllow: row.EgressAllow, EgressDeny: row.EgressDeny, LeaseToken: token,
 		SandboxLease: SandboxLease{CloseRequested: row.CloseRequested, IdleTimeout: time.Duration(row.IdleTimeoutSec) * time.Second,
 			ExpiresAt: row.ExpiresAt.Time.UTC()}}, nil
 }

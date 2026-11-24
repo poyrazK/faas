@@ -11707,6 +11707,25 @@ var (
 	// screenshots outlive it (ADR-20261117065818 §5).
 	SandboxScreenshotMaxBytes     = 1 << 20
 	SandboxScreenshotRetentionSec = 86_400
+	// Sandbox desktops (ADR-20261124075005). SandboxDesktopEnabled admits
+	// preset desktop on the plan. A desktop has at least
+	// SandboxDesktopRAMMBMin and defaults to SandboxDesktopDefaultRAMMB, within
+	// the plan's RAM cap: Xfce, x11vnc and Chromium sit near 1 GB. Its screen
+	// is SandboxDesktopDefaultResolution unless the create names one from
+	// SandboxDesktopWidthMin x SandboxDesktopHeightMin to
+	// SandboxDesktopWidthMax x SandboxDesktopHeightMax. The desktop must be
+	// ready within SandboxDesktopReadyTimeoutSec, and one gregale-desktop type
+	// call enters at most SandboxDesktopTypeMaxChars.
+	SandboxDesktopEnabled           = [4]bool{false, false, true, true}
+	SandboxDesktopRAMMBMin          = 2048
+	SandboxDesktopDefaultRAMMB      = 2048
+	SandboxDesktopDefaultResolution = "1024x768"
+	SandboxDesktopWidthMin          = 640
+	SandboxDesktopHeightMin         = 480
+	SandboxDesktopWidthMax          = 1920
+	SandboxDesktopHeightMax         = 1080
+	SandboxDesktopReadyTimeoutSec   = 45
+	SandboxDesktopTypeMaxChars      = 8192
 	// SandboxWebDistinctDomains bounds the registrable domains one web-mode
 	// session may reach (ADR-20261112121456 §4); vmmd grants no new one past
 	// it. A browser touches many domains per page, so it is above the per-run

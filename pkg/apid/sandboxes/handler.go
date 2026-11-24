@@ -79,6 +79,10 @@ type Handler struct {
 	// image preset code-interpreter boots (ADR-20261027090013 step 14).
 	// Empty, the preset is sandbox_unsupported.
 	CodeInterpreterImage string
+	// DesktopImage is FAAS_SANDBOX_DESKTOP_IMAGE: the image preset desktop
+	// boots (ADR-20261124075005 §1). Empty, the preset is
+	// sandbox_unsupported.
+	DesktopImage string
 	// Files is the artifact store gregale_browser's screenshots are kept in
 	// (ADR-20261117065818 §5); nil: they cannot be read from this host.
 	Files storage.StorageBackend
@@ -118,6 +122,10 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request, acct state.Acco
 		return
 	}
 	if prob := h.codeInterpreter(&body); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := h.desktop(&body); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -386,7 +394,7 @@ func (h *Handler) view(acct state.Account, sb agentstore.Sandbox, withToken bool
 	out := api.Sandbox{ID: sb.ID, State: sb.State, Kind: sb.Kind, Preset: sb.Preset, RAMMB: sb.RAMMB,
 		Network: api.SandboxNetwork{Mode: sb.NetworkMode, Allow: sb.EgressAllow, Deny: sb.EgressDeny}, Tenant: sb.TenantID, IdleTimeoutS: sb.IdleTimeoutSec,
 		ExpiresAt: sb.ExpiresAt, Labels: sb.Labels, CloseRequestedAt: sb.CloseRequestedAt, CreatedAt: sb.CreatedAt,
-		UpdatedAt: sb.UpdatedAt, ClosedAt: sb.ClosedAt, SnapshotID: sb.WorkspaceSnapshotID, Browser: sb.Browser,
+		UpdatedAt: sb.UpdatedAt, ClosedAt: sb.ClosedAt, SnapshotID: sb.WorkspaceSnapshotID, Browser: sb.Browser, Resolution: sb.DesktopResolution,
 		VCPU: sb.VCPU, VolumeGB: sb.VolumeGB, PauseRequestedAt: sb.PauseRequestedAt, ResumeRequestedAt: sb.ResumeRequestedAt,
 		PausedAt: sb.PausedAt, Durability: sb.Durability, ResumedCold: sb.ResumedCold, ForkedFrom: sb.ForkedFrom, StoredBytes: sb.StoredBytes}
 	if name, ok := strings.CutPrefix(sb.ImageRef, api.SandboxTemplateRefPrefix); ok {
