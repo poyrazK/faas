@@ -19,8 +19,14 @@ type ConsumerUpgradeLinker interface {
 	UpgradeLink(ctx context.Context, accountID, appID, consumerID string) (string, time.Time, error)
 }
 
-// upgradeLinkTimeout bounds the apid call on a refusal.
-const upgradeLinkTimeout = time.Second
+const (
+	// upgradeLinkTimeout bounds the apid call on a refusal.
+	upgradeLinkTimeout = time.Second
+	// upgradeLinkFailureTTL is how long a failed lookup leaves the field
+	// out: for that consumer, and for every consumer while apid is down,
+	// so refusals stay cheap during an outage.
+	upgradeLinkFailureTTL = 30 * time.Second
+)
 
 type upgradeLinkEntry struct {
 	url     string
@@ -30,6 +36,8 @@ type upgradeLinkEntry struct {
 type upgradeLinkCache struct {
 	mu      sync.Mutex
 	entries map[string]upgradeLinkEntry
+	// downUntil skips lookups after a failure.
+	downUntil time.Time
 }
 
 // WithUpgradeLinks adds upgrade links to plan-limit refusals.
@@ -47,9 +55,13 @@ func (h *Handler) consumerUpgradeURL(ctx context.Context, app App, consumerID st
 	c := h.upgradeLinkCache
 	c.mu.Lock()
 	e, ok := c.entries[consumerID]
+	down := now.Before(c.downUntil)
 	c.mu.Unlock()
 	if ok && now.Before(e.expires) {
 		return e.url
+	}
+	if down {
+		return ""
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), upgradeLinkTimeout)
 	defer cancel()
@@ -58,6 +70,9 @@ func (h *Handler) consumerUpgradeURL(ctx context.Context, app App, consumerID st
 		if h.log != nil {
 			h.log.Warn("consumer upgrade link unavailable", "err", err, "app_id", app.ID)
 		}
+		c.mu.Lock()
+		c.downUntil = now.Add(upgradeLinkFailureTTL)
+		c.mu.Unlock()
 		return ""
 	}
 	expires := now.Add(api.ConsumerUpgradeLinkCacheTTL)

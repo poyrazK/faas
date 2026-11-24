@@ -123,6 +123,10 @@ func (s *Service) UpgradeLink(ctx context.Context, accountID, appID, consumerID 
 	if errors.Is(err, state.ErrNotFound) || (err == nil && (consumer.AppID != appID || !consumer.Active())) {
 		return "", time.Time{}, nil
 	}
+	if err == nil && !state.APIConsumerCardless(consumer.ExternalRef) && !state.APIConsumerHasStripeCustomer(consumer.ExternalRef) {
+		// The owner bills this consumer some other way: no self-serve page.
+		return "", time.Time{}, nil
+	}
 	if err != nil {
 		return "", time.Time{}, err
 	}
@@ -207,7 +211,7 @@ func (s *Service) Upgrade(w http.ResponseWriter, r *http.Request) {
 	_, livemode, _ := s.Host.StripeKey(r.Context(), c.app.AccountID)
 	w.Header().Set("Cache-Control", "no-store")
 	httpkit.WriteJSON(w, http.StatusOK, api.ConsumerUpgradeResponse{App: c.app.Slug, DisplayName: c.set.DisplayName, Livemode: livemode,
-		CurrentPlanID: s.currentPlanID(r.Context(), c), Plans: plans, HasCard: !state.APIConsumerCardless(c.consumer.ExternalRef)})
+		CurrentPlanID: s.currentPlanID(r.Context(), c), Plans: plans, HasCard: state.APIConsumerHasStripeCustomer(c.consumer.ExternalRef)})
 }
 
 // StartUpgrade moves the customer to an offered plan, or starts a Stripe
@@ -228,8 +232,13 @@ func (s *Service) StartUpgrade(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid plan", "plan_id must be one of the offered plans"))
 		return
 	}
-	if target == c.set.FreePlanID || !state.APIConsumerCardless(c.consumer.ExternalRef) {
+	if target == c.set.FreePlanID || state.APIConsumerHasStripeCustomer(c.consumer.ExternalRef) {
 		s.changePlan(ctx, w, c, target)
+		return
+	}
+	if !state.APIConsumerCardless(c.consumer.ExternalRef) {
+		// The owner bills this consumer some other way.
+		billedElsewhere(w)
 		return
 	}
 	key, _, problem := s.Host.StripeKey(ctx, c.app.AccountID)
@@ -271,6 +280,13 @@ func (s *Service) StartUpgrade(w http.ResponseWriter, r *http.Request) {
 		"plan_id": target})
 	w.Header().Set("Cache-Control", "no-store")
 	httpkit.WriteJSON(w, http.StatusOK, api.ConsumerUpgradeResult{PlanID: target, CheckoutURL: session.URL, CompleteToken: complete})
+}
+
+// billedElsewhere answers a consumer the owner bills outside Gregale's
+// Stripe customers, or one another upgrade already attached.
+func billedElsewhere(w http.ResponseWriter) {
+	api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Account already has a card",
+		"this account is billed through another payment account; ask the API owner"))
 }
 
 // CompleteUpgrade attaches the Stripe customer whose card Checkout saved
@@ -318,9 +334,12 @@ func (s *Service) CompleteUpgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	consumer, err := upgrades.AttachAPIConsumerStripeCustomer(ctx, c.app.AccountID, c.consumer.ID, claims.Customer)
+	if errors.Is(err, state.ErrConflict) {
+		billedElsewhere(w)
+		return
+	}
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Account already has a card",
-			"this account is billed through another payment account; ask the API owner"))
+		api.WriteProblem(w, api.ErrInternal("could not save the card to the account; try again"))
 		return
 	}
 	s.Host.Audit(ctx, "api_consumer.card_saved", c.app.AccountID, map[string]any{"app_id": c.app.ID, "consumer_id": consumer.ID,

@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -25,6 +26,60 @@ type APIConsumerUpgradeStore interface {
 	// consumer of the app has customerID; ErrNotFound when it is not the
 	// account's.
 	AttachAPIConsumerStripeCustomer(ctx context.Context, accountID, consumerID, customerID string) (APIConsumer, error)
+	// CountCardlessAPIConsumersOnPlan counts the app's active card-less
+	// consumers whose plan at at is planID, or who move to it later: a
+	// rate card that charges on that plan could not be collected from them.
+	CountCardlessAPIConsumersOnPlan(ctx context.Context, accountID, appID, planID string, at time.Time) (int, error)
+}
+
+// CountCardlessAPIConsumersOnPlan implements APIConsumerUpgradeStore.
+func (m *MemStore) CountCardlessAPIConsumersOnPlan(_ context.Context, accountID, appID, planID string, at time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	type current struct {
+		plan string
+		from time.Time
+		set  bool
+	}
+	now := map[string]current{}
+	later := map[string]bool{}
+	for _, a := range m.apiConsumerPlanAssignments {
+		if a.AccountID != accountID || a.AppID != appID {
+			continue
+		}
+		if a.EffectiveFrom.After(at) {
+			later[a.ConsumerID] = later[a.ConsumerID] || a.PlanID == planID
+			continue
+		}
+		if c := now[a.ConsumerID]; !c.set || a.EffectiveFrom.After(c.from) {
+			now[a.ConsumerID] = current{plan: a.PlanID, from: a.EffectiveFrom, set: true}
+		}
+	}
+	n := 0
+	for _, c := range m.apiConsumers {
+		if c.AccountID != accountID || c.AppID != appID || !c.Active() || !APIConsumerCardless(c.ExternalRef) {
+			continue
+		}
+		if cur := now[c.ID]; (cur.set && cur.plan == planID) || later[c.ID] {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// CountCardlessAPIConsumersOnPlan implements APIConsumerUpgradeStore.
+func (s *PgStore) CountCardlessAPIConsumersOnPlan(ctx context.Context, accountID, appID, planID string, at time.Time) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `select count(*) from api_consumers c
+		where c.account_id = $1::uuid and c.app_id = $2::uuid and c.status = 'active' and c.revoked_at is null
+		  and (c.external_ref like 'signup:%' or c.external_ref like 'oauth:%')
+		  and exists (select 1 from api_consumer_plan_assignments a where a.consumer_id = c.id and a.plan_id = $3::uuid
+		    and (a.effective_from > $4 or a.effective_from = (select max(b.effective_from) from api_consumer_plan_assignments b
+		      where b.consumer_id = c.id and b.effective_from <= $4)))`, accountID, appID, planID, at).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count card-less consumers on plan: %w", err)
+	}
+	return n, nil
 }
 
 var (
@@ -37,6 +92,10 @@ var (
 func APIConsumerCardless(ref string) bool {
 	return strings.HasPrefix(ref, "signup:") || strings.HasPrefix(ref, "oauth:")
 }
+
+// APIConsumerHasStripeCustomer reports whether ref is a Stripe customer, so
+// the consumer has a card to bill.
+func APIConsumerHasStripeCustomer(ref string) bool { return validStripeCustomerID(ref) }
 
 func validStripeCustomerID(id string) bool {
 	return strings.HasPrefix(id, "cus_") && len(id) <= 256

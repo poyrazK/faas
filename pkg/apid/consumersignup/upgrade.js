@@ -148,7 +148,8 @@
         changed(res.data);
         return;
       }
-      if (res.status !== 409) {
+      // Only an unconfirmed checkout is worth waiting for.
+      if (res.data.code !== "consumer_signup_checkout_incomplete") {
         message("Upgrade not finished", res.data.detail || "The upgrade could not be completed.");
         return;
       }

@@ -79,6 +79,9 @@ func TestMCPOAuthConsumerEnrollment(t *testing.T) {
 	}{
 		"revoked":     {&fakeOAuthEnroller{id: "consumer-1"}, http.StatusForbidden, "mcp_access_denied"},
 		"daily limit": {&fakeOAuthEnroller{err: apidgrpc.ErrOAuthConsumerSignupLimit}, http.StatusTooManyRequests, api.CodeConsumerSignupDailyLimit},
+		// A permanent refusal (free plan gone) is never served unattributed,
+		// whether or not this gateway saw the app enroll anyone.
+		"refused": {&fakeOAuthEnroller{err: apidgrpc.ErrOAuthConsumerRefused}, http.StatusForbidden, "mcp_access_denied"},
 	} {
 		w, _, handled := call(handler(tc.enroller, "u1"), "u1")
 		if !handled || w.Code != tc.status || !strings.Contains(w.Body.String(), tc.code) {

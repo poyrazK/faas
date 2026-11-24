@@ -18,6 +18,10 @@ var (
 	ErrOAuthConsumersOff = errors.New("apidgrpc: OAuth consumers are off for the app")
 	// ErrOAuthConsumerSignupLimit: the app took its sign-ups for the day.
 	ErrOAuthConsumerSignupLimit = errors.New("apidgrpc: the app took its sign-ups for the day")
+	// ErrOAuthConsumerRefused: apid will not enroll this caller on this app
+	// however often it is asked (the free plan is gone, or the identity is
+	// invalid).
+	ErrOAuthConsumerRefused = errors.New("apidgrpc: the app cannot enroll this caller")
 	// ErrOAuthLinkKeyRejected: the key is not a live key of the app's
 	// consumers.
 	ErrOAuthLinkKeyRejected = errors.New("apidgrpc: the key is not a live key of the app's consumers")
@@ -83,6 +87,8 @@ func (c OAuthConsumers) EnrollOAuthConsumer(ctx context.Context, accountID, appI
 		return "", false, ErrOAuthConsumersOff
 	case codes.ResourceExhausted:
 		return "", false, ErrOAuthConsumerSignupLimit
+	case codes.NotFound, codes.InvalidArgument:
+		return "", false, ErrOAuthConsumerRefused
 	}
 	return "", false, fmt.Errorf("apidgrpc: EnrollOAuthConsumer: %w", err)
 }

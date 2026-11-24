@@ -59,16 +59,9 @@ func (s *PgStore) EnrollAPIConsumerIdentity(ctx context.Context, in APIConsumerE
 	if !errors.Is(err, ErrNotFound) {
 		return APIConsumerIdentity{}, APIConsumer{}, false, fmt.Errorf("get consumer identity: %w", err)
 	}
-	var taken int
-	if err := tx.QueryRow(ctx, `select (select count(*) from api_consumer_signups where app_id = $1::uuid and created_at >= $2)
-		+ (select count(*) from api_consumer_identities where app_id = $1::uuid and created_at >= $2)`, in.AppID, in.DayStart.UTC()).Scan(&taken); err != nil {
-		return APIConsumerIdentity{}, APIConsumer{}, false, fmt.Errorf("count consumer sign-ups: %w", err)
-	}
-	if taken >= settings.DailyLimit {
-		return APIConsumerIdentity{}, APIConsumer{}, false, ErrAPIConsumerSignupLimit
-	}
 	ref := apiConsumerIdentityRef(in.Issuer, in.Subject)
-	// A consumer left behind when its identity was unlinked keeps its ref.
+	// A consumer whose identity row is gone keeps its ref unless a link
+	// closed it; re-attaching it is not a new sign-up.
 	c, err := scanAPIConsumerRow(tx.QueryRow(ctx, `select `+apiConsumerSelectCols+` from api_consumers
 		where app_id = $1::uuid and external_ref = $2`, in.AppID, ref))
 	created := errors.Is(err, pgx.ErrNoRows)
@@ -76,6 +69,14 @@ func (s *PgStore) EnrollAPIConsumerIdentity(ctx context.Context, in APIConsumerE
 		return APIConsumerIdentity{}, APIConsumer{}, false, fmt.Errorf("get enrolled consumer: %w", err)
 	}
 	if created {
+		var taken int
+		if err := tx.QueryRow(ctx, `select (select count(*) from api_consumer_signups where app_id = $1::uuid and created_at >= $2)
+			+ (select count(*) from api_consumer_identities where app_id = $1::uuid and created_at >= $2)`, in.AppID, in.DayStart.UTC()).Scan(&taken); err != nil {
+			return APIConsumerIdentity{}, APIConsumer{}, false, fmt.Errorf("count consumer sign-ups: %w", err)
+		}
+		if taken >= settings.DailyLimit {
+			return APIConsumerIdentity{}, APIConsumer{}, false, ErrAPIConsumerSignupLimit
+		}
 		c, err = scanAPIConsumerRow(tx.QueryRow(ctx, `insert into api_consumers (account_id, app_id, external_ref, name)
 			values ($1::uuid, $2::uuid, $3, $4) returning `+apiConsumerSelectCols, in.AccountID, in.AppID, ref, apiConsumerIdentityName(in.Email, in.Subject)))
 		if err != nil {

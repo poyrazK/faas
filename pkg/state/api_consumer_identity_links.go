@@ -156,6 +156,14 @@ func (s *PgStore) LinkAPIConsumerIdentity(ctx context.Context, in APIConsumerIde
 		return APIConsumerIdentity{}, "", fmt.Errorf("link consumer identity: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// The settings row serializes the app's enrollments; holding it here too
+	// keeps a link from racing the same caller's first enrollment.
+	var locked int
+	err = tx.QueryRow(ctx, `select 1 from api_consumer_signup_settings where app_id = $1::uuid and account_id = $2::uuid for update`,
+		in.AppID, in.AccountID).Scan(&locked)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return APIConsumerIdentity{}, "", fmt.Errorf("link consumer identity: lock settings: %w", err)
+	}
 	target, err := scanAPIConsumerRow(tx.QueryRow(ctx, `select `+apiConsumerSelectCols+` from api_consumers
 		where id = $1::uuid and account_id = $2::uuid and app_id = $3::uuid for update`, in.ConsumerID, in.AccountID, in.AppID))
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !target.Active()) {

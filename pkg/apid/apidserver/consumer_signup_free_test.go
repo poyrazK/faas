@@ -163,4 +163,19 @@ func TestConsumerSignupFreePlanAndOAuthConsumers(t *testing.T) {
 	if fresh, created, err := enroll("u1"); err != nil || !created || fresh.ID == done.ConsumerID {
 		t.Fatalf("enroll after unlink = %+v %v %v; want a new consumer", fresh, created, err)
 	}
+
+	// Card-less consumers are never charged: the owner cannot move one to a
+	// paid plan, nor price a former free plan they are still on.
+	if res := e.Do(t, http.MethodPost, "/v1/apps/search/consumers/"+done.ConsumerID+"/plan-assignments",
+		api.AssignAPIConsumerPlanRequest{PlanID: pro}, nil); res.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("card-less consumer onto a paid plan: %d %s", res.Code, res.Body)
+	}
+	free2 := plan("free2", 0)
+	settings.PlanIDs, settings.FreePlanID = []string{free, pro, free2}, free2
+	decode(t, e.Do(t, http.MethodPut, "/v1/apps/search/consumer-signup", settings, nil), http.StatusOK, nil)
+	if res := e.Do(t, http.MethodPost, "/v1/apps/search/rate-cards", api.CreateAPIConsumerRateCardRequest{Currency: "USD",
+		PriceMillicentsPerUnit: 10, PlanID: free}, nil); res.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(res.Body.String(), "joined without a card") {
+		t.Fatalf("charging card on a plan with card-less consumers: %d %s", res.Code, res.Body)
+	}
 }

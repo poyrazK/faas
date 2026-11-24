@@ -86,6 +86,8 @@ func (r *authReceiver) EnrollOAuthConsumer(ctx context.Context, req *apidpb.Enro
 		return nil, status.Error(codes.ResourceExhausted, "the app took its sign-ups for the day")
 	case errors.Is(err, state.ErrNotFound):
 		return nil, status.Error(codes.NotFound, "no such app or free plan")
+	case errors.Is(err, state.ErrAPIConsumerIdentityInvalid):
+		return nil, status.Error(codes.InvalidArgument, "invalid identity")
 	case err != nil:
 		return nil, status.Error(codes.Unavailable, "could not enroll the consumer")
 	}

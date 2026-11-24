@@ -72,17 +72,22 @@ var (
 	_ APIConsumerIdentityStore = (*PgStore)(nil)
 )
 
+// ErrAPIConsumerIdentityInvalid wraps an enrollment or link that can never
+// succeed as given (malformed IDs, issuer or subject).
+var ErrAPIConsumerIdentityInvalid = errors.New("invalid consumer identity")
+
 func validateAPIConsumerEnrollment(in APIConsumerEnrollment) error {
 	for name, value := range map[string]string{"account_id": in.AccountID, "app_id": in.AppID} {
 		if _, err := uuid.Parse(value); err != nil {
-			return fmt.Errorf("consumer enrollment: %s must be a UUID: %w", name, err)
+			return fmt.Errorf("consumer enrollment: %s must be a UUID: %w", name, ErrAPIConsumerIdentityInvalid)
 		}
 	}
 	switch {
 	case in.Issuer == "" || len(in.Issuer) > MaxAPIConsumerIdentityIssuerLen:
-		return fmt.Errorf("consumer enrollment: issuer must be 1 to %d bytes", MaxAPIConsumerIdentityIssuerLen)
+		return fmt.Errorf("consumer enrollment: issuer must be 1 to %d bytes: %w", MaxAPIConsumerIdentityIssuerLen, ErrAPIConsumerIdentityInvalid)
 	case in.Subject == "" || len(in.Subject) > MaxAPIConsumerIdentitySubjectLen || !utf8.ValidString(in.Subject):
-		return fmt.Errorf("consumer enrollment: subject must be 1 to %d bytes of UTF-8", MaxAPIConsumerIdentitySubjectLen)
+		return fmt.Errorf("consumer enrollment: subject must be 1 to %d bytes of UTF-8: %w", MaxAPIConsumerIdentitySubjectLen,
+			ErrAPIConsumerIdentityInvalid)
 	case in.EffectiveFrom.IsZero() || !in.EffectiveFrom.Equal(in.EffectiveFrom.UTC().Truncate(time.Minute)):
 		return errors.New("consumer enrollment: effective_from must be a UTC minute")
 	}
@@ -143,34 +148,35 @@ func (m *MemStore) EnrollAPIConsumerIdentity(_ context.Context, in APIConsumerEn
 			return id, c, false, nil
 		}
 	}
-	taken := 0
-	for _, s := range m.apiConsumerSignups {
-		if s.AppID == in.AppID && !s.CreatedAt.Before(in.DayStart) {
-			taken++
-		}
-	}
-	for _, id := range m.apiConsumerIdentities {
-		if id.AppID == in.AppID && !id.CreatedAt.Before(in.DayStart) {
-			taken++
-		}
-	}
-	if taken >= settings.DailyLimit {
-		return APIConsumerIdentity{}, APIConsumer{}, false, ErrAPIConsumerSignupLimit
-	}
-	if plan, ok := m.apiConsumerPlans[settings.FreePlanID]; !ok || plan.AccountID != in.AccountID || plan.AppID != in.AppID {
-		return APIConsumerIdentity{}, APIConsumer{}, false, ErrNotFound
-	}
 	now := time.Now().UTC()
 	ref := apiConsumerIdentityRef(in.Issuer, in.Subject)
 	var c APIConsumer
 	for _, existing := range m.apiConsumers {
-		// A consumer whose identity row is gone keeps its ref unless a link closed it.
+		// A consumer whose identity row is gone keeps its ref unless a link
+		// closed it; re-attaching it is not a new sign-up.
 		if existing.AppID == in.AppID && existing.ExternalRef == ref {
 			c = existing
 		}
 	}
 	created := c.ID == ""
 	if created {
+		taken := 0
+		for _, s := range m.apiConsumerSignups {
+			if s.AppID == in.AppID && !s.CreatedAt.Before(in.DayStart) {
+				taken++
+			}
+		}
+		for _, id := range m.apiConsumerIdentities {
+			if id.AppID == in.AppID && !id.CreatedAt.Before(in.DayStart) {
+				taken++
+			}
+		}
+		if taken >= settings.DailyLimit {
+			return APIConsumerIdentity{}, APIConsumer{}, false, ErrAPIConsumerSignupLimit
+		}
+		if plan, ok := m.apiConsumerPlans[settings.FreePlanID]; !ok || plan.AccountID != in.AccountID || plan.AppID != in.AppID {
+			return APIConsumerIdentity{}, APIConsumer{}, false, ErrNotFound
+		}
 		c = APIConsumer{ID: uuid.NewString(), AccountID: in.AccountID, AppID: in.AppID, ExternalRef: ref,
 			Name: apiConsumerIdentityName(in.Email, in.Subject), Status: APIConsumerStatusActive, CreatedAt: now, UpdatedAt: now}
 		m.apiConsumers[c.ID] = c

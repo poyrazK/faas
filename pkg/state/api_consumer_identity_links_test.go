@@ -29,6 +29,10 @@ func checkAPIConsumerIdentityLinks(t *testing.T, ctx context.Context, st state.S
 	if err != nil {
 		t.Fatal(err)
 	}
+	upgrades := st.(state.APIConsumerUpgradeStore)
+	if n, err := upgrades.CountCardlessAPIConsumersOnPlan(ctx, accountID, appID, free.ID, time.Now()); err != nil || n != 1 {
+		t.Fatalf("card-less consumers on the free plan = %d %v; want 1", n, err)
+	}
 	keyed, err := st.CreateAPIConsumer(ctx, accountID, appID, "cus_keyed", "Ada")
 	if err != nil {
 		t.Fatal(err)
@@ -49,6 +53,9 @@ func checkAPIConsumerIdentityLinks(t *testing.T, ctx context.Context, st state.S
 	}
 	if c, _ := st.GetAPIConsumerByID(ctx, accountID, enrolled.ID); c.Active() {
 		t.Fatal("the enrolled consumer is still active")
+	}
+	if n, err := upgrades.CountCardlessAPIConsumersOnPlan(ctx, accountID, appID, free.ID, time.Now()); err != nil || n != 0 {
+		t.Fatalf("card-less consumers after the link closed one = %d %v; want 0", n, err)
 	}
 	if again, revoked, err := link("u1", keyed.ID); err != nil || again.ID != id.ID || revoked != "" {
 		t.Fatalf("link again = %+v %q %v; want a no-op", again, revoked, err)

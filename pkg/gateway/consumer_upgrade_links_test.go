@@ -62,8 +62,16 @@ func TestPlanLimitRefusalCarriesUpgradeURL(t *testing.T) {
 	if linker.calls != 1 || linker.consumer != "consumer-1" {
 		t.Fatalf("linker = %+v; want one cached call", linker)
 	}
-	if p := refuse(handler(&fakeUpgradeLinker{err: errors.New("apid down")})); p.UpgradeURL != "" {
-		t.Fatalf("failed lookup still set upgrade_url %q", p.UpgradeURL)
+	down := &fakeUpgradeLinker{err: errors.New("apid down")}
+	h = handler(down)
+	for range 3 {
+		if p := refuse(h); p.UpgradeURL != "" {
+			t.Fatalf("failed lookup still set upgrade_url %q", p.UpgradeURL)
+		}
+	}
+	// While apid is down, refusals skip the lookup.
+	if down.calls != 1 {
+		t.Fatalf("apid asked %d times during an outage; want 1", down.calls)
 	}
 	if p := refuse(handler(&fakeUpgradeLinker{})); p.UpgradeURL != "" {
 		t.Fatalf("app without upgrades set upgrade_url %q", p.UpgradeURL)

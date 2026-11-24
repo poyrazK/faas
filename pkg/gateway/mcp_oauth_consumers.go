@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -53,12 +54,23 @@ type oauthConsumerEntry struct {
 type oauthConsumerCache struct {
 	mu      sync.Mutex
 	entries map[string]oauthConsumerEntry
+	// apps holds the per-app "off" and "on" marks apart from callers, so
+	// churn of callers never drops the mark that fails an app closed.
+	apps map[string]oauthConsumerEntry
+}
+
+// table returns the map key belongs in. Callers hold c.mu.
+func (c *oauthConsumerCache) table(key string) *map[string]oauthConsumerEntry {
+	if strings.HasPrefix(key, "sub\x00") {
+		return &c.entries
+	}
+	return &c.apps
 }
 
 func (c *oauthConsumerCache) get(key string, now time.Time) (oauthConsumerEntry, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	e, ok := c.entries[key]
+	e, ok := (*c.table(key))[key]
 	if !ok || !now.Before(e.expires) {
 		return oauthConsumerEntry{}, false
 	}
@@ -68,10 +80,11 @@ func (c *oauthConsumerCache) get(key string, now time.Time) (oauthConsumerEntry,
 func (c *oauthConsumerCache) put(key string, e oauthConsumerEntry) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.entries == nil || len(c.entries) >= oauthConsumerCacheMax {
-		c.entries = map[string]oauthConsumerEntry{}
+	t := c.table(key)
+	if *t == nil || len(*t) >= oauthConsumerCacheMax {
+		*t = map[string]oauthConsumerEntry{}
 	}
-	c.entries[key] = e
+	(*t)[key] = e
 }
 
 // WithOAuthConsumers lets MCP resource policies enroll verified callers as
@@ -104,7 +117,7 @@ func (h *Handler) oauthConsumer(ctx context.Context, app App, issuer, subject, e
 		h.oauthConsumerCache.put(appKey, e)
 		h.oauthConsumerCache.put(onKey, oauthConsumerEntry{expires: now})
 		return e, nil
-	case errors.Is(err, apidgrpc.ErrOAuthConsumerSignupLimit):
+	case errors.Is(err, apidgrpc.ErrOAuthConsumerSignupLimit), errors.Is(err, apidgrpc.ErrOAuthConsumerRefused):
 		h.oauthConsumerCache.put(key, oauthConsumerEntry{err: err, expires: now.Add(oauthConsumerRefusedTTL)})
 		return oauthConsumerEntry{}, err
 	case err != nil:
@@ -153,6 +166,12 @@ func (h *Handler) attachOAuthConsumer(w http.ResponseWriter, r *http.Request, ap
 		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeConsumerSignupDailyLimit, "Sign-ups closed for today",
 			"this MCP server took its new customers for the day; try again tomorrow"))
 		return true
+	case errors.Is(err, apidgrpc.ErrOAuthConsumerRefused):
+		// Serving the caller unattributed would be unbilled and unlimited.
+		if h.log != nil {
+			h.log.Warn("oauth consumer enrollment refused", "app_id", app.ID)
+		}
+		return mcpPolicyReject(w, http.StatusForbidden, rule.MCP, "This MCP server cannot open an account for you; contact its owner")
 	case err != nil:
 		if h.log != nil {
 			h.log.Error("oauth consumer enrollment unavailable", "err", err, "app_id", app.ID)

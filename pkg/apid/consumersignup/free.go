@@ -3,6 +3,7 @@ package consumersignup
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"time"
@@ -78,7 +79,9 @@ func (s *Service) freePlanProblem(ctx context.Context, app state.App, set state.
 }
 
 // FreePlanCardProblem refuses a rate card that charges on the app's sign-up
-// free plan, so joining it without a card stays free.
+// free plan, so joining it without a card stays free, or on any plan
+// card-less consumers are on (a former free plan), whose charges could not
+// be collected.
 func (s *Service) FreePlanCardProblem(ctx context.Context, app state.App, card state.APIConsumerRateCard) *api.Problem {
 	if card.PlanID == "" || rateCardChargesNothing(card) {
 		return nil
@@ -94,12 +97,53 @@ func (s *Service) FreePlanCardProblem(ctx context.Context, app state.App, card s
 	if err != nil {
 		return api.ErrInternal("could not read the sign-up settings")
 	}
-	if set.FreePlanID != card.PlanID {
+	if set.FreePlanID == card.PlanID {
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid rate card",
+			"this plan is the sign-up free plan, joined without a card, so its rate cards must charge nothing; "+
+				"pick another free plan first (gregale api consumer signup set APP --free-plan NAME)")
+	}
+	return s.CardlessPlanProblem(ctx, app, card.PlanID)
+}
+
+// CardlessPlanProblem refuses charging on planID while card-less consumers
+// are on it.
+func (s *Service) CardlessPlanProblem(ctx context.Context, app state.App, planID string) *api.Problem {
+	upgrades, ok := s.Host.Store().(state.APIConsumerUpgradeStore)
+	if !ok || planID == "" {
+		return nil
+	}
+	n, err := upgrades.CountCardlessAPIConsumersOnPlan(ctx, app.AccountID, app.ID, planID, s.now())
+	if err != nil {
+		return api.ErrInternal("could not check the plan's consumers")
+	}
+	if n == 0 {
 		return nil
 	}
 	return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid rate card",
-		"this plan is the sign-up free plan, joined without a card, so its rate cards must charge nothing; "+
-			"pick another free plan first (gregale api consumer signup set APP --free-plan NAME)")
+		fmt.Sprintf("%d consumers on this plan joined without a card, so its rate cards must charge nothing; "+
+			"move them to a free plan first, or let them upgrade through the upgrade link", n)).WithLimit(0, int64(n))
+}
+
+// CardlessAssignmentProblem refuses moving a card-less consumer onto a
+// plan that charges: it must save a card through the upgrade page first.
+func (s *Service) CardlessAssignmentProblem(ctx context.Context, app state.App, consumer state.APIConsumer, planID string) *api.Problem {
+	if !state.APIConsumerCardless(consumer.ExternalRef) {
+		return nil
+	}
+	cardsStore, ok := s.Host.Store().(state.APIConsumerRateCardStore)
+	if !ok {
+		return nil
+	}
+	cards, err := cardsStore.ListAPIConsumerRateCardsForApp(ctx, app.AccountID, app.ID)
+	if err != nil {
+		return api.ErrInternal("could not read the rate cards")
+	}
+	if PlanChargesNothing(cards, planID, s.now()) {
+		return nil
+	}
+	return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid plan assignment",
+		"this consumer joined without a card, so it can only be on a plan that charges nothing; "+
+			"it moves to a paid plan by saving a card through its upgrade link")
 }
 
 // completeFree creates a free-plan sign-up's consumer without a checkout.
