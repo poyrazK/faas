@@ -102,8 +102,8 @@ func describeAuthRefusal(problem *api.Problem, response *http.Response) {
 		problem.Detail = fmt.Sprintf("MCP server did not accept the Authorization header as a Bearer token (HTTP 401 %s)", reason)
 		problem.Hint = "A token was sent: check the variable named by --token-env holds a bare token (no \"Bearer \" prefix, no line breaks) of a size the server accepts."
 	case strings.Contains(strings.ToLower(description), signingKeysRefused):
-		problem.Detail = fmt.Sprintf("MCP server could not check the token: its JWKS URL requires credentials (HTTP 401 %s)", reason)
-		problem.Hint = "The token itself may be fine. The authorization server's JWKS URL answered 401 or 403, so it sits behind access protection. If the authorization server runs on Gregale, open it to anonymous callers: gregale app update <authorization-server-app> --no-require-authn. Then retry."
+		problem.Detail = fmt.Sprintf("MCP server could not check the token: its JWKS URL refused the request (HTTP 401 %s)", reason)
+		problem.Hint = "The token itself may be fine. The authorization server's JWKS URL answered 401 or 403: access protection or a firewall refused the app's request. If the authorization server runs on Gregale, open it to anonymous callers with gregale app update <authorization-server-app> --no-require-authn --public-auth open, and set access: public in its gregale.yaml so the next deploy keeps it open. Otherwise check that the provider lets the app's requests through. Then retry."
 	case strings.Contains(strings.ToLower(description), signingKeysUnavailable):
 		problem.Detail = fmt.Sprintf("MCP server could not check the token (HTTP 401 %s)", reason)
 		problem.Hint = "The server could not fetch its authorization server's signing keys (JWKS); the token itself may be fine. Check that the JWKS URL is reachable from the app, then retry."
