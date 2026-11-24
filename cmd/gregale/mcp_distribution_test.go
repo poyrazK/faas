@@ -1,5 +1,5 @@
 // adr: 20261026110240
-package main
+package main_test
 
 import (
 	"encoding/base64"
@@ -12,9 +12,14 @@ import (
 
 // The MCP registry listing and the one-click install links in the docs all
 // point clients at the hosted server. They live outside the code that serves
-// it, so this test keeps them on hostedMCPURL.
+// it, so this test keeps them on hostedMCPServerURL.
 
-const mcpRegistryServerJSON = "../../packaging/mcp-registry/server.json"
+const (
+	mcpRegistryServerJSON = "../../packaging/mcp-registry/server.json"
+	// hostedMCPServerURL is Gregale's hosted management MCP server; the
+	// plugin's .mcp.json is pinned to the same URL in claude_plugin_test.go.
+	hostedMCPServerURL = "https://api.gregale.dev/mcp"
+)
 
 func TestMCPRegistryListingNamesHostedServer(t *testing.T) {
 	content, err := os.ReadFile(mcpRegistryServerJSON)
@@ -43,8 +48,8 @@ func TestMCPRegistryListingNamesHostedServer(t *testing.T) {
 		t.Errorf("need a version and a description of at most 100 characters: %+v", listing)
 	}
 	if len(listing.Packages) != 0 || len(listing.Remotes) != 1 ||
-		listing.Remotes[0].Type != "streamable-http" || listing.Remotes[0].URL != hostedMCPURL {
-		t.Errorf("listing must name only the hosted server %s over streamable-http: %+v", hostedMCPURL, listing)
+		listing.Remotes[0].Type != "streamable-http" || listing.Remotes[0].URL != hostedMCPServerURL {
+		t.Errorf("listing must name only the hosted server %s over streamable-http: %+v", hostedMCPServerURL, listing)
 	}
 }
 
@@ -97,7 +102,7 @@ func checkInstallConfig(t *testing.T, path, link, name string, raw []byte, wantT
 		t.Errorf("%s: %s: config is not JSON: %v", path, link, err)
 		return
 	}
-	want := map[string]string{"url": hostedMCPURL}
+	want := map[string]string{"url": hostedMCPServerURL}
 	if wantType {
 		want["type"] = "http"
 	}
