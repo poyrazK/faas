@@ -10404,6 +10404,13 @@ type ManagedValkeyCach struct {
 	CreatedAt      pgtype.Timestamptz
 }
 
+type ManagedValkeyCacheGrant struct {
+	CacheAppID pgtype.UUID
+	AppID      pgtype.UUID
+	AccountID  pgtype.UUID
+	CreatedAt  pgtype.Timestamptz
+}
+
 type McpBridgeLease struct {
 	Bridge    string
 	Holder    string

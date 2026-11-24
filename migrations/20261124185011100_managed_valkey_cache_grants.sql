@@ -1,4 +1,4 @@
--- filename: 20261124174244310_managed_valkey_cache_grants.sql
+-- filename: 20261124185011100_managed_valkey_cache_grants.sql
 -- migration-compat: expand
 -- Binding a managed cache to an app grants that app the call
 -- (ADR-20261124174500). `gregale redis bind` and Compose cache provisioning
