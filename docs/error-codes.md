@@ -4,6 +4,10 @@ Every error Gregale returns carries a stable `code`. [Errors](errors.md) explain
 
 The list is generated from the code that builds each error, so a new code appears here when it ships. Codes for features whose docs are not published yet are left out. Each code's name is its anchor: link to `error-codes#plan_limit_apps`, for example.
 
+If you are fixing a failure rather than looking up one code, start with [the common codes](errors.md#common-codes), which group the frequent ones by what went wrong, or [Troubleshooting](troubleshooting.md), which goes by symptom.
+
+Jump to: [A](#a) · [B](#b) · [C](#c) · [D](#d) · [E](#e) · [F](#f) · [G](#g) · [H](#h) · [I](#i) · [J](#j) · [L](#l) · [M](#m) · [N](#n) · [O](#o) · [P](#p) · [Q](#q) · [R](#r) · [S](#s) · [T](#t) · [U](#u) · [V](#v) · [W](#w)
+
 ## A
 
 ### `account_abuse_hold`
