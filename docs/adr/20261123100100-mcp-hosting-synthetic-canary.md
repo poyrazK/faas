@@ -1,7 +1,8 @@
-# ADR-20261123100000 · Synthetic canary for MCP hosting
+# ADR-20261123100100 · Synthetic canary for MCP hosting
 
 - **Status:** accepted for implementation; activation needs the `MCP_CANARY_KEY` secret.
 - **Date:** 2026-11-23
+- **Number:** ADR-20261123100000 until 2026-11-25; renumbered because the peer entry hairpin ADR holds that number.
 - **Extends:** [synthetic canary missed-run monitor](20261113100000-synthetic-canary-missed-run-monitor.md),
   [MCP hosting prod probe fixes](20261121160000-mcp-hosting-prod-probe-fixes.md).
 

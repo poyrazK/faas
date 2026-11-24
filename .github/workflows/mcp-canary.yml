@@ -1,7 +1,7 @@
 name: mcp-canary
 
 # Synthetic canary for customer MCP hosting and Gregale's hosted management
-# MCP (ADR-20261123100000). It runs on a GitHub-hosted runner and touches only
+# MCP (ADR-20261123100100). It runs on a GitHub-hosted runner and touches only
 # public endpoints with the CLI customers install from npm, so it does not
 # share a failure mode with control-plane SSH or the fleet's own runners.
 #
