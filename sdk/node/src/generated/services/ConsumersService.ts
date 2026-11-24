@@ -35,6 +35,9 @@ import type { ConsumerBillingPortalResponse } from '../models/ConsumerBillingPor
 import type { ConsumerBillingStatementsResponse } from '../models/ConsumerBillingStatementsResponse.js';
 import type { ConsumerBillingSummaryResponse } from '../models/ConsumerBillingSummaryResponse.js';
 import type { ConsumerBillingUsageResponse } from '../models/ConsumerBillingUsageResponse.js';
+import type { ConsumerCreditPackSettings } from '../models/ConsumerCreditPackSettings.js';
+import type { ConsumerCreditPacksResponse } from '../models/ConsumerCreditPacksResponse.js';
+import type { ConsumerCreditPurchaseResponse } from '../models/ConsumerCreditPurchaseResponse.js';
 import type { ConsumerKeyListResponse } from '../models/ConsumerKeyListResponse.js';
 import type { ConsumerKeyResponse } from '../models/ConsumerKeyResponse.js';
 import type { ConsumerSignupFormResponse } from '../models/ConsumerSignupFormResponse.js';
@@ -46,6 +49,7 @@ import type { CreateAPIConsumerRateCardRequest } from '../models/CreateAPIConsum
 import type { CreateAPIConsumerRequest } from '../models/CreateAPIConsumerRequest.js';
 import type { CreateAPIConsumerUsageStatementRequest } from '../models/CreateAPIConsumerUsageStatementRequest.js';
 import type { CreateConsumerBillingPortalRequest } from '../models/CreateConsumerBillingPortalRequest.js';
+import type { CreateConsumerCreditPurchaseRequest } from '../models/CreateConsumerCreditPurchaseRequest.js';
 import type { CreateConsumerKeyRequest } from '../models/CreateConsumerKeyRequest.js';
 import type { CreateConsumerSignupRequest } from '../models/CreateConsumerSignupRequest.js';
 import type { CreateConsumerSignupResponse } from '../models/CreateConsumerSignupResponse.js';
@@ -223,6 +227,115 @@ export class ConsumersService {
         409: `Plan changes are not offered (\`consumer_self_service_unavailable\`), you are already on the plan, or a change is pending.`,
         422: `The plan is not one of the offered plans.`,
         429: `Plan changes for this key are rate limited.`,
+      },
+    });
+  }
+  /**
+   * List the prepaid credit packs available to your consumer.
+   * @returns ConsumerCreditPacksResponse The credit packs offered to this consumer, possibly empty.
+   * @throws ApiError
+   */
+  public static listConsumerCreditPacks({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ConsumerCreditPacksResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/consumer-billing/{slug}/credit-packs',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Start or resume a one-time Stripe Checkout for a credit pack.
+   * Choose a unique purchase_id and reuse it when retrying the same pack.
+   * A consumer can have one pending purchase at a time. Granting credit
+   * requires Stripe to confirm the exact live payment amount and currency.
+   *
+   * @returns ConsumerCreditPurchaseResponse The purchase, with a checkout URL when the session is open.
+   * @throws ApiError
+   */
+  public static createConsumerCreditPurchase({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateConsumerCreditPurchaseRequest,
+  }): CancelablePromise<ConsumerCreditPurchaseResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/consumer-billing/{slug}/credit-purchases',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        409: `code: conflict`,
+        422: `The purchase ID or pack ID is invalid, or Stripe rejected the new checkout.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        502: `Stripe Checkout could not be reached or opened.`,
+      },
+    });
+  }
+  /**
+   * Read your purchase and its credit grant receipt.
+   * @returns ConsumerCreditPurchaseResponse The latest state of the caller's purchase.
+   * @throws ApiError
+   */
+  public static getConsumerCreditPurchase({
+    slug,
+    purchaseId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * The UUID supplied when the purchase began.
+     */
+    purchaseId: string,
+  }): CancelablePromise<ConsumerCreditPurchaseResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/consumer-billing/{slug}/credit-purchases/{purchase_id}',
+      path: {
+        'slug': slug,
+        'purchase_id': purchaseId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
       },
     });
   }
@@ -1734,6 +1847,67 @@ export class ConsumersService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read the credit packs an app offers.
+   * @returns ConsumerCreditPackSettings The configured purchases and the app's checkout return URL.
+   * @throws ApiError
+   */
+  public static getConsumerCreditPackSettings({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ConsumerCreditPackSettings> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumer-credit-packs',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Set the fixed-value packs customers can buy through the app owner's Stripe.
+   * An empty pack list disables new purchases. Existing checkout sessions
+   * keep the terms saved when the purchase started.
+   *
+   * @returns ConsumerCreditPackSettings The saved settings.
+   * @throws ApiError
+   */
+  public static putConsumerCreditPackSettings({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: ConsumerCreditPackSettings,
+  }): CancelablePromise<ConsumerCreditPackSettings> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/consumer-credit-packs',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `The pack ID, label, return URL, amount, or currency is invalid.`,
       },
     });
   }

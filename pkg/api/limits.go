@@ -1898,6 +1898,10 @@ const (
 	// A consumer holds at most this many grants with credit left.
 	ConsumerCreditOpenGrantsMax = 100
 	ConsumerCreditNoteMaxBytes  = 200
+	// Self-service checkout catalog limits and the lifetime of an open checkout.
+	ConsumerCreditPacksMax          = 16
+	ConsumerCreditPackLabelMaxBytes = 80
+	ConsumerCreditPurchaseTTL       = time.Hour
 	// apid rechecks each capped consumer's month to date this often, in
 	// batches; a claimed check is retried after the lease.
 	ConsumerSpendCapCheckInterval = time.Minute
@@ -3141,6 +3145,35 @@ const (
 	AnalyticsCohortMaxMinCount = 1000
 	// AnalyticsCohortRefreshInterval is how often a cohort is recomputed.
 	AnalyticsCohortRefreshInterval = time.Hour
+)
+
+// Saved insights (ADR-20261122190000).
+const (
+	// SavedInsightsMaxPerEnvironment bounds an environment's saved insights.
+	SavedInsightsMaxPerEnvironment = 50
+	// SavedInsightMaxChannels bounds the channels one saved insight sends to.
+	SavedInsightMaxChannels = 5
+	// SavedInsightAlertInterval is how often meterd checks a saved insight
+	// that has an alert.
+	SavedInsightAlertInterval = 15 * time.Minute
+	// SavedInsightDigestHourUTC is the hour digests go out: daily ones every
+	// day, weekly ones on Mondays.
+	SavedInsightDigestHourUTC = 8
+	// SavedInsightRunBatch bounds the saved insights one meterd pass runs.
+	SavedInsightRunBatch = 10
+	// SavedInsightItemBudget bounds one saved insight's run: its query
+	// (AnalyticsQueryTimeout) and at most two channel sends of 30 s each.
+	SavedInsightItemBudget = AnalyticsQueryTimeout + time.Minute
+	// SavedInsightLease is how long a claimed batch stays leased; a pass
+	// releases the items it cannot start with SavedInsightItemBudget left.
+	SavedInsightLease = SavedInsightRunBatch*SavedInsightItemBudget + time.Minute
+	// SavedInsightNotReleasedRetry is how long a saved insight of an account
+	// without saved insights waits before meterd looks at it again.
+	SavedInsightNotReleasedRetry = time.Hour
+	// SavedInsightNameMaxBytes bounds a saved insight's display name.
+	SavedInsightNameMaxBytes = 128
+	// SavedInsightRequestMaxBytes bounds a create or replace request body.
+	SavedInsightRequestMaxBytes = 32 << 10
 )
 
 // Subject units, layers and the holdout, richer metrics, bandits and

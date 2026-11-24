@@ -1021,6 +1021,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		srv.consumerSignup.Start(ctx, log)                // ADR-20261021143000
 		srv.productControl.StartOverdueHolds(ctx, log)    // ADR-20261018212918
 		srv.productControl.StartTrialResolution(ctx, log) // ADR-20261022180921
+		// Payments already started still settle if API monetization is disabled.
+		srv.consumerBilling.StartCreditPurchaseSync(ctx, log)
 		startFeatureFlagAutoAdvancer(ctx, srv, log)
 		startFeatureFlagLifecycleReconciler(ctx, srv, log)
 		startFlagExperimentReconciler(ctx, srv, log) // ADR 20261115163113

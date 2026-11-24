@@ -1768,10 +1768,6 @@ See [Managed PostgreSQL](postgres.md).
 
 HTTP 409 Conflict · Cache binding target missing
 
-### `managed_redis_cache_missing`
-
-HTTP 409 Conflict · Cache missing
-
 ### `managed_redis_limit`
 
 HTTP 403 Forbidden · Managed Redis cache limit reached
@@ -3461,6 +3457,10 @@ HTTP 409 Conflict · Run control changed
 ### `safe_release_unavailable`
 
 HTTP 503 Service Unavailable · Safe release unavailable
+
+### `saved_insight_limit`
+
+HTTP 409 Conflict · Saved insight limit reached
 
 ### `scaling_request_conflict`
 

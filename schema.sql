@@ -32825,6 +32825,48 @@ COMMENT ON TABLE public.api_consumer_credit_grants IS 'Prepaid credit granted to
 
 
 --
+-- Name: api_consumer_credit_pack_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_credit_pack_settings (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    return_url text NOT NULL,
+    packs jsonb NOT NULL,
+    CONSTRAINT api_consumer_credit_pack_settings_packs_check CHECK ((jsonb_typeof(packs) = 'array'::text))
+);
+
+
+--
+-- Name: api_consumer_credit_purchases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_credit_purchases (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    consumer_id uuid NOT NULL,
+    pack_id text NOT NULL,
+    label text NOT NULL,
+    currency text NOT NULL,
+    amount_millicents bigint NOT NULL,
+    amount_minor bigint NOT NULL,
+    return_url text NOT NULL,
+    stripe_customer text NOT NULL,
+    stripe_session text,
+    livemode boolean NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    next_check_at timestamp with time zone NOT NULL,
+    CONSTRAINT api_consumer_credit_purchases_amount_millicents_check CHECK (((amount_millicents >= 1) AND (amount_millicents <= '1000000000000'::bigint))),
+    CONSTRAINT api_consumer_credit_purchases_amount_minor_check CHECK ((amount_minor > 0)),
+    CONSTRAINT api_consumer_credit_purchases_check CHECK (((status <> 'credited'::text) OR (stripe_session IS NOT NULL))),
+    CONSTRAINT api_consumer_credit_purchases_currency_check CHECK ((currency ~ '^[A-Z]{3}$'::text)),
+    CONSTRAINT api_consumer_credit_purchases_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'credited'::text, 'expired'::text])))
+);
+
+
+--
 -- Name: api_consumer_meter_usage_minutes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -50372,19 +50414,6 @@ CREATE TABLE public.managed_realtime_worker_heartbeats (
 
 
 --
--- Name: managed_valkey_cache_grants; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.managed_valkey_cache_grants (
-    cache_app_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    account_id uuid NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT managed_valkey_cache_grants_check CHECK ((cache_app_id <> app_id))
-);
-
-
---
 -- Name: managed_valkey_caches; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -61684,6 +61713,44 @@ COMMENT ON TABLE public.sandbox_workspace_snapshots IS 'ADR-20261027090013 step 
 
 
 --
+-- Name: saved_insights; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.saved_insights (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    key text NOT NULL,
+    name text NOT NULL,
+    kind text NOT NULL,
+    query jsonb NOT NULL,
+    range_days integer NOT NULL,
+    digest text DEFAULT ''::text NOT NULL,
+    alert_comparison text DEFAULT ''::text NOT NULL,
+    alert_threshold double precision DEFAULT 0 NOT NULL,
+    channel_ids uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    alert_state text DEFAULT 'ok'::text NOT NULL,
+    last_value double precision,
+    last_run_at timestamp with time zone,
+    last_error text DEFAULT ''::text NOT NULL,
+    next_digest_at timestamp with time zone,
+    next_check_at timestamp with time zone,
+    lease_until timestamp with time zone,
+    created_by text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT saved_insights_chk CHECK (((key ~ '^[a-z][a-z0-9_-]{0,63}$'::text) AND ((length(name) >= 1) AND (length(name) <= 128)) AND (kind = ANY (ARRAY['events'::text, 'funnel'::text, 'retention'::text])) AND (jsonb_typeof(query) = 'object'::text) AND ((range_days >= 1) AND (range_days <= 400)) AND (digest = ANY (ARRAY[''::text, 'daily'::text, 'weekly'::text])) AND (alert_comparison = ANY (ARRAY[''::text, 'gt'::text, 'gte'::text, 'lt'::text, 'lte'::text])) AND (alert_threshold = alert_threshold) AND (cardinality(channel_ids) <= 5) AND (alert_state = ANY (ARRAY['ok'::text, 'firing'::text])) AND (length(last_error) <= 512) AND ((length(created_by) >= 1) AND (length(created_by) <= 256)) AND (((digest = ''::text) AND (alert_comparison = ''::text)) = (next_check_at IS NULL))))
+);
+
+
+--
+-- Name: TABLE saved_insights; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.saved_insights IS 'Named analytics queries per environment; digests and threshold alerts run by meterd (ADR-20261122190000).';
+
+
+--
 -- Name: saved_route_requirements; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -65316,6 +65383,30 @@ ALTER TABLE ONLY public.api_consumer_credit_applications
 
 ALTER TABLE ONLY public.api_consumer_credit_grants
     ADD CONSTRAINT api_consumer_credit_grants_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: api_consumer_credit_pack_settings api_consumer_credit_pack_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_pack_settings
+    ADD CONSTRAINT api_consumer_credit_pack_settings_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: api_consumer_credit_purchases api_consumer_credit_purchases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_purchases
+    ADD CONSTRAINT api_consumer_credit_purchases_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: api_consumer_credit_purchases api_consumer_credit_purchases_stripe_session_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_purchases
+    ADD CONSTRAINT api_consumer_credit_purchases_stripe_session_key UNIQUE (stripe_session);
 
 
 --
@@ -73183,14 +73274,6 @@ ALTER TABLE ONLY public.managed_realtime_worker_heartbeats
 
 
 --
--- Name: managed_valkey_cache_grants managed_valkey_cache_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.managed_valkey_cache_grants
-    ADD CONSTRAINT managed_valkey_cache_grants_pkey PRIMARY KEY (cache_app_id, app_id);
-
-
---
 -- Name: managed_valkey_caches managed_valkey_caches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -78143,6 +78226,22 @@ ALTER TABLE ONLY public.sandbox_workspace_snapshots
 
 
 --
+-- Name: saved_insights saved_insights_env_key_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.saved_insights
+    ADD CONSTRAINT saved_insights_env_key_uniq UNIQUE (environment_id, key);
+
+
+--
+-- Name: saved_insights saved_insights_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.saved_insights
+    ADD CONSTRAINT saved_insights_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: saved_route_requirements saved_route_requirements_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -80182,6 +80281,27 @@ CREATE INDEX api_consumer_credit_applications_statement_idx ON public.api_consum
 --
 
 CREATE INDEX api_consumer_credit_grants_consumer_idx ON public.api_consumer_credit_grants USING btree (consumer_id, currency, created_at);
+
+
+--
+-- Name: api_consumer_credit_purchases_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_credit_purchases_due ON public.api_consumer_credit_purchases USING btree (next_check_at, id) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: api_consumer_credit_purchases_pending_consumer; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX api_consumer_credit_purchases_pending_consumer ON public.api_consumer_credit_purchases USING btree (consumer_id) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: api_consumer_credit_purchases_pending_live_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_credit_purchases_pending_live_account ON public.api_consumer_credit_purchases USING btree (account_id) WHERE ((status = 'pending'::text) AND livemode);
 
 
 --
@@ -86643,13 +86763,6 @@ CREATE INDEX managed_realtime_subscription_tickets_principal ON public.managed_r
 
 
 --
--- Name: managed_valkey_cache_grants_app_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX managed_valkey_cache_grants_app_idx ON public.managed_valkey_cache_grants USING btree (app_id);
-
-
---
 -- Name: managed_valkey_caches_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -90245,6 +90358,13 @@ CREATE INDEX sandbox_workspace_snapshots_expiry_idx ON public.sandbox_workspace_
 --
 
 CREATE INDEX sandbox_workspace_snapshots_pending_idx ON public.sandbox_workspace_snapshots USING btree (created_at) WHERE (state = 'pending'::text);
+
+
+--
+-- Name: saved_insights_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX saved_insights_due_idx ON public.saved_insights USING btree (next_check_at) WHERE (next_check_at IS NOT NULL);
 
 
 --
@@ -100171,6 +100291,46 @@ ALTER TABLE ONLY public.api_consumer_credit_grants
 
 
 --
+-- Name: api_consumer_credit_pack_settings api_consumer_credit_pack_settings_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_pack_settings
+    ADD CONSTRAINT api_consumer_credit_pack_settings_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_credit_pack_settings api_consumer_credit_pack_settings_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_pack_settings
+    ADD CONSTRAINT api_consumer_credit_pack_settings_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_credit_purchases api_consumer_credit_purchases_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_purchases
+    ADD CONSTRAINT api_consumer_credit_purchases_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_credit_purchases api_consumer_credit_purchases_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_purchases
+    ADD CONSTRAINT api_consumer_credit_purchases_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_credit_purchases api_consumer_credit_purchases_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_purchases
+    ADD CONSTRAINT api_consumer_credit_purchases_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
+
+
+--
 -- Name: api_consumer_meter_usage_minutes api_consumer_meter_usage_minutes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -109475,22 +109635,6 @@ ALTER TABLE ONLY public.managed_realtime_worker_heartbeats
 
 
 --
--- Name: managed_valkey_cache_grants managed_valkey_cache_grants_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.managed_valkey_cache_grants
-    ADD CONSTRAINT managed_valkey_cache_grants_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
-
-
---
--- Name: managed_valkey_cache_grants managed_valkey_cache_grants_cache_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.managed_valkey_cache_grants
-    ADD CONSTRAINT managed_valkey_cache_grants_cache_app_id_fkey FOREIGN KEY (cache_app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
-
-
---
 -- Name: managed_valkey_caches managed_valkey_caches_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -115528,6 +115672,22 @@ ALTER TABLE ONLY public.sandbox_templates
 
 ALTER TABLE ONLY public.sandbox_workspace_snapshots
     ADD CONSTRAINT sandbox_workspace_snapshots_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: saved_insights saved_insights_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.saved_insights
+    ADD CONSTRAINT saved_insights_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: saved_insights saved_insights_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.saved_insights
+    ADD CONSTRAINT saved_insights_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
 
 
 --
