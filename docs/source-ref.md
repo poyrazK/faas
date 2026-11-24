@@ -8,7 +8,7 @@ connected to your account.
 
 ## Prerequisites
 
-- `FAAS_API` — the API URL (`https://api.gregale.dev`, the default).
+- `GREGALE_API_URL` — the API URL (`https://api.gregale.dev`, the default).
 - `GREGALE_TOKEN` — a deploy-time API key (the `deploy` scope, or
   admin).
 - `gregale connect` completed once on a workstation (browser
@@ -23,7 +23,7 @@ installation and fetch source through Gregale.
 ## Worked example: pin to a SHA in CI
 
 ```bash
-FAAS_API=https://api.gregale.dev \
+GREGALE_API_URL=https://api.gregale.dev \
 GREGALE_TOKEN=$GREGALE_TOKEN \
 gregale deploy --repo acme/hello --ref $(git rev-parse HEAD)
 ```

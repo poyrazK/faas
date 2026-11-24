@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
@@ -25,8 +26,42 @@ type APIConsumerPlan struct {
 	// AlertThresholdsPercent are ascending percentages of MaxUnitsPerMonth
 	// at which a consumer.usage_threshold webhook fires (ADR-849).
 	AlertThresholdsPercent []int32
-	CreatedAt              time.Time
-	UpdatedAt              time.Time
+	// RouteLimits cap single billing routes, such as one MCP tool, per
+	// consumer (ADR-20261123192254). Keys are billing route labels.
+	RouteLimits map[string]APIConsumerPlanRouteLimit
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+// APIConsumerPlanRouteLimit caps a consumer's requests on one billing route
+// per UTC minute and per UTC month. Zero means unlimited; at least one is
+// set. Every admitted request counts one, whatever the route's weight.
+type APIConsumerPlanRouteLimit struct {
+	MaxRequestsPerMinute int64 `json:"max_requests_per_minute,omitempty"`
+	MaxRequestsPerMonth  int64 `json:"max_requests_per_month,omitempty"`
+}
+
+// MaxAPIConsumerPlanRouteLimits bounds a plan's route limits
+// (api.APIConsumerPlanMaxRouteLimits).
+const MaxAPIConsumerPlanRouteLimits = api.APIConsumerPlanMaxRouteLimits
+
+// apiConsumerPlanRouteLimitsDocs explains plan route limits.
+const apiConsumerPlanRouteLimitsDocs = "https://gregale.dev/docs/api-monetization#route-limits"
+
+// ValidateAPIConsumerPlanRouteLimits checks a plan's route limits.
+func ValidateAPIConsumerPlanRouteLimits(limits map[string]APIConsumerPlanRouteLimit) error {
+	if len(limits) > MaxAPIConsumerPlanRouteLimits {
+		return fmt.Errorf("consumer plan: %d route limits exceed the limit of %d; see %s", len(limits), MaxAPIConsumerPlanRouteLimits, apiConsumerPlanRouteLimitsDocs)
+	}
+	for route, limit := range limits {
+		if !ValidBillingRoute(route) {
+			return fmt.Errorf("consumer plan: route limit %q is not a \"METHOD /template\" route", route)
+		}
+		if limit.MaxRequestsPerMinute < 0 || limit.MaxRequestsPerMonth < 0 || limit.MaxRequestsPerMinute == 0 && limit.MaxRequestsPerMonth == 0 {
+			return fmt.Errorf("consumer plan: route limit %q needs a positive per-minute or per-month limit", route)
+		}
+	}
+	return nil
 }
 
 // APIConsumerPlanAssignment moves one consumer onto a plan from a UTC
@@ -51,6 +86,8 @@ type APIConsumerPlanPolicy struct {
 	MaxRequestsPerMinute int64
 	MaxUnitsPerMonth     int64
 	RouteWeights         map[string]int64
+	// RouteLimits are the plan's per-route caps (ADR-20261123192254).
+	RouteLimits map[string]APIConsumerPlanRouteLimit
 	// AlertThresholdsPercent are the plan's usage alert thresholds (ADR-849).
 	AlertThresholdsPercent []int32
 	// SpendCapped is set, on any plan, while the consumer's last spend check
@@ -80,7 +117,7 @@ func (p *APIConsumerPlanPolicy) attachSpendCap(c APIConsumerSpendCap, at time.Ti
 
 // Limited reports whether admission must consult the counter.
 func (p APIConsumerPlanPolicy) Limited() bool {
-	return p.MaxRequestsPerMinute > 0 || p.MaxUnitsPerMonth > 0
+	return p.MaxRequestsPerMinute > 0 || p.MaxUnitsPerMonth > 0 || len(p.RouteLimits) > 0
 }
 
 // Units returns the weighted units one request on route consumes.
@@ -115,7 +152,8 @@ type APIConsumerPlanStore interface {
 	CreateAPIConsumerPlan(context.Context, APIConsumerPlan) (APIConsumerPlan, error)
 	// UpdateAPIConsumerPlanLimits replaces a plan's limits. A nil
 	// alertThresholds keeps the plan's alert thresholds; an empty one clears them.
-	UpdateAPIConsumerPlanLimits(ctx context.Context, accountID, appID, planID string, perMinute, perMonth int64, alertThresholds []int32) (APIConsumerPlan, error)
+	// A nil routeLimits keeps the plan's route limits; an empty one clears them.
+	UpdateAPIConsumerPlanLimits(ctx context.Context, accountID, appID, planID string, perMinute, perMonth int64, alertThresholds []int32, routeLimits map[string]APIConsumerPlanRouteLimit) (APIConsumerPlan, error)
 	GetAPIConsumerPlan(ctx context.Context, accountID, appID, planID string) (APIConsumerPlan, error)
 	ListAPIConsumerPlans(ctx context.Context, accountID, appID string) ([]APIConsumerPlan, error)
 	AssignAPIConsumerPlan(context.Context, APIConsumerPlanAssignment) (APIConsumerPlanAssignment, error)
@@ -123,7 +161,9 @@ type APIConsumerPlanStore interface {
 	// oldest first.
 	ListAPIConsumerPlanAssignments(ctx context.Context, accountID, appID, consumerID string) ([]APIConsumerPlanAssignment, error)
 	GetAPIConsumerPlanPolicy(ctx context.Context, accountID, appID, consumerID string, at time.Time) (APIConsumerPlanPolicy, error)
-	AdmitAPIConsumerPlanRequest(ctx context.Context, accountID, consumerID string, policy APIConsumerPlanPolicy, units int64) (APIConsumerPlanDecision, error)
+	// AdmitAPIConsumerPlanRequest admits one request of units on billing
+	// route against the plan's limits and the route's limit, if any.
+	AdmitAPIConsumerPlanRequest(ctx context.Context, accountID, consumerID string, policy APIConsumerPlanPolicy, route string, units int64) (APIConsumerPlanDecision, error)
 	// ListAPIConsumerUsageAlerts returns a consumer's recorded usage alerts,
 	// newest first, at most limit.
 	ListAPIConsumerUsageAlerts(ctx context.Context, accountID, appID, consumerID string, limit int) ([]APIConsumerUsageAlert, error)
@@ -138,6 +178,9 @@ func ValidateAPIConsumerPlan(plan APIConsumerPlan) error {
 	}
 	if plan.MaxRequestsPerMinute < 0 || plan.MaxUnitsPerMonth < 0 {
 		return fmt.Errorf("consumer plan: limits must be non-negative")
+	}
+	if err := ValidateAPIConsumerPlanRouteLimits(plan.RouteLimits); err != nil {
+		return err
 	}
 	return validateAPIConsumerPlanAlerts(plan.AlertThresholdsPercent, plan.MaxUnitsPerMonth)
 }
@@ -201,6 +244,33 @@ func decidePlanAdmission(counter planAdmissionCounter, policy APIConsumerPlanPol
 		crossedUsageAlertThresholds(policy.AlertThresholdsPercent, policy.MaxUnitsPerMonth, before, counter.MonthUsed)
 }
 
+// decideRouteAdmission applies one request on a limited route at now, like
+// decidePlanAdmission: expired windows reset, a request past either limit
+// is denied without consuming anything. Scope is "route_minute" or
+// "route_month" on denial.
+func decideRouteAdmission(counter planAdmissionCounter, limit APIConsumerPlanRouteLimit, now time.Time) (planAdmissionCounter, APIConsumerPlanDecision) {
+	now = now.UTC()
+	minute := now.Truncate(time.Minute)
+	month := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	if !counter.MinuteStart.Equal(minute) {
+		counter.MinuteStart, counter.MinuteUsed = minute, 0
+	}
+	if !counter.MonthStart.Equal(month) {
+		counter.MonthStart, counter.MonthUsed = month, 0
+	}
+	if limit.MaxRequestsPerMinute > 0 && counter.MinuteUsed+1 > limit.MaxRequestsPerMinute {
+		return counter, APIConsumerPlanDecision{Scope: "route_minute", Limit: limit.MaxRequestsPerMinute, Observed: counter.MinuteUsed,
+			RetryAfterSeconds: max(1, int64(minute.Add(time.Minute).Sub(now).Seconds()))}
+	}
+	if limit.MaxRequestsPerMonth > 0 && counter.MonthUsed+1 > limit.MaxRequestsPerMonth {
+		return counter, APIConsumerPlanDecision{Scope: "route_month", Limit: limit.MaxRequestsPerMonth, Observed: counter.MonthUsed,
+			RetryAfterSeconds: max(1, int64(month.AddDate(0, 1, 0).Sub(now).Seconds()))}
+	}
+	counter.MinuteUsed++
+	counter.MonthUsed++
+	return counter, APIConsumerPlanDecision{Allowed: true}
+}
+
 // --- MemStore ---
 
 func (m *MemStore) CreateAPIConsumerPlan(_ context.Context, plan APIConsumerPlan) (APIConsumerPlan, error) {
@@ -223,12 +293,13 @@ func (m *MemStore) CreateAPIConsumerPlan(_ context.Context, plan APIConsumerPlan
 	}
 	now := time.Now().UTC()
 	plan.AlertThresholdsPercent = normalizeAPIConsumerPlanAlerts(plan.AlertThresholdsPercent)
+	plan.RouteLimits = normalizeAPIConsumerPlanRouteLimits(plan.RouteLimits)
 	plan.ID, plan.CreatedAt, plan.UpdatedAt = uuid.NewString(), now, now
 	m.apiConsumerPlans[plan.ID] = plan
 	return plan, nil
 }
 
-func (m *MemStore) UpdateAPIConsumerPlanLimits(_ context.Context, accountID, appID, planID string, perMinute, perMonth int64, alertThresholds []int32) (APIConsumerPlan, error) {
+func (m *MemStore) UpdateAPIConsumerPlanLimits(_ context.Context, accountID, appID, planID string, perMinute, perMonth int64, alertThresholds []int32, routeLimits map[string]APIConsumerPlanRouteLimit) (APIConsumerPlan, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	plan, ok := m.apiConsumerPlans[planID]
@@ -238,6 +309,9 @@ func (m *MemStore) UpdateAPIConsumerPlanLimits(_ context.Context, accountID, app
 	plan.MaxRequestsPerMinute, plan.MaxUnitsPerMonth = perMinute, perMonth
 	if alertThresholds != nil {
 		plan.AlertThresholdsPercent = normalizeAPIConsumerPlanAlerts(alertThresholds)
+	}
+	if routeLimits != nil {
+		plan.RouteLimits = normalizeAPIConsumerPlanRouteLimits(routeLimits)
 	}
 	if err := ValidateAPIConsumerPlan(plan); err != nil {
 		return APIConsumerPlan{}, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
@@ -331,6 +405,7 @@ func (m *MemStore) GetAPIConsumerPlanPolicy(_ context.Context, accountID, appID,
 	}
 	policy.PlanID, policy.AppID, policy.MaxRequestsPerMinute = plan.ID, plan.AppID, plan.MaxRequestsPerMinute
 	policy.MaxUnitsPerMonth, policy.AlertThresholdsPercent = plan.MaxUnitsPerMonth, slices.Clone(plan.AlertThresholdsPercent)
+	policy.RouteLimits = maps.Clone(plan.RouteLimits)
 	var current APIConsumerRateCard
 	for _, card := range m.apiConsumerRateCards {
 		if card.PlanID == plan.ID && !card.EffectiveFrom.After(at) && card.EffectiveFrom.After(current.EffectiveFrom) {
@@ -341,16 +416,29 @@ func (m *MemStore) GetAPIConsumerPlanPolicy(_ context.Context, accountID, appID,
 	return policy, nil
 }
 
-func (m *MemStore) AdmitAPIConsumerPlanRequest(_ context.Context, accountID, consumerID string, policy APIConsumerPlanPolicy, units int64) (APIConsumerPlanDecision, error) {
+func (m *MemStore) AdmitAPIConsumerPlanRequest(_ context.Context, accountID, consumerID string, policy APIConsumerPlanPolicy, route string, units int64) (APIConsumerPlanDecision, error) {
 	if !policy.Limited() {
 		return APIConsumerPlanDecision{Allowed: true}, nil
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now().UTC()
+	routeKey := consumerID + "\x00" + route
+	routeLimit, routeLimited := policy.RouteLimits[route]
+	var routeCounter planAdmissionCounter
+	if routeLimited {
+		var routeDecision APIConsumerPlanDecision
+		routeCounter, routeDecision = decideRouteAdmission(m.apiConsumerPlanRouteAdmissions[routeKey], routeLimit, now)
+		if !routeDecision.Allowed {
+			return routeDecision, nil
+		}
+	}
 	counter, decision, crossed := decidePlanAdmission(m.apiConsumerPlanAdmissions[consumerID], policy, units, now)
 	if decision.Allowed {
 		m.apiConsumerPlanAdmissions[consumerID] = counter
+		if routeLimited {
+			m.apiConsumerPlanRouteAdmissions[routeKey] = routeCounter
+		}
 	}
 	if len(crossed) > 0 {
 		if err := m.recordAPIConsumerUsageAlertsLocked(accountID, consumerID, policy, counter, crossed, now); err != nil {
@@ -358,4 +446,12 @@ func (m *MemStore) AdmitAPIConsumerPlanRequest(_ context.Context, accountID, con
 		}
 	}
 	return decision, nil
+}
+
+// normalizeAPIConsumerPlanRouteLimits returns a copy, never nil, so stored
+// and returned plans always carry an object.
+func normalizeAPIConsumerPlanRouteLimits(limits map[string]APIConsumerPlanRouteLimit) map[string]APIConsumerPlanRouteLimit {
+	out := make(map[string]APIConsumerPlanRouteLimit, len(limits))
+	maps.Copy(out, limits)
+	return out
 }

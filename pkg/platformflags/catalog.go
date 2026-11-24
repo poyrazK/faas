@@ -99,6 +99,10 @@ const (
 	// from (ADR-20261121170000).
 	RouteResourcePeaks = "route_resource_peaks"
 
+	// CrossAppBindings lets producer routes accept gregale:bindings workload
+	// tokens, authorized by the caller app's gregale.yaml `uses:` grants
+	// (ADR-20261122191423).
+	CrossAppBindings = "cross_app_bindings"
 	// MCPGatewayAuth releases api-key and oauth-proxy MCP access, MCP tool
 	// limits and "mcp:" consumer-key scopes (ADR-20261122194324).
 	MCPGatewayAuth = "mcp_gateway_auth"
@@ -543,6 +547,17 @@ var catalog = []Spec{
 		RetireBy:   "2027-06-30",
 	},
 	{
+		Key:   CrossAppBindings,
+		Label: "Cross-app bindings",
+		Description: "Let queue send, realtime publish and delayed-task routes accept gregale:bindings workload-identity tokens, authorized by " +
+			"the calling app's gregale.yaml `uses:` grants, so apps need no API key to call Gregale on themselves or sibling apps. Decided " +
+			"for the target app's resource account. Off, a binding token is refused and API keys are unaffected.",
+		ADR:        "ADR-20261122191423",
+		Consumers:  []string{"apid"},
+		Attributes: []Attribute{AttributePlan, AttributeOrg},
+		RetireBy:   "2027-06-30",
+	},
+	{
 		Key:   MCPGatewayAuth,
 		Label: "MCP gateway auth modes",
 		Description: "Let hosted MCP servers authorize callers with consumer keys (api-key) or a Gregale Auth app (oauth-proxy), " +
@@ -554,8 +569,9 @@ var catalog = []Spec{
 		RetireBy:   "2027-06-30",
 	},
 	{
-		Key:   MCPToolInsights,
-		Label: "MCP tool insights",
+		Key:        MCPToolInsights,
+		Label:      "MCP tool insights",
+		Capability: "mcp-tool-insights",
 		Description: "Serve each hosted MCP tool's estimated compute cost and argument mismatches beside its calls, errors and latency. " +
 			"Off, the reads leave those fields out.",
 		ADR:        "ADR-20261122194324",

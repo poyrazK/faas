@@ -81,7 +81,7 @@ Use your existing credential through `GREGALE_TOKEN`, never a literal in source:
 ```js
 import { AccountService, FaaSClient } from '@gregale/sdk-node';
 
-const client = new FaaSClient(process.env.FAAS_API ?? 'https://api.gregale.dev', {
+const client = new FaaSClient(process.env.GREGALE_API_URL ?? 'https://api.gregale.dev', {
   token: process.env.GREGALE_TOKEN,
 });
 try {
@@ -653,7 +653,7 @@ available separately.
 import { createClient, parseReviewedProjectPlan } from '@gregale/sdk-node';
 import { writeFile, readFile } from 'node:fs/promises';
 
-const client = createClient(process.env.FAAS_API!, { token: process.env.GREGALE_TOKEN });
+const client = createClient(process.env.GREGALE_API_URL!, { token: process.env.GREGALE_TOKEN });
 const plan = await client.projects.previewLocal({
   directory: './my-project', projectSlug: 'shop',
   appSlugs: { api: 'shop-api', worker: 'shop-worker' },
@@ -727,7 +727,7 @@ if (project.issues.some(issue => issue.severity === 'error')) {
 }
 // Save the reviewed intent outside the repository for process recovery.
 await writeFile('../project-plan.json', JSON.stringify(project));
-const client = createClient(process.env.FAAS_API!, { token: process.env.GREGALE_TOKEN });
+const client = createClient(process.env.GREGALE_API_URL!, { token: process.env.GREGALE_TOKEN });
 const options = { statePath: '../deployment.json', timeoutMs: 120_000 };
 const result = await client.deployments.deployProject(project, options);
 // After a restart, deserialize the original plan and use the same journal.

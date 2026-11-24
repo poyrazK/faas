@@ -549,6 +549,7 @@ type MemStore struct {
 	objectGatewayStorage          map[string]*memGatewayStorage
 	objectAccessGrants            map[string]ObjectBucketAccessGrant
 	objectS3Credentials           map[string]ObjectS3Credential
+	objectWorkloadCredentials     map[string]ObjectWorkloadCredential
 	objectS3CopySources           map[string]ObjectS3CopySource
 	objectMultipartUploads        map[string]ObjectMultipartUpload
 	objectMultipartInitiations    map[string]ObjectMultipartInitiation
@@ -1341,9 +1342,10 @@ type MemStore struct {
 	platformTenantSourceRouteUsage map[string]PlatformTenantSourceRouteUsageBucket
 	// Consumer plans (ADR-953): plans by ID, assignments by ID, and admission
 	// counters by consumer ID.
-	apiConsumerPlans           map[string]APIConsumerPlan
-	apiConsumerPlanAssignments map[string]APIConsumerPlanAssignment
-	apiConsumerPlanAdmissions  map[string]planAdmissionCounter
+	apiConsumerPlans               map[string]APIConsumerPlan
+	apiConsumerPlanAssignments     map[string]APIConsumerPlanAssignment
+	apiConsumerPlanAdmissions      map[string]planAdmissionCounter
+	apiConsumerPlanRouteAdmissions map[string]planAdmissionCounter // consumerID + "\x00" + route
 	// apiConsumerTelemetryHours is seeded by tests; the in-memory store keeps
 	// no request telemetry of its own (ADR-954).
 	apiConsumerTelemetryHours map[string]APIConsumerTelemetryHour
@@ -2117,6 +2119,7 @@ func NewMemStore(options ...StoreOption) *MemStore {
 		apiConsumerPlans:                  map[string]APIConsumerPlan{},
 		apiConsumerPlanAssignments:        map[string]APIConsumerPlanAssignment{},
 		apiConsumerPlanAdmissions:         map[string]planAdmissionCounter{},
+		apiConsumerPlanRouteAdmissions:    map[string]planAdmissionCounter{},
 		apiConsumerUsageEvents:            map[string]usageEventIdentity{},
 		requestAuditEvents:                map[string]RequestAuditRecord{},
 		discoveredAPIRoutes:               map[string]DiscoveredAPIRoute{},

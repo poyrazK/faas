@@ -20,6 +20,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/capgrant"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -365,6 +366,9 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, availa
 	}
 	if internalPortsChanged(a.Manifest.Ports, w.InternalPorts) {
 		changed = append(changed, "internal_ports")
+	}
+	if !capgrant.Equal(a.Manifest.Uses, w.Uses) {
+		changed = append(changed, "uses")
 	}
 	return changed
 }

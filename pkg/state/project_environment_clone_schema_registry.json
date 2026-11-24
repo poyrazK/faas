@@ -1039,6 +1039,19 @@
     "kind": "operational"
   },
   {
+    "table": "api_consumer_plan_route_admissions",
+    "columns": [
+      "account_id",
+      "consumer_id",
+      "minute_start",
+      "minute_used",
+      "month_start",
+      "month_used",
+      "route"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "api_consumer_plan_assignments",
     "columns": [
       "account_id",
@@ -1066,6 +1079,7 @@
       "max_requests_per_minute",
       "max_units_per_month",
       "name",
+      "route_limits",
       "updated_at"
     ],
     "kind": "configuration",
@@ -22869,6 +22883,24 @@
       "sealed_definition",
       "status",
       "version"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "object_storage_workload_credentials",
+    "columns": [
+      "access_key_id",
+      "account_id",
+      "bucket_id",
+      "caller_app_id",
+      "created_at",
+      "expires_at",
+      "id",
+      "instance_id",
+      "key_prefix",
+      "kid",
+      "permission",
+      "secret_sealed"
     ],
     "kind": "operational"
   }

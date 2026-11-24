@@ -20,6 +20,21 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/capgrant"
+)
+
+// Cross-app capability bindings (ADR-20261122191423). A workload S3
+// credential lives an hour; guest-init caches it until five minutes before
+// expiry, so a well-behaved instance holds one or two per bucket and the
+// per-instance cap only bounds rows a looping workload can create.
+// CapabilityGrantsPerKindMax is pkg/capgrant's cap on each `uses:` list;
+// capgrant keeps it as its own constant because it stays stdlib-only, so
+// the manifest parser can validate `uses:` without importing this package.
+const (
+	WorkloadObjectCredentialTTL                = time.Hour
+	WorkloadObjectCredentialsPerInstanceBucket = 8
+	CapabilityGrantsPerKindMax                 = capgrant.MaxGrantsPerKind
 )
 
 // Pipeline limits bound durable orchestration independently of Run concurrency.
@@ -1474,7 +1489,16 @@ const (
 	MCPTaskDefaultMaxOutstandingPerOwner = 100
 	MCPPolicyMaxEntries                  = 256
 	MCPPolicyMaxKeyBytes                 = 4096
-	MCPPolicyMaxRequestBytes             = 1 << 20
+	// MCPBillingNameMaxBytes bounds a tool or prompt name in an MCP billing
+	// label (ADR-20261123192254).
+	MCPBillingNameMaxBytes = 128
+	// MCPJWTAudienceMaxBytes bounds the audience an external OAuth issuer
+	// declares for an MCP server (ADR-20261123192254).
+	MCPJWTAudienceMaxBytes = 512
+	// APIConsumerPlanMaxRouteLimits bounds a consumer plan's per-route and
+	// per-tool caps (ADR-20261123192254).
+	APIConsumerPlanMaxRouteLimits = 50
+	MCPPolicyMaxRequestBytes      = 1 << 20
 	// MCP tool limits (ADR-20261122194324): per caller and tool.
 	MCPToolLimitMaxRequests      = 100000
 	MCPToolLimitMaxWindowSeconds = 3600

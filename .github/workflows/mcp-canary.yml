@@ -1,0 +1,120 @@
+name: mcp-canary
+
+# Synthetic canary for customer MCP hosting and Gregale's hosted management
+# MCP (ADR-20261123100000). It runs on a GitHub-hosted runner and touches only
+# public endpoints with the CLI customers install from npm, so it does not
+# share a failure mode with control-plane SSH or the fleet's own runners.
+#
+# Hourly: protocol, catalog, streaming, a 20 s silent call, egress, cross-node
+# app-to-app reachability, park/wake, and the hosted management MCP.
+# Every sixth hour it first redeploys a fresh Go starter from `gregale@latest`
+# so the deploy-and-promote path is covered without paying for a build hourly.
+# See docs/ops/mcp-canary.md before enabling paging.
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Redeploy a fresh starter before the checks."
+        type: boolean
+        default: false
+      page_on_failure:
+        description: "Post failures to the fallback webhook."
+        type: boolean
+        default: false
+
+concurrency:
+  # Two runs would park the same app under each other.
+  group: mcp-canary
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    name: MCP hosting canary
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      MCP_CANARY_APP: ${{ vars.MCP_CANARY_APP || 'mcp-canary' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+
+      - name: Self-test the prober
+        run: python3 -I scripts/ops/mcp_canary_test.py
+
+      - name: Install the CLI customers get
+        run: |
+          set -euo pipefail
+          npm install --global --no-audit --no-fund gregale@latest
+          gregale version
+
+      - name: Decide whether this run redeploys
+        id: mode
+        env:
+          HAS_KEY: ${{ secrets.MCP_CANARY_KEY != '' }}
+        run: |
+          set -euo pipefail
+          # Until MCP_CANARY_KEY is set the hourly schedule is a no-op rather
+          # than an hourly failure; a manual run still fails loudly.
+          if [[ "$HAS_KEY" != true && "${{ github.event_name }}" == schedule ]]; then
+            echo "::notice::MCP_CANARY_KEY is not set; the canary is not enabled yet (docs/ops/mcp-canary.md)"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+          deploy=false
+          if [[ "${{ github.event_name }}" == workflow_dispatch ]]; then
+            deploy="${{ inputs.deploy }}"
+          elif (( 10#$(date -u +%H) % 6 == 0 )); then
+            deploy=true
+          fi
+          echo "deploy=$deploy" >> "$GITHUB_OUTPUT"
+
+      - name: Probe MCP hosting
+        id: probe
+        if: steps.mode.outputs.enabled == 'true'
+        env:
+          MCP_CANARY_KEY: ${{ secrets.MCP_CANARY_KEY }}
+          CANARY_FALLBACK_WEBHOOK_URL: ${{ secrets.CANARY_FALLBACK_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+          args=(--app "$MCP_CANARY_APP" --json "$RUNNER_TEMP/mcp-canary.json")
+          [[ "${{ steps.mode.outputs.deploy }}" == true ]] && args+=(--deploy)
+          if [[ "${{ github.event_name }}" == schedule || "${{ inputs.page_on_failure }}" == true ]]; then
+            args+=(--page)
+          fi
+          python3 -I scripts/ops/mcp_canary.py "${args[@]}"
+
+      - name: Report scheduled success to the independent monitor
+        if: success() && steps.mode.outputs.enabled == 'true' && github.event_name == 'schedule' && github.run_attempt == '1'
+        timeout-minutes: 1
+        env:
+          CANARY_HEARTBEAT_URL: ${{ secrets.MCP_CANARY_HEARTBEAT_URL }}
+          CANARY_JOB_STATUS: ${{ job.status }}
+          CANARY_PROBE_OUTCOME: ${{ steps.probe.outcome }}
+        run: |
+          if [[ -z "$CANARY_HEARTBEAT_URL" ]]; then
+            echo "::warning::MCP_CANARY_HEARTBEAT_URL is not set; missed runs go unnoticed"
+            exit 0
+          fi
+          python3 scripts/ops/canary_heartbeat.py
+
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mcp-canary-${{ github.run_id }}
+          path: ${{ runner.temp }}/mcp-canary.json
+          if-no-files-found: ignore
+          retention-days: 14

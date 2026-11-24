@@ -229,6 +229,8 @@ var CreateRuntimeArtifactCapture = createRuntimeArtifactCapture
 var CronAppTaskRetryAt = cronAppTaskRetryAt
 var CrossedUsageAlertThresholds = crossedUsageAlertThresholds
 var DecidePlanAdmission = decidePlanAdmission
+
+var DecideRouteAdmission = decideRouteAdmission
 var DecideProfileCanaryGate = decideProfileCanaryGate
 var DecideRouteMonitorRollback = decideRouteMonitorRollback
 var DecodeInitialReview = decodeInitialReview

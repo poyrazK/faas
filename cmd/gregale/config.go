@@ -230,11 +230,40 @@ func describeKeyringErr(err error) string {
 // keyringOptOutHint tells a user how to stop the CLI asking the keychain.
 const keyringOptOutHint = "To keep the API key in a file instead, run 'gregale login --insecure-storage' or set GREGALE_KEYRING=off."
 
-// apiBase returns the effective API base URL. Explicit $FAAS_API remains the
-// highest-priority override for local development and CI; the persistent
-// non-secret CLI config is consulted only when the environment is unset.
+// apiEnvVar is the variable that overrides the API address. Apps on Gregale
+// and the SDKs read the same name.
+const apiEnvVar = "GREGALE_API_URL"
+
+// legacyAPIEnvVar is the variable's earlier name. It is still read, after
+// GREGALE_API_URL, so existing CI and scripts keep working.
+const legacyAPIEnvVar = "FAAS_API"
+
+// envAPIVar returns the first API address variable set to a non-blank value,
+// and that value trimmed; "" and "" when neither is set.
+func envAPIVar() (name, value string) {
+	for _, name := range []string{apiEnvVar, legacyAPIEnvVar} {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+			return name, value
+		}
+	}
+	return "", ""
+}
+
+// envAPIName names the API address variable for messages: the one in use, or
+// GREGALE_API_URL when neither is set.
+func envAPIName() string {
+	if name, _ := envAPIVar(); name != "" {
+		return name
+	}
+	return apiEnvVar
+}
+
+// apiBase returns the effective API base URL. An explicit $GREGALE_API_URL
+// (or $FAAS_API) remains the highest-priority override for local development
+// and CI; the persistent non-secret CLI config is consulted only when the
+// environment is unset.
 func apiBase() string {
-	if raw := strings.TrimSpace(os.Getenv("FAAS_API")); raw != "" {
+	if _, raw := envAPIVar(); raw != "" {
 		return normalizeAPIBase(raw)
 	}
 	if cfg, err := loadCLIConfig(); err == nil {

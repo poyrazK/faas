@@ -51,11 +51,15 @@ measure what a cold agent does with a repository Gregale did not create:
 - Apps and projects that appear in the evaluation account during the run are
   the run's. Checks read them (`apps_created`, `apps_serving`, `app_http`
   on the created app whose slug matches, `no_traps`), and cleanup deletes
-  them. Runs are sequential for that reason.
+  them. `no_traps` grades the end state: an app still parked by this run, or
+  a latest release that failed, not a failed release the agent replaced. Runs are sequential for that reason.
 - `features` lists the Gregale features that apply to the repository. Each is
   a regex over the agent's shell commands (`command`), over files in the
   checkout after the run (`file`), or a fact about what it created
-  (`state: project_created`). `feature_score` is the share used. Until the
+  (`state: project_created`). `feature_score` is the share used. A feature
+  with `"unless": "first_deploy_live"` is a fix the agent needs only when
+  Gregale's detection falls short; it counts as used when every app the run
+  created went live on its first deployment. Until the
   scan reports features itself (ADR-20261112223000 §1), the list is written
   by hand.
 - Every run is graded for anti-patterns in its shell commands: raw calls to

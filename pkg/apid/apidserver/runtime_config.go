@@ -32,7 +32,12 @@ const (
 	// probe, release-acceptance) whose deployments the public status page's
 	// deployment-success indicator leaves out (prod 2026-11-22: two internal
 	// accounts alone met the two-tenant breach rule).
-	runtimeConfigStatusExcludedAccounts             = "status_excluded_account_ids"
+	runtimeConfigStatusExcludedAccounts = "status_excluded_account_ids"
+	// runtimeConfigAppNameBlocklist lists app names (and * patterns) no
+	// account may newly take: brand and phishing names under the apps
+	// domain. A create answers it like a taken name, so deploys fall back
+	// to a suffixed name; existing apps keep theirs.
+	runtimeConfigAppNameBlocklist                   = "app_name_blocklist"
 	runtimeConfigDataPlacement                      = "data_placement_enabled"
 	runtimeConfigAppErrors                          = "app_errors_enabled"
 	runtimeConfigRekey                              = "rekey_enabled"
@@ -153,6 +158,7 @@ var runtimeConfigCatalog = []runtimeConfigDefinition{
 	{Key: runtimeConfigTenantSurfaces, Label: "Tenant surfaces", Description: "Expose the tenant surface and certificate lifecycle API.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigDomainDoctor, Label: "Domain doctor", Description: "Run DNS and certificate readiness probes for customer domains.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("true"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigStatusExcludedAccounts, Label: "Status page: excluded accounts", Description: "Comma-separated account IDs (internal test, probe and release-acceptance accounts) whose deployments the public status page's deployment-success indicator leaves out of both its successes and its failures. Empty counts every account.", Category: "Operational policies", Kind: "string", Default: json.RawMessage(`""`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateAccountIDList},
+	{Key: runtimeConfigAppNameBlocklist, Label: "App name blocklist", Description: "App names no account may newly take under the apps domain (brand and phishing names), separated by commas, spaces or newlines. An entry is an exact name (paypal) or a pattern where * matches any characters (*-login, *paypal*). A deploy asking for a blocked name gets a suffixed name instead (the CLI treats it like a taken name); rename, the dashboard and new project workloads refuse it. Existing apps keep their names: gregalectl accounts app-name-report lists the ones a list would match. Empty blocks nothing.", Category: "Security", Kind: "string", Default: json.RawMessage(`""`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateAppNameBlocklist},
 	{Key: runtimeConfigDomainDoctorTTL, Label: "Domain doctor TTL", Description: "Maximum age in seconds before a domain doctor result is stale.", Category: "Operational policies", Kind: "integer", Default: json.RawMessage("300"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigDataPlacement, Label: "Data placement", Description: "Enable customer data-upstream placement and affinity behavior.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigAppErrors, Label: "Automatic app errors", Description: "Accept and aggregate gateway error reports; enabling the socket is a graceful daemon change.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("true"), ApplyMode: state.RuntimeConfigApplyGraceful, ControllerEnabled: false, Mutable: true},
@@ -791,6 +797,33 @@ func validateAccountIDList(value json.RawMessage) error {
 		}
 	}
 	return nil
+}
+
+// validateAppNameBlocklist checks app_name_blocklist (api.ParseAppNameBlocklist).
+func validateAppNameBlocklist(value json.RawMessage) error {
+	list, err := runtimeconfig.String(value)
+	if err != nil {
+		return err
+	}
+	_, err = api.ParseAppNameBlocklist(list)
+	return err
+}
+
+// appNameBlocklist is app_name_blocklist's entries; nil when unset or
+// unreadable.
+func (m *runtimeConfigManager) appNameBlocklist() []string {
+	if m == nil {
+		return nil
+	}
+	list, err := runtimeconfig.String(m.Value(runtimeConfigAppNameBlocklist))
+	if err != nil {
+		return nil
+	}
+	entries, err := api.ParseAppNameBlocklist(list)
+	if err != nil {
+		return nil
+	}
+	return entries
 }
 
 // statusExcludedAccounts is status_excluded_account_ids as canonical IDs.
