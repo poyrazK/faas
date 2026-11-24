@@ -399,12 +399,13 @@ WITH participating_nodes AS (
  SELECT 1 FROM request_analytics_coverage_gaps g JOIN evidence e USING(node_name,source_kind)
  WHERE g.app_id=sqlc.arg(app_id)::uuid AND g.gap_from<sqlc.arg(window_until)::timestamptz AND g.gap_until>=sqlc.arg(window_from)::timestamptz)
  UNION
- -- A live backlog holds rows recorded since it began, and up to ten minutes
- -- before (a collapsed minute, a delivery backoff), not earlier windows.
+ -- A live backlog holds rows recorded since it began: since the heartbeat
+ -- before the one that first reported it, which had not counted them.
+ -- Earlier windows keep their proof.
  -- Loss is a coverage gap, above.
  SELECT 'telemetry_ingestion_pending'::text WHERE EXISTS(
  SELECT 1 FROM pending_app_gaps p JOIN evidence e USING(node_name,source_kind)
- WHERE p.app_id=sqlc.arg(app_id)::uuid AND sqlc.arg(window_until)::timestamptz>p.pending_since-interval '10 minutes')
+ WHERE p.app_id=sqlc.arg(app_id)::uuid AND sqlc.arg(window_until)::timestamptz>p.pending_since)
  UNION
  -- A pending rollup marker that outlived the rollup cadence was settled by a
  -- rollup that did not clear it if its own minute rolled up; otherwise that

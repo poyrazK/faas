@@ -97,9 +97,9 @@ func TestTelemetryCoverageGapsOnlyOnLossPG(t *testing.T) {
 		t.Fatalf("in-flight rows wrote %d coverage gaps, want none", n)
 	}
 	beat(2, 0)
-	gaps, err := store.RequestTelemetryCompleteness(ctx, app.ID, now.Add(-time.Hour), now.Add(-30*time.Second))
+	gaps, err := store.RequestTelemetryCompleteness(ctx, app.ID, now.Add(-time.Hour), time.Now().UTC())
 	if err != nil || len(gaps) != 1 || gaps[0] != "telemetry_ingestion_pending" {
-		t.Fatalf("recent window with a live backlog: %v %v, want telemetry_ingestion_pending", gaps, err)
+		t.Fatalf("window reaching into a live backlog: %v %v, want telemetry_ingestion_pending", gaps, err)
 	}
 	gaps, err = store.RequestTelemetryCompleteness(ctx, app.ID, now.Add(-2*time.Hour), now.Add(-time.Hour))
 	if err != nil || len(gaps) != 0 {
@@ -138,8 +138,8 @@ func TestRequestTelemetryCoveredFromPG(t *testing.T) {
 	}
 }
 
-// A loss marks the whole backlog it was lost from, and a backlog older than
-// ten minutes still holds every window it touches (code review of #7982).
+// A loss marks the whole backlog it was lost from, and a long backlog holds
+// every window it touches (code review of #7982).
 func TestTelemetryCoverageLongBacklogPG(t *testing.T) {
 	store, pool, ctx, _, app, _, _, _ := routeRemovalFixture(t)
 	var node string

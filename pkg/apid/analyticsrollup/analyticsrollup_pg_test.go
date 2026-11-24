@@ -76,9 +76,10 @@ func TestRollupReadsGroupFoldAndSplitByHour(t *testing.T) {
 		byDimension[1].Dimension != analyticsrollup.OtherDimension || byDimension[1].Requests != 6 {
 		t.Fatalf("route groups = %+v, want GET /a with 100 requests then __other__ with 6", byDimension)
 	}
-	// /a: 60 at <=10 ms, 30 at <=20 ms, 10 at <=100 ms.
-	if byDimension[0].P50Ms != 10 || byDimension[0].P95Ms != 100 {
-		t.Fatalf("GET /a p50/p95 = %d/%d, want 10/100", byDimension[0].P50Ms, byDimension[0].P95Ms)
+	// /a: 60 at <=10 ms, 30 at <=20 ms, 10 at 90-100 ms, interpolated
+	// inside the bucket.
+	if byDimension[0].P50Ms != 9 || byDimension[0].P95Ms != 95 {
+		t.Fatalf("GET /a p50/p95 = %d/%d, want 9/95", byDimension[0].P50Ms, byDimension[0].P95Ms)
 	}
 	summary := analyticsrollup.Summary(groups)
 	if summary.Requests != 106 || summary.ErrorRequests != 10 || summary.P99Ms != 100 {
