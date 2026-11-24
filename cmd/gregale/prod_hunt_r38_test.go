@@ -129,6 +129,23 @@ func TestEgressPortsAddAlreadyAllowedSaysSo(t *testing.T) {
 	}
 }
 
+// Prod hunt r43: a feature the installation does not run (501) exited 3,
+// temporary_failure, so agents retried what could never succeed.
+func TestNotImplementedIsNotTemporary(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusNotImplemented)
+		_, _ = w.Write([]byte(`{"title":"Image runs unavailable","status":501,"code":"not_implemented","detail":"image runs are not enabled on this Gregale installation"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	code, _, stderr := runCLI(t, "--json", "run", "--image", "alpine", "true")
+	if code != 1 || strings.Contains(stderr, "temporary_failure") {
+		t.Fatalf("501 = exit %d %q, want exit 1 and no temporary_failure", code, stderr)
+	}
+}
+
 // Prod hunt r38: bare `gregale env` listed only the clone and sync verbs,
 // not set/unset/list.
 func TestEnvUsageListsSecretVerbs(t *testing.T) {
