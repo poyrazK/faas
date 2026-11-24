@@ -3082,6 +3082,28 @@ func RealtimeVerbsDiscoveredBy(hidden ...string) []string {
 	return names
 }
 
+// Built-in Task release gate (commands_mcp_native_gate.go).
+type (
+	MCPGateWorker     = mcpGateWorker
+	MCPTaskHandlerRef = mcpTaskHandlerRef
+	MCPGateStore      = mcpGateStore
+	MCPGateReport     = mcpGateReport
+)
+
+var (
+	MCPNativeWorkerRuntime     = mcpNativeWorkerRuntime
+	RequireMCPNativeNodeWorker = requireMCPNativeNodeWorker
+	MCPReplacementsReady       = mcpReplacementsReady
+)
+
+// RunMCPGate runs the built-in gate against a test store and hooks.
+func RunMCPGate(ctx context.Context, store MCPGateStore, namespace, releaseID, checkpointPath string, timeout time.Duration,
+	migrate func(context.Context) error, start func(context.Context, map[string]any) ([]string, error), drain func(context.Context, map[string]any) error) MCPGateReport {
+	g := &mcpGate{store: store, namespace: namespace, releaseID: releaseID, timeout: timeout, poll: time.Millisecond,
+		checkpointPath: checkpointPath, migrate: migrate, start: start, drain: drain}
+	return g.run(ctx)
+}
+
 // LeadingDeploymentID exposes the traffic verbs' positional-id fold (prod hunt r32).
 var LeadingDeploymentID = leadingDeploymentID
 
