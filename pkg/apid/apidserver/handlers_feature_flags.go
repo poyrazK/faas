@@ -1,6 +1,7 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -211,8 +212,8 @@ func (s *server) updateFeatureFlags(w http.ResponseWriter, r *http.Request, acct
 // publishes, so turning the flag off never blocks kills or rollouts.
 func (s *server) edgeRoutesAllowed(r *http.Request, acct state.Account, store state.FeatureFlagStore, scope state.FeatureFlagScope, next flags.Config) bool {
 	released := flags.HasEdge(next) && s.platformFlagFor(platformflags.EdgeFlags, s.edgeFlagsSubject(r, acct, scope))
-	return flagedge.PublishAllowed(released, next, func() (flags.Config, error) {
-		current, err := store.GetFeatureFlags(r.Context(), scope, 0)
+	return flagedge.PublishAllowed(r.Context(), released, next, func(ctx context.Context) (flags.Config, error) {
+		current, err := store.GetFeatureFlags(ctx, scope, 0)
 		return current.Config, err
 	})
 }
@@ -231,7 +232,7 @@ func (s *server) edgeFlagsSubject(r *http.Request, acct state.Account, scope sta
 
 func writeEdgeFlagsUnavailable(w http.ResponseWriter) {
 	api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Edge flags unavailable", "edge flag routing is not enabled for this account").
-		WithHint("An operator releases edge flag routing account by account (ADR-20261124212701). Your credentials are not the cause."))
+		WithHint("An operator releases edge flag routing account by account. Your credentials are not the cause."))
 }
 
 func sameAccountID(a, b string) bool {

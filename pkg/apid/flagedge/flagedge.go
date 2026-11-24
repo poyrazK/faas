@@ -5,6 +5,8 @@
 package flagedge
 
 import (
+	"context"
+
 	"github.com/onebox-faas/faas/pkg/flags"
 )
 
@@ -12,10 +14,10 @@ import (
 // edge_flags decision for the project's owner; current loads the
 // environment's latest configuration and is read only when routes would
 // change. A configuration whose routes cannot be compared is refused.
-func PublishAllowed(released bool, next flags.Config, current func() (flags.Config, error)) bool {
+func PublishAllowed(ctx context.Context, released bool, next flags.Config, current func(context.Context) (flags.Config, error)) bool {
 	if released || !flags.HasEdge(next) {
 		return true
 	}
-	cur, err := current()
+	cur, err := current(ctx)
 	return err == nil && flags.SameEdge(cur, next)
 }
