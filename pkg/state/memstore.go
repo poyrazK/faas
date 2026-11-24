@@ -1356,6 +1356,8 @@ type MemStore struct {
 	// apiConsumerSpendCaps (by consumer ID) back prepaid credits and spend
 	// caps (ADR-1306).
 	apiConsumerCreditGrants       map[string]APIConsumerCreditGrant
+	apiConsumerCreditPackSettings map[string]api.ConsumerCreditPackSettings
+	apiConsumerCreditPurchases    map[string]APIConsumerCreditPurchase
 	apiConsumerCreditApplications []apiConsumerCreditApplication
 	apiConsumerSpendCaps          map[string]APIConsumerSpendCap
 	// platformTenantCreditGrants (by ID), platformTenantCreditApplications

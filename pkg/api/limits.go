@@ -1898,6 +1898,10 @@ const (
 	// A consumer holds at most this many grants with credit left.
 	ConsumerCreditOpenGrantsMax = 100
 	ConsumerCreditNoteMaxBytes  = 200
+	// Self-service checkout catalog limits and the lifetime of an open checkout.
+	ConsumerCreditPacksMax          = 16
+	ConsumerCreditPackLabelMaxBytes = 80
+	ConsumerCreditPurchaseTTL       = time.Hour
 	// apid rechecks each capped consumer's month to date this often, in
 	// batches; a claimed check is retried after the lease.
 	ConsumerSpendCapCheckInterval = time.Minute

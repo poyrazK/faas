@@ -10000,6 +10000,90 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/consumer-billing/{slug}/credit-packs:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [consumers]
+      operationId: listConsumerCreditPacks
+      summary: List the prepaid credit packs available to your consumer.
+      security:
+        - consumerKey: []
+      responses:
+        '200':
+          description: The credit packs offered to this consumer, possibly empty.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerCreditPacksResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/consumer-billing/{slug}/credit-purchases:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [consumers]
+      operationId: createConsumerCreditPurchase
+      summary: Start or resume a one-time Stripe Checkout for a credit pack.
+      description: |
+        Choose a unique purchase_id and reuse it when retrying the same pack.
+        A consumer can have one pending purchase at a time. Granting credit
+        requires Stripe to confirm the exact live payment amount and currency.
+      security:
+        - consumerKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateConsumerCreditPurchaseRequest' }
+      responses:
+        '200':
+          description: The purchase, with a checkout URL when the session is open.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerCreditPurchaseResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: The purchase ID or pack ID is invalid, or Stripe rejected the new checkout.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '502':
+          description: Stripe Checkout could not be reached or opened.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/consumer-billing/{slug}/credit-purchases/{purchase_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: purchase_id
+        in: path
+        required: true
+        description: The UUID supplied when the purchase began.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [consumers]
+      operationId: getConsumerCreditPurchase
+      summary: Read your purchase and its credit grant receipt.
+      security:
+        - consumerKey: []
+      responses:
+        '200':
+          description: The latest state of the caller's purchase.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerCreditPurchaseResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/consumer-billing/{slug}/portal:
     parameters:
       - name: slug
@@ -19383,7 +19467,7 @@ paths:
         read access to customers; Lago
         an API key and, for the EU region or a self-hosted Lago, api_url. Only
         the last four characters, the mode and the Lago API URL are ever
-        returned.
+        returned. Pending credit pack purchases prevent Stripe connection changes.
       requestBody:
         required: true
         content:
@@ -19397,6 +19481,7 @@ paths:
               schema: { $ref: '#/components/schemas/BillingConnectionResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '422':
           description: Not a key of this provider, a bad api_url, or the provider rejected the key.
           content:
@@ -19416,10 +19501,12 @@ paths:
       tags: [account]
       operationId: deleteBillingConnection
       summary: Remove the account's key for one billing provider.
+      description: Pending credit pack purchases prevent removing the Stripe connection.
       responses:
         '204': { description: Removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /v1/account/statement-invoices:
     get:
@@ -23816,6 +23903,50 @@ paths:
         '204': { description: The overdue rule was removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/consumer-credit-packs:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [consumers]
+      operationId: getConsumerCreditPackSettings
+      summary: Read the credit packs an app offers.
+      responses:
+        '200':
+          description: The configured purchases and the app's checkout return URL.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerCreditPackSettings' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [consumers]
+      operationId: putConsumerCreditPackSettings
+      summary: Set the fixed-value packs customers can buy through the app owner's Stripe.
+      description: |
+        An empty pack list disables new purchases. Existing checkout sessions
+        keep the terms saved when the purchase started.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConsumerCreditPackSettings' }
+      responses:
+        '200':
+          description: The saved settings.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerCreditPackSettings' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: The pack ID, label, return URL, amount, or currency is invalid.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/apps/{slug}/consumer-signup:
     parameters:
@@ -137365,6 +137496,65 @@ components:
       properties:
         return_url: { type: string, format: uri, maxLength: 2048 }
 
+    ConsumerCreditPack:
+      type: object
+      description: A predefined amount of prepaid credit, sold for the same amount in Stripe Checkout.
+      required: [id, label, currency, amount_millicents]
+      properties:
+        id: { type: string, pattern: '^[a-z][a-z0-9_-]{0,31}$' }
+        label: { type: string, maxLength: 80 }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        amount_millicents: { type: integer, format: int64, minimum: 1, maximum: 1000000000000 }
+    ConsumerCreditPackSettings:
+      type: object
+      description: The packs offered by an app and the billing page where buyers return.
+      required: [packs]
+      properties:
+        return_url:
+          type: string
+          format: uri
+          description: The HTTPS billing page to return to, required when packs are offered.
+        packs:
+          type: array
+          maxItems: 16
+          items: { $ref: '#/components/schemas/ConsumerCreditPack' }
+    ConsumerCreditPacksResponse:
+      type: object
+      description: The credit packs this consumer can buy.
+      required: [packs]
+      properties:
+        packs:
+          type: array
+          items: { $ref: '#/components/schemas/ConsumerCreditPack' }
+    CreateConsumerCreditPurchaseRequest:
+      type: object
+      description: A pack selection and the UUID used to recover the purchase on retry.
+      required: [purchase_id, pack_id]
+      properties:
+        purchase_id:
+          type: string
+          format: uuid
+          description: A unique client-generated identifier. Reuse it to retry this purchase.
+        pack_id: { type: string }
+    ConsumerCreditPurchaseResponse:
+      type: object
+      description: The saved purchase terms, current checkout state and verified credit receipt.
+      required: [id, pack_id, currency, amount_millicents, status, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        pack_id: { type: string }
+        currency: { type: string }
+        amount_millicents: { type: integer, format: int64 }
+        status: { type: string, enum: [pending, credited, expired] }
+        expires_at: { type: string, format: date-time }
+        checkout_url:
+          type: string
+          format: uri
+          description: Stripe Checkout URL, returned when starting or resuming an open session.
+        credit_grant_id:
+          type: string
+          format: uuid
+          description: The prepaid credit grant once Stripe payment is confirmed.
     ConsumerBillingPortalResponse:
       description: "A short-lived customer portal URL."
       type: object

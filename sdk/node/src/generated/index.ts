@@ -442,6 +442,10 @@ export type { ConsumerBillingStatement } from './models/ConsumerBillingStatement
 export type { ConsumerBillingStatementsResponse } from './models/ConsumerBillingStatementsResponse.js';
 export type { ConsumerBillingSummaryResponse } from './models/ConsumerBillingSummaryResponse.js';
 export type { ConsumerBillingUsageResponse } from './models/ConsumerBillingUsageResponse.js';
+export type { ConsumerCreditPack } from './models/ConsumerCreditPack.js';
+export type { ConsumerCreditPackSettings } from './models/ConsumerCreditPackSettings.js';
+export type { ConsumerCreditPacksResponse } from './models/ConsumerCreditPacksResponse.js';
+export type { ConsumerCreditPurchaseResponse } from './models/ConsumerCreditPurchaseResponse.js';
 export type { ConsumerKeyListResponse } from './models/ConsumerKeyListResponse.js';
 export type { ConsumerKeyResponse } from './models/ConsumerKeyResponse.js';
 export type { ConsumerSignupFormResponse } from './models/ConsumerSignupFormResponse.js';
@@ -484,6 +488,7 @@ export type { CreateBillingRunRequest } from './models/CreateBillingRunRequest.j
 export type { CreateBindingVerificationRunRequest } from './models/CreateBindingVerificationRunRequest.js';
 export type { CreateCommitSourceRequest } from './models/CreateCommitSourceRequest.js';
 export type { CreateConsumerBillingPortalRequest } from './models/CreateConsumerBillingPortalRequest.js';
+export type { CreateConsumerCreditPurchaseRequest } from './models/CreateConsumerCreditPurchaseRequest.js';
 export type { CreateConsumerKeyRequest } from './models/CreateConsumerKeyRequest.js';
 export type { CreateConsumerSignupRequest } from './models/CreateConsumerSignupRequest.js';
 export type { CreateConsumerSignupResponse } from './models/CreateConsumerSignupResponse.js';
@@ -1332,6 +1337,7 @@ export type { InsightCohortList } from './models/InsightCohortList.js';
 export type { InsightCohortRequest } from './models/InsightCohortRequest.js';
 export type { InsightEventPoint } from './models/InsightEventPoint.js';
 export type { InsightEventSeries } from './models/InsightEventSeries.js';
+export type { InsightEventsQuery } from './models/InsightEventsQuery.js';
 export type { InsightFunnel } from './models/InsightFunnel.js';
 export type { InsightFunnelBreakdown } from './models/InsightFunnelBreakdown.js';
 export type { InsightFunnelRequest } from './models/InsightFunnelRequest.js';
@@ -3291,6 +3297,11 @@ export type { RuntimePolicySchedulerStatus } from './models/RuntimePolicySchedul
 export type { RuntimePolicyStatusResponse } from './models/RuntimePolicyStatusResponse.js';
 export type { RuntimeReleaseResponse } from './models/RuntimeReleaseResponse.js';
 export type { RuntimeUpgradePreviewResponse } from './models/RuntimeUpgradePreviewResponse.js';
+export type { SavedInsight } from './models/SavedInsight.js';
+export type { SavedInsightAlert } from './models/SavedInsightAlert.js';
+export type { SavedInsightList } from './models/SavedInsightList.js';
+export type { SavedInsightRequest } from './models/SavedInsightRequest.js';
+export type { SavedInsightResult } from './models/SavedInsightResult.js';
 export type { SavedRouteRequirements } from './models/SavedRouteRequirements.js';
 export type { SaveProfileDeploymentPolicyRequest } from './models/SaveProfileDeploymentPolicyRequest.js';
 export type { SaveProfileInvestigationRequest } from './models/SaveProfileInvestigationRequest.js';

@@ -2,6 +2,7 @@ package apidserver
 
 import (
 	"context"
+	"net/http"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -17,6 +18,9 @@ type consumerBillingHost struct{ s *server }
 var _ consumerbilling.Host = consumerBillingHost{}
 
 func (h consumerBillingHost) Store() state.Store { return h.s.store }
+func (h consumerBillingHost) AppRoute(w http.ResponseWriter, r *http.Request, acct state.Account) (state.App, bool) {
+	return h.s.consumerApp(w, r, acct)
+}
 
 func (h consumerBillingHost) CreatorBills(ctx context.Context, app state.App) bool {
 	return h.s.creatorBills(ctx, app)
