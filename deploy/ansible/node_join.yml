@@ -316,12 +316,15 @@
             ((lookup('ansible.builtin.file', faas_join_imaged_storage_env_source) |
             regex_search('(?m)^FAAS_(?!S3_(ACCESS_KEY_ID|SECRET_ACCESS_KEY)=)')) is none)) or
             ((faas_storage_grants | default(false) | bool) and
+            ((lookup('ansible.builtin.file', faas_join_storage_env_source) |
+            regex_search('(?m)^FAAS_STORAGE_BACKEND=(gcs|s3)$')) is not none) and
             ((lookup('ansible.builtin.file', faas_join_imaged_storage_env_source) |
-            regex_search('(?m)^FAAS_')) is none))
+            regex_search('(?m)^[ \t]*(export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*=')) is none))
         fail_msg: >-
           imaged-storage.env must contain only one non-empty credential pair:
           FAAS_OCI_USERNAME and FAAS_OCI_PASSWORD, or FAAS_S3_ACCESS_KEY_ID and
-          FAAS_S3_SECRET_ACCESS_KEY; with faas_storage_grants it may hold no
+          FAAS_S3_SECRET_ACCESS_KEY; on an S3 or GCS node with
+          faas_storage_grants it may hold no
           assignment at all (ADR-20261117190000 slice 5). Storage topology
           remains owned by the shared storage.env contract.
       no_log: true

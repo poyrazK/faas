@@ -2238,7 +2238,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// check); ADR 20261022184951 amendment 1 adds vmmd's native runtime
 	// snapshots. A granted node cannot list the shared store, and with a
 	// shared store the sweep is fleet-wide: the control plane's schedd
-	// runs it (ADR-20261117190000).
+	// runs it (ADR-20261117190000). A granted node holds no native runtime
+	// snapshots either: execution dispatch, which writes them, stays off
+	// on granted nodes (docs/runbooks/storage-grants.md).
 	var diskDrift *sched.DiskDrift
 	if !storageGranted {
 		diskDrift = sched.NewDiskDrift(store, log).WithMetrics(ops).

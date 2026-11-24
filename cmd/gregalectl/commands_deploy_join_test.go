@@ -1370,6 +1370,102 @@ func TestValidateImagedStorageEnv(t *testing.T) {
 	}
 }
 
+func TestJoinStorageGrantsFromAnsibleVars(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	for _, tc := range []struct {
+		name, vars string
+		flag, want bool
+		wantErr    bool
+	}{
+		{name: "flag", flag: true, want: true},
+		{name: "no vars file"},
+		{name: "vars true", vars: "faas_storage_grants: true\n", want: true},
+		{name: "vars string", vars: "faas_storage_grants: \"yes\"\n", wantErr: true},
+		{name: "vars string bool", vars: "faas_storage_grants: \"true\"\n", want: true},
+		{name: "vars false", vars: "faas_storage_grants: false\n"},
+		{name: "vars absent", vars: "faas_other: 1\n"},
+		{name: "vars json", vars: `{"faas_storage_grants": true}`, want: true},
+		{name: "vars not bool", vars: "faas_storage_grants: [1]\n", wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := deployJoinOptions{StorageGrants: tc.flag}
+			if tc.vars != "" {
+				opts.AnsibleVarsFile = write("vars.yml", tc.vars)
+			}
+			got, err := joinStorageGrants(opts)
+			if (err != nil) != tc.wantErr || (err == nil && got != tc.want) {
+				t.Fatalf("got %v, %v; want %v (err %v)", got, err, tc.want, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestGrantableStorageEnvBackends(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "storage.env")
+	for backend, want := range map[string]bool{"s3": true, "gcs": true, "\"S3\"": true, "oci": false, "": false} {
+		body := "FAAS_STORAGE_LOCAL_PREFIXES=none\n"
+		if backend != "" {
+			body += "FAAS_STORAGE_BACKEND=" + backend + "\n"
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := grantableStorageEnv(path, true); err != nil || got != want {
+			t.Fatalf("backend %q: got %v, %v; want %v", backend, got, err, want)
+		}
+		if got, _ := grantableStorageEnv(path, false); got {
+			t.Fatalf("backend %q: grantable without grants", backend)
+		}
+	}
+}
+
+func TestValidateSharedStorageEnvRefusesEmptyKeyLines(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "storage.env")
+	body := "FAAS_STORAGE_BACKEND=s3\nFAAS_S3_BUCKET=gregale-artifacts-bhs\nFAAS_S3_ENDPOINT=https://s3.bhs.io.cloud.ovh.net\nFAAS_S3_REGION=bhs\n" +
+		"FAAS_S3_ACCESS_KEY_ID=\nFAAS_S3_SECRET_ACCESS_KEY=\n" +
+		"FAAS_STORAGE_LOCAL_PREFIXES=none\nFAAS_REQUIRE_SHARED_ARTIFACTS=1\nFAAS_STORAGE_CACHE_SERVE_STALE=0\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateSharedStorageEnv(path, true); err == nil || !strings.Contains(err.Error(), "set but empty") {
+		t.Fatalf("empty key lines under grants: err = %v", err)
+	}
+}
+
+func TestGrantedLifecycleSkip(t *testing.T) {
+	dir := t.TempDir()
+	storageEnv := filepath.Join(dir, "storage.env")
+	lifecycleEnv := filepath.Join(dir, "imaged-storage.env")
+	for _, tc := range []struct {
+		name, backend, lifecycle string
+		want                     bool
+	}{
+		{"empty on s3", "s3", "", true},
+		{"comments only on gcs", "gcs", "# granted\n\n", true},
+		{"empty on oci", "oci", "", false},
+		{"keyed on s3", "s3", "FAAS_S3_ACCESS_KEY_ID=AK\nFAAS_S3_SECRET_ACCESS_KEY=SK\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.WriteFile(storageEnv, []byte("FAAS_STORAGE_BACKEND="+tc.backend+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(lifecycleEnv, []byte(tc.lifecycle), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := grantedLifecycleSkip(storageEnv, lifecycleEnv); err != nil || got != tc.want {
+				t.Fatalf("got %v, %v; want %v", got, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestValidateStorageEnvUnderGrants(t *testing.T) {
 	dir := t.TempDir()
 	shared := filepath.Join(dir, "storage.env")

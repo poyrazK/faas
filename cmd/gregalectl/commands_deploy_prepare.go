@@ -725,13 +725,26 @@ func stagePrepareSecrets(sourceDir, outputDir string, grants bool) error {
 		{name: "sign.key", mode: 0o600},
 		{name: "sign-pub.pem", mode: 0o644},
 	}
+	// The join reads faas_storage_grants from the staged ansible-vars.yml,
+	// so the prepared artifact must pass the same checks.
+	if varsPath := filepath.Join(sourceDir, "ansible-vars.yml"); !grants {
+		if _, err := os.Stat(varsPath); err == nil {
+			fromVars, err := ansibleVarsStorageGrants(varsPath)
+			if err != nil {
+				return err
+			}
+			grants = fromVars
+		}
+	}
+	// A read error leaves imagedGrants false; the loop below reports it.
+	imagedGrants, _ := grantableStorageEnv(filepath.Join(sourceDir, "storage.env"), grants)
 	for _, item := range required {
 		source := filepath.Join(sourceDir, item.name)
 		body, err := os.ReadFile(source)
 		if err != nil {
 			return fmt.Errorf("read secret %s: %w", item.name, err)
 		}
-		if len(bytes.TrimSpace(body)) == 0 && !(grants && item.name == "imaged-storage.env") {
+		if len(bytes.TrimSpace(body)) == 0 && !(imagedGrants && item.name == "imaged-storage.env") {
 			// Under grants imaged needs no lifecycle key, so its file may be empty.
 			return fmt.Errorf("secret %s is empty", item.name)
 		}
@@ -745,7 +758,7 @@ func stagePrepareSecrets(sourceDir, outputDir string, grants bool) error {
 	if err := validateSharedStorageEnv(filepath.Join(sourceDir, "storage.env"), grants); err != nil {
 		return fmt.Errorf("storage.env: %w", err)
 	}
-	if err := validateImagedStorageEnv(filepath.Join(sourceDir, "imaged-storage.env"), grants); err != nil {
+	if err := validateImagedStorageEnv(filepath.Join(sourceDir, "imaged-storage.env"), imagedGrants); err != nil {
 		return fmt.Errorf("imaged-storage.env: %w", err)
 	}
 

@@ -276,6 +276,25 @@ type artifactLifecycleReport struct {
 	Bytes        int    `json:"bytes"`
 	ReadVerified bool   `json:"read_verified"`
 	Deleted      bool   `json:"deleted"`
+	// Skipped says why no probe ran: a node on storage grants holds no
+	// lifecycle key; the control plane decides its deletes.
+	Skipped string `json:"skipped,omitempty"`
+}
+
+// grantedLifecycleSkip reports whether lifecycle-check has nothing to probe:
+// imaged-storage.env is empty, which the compute gates allow only on an S3
+// or GCS node with faas_storage_grants (ADR-20261117190000).
+func grantedLifecycleSkip(envFile, lifecycleEnvFile string) (bool, error) {
+	body, err := os.ReadFile(lifecycleEnvFile)
+	if err != nil {
+		return false, fmt.Errorf("read lifecycle env: %w", err)
+	}
+	for _, line := range strings.Split(string(body), "\n") {
+		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "#") {
+			return false, nil
+		}
+	}
+	return grantableStorageEnv(envFile, true)
 }
 
 func cmdArtifactLifecycleCheck(args []string) int {
@@ -289,6 +308,17 @@ func cmdArtifactLifecycleCheck(args []string) int {
 	if fs.NArg() != 0 || *envFile == "" || *lifecycleEnvFile == "" {
 		fmt.Fprintln(os.Stderr, "gregalectl artifact lifecycle-check: --env-file and --lifecycle-env-file are required")
 		return 2
+	}
+	if skip, err := grantedLifecycleSkip(*envFile, *lifecycleEnvFile); err != nil {
+		return printErr("gregalectl artifact lifecycle-check", err)
+	} else if skip {
+		report := artifactLifecycleReport{Operation: "lifecycle-check", Skipped: "no lifecycle key: the node reaches the store through secretd grants"}
+		if jsonEnabled() {
+			jsonEmit(osStdout, report)
+		} else {
+			fmt.Println("artifact lifecycle-check: skipped (" + report.Skipped + ")")
+		}
+		return 0
 	}
 	cleanupStorage, err := loadStorageEnv(*envFile)
 	if err != nil {

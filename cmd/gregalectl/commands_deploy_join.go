@@ -656,10 +656,18 @@ func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 			return report, fmt.Errorf("--%s must be a regular file", name)
 		}
 	}
-	if err := validateSharedStorageEnv(opts.StorageEnvSource, opts.StorageGrants); err != nil {
+	grants, grantsErr := joinStorageGrants(opts)
+	if grantsErr != nil {
+		return report, grantsErr
+	}
+	if err := validateSharedStorageEnv(opts.StorageEnvSource, grants); err != nil {
 		return report, fmt.Errorf("--storage-env: %w", err)
 	}
-	if err := validateImagedStorageEnv(opts.ImagedStorageEnvSource, opts.StorageGrants); err != nil {
+	imagedGrants, grantsErr := grantableStorageEnv(opts.StorageEnvSource, grants)
+	if grantsErr != nil {
+		return report, fmt.Errorf("--storage-env: %w", grantsErr)
+	}
+	if err := validateImagedStorageEnv(opts.ImagedStorageEnvSource, imagedGrants); err != nil {
 		return report, fmt.Errorf("--imaged-storage-env: %w", err)
 	}
 	for name, path := range map[string]string{
@@ -974,8 +982,8 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		"faas_join_defer_service_handlers": true,
 	}
 	if opts.StorageGrants {
-		// Set only when asked, so --ansible-vars-file or the inventory keeps
-		// the say when the flag is absent.
+		// Set only when asked, so a faas_storage_grants value from
+		// --ansible-vars-file or the inventory stands when the flag is absent.
 		vars["faas_storage_grants"] = true
 	}
 	varsPath := filepath.Join(tempRoot, "join-vars.json")
@@ -2025,6 +2033,13 @@ func validateSharedStorageEnv(path string, grants bool) error {
 		}
 	}
 	if backend == "s3" {
+		// The Ansible gates refuse any key line under grants, so an empty
+		// assignment is refused here too rather than read as "no key".
+		for _, key := range []string{"FAAS_S3_ACCESS_KEY_ID", "FAAS_S3_SECRET_ACCESS_KEY"} {
+			if seen[key] && strings.TrimSpace(values[key]) == "" {
+				return fmt.Errorf("%s is set but empty; set the key or remove the line", key)
+			}
+		}
 		pathStyle, _ := strconv.ParseBool(values["FAAS_S3_PATH_STYLE"])
 		if err := (storage.S3Config{
 			Bucket:          values["FAAS_S3_BUCKET"],
@@ -2074,6 +2089,63 @@ func validateSharedStorageEnv(path string, grants bool) error {
 		return fmt.Errorf("FAAS_STORAGE_CACHE_DIR=%q is not supported by the managed systemd units; use %s", cacheDir, storage.DefaultRemoteCacheDir)
 	}
 	return nil
+}
+
+// joinStorageGrants reports whether the node reaches the shared store
+// through secretd grants: --storage-grants, or faas_storage_grants true in
+// --ansible-vars-file (what cd-compute and join-fleet pass), so the local
+// checks agree with the Ansible gates that read the same variable.
+func joinStorageGrants(opts deployJoinOptions) (bool, error) {
+	if opts.StorageGrants || opts.AnsibleVarsFile == "" {
+		return opts.StorageGrants, nil
+	}
+	return ansibleVarsStorageGrants(opts.AnsibleVarsFile)
+}
+
+func ansibleVarsStorageGrants(path string) (bool, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return false, fmt.Errorf("--ansible-vars-file: %w", err)
+	}
+	var vars map[string]any
+	if err := yaml.Unmarshal(body, &vars); err != nil {
+		return false, fmt.Errorf("--ansible-vars-file: %w", err)
+	}
+	switch v := vars["faas_storage_grants"].(type) {
+	case nil:
+		return false, nil
+	case bool:
+		return v, nil
+	case string:
+		on, err := strconv.ParseBool(strings.TrimSpace(v))
+		if err != nil {
+			return false, fmt.Errorf("--ansible-vars-file: faas_storage_grants=%q is not a boolean", v)
+		}
+		return on, nil
+	default:
+		return false, fmt.Errorf("--ansible-vars-file: faas_storage_grants must be a boolean")
+	}
+}
+
+// grantableStorageEnv reports whether imaged can run on grants with the
+// storage.env at path: grants are on and the backend is one secretd signs
+// for (S3 or GCS). An OCI node keeps its imaged lifecycle login.
+func grantableStorageEnv(path string, grants bool) (bool, error) {
+	if !grants {
+		return false, nil
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	for _, line := range strings.Split(string(body), "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if ok && strings.TrimSpace(key) == "FAAS_STORAGE_BACKEND" {
+			backend := strings.ToLower(strings.Trim(strings.TrimSpace(value), "\"'"))
+			return backend == "s3" || backend == "gcs", nil
+		}
+	}
+	return false, nil
 }
 
 // validateImagedStorageEnv keeps package lifecycle authority in a narrow

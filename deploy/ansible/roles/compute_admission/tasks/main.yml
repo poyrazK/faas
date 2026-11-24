@@ -132,11 +132,12 @@
         ((faas_admission_imaged_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_S3_SECRET_ACCESS_KEY=[^\r\n]+$') | length) == 1 and
         ((faas_admission_imaged_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_(?!S3_(ACCESS_KEY_ID|SECRET_ACCESS_KEY)=)') | length) == 0) or
         ((faas_storage_grants | default(false) | bool) and
-        ((faas_admission_imaged_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_') | length) == 0)
+        ((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_BACKEND=(?:gcs|s3)$') | length) == 1 and
+        ((faas_admission_imaged_storage_blob.content | b64decode) | regex_findall('(?m)^[ \t]*(?:export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*=') | length) == 0)
     fail_msg: >-
       The imaged lifecycle environment must contain exactly one non-empty
       credential pair (OCI username and password, or S3 access key ID and
-      secret) and no storage topology overrides; on a node with
+      secret) and no storage topology overrides; on an S3 or GCS node with
       faas_storage_grants it may instead hold no assignment at all
       (ADR-20261117190000 slice 5).
   no_log: true
