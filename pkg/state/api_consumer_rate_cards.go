@@ -75,6 +75,7 @@ type APIConsumerRateCardInput struct {
 	IncludedUnitsPerMonth  int64
 	Tiers                  []APIConsumerRateCardTier
 	RouteWeights           map[string]int64
+	ModelPrices            map[string]int64
 	PlanID                 string
 	EffectiveFrom          time.Time
 	// Unit is what the card prices; empty means request (ADR-1308).
@@ -98,6 +99,9 @@ func normalizeAPIConsumerRateCardInput(in APIConsumerRateCardInput) (APIConsumer
 	}
 	if !ValidAPIConsumerRateCardUnit(in.Unit) || (in.Unit != APIConsumerRateCardUnitRequest && len(in.RouteWeights) > 0) {
 		return in, fmt.Errorf("CreateAPIConsumerRateCard: %w: route weights apply to request cards only", ErrInvalidArgument)
+	}
+	if err := ValidateAPIConsumerModelPrices(in.Unit, in.ModelPrices, len(in.Tiers)); err != nil {
+		return in, err
 	}
 	mode, err := normalizeRateCardTierMode(in.TierMode, in.Tiers)
 	if err != nil {
@@ -128,15 +132,16 @@ func normalizeAPIConsumerRateCardInput(in APIConsumerRateCardInput) (APIConsumer
 		}
 	}
 	in.Tiers = cloneRateCardTiers(in.Tiers)
-	in.RouteWeights = cloneRouteWeights(in.RouteWeights)
+	in.RouteWeights = cloneRateCardValues(in.RouteWeights)
+	in.ModelPrices = cloneRateCardValues(in.ModelPrices)
 	return in, nil
 }
 
-func cloneRouteWeights(weights map[string]int64) map[string]int64 {
-	if len(weights) == 0 {
+func cloneRateCardValues(values map[string]int64) map[string]int64 {
+	if len(values) == 0 {
 		return nil
 	}
-	return maps.Clone(weights)
+	return maps.Clone(values)
 }
 
 func cloneRateCardTiers(tiers []APIConsumerRateCardTier) []APIConsumerRateCardTier {

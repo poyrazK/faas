@@ -195,10 +195,7 @@ func priceTenantMonth(cardsByApp map[string][]state.APIConsumerRateCard, tenantC
 	}
 	sort.Strings(apps)
 	for _, appID := range apps {
-		if err := requireFlatAppCards(cardsByApp[appID]); err != nil {
-			return nil, "", feeUsage{}, err
-		}
-		quote, err := QuoteAPIConsumerUsage(cardsByApp[appID], fallbackByApp[appID])
+		quote, err := quoteTenantAppFallback(cardsByApp[appID], fallbackByApp[appID])
 		if err != nil {
 			if errors.Is(err, ErrMixedAPIConsumerRateCardCurrency) {
 				return nil, "", feeUsage{}, ErrMixedTenantCurrency

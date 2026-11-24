@@ -2,11 +2,14 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { APIConsumerQuoteBreakdown } from './APIConsumerQuoteBreakdown.js';
 import type { APIConsumerUsageQuoteBucketResponse } from './APIConsumerUsageQuoteBucketResponse.js';
 /**
  * Deterministic estimate from durable API consumer usage and versioned app pricing; not an invoice.
  */
 export type APIConsumerUsageQuoteResponse = {
+  route_breakdown?: Array<APIConsumerQuoteBreakdown>;
+  meter_breakdown?: Array<APIConsumerQuoteBreakdown>;
   consumer_id: string;
   period_start: string;
   period_end: string;
