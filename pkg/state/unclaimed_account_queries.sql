@@ -63,6 +63,17 @@ SELECT account_id::text AS account_id, expires_at FROM unclaimed_accounts
  ORDER BY expires_at, account_id
  LIMIT sqlc.arg(row_limit);
 
+-- name: ListUnrecordedUnclaimedClaims :many
+-- Open rows whose account already carries a real address: the claim's
+-- address change landed but recording it failed. Keyset by account_id.
+SELECT u.account_id::text AS account_id
+  FROM unclaimed_accounts u JOIN accounts a ON a.id = u.account_id
+ WHERE u.claimed_at IS NULL AND u.expired_at IS NULL
+   AND lower(a.email::text) NOT LIKE '%@' || sqlc.arg(placeholder_domain)::text
+   AND u.account_id > sqlc.arg(after_account_id)::uuid
+ ORDER BY u.account_id
+ LIMIT sqlc.arg(row_limit);
+
 -- name: LockLiveUnclaimedAccountByClaimToken :one
 -- Holds the row while a claim confirmation is issued, so a concurrent link
 -- rotation or expiry (both update this row) runs wholly before or after it.

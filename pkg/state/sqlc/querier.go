@@ -4681,6 +4681,9 @@ type Querier interface {
 	// intent, and for 'ending' only while the copy still holds a slot that has
 	// not ended.
 	ListUnmailedManagedPostgresRestoreSlotNotices(ctx context.Context, db DBTX, arg ListUnmailedManagedPostgresRestoreSlotNoticesParams) ([]ListUnmailedManagedPostgresRestoreSlotNoticesRow, error)
+	// Open rows whose account already carries a real address: the claim's
+	// address change landed but recording it failed. Keyset by account_id.
+	ListUnrecordedUnclaimedClaims(ctx context.Context, db DBTX, arg ListUnrecordedUnclaimedClaimsParams) ([]string, error)
 	// The account trace view's per-request wakes: one canonical instance per wake
 	// (its first), scoped to the account's apps before reading wake metadata, with
 	// the same boot and completion reads as ListAppWakeHistoryPage.

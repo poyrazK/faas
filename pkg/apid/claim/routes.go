@@ -31,6 +31,27 @@ var readDenied = map[string]bool{
 	"GET /v1/apps/{slug}/forks/{id}/execs/{exec_id}": true,
 }
 
+// credentialSegments mark reads of keys, tokens and credentials under the
+// read roots. An unclaimed account cannot create any, and listing them is
+// refused as a class, like GET /v1/keys, so a new credential route is
+// closed too.
+var credentialSegments = map[string]bool{
+	"keys": true, "access-tokens": true, "ai-access-tokens": true, "deploy-tokens": true,
+	"credentials": true, "s3-credentials": true, "registry-credentials": true,
+	"publish-credentials": true, "credential-policy": true, "access-grants": true,
+	"trusted_signers": true, "platform-tenants": true,
+}
+
+// readsCredentials reports a path with a credential segment.
+func readsCredentials(path string) bool {
+	for seg := range strings.SplitSeq(path, "/") {
+		if credentialSegments[seg] {
+			return true
+		}
+	}
+	return false
+}
+
 // IsUpgrade reports a request asking to switch protocols (a WebSocket).
 // An unclaimed account's reads are plain HTTP; an upgraded session acts.
 func IsUpgrade(r *http.Request) bool {
@@ -134,7 +155,7 @@ func RouteAllowed(pattern string) bool {
 	}
 	switch method {
 	case "GET", "HEAD":
-		if readDenied["GET "+path] {
+		if readDenied["GET "+path] || readsCredentials(path) {
 			return false
 		}
 		for _, root := range readRoots {

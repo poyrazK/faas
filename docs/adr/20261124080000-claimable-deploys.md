@@ -63,8 +63,10 @@ apid keeps the route table, the middleware and a `claim.Host` adapter.
   variables and secrets; and `POST /v1/account/claim-link`. A test keeps
   the list in step with the route table.
 - Reads under those roots exclude routes that act: a WebSocket upgrade
-  is refused as a class, and durable-entity connections and fork execs
-  are named.
+  is refused as a class, durable-entity connections and fork execs are
+  named, and reads of keys, tokens and credentials (any path with a
+  credential segment such as `keys`, `deploy-tokens` or `credentials`)
+  are refused like `GET /v1/keys`.
 - `POST /v1/apps` and `PATCH /v1/apps/{slug}` are allowed with only the
   settings a deploy applies (`claim.RefusedField`; creating also takes
   `slug`, `type`, `runtime` and `vcpu`): public access (`require_authn`,
@@ -148,9 +150,10 @@ to apid (`apid.ApidRootClaim`; it is reserved on platform hosts only):
    to queue it, the page answers 503 rather than claim a mail was sent. The answer is the same whether or not the address has an account.
    An address that already has an account gets an explanation instead of a
    link.
-   The pages send `Referrer-Policy: same-origin`, and the origin check
-   accepts `Origin: null` only with `Sec-Fetch-Site: same-origin` (a
-   browser posting this host's own page).
+   The pages send `Referrer-Policy: same-origin`, so the browser's form
+   posts carry this host's Origin for the trusted-origin check. Errors on
+   these pages (a malformed address, a used or expired confirmation, an
+   address another account took) are pages too, not JSON.
 3. `GET /claim/confirm` renders a button. Mail scanners that prefetch links
    consume nothing.
 4. `POST /claim/confirm` consumes the change. The store refuses an address
@@ -171,8 +174,9 @@ Expiry drops them too.
 If the address moved but recording the claim failed, the row stays open.
 Two things cover that gap. The middleware refuses an `anonymous-deploy` key
 on an account that has an `unclaimed_accounts` row but no placeholder
-address. And the sweep, finding such a row past its expiry, finishes the
-claim instead of deleting the account. The anonymous key also expires with
+address. And every sweep (every 5 minutes) finishes open rows whose
+account no longer has the placeholder address, so the claim is recorded
+within minutes, not at the end of the window. The anonymous key also expires with
 the claim window.
 
 The account, its apps, deployments and data stay where they are. The agent's

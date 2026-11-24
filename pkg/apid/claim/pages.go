@@ -48,6 +48,7 @@ var claimPage = template.Must(template.New("claim").Parse(`<!doctype html>
 <p>An agent deployed {{if .Apps}}these apps{{else}}to Gregale{{end}} without an account. Claim it to keep it: it becomes yours on the Free plan, and you can then add custom domains, databases and more apps.</p>
 {{if .Apps}}<ul>{{range .Apps}}<li><a href="{{.URL}}" rel="noopener">{{.Slug}}</a></li>{{end}}</ul>{{end}}
 <p>Unclaimed apps are deleted on {{.Expires}}.</p>
+{{if .Error}}<p role="alert">{{.Error}}</p>{{end}}
 <form method="post" action="{{.Action}}">
 <label for="email">Your email</label>
 <input id="email" name="email" type="email" autocomplete="email" required maxlength="254">
@@ -75,6 +76,31 @@ var claimConfirmPage = template.Must(template.New("claim-confirm").Parse(`<!doct
 </html>
 `))
 
+// claimErrorPage answers a claim form post that failed, in the browser.
+var claimErrorPage = template.Must(template.New("claim-error").Parse(`<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>{{.Title}}</title></head>
+<body>
+<main>
+<h1>{{.Title}}</h1>
+<p>{{.Message}}</p>
+</main>
+</body>
+</html>
+`))
+
+type errorData struct{ Title, Message string }
+
+// writeError answers a claim page request with an HTML error page.
+func writeError(w http.ResponseWriter, status int, title, message string) {
+	writeHTML(w, status, claimErrorPage, errorData{Title: title, Message: message})
+}
+
+const (
+	busyMessage        = "We could not do that just now. Wait a minute and try again."
+	invalidLinkMessage = "This confirmation link is invalid, was already used, or expired. Open the claim link again to get a new one."
+)
+
 type pageApp struct {
 	Slug string
 	URL  string
@@ -86,14 +112,15 @@ type pageData struct {
 	Apps    []pageApp
 	Expires string
 	Action  string
+	Error   string
 }
 
 func writeHTML(w http.ResponseWriter, status int, tmpl *template.Template, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	// same-origin, not no-referrer: under no-referrer a browser sends
-	// Origin: null on the form posts, which the origin check would refuse.
-	// The claim token in the path still never leaves the API host.
+	// same-origin, not no-referrer: under no-referrer a browser may send
+	// Origin: null on the form posts, which the trusted-origin check
+	// refuses. The claim token in the path still never leaves this host.
 	w.Header().Set("Referrer-Policy", "same-origin")
 	w.Header().Set("X-Robots-Tag", "noindex")
 	w.WriteHeader(status)
@@ -140,13 +167,18 @@ func (s *Service) Page(w http.ResponseWriter, r *http.Request) {
 		writeHTML(w, http.StatusGone, claimPage, pageData{Gone: true})
 		return
 	}
+	writeHTML(w, http.StatusOK, claimPage, s.formData(r, row, acct))
+}
+
+// formData is the claim form for the account behind the link.
+func (s *Service) formData(r *http.Request, row state.UnclaimedAccount, acct state.Account) pageData {
 	data := pageData{Expires: formatExpiry(row.ExpiresAt), Action: PagePath + "/" + r.PathValue("token")}
 	if apps, err := s.Host.Store().ListApps(r.Context(), acct.ID); err == nil {
 		for _, app := range apps {
 			data.Apps = append(data.Apps, pageApp{Slug: app.Slug, URL: s.Host.AppURL(app.Slug)})
 		}
 	}
-	writeHTML(w, http.StatusOK, claimPage, data)
+	return data
 }
 
 // Request is POST /claim/{token}: mail a confirmation to the address. The
@@ -163,7 +195,9 @@ func (s *Service) Request(w http.ResponseWriter, r *http.Request) {
 	}
 	email := strings.ToLower(strings.TrimSpace(r.PostFormValue("email")))
 	if !validEmail(email) {
-		api.WriteProblemForRequest(w, r, api.ErrValidation("email must be a valid address"))
+		data := s.formData(r, row, acct)
+		data.Error = "Enter a full email address, such as you@example.com."
+		writeHTML(w, http.StatusBadRequest, claimPage, data)
 		return
 	}
 	// The confirmation never outlives the claim window.
@@ -182,7 +216,7 @@ func (s *Service) Request(w http.ResponseWriter, r *http.Request) {
 	}
 	if !s.Host.Background(mail) {
 		s.Host.Log().Warn("claim.busy", "account_id", acct.ID)
-		api.WriteProblemForRequest(w, r, api.ErrCapacity("could not send the confirmation now; try again in a minute"))
+		writeError(w, http.StatusServiceUnavailable, "Try again in a minute", busyMessage)
 		return
 	}
 	s.Host.Audit(r.Context(), "account.claim_requested", &acct.ID, nil)
@@ -204,12 +238,12 @@ func (s *Service) prepareClaimMail(w http.ResponseWriter, r *http.Request, row s
 	}
 	store, ok := s.unclaimedStore()
 	if !ok {
-		api.WriteProblemForRequest(w, r, api.ErrCapacity("claiming is unavailable"))
+		writeError(w, http.StatusServiceUnavailable, "Claiming is unavailable", busyMessage)
 		return nil, false
 	}
 	raw, err := newToken(confirmTokenBytes)
 	if err != nil {
-		api.WriteProblemForRequest(w, r, api.ErrCapacity("could not start the claim; try again"))
+		writeError(w, http.StatusServiceUnavailable, "Try again in a minute", busyMessage)
 		return nil, false
 	}
 	defer clear(raw)
@@ -219,7 +253,7 @@ func (s *Service) prepareClaimMail(w http.ResponseWriter, r *http.Request, row s
 			return nil, false
 		}
 		log.Error("claim.issue", "err", err, "account_id", acct.ID)
-		api.WriteProblemForRequest(w, r, api.ErrCapacity("could not start the claim; try again"))
+		writeError(w, http.StatusServiceUnavailable, "Try again in a minute", busyMessage)
 		return nil, false
 	}
 	link := s.Host.ClaimBase(r) + ConfirmPath + "?token=" + base64.RawURLEncoding.EncodeToString(raw)
@@ -235,7 +269,7 @@ func (s *Service) prepareClaimMail(w http.ResponseWriter, r *http.Request, row s
 func (s *Service) ConfirmPage(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimSpace(r.URL.Query().Get("token"))
 	if _, ok := decodeToken(token, confirmTokenBytes); !ok {
-		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
+		writeError(w, http.StatusGone, "This link is no longer valid", invalidLinkMessage)
 		return
 	}
 	writeHTML(w, http.StatusOK, claimConfirmPage, token)
@@ -245,23 +279,23 @@ func (s *Service) ConfirmPage(w http.ResponseWriter, r *http.Request) {
 func (s *Service) Confirm(w http.ResponseWriter, r *http.Request) {
 	raw, ok := decodeToken(r.PostFormValue("token"), confirmTokenBytes)
 	if !ok {
-		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
+		writeError(w, http.StatusGone, "This link is no longer valid", invalidLinkMessage)
 		return
 	}
 	defer clear(raw)
 	flow, ok := s.Host.Store().(state.AccountFlowStore)
 	if !ok {
-		api.WriteProblemForRequest(w, r, api.ErrCapacity("claiming is unavailable"))
+		writeError(w, http.StatusServiceUnavailable, "Claiming is unavailable", busyMessage)
 		return
 	}
 	change, err := flow.ConsumeEmailChange(r.Context(), api.HashToken(raw))
 	switch {
 	case errors.Is(err, state.ErrConflict):
-		api.WriteProblemForRequest(w, r, api.NewProblem(http.StatusConflict, api.CodeConflict,
-			"Email in use", "another Gregale account already uses that address; claim with a different address"))
+		writeError(w, http.StatusConflict, "That address is already in use",
+			"Another Gregale account uses that address. Open the claim link again and claim with a different address.")
 		return
 	case err != nil:
-		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
+		writeError(w, http.StatusGone, "This link is no longer valid", invalidLinkMessage)
 		return
 	}
 	// FinishEmailChange signs out, notifies the old (placeholder, dropped)

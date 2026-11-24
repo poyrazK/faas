@@ -133,6 +133,10 @@ type UnclaimedAccountStore interface {
 	// account (ConsumeEmailChange), so once a row is listed no claim can
 	// land on it, whatever apid's clock says.
 	ListExpiredUnclaimedAccounts(ctx context.Context, now time.Time, after UnclaimedCursor, limit int) ([]UnclaimedCursor, error)
+	// ListUnrecordedClaims returns up to limit open accounts, after the
+	// account ID after ("" starts at the beginning), whose address is no
+	// longer the placeholder: claimed, but the claim was not recorded.
+	ListUnrecordedClaims(ctx context.Context, after string, limit int) ([]string, error)
 	// IssueClaimEmailChange issues the claim's email change (as
 	// IssueEmailChange) only while claimHash still names a live account,
 	// serialised with the link rotation and the expiry that would drop it.
@@ -389,6 +393,26 @@ func (m *MemStore) ListExpiredUnclaimedAccounts(_ context.Context, now time.Time
 	return out, nil
 }
 
+func (m *MemStore) ListUnrecordedClaims(_ context.Context, after string, limit int) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []string
+	for id := range m.unclaimedAccounts {
+		u, ok := m.unclaimedRowLocked(id)
+		if !ok || !u.Open() || id <= after {
+			continue
+		}
+		if a, ok := m.accounts[id]; ok && !api.IsUnclaimedPlaceholderEmail(a.Email) {
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	if len(out) > limit {
+		out = out[:max(0, limit)]
+	}
+	return out, nil
+}
+
 func (m *MemStore) IssueClaimEmailChange(_ context.Context, claimHash, changeHash []byte, newEmail string, expiresAt, now time.Time) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -623,6 +647,25 @@ func (s *PgStore) ListExpiredUnclaimedAccounts(ctx context.Context, now time.Tim
 		out = append(out, UnclaimedCursor{ExpiresAt: r.ExpiresAt.Time.UTC(), AccountID: r.AccountID})
 	}
 	return out, nil
+}
+
+func (s *PgStore) ListUnrecordedClaims(ctx context.Context, after string, limit int) ([]string, error) {
+	afterID := pgtype.UUID{Valid: true}
+	if after != "" {
+		id, err := parsePgUUID(after)
+		if err != nil {
+			return nil, fmt.Errorf("state: unrecorded claims cursor: %w", err)
+		}
+		afterID = id
+	}
+	ids, err := sqlc.New().ListUnrecordedUnclaimedClaims(ctx, s.pool, sqlc.ListUnrecordedUnclaimedClaimsParams{
+		PlaceholderDomain: strings.ToLower(api.UnclaimedEmailDomain), AfterAccountID: afterID,
+		RowLimit: int32(max(0, min(limit, 10_000))), //nolint:gosec // bounded above
+	})
+	if err != nil {
+		return nil, fmt.Errorf("state: list unrecorded claims: %w", mapErr(err))
+	}
+	return ids, nil
 }
 
 func (s *PgStore) IssueClaimEmailChange(ctx context.Context, claimHash, changeHash []byte, newEmail string, expiresAt, now time.Time) (string, error) {

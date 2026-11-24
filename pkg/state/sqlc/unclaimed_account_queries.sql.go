@@ -145,6 +145,44 @@ func (q *Queries) ListExpiredUnclaimedAccounts(ctx context.Context, db DBTX, arg
 	return items, nil
 }
 
+const listUnrecordedUnclaimedClaims = `-- name: ListUnrecordedUnclaimedClaims :many
+SELECT u.account_id::text AS account_id
+  FROM unclaimed_accounts u JOIN accounts a ON a.id = u.account_id
+ WHERE u.claimed_at IS NULL AND u.expired_at IS NULL
+   AND lower(a.email::text) NOT LIKE '%@' || $1::text
+   AND u.account_id > $2::uuid
+ ORDER BY u.account_id
+ LIMIT $3
+`
+
+type ListUnrecordedUnclaimedClaimsParams struct {
+	PlaceholderDomain string
+	AfterAccountID    pgtype.UUID
+	RowLimit          int32
+}
+
+// Open rows whose account already carries a real address: the claim's
+// address change landed but recording it failed. Keyset by account_id.
+func (q *Queries) ListUnrecordedUnclaimedClaims(ctx context.Context, db DBTX, arg ListUnrecordedUnclaimedClaimsParams) ([]string, error) {
+	rows, err := db.Query(ctx, listUnrecordedUnclaimedClaims, arg.PlaceholderDomain, arg.AfterAccountID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var account_id string
+		if err := rows.Scan(&account_id); err != nil {
+			return nil, err
+		}
+		items = append(items, account_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockLiveUnclaimedAccountByClaimToken = `-- name: LockLiveUnclaimedAccountByClaimToken :one
 SELECT account_id FROM unclaimed_accounts
  WHERE claim_token_sha256 = $1

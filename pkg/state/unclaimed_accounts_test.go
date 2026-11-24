@@ -292,3 +292,45 @@ func TestIssueClaimEmailChange(t *testing.T) {
 		})
 	}
 }
+
+// A claim whose address change landed but was not recorded is listed for
+// the sweep until it is recorded.
+func TestListUnrecordedClaims(t *testing.T) {
+	for name, open := range unclaimedBackends() {
+		t.Run(name, func(t *testing.T) {
+			s := open(t)
+			ctx := t.Context()
+			now := time.Now().UTC()
+			mk := func(n int) string {
+				res, err := s.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{
+					Email: fmt.Sprintf("anon-unrec-%d@%s", n, api.UnclaimedEmailDomain), Plan: api.PlanFree,
+					Unclaimed: &state.UnclaimedAccountParams{ClaimTokenSHA256: claimHash(fmt.Sprintf("unrec-%d", n)), ExpiresAt: now.Add(time.Hour), LiveMax: 100, PerAddress: 100, PerNetwork: 100},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return res.Account.ID
+			}
+			claimed, untouched := mk(1), mk(2)
+			if _, err := s.IssueClaimEmailChange(ctx, claimHash("unrec-1"), claimHash("unrec-change"), "owner-unrec@example.com", now.Add(time.Hour), now); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.ConsumeEmailChange(ctx, claimHash("unrec-change")); err != nil {
+				t.Fatal(err)
+			}
+			ids, err := s.ListUnrecordedClaims(ctx, "", 10)
+			if err != nil || len(ids) != 1 || ids[0] != claimed {
+				t.Fatalf("unrecorded = %v (err %v), want [%s] (not %s)", ids, err, claimed, untouched)
+			}
+			if ids, _ := s.ListUnrecordedClaims(ctx, claimed, 10); len(ids) != 0 {
+				t.Fatalf("after the cursor = %v, want none", ids)
+			}
+			if ok, err := s.MarkUnclaimedAccountClaimed(ctx, claimed, now); err != nil || !ok {
+				t.Fatalf("claim = %v %v", ok, err)
+			}
+			if ids, _ := s.ListUnrecordedClaims(ctx, "", 10); len(ids) != 0 {
+				t.Fatalf("unrecorded after recording = %v", ids)
+			}
+		})
+	}
+}

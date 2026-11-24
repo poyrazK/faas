@@ -371,9 +371,8 @@ func TestUnrecordedClaimIsFinishedBySweep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The next sweep finishes it, long before the window ends.
 	svc := srv.Claim()
-	later := sess.ExpiresAt.Add(time.Minute)
-	svc.Now = func() time.Time { return later }
 	if n := svc.ExpireOnce(t.Context()); n != 0 {
 		t.Fatalf("sweep expired %d claimed accounts", n)
 	}
@@ -404,13 +403,14 @@ func TestClaimLinkAfterWindowIsGone(t *testing.T) {
 	}
 }
 
-// A browser posting the claim form from the page may send Origin: null;
-// with Sec-Fetch-Site: same-origin that is this host's own page.
-func TestClaimFormAcceptsSameOriginNullOrigin(t *testing.T) {
+// The claim forms are posted from this host's own pages, which send a real
+// Origin (Referrer-Policy: same-origin); an opaque Origin: null is refused
+// like any other unknown origin.
+func TestClaimFormRefusesNullOrigin(t *testing.T) {
 	srv, _, _ := apidserver.V1AuthTestHarness(t)
 	h := srv.Handler()
 	_, sess := anonymousSession(t, h, "203.0.113.80:5000")
-	post := func(site string) *httptest.ResponseRecorder {
+	for _, site := range []string{"", "same-origin", "same-site", "cross-site"} {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, claimPath(sess.ClaimURL), strings.NewReader(url.Values{"email": {"browser@example.com"}}.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -420,14 +420,28 @@ func TestClaimFormAcceptsSameOriginNullOrigin(t *testing.T) {
 		}
 		req.RemoteAddr = "198.51.100.8:4000"
 		h.ServeHTTP(rec, req)
-		return rec
-	}
-	if rec := post("same-origin"); rec.Code != http.StatusOK {
-		t.Fatalf("same-origin null Origin = %d %s, want 200", rec.Code, rec.Body.String())
-	}
-	for _, site := range []string{"", "same-site", "cross-site"} {
-		if rec := post(site); rec.Code != http.StatusForbidden {
+		if rec.Code != http.StatusForbidden {
 			t.Errorf("null Origin with Sec-Fetch-Site %q = %d, want 403", site, rec.Code)
+		}
+	}
+}
+
+// A person using the claim pages sees errors as pages, not JSON.
+func TestClaimPagesAnswerErrorsInHTML(t *testing.T) {
+	srv, _, _ := apidserver.V1AuthTestHarness(t)
+	h := srv.Handler()
+	_, sess := anonymousSession(t, h, "203.0.113.81:5000")
+	rec := claimForm(h, claimPath(sess.ClaimURL), url.Values{"email": {"me@localhost"}})
+	if rec.Code != http.StatusBadRequest || !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/html") ||
+		!strings.Contains(rec.Body.String(), "full email address") || !strings.Contains(rec.Body.String(), `name="email"`) {
+		t.Fatalf("bad address = %d %q:\n%s", rec.Code, rec.Header().Get("Content-Type"), rec.Body.String())
+	}
+	for _, r := range []*httptest.ResponseRecorder{
+		claimGet(h, claim.ConfirmPath+"?token=nope"),
+		claimForm(h, claim.ConfirmPath, url.Values{"token": {"nope"}}),
+	} {
+		if r.Code != http.StatusGone || !strings.HasPrefix(r.Header().Get("Content-Type"), "text/html") {
+			t.Errorf("bad confirmation token = %d %q, want a 410 page", r.Code, r.Header().Get("Content-Type"))
 		}
 	}
 }

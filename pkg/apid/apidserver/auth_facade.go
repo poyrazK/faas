@@ -227,12 +227,6 @@ func (s *server) browserRequestFromTrustedOrigin(r *http.Request) bool {
 	if raw == "" {
 		return site == "" || site == "same-origin" || site == "none"
 	}
-	if raw == "null" {
-		// A form posted from a page served with Referrer-Policy:
-		// no-referrer carries Origin: null. Only a browser sets
-		// Sec-Fetch-Site, and same-origin means this host's own page.
-		return site == "same-origin"
-	}
 	origin, err := url.Parse(raw)
 	return err == nil && origin.Host != "" && (s.isTrustedAdminOrigin(origin, r) || s.isWebDashboardOrigin(origin))
 }

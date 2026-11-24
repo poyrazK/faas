@@ -130,6 +130,7 @@ func (s *Service) ExpireOnce(ctx context.Context) int {
 		return 0
 	}
 	log := s.Host.Log()
+	s.finishUnrecordedClaims(ctx, store)
 	now := s.now()
 	ended := 0
 	var cursor state.UnclaimedCursor
@@ -151,6 +152,28 @@ func (s *Service) ExpireOnce(ctx context.Context) int {
 		log.Info("unclaimed_expiry.ended", "count", ended)
 	}
 	return ended
+}
+
+// finishUnrecordedClaims finishes claims whose address change landed but
+// whose recording failed, at the next sweep rather than at the window's end.
+func (s *Service) finishUnrecordedClaims(ctx context.Context, store state.UnclaimedAccountStore) {
+	after := ""
+	for range api.UnclaimedAccountSweepMaxPages {
+		ids, err := store.ListUnrecordedClaims(ctx, after, api.UnclaimedAccountExpiryBatch)
+		if err != nil {
+			s.Host.Log().Warn("unclaimed_expiry.unrecorded_claims", "err", err)
+			return
+		}
+		for _, id := range ids {
+			if err := s.FinishClaim(ctx, id); err != nil {
+				s.Host.Log().Error("unclaimed_expiry.finish_claim", "account_id", id, "err", err)
+			}
+		}
+		if len(ids) < api.UnclaimedAccountExpiryBatch || ctx.Err() != nil {
+			return
+		}
+		after = ids[len(ids)-1]
+	}
 }
 
 // sweepOne ends or finishes one due account; 1 when it ended it.
