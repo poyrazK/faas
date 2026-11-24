@@ -303,6 +303,9 @@ from .app_manifest_secret_reload_signal_type_2_type_1 import AppManifestSecretRe
 from .app_manifest_secret_reload_signal_type_3_type_1 import AppManifestSecretReloadSignalType3Type1
 from .app_metrics_response import AppMetricsResponse
 from .app_metrics_response_range import AppMetricsResponseRange
+from .app_name_report_match import AppNameReportMatch
+from .app_name_report_response import AppNameReportResponse
+from .app_name_report_response_source import AppNameReportResponseSource
 from .app_open_api_import_dry_run_response import AppOpenAPIImportDryRunResponse
 from .app_open_api_import_response import AppOpenAPIImportResponse
 from .app_open_api_import_response_openapi_version import AppOpenAPIImportResponseOpenapiVersion
@@ -4845,6 +4848,7 @@ from .plan_response import PlanResponse
 from .plan_response_scan_source import PlanResponseScanSource
 from .plan_source_host import PlanSourceHost
 from .plan_workload import PlanWorkload
+from .plan_workload_access import PlanWorkloadAccess
 from .plan_workload_action import PlanWorkloadAction
 from .plan_workload_class import PlanWorkloadClass
 from .plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
@@ -7658,6 +7662,9 @@ __all__ = (
     "AppManifestSecretReloadSignalType3Type1",
     "AppMetricsResponse",
     "AppMetricsResponseRange",
+    "AppNameReportMatch",
+    "AppNameReportResponse",
+    "AppNameReportResponseSource",
     "AppOpenAPIImportDryRunResponse",
     "AppOpenAPIImportResponse",
     "AppOpenAPIImportResponseOpenapiVersion",
@@ -11853,6 +11860,7 @@ __all__ = (
     "PlanResponseScanSource",
     "PlanSourceHost",
     "PlanWorkload",
+    "PlanWorkloadAccess",
     "PlanWorkloadAction",
     "PlanWorkloadClass",
     "PlanWorkloadDependsOnConditions",

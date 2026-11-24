@@ -208,6 +208,12 @@ type Workload struct {
 	// setting and the platform default for a new one.
 	Streaming *bool `json:",omitempty"`
 	WakeAhead *bool `json:",omitempty"`
+	// Access is who may call the service's public URL, declared in
+	// gregale.yaml (project.services.<name>.access) or Compose
+	// (x-gregale-access): "public" (anyone) or "key" (a Gregale API key).
+	// Empty declares nothing: a new app takes the plan default and an
+	// existing one keeps its setting (ADR-20261124090000).
+	Access string `json:",omitempty"`
 	// RenamedFrom is the service's previous name (Compose
 	// x-gregale-renamed-from). A deploy updates that name's app in place
 	// instead of removing it and creating a new one (ADR-20261029090000).
