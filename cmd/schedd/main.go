@@ -1048,16 +1048,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-20261117190000: on a granted compute node schedd holds no store
 	// credential either; its signature and snapshot reads go through
 	// secretd grants and its deletes become control-plane requests.
-	storageGranted, closeStorageGrants, err := secretdgrant.FromEnv(ctx, os.Getenv, storageBackend, "schedd", log)
-	if err != nil {
-		return err
-	}
-	defer closeStorageGrants()
+	// Deletes must be deferred first: storage.UseGrants refuses a backend
+	// that still deletes directly.
 	if deferred, err := objectgc.DeferFromEnv(os.Getenv, storageBackend, store, "schedd"); err != nil {
 		return fmt.Errorf("schedd: %w", err)
 	} else if deferred {
 		log.Info("schedd: shared-store deletes deferred to the control plane")
 	}
+	storageGranted, closeStorageGrants, err := secretdgrant.FromEnv(ctx, os.Getenv, storageBackend, "schedd", log)
+	if err != nil {
+		return err
+	}
+	defer closeStorageGrants()
 	// ADR-054 acceptance: wire the LocalCacheBackend observer so
 	// stale-fallback serves on the wake path emit
 	// `schedd_storage_cache_stale_fallback_total`. The schedd

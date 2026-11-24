@@ -97,7 +97,7 @@
           test -x /usr/local/bin/gregalectl
           test -s /etc/faas/manifest.yaml
           test -s /etc/faas/storage.env
-          test -s /etc/faas/imaged-storage.env
+          test -f /etc/faas/imaged-storage.env
           test -s /etc/faas/runtime-bases.env
           for service in faas-vmmd faas-schedd faas-gatewayd-internal faas-builderd faas-imaged; do
             systemctl is-enabled --quiet "$service.service"
