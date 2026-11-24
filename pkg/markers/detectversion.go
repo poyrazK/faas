@@ -435,14 +435,19 @@ func versionFromGoModDirective(body string) string {
 // with an internal "runtime base does not match the build artifact" error
 // blamed on the platform (prod 2026-11-23).
 //
-// Only what no Node package manager would read is a problem: a UTF-8 byte
-// order mark (npm and Node's require strip it), comments and trailing commas
-// (Bun accepts them) are blanked out first, keeping byte offsets so the
-// reported line stays right.
+// A leading UTF-8 byte order mark is a problem: npm strips it, but
+// Railpack's hujson reader rejects it and the build exports an empty image
+// (prod 2026-11-24). Comments and trailing commas are not: hujson and Bun
+// accept them, so they are blanked out first (see lenientJSON), keeping byte
+// offsets so the reported line stays right.
 func NodePackageJSONProblemAtRoot(path, sourceRoot string) string {
 	raw, ok := readTarballFilesAtRoot(path, sourceRoot, "package.json")["package.json"]
 	if !ok {
 		return ""
+	}
+	// builderd appends "; fix the file and deploy again" to the problem.
+	if strings.HasPrefix(raw, "\xef\xbb\xbf") {
+		return "package.json starts with a UTF-8 byte order mark (BOM), which the build cannot read (save it as UTF-8 without a BOM)"
 	}
 	raw = lenientJSON(raw)
 	var v map[string]any
