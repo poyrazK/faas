@@ -19,10 +19,21 @@ import (
 type edgeFlagBackend struct {
 	Backend
 	bundle flags.Bundle
+	// environments records the environment of each lookup, when set.
+	environments *[]string
 }
 
-func (b edgeFlagBackend) EdgeFlagBundle(context.Context, string, string) flags.Bundle {
+func (b edgeFlagBackend) EdgeFlagBundle(_ context.Context, _, environment string) flags.Bundle {
+	if b.environments != nil {
+		*b.environments = append(*b.environments, environment)
+	}
 	return b.bundle
+}
+
+type declaredOnly map[string]bool
+
+func (d declaredOnly) MatchDeclaredRoute(_ context.Context, _ App, path, _ string) (bool, error) {
+	return d[path], nil
 }
 
 // pricingBundle routes /pricing: variant "b" rewrites to /pricing-b, "a"
@@ -68,7 +79,7 @@ func TestEdgeFlagsRouteVerifiedCustomer(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "/pricing", nil)
 		r = r.WithContext(withAuthenticated(r.Context(), Authenticated{PlatformTenantID: customer}))
 		w := httptest.NewRecorder()
-		r = edgeHandler(true).applyEdgeFlags(w, r, edgeApp)
+		r, _ = edgeHandler(true).applyEdgeFlags(w, r, edgeApp)
 		if want := wantPath(t, customer, ""); r.URL.Path != want {
 			t.Fatalf("customer %s routed to %s; want %s", customer, r.URL.Path, want)
 		}
@@ -94,7 +105,7 @@ func TestEdgeFlagsRouteVerifiedCustomer(t *testing.T) {
 func TestEdgeFlagsAnonymousVisitorIsSticky(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/pricing", nil)
 	w := httptest.NewRecorder()
-	r = edgeHandler(true).applyEdgeFlags(w, r, edgeApp)
+	r, _ = edgeHandler(true).applyEdgeFlags(w, r, edgeApp)
 	cookies := w.Result().Cookies()
 	if len(cookies) != 1 || cookies[0].Name != EdgeVisitorCookie || !cookies[0].Secure || !cookies[0].HttpOnly || cookies[0].Path != "/" ||
 		cookies[0].MaxAge != int(api.FlagsEdgeVisitorCookieMaxAge/time.Second) {
@@ -109,7 +120,7 @@ func TestEdgeFlagsAnonymousVisitorIsSticky(t *testing.T) {
 		again := httptest.NewRequest(http.MethodGet, "/pricing", nil)
 		again.AddCookie(&http.Cookie{Name: EdgeVisitorCookie, Value: visitor})
 		w := httptest.NewRecorder()
-		again = edgeHandler(true).applyEdgeFlags(w, again, edgeApp)
+		again, _ = edgeHandler(true).applyEdgeFlags(w, again, edgeApp)
 		if again.URL.Path != first || len(w.Result().Cookies()) != 0 {
 			t.Fatalf("returning visitor routed to %s (first %s), cookies %v", again.URL.Path, first, w.Result().Cookies())
 		}
@@ -117,7 +128,7 @@ func TestEdgeFlagsAnonymousVisitorIsSticky(t *testing.T) {
 	forged := httptest.NewRequest(http.MethodGet, "/pricing", nil)
 	forged.AddCookie(&http.Cookie{Name: EdgeVisitorCookie, Value: "not-a-uuid"})
 	w = httptest.NewRecorder()
-	edgeHandler(true).applyEdgeFlags(w, forged, edgeApp)
+	_, _ = edgeHandler(true).applyEdgeFlags(w, forged, edgeApp)
 	if c := w.Result().Cookies(); len(c) != 1 || c[0].Value == "not-a-uuid" {
 		t.Fatalf("an invalid visitor cookie was kept: %v", c)
 	}
@@ -138,28 +149,30 @@ func TestEdgeFlagsLeaveOtherRequestsAlone(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			r := httptest.NewRequest(tc.method, tc.path, nil)
 			w := httptest.NewRecorder()
-			r = edgeHandler(tc.released).applyEdgeFlags(w, r, edgeApp)
+			r, _ = edgeHandler(tc.released).applyEdgeFlags(w, r, edgeApp)
 			if r.URL.Path != tc.path || len(edgeFlagEvidence(r.Context())) != 0 || len(w.Result().Cookies()) != 0 {
 				t.Fatalf("routed to %s, evidence %v, cookies %v", r.URL.Path, edgeFlagEvidence(r.Context()), w.Result().Cookies())
 			}
 		})
 	}
 	other := App{ID: "app-1", AccountID: "acct-2", Plan: api.PlanPro}
-	r := edgeHandler(true).applyEdgeFlags(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/pricing", nil), other)
+	r, _ := edgeHandler(true).applyEdgeFlags(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/pricing", nil), other)
 	if len(edgeFlagEvidence(r.Context())) != 0 {
 		t.Fatal("an account outside edge_flags was routed")
 	}
 }
 
-// A killed flag serves the unrouted page and records the kill.
+// A killed flag serves the unrouted page and records the kill, even when its
+// default variant has a rewrite of its own.
 func TestEdgeFlagsKilledServesFallback(t *testing.T) {
 	b := pricingBundle()
 	b.Flags[0].Killed = true
+	b.Flags[0].Edge.Routes[0].Variants["a"] = flags.EdgeAction{Rewrite: "/pricing-a"}
 	h := &Handler{backend: edgeFlagBackend{bundle: b}, edgeFlagsRelease: edgeFeatureSet("acct-1", platformflags.EdgeFlags)}
 	for i := 0; i < 8; i++ {
 		r := httptest.NewRequest(http.MethodGet, "/pricing", nil)
 		r = r.WithContext(withAuthenticated(r.Context(), Authenticated{PlatformTenantID: uuid.NewString()}))
-		r = h.applyEdgeFlags(httptest.NewRecorder(), r, edgeApp)
+		r, _ = h.applyEdgeFlags(httptest.NewRecorder(), r, edgeApp)
 		if ev := edgeFlagEvidence(r.Context()); r.URL.Path != "/pricing" || len(ev) != 1 || ev[0].Reason != flags.ReasonKilled {
 			t.Fatalf("killed flag routed to %s, evidence %+v", r.URL.Path, ev)
 		}
@@ -200,5 +213,100 @@ func TestEdgeFlagCacheCachesInvalidatesAndRetries(t *testing.T) {
 	var nilCache *EdgeFlagCache
 	if b := nilCache.Bundle(context.Background(), "app", ""); len(b.Flags) != 0 {
 		t.Fatal("a nil cache routed")
+	}
+}
+
+// bVisitor returns a visitor id the pricing flag buckets into variant b.
+func bVisitor(t *testing.T) string {
+	t.Helper()
+	for i := 0; i < 64; i++ {
+		id := uuid.NewString()
+		if wantPath(t, id, id) == "/pricing-b" {
+			return id
+		}
+	}
+	t.Fatal("no visitor in variant b")
+	return ""
+}
+
+// The visitor cookie never reaches the app or the response cache's
+// signed-in check, on routed and unrouted paths alike; other cookies stay.
+// A newly issued cookie is returned so a cached response leaves it out.
+func TestEdgeFlagsVisitorCookieIsThePlatforms(t *testing.T) {
+	for _, path := range []string{"/pricing", "/about"} {
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		r.Header.Set("Cookie", "theme=dark; "+EdgeVisitorCookie+"="+uuid.NewString()+"; lang=en")
+		r, set := edgeHandler(true).applyEdgeFlags(httptest.NewRecorder(), r, edgeApp)
+		if got := r.Header.Get("Cookie"); got != "theme=dark; lang=en" || set != "" {
+			t.Fatalf("%s: forwarded Cookie %q, issued %q", path, got, set)
+		}
+	}
+	r := httptest.NewRequest(http.MethodGet, "/pricing", nil)
+	r.Header.Set("Cookie", EdgeVisitorCookie+"="+uuid.NewString())
+	r, _ = edgeHandler(true).applyEdgeFlags(httptest.NewRecorder(), r, edgeApp)
+	if _, ok := r.Header["Cookie"]; ok {
+		t.Fatalf("a visitor-only request still carries Cookie %q", r.Header.Get("Cookie"))
+	}
+	w := httptest.NewRecorder()
+	_, set := edgeHandler(true).applyEdgeFlags(w, httptest.NewRequest(http.MethodGet, "/pricing", nil), edgeApp)
+	if set == "" || w.Header().Get("Set-Cookie") != set {
+		t.Fatalf("issued %q, response Set-Cookie %q", set, w.Header().Get("Set-Cookie"))
+	}
+}
+
+// Named environments and deployment previews read their own environment's
+// routes; a PR preview token is not an environment and is not routed.
+func TestEdgeFlagsEnvironment(t *testing.T) {
+	for name, tc := range map[string]struct {
+		app  App
+		want string
+		asks bool
+	}{
+		"production":        {edgeApp, "", true},
+		"named environment": {App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro, PinnedDeploymentID: "d", PinnedDeploymentScope: "staging"}, "staging", true},
+		"pr preview":        {App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro, Scope: "pr-42"}, "", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var seen []string
+			h := &Handler{backend: edgeFlagBackend{bundle: pricingBundle(), environments: &seen}, edgeFlagsRelease: edgeFeatureSet("acct-1", platformflags.EdgeFlags)}
+			_, _ = h.applyEdgeFlags(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/pricing", nil), tc.app)
+			if !tc.asks {
+				if len(seen) != 0 {
+					t.Fatalf("looked up environments %q; want none", seen)
+				}
+				return
+			}
+			if len(seen) != 1 || seen[0] != tc.want {
+				t.Fatalf("looked up environments %q; want [%q]", seen, tc.want)
+			}
+		})
+	}
+}
+
+// A rewrite to a path the declared-route gate refuses is not served: the
+// request keeps the client's path and records no exposure. The rewrite
+// never changes the URL of the request it was given.
+func TestEdgeFlagsRewriteKeepsGates(t *testing.T) {
+	visitor := bVisitor(t)
+	request := func() *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "/pricing", nil)
+		r.AddCookie(&http.Cookie{Name: EdgeVisitorCookie, Value: visitor})
+		return r
+	}
+	gated := edgeApp
+	gated.OnlyAllowDeclaredRoutes = true
+
+	h := edgeHandler(true)
+	h.declaredRoutes = declaredOnly{"/pricing": true}
+	r, _ := h.applyEdgeFlags(httptest.NewRecorder(), request(), gated)
+	if r.URL.Path != "/pricing" || len(edgeFlagEvidence(r.Context())) != 0 {
+		t.Fatalf("an undeclared target was served: %s, evidence %v", r.URL.Path, edgeFlagEvidence(r.Context()))
+	}
+
+	h.declaredRoutes = declaredOnly{"/pricing": true, "/pricing-b": true}
+	in := request()
+	r, _ = h.applyEdgeFlags(httptest.NewRecorder(), in, gated)
+	if r.URL.Path != "/pricing-b" || in.URL.Path != "/pricing" {
+		t.Fatalf("declared target: routed %s, original request now %s", r.URL.Path, in.URL.Path)
 	}
 }

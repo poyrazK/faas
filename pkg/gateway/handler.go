@@ -7231,7 +7231,7 @@ haveApp:
 	// ADR-20261124212701: edge flag routing, after every identity and access
 	// gate (a verified customer buckets as the SDK would) and before the
 	// response cache, whose key then carries the rewritten path.
-	r = h.applyEdgeFlags(w, r, app)
+	r, edgeVisitorSetCookie := h.applyEdgeFlags(w, r, app)
 	managedVersionSetCookie := ""
 	managedReleaseContextSetCookie := ""
 	if app.VersionAffinityManagedCookie && app.VersionAffinityCookie == "" {
@@ -7475,6 +7475,7 @@ haveApp:
 		cw := newCacheWriter(w, rec, rule, ResponseCachePerEntryMaxBytes, responseCacheFillFrom(r.Context(), h.responseCache))
 		cw.excludeManagedVersionCookie(managedVersionSetCookie)
 		cw.excludeManagedCookie(managedReleaseContextSetCookie)
+		cw.excludeManagedCookie(edgeVisitorSetCookie)
 		w = cw
 		if h.contentObserver != nil && contentObservable(r) {
 			// Compare the body this miss stores with the previous one for the

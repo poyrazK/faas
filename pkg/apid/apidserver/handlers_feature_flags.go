@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/flagedge"
 	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -197,23 +198,44 @@ func (s *server) updateFeatureFlags(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	if !s.edgeRoutesAllowed(r, acct, store, scope, req.Config) {
-		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Edge flags unavailable", "edge flag routing is not enabled for this account").
-			WithHint("An operator releases edge flag routing account by account (ADR-20261124212701). Your credentials are not the cause."))
+		writeEdgeFlagsUnavailable(w)
 		return
 	}
 	s.publishFeatureFlags(w, r, store, state.FeatureFlagUpdate{Scope: scope, ExpectedVersion: *req.ExpectedVersion, Config: req.Config, Actor: acct.ID})
 }
 
 // edgeRoutesAllowed refuses a publish that adds or changes edge routes while
-// the edge_flags platform flag is off for the account (ADR-20261124212701).
-// An edit that leaves existing routes as they are publishes, so turning the
-// flag off never blocks kills or rollouts.
+// the edge_flags platform flag is off (ADR-20261124212701). The flag is
+// decided for the project's owner, the subject the gateway routes for, not
+// the member who publishes. An edit that leaves existing routes as they are
+// publishes, so turning the flag off never blocks kills or rollouts.
 func (s *server) edgeRoutesAllowed(r *http.Request, acct state.Account, store state.FeatureFlagStore, scope state.FeatureFlagScope, next flags.Config) bool {
-	if !flags.HasEdge(next) || s.platformFlagFor(platformflags.EdgeFlags, flagSubject(r, acct)) {
-		return true
+	released := flags.HasEdge(next) && s.platformFlagFor(platformflags.EdgeFlags, s.edgeFlagsSubject(r, acct, scope))
+	return flagedge.PublishAllowed(released, next, func() (flags.Config, error) {
+		current, err := store.GetFeatureFlags(r.Context(), scope, 0)
+		return current.Config, err
+	})
+}
+
+// edgeFlagsSubject is the project owner's account and plan, as gatewayd
+// sees them on the app; the acting account when the owner cannot be read.
+func (s *server) edgeFlagsSubject(r *http.Request, acct state.Account, scope state.FeatureFlagScope) platformflags.Subject {
+	owner := acct
+	if !sameAccountID(acct.ID, scope.AccountID) {
+		if loaded, err := s.store.AccountByID(r.Context(), scope.AccountID); err == nil {
+			owner = loaded
+		}
 	}
-	current, err := store.GetFeatureFlags(r.Context(), scope, 0)
-	return err == nil && flags.SameEdge(current.Config, next)
+	return platformflags.Subject{AccountID: owner.ID, Plan: string(owner.Plan)}
+}
+
+func writeEdgeFlagsUnavailable(w http.ResponseWriter) {
+	api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Edge flags unavailable", "edge flag routing is not enabled for this account").
+		WithHint("An operator releases edge flag routing account by account (ADR-20261124212701). Your credentials are not the cause."))
+}
+
+func sameAccountID(a, b string) bool {
+	return strings.ReplaceAll(a, "-", "") == strings.ReplaceAll(b, "-", "")
 }
 
 func (s *server) rollbackFeatureFlags(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -228,6 +250,11 @@ func (s *server) rollbackFeatureFlags(w http.ResponseWriter, r *http.Request, ac
 	}
 	if req.ExpectedVersion == nil || req.Version < 1 {
 		api.WriteProblem(w, api.ErrValidation("expected_version and positive version are required"))
+		return
+	}
+	// Restoring a version republishes its edge routes: the same gate applies.
+	if restored, err := store.GetFeatureFlags(r.Context(), scope, req.Version); err == nil && !s.edgeRoutesAllowed(r, acct, store, scope, restored.Config) {
+		writeEdgeFlagsUnavailable(w)
 		return
 	}
 	s.publishFeatureFlags(w, r, store, state.FeatureFlagUpdate{Scope: scope, ExpectedVersion: *req.ExpectedVersion, RestoreVersion: req.Version, Actor: acct.ID})

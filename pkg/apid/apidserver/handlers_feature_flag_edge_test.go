@@ -52,6 +52,18 @@ func TestFeatureFlagEdgeRoutesFollowThePlatformFlag(t *testing.T) {
 		Variants: []flags.FlagVariant{{Key: "a", Weight: 5000}, {Key: "b", Weight: 5000}}}}}); code != http.StatusOK {
 		t.Fatalf("removing the routes after edge_flags is off = %d; want 200", code)
 	}
+	rollback := func(version int64) int {
+		t.Helper()
+		three := int64(3)
+		return e.Do(t, http.MethodPost, path+"/rollback", apidserver.RollbackFeatureFlagsRequest{ExpectedVersion: &three, Version: version}, nil).Code
+	}
+	if code := rollback(1); code != http.StatusForbidden {
+		t.Fatalf("a rollback that brings routes back after edge_flags is off = %d; want 403", code)
+	}
+	(*e.S()).EnablePlatformFlagForAll(platformflags.EdgeFlags)
+	if code := rollback(1); code != http.StatusOK {
+		t.Fatalf("the same rollback with edge_flags on = %d; want 200", code)
+	}
 }
 
 // SDKs never receive edge routes: the gateway applies them.

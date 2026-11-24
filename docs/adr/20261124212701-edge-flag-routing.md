@@ -59,10 +59,25 @@ The gateway evaluates it with the shared evaluator (`flags.EvaluateVariantWithCo
   match them.
 
 Country and browser family are the same gateway attributes the SDK receives;
-cohort conditions do not match at the edge. A killed flag serves the
-unrouted path. The rewritten path is what the response cache keys on and what
-the app sees, so variants never share a cache entry; the response is kept
+cohort conditions do not match at the edge. A killed, disabled or missing flag
+(the evaluator's fallback) serves the unrouted path, whatever its default
+variant's action. The rewritten path is what the response cache keys on and
+what the app sees, so variants never share a cache entry; the response is kept
 out of shared caches (Cloudflare) because it depends on who asked.
+
+- **Environment:** production and named environments read their own routes;
+  a deployment preview host reads its environment's. A PR preview token is
+  not an environment and is never routed.
+- **Gates:** the identity, access and challenge gates ran on the client's
+  path. A rewrite is served only when the target passes the same declared-route
+  policy and matches the same IP, geo, JWT, throttle, validation, limit,
+  budget, maintenance, respond, WAF and challenge rules; otherwise the request
+  is served unrouted and records no exposure.
+- **Cookie:** the visitor cookie belongs to the platform. It is removed from
+  the request the app sees (so it never makes a visitor look signed in to the
+  response cache) and a newly issued one is never stored in a cached response.
+- **Telemetry:** request logs and analytics record the path the app served
+  (the rewritten one), so a variant's page views are counted under its own path.
 
 ### 3. Evidence and experiments
 
@@ -75,9 +90,11 @@ are not counted.
 
 ### 4. Release
 
-The `edge_flags` platform flag (by plan) gates both sides: off, apid refuses a
-configuration with edge routes (403, existing routes keep publishing through
-other edits) and the gateway serves every request unchanged.
+The `edge_flags` platform flag (by plan) gates both sides, evaluated for the
+project's owner (apid) and the app's owner (gateway), so both read the same
+account and plan: off, apid refuses a configuration or rollback that adds or
+changes edge routes (403, existing routes keep publishing through other edits)
+and the gateway serves every request unchanged.
 
 ### 5. Later
 

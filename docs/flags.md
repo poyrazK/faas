@@ -505,11 +505,19 @@ target is an ordinary path of your app.
   Percentage and weighted rules split visitors; customer, group and cohort
   targeting never match them. Anonymous visitors are served but not counted
   in experiments.
+  The cookie is the platform's: your app never receives it.
 - A kill (`gregale flag kill set pricing`) serves the unrouted path on the
-  next request. `gregale flag edge delete pricing [--path /pricing]` removes
-  routes.
+  next request, even if the default variant has a rewrite.
+  `gregale flag edge delete pricing [--path /pricing]` removes routes.
+- Each environment routes with its own flags. PR preview links are never
+  routed.
+- A rewrite is served only when the target path passes the same gates as the
+  requested one (declared routes, IP, geo, JWT, rate limit, WAF and
+  challenge rules); otherwise the requested path is served and no exposure is
+  recorded.
 - Each variant is cached separately, and routed responses are kept out of
-  shared caches such as Cloudflare.
+  shared caches such as Cloudflare. Request logs and analytics show the path
+  served (`/pricing-b`), not the one requested.
 
 Limits: 16 routed flags per environment, 8 paths per flag, paths up to 256
 bytes without query, fragment or dot segments. Edge routing is released by
