@@ -30,8 +30,9 @@ import (
 // path of the service.
 //
 // app is the app as the staged archive sees it (a Compose build context is
-// staged as the archive root); workload.RootDir is repository-relative.
-func projectWorkloadReleaseCommand(staged string, workloads []reposcan.Workload, workload reposcan.Workload, app state.App, manifest *gregalemanifest.Manifest) (deploymentReleaseCommand, *api.Problem) {
+// staged as the archive root, and narrowed says so); workload.RootDir is
+// repository-relative.
+func projectWorkloadReleaseCommand(staged string, workloads []reposcan.Workload, workload reposcan.Workload, app state.App, narrowed bool, manifest *gregalemanifest.Manifest) (deploymentReleaseCommand, *api.Problem) {
 	assigned := deploymentReleaseCommand{command: append([]string(nil), workload.ReleaseCommand...), shell: workload.ReleaseCommandShell}
 	if len(workloads) == 1 {
 		resolved, problem := resolveSourceReleaseDeclaration(staged, app, manifest)
@@ -40,7 +41,7 @@ func projectWorkloadReleaseCommand(staged string, workloads []reposcan.Workload,
 		}
 		return resolved, nil
 	}
-	declared, origin, problem := serviceOwnReleaseDeclaration(staged, workload, app, manifest)
+	declared, origin, problem := serviceOwnReleaseDeclaration(staged, workload, narrowed, manifest)
 	if problem != nil || declared == "" {
 		return assigned, problem
 	}
@@ -61,7 +62,7 @@ func projectWorkloadReleaseCommand(staged string, workloads []reposcan.Workload,
 // serviceOwnReleaseDeclaration returns the release command a service declares
 // in its own directory and where it came from. The repository root Procfile
 // is reposcan's (it assigns that release: process to exactly one workload).
-func serviceOwnReleaseDeclaration(staged string, workload reposcan.Workload, app state.App, manifest *gregalemanifest.Manifest) (string, string, *api.Problem) {
+func serviceOwnReleaseDeclaration(staged string, workload reposcan.Workload, narrowed bool, manifest *gregalemanifest.Manifest) (string, string, *api.Problem) {
 	dir := cleanWorkloadDir(workload.RootDir)
 	if manifest != nil && manifest.Release != nil && manifest.Release.Command != "" {
 		return manifest.Release.Command, path.Join(dir, "gregale.yaml") + " release.command", nil
@@ -71,7 +72,12 @@ func serviceOwnReleaseDeclaration(staged string, workload reposcan.Workload, app
 	}
 	// Only the service's own directory counts: the reader falls back to the
 	// archive root, whose Procfile reposcan already assigned to one workload.
-	body, found, err := readServiceOwnProcfile(staged, dir)
+	// A Compose build context is staged as the archive root, so there the
+	// archive-root Procfile is the service's own; reading only dir/Procfile
+	// dropped it without a word (agent eval 2026-11-24: a Compose worker's
+	// worker/Procfile release: never ran). An empty app.RootDir alone does
+	// not say the archive was narrowed (nightly 11-07), so the caller does.
+	body, found, err := readServiceOwnProcfile(staged, dir, narrowed)
 	if err != nil {
 		return "", "", api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", err.Error())
 	}
@@ -100,8 +106,13 @@ func projectReleaseDeclarationProblem(detail string) *api.Problem {
 }
 
 // readServiceOwnProcfile reads dir/Procfile and ignores the archive-root
-// Procfile the source-root lookup falls back to.
-func readServiceOwnProcfile(staged, dir string) ([]byte, bool, error) {
+// Procfile the source-root lookup falls back to. In an archive narrowed to
+// the service's own directory, the archive-root Procfile is dir/Procfile.
+func readServiceOwnProcfile(staged, dir string, narrowed bool) ([]byte, bool, error) {
+	if narrowed {
+		body, _, found, err := readSourceRefArchiveFileBytes(staged, ".", []string{"Procfile"}, sourceRefManifestMaxBytes, "Procfile")
+		return body, found && err == nil, err
+	}
 	body, name, found, err := readSourceRefArchiveFileBytes(staged, dir, []string{"Procfile"}, sourceRefManifestMaxBytes, "Procfile")
 	if err != nil || !found {
 		return nil, false, err

@@ -1183,7 +1183,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// release: in its own directory) applies as on a single-app deploy
 		// unless another service builds from the same directory
 		// (ADR-20261019120007 amendment 1).
-		releaseCommand, releaseProblem := projectWorkloadReleaseCommand(staged, workloads, workload, sourceApp, manifest)
+		releaseCommand, releaseProblem := projectWorkloadReleaseCommand(staged, workloads, workload, sourceApp, composeContext, manifest)
 		if releaseProblem != nil {
 			_ = os.Remove(staged)
 			res.Error = "release declaration invalid (server logs carry the detail)"

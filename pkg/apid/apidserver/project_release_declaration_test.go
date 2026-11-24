@@ -87,3 +87,30 @@ func TestProjectWorkloadReleaseCommandReadsServiceDirNotAppRoot(t *testing.T) {
 		t.Fatalf("release = %v, %v; want none (the worker declares nothing in worker/)", command, problem)
 	}
 }
+
+// A Compose service with its own build context is staged as the archive root,
+// so its own Procfile sits at that root. Its release: process used to be
+// dropped as if it were the repository root's (agent eval 2026-11-24: a
+// Compose worker's worker/Procfile migration never ran, so its table was
+// never created). An archive that is not narrowed still leaves the root
+// Procfile to reposcan.
+func TestProjectWorkloadReleaseCommandReadsNarrowedComposeContext(t *testing.T) {
+	vote := reposcan.Workload{Name: "vote", RootDir: "vote"}
+	worker := reposcan.Workload{Name: "worker", RootDir: "worker"}
+	archive := sourceArchive(t, map[string]string{"Procfile": "release: dotnet Worker.dll migrate\n", "Program.cs": "x"})
+	for _, tc := range []struct {
+		name     string
+		narrowed bool
+		want     []string
+	}{
+		{name: "narrowed to the service's build context", narrowed: true, want: []string{"dotnet Worker.dll migrate"}},
+		{name: "whole repository", narrowed: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			command, _, problem := apidserver.ProjectWorkloadReleaseCommandStaged(archive, []reposcan.Workload{vote, worker}, worker, state.App{}, tc.narrowed, nil)
+			if problem != nil || !slices.Equal(command, tc.want) {
+				t.Fatalf("release = %v, %v; want %v", command, problem, tc.want)
+			}
+		})
+	}
+}

@@ -6088,9 +6088,9 @@
     },
     {
       "id": "tcp-listeners",
-      "name": "TCP listeners",
+      "name": "Public TCP listeners",
       "category": "edge",
-      "description": "Serve raw TCP on a dedicated listener.",
+      "description": "Serve raw TCP to the internet on a dedicated public port at the edge. Private TCP between your own apps (managed Redis, <name>.svc.gregale) does not need it.",
       "maturity": "preview",
       "plans": [
         "free",
