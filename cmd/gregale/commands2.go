@@ -8250,6 +8250,7 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 		warnWaitStopped("stream unreachable; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
 		return 3
 	}
+	body = newIdleWatchdogReader(body, deployStreamIdleTimeout)
 	defer func() { _ = body.Close() }()
 	dec := api.NewDecoder(body)
 	dec.SetCloseFn(body.Close)

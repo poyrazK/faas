@@ -3161,3 +3161,16 @@ var InitDeployArgs = initDeployArgs
 
 // TemplatesPublicOnPurpose lists the templates that deploy public.
 var TemplatesPublicOnPurpose = templatesPublicOnPurpose
+
+// StreamDeployLogsWait follows a deployment's log stream with --wait semantics.
+func StreamDeployLogsWait(ctx context.Context, c *Client, dep api.DeploymentResponse, slug string, wait time.Duration) int {
+	return streamDeployLogsContextWithOptions(ctx, c, dep, slug, streamDeployOptions{waitTimeout: wait})
+}
+
+// SetDeployStreamIdleTimeout shrinks the deploy log stream's idle watchdog
+// and returns a func that restores it.
+func SetDeployStreamIdleTimeout(d time.Duration) (restore func()) {
+	old := deployStreamIdleTimeout
+	deployStreamIdleTimeout = d
+	return func() { deployStreamIdleTimeout = old }
+}
