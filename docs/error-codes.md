@@ -226,6 +226,8 @@ HTTP 400 Bad Request · Invalid app_protocol; Invalid app protocol
 
 HTTP 409 Conflict · Slug taken
 
+See [Apps](apps.md).
+
 ### `app_runtime_oom`
 
 HTTP 422 Unprocessable Entity or 503 Service Unavailable · Container out of memory; App is out of memory; App ran out of memory during startup
