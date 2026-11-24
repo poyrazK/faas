@@ -4437,6 +4437,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 					return guardUnlinkedExistingApp(ctx, client, alt, contextDir, *yes) == 0
 				}
 			}
+			if *environment == "" {
+				if accessErr := checkManifestAccessFlags(ctx, client, slug, sourceDir, *requireAuthn, *noRequireAuthn); accessErr != nil {
+					return printErr("Manifest access conflicts with a flag", accessErr)
+				}
+			}
 			requestedSlug := slug
 			var nameUnavailable bool
 			slug, nameUnavailable, err = createOrFetchAppWithAlternatives(ctx, client, createReq, existingReq, sourceDir, confirmExisting, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
@@ -4636,11 +4641,6 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if err := deployManifestProtection(ctx, client, slug, sourceDir); err != nil {
 		return printErr("Manifest protection failed", err)
-	}
-	if *environment == "" {
-		if err := deployManifestAccess(ctx, client, slug, sourceDir, *requireAuthn, *noRequireAuthn); err != nil {
-			return printErr("Manifest access failed", err)
-		}
 	}
 
 	recordQueued := func(dep api.DeploymentResponse) int {

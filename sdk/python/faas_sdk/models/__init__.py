@@ -2879,9 +2879,6 @@ from .update_app_request_cpu_millicores_type_3_type_1 import UpdateAppRequestCpu
 from .update_app_request_crawler_policy_type_1 import UpdateAppRequestCrawlerPolicyType1
 from .update_app_request_crawler_policy_type_2_type_1 import UpdateAppRequestCrawlerPolicyType2Type1
 from .update_app_request_crawler_policy_type_3_type_1 import UpdateAppRequestCrawlerPolicyType3Type1
-from .update_app_request_declared_access_type_1 import UpdateAppRequestDeclaredAccessType1
-from .update_app_request_declared_access_type_2_type_1 import UpdateAppRequestDeclaredAccessType2Type1
-from .update_app_request_declared_access_type_3_type_1 import UpdateAppRequestDeclaredAccessType3Type1
 from .update_app_request_eviction_priority_type_1 import UpdateAppRequestEvictionPriorityType1
 from .update_app_request_eviction_priority_type_2_type_1 import UpdateAppRequestEvictionPriorityType2Type1
 from .update_app_request_eviction_priority_type_3_type_1 import UpdateAppRequestEvictionPriorityType3Type1
@@ -5912,9 +5909,6 @@ __all__ = (
     "UpdateAppRequestCrawlerPolicyType1",
     "UpdateAppRequestCrawlerPolicyType2Type1",
     "UpdateAppRequestCrawlerPolicyType3Type1",
-    "UpdateAppRequestDeclaredAccessType1",
-    "UpdateAppRequestDeclaredAccessType2Type1",
-    "UpdateAppRequestDeclaredAccessType3Type1",
     "UpdateAppRequestEvictionPriorityType1",
     "UpdateAppRequestEvictionPriorityType2Type1",
     "UpdateAppRequestEvictionPriorityType3Type1",

@@ -1710,10 +1710,6 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		s.updateEnvironmentAppSettings(w, r, acct, app, environment, params)
 		return
 	}
-	if problem := applyDeclaredAccess(acct, app, req, &params); problem != nil {
-		api.WriteProblem(w, problem)
-		return
-	}
 	configActivityAtomic := false
 	params.TouchDeploymentPolicies = req.Profiling != nil || req.Tracing != nil
 	params = guardedDeploySettingsParams(req, acct, params)

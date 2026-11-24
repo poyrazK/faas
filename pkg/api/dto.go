@@ -1283,15 +1283,6 @@ type UpdateAppRequest struct {
 	// here: a valid token from a different account receives 403
 	// at the gateway, not at the PATCH endpoint.
 	RequireAuthn *bool `json:"require_authn,omitempty"`
-	// DeclaredAccess is the app source's `access:` key in gregale.yaml
-	// (ADR-20261124090000 amendment 1): "public", "key", or "" when the
-	// source declares none. A deploy sends it; apid sets require_authn and
-	// the public auth mode to match and records the declaration, and ""
-	// returns a previously declared app to the plan default. An explicit
-	// require_authn or public_auth in the same request wins for that
-	// field. Nil leaves access alone. Ignored on project apps, whose
-	// project source manages access.
-	DeclaredAccess *string `json:"declared_access,omitempty"`
 	// ConsumerAuthMode (ADR-120) controls end-customer API-key
 	// authentication. "optional" accepts anonymous requests and stamps a
 	// consumer when a valid key is present; "required" rejects anonymous

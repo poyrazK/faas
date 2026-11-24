@@ -59,7 +59,7 @@ type Plan struct {
 }
 
 // AccessHintUndeclared is the plan's hint for a source without an access key.
-const AccessHintUndeclared = "The URL keeps the plan's default access: on Hobby and above callers need a Gregale API key. For a site people open in a browser, add `access: public` to gregale.yaml; every deploy keeps it public."
+const AccessHintUndeclared = "gregale.yaml declares no access, so the URL keeps its current setting; a new app on Hobby and above needs a Gregale API key. For a site people open in a browser, add `access: public` to gregale.yaml; every deploy keeps it public (Free has no key gate)."
 
 // CreateRequest compiles the resolved intent into Gregale's existing app
 // creation DTO. The plan-default profile is intentionally omitted so the API

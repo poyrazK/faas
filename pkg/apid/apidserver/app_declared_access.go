@@ -3,80 +3,86 @@ package apidserver
 import (
 	"context"
 	"fmt"
-	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/reconcile"
-	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// applyDeclaredAccess folds a single app's declared access, the `access:`
-// key of its gregale.yaml that a deploy sends as declared_access
-// (ADR-20261124090000 amendment 1), into an app update. The source is the
-// truth: "public" opens the URL, "key" needs a Gregale API key where the
-// plan has that gate, and "" returns an app that used to declare access to
-// the plan default. It writes the store fields directly, below the
-// require_authn plan gate, as a project deploy does. An explicit
-// require_authn or public_auth in the same request wins for its field.
-// Project apps are left alone: their project source manages access.
-func applyDeclaredAccess(acct state.Account, app state.App, req api.UpdateAppRequest, params *state.UpdateAppParams) *api.Problem {
-	if req.DeclaredAccess == nil || app.ProjectID != "" {
+// sourceAccessRestore is an app's access before a source deploy applied its
+// gregale.yaml access key, so a rolled-back deploy can put it back.
+type sourceAccessRestore struct {
+	requireAuthn   bool
+	publicAuthMode string
+	declared       string
+}
+
+// applyManifestAccess applies a single app's gregale.yaml access key on a
+// production source deploy (ADR-20261124090000 amendment 1): "public" opens
+// the URL, "key" needs a Gregale API key where the plan has that gate, and ""
+// returns an app that used to declare access to the plan default. It writes
+// below the manual require_authn plan gate, as a project deploy does. The
+// app is reloaded first: earlier manifest staging may have rewritten its
+// manifest. Project apps are left alone; their project source manages access.
+// It returns what to restore if the deploy is rolled back, or nil when
+// nothing changed.
+func (s *server) applyManifestAccess(ctx context.Context, acct state.Account, appID, access string) (*sourceAccessRestore, *api.Problem) {
+	app, err := s.store.AppByID(ctx, appID)
+	if err != nil {
+		return nil, api.ErrCapacity("could not read the app to apply the manifest's access key")
+	}
+	if app.ProjectID != "" {
+		return nil, nil
+	}
+	change := reconcile.DeclaredAccessChange(access, app.Manifest.DeclaredAccess, acct.Plan, app.RequireAuthn, app.PublicAuthMode)
+	if !change.Changed() {
+		return nil, nil
+	}
+	restore := &sourceAccessRestore{requireAuthn: app.RequireAuthn, publicAuthMode: app.PublicAuthMode, declared: app.Manifest.DeclaredAccess}
+	if err := s.writeAppAccess(ctx, app, change.RequireAuthn, change.PublicAuthMode, change.Declared); err != nil {
+		return nil, api.ErrCapacity("could not apply the manifest's access key")
+	}
+	s.audit.Emit(ctx, "app.access_changed", &acct.ID, map[string]any{
+		"app_id": app.ID, "slug": app.Slug, "source": "manifest", "declared": access,
+		"old_require_authn": app.RequireAuthn, "new_require_authn": change.RequireAuthn,
+		"old_public_auth_mode": app.PublicAuthMode, "new_public_auth_mode": change.PublicAuthMode,
+	})
+	return restore, nil
+}
+
+// restoreManifestAccess undoes applyManifestAccess for a rolled-back deploy.
+func (s *server) restoreManifestAccess(ctx context.Context, appID string, restore *sourceAccessRestore) error {
+	if restore == nil {
 		return nil
 	}
-	declared, err := reposcan.NormalizeServiceAccess(*req.DeclaredAccess)
+	app, err := s.store.AppByID(ctx, appID)
 	if err != nil {
-		return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid declared_access", "declared_access "+err.Error())
+		return fmt.Errorf("restore app access: %w", err)
 	}
-	previous := app.Manifest.DeclaredAccess
-	requireAuthn, mode := app.RequireAuthn, app.PublicAuthMode
-	switch {
-	case declared != "":
-		requireAuthn, mode = reconcile.ServiceAccessAuth(declared, acct.Plan, requireAuthn, mode)
-	case previous != "":
-		requireAuthn, mode = reconcile.ServiceAccessRemovedAuth(acct.Plan, mode)
-	}
-	if requireAuthn != app.RequireAuthn && req.RequireAuthn == nil {
-		params.RequireAuthn, params.SetRequireAuthn = &requireAuthn, true
-	}
-	if mode != app.PublicAuthMode && req.PublicAuth == nil {
-		params.PublicAuth, params.SetPublicAuth = &state.AppPublicAuthUpdate{Mode: mode}, true
-	}
-	if declared != previous {
-		if params.Manifest == nil {
-			manifest := app.Manifest
-			params.Manifest = &manifest
-		}
-		params.Manifest.DeclaredAccess = declared
+	if err := s.writeAppAccess(ctx, app, restore.requireAuthn, restore.publicAuthMode, restore.declared); err != nil {
+		return fmt.Errorf("restore app access: %w", err)
 	}
 	return nil
 }
 
-// applyManifestAccess applies a source deploy's access key to its app, as
-// the CLI's declared_access does for an uploaded source. Only a production
-// deploy applies it: access is app-wide.
-func (s *server) applyManifestAccess(ctx context.Context, acct state.Account, app state.App, access, deploymentScope string) *api.Problem {
-	if deploymentScope != "" && deploymentScope != api.DefaultEnvScope {
-		return nil
+func (s *server) writeAppAccess(ctx context.Context, app state.App, requireAuthn bool, mode, declared string) error {
+	params := state.UpdateAppParams{}
+	if requireAuthn != app.RequireAuthn {
+		params.RequireAuthn, params.SetRequireAuthn = &requireAuthn, true
 	}
-	var params state.UpdateAppParams
-	if problem := applyDeclaredAccess(acct, app, api.UpdateAppRequest{DeclaredAccess: &access}, &params); problem != nil {
-		return problem
+	if mode != app.PublicAuthMode {
+		params.PublicAuth, params.SetPublicAuth = &state.AppPublicAuthUpdate{Mode: mode}, true
 	}
-	if !params.SetRequireAuthn && !params.SetPublicAuth && params.Manifest == nil {
-		return nil
+	if declared != app.Manifest.DeclaredAccess {
+		manifest := app.Manifest
+		manifest.DeclaredAccess = declared
+		params.Manifest = &manifest
 	}
-	updated, err := s.store.UpdateApp(ctx, app.ID, params)
-	if err != nil {
-		return api.ErrCapacity("could not apply the manifest's access key")
+	if _, err := s.store.UpdateApp(ctx, app.ID, params); err != nil {
+		return err
 	}
 	_ = s.notif.Notify(ctx, db.NotifyAppChanged,
 		fmt.Sprintf(`{"kind":"updated","slug":"%s","app_id":"%s","lifecycle_changed":false}`, app.Slug, app.ID))
-	s.audit.Emit(ctx, "app.access_changed", &acct.ID, map[string]any{
-		"app_id": app.ID, "slug": app.Slug, "source": "manifest", "declared": access,
-		"old_require_authn": app.RequireAuthn, "new_require_authn": updated.RequireAuthn,
-		"old_public_auth_mode": app.PublicAuthMode, "new_public_auth_mode": updated.PublicAuthMode,
-	})
 	return nil
 }

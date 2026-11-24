@@ -54,33 +54,37 @@ repository: a redeploy of a fresh project closes it again.
 - apid writes `require_authn` and `public_auth` after the reconcile. apid
   already owns these customer-intent columns.
 
+
 ## Amendment 1 (2026-11-24): single apps and MCP deploys
 
-Agents that deploy through the Gregale MCP server could not open a URL at
-all. The MCP deploy tools deploy one app (`gregale deploy --app`), not a
-project, so the project `access` key never applied. No MCP tool sets
+Agents deploying through the Gregale MCP server could not open a URL at all.
+The MCP deploy tools deploy one app (`gregale deploy --app`), not a project,
+so the project `access` key never applied. No MCP tool sets
 `require_authn`, so every MCP-deployed app on Hobby and above answered 401
 until a person ran `gregale app update --no-require-authn`.
 
 1. A single app's `gregale.yaml` (and `gregale.toml`) takes a top-level
    `access: public | key`, with the same meaning as a project service's.
-2. A production CLI deploy sends it to apid as `declared_access` on
-   `PATCH /v1/apps/{slug}`. apid applies it below the manual
-   `require_authn` plan gate, as a project deploy does, and records it in
-   `AppManifest.declared_access`, now also returned as
-   `AppResponse.declared_access`. A deploy whose source declares nothing
-   sends `""` only when the app used to declare access, which returns it
-   to the plan default. Apps that never use the key, and servers without
-   the field, see no extra write.
-3. A git-source deploy applies the same key in apid
-   (`applySourceRefManifest`). Named environments, and apps in a project,
-   are left alone: access is app-wide, and the project source manages its
-   own services.
-4. An explicit `--require-authn` or `--no-require-authn` that contradicts
-   the file fails the deploy. Change one of them.
-5. `gregale deploy --plan`, which is the plan an MCP agent reviews, shows
-   the declared access. When the source declares none, it shows a hint
-   that names `access: public`.
+2. apid applies it when it stages a source deploy's manifest. That covers
+   uploads from the CLI and MCP, and git-source deploys. It applies only to
+   a production deploy that takes traffic: never a dark or `--no-traffic`
+   rollout, never a named environment. It writes below the manual
+   `require_authn` plan gate, as a project deploy does, after reloading the
+   app. The declaration is recorded in `AppManifest.declared_access`,
+   which `AppResponse.declared_access` returns. A source that declares
+   nothing, or has no gregale.yaml at all, returns an app that used to
+   declare access to the plan default. An app that never declared access
+   keeps its hand-set value.
+3. A deploy rolled back after staging restores the app's previous access.
+   Each change emits `app.access_changed` with source `manifest`. Project
+   apps are left alone; their project source manages access.
+4. The CLI refuses, before it creates or changes the app, a
+   `--require-authn`/`--no-require-authn` flag that the file would undo. That
+   includes `--no-require-authn` on an app whose source dropped a
+   declaration it used to have.
+5. `gregale deploy --plan`, which is the plan an MCP agent reviews, shows the
+   declared access. When the source declares none, it shows a hint that
+   names `access: public`.
 
-MCP deploys run the CLI on the uploaded source, so they need no new tool
-argument.
+There is no new MCP tool argument and no new PATCH field: the source is the
+only way to declare access.

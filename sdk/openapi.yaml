@@ -36487,10 +36487,6 @@ components:
           description: "Per-deployment token-gate flag. Omitted → no change. PATCH-true on Free/Hobby is rejected with 403 plan_require_authn_not_allowed."
           type: [boolean, "null"]
           example: false
-        declared_access:
-          description: "The `access:` key of the app's gregale.yaml, sent by a production deploy: `public` opens the URL, `key` needs a Gregale API key where the plan has that gate, and an empty string returns an app that used to declare access to the plan default. Records the declaration. An explicit require_authn or public_auth in the same request wins for that field. Omitted → no change. Ignored on project apps."
-          type: [string, "null"]
-          enum: [public, key, "", null]
         # ADR-120: end-customer API-key policy. Optional preserves anonymous
         # compatibility while attributing valid keys; required rejects
         # requests without a valid consumer credential.

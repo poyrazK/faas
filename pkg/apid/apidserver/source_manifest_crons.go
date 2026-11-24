@@ -46,6 +46,24 @@ func (s *server) stageSourceDeploymentManifest(r *http.Request, acct state.Accou
 	}
 	staged, problem := s.applySourceRefManifest(ctx, acct, app, m, rollout.Scope, applyTriggers)
 	staged.cronIntent = intent
+	// A single app's access key (ADR-20261124090000 amendment 1) is
+	// app-wide, so only a production deploy that takes traffic applies it.
+	// A source without gregale.yaml declares nothing, which re-locks an app
+	// that used to declare access.
+	if problem == nil && !dark && state.IsProductionScope(rollout.Scope) {
+		access := ""
+		if m != nil {
+			access = m.Access
+		}
+		restore, accessProblem := s.applyManifestAccess(ctx, acct, app.ID, access)
+		if accessProblem != nil {
+			if err := s.rollbackSourceRefManifest(context.WithoutCancel(ctx), staged); err != nil && s.log != nil {
+				s.log.ErrorContext(ctx, "roll back manifest after access failure", "app_id", app.ID, "err", err)
+			}
+			return sourceRefManifestStaged{}, accessProblem
+		}
+		staged.accessRestore = restore
+	}
 	if problem == nil {
 		commitBudget()
 	}
