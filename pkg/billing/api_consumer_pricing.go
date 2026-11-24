@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -17,11 +18,13 @@ var ErrMixedAPIConsumerRateCardCurrency = errors.New("billing: API consumer rate
 // would fall back to an app rate card with a monthly allowance (ADR-950), a
 // graduated ladder (ADR-951), route weights (ADR-952), or that belong to a
 // consumer plan (ADR-953).
-var ErrAPIConsumerAllowanceInTenantStatement = errors.New("billing: app rate cards with included units, tiers, route weights, or consumer plans cannot price platform tenant statements")
+var ErrAPIConsumerAllowanceInTenantStatement = errors.New("billing: app rate cards with included units, tiers, route weights, model prices, or consumer plans cannot price platform tenant statements")
 
 // APIConsumerUsageChargeBucket is the priced form of one durable usage
 // minute. RateCardID is empty when no card was effective for that minute.
 type APIConsumerUsageChargeBucket struct {
+	WaivedUnits              int64
+	Model                    string
 	WindowStart              time.Time
 	BillableUnits            int64
 	RateCardID               string
@@ -217,7 +220,7 @@ func tenantCardUnit(card state.PlatformTenantRateCard) string {
 // statement mixes sources and prices only usage deltas.
 func requireFlatAppCards(cards []state.APIConsumerRateCard) error {
 	for _, card := range cards {
-		if card.IncludedUnitsPerMonth > 0 || len(card.Tiers) > 0 || len(card.RouteWeights) > 0 || card.PlanID != "" {
+		if card.IncludedUnitsPerMonth > 0 || len(card.Tiers) > 0 || len(card.RouteWeights) > 0 || len(card.ModelPrices) > 0 || card.PlanID != "" {
 			return ErrAPIConsumerAllowanceInTenantStatement
 		}
 	}
@@ -234,6 +237,8 @@ type APIConsumerUsageQuote struct {
 	AmountMillicents int64
 	Priced           bool
 	Buckets          []APIConsumerUsageChargeBucket
+	RouteBreakdown   []api.APIConsumerQuoteBreakdown
+	MeterBreakdown   []api.APIConsumerQuoteBreakdown
 }
 
 // QuoteOptions adjust how a quote prices usage. VolumeSteps maps a volume
@@ -243,6 +248,7 @@ type APIConsumerUsageQuote struct {
 // TrialStart and TrialEnd bound a consumer's trial (ADR-1314): its minutes
 // are priced at zero and consume no included units, steps or volume.
 type QuoteOptions struct {
+	ModelWaivers         []state.APIConsumerUsageWaiver
 	VolumeSteps          map[string]int
 	TrialStart, TrialEnd time.Time
 	// EndedAt is when the consumer was revoked; prorating cards stop
@@ -319,7 +325,7 @@ func QuoteAPIConsumerUsageWith(cards []state.APIConsumerRateCard, usage []state.
 		for cardIndex+1 < len(ordered) && !ordered[cardIndex+1].EffectiveFrom.After(minute) {
 			cardIndex++
 		}
-		priced := APIConsumerUsageChargeBucket{WindowStart: minute, BillableUnits: bucket.BillableUnits}
+		priced := APIConsumerUsageChargeBucket{WindowStart: minute, BillableUnits: bucket.BillableUnits, Model: bucket.Model}
 		trial := opts.inTrial(minute)
 		switch {
 		case cardIndex >= 0 && trial:
@@ -388,11 +394,15 @@ func priceMinute(card state.APIConsumerRateCard, bucket APIConsumerUsageChargeBu
 	}
 	if len(card.Tiers) == 0 {
 		charged := bucket.BillableUnits - includedUnits(card.IncludedUnitsPerMonth, usedBefore, bucket.BillableUnits)
-		amount, err := multiplyMillicents(charged, card.PriceMillicentsPerUnit)
+		price := card.PriceMillicentsPerUnit
+		if override, ok := card.ModelPrices[bucket.Model]; ok {
+			price = override
+		}
+		amount, err := multiplyMillicents(charged, price)
 		if err != nil {
 			return bucket, err
 		}
-		bucket.PriceMillicentsPerUnit, bucket.ChargedUnits, bucket.AmountMillicents = card.PriceMillicentsPerUnit, charged, amount
+		bucket.PriceMillicentsPerUnit, bucket.ChargedUnits, bucket.AmountMillicents = price, charged, amount
 		return bucket, nil
 	}
 	bucket.TierUnits = make([]int64, len(card.Tiers))
@@ -479,10 +489,10 @@ func (q *APIConsumerUsageQuote) add(bucket APIConsumerUsageChargeBucket) error {
 	}
 	q.BillableUnits += bucket.BillableUnits
 	if bucket.RateCardID == "" {
-		if q.UnpricedUnits > maxInt64-bucket.BillableUnits {
+		if q.UnpricedUnits > maxInt64-(bucket.BillableUnits-bucket.WaivedUnits) {
 			return fmt.Errorf("billing: API consumer unpriced usage total overflow")
 		}
-		q.UnpricedUnits += bucket.BillableUnits
+		q.UnpricedUnits += bucket.BillableUnits - bucket.WaivedUnits
 	} else {
 		// A re-rated tiered adjustment bucket may be negative (ADR-951).
 		if (bucket.AmountMillicents > 0 && q.AmountMillicents > maxInt64-bucket.AmountMillicents) ||

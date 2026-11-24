@@ -84,6 +84,10 @@ func (s *server) createPlatformTenantStatement(w http.ResponseWriter, r *http.Re
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	if req.Waiver != nil {
+		api.WriteProblem(w, api.ErrValidation("usage waivers apply to app consumer statements"))
+		return
+	}
 	if req.PeriodStart == nil || req.PeriodEnd == nil || !validateTenantStatementPeriod(*req.PeriodStart, *req.PeriodEnd) {
 		tenantStatementPeriodProblem(w)
 		return

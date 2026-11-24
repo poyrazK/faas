@@ -68,6 +68,11 @@ def _parse_response(
 
         return response_402
 
+    if response.status_code == 403:
+        response_403 = Problem.from_dict(response.json())
+
+        return response_403
+
     if response.status_code == 404:
         response_404 = Problem.from_dict(response.json())
 
@@ -77,6 +82,11 @@ def _parse_response(
         response_409 = Problem.from_dict(response.json())
 
         return response_409
+
+    if response.status_code == 422:
+        response_422 = Problem.from_dict(response.json())
+
+        return response_422
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -105,10 +115,11 @@ def sync_detailed(
 ) -> Response[APIConsumerUsageStatementResponse | Problem]:
     """Snapshot an API consumer usage quote or create a late-usage adjustment.
 
-     Creates an immutable, auditable statement revision for the explicit UTC-minute period. An unchanged
-    draft replays. If usage or effective prices changed, the open draft becomes superseded and a new
-    draft revision is created. After finalization, new units create the next revision containing only
-    those units; no new units replay the latest revision. Finalized revisions are never rewritten.
+     Creates an immutable statement revision for the explicit UTC-minute period. An unchanged draft
+    replays. Changes supersede an open draft and late usage after finalization creates an adjustment. An
+    administrator can submit a waiver for the exact unpriced model units on the latest held draft. The
+    waiver records zero-charge coverage for those units in a new revision. Repeating the approval
+    returns its revision. Additional unpriced units require a new approval.
 
     Args:
         slug (str):
@@ -149,10 +160,11 @@ def sync(
 ) -> APIConsumerUsageStatementResponse | Problem | None:
     """Snapshot an API consumer usage quote or create a late-usage adjustment.
 
-     Creates an immutable, auditable statement revision for the explicit UTC-minute period. An unchanged
-    draft replays. If usage or effective prices changed, the open draft becomes superseded and a new
-    draft revision is created. After finalization, new units create the next revision containing only
-    those units; no new units replay the latest revision. Finalized revisions are never rewritten.
+     Creates an immutable statement revision for the explicit UTC-minute period. An unchanged draft
+    replays. Changes supersede an open draft and late usage after finalization creates an adjustment. An
+    administrator can submit a waiver for the exact unpriced model units on the latest held draft. The
+    waiver records zero-charge coverage for those units in a new revision. Repeating the approval
+    returns its revision. Additional unpriced units require a new approval.
 
     Args:
         slug (str):
@@ -188,10 +200,11 @@ async def asyncio_detailed(
 ) -> Response[APIConsumerUsageStatementResponse | Problem]:
     """Snapshot an API consumer usage quote or create a late-usage adjustment.
 
-     Creates an immutable, auditable statement revision for the explicit UTC-minute period. An unchanged
-    draft replays. If usage or effective prices changed, the open draft becomes superseded and a new
-    draft revision is created. After finalization, new units create the next revision containing only
-    those units; no new units replay the latest revision. Finalized revisions are never rewritten.
+     Creates an immutable statement revision for the explicit UTC-minute period. An unchanged draft
+    replays. Changes supersede an open draft and late usage after finalization creates an adjustment. An
+    administrator can submit a waiver for the exact unpriced model units on the latest held draft. The
+    waiver records zero-charge coverage for those units in a new revision. Repeating the approval
+    returns its revision. Additional unpriced units require a new approval.
 
     Args:
         slug (str):
@@ -230,10 +243,11 @@ async def asyncio(
 ) -> APIConsumerUsageStatementResponse | Problem | None:
     """Snapshot an API consumer usage quote or create a late-usage adjustment.
 
-     Creates an immutable, auditable statement revision for the explicit UTC-minute period. An unchanged
-    draft replays. If usage or effective prices changed, the open draft becomes superseded and a new
-    draft revision is created. After finalization, new units create the next revision containing only
-    those units; no new units replay the latest revision. Finalized revisions are never rewritten.
+     Creates an immutable statement revision for the explicit UTC-minute period. An unchanged draft
+    replays. Changes supersede an open draft and late usage after finalization creates an adjustment. An
+    administrator can submit a waiver for the exact unpriced model units on the latest held draft. The
+    waiver records zero-charge coverage for those units in a new revision. Repeating the approval
+    returns its revision. Additional unpriced units require a new approval.
 
     Args:
         slug (str):

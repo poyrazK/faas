@@ -28,6 +28,11 @@ func (m *MemStore) CreateAPIConsumerRateCardVersion(_ context.Context, in APICon
 		}
 	}
 	for _, card := range m.apiConsumerRateCards {
+		if card.AccountID == in.AccountID && card.AppID == in.AppID {
+			if err := CheckModelMeterOverlap(in.Unit, in.ModelPrices, card.Unit, card.ModelPrices); err != nil {
+				return APIConsumerRateCard{}, err
+			}
+		}
 		if card.AppID == in.AppID && card.PlanID == in.PlanID && card.Unit == in.Unit && card.EffectiveFrom.Equal(in.EffectiveFrom) {
 			return APIConsumerRateCard{}, ErrConflict
 		}
@@ -46,6 +51,7 @@ func (m *MemStore) CreateAPIConsumerRateCardVersion(_ context.Context, in APICon
 		MinimumMillicentsPerMonth: in.MinimumMillicentsPerMonth,
 		ProrateMonthlyFees:        in.ProrateMonthlyFees,
 		RouteWeights:              in.RouteWeights,
+		ModelPrices:               in.ModelPrices,
 		PlanID:                    in.PlanID,
 		EffectiveFrom:             in.EffectiveFrom,
 		CreatedAt:                 time.Now().UTC(),
@@ -53,7 +59,8 @@ func (m *MemStore) CreateAPIConsumerRateCardVersion(_ context.Context, in APICon
 	m.apiConsumerRateCards[card.ID] = card
 	out := card
 	out.Tiers = cloneRateCardTiers(card.Tiers)
-	out.RouteWeights = cloneRouteWeights(card.RouteWeights)
+	out.RouteWeights = cloneRateCardValues(card.RouteWeights)
+	out.ModelPrices = cloneRateCardValues(card.ModelPrices)
 	return out, nil
 }
 
@@ -67,7 +74,8 @@ func (m *MemStore) ListAPIConsumerRateCardsForApp(_ context.Context, accountID, 
 	for _, card := range m.apiConsumerRateCards {
 		if card.AccountID == accountID && card.AppID == appID {
 			card.Tiers = cloneRateCardTiers(card.Tiers)
-			card.RouteWeights = cloneRouteWeights(card.RouteWeights)
+			card.RouteWeights = cloneRateCardValues(card.RouteWeights)
+			card.ModelPrices = cloneRateCardValues(card.ModelPrices)
 			out = append(out, card)
 		}
 	}
@@ -91,6 +99,7 @@ func (m *MemStore) GetAPIConsumerRateCardByID(_ context.Context, accountID, card
 		return APIConsumerRateCard{}, ErrNotFound
 	}
 	card.Tiers = cloneRateCardTiers(card.Tiers)
-	card.RouteWeights = cloneRouteWeights(card.RouteWeights)
+	card.RouteWeights = cloneRateCardValues(card.RouteWeights)
+	card.ModelPrices = cloneRateCardValues(card.ModelPrices)
 	return card, nil
 }

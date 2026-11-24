@@ -3888,10 +3888,12 @@ var cliCommands = []cliCommand{
 			{Name: "usage", Short: "Show a consumer's metered requests", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
 				{Name: "since", Short: "window start", Value: "RFC3339"},
 				{Name: "until", Short: "window end", Value: "RFC3339"},
+				{Name: "breakdown", Short: "show usage by route and meter"},
 			}},
 			{Name: "quote", Short: "Estimate a consumer's charges with current rate cards", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
 				{Name: "since", Short: "window start", Value: "RFC3339"},
 				{Name: "until", Short: "window end", Value: "RFC3339"},
+				{Name: "breakdown", Short: "show usage by route and meter"},
 			}},
 			{Name: "completeness", Short: "Check billed usage against request telemetry before invoicing", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
 				{Name: "month", Short: "calendar month", Value: "YYYY-MM"},
@@ -3906,6 +3908,7 @@ var cliCommands = []cliCommand{
 				{Name: "tier", Short: "graduated step; repeat in order, last UP_TO is inf (replaces price and included units)", Value: "UP_TO:PRICE", Repeatable: true},
 				{Name: "weight", Short: "count each request on a route as N units; unlisted routes count 1", Value: "METHOD /template=N", Repeatable: true},
 				{Name: "tool-weight", Short: "count each call of an MCP tool as N units", Value: "TOOL=N", Repeatable: true},
+				{Name: "model-price", Short: "override the unit price for a model on a flat app meter", Value: "MODEL=MILLICENTS", Repeatable: true},
 				{Name: "plan", Short: "add the price to a consumer plan instead of the app default", Value: "NAME"},
 				{Name: "effective-from", Short: "UTC minute the price starts (default next minute)", Value: "RFC3339"},
 				{Name: "unit", Short: "what the price is per: request, compute_second or response_megabyte (rounded per consumer minute), or app:<meter> for units the app reports in Gregale-Usage; cards of different units price side by side", Value: "UNIT"},
@@ -3919,6 +3922,7 @@ var cliCommands = []cliCommand{
 				{Name: "month", Short: "calendar month", Value: "YYYY-MM"},
 				{Name: "period-start", Short: "period start (UTC minute)", Value: "RFC3339"},
 				{Name: "period-end", Short: "exclusive period end (UTC minute)", Value: "RFC3339"},
+				{Name: "waiver-file", Short: "JSON approval for exact unpriced model units on a held draft", Value: "FILE"},
 			}},
 			{Name: "statement-show", Short: "Show one statement revision", Positionals: []string{"<slug>", "<consumer-id>", "<statement-id>"}},
 			{Name: "statement-finalize", Short: "Freeze a fully priced draft revision", Positionals: []string{"<slug>", "<consumer-id>", "<statement-id>"}},
