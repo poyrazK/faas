@@ -118,6 +118,18 @@ On the m7i-flex test host (nested KVM, Firecracker 1.10, 2 vCPU, 2048 MB, 1280x8
 
 Capture and restore are from runs with the work directory on the host's NVMe drive; on its EBS root disk they took 31 s and 6 s.
 
+The warm desktop snapshot (§3b), with the work directory on the EBS root disk (the NVMe drive was full) and a 4 GB test drive holding the 1.2 GB root:
+
+| What | Result |
+|---|---|
+| Prewarm in Docker (desktop up, Chromium opened and closed, all stopped) | 2.3 s; a start after it is ready in 0.5 s |
+| Warm capture: cold boot, prewarm, snapshot | 42–50 s, of which staging the writable drive copy 9.6 s and publishing the drive with the snapshot 19 s |
+| Warm restore to a ready desktop at a new resolution | 10.4–10.7 s, of which the host's restore 9.2 s and the guest's resume hook 0.1 s |
+| First Chromium window after the warm restore | 1.2–1.3 s |
+| VM resident memory after the warm restore | 412–421 MB |
+
+On this disk the warm restore is slower than the 5.1 s cold boot. The time is the host copying the drive the capture couples (a capture keeps the drive it was taken with, since the guest's page cache describes it), not the guest. The drive copy scales with the disk, as for the fork capture above. Before warm snapshots are turned on for desktops, the restore must be measured with the work directory on NVMe and a drive imaged sizes to the root (see Not yet).
+
 The image is 1.75 GB (1.2 GB unpacked root). In Docker on the same host the desktop is ready in 0.9–1.6 s.
 
 `gregale-desktop start` runs Xfce's parts (xfsettingsd, xfwm4, xfdesktop, xfce4-panel) at once under one D-Bus session instead of through `xfce4-session`. A boot breakdown in the metal test showed `xfce4-session` starting them one by one, with the panel appearing 5.5 s after Xvfb on a cold guest. It also started the session's autostart extras, which cost about 190 MB idle. With the direct start the guest is ready about 2 s after boot, and the rest of the cold boot is Firecracker bringing the VM up and reading the image drive. `wait` requires xfdesktop's and the panel's windows to be mapped, since with everything starting at once a window can exist before it is on screen. A desktop should still resume from a pause capture or warm snapshot where it can. 2048 MB stays the default: it leaves room for a second browser or a heavier page. The minimum is 1536 MB (2048 MB until these measurements): Chromium's 923 MB leaves about 600 MB of headroom, and since a session is billed on its RAM, a desktop at the minimum costs a quarter less.
@@ -151,6 +163,8 @@ The image is 1.75 GB (1.2 GB unpacked root). In Docker on the same host the desk
 - **GNOME or KDE.** Each idles at 600 MB or more and starts slower; Xfce does what an agent needs.
 
 ## Not yet
+
+- A warm desktop restore that does not copy the drive: boot the platform drive read-only with the session's writes in an overlay on a per-session layer, so a capture couples only that small layer. That changes the image session's drive layout and needs its own decision. Until warm restores beat the cold boot on the reference node, `FAAS_SCHEDD_SANDBOX_SNAPSHOTS` stays off where desktops run.
 
 - Audio, clipboard sync with the viewer, file drag and drop into the view.
 - Several displays per session, GPU rendering.
