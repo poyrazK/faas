@@ -100,6 +100,13 @@ func TestPg_InstanceBillingSecondsOverlap(t *testing.T) {
 		t.Fatal(err)
 	}
 	nodeID := resolveDefaultLocal(t, ctx, s)
+	// The seeded node's heartbeat is as old as the template database, so later
+	// in a shard it is past api.DeadNodeReconcilerStalenessSeconds and the
+	// dead-node clamp (#7777) bills nothing. This test is about window overlap
+	// on a live node.
+	if _, err := pool.Exec(ctx, `update compute_nodes set last_heartbeat_at = now() where id = $1`, nodeID); err != nil {
+		t.Fatal(err)
+	}
 	end := time.Now().UTC().Truncate(time.Second)
 	start := end.Add(-time.Minute)
 	resident := func(startedAt time.Time, endedAt *time.Time) string {

@@ -13,6 +13,13 @@ either:
       debian:${SUITE}`) ARE flagged — those are exactly the mutable
       tags the lock is meant to catch.
 
+  (c) A build-time digest pin: the image's digest slot is itself an
+      ARG (`FROM ${IMAGE}@${DIGEST}` or `FROM repo@sha256:${SHA256}`).
+      Operator-published bases (images/execution-environment-*.Dockerfile)
+      differ per deployment, so no repository lock can hold their
+      digest; the image reference grammar refuses an empty or non-digest
+      value after `@`, so such a build cannot run unpinned.
+
 Exits non-zero on any failure. Pure stdlib.
 
 Usage:
@@ -49,6 +56,11 @@ FROM_RE = re.compile(r"^FROM\s+(?P<rest>.*)$")
 # the first whitespace-separated token; the tag (and thus the
 # mutability) lives in that token, not later in the URL.
 ARG_PLACEHOLDER_RE = re.compile(r"\$\{?[A-Z_][A-Z0-9_]*\}?")
+# BUILD_TIME_DIGEST_RE matches an image reference whose digest is a build
+# argument, case (c) in the module docstring. The digest must be the whole
+# suffix after the single `@`: `${IMAGE}@${DIGEST}` or
+# `repo@sha256:${SHA256}`, never `${REF}` alone.
+BUILD_TIME_DIGEST_RE = re.compile(r"^[^\s@]+@(?:sha256:)?\$\{?[A-Z_][A-Z0-9_]*\}?$")
 
 
 def parse_dockerfile_lines(text: str) -> list[tuple[int, str]]:
@@ -87,6 +99,14 @@ def from_clause_has_arg_substitution(rest: str) -> bool:
     return bool(ARG_PLACEHOLDER_RE.search(ref))
 
 
+def from_clause_has_build_time_digest(rest: str) -> bool:
+    """True if the FROM <rest>'s image reference takes its digest from a
+    build argument (case (c)). Leading `--platform=...` flags are skipped
+    so the image token is the one checked."""
+    ref = next((tok for tok in rest.split() if not tok.startswith("--")), "")
+    return bool(BUILD_TIME_DIGEST_RE.match(ref))
+
+
 # Canonical empty image — not a mutable upstream; the FROM `scratch`
 # is exempt from the lock check.
 EXEMPT_FROM_REFS = frozenset({"scratch"})
@@ -121,6 +141,8 @@ def audit_repo(repo_root: Path) -> list[str]:
             # Strip the AS clause for the ref check.
             ref = rest.split()[0] if rest else ""
             if ref in EXEMPT_FROM_REFS:
+                continue
+            if from_clause_has_build_time_digest(rest):
                 continue
             if from_clause_is_digest_pinned(rest):
                 if any(p.strip() == full_line for p in pinned_lines):

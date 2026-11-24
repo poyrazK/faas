@@ -2757,6 +2757,7 @@ func (s *server) scanService(
 		capturedProb = prob
 		return resp, state.Project{}, nil, nil, nil, nil, prob
 	}
+	s.revokeUngrantedWorkloadCredentials(r.Context(), rec.Changed)
 
 	// Compute removed slugs. rec.Removed is a list of IDs; the
 	// handler needs slugs to soft-delete the corresponding crons

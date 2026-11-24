@@ -730,6 +730,8 @@ export type { ObjectUploadRoute } from './models/ObjectUploadRoute.js';
 export type { ObjectUploadRouteList } from './models/ObjectUploadRouteList.js';
 export type { ObjectVersionLegalHold } from './models/ObjectVersionLegalHold.js';
 export type { ObjectVersionRetention } from './models/ObjectVersionRetention.js';
+export type { ObjectWorkloadCredentialRequest } from './models/ObjectWorkloadCredentialRequest.js';
+export type { ObjectWorkloadCredentialResponse } from './models/ObjectWorkloadCredentialResponse.js';
 export type { ObjectWriteProtection } from './models/ObjectWriteProtection.js';
 export type { ObsAlertEpisode } from './models/ObsAlertEpisode.js';
 export type { ObsAlertSuppression } from './models/ObsAlertSuppression.js';

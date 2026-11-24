@@ -57,6 +57,11 @@ func TestWebFetch(t *testing.T) {
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = w.Write([]byte(strings.Repeat("a", api.AgentWebFetchMaxBytes+10)))
 	})
+	mux.HandleFunc("/big-utf8", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		// One ASCII byte first puts the size bound inside a two-byte rune.
+		_, _ = w.Write([]byte("a" + strings.Repeat("é", api.AgentWebFetchMaxBytes/2+10)))
+	})
 	mux.HandleFunc("/loop", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/loop", http.StatusFound) })
 	mux.HandleFunc("/to-port", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "http://example.test:8080/data", http.StatusFound)
@@ -83,6 +88,10 @@ func TestWebFetch(t *testing.T) {
 	if text, isErr := fetch(t, w, `{"url":"http://example.test/big"}`); isErr || !strings.Contains(text, "Truncated") ||
 		len(text) > api.AgentWebFetchMaxBytes+200 {
 		t.Errorf("a large body: error=%v len=%d", isErr, len(text))
+	}
+	if text, isErr := fetch(t, w, `{"url":"http://example.test/big-utf8"}`); isErr || !strings.Contains(text, "Truncated") ||
+		strings.Contains(text, "\ufffd") || !strings.HasSuffix(text, "é") || len(text) > api.AgentWebFetchMaxBytes+200 {
+		t.Errorf("a large body cut inside a rune: error=%v len=%d replacement=%v", isErr, len(text), strings.Contains(text, "\ufffd"))
 	}
 	for args, want := range map[string]string{
 		`{"url":"http://example.test/image"}`:     "not text",

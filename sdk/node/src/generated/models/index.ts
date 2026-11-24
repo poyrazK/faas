@@ -1799,6 +1799,8 @@ export type { ObjectVersionProtection } from './ObjectVersionProtection.js';
 export type { ObjectVersionRetention } from './ObjectVersionRetention.js';
 export type { ObjectVersionRetentionRequest } from './ObjectVersionRetentionRequest.js';
 export type { ObjectVersionRetentionResult } from './ObjectVersionRetentionResult.js';
+export type { ObjectWorkloadCredentialRequest } from './ObjectWorkloadCredentialRequest.js';
+export type { ObjectWorkloadCredentialResponse } from './ObjectWorkloadCredentialResponse.js';
 export type { ObjectWriteProtection } from './ObjectWriteProtection.js';
 export type { ObjectWriteReceipt } from './ObjectWriteReceipt.js';
 export type { ObjectWriteReceiptList } from './ObjectWriteReceiptList.js';

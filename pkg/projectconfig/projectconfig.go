@@ -1,8 +1,9 @@
 // Package projectconfig is the schema of a repository's project-wide service
 // settings: the `project:` block of the root gregale.yaml
 // (ADR-20261107180000), and the legacy `.gregale/project.yaml` file it
-// replaces (ADR-20261025093331). It has no dependencies beyond YAML so the
-// manifest parser and the repository scanner share one definition.
+// replaces (ADR-20261025093331). It has no dependencies beyond YAML and the
+// stdlib-only grant schema (pkg/capgrant) so the manifest parser and the
+// repository scanner share one definition.
 package projectconfig
 
 import (
@@ -13,6 +14,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/onebox-faas/faas/pkg/capgrant"
 )
 
 const (
@@ -51,6 +54,10 @@ type Service struct {
 	ServicePolicy string   `yaml:"service_policy,omitempty" json:"service_policy,omitempty"`
 	Visibility    string   `yaml:"visibility,omitempty" json:"visibility,omitempty"`
 	DependsOn     []string `yaml:"depends_on,omitempty" json:"depends_on,omitempty"`
+	// Uses are the actions the service may take on itself or a sibling app
+	// with its workload identity instead of an API key
+	// (ADR-20261122191423).
+	Uses *capgrant.Uses `yaml:"uses,omitempty" json:"uses,omitempty"`
 }
 
 // Validate checks values that do not depend on the scanned services. Service
@@ -72,6 +79,11 @@ func (c Config) Validate() error {
 		for _, dependency := range service.DependsOn {
 			if strings.TrimSpace(dependency) == "" {
 				return fmt.Errorf("service %q has an empty depends_on entry", name)
+			}
+		}
+		if service.Uses != nil {
+			if err := service.Uses.Normalized().Validate(); err != nil {
+				return fmt.Errorf("service %q: %w", name, err)
 			}
 		}
 	}

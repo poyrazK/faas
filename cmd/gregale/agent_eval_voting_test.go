@@ -2,8 +2,10 @@ package main_test
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -39,6 +41,79 @@ func TestWorkerLivenessParkSaysCrashLooped(t *testing.T) {
 		if len(recs) == 0 || !strings.Contains(recs[0].Message, "process kept exiting") {
 			t.Errorf("inspect %+v recommendations = %+v", app, recs)
 		}
+	}
+}
+
+type parkingHealthClient struct {
+	polls int
+}
+
+func (c *parkingHealthClient) GetAppHealth(context.Context, string) (api.AppHealthResponse, error) {
+	c.polls++
+	return api.AppHealthResponse{Checks: []api.AppHealthCheck{{Code: "readiness", Status: "fail", Detail: "0 of 1 required replicas are ready"}}}, nil
+}
+
+func (c *parkingHealthClient) GetApp(context.Context, string) (api.AppResponse, error) {
+	app := api.AppResponse{Slug: "worker", Status: "active", WorkloadClass: api.ExecutionModeWorker}
+	if c.polls >= 2 {
+		app.Status = "evicted_cold"
+		app.ParkedDeployment = &api.ParkedDeploymentRef{ID: "d1", ParkedReason: "liveness_exhausted"}
+	}
+	return app, nil
+}
+
+// TestRestartWaitStopsWhenTheAppIsParked pins the agent eval of 2026-11-23
+// (voting-app P9): `app restart --project --fresh --wait` waited the whole
+// timeout, silently, on a worker that crash-looped into a park.
+func TestRestartWaitStopsWhenTheAppIsParked(t *testing.T) {
+	var stderr bytes.Buffer
+	previous := *main.OsStderr
+	*main.OsStderr = &stderr
+	t.Cleanup(func() { *main.OsStderr = previous })
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	client := &parkingHealthClient{}
+	err := main.WaitAppReadiness(ctx, client, "worker", time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "parked: crash-looped") || !strings.Contains(err.Error(), "gregale logs worker") {
+		t.Fatalf("err = %v", err)
+	}
+	if ctx.Err() != nil {
+		t.Fatal("the wait ran to its deadline")
+	}
+	if got := strings.Count(stderr.String(), "Waiting for worker to become ready: 0 of 1 required replicas are ready"); got != 1 {
+		t.Fatalf("progress printed %d times:\n%s", got, stderr.String())
+	}
+}
+
+// TestSecretFailureWithoutInstancePointsAtStartup pins the agent eval of
+// 2026-11-23 (voting-app P10): env list said "delivery failed" for secrets
+// whose only deliveries went to boots that crashed, and sent the agent to
+// review operations instead of the app's startup.
+func TestSecretFailureWithoutInstancePointsAtStartup(t *testing.T) {
+	running := []api.SecretRuntimeReloadObservation{{InstanceID: "i1", RuntimeState: "running"}}
+	if got := main.SecretDeliveryRowLabel("failed", true, nil); !strings.Contains(got, "boot that did not start") {
+		t.Errorf("no-instance failure label = %q", got)
+	}
+	for _, tc := range []struct {
+		complete bool
+		targets  []api.SecretRuntimeReloadObservation
+	}{{complete: true, targets: running}, {complete: false}} {
+		if got := main.SecretDeliveryRowLabel("failed", tc.complete, tc.targets); got != "delivery failed" {
+			t.Errorf("complete=%v targets=%d label = %q", tc.complete, len(tc.targets), got)
+		}
+	}
+
+	var out bytes.Buffer
+	previous := *main.OsStdout
+	*main.OsStdout = &out
+	t.Cleanup(func() { *main.OsStdout = previous })
+	main.PrintSecretDeliveryOverview("worker", "", &api.AppSecretListResponse{Secrets: []api.AppSecretResponse{
+		{Key: "DATABASE_URL", DeliveryStatus: "failed", DeliveryVersion: 1, RuntimeReloadTargetsComplete: true},
+		{Key: "REDIS_URL", DeliveryStatus: "failed", DeliveryVersion: 1, RuntimeReloadTargetsComplete: true},
+	}})
+	if got := out.String(); !strings.Contains(got, "boots that did not start") || !strings.Contains(got, "logs worker") ||
+		strings.Contains(got, "Review current operations") {
+		t.Fatalf("overview:\n%s", got)
 	}
 }
 
