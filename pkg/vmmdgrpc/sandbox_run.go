@@ -686,7 +686,16 @@ func sandboxStartFromProto(start *vmmdpb.RunSandboxStart) (fcvm.SandboxWakeReque
 		wake.Snapshot = &fcvm.Snapshot{StorageKey: snap.GetStorageKey(), VMStateStorageKey: snap.GetVmstateStorageKey(),
 			FCVersion: snap.GetFcVersion(), MemBytes: snap.GetMemBytes(), Networkless: wake.Network == api.SandboxNetworkNone}
 		wake.SessionCapture = true
+		if from := start.GetForkedFrom(); from != "" {
+			if (sandboxproto.Request{Op: sandboxproto.OpForked, ForkedFrom: from}).Validate() != nil || from == wake.SandboxID {
+				return fcvm.SandboxWakeRequest{}, invalid("forked_from must be another session's id")
+			}
+			wake.ForkedFrom = from
+		}
 		return wake, nil
+	}
+	if start.GetForkedFrom() != "" {
+		return fcvm.SandboxWakeRequest{}, invalid("forked_from goes only with a session capture")
 	}
 	if snap := start.GetSnapshot(); snap != nil {
 		if !storagekey.IsSandboxSnapshotKey(snap.GetStorageKey(), wake.AccountID, wake.ImageKey != "") ||

@@ -28,6 +28,9 @@ type execBody struct {
 	TimeoutMillis  int64             `json:"timeout_ms,omitempty"`
 	MaxOutputBytes int64             `json:"max_output_bytes,omitempty"`
 	RunAs          string            `json:"run_as,omitempty"`
+	// ReseedOnFork: the background command gets SIGUSR2 in each fork of the
+	// session, to reseed its own PRNG state (ADR-20261122132055 §3).
+	ReseedOnFork bool `json:"reseed_on_fork,omitempty"`
 }
 
 // ExecResponse answers a foreground command.
@@ -146,6 +149,12 @@ func execRequest(c sandboxtoken.Claims, body execBody) (sandboxproto.Request, *a
 	}
 	// rows and cols without tty reach the guest, which refuses them.
 	req.TTY, req.Rows, req.Cols = body.TTY, body.Rows, body.Cols
+	// Only a background command runs on in a fork: a foreground one ends
+	// with its call (ADR-20261122132055 §3).
+	if body.ReseedOnFork && !body.Background {
+		return req, api.ErrValidation("reseed_on_fork needs background: true; a foreground command does not run on in a fork")
+	}
+	req.ReseedOnFork = body.ReseedOnFork
 	req.TimeoutMillis, req.MaxOutputBytes = min(defaultExecTimeoutMillis, c.ExecTimeoutMaxMillis), c.ExecOutputMaxBytes
 	if body.TimeoutMillis > 0 {
 		req.TimeoutMillis = body.TimeoutMillis

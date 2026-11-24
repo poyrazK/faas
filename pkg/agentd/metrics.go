@@ -41,6 +41,34 @@ type Metrics struct {
 	// (ADR-20261122132055 §4, Metrics).
 	volumeBackupSeconds prometheus.Histogram
 	volumeBackupBytes   prometheus.Histogram
+	// Forks (ADR-20261122132055 §3, Metrics).
+	forkSeconds *prometheus.HistogramVec
+	forks       *prometheus.CounterVec
+}
+
+// Outcomes of sandbox_forks_total: a fork restored on its capture's node, or
+// on another from the shared store, or cold-booted; refused on the
+// capture's node (it then waits for the upload); or failed because its
+// source ended before the capture.
+const (
+	forkNode     = "node"
+	forkRemote   = "remote"
+	forkCold     = "cold"
+	forkRefused  = "refused_node"
+	forkOrphaned = "orphaned"
+)
+
+// forkCountBucket bounds sandbox_fork_seconds' label: how many forks one
+// capture serves.
+func forkCountBucket(n int) string {
+	switch {
+	case n <= 1:
+		return "1"
+	case n <= 4:
+		return "2-4"
+	default:
+		return "5+"
+	}
 }
 
 // Sources of sandbox_session_resume_seconds: the capture restored on its
@@ -158,6 +186,21 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Help: "Paused sandbox sessions that resumed by cold boot, losing their memory state, by reason: no_capture or restore_failed (ADR-20261122132055 §2).",
 		}, []string{"reason"}),
 	}
+	m.forkSeconds = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "sandbox_fork_seconds",
+		Help:    "Time from agentd asking for a running sandbox session's fork capture to vmmd recording it, by how many forks it serves (1, 2-4, 5+) (ADR-20261122132055 §3).",
+		Buckets: []float64{.25, .5, 1, 2, 5, 10, 30, 60},
+	}, []string{"count_bucket"})
+	m.forks = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "sandbox_forks_total",
+		Help: "Sandbox fork starts by outcome: node (restored on its capture's node), remote (from the shared store), cold (cold-booted), refused_node (refused on the capture's node, waits for the upload) or orphaned (its source ended before the capture) (ADR-20261122132055 §3).",
+	}, []string{"outcome"})
+	for _, b := range []string{"1", "2-4", "5+"} {
+		m.forkSeconds.WithLabelValues(b)
+	}
+	for _, o := range []string{forkNode, forkRemote, forkCold, forkRefused, forkOrphaned} {
+		m.forks.WithLabelValues(o)
+	}
 	for _, source := range []string{resumeNode, resumeRemote, resumeCold} {
 		m.sandboxResume.WithLabelValues(source)
 	}
@@ -166,7 +209,8 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 	}
 	for _, c := range []prometheus.Collector{m.runs, m.requeues, m.startSeconds, m.runSeconds, m.queueDepth, m.queueOldest,
 		m.deliveries, m.deliveryAttempts, m.attemptSeconds, m.memory, m.sampleGap, m.sandboxBilled, m.sandboxPaused, m.deadlineCredit,
-		m.sandboxPause, m.sandboxResume, m.sandboxResumedCold, m.volumeBackupSeconds, m.volumeBackupBytes} {
+		m.sandboxPause, m.sandboxResume, m.sandboxResumedCold, m.volumeBackupSeconds, m.volumeBackupBytes,
+		m.forkSeconds, m.forks} {
 		if err := reg.Register(c); err != nil {
 			return nil, err
 		}
@@ -313,6 +357,22 @@ func (m *Metrics) sandboxResumed(source, coldReason string, took time.Duration) 
 	if source == resumeCold {
 		m.sandboxResumedCold.WithLabelValues(coldReason).Inc()
 	}
+}
+
+// sandboxForked records one fork capture serving forks.
+func (m *Metrics) sandboxForked(forks int, took time.Duration) {
+	if m == nil || took < 0 {
+		return
+	}
+	m.forkSeconds.WithLabelValues(forkCountBucket(forks)).Observe(took.Seconds())
+}
+
+// forkOutcome counts n fork starts with outcome.
+func (m *Metrics) forkOutcome(outcome string, n int) {
+	if m == nil || n <= 0 {
+		return
+	}
+	m.forks.WithLabelValues(outcome).Add(float64(n))
 }
 
 func (m *Metrics) creditGranted(d time.Duration) {

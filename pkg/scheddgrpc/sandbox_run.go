@@ -65,8 +65,9 @@ func (s *Server) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
 			NodeID:      start.GetVolumeNodeId(), StoredBackupID: start.GetVolumeStoredBackupId(),
 			SourceSandboxID: start.GetVolumeSourceSandboxId()}}
 	if r := start.GetResume(); r != nil {
-		admission.Resume = &sched.SandboxResume{NodeID: r.GetNodeId(), RequireNode: r.GetRequireNode(), Fork: r.GetFork(), Snapshot: sched.AgentRunSnapshot{StorageKey: r.GetStorageKey(),
-			VMStateStorageKey: r.GetVmstateStorageKey(), FCVersion: r.GetFcVersion(), MemBytes: r.GetMemBytes()}}
+		admission.Resume = &sched.SandboxResume{NodeID: r.GetNodeId(), RequireNode: r.GetRequireNode(), Fork: r.GetFork(),
+			ForkedFrom: r.GetForkedFrom(), Snapshot: sched.AgentRunSnapshot{StorageKey: r.GetStorageKey(),
+				VMStateStorageKey: r.GetVmstateStorageKey(), FCVersion: r.GetFcVersion(), MemBytes: r.GetMemBytes()}}
 	}
 	ctx := stream.Context()
 	var sendMu sync.Mutex

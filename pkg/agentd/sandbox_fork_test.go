@@ -155,7 +155,7 @@ func TestSandboxForkOfARunningSession(t *testing.T) {
 		r := start.GetResume()
 		if r == nil || !r.GetFork() || r.GetStorageKey() != mem || start.GetPersistent() ||
 			start.GetVolumeGb() != 10 || start.GetVolumeBackupId() != forkBackup || start.GetVolumeSourceSandboxId() != src ||
-			start.GetVolumeBackupIntervalMs() != 0 || r.GetRequireNode() != (id == first) {
+			start.GetVolumeBackupIntervalMs() != 0 || r.GetRequireNode() != (id == first) || r.GetForkedFrom() != src {
 			t.Fatalf("fork %s start = %v", id, start)
 		}
 	}

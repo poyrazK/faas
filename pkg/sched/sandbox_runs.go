@@ -112,6 +112,8 @@ type SandboxResume struct {
 	// session starts from it whatever its kind. With RequireNode the shared
 	// store does not hold it yet and only its node can restore it.
 	Fork bool
+	// ForkedFrom is the fork's source session, which its guest learns.
+	ForkedFrom string
 }
 
 // SandboxForked is vmmd's answer to a fork: the published fork capture of
@@ -243,6 +245,8 @@ type SandboxSpec struct {
 	// SessionCapture marks Snapshot as the session's own pause capture
 	// (ADR-20261122132055 §2).
 	SessionCapture bool
+	// ForkedFrom is the source of a fork restored from its fork capture.
+	ForkedFrom string
 	// Volume is the session's workspace volume.
 	Volume SandboxVolume
 }
@@ -459,6 +463,9 @@ func (r *AgentRunner) RunSandbox(ctx context.Context, a SandboxAdmission, placed
 	if a.Resume != nil {
 		snap := a.Resume.Snapshot
 		spec.Snapshot, spec.SessionCapture = &snap, true
+		if a.Resume.Fork {
+			spec.ForkedFrom = a.Resume.ForkedFrom
+		}
 		// A resumed session is never a warm capture's proof, and its capture
 		// is not the warm cache's to drop.
 		return r.runResumedSandbox(ctx, router, placement, spec, hooks, control)
@@ -611,7 +618,7 @@ func (c *VMMClient) RunSandbox(ctx context.Context, spec SandboxSpec, hooks Sand
 		ReadyTimeoutMs: spec.ReadyTimeout.Milliseconds(), Snapshot: snapshotToProto(spec.Snapshot), Browser: spec.Browser,
 		Task:        sandboxTaskToProto(spec.Task),
 		EgressAllow: spec.EgressAllow, EgressDeny: spec.EgressDeny, WebDomainLog: spec.WebDomainLog,
-		SessionCapture: spec.SessionCapture,
+		SessionCapture: spec.SessionCapture, ForkedFrom: spec.ForkedFrom,
 		VolumeGb:       int32(spec.Volume.GB), //nolint:gosec // G115: bounded by the plan's volume cap.
 		VolumeBackupId: spec.Volume.BackupID, VolumeBackupIntervalMs: spec.Volume.BackupEvery.Milliseconds(),
 		VolumeSourceSandboxId: spec.Volume.SourceSandboxID,

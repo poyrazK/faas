@@ -3683,6 +3683,11 @@ message RunSandboxStart {
   // is, for a fork (ADR-20261122132055 §3): the fork's volume starts as the
   // source's at the fork's capture. Empty: the session's own.
   string volume_source_sandbox_id = 27;
+  // forked_from is the source session of a fork restored from its fork
+  // capture (ADR-20261122132055 §3). Once the guest answers, vmmd tells it,
+  // so later commands see GREGALE_FORKED_FROM and commands that asked get
+  // SIGUSR2 to reseed. Only with session_capture. An older vmmd ignores it.
+  string forked_from = 28;
 }
 
 // RunSandboxAction is one browser action on a live session

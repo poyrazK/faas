@@ -1386,6 +1386,9 @@ message SandboxRunResume {
   // fork: the capture is another session's fork capture
   // (ADR-20261122132055 §3); the session starts from it, whatever its kind.
   bool fork = 7;
+  // forked_from is the fork's source session; the guest learns it once the
+  // fork restores (GREGALE_FORKED_FROM, §3). Only with fork.
+  string forked_from = 8;
 }
 
 // SandboxRunStart is the session's machine, already checked against the

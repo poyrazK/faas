@@ -216,7 +216,7 @@ Each step is one PR on the sandbox branches until the owner asks for PRs. Every 
 - **Start.** A fork is claimable only once the shared store holds its whole capture and the volume backup (`uploaded_at`, set by the agentd sweep). It restores on any node as `Resume{fork}` with the source's vCPUs, and its volume restores from the source's backup (`volume_source_sandbox_id`). An ephemeral fork's volume is still recorded, so it is deleted when the fork ends.
 - **Lifetime of what forks share.** A capture, the backup it names and the source's volume row stay while a queued or starting fork names the capture, even after the source resumed or ended. Once none does, a fork capture is consumed (after a minute's grace) and the capture sweep deletes its objects. A fork whose source ended before it was captured fails with `fork_source_ended`.
 - **Measured** (EC2 nested KVM, 512 MB guest with a 2 GB volume): live fork capture 7.6 s node-first; two forks restored in 318 ms and 279 ms with distinct host IPs, the source's memory and files, and writes isolated both ways.
-- **Not yet:** the reflink fast path for a fork on its source's node (every fork restores from the shared store today); the `GREGALE_FORKED_FROM` marker and `SIGUSR2` reseed hook (§3); `sandbox_fork_seconds` and `sandbox_forks_total`; clients (step 10).
+- **Not yet (fork):** ~~the reflink fast path~~ (amendment "same-node forks"); ~~the `GREGALE_FORKED_FROM` marker and `SIGUSR2` reseed hook~~ and ~~`sandbox_fork_seconds` and `sandbox_forks_total`~~ (amendment "fork marker and metrics"); clients (step 10).
 
 ### Amendment: prompt requests and fork starts
 
@@ -233,6 +233,12 @@ A fork of a running session still waited for its capture's upload to the shared 
 - **Refusal.** A pinned fork that does not become ready (no room on the node, the node gone, or any failure before ready) goes back to the queue with `sandbox_sessions.fork_local_refused_at` set. It is then claimable only once the capture is uploaded, and starts on any node, as before this amendment. A fork is never failed for being refused on the capture's node.
 - **Volume.** vmmd clones the fork's volume from the node's own clone of the source's fork backup: the pending clone while it uploads, the base once it has. A node without either reads the backup from the store. The fork has no backup base of its own, so its first backup is full.
 - **Migration.** `fork_local_refused_at timestamptz` is an expand-only column. A replica of the previous release ignores it and waits for the upload as before; a previous schedd rejects `Fork` with `RequireNode` as invalid, which agentd treats as a refusal.
+
+### Amendment: fork marker and metrics
+
+- **Marker.** agentd sends a fork's source in `SandboxRunResume.forked_from`. schedd passes it to vmmd as `RunSandboxStart.forked_from`, which vmmd accepts only with `session_capture` and only when it names another session. Once the fork's guest answers, vmmd sends it the host-only `forked` op. From then on, guest-init sets `GREGALE_FORKED_FROM` in every command's environment, over the session's env and the command's own. A guest-init from before this amendment refuses the op; vmmd logs it and the fork runs on without the marker.
+- **Reseed hook.** `POST …/exec` takes `reseed_on_fork` for a background command. A foreground command ends with its call, so it never runs on in a fork, and the flag is refused there. On `forked`, guest-init sends `SIGUSR2` to the process group of each running command that asked. Commands that did not ask are left alone.
+- **Metrics.** `sandbox_fork_seconds{count_bucket=1|2-4|5+}` is the time from agentd asking for a running session's fork capture to vmmd recording it. `sandbox_forks_total{outcome}` counts fork starts: `node` (restored on the capture's node), `remote` (from the shared store), `cold`, `refused_node` (the capture's node refused it and it waits for the upload) and `orphaned` (its source ended before the capture). Both are on the agent runs dashboard.
 
 ## Open questions
 

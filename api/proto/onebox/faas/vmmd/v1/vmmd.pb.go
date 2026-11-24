@@ -15477,8 +15477,13 @@ type RunSandboxStart struct {
 	// is, for a fork (ADR-20261122132055 §3): the fork's volume starts as the
 	// source's at the fork's capture. Empty: the session's own.
 	VolumeSourceSandboxId string `protobuf:"bytes,27,opt,name=volume_source_sandbox_id,json=volumeSourceSandboxId,proto3" json:"volume_source_sandbox_id,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
+	// forked_from is the source session of a fork restored from its fork
+	// capture (ADR-20261122132055 §3). Once the guest answers, vmmd tells it,
+	// so later commands see GREGALE_FORKED_FROM and commands that asked get
+	// SIGUSR2 to reseed. Only with session_capture. An older vmmd ignores it.
+	ForkedFrom    string `protobuf:"bytes,28,opt,name=forked_from,json=forkedFrom,proto3" json:"forked_from,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *RunSandboxStart) Reset() {
@@ -15696,6 +15701,13 @@ func (x *RunSandboxStart) GetVolumeBackupIntervalMs() int64 {
 func (x *RunSandboxStart) GetVolumeSourceSandboxId() string {
 	if x != nil {
 		return x.VolumeSourceSandboxId
+	}
+	return ""
+}
+
+func (x *RunSandboxStart) GetForkedFrom() string {
+	if x != nil {
+		return x.ForkedFrom
 	}
 	return ""
 }
@@ -27009,7 +27021,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"capture_id\x18\x01 \x01(\tR\tcaptureId\"0\n" +
 	"\x0fRunSandboxPause\x12\x1d\n" +
 	"\n" +
-	"capture_id\x18\x01 \x01(\tR\tcaptureId\"\xfd\a\n" +
+	"capture_id\x18\x01 \x01(\tR\tcaptureId\"\x9e\b\n" +
 	"\x0fRunSandboxStart\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1d\n" +
 	"\n" +
@@ -27043,7 +27055,9 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\tvolume_gb\x18\x18 \x01(\x05R\bvolumeGb\x12(\n" +
 	"\x10volume_backup_id\x18\x19 \x01(\tR\x0evolumeBackupId\x129\n" +
 	"\x19volume_backup_interval_ms\x18\x1a \x01(\x03R\x16volumeBackupIntervalMs\x127\n" +
-	"\x18volume_source_sandbox_id\x18\x1b \x01(\tR\x15volumeSourceSandboxId\"\xc9\x02\n" +
+	"\x18volume_source_sandbox_id\x18\x1b \x01(\tR\x15volumeSourceSandboxId\x12\x1f\n" +
+	"\vforked_from\x18\x1c \x01(\tR\n" +
+	"forkedFrom\"\xc9\x02\n" +
 	"\x10RunSandboxAction\x12\x1b\n" +
 	"\taction_id\x18\x01 \x01(\tR\bactionId\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x10\n" +

@@ -414,7 +414,8 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 		// (ADR-20261122132055 §3, same-node forks).
 		start.WorkspaceKey = ""
 		start.Resume = &scheddpb.SandboxRunResume{StorageKey: c.StorageKey, VmstateStorageKey: c.VMStateStorageKey,
-			FcVersion: c.FCVersion, MemBytes: c.MemBytes, NodeId: c.NodeID, Fork: true, RequireNode: localFork(claim)}
+			FcVersion: c.FCVersion, MemBytes: c.MemBytes, NodeId: c.NodeID, Fork: true, RequireNode: localFork(claim),
+			ForkedFrom: claim.ForkOf}
 	}
 	if claim.Resuming {
 		// A resumed session's workspace is in its capture; one without a
@@ -539,8 +540,13 @@ func (s *Sandboxes) receive(ctx context.Context, stream grpc.BidiStreamingClient
 				if err := s.markResumed(ctx, ss, placed, ev.GetBooted().GetMethod()); err != nil {
 					return err
 				}
-			} else if err := s.store.MarkSandboxReady(ctx, ss.claim.ID, ss.claim.LeaseToken, placed.GetNodeId(), placed.GetInstance()); err != nil {
-				return err
+			} else {
+				if err := s.store.MarkSandboxReady(ctx, ss.claim.ID, ss.claim.LeaseToken, placed.GetNodeId(), placed.GetInstance()); err != nil {
+					return err
+				}
+				if ss.claim.ForkOf != "" {
+					s.metrics.forkOutcome(forkStartOutcome(ss.claim, placed.GetNodeId(), ev.GetBooted().GetMethod()), 1)
+				}
 			}
 			if err := s.markVolumeNode(ctx, ss, placed.GetNodeId()); err != nil {
 				return err
@@ -1118,6 +1124,19 @@ func localFork(claim agentstore.SandboxClaim) bool {
 	return claim.ForkOf != "" && claim.Resume != nil && !claim.Resume.Remote && claim.Resume.NodeID != ""
 }
 
+// forkStartOutcome is how a fork started: restored on its capture's node,
+// on another from the shared store, or cold-booted.
+func forkStartOutcome(claim agentstore.SandboxClaim, node, method string) string {
+	switch {
+	case method != vmmdWakeRestore || claim.Resume == nil:
+		return forkCold
+	case node == claim.Resume.NodeID:
+		return forkNode
+	default:
+		return forkRemote
+	}
+}
+
 // requeueForkElsewhere returns a fork the capture's node did not start to
 // the queue, to start on any node once the capture is uploaded.
 func (s *Sandboxes) requeueForkElsewhere(ctx context.Context, claim agentstore.SandboxClaim, cause error) {
@@ -1125,6 +1144,7 @@ func (s *Sandboxes) requeueForkElsewhere(ctx context.Context, claim agentstore.S
 		s.log.Warn("agentd: requeue sandbox fork failed", "sandbox_id", claim.ID, "err", err)
 		return
 	}
+	s.metrics.forkOutcome(forkRefused, 1)
 	s.log.Info("agentd: sandbox fork waits for its capture's upload", "sandbox_id", claim.ID,
 		"node", claim.Resume.NodeID, "cause", status.Code(cause).String())
 }

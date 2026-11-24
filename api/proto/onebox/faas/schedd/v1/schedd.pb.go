@@ -3563,7 +3563,10 @@ type SandboxRunResume struct {
 	RequireNode bool `protobuf:"varint,6,opt,name=require_node,json=requireNode,proto3" json:"require_node,omitempty"`
 	// fork: the capture is another session's fork capture
 	// (ADR-20261122132055 §3); the session starts from it, whatever its kind.
-	Fork          bool `protobuf:"varint,7,opt,name=fork,proto3" json:"fork,omitempty"`
+	Fork bool `protobuf:"varint,7,opt,name=fork,proto3" json:"fork,omitempty"`
+	// forked_from is the fork's source session; the guest learns it once the
+	// fork restores (GREGALE_FORKED_FROM, §3). Only with fork.
+	ForkedFrom    string `protobuf:"bytes,8,opt,name=forked_from,json=forkedFrom,proto3" json:"forked_from,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3645,6 +3648,13 @@ func (x *SandboxRunResume) GetFork() bool {
 		return x.Fork
 	}
 	return false
+}
+
+func (x *SandboxRunResume) GetForkedFrom() string {
+	if x != nil {
+		return x.ForkedFrom
+	}
+	return ""
 }
 
 // SandboxRunStart is the session's machine, already checked against the
@@ -11169,7 +11179,7 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"capture_id\x18\x01 \x01(\tR\tcaptureId\"0\n" +
 	"\x0fSandboxRunPause\x12\x1d\n" +
 	"\n" +
-	"capture_id\x18\x01 \x01(\tR\tcaptureId\"\xef\x01\n" +
+	"capture_id\x18\x01 \x01(\tR\tcaptureId\"\x90\x02\n" +
 	"\x10SandboxRunResume\x12\x1f\n" +
 	"\vstorage_key\x18\x01 \x01(\tR\n" +
 	"storageKey\x12.\n" +
@@ -11179,7 +11189,9 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\tmem_bytes\x18\x04 \x01(\x03R\bmemBytes\x12\x17\n" +
 	"\anode_id\x18\x05 \x01(\tR\x06nodeId\x12!\n" +
 	"\frequire_node\x18\x06 \x01(\bR\vrequireNode\x12\x12\n" +
-	"\x04fork\x18\a \x01(\bR\x04fork\"\xb6\a\n" +
+	"\x04fork\x18\a \x01(\bR\x04fork\x12\x1f\n" +
+	"\vforked_from\x18\b \x01(\tR\n" +
+	"forkedFrom\"\xb6\a\n" +
 	"\x0fSandboxRunStart\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x1d\n" +
