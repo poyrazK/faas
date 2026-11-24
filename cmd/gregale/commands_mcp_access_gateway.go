@@ -19,7 +19,7 @@ func mcpAccessRuleActive(rule api.EdgeRuleResponse, now time.Time) bool {
 	return rule.Enabled && !rule.Expired && (rule.ExpiresAt == nil || rule.ExpiresAt.After(now)) && rule.Mode != "log"
 }
 
-func auditMCPGatewayRules(appID string, cfg mcphosting.Config, options mcpAccessAuditOptions, rules []api.EdgeRuleResponse, now time.Time, checks []mcphosting.Check) (string, []mcphosting.Check) {
+func auditMCPGatewayRules(appID string, cfg mcphosting.Config, options mcpAccessAuditOptions, apiBase string, rules []api.EdgeRuleResponse, now time.Time, checks []mcphosting.Check) (string, []mcphosting.Check) {
 	resource, err := url.Parse(cfg.Auth.Resource)
 	if err != nil || resource.Host == "" {
 		return "", append(checks, mcphosting.Check{Name: "gateway_resource", Status: "failed", Detail: "Invalid reviewed canonical resource."})
@@ -32,10 +32,10 @@ func auditMCPGatewayRules(appID string, cfg mcphosting.Config, options mcpAccess
 	}
 	if options.AuthPlacement == "guest-only" {
 		state := "passed"
-		if len(active) > 0 {
+		if len(active) > 0 || cfg.Auth.GatewayOnly() {
 			state = "failed"
 		}
-		return "", append(checks, mcphosting.Check{Name: "guest_only_gateway", Status: state, Detail: "Guest-only placement requires no active gateway JWT rules overlapping the MCP endpoint or metadata paths."})
+		return "", append(checks, mcphosting.Check{Name: "guest_only_gateway", Status: state, Detail: "Guest-only placement requires no active gateway JWT rules overlapping the MCP endpoint or metadata paths, and an auth mode the server verifies itself (api-key and oauth-proxy are gateway-only)."})
 	}
 	// A managed rule is bound to this app and unconditionally covers the canonical
 	// host and every path/method, as created by mcp policy.
@@ -65,7 +65,7 @@ func auditMCPGatewayRules(appID string, cfg mcphosting.Config, options mcpAccess
 	if decodeErr != nil || actual.Validate() != nil || actual.MCP == nil {
 		return selected.ID, append(checks, mcphosting.Check{Name: "gateway_policy_shape", Status: "failed", Detail: "Managed JWT action is invalid, unsupported, or missing the MCP resource policy."})
 	}
-	expected := mcpExpectedGatewayAction(cfg, options.Algorithms)
+	expected := mcpExpectedGatewayAction(cfg, options.Algorithms, apiBase)
 	if expected.Validate() != nil {
 		return selected.ID, append(checks, mcphosting.Check{Name: "source_gateway_contract", Status: "failed", Detail: "Source configuration cannot be represented by the gateway MCP policy contract."})
 	}
@@ -80,6 +80,9 @@ func auditMCPGatewayRules(appID string, cfg mcphosting.Config, options mcpAccess
 		{"tool_scopes", mcpAuditScopeMap(actual.MCP.ToolScopes), mcpAuditScopeMap(expected.MCP.ToolScopes)},
 		{"resource_scopes", mcpAuditScopeMap(actual.MCP.ResourceScopes), mcpAuditScopeMap(expected.MCP.ResourceScopes)},
 		{"prompt_scopes", mcpAuditScopeMap(actual.MCP.PromptScopes), mcpAuditScopeMap(expected.MCP.PromptScopes)},
+		{"credential", actual.MCP.Credential, expected.MCP.Credential},
+		{"audience", actual.MCP.Audience, expected.MCP.Audience},
+		{"tool_limits", mcpAuditToolLimits(actual.MCP.ToolLimits), mcpAuditToolLimits(expected.MCP.ToolLimits)},
 	}
 	for _, comparison := range comparisons {
 		state = "passed"
@@ -96,8 +99,29 @@ func auditMCPGatewayRules(appID string, cfg mcphosting.Config, options mcpAccess
 	return selected.ID, checks
 }
 
-func mcpExpectedGatewayAction(cfg mcphosting.Config, algorithms []string) api.EdgeRuleJWTAction {
-	return api.EdgeRuleJWTAction{Issuer: cfg.Auth.Issuer, Audience: []string{cfg.Auth.Resource}, JWKSURL: cfg.Auth.JWKSURL, Algorithms: algorithms, MCP: &api.MCPResourcePolicy{Resource: cfg.Auth.Resource, Scopes: cfg.Auth.Scopes, AllowedOrigins: cfg.AllowedOrigins, ToolScopes: cfg.Auth.ToolScopes, ResourceScopes: cfg.Auth.ResourceScopes, PromptScopes: cfg.Auth.PromptScopes}}
+// mcpExpectedGatewayAction is the gateway rule action a reviewed source
+// configuration needs. apiBase is the platform API origin; api-key policies
+// name its empty key set so gateways that predate consumer-key policies fail
+// closed (ADR-20261122194324). Gateway-only modes fix the algorithm to ES256.
+func mcpExpectedGatewayAction(cfg mcphosting.Config, algorithms []string, apiBase string) api.EdgeRuleJWTAction {
+	issuer, jwks := cfg.Auth.Issuer, cfg.Auth.JWKSURL
+	policy := &api.MCPResourcePolicy{Resource: cfg.Auth.Resource, Scopes: cfg.Auth.Scopes, AllowedOrigins: cfg.AllowedOrigins, ToolScopes: cfg.Auth.ToolScopes, ResourceScopes: cfg.Auth.ResourceScopes, PromptScopes: cfg.Auth.PromptScopes, ToolLimits: cfg.Auth.ToolLimits}
+	switch cfg.Auth.Mode {
+	case mcphosting.AuthAPIKey:
+		base := strings.TrimSuffix(apiBase, "/")
+		issuer, jwks, algorithms = base+api.MCPConsumerKeyIssuerPath, base+api.MCPConsumerKeyJWKSPath, []string{"ES256"}
+		policy.Credential = api.MCPCredentialConsumerKey
+	case mcphosting.AuthOAuthProxy:
+		if cfg.Auth.ExternalIssuer() {
+			// External OpenID Connect issuers sign with RSA or ECDSA keys
+			// (ADR-20261123192254).
+			algorithms = []string{"RS256", "ES256"}
+			policy.Audience = cfg.Auth.Audience
+		} else {
+			jwks, algorithms = mcphosting.OAuthProxyJWKSURL(issuer), []string{"ES256"}
+		}
+	}
+	return api.EdgeRuleJWTAction{Issuer: issuer, Audience: []string{cfg.Auth.TokenAudience()}, JWKSURL: jwks, Algorithms: algorithms, MCP: policy}
 }
 
 func mcpAuditSet(values []string) []string {
@@ -117,4 +141,11 @@ func mcpAuditScopeMap(policy map[string][]string) map[string][]string {
 		result[entry] = mcpAuditSet(scopes)
 	}
 	return result
+}
+
+func mcpAuditToolLimits(limits map[string]api.MCPToolLimit) map[string]api.MCPToolLimit {
+	if len(limits) == 0 {
+		return nil
+	}
+	return limits
 }

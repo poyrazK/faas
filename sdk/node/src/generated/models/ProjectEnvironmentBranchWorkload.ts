@@ -21,5 +21,9 @@ export type ProjectEnvironmentBranchWorkload = {
    * The address of this incarnation of the branch; a reset gives it a new one.
    */
   environment_url?: string;
+  /**
+   * Why the workload is not serving: its branch deployment failed, or has not gone live five minutes after the branch's data was ready.
+   */
+  error?: string;
 };
 

@@ -125,6 +125,17 @@ type HostPolicy struct {
 	// a vmmd without this field stays Cloudflare-only rather than open.
 	PublicEntryAddrs []netip.Addr
 
+	// PeerEntryAddrs are the other compute edges' IPv4 entry addresses
+	// (ADR-20261123100000). A guest's call to one on 443 is DNATed to this
+	// node's own IPv4 entry address, so app-to-app calls over a public
+	// gregale.app URL stay on the node: the edge serves every app, it sees
+	// the guest's own bridge address (per-tenant client limits instead of
+	// one masqueraded node address shared by every tenant), and the call
+	// does not depend on the provider delivering replies between the
+	// servers' primary addresses. Rendered only when PublicEntryAddrs has an
+	// IPv4 address.
+	PeerEntryAddrs []netip.Addr
+
 	// MasqueradeCIDR is the source-address set the postrouting nat chain
 	// MASQUERADEs to the host's public IP on its way out PublicIface. Must be
 	// the NETWORK form of HostBridgeCIDR (e.g. "10.100.0.0/16", not the host
@@ -661,6 +672,11 @@ func (h HostPolicy) Render() string {
 			panic("netns: HostPolicy.Render: PublicEntryAddrs has an invalid, zoned or IPv4-mapped address")
 		}
 	}
+	for _, a := range h.PeerEntryAddrs {
+		if !a.IsValid() || !a.Is4() || slices.Contains(h.PublicEntryAddrs, a) {
+			panic("netns: HostPolicy.Render: PeerEntryAddrs must be IPv4 addresses other than this node's entry addresses")
+		}
+	}
 	for _, r := range h.PrivateInputAllowRules {
 		if !r.Source.IsValid() {
 			panic("netns: HostPolicy.Render: PrivateInputAllowRules has invalid source prefix")
@@ -908,7 +924,8 @@ func (h HostPolicy) Render() string {
 	b.WriteString("    type filter hook output priority 0; policy accept;\n")
 	b.WriteString("  }\n")
 	b.WriteString("\n")
-	if h.ServiceTCP != nil || h.DatabaseRoute != nil {
+	peerEntry, hairpinTo := h.peerEntryHairpin()
+	if h.ServiceTCP != nil || h.DatabaseRoute != nil || len(peerEntry) > 0 {
 		b.WriteString("  chain prerouting {\n")
 		b.WriteString("    type nat hook prerouting priority dstnat; policy accept;\n")
 		if p := h.ServiceTCP; p != nil {
@@ -922,6 +939,10 @@ func (h HostPolicy) Render() string {
 		if p := h.DatabaseRoute; p != nil {
 			fmt.Fprintf(&b, "    iifname %q ip daddr %s tcp dport %d dnat ip to %s:%d\n",
 				h.BridgeName, p.Address, DatabaseRoutePort, p.BridgeIP, p.ProxyPort)
+		}
+		if len(peerEntry) > 0 {
+			fmt.Fprintf(&b, "    iifname %q ip daddr { %s } tcp dport 443 dnat ip to %s\n",
+				h.BridgeName, joinAddrs(peerEntry), hairpinTo)
 		}
 		b.WriteString("  }\n")
 		b.WriteString("\n")
@@ -1004,6 +1025,29 @@ func publicEntryFamilies(addrs []netip.Addr) []string {
 		out = append(out, "ip6")
 	}
 	return out
+}
+
+// peerEntryHairpin returns the peer entry addresses a guest's 443 calls are
+// DNATed from and this node's IPv4 entry address they go to, or nothing
+// when the node has no IPv4 entry address (ADR-20261123100000).
+func (h HostPolicy) peerEntryHairpin() ([]netip.Addr, netip.Addr) {
+	if len(h.PeerEntryAddrs) == 0 {
+		return nil, netip.Addr{}
+	}
+	for _, a := range h.PublicEntryAddrs {
+		if a.Is4() {
+			return h.PeerEntryAddrs, a
+		}
+	}
+	return nil, netip.Addr{}
+}
+
+func joinAddrs(addrs []netip.Addr) string {
+	out := make([]string, len(addrs))
+	for i, a := range addrs {
+		out[i] = a.String()
+	}
+	return strings.Join(out, ", ")
 }
 
 // publicEntrySetSuffix names a family's public-entry sets.

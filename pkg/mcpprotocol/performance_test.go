@@ -60,12 +60,14 @@ func TestPerformanceQueriesScopeAndTrafficGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshot.Tools) != 1 || snapshot.Tools[0].Tool != "greet" || snapshot.Tools[0].P95 == nil || *snapshot.Tools[0].P95 != .25 || len(snapshot.Traffic) != 1 {
+	// Observed tools, most calls first (ADR-20261122194324).
+	if len(snapshot.Tools) != 2 || snapshot.Tools[0].Tool != "private-unreviewed-name" || snapshot.Tools[1].Tool != "greet" ||
+		snapshot.Tools[1].P95 == nil || *snapshot.Tools[1].P95 != .25 || snapshot.Tools[1].Mismatches != 50 || len(snapshot.Traffic) != 1 {
 		t.Fatalf("bad projection: %+v", snapshot)
 	}
 	reader.sparse = true
 	snapshot, err = Fetch(context.Background(), reader, id, now)
-	if err != nil || snapshot.Tools[0].P50 != nil || snapshot.Tools[0].P95 != nil || snapshot.Tools[0].P99 != nil || snapshot.Tools[0].StreamP95 != nil {
+	if err != nil || snapshot.Tools[1].P50 != nil || snapshot.Tools[1].P95 != nil || snapshot.Tools[1].P99 != nil || snapshot.Tools[1].StreamP95 != nil {
 		t.Fatal("sparse traffic produced percentiles")
 	}
 	reader.failed = true
@@ -74,5 +76,22 @@ func TestPerformanceQueriesScopeAndTrafficGate(t *testing.T) {
 	}
 	if _, err = Fetch(context.Background(), reader, `bad"} or vector(1)`, now); err == nil {
 		t.Fatal("invalid app selector accepted")
+	}
+}
+
+// adr: 20261122194324 — compute estimate at billed memory and the overage rate.
+func TestEstimateToolCompute(t *testing.T) {
+	// One hour at 1016 MB of plan RAM is exactly 1 GB-hour billed.
+	got := EstimateToolCompute(3600, 1016)
+	if got.GBSeconds != 3600 || got.Millicents != 5000 {
+		t.Fatalf("one GB-hour = %+v", got)
+	}
+	if small := EstimateToolCompute(0.25, 248); small.Millicents != 0 || small.GBSeconds != 0.0625 {
+		t.Fatalf("quarter second = %+v", small)
+	}
+	for _, bad := range []ToolCompute{EstimateToolCompute(-1, 512), EstimateToolCompute(1, 0)} {
+		if bad != (ToolCompute{}) {
+			t.Fatalf("invalid input estimated %+v", bad)
+		}
 	}
 }

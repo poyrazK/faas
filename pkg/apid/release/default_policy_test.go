@@ -17,6 +17,18 @@ type releasePolicyFakeStore struct {
 	lookupErr error
 	leaseOK   bool
 	leaseErr  error
+	cache     bool
+	cacheErr  error
+}
+
+func (f releasePolicyFakeStore) GetManagedValkeyCache(context.Context, string) (state.ManagedValkeyCache, error) {
+	if f.cacheErr != nil {
+		return state.ManagedValkeyCache{}, f.cacheErr
+	}
+	if !f.cache {
+		return state.ManagedValkeyCache{}, state.ErrNotFound
+	}
+	return state.ManagedValkeyCache{MemoryMB: 64}, nil
 }
 
 func (f releasePolicyFakeStore) LiveDeploymentForScope(_ context.Context, _, scope string) (state.Deployment, error) {
@@ -59,6 +71,12 @@ func TestApplyDefaultReleasePolicy(t *testing.T) {
 		{name: "immediate app policy opts out", store: serving,
 			app: state.App{Manifest: state.AppManifest{ReleasePolicy: api.ReleasePolicyImmediate}}},
 		{name: "preview app stays immediate", store: serving, app: state.App{PreviewOfSlug: "api"}},
+		{name: "managed cache handoff stays immediate", store: releasePolicyFakeStore{live: true, leaseOK: true, cache: true},
+			req: api.CreateDeploymentRequest{Image: api.ManagedValkeyImage}},
+		{name: "managed cache lookup error stays immediate", store: releasePolicyFakeStore{live: true, leaseOK: true, cacheErr: errors.New("db down")}},
+		{name: "customer app on the cache image keeps the default", store: serving,
+			req:  api.CreateDeploymentRequest{Image: api.ManagedValkeyImage},
+			want: PolicySafe, wantCanary: api.DefaultReleaseCanaryPreset, wantRollback: ptrBool(true)},
 		{name: "service app keeps scheduler rollout", store: serving,
 			app: state.App{Manifest: state.AppManifest{ExecutionMode: api.ExecutionModeService}}},
 		{name: "named environment scope stays immediate", store: serving, req: api.CreateDeploymentRequest{Scope: "staging"}},

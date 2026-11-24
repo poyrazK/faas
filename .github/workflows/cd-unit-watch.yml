@@ -79,6 +79,8 @@ jobs:
     # A 30-minute window after the last activation, plus a rollback of every
     # recorded host.
     timeout-minutes: 50
+    outputs:
+      host_config_rollback_to: ${{ steps.watch.outputs.host_config_rollback_to }}
     env:
       CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
       CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
@@ -163,6 +165,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Watch the deployed units
+        id: watch
         env:
           GH_TOKEN: ${{ github.token }}
           DEPLOY_RESULTS: ${{ inputs.deploy_results }}
@@ -172,3 +175,27 @@ jobs:
           args=(--deployctl "$UNITS_DIR/tools/deployctl" --compute-key "$COMPUTE_KEY" --deploy-results "$DEPLOY_RESULTS")
           [[ "$ADOPT" != true ]] || args+=(--adopt)
           python3 watch-src/scripts/ci/unit_watch.py "${args[@]}"
+
+  # Config rollback (docs/adr/20261122170000-continuous-unit-lane.md): the
+  # watch put the binaries back; when the rolled-back releases also
+  # converged control-plane host roles, converge those roles back to the
+  # known-good configuration through cd-controlplane's host-config step (the
+  # same secrets, gregalectl converge, daemon restarts and SLO gate). Only
+  # roles whose content differs converge; a stateful one never does. Deploys
+  # stay frozen by the watch's issue either way.
+  restore-host-config:
+    name: Converge the host roles back
+    needs: [watch]
+    if: >-
+      always() && github.repository == 'poyrazK/faas' &&
+      needs.watch.outputs.host_config_rollback_to != ''
+    uses: ./.github/workflows/cd-controlplane.yml
+    with:
+      deploy_environment: ${{ inputs.deploy_environment }}
+      units_run_id: ${{ inputs.units_run_id }}
+      units_lane: control-plane
+      host_config_rollback_to: ${{ needs.watch.outputs.host_config_rollback_to }}
+    secrets: inherit
+    permissions:
+      contents: read
+      actions: read

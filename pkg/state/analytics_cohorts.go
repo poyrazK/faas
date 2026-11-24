@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onebox-faas/faas/pkg/flags"
+	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -234,9 +235,7 @@ func (s *PgStore) ReplaceAnalyticsCohortMembers(ctx context.Context, c Analytics
 
 // FailAnalyticsCohortRefresh implements AnalyticsCohortStore.
 func (s *PgStore) FailAnalyticsCohortRefresh(ctx context.Context, cohortID string, now time.Time, msg string) error {
-	if len(msg) > 512 {
-		msg = msg[:512]
-	}
+	msg = safetext.Truncate(msg, 512)
 	if err := sqlc.New().FailAnalyticsCohortRefresh(ctx, s.pool, sqlc.FailAnalyticsCohortRefreshParams{
 		ID: uuidToPgtype(cohortID), Now: pgTimestamptzUTC(now), RefreshError: msg}); err != nil {
 		return fmt.Errorf("analytics cohort refresh failure: %w", err)

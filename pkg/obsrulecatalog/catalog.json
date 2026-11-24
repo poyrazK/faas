@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "d1dd6994eb8e358e698808d533c52b4de89b0deb9f6f643d928a1f66c908d597",
+      "revision": "2e9f1ef3bc38d2dc4d0563540cf056bc96d6d73c167193c8e18251df4c6b5e62",
       "files": [
         "faas.rules.yml"
       ],
@@ -4812,11 +4812,11 @@
           "group_name": "faas_mcp_protocol",
           "rule_name": "FaasMCPProtocolHighErrorRate",
           "definition": {
-            "expression_hash": "3ce639f980748b16a74efeeda5a06de624664548a5a6b8ccfe2e363ebaccc68b",
+            "expression_hash": "e25e211ce0e9a7c9d87e00754bc04f831c44d21a705b7b2c70ae3f736a497cdf",
             "labels_hash": "9b234559d5b3e6a4b862d2aa8d439cbb834eee117b460ab67b55b5e7a407b8d3",
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "12b1ae6d42c9f48d92ff65e2ab6a5ac737218c9d1711919f7a8d6ee59dfa783d"
+            "fingerprint": "d5cd2d5350c87344f492bafe2ba88a70eda0b623fbadad1eb2e6084395f084a7"
           }
         },
         {
@@ -5519,6 +5519,19 @@
             "for_seconds": 1800,
             "keep_firing_for_seconds": 0,
             "fingerprint": "70da2050abb1dc7bdc3aa771c4de26672f84ef0ff2f0d2c0d9875f1cc546535c"
+          }
+        },
+        {
+          "id": "b7ac08ef4b08f3ba66a50a91caab8029ddec2a6fe64b48c570992a51750ec65d",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasMeterdPaidSubjectWithoutIdentity",
+          "definition": {
+            "expression_hash": "d527d3b54614e77f13c992c37db16fdded87569fa193603570fceb8eb4e4368f",
+            "labels_hash": "d6f182a1e274f40cb1bfacc2304834a3508e0973909adf95fad78b511d7ce7ee",
+            "for_seconds": 21600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e38971ffbb877b5ab0b9391041639ac57eb0fec8774b0c04c49edd79982584e3"
           }
         },
         {
@@ -7514,7 +7527,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "f1c5fdca7aa6bc91f5038366ae17f422a3dbbd0e854dd74cf1a38514509373f5",
+      "revision": "16965214df5e7f8783b3bdf3a1eda5e1cadb6a349f3bf8e376603f7c08900426",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -12534,11 +12547,11 @@
           "group_name": "faas_mcp_protocol",
           "rule_name": "FaasMCPProtocolHighErrorRate",
           "definition": {
-            "expression_hash": "3ce639f980748b16a74efeeda5a06de624664548a5a6b8ccfe2e363ebaccc68b",
+            "expression_hash": "e25e211ce0e9a7c9d87e00754bc04f831c44d21a705b7b2c70ae3f736a497cdf",
             "labels_hash": "9b234559d5b3e6a4b862d2aa8d439cbb834eee117b460ab67b55b5e7a407b8d3",
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "12b1ae6d42c9f48d92ff65e2ab6a5ac737218c9d1711919f7a8d6ee59dfa783d"
+            "fingerprint": "d5cd2d5350c87344f492bafe2ba88a70eda0b623fbadad1eb2e6084395f084a7"
           }
         },
         {
@@ -13280,6 +13293,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "9babf72dec9a25ae0fbde2ad294403842ae71e510e1da409575c59a250a8a63e"
+          }
+        },
+        {
+          "id": "b7ac08ef4b08f3ba66a50a91caab8029ddec2a6fe64b48c570992a51750ec65d",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasMeterdPaidSubjectWithoutIdentity",
+          "definition": {
+            "expression_hash": "d527d3b54614e77f13c992c37db16fdded87569fa193603570fceb8eb4e4368f",
+            "labels_hash": "d6f182a1e274f40cb1bfacc2304834a3508e0973909adf95fad78b511d7ce7ee",
+            "for_seconds": 21600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e38971ffbb877b5ab0b9391041639ac57eb0fec8774b0c04c49edd79982584e3"
           }
         },
         {

@@ -103,6 +103,35 @@ class PlanTest(unittest.TestCase):
                     phc.plan(release, state, NEW, None, ancestors(("a" * 40, COMMIT)), previous)
 
 
+class RollbackTest(unittest.TestCase):
+    """Converging back to the known-good host configuration after a watch
+    breach (ADR-20261122170000)."""
+    GOOD = "9" * 40
+
+    def test_roles_that_differ_converge_back_and_the_record_names_the_target(self):
+        # The record says grafana was converged at "a" (sha256:f2); back at GOOD it is sha256:f.
+        rec = record(roles={"nftables": "sha256:n", "postgres": "sha256:p2", "grafana": "sha256:f2"})
+        out, new_rec = phc.plan_rollback(self.GOOD, host(rec), NEW, None, ancestors((self.GOOD, "a" * 40)))
+        self.assertEqual((out["action"], out["roles"], out["previous"]), ("converge", ["grafana"], ""))
+        self.assertEqual(new_rec["commit"], self.GOOD)
+
+    def test_stateful_roles_never_converge_back(self):
+        rec = record(roles={"nftables": "sha256:n", "postgres": "sha256:p9", "grafana": "sha256:f"})
+        out, new_rec = phc.plan_rollback(self.GOOD, host(rec), NEW, None, ancestors((self.GOOD, "a" * 40)),
+                                         {"postgres": ["postgresql"]})
+        self.assertEqual((out["action"], out["roles"]), ("none", []))
+        self.assertIsNone(new_rec)
+
+    def test_refusals(self):
+        for name, state, anc, why in (
+            ("no record", host(None), ancestors(), "no role record"),
+            ("not an ancestor", host(record()), ancestors(), "not an ancestor"),
+            ("other globals", host(record(globals="sha256:old")), ancestors((self.GOOD, "a" * 40)), "globals"),
+        ):
+            with self.subTest(name), self.assertRaisesRegex(phc.Refused, why):
+                phc.plan_rollback(self.GOOD, state, NEW, None, anc)
+
+
 class FullReleaseTest(unittest.TestCase):
     """ADR-20261030150000: a full release converges the roles whose hash
     differs from the record, stateful roles included, and refuses nothing."""

@@ -128,6 +128,10 @@ type RunArgs struct {
 	// (api.FunctionRunnerBootArg), which hands every request, probes
 	// included, to the customer's handler (Hunt 12 H12-6).
 	FunctionRunner bool
+	// RawTCPListener skips the L7 probes: vmmd booted a raw TCP server
+	// (api.RawTCPListenerBootArg) such as a managed Valkey cache, which logs
+	// an HTTP request as a cross-protocol attack.
+	RawTCPListener bool
 }
 
 // runCharacterization is the boot-side entry point. It observes the
@@ -288,6 +292,10 @@ var bootProvenWorker = sync.OnceValue(func() bool { return bootArgSet(api.Proven
 // bootFunctionRunner reports whether vmmd booted this guest with
 // api.FunctionRunnerBootArg.
 var bootFunctionRunner = sync.OnceValue(func() bool { return bootArgSet(api.FunctionRunnerBootArg) })
+
+// bootRawTCPListener reports whether vmmd booted this guest with
+// api.RawTCPListenerBootArg.
+var bootRawTCPListener = sync.OnceValue(func() bool { return bootArgSet(api.RawTCPListenerBootArg) })
 
 func bootArgSet(arg string) bool {
 	cmdline, err := os.ReadFile("/proc/cmdline")
@@ -487,7 +495,7 @@ func collectSocketInodes(pid int, depth int, out map[uint64]struct{}, visited ma
 // the app's `/`, a request with side effects for any handler that acts on
 // POSTs (Hunt 12 H12-6); "graphql" only refined "http" on the host.
 func runL7Probes(ctx context.Context, args RunArgs, port int) (string, []byte, bool) {
-	if port <= 0 || args.FunctionRunner {
+	if port <= 0 || args.FunctionRunner || args.RawTCPListener {
 		// No bind means there is no L7 class hint. The caller combines the
 		// terminal status with this observation; the host re-derives it again.
 		// A function's runner would hand the probes to the customer's handler.

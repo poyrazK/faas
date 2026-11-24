@@ -25,14 +25,25 @@ import (
 )
 
 const (
-	runtimeConfigTenantSurfaces                     = "tenant_surfaces_enabled"
-	runtimeConfigDomainDoctor                       = "domain_doctor_enabled"
-	runtimeConfigDomainDoctorTTL                    = "domain_doctor_ttl_seconds"
+	runtimeConfigTenantSurfaces  = "tenant_surfaces_enabled"
+	runtimeConfigDomainDoctor    = "domain_doctor_enabled"
+	runtimeConfigDomainDoctorTTL = "domain_doctor_ttl_seconds"
+	// runtimeConfigStatusExcludedAccounts lists the internal accounts (test,
+	// probe, release-acceptance) whose deployments the public status page's
+	// deployment-success indicator leaves out (prod 2026-11-22: two internal
+	// accounts alone met the two-tenant breach rule).
+	runtimeConfigStatusExcludedAccounts = "status_excluded_account_ids"
+	// runtimeConfigAppNameBlocklist lists app names (and * patterns) no
+	// account may newly take: brand and phishing names under the apps
+	// domain. A create answers it like a taken name, so deploys fall back
+	// to a suffixed name; existing apps keep theirs.
+	runtimeConfigAppNameBlocklist                   = "app_name_blocklist"
 	runtimeConfigDataPlacement                      = "data_placement_enabled"
 	runtimeConfigAppErrors                          = "app_errors_enabled"
 	runtimeConfigRekey                              = "rekey_enabled"
 	runtimeConfigHSTS                               = "hsts_enabled"
 	runtimeConfigS3                                 = "s3_enabled"
+	runtimeConfigPrivateServiceTCP                  = "private_service_tcp_enabled"
 	runtimeConfigObjectStorageOverCeiling           = "object_storage_over_ceiling_deletion"
 	runtimeConfigFrontendHosting                    = "frontend_hosting_enabled"
 	runtimeConfigFrontendHostingDurable             = "frontend_hosting_durable_routing_enabled"
@@ -135,16 +146,19 @@ var runtimeConfigCatalog = []runtimeConfigDefinition{
 	{Key: runtimeconfig.KeySnapshotRefresh, Label: "Snapshot refresh after a release", Description: "After a node takes a release, find the snapshots of recently active apps that the release made stale (ADR-20261106214916). off does nothing; shadow logs and counts them without booting anything; on boots each one on its node, captures a fresh snapshot and parks it, unbilled.", Category: "Snapshots", Kind: "enum", Default: json.RawMessage(`"off"`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateSnapshotRefresh},
 	{Key: runtimeconfig.KeySnapshotCleanRecapture, Label: "Clean init snapshot recapture", Description: "When an instance parks and its deployment has no usable init snapshot on that node (ADR-20261115113000). on destroys the used instance instead of snapshotting its memory and boots, primes, snapshots and parks a fresh instance on the node in the background, unbilled, while the node keeps its headroom; wakes cold-boot until it lands. off snapshots the used instance at park, including the state its requests left in memory.", Category: "Snapshots", Kind: "enum", Default: json.RawMessage(`"on"`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateSnapshotCleanRecapture},
 	{Key: runtimeconfig.KeyBuilderElasticSlots, Label: "Elastic builder slots", Description: "Per-node builder slots that follow builder_slots without a restart (ADR-20261118154632). on lets each node run its reserved builds plus borrowed ones that use only memory its tenant slice is not using, and give it back: builderd cancels and requeues the newest borrowed build above 85% of the tenant slice and vmmd destroys one above 92%, so a build never OOM-kills, refuses or evicts a tenant. off keeps the fixed two-slot builder and the static build slices.", Category: "Builds", Kind: "enum", Default: json.RawMessage(`"` + api.DefaultBuilderElasticSlots + `"`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateBuilderElasticSlots},
-	{Key: runtimeConfigManagedPostgresPolicy, Label: "Managed PostgreSQL policy", Description: "Managed PostgreSQL operator policy, applied without a restart; a field left out keeps the provider registry file's value (FAAS_MANAGED_POSTGRES_CONFIG) or, for the approval, FAAS_MANAGED_POSTGRES_PRODUCTION_*: {\"provisioning_enabled\": true, \"max_databases_per_account\": 10, \"fleet\": {\"max_databases\": 80, \"max_monthly_cost_millicents\": 50000000}, \"usage\": {usage ceilings and provider rates}, \"production_approval\": {\"backend_id\", \"backend_fingerprint\", \"approved_at\", \"until\"} (at most 90 days)}. A value this platform's registry would refuse (an unknown backend, an invalid merged usage policy) is not stored. Backends, usage metering on/off and its collection timing stay in the file.", Category: "Managed PostgreSQL", Kind: runtimeConfigKindManagedPostgresPolicy, Default: json.RawMessage(`{}`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
+	{Key: runtimeConfigManagedPostgresPolicy, Label: "Managed PostgreSQL policy", Description: "Managed PostgreSQL operator policy, applied without a restart; a field left out keeps the provider registry file's value (FAAS_MANAGED_POSTGRES_CONFIG) or, for the approval, FAAS_MANAGED_POSTGRES_PRODUCTION_*: {\"provisioning_enabled\": true, \"max_databases_per_account\": 10, \"fleet\": {\"max_databases\": 80, \"max_monthly_cost_millicents\": 50000000}, \"usage\": {usage ceilings and provider rates}, \"production_approval\": {\"backend_id\", \"backend_fingerprint\", \"approved_at\", \"until\"} (at most 90 days), \"suspend_timeout_seconds\": 120 (scale-to-zero idle timeout, 60..604800, default 120; new databases take it at once, existing ones the next time their compute is suspended)}. A value this platform's registry would refuse (an unknown backend, an invalid merged usage policy) is not stored. Backends, usage metering on/off and its collection timing stay in the file.", Category: "Managed PostgreSQL", Kind: runtimeConfigKindManagedPostgresPolicy, Default: json.RawMessage(`{}`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeconfig.KeyBuilderSlots, Label: "Builder slots per node", Description: "Each node's builder slots while builder_elastic_slots is on (ADR-20261118154632): {\"default\": {\"reserved\": 1, \"max\": 2}, \"nodes\": {\"<node>\": {\"reserved\": 1, \"max\": 8}}}. reserved slots are funded out of tenant capacity and never give a build back; each node runs the reserved slots it is provisioned with (the deploy manifest's builder_reserved_slots, ADR-20261118154632 amendment 1), so reserved (1 to 4) cannot change that count. max includes them; the slots above reserved borrow idle tenant memory. A node runs at most its online CPUs / 2 builds and reports what it applied. Lowering max never cancels a running build.", Category: "Builds", Kind: runtimeConfigKindBuilderSlots, Default: builderslots.DefaultJSON(), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateBuilderSlots},
 	{Key: runtimeconfig.KeyObjectInventoryQuiet, Label: "Quiet bucket inventory", Description: "How long a bucket's inventory stays fresh when nothing was written to it since its last listing, under gateway-safety accounting (ADR-20261110151628). off holds every bucket to 900 s; shadow still does, but classifies quiet buckets and counts drift when one's listing changes (faas_object_storage_inventory_drift_total); on keeps a quiet bucket's inventory for 24 h and lists it once a day. Move to on only after a shadow week with no drift.", Category: "Object storage", Kind: "enum", Default: json.RawMessage(`"off"`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateObjectInventoryQuiet},
 	{Key: runtimeconfig.KeySnapshotRefreshWindowHours, Label: "Snapshot refresh window (hours)", Description: "An app that parked on a node within this many hours is a snapshot refresh candidate on that node (ADR-20261106214916).", Category: "Snapshots", Kind: "integer", Default: json.RawMessage("168"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateIntSetting(api.SnapshotRefreshWindowHoursMin, api.SnapshotRefreshWindowHoursMax, api.ValidSnapshotRefreshWindowHours)},
 	{Key: runtimeConfigEnvironmentBranches, Label: "Environment branches", Description: "Admit environment branches: lazy copies of a project environment whose workloads activate on first request (ADR-20261031193635). Managed PostgreSQL is copied as of the branch point and object storage is overlaid on the parent's buckets.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigEnvironmentBranchPRPreviews, Label: "Branch PR previews", Description: "Let projects choose branch-backed PR previews: each pull request gets environment branch pr-N of production and its head deploys into it (ADR-20261113121342). Needs environment branches; a project that chose them falls back to app previews while this is off.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigObjectStorageOverCeiling, Label: "Object storage over-ceiling deletion", Description: "Rollout of deleting object storage held above an account's ceiling after 30 days' notice (ADR-20261111123000). off: nothing. shadow: record each account's clock and log it, with no customer effect. notify: also show the deletion date in the usage API. on: reserved for deletion. Run notify for at least 30 days before on.", Category: "Feature flags", Kind: "enum", Default: json.RawMessage(`"off"`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateObjectStorageOverCeiling},
+	{Key: runtimeConfigPrivateServiceTCP, Label: "Private service TCP", Description: "Kill switch for private TCP between services (ADR-576, the deploy manifest's service_tcp: node, listener and dns). Managed Redis is reached only that way, so while this is off redis create, Compose Redis provisioning and the managed-redis capability are refused instead of creating caches nothing can connect to. Turn it off when a compute node loses the service TCP listener, and back on once service_tcp is converged on every node. Existing caches keep running either way.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("true"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigS3, Label: "S3 object storage", Description: "Allow bucket provisioning and new signed URLs. Disabling preserves metadata and cleanup; existing URLs expire normally. Provider configuration is still required.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigTenantSurfaces, Label: "Tenant surfaces", Description: "Expose the tenant surface and certificate lifecycle API.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigDomainDoctor, Label: "Domain doctor", Description: "Run DNS and certificate readiness probes for customer domains.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("true"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
+	{Key: runtimeConfigStatusExcludedAccounts, Label: "Status page: excluded accounts", Description: "Comma-separated account IDs (internal test, probe and release-acceptance accounts) whose deployments the public status page's deployment-success indicator leaves out of both its successes and its failures. Empty counts every account.", Category: "Operational policies", Kind: "string", Default: json.RawMessage(`""`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateAccountIDList},
+	{Key: runtimeConfigAppNameBlocklist, Label: "App name blocklist", Description: "App names no account may newly take under the apps domain (brand and phishing names), separated by commas, spaces or newlines. An entry is an exact name (paypal) or a pattern where * matches any characters (*-login, *paypal*). A deploy asking for a blocked name gets a suffixed name instead (the CLI treats it like a taken name); rename, the dashboard and new project workloads refuse it. Existing apps keep their names: gregalectl accounts app-name-report lists the ones a list would match. Empty blocks nothing.", Category: "Security", Kind: "string", Default: json.RawMessage(`""`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateAppNameBlocklist},
 	{Key: runtimeConfigDomainDoctorTTL, Label: "Domain doctor TTL", Description: "Maximum age in seconds before a domain doctor result is stale.", Category: "Operational policies", Kind: "integer", Default: json.RawMessage("300"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigDataPlacement, Label: "Data placement", Description: "Enable customer data-upstream placement and affinity behavior.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigAppErrors, Label: "Automatic app errors", Description: "Accept and aggregate gateway error reports; enabling the socket is a graceful daemon change.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("true"), ApplyMode: state.RuntimeConfigApplyGraceful, ControllerEnabled: false, Mutable: true},
@@ -765,6 +779,69 @@ func validateGuestVCPUApps(value json.RawMessage) error {
 		}
 	}
 	return nil
+}
+
+// validateAccountIDList accepts a comma-separated list of account IDs.
+func validateAccountIDList(value json.RawMessage) error {
+	list, err := runtimeconfig.String(value)
+	if err != nil {
+		return err
+	}
+	for _, entry := range strings.Split(list, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		if _, err := uuid.Parse(entry); err != nil {
+			return fmt.Errorf("%q is not an account ID", entry)
+		}
+	}
+	return nil
+}
+
+// validateAppNameBlocklist checks app_name_blocklist (api.ParseAppNameBlocklist).
+func validateAppNameBlocklist(value json.RawMessage) error {
+	list, err := runtimeconfig.String(value)
+	if err != nil {
+		return err
+	}
+	_, err = api.ParseAppNameBlocklist(list)
+	return err
+}
+
+// appNameBlocklist is app_name_blocklist's entries; nil when unset or
+// unreadable.
+func (m *runtimeConfigManager) appNameBlocklist() []string {
+	if m == nil {
+		return nil
+	}
+	list, err := runtimeconfig.String(m.Value(runtimeConfigAppNameBlocklist))
+	if err != nil {
+		return nil
+	}
+	entries, err := api.ParseAppNameBlocklist(list)
+	if err != nil {
+		return nil
+	}
+	return entries
+}
+
+// statusExcludedAccounts is status_excluded_account_ids as canonical IDs.
+func (m *runtimeConfigManager) statusExcludedAccounts() []string {
+	if m == nil {
+		return nil
+	}
+	list, err := runtimeconfig.String(m.Value(runtimeConfigStatusExcludedAccounts))
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, entry := range strings.Split(list, ",") {
+		if id, err := uuid.Parse(strings.TrimSpace(entry)); err == nil {
+			out = append(out, id.String())
+		}
+	}
+	return out
 }
 
 func runRuntimeConfigSubscriber(ctx context.Context, pool *pgxpool.Pool, srv *server, log *slog.Logger) error {

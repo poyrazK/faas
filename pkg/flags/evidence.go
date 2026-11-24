@@ -71,7 +71,7 @@ func CanonicalEvidence(raw []byte) (string, error) {
 }
 
 // MergeEvidence adds the gateway's own decisions (edge routing,
-// ADR-20261122090000) to the canonical evidence the application reported. The
+// ADR-20261124212701) to the canonical evidence the application reported. The
 // application's evidence for a flag wins: it reports what the code did. The
 // result is canonical; decisions past the evidence bound are dropped.
 func MergeEvidence(canonical string, extra []Evidence) (string, error) {

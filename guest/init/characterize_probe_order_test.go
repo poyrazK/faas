@@ -60,6 +60,8 @@ func TestRunL7ProbesRequests(t *testing.T) {
 	}{
 		{"app gets only the OpenAPI GET", RunArgs{}, []string{"GET /openapi.json HTTP/1.1"}},
 		{"function runner gets no probes", RunArgs{FunctionRunner: true}, nil},
+		// Agent eval 2026-11-23 (P8): Valkey logged the GET as an attack.
+		{"raw TCP listener gets no probes", RunArgs{RawTCPListener: true}, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

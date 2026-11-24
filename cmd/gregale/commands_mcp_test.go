@@ -82,6 +82,9 @@ func TestMCPCLIJourney(t *testing.T) {
 	defer s.Close()
 	for _, command := range [][]string{
 		{"tools", "--url", s.URL + "/mcp"},
+		// A leading URL is the endpoint, not an app slug (MCP Tasks prod
+		// probe 2026-11-22).
+		{"tools", s.URL + "/mcp"},
 		{"doctor", "--url", s.URL + "/mcp"},
 		{"call", "--url", s.URL + "/mcp", "--tool", "add", "--arguments", `{"a":7,"b":5}`},
 		{"config", "--url", s.URL + "/mcp", "--name", "my-mcp"},

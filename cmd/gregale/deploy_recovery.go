@@ -166,7 +166,7 @@ func renderDeployRecoveryError(title string, e *deployRecoveryError) int {
 		}
 	}
 	r := *e.recovery
-	if r.DeploymentID == "" && remote != nil && submissionRejected(remote.Problem.Status) {
+	if r.DeploymentID == "" && remote != nil && submissionRejected(remote.Problem) {
 		// The server answered with a definitive rejection: nothing was
 		// accepted, so "the server may have accepted the submission" and
 		// an idempotent retry flag were wrong advice (production-us
@@ -208,8 +208,14 @@ func renderDeployRecoveryError(title string, e *deployRecoveryError) int {
 
 // submissionRejected reports a 4xx that proves the submission was refused
 // rather than possibly accepted: everything except timeouts, conflicts with
-// an in-flight submission, and rate limiting.
-func submissionRejected(status int) bool {
+// an in-flight submission, and rate limiting. A release freeze answers 409
+// too but refuses outright; its retry flag and `release list` next step were
+// noise beside the freeze's own lift/override hint (prod hunt r25).
+func submissionRejected(p api.Problem) bool {
+	if p.Code == api.CodeReleaseFrozen {
+		return true
+	}
+	status := p.Status
 	return status >= 400 && status < 500 && status != 408 && status != 409 && status != 429
 }
 

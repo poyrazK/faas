@@ -21,6 +21,7 @@ export type ManagedPostgresUsageOperatorResponse = {
   storage_byte_seconds_limit: number;
   storage_byte_seconds_remaining: number;
   history_byte_seconds: number;
+  snapshot_byte_seconds?: number;
   egress_bytes: number;
   cost_millicents: number;
   max_monthly_cost_millicents: number;

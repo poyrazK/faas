@@ -49,6 +49,14 @@ func TestRenderUsesEveryPlanAndCanonicalValues(t *testing.T) {
 	}
 }
 
+func TestFormatExactPrice(t *testing.T) {
+	for millicents, want := range map[int64]string{23_310: "$0.2331", 9_450: "$0.0945", 50_000: "$0.50", 21_000: "$0.21", 10_500: "$0.105", 100_000: "$1.00"} {
+		if got := formatExactPrice(millicents); got != want {
+			t.Errorf("formatExactPrice(%d) = %q, want %q", millicents, got, want)
+		}
+	}
+}
+
 func TestFormatPrice(t *testing.T) {
 	for _, tc := range []struct {
 		millicents int64

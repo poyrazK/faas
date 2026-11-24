@@ -5,7 +5,7 @@
 //
 // Client is the public SDK surface. New customers should:
 //
-//	c := api.NewClient("https://api.example.com", os.Getenv("FAAS_TOKEN"))
+//	c := api.NewClient("https://api.example.com", os.Getenv("GREGALE_TOKEN"))
 //	app, err := c.GetApp(ctx, "hello-world")
 //	apps, err := c.ListApps(ctx)
 //

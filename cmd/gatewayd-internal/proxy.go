@@ -46,6 +46,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 )
@@ -265,6 +266,13 @@ func isApidLogsPath(p string) bool {
 // `pkg/apid/router_test.go::TestIsApidPath`.
 func isApidPath(p string) bool {
 	return apid.IsApidPath(p)
+}
+
+// dashboardCSPGate reports whether the dashboard's nonce CSP belongs on
+// the response: an apid path on a Gregale-owned host. It reads the Surface
+// that httpsec.ForSurface recorded, so it must run inside that middleware.
+func dashboardCSPGate(r *http.Request) bool {
+	return !httpsec.SurfaceFrom(r.Context()).CustomerOwned() && isApidPath(r.URL.Path)
 }
 
 // proxyToApid builds a one-shot httputil.ReverseProxy and serves

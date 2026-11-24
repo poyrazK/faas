@@ -112,7 +112,35 @@ What to expect:
       ADR-20261103163954 §2), routed to that server. No role puts it on
       the host: add it to the public card in its own netplan file
       (`/etc/netplan/61-entry-ip.yaml`, `addresses: [<ip>/32]` under the
-      card named in `50-cloud-init.yaml`) and check it answers ping.
+      card named in `50-cloud-init.yaml`). Check `ip addr show` lists it;
+      once the converge has run (nftables + gatewayd-public listening on
+      443), check from outside that
+      `curl -sk -o /dev/null --connect-timeout 5 -w '%{time_connect}' https://<ip>/`
+      connects. Don't use ping: nftables drops ICMP on the public card.
+- [ ] Every host whose public DHCP subnet holds another fleet host (on
+      2026-11-23: bhs-2 and bhs-3 in 15.235.50.0/24; bhs-1 is alone in
+      149.56.23.0/24 and needs nothing) sends that subnet through the
+      gateway. This applies to any compute node added later too. OVH
+      answers ARP between dedicated servers only sporadically, so the
+      on-link route drops replies to the other node's primary address (app
+      egress is masqueraded to it, so cross-node `*.gregale.app` calls
+      hang). Add `/etc/netplan/62-peer-via-gw.yaml` (mode 600) with, under
+      the same card id as `50-cloud-init.yaml`, `routes:` for the two halves
+      of the DHCP prefix (prefix length + 1, e.g. `15.235.50.0/25` and
+      `15.235.50.128/25` for a /24), each `via:` the DHCP gateway with
+      `on-link: true` (the gateway sits inside one half, and at boot the
+      static routes are added before DHCP installs its route to the
+      gateway). Run `netplan generate`, check that
+      `/run/systemd/network/10-netplan-<card>.network` has both routes with
+      `GatewayOnLink=true`, and add them live with
+      `ip route replace <half> via <gw> dev <card> onlink`. After the next
+      planned reboot, check that `ip route` shows both halves. Check with an
+      empty neighbour cache, 10 times in each direction (the fault was
+      intermittent, so one success proves nothing): on the serving node
+      `ip neigh del <caller primary> dev <card>`, then from the caller
+      `curl -sk -o /dev/null --connect-timeout 5 --interface <caller primary> -w '%{time_connect}\n' https://<other entry_ipv4>/`
+      must print a non-zero time every run. Don't use ping for this check.
+      IPv4 only: `*.gregale.app` publishes no AAAA records (2026-11-23).
 - [ ] OVH account: 2FA on every login, API tokens scoped and listed, IPMI and
       rescue mode understood (disk encryption, ADR-20261109120000, covers
       the rescue-mode risk to data volumes).

@@ -37,6 +37,9 @@ func (s *server) selectBindingVerificationDeployment(ctx context.Context, app st
 	if err != nil {
 		return state.Deployment{}, api.ErrInternal("could not read binding verification deployment")
 	}
+	if problem := functionAppTaskUnavailable(app, deployment); problem != nil {
+		return state.Deployment{}, problem
+	}
 	if deployment.Status != state.DeployLive && !preparedBindingRollback(ctx, deployment) || deployment.RootfsKey == "" || deployment.ImageDigest == "" {
 		return state.Deployment{}, appTaskDeploymentUnavailableProblem()
 	}

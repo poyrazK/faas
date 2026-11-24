@@ -325,6 +325,63 @@ class RestartRolesTest(unittest.TestCase):
         self.assertIn("control_plane_service", got)
 
 
+class LiteralHostvarsTest(unittest.TestCase):
+    """hostvars reads by literal attribute name only, or by computed name
+    (every variable)."""
+
+    def test_literal_shapes(self):
+        for text in [
+            "{{ hostvars[item].faas_private_dns_address | default('') }}",
+            "{{ hostvars[groups['control_plane'][0]].promote_lsn }}",
+            "{{ hostvars[h]['faas_node_name'] }}",
+            "{{ groups['x'] | map('extract', hostvars, 'faas_node_name') | list | sort }}",
+            "{{ groups['compute_nodes'] | default([]) | map('extract', hostvars)\n"
+            "   | selectattr('faas_edge_on_compute_nodes', 'defined')\n"
+            "   | map(attribute='faas_edge_on_compute_nodes') | map('bool')\n"
+            "   | select | list | length > 0 }}",
+            "{{ hostvars | dict2items | selectattr('value.faas_t', 'defined')\n"
+            "   | selectattr('value.faas_t', 'ne', '') | map(attribute='key') | list }}",
+            "{%- set hv = hostvars[h] if (hostvars is defined and h in hostvars) else {} -%}\n"
+            "{%- set addr = hv.faas_private_dns_address | default(hv.faas_private_address) -%}",
+            "no host variables here",
+        ]:
+            with self.subTest(text=text[:60]):
+                self.assertTrue(hr.literal_hostvars(text))
+
+    def test_computed_shapes_read_every_variable(self):
+        for text in [
+            "{{ hostvars[item][name] }}",
+            "{{ hostvars[item] | to_json }}",
+            "{{ hostvars[item] }}",
+            "{{ groups['x'] | map('extract', hostvars) | map('to_json') | list }}",
+            "{{ groups['x'] | map('extract', hostvars) | first | dict2items }}",
+            "{{ hostvars | dict2items | map(attribute='value') | list }}",
+            "{%- set hv = hostvars[h] -%}{{ hv[key] }}",
+            "{%- set hv = hostvars[h] -%}{{ hv | to_json }}",
+            "{%- set hv = hostvars[h] -%}{{ hv.get(key) }}",
+            "{%- set hv = hostvars[h] -%}{{ hv.items() | list }}",
+            "{{ hostvars.keys() }}",
+            "{{ hostvars[h].get(name) }}",
+            "{{ hostvars[h].items() | list }}",
+            "{% for hv in groups['db'] | map('extract', hostvars) %}{{ hv[setting] }}{% endfor %}",
+            "{% for hv in groups['db'] | map('extract', hostvars) | selectattr('x', 'defined') %}{% endfor %}",
+            "{% set hs = groups['db'] | map('extract', hostvars) | list %}{{ hs | to_json }}",
+            "{% for i in hostvars | dict2items %}{{ i.value[k] }}{% endfor %}",
+            "{{ groups['x'] | map('extract', hostvars) | selectattr('faas_x') | first }}",
+        ]:
+            with self.subTest(text=text[:60]):
+                self.assertFalse(hr.literal_hostvars(text))
+
+    def test_literal_hostvars_role_does_not_read_unrelated_variables(self):
+        variables = hr.Variables.__new__(hr.Variables)
+        variables.defs = {"faas_edge_on_compute_nodes": [("a", "x")], "meterd_internal_egress_unbilled": [("b", "y")]}
+        variables.deps = {n: set() for n in variables.defs}
+        literal = ("{{ groups['compute_nodes'] | map('extract', hostvars)"
+                   " | selectattr('faas_edge_on_compute_nodes', 'defined') | list | length > 0 }}")
+        self.assertEqual(variables.closure(literal), {"faas_edge_on_compute_nodes"})
+        self.assertEqual(variables.closure("{{ hostvars[h][v] }}"), set(variables.defs))
+
+
 class RepositoryTest(unittest.TestCase):
     """The real deploy tree: every reference a host role makes resolves, so
     no input escapes its role's hash."""
@@ -337,6 +394,19 @@ class RepositoryTest(unittest.TestCase):
 
     def test_every_role_reference_resolves(self):
         self.assertEqual(self.roles.unresolved, {})
+
+    def test_every_hostvars_use_is_a_recognised_literal_shape(self):
+        # A new computed-name read is allowed (it reads every variable), but
+        # it makes every group variable change that role's change: on a
+        # stateful role that stops the unit lane. Recognise it here, or
+        # rewrite it with a literal name.
+        dynamic = []
+        for path in self.tree.walk("deploy/ansible/"):
+            if path.endswith((".yml", ".yaml", ".j2")):
+                text = hr.uncomment(self.tree.text(path))
+                if not hr.literal_hostvars(text):
+                    dynamic.append(path)
+        self.assertEqual(dynamic, [])
 
     def test_plays_name_existing_roles(self):
         for group in hr.GROUPS:

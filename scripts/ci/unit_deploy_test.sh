@@ -79,11 +79,14 @@ bash -n "$test_root/activate.sh" || fail "activation script does not parse"
 for want in \
   "$stage/bin/deployctl unit-overlay --release-id 0123456789abcdef0123456789abcdef01234567 --expect-current 00000000000000000000000000000000000000b0 --commit 1111111111111111111111111111111111111111" \
   "bin/apid=$stage/bin/apid" \
-  "/opt/faas/releases/0123456789abcdef0123456789abcdef01234567/bin/deployctl deploy --only 'apid,meterd' --expect-current 00000000000000000000000000000000000000b0 0123456789abcdef0123456789abcdef01234567" \
+  "DEPLOYCTL_RESTART_PARALLEL=$(jq -r .activation.parallel "$repo_root/scripts/ci/release_units.json") /opt/faas/releases/0123456789abcdef0123456789abcdef01234567/bin/deployctl deploy --only 'apid,meterd' --expect-current 00000000000000000000000000000000000000b0 0123456789abcdef0123456789abcdef01234567" \
   "unit-release-verify.sh /opt/faas/releases/0123456789abcdef0123456789abcdef01234567 apid=http://127.0.0.1:9101/readyz \\?apid-clone-worker" \
   "$stage/bin/deployctl rollback --only 'apid,meterd' --expect-current 0123456789abcdef0123456789abcdef01234567 --to 00000000000000000000000000000000000000b0"; do
   grep -Fq -- "$want" "$test_root/activate.sh" || fail "activation script lacks: $want"
 done
+# Parallel activation is for the deploy; the rollback restarts one at a time.
+[[ "$(grep -c DEPLOYCTL_RESTART_PARALLEL "$test_root/activate.sh")" == 1 ]] \
+  || fail "only the deploy may restart in parallel: $(cat "$test_root/activate.sh")"
 
 # 1. (cont.) In a workflow run the script names the run as the actor in the
 #    release history deployctl writes (issue #574); outside one it names none.
@@ -107,6 +110,60 @@ bash "$helper" script "$test_root/data-only.json" "$stage" "$test_root/data-only
 bash -n "$test_root/data-only.sh" || fail "data-only activation script does not parse"
 grep -Fq "deploy --only '' --expect-current" "$test_root/data-only.sh" || fail "data-only plan does not deploy with an empty --only"
 if grep -q unit-release-verify "$test_root/data-only.sh"; then fail "data-only plan verifies units it did not restart"; fi
+
+# 1c. A plan that restarts vmmd (the compute lane, docs/adr/20261123122457-
+#     compute-unit-lane.md) asks the staged candidate whether it adopts
+#     every live guest before anything changes, stands down (exit 3) when it
+#     does not, and after the restart requires a clean adoption report or
+#     rolls the node back. Other plans never run either.
+if grep -q adoption "$test_root/activate.sh"; then fail "a plan without vmmd runs the adoption proof"; fi
+jq '.units = ["vmmd", "schedd"] | .only = ["vmmd", "schedd"] | .verify = ["vmmd=http://127.0.0.1:9104/readyz"]
+    | .replace = {"bin/vmmd": "bin/vmmd", "bin/schedd": "bin/schedd", "bin/deployctl": "bin/deployctl",
+                  "unit-versions.json": "unit-versions.json"}' "$plan" > "$test_root/vmmd.json"
+bash "$helper" script "$test_root/vmmd.json" "$stage" "$test_root/vmmd.sh"
+bash -n "$test_root/vmmd.sh" || fail "vmmd activation script does not parse"
+line() { grep -nF -- "$1" "$test_root/vmmd.sh" | head -1 | cut -d: -f1; }
+check="$(line "$stage/bin/vmmd adoption-check --config /etc/faas/vmmd.toml")"
+handoff="$(line "FAAS_VMMD_ADOPT_RUNNING_VMS=(1|t|T|true|TRUE|True)")"
+standdown="$(line 'stand_down "the candidate vmmd does not adopt every live guest')"
+overlay="$(line "$stage/bin/deployctl unit-overlay")"
+deploy="$(line "bin/deployctl deploy --only 'vmmd,schedd'")"
+# shellcheck disable=SC2016 # the literal text the script carries
+report="$(line '/opt/faas/current/bin/vmmd adoption-report --wait 90s --already-gone "$adoption_gone"')"
+rollback="$(line "$stage/bin/deployctl rollback --only 'vmmd,schedd'")"
+for n in check handoff standdown overlay deploy report rollback; do
+  [[ -n "${!n}" ]] || fail "vmmd activation script lacks its $n step: $(cat "$test_root/vmmd.sh")"
+done
+(( handoff < check && check < standdown && standdown < overlay && overlay < deploy && deploy < report && report < rollback )) \
+  || fail "vmmd activation order must be hand-off, check, stand-down, overlay, deploy, report, rollback"
+grep -Fq 'exit 3' "$test_root/vmmd.sh" || fail "a refused adoption must stand down with exit 3"
+if grep -Eq 'force-park|drain' "$test_root/vmmd.sh"; then fail "the lane must never park or drain a guest"; fi
+
+# 1c. (cont.) The proof runs: the stand-down leaves the node untouched when
+#     the serving vmmd does not hand off, and when the candidate refuses.
+proof="$test_root/proof"
+mkdir -p "$proof/bin" "$proof/proc/77"
+sed -n '/^stand_down()/,/^adoption_gone=/p' "$test_root/vmmd.sh" \
+  | sed -e "s#/proc/#$proof/proc/#g" -e "s#$stage/bin/vmmd#$proof/bin/vmmd#g" -e 's/sleep 10/:/' > "$proof/check.sh"
+cat > "$proof/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+echo 77
+EOF
+cat > "$proof/bin/vmmd" <<'EOF'
+#!/usr/bin/env bash
+echo "${PROOF_OUT:-{\}}"
+exit "${PROOF_RC:-0}"
+EOF
+chmod +x "$proof/bin/systemctl" "$proof/bin/vmmd"
+run_proof() { PATH="$proof/bin:$PATH" bash -c "set -euo pipefail; source '$proof/check.sh'; echo gone=\$adoption_gone"; }
+printf 'FAAS_VMMD_ADOPTION_RECORD=true\0' > "$proof/proc/77/environ"
+rc=0; run_proof >/dev/null 2>&1 || rc=$?
+[[ "$rc" == 3 ]] || fail "a serving vmmd without adopt_running_vms must stand down with 3, got $rc"
+printf 'FAAS_VMMD_ADOPTION_RECORD=true\0FAAS_VMMD_ADOPT_RUNNING_VMS=true\0' > "$proof/proc/77/environ"
+rc=0; PROOF_RC=3 PROOF_OUT='{"reason":"adoption is off"}' run_proof >/dev/null 2>&1 || rc=$?
+[[ "$rc" == 3 ]] || fail "a refused adoption must stand down with 3, got $rc"
+got="$(PROOF_OUT='{"gone":[{"instance":"i-1"},{"instance":"i-2"}]}' run_proof 2>/dev/null | tail -1)"
+[[ "$got" == "gone=i-1,i-2" ]] || fail "a clean adoption must pass on the gone guests, got $got"
 
 # 2. A converge plan re-activates the active overlay without assembling one.
 jq '.action = "converge" | .replace = {} | .release_id = .expect_current' "$plan" > "$test_root/converge.json"
@@ -308,6 +365,10 @@ export STUB_ALERTS='{"status":"success","data":{"alerts":[{"labels":{"alertname"
 state="$(bash "$helper" preflight-state)"
 jq -e '.lock == "free" and .prometheus.ok and (.prometheus.alerts | length) == 1 and .prometheus.alerts[0].labels.alertname == "FaasDaemonDown"' <<<"$state" >/dev/null \
   || fail "preflight-state did not report a free lock and the alert: $state"
+# The full release the host runs; empty when there is no release to read.
+jq -e '(.base | type) == "string"' <<<"$state" >/dev/null || fail "preflight-state did not report the host's base: $state"
+state="$(STUB_CURL_FAIL=1 bash "$helper" preflight-state)"
+jq -e '(.base | type) == "string"' <<<"$state" >/dev/null || fail "preflight-state without Prometheus lost the host's base: $state"
 state="$(STUB_FLOCK=75 bash "$helper" preflight-state)"
 jq -e '.lock == "held"' <<<"$state" >/dev/null || fail "a held deploy lock was not reported: $state"
 state="$(STUB_FLOCK=1 bash "$helper" preflight-state)"
@@ -417,18 +478,23 @@ WATCH_OWNER=777 bash "$helper" watch-close >/dev/null || fail "the owner could n
 [[ ! -f "$WATCH_RECORD" ]] || fail "watch-close left the record"
 [[ "$(bash "$helper" watch-record)" == null ]] || fail "watch-record of no record is not null"
 
-# The cap: at most max_unwatched releases per host.
-printf '%s\n' "$releases/$known_good" > "$test_root/current"
-bash "$helper" watch-open "$plan" control-plane || fail "watch-open (1)"
-jq '.release_id = "0123456789abcdef0123456789abcdef0123456a" | .expect_current = "0123456789abcdef0123456789abcdef01234567"' "$plan" > "$test_root/plan2.json"
-printf '%s\n' "$releases/0123456789abcdef0123456789abcdef01234567" > "$test_root/current"
-bash "$helper" watch-open "$test_root/plan2.json" control-plane || fail "watch-open (2)"
-jq '.release_id = "0123456789abcdef0123456789abcdef0123456b" | .expect_current = "0123456789abcdef0123456789abcdef0123456a"' "$plan" > "$test_root/plan3.json"
-mkdir -p "$releases/0123456789abcdef0123456789abcdef0123456a"
-cp "$releases/$known_good/release-manifest.json" "$releases/0123456789abcdef0123456789abcdef0123456a/"
-printf '%s\n' "$releases/0123456789abcdef0123456789abcdef0123456a" > "$test_root/current"
-status=0; bash "$helper" watch-open "$test_root/plan3.json" control-plane 2>/dev/null || status=$?
-[[ "$status" == 3 ]] || fail "a third unwatched release was accepted (exit $status)"
+# The cap: at most max_unwatched releases per host (release_units.json).
+cap="$(jq -r .watch.max_unwatched "$repo_root/scripts/ci/release_units.json")"
+expect="$known_good"
+for (( i = 1; i <= cap + 1; i++ )); do
+  id="$(printf '0123456789abcdef0123456789abcdef012345%02x' "$((0x70 + i))")"
+  mkdir -p "$releases/$expect"
+  [[ -f "$releases/$expect/release-manifest.json" ]] || cp "$releases/$known_good/release-manifest.json" "$releases/$expect/"
+  printf '%s\n' "$releases/$expect" > "$test_root/current"
+  jq --arg id "$id" --arg expect "$expect" '.release_id = $id | .expect_current = $expect' "$plan" > "$test_root/cap-$i.json"
+  status=0; bash "$helper" watch-open "$test_root/cap-$i.json" control-plane 2>/dev/null || status=$?
+  if (( i <= cap )); then
+    [[ "$status" == 0 ]] || fail "unwatched release $i of $cap was refused (exit $status)"
+  else
+    [[ "$status" == 3 ]] || fail "release $i, past the cap of $cap, was accepted (exit $status)"
+  fi
+  expect="$id"
+done
 rm -f "$WATCH_RECORD"
 
 # pin-node keeps only keys with the pinned fingerprint.

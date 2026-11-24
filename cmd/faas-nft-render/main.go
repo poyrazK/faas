@@ -76,6 +76,8 @@ func main() {
 		"ADR-20261102081618: comma-separated sources (Cloudflare's ranges) that alone may reach 80 and 443, as the nftables role's faas_cloudflare_origin_only renders. Env: FAAS_PUBLIC_INGRESS_CIDRS.")
 	publicEntryAddrs := flag.String("public-entry-addrs", "",
 		"ADR-20261103163954: comma-separated public entry addresses of an edge with no proxy in front; they take 443 from every source and nothing else, as the nftables role's faas_public_entry_addrs renders. Env: FAAS_PUBLIC_ENTRY_ADDRS.")
+	peerEntryAddrs := flag.String("peer-entry-addrs", "",
+		"ADR-20261123100000: comma-separated IPv4 entry addresses of the other compute edges; a guest's 443 call to one is DNATed to this node's IPv4 entry address, as the nftables role's faas_peer_entry_addrs renders. Env: FAAS_PEER_ENTRY_ADDRS.")
 	flag.Parse()
 
 	policy := netns.DefaultHostPolicy
@@ -98,6 +100,16 @@ func main() {
 				os.Exit(1)
 			}
 			policy.PublicEntryAddrs = append(policy.PublicEntryAddrs, addr)
+		}
+	}
+	if raw := pickValue(*peerEntryAddrs, "FAAS_PEER_ENTRY_ADDRS"); raw != "" {
+		for _, entry := range strings.Split(raw, ",") {
+			addr, err := netip.ParseAddr(strings.TrimSpace(entry))
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "faas-nft-render: --peer-entry-addrs %q: %v\n", entry, err)
+				os.Exit(1)
+			}
+			policy.PeerEntryAddrs = append(policy.PeerEntryAddrs, addr)
 		}
 	}
 	if iface := pickValue(*publicIface, "FAAS_PUBLIC_IFACE"); iface != "" {

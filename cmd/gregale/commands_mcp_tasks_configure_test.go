@@ -27,6 +27,10 @@ func TestMCPTasksConfigurePreviewApplyAndResume(t *testing.T) {
 					main.WriteJSONTest(w, app)
 					return
 				}
+				if r.Method == http.MethodGet && r.URL.Path == "/v1/apps/reports-worker/env" {
+					main.WriteJSONTest(w, api.AppEnvListResponse{Env: []api.AppEnvResponse{}})
+					return
+				}
 				prefix := "/v1/apps/reports-worker/env/"
 				if r.Method != http.MethodPut || !strings.HasPrefix(r.URL.Path, prefix) {
 					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)

@@ -151,6 +151,7 @@ type HostingPhaseObserver interface {
 // bridge stamps it from req.Pusher.Login; the apid paths leave
 // it empty.
 type EnqueueParams struct {
+	ProjectDeployGroupID string
 	// IntentID gives durable non-webhook orchestration the same recovery
 	// guarantees as DeliveryID. The two namespaces cannot collide.
 	IntentID            string
@@ -674,6 +675,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 	// chain, so pre-#606 callers that don't pass actor fields render
 	// identical wire shapes.
 	input := state.Deployment{
+		ProjectDeployGroupID: p.ProjectDeployGroupID,
 		BuildDependencies:    p.BuildDependencies,
 		ExpectedReview:       p.ExpectedReview,
 		ReviewedRolloutMode:  p.ReviewedRolloutMode,

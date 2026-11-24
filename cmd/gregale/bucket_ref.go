@@ -16,10 +16,15 @@ func bucketIDArgOffset(args []string) (int, bool) {
 	if len(args) == 0 {
 		return 0, false
 	}
+	// The tree rewrites before this runs, so today's spellings are listed too
+	// (`bucket version list` arrives as `versions list`, `bucket version
+	// delete` as `version-delete`). Missing them left `bucket version list APP
+	// BUCKET-NAME` printing only its usage line (prod hunt r28).
 	switch args[0] {
-	case "upload", "download", "sign", "delete":
+	case "upload", "download", "sign", "delete", "version-delete", "encryption-keys":
 		return 1, true
-	case "deletion", "deletions", "versioning", "writes", "tags", "version":
+	case "deletion", "deletions", "versioning", "writes", "tags", "version", "versions",
+		"copy-source", "copy-sources", "cors", "encryption", "reconcile", "uploads", "lifecycle", "notifications":
 		// `bucket <noun> <verb> <app> <bucket-id> …`
 		if len(args) > 1 && !strings.HasPrefix(args[1], "-") {
 			return 2, true

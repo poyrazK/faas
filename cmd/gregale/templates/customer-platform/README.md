@@ -63,8 +63,8 @@ this starter reads it at process startup.
 ## Onboard and issue a customer key
 
 Run `tools/customer.js` on your operator machine. It uses the existing Gregale
-REST API. Set `FAAS_TOKEN` to your account-owner credential using your secret
-manager or CLI environment; optionally set `FAAS_API` (default
+REST API. Set `GREGALE_TOKEN` to your account-owner credential using your secret
+manager or CLI environment; optionally set `GREGALE_API_URL` (default
 `https://api.gregale.dev`). **Never put the owner token in the app's secrets.**
 Owner API scopes, MFA requirements, and quotas still apply.
 
@@ -106,7 +106,7 @@ changing credentials to another Gregale account will fail ownership checks.
 ## Customer API
 
 Send the customer's key as `Authorization: Bearer <customer-key>` to
-`https://<slug>.gregale.dev`:
+`https://<slug>.gregale.app`:
 
 | Method | Path | Body / result |
 | --- | --- | --- |

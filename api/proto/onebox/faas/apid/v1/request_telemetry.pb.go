@@ -1730,7 +1730,11 @@ type TelemetryCoverage struct {
 	// A gateway that counts its own requests into analytics rollups reports
 	// its analytics part apart from raw delivery (ADR-20261103113952
 	// amendment 6); an older gateway leaves it unset.
-	Analytics     *AnalyticsCoverage `protobuf:"bytes,12,opt,name=analytics,proto3" json:"analytics,omitempty"`
+	Analytics *AnalyticsCoverage `protobuf:"bytes,12,opt,name=analytics,proto3" json:"analytics,omitempty"`
+	// The gateway's last heartbeat before it exits, sent only after every row
+	// was delivered or journaled: its node's next boot continues the coverage
+	// instead of starting a new one. An older gateway never sets it.
+	CleanStop     bool `protobuf:"varint,13,opt,name=clean_stop,json=cleanStop,proto3" json:"clean_stop,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1847,6 +1851,13 @@ func (x *TelemetryCoverage) GetAnalytics() *AnalyticsCoverage {
 		return x.Analytics
 	}
 	return nil
+}
+
+func (x *TelemetryCoverage) GetCleanStop() bool {
+	if x != nil {
+		return x.CleanStop
+	}
+	return false
 }
 
 type AnalyticsCoverage struct {
@@ -2425,7 +2436,7 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\brejected\x18\x03 \x01(\x05R\brejected\"c\n" +
 	"!IncrementRequestTelemetryResponse\x12\x18\n" +
 	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12$\n" +
-	"\x0eretry_after_ms\x18\x02 \x01(\x03R\fretryAfterMs\"\x8c\x04\n" +
+	"\x0eretry_after_ms\x18\x02 \x01(\x03R\fretryAfterMs\"\xab\x04\n" +
 	"\x11TelemetryCoverage\x12\x1b\n" +
 	"\tnode_name\x18\x01 \x01(\tR\bnodeName\x12\x17\n" +
 	"\aboot_id\x18\x02 \x01(\tR\x06bootId\x12\x1a\n" +
@@ -2440,7 +2451,9 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\x1aunattributed_dropped_total\x18\n" +
 	" \x01(\x03R\x18unattributedDroppedTotal\x12?\n" +
 	"\bapp_gaps\x18\v \x03(\v2$.onebox.faas.apid.v1.TelemetryAppGapR\aappGaps\x12D\n" +
-	"\tanalytics\x18\f \x01(\v2&.onebox.faas.apid.v1.AnalyticsCoverageR\tanalytics\"m\n" +
+	"\tanalytics\x18\f \x01(\v2&.onebox.faas.apid.v1.AnalyticsCoverageR\tanalytics\x12\x1d\n" +
+	"\n" +
+	"clean_stop\x18\r \x01(\bR\tcleanStop\"m\n" +
 	"\x11AnalyticsCoverage\x12\x1a\n" +
 	"\bcounting\x18\x01 \x01(\bR\bcounting\x12<\n" +
 	"\x1aunattributed_dropped_total\x18\x02 \x01(\x03R\x18unattributedDroppedTotal\"\xe2\x01\n" +

@@ -67,7 +67,7 @@ companions:
 `cmd: ["/http-echo", "-listen=:5678", "-text=hello"]` would run
 `/http-echo /http-echo -listen=:5678 -text=hello`, and http-echo exits with
 `Too many arguments!`. For an image without an entrypoint, `cmd` is the whole
-command. `gregale doctor --image <ref>` prints an image's entrypoint and
+command. `gregale deploy check --image <ref>` prints an image's entrypoint and
 default command.
 
 A companion is essential unless it sets `essential: false`. When an essential
@@ -91,7 +91,7 @@ and temporary paths at `/tmp` with `cmd` or `env`. Anything written to
 
 A companion that declares a `port` is also reachable from the internet. The
 edge routes `<app>--<companion>.<apps domain>`, for example
-`shop--database-proxy.gregale.dev`, straight to that port on a running
+`shop--database-proxy.gregale.app`, straight to that port on a running
 instance, the same way it routes the application's own hostname. The
 companion above is therefore public at that hostname, not only on loopback.
 

@@ -20,7 +20,7 @@ func finishMCPDeploy(ctx context.Context, c *Client, slug string, cfg mcphosting
 	if err != nil {
 		return printErr("MCP endpoint", err)
 	}
-	if cfg.Auth.Mode == "external-oauth" && cfg.Auth.Resource != endpoint {
+	if cfg.Auth.Mode != mcphosting.AuthOpen && cfg.Auth.Resource != endpoint {
 		return printErr("MCP audience mismatch", fmt.Errorf("auth.resource must match the app's canonical endpoint %s", endpoint))
 	}
 	if app.MaintenanceMode {

@@ -52,7 +52,7 @@ Gregale sells compute (the pricing principle): the provider's cost passes throug
 - The business model (`ex44_faas_financial_model.xlsx`) and the COGS report's managed PostgreSQL rows need the owner's update to these figures.
 - **Still open:**
   - The always-on add-on has no price yet.
-  - The restore-history cap is undecided. Neon charges $0.20 per GB-month of history.
+  - ~~The restore-history cap is undecided.~~ Decided in [ADR-20261123062111](20261123062111-managed-postgres-restore-history-billing.md): restore history and snapshots past the plan's included history are billed at Neon's price plus 5%.
 
 ## Rejected alternatives
 

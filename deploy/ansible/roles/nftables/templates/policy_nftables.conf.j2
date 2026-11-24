@@ -239,7 +239,9 @@ table inet faas {
     type filter hook output priority 0; policy accept;
   }
 
-{% if faas_service_tcp_enabled | default(false) or faas_database_route_enabled | default(false) -%}
+{% set faas_hairpin = namespace(to='') %}{% for addr in faas_public_entry_addrs | default([]) %}{% if ':' not in addr and not faas_hairpin.to and faas_peer_entry_addrs | default([]) %}{% set faas_hairpin.to = addr %}{% endif %}{% endfor %}
+{% set faas_hairpin_to = faas_hairpin.to %}
+{% if faas_service_tcp_enabled | default(false) or faas_database_route_enabled | default(false) or faas_hairpin_to -%}
 {{ '  ' }}chain prerouting {
     type nat hook prerouting priority dstnat; policy accept;
 {% if faas_service_tcp_enabled | default(false) -%}
@@ -248,6 +250,9 @@ table inet faas {
 {% endif -%}
 {% if faas_database_route_enabled | default(false) -%}
 {{ '    ' }}iifname "{{ tenant_bridge | default('br-tenants') }}" ip daddr 198.18.0.1 tcp dport 5432 dnat ip to {{ bridge_cidr.split('/')[0] }}:10083
+{% endif -%}
+{% if faas_hairpin_to -%}
+{{ '    ' }}iifname "{{ tenant_bridge | default('br-tenants') }}" ip daddr { {{ faas_peer_entry_addrs | join(', ') }} } tcp dport 443 dnat ip to {{ faas_hairpin_to }}
 {% endif -%}
 {{ '  ' }}}
 

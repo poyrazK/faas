@@ -166,6 +166,23 @@ func TestRewardsFollowPaidInvoiceAndRefunds(t *testing.T) {
 		t.Fatal(err)
 	}
 	assert("eligible", true, 125) // fractions of a cent round down
+	sales := func(ever, month, everCents, monthCents int64) {
+		t.Helper()
+		summary, err := store.Summary(ctx, referrals.Scope{OwnerID: owner})
+		if err != nil || len(summary) != 1 {
+			t.Fatal(summary, err)
+		}
+		s := summary[0]
+		if s.Sales != ever || s.SalesThisMonth != month || s.PaidCents != everCents || s.PaidThisMonthCents != monthCents {
+			t.Fatalf("sales %+v, want %d/%d/%d/%d", s, ever, month, everCents, monthCents)
+		}
+	}
+	sales(1, 1, 1203, 1203)
+	// A first payment before this UTC month still counts toward sales ever.
+	if _, err = pool.Exec(ctx, "UPDATE referral_attributions SET first_paid_at=date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' - interval '1 second' WHERE account_id=$1", id); err != nil {
+		t.Fatal(err)
+	}
+	sales(1, 0, 1203, 0)
 	if _, err = pool.Exec(ctx, "UPDATE invoices SET amount_refund_pending_cents=1 WHERE id=$1", invoice); err != nil {
 		t.Fatal(err)
 	}
@@ -178,6 +195,7 @@ func TestRewardsFollowPaidInvoiceAndRefunds(t *testing.T) {
 	if err != nil || summary[0].Eligible != 0 || summary[0].RewardCents != 0 {
 		t.Fatal(summary, err)
 	}
+	sales(0, 0, 0, 0) // a refunded first invoice is not a sale
 	if _, err = pool.Exec(ctx, "UPDATE invoices SET amount_refund_pending_cents=0,currency='eur' WHERE id=$1", invoice); err != nil {
 		t.Fatal(err)
 	}

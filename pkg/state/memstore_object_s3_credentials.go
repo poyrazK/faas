@@ -414,6 +414,9 @@ func (m *MemStore) ResolveObjectS3Credential(ctx context.Context, accessKeyID st
 		var zero1 ObjectBucket
 		return zero0, zero1, err
 	}
+	if isObjectWorkloadAccessKey(accessKeyID) {
+		return m.resolveObjectWorkloadCredentialLocked(accessKeyID)
+	}
 
 	for _, c := range m.objectS3Credentials {
 		if c.AccessKeyID != accessKeyID || c.Status != ObjectS3CredentialStatusActive || !m.objectURLCredentialLiveLocked(c) {
@@ -435,6 +438,10 @@ func (m *MemStore) TouchObjectS3Credential(ctx context.Context, credentialID str
 		return err
 	}
 
+	if m.isObjectWorkloadCredentialLocked(credentialID) {
+		// Workload credentials record no last use; they expire within the hour.
+		return nil
+	}
 	c, ok := m.objectS3Credentials[credentialID]
 	if !ok || c.Status != ObjectS3CredentialStatusActive {
 		return ErrNotFound

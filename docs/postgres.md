@@ -15,12 +15,12 @@ Operators: see the [operator guide](managed-postgres.md).
 
 ## Plans
 
-| Plan | Databases | Pooled storage | Compute per month | Restore window | Classes |
-| --- | ---: | ---: | ---: | ---: | --- |
-| Free | — | — | — | — | — |
-| Hobby | 1 | 1 GiB | 25 CU-hours | 7 days | development |
-| Pro | 3 | 5 GiB | 75 CU-hours | 7 days | development, burstable |
-| Scale | 10 | 20 GiB | 200 CU-hours | 7 days | development, burstable, production |
+| Plan | Databases | Pooled storage | Compute per month | Included restore history | Restore window | Classes |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| Free | — | — | — | — | — | — |
+| Hobby | 1 | 1 GiB | 25 CU-hours | 1 GiB | 7 days | development |
+| Pro | 3 | 5 GiB | 75 CU-hours | 5 GiB | 7 days | development, burstable |
+| Scale | 10 | 20 GiB | 200 CU-hours | 20 GiB | 7 days | development, burstable, production |
 
 - The Free plan includes no managed PostgreSQL: create, `gregale dev
   --postgres`, a Compose `postgres` service and restores answer
@@ -28,9 +28,23 @@ Operators: see the [operator guide](managed-postgres.md).
   database.
 - Storage is pooled across your databases: one database may use the whole
   pool.
-- Compute suspends when a database is idle. Always-on compute is not part of
-  these plans.
-- Storage is a limit. Compute and egress past the allowance are billed only
+- Compute suspends when a database is idle, by default after 2 minutes
+  without activity. Every wake bills at least that long, so a shorter time
+  costs less and a longer one avoids more cold starts. Choose it per database
+  from 1 minute to 1 hour:
+
+  ```sh
+  gregale postgres suspend-timeout set orders-db 5m
+  gregale postgres suspend-timeout set orders-db default
+  ```
+
+  A suspended database takes the new time at once; a running one takes it
+  the next time it suspends, without dropping connections. `gregale postgres
+  get` shows the current value. Always-on compute is not part of these plans.
+- Restore history (what point-in-time restore keeps) and snapshots are
+  included up to the size of the storage pool, averaged over the month.
+- Without overage, storage is a limit and nothing past the plan is billed.
+  Compute, storage, restore history and egress past the plan are billed only
   when you turn on overage; see [Usage and limits](#usage-and-limits).
 - A database runs in a single zone. Gregale makes no high-availability
   promise for it; point-in-time restore and the 7-day undo of a delete are the
@@ -100,6 +114,14 @@ gregale postgres attach orders my-api --env DATABASE_URL
   its own login, so detaching one app never affects another.
 - A bound app can reach its database on every plan. Other destinations on port
   5432 stay closed unless the app declares that egress port (Pro and Scale).
+
+> **Schema changes need a second binding.** The default `read_write` access
+> can read and write rows in `public` but cannot `CREATE`, `ALTER` or `DROP`
+> anything, so a migration run at app startup fails with `permission denied`.
+> Attach the database again with `--access migration --env MIGRATION_DATABASE_URL`
+> and run your migration tool as a release task pointed at that URL. Serving
+> instances never receive it. The access levels are listed under
+> [Connect from your laptop](#connect-from-your-laptop).
 
 ### Declare the database in gregale.yaml
 
@@ -239,6 +261,37 @@ The `rest-api-postgres` and `rest-api-postgres-python` starters
 adopt rotated credentials and reconnect after a restore. See the
 [pool runtime guide](postgres-pool-runtime.md).
 
+## Run SQL from the CLI
+
+`gregale postgres query` (alias `postgres sql`) runs a query against a managed
+database, through the same bound-app tunnel as above, and prints the rows. It needs no `psql`, so scripts and coding agents
+can use it:
+
+```sh
+gregale postgres sql orders "select status, count(*) from orders group by 1"
+gregale postgres sql orders --file audit.sql --json
+gregale postgres sql orders --write "update orders set status = 'void' where id = 42"
+```
+
+- It is read-only unless you pass `--write`. A read runs as the only statement
+  of a `READ ONLY` transaction that is always rolled back, on a `read_only`
+  binding when the database has one. A second statement, or one that writes,
+  fails with a hint. Without a `read_only` binding it uses the app's
+  credential, so functions with side effects that a read-only transaction
+  still allows (`pg_terminate_backend`, advisory locks) run with that role's
+  rights; attach a `read_only` binding for a hard boundary.
+- `--write` runs the text as a script on a `read_write`, `migration` or
+  `session` binding and commits it. To try a destructive change first, run it
+  on a [branch](#branches): `gregale postgres branch orders pr-42 --ttl 2h`,
+  attach the branch to an app, then `gregale postgres sql pr-42 --write …`.
+- `--max-rows` (default 500) caps the rows kept per result, and `--timeout`
+  (default 30 s) bounds each run: the statement timeout for a read, a cancel
+  of the whole script for `--write`.
+- With `--json`, numbers, booleans and `json`/`jsonb` stay typed, `NULL` is
+  `null`, and every other value is its PostgreSQL text form. Each result also
+  lists its column names and types and the command tag (`SELECT 1204`, which
+  counts every row, kept or not).
+
 ## Restore to a point in time
 
 A restore creates a new database from any moment inside the restore window. The
@@ -310,7 +363,7 @@ resuming my-api on v42
 ```
 
 It runs the same steps as a
-[rollback that restores the database](deploys.md#rollbacks-that-restore-the-database),
+[rollback that restores the database](releases.md#rollbacks-that-restore-the-database),
 except that the release stays the same: restore, stage and verify credentials,
 fence and drain the app, move every binding the app has to the database in
 the scope (`--env`, default `default`) in one transaction, then resume. Until
@@ -421,12 +474,29 @@ databases by up to two hours.
   allowance the databases are suspended until the 1st of next month or an
   upgrade, unless compute overage is on. A suspended database keeps its data.
 - Compute overage (`gregale postgres overage on|off`) keeps the databases
-  running past the allowance, up to twice it, and bills the excess. It is off
-  by default on Hobby and Pro and on by default on Scale; turning it off on
-  Scale is kept.
+  running past the allowance, up to twice it, and bills the excess at $0.2331
+  per CU-hour. It is off by default on Hobby and Pro and on by default on
+  Scale; turning it off on Scale is kept.
 - Storage: at the pooled storage limit, writes that would grow a database
   fail. Reads, deletes and `VACUUM` keep working, and nothing is suspended or
-  deleted.
+  deleted. With overage on, the limit is twice the pool, and storage past the
+  pool, averaged over the month, is billed at $0.50 per GiB-month.
+- Restore history and snapshots: `usage` shows `history_byte_seconds` (what
+  point-in-time restore keeps), `snapshot_byte_seconds` and
+  `included_history_bytes`, which equals your storage pool. Restore history
+  uses the included amount first. It grows with how much your databases write,
+  not with their size: rewriting 1 GiB a day keeps about 7 GiB with a 7-day
+  restore window. With overage on, what passes the included amount, averaged
+  over the month, is billed at $0.21 per GB-month for restore history and
+  $0.0945 per GB-month for snapshots (10^9 bytes). A month that billed it
+  keeps the charge if you turn overage off.
+- With overage off, restore history is bounded instead of billed. Once this
+  month's restore history and snapshots pass twice the included amount,
+  `usage` shows `history_state: limited` and your databases keep only the
+  last 24 hours of history until the 1st of next month, or until you turn
+  overage on. Restoring to a point older than 24 hours is refused while
+  limited, and history dropped while limited does not come back. Writes,
+  reads and data are not affected.
 - Egress: each database has its own 500 GB (10^9 bytes) monthly egress
   allowance, separate from your apps' plan allowance. `usage` shows
   `egress_allowance_bytes` (per database) and what all the databases sent

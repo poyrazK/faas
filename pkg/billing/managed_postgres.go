@@ -52,6 +52,9 @@ type ManagedPostgresChargePolicy struct {
 	Provider      string
 	Live          bool
 	EffectiveFrom time.Time
+	// HistoryFrom is the first UTC month whose restore history is charged
+	// (ADR-20261123062111); zero charges none.
+	HistoryFrom time.Time
 }
 
 // ManagedPostgresChargeStep raises one usage subject's month charge from
@@ -81,6 +84,14 @@ type ManagedPostgresChargeStep struct {
 	AppEgressBytes       int64
 	EgressAllowanceBytes int64
 	BilledEgressBytes    int64
+
+	// Restore history and snapshot storage past the plan's included history
+	// (ADR-20261123062111).
+	UsedHistoryByteSeconds    int64
+	UsedSnapshotByteSeconds   int64
+	IncludedHistoryBytes      int64
+	BilledHistoryByteSeconds  int64
+	BilledSnapshotByteSeconds int64
 }
 
 // ManagedPostgresChargeSink is the provider seam for managed PostgreSQL

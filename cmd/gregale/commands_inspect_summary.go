@@ -328,6 +328,18 @@ func inspectExecutionMode(app api.AppResponse) string {
 	return ""
 }
 
+// functionIgnoresProfileWarning lists the source-profile warnings about
+// serving HTTP from a process the source starts. A function's runtime, not
+// its source, decides how it runs, so none of them applies to one.
+var functionIgnoresProfileWarning = map[string]bool{
+	"missing_start_command":         true,
+	"framework_not_detected":        true,
+	"python_framework_not_detected": true,
+	"loopback_bind_possible":        true,
+	"non_http_service":              true,
+	"container_command_deferred":    true,
+}
+
 func inspectRuntime(app api.AppResponse, dep *api.DeploymentResponse, unavailable *[]string) inspectRuntimeSummary {
 	out := inspectRuntimeSummary{
 		Entrypoint: strings.Join(app.Manifest.Entrypoint, " "),
@@ -493,7 +505,10 @@ func selectInspectDeployments(deployments []api.DeploymentResponse) (current, ne
 		}
 	}
 	latest := &deployments[0]
-	if current.ID != latest.ID && latest.Status == "failed" && latest.TrafficPercent == 0 {
+	// A canary the rollout aborted stays "live" at 0%: health answered "No
+	// urgent issues" after the latest deploy was rolled back (prod hunt r31).
+	aborted := latest.Status == "live" && latest.RolloutState == "aborted"
+	if current.ID != latest.ID && (latest.Status == "failed" || aborted) && latest.TrafficPercent == 0 {
 		newerFailedCandidate = latest
 	}
 	return current, newerFailedCandidate
@@ -582,11 +597,15 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 		next := "Send a request, or run `gregale app wake " + summary.App.Slug + "` to start it now."
 		severity := "info"
 		switch {
+		case summary.App.ParkedReason == "liveness_exhausted" && isWorker(summary.App.ExecutionMode, summary.App.WorkloadClass):
+			message = "This worker is parked because its process kept exiting (a worker gets no HTTP health check); requests never start a worker."
+			next = "Fix the crash (see `gregale logs " + summary.App.Slug + " --since 1h`) and deploy: a new release starts the worker. Or run `gregale app wake " + summary.App.Slug + "`."
+			severity = "error"
 		case summary.App.ParkedReason == "liveness_exhausted":
 			message = "This app is parked because its instances repeatedly failed liveness checks or crashed; the next request starts it again."
 			next = "Fix the failure (see `gregale logs " + summary.App.Slug + " --since 1h`), deploy, then run `gregale app wake " + summary.App.Slug + "`."
 			severity = "error"
-		case summary.App.ExecutionMode == api.ExecutionModeWorker:
+		case isWorker(summary.App.ExecutionMode, summary.App.WorkloadClass):
 			message = "This worker is parked: requests do not wake a worker, so it stays stopped until you wake it."
 			next = "Run `gregale app wake " + summary.App.Slug + "` to start it."
 			severity = "error"
@@ -628,9 +647,15 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 	}
 	if summary.Release.NewerFailedCandidate != nil {
 		candidate := summary.Release.NewerFailedCandidate
-		add("newer_candidate_failed", "warning",
-			"A newer zero-traffic deployment candidate failed; the serving release remains active.",
-			"Run `gregale inspect "+summary.App.Slug+" --errors` for candidate "+candidate.DeploymentID+" failure details.")
+		if candidate.RolloutState == "aborted" {
+			add("newer_candidate_failed", "warning",
+				"The newest deployment "+candidate.DeploymentID+" was rolled back during its rollout; the previous release still serves.",
+				"Run `gregale release timeline "+candidate.DeploymentID+" --app "+summary.App.Slug+"` for why it stopped.")
+		} else {
+			add("newer_candidate_failed", "warning",
+				"A newer zero-traffic deployment candidate failed; the serving release remains active.",
+				"Run `gregale inspect "+summary.App.Slug+" --errors` for candidate "+candidate.DeploymentID+" failure details.")
+		}
 	}
 	// An image deploy runs the image's own ENTRYPOINT/CMD: there is no source
 	// to detect a framework from and no Dockerfile to add, so a healthy nginx
@@ -640,9 +665,11 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 	}
 	for _, warning := range summary.Runtime.Warnings {
 		// A function runs its handler under the platform runner, so it has
-		// no start script by design; health led with "No npm start script"
-		// for every `gregale add function` scaffold (prod 2026-11-20).
-		if summary.App.Type == "function" && warning.Code == "missing_start_command" {
+		// no start script or web framework by design; health led with "No npm
+		// start script" for every `gregale add function` scaffold (prod
+		// 2026-11-20) and with "no FastAPI, Flask, or Django dependency" for
+		// every Python function (prod hunt r36).
+		if summary.App.Type == "function" && functionIgnoresProfileWarning[warning.Code] {
 			continue
 		}
 		add("profile_"+warning.Code, "warning", warning.Message, "Review the inferred deployment profile before the next release.")
@@ -654,8 +681,12 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 	if summary.Release.Status == "live" && summary.Release.Scope == "production" && !canary {
 		add("safe_release_missing", "warning", "The production deployment has no canary policy.", "Deploy with `--canary-preset balanced`.")
 	}
+	// Every canary has the always-on 5xx, p95 and OOM checks that abort it
+	// (pkg/canary circuitBreakerReady), so a missing alert rule is advice, not
+	// a warning: it made "Review recommended" the headline of every app on
+	// the default adaptive canary, with "no rollback … rule" (prod hunt r32).
 	if canary && summary.Release.HealthSignalsAvailable && summary.Release.HealthGateRules == 0 {
-		add("canary_without_health_gate", "warning", "The canary has no rollback or demote health rule.", "Add an actionable latency or error-rate alert.")
+		add("canary_without_health_gate", "info", "Only the built-in 5xx, latency and OOM checks can roll back the canary; no alert rule of yours does.", "Add a latency or error-rate alert with a rollback action to guard what matters to your app.")
 	}
 	if summary.Release.FiringHealthGates > 0 {
 		add("health_gate_firing", "error", "A safe-release health gate is currently firing.", "Inspect the alert and deployment audit before promoting.")

@@ -168,6 +168,7 @@ func secretsList(args []string) int {
 		return jsonOut(writeJSON(resp))
 	}
 	code := renderSecretListHuman(*app, *scope, *secretClass, *olderThan, *deliveryStatus, &resp, keys...)
+	printRecentConfigGuardVerdict(context.Background(), client, *app, *scope)
 	printSecretKeyHints(*app, *scope, secretKeyHints(keys, availableKeys, secretMetadataKeys(&resp)))
 	if *scope != api.EnvScopeAllSentinel && *secretClass == "" && *deliveryStatus == "" && age == 0 {
 		printPlainVariables(osStdout, client, *app, *scope, keys)
@@ -221,7 +222,7 @@ func renderSecretsByScope(w io.Writer, app string, resp *api.AppSecretListRespon
 	for _, s := range scopes {
 		for _, row := range resp.SecretsByScope[s] {
 			_, _ = fmt.Fprintf(w, "  %-48s %-10s · %s · %s%s\n", s+"/"+row.Key, secretClassLabel(row.SecretClass),
-				secretDeliveryLabel(row.DeliveryStatus), secretRuntimeReloadLabel(row.DeliveryVersion,
+				secretDeliveryRowLabel(row.DeliveryStatus, row.RuntimeReloadTargetsComplete, row.RuntimeReloadObservations), secretRuntimeReloadLabel(row.DeliveryVersion,
 					row.LastRuntimeReloadVersion, row.LastRuntimeReloadProjection, row.LastRuntimeReloadSignal, row.LastRuntimeReloadInstanceID,
 					row.RuntimeReloadObservations, row.RuntimeReloadTargetsComplete), secretUpdatedAtSuffix(row.UpdatedAt))
 		}
@@ -241,7 +242,7 @@ func renderFlatSecrets(w io.Writer, app string, resp *api.AppSecretListResponse)
 	_, _ = fmt.Fprintf(w, "%s: %d/%d secrets\n", app, resp.Count, resp.Quota)
 	for _, s := range resp.Secrets {
 		_, _ = fmt.Fprintf(w, "  %-48s %-10s · %s · %s%s\n", scopeOrDefault(s.Scope)+"/"+s.Key, secretClassLabel(s.SecretClass),
-			secretDeliveryLabel(s.DeliveryStatus), secretRuntimeReloadLabel(s.DeliveryVersion,
+			secretDeliveryRowLabel(s.DeliveryStatus, s.RuntimeReloadTargetsComplete, s.RuntimeReloadObservations), secretRuntimeReloadLabel(s.DeliveryVersion,
 				s.LastRuntimeReloadVersion, s.LastRuntimeReloadProjection, s.LastRuntimeReloadSignal, s.LastRuntimeReloadInstanceID,
 				s.RuntimeReloadObservations, s.RuntimeReloadTargetsComplete), secretUpdatedAtSuffix(s.UpdatedAt))
 	}
@@ -365,6 +366,23 @@ func filterAppSecretListByClass(resp *api.AppSecretListResponse, class string) {
 	}
 	resp.Secrets = filtered
 	resp.Count = len(filtered)
+}
+
+// secretDeliveryRowLabel is secretDeliveryLabel for a listed row. A failure
+// with no instance running was recorded by a boot that never started, often a
+// crashing first deploy; "delivery failed" alone read as a broken secret on a
+// worker that later connected fine (agent eval 2026-11-23, voting-app P10).
+func secretDeliveryRowLabel(status string, targetsComplete bool, targets []api.SecretRuntimeReloadObservation) string {
+	if secretFailedWithoutInstance(status, targetsComplete, targets) {
+		return "delivery failed on a boot that did not start (none running now)"
+	}
+	return secretDeliveryLabel(status)
+}
+
+// secretFailedWithoutInstance reports a failed delivery while the complete
+// list of active instances is empty.
+func secretFailedWithoutInstance(status string, targetsComplete bool, targets []api.SecretRuntimeReloadObservation) bool {
+	return status == "failed" && targetsComplete && len(targets) == 0
 }
 
 func secretDeliveryLabel(status string) string {

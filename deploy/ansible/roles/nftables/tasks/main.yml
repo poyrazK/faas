@@ -219,6 +219,15 @@
     fail_msg: "faas_public_entry_addrs entry {{ item }} must be a plain IPv4 or lowercase IPv6 address in canonical form"
   loop: "{{ faas_public_entry_addrs }}"
 
+- name: nftables — peer entry addresses are other nodes' plain IPv4 addresses
+  ansible.builtin.assert:
+    that:
+      - item is string
+      - item is match('^(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}$')
+      - item not in faas_public_entry_addrs
+    fail_msg: "faas_peer_entry_addrs entry {{ item }} must be a canonical IPv4 address that is not this node's own entry address"
+  loop: "{{ faas_peer_entry_addrs | default([]) }}"
+
 # ADR-20261109100000: on bare metal every host has a public card. With
 # faas_private_iface set, private services accept only on that card; with
 # faas_ssh_restricted, sshd answers only faas_ssh_private_cidrs (the overlay)

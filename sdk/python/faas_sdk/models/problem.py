@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar, cast
+from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -56,6 +57,8 @@ class Problem:
     status: int
     code: str
     """Stable machine-readable error code. See StatusForCode."""
+    active_operation_id: UUID | Unset = UNSET
+    """The running project rollback identified by a project rollback start conflict."""
     run_budget: RunBudgetRefusal | Unset = UNSET
     """Budget limit that prevented admission and the current usage against it."""
     current_sequence: int | Unset = UNSET
@@ -172,6 +175,18 @@ class Problem:
     each per CLI tripwire). The CLI renders the first 5
     inline as a fenced block. Optional + omitempty.
     """
+    fix_commands: list[str] | Unset = UNSET
+    """The runnable commands quoted in `fix`, in order, with this
+    failure's values (app, deployment) filled in. A command that
+    still needs a value nobody knew is left out rather than shown
+    with a placeholder. Omitted when there are none.
+    """
+    retryable: bool | Unset = UNSET
+    """Whether repeating the same request can succeed without a
+    change: true for rate limits, a Retry-After and transient
+    platform errors; false when the request or the app must
+    change. Absent when unknown.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -180,6 +195,10 @@ class Problem:
         status = self.status
 
         code = self.code
+
+        active_operation_id: str | Unset = UNSET
+        if not isinstance(self.active_operation_id, Unset):
+            active_operation_id = str(self.active_operation_id)
 
         run_budget: dict[str, Any] | Unset = UNSET
         if not isinstance(self.run_budget, Unset):
@@ -309,6 +328,12 @@ class Problem:
                 relevant_logs_item = relevant_logs_item_data.to_dict()
                 relevant_logs.append(relevant_logs_item)
 
+        fix_commands: list[str] | Unset = UNSET
+        if not isinstance(self.fix_commands, Unset):
+            fix_commands = self.fix_commands
+
+        retryable = self.retryable
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -318,6 +343,8 @@ class Problem:
                 "code": code,
             }
         )
+        if active_operation_id is not UNSET:
+            field_dict["active_operation_id"] = active_operation_id
         if run_budget is not UNSET:
             field_dict["run_budget"] = run_budget
         if current_sequence is not UNSET:
@@ -392,6 +419,10 @@ class Problem:
             field_dict["fix"] = fix
         if relevant_logs is not UNSET:
             field_dict["relevant_logs"] = relevant_logs
+        if fix_commands is not UNSET:
+            field_dict["fix_commands"] = fix_commands
+        if retryable is not UNSET:
+            field_dict["retryable"] = retryable
 
         return field_dict
 
@@ -414,6 +445,13 @@ class Problem:
         status = d.pop("status")
 
         code = d.pop("code")
+
+        _active_operation_id = d.pop("active_operation_id", UNSET)
+        active_operation_id: UUID | Unset
+        if isinstance(_active_operation_id, Unset):
+            active_operation_id = UNSET
+        else:
+            active_operation_id = UUID(_active_operation_id)
 
         _run_budget = d.pop("run_budget", UNSET)
         run_budget: RunBudgetRefusal | Unset
@@ -579,10 +617,15 @@ class Problem:
 
                 relevant_logs.append(relevant_logs_item)
 
+        fix_commands = cast(list[str], d.pop("fix_commands", UNSET))
+
+        retryable = d.pop("retryable", UNSET)
+
         problem = cls(
             title=title,
             status=status,
             code=code,
+            active_operation_id=active_operation_id,
             run_budget=run_budget,
             current_sequence=current_sequence,
             agent_approval=agent_approval,
@@ -620,6 +663,8 @@ class Problem:
             why=why,
             fix=fix,
             relevant_logs=relevant_logs,
+            fix_commands=fix_commands,
+            retryable=retryable,
         )
 
         problem.additional_properties = d

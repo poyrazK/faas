@@ -222,7 +222,7 @@ func (h *Handler) ensureBaseExt4(
 						h.log.Warn("imaged: refresh base digest sidecar source ref", "key", digestKey, "err", sidecarErr)
 					}
 				}
-				if markErr := markCachedBaseGeneration(be, baseKey, digestKey, ref); markErr != nil {
+				if markErr := markCachedBaseGeneration(ctx, be, baseKey, digestKey, ref); markErr != nil {
 					h.log.Warn("imaged: mark cached base generation", "key", baseKey, "err", markErr)
 				}
 				return BaseStageResult{
@@ -332,14 +332,40 @@ func (h *Handler) ensureBaseExt4(
 // "did this base already stage?" check — re-fetching tens of
 // MB of layers on every daemon restart would be wasteful.
 func (h *Handler) writeBaseDigestSidecar(ctx context.Context, be storage.StorageBackend, digestKey, wantDigest, guestInitDigest, sourceRef string) error {
-	digestRC, err := openStringReader(baseDigestSidecarValueWithSource(wantDigest, guestInitDigest, sourceRef))
-	if err != nil {
-		return fmt.Errorf("imaged: open digest sidecar: %w", err)
-	}
-	if err := be.Put(ctx, digestKey, digestRC); err != nil {
+	value := baseDigestSidecarValueWithSource(wantDigest, guestInitDigest, sourceRef)
+	if err := putSharedBaseSidecar(ctx, be, digestKey, []byte(value)); err != nil {
 		return fmt.Errorf("imaged: write digest sidecar %q: %w", digestKey, err)
 	}
 	return nil
+}
+
+// sharedBaseSidecarConflictBackoff spaces the writes putSharedBaseSidecar
+// makes after a concurrent-write conflict.
+var sharedBaseSidecarConflictBackoff = []time.Duration{250 * time.Millisecond, time.Second}
+
+// putSharedBaseSidecar writes a small sidecar (digest, scan, content) of a
+// shared runtime base. Builds on several nodes stage one base at the same
+// time, and OVH refuses a write while another writer's conditional write of
+// the key is in flight (409 OperationAborted, storage.ErrWriteConflict): prod
+// hunts r26 and r27 each failed one app of a 3-service Compose deploy, on the
+// digest and then the scan sidecar. The refused attempt published nothing,
+// so it writes again after a short wait, at most twice.
+func putSharedBaseSidecar(ctx context.Context, be storage.StorageBackend, key string, body []byte) error {
+	err := be.Put(ctx, key, bytes.NewReader(body))
+	for _, wait := range sharedBaseSidecarConflictBackoff {
+		if !errors.Is(err, storage.ErrWriteConflict) {
+			return err
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return errors.Join(err, ctx.Err())
+		case <-timer.C:
+		}
+		err = be.Put(ctx, key, bytes.NewReader(body))
+	}
+	return err
 }
 
 func baseDigestSidecarValue(configDigest string) string {
@@ -442,7 +468,7 @@ func (h *Handler) trySkipPinnedBaseLocally(
 			h.log.Warn("imaged: upgrade legacy base digest sidecar source ref", "key", digestKey, "err", sidecarErr)
 		}
 	}
-	if markErr := markCachedBaseGeneration(be, baseKey, digestKey, ref); markErr != nil {
+	if markErr := markCachedBaseGeneration(ctx, be, baseKey, digestKey, ref); markErr != nil {
 		h.log.Warn("imaged: mark cached base generation", "key", baseKey, "err", markErr)
 	}
 	h.log.Info("imaged: reused pinned base from local evidence",
@@ -817,29 +843,6 @@ func (h *Handler) baseSkipDeclined(be storage.StorageBackend, baseKey, outImage,
 // and imaged's systemd unit can drop AmbientCapabilities=
 // entirely (ADR-075). imaged no longer needs CAP_SYS_ADMIN.
 
-// openStringReader returns an io.Reader for the supplied string. The
-// helper exists so the digest sidecar Put has a content source without
-// dragging in bytes.NewReader (which would also force a package-level
-// bytes import that's only used here).
-func openStringReader(s string) (io.Reader, error) {
-	return stringReader(s), nil
-}
-
-type stringReaderImpl struct {
-	s   string
-	off int
-}
-
-func stringReader(s string) io.Reader { return &stringReaderImpl{s: s} }
-func (r *stringReaderImpl) Read(p []byte) (int, error) {
-	if r.off >= len(r.s) {
-		return 0, io.EOF
-	}
-	n := copy(p, r.s[r.off:])
-	r.off += n
-	return n, nil
-}
-
 // writeScanSidecar runs a Grype scan of the staged base ext4 and
 // writes the per-severity finding counts to the scan sidecar
 // (issue #299). The sidecar is keyed by wire.ScanKeyForBaseKey so
@@ -919,16 +922,16 @@ func (h *Handler) writeScanSidecar(ctx context.Context, baseKey, digestKey, ref,
 		return fmt.Errorf("imaged: marshal scan sidecar: %w", err)
 	}
 	scanKey := wire.ScanKeyForBaseKey(baseKey)
-	if err := be.Put(ctx, scanKey, bytes.NewReader(scanBlob)); err != nil {
+	if err := putSharedBaseSidecar(ctx, be, scanKey, scanBlob); err != nil {
 		return fmt.Errorf("imaged: write scan sidecar %q: %w", scanKey, err)
 	}
-	if err := markCachedBaseGeneration(be, baseKey, digestKey, ref); err != nil {
+	if err := markCachedBaseGeneration(ctx, be, baseKey, digestKey, ref); err != nil {
 		return err
 	}
 	return nil
 }
 
-func markCachedBaseGeneration(be storage.StorageBackend, baseKey, digestKey, generation string) error {
+func markCachedBaseGeneration(ctx context.Context, be storage.StorageBackend, baseKey, digestKey, generation string) error {
 	// The base marker is the commit record consumed by vmmd. Mark the two
 	// sidecars first so observing the base generation also means every local
 	// artifact needed to validate it is protected from cache eviction.
@@ -940,11 +943,35 @@ func markCachedBaseGeneration(be storage.StorageBackend, baseKey, digestKey, gen
 		if cache == nil {
 			continue
 		}
-		if err := cache.MarkGeneration(cacheKey, generation); err != nil {
+		err = cache.MarkGeneration(cacheKey, generation)
+		if errors.Is(err, os.ErrNotExist) {
+			// Another node published this artifact to the shared store and
+			// this node never read it (a fresh node joining a fleet whose
+			// bucket already holds the base): read it through, which fills
+			// the cache, then mark it.
+			if fillErr := fillCache(ctx, be, key); fillErr != nil {
+				return fmt.Errorf("imaged: mark cached base generation %q: fill cache: %w", key, fillErr)
+			}
+			err = cache.MarkGeneration(cacheKey, generation)
+		}
+		if err != nil {
 			return fmt.Errorf("imaged: mark cached base generation %q: %w", key, err)
 		}
 	}
 	return nil
+}
+
+// fillCache reads key through be so a read-through cache holds it.
+func fillCache(ctx context.Context, be storage.StorageBackend, key string) error {
+	rc, err := be.Get(ctx, key)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(io.Discard, rc)
+	if closeErr := rc.Close(); copyErr == nil {
+		copyErr = closeErr
+	}
+	return copyErr
 }
 
 // scanSourceForBase resolves the path Grype should inspect. Local storage

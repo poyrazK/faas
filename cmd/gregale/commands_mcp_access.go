@@ -136,7 +136,7 @@ func collectMCPAccessAudit(ctx context.Context, client *Client, slug string, cfg
 		report.Checks = append(report.Checks, mcphosting.Check{Name: "account_gateway_rules", Status: "unknown", Detail: "Could not inspect account-wide gateway rules; check read permissions and connectivity."})
 		return report
 	}
-	report.RuleID, report.Checks = auditMCPGatewayRules(app.ID, cfg, options, rules, report.ObservedAt, report.Checks)
+	report.RuleID, report.Checks = auditMCPGatewayRules(app.ID, cfg, options, client.BaseURL(), rules, report.ObservedAt, report.Checks)
 	fingerprint, fingerprintErr := api.MCPAccessPolicyFingerprint(cfg.Auth.Resource, rules, report.ObservedAt)
 	if fingerprintErr != nil {
 		report.Checks = append(report.Checks, mcphosting.Check{Name: "policy_fingerprint", Status: "unknown", Detail: "Could not fingerprint stored access policy."})

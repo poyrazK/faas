@@ -851,9 +851,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runPromotionHealthWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runMailOutbox(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runHostingReconciler(ctx) })
+		// ADR-20261122220000: read-only SQL checks imaged queues while it
+		// verifies a candidate.
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runVerificationQueryWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runSafeReleaseEmergencyAbort(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runServiceRolloutBindingWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runCheckedRollbackWorker(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runProjectRollbackWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runAlertRollbackWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runRollbackOn5xxWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runConfigGuardWorker(ctx) })
@@ -880,6 +884,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go background.Staggered(ctx, background.StartSpread, func() { srv.operation.RunChildSettlementSignals(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.object.RunObjectStorageRecovery(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.object.RunObjectStorageAccounting(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.object.RunWorkloadCredentialSweep(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.object.RunObjectStorageUsageExports(ctx, os.Getenv) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresReconciler(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresBindingReconciler(ctx) })
@@ -889,6 +894,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runEnvironmentBranchDataReconciler(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runProjectEnvironmentCloneCoordinator(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresUsageCollector(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresSuspendTimeouts(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresHealthCollector(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresSQLProber(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runAppHealthCollector(ctx) })
@@ -1016,6 +1022,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		srv.consumerSignup.Start(ctx, log)                // ADR-20261021143000
 		srv.productControl.StartOverdueHolds(ctx, log)    // ADR-20261018212918
 		srv.productControl.StartTrialResolution(ctx, log) // ADR-20261022180921
+		// Payments already started still settle if API monetization is disabled.
+		srv.consumerBilling.StartCreditPurchaseSync(ctx, log)
 		startFeatureFlagAutoAdvancer(ctx, srv, log)
 		startFeatureFlagLifecycleReconciler(ctx, srv, log)
 		startFlagExperimentReconciler(ctx, srv, log) // ADR 20261115163113

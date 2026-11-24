@@ -12,7 +12,7 @@ import (
 )
 
 func isLongLivedForward(r *http.Request) bool {
-	return r.Header.Get("x-faas-stream") == "true" || r.Header.Get("x-faas-protocol") == "grpc"
+	return r.Header.Get("X-Faas-Stream") == "true" || r.Header.Get("X-Faas-Protocol") == "grpc"
 }
 
 func newHTTPForwardSession(parent context.Context, longLived bool) (context.Context, func(), func(), context.CancelFunc) {

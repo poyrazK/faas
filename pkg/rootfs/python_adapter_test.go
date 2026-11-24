@@ -176,6 +176,14 @@ func TestPythonFunctionAdapterHandlerExceptionIsTerminalAndWorkerSurvives(t *tes
 	if err := cmd.Wait(); err != nil {
 		t.Fatalf("adapter exit: %v; stderr=%s", err, stderr.String())
 	}
+	// The traceback names the customer's file and line, not the adapter's
+	// frames or the moved implementation (prod hunt r25: "/app/handler.py,
+	// line 453, in _serve_lines" above "/app/.faas-handler.py").
+	got := stderr.String()
+	if !strings.Contains(got, `handler.py", line 3, in handler`) || !strings.Contains(got, "ValueError: customer bug") ||
+		strings.Contains(got, ".faas-handler.py") || strings.Contains(got, "_serve_lines") {
+		t.Fatalf("traceback does not name the customer's handler.py:\n%s", got)
+	}
 }
 
 // TestPythonFunctionAdapterKeepsOneEventLoopAcrossRequests — the adapter ran

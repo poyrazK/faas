@@ -283,9 +283,23 @@ const s3 = new S3Client({
   endpoint: "https://s3.gregale.dev",
   region: "us-east-1",
   forcePathStyle: true,
+  // Required for presigned URLs that browsers upload to (see below).
+  requestChecksumCalculation: "WHEN_REQUIRED",
+  responseChecksumValidation: "WHEN_REQUIRED",
 });
 await s3.send(new PutObjectCommand({ Bucket: "assets", Key: "hello.txt", Body: "hello" }));
 ```
+
+Two settings matter with AWS SDK v3 (and boto3 1.36 or later):
+
+- `forcePathStyle: true`. Without it the SDK sends requests to
+  `assets.s3.gregale.dev`, which does not exist.
+- `requestChecksumCalculation: "WHEN_REQUIRED"` (boto3:
+  `Config(request_checksum_calculation="when_required")`). Newer SDKs sign a
+  CRC32 checksum into every presigned PUT and upload-part URL. When you
+  presign before you have the file, that is the checksum of an empty body.
+  Gregale validates signed checksums, so the browser's upload of the real
+  file is then refused. Direct SDK uploads work either way.
 
 What the endpoint does not support:
 
@@ -326,8 +340,12 @@ buckets:
     prefix: GREGALE_S3_ASSETS
 ```
 
-`gregale deploy` creates or reuses the binding but never creates the bucket, so
-create it first with `gregale add bucket`. Rotate or revoke a binding's key with:
+`gregale deploy` creates or reuses the binding. It creates the bucket only when
+the entry says `create: true` (or `create: {region: …}`) and no bucket with that
+name exists; otherwise create it first with `gregale add bucket`. A deploy never
+changes or deletes an existing bucket. To run your app when files land in the
+bucket, add `triggers` to the same entry ([run code on upload](#run-code-on-upload)).
+Rotate or revoke a binding's key with:
 
 ```sh
 gregale app binding object-storage list my-api assets
@@ -523,14 +541,84 @@ is served.
 ## Events and notifications
 
 Every confirmed write emits an `object.created` event, and deletions emit
-`object.removed`, from the `gregale.storage` source. Subscribe an app to them
-with `event_triggers` in its `gregale.yaml` (see
-[events](events.md#internal-event-subscriptions)), or send them to a function
-or queue with the bucket's notification configuration:
+`object.removed`, from the `gregale.storage` source. That includes writes
+through signed URLs, upload routes, multipart uploads and S3 SDKs. There are
+three ways to act on them:
+
+- **Run your app on upload:** `triggers` on a `gregale.yaml` bucket entry
+  (below). Simplest; calls the app that owns the bucket.
+- **Send to a queue, or to another app:** the bucket's notification rules.
+- **Subscribe through the event router (preview):** `event_triggers` in
+  `gregale.yaml` (see [events](events.md#internal-event-subscriptions)).
+
+### Run code on upload
+
+Declare the trigger next to the bucket binding. On each deploy Gregale makes
+the bucket's notification rules match the list:
+
+```yaml
+buckets:
+  - bucket: uploads
+    permission: read_write
+    triggers:
+      - id: new-image          # stable name; renaming it replaces the rule
+        prefix: incoming/      # optional
+        suffix: .png           # optional
+```
+
+Each matching write sends one `POST /` to your app, as an asynchronous
+invocation, with an S3-style body:
+
+```json
+{"Records": [{"eventVersion": "2.1", "eventSource": "aws:s3", "awsRegion": "…",
+  "eventTime": "…", "eventName": "ObjectCreated:Put",
+  "s3": {"configurationId": "…", "bucket": {"name": "uploads", "arn": "…"},
+         "object": {"key": "incoming%2Fcat.png", "size": 18231, "eTag": "…"}}}]}
+```
+
+- The object key is URL-encoded, as in AWS S3 events; decode it before use.
+- `events` defaults to every `ObjectCreated` event. Triggers do not fire on
+  deletes; use a notification rule for those.
+- Delivery is at least once. The `x-gregale-event-id` header stays the same
+  across retries, so record it before applying side effects. Failed deliveries
+  follow the async retry policy and end in the app's dead-letter queue
+  (`gregale dlq my-api`).
+- The trigger always calls the app that owns the bucket. Leaving out `triggers`
+  keeps the current rules; `triggers: []` removes the ones the manifest created.
+  Rules you set by hand with `gregale bucket notifications` are kept, and a
+  trigger whose `id` or filter clashes with one fails the deploy instead of
+  overwriting it.
+- `gregale dev` accepts the same `triggers` on `dev.buckets`; they call your dev
+  workspace, not production.
+
+**Browser uploads without a "complete" call.** Your backend issues a signed PUT
+URL ([signed URLs](#signed-urls)) and returns it to the browser; the browser
+uploads straight to `s3.gregale.dev`; the trigger then runs your processing
+code. The browser never needs to call back to say the upload finished, and
+your app sleeps while the upload is in flight.
+
+### Notification rules: queues and other apps
+
+To put work on a queue instead of calling the app directly, or to reach an app
+other than the bucket's owner, set the bucket's notification rules:
 
 ```sh
 gregale bucket notifications set my-api BUCKET_ID notifications.json
+gregale bucket notifications get my-api BUCKET_ID
 ```
+
+```json
+{"rules": [{"id": "thumbnails", "events": ["s3:ObjectCreated:*"], "prefix": "incoming/",
+  "destination": "arn:gregale:sqs:REGION:ACCOUNT_ID:APP_ID/thumbnail-jobs"}]}
+```
+
+A function destination is `arn:gregale:lambda:REGION:ACCOUNT_ID:function:APP_ID`.
+`REGION` is the bucket's region (`gregale bucket list`), `ACCOUNT_ID` is the
+`id` from `gregale whoami --json`, and `APP_ID` is the `id` from
+`gregale app get APP --json`. Queue messages carry the same body as above.
+Rules support `ObjectCreated:Put`, `:Copy`, `:CompleteMultipartUpload`,
+`ObjectRemoved:Delete`, `:DeleteMarkerCreated` and the lifecycle expiration
+events. Notification rules are not declared in `gregale.yaml` yet.
 
 Notifications and compute triggers run app code, so they need a paid plan;
 Free answers `402`, like other triggers. Company apps use the organization's

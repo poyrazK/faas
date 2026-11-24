@@ -20,9 +20,10 @@ import threading
 import time
 from urllib.parse import urlsplit
 
+import protocol_telemetry
 from protocol_telemetry import ProtocolObservation, start_protocol_heartbeat
 
-from auth import AuthConfigurationError, AuthFailure, Authenticator
+from auth import AuthConfigurationError, AuthFailure, Authenticator, GATEWAY_AUTHORIZED
 from catalog import RuntimeCatalog
 from tasks import DurableTaskRuntime, TASK_ID_PATTERN, TaskNotFound, register_task_handler, resolve_task_role, task_id_from_uri, task_resource_template
 
@@ -270,6 +271,7 @@ PROMPTS = [
 ]
 
 MCP_CATALOG = RuntimeCatalog()
+protocol_telemetry.tool_known = lambda name: MCP_CATALOG.get("tool", name) is not None
 for _definition in TOOLS:
     MCP_CATALOG.seed("tool", _definition)
 for _definition in RESOURCES + RESOURCE_TEMPLATES:
@@ -625,7 +627,7 @@ def call_tool(request_id, params, authenticator, granted_scopes, protocol=CURREN
         try:
             validator.validate(arguments)
         except Exception:
-            return tool_error(request_id, "tool arguments do not match inputSchema")
+            return tool_error(request_id, protocol_telemetry.TOOL_ARGUMENTS_MISMATCH)
     metadata = params.get("_meta", {})
     keyed = isinstance(metadata, dict) and TASK_SUBMISSION_KEY_META in metadata
     client_capabilities = metadata.get(CLIENT_CAPABILITIES_META_KEY, {}) if isinstance(metadata, dict) else {}
@@ -938,6 +940,8 @@ class MCPHandler(BaseHTTPRequestHandler):
             self.send_json(200 if health["ready"] else 503, {key: value for key, value in health.items() if key != "ready"})
             return
         if path == self.server.app_config["endpoint"]:
+            if self.reject_ungated():
+                return
             try:
                 self.server.authenticator.authenticate(self.headers.get("Authorization", ""))
             except AuthFailure as failure:
@@ -988,6 +992,8 @@ class MCPHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.send_header("Connection", "close")
             self.end_headers()
+            return
+        if self.reject_ungated():
             return
         health = runtime_catalog_health(
             getattr(self.server, "expected_catalog_sha256", ""),
@@ -1578,6 +1584,14 @@ class MCPHandler(BaseHTTPRequestHandler):
         self.wfile.write(f"{len(payload):X}\r\n".encode("ascii") + payload + b"\r\n")
         self.wfile.flush()
 
+    def reject_ungated(self):
+        # api-key and oauth-proxy servers trust only requests Gregale's
+        # gateway admitted; without its policy they would serve anyone.
+        if getattr(self.server.authenticator, "gateway_only", False) and not self.headers.get(GATEWAY_AUTHORIZED, "").strip():
+            self.send_json(401, {"error": "gateway_policy_required"})
+            return True
+        return False
+
     def reject_origin(self):
         origins=self.headers.get_all("Origin",[])
         if origins and (len(origins)!=1 or origins[0] not in self.server.app_config.get("allowed_origins",[])):
@@ -1596,8 +1610,15 @@ class MCPHandler(BaseHTTPRequestHandler):
             )
             if failure.code != "authentication_required":
                 challenge += f', error="{failure.code}"'
+            if failure.description:
+                challenge += f', error_description="{failure.description}"'
             headers["WWW-Authenticate"] = challenge
-        self.send_json(failure.status, {"error": failure.code}, headers)
+        body = {"error": failure.code}
+        if failure.description:
+            body["error_description"] = failure.description
+        if failure.retryable:
+            headers["Retry-After"] = "1"
+        self.send_json(failure.status, body, headers)
 
     def send_rpc(self, status, value, protocol=None):
         observation = getattr(self, "_protocol_observation", None)

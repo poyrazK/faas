@@ -47,6 +47,7 @@ class ManagedPostgresUsageOperatorResponse:
     max_monthly_egress_bytes: int
     line_items: list[ManagedPostgresUsageLineItem]
     observed_at: datetime.datetime | None | Unset = UNSET
+    snapshot_byte_seconds: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -103,6 +104,8 @@ class ManagedPostgresUsageOperatorResponse:
         else:
             observed_at = self.observed_at
 
+        snapshot_byte_seconds = self.snapshot_byte_seconds
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -132,6 +135,8 @@ class ManagedPostgresUsageOperatorResponse:
         )
         if observed_at is not UNSET:
             field_dict["observed_at"] = observed_at
+        if snapshot_byte_seconds is not UNSET:
+            field_dict["snapshot_byte_seconds"] = snapshot_byte_seconds
 
         return field_dict
 
@@ -204,6 +209,8 @@ class ManagedPostgresUsageOperatorResponse:
 
         observed_at = _parse_observed_at(d.pop("observed_at", UNSET))
 
+        snapshot_byte_seconds = d.pop("snapshot_byte_seconds", UNSET)
+
         managed_postgres_usage_operator_response = cls(
             account_id=account_id,
             period_start=period_start,
@@ -227,6 +234,7 @@ class ManagedPostgresUsageOperatorResponse:
             max_monthly_egress_bytes=max_monthly_egress_bytes,
             line_items=line_items,
             observed_at=observed_at,
+            snapshot_byte_seconds=snapshot_byte_seconds,
         )
 
         managed_postgres_usage_operator_response.additional_properties = d

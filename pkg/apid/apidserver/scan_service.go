@@ -1001,6 +1001,13 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 	if safe {
 		environment = "production"
 	}
+	var deployGroup string
+	if !safe && reconcileProductionEnvironment(environment) {
+		deployGroup = uuid.NewString()
+		if tracker != nil {
+			deployGroup = uuid.MustParse(tracker.Receipt.AttemptID).String()
+		}
+	}
 	if environment == "production" && !safe {
 		environment = state.DefaultEnvScope
 	}
@@ -1115,7 +1122,14 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// build context is staged as the archive root (H10-25).
 		sourceApp := app
 		composeContext := composeDockerBuildContext(scanDir, workload, app)
+		// A release-phase-off installation keeps ignoring a build
+		// context's Procfile, as before it counted: honoring it there would
+		// refuse redeploys of projects that deployed fine.
+		var buildContext composeReleaseContext
 		if composeContext {
+			if !s.releasePhaseOff {
+				buildContext = composeReleaseContext{root: app.RootDir, archiveNarrowed: true}
+			}
 			sourceApp.RootDir = ""
 		}
 		staged, bytes, stageErr := s.stageApplyTarball(ctx, scanDir, acct.ID, project.ID, app, composeContext)
@@ -1176,7 +1190,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// release: in its own directory) applies as on a single-app deploy
 		// unless another service builds from the same directory
 		// (ADR-20261019120007 amendment 1).
-		releaseCommand, releaseProblem := projectWorkloadReleaseCommand(staged, workloads, workload, sourceApp, manifest)
+		releaseCommand, releaseProblem := projectWorkloadReleaseCommand(staged, workloads, workload, sourceApp, buildContext, manifest)
 		if releaseProblem != nil {
 			_ = os.Remove(staged)
 			res.Error = "release declaration invalid (server logs carry the detail)"
@@ -1271,6 +1285,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		}
 		readinessCheck, livenessCheck := projectReadinessOverrides(app.Manifest, acct.Plan)
 		enqParams := apidsource.EnqueueParams{
+			ProjectDeployGroupID:      deployGroup,
 			TrafficPercentExplicit:    safe,
 			OperationID:               operationID,
 			BuildDependencies:         buildDependencies,
@@ -2111,6 +2126,8 @@ func (s *server) scanService(
 	preAdmissionReasons := reconcile.WorkloadAdmissionReasonsWithManaged(result.Workloads, result.Managed, acctApps, projectID)
 	preAdmissionReasons = append(preAdmissionReasons, reconcile.ProjectImageLifecycleAdmissionReasons(acct.Plan, result.Workloads)...)
 	preAdmissionReasons = append(preAdmissionReasons, reconcile.SlugHolderReasons(acct.ID, projectID, result.Workloads, slugHolders)...)
+	appNameBlocklist := s.runtimeConfig.appNameBlocklist()
+	preAdmissionReasons = append(preAdmissionReasons, reconcile.BlockedAppNameReasons(result.Workloads, acctApps, projectID, appNameBlocklist)...)
 	var admissionReasons []string
 	if len(filteredW) > 0 || len(result.Workloads) == 0 {
 		// An actually empty scan is unsafe and must carry the reconcile
@@ -2120,6 +2137,7 @@ func (s *server) scanService(
 		admissionReasons = reconcile.WorkloadAdmissionReasonsWithManaged(filteredW, filteredMc, acctApps, projectID, dependencyReferences)
 		admissionReasons = append(admissionReasons, reconcile.ProjectImageLifecycleAdmissionReasons(acct.Plan, filteredW)...)
 		admissionReasons = append(admissionReasons, reconcile.SlugHolderReasons(acct.ID, projectID, filteredW, slugHolders)...)
+		admissionReasons = append(admissionReasons, reconcile.BlockedAppNameReasons(filteredW, acctApps, projectID, appNameBlocklist)...)
 	}
 	if !reconcileProductionEnvironment(req.Environment) {
 		stageReasons := reconcile.EnvironmentWorkloadAdmissionReasons(filteredW, projectApps)
@@ -2249,6 +2267,9 @@ func (s *server) scanService(
 			if note := projectVisibilityNote(w, *existing, req.Environment == ""); note != "" {
 				warnings = append(warnings, note)
 			}
+			if note := projectAccessNote(w, *existing, acct.Plan, req.Environment == ""); note != "" {
+				warnings = append(warnings, note)
+			}
 		}
 		if s.domain != "" && pw.Visibility != api.AppVisibilityInternal && (string(w.Class) == "http" || string(w.Class) == "graphql") {
 			slug := w.AppSlug
@@ -2257,6 +2278,9 @@ func (s *server) scanService(
 			}
 			pw.PublicURL = "https://" + slug + "." + strings.TrimPrefix(s.domain, ".")
 			pw.PublicAuthMode = planWorkloadPublicAuthMode(existing, acct.Plan)
+			if w.Access != "" && (existing == nil || req.Environment == "") {
+				pw.PublicAuthMode = planWorkloadAccessAuthMode(w, existing, acct.Plan)
+			}
 			if nonProductionEnvironment {
 				// A new app's environment host is known only once it exists.
 				pw.PublicURL = ""
@@ -2746,6 +2770,7 @@ func (s *server) scanService(
 		capturedProb = prob
 		return resp, state.Project{}, nil, nil, nil, nil, prob
 	}
+	s.revokeUngrantedWorkloadCredentials(r.Context(), rec.Changed)
 
 	// Compute removed slugs. rec.Removed is a list of IDs; the
 	// handler needs slugs to soft-delete the corresponding crons
@@ -2931,6 +2956,9 @@ func (s *server) scanService(
 	}
 	if req.Environment == "" {
 		if problem := s.applyComposeInternalVisibility(r, acct, project.ID, filteredW); problem != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, problem
+		}
+		if problem := s.applyProjectServiceAccess(r, acct, preRemoveApps, filteredW); problem != nil {
 			return resp, state.Project{}, nil, nil, nil, nil, problem
 		}
 	}

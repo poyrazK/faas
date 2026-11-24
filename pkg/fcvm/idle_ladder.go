@@ -441,7 +441,7 @@ func NewIdleLadderMetrics(reg prometheus.Registerer) *IdleLadderMetrics {
 		}, []string{"plan"}),
 		appResumes: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "vmmd_idle_ladder_app_resumes_total",
-			Help: "Apps the idle ladder paused behind its activity guard that vmmd resumed outside a request, by cause: inbound (traffic reached the guest) or no_counters (the guard lost its CPU or veth counters) (ADR-20261107122928).",
+			Help: "Apps the idle ladder paused behind its activity guard that vmmd resumed outside a request, by cause: inbound (IPv4 packets addressed to the instance's network namespace arrived), inbound_veth (its veth's ingress moved while there was no addressed reading) or no_counters (the guard lost its CPU or veth counters) (ADR-20261107122928 amendment 4).",
 		}, []string{"cause"}),
 	}
 	for l := IdleQuietPause; l < idleLevelCount; l++ {
@@ -450,7 +450,7 @@ func NewIdleLadderMetrics(reg prometheus.Registerer) *IdleLadderMetrics {
 	for _, cause := range []string{idleGuardEndRequest, idleGuardEndInbound, idleGuardEndBackground, idleGuardEndFrozen} {
 		m.guardResumes.WithLabelValues(cause)
 	}
-	for _, cause := range []string{idleAppResumeInbound, idleAppResumeNoCounters} {
+	for _, cause := range []string{idleAppResumeInbound, idleAppResumeInboundVeth, idleAppResumeNoCounters} {
 		m.appResumes.WithLabelValues(cause)
 	}
 	reg.MustRegister(m, m.wakes, m.gaps, m.unbilled, m.guardPauses, m.guardResumes, m.guardDurations, m.guardHeld, m.appResumes)

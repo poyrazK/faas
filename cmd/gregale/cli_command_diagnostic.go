@@ -67,7 +67,7 @@ func commandDiagnosticFrom(kind string, words []string, manifest []cliCommand) *
 	}
 	if parent.Name == "" {
 		if suggestion, ok := suggestCommandFrom(words[0], manifest, nil); ok {
-			setCommandCorrection(advice, []string{suggestion}, manifest)
+			setCommandCorrection(advice, strings.Fields(suggestion), manifest)
 		}
 		return advice
 	}

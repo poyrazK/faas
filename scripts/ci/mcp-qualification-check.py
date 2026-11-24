@@ -19,6 +19,12 @@ OAUTH_LIFECYCLE_RUNNER = "gregale-mcp-oauth-lifecycle-v1"
 SDK_INTEROP_RUNNER = "gregale-mcp-sdk-interop-v3"
 SDK_INTEROP_VERSION = "2.3.1"
 TASKS_RESTART_RUNNER = "gregale-mcp-tasks-restart-v1"
+TASKS_RESTART_REVIEWED_RUNNER = "gregale-mcp-tasks-restart-v2"
+TASKS_RESTART_RUNNERS = {1: TASKS_RESTART_RUNNER, 2: TASKS_RESTART_REVIEWED_RUNNER}
+TASKS_RESTART_REVIEWED_CHECK = "reviewed_input_worker_replacement"
+TASKS_RESTART_REVIEWED_OBSERVATIONS = {
+    "denied_input_updates": 0, "accepted_input_updates": 1, "reviewed_task_results": 1,
+}
 TASKS_SCALE_ZERO_RUNNER = "gregale-mcp-tasks-scale-zero-v2"
 TASKS_RESTART_CHECKS = {
     "initial_worker_crash", "two_replica_recovery", "stale_lease_fenced",
@@ -366,8 +372,9 @@ def validate_tasks_restart_receipt(receipt, name, target, require_passed=True):
             "version", "runner", "check", "status", "target", "observed_at",
             "checks", "observations", "failures",
         }
-        or receipt.get("version") != 1
-        or receipt.get("runner") != TASKS_RESTART_RUNNER
+        or type(receipt.get("version")) is not int
+        or receipt.get("version") not in TASKS_RESTART_RUNNERS
+        or receipt.get("runner") != TASKS_RESTART_RUNNERS[receipt["version"]]
         or receipt.get("check") != name
         or receipt.get("status") not in {"passed", "failed"}
         or receipt.get("target") != target
@@ -384,15 +391,23 @@ def validate_tasks_restart_receipt(receipt, name, target, require_passed=True):
 
     checks = receipt["checks"]
     observations = receipt["observations"]
+    expected_checks = TASKS_RESTART_CHECKS
+    expected_observations = {
+        "replacement_replicas": 2,
+        "recovery_attempt": 2,
+        "recovered_handler_executions": 1,
+        "final_attempt": 3,
+        "resumed_attempt": 3,
+    }
+    if receipt["version"] == 2:
+        expected_checks = expected_checks | {TASKS_RESTART_REVIEWED_CHECK}
+        expected_observations.update(TASKS_RESTART_REVIEWED_OBSERVATIONS)
     if (
         not isinstance(checks, dict)
-        or set(checks) != TASKS_RESTART_CHECKS
+        or set(checks) != expected_checks
         or any(status not in {"passed", "failed"} for status in checks.values())
         or not isinstance(observations, dict)
-        or set(observations) != {
-            "replacement_replicas", "recovery_attempt", "recovered_handler_executions",
-            "final_attempt", "resumed_attempt",
-        }
+        or set(observations) != set(expected_observations)
         or any(type(value) is not int or value < 0 for value in observations.values())
     ):
         raise ValueError(f"{name}: task restart receipt checks or observations are invalid")
@@ -412,13 +427,6 @@ def validate_tasks_restart_receipt(receipt, name, target, require_passed=True):
         if require_passed:
             raise ValueError(f"{name}: task restart qualification did not pass")
         return
-    expected_observations = {
-        "replacement_replicas": 2,
-        "recovery_attempt": 2,
-        "recovered_handler_executions": 1,
-        "final_attempt": 3,
-        "resumed_attempt": 3,
-    }
     if (
         failures
         or any(status != "passed" for status in checks.values())
@@ -428,13 +436,15 @@ def validate_tasks_restart_receipt(receipt, name, target, require_passed=True):
 
 
 def check_tasks_restart_receipt(path, name, record):
-    if record.get("evidence_type") != TASKS_RESTART_RUNNER:
+    if record.get("evidence_type") not in TASKS_RESTART_RUNNERS.values():
         return
     try:
         receipt = json.loads(path.read_text(encoding="utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ValueError(f"{name}: task restart receipt must be valid JSON") from error
     validate_tasks_restart_receipt(receipt, name, record.get("target"))
+    if receipt["runner"] != record["evidence_type"]:
+        raise ValueError(f"{name}: manifest and task restart receipt versions do not match")
 
 
 def validate_tasks_scale_zero_receipt(receipt, name, target, require_passed=True):
@@ -551,7 +561,7 @@ def check(path, commit):
             raise ValueError(f"{name}: artifact digest does not match")
         if record.get("evidence_type") is not None and record.get("evidence_type") not in {
             NATIVE_PROBE_RUNNER, OAUTH_PROBE_RUNNER, OAUTH_LIFECYCLE_RUNNER, SDK_INTEROP_RUNNER,
-            TASKS_RESTART_RUNNER, TASKS_SCALE_ZERO_RUNNER,
+            *TASKS_RESTART_RUNNERS.values(), TASKS_SCALE_ZERO_RUNNER,
         }:
             raise ValueError(f"{name}: unsupported evidence type")
         check_native_probe(artifact, name, record)

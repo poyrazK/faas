@@ -293,6 +293,7 @@ func (s *Service) reconcileResize(ctx context.Context, database Database) (Datab
 	request := UpdateRequest{ResourceID: operation.ProviderResourceID,
 		DataResourceID: operation.DataResourceID, PreviousSpec: operation.SourceSpec, Spec: operation.TargetSpec(),
 		Generation: operation.Generation, IdempotencyKey: "resize-" + operation.ID}
+	request.SuspendTimeoutSeconds = s.ownSuspendTimeout(ctx, claimed.ID, request)
 	observed, err := backend.Provider.Update(providerCtx, request)
 	if err != nil {
 		var rejected *ChangeRejectedError

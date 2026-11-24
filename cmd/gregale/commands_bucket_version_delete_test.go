@@ -8,6 +8,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -36,7 +37,15 @@ func TestBucketVersionDeleteCLI(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil || result.VersionID != version || !result.DeleteMarker {
 		t.Fatal(result, err)
 	}
-	if code := main.CmdBucket([]string{"version-delete", "demo", bucket, key, "null"}); code != 1 || calls != 1 {
+	errOut, restoreErr := main.CaptureStderr(t)
+	code := main.CmdBucket([]string{"version-delete", "demo", bucket, key, "null"})
+	restoreErr()
+	if code != 1 || calls != 1 {
 		t.Fatal("mutable null dispatched", code, calls)
+	}
+	// Prod hunt r28: version null got a bare usage line; name the command
+	// that removes it.
+	if !strings.Contains(errOut.String()+stderr.String(), "bucket deletion create demo "+bucket) {
+		t.Fatalf("version null advice: %s%s", errOut.String(), stderr.String())
 	}
 }

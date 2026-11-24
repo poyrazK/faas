@@ -87,8 +87,8 @@ func (p *Provider) computeUnitSecondsBetween(ctx context.Context, projectID stri
 			return 0, err
 		}
 	}
-	compute, _, _, _, err := sumConsumption(project)
-	return compute, err
+	totals, err := sumConsumption(project)
+	return totals.compute, err
 }
 
 func consumptionFrames(project projectConsumption) int {

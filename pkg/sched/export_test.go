@@ -1469,3 +1469,6 @@ func ReportTriggerPoll(ctx context.Context, records int) { reportTriggerPoll(ctx
 
 // ErrTriggerGatewayDispatch marks a batch the gateway could not take.
 var ErrTriggerGatewayDispatch = errTriggerGatewayDispatch
+
+// InvocationErrorText is the last_error text of a failed invocation.
+var InvocationErrorText = invocationErrorText

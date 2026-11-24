@@ -62,7 +62,7 @@ http
       debug().then((body) => send(res, 200, body), (err) => send(res, 500, { error: String(err) }));
       return;
     }
-    // Edge routing (ADR-20261122090000): two plain pages the gateway picks
+    // Edge routing (ADR-20261124212701): two plain pages the gateway picks
     // between; the code never checks a flag here.
     if (url.pathname === "/page" || url.pathname === "/page-b") {
       send(res, 200, { probe: "gregale-e2e-flags", customer, page: url.pathname === "/page" ? "a" : "b" });

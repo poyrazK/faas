@@ -48,6 +48,21 @@ class CanaryOrderTest(unittest.TestCase):
         self.assertEqual(got["control_plane"], {"deploy": True, "gate": "canary"})
         self.assertEqual([t["node"] for t in got["followers"]], ["fsn-2", "fsn-3", "fsn-4"])
 
+    def test_compute_lane_units_deploy_nodes_canary_first(self):
+        # docs/adr/20261123122457-compute-unit-lane.md: vmmd (or only a
+        # helper) restarts on, or is replaced on, every node; the control
+        # plane's schedd went out with the control-plane lane.
+        vmmd = {"lane": "compute", "services": [{"name": "vmmd", "host": "compute-only"}]}
+        schedd = {"lane": "shared", "services": [{"name": "schedd", "host": "control-plane"},
+                                                 {"name": "schedd", "host": "compute-only"}]}
+        bridge = {"lane": "compute", "services": [], "helper": True}
+        for units in ({"vmmd": vmmd, "schedd": schedd}, {"vmmd-tcp-bridge": bridge}):
+            with self.subTest(sorted(units)):
+                got = per.plan(manifest(**units), NODES, canary="fsn-3")
+                self.assertEqual(got["canary"]["node"], "fsn-3")
+                self.assertEqual([t["node"] for t in got["followers"]], ["fsn-2", "fsn-4"])
+                self.assertEqual(got["control_plane"], {"deploy": False, "gate": "follower"})
+
     def test_no_edge_units_touches_no_host(self):
         got = per.plan(manifest(apid=APID), NODES)
         self.assertEqual(got, {"canary": None, "followers": [], "control_plane": {"deploy": False, "gate": "canary"}})

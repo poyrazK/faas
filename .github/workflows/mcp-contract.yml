@@ -443,7 +443,7 @@ jobs:
         run: |
           node "$RUNNER_TEMP/mcp-starter/test/tasks-restart-qualification.mjs" \
             --target "MCP contract workflow / $GITHUB_SHA" \
-            --confirm-disposable-database
+            --confirm-disposable-database --gregale "$RUNNER_TEMP/gregale"
       - name: Gate reader and writer catalogs without executing tools
         shell: bash
         run: |
@@ -557,3 +557,17 @@ jobs:
         run: |
           go test -race -v -p=1 ./pkg/apid/apidserver ./migrations -run 'TestPGHandler_RegressionTriageGuardAndReplay|TestPGHandler_DebugRegressionReopensWhenErrorsAppear|TestRegressionReviewVersionFastDefaultAndLegacyHistory|TestScopedRouteMonitor|TestScopedTelemetry|TestScopedWorkerObservation|TestWorkerRolloutObservationHTTP|TestReviewedWorkloadRollout|TestMemReviewedRollout|TestPgReviewedRollout|TestMemReviewedServiceRecovery|TestPgReviewedServiceRecovery|TestMemReviewedPinnedServiceReadiness|TestPgReviewedPinnedServiceReadiness|TestReviewedNativeSource|TestReviewedSourceRef|TestSourceRef_|TestReleaseReviewHTTP|TestMemReleaseReview|TestPgReleaseReview|TestMemReviewedNamedStaging|TestPgReviewedNamedStaging|TestPrivatePublicationExactReplicaProtocol|TestMCP|TestStateless|TestClient|TestCall|TestLegacyStateless|TestMirrored|TestConfig|TestOAuth|TestMem_UpdateDeploymentTraffic_Expected|TestNpmIntegrity|TestScanExtractedMCP|TestListTemplates|TestScorecard' -count=1
           DATABASE_URL=postgres://mcp:mcp-ci-only@localhost:5432/mcp?sslmode=disable go test -race -v -p=1 ./pkg/apid/apidserver -run '^TestHostedTaskNativeAcceptance$' -count=1
+      - name: Native hosted FastAPI upload approval restart
+        env:
+          DATABASE_URL: postgres://mcp:mcp-ci-only@localhost:5432/mcp?sslmode=disable
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1"'
+          GOMEMLIMIT: 2GiB
+          GOGC: 30
+          GOMAXPROCS: 2
+        run: |
+          go build -p=1 -o "$RUNNER_TEMP/gregale-upload-acceptance" ./cmd/gregale
+          python3 -m venv "$RUNNER_TEMP/hosted-fastapi"
+          "$RUNNER_TEMP/hosted-fastapi/bin/python" -m pip install 'fastapi==0.116.0' 'uvicorn==0.35.0'
+          MCP_UPLOAD_TEST_GREGALE="$RUNNER_TEMP/gregale-upload-acceptance" \
+            MCP_UPLOAD_TEST_PYTHON="$RUNNER_TEMP/hosted-fastapi/bin/python" \
+            go test -race -v -p=1 ./pkg/apid/apidserver -run '^TestHostedUploadNativeAcceptance$' -count=1

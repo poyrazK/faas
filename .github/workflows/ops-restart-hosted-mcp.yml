@@ -1,0 +1,72 @@
+name: ops-restart-hosted-mcp
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: production-us-platform-rollout
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  restart:
+    name: Restart the hosted MCP bridge
+    if: github.repository == 'poyrazK/faas' && github.ref == 'refs/heads/main'
+    environment: production-us
+    runs-on: [self-hosted, linux, faas-fleet-us]
+    timeout-minutes: 5
+    steps:
+      - name: Restart and verify the bridge
+        env:
+          CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
+          CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
+          COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${CP_HOST:?Control-plane host is required}"
+          : "${CP_SSH_KEY:?Control-plane SSH key is required}"
+          : "${COMPUTE_KNOWN_HOSTS:?Fleet SSH host pins are required}"
+
+          umask 077
+          scratch="$(mktemp -d "$RUNNER_TEMP/mcp-bridge-restart.XXXXXXXX")"
+          trap 'rm -rf -- "$scratch"' EXIT
+          printf '%s\n' "$CP_SSH_KEY" > "$scratch/key"
+          printf '%s\n' "$COMPUTE_KNOWN_HOSTS" > "$scratch/known-hosts"
+          ssh -T -F /dev/null -i "$scratch/key" \
+            -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$scratch/known-hosts" -o GlobalKnownHostsFile=/dev/null \
+            -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
+            -- "root@$CP_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          unit=faas-mcp-bridge.service
+
+          # Use the same host lock as deployctl, including for unit releases.
+          exec 9>>/run/lock/faas-deploy.lock
+          flock -n 9 || { echo 'Could not acquire the control-plane deploy lock' >&2; exit 1; }
+
+          for service in postgresql.service faas-apid.service "$unit"; do
+            systemctl is-active --quiet "$service" || { echo "$service is inactive" >&2; exit 1; }
+          done
+          before="$(systemctl show --property=InvocationID --value "$unit")"
+          [[ -n "$before" ]] || { echo 'Bridge invocation ID is unavailable' >&2; exit 1; }
+
+          systemctl restart "$unit"
+          for _ in {1..30}; do
+            # The root route may return an HTTP error. Any HTTP response shows
+            # that the bridge has opened its listener after loading state.
+            candidate="$(systemctl show --property=InvocationID --value "$unit")"
+            if [[ -n "$candidate" && "$candidate" != "$before" ]] &&
+              curl --silent --noproxy '*' --max-time 2 --output /dev/null http://127.0.0.1:8787/ &&
+              systemctl is-active --quiet "$unit" &&
+              [[ "$(systemctl show --property=InvocationID --value "$unit")" == "$candidate" ]]; then
+              printf 'Hosted MCP bridge invocation changed from %s to %s\n' "$before" "$candidate"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo 'Could not confirm a new bridge invocation serving HTTP' >&2
+          exit 1
+          REMOTE

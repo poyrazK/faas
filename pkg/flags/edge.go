@@ -11,7 +11,7 @@ import (
 
 // Edge routes a variant flag's variants at the gateway, so an app without an
 // SDK (a static site, a route the code does not branch on) still serves them
-// (ADR-20261122090000). The gateway evaluates the flag for each request that
+// (ADR-20261124212701). The gateway evaluates the flag for each request that
 // matches a route and, for the decided variant, rewrites the request path
 // before the response cache and the app see it.
 type Edge struct {

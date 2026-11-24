@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ADR-20261122090000: gatewayd reads an app's edge-routed flags from its
+// ADR-20261124212701: gatewayd reads an app's edge-routed flags from its
 // project environment's latest configuration, and only those flags.
 func TestPg_FeatureFlagEdgeForApp(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)

@@ -121,14 +121,21 @@ func TestPublicStatusOverviewDegradesWhenWakeP95BreachesTarget(t *testing.T) {
 	if overview.OverallStatus == string(publicstatus.StateOperational) {
 		t.Fatalf("overall status = %q with wake p95 above target", overview.OverallStatus)
 	}
-	var networking string
+	// Wake p95 measures App execution, not the network.
+	var networking, appExecution string
 	for _, component := range overview.Components {
-		if component.ID == string(publicstatus.ComponentNetworking) {
+		switch component.ID {
+		case string(publicstatus.ComponentNetworking):
 			networking = component.Status
+		case string(publicstatus.ComponentAppExecution):
+			appExecution = component.Status
 		}
 	}
-	if networking != string(publicstatus.StateDegraded) {
-		t.Fatalf("networking = %q, want degraded", networking)
+	if appExecution != string(publicstatus.StateDegraded) {
+		t.Fatalf("app_execution = %q, want degraded", appExecution)
+	}
+	if networking != string(publicstatus.StateOperational) {
+		t.Fatalf("networking = %q, want operational", networking)
 	}
 
 	legacy, err := srv.statusCache.Get(t.Context())

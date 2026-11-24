@@ -1,6 +1,7 @@
 package edgerules
 
 import (
+	"encoding/json"
 	"slices"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -19,6 +20,7 @@ var (
 	featurePenaltyBox  = edgeFeature{platformflags.EdgePenaltyBox, "Edge rule penalties", api.EdgeFeaturePenaltyBox}
 	featureAICrawlers  = edgeFeature{platformflags.EdgeAICrawlers, "AI crawler conditions", api.EdgeFeatureAICrawlers}
 	featureAttackMode  = edgeFeature{platformflags.EdgeAttackMode, "Attack mode", api.EdgeFeatureAttackMode}
+	featureMCPAuth     = edgeFeature{platformflags.MCPGatewayAuth, "MCP gateway auth modes and tool limits", api.EdgeFeatureMCPGatewayAuth}
 )
 
 // RuleResponse is the rule as acct sees it: EdgeRuleResponse plus the gated
@@ -36,7 +38,7 @@ func (s *Service) RuleResponse(acct state.Account, row state.EdgeRule) api.EdgeR
 // FeatureReleased reports whether acct may use an edge feature
 // (api.EdgeFeature*); an unknown feature is not released.
 func (s *Service) FeatureReleased(acct state.Account, feature string) bool {
-	for _, f := range []edgeFeature{featureChallenge, featureWAFBlocking, featurePenaltyBox, featureAICrawlers, featureAttackMode} {
+	for _, f := range []edgeFeature{featureChallenge, featureWAFBlocking, featurePenaltyBox, featureAICrawlers, featureAttackMode, featureMCPAuth} {
 		if f.wire == feature {
 			return s.Host.PlatformFlagEnabled(f.flag, acct)
 		}
@@ -55,6 +57,9 @@ type ruleShape struct {
 	// attackMode is the app's attack-mode rule (ADR-20261021220456
 	// amendment 1); only a stored rule can be one.
 	attackMode bool
+	// mcpAuth is an MCP policy with a consumer-key credential or tool
+	// limits (ADR-20261122194324).
+	mcpAuth bool
 	// active is enabled and not in log mode (ADR-960).
 	active bool
 }
@@ -77,6 +82,9 @@ func (r ruleShape) features() []edgeFeature {
 	if r.attackMode {
 		out = append(out, featureAttackMode)
 	}
+	if r.mcpAuth {
+		out = append(out, featureMCPAuth)
+	}
 	return out
 }
 
@@ -87,6 +95,9 @@ func storedRuleShape(row state.EdgeRule) ruleShape {
 		aiCrawlers: api.EdgeRuleMatchUsesAICrawlerFields(row.Match),
 		attackMode: row.AttackMode(),
 		active:     row.Enabled && row.Mode != api.EdgeRuleModeLog,
+	}
+	if row.Kind == state.EdgeRuleKindJWT && row.Action.JWT != nil {
+		shape.mcpAuth = mcpAuthPolicy(row.Action.JWT.MCP)
 	}
 	if row.Kind == state.EdgeRuleKindWAF {
 		shape.wafMode = api.EdgeWAFModeObserve
@@ -102,6 +113,7 @@ func updatedRuleShape(row state.EdgeRule, req api.UpdateEdgeRuleRequest) ruleSha
 	shape := storedRuleShape(row)
 	if req.Action != nil {
 		shape.wafMode = wafModeFromAction(shape.kind, *req.Action)
+		shape.mcpAuth = mcpAuthFromAction(shape.kind, *req.Action)
 	}
 	switch {
 	case req.ClearMatch:
@@ -131,7 +143,7 @@ func updatedRuleShape(row state.EdgeRule, req api.UpdateEdgeRuleRequest) ruleSha
 // starts enabled.
 func (s *Service) createReleaseProblem(acct state.Account, req api.CreateEdgeRuleRequest) *api.Problem {
 	shape := ruleShape{kind: req.Kind, wafMode: wafModeFromAction(req.Kind, req.Action), penalty: req.Penalty != nil,
-		aiCrawlers: api.EdgeRuleMatchUsesAICrawlerFields(req.Match)}
+		aiCrawlers: api.EdgeRuleMatchUsesAICrawlerFields(req.Match), mcpAuth: mcpAuthFromAction(req.Kind, req.Action)}
 	return s.releaseProblem(acct, shape.features(), nil)
 }
 
@@ -159,4 +171,20 @@ func (s *Service) releaseProblem(acct state.Account, used, enforced []edgeFeatur
 		}
 	}
 	return nil
+}
+
+// mcpAuthPolicy reports whether an MCP policy uses a feature that
+// mcp_gateway_auth releases.
+func mcpAuthPolicy(p *api.MCPResourcePolicy) bool {
+	return p != nil && (p.Credential != "" || len(p.ToolLimits) > 0)
+}
+
+// mcpAuthFromAction reads mcpAuthPolicy from a wire jwt action.
+func mcpAuthFromAction(kind string, raw json.RawMessage) bool {
+	if kind != string(state.EdgeRuleKindJWT) {
+		return false
+	}
+	var a api.EdgeRuleJWTAction
+	_ = json.Unmarshal(raw, &a)
+	return mcpAuthPolicy(a.MCP)
 }

@@ -581,6 +581,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	} else {
 		netns.SetDefaultDatabaseRouteAddress(netip.Addr{})
 	}
+	// ADR-20261114100000 amendment 2026-11-23: public destinations that are
+	// Gregale's own count as internal egress in every namespace from here on.
+	if err := seedInternalEgressDestinations(ctx, cfg.ComputeNode, log); err != nil {
+		return err
+	}
 	// Runtime policy rebuilds happen after every VM cache mutation. Seed the
 	// mutable policy from this host's deployment-owned network values before
 	// any wake can trigger a render; otherwise the package default (eth0)
@@ -1579,15 +1584,22 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// refuses on without quiet pause.
 	if cfg.IdleLadder != idleLadderOff {
 		on := cfg.IdleLadder == idleLadderOn
+		// A paused app resumes on IPv4 packets addressed to its namespace,
+		// not on the bridge's broadcasts and floods (amendment 4).
+		var addressed *fcvm.NetnsIngressReader
+		if on && cfg.IdleLadderApps {
+			addressed = fcvm.NewNetnsIngressReader("/proc")
+			go runNetnsIngressPoll(ctx, mgr.SnapshotLive, addressed, 0)
+		}
 		mgr.WithIdleLadder(fcvm.IdleLadderConfig{
 			Activity: activityTracker,
 			Metrics:  fcvm.NewIdleLadderMetrics(ops.Registry()),
 			On:       on,
 			Apps:     cfg.IdleLadderApps,
 			// The activity guard (ADR §6) watches apps quiet pause does not
-			// pause: their VM CPU and veth bytes.
+			// pause: their VM CPU, veth bytes and addressed packets.
 			CPU: agentWaitCPU{cache: cpuCache},
-			Net: idleLadderNet{cache: netCache},
+			Net: idleLadderNet{cache: netCache, addressed: addressed},
 			// L3/L4: compress quiet-paused VMs' cold pages (LoadConfig
 			// refuses it without on).
 			Compress:        cfg.IdleLadderCompress,

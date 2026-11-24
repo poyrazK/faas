@@ -519,6 +519,8 @@ const UploadSessionOffsetConflictCode = uploadSessionOffsetConflictCode
 
 // Package-level vars
 var TerminalSafe = terminalSafe
+var ParsePostgresSuspendTimeout = parsePostgresSuspendTimeout
+var RenderPostgresSuspendTimeout = renderPostgresSuspendTimeout
 var AgentKeyScopes = agentKeyScopes
 var TerminalSafeLines = terminalSafeLines
 var AuthAdminHTTPClient = &authAdminHTTPClient
@@ -1220,6 +1222,15 @@ var CoveragePolicy = coveragePolicy
 var CreateDevSetupManifest = createDevSetupManifest
 var CreateDurableProjectVerification = createDurableProjectVerification
 var CreateOrFetchApp = createOrFetchApp
+
+// DeployAppWithAlternatives runs the deploy's name resolution: slug, or the
+// caller's suffixed alternative when another owner holds slug.
+func DeployAppWithAlternatives(ctx context.Context, client *Client, slug, sourceDir string) (string, error) {
+	req := api.CreateAppRequest{Slug: slug}
+	got, _, err := createOrFetchAppWithAlternatives(ctx, client, req, req, sourceDir, nil, nil, nil, nil, nil)
+	return got, err
+}
+
 var CreateTestAsyncRoutes = createTestAsyncRoutes
 var CurrentUploadOffset = currentUploadOffset
 var CustomerCliCommands = customerCliCommands
@@ -1426,6 +1437,12 @@ var InspectData = inspectData
 var InspectOpenAPI = inspectOpenAPI
 var InspectProductPilotHelp = inspectProductPilotHelp
 var InspectRecommendations = inspectRecommendations
+var AppParkedLabel = appParkedLabel
+var WriteParkedNotice = writeParkedNotice
+var StartupCrashCauseHint = startupCrashCauseHint
+var WaitAppReadiness = waitAppReadiness
+var PrintSecretDeliveryOverview = printSecretDeliveryOverview
+var SecretDeliveryRowLabel = secretDeliveryRowLabel
 var InspectRuntime = inspectRuntime
 var InspectResources = inspectResources
 var InspectUnavailable = inspectUnavailable
@@ -1486,6 +1503,9 @@ var McpNativeFingerprint = mcpNativeFingerprint
 var McpNativeWorkerLogs = mcpNativeWorkerLogs
 var McpTasksObserverConfigEnvNames = mcpTasksObserverConfigEnvNames
 var McpTasksObserverCredential = mcpTasksObserverCredential
+var McpTasksRuntimeApp = mcpTasksRuntimeApp
+var McpTasksObserverProcessDetected = mcpTasksObserverProcessDetected
+var PrintReleaseTaskOutput = printReleaseTaskOutput
 var McpTasksObserverEntrypointDetected = mcpTasksObserverEntrypointDetected
 var McpTasksObserverHeartbeatIsFresh = mcpTasksObserverHeartbeatIsFresh
 var McpTasksObserverMetricsTargetMatches = mcpTasksObserverMetricsTargetMatches
@@ -2644,6 +2664,7 @@ var RoutesAppFlagAsPositional = routesAppFlagAsPositional
 
 var RenderProject = renderProject
 var InspectAttention = inspectAttention
+var SelectInspectDeployments = selectInspectDeployments
 var RemoveCLITestSandbox = removeCLITestSandbox
 var WorkerScalingMetrics = workerScalingMetrics
 var WorkerMetricLabel = workerMetricLabel
@@ -3007,6 +3028,15 @@ func RenderInspectFailureDetails(w io.Writer, slug string, failed api.Deployment
 // FormatObserved renders a measured alert value.
 var FormatObserved = formatObserved
 
+// PrintAffectedText renders a project plan's affected apps.
+var PrintAffectedText = printAffectedText
+
+// AppGetURL is the url row of `app get`.
+var AppGetURL = appGetURL
+
+// LatestWakeID picks the wake shown by `app wake-timeline APP`.
+var LatestWakeID = latestWakeID
+
 // SplitTargetSlug and RenderRouteSplit expose the route split suggestion
 // (ADR-20261121170000 amendment 1).
 var (
@@ -3018,3 +3048,116 @@ var (
 func WaitForDevPostgres(ctx context.Context, session api.DevSessionResponse, timeout, poll time.Duration, get func(context.Context) (api.DevSessionResponse, error), waiting func(string)) (api.DevSessionResponse, error) {
 	return waitForDevPostgres(ctx, session, timeout, poll, get, waiting)
 }
+
+// ADR-20261122194324: gateway-enforced MCP access modes.
+var AuditMCPGatewayRules = auditMCPGatewayRules
+
+// MCPAuthEnableConfig is mcpAuthEnableConfig with a Gregale Auth issuer
+// URL (empty for api-key).
+func MCPAuthEnableConfig(cfg *mcphosting.Config, mode, endpoint, issuer, scopes string) error {
+	return mcpAuthEnableConfig(cfg, mode, endpoint, mcpAuthIssuer{url: issuer}, scopes)
+}
+
+// RealtimePreviewInView is realtimePreviewInView for the tier defaults
+// (tier) or for an account view that hides hidden.
+func RealtimePreviewInView(tier bool, hidden ...string) bool {
+	if tier {
+		return realtimePreviewInView(capabilityView{tier: true})
+	}
+	return realtimePreviewInView(accountCapabilityView(hidden))
+}
+
+// RealtimeVerbsDiscoveredBy lists the realtime verbs discovery shows to an
+// account whose view hides hidden.
+func RealtimeVerbsDiscoveredBy(hidden ...string) []string {
+	view := accountCapabilityView(hidden)
+	var names []string
+	for _, command := range view.discoverableCommands(visibleCliCommandsWith(realtimePreviewInView(view))) {
+		if command.Name == "realtime" {
+			for _, sub := range command.Subcommands {
+				names = append(names, sub.Name)
+			}
+		}
+	}
+	return names
+}
+
+// Built-in Task release gate (commands_mcp_native_gate.go).
+type (
+	MCPGateWorker     = mcpGateWorker
+	MCPTaskHandlerRef = mcpTaskHandlerRef
+	MCPGateStore      = mcpGateStore
+	MCPGateReport     = mcpGateReport
+)
+
+var (
+	MCPNativeWorkerRuntime     = mcpNativeWorkerRuntime
+	RequireMCPNativeNodeWorker = requireMCPNativeNodeWorker
+	MCPReplacementsReady       = mcpReplacementsReady
+)
+
+// RunMCPGate runs the built-in gate against a test store and hooks.
+func RunMCPGate(ctx context.Context, store MCPGateStore, namespace, releaseID, checkpointPath string, timeout time.Duration,
+	migrate func(context.Context) error, start func(context.Context, map[string]any) ([]string, error), drain func(context.Context, map[string]any) error) MCPGateReport {
+	g := &mcpGate{store: store, namespace: namespace, releaseID: releaseID, timeout: timeout, poll: time.Millisecond,
+		checkpointPath: checkpointPath, migrate: migrate, start: start, drain: drain}
+	return g.run(ctx)
+}
+
+// LeadingDeploymentID exposes the traffic verbs' positional-id fold (prod hunt r32).
+var LeadingDeploymentID = leadingDeploymentID
+
+// adr: 20261123110137
+var WithMCPReplayGate = withMCPReplayGate
+
+// RunMCPReplayGateForTest runs the deploy replay gate and returns its skip
+// reason and verdict.
+func RunMCPReplayGateForTest(ctx context.Context, endpoint, candidate, serving string, gate *mcpSmokeGate) (string, bool) {
+	report, ok := runMCPReplayGate(ctx, endpoint, candidate, serving, "", gate)
+	return report.Skipped, ok
+}
+
+// MCPDiscoverJWKS is mcpDiscoverJWKS.
+var MCPDiscoverJWKS = mcpDiscoverJWKS
+
+// MCPToolKeyScopes is mcpToolKeyScopes.
+var MCPToolKeyScopes = mcpToolKeyScopes
+
+// MCPAuthNext is mcpAuthNext.
+var MCPAuthNext = mcpAuthNext
+
+// SetMCPOIDCHTTPClient replaces the issuer-discovery client until the test ends.
+func SetMCPOIDCHTTPClient(t interface{ Cleanup(func()) }, c *http.Client) {
+	previous := mcpOIDCHTTPClient
+	mcpOIDCHTTPClient = c
+	t.Cleanup(func() { mcpOIDCHTTPClient = previous })
+}
+
+// MCPAuthEnableExternalIssuer is mcpAuthEnableConfig with an external issuer.
+func MCPAuthEnableExternalIssuer(cfg *mcphosting.Config, mode, endpoint, issuer, jwksURL, audience, scopes string) error {
+	return mcpAuthEnableConfig(cfg, mode, endpoint, mcpAuthIssuer{url: issuer, jwksURL: jwksURL, audience: audience}, scopes)
+}
+
+// ParseToolWeights is parseToolWeights.
+var ParseToolWeights = parseToolWeights
+
+// ApplyRouteLimitSpecs parses --route-limit and --tool-limit values and
+// applies them to current, as plan-update does.
+func ApplyRouteLimitSpecs(current map[string]api.APIConsumerPlanRouteLimit, routes, tools []string) (map[string]api.APIConsumerPlanRouteLimit, error) {
+	edits, err := parseRouteLimitEdits(routes, tools)
+	if err != nil {
+		return nil, err
+	}
+	return applyRouteLimitEdits(current, edits), nil
+}
+
+var CheckManifestAccessFlags = checkManifestAccessFlags
+
+// WithLinkedApp fills a missing leading <slug> from the linked app.
+var WithLinkedApp = withLinkedApp
+
+// InitDeployArgs is the deploy flag list init --deploy runs.
+var InitDeployArgs = initDeployArgs
+
+// TemplatesPublicOnPurpose lists the templates that deploy public.
+var TemplatesPublicOnPurpose = templatesPublicOnPurpose

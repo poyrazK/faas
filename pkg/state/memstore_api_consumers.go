@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func validateAPIConsumerInput(op, accountID, appID, externalRef, name string) error {
@@ -133,6 +135,9 @@ func validateConsumerKeyForConsumer(op, accountID, consumerID, name, prefix stri
 		switch scope {
 		case "read", "write", "admin", "billing":
 		default:
+			if api.ValidConsumerKeyMCPScope(scope) {
+				continue
+			}
 			return fmt.Errorf("memstore: %s: scope %q is not in the closed-set {read, write, admin}", op, scope)
 		}
 	}

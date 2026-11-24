@@ -8,14 +8,31 @@ checks:
 
   freeze   no open issue labelled deploy-freeze             else hold
   newest   no newer run of release-units will deploy        else stand down
+  current  no earlier run deployed this commit through every lane else stand down
   main     the commit's post-merge ci-light run did not fail else fail
   idle     no other deploy runs, the control plane's deploy lock is free
                                                             else wait
   healthy  no page alert fires on the control plane's Prometheus (tenant-
            signal families excepted) and Prometheus answers else wait
+  base     the control plane runs the full release this unit release is
+           built over (the build's BASE_MARKER artifact)  else stand down:
+           a newer tag is not deployed yet; cd-platform deploys it
   watch    no host already holds the most unwatched releases allowed
            (release_units.json "watch".max_unwatched)      else wait while
            its watch runs; fail when no watch runs for it (adopt it)
+
+With --follow-build (release-units.yml, ADR-20261122170000 "Preflight
+beside the build") the job starts with the build instead of after it, and
+one more check leads:
+
+  built    this run's build job finished and released a commit (its
+           RELEASE_MARKER artifact names it)            else wait while it
+           builds; stand down when it failed or released nothing
+
+While only the build is outstanding, the build job is polled every --poll
+and the other checks are reread every --interval; the round that sees the
+build finish rereads every check, so a go is never older than one round.
+The commit the current and main checks read comes from the marker.
 
 A hold or a stand-down ends the job without deploying and without failing:
 a person froze deploys, or a newer cumulative unit release takes over.
@@ -58,6 +75,18 @@ LIGHT_WORKFLOW = "ci-light.yml"
 LANE_JOB_PREFIXES = ("Deploy the control-plane lane", "Deploy the edge lane")
 BUILD_JOB = "Build and sign changed control-plane units"
 PREFLIGHT_JOB = "Check production can take a deploy"
+# release-units' build job uploads an empty artifact named this plus the
+# released commit, so a later run can find the runs that released it.
+RELEASE_MARKER = "unit-release-sha-"
+# ... and one named after the full release it is built over (--follow-build).
+BASE_MARKER = "unit-release-base-"
+
+
+def lanes_passed(jobs: list[dict]) -> bool:
+    """Whether a release-units run finished every lane it ran (control
+    plane, edge) green: at least one ran, none was skipped-over by failure."""
+    lanes = [j for j in jobs if j["name"].startswith(LANE_JOB_PREFIXES) and j.get("conclusion") != "skipped"]
+    return bool(lanes) and all(j.get("status") == "completed" and j.get("conclusion") == "success" for j in lanes)
 ACTIVE_RUN_STATUSES = ("in_progress", "queued", "waiting")
 ACTIVE_JOB_STATUSES = ("in_progress", "queued", "waiting", "pending", "requested")
 
@@ -127,6 +156,16 @@ class Preflight:
     log: object = print
     light_verdict: Verdict | None = None
     _me: dict | None = None
+    # --follow-build: wait for this run's build and read the released commit
+    # from its marker; reread the other checks every full_every seconds.
+    follow_build: bool = False
+    full_every: float = 60.0
+    clock: object = time.time
+    _round: list | None = None
+    _round_at: float = 0.0
+    # The full release this run's unit release is built over (BASE_MARKER),
+    # known once the build released something; "" skips the base check.
+    base_sha: str = ""
 
     def me(self) -> dict:
         if self._me is None:
@@ -134,13 +173,81 @@ class Preflight:
         return self._me
 
     def evaluate(self) -> list[Verdict]:
-        verdicts = [self.freeze(), self.newest(), self.main()]
+        lead = []
+        if self.follow_build:
+            built = self.built()
+            if built.state == WAIT and self._round is not None and self.clock() - self._round_at < self.full_every:
+                return [built] + self._round
+            lead = [built]
+        verdicts = [self.freeze(), self.newest()]
+        if self.sha:
+            verdicts += [self.current(), self.main()]
         try:
             host = self.host_state()
         except (OSError, ValueError, subprocess.SubprocessError) as err:
             host = {"error": str(err)}
-        verdicts += [self.idle(host), self.healthy(host), self.watch(host)]
-        return verdicts
+        verdicts += [self.idle(host), self.healthy(host), self.base(host), self.watch(host)]
+        self._round, self._round_at = verdicts, self.clock()
+        return lead + verdicts
+
+    # --- built ------------------------------------------------------------
+    def built(self) -> Verdict:
+        """This run's build job (--follow-build). Its marker artifact names
+        the commit it released; upload-artifact v4 lists an artifact as soon
+        as it is uploaded."""
+        build = next((j for j in self.jobs(self.run_id) if j["name"] == BUILD_JOB), None)
+        if build is None or build.get("status") != "completed":
+            state = build.get("status", "queued") if build else "not started"
+            return Verdict("built", WAIT, f"this run's unit release is building ({state})")
+        if build.get("conclusion") != "success":
+            return Verdict("built", STAND_DOWN, f"this run's build ended {build.get('conclusion')}; nothing to deploy")
+        sha = self.marker(self.run_id)
+        if not sha:
+            return Verdict("built", STAND_DOWN, "this run's build released nothing; nothing to deploy")
+        self.sha = sha
+        self.base_sha = self.marker(self.run_id, BASE_MARKER)
+        return Verdict("built", OK, f"this run released {sha[:12]}")
+
+    def marker(self, run_id: int, prefix: str = RELEASE_MARKER) -> str:
+        """The commit a marker artifact of run_id names: RELEASE_MARKER the
+        released commit, BASE_MARKER the full release it is built over."""
+        arts = self.gh.get(f"actions/runs/{run_id}/artifacts", {"per_page": 100}).get("artifacts", [])
+        names = [a.get("name", "") for a in arts if a.get("name", "").startswith(prefix)]
+        return names[0][len(prefix):] if names else ""
+
+    # --- base -------------------------------------------------------------
+    def base(self, host: dict) -> Verdict:
+        """The planner refuses a unit release built over another full
+        release than the control plane runs (N±1). The build takes the
+        newest tag, so between a tag and its cd-platform deploy every
+        release would fail the lane and freeze deploys; stand down instead.
+        Unknown on either side (no marker, an old host script, no release
+        manifest): the planner still decides."""
+        running = (host.get("base") or "") if not host.get("error") else ""
+        if not self.base_sha or not running:
+            return Verdict("base", OK, "the planner checks the full release the control plane runs")
+        if running == self.base_sha:
+            return Verdict("base", OK, f"the control plane runs the full release this unit release is built over ({running[:12]})")
+        return Verdict("base", STAND_DOWN, f"the control plane runs full release {running[:12]}, but this unit release is "
+                       f"built over {self.base_sha[:12]} (the newest tag): deploy that release with cd-platform first; "
+                       "the next merge after it deploys")
+
+    # --- current ----------------------------------------------------------
+    def current(self) -> Verdict:
+        """A stalled lane (docs/adr/20261122170000-continuous-unit-lane.md)
+        releases the same commit on every merge until the next full
+        release. Every release-units run that releases a commit uploads the
+        marker artifact RELEASE_MARKER + sha; when an earlier such run
+        finished every lane it ran (control plane, edge) green, this one has
+        nothing to add. A failed lane is retried (once its deploy-freeze
+        issue is closed); a release the watch rolled back is not re-shipped
+        on its own: a person decides that (ADR 20261020214632)."""
+        arts = self.gh.get("actions/artifacts", {"name": RELEASE_MARKER + self.sha, "per_page": 100})
+        for run_id in sorted({a.get("workflow_run", {}).get("id") for a in arts.get("artifacts", [])} - {None, self.run_id}):
+            if lanes_passed(self.jobs(run_id)):
+                return Verdict("current", STAND_DOWN, f"run {run_id} already deployed the unit release of "
+                               f"{self.sha[:12]}: every lane it ran passed")
+        return Verdict("current", OK, f"no earlier run deployed {self.sha[:12]} through every lane")
 
     # --- freeze -----------------------------------------------------------
     def freeze(self) -> Verdict:
@@ -162,12 +269,20 @@ class Preflight:
         for run in newer:
             jobs = self.jobs(run["id"])
             preflight = next((j for j in jobs if j["name"] == PREFLIGHT_JOB), None)
-            if preflight is not None and preflight.get("conclusion") != "skipped":
-                return Verdict("newest", STAND_DOWN,
-                               f"newer unit release run {run['id']} ({run['head_sha'][:12]}) deploys instead; "
-                               "unit releases are cumulative")
             build = next((j for j in jobs if j["name"] == BUILD_JOB), None)
-            if run["status"] != "completed" and (build is None or build["status"] != "completed"):
+            if preflight is not None and preflight.get("conclusion") == "skipped":
+                continue  # a build-only run deploys nothing
+            built = build is not None and build["status"] == "completed"
+            # Its preflight starts with its build (--follow-build), so a
+            # running preflight alone is no takeover: the newer run takes
+            # over once its build released a commit.
+            if preflight is not None and built and build.get("conclusion") == "success":
+                if self.marker(run["id"]):
+                    return Verdict("newest", STAND_DOWN,
+                                   f"newer unit release run {run['id']} ({run['head_sha'][:12]}) deploys instead; "
+                                   "unit releases are cumulative")
+                continue  # it released nothing
+            if run["status"] != "completed" and not built:
                 building.append(run)
         if building:
             names = ", ".join(f"run {r['id']} ({r['head_sha'][:12]})" for r in building)
@@ -297,7 +412,8 @@ class Report:
         return "\n".join(lines) + "\n"
 
 
-def run(pre: Preflight, wait: float, interval: float, now=time.time, sleep=time.sleep, log=print) -> tuple[int, bool, str]:
+def run(pre: Preflight, wait: float, interval: float, now=time.time, sleep=time.sleep, log=print,
+        poll: float | None = None) -> tuple[int, bool, str]:
     """Return (exit code, go, summary markdown)."""
     report = Report(started=now())
     while True:
@@ -328,7 +444,10 @@ def run(pre: Preflight, wait: float, interval: float, now=time.time, sleep=time.
             log(f"::error::deploy preflight: still waiting after {round(t - report.started)} s: {waiting}")
             return 1, False, report.markdown(
                 verdicts, f"**Not deployed:** waited {round(t - report.started)} s; the next merge tries again.", t)
-        sleep(min(interval, max(wait - (t - report.started), 1)))
+        # Only the build outstanding (--follow-build): poll it more often,
+        # so the deploy starts soon after the build ends.
+        building = poll is not None and all(v.check == "built" for v in verdicts if v.state == WAIT)
+        sleep(min(poll if building else interval, max(wait - (t - report.started), 1)))
 
 
 def parse_duration(text: str) -> float:
@@ -344,7 +463,12 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", ""))
     parser.add_argument("--run-id", type=int, default=int(os.environ.get("GITHUB_RUN_ID", "0") or 0))
-    parser.add_argument("--sha", default=os.environ.get("GITHUB_SHA", ""))
+    parser.add_argument("--sha", default="",
+                        help="the commit this run releases; with --follow-build, read from the build's marker")
+    parser.add_argument("--follow-build", action="store_true",
+                        help="start beside this run's build job and wait for it (release-units.yml)")
+    parser.add_argument("--poll", type=parse_duration, default=parse_duration("10s"),
+                        help="with --follow-build, how often the build job is read")
     parser.add_argument("--wait", type=parse_duration, default=parse_duration("40m"))
     parser.add_argument("--interval", type=parse_duration, default=parse_duration("60s"))
     parser.add_argument("--host-state", default=str(HERE / "unit_deploy.sh"),
@@ -353,11 +477,13 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--output", default=os.environ.get("GITHUB_OUTPUT", ""))
     args = parser.parse_args(argv)
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN", "")
-    if not args.repo or not args.run_id or len(args.sha) != 40 or not token:
-        print("::error::deploy preflight needs --repo, --run-id, a 40-hex --sha and GH_TOKEN", file=sys.stderr)
+    if not args.repo or not args.run_id or not token or (len(args.sha) != 40 and not args.follow_build):
+        print("::error::deploy preflight needs --repo, --run-id, GH_TOKEN and a 40-hex --sha or --follow-build",
+              file=sys.stderr)
         return 2
-    pre = Preflight(GitHub(args.repo, token), lambda: host_state_command(args.host_state), args.run_id, args.sha)
-    code, go, summary = run(pre, args.wait, args.interval)
+    pre = Preflight(GitHub(args.repo, token), lambda: host_state_command(args.host_state), args.run_id, args.sha,
+                    follow_build=args.follow_build, full_every=args.interval)
+    code, go, summary = run(pre, args.wait, args.interval, poll=args.poll if args.follow_build else None)
     if args.summary:
         with open(args.summary, "a", encoding="utf-8") as f:
             f.write(summary)

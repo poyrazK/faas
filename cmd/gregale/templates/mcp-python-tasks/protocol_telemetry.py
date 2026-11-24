@@ -4,7 +4,23 @@ import re
 import time
 
 METHODS = frozenset(("initialize", "server/discover", "ping", "tools/list", "tools/call", "resources/list", "resources/templates/list", "resources/read", "prompts/list", "prompts/get", "completion/complete", "tasks/get", "tasks/cancel", "tasks/update", "subscriptions/listen"))
-TOOLS = frozenset(("greet", "add", "stream_demo", "build_report"))
+# Tool error text for arguments that fail the tool's inputSchema; telemetry
+# reports those calls as invalid_params.
+TOOL_ARGUMENTS_MISMATCH = "tool arguments do not match inputSchema"
+
+
+def tool_result_text(result):
+    content = result.get("content")
+    if isinstance(content, list) and content and isinstance(content[0], dict):
+        text = content[0].get("text")
+        return text if isinstance(text, str) else ""
+    return ""
+
+
+# The server replaces this with a lookup in its runtime catalog: only
+# registered tools keep their name, so callers cannot choose labels.
+def tool_known(name):
+    return name in ("greet", "add", "stream_demo", "build_report")
 REQUEST_ID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 TRACEPARENT = re.compile(r"00-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-f]{2}")
 
@@ -15,7 +31,7 @@ class ProtocolObservation:
         self.method = method if isinstance(method, str) and method in METHODS else "other"
         params = message.get("params")
         name = params.get("name") if isinstance(params, dict) else None
-        self.tool = (name if isinstance(name, str) and name in TOOLS else "other") if method == "tools/call" else "none"
+        self.tool = (name if isinstance(name, str) and tool_known(name) else "other") if method == "tools/call" else "none"
         self.start = time.monotonic()
         self.execution_end = self.stream_start = None
         self.outcome = None
@@ -37,7 +53,11 @@ class ProtocolObservation:
             return
         if self.execution_end is None:self.execution_end = time.monotonic()
         result = value.get("result")
-        self.outcome = "rpc_error" if "error" in value else "tool_error" if isinstance(result, dict) and result.get("isError") is True else "task_created" if isinstance(result, dict) and result.get("resultType") == "task" else "success"
+        error = value.get("error")
+        invalid_params = self.method == "tools/call" and (
+            isinstance(error, dict) and error.get("code") == -32602
+            or isinstance(result, dict) and result.get("isError") is True and tool_result_text(result) == TOOL_ARGUMENTS_MISMATCH)
+        self.outcome = "invalid_params" if invalid_params else "rpc_error" if "error" in value else "tool_error" if isinstance(result, dict) and result.get("isError") is True else "task_created" if isinstance(result, dict) and result.get("resultType") == "task" else "success"
 
     def failed(self, reason):
         self.stream_outcome = reason

@@ -3,13 +3,16 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"sort"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -51,7 +54,7 @@ var guidePages = []guidePage{
 		},
 		Notes: []string{
 			"A Compose file or several services: see `gregale guide compose-project`.",
-			"Public or private: on Hobby and above a new app's URL answers 401 without an API key, even after a successful deploy. Deploy with --no-require-authn when the user wants a website, a demo or a link to share, or the app was public where it ran before (Render, Heroku); keep the default for an API or anything the user did not ask to publish, and tell the user which you chose. release verify checks the deployment with owner access; it does not test anonymous access.",
+			"Public or private: on Hobby and above a new app's URL answers 401 without an API key, even after a successful deploy. When the user wants a website, a demo or a link to share, or the app was public where it ran before (Render, Heroku), add `access: public` to its gregale.yaml (every deploy keeps it public, MCP deploys too) or deploy with --no-require-authn; keep the default for an API or anything the user did not ask to publish, and tell the user which you chose. release verify checks the deployment with owner access; it does not test anonymous access.",
 			"Readiness: a health route found in the source (or hosting.health) must answer 2xx; with none, an open port is enough. Do not pass / as the health path. An app that checks the Host header (Django ALLOWED_HOSTS) needs the health route answered first; see `gregale guide health-checks`.",
 		},
 	},
@@ -62,7 +65,6 @@ var guidePages = []guidePage{
 			{Do: "Preview every service, its URL, health check and managed databases", Command: "gregale deploy --project --dry-run"},
 			{Do: "Deploy the project", Command: "gregale deploy --project --yes"},
 			{Do: "Deploy some services only", Command: "gregale deploy --project --only <service>"},
-			{Do: "Open a public service to everyone", Command: "gregale app update <app> --no-require-authn"},
 			{Do: "Restart, health-check or change every app of the project at once", Command: "gregale app restart --project <project> --fresh --wait"},
 			{Do: "Follow every service's logs", Command: "gregale logs --project <project> --follow"},
 			{Do: "Run a command in a fresh instance of a service", Command: "gregale app exec <app> -- <command>"},
@@ -70,9 +72,10 @@ var guidePages = []guidePage{
 		Notes: []string{
 			"Plain environment: values are imported only with `x-gregale-env-import: true` at the top of the Compose file; a URL that names a sibling (http://api:8080) is rewritten to its Gregale address without it. Do not copy them into Dockerfiles.",
 			"A gRPC service declares `x-gregale-app-protocol: grpc` on its Compose service.",
+			"A browser-facing service declares `x-gregale-access: public` on its Compose service (or `access: public` under project.services.<name> in gregale.yaml): its URL needs no Gregale API key, and every production deploy keeps it so. Removing the key makes the URL need a key again. Use this instead of `gregale app update <app> --no-require-authn`, which the next deploy undoes for a service that declares access.",
 			"Too many files: each service's .dockerignore applies inside its build context; list directories no service builds from (k8s, docs) in .gregaleignore.",
 			"Code that dials a Compose name (redis, db) must read $GREGALE_SERVICE_<NAME>_HOST (raw TCP) or $GREGALE_SERVICE_<NAME>_URL (HTTP); the caller lists the service in depends_on. The dry run names each place.",
-			"A postgres service becomes a managed database bound as DATABASE_URL. Gregale does not run other datastores (redis, mysql, mongo): an app parks to a snapshot and keeps no data. Point the code at a hosted one (Upstash, PlanetScale, Atlas) with an env URL.",
+			"A postgres service becomes a managed database bound as DATABASE_URL, and a redis service a managed Redis cache bound as REDIS_URL where managed Redis is on for the account (`gregale feature list`). Gregale does not run other datastores (mysql, mongo): an app parks to a snapshot and keeps no data. Point the code at a hosted one (PlanetScale, Atlas) with an env URL.",
 			"A build target or command for development (target: dev, nodemon, --reload) is deployed as written.",
 			"A gRPC address (PRODUCT_SERVICE_ADDR: products:3550) is rewritten to products.svc.gregale:10081. Set x-gregale-streaming and x-gregale-wake-ahead on a service instead of later app commands.",
 		},
@@ -117,7 +120,7 @@ var guidePages = []guidePage{
 		Task: "secrets-and-env", Title: "Environment variables and secrets",
 		Summary: "Set values before the first request; the dry run lists keys the code reads that will have no value.",
 		Steps: []guideStep{
-			{Do: "Set a value (stored sealed; never shown again)", Command: "gregale env set --app <app> KEY=<value>"},
+			{Do: "Set a value or secret (stored sealed; never shown again)", Command: "gregale env set --app <app> KEY=<value>"},
 			{Do: "Push a local .env file", Command: "gregale env push --app <app> -f .env"},
 			{Do: "List an app's key names", Command: "gregale env list --app <app>"},
 			{Do: "Set one value for every service of a project environment", Command: "gregale environment secrets set <project> <environment> KEY=<value>"},
@@ -145,7 +148,8 @@ var guidePages = []guidePage{
 			{Do: "Send a message", Command: "gregale queue send <app> --queue-name <queue> --payload '<json>'"},
 			{Do: "See queue depth, bindings and consumer liveness", Command: "gregale queue status <app>"},
 			{Do: "List and replay dead letters", Command: "gregale dlq list <app>"},
-			{Do: "List an app's crons, then one cron's runs", Command: "gregale cron list <app>"},
+			{Do: "List an app's crons", Command: "gregale cron list <app>"},
+			{Do: "Show one cron's runs (its ID is in the list)", Command: "gregale cron runs <cron-id>"},
 		},
 		Notes: []string{
 			"A handler that answers 4xx (other than 408 or 429) dead-letters the message at once; 5xx, 408 and 429 are retried up to max_attempts.",
@@ -203,8 +207,14 @@ func renderGuidePage(page guidePage) string {
 func renderGuideIndex() string {
 	var b strings.Builder
 	b.WriteString("Gregale task guide. Run `gregale guide <task>` for one page.\n\n")
+	// The column fits the longest task: a fixed 18 ran
+	// "functions-and-queues" into its title (prod hunt r31).
+	width := 0
 	for _, page := range guidePages {
-		fmt.Fprintf(&b, "  %-18s %s\n", page.Task, page.Title)
+		width = max(width, len(page.Task))
+	}
+	for _, page := range guidePages {
+		fmt.Fprintf(&b, "  %-*s  %s\n", width, page.Task, page.Title)
 	}
 	return b.String()
 }
@@ -222,10 +232,6 @@ func cmdGuide(args []string) int {
 	if *asJSON {
 		jsonOutput = true
 	}
-	if fs.NArg() > 1 {
-		PrintUsage(osStderr, "usage: gregale guide [<task>] [--json]", "guide")
-		return 1
-	}
 	if fs.NArg() == 0 {
 		if jsonOutput {
 			return jsonOut(writeJSON(map[string]any{"tasks": guidePages}))
@@ -233,14 +239,16 @@ func cmdGuide(args []string) int {
 		_, _ = io.WriteString(osStdout, renderGuideIndex())
 		return 0
 	}
+	// One word naming a task shows its page; anything else is a question
+	// (ADR-20261123180000).
 	page, ok := lookupGuidePage(fs.Arg(0))
-	if !ok {
-		tasks := make([]string, 0, len(guidePages))
-		for _, p := range guidePages {
-			tasks = append(tasks, p.Task)
+	if fs.NArg() > 1 || !ok {
+		query := strings.TrimSpace(strings.Join(fs.Args(), " "))
+		if query == "" || len(query) > 200 {
+			PrintUsage(osStderr, "usage: gregale guide [<task> | \"<question>\"] [--json]  (a question is 1 to 200 characters)", "guide")
+			return 1
 		}
-		sort.Strings(tasks)
-		return printErr("Unknown guide task", fmt.Errorf("no guide task %q; tasks: %s", fs.Arg(0), strings.Join(tasks, ", ")))
+		return cmdGuideSearch(query)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(page))
@@ -262,13 +270,57 @@ func runByAgent() bool {
 	return api.CodingAgentFromEnv(os.Getenv) != ""
 }
 
-// printAgentHint writes the pointer once per process.
+// agentHintEvery is how often an agent sees the pointer. Every gregale call
+// is a new process, so once per process put it on nearly every failing
+// command an agent ran (33 times in one 2026-11-23 eval run).
+const agentHintEvery = time.Hour
+
+// printAgentHint writes the pointer at most once per process and once per
+// agentHintEvery across processes, tracked by a marker file's mtime in the
+// user cache directory. Without a cache directory it falls back to once per
+// process.
 func printAgentHint(w io.Writer) {
 	if agentHintPrinted || jsonOutput || !runByAgent() {
 		return
 	}
 	agentHintPrinted = true
+	marker := agentHintMarker()
+	if marker != "" {
+		if info, err := os.Stat(marker); err == nil && time.Since(info.ModTime()) < agentHintEvery {
+			return
+		}
+		if os.MkdirAll(filepath.Dir(marker), 0o700) == nil {
+			_ = os.WriteFile(marker, nil, 0o600)
+			now := time.Now()
+			_ = os.Chtimes(marker, now, now)
+		}
+	}
 	_, _ = fmt.Fprintln(w, agentHint)
 }
 
 var agentHintPrinted bool
+
+// agentSessionEnv names the variables that identify one agent session, so
+// a new session gets the pointer even when another one saw it this hour.
+var agentSessionEnv = []string{"CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID"}
+
+// agentHintMarker is the file whose mtime records the last pointer; empty
+// keeps no record. One file per agent session when the agent names its
+// session, else one per user. A variable so tests use their own.
+var agentHintMarker = func() string {
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(base, "gregale", agentHintMarkerName(os.Getenv))
+}
+
+func agentHintMarkerName(getenv func(string) string) string {
+	for _, name := range agentSessionEnv {
+		if id := getenv(name); id != "" {
+			sum := sha256.Sum256([]byte(name + "=" + id))
+			return "agent-hint-" + hex.EncodeToString(sum[:8])
+		}
+	}
+	return "agent-hint"
+}

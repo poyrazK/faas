@@ -31,8 +31,8 @@ func cmdMCPPolicy(args []string) int {
 	if err != nil {
 		return printErr("MCP configuration", err)
 	}
-	if cfg.Auth.Mode != "external-oauth" {
-		return printErr("MCP policy", errors.New("gateway resource policy requires external-oauth"))
+	if cfg.Auth.Mode == mcphosting.AuthOpen {
+		return printErr("MCP policy", errors.New("gateway resource policy requires external-oauth, api-key or oauth-proxy"))
 	}
 	c, err := authedClient()
 	if err != nil {
@@ -58,7 +58,7 @@ func applyMCPGatewayPolicy(ctx context.Context, c *Client, slug string, cfg mcph
 		return api.EdgeRuleResponse{}, errors.New("MCP resource must match the app's canonical endpoint")
 	}
 	resource, _ := url.Parse(endpoint)
-	a := mcpExpectedGatewayAction(cfg, algorithms)
+	a := mcpExpectedGatewayAction(cfg, algorithms, c.BaseURL())
 	if problem := a.Validate(); problem != nil {
 		return api.EdgeRuleResponse{}, errors.New(problem.Detail)
 	}

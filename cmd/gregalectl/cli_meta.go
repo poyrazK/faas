@@ -219,6 +219,14 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    dispatchUnitSmoke,
+		DocSlug: "unit-smoke",
+		Short:   "Create the unit lane's smoke account and mint its scoped key",
+		Subcommands: []cliSub{
+			{Name: "mint-key", Short: "Create the internal smoke account once and mint a key with the smoke scopes", Flags: []cliFlag{{Name: "ttl", Short: "key lifetime (1h..8760h)"}, {Name: "yes", Short: "acknowledge the production database mutation", Req: true}, {Name: "reason", Short: "fixed unit_lane_smoke audit reason", Req: true}}},
+		},
+	},
+	{
 		Name:    dispatchOperatorAuth,
 		DocSlug: "operator-auth",
 		Short:   "Manage the MFA-stepped-up session used for provider mutations",
@@ -896,6 +904,13 @@ var cliCommands = []cliCommand{
 				Flags: []cliFlag{
 					{Name: "since", Short: "window, a duration up to 720h (default 24h)"},
 					{Name: "limit", Short: "maximum rows (1..1000)"},
+				},
+			},
+			{
+				Name:  "app-name-report",
+				Short: "List existing apps the app name blocklist matches, for review",
+				Flags: []cliFlag{
+					{Name: "blocklist", Short: "report against these entries instead of the live app_name_blocklist"},
 				},
 			},
 			{

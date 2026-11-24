@@ -1,6 +1,9 @@
 package publicstatus
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 type Alert struct {
 	// Severity is the operator-routing severity. Public status deliberately
@@ -178,6 +181,15 @@ func AvailableStates() []string {
 	return []string{string(StateOperational), string(StateMaintenance), string(StateDegraded)}
 }
 
+// DailyDegradedMinIntervals is how many five-minute intervals of a day must be
+// degraded before the day shows as degraded (15 = 75 minutes, ~5% of a full
+// day). One slow window is not a degraded day. It is an absolute count, not a
+// share of the intervals seen so far, so today's bar never turns from degraded
+// back to operational as the day goes on. Outage and maintenance intervals are
+// not thresholded, and operator-declared degraded incidents are applied by the
+// caller on top of this summary.
+const DailyDegradedMinIntervals = 15
+
 func SummarizeDay(day time.Time, buckets []Bucket, expectedBuckets int) DailyObservation {
 	obs := DailyObservation{Date: day.UTC(), State: StateUnknown, Expected: expectedBuckets}
 	if expectedBuckets <= 0 {
@@ -185,6 +197,7 @@ func SummarizeDay(day time.Time, buckets []Bucket, expectedBuckets int) DailyObs
 	}
 	available := 0
 	up := 0
+	degraded := 0
 	worst := StateOperational
 	for _, bucket := range buckets {
 		if !bucket.HasTelemetry {
@@ -194,7 +207,16 @@ func SummarizeDay(day time.Time, buckets []Bucket, expectedBuckets int) DailyObs
 		if CountsAsAvailable(bucket.State) {
 			up++
 		}
+		if bucket.State == StateDegraded {
+			degraded++
+			continue
+		}
 		worst = Worse(worst, bucket.State)
+	}
+	// A day with fewer expected intervals than the bar (launch day) is
+	// degraded once all of them are.
+	if degraded >= min(DailyDegradedMinIntervals, expectedBuckets) {
+		worst = Worse(worst, StateDegraded)
 	}
 	obs.CoveragePct = float64(available) / float64(expectedBuckets) * 100
 	obs.Observed = available
@@ -205,6 +227,37 @@ func SummarizeDay(day time.Time, buckets []Bucket, expectedBuckets int) DailyObs
 	uptime := float64(up) / float64(available) * 100
 	obs.State = worst
 	obs.UptimePct = &uptime
+	return obs
+}
+
+// DeclaredSpan is an operator-declared incident's time range: start to
+// resolution, or to now while it is open.
+type DeclaredSpan struct {
+	Start, End time.Time
+	Components []Component
+}
+
+// ApplyDeclaredIncidents marks a summarized day at least degraded when a
+// declared incident covering component overlaps it. SummarizeDay ignores
+// brief degradation, and buckets degraded by an incident overlay look like
+// telemetry ones, so without this a short declared incident (or the degraded
+// phase of one later escalated) would leave its day green. Whatever impact
+// the incident has now, outage buckets already show through SummarizeDay.
+// Days without enough coverage stay unknown.
+func ApplyDeclaredIncidents(obs DailyObservation, component Component, spans []DeclaredSpan) DailyObservation {
+	if obs.State == StateUnknown {
+		return obs
+	}
+	dayEnd := obs.Date.Add(24 * time.Hour)
+	for _, span := range spans {
+		if !slices.Contains(span.Components, component) {
+			continue
+		}
+		if span.Start.Before(dayEnd) && span.End.After(obs.Date) {
+			obs.State = Worse(obs.State, StateDegraded)
+			return obs
+		}
+	}
 	return obs
 }
 

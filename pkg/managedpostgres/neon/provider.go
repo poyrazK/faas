@@ -91,6 +91,10 @@ type endpoint struct {
 	SuspendTimeoutSecond int64   `json:"suspend_timeout_seconds"`
 }
 
+func (e endpoint) endpointSettings() endpointSettings {
+	return endpointSettings{MinimumCU: e.MinimumCU, MaximumCU: e.MaximumCU, SuspendTimeoutSecond: e.SuspendTimeoutSecond}
+}
+
 type projectResponse struct {
 	Project project `json:"project"`
 }
@@ -193,6 +197,7 @@ func (p *Provider) Capabilities() managedpostgres.Capabilities {
 			managedpostgres.MeterComputeUnitSeconds,
 			managedpostgres.MeterStorageByteSeconds,
 			managedpostgres.MeterHistoryByteSeconds,
+			managedpostgres.MeterSnapshotByteSeconds,
 			managedpostgres.MeterEgressBytes,
 		},
 	}
@@ -301,7 +306,7 @@ func (p *Provider) RestoreWithCreationReceipt(ctx context.Context, request manag
 	payload.Branch.InitSource = "parent-data"
 	// Branch endpoints otherwise inherit today's project defaults. Those can
 	// differ from the immutable configuration selected for an environment clone.
-	payload.Endpoints = []createBranchEndpoint{{Type: "read_write", endpointSettings: endpointSettingsForSpec(request.Spec)}}
+	payload.Endpoints = []createBranchEndpoint{{Type: "read_write", endpointSettings: p.endpointSettingsForSpec(request.Spec)}}
 	var created createdBranchResponse
 	path := "/projects/" + url.PathEscape(source.projectID) + "/branches"
 	if err := p.doJSON(ctx, http.MethodPost, path, nil, payload, &created, http.StatusCreated); err != nil {
@@ -611,7 +616,7 @@ func (p *Provider) projectPayload(name string, spec managedpostgres.Spec) create
 	request.Project.PostgresMajor = spec.PostgresMajor
 	request.Project.StorePasswords = true
 	request.Project.HistoryRetentionSeconds = spec.RestoreWindowSeconds
-	request.Project.DefaultEndpointSettings = endpointSettingsForSpec(spec)
+	request.Project.DefaultEndpointSettings = p.endpointSettingsForSpec(spec)
 	request.Project.Settings.Quota.LogicalSizeBytes = &spec.StorageLimitBytes
 	request.Project.Branch.Name = "production"
 	request.Project.Branch.RoleName = ownerLogin
@@ -619,13 +624,42 @@ func (p *Provider) projectPayload(name string, spec managedpostgres.Spec) create
 	return request
 }
 
-func endpointSettingsForSpec(spec managedpostgres.Spec) endpointSettings {
+var _ managedpostgres.SuspendTimeoutSetter = (*Provider)(nil)
+
+// SetSuspendTimeout implements managedpostgres.SuspendTimeoutSetter.
+func (p *Provider) SetSuspendTimeout(seconds int64) {
+	p.suspendTimeout.Store(seconds)
+}
+
+func (p *Provider) suspendTimeoutSeconds() int64 {
+	if seconds := p.suspendTimeout.Load(); seconds > 0 {
+		return seconds
+	}
+	return managedpostgres.DefaultSuspendTimeoutSeconds
+}
+
+// endpointSettingsForSpec is the compute a spec asks for now. A scale-to-zero
+// endpoint's timeout follows the live setting, so an existing endpoint is
+// compared with sameEndpointSettings, not ==.
+func (p *Provider) endpointSettingsForSpec(spec managedpostgres.Spec) endpointSettings {
 	profile := profiles[spec.Class]
 	suspendTimeout := int64(-1)
 	if spec.ScaleToZero {
-		suspendTimeout = 300
+		suspendTimeout = p.suspendTimeoutSeconds()
 	}
 	return endpointSettings{MinimumCU: profile.minimumCU, MaximumCU: profile.maximumCU, SuspendTimeoutSecond: suspendTimeout}
+}
+
+// sameEndpointSettings compares sizes exactly and the suspend timeout only as
+// scale-to-zero or always-on (-1): the timeout of a scale-to-zero endpoint
+// moves with the operator setting and is not drift.
+func sameEndpointSettings(actual, want endpointSettings) bool {
+	return actual.MinimumCU == want.MinimumCU && actual.MaximumCU == want.MaximumCU &&
+		sameSuspendPolicy(actual.SuspendTimeoutSecond, want.SuspendTimeoutSecond)
+}
+
+func sameSuspendPolicy(actual, want int64) bool {
+	return (actual == -1) == (want == -1)
 }
 
 func (p *Provider) projectName(resourceID string) string {

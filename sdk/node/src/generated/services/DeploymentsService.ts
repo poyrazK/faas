@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AdvanceCanaryRequest } from '../models/AdvanceCanaryRequest.js';
+import type { BindingCheckFinding } from '../models/BindingCheckFinding.js';
 import type { BindingPromotionRequest } from '../models/BindingPromotionRequest.js';
 import type { BindingPromotionResponse } from '../models/BindingPromotionResponse.js';
 import type { BuildListResponse } from '../models/BuildListResponse.js';
@@ -1192,6 +1193,65 @@ export class DeploymentsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Check an exact rollback pair before admission.
+   * Reports known blockers for the current and target revisions. A successful check returns warnings, including any binding verification that requires a prepared target. Admission and routing recheck current conditions.
+   * @returns BindingCheckFinding Preflight passed. Returns warnings, or an empty list when there are none.
+   * @returns Problem A rollback preflight check failed.
+   * @throws ApiError
+   */
+  public static preflightCheckedRollback({
+    slug,
+    expectedCurrentDeploymentId,
+    targetDeploymentId,
+    acknowledgeReleases = false,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * The expected serving deployment ID or exact revision.
+     */
+    expectedCurrentDeploymentId: string,
+    /**
+     * The historical deployment ID or exact revision to restore.
+     */
+    targetDeploymentId: string,
+    /**
+     * Include the effect of proceeding across release commands.
+     */
+    acknowledgeReleases?: boolean,
+  }): CancelablePromise<Array<BindingCheckFinding> | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/rollbacks/preflight',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'expected_current_deployment_id': expectedCurrentDeploymentId,
+        'target_deployment_id': targetDeploymentId,
+        'acknowledge_releases': acknowledgeReleases,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `A deployment or release policy currently blocks the selected rollback pair.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
         `,
       },
     });

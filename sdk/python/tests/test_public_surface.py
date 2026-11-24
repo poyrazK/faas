@@ -24,8 +24,11 @@ def test_only_the_preview_client_runs_disposable_executions() -> None:
 
 def test_generated_trees_split_by_maturity() -> None:
     assert importlib.util.find_spec("faas_sdk.api.apps") is not None
-    assert importlib.util.find_spec("faas_sdk.api.realtime") is None
-    assert importlib.util.find_spec("faas_sdk.preview.api.realtime") is not None
+    # Core realtime is beta (ADR-20261123074615), so it ships in faas_sdk;
+    # queues is still preview.
+    assert importlib.util.find_spec("faas_sdk.api.realtime") is not None
+    assert importlib.util.find_spec("faas_sdk.api.queues") is None
+    assert importlib.util.find_spec("faas_sdk.preview.api.queues") is not None
 
 
 def test_preview_shares_the_generator_types_and_clients() -> None:

@@ -79,6 +79,10 @@ func DashboardURL(livemode bool, invoiceID string) string {
 }
 
 func (c *Client) do(ctx context.Context, key, method, path, idempotencyKey string, form url.Values, out any) error {
+	return c.doVersion(ctx, key, APIVersion, method, path, idempotencyKey, form, out)
+}
+
+func (c *Client) doVersion(ctx context.Context, key, version, method, path, idempotencyKey string, form url.Values, out any) error {
 	var body io.Reader
 	if form != nil {
 		body = strings.NewReader(form.Encode())
@@ -88,7 +92,7 @@ func (c *Client) do(ctx context.Context, key, method, path, idempotencyKey strin
 		return fmt.Errorf("stripe request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
-	req.Header.Set("Stripe-Version", APIVersion)
+	req.Header.Set("Stripe-Version", version)
 	if form != nil {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}

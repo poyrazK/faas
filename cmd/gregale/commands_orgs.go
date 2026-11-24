@@ -837,12 +837,15 @@ func cmdOrgsKeysAdd(args []string) int {
 	}
 	// The label is positional, as in `gregale key create <label>`; --label
 	// remains for existing scripts. Naming it both ways must agree.
-	if fs.NArg() > 1 || fs.NArg() == 1 && *label != "" && *label != fs.Arg(0) {
+	if fs.NArg() == 1 {
+		if *label != "" && *label != fs.Arg(0) {
+			PrintUsage(os.Stderr, orgKeyCreateUsage, "orgs")
+			return 1
+		}
+		*label = fs.Arg(0)
+	} else if fs.NArg() != 0 {
 		PrintUsage(os.Stderr, orgKeyCreateUsage, "orgs")
 		return 1
-	}
-	if fs.NArg() == 1 {
-		*label = fs.Arg(0)
 	}
 	projects := splitList(*projectsCSV)
 	if *slug == "" || *label == "" || flagWasSet(fs, "projects") && len(projects) == 0 {

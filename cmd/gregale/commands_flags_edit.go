@@ -43,7 +43,7 @@ var flagsEditVerbs = map[string]string{
 	"rule-add": "a flag KEY and --id",
 	"rule-rm":  "a flag KEY and --id",
 	"rm":       "a flag KEY",
-	// ADR-20261122090000: edge routing.
+	// ADR-20261124212701: edge routing.
 	"edge-set":  "a flag KEY, --path, --variant and --rewrite",
 	"edge-rm":   "a flag KEY (and --path for one route)",
 	"edge-list": "--project",
@@ -476,7 +476,7 @@ type flagEdgeRow struct {
 	Rewrite string `json:"rewrite"`
 }
 
-// printFlagsEdge lists every edge route action (ADR-20261122090000).
+// printFlagsEdge lists every edge route action (ADR-20261124212701).
 func printFlagsEdge(snap flagsSnapshot) int {
 	rows := []flagEdgeRow{}
 	for _, f := range snap.Flags {

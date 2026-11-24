@@ -65,6 +65,13 @@ func TestMain(m *testing.M) {
 	}
 	// Source/session helpers canonicalize paths. Keep the sandbox fence in
 	// that same form on macOS, where /var resolves through /private/var.
+	// GREGALE_TOKEN and GREGALE_API_URL outrank FAAS_TOKEN and FAAS_API,
+	// which tests set: ones exported in the developer's shell must not
+	// replace them. Helper subprocesses keep what their parent test set.
+	if owned {
+		_ = os.Unsetenv("GREGALE_TOKEN")
+		_ = os.Unsetenv("GREGALE_API_URL")
+	}
 	var err error
 	if sandbox, err = filepath.EvalSymlinks(sandbox); err != nil {
 		panic(err)

@@ -75,7 +75,7 @@ capabilities import `preview` and use a `preview.Client`.
 
 ## Quick start
 
-Set `FAAS_TOKEN` to your existing credential. This request only reads your
+Set `GREGALE_TOKEN` to your existing credential. This request only reads your
 account; no application needs to exist yet.
 
 <!-- sdk-install-quickstart:start -->
@@ -92,11 +92,11 @@ import (
 )
 
 func main() {
-    baseURL := os.Getenv("FAAS_API")
+    baseURL := os.Getenv("GREGALE_API_URL")
     if baseURL == "" {
         baseURL = "https://api.gregale.dev"
     }
-    c, err := faas.NewClient(baseURL, os.Getenv("FAAS_TOKEN"))
+    c, err := faas.NewClient(baseURL, os.Getenv("GREGALE_TOKEN"))
     if err != nil {
         log.Fatal(err)
     }

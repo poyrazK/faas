@@ -1026,8 +1026,9 @@ func (c *Client) GetAPIConsumerRateCard(ctx context.Context, slug, rateCardID st
 // consumer usage and usage-quote methods. Empty bounds use the server's
 // trailing-30d default.
 type APIConsumerUsageOptions struct {
-	Since string
-	Until string
+	Since     string
+	Until     string
+	Breakdown bool
 }
 
 // GetAPIConsumerUsage returns durable minute usage for one stable API
@@ -1042,6 +1043,9 @@ func (c *Client) GetAPIConsumerUsage(ctx context.Context, slug, consumerID strin
 	}
 	if opts.Until != "" {
 		q.Set("until", opts.Until)
+	}
+	if opts.Breakdown {
+		q.Set("breakdown", "true")
 	}
 	if len(q) > 0 {
 		path += "?" + q.Encode()
@@ -1059,6 +1063,9 @@ func (c *Client) GetAPIConsumerUsageQuote(ctx context.Context, slug, consumerID 
 	}
 	if opts.Until != "" {
 		q.Set("until", opts.Until)
+	}
+	if opts.Breakdown {
+		q.Set("breakdown", "true")
 	}
 	if len(q) > 0 {
 		path += "?" + q.Encode()
@@ -2282,6 +2289,12 @@ func (c *Client) GetProject(ctx context.Context, slug string) (ProjectResponse, 
 	return out, c.do(ctx, http.MethodGet, "/v1/projects/"+url.PathEscape(slug), nil, &out)
 }
 
+// GetProjectWithRollback requests exact production deployment membership.
+func (c *Client) GetProjectWithRollback(ctx context.Context, slug string) (ProjectResponse, error) {
+	var out ProjectResponse
+	return out, c.do(ctx, http.MethodGet, "/v1/projects/"+url.PathEscape(slug)+"?include_rollback=true", nil, &out)
+}
+
 // UpdateProject changes a project's repository or production branch.
 func (c *Client) UpdateProject(ctx context.Context, slug string, req UpdateProjectRequest) (ProjectResponse, error) {
 	var out ProjectResponse
@@ -3083,7 +3096,7 @@ func (c *Client) ProbeMCPInstanceProtocol(ctx context.Context, slug, deploymentI
 	endpoint := "/v1/apps/" + url.PathEscape(slug) + "/deployments/" + url.PathEscape(deploymentID) + "/instances/" + url.PathEscape(instanceID) + "/mcp-probe"
 	headers := make(http.Header)
 	if token != "" {
-		headers.Set("MCP-Probe-Authorization", token)
+		headers.Set("Mcp-Probe-Authorization", token)
 	}
 	return out, c.doWithHeaders(ctx, "POST", endpoint, probe, &out, headers)
 }
@@ -5165,7 +5178,7 @@ func (c *Client) PostAuthLogin(ctx context.Context, email, password string) (Pro
 // ACTIONS_ID_TOKEN_REQUEST_TOKEN from GitHub Actions) for a
 // short-lived opaque bearer (5 min TTL, fp_oidc_ prefix). Used by
 // the CI deploy path so customers can swap the long-lived
-// FAAS_TOKEN secret for keyless OIDC. The wire contract is
+// GREGALE_TOKEN secret for keyless OIDC. The wire contract is
 // PR-A (ADR-101 / issue #270); PR-B adds the CLI flag + Action
 // input that drives this call.
 //
@@ -7570,14 +7583,14 @@ func (c *Client) GetAppsDeploymentOpenAPIDoc(ctx context.Context, slug, deployme
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return false
 		}
-		out.DeploymentID = resp.Header.Get("X-OpenAPI-Doc-Deployment-ID")
-		out.AppID = resp.Header.Get("X-OpenAPI-Doc-App-ID")
-		out.Source = resp.Header.Get("X-OpenAPI-Doc-Source")
-		out.DocSHA256 = resp.Header.Get("X-OpenAPI-Doc-SHA256")
-		out.CapturedAt = resp.Header.Get("X-OpenAPI-Doc-Captured-At")
-		out.UpdatedAt = resp.Header.Get("X-OpenAPI-Doc-Updated-At")
-		out.ByteSize, _ = strconv.Atoi(resp.Header.Get("X-OpenAPI-Doc-Byte-Size"))
-		out.Truncated = resp.Header.Get("X-OpenAPI-Doc-Truncated") == "1"
+		out.DeploymentID = resp.Header.Get("X-Openapi-Doc-Deployment-Id")
+		out.AppID = resp.Header.Get("X-Openapi-Doc-App-Id")
+		out.Source = resp.Header.Get("X-Openapi-Doc-Source")
+		out.DocSHA256 = resp.Header.Get("X-Openapi-Doc-Sha256")
+		out.CapturedAt = resp.Header.Get("X-Openapi-Doc-Captured-At")
+		out.UpdatedAt = resp.Header.Get("X-Openapi-Doc-Updated-At")
+		out.ByteSize, _ = strconv.Atoi(resp.Header.Get("X-Openapi-Doc-Byte-Size"))
+		out.Truncated = resp.Header.Get("X-Openapi-Doc-Truncated") == "1"
 		return true
 	})
 	if err != nil {

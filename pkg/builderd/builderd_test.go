@@ -1099,8 +1099,17 @@ func makeTarballWithName(t *testing.T, path string, names []string) {
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
 	for _, n := range names {
-		hdr := &tar.Header{Name: n, Mode: 0o644, Size: 0, Typeflag: tar.TypeReg}
+		// Files are empty except package.json, which builderd parses before
+		// a Node build (an empty one is invalid JSON and fails the build).
+		var body []byte
+		if n == "package.json" || strings.HasSuffix(n, "/package.json") {
+			body = []byte("{}")
+		}
+		hdr := &tar.Header{Name: n, Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg}
 		if err := tw.WriteHeader(hdr); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write(body); err != nil {
 			t.Fatal(err)
 		}
 	}

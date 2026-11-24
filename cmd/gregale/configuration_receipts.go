@@ -27,7 +27,7 @@ func printAppSettingsReceipt(slug, environment string, request api.UpdateAppRequ
 		// instances keep the old size, and are billed at it, until they park
 		// or restart: an always-on --min instance never does on its own
 		// (production-us hunt #9).
-		PrintWarn(osStdout, "Memory changes apply to instances started from now on; running instances keep their current memory and billing until they park or restart. Apply now: %s app %s restart", recoveryCLI(), recoveryArgument(slug))
+		PrintWarn(osStdout, "Memory changes apply to instances started from now on; running instances keep their current memory and billing until they park or restart. Apply now: %s app restart %s", recoveryCLI(), recoveryArgument(slug))
 	}
 	command := recoveryCLI() + " app get " + recoveryArgument(slug)
 	if environment != "" {

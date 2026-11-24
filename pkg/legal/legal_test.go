@@ -207,6 +207,16 @@ func TestDPAHasNoPlaceholders(t *testing.T) {
 	}
 }
 
+func TestDPAHasNoMaintainerComments(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "DPA.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "<!--") {
+		t.Fatal("docs/DPA.md is served as public Markdown; keep comments in the operator notes")
+	}
+}
+
 func TestPendingNotice(t *testing.T) {
 	c := Config{EffectiveDate: "2026-12-20", ChangeNotice: " Terms change. "}
 	cases := []struct {

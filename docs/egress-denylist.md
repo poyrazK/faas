@@ -1,7 +1,5 @@
 # Blocked outbound destinations
 
-<!-- GENERATED — do not edit by hand; regenerate with `make denylist-md`. -->
-
 Apps can't open connections to the addresses and ports on this page. The
 rules apply to every app on every plan, and an egress allowlist entry does not
 open them. See [Networking](networking.md#outbound-connections) for what an app

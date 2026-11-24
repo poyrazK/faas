@@ -10,7 +10,7 @@ endpoint with that profile's stored credential and displays the account identity
 before asking to switch (default: no). Failed checks leave the active profile
 unchanged. Use `--timeout 5s` to adjust the connection check deadline.
 
-Run without a prefix `--profile` flag or `FAAS_API` / `FAAS_TOKEN` overrides so
+Run without a prefix `--profile` flag or `GREGALE_API_URL` / `GREGALE_TOKEN` overrides so
 the check reflects the saved endpoint and its own credential. Terminal input
 and output are required. Scripts can use `gregale config profile use <name>` and
 `gregale config profile check` separately.
@@ -85,7 +85,7 @@ overrides the committed target for your checkout and holds your environment;
 `gregale link`, `unlink` and `context set` only ever change that file.
 `gregale config explain app` (or `project`, `environment`) shows which of these
 files the current directory's target comes from. A profile selects a connection and credentials;
-it is not an environment. When `FAAS_API` overrides the profile API address,
+it is not an environment. When `GREGALE_API_URL` overrides the profile API address,
 the display explains that credentials are still selected by the profile.
 
 Use `gregale config context get --check` for a local guard before app-scoped commands. It
@@ -366,7 +366,7 @@ command for each saved run, including its recorded API address, profile, and
 exact UUID. Each entry labels whether the recorded profile/API matches the
 current connection; this is a local comparison, not a remote health or status
 check. The same guidance appears when multiple records require an explicit
-choice. Commands use POSIX shell syntax (`FAAS_API=... gregale ...`).
+choice. Commands use POSIX shell syntax (`GREGALE_API_URL=... gregale ...`).
 
 JSON listings remain arrays with the existing record fields and add
 `connection_matches` and `resume_command` to each entry. Listing does not read
@@ -569,7 +569,7 @@ are read and no repair is performed automatically.
 Use `jobs resume --list --current-connection` or
 `workflows resume-wait --overview --current-connection` to include only records
 whose saved profile and API match the current connection. Profile and API
-must both match, including an effective `FAAS_API` override. The flag requires
+must both match, including an effective `GREGALE_API_URL` override. The flag requires
 `--list` or `--overview`; it can be combined with workload selectors or
 `--saved-job`. `--current-connection=false` leaves the existing report scope
 unchanged. Empty matching reports are valid.
@@ -583,7 +583,7 @@ fail validation rather than being hidden by the filter.
 `context --local-config` now shows both total validated recovery counts and
 counts matching the current profile/API. JSON `recovery_records` adds
 `current_connection_jobs` and `current_connection_workflows`. Both the profile
-and effective API must match, including any `FAAS_API` override.
+and effective API must match, including any `GREGALE_API_URL` override.
 On valid stores, inspection suggestions use `--list --current-connection`
 and appear only for workload types with matching records. Counts remain local
 comparisons, not remote status checks; partial or invalid scans retain their

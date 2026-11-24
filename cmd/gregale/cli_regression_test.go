@@ -371,3 +371,30 @@ func TestCLIRegressionRejectedSubmissionShowsFindingsAndNoRetryAdvice(t *testing
 		t.Errorf("rejected submission still advises an idempotent retry:\n%s", out)
 	}
 }
+
+// Prod hunt r25: a deploy refused by a release freeze (409 release_frozen)
+// printed an idempotent retry flag and "Next step: gregale release list"
+// beside the freeze's own lift/override hint, because every 409 counted as
+// possibly accepted.
+func TestCLIRegressionFrozenReleaseShowsNoRetryAdvice(t *testing.T) {
+	setupCLIRegression(t)
+	jsonOutput = false
+	key, _ := deployIdempotencyKey("", deployIdempotencyIntent{Slug: "demo", Image: "image@sha256:abc"})
+	stderr, restore := captureStderr(t)
+	defer restore()
+	frozen := &APIError{Problem: api.Problem{
+		Status: 409, Code: api.CodeReleaseFrozen, Title: "Production releases are frozen",
+		Detail: `Production releases of demo are frozen: "incident" until 2026-11-22T10:53:46Z.`,
+		Hint:   "Wait for the freeze to end, lift it with `gregale release freeze lift`, or release anyway with --override-freeze REASON.",
+	}}
+	if code := printDeploySubmissionError("Deploy failed", frozen, "demo", key, "submission", ""); code == 0 {
+		t.Fatal("frozen submission exited 0")
+	}
+	out := stderr.String()
+	if !strings.Contains(out, "gregale release freeze lift") {
+		t.Errorf("freeze hint missing:\n%s", out)
+	}
+	if strings.Contains(out, "--idempotency-key=") || strings.Contains(out, "Next step (POSIX shells):\n  gregale release list") {
+		t.Errorf("frozen submission still advises a retry or release list:\n%s", out)
+	}
+}

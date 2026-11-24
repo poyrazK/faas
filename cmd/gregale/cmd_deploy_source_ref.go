@@ -14,8 +14,8 @@
 //
 // CI acceptance gate (closes issue #739):
 //
-//	FAAS_API=https://api.gregale.dev \
-//	FAAS_TOKEN=$FAAS_TOKEN \
+//	GREGALE_API_URL=https://api.gregale.dev \
+//	GREGALE_TOKEN=$GREGALE_TOKEN \
 //	gregale deploy --repo OWNER/NAME --ref $(git rev-parse HEAD)
 //
 // with no GREGALE_INSTALL_TOKEN_* env vars set.

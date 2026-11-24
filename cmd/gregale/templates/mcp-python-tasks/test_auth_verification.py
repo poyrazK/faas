@@ -5,7 +5,7 @@ import json
 import time
 import unittest
 from unittest.mock import Mock, patch
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
@@ -137,6 +137,49 @@ class JWKVerificationTests(unittest.TestCase):
                     self.assertEqual(self.status(auth, token), 200)
                     self.assertEqual(self.status(auth, token), 200)
                     self.assertEqual(opener.open.call_count, 2)
+
+    def test_fetch_failure_is_labelled_signing_keys_unavailable(self):
+        auth = Authenticator(CONFIG)
+        opener = Mock()
+        opener.open.side_effect = URLError("provider unavailable")
+        with patch("urllib.request.build_opener", return_value=opener), patch("auth.time.monotonic", return_value=1000) as clock:
+            for _ in range(2):  # the failed fetch, then its cooldown
+                with self.assertRaises(AuthFailure) as caught:
+                    auth.authenticate("Bearer " + self.token())
+                self.assertEqual((caught.exception.status, caught.exception.code), (401, "invalid_token"))
+                self.assertEqual(caught.exception.description, "signing keys unavailable")
+                self.assertTrue(caught.exception.retryable)
+            opener.open.side_effect = lambda *_args, **_kwargs: http_response(json.dumps({"keys": [self.key]}).encode())
+            clock.return_value = 1001
+            with self.assertRaises(AuthFailure) as caught:
+                auth.authenticate("Bearer " + self.token(private=rsa.generate_private_key(public_exponent=65537, key_size=2048)))
+            self.assertEqual(caught.exception.description, "")
+            self.assertFalse(caught.exception.retryable)
+
+    def test_wrong_jwks_url_is_not_retryable(self):
+        auth = Authenticator(CONFIG)
+        opener = Mock()
+        opener.open.side_effect = HTTPError(CONFIG["auth"]["jwks_url"], 404, "Not Found", {}, io.BytesIO(b""))
+        with patch("urllib.request.build_opener", return_value=opener), patch("auth.time.monotonic", return_value=1000):
+            for _ in range(2):  # the failed fetch, then its cooldown
+                with self.assertRaises(AuthFailure) as caught:
+                    auth.authenticate("Bearer " + self.token())
+                self.assertEqual((caught.exception.code, caught.exception.retryable), ("invalid_token", False))
+
+    def test_protected_jwks_url_is_labelled_signing_keys_refused(self):
+        # A JWKS URL behind access protection answers 401/403: the token was
+        # never checked, and retrying cannot fix it.
+        for status in (401, 403):
+            auth = Authenticator(CONFIG)
+            opener = Mock()
+            opener.open.side_effect = HTTPError(CONFIG["auth"]["jwks_url"], status, "Protected", {}, io.BytesIO(b""))
+            with patch("urllib.request.build_opener", return_value=opener), patch("auth.time.monotonic", return_value=1000):
+                for _ in range(2):  # the failed fetch, then its cooldown
+                    with self.assertRaises(AuthFailure) as caught:
+                        auth.authenticate("Bearer " + self.token())
+                    self.assertEqual((caught.exception.status, caught.exception.code), (401, "invalid_token"))
+                    self.assertEqual(caught.exception.description, "signing keys refused")
+                    self.assertFalse(caught.exception.retryable)
 
     def test_failed_rotation_preserves_fresh_cached_keys(self):
         auth = Authenticator(CONFIG)

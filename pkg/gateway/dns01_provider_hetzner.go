@@ -203,7 +203,7 @@ func (p *HetznerDNSProvider) do(ctx context.Context, method, path string, body a
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
-	req.Header.Set("Auth-API-Token", p.token)
+	req.Header.Set("Auth-Api-Token", p.token)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

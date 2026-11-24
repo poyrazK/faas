@@ -246,6 +246,25 @@
     "kind": "account_identity"
   },
   {
+    "table": "app_verification_contracts",
+    "columns": [
+      "account_id",
+      "app_id",
+      "byte_size",
+      "check_count",
+      "contract",
+      "contract_sha256",
+      "created_at",
+      "revision",
+      "updated_at"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
+  },
+  {
     "table": "billing_plan_activations",
     "columns": [
       "effective_at",
@@ -279,6 +298,40 @@
       "reason"
     ],
     "kind": "account_identity"
+  },
+  {
+    "table": "deployment_verification_leases",
+    "columns": [
+      "app_id",
+      "created_at",
+      "deployment_id",
+      "expires_at",
+      "node_name"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "deployment_verification_queries",
+    "columns": [
+      "account_id",
+      "app_id",
+      "check_name",
+      "claimed_at",
+      "completed_at",
+      "created_at",
+      "database_name",
+      "deployment_id",
+      "error",
+      "error_code",
+      "expires_at",
+      "first_value",
+      "has_first",
+      "id",
+      "query",
+      "row_count",
+      "status"
+    ],
+    "kind": "operational"
   },
   {
     "table": "financial_budget_alert_channel_deliveries",
@@ -949,6 +1002,38 @@
     "kind": "operational"
   },
   {
+    "table": "api_consumer_credit_pack_settings",
+    "columns": [
+      "account_id",
+      "app_id",
+      "packs",
+      "return_url"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_consumer_credit_purchases",
+    "columns": [
+      "account_id",
+      "amount_millicents",
+      "amount_minor",
+      "app_id",
+      "consumer_id",
+      "currency",
+      "expires_at",
+      "id",
+      "label",
+      "livemode",
+      "next_check_at",
+      "pack_id",
+      "return_url",
+      "status",
+      "stripe_customer",
+      "stripe_session"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "api_consumer_meter_usage_minutes",
     "columns": [
       "account_id",
@@ -986,6 +1071,19 @@
     "kind": "operational"
   },
   {
+    "table": "api_consumer_plan_route_admissions",
+    "columns": [
+      "account_id",
+      "consumer_id",
+      "minute_start",
+      "minute_used",
+      "month_start",
+      "month_used",
+      "route"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "api_consumer_plan_assignments",
     "columns": [
       "account_id",
@@ -1013,6 +1111,7 @@
       "max_requests_per_minute",
       "max_units_per_month",
       "name",
+      "route_limits",
       "updated_at"
     ],
     "kind": "configuration",
@@ -1033,6 +1132,7 @@
       "id",
       "included_units_per_month",
       "minimum_millicents_per_month",
+      "model_prices",
       "plan_id",
       "price_millicents_per_unit",
       "prorate_monthly_fees",
@@ -1226,7 +1326,8 @@
       "priced",
       "revision",
       "status",
-      "unpriced_units"
+      "unpriced_units",
+      "waiver"
     ],
     "kind": "operational"
   },
@@ -5747,6 +5848,7 @@
       "app_id",
       "current_deployment_id",
       "id",
+      "project_rollback_id",
       "receipt",
       "scope",
       "status",
@@ -10622,6 +10724,8 @@
     "table": "managed_postgres_overage_deliveries",
     "columns": [
       "billed_egress_bytes",
+      "billed_history_byte_seconds",
+      "billed_snapshot_byte_seconds",
       "billed_storage_byte_seconds",
       "billed_unit_seconds",
       "delivered_millicents",
@@ -10639,10 +10743,13 @@
       "allowance_unit_seconds",
       "app_egress_bytes",
       "billed_egress_bytes",
+      "billed_history_byte_seconds",
+      "billed_snapshot_byte_seconds",
       "billed_storage_byte_seconds",
       "billed_unit_seconds",
       "egress_allowance_bytes",
       "from_millicents",
+      "included_history_bytes",
       "live",
       "period_start",
       "previous_live",
@@ -10653,6 +10760,8 @@
       "subject_id",
       "target_millicents",
       "used_egress_bytes",
+      "used_history_byte_seconds",
+      "used_snapshot_byte_seconds",
       "used_storage_byte_seconds",
       "used_unit_seconds"
     ],
@@ -11178,6 +11287,15 @@
       "recorded_at",
       "restorable_until",
       "slot_until"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_postgres_suspend_timeouts",
+    "columns": [
+      "database_id",
+      "seconds",
+      "updated_at"
     ],
     "kind": "operational"
   },
@@ -16426,6 +16544,15 @@
     "kind": "operational"
   },
   {
+    "table": "project_deploy_rollback_members",
+    "kind": "operational",
+    "columns": [
+      "deploy_group_id",
+      "deployment_id",
+      "project_id"
+    ]
+  },
+  {
     "table": "project_environment_approvals",
     "columns": [
       "account_id",
@@ -18176,6 +18303,62 @@
     ]
   },
   {
+    "table": "project_rollback_deploy_protections",
+    "columns": [
+      "deploy_group_id",
+      "deployment_ids",
+      "expires_at",
+      "layer_bytes",
+      "manifest_hash",
+      "project_id",
+      "storage_keys"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_rollback_http_recovery",
+    "kind": "operational",
+    "columns": [
+      "acknowledged_gateways",
+      "app_id",
+      "expected_gateways",
+      "expires_at",
+      "first_success_at",
+      "gateways_applied_at",
+      "generation",
+      "next_notify_at",
+      "operation_id",
+      "rollback_id",
+      "routing_committed_at",
+      "service",
+      "target_id"
+    ]
+  },
+  {
+    "table": "project_rollback_operations",
+    "kind": "operational",
+    "columns": [
+      "id",
+      "next_run_at",
+      "project_id",
+      "receipt",
+      "start_request_id",
+      "start_request_options",
+      "status",
+      "version"
+    ]
+  },
+  {
+    "table": "project_rollback_undo_artifact_holds",
+    "kind": "operational",
+    "columns": [
+      "deployment_id",
+      "expires_at",
+      "operation_id",
+      "storage_keys"
+    ]
+  },
+  {
     "table": "project_submissions",
     "kind": "operational",
     "columns": [
@@ -18611,9 +18794,11 @@
     "table": "request_analytics_app_gaps",
     "columns": [
       "app_id",
+      "dropped_total",
       "last_gap_at",
       "node_name",
       "pending_count",
+      "pending_since",
       "updated_at"
     ],
     "kind": "operational"
@@ -18763,6 +18948,7 @@
       "last_gap_at",
       "node_name",
       "pending_count",
+      "pending_since",
       "updated_at"
     ],
     "kind": "operational"
@@ -18772,6 +18958,7 @@
     "columns": [
       "app_scoped",
       "boot_id",
+      "clean_stop_at",
       "dropped_total",
       "enabled",
       "healthy_since",
@@ -22543,6 +22730,34 @@
     "kind": "operational"
   },
   {
+    "table": "saved_insights",
+    "columns": [
+      "account_id",
+      "alert_comparison",
+      "alert_state",
+      "alert_threshold",
+      "channel_ids",
+      "created_at",
+      "created_by",
+      "digest",
+      "environment_id",
+      "id",
+      "key",
+      "kind",
+      "last_error",
+      "last_run_at",
+      "last_value",
+      "lease_until",
+      "name",
+      "next_check_at",
+      "next_digest_at",
+      "query",
+      "range_days",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "analytics_events",
     "columns": [
       "account_id",
@@ -22743,6 +22958,24 @@
       "sealed_definition",
       "status",
       "version"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "object_storage_workload_credentials",
+    "columns": [
+      "access_key_id",
+      "account_id",
+      "bucket_id",
+      "caller_app_id",
+      "created_at",
+      "expires_at",
+      "id",
+      "instance_id",
+      "key_prefix",
+      "kid",
+      "permission",
+      "secret_sealed"
     ],
     "kind": "operational"
   }

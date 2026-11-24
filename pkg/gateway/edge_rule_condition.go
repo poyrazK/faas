@@ -131,8 +131,15 @@ type EdgeRuleMatchContext struct {
 // country for the trusted client IP; nil means no GeoIP database, so
 // conditions on country see it as absent. hits may be nil (no counting).
 func NewEdgeRuleMatchContext(r *http.Request, clientIP net.IP, lookup func(net.IP) string, hits EdgeRuleHitRecorder) *EdgeRuleMatchContext {
+	return newEdgeRuleMatchContextWithHeaders(r, r.Header.Clone(), clientIP, lookup, hits)
+}
+
+// newEdgeRuleMatchContextWithHeaders builds the snapshot around headers, a
+// clone of r.Header the caller owns and never modifies (the match context
+// only reads it).
+func newEdgeRuleMatchContextWithHeaders(r *http.Request, headers http.Header, clientIP net.IP, lookup func(net.IP) string, hits EdgeRuleHitRecorder) *EdgeRuleMatchContext {
 	return &EdgeRuleMatchContext{
-		Host: hostname(r.Host), Headers: r.Header.Clone(), Query: edgeRuleQuery(r.URL.RawQuery),
+		Host: hostname(r.Host), Headers: headers, Query: edgeRuleQuery(r.URL.RawQuery),
 		ClientIP: clientIP, Method: r.Method, Path: r.URL.Path, lookup: lookup, hits: hits,
 		requestID: r.Header.Get(api.RequestIDHeader),
 	}

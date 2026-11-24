@@ -277,6 +277,9 @@ gregale metric my-api
 gregale inspect my-api
 ```
 
+If a deploy fails, a request errors or the first request is slow, see
+[Troubleshooting](troubleshooting.md).
+
 For scripts and coding agents with a standalone app, use the non-interactive
 deployment commands. To start with a private Node project on Free, follow the
 [internal Compose quickstart](#deploy-a-private-node-app-on-free).

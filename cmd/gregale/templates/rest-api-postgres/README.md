@@ -151,10 +151,10 @@ both PR CI and full CI run it against TLS/SCRAM PostgreSQL.
 ## Try it
 
 ```sh
-curl https://<slug>.gregale.dev/healthz
+curl https://<slug>.gregale.app/healthz
 curl -X POST -H 'content-type: application/json' -d '{"body":"hello"}' \
-  https://<slug>.gregale.dev/notes
-curl https://<slug>.gregale.dev/notes
+  https://<slug>.gregale.app/notes
+curl https://<slug>.gregale.app/notes
 ```
 
 After edits, deploy from this directory with `gregale deploy --name <slug>`.

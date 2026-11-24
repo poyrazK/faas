@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"errors"
 	"io"
+	"log/slog"
 	"maps"
 	"slices"
 	"strings"
@@ -270,7 +271,9 @@ func sharedRuntimeArtifactFixture(t *testing.T, files map[string]string) string 
 
 // spec: §4.6
 // H10-140: an export built FROM the runner base keeps only /app when the
-// rest is toolchain, and keeps every layer above the base otherwise.
+// rest is toolchain, and keeps every layer above the base otherwise. A
+// release command that calls npm keeps the toolchain too: the runner base
+// ships no npm, so `release: npm run migrate` exited 127.
 func TestSharedRuntimeAppLayers(t *testing.T) {
 	const pkg = `{"scripts":{"start":"node worker.js"}}`
 	base := minimalConfigBytes()
@@ -280,11 +283,13 @@ func TestSharedRuntimeAppLayers(t *testing.T) {
 		deployBaseRefOverride: "ghcr.io/test/runner-node24@sha256:" + strings.Repeat("4", 64),
 	}
 	tests := []struct {
-		name       string
-		files      map[string]string
-		wantReason string
+		name         string
+		files        map[string]string
+		releaseKeeps bool
+		wantReason   string
 	}{
 		{name: "app and toolchain", files: map[string]string{"app/package.json": pkg, "app/worker.js": "tick", "mise/installs/node/24.1.0/bin/node": "elf"}},
+		{name: "release calls npm", files: map[string]string{"app/package.json": pkg, "app/worker.js": "tick", "mise/installs/node/24.1.0/bin/node": "elf"}, releaseKeeps: true, wantReason: sharedruntime.ReasonReleasePackageManager},
 		{name: "system library", files: map[string]string{"app/package.json": pkg, "app/worker.js": "tick", "usr/lib/libvips.so": "so"}, wantReason: "content_outside_app"},
 	}
 	for _, tt := range tests {
@@ -296,7 +301,11 @@ func TestSharedRuntimeAppLayers(t *testing.T) {
 			}
 			defer cleanup()
 			manifest := api.AppManifest{Entrypoint: []string{"/bin/bash", "-c", "npm run start"}, Env: map[string]string{"PATH": "/mise/shims:/usr/bin", "NODE_ENV": "production"}}
-			got, err := h.sharedRuntimeAppLayers(t.Context(), RuntimeNode24, archive, config, layers, &manifest, state.App{Type: state.AppTypeApp})
+			_, baseDiffIDs, err := h.runtimeBaseDiffIDs(t.Context(), RuntimeNode24, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := h.sharedRuntimeAppLayersAt(t.Context(), RuntimeNode24, baseDiffIDs, archive, config, layers, &manifest, state.App{Type: state.AppTypeApp}, sharedRuntimeSplit{keepsToolchain: tt.releaseKeeps})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -312,6 +321,217 @@ func TestSharedRuntimeAppLayers(t *testing.T) {
 			}
 			if !slices.Equal(manifest.Entrypoint, []string{"/bin/bash", "-c", "npm run start"}) {
 				t.Fatalf("fallback rewrote the start command: %v", manifest.Entrypoint)
+			}
+		})
+	}
+}
+
+// layerEntryNames lists the entries of filtered layers.
+func layerEntryNames(t *testing.T, layers []io.Reader) []string {
+	t.Helper()
+	var names []string
+	for _, layer := range layers {
+		zr, err := rootfs.OpenCompressedLayer(layer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tr := tar.NewReader(zr)
+		for {
+			hdr, err := tr.Next()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			names = append(names, hdr.Name)
+		}
+		_ = zr.Close()
+	}
+	slices.Sort(names)
+	return names
+}
+
+// spec: §4.6
+// ADR-20261124160000: a Next.js app started with a plain `next start` ships
+// only its standalone tree when the build wrote one, and a Bun app keeps
+// Bun's install instead of the whole mise toolchain. Anything else keeps
+// the earlier layer.
+func TestSharedRuntimeAppLayersNextAndBun(t *testing.T) {
+	const nextPkg = `{"scripts":{"build":"next build","start":"next start"},"dependencies":{"next":"16.4.6"}}`
+	const bunPkg = `{"scripts":{"start":"bun index.ts"}}`
+	base := minimalConfigBytes()
+	digest := digestFor(t, base)
+	h := &Handler{
+		oci:                   &minimalManifestPuller{manifest: oci.Manifest{Config: oci.Descriptor{Digest: digest}}, layers: map[string][]byte{digest: base}},
+		deployBaseRefOverride: "ghcr.io/test/runner-node24@sha256:" + strings.Repeat("4", 64),
+		log:                   slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	standalone := map[string]string{
+		"app/package.json":                            nextPkg,
+		"app/node_modules/next/dist/server.js":        "full",
+		"app/.next/standalone/server.js":              "server",
+		"app/.next/standalone/.gregale-standalone":    "",
+		"app/.next/standalone/node_modules/next/x.js": "traced",
+		"app/.next/standalone/.next/static/a.css":     "css",
+		"mise/installs/node/24.1.0/bin/node":          "elf",
+	}
+	withPkg := func(files map[string]string, pkg string) map[string]string {
+		out := maps.Clone(files)
+		out["app/package.json"] = pkg
+		return out
+	}
+	withoutMarker := maps.Clone(standalone)
+	delete(withoutMarker, sharedruntime.NextStandaloneMarker)
+	standaloneNames := []string{sharedruntime.NextStandaloneMarker, "app/.next/standalone/.next/static/a.css", "app/.next/standalone/node_modules/next/x.js", "app/.next/standalone/server.js"}
+	fullAppNames := []string{"app/node_modules/next/dist/server.js", "app/package.json"}
+	allNames := append(slices.Clone(standaloneNames), fullAppNames...)
+	slices.Sort(allNames)
+	bunInstalled := map[string]string{"app/index.ts": "Bun.serve()", "mise/installs/bun/1.3.5/bin/bun": "elf", "mise/installs/node/24.1.0/bin/node": "elf"}
+	tests := []struct {
+		name       string
+		files      map[string]string
+		start      string
+		wantReason string
+		wantArgv   []string
+		wantPath   string
+		wantNames  []string
+		entry      []string
+		env        map[string]string
+		wantHost   string
+		release    bool
+	}{
+		{
+			// A release command may read /app files the standalone tree
+			// drops. The builder kept the tree only because the full /app
+			// is over the plan's cap, so this layer fails that cap as it
+			// did before the standalone build.
+			name: "release command keeps all of /app", files: standalone, start: "npm run start", release: true,
+			wantArgv: []string{"/bin/sh", "-c", "next start"}, wantPath: sharedruntime.RunnerPath,
+			wantNames: allNames,
+		},
+		{
+			name: "bun script calling npx keeps the toolchain", start: "bun run start",
+			files:      withPkg(bunInstalled, `{"scripts":{"start":"npx prisma migrate deploy && bun src/index.ts"}}`),
+			wantReason: sharedruntime.ReasonPackageManagerStart,
+		},
+		{
+			name: "bun flags before a script calling run-p keep the toolchain", start: "bun run --bun start",
+			files:      withPkg(bunInstalled, `{"scripts":{"start":"run-p serve worker"}}`),
+			wantReason: sharedruntime.ReasonPackageManagerStart,
+		},
+		{
+			// npm is not on the runner base, and the layer would drop Bun.
+			name: "npm script running bun keeps the toolchain", start: "npm run start",
+			files:      withPkg(bunInstalled, bunPkg),
+			wantReason: sharedruntime.ReasonBunInScript,
+		},
+		{
+			name: "env-prefixed bun start keeps bun", start: "NODE_ENV=production bun run start",
+			files:     withPkg(bunInstalled, bunPkg),
+			wantArgv:  []string{"/bin/sh", "-c", "NODE_ENV=production bun run start"},
+			wantPath:  sharedruntime.BunRunnerPath("/mise/installs/bun/1.3.5/bin"),
+			wantNames: []string{"app/index.ts", "app/package.json", "mise/installs/bun/1.3.5/bin/bun"},
+		},
+		{
+			name: "next standalone", files: standalone, start: "npm run start",
+			wantArgv: sharedruntime.NextStandaloneStart, wantPath: sharedruntime.RunnerPath, wantHost: "0.0.0.0",
+			wantNames: standaloneNames,
+		},
+		{
+			name: "customer HOSTNAME kept", files: standalone, start: "npm run start", env: map[string]string{"HOSTNAME": "::"},
+			wantArgv: sharedruntime.NextStandaloneStart, wantPath: sharedruntime.RunnerPath, wantHost: "::",
+			wantNames: standaloneNames,
+		},
+		{
+			name: "next started through bun", files: withPkg(standalone, nextPkg), start: "bun run start",
+			wantArgv: sharedruntime.NextStandaloneStart, wantPath: sharedruntime.RunnerPath, wantHost: "0.0.0.0",
+			wantNames: standaloneNames,
+		},
+		{
+			// The app's own output "standalone" without the builder's copy
+			// step: its server lacks static and public files.
+			name: "standalone without the builder marker keeps node_modules", start: "npm run start",
+			files:     withoutMarker,
+			wantArgv:  []string{"/bin/sh", "-c", "next start"},
+			wantPath:  sharedruntime.RunnerPath,
+			wantNames: []string{"app/.next/standalone/.next/static/a.css", "app/.next/standalone/node_modules/next/x.js", "app/.next/standalone/server.js", "app/node_modules/next/dist/server.js", "app/package.json"},
+		},
+		{
+			name: "next start with arguments keeps all of /app", start: "npm run start",
+			files:    withPkg(standalone, `{"scripts":{"start":"next start -p 3000"}}`),
+			wantArgv: []string{"/bin/sh", "-c", "next start -p 3000"}, wantPath: sharedruntime.RunnerPath,
+			wantNames: allNames,
+		},
+		{
+			name: "bun exec form keeps its words", start: "unused",
+			entry:     []string{"bun", "run", "server.ts", "--title", "my app"},
+			files:     map[string]string{"app/package.json": bunPkg, "app/server.ts": "Bun.serve()", "mise/installs/bun/1.3.5/bin/bun": "elf"},
+			wantArgv:  []string{"bun", "run", "server.ts", "--title", "my app"},
+			wantPath:  sharedruntime.BunRunnerPath("/mise/installs/bun/1.3.5/bin"),
+			wantNames: []string{"app/package.json", "app/server.ts", "mise/installs/bun/1.3.5/bin/bun"},
+		},
+		{
+			name: "next without standalone output", start: "npm run start",
+			files:     map[string]string{"app/package.json": nextPkg, "app/node_modules/next/dist/server.js": "full"},
+			wantArgv:  []string{"/bin/sh", "-c", "next start"},
+			wantPath:  sharedruntime.RunnerPath,
+			wantNames: []string{"app/node_modules/next/dist/server.js", "app/package.json"},
+		},
+		{
+			name: "bun keeps bun, not node", start: "bun run start",
+			files:     map[string]string{"app/package.json": bunPkg, "app/index.ts": "Bun.serve()", "mise/installs/bun/1.3.5/bin/bun": "elf", "mise/installs/node/24.1.0/bin/node": "elf"},
+			wantArgv:  []string{"/bin/sh", "-c", "bun run start"},
+			wantPath:  sharedruntime.BunRunnerPath("/mise/installs/bun/1.3.5/bin"),
+			wantNames: []string{"app/index.ts", "app/package.json", "mise/installs/bun/1.3.5/bin/bun"},
+		},
+		{
+			name: "bun start without bun installed", start: "bun run start",
+			files:      map[string]string{"app/package.json": bunPkg, "app/index.ts": "Bun.serve()", "mise/installs/node/24.1.0/bin/node": "elf"},
+			wantReason: sharedruntime.ReasonBunNotInstalled,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			archive := sharedRuntimeArtifactFixture(t, tt.files)
+			config, layers, cleanup, err := loadLocalOCIArchiveContext(t.Context(), archive)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cleanup()
+			entry := []string{"/bin/bash", "-c", tt.start}
+			if tt.entry != nil {
+				entry = tt.entry
+			}
+			env := map[string]string{"NODE_ENV": "production"}
+			maps.Copy(env, tt.env)
+			manifest := api.AppManifest{Entrypoint: slices.Clone(entry), Env: env}
+			_, baseDiffIDs, err := h.runtimeBaseDiffIDs(t.Context(), RuntimeNode24, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := h.sharedRuntimeAppLayersAt(t.Context(), RuntimeNode24, baseDiffIDs, archive, config, layers, &manifest, state.App{Type: state.AppTypeApp}, sharedRuntimeSplit{keepsApp: tt.release})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer got.cleanup()
+			if got.Reason != tt.wantReason {
+				t.Fatalf("reason = %q, want %q", got.Reason, tt.wantReason)
+			}
+			if tt.wantReason != "" {
+				if !slices.Equal(manifest.Entrypoint, entry) {
+					t.Fatalf("fallback rewrote the start command: %v", manifest.Entrypoint)
+				}
+				return
+			}
+			if !slices.Equal(manifest.Entrypoint, tt.wantArgv) || manifest.Env["PATH"] != tt.wantPath || manifest.Env["NODE_ENV"] != "production" {
+				t.Fatalf("manifest = %+v, want %q on %q", manifest, tt.wantArgv, tt.wantPath)
+			}
+			if manifest.Env["HOSTNAME"] != tt.wantHost {
+				t.Fatalf("HOSTNAME = %q, want %q", manifest.Env["HOSTNAME"], tt.wantHost)
+			}
+			if names := layerEntryNames(t, got.layers); !slices.Equal(names, tt.wantNames) {
+				t.Fatalf("layer = %q\nwant %q", names, tt.wantNames)
 			}
 		})
 	}

@@ -19,7 +19,7 @@ func edgeCheckoutConfig(rewrite string, killed bool) flags.Config {
 	}}}
 }
 
-// ADR-20261122090000: edge routes publish only while edge_flags is on for
+// ADR-20261124212701: edge routes publish only while edge_flags is on for
 // the account; once it is off, edits that leave the routes alone (a kill)
 // still publish, and changed routes are refused.
 func TestFeatureFlagEdgeRoutesFollowThePlatformFlag(t *testing.T) {

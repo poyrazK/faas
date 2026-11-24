@@ -36,3 +36,24 @@ faas_runner_private_hosts: []
 # cgroup CPU weight of the runner unit (systemd default 100). Low so deploy
 # jobs yield to PostgreSQL and the control-plane daemons under contention.
 faas_runner_cpu_weight: 20
+
+# deploy: runs rollouts with the fleet's secrets (faas-fleet* label).
+# build: compiles and signs unit releases from main (faas-build* label), as
+# its own user with no production credentials, inside the limits below
+# (deploy/ansible/build_runner.yml, ADR-20261122170000).
+faas_runner_kind: deploy
+# Optional unit limits; empty leaves systemd's default. A build runner on the
+# control plane sets all of them so a compile cannot starve PostgreSQL or
+# apid.
+faas_runner_cpu_quota: ""
+faas_runner_io_weight: ""
+faas_runner_memory_high: ""
+faas_runner_memory_max: ""
+# GOMAXPROCS also bounds `go build`'s parallel compiles (-p defaults to it).
+faas_runner_gomaxprocs: ""
+faas_runner_protect_system: full
+# The build runner's job hook that kills Go processes a cancelled job left
+# (templates/faas-build-runner-job-cleanup.sh.j2); build runners only. The
+# runner runs a hook only by extension (.sh, .ps1, .js): without one every
+# job fails at "Set up runner" (2026-11-22).
+faas_runner_job_cleanup_hook: /usr/local/bin/faas-build-runner-job-cleanup.sh

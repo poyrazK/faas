@@ -17,6 +17,7 @@ def _get_kwargs(
     *,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
+    breakdown: bool | Unset = False,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -30,6 +31,8 @@ def _get_kwargs(
     if not isinstance(until, Unset):
         json_until = until.isoformat()
     params["until"] = json_until
+
+    params["breakdown"] = breakdown
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -95,6 +98,7 @@ def sync_detailed(
     client: AuthenticatedClient,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
+    breakdown: bool | Unset = False,
 ) -> Response[ConsumerBillingUsageResponse | Problem]:
     """Read your own daily usage with your consumer key.
 
@@ -102,6 +106,7 @@ def sync_detailed(
         slug (str):
         since (datetime.datetime | Unset):
         until (datetime.datetime | Unset):
+        breakdown (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -115,6 +120,7 @@ def sync_detailed(
         slug=slug,
         since=since,
         until=until,
+        breakdown=breakdown,
     )
 
     response = client.get_httpx_client().request(
@@ -130,6 +136,7 @@ def sync(
     client: AuthenticatedClient,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
+    breakdown: bool | Unset = False,
 ) -> ConsumerBillingUsageResponse | Problem | None:
     """Read your own daily usage with your consumer key.
 
@@ -137,6 +144,7 @@ def sync(
         slug (str):
         since (datetime.datetime | Unset):
         until (datetime.datetime | Unset):
+        breakdown (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -151,6 +159,7 @@ def sync(
         client=client,
         since=since,
         until=until,
+        breakdown=breakdown,
     ).parsed
 
 
@@ -160,6 +169,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
+    breakdown: bool | Unset = False,
 ) -> Response[ConsumerBillingUsageResponse | Problem]:
     """Read your own daily usage with your consumer key.
 
@@ -167,6 +177,7 @@ async def asyncio_detailed(
         slug (str):
         since (datetime.datetime | Unset):
         until (datetime.datetime | Unset):
+        breakdown (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -180,6 +191,7 @@ async def asyncio_detailed(
         slug=slug,
         since=since,
         until=until,
+        breakdown=breakdown,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -193,6 +205,7 @@ async def asyncio(
     client: AuthenticatedClient,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
+    breakdown: bool | Unset = False,
 ) -> ConsumerBillingUsageResponse | Problem | None:
     """Read your own daily usage with your consumer key.
 
@@ -200,6 +213,7 @@ async def asyncio(
         slug (str):
         since (datetime.datetime | Unset):
         until (datetime.datetime | Unset):
+        breakdown (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -215,5 +229,6 @@ async def asyncio(
             client=client,
             since=since,
             until=until,
+            breakdown=breakdown,
         )
     ).parsed

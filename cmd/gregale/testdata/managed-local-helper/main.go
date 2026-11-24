@@ -58,7 +58,7 @@ func runApp() {
 	}
 	host, port := os.Getenv("HOST"), os.Getenv("PORT")
 	baseURL := "http://" + net.JoinHostPort(host, port)
-	if host != "127.0.0.1" || os.Getenv("GREGALE_TEST_HOST") != host || os.Getenv("GREGALE_TEST_PORT") != port || os.Getenv("GREGALE_TEST_URL") != baseURL || os.Getenv("FAAS_TOKEN") != "" {
+	if host != "127.0.0.1" || os.Getenv("GREGALE_TEST_HOST") != host || os.Getenv("GREGALE_TEST_PORT") != port || os.Getenv("GREGALE_TEST_URL") != baseURL || os.Getenv("FAAS_TOKEN") != "" || os.Getenv("GREGALE_TOKEN") != "" {
 		fail(fmt.Errorf("managed app received invalid environment"))
 	}
 	if len(os.Args) > 1 && strings.HasPrefix(os.Args[len(os.Args)-1], "endpoint=") && os.Args[len(os.Args)-1] != "endpoint="+net.JoinHostPort(host, port) {

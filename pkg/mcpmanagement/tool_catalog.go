@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 // Some clients refuse a server that lists more than 128 tools (OpenAI's
@@ -78,6 +80,8 @@ var toolCapability = map[string]string{
 	"gregale_get_insight_retention": "product-analytics",
 	"gregale_get_insight_requests":  "product-analytics",
 	"gregale_list_insight_cohorts":  "product-analytics",
+	"gregale_list_saved_insights":   "saved-insights",
+	"gregale_run_saved_insight":     "saved-insights",
 }
 
 // unavailableCapabilities reads the account's hidden and disabled
@@ -369,7 +373,7 @@ func firstSentence(description string) string {
 		description = description[:i+1]
 	}
 	if len(description) > 240 {
-		description = description[:237] + "..."
+		description = safetext.Truncate(description, 237) + "..."
 	}
 	return description
 }

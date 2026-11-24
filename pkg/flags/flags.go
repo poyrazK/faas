@@ -273,7 +273,7 @@ type Flag struct {
 	Rules     []Rule        `json:"rules"`
 	Variants  []FlagVariant `json:"variants,omitempty"`
 	// Edge routes the flag's variants at the gateway, without an SDK
-	// (ADR-20261122090000). Runtime bundles leave it out.
+	// (ADR-20261124212701). Runtime bundles leave it out.
 	Edge *Edge `json:"edge,omitempty"`
 }
 type FlagVariant struct {

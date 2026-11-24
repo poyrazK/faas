@@ -1071,7 +1071,7 @@ type Handler struct {
 	// apiMonetizationFlags is the api_monetization platform flag: it
 	// releases monetization to the accounts it admits (ADR-20261020170649).
 	apiMonetizationFlags *platformflags.Set
-	// edgeFlagsRelease is the edge_flags platform flag (ADR-20261122090000):
+	// edgeFlagsRelease is the edge_flags platform flag (ADR-20261124212701):
 	// nil routes no request at the edge.
 	edgeFlagsRelease *platformflags.Set
 	// capabilityAllowed decides a product capability flag for an app's
@@ -2170,7 +2170,7 @@ func (h *Handler) enforceDeclaredRoute(w http.ResponseWriter, r *http.Request, a
 		}); ok {
 			resolved, err := resolver.ResolveScopedRoutePolicy(r.Context(), app)
 			if err != nil {
-				w.Header().Set("x-faas-error-reason", api.CodeDeclaredRoutePolicyUnavailable)
+				w.Header().Set("X-Faas-Error-Reason", api.CodeDeclaredRoutePolicyUnavailable)
 				api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeDeclaredRoutePolicyUnavailable,
 					"Declared route policy unavailable", "the environment route policy could not be loaded"))
 				return true
@@ -2189,7 +2189,7 @@ func (h *Handler) enforceDeclaredRoute(w http.ResponseWriter, r *http.Request, a
 		return false
 	}
 	if h.declaredRoutes == nil {
-		w.Header().Set("x-faas-error-reason", api.CodeDeclaredRoutePolicyUnavailable)
+		w.Header().Set("X-Faas-Error-Reason", api.CodeDeclaredRoutePolicyUnavailable)
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeDeclaredRoutePolicyUnavailable,
 			"Declared route policy unavailable", "the gateway has no declared-route matcher configured"))
 		return true
@@ -2209,7 +2209,7 @@ func (h *Handler) enforceDeclaredRoute(w http.ResponseWriter, r *http.Request, a
 		if h.log != nil {
 			h.log.Warn("gateway: declared route policy unavailable", "app_id", app.ID, "path", logsanitize.Field(requestPath), "method", logsanitize.Field(requestMethod), "err", logsanitize.FieldAny(err))
 		}
-		w.Header().Set("x-faas-error-reason", api.CodeDeclaredRoutePolicyUnavailable)
+		w.Header().Set("X-Faas-Error-Reason", api.CodeDeclaredRoutePolicyUnavailable)
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeDeclaredRoutePolicyUnavailable,
 			"Declared route policy unavailable", "the configured OpenAPI document or route list could not be loaded"))
 		return true
@@ -2217,7 +2217,7 @@ func (h *Handler) enforceDeclaredRoute(w http.ResponseWriter, r *http.Request, a
 	if allowed {
 		return false
 	}
-	w.Header().Set("x-faas-error-reason", api.CodeUndeclaredRoute)
+	w.Header().Set("X-Faas-Error-Reason", api.CodeUndeclaredRoute)
 	api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeUndeclaredRoute,
 		"Route not declared", fmt.Sprintf("%s %s is not declared for this app", requestMethod, requestPath)))
 	return true
@@ -3307,7 +3307,7 @@ func (h *Handler) applyEdgeRuleJWTRule(w http.ResponseWriter, r *http.Request, a
 	}
 	raw := bearerTokenFromHeader(r.Header.Get("Authorization"))
 	if raw == "" {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="apps"`)
+		w.Header().Set("Www-Authenticate", `Bearer realm="apps"`)
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized,
 			api.CodeUnauthorized, "Missing bearer token",
 			"Authorization: Bearer <token> required for this edge rule"))
@@ -3336,7 +3336,7 @@ func (h *Handler) applyEdgeRuleJWTRule(w http.ResponseWriter, r *http.Request, a
 		return true
 	}
 	if err != nil {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="apps"`)
+		w.Header().Set("Www-Authenticate", `Bearer realm="apps"`)
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized,
 			api.CodeUnauthorized, "JWT verification failed", "the bearer token did not satisfy this edge rule"))
 		h.jwtEmit(r.Context(), "jwt", "failed", rule.ID, r.Host, nil, map[string]any{"err": err.Error()})
@@ -4977,7 +4977,7 @@ func (h *Handler) applyEdgeRuleThrottleRule(w http.ResponseWriter, r *http.Reque
 		// `route` is a new scope value alongside `account` + `app`
 		// (established by per-account / per-app 429 paths
 		// respectively) — see writeRouteRateLimitHeaders comment.
-		w.Header().Set("x-faas-rate-limit-scope", "route")
+		w.Header().Set("X-Faas-Rate-Limit-Scope", "route")
 		// The policy names the authoritative bucket family: `route` for a
 		// shared rule bucket and `per-consumer` for every dimensional rule,
 		// whether the identity owns a dedicated bucket or shares __other__.
@@ -5166,7 +5166,7 @@ func clientIPFromForwardedFor(r *http.Request) (net.IP, bool) {
 // True-Client-IP first, then X-Real-IP). The gateway forwarded client-supplied
 // values unchanged, so a workload behind it could be handed a forged client
 // address (hunt #9 H9-67, production-us rc.252).
-var clientIPAliasHeaders = []string{"True-Client-IP", "X-Real-IP", "X-Client-IP", "X-Cluster-Client-IP", "Fastly-Client-IP"}
+var clientIPAliasHeaders = []string{"True-Client-Ip", "X-Real-Ip", "X-Client-Ip", "X-Cluster-Client-Ip", "Fastly-Client-Ip"} // canonical spelling: http.Header would allocate a canonical copy per call
 
 // stampTrustedClientIP replaces the customer-controlled value of
 // x-faas-client-ip with the one address established by the public listener's
@@ -5182,15 +5182,16 @@ func stampTrustedClientIP(r *http.Request) {
 	if r == nil {
 		return
 	}
-	r.Header.Del(wire.ClientIPHeader)
+	r.Header.Del(canonicalClientIPHeader)
 	r.Header.Del("Forwarded")
 	for _, name := range clientIPAliasHeaders {
 		r.Header.Del(name)
 	}
 	if ip, ok := clientIPFromTrustedXFF(r); ok {
-		r.Header.Set(wire.ClientIPHeader, ip.String())
-		r.Header.Set("True-Client-IP", ip.String())
-		r.Header.Set("X-Real-IP", ip.String())
+		addr := ip.String()
+		r.Header.Set(canonicalClientIPHeader, addr)
+		r.Header.Set("True-Client-Ip", addr)
+		r.Header.Set("X-Real-Ip", addr)
 	}
 }
 
@@ -5842,7 +5843,7 @@ func (h *Handler) setupStreamingWriter(w http.ResponseWriter, rec *statusRecorde
 	onFlush := func(cumulative int64) {
 		delta := cumulative - lastReported
 		lastReported = cumulative
-		if delta <= 0 {
+		if delta <= 0 || rec.isPlatformResponse() {
 			return
 		}
 		if h.egressSink != nil && target.InstanceID != "" {
@@ -6287,7 +6288,7 @@ func (h *Handler) AccountLimiter() *Limiter { return h.accountLimiter }
 // canonical "feature not enabled on this deployment" code (the
 // WS protocol allows clients to back off; 502 doesn't).
 func (h *Handler) writeWebSocketNotAllowed(w http.ResponseWriter, appID string, forwarderMissing bool) {
-	w.Header().Set("x-faas-error-reason", "websocket_not_on_plan")
+	w.Header().Set("X-Faas-Error-Reason", "websocket_not_on_plan")
 	w.Header().Set("Content-Type", "application/problem+json")
 	detail := "This app has WebSocket / Upgrade traffic disabled."
 	if forwarderMissing {
@@ -6342,14 +6343,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// the recorders below still see the HTTP status (grpc_platform_error.go).
 	w, finishGRPC := wrapGRPCPlatformErrors(w, r)
 	defer finishGRPC()
-	r = r.WithContext(withResponseCacheFill(r.Context(), h.responseCache))
-	r = r.WithContext(withCapacityRefusalMark(r.Context()))
+	// One request copy per group of context values below: each WithContext
+	// copies the whole *http.Request, and nothing reads r between them.
+	r = r.WithContext(withCapacityRefusalMark(withResponseCacheFill(r.Context(), h.responseCache)))
 	// These forwarding controls are authored below from the pinned app and
 	// streaming decision. A public header cannot turn ordinary HTTP into a
 	// detachable response and escape its deadline.
-	r.Header.Del("x-faas-stream")
-	r.Header.Del("x-faas-protocol")
+	r.Header.Del("X-Faas-Stream")
+	r.Header.Del("X-Faas-Protocol")
 	r.Header.Del(trafficdeadline.Header)
+	// Only an MCP resource policy that admitted the request sets this.
+	r.Header.Del(api.MCPGatewayAuthorizedHeader)
 	// The public edge's nonce for a not-dispatched marker lives in the
 	// request context from here on (ADR-20261022184531 step 5).
 	r = takeDispatchNonce(r)
@@ -6405,12 +6409,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			(code >= http.StatusOK && code < http.StatusBadRequest && isLongLivedForward(r))
 	}
 	defer rec.stopTrafficResponse()
-	r = r.WithContext(withResponseRecorder(r.Context(), rec))
 	w = rec
 	// ADR-1505: the commit is armed once a monetized request is about to be
 	// forwarded; at exit it completes or aborts the response.
 	rec.usage = &usageCommitHolder{rec: rec}
-	r = r.WithContext(withUsageCommitHolder(r.Context(), rec.usage))
+	r = r.WithContext(withUsageCommitHolder(withResponseRecorder(r.Context(), rec), rec.usage))
 	defer abortUnrecordedResponse(rec.usage, rec)
 	// Semantic request span. The public listener already creates an inbound
 	// otelhttp span, but gatewayd-internal also serves the handler directly in
@@ -6425,7 +6428,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestCtx, requestSpan := pkgtrace.StartSpan(parentCtx, "gateway.request",
 		attribute.String("http.method", r.Method))
 	requestAttrs := collectSpanAttributes(requestSpan)
-	requestCtx = WithEdgeRuleRequestHeaders(requestCtx, r.Header)
+	// One immutable snapshot of the inbound headers serves both the selector
+	// context and the condition match context below; neither modifies it, and
+	// nothing between here and NewEdgeRuleMatchContext writes r.Header.
+	inboundHeaders := r.Header.Clone()
+	requestCtx = withEdgeRuleRequestHeaderSnapshot(requestCtx, inboundHeaders)
 	requestCtx = WithEdgeRuleMethodOverride(requestCtx, r)
 	// ADR-962: the snapshot rule conditions read. The client IP is only the
 	// single trusted forwarded hop; country is looked up lazily.
@@ -6434,7 +6441,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// runs, so every IP-based gate and the headers stamped for the app read
 	// it rather than whatever a kind=headers rule left in X-Forwarded-For.
 	requestCtx = withTrustedClientIP(requestCtx, trustedIP, trustedIPOK)
-	matchCtx := NewEdgeRuleMatchContext(r, trustedIP, h.edgeRuleCountryLookup(), h.edgeRuleHits)
+	matchCtx := newEdgeRuleMatchContextWithHeaders(r, inboundHeaders, trustedIP, h.edgeRuleCountryLookup(), h.edgeRuleHits)
 	matchCtx.SetASNLookup(h.edgeRuleASNLookup())
 	matchCtx.SetBotVerifier(requestCtx, h.botVerifier)
 	requestCtx = WithEdgeRuleMatchContext(requestCtx, matchCtx)
@@ -6458,10 +6465,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// has a real elapsed to record and the slog latency_ms field stops
 	// being effectively zero).
 	start := time.Now()
-	if accepted, ok := StartTimeFromContext(r.Context()); ok && accepted.Before(start) {
+	accepted, haveAccepted := StartTimeFromContext(r.Context())
+	if haveAccepted && accepted.Before(start) {
 		start = accepted
 	}
-	r = r.WithContext(WithStartTime(r.Context(), start)) //nolint:contextcheck // request ctx is the canonical inbound ctx at the HTTP handler boundary.
+	// TrustedTrafficIngress normally stored this exact start already; adding
+	// it again only grew the context chain (and copied the request).
+	if !haveAccepted || !start.Equal(accepted) {
+		r = r.WithContext(WithStartTime(r.Context(), start)) //nolint:contextcheck // request ctx is the canonical inbound ctx at the HTTP handler boundary.
+	}
 	// Keep a request-local sink for platform-owned runner execution markers.
 	// The forwarder consumes and redacts the headers; observe persists the
 	// bounded values with the request telemetry row.
@@ -6494,10 +6506,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !isSyntheticInvocation(r.Context()) {
 		r.Header.Set(api.InvocationIDHeader, rid)
 	}
-	r = r.WithContext(WithRequestID(r.Context(), rid)) //nolint:contextcheck // request ctx is the canonical inbound ctx at the HTTP handler boundary.
-	correlation, _ := wire.FromContext(r.Context())
+	ridCtx := WithRequestID(r.Context(), rid) //nolint:contextcheck // request ctx is the canonical inbound ctx at the HTTP handler boundary.
+	correlation, _ := wire.FromContext(ridCtx)
 	correlation.RequestID = rid
-	r = r.WithContext(wire.WithContext(r.Context(), correlation))
+	r = r.WithContext(wire.WithContext(ridCtx, correlation))
 
 	host := hostname(r.Host)
 
@@ -6615,8 +6627,7 @@ haveApp:
 	// wrote (OwnedEdgeRules): match_host is free-form, so a foreign rule
 	// could otherwise shadow this app's own gates.
 	//nolint:contextcheck // same request context, extended with the owner.
-	r = r.WithContext(WithEdgeRuleScope(r.Context(), app))
-	r = r.WithContext(withRateAdmissionEvidence(r.Context()))
+	r = r.WithContext(withRateAdmissionEvidence(WithEdgeRuleScope(r.Context(), app)))
 	if h.applyTotalDeadline(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
@@ -6675,6 +6686,17 @@ haveApp:
 	triggerClass := ClassifyWakeTrigger(r)
 	smokeDeploymentID, deploymentSmoke := h.authorizedDeploymentSmokeTarget(r, app)
 	rec.deploymentSmoke = deploymentSmoke
+	// ADR-20261122220000: a request carrying a smoke token this gateway does
+	// not know (the challenge has not reached it yet, or expired) is refused
+	// like an unknown route probe. Serving it from the live deployment would
+	// send a verification contract's request, possibly a state-changing one,
+	// to the predecessor instead of the candidate. The verifier reads the
+	// unproven 503 as gateway-unavailable and retries.
+	if !deploymentSmoke && r.Header.Get(apihostingreceipt.PlatformSmokeTokenHeader) != "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+			"Deployment smoke not authorized", "the smoke challenge is unknown or expired on this gateway"))
+		return
+	}
 	workloadAdmissionScope := app.Scope
 	if app.PinnedDeploymentScope != "" {
 		workloadAdmissionScope = app.PinnedDeploymentScope
@@ -6707,7 +6729,7 @@ haveApp:
 	// Wake-tier transparency is useful on every response, including auth,
 	// rate-limit, redirect, and cached responses that return before the wake
 	// gate. The later wake path replaces this hot default after admission.
-	w.Header().Set(wire.WakeHeader, wire.HotWakeValue)
+	w.Header().Set(canonicalWakeHeader, wire.HotWakeValue)
 	// ADR-127: stamp account_id + app_id onto the request context
 	// so the recorder can build a row at Handler.observe without
 	// observe's signature changing. nil-safe on accountID (the
@@ -6824,6 +6846,7 @@ haveApp:
 		}
 		if billingAttributed {
 			r = withBillingRoute(r, h.billingRouteSetFor(app.ID).admit(preLabel))
+			r = withPlanRoute(r, preLabel)
 		} else if jwtTenantPossible {
 			r = withBillingRouteCandidate(r, preLabel)
 		}
@@ -7205,7 +7228,7 @@ haveApp:
 	if h.serveGatedEdgeAnswer(w, r, app, declaredPath) {
 		return
 	}
-	// ADR-20261122090000: edge flag routing, after every identity and access
+	// ADR-20261124212701: edge flag routing, after every identity and access
 	// gate (a verified customer buckets as the SDK would) and before the
 	// response cache, whose key then carries the rewritten path.
 	r = h.applyEdgeFlags(w, r, app)
@@ -7587,7 +7610,10 @@ haveApp:
 		wakeMethod        WakeMethod
 		platformWakeStart time.Time
 		platformWakeTrace *wakePhaseTrace
-		err               error
+		// startupOOM collects the instances whose wake reported that the
+		// app ran out of memory while booting; set only on wake paths.
+		startupOOM *sched.StartupOOMRecorder
+		err        error
 	)
 
 	// PickWarm is the combined warm-path decision for the production backend. A
@@ -7700,6 +7726,7 @@ haveApp:
 				platformWakeStart = time.Now()
 				platformWakeTrace = newWakePhaseTrace(platformWakeStart)
 				wakeCtx := withWakePhaseTrace(r.Context(), platformWakeTrace)
+				wakeCtx = withStartupOOMRecorder(wakeCtx, &startupOOM)
 				if acceptsWakePage(r) {
 					var cancel context.CancelFunc
 					wakeCtx, cancel = context.WithTimeout(wakeCtx, time.Duration(api.WakePageAfterMs)*time.Millisecond)
@@ -7721,7 +7748,7 @@ haveApp:
 					return
 				}
 			} else {
-				admittedWakeID, method, atCapacity, admitErr = h.backend.Admit(r.Context(), app.ID, exactDeploymentID, exactDeploymentScope, exactDeploymentTrigger, maxInstances+api.RolloutConcurrencyGrant)
+				admittedWakeID, method, atCapacity, admitErr = h.backend.Admit(withStartupOOMRecorder(r.Context(), &startupOOM), app.ID, exactDeploymentID, exactDeploymentScope, exactDeploymentTrigger, maxInstances+api.RolloutConcurrencyGrant)
 			}
 			settled := false
 			if admitErr == nil && atCapacity {
@@ -7804,6 +7831,7 @@ haveApp:
 		// booting. API clients retain the plan-derived wait budget.
 		wakeCtx := r.Context()
 		wakeCtx = withWakePhaseTrace(wakeCtx, platformWakeTrace)
+		wakeCtx = withStartupOOMRecorder(wakeCtx, &startupOOM)
 		// A thaw prefers the frozen instance this session is pinned to
 		// (ADR-1151): its in-memory state is why the app keeps affinity.
 		wakeCtx = sched.WithPreferredInstance(wakeCtx, preferredInstanceID)
@@ -7849,8 +7877,8 @@ haveApp:
 				// still alive. Record the visit and let the page's fetch/meta
 				// retry land on the app without a manual reload.
 				h.noteWakePageServed(r.Context(), app.ID, app.AccountID, requestIDFrom(r), time.Now())
-				w.Header().Set(wire.WakeHeader, wire.ColdWakeValue)
-				writeWakePage(w, r.Header.Get("x-faas-wake-id"))
+				w.Header().Set(canonicalWakeHeader, wire.ColdWakeValue)
+				writeWakePage(w, r.Header.Get("X-Faas-Wake-Id"))
 				h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 				return
 			}
@@ -7916,7 +7944,7 @@ haveApp:
 	routing, hasPublicRouting := publicRoutingSnapshot(r.Context())
 	if !exactDeployment || hasPublicRouting {
 		//nolint:contextcheck // request ctx at handler boundary.
-		burstWaitCtx, cancelBurstWait := context.WithTimeout(r.Context(), burstCapacityWait(app))
+		burstWaitCtx, cancelBurstWait := context.WithTimeout(withStartupOOMRecorder(r.Context(), &startupOOM), burstCapacityWait(app))
 		defer cancelBurstWait()
 		var burstErr error
 		if hasPublicRouting {
@@ -7957,7 +7985,7 @@ haveApp:
 		if platformWakeStart.IsZero() {
 			platformWakeStart = time.Now()
 		}
-		fanoutCtx, fanoutSpan := pkgtrace.StartSpan(r.Context(), "gateway.wake_fanout",
+		fanoutCtx, fanoutSpan := pkgtrace.StartSpan(withStartupOOMRecorder(r.Context(), &startupOOM), "gateway.wake_fanout",
 			attribute.String("app_id", app.ID),
 			attribute.String("deployment_id", pick.ColdBucket),
 		)
@@ -8024,7 +8052,7 @@ haveApp:
 	}
 	// The wake admission result is now known. Replace the hot default before
 	// any response body is committed by the proxy.
-	w.Header().Set(wire.WakeHeader, wakeResponseValue(cold, wakeMethod))
+	w.Header().Set(canonicalWakeHeader, wakeResponseValue(cold, wakeMethod))
 	// Enforce the plan's per-instance request bound only after a concrete
 	// target exists. A saturated target first gives the picker a chance to
 	// place the request on another warm VM; when every routable VM is full,
@@ -8241,7 +8269,7 @@ haveApp:
 		// Per-wake correlation handle (gaps analysis 2026-07-23). Sits
 		// next to x-faas-wake so the two are co-located on every
 		// response, and never set on a Phase-1 fast-path response.
-		w.Header().Set("x-faas-wake-id", wakeID)
+		w.Header().Set("X-Faas-Wake-Id", wakeID)
 	}
 
 	// The forwarding bridge can detect a terminal vmmd/netns failure after
@@ -8374,7 +8402,7 @@ haveApp:
 		// to the client (the request stays on the inbound HTTP
 		// path); the forwarder strips x-faas-* headers before
 		// bridging so the guest never sees it.
-		r.Header.Set("x-faas-stream", "true")
+		r.Header.Set("X-Faas-Stream", "true")
 		// ADR-124: per-app wire-protocol selector stamp. Same
 		// internal-header contract as x-faas-stream above —
 		// the forwarder reads x-faas-protocol as
@@ -8390,7 +8418,7 @@ haveApp:
 		// bridge re-frames to H1+chunked on the guest side
 		// per PR #750, so the per-app selector is metadata-
 		// only on the read side.
-		r.Header.Set("x-faas-protocol", decideProtocol(app))
+		r.Header.Set("X-Faas-Protocol", decideProtocol(app))
 		// ADR-047 PR-D: bookend the streaming concurrency gauge.
 		// setupStreamingWriter installs the per-flush onFlush hook
 		// that increments streamFlushes; this Inc opens the
@@ -8475,7 +8503,7 @@ haveApp:
 		// downstream observability (slog fields, dashboards)
 		// can distinguish raw-bytes sessions from plain HTTP
 		// without re-deriving from Connection/Upgrade.
-		r.Header.Set("x-faas-upgrade", "true")
+		r.Header.Set("X-Faas-Upgrade", "true")
 		platformWakeTrace.markProxyStarted(time.Now())
 		if h.sessionAffinity(app) {
 			if _, ok := h.backend.(affinityPicker); ok {
@@ -8542,7 +8570,7 @@ haveApp:
 		// the inner leg is a separate file (the bridge today
 		// re-frames to H1+chunked on the guest side per
 		// PR #750).
-		r.Header.Set("x-faas-protocol", decideProtocol(app))
+		r.Header.Set("X-Faas-Protocol", decideProtocol(app))
 		// ADR-201 §1. Retry only wraps the BUFFERED path: a streaming
 		// response commits on its first flush, so a replay is impossible by
 		// construction, and wrapping it would put a buffering writer in front
@@ -8660,11 +8688,10 @@ haveApp:
 	}
 	// ADR-046 (per-instance egress metering, telemetry only):
 	// record the response body bytes that egressed the gateway on
-	// this instance. Gated on 2xx/3xx because 4xx/5xx the
-	// ReverseProxy never actually wrote the response body to the
-	// wire (it short-circuited on the upstream reject) — billing
-	// bytes that didn't egress would be wrong on both ends of the
-	// financial model. nil-safe for unit tests.
+	// this instance. An app's own 4xx/5xx body egresses like any
+	// other and is billed; a response the gateway wrote itself
+	// (statusRecorder.isPlatformResponse) is not. nil-safe for
+	// unit tests.
 	if !probe {
 		h.recordEgress(rec, completionTarget, app)
 	}
@@ -8702,8 +8729,31 @@ haveApp:
 		if cold && wakeMethod != WakeMethodUnspecified {
 			h.metrics.ObserveColdBootWithTrace(app.ID, firstByteAt.Sub(wakeStart), target.NodeID, traceID)
 			if !platformWakeStart.IsZero() {
-				h.metrics.ObservePlatformWakeWithTrace(firstByteAt.Sub(platformWakeStart), traceID)
-				platformWakeTrace.observe(h.metrics, firstByteAt)
+				switch {
+				case startupOOM.Any():
+					// The app ran out of memory while a wake this request
+					// admitted booted it: the kernel's OOM kill, not the
+					// platform, set the latency this request waited out,
+					// whichever instance the final pick routed it to. The
+					// app's own wake latency (above) keeps it; the phase
+					// breakdown follows the SLO series it decomposes.
+					// Checked before the smoke case so a candidate that OOMs
+					// on its first boot still moves the startup_oom rate the
+					// ADR treats as a platform signal.
+					h.metrics.ObservePlatformWakeExcluded(platformWakeExcludedStartupOOM)
+				case deploymentSmoke:
+					// A deployment smoke verifies a candidate, not customer
+					// demand. It is admitted while the candidate's first-boot
+					// instance is still capturing the snapshot the smoke then
+					// restores, so its wait is the deploy pipeline's
+					// (2026-11-24: 24 of 32 platform wakes over 350 ms were
+					// smokes; customer restores held p95 157 ms). The app's
+					// own wake latency (above) keeps it.
+					h.metrics.ObservePlatformWakeExcluded(platformWakeExcludedDeploymentSmoke)
+				default:
+					h.metrics.ObservePlatformWakeWithTrace(firstByteAt.Sub(platformWakeStart), traceID)
+					platformWakeTrace.observe(h.metrics, firstByteAt)
+				}
 			}
 			// Wake-locality classifier (PR scale-out readiness). Increment
 			// AFTER the first-byte observation so the 350 ms measurement
@@ -8839,6 +8889,14 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// An Info line also spends the request-log budget: past it the line is
 	// not built (see requestLogBudget).
 	decision := trafficDecisionEvidence(r.Context(), status, false)
+	if status >= http.StatusOK && status < http.StatusMultipleChoices && decision.path == "public_http" &&
+		decision.outcome == "upstream_response" && !decision.edgeResponse && !decision.deploymentPinned &&
+		decision.cache != "hit" && !strings.HasPrefix(decision.cache, "stale_") &&
+		target.InstanceID != "" && target.DeploymentID != "" && truncatedResponse(r) == nil && !isRouteProbe(r.Context()) {
+		if backend, ok := h.backend.(*PGBackend); ok {
+			backend.observeProjectRollbackResponse(r.Context(), appID, target.DeploymentID, startTime(r), time.Now())
+		}
+	}
 	level := requestLogLevel(code, cold)
 	if requestLog := h.log; requestLog != nil && requestLog.Enabled(r.Context(), level) && h.requestLogBudget.admit(level, h.metrics) {
 		if suppressed := h.requestLogBudget.takeSuppressed(); suppressed > 0 {
@@ -9131,10 +9189,12 @@ func (h *Handler) routeSetFor(appID string, enabled bool) *routeLabelSet {
 // recordEgress attributes response body bytes to the (instanceID,
 // minute) bucket in h.egressSink. Called after the proxy ServeHTTP
 // returns so the recorder has observed every body chunk that hit
-// the wire. The 2xx/3xx gate mirrors what the gateway actually
-// delivered to the caller: 4xx/5xx responses never reach the body
-// stage on the ReverseProxy path (it short-circuits to the error
-// branch), so trying to count their bytes would over-attribute.
+// the wire. Every status the app answered counts: an app's own 404
+// page or 500 body leaves the platform like any other response, and
+// since gateway response bytes are billed app egress
+// (ADR-20261121210517) skipping them made error statuses a free
+// channel (metering review 2026-11-23). Only bytes the gateway wrote
+// itself (writeForwarderProblem marks the recorder) are left out.
 //
 // PR-B streaming path: when the recorder is armed with a flusher
 // (rec.flusher != nil, set by setupStreamingWriter), the per-flush
@@ -9164,7 +9224,7 @@ func (h *Handler) recordEgress(rec *statusRecorder, target Target, app App) {
 	if rec.flusher != nil {
 		return
 	}
-	if rec.status < 200 || rec.status >= 400 {
+	if rec.status < 200 || rec.isPlatformResponse() {
 		return
 	}
 	if rec.Bytes <= 0 {
@@ -9215,9 +9275,9 @@ func (h *Handler) writeAppRateLimitHeaders(w http.ResponseWriter, appID string, 
 	if !ok {
 		return rateLimitBucket{}
 	}
-	w.Header().Set("X-RateLimit-Limit", intToString(limit))
-	w.Header().Set("X-RateLimit-Remaining", intToString(remaining))
-	w.Header().Set("X-RateLimit-Reset", intToString(reset))
+	w.Header().Set("X-Ratelimit-Limit", intToString(limit))
+	w.Header().Set("X-Ratelimit-Remaining", intToString(remaining))
+	w.Header().Set("X-Ratelimit-Reset", intToString(reset))
 	return rateLimitBucket{limit: limit, remaining: remaining, ok: true}
 }
 
@@ -9236,9 +9296,9 @@ func (h *Handler) writeAccountRateLimitHeaders(w http.ResponseWriter, accountID 
 	if !ok {
 		return rateLimitBucket{}
 	}
-	w.Header().Set("X-AccountRateLimit-Limit", intToString(limit))
-	w.Header().Set("X-AccountRateLimit-Remaining", intToString(remaining))
-	w.Header().Set("X-AccountRateLimit-Reset", intToString(reset))
+	w.Header().Set("X-Accountratelimit-Limit", intToString(limit))
+	w.Header().Set("X-Accountratelimit-Remaining", intToString(remaining))
+	w.Header().Set("X-Accountratelimit-Reset", intToString(reset))
 	return rateLimitBucket{limit: limit, remaining: remaining, ok: true}
 }
 
@@ -9280,9 +9340,9 @@ func (h *Handler) writeRouteRateLimitHeadersFromLimiter(w http.ResponseWriter, l
 	if !ok {
 		return rateLimitBucket{}
 	}
-	w.Header().Set("X-RouteRateLimit-Limit", intToString(limit))
-	w.Header().Set("X-RouteRateLimit-Remaining", intToString(remaining))
-	w.Header().Set("X-RouteRateLimit-Reset", intToString(reset))
+	w.Header().Set("X-Routeratelimit-Limit", intToString(limit))
+	w.Header().Set("X-Routeratelimit-Remaining", intToString(remaining))
+	w.Header().Set("X-Routeratelimit-Reset", intToString(reset))
 	// ADR-104 amendment 5 (issue #881 Phase 4 H1): the policy
 	// hint is emitted unconditionally so dashboards that key off
 	// its presence don't break; the value distinguishes the
@@ -9291,7 +9351,7 @@ func (h *Handler) writeRouteRateLimitHeadersFromLimiter(w http.ResponseWriter, l
 	if policy == "" {
 		policy = rateLimitScopeRoute
 	}
-	w.Header().Set("X-RouteRateLimit-Policy", policy)
+	w.Header().Set("X-Routeratelimit-Policy", policy)
 	return rateLimitBucket{limit: limit, remaining: remaining, ok: true}
 }
 
@@ -9452,6 +9512,12 @@ type statusRecorder struct {
 	http.ResponseWriter
 	status      int
 	wroteHeader bool
+	// platformResponse marks a response the gateway wrote itself (a
+	// forwarder problem), not the app: its bytes are not app egress.
+	platformResponse bool
+	// platformProblem is whether the committed headers carried
+	// api.ErrorCodeHeader (prepareResponseHeaders).
+	platformProblem bool
 	// headerAt is when the response headers were committed: a long-lived
 	// response's latency (ADR-20261109153000).
 	headerAt                 time.Time
@@ -9536,6 +9602,50 @@ type statusRecorder struct {
 // per-chunk read deadlines during request-body admission.
 func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 
+// markPlatformResponse flags the statusRecorder under w (through any
+// Unwrap chain) as carrying a gateway-written response. An uncommitted retry
+// attempt keeps the mark itself until it commits or is discarded.
+func markPlatformResponse(w http.ResponseWriter) {
+	for w != nil {
+		if rec, ok := w.(*statusRecorder); ok {
+			// Once the app's status is on the wire the response is the
+			// app's; a later platform write must not unbill it.
+			if !rec.wroteHeader {
+				rec.platformResponse = true
+			}
+			return
+		}
+		if rw, ok := w.(*retryWriter); ok {
+			if !rw.committed {
+				rw.platformResponse = true
+				return
+			}
+		}
+		u, ok := w.(interface{ Unwrap() http.ResponseWriter })
+		if !ok {
+			return
+		}
+		w = u.Unwrap()
+	}
+}
+
+// isPlatformResponse reports whether the gateway, not the app, wrote this
+// response: either a writer marked it, or it carries api.ErrorCodeHeader,
+// which api.WriteProblem stamps and both proxy paths strip from a guest's
+// response (ADR-20261030115139). Its bytes are not billed app egress.
+func (s *statusRecorder) isPlatformResponse() bool {
+	if s.platformResponse {
+		return true
+	}
+	if s.wroteHeader {
+		return s.platformProblem
+	}
+	if s.ResponseWriter == nil {
+		return false
+	}
+	return s.ResponseWriter.Header().Get(api.ErrorCodeHeader) != ""
+}
+
 // ProblemHTMLRequest lets the shared API problem writer negotiate the
 // browser-facing error page for gateway requests. API handlers do not use this
 // wrapper, so their RFC 7807 JSON responses remain unchanged.
@@ -9580,6 +9690,9 @@ func (s *statusRecorder) prepareResponseHeaders(code int) {
 		// reading it here is race-free relative to the underlying
 		// ResponseWriter.
 		s.ContentType = s.ResponseWriter.Header().Get("Content-Type")
+		// Who wrote the response is fixed when its headers commit; a header
+		// set afterwards never unbills bytes already sent.
+		s.platformProblem = s.ResponseWriter.Header().Get(api.ErrorCodeHeader) != ""
 		s.headCachePrivate = s.sharedCachePrivate || responseForbidsSharedCaching(s.Header())
 		// ADR-089 / issue #561 PR 4: apply any EdgeRuleHeaderOp
 		// mutations the applyEdgeRuleHeaders helper installed
@@ -10407,7 +10520,7 @@ func writeWakeInProgress(w http.ResponseWriter, requestID string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Retry-After", "1")
-	w.Header().Set(wire.WakeHeader, wire.ColdWakeValue)
+	w.Header().Set(canonicalWakeHeader, wire.ColdWakeValue)
 	if requestID != "" {
 		w.Header().Set(api.RequestIDHeader, requestID)
 	}

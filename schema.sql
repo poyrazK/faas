@@ -7551,6 +7551,20 @@ END $$;
 
 
 --
+-- Name: consumer_key_scopes_valid(text[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.consumer_key_scopes_valid(scopes text[]) RETURNS boolean
+    LANGUAGE sql IMMUTABLE PARALLEL SAFE
+    AS $_$
+  SELECT cardinality(scopes) > 0 AND NOT EXISTS (
+    SELECT 1 FROM unnest(scopes) AS s(scope)
+    WHERE NOT (s.scope IN ('read', 'write', 'admin', 'billing')
+      OR (char_length(s.scope) <= 128 AND s.scope ~ '^mcp:[!#-\[\]-~]+$')))
+$_$;
+
+
+--
 -- Name: consumer_keys_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -14658,6 +14672,26 @@ $$;
 
 
 --
+-- Name: finish_project_rollback_undo_artifact_holds(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.finish_project_rollback_undo_artifact_holds() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.status = 'blocked' THEN
+        UPDATE project_rollback_undo_artifact_holds
+        SET expires_at = clock_timestamp() + interval '24 hours'
+        WHERE operation_id = NEW.id AND expires_at IS NULL;
+    ELSIF NEW.status = 'complete' THEN
+        DELETE FROM project_rollback_undo_artifact_holds WHERE operation_id = NEW.id;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: forbid_runtime_upgrade_native_public_startup_truncate(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -18154,6 +18188,38 @@ $$;
 
 
 --
+-- Name: guard_legacy_project_rollback_pause(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_legacy_project_rollback_pause() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE request_id text := nullif(current_setting('faas.checked_rollback_request', true), '');
+        paused boolean;
+BEGIN
+    IF request_id IS NULL OR NEW.status <> 'live'
+       OR NEW.traffic_percent <= (CASE WHEN OLD.status = 'live' THEN OLD.traffic_percent ELSE 0 END)
+    THEN
+        RETURN NEW;
+    END IF;
+    SELECT p.receipt ? 'pause_requested_at' INTO paused
+    FROM deployment_rollback_operations r
+    JOIN project_rollback_operations p ON (p.status = 'running' OR p.receipt ? 'pause_requested_at')
+       AND p.receipt->'steps' @> jsonb_build_array(jsonb_build_object(
+           'attempt_id', r.id, 'app_id', r.app_id, 'target_deployment_id', r.target_deployment_id,
+           'expected_current_deployment_id', r.current_deployment_id))
+    WHERE r.id = request_id::uuid AND r.app_id = NEW.app_id AND r.target_deployment_id = NEW.id
+      AND r.project_rollback_id IS NULL AND r.status IN ('ready', 'blocked')
+    FOR UPDATE OF p;
+    IF paused THEN
+        RAISE EXCEPTION 'project rollback is paused'
+            USING ERRCODE = '23514', CONSTRAINT = 'checked_rollback_required';
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_managed_postgres_accounting_intent(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -19329,6 +19395,90 @@ END $$;
 
 
 --
+-- Name: guard_project_rollback_artifact_deletion(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_project_rollback_artifact_deletion() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF project_rollback_protects_artifact(OLD.storage_key) THEN
+        RETURN NULL;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_project_rollback_live_traffic(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_project_rollback_live_traffic() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.status = 'live' AND NEW.traffic_percent > (CASE WHEN OLD.status = 'live' THEN OLD.traffic_percent ELSE 0 END)
+       AND EXISTS (
+           SELECT 1 FROM deployment_rollback_operations r
+           JOIN project_rollback_operations p ON p.id = r.project_rollback_id
+           WHERE r.app_id = NEW.app_id AND r.target_deployment_id = NEW.id
+             AND r.status NOT IN ('complete', 'failed') AND p.receipt->>'verify_live_traffic' = 'true'
+             AND r.id::text IS DISTINCT FROM current_setting('faas.project_rollback_live_traffic_verified', true)
+       ) THEN
+        RAISE EXCEPTION 'project rollback requires live-traffic health authorization'
+            USING ERRCODE = '23514', CONSTRAINT = 'checked_rollback_required';
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_project_rollback_pre_cutover_health(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_project_rollback_pre_cutover_health() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.status = 'live' AND NEW.traffic_percent > (CASE WHEN OLD.status = 'live' THEN OLD.traffic_percent ELSE 0 END)
+       AND EXISTS (
+           SELECT 1 FROM deployment_rollback_operations r
+           JOIN project_rollback_operations p ON p.id = r.project_rollback_id
+           WHERE r.app_id = NEW.app_id AND r.target_deployment_id = NEW.id
+             AND r.status NOT IN ('complete', 'failed') AND p.receipt->>'verify_before_cutover' = 'true'
+             AND r.id::text IS DISTINCT FROM current_setting('faas.project_rollback_pre_cutover_verified', true)
+       ) THEN
+        RAISE EXCEPTION 'project rollback requires pre-cutover health authorization'
+            USING ERRCODE = '23514', CONSTRAINT = 'checked_rollback_required';
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_project_rollback_preparation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_project_rollback_preparation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.status = 'live' AND NEW.traffic_percent > (CASE WHEN OLD.status = 'live' THEN OLD.traffic_percent ELSE 0 END)
+       AND EXISTS (
+           SELECT 1 FROM deployment_rollback_operations r
+           WHERE r.app_id = NEW.app_id AND r.target_deployment_id = NEW.id AND r.project_rollback_id IS NOT NULL
+             AND r.status NOT IN ('complete', 'failed')
+             AND r.id::text IS DISTINCT FROM current_setting('faas.project_rollback_cutover', true)
+       ) THEN
+        RAISE EXCEPTION 'project rollback preparation has not released this target'
+            USING ERRCODE = '23514', CONSTRAINT = 'checked_rollback_required';
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_promotion_control_publication(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -20276,6 +20426,29 @@ BEGIN
   END IF;
  END IF;
  RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_verified_project_rollback(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_verified_project_rollback() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.status = 'live' AND NEW.traffic_percent > (CASE WHEN OLD.status = 'live' THEN OLD.traffic_percent ELSE 0 END)
+       AND EXISTS (
+           SELECT 1 FROM deployment_rollback_operations r
+           JOIN project_rollback_operations p ON p.id = r.project_rollback_id
+           WHERE r.app_id = NEW.app_id AND r.target_deployment_id = NEW.id
+             AND r.status NOT IN ('complete', 'failed') AND p.receipt->>'verify' = 'true'
+             AND r.id::text IS DISTINCT FROM current_setting('faas.project_rollback_verified_cutover', true)
+       ) THEN
+        RAISE EXCEPTION 'verified project rollback requires health authorization'
+            USING ERRCODE = '23514', CONSTRAINT = 'checked_rollback_required';
+    END IF;
+    RETURN NEW;
 END $$;
 
 
@@ -24474,6 +24647,137 @@ END $$;
 
 
 --
+-- Name: preserve_project_rollback_health_policy(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.preserve_project_rollback_health_policy() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.receipt->>'verify' = 'true' AND (
+        NEW.receipt->>'verify' IS DISTINCT FROM 'true'
+        OR NEW.receipt->'health_probes' IS DISTINCT FROM OLD.receipt->'health_probes'
+    ) THEN
+        RETURN NULL;
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: preserve_project_rollback_live_traffic_policy(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.preserve_project_rollback_live_traffic_policy() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.receipt->>'verify_live_traffic' = 'true' AND (
+        NEW.receipt->>'verify_live_traffic' IS DISTINCT FROM 'true'
+        OR NEW.receipt->'live_traffic_policies' IS DISTINCT FROM OLD.receipt->'live_traffic_policies'
+    ) THEN
+        RETURN NULL;
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: preserve_project_rollback_live_traffic_undo(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.preserve_project_rollback_live_traffic_undo() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.receipt->>'undo_on_live_traffic_failure' = 'true' AND (
+        NEW.receipt->>'undo_on_live_traffic_failure' IS DISTINCT FROM 'true'
+        OR (
+            OLD.receipt #>> '{auto_undo,trigger}' = 'live_traffic'
+            AND NEW.receipt ? 'auto_undo'
+            AND ((NEW.receipt->'auto_undo') - 'status' - 'problem')
+                IS DISTINCT FROM ((OLD.receipt->'auto_undo') - 'status' - 'problem')
+        )
+    ) THEN
+        RETURN NULL;
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: preserve_project_rollback_pause(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.preserve_project_rollback_pause() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.receipt ? 'pause_requested_at' AND (
+        (NEW.receipt->>'pause_requested_at' IS DISTINCT FROM OLD.receipt->>'pause_requested_at'
+         AND NOT (OLD.status = 'blocked' AND NEW.status = 'running' AND
+                  NEW.receipt->>'phase' IS NOT DISTINCT FROM 'preparing'))
+        OR (OLD.status = 'running' AND
+            (NEW.receipt->>'phase' IS DISTINCT FROM 'releasing' OR NEW.status = 'complete'))
+    ) THEN
+        RETURN NULL;
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: preserve_project_rollback_pre_cutover_policy(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.preserve_project_rollback_pre_cutover_policy() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.receipt->>'verify_before_cutover' = 'true'
+       AND NEW.receipt->>'verify_before_cutover' IS DISTINCT FROM 'true' THEN
+        RETURN NULL;
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: preserve_project_rollback_stabilization(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.preserve_project_rollback_stabilization() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.receipt ? 'stabilize_for_seconds'
+       AND NEW.receipt->'stabilize_for_seconds' IS DISTINCT FROM OLD.receipt->'stabilize_for_seconds' THEN
+        RETURN NULL;
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: preserve_project_rollback_undo_link(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.preserve_project_rollback_undo_link() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF (OLD.receipt ? 'undo_operation_id' AND (
+            NEW.receipt->>'undo_operation_id' IS DISTINCT FROM OLD.receipt->>'undo_operation_id'
+            OR NEW.status <> OLD.status
+        )) OR (OLD.receipt ? 'undo_of' AND NEW.receipt->>'undo_of' IS DISTINCT FROM OLD.receipt->>'undo_of')
+    THEN
+        RETURN NULL;
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
 -- Name: private_network_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -24790,6 +25094,27 @@ BEGIN
     END IF;
     RETURN OLD;
 END;
+$$;
+
+
+--
+-- Name: project_rollback_protects_artifact(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.project_rollback_protects_artifact(key text) RETURNS boolean
+    LANGUAGE sql
+    AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM project_rollback_deploy_protections
+        WHERE (storage_keys @> ARRAY[key] OR
+               (left(key, 5) = 'sigs/' AND right(key, 4) = '.sig'
+                AND storage_keys @> ARRAY[substring(key from 6 for greatest(length(key) - 9, 0))]))
+          AND expires_at > clock_timestamp()
+    ) OR EXISTS (
+        SELECT 1 FROM project_rollback_undo_artifact_holds
+        WHERE storage_keys @> ARRAY[key]
+          AND (expires_at IS NULL OR expires_at > clock_timestamp())
+    );
 $$;
 
 
@@ -26611,7 +26936,7 @@ END $$;
 CREATE FUNCTION public.record_request_analytics_coverage(node text, boot uuid, counting boolean, unattributed_drops bigint, app_gaps jsonb) RETURNS void
     LANGUAGE plpgsql
     AS $$
-DECLARE stamp timestamptz:=clock_timestamp(); gap record;
+DECLARE stamp timestamptz:=clock_timestamp(); gap record; backlog_from timestamptz;
 BEGIN
  IF jsonb_typeof(app_gaps) IS DISTINCT FROM 'array' OR unattributed_drops IS NULL OR unattributed_drops<0 OR
   EXISTS(SELECT 1 FROM jsonb_to_recordset(app_gaps) g(app_id uuid,analytics_dropped_count bigint,analytics_pending_count integer)
@@ -26624,14 +26949,23 @@ BEGIN
   WHEN old.counting_since IS NULL OR old.boot_id<>excluded.boot_id OR old.heartbeat_at<stamp-interval '30 seconds'
    OR excluded.unattributed_dropped_total<>old.unattributed_dropped_total THEN stamp
   ELSE old.counting_since END;
- -- Omitted apps have nothing late any more.
- UPDATE request_analytics_app_gaps SET last_gap_at=stamp,pending_count=0,updated_at=stamp WHERE node_name=node AND pending_count>0;
+ -- Omitted apps have nothing late any more; reported ones are left to the
+ -- upsert, so the gap trigger still sees when their backlog began.
+ UPDATE request_analytics_app_gaps SET last_gap_at=stamp,pending_count=0,pending_since=NULL,updated_at=stamp WHERE node_name=node AND pending_count>0
+  AND app_id NOT IN (SELECT g.app_id FROM jsonb_to_recordset(app_gaps) g(app_id uuid,analytics_dropped_count bigint,analytics_pending_count integer)
+   JOIN apps a ON a.id=g.app_id AND a.status<>'deleted' WHERE coalesce(g.analytics_dropped_count,0)>0 OR coalesce(g.analytics_pending_count,0)>0);
+ SELECT least(previous_source_at,stamp) INTO backlog_from FROM request_analytics_coverage_watermarks WHERE node_name=node AND source_kind='analytics';
+ backlog_from:=coalesce(backlog_from,stamp);
  FOR gap IN SELECT g.app_id,coalesce(g.analytics_dropped_count,0) AS dropped,coalesce(g.analytics_pending_count,0) AS pending
   FROM jsonb_to_recordset(app_gaps) g(app_id uuid,analytics_dropped_count bigint,analytics_pending_count integer) ORDER BY g.app_id LOOP
  IF (gap.dropped>0 OR gap.pending>0) AND EXISTS(SELECT 1 FROM apps WHERE id=gap.app_id AND status<>'deleted') THEN
- INSERT INTO request_analytics_app_gaps AS old(node_name,app_id,last_gap_at,pending_count,updated_at)
- VALUES(node,gap.app_id,stamp,gap.pending,stamp)
- ON CONFLICT(node_name,app_id) DO UPDATE SET last_gap_at=stamp,pending_count=excluded.pending_count,updated_at=stamp;
+ -- The dropped total is cumulative: the gap trigger marks a loss only when
+ -- it grows, not for counts still in flight.
+ INSERT INTO request_analytics_app_gaps AS old(node_name,app_id,last_gap_at,pending_count,pending_since,dropped_total,updated_at)
+ VALUES(node,gap.app_id,stamp,gap.pending,CASE WHEN gap.pending>0 THEN backlog_from END,gap.dropped,stamp)
+ ON CONFLICT(node_name,app_id) DO UPDATE SET last_gap_at=stamp,pending_count=excluded.pending_count,
+  pending_since=CASE WHEN excluded.pending_count>0 THEN coalesce(old.pending_since,CASE WHEN old.pending_count>0 THEN old.last_gap_at END,backlog_from) END,
+  dropped_total=old.dropped_total+excluded.dropped_total,updated_at=stamp;
  END IF;
  END LOOP;
 END $$;
@@ -26653,10 +26987,22 @@ $$;
 --
 
 CREATE FUNCTION public.record_telemetry_coverage(node text, boot uuid, seq bigint, is_enabled boolean, sampling integer, drops bigint, pending integer, source_stamp timestamp with time zone, scoped boolean, unattributed_drops bigint, app_gaps jsonb) RETURNS void
+    LANGUAGE sql
+    AS $$
+ SELECT record_telemetry_coverage(node,boot,seq,is_enabled,sampling,drops,pending,source_stamp,scoped,unattributed_drops,app_gaps,false)
+$$;
+
+
+--
+-- Name: record_telemetry_coverage(text, uuid, bigint, boolean, integer, bigint, integer, timestamp with time zone, boolean, bigint, jsonb, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_telemetry_coverage(node text, boot uuid, seq bigint, is_enabled boolean, sampling integer, drops bigint, pending integer, source_stamp timestamp with time zone, scoped boolean, unattributed_drops bigint, app_gaps jsonb, stopped boolean) RETURNS void
     LANGUAGE plpgsql
     AS $$
-DECLARE stamp timestamptz:=clock_timestamp(); attributed_pending bigint; attributed_losses bigint; gap record;
+DECLARE stamp timestamptz:=clock_timestamp(); attributed_pending bigint; attributed_losses bigint; gap record; backlog_from timestamptz;
 BEGIN
+ IF stopped IS NULL THEN RAISE EXCEPTION 'invalid telemetry coverage stop flag' USING ERRCODE='22023'; END IF;
  IF jsonb_typeof(app_gaps) IS DISTINCT FROM 'array' OR (NOT scoped AND jsonb_array_length(app_gaps)>0) THEN
  RAISE EXCEPTION 'invalid app telemetry coverage' USING ERRCODE='22023'; END IF;
  IF EXISTS(SELECT 1 FROM jsonb_to_recordset(app_gaps) g(app_id uuid,dropped_count bigint,pending_count integer) WHERE app_id IS NULL OR app_id='00000000-0000-0000-0000-000000000000'::uuid OR dropped_count IS NULL OR dropped_count<0 OR pending_count IS NULL OR pending_count<0) OR
@@ -26669,27 +27015,44 @@ BEGIN
  -- FK app locks precede the node lock, matching promotion's app-before-node
  -- ordering. The writer cannot hold a node while waiting on a promotion app.
  PERFORM 1 FROM apps a WHERE a.id IN (SELECT app_id FROM jsonb_to_recordset(app_gaps) g(app_id uuid)) ORDER BY a.id FOR KEY SHARE;
- INSERT INTO request_telemetry_coverage AS old(node_name,boot_id,sequence,enabled,sampling_basis_points,dropped_total,pending_count,source_at,received_at,healthy_since,app_scoped,unattributed_dropped_total,unattributed_pending_count)
+ INSERT INTO request_telemetry_coverage AS old(node_name,boot_id,sequence,enabled,sampling_basis_points,dropped_total,pending_count,source_at,received_at,healthy_since,app_scoped,unattributed_dropped_total,unattributed_pending_count,clean_stop_at)
  VALUES(node,boot,seq,is_enabled,sampling,drops,pending,source_stamp,stamp,
  CASE WHEN is_enabled AND sampling=10000 AND (CASE WHEN scoped THEN unattributed_drops=0 AND pending=attributed_pending ELSE drops=0 AND pending=0 END) THEN stamp END,
- scoped,unattributed_drops,(pending-attributed_pending)::integer)
+ scoped,unattributed_drops,(pending-attributed_pending)::integer,CASE WHEN stopped THEN stamp END)
  ON CONFLICT(node_name) DO UPDATE SET boot_id=excluded.boot_id,sequence=excluded.sequence,enabled=excluded.enabled,sampling_basis_points=excluded.sampling_basis_points,
  dropped_total=excluded.dropped_total,pending_count=excluded.pending_count,source_at=excluded.source_at,received_at=excluded.received_at,
  app_scoped=excluded.app_scoped,unattributed_dropped_total=excluded.unattributed_dropped_total,unattributed_pending_count=excluded.unattributed_pending_count,
+ clean_stop_at=excluded.clean_stop_at,
  healthy_since=CASE WHEN NOT excluded.enabled OR excluded.sampling_basis_points<>10000 OR (CASE WHEN excluded.app_scoped THEN excluded.unattributed_pending_count ELSE excluded.pending_count END)<>0 THEN NULL
- WHEN old.boot_id<>excluded.boot_id OR old.received_at<stamp-interval '30 seconds' OR excluded.dropped_total<old.dropped_total OR
+ -- A new boot continues the coverage of a predecessor that stopped cleanly
+ -- (every row delivered or journaled) within the silence grace, provided it
+ -- has lost nothing it cannot attribute. Any other new boot starts fresh.
+ WHEN old.boot_id<>excluded.boot_id THEN
+  CASE WHEN old.clean_stop_at IS NOT NULL AND old.clean_stop_at>=stamp-interval '30 seconds' AND old.healthy_since IS NOT NULL
+    AND (CASE WHEN excluded.app_scoped THEN excluded.unattributed_dropped_total=0 ELSE excluded.dropped_total=0 END)
+   THEN old.healthy_since ELSE stamp END
+ WHEN old.received_at<stamp-interval '30 seconds' OR excluded.dropped_total<old.dropped_total OR
  (excluded.app_scoped AND excluded.dropped_total-old.dropped_total>attributed_losses+greatest(excluded.unattributed_dropped_total-old.unattributed_dropped_total,0)) OR (CASE WHEN excluded.app_scoped THEN old.unattributed_dropped_total<>excluded.unattributed_dropped_total ELSE old.dropped_total<>excluded.dropped_total END) THEN stamp
  ELSE coalesce(old.healthy_since,stamp) END
  WHERE excluded.source_at>old.source_at AND (old.boot_id<>excluded.boot_id OR excluded.sequence>old.sequence);
  IF NOT FOUND THEN RAISE EXCEPTION 'telemetry coverage replay or out-of-order heartbeat' USING ERRCODE='22023'; END IF;
  -- Omitted apps have no current backlog. Recovery starts at this receipt,
- -- never at the previous unhealthy heartbeat.
- UPDATE request_telemetry_app_gaps SET last_gap_at=stamp,pending_count=0,updated_at=stamp WHERE node_name=node AND pending_count>0;
+ -- never at the previous unhealthy heartbeat. Reported apps are left to the
+ -- upsert, so the gap trigger still sees when their backlog began.
+ UPDATE request_telemetry_app_gaps SET last_gap_at=stamp,pending_count=0,pending_since=NULL,updated_at=stamp WHERE node_name=node AND pending_count>0
+  AND app_id NOT IN (SELECT g.app_id FROM jsonb_to_recordset(app_gaps) g(app_id uuid,dropped_count bigint,pending_count integer)
+   JOIN apps a ON a.id=g.app_id AND a.status<>'deleted' WHERE g.dropped_count>0 OR g.pending_count>0);
+ -- A backlog that begins now holds rows the previous heartbeat did not
+ -- count as pending, so it reaches back to that heartbeat and no further.
+ SELECT least(previous_source_at,stamp) INTO backlog_from FROM request_analytics_coverage_watermarks WHERE node_name=node AND source_kind='raw';
+ backlog_from:=coalesce(backlog_from,stamp);
  FOR gap IN SELECT * FROM jsonb_to_recordset(app_gaps) g(app_id uuid,dropped_count bigint,pending_count integer) ORDER BY app_id LOOP
  IF (gap.dropped_count>0 OR gap.pending_count>0) AND EXISTS(SELECT 1 FROM apps WHERE id=gap.app_id AND status<>'deleted') THEN
- INSERT INTO request_telemetry_app_gaps AS old(node_name,app_id,last_gap_at,pending_count,dropped_total,updated_at)
- VALUES(node,gap.app_id,stamp,gap.pending_count,gap.dropped_count,stamp)
- ON CONFLICT(node_name,app_id) DO UPDATE SET last_gap_at=stamp,pending_count=excluded.pending_count,dropped_total=old.dropped_total+excluded.dropped_total,updated_at=stamp;
+ INSERT INTO request_telemetry_app_gaps AS old(node_name,app_id,last_gap_at,pending_count,pending_since,dropped_total,updated_at)
+ VALUES(node,gap.app_id,stamp,gap.pending_count,CASE WHEN gap.pending_count>0 THEN backlog_from END,gap.dropped_count,stamp)
+ ON CONFLICT(node_name,app_id) DO UPDATE SET last_gap_at=stamp,pending_count=excluded.pending_count,
+  pending_since=CASE WHEN excluded.pending_count>0 THEN coalesce(old.pending_since,CASE WHEN old.pending_count>0 THEN old.last_gap_at END,backlog_from) END,
+  dropped_total=old.dropped_total+excluded.dropped_total,updated_at=stamp;
  END IF;
  END LOOP;
 END $$;
@@ -27165,13 +27528,18 @@ END $$;
 CREATE FUNCTION public.request_analytics_record_coverage_gap() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-DECLARE first_gap timestamptz:=NEW.last_gap_at; kind text:=CASE WHEN TG_TABLE_NAME='request_analytics_app_gaps' THEN 'analytics' ELSE 'raw' END;
+DECLARE kind text:=CASE WHEN TG_TABLE_NAME='request_analytics_app_gaps' THEN 'analytics' ELSE 'raw' END;
+ lost bigint:=NEW.dropped_total; first_gap timestamptz:=least(NEW.updated_at,NEW.last_gap_at);
 BEGIN
  SELECT least(first_gap,previous_source_at) INTO first_gap FROM request_analytics_coverage_watermarks WHERE node_name=NEW.node_name AND source_kind=kind;
- first_gap:=coalesce(first_gap,NEW.last_gap_at);
- IF TG_OP='UPDATE' AND OLD.pending_count>0 THEN first_gap:=least(first_gap,OLD.last_gap_at); END IF;
+ first_gap:=least(coalesce(first_gap,NEW.updated_at),coalesce(NEW.pending_since,NEW.updated_at));
+ IF TG_OP='UPDATE' THEN
+  lost:=NEW.dropped_total-OLD.dropped_total;
+  IF OLD.pending_count>0 THEN first_gap:=least(first_gap,coalesce(OLD.pending_since,OLD.last_gap_at)); END IF;
+ END IF;
+ IF lost<=0 THEN RETURN NEW; END IF;
  INSERT INTO request_analytics_coverage_gaps(node_name,source_kind,app_id,gap_from,gap_until)
- VALUES(NEW.node_name,kind,NEW.app_id,first_gap,greatest(first_gap,NEW.updated_at))
+ VALUES(NEW.node_name,kind,NEW.app_id,first_gap,NEW.updated_at)
  ON CONFLICT(node_name,source_kind,app_id,gap_from) DO UPDATE SET gap_until=greatest(request_analytics_coverage_gaps.gap_until,EXCLUDED.gap_until);
  RETURN NEW;
 END $$;
@@ -27457,6 +27825,84 @@ CREATE FUNCTION public.retain_object_version_history_latch() RETURNS trigger
 BEGIN
  IF OLD.recovery_versions_observed THEN NEW.recovery_versions_observed:=true; END IF;
  RETURN NEW;
+END $$;
+
+
+--
+-- Name: retain_project_rollback_phase(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.retain_project_rollback_phase() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.receipt ? 'phase' AND NOT (NEW.receipt ? 'phase') THEN
+        NEW.receipt := NEW.receipt || jsonb_build_object(
+            'phase', OLD.receipt->'phase', 'preparation_deadline', OLD.receipt->'preparation_deadline');
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: retain_project_rollback_plan_hash(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.retain_project_rollback_plan_hash() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.receipt ? 'plan_hash' THEN
+        NEW.receipt := NEW.receipt || jsonb_build_object('plan_hash', OLD.receipt->'plan_hash');
+    END IF;
+    IF OLD.receipt ? 'resume_plan_hash' AND NOT (OLD.status = 'blocked' AND NEW.status = 'running') THEN
+        NEW.receipt := NEW.receipt || jsonb_build_object('resume_plan_hash', OLD.receipt->'resume_plan_hash');
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: retain_project_rollback_preparation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.retain_project_rollback_preparation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        SELECT p.id INTO NEW.project_rollback_id
+        FROM apps a JOIN project_rollback_operations p ON p.project_id = a.project_id
+        WHERE a.id = NEW.app_id AND p.status = 'running'
+          AND p.receipt->>'phase' IN ('preparing', 'cutover', 'releasing')
+          AND EXISTS (
+              SELECT 1 FROM jsonb_array_elements(p.receipt->'steps') AS step
+              WHERE step->>'attempt_id' = NEW.id::text AND step->>'app_id' = NEW.app_id::text
+                AND step->>'target_deployment_id' = NEW.target_deployment_id::text
+                AND step->>'expected_current_deployment_id' = NEW.current_deployment_id::text
+          );
+    ELSE
+        NEW.project_rollback_id := OLD.project_rollback_id;
+    END IF;
+    IF NEW.project_rollback_id IS NOT NULL THEN
+        NEW.receipt := NEW.receipt || jsonb_build_object('project_rollback_id', NEW.project_rollback_id);
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: retain_project_rollback_start_request(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.retain_project_rollback_start_request() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.start_request_id IS NOT NULL THEN
+        NEW.receipt := NEW.receipt || jsonb_build_object('request_id', NEW.start_request_id);
+    END IF;
+    RETURN NEW;
 END $$;
 
 
@@ -32379,6 +32825,48 @@ COMMENT ON TABLE public.api_consumer_credit_grants IS 'Prepaid credit granted to
 
 
 --
+-- Name: api_consumer_credit_pack_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_credit_pack_settings (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    return_url text NOT NULL,
+    packs jsonb NOT NULL,
+    CONSTRAINT api_consumer_credit_pack_settings_packs_check CHECK ((jsonb_typeof(packs) = 'array'::text))
+);
+
+
+--
+-- Name: api_consumer_credit_purchases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_credit_purchases (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    consumer_id uuid NOT NULL,
+    pack_id text NOT NULL,
+    label text NOT NULL,
+    currency text NOT NULL,
+    amount_millicents bigint NOT NULL,
+    amount_minor bigint NOT NULL,
+    return_url text NOT NULL,
+    stripe_customer text NOT NULL,
+    stripe_session text,
+    livemode boolean NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    next_check_at timestamp with time zone NOT NULL,
+    CONSTRAINT api_consumer_credit_purchases_amount_millicents_check CHECK (((amount_millicents >= 1) AND (amount_millicents <= '1000000000000'::bigint))),
+    CONSTRAINT api_consumer_credit_purchases_amount_minor_check CHECK ((amount_minor > 0)),
+    CONSTRAINT api_consumer_credit_purchases_check CHECK (((status <> 'credited'::text) OR (stripe_session IS NOT NULL))),
+    CONSTRAINT api_consumer_credit_purchases_currency_check CHECK ((currency ~ '^[A-Z]{3}$'::text)),
+    CONSTRAINT api_consumer_credit_purchases_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'credited'::text, 'expired'::text])))
+);
+
+
+--
 -- Name: api_consumer_meter_usage_minutes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -32471,6 +32959,30 @@ COMMENT ON TABLE public.api_consumer_plan_assignments IS 'Append-only, minute-ef
 
 
 --
+-- Name: api_consumer_plan_route_admissions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_plan_route_admissions (
+    consumer_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    route text NOT NULL,
+    minute_start timestamp with time zone NOT NULL,
+    minute_used bigint DEFAULT 0 NOT NULL,
+    month_start timestamp with time zone NOT NULL,
+    month_used bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT api_consumer_plan_route_admissions_route_chk CHECK (((char_length(route) >= 3) AND (char_length(route) <= 256))),
+    CONSTRAINT api_consumer_plan_route_admissions_used_chk CHECK (((minute_used >= 0) AND (month_used >= 0)))
+);
+
+
+--
+-- Name: TABLE api_consumer_plan_route_admissions; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_plan_route_admissions IS 'Cross-replica admission counters for plan route limits: requests on one route this minute and this UTC month.';
+
+
+--
 -- Name: api_consumer_plans; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -32484,6 +32996,7 @@ CREATE TABLE public.api_consumer_plans (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     alert_thresholds_percent integer[] DEFAULT '{}'::integer[] NOT NULL,
+    route_limits jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT api_consumer_plans_alert_thresholds_chk CHECK (((cardinality(alert_thresholds_percent) <= 5) AND (1 <= ALL (alert_thresholds_percent)) AND (100 >= ALL (alert_thresholds_percent)) AND ((cardinality(alert_thresholds_percent) = 0) OR (max_units_per_month > 0)))),
     CONSTRAINT api_consumer_plans_limits_chk CHECK (((max_requests_per_minute >= 0) AND (max_units_per_month >= 0))),
     CONSTRAINT api_consumer_plans_name_chk CHECK ((name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))
@@ -32502,6 +33015,13 @@ COMMENT ON TABLE public.api_consumer_plans IS 'Named consumer plans: enforcement
 --
 
 COMMENT ON COLUMN public.api_consumer_plans.alert_thresholds_percent IS 'Percentages of max_units_per_month at which a consumer.usage_threshold webhook fires, once per consumer per UTC month.';
+
+
+--
+-- Name: COLUMN api_consumer_plans.route_limits; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.api_consumer_plans.route_limits IS 'Per-route caps keyed by billing route label: {"MCP /tools/search": {"max_requests_per_minute": n, "max_requests_per_month": n}}.';
 
 
 --
@@ -32525,6 +33045,7 @@ CREATE TABLE public.api_consumer_rate_cards (
     base_fee_millicents_per_month bigint DEFAULT 0 NOT NULL,
     minimum_millicents_per_month bigint DEFAULT 0 NOT NULL,
     prorate_monthly_fees boolean DEFAULT false NOT NULL,
+    model_prices jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT api_consumer_rate_cards_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
     CONSTRAINT api_consumer_rate_cards_effective_minute_chk CHECK ((effective_from = date_trunc('minute'::text, effective_from))),
     CONSTRAINT api_consumer_rate_cards_included_units_chk CHECK ((included_units_per_month >= 0)),
@@ -32845,6 +33366,7 @@ CREATE TABLE public.api_consumer_usage_statements (
     revision integer DEFAULT 1 NOT NULL,
     credit_applied_millicents bigint DEFAULT 0 NOT NULL,
     fees jsonb DEFAULT '[]'::jsonb NOT NULL,
+    waiver jsonb,
     CONSTRAINT api_consumer_usage_statements_buckets_chk CHECK ((jsonb_typeof(buckets) = 'array'::text)),
     CONSTRAINT api_consumer_usage_statements_credit_chk CHECK (((credit_applied_millicents >= 0) AND (credit_applied_millicents <= amount_millicents))),
     CONSTRAINT api_consumer_usage_statements_currency_chk CHECK (((currency IS NULL) OR (currency ~ '^[A-Z]{3}$'::text))),
@@ -34569,6 +35091,35 @@ CREATE TABLE public.app_udp_listeners (
     CONSTRAINT app_udp_listeners_protocol_chk CHECK ((protocol = 'udp'::text)),
     CONSTRAINT app_udp_listeners_public_port_chk CHECK (((public_port >= 40000) AND (public_port <= 49999)))
 );
+
+
+--
+-- Name: app_verification_contracts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_verification_contracts (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    contract jsonb NOT NULL,
+    contract_sha256 text NOT NULL,
+    byte_size integer NOT NULL,
+    check_count integer NOT NULL,
+    revision bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_verification_contracts_byte_size_check CHECK (((byte_size >= 1) AND (byte_size <= 262144))),
+    CONSTRAINT app_verification_contracts_check_count_check CHECK (((check_count >= 1) AND (check_count <= 32))),
+    CONSTRAINT app_verification_contracts_contract_check CHECK ((jsonb_typeof(contract) = 'object'::text)),
+    CONSTRAINT app_verification_contracts_contract_sha256_check CHECK ((contract_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT app_verification_contracts_revision_check CHECK ((revision >= 1))
+);
+
+
+--
+-- Name: TABLE app_verification_contracts; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.app_verification_contracts IS 'Per-app gregale.verify.yaml contract (validated JSON) run against deployment candidates before promotion (ADR-20261122220000).';
 
 
 --
@@ -36915,7 +37466,7 @@ CREATE TABLE public.consumer_keys (
     CONSTRAINT consumer_keys_name_len_chk CHECK (((length(name) >= 1) AND (length(name) <= 64))),
     CONSTRAINT consumer_keys_prefix_len_chk CHECK (((length(prefix) >= 1) AND (length(prefix) <= 16))),
     CONSTRAINT consumer_keys_revoked_state_chk CHECK (((revoked_at IS NULL) OR (revoked_at >= created_at))),
-    CONSTRAINT consumer_keys_scopes_vocab_chk CHECK (((scopes <@ ARRAY['read'::text, 'write'::text, 'admin'::text, 'billing'::text]) AND (cardinality(scopes) > 0)))
+    CONSTRAINT consumer_keys_scopes_vocab_v2_chk CHECK (public.consumer_key_scopes_valid(scopes))
 );
 
 
@@ -39391,6 +39942,7 @@ CREATE TABLE public.deployment_rollback_operations (
     status text NOT NULL,
     receipt jsonb NOT NULL,
     updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    project_rollback_id uuid,
     CONSTRAINT deployment_rollback_operations_check CHECK ((target_deployment_id <> current_deployment_id)),
     CONSTRAINT deployment_rollback_operations_check1 CHECK (((receipt ?& ARRAY['id'::text, 'app_id'::text, 'scope'::text, 'target_deployment_id'::text, 'current_deployment_id'::text, 'status'::text]) AND ((receipt ->> 'id'::text) = (id)::text) AND ((receipt ->> 'app_id'::text) = (app_id)::text) AND ((receipt ->> 'scope'::text) = scope) AND ((receipt ->> 'target_deployment_id'::text) = (target_deployment_id)::text) AND ((receipt ->> 'current_deployment_id'::text) = (current_deployment_id)::text) AND ((receipt ->> 'status'::text) = status))),
     CONSTRAINT deployment_rollback_operations_public_receipt_check CHECK (((jsonb_typeof(receipt) = 'object'::text) AND (octet_length(((receipt - '_release_review'::text))::text) <= 16384) AND ((NOT (receipt ? '_release_review'::text)) OR (jsonb_typeof((receipt -> '_release_review'::text)) = ANY (ARRAY['array'::text, 'null'::text]))))),
@@ -39454,7 +40006,7 @@ CREATE TABLE public.deployment_route_policy_snapshots (
     schema_version integer DEFAULT 1 NOT NULL,
     captured_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT deployment_route_policy_snapshots_schema_version_positive CHECK ((schema_version >= 1)),
-    CONSTRAINT deployment_route_policy_snapshots_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
+    CONSTRAINT deployment_route_policy_snapshots_scope_v2_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
     CONSTRAINT deployment_route_policy_snapshots_sha256_shape CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text))
 );
 
@@ -39671,6 +40223,67 @@ CREATE TABLE public.deployment_submission_receipts (
     CONSTRAINT deployment_submission_receipts_accepted_at_check CHECK (isfinite(accepted_at)),
     CONSTRAINT deployment_submission_receipts_attempt_id_check CHECK ((attempt_id ~ '^[0-9a-f]{32}$'::text))
 );
+
+
+--
+-- Name: deployment_verification_leases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_verification_leases (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    node_name text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_verification_leases_node_name_check CHECK (((octet_length(node_name) >= 1) AND (octet_length(node_name) <= 253)))
+);
+
+
+--
+-- Name: TABLE deployment_verification_leases; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.deployment_verification_leases IS 'Node verifying a deployment candidate; secretd opens contract-referenced app secrets only for it (ADR-20261122220000 amendment 2).';
+
+
+--
+-- Name: deployment_verification_queries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_verification_queries (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    check_name text NOT NULL,
+    database_name text NOT NULL,
+    query text NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    row_count integer,
+    has_first boolean,
+    first_value text,
+    error_code text,
+    error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    claimed_at timestamp with time zone,
+    completed_at timestamp with time zone,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT deployment_verification_queries_check_name_check CHECK (((octet_length(check_name) >= 1) AND (octet_length(check_name) <= 64))),
+    CONSTRAINT deployment_verification_queries_database_name_check CHECK (((octet_length(database_name) >= 1) AND (octet_length(database_name) <= 63))),
+    CONSTRAINT deployment_verification_queries_error_check CHECK ((octet_length(error) <= 512)),
+    CONSTRAINT deployment_verification_queries_error_code_check CHECK ((octet_length(error_code) <= 64)),
+    CONSTRAINT deployment_verification_queries_first_value_check CHECK ((octet_length(first_value) <= 1024)),
+    CONSTRAINT deployment_verification_queries_query_check CHECK (((octet_length(query) >= 1) AND (octet_length(query) <= 65536))),
+    CONSTRAINT deployment_verification_queries_row_count_check CHECK ((row_count >= 0)),
+    CONSTRAINT deployment_verification_queries_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'done'::text])))
+);
+
+
+--
+-- Name: TABLE deployment_verification_queries; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.deployment_verification_queries IS 'Read-only SQL checks imaged hands to apid during candidate verification; result is row count and first value only (ADR-20261122220000).';
 
 
 --
@@ -48269,6 +48882,8 @@ CREATE TABLE public.managed_postgres_overage_deliveries (
     updated_at timestamp with time zone NOT NULL,
     billed_storage_byte_seconds bigint DEFAULT 0 NOT NULL,
     billed_egress_bytes bigint DEFAULT 0 NOT NULL,
+    billed_history_byte_seconds bigint DEFAULT 0 NOT NULL,
+    billed_snapshot_byte_seconds bigint DEFAULT 0 NOT NULL,
     CONSTRAINT managed_postgres_overage_deliveries_billed_unit_seconds_check CHECK ((billed_unit_seconds >= 0)),
     CONSTRAINT managed_postgres_overage_deliveries_check CHECK ((isfinite(updated_at) AND (updated_at >= period_start))),
     CONSTRAINT managed_postgres_overage_deliveries_delivered_millicents_check CHECK ((delivered_millicents > 0)),
@@ -48308,6 +48923,11 @@ CREATE TABLE public.managed_postgres_overage_pending (
     app_egress_bytes bigint DEFAULT 0 NOT NULL,
     egress_allowance_bytes bigint DEFAULT 0 NOT NULL,
     billed_egress_bytes bigint DEFAULT 0 NOT NULL,
+    used_history_byte_seconds bigint DEFAULT 0 NOT NULL,
+    used_snapshot_byte_seconds bigint DEFAULT 0 NOT NULL,
+    included_history_bytes bigint DEFAULT 0 NOT NULL,
+    billed_history_byte_seconds bigint DEFAULT 0 NOT NULL,
+    billed_snapshot_byte_seconds bigint DEFAULT 0 NOT NULL,
     CONSTRAINT managed_postgres_overage_pending_allowance_unit_seconds_check CHECK ((allowance_unit_seconds >= 0)),
     CONSTRAINT managed_postgres_overage_pending_billed_storage_check CHECK ((billed_storage_byte_seconds >= 0)),
     CONSTRAINT managed_postgres_overage_pending_billed_unit_seconds_check CHECK ((billed_unit_seconds >= 0)),
@@ -48479,6 +49099,26 @@ CREATE TABLE public.managed_postgres_restore_verifications (
 
 
 --
+-- Name: managed_postgres_suspend_timeouts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_suspend_timeouts (
+    database_id uuid NOT NULL,
+    seconds integer NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT managed_postgres_suspend_timeouts_seconds_check CHECK (((seconds >= 60) AND (seconds <= 3600))),
+    CONSTRAINT managed_postgres_suspend_timeouts_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
+-- Name: TABLE managed_postgres_suspend_timeouts; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.managed_postgres_suspend_timeouts IS 'Customer-chosen scale-to-zero suspend timeout per managed PostgreSQL database; no row is the platform default; written only by apid.';
+
+
+--
 -- Name: managed_postgres_usage; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -48496,7 +49136,7 @@ CREATE TABLE public.managed_postgres_usage (
     CONSTRAINT managed_postgres_usage_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT managed_postgres_usage_check CHECK ((window_to > window_from)),
     CONSTRAINT managed_postgres_usage_cost_millicents_check CHECK ((cost_millicents >= 0)),
-    CONSTRAINT managed_postgres_usage_meter_check CHECK ((meter = ANY (ARRAY['active_seconds'::text, 'compute_unit_seconds'::text, 'storage_byte_seconds'::text, 'history_byte_seconds'::text, 'egress_bytes'::text, 'operations'::text]))),
+    CONSTRAINT managed_postgres_usage_meter_check CHECK (((meter = ANY (ARRAY['active_seconds'::text, 'compute_unit_seconds'::text, 'storage_byte_seconds'::text, 'history_byte_seconds'::text, 'egress_bytes'::text, 'operations'::text])) OR (meter = 'snapshot_byte_seconds'::text))),
     CONSTRAINT managed_postgres_usage_quantity_check CHECK ((quantity >= 0))
 );
 
@@ -51727,6 +52367,40 @@ CREATE TABLE public.object_storage_version_inventory_entries (
     CONSTRAINT object_storage_version_inventory_entries_bytes_check CHECK (((bytes >= 0) AND (bytes <= '5497558138880'::bigint))),
     CONSTRAINT object_storage_version_inventory_entries_identity_hash_check CHECK ((identity_hash ~ '^[a-f0-9]{64}$'::text))
 );
+
+
+--
+-- Name: object_storage_workload_credentials; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_storage_workload_credentials (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    bucket_id uuid NOT NULL,
+    caller_app_id uuid NOT NULL,
+    instance_id text NOT NULL,
+    access_key_id text NOT NULL,
+    secret_sealed bytea NOT NULL,
+    kid text NOT NULL,
+    permission text NOT NULL,
+    key_prefix text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT object_storage_workload_credentials_access_key_id_check CHECK ((access_key_id ~ '^GRGW[A-Z2-7]{16}$'::text)),
+    CONSTRAINT object_storage_workload_credentials_check CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '01:05:00'::interval)))),
+    CONSTRAINT object_storage_workload_credentials_instance_id_check CHECK (((octet_length(instance_id) >= 1) AND (octet_length(instance_id) <= 128))),
+    CONSTRAINT object_storage_workload_credentials_key_prefix_check CHECK (((key_prefix IS NULL) OR (((octet_length(key_prefix) >= 1) AND (octet_length(key_prefix) <= 512)) AND ("left"(key_prefix, 1) <> '/'::text)))),
+    CONSTRAINT object_storage_workload_credentials_kid_check CHECK (((length(kid) >= 1) AND (length(kid) <= 255))),
+    CONSTRAINT object_storage_workload_credentials_permission_check CHECK ((permission = ANY (ARRAY['read'::text, 'write'::text, 'read_write'::text]))),
+    CONSTRAINT object_storage_workload_credentials_secret_sealed_check CHECK ((octet_length(secret_sealed) > 0))
+);
+
+
+--
+-- Name: TABLE object_storage_workload_credentials; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.object_storage_workload_credentials IS 'Short-lived per-instance S3 credentials for buckets granted by gregale.yaml uses:; written by apid, resolved by s3-gatewayd, swept by apid after expiry (ADR-20261122191423).';
 
 
 --
@@ -55387,6 +56061,17 @@ CREATE TABLE public.project_binding_verification_runs (
 
 
 --
+-- Name: project_deploy_rollback_members; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_deploy_rollback_members (
+    deployment_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    deploy_group_id uuid NOT NULL
+);
+
+
+--
 -- Name: project_environment_approvals; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -57943,6 +58628,74 @@ CREATE TABLE public.project_release_worker_drains (
 
 
 --
+-- Name: project_rollback_deploy_protections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_rollback_deploy_protections (
+    project_id uuid NOT NULL,
+    deploy_group_id uuid NOT NULL,
+    manifest_hash text NOT NULL,
+    deployment_ids text[] NOT NULL,
+    storage_keys text[] NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    layer_bytes bigint NOT NULL,
+    CONSTRAINT project_rollback_deploy_protections_layer_bytes_check CHECK ((layer_bytes > 0))
+);
+
+
+--
+-- Name: project_rollback_http_recovery; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_rollback_http_recovery (
+    rollback_id uuid NOT NULL,
+    operation_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    target_id uuid NOT NULL,
+    service boolean NOT NULL,
+    generation bigint,
+    routing_committed_at timestamp with time zone,
+    expected_gateways text[] DEFAULT '{}'::text[] NOT NULL,
+    acknowledged_gateways text[] DEFAULT '{}'::text[] NOT NULL,
+    gateways_applied_at timestamp with time zone,
+    first_success_at timestamp with time zone,
+    expires_at timestamp with time zone,
+    next_notify_at timestamp with time zone
+);
+
+
+--
+-- Name: project_rollback_operations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_rollback_operations (
+    id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    status text NOT NULL,
+    version bigint DEFAULT 0 NOT NULL,
+    next_run_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    receipt jsonb NOT NULL,
+    start_request_id uuid,
+    start_request_options jsonb,
+    CONSTRAINT project_rollback_operations_status_check CHECK ((status = ANY (ARRAY['running'::text, 'blocked'::text, 'complete'::text]))),
+    CONSTRAINT project_rollback_start_request_pair CHECK (((start_request_id IS NULL) = (start_request_options IS NULL)))
+);
+
+
+--
+-- Name: project_rollback_undo_artifact_holds; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_rollback_undo_artifact_holds (
+    operation_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    storage_keys text[] NOT NULL,
+    expires_at timestamp with time zone,
+    CONSTRAINT project_rollback_undo_artifact_holds_storage_keys_check CHECK ((cardinality(storage_keys) > 0))
+);
+
+
+--
 -- Name: project_submissions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -58551,9 +59304,13 @@ CREATE TABLE public.request_analytics_app_gaps (
     last_gap_at timestamp with time zone NOT NULL,
     pending_count integer NOT NULL,
     updated_at timestamp with time zone NOT NULL,
+    dropped_total bigint DEFAULT 0 NOT NULL,
+    pending_since timestamp with time zone,
     CONSTRAINT request_analytics_app_gaps_check CHECK ((last_gap_at <= updated_at)),
+    CONSTRAINT request_analytics_app_gaps_dropped_total_check CHECK ((dropped_total >= 0)),
     CONSTRAINT request_analytics_app_gaps_node_name_check CHECK ((node_name <> ''::text)),
-    CONSTRAINT request_analytics_app_gaps_pending_count_check CHECK ((pending_count >= 0))
+    CONSTRAINT request_analytics_app_gaps_pending_count_check CHECK ((pending_count >= 0)),
+    CONSTRAINT request_analytics_app_gaps_pending_since_check CHECK (((pending_since IS NULL) OR ((pending_count > 0) AND (pending_since <= updated_at))))
 );
 
 
@@ -59120,10 +59877,12 @@ CREATE TABLE public.request_telemetry_app_gaps (
     pending_count integer NOT NULL,
     dropped_total bigint NOT NULL,
     updated_at timestamp with time zone NOT NULL,
+    pending_since timestamp with time zone,
     CONSTRAINT request_telemetry_app_gaps_check CHECK ((last_gap_at <= updated_at)),
     CONSTRAINT request_telemetry_app_gaps_dropped_total_check CHECK ((dropped_total >= 0)),
     CONSTRAINT request_telemetry_app_gaps_node_name_check CHECK ((node_name <> ''::text)),
-    CONSTRAINT request_telemetry_app_gaps_pending_count_check CHECK ((pending_count >= 0))
+    CONSTRAINT request_telemetry_app_gaps_pending_count_check CHECK ((pending_count >= 0)),
+    CONSTRAINT request_telemetry_app_gaps_pending_since_check CHECK (((pending_since IS NULL) OR ((pending_count > 0) AND (pending_since <= updated_at))))
 );
 
 
@@ -59145,8 +59904,10 @@ CREATE TABLE public.request_telemetry_coverage (
     app_scoped boolean DEFAULT false NOT NULL,
     unattributed_dropped_total bigint DEFAULT 0 NOT NULL,
     unattributed_pending_count integer DEFAULT 0 NOT NULL,
+    clean_stop_at timestamp with time zone,
     CONSTRAINT request_telemetry_coverage_boot_id_check CHECK ((boot_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT request_telemetry_coverage_check CHECK (((healthy_since IS NULL) OR (healthy_since <= received_at))),
+    CONSTRAINT request_telemetry_coverage_clean_stop_at_check CHECK (((clean_stop_at IS NULL) OR (clean_stop_at <= received_at))),
     CONSTRAINT request_telemetry_coverage_dropped_total_check CHECK ((dropped_total >= 0)),
     CONSTRAINT request_telemetry_coverage_node_name_check CHECK ((node_name <> ''::text)),
     CONSTRAINT request_telemetry_coverage_pending_count_check CHECK ((pending_count >= 0)),
@@ -59748,7 +60509,7 @@ CASE
     WHEN (environment_id IS NULL) THEN ('scope:'::text || scope)
     ELSE ('environment:'::text || (environment_id)::text)
 END)),
-    CONSTRAINT runtime_environment_scaling_states_scope_check CHECK (((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text) AND (scope <> 'default'::text)))
+    CONSTRAINT runtime_environment_scaling_states_scope_v2_check CHECK (((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text) AND (scope <> 'default'::text)))
 );
 
 
@@ -59770,7 +60531,7 @@ CREATE TABLE public.runtime_instance_config_proofs (
     CONSTRAINT runtime_instance_config_proofs_environment_id_check CHECK ((environment_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT runtime_instance_config_proofs_node_id_check CHECK ((node_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT runtime_instance_config_proofs_prime_activation_handoff_check CHECK (((prime_activation_handoff IS NULL) OR (jsonb_typeof(prime_activation_handoff) = 'object'::text))),
-    CONSTRAINT runtime_instance_config_proofs_scope_check CHECK (((scope = 'default'::text) OR (scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text))),
+    CONSTRAINT runtime_instance_config_proofs_scope_v2_check CHECK (((scope = 'default'::text) OR (scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text))),
     CONSTRAINT runtime_instance_config_proofs_secret_fingerprint_check CHECK ((secret_fingerprint ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT runtime_instance_config_proofs_wake_id_check CHECK ((wake_id <> '00000000-0000-0000-0000-000000000000'::uuid))
 );
@@ -60972,6 +61733,44 @@ COMMENT ON TABLE public.sandbox_workspace_snapshots IS 'ADR-20261027090013 step 
 
 
 --
+-- Name: saved_insights; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.saved_insights (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    key text NOT NULL,
+    name text NOT NULL,
+    kind text NOT NULL,
+    query jsonb NOT NULL,
+    range_days integer NOT NULL,
+    digest text DEFAULT ''::text NOT NULL,
+    alert_comparison text DEFAULT ''::text NOT NULL,
+    alert_threshold double precision DEFAULT 0 NOT NULL,
+    channel_ids uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    alert_state text DEFAULT 'ok'::text NOT NULL,
+    last_value double precision,
+    last_run_at timestamp with time zone,
+    last_error text DEFAULT ''::text NOT NULL,
+    next_digest_at timestamp with time zone,
+    next_check_at timestamp with time zone,
+    lease_until timestamp with time zone,
+    created_by text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT saved_insights_chk CHECK (((key ~ '^[a-z][a-z0-9_-]{0,63}$'::text) AND ((length(name) >= 1) AND (length(name) <= 128)) AND (kind = ANY (ARRAY['events'::text, 'funnel'::text, 'retention'::text])) AND (jsonb_typeof(query) = 'object'::text) AND ((range_days >= 1) AND (range_days <= 400)) AND (digest = ANY (ARRAY[''::text, 'daily'::text, 'weekly'::text])) AND (alert_comparison = ANY (ARRAY[''::text, 'gt'::text, 'gte'::text, 'lt'::text, 'lte'::text])) AND (alert_threshold = alert_threshold) AND (cardinality(channel_ids) <= 5) AND (alert_state = ANY (ARRAY['ok'::text, 'firing'::text])) AND (length(last_error) <= 512) AND ((length(created_by) >= 1) AND (length(created_by) <= 256)) AND (((digest = ''::text) AND (alert_comparison = ''::text)) = (next_check_at IS NULL))))
+);
+
+
+--
+-- Name: TABLE saved_insights; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.saved_insights IS 'Named analytics queries per environment; digests and threshold alerts run by meterd (ADR-20261122190000).';
+
+
+--
 -- Name: saved_route_requirements; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -61896,7 +62695,7 @@ CREATE TABLE public.storage_grant_audit (
     granted_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT storage_grant_audit_access_check CHECK ((access = ANY (ARRAY['read'::text, 'write'::text]))),
     CONSTRAINT storage_grant_audit_objects_check CHECK (((objects > 0) AND (objects <= 64))),
-    CONSTRAINT storage_grant_audit_subject_class_check CHECK ((subject_class = ANY (ARRAY['deployment'::text, 'sandbox_account'::text, 'job'::text, 'build'::text])))
+    CONSTRAINT storage_grant_audit_subject_class_v2_check CHECK ((subject_class = ANY (ARRAY['deployment'::text, 'sandbox_account'::text, 'job'::text, 'build'::text, 'build_output'::text, 'platform'::text])))
 );
 
 
@@ -64607,6 +65406,30 @@ ALTER TABLE ONLY public.api_consumer_credit_grants
 
 
 --
+-- Name: api_consumer_credit_pack_settings api_consumer_credit_pack_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_pack_settings
+    ADD CONSTRAINT api_consumer_credit_pack_settings_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: api_consumer_credit_purchases api_consumer_credit_purchases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_purchases
+    ADD CONSTRAINT api_consumer_credit_purchases_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: api_consumer_credit_purchases api_consumer_credit_purchases_stripe_session_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_purchases
+    ADD CONSTRAINT api_consumer_credit_purchases_stripe_session_key UNIQUE (stripe_session);
+
+
+--
 -- Name: api_consumer_meter_usage_minutes api_consumer_meter_usage_minutes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -64647,6 +65470,14 @@ ALTER TABLE ONLY public.api_consumer_plan_assignments
 
 
 --
+-- Name: api_consumer_plan_route_admissions api_consumer_plan_route_admissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plan_route_admissions
+    ADD CONSTRAINT api_consumer_plan_route_admissions_pkey PRIMARY KEY (consumer_id, route);
+
+
+--
 -- Name: api_consumer_plans api_consumer_plans_app_id_uniq; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -64668,6 +65499,14 @@ ALTER TABLE ONLY public.api_consumer_plans
 
 ALTER TABLE ONLY public.api_consumer_plans
     ADD CONSTRAINT api_consumer_plans_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: api_consumer_plans api_consumer_plans_route_limits_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.api_consumer_plans
+    ADD CONSTRAINT api_consumer_plans_route_limits_chk CHECK ((jsonb_typeof(route_limits) = 'object'::text)) NOT VALID;
 
 
 --
@@ -65540,6 +66379,14 @@ ALTER TABLE ONLY public.app_trusted_signers
 
 ALTER TABLE ONLY public.app_udp_listeners
     ADD CONSTRAINT app_udp_listeners_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: app_verification_contracts app_verification_contracts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_verification_contracts
+    ADD CONSTRAINT app_verification_contracts_pkey PRIMARY KEY (app_id);
 
 
 --
@@ -68044,6 +68891,22 @@ ALTER TABLE ONLY public.deployment_sidecar_secret_reload_signals
 
 ALTER TABLE ONLY public.deployment_submission_receipts
     ADD CONSTRAINT deployment_submission_receipts_pkey PRIMARY KEY (app_id, attempt_id);
+
+
+--
+-- Name: deployment_verification_leases deployment_verification_leases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_verification_leases
+    ADD CONSTRAINT deployment_verification_leases_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: deployment_verification_queries deployment_verification_queries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_verification_queries
+    ADD CONSTRAINT deployment_verification_queries_pkey PRIMARY KEY (id);
 
 
 --
@@ -71847,6 +72710,14 @@ ALTER TABLE public.managed_postgres_overage_deliveries
 
 
 --
+-- Name: managed_postgres_overage_deliveries managed_postgres_overage_deliveries_billed_history_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.managed_postgres_overage_deliveries
+    ADD CONSTRAINT managed_postgres_overage_deliveries_billed_history_check CHECK (((billed_history_byte_seconds >= 0) AND (billed_snapshot_byte_seconds >= 0))) NOT VALID;
+
+
+--
 -- Name: managed_postgres_overage_deliveries managed_postgres_overage_deliveries_billed_storage_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -71868,6 +72739,14 @@ ALTER TABLE ONLY public.managed_postgres_overage_deliveries
 
 ALTER TABLE public.managed_postgres_overage_pending
     ADD CONSTRAINT managed_postgres_overage_pending_egress_check CHECK (((used_egress_bytes >= 0) AND (app_egress_bytes >= 0) AND (egress_allowance_bytes >= 0) AND (billed_egress_bytes >= 0))) NOT VALID;
+
+
+--
+-- Name: managed_postgres_overage_pending managed_postgres_overage_pending_history_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.managed_postgres_overage_pending
+    ADD CONSTRAINT managed_postgres_overage_pending_history_check CHECK (((used_history_byte_seconds >= 0) AND (used_snapshot_byte_seconds >= 0) AND (included_history_bytes >= 0) AND (billed_history_byte_seconds >= 0) AND (billed_snapshot_byte_seconds >= 0))) NOT VALID;
 
 
 --
@@ -71940,6 +72819,14 @@ ALTER TABLE ONLY public.managed_postgres_restore_verifications
 
 ALTER TABLE ONLY public.managed_postgres_restore_verifications
     ADD CONSTRAINT managed_postgres_restore_verifications_pkey PRIMARY KEY (database_id);
+
+
+--
+-- Name: managed_postgres_suspend_timeouts managed_postgres_suspend_timeouts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_suspend_timeouts
+    ADD CONSTRAINT managed_postgres_suspend_timeouts_pkey PRIMARY KEY (database_id);
 
 
 --
@@ -73276,6 +74163,22 @@ ALTER TABLE ONLY public.object_storage_version_inventory_cursors
 
 ALTER TABLE ONLY public.object_storage_version_inventory_entries
     ADD CONSTRAINT object_storage_version_inventory_entries_pkey PRIMARY KEY (job_id, identity_hash);
+
+
+--
+-- Name: object_storage_workload_credentials object_storage_workload_credentials_access_key_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_workload_credentials
+    ADD CONSTRAINT object_storage_workload_credentials_access_key_id_key UNIQUE (access_key_id);
+
+
+--
+-- Name: object_storage_workload_credentials object_storage_workload_credentials_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_workload_credentials
+    ADD CONSTRAINT object_storage_workload_credentials_pkey PRIMARY KEY (id);
 
 
 --
@@ -74847,6 +75750,14 @@ ALTER TABLE ONLY public.project_binding_verification_runs
 
 
 --
+-- Name: project_deploy_rollback_members project_deploy_rollback_members_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_deploy_rollback_members
+    ADD CONSTRAINT project_deploy_rollback_members_pkey PRIMARY KEY (deployment_id);
+
+
+--
 -- Name: project_environment_approvals project_environment_approvals_approval_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -76127,6 +77038,46 @@ ALTER TABLE ONLY public.project_release_worker_drains
 
 
 --
+-- Name: project_rollback_deploy_protections project_rollback_deploy_protections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_rollback_deploy_protections
+    ADD CONSTRAINT project_rollback_deploy_protections_pkey PRIMARY KEY (project_id, deploy_group_id, manifest_hash);
+
+
+--
+-- Name: project_rollback_http_recovery project_rollback_http_recovery_generation_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_rollback_http_recovery
+    ADD CONSTRAINT project_rollback_http_recovery_generation_key UNIQUE (generation);
+
+
+--
+-- Name: project_rollback_http_recovery project_rollback_http_recovery_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_rollback_http_recovery
+    ADD CONSTRAINT project_rollback_http_recovery_pkey PRIMARY KEY (rollback_id);
+
+
+--
+-- Name: project_rollback_operations project_rollback_operations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_rollback_operations
+    ADD CONSTRAINT project_rollback_operations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: project_rollback_undo_artifact_holds project_rollback_undo_artifact_holds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_rollback_undo_artifact_holds
+    ADD CONSTRAINT project_rollback_undo_artifact_holds_pkey PRIMARY KEY (operation_id, deployment_id);
+
+
+--
 -- Name: project_submissions project_submissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -77300,6 +78251,22 @@ ALTER TABLE ONLY public.sandbox_workspace_snapshots
 
 ALTER TABLE ONLY public.sandbox_workspace_snapshots
     ADD CONSTRAINT sandbox_workspace_snapshots_storage_key_key UNIQUE (storage_key);
+
+
+--
+-- Name: saved_insights saved_insights_env_key_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.saved_insights
+    ADD CONSTRAINT saved_insights_env_key_uniq UNIQUE (environment_id, key);
+
+
+--
+-- Name: saved_insights saved_insights_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.saved_insights
+    ADD CONSTRAINT saved_insights_pkey PRIMARY KEY (id);
 
 
 --
@@ -79345,6 +80312,27 @@ CREATE INDEX api_consumer_credit_grants_consumer_idx ON public.api_consumer_cred
 
 
 --
+-- Name: api_consumer_credit_purchases_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_credit_purchases_due ON public.api_consumer_credit_purchases USING btree (next_check_at, id) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: api_consumer_credit_purchases_pending_consumer; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX api_consumer_credit_purchases_pending_consumer ON public.api_consumer_credit_purchases USING btree (consumer_id) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: api_consumer_credit_purchases_pending_live_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_credit_purchases_pending_live_account ON public.api_consumer_credit_purchases USING btree (account_id) WHERE ((status = 'pending'::text) AND livemode);
+
+
+--
 -- Name: api_consumer_overdue_holds_app_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -79356,6 +80344,13 @@ CREATE INDEX api_consumer_overdue_holds_app_idx ON public.api_consumer_overdue_h
 --
 
 CREATE INDEX api_consumer_plan_assignments_lookup_idx ON public.api_consumer_plan_assignments USING btree (account_id, app_id, consumer_id, effective_from DESC);
+
+
+--
+-- Name: api_consumer_plan_route_admissions_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_plan_route_admissions_account_idx ON public.api_consumer_plan_route_admissions USING btree (account_id);
 
 
 --
@@ -80077,6 +81072,13 @@ CREATE INDEX app_udp_listeners_enabled_port_idx ON public.app_udp_listeners USIN
 --
 
 CREATE UNIQUE INDEX app_udp_listeners_public_port_uniq ON public.app_udp_listeners USING btree (public_port);
+
+
+--
+-- Name: app_verification_contracts_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_verification_contracts_account_idx ON public.app_verification_contracts USING btree (account_id);
 
 
 --
@@ -82174,6 +83176,27 @@ CREATE INDEX deployment_sidecar_layers_storage_key_idx ON public.deployment_side
 --
 
 CREATE INDEX deployment_submission_receipts_deployment_idx ON public.deployment_submission_receipts USING btree (deployment_id);
+
+
+--
+-- Name: deployment_verification_leases_expires_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_verification_leases_expires_idx ON public.deployment_verification_leases USING btree (expires_at);
+
+
+--
+-- Name: deployment_verification_queries_expires_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_verification_queries_expires_idx ON public.deployment_verification_queries USING btree (expires_at);
+
+
+--
+-- Name: deployment_verification_queries_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_verification_queries_pending_idx ON public.deployment_verification_queries USING btree (created_at) WHERE (status = 'pending'::text);
 
 
 --
@@ -86468,6 +87491,27 @@ CREATE INDEX object_storage_upload_grants_expiry_idx ON public.object_storage_up
 
 
 --
+-- Name: object_storage_workload_credentials_caller_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_storage_workload_credentials_caller_idx ON public.object_storage_workload_credentials USING btree (caller_app_id);
+
+
+--
+-- Name: object_storage_workload_credentials_expires_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_storage_workload_credentials_expires_idx ON public.object_storage_workload_credentials USING btree (expires_at);
+
+
+--
+-- Name: object_storage_workload_credentials_instance_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_storage_workload_credentials_instance_idx ON public.object_storage_workload_credentials USING btree (instance_id, bucket_id);
+
+
+--
 -- Name: object_upload_capture_pending_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -87833,6 +88877,13 @@ CREATE INDEX project_binding_verification_runs_project_time_idx ON public.projec
 
 
 --
+-- Name: project_deploy_rollback_members_group_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_deploy_rollback_members_group_idx ON public.project_deploy_rollback_members USING btree (project_id, deploy_group_id);
+
+
+--
 -- Name: project_environment_approvals_id_lookup_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -88152,6 +89203,62 @@ CREATE INDEX project_release_sets_history_idx ON public.project_release_sets USI
 --
 
 CREATE INDEX project_release_stages_scope ON public.project_release_stages USING btree (project_id, environment_slug, expires_at);
+
+
+--
+-- Name: project_rollback_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_rollback_due ON public.project_rollback_operations USING btree (next_run_at, id) WHERE (status = 'running'::text);
+
+
+--
+-- Name: project_rollback_history_by_project; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_rollback_history_by_project ON public.project_rollback_operations USING btree (project_id);
+
+
+--
+-- Name: project_rollback_http_recovery_operation; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_rollback_http_recovery_operation ON public.project_rollback_http_recovery USING btree (operation_id);
+
+
+--
+-- Name: project_rollback_http_recovery_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_rollback_http_recovery_pending ON public.project_rollback_http_recovery USING btree (next_notify_at, generation) WHERE (next_notify_at IS NOT NULL);
+
+
+--
+-- Name: project_rollback_one_running; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX project_rollback_one_running ON public.project_rollback_operations USING btree (project_id) WHERE (status = 'running'::text);
+
+
+--
+-- Name: project_rollback_protection_keys_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_rollback_protection_keys_idx ON public.project_rollback_deploy_protections USING gin (storage_keys);
+
+
+--
+-- Name: project_rollback_start_request_once; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX project_rollback_start_request_once ON public.project_rollback_operations USING btree (project_id, start_request_id) WHERE (start_request_id IS NOT NULL);
+
+
+--
+-- Name: project_rollback_undo_artifact_keys_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_rollback_undo_artifact_keys_idx ON public.project_rollback_undo_artifact_holds USING gin (storage_keys);
 
 
 --
@@ -89279,6 +90386,13 @@ CREATE INDEX sandbox_workspace_snapshots_expiry_idx ON public.sandbox_workspace_
 --
 
 CREATE INDEX sandbox_workspace_snapshots_pending_idx ON public.sandbox_workspace_snapshots USING btree (created_at) WHERE (state = 'pending'::text);
+
+
+--
+-- Name: saved_insights_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX saved_insights_due_idx ON public.saved_insights USING btree (next_check_at) WHERE (next_check_at IS NOT NULL);
 
 
 --
@@ -94462,6 +95576,13 @@ CREATE TRIGGER financial_usage_retention AFTER INSERT OR UPDATE ON public.usage_
 
 
 --
+-- Name: project_rollback_operations finish_project_rollback_undo_artifact_holds; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER finish_project_rollback_undo_artifact_holds AFTER UPDATE OF status ON public.project_rollback_operations FOR EACH ROW WHEN ((old.status IS DISTINCT FROM new.status)) EXECUTE FUNCTION public.finish_project_rollback_undo_artifact_holds();
+
+
+--
 -- Name: function_migration_destinations function_migration_destination_capacity_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -94672,10 +95793,52 @@ CREATE TRIGGER guard_event_subscription_environment_scope BEFORE INSERT OR UPDAT
 
 
 --
+-- Name: deployments guard_legacy_project_rollback_pause; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_legacy_project_rollback_pause BEFORE UPDATE OF status, traffic_percent ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_legacy_project_rollback_pause();
+
+
+--
 -- Name: managed_postgres_databases guard_managed_postgres_accounting_intent; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER guard_managed_postgres_accounting_intent BEFORE UPDATE OF accounting_required ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_accounting_intent();
+
+
+--
+-- Name: layer_artifact_retention guard_project_rollback_artifact_deletion; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_project_rollback_artifact_deletion BEFORE UPDATE OF state ON public.layer_artifact_retention FOR EACH ROW WHEN (((old.state = 'retained'::text) AND (new.state = 'deleting'::text))) EXECUTE FUNCTION public.guard_project_rollback_artifact_deletion();
+
+
+--
+-- Name: deployments guard_project_rollback_preparation; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_project_rollback_preparation BEFORE UPDATE OF status, traffic_percent ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_project_rollback_preparation();
+
+
+--
+-- Name: deployments guard_verified_project_rollback; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_verified_project_rollback BEFORE UPDATE OF status, traffic_percent ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_verified_project_rollback();
+
+
+--
+-- Name: deployments guard_verified_project_rollback_pre_cutover_health; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_verified_project_rollback_pre_cutover_health BEFORE UPDATE OF status, traffic_percent ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_project_rollback_pre_cutover_health();
+
+
+--
+-- Name: deployments guard_verified_project_rollback_traffic; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_verified_project_rollback_traffic BEFORE UPDATE OF status, traffic_percent ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_project_rollback_live_traffic();
 
 
 --
@@ -96667,6 +97830,55 @@ CREATE TRIGGER pr_preview_set_account_trg BEFORE INSERT OR UPDATE OF root_app_id
 
 
 --
+-- Name: project_rollback_operations preserve_project_rollback_health_policy; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER preserve_project_rollback_health_policy BEFORE UPDATE OF receipt ON public.project_rollback_operations FOR EACH ROW EXECUTE FUNCTION public.preserve_project_rollback_health_policy();
+
+
+--
+-- Name: project_rollback_operations preserve_project_rollback_live_traffic_policy; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER preserve_project_rollback_live_traffic_policy BEFORE UPDATE OF receipt ON public.project_rollback_operations FOR EACH ROW EXECUTE FUNCTION public.preserve_project_rollback_live_traffic_policy();
+
+
+--
+-- Name: project_rollback_operations preserve_project_rollback_live_traffic_undo; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER preserve_project_rollback_live_traffic_undo BEFORE UPDATE OF receipt ON public.project_rollback_operations FOR EACH ROW EXECUTE FUNCTION public.preserve_project_rollback_live_traffic_undo();
+
+
+--
+-- Name: project_rollback_operations preserve_project_rollback_pause; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER preserve_project_rollback_pause BEFORE UPDATE OF status, receipt ON public.project_rollback_operations FOR EACH ROW EXECUTE FUNCTION public.preserve_project_rollback_pause();
+
+
+--
+-- Name: project_rollback_operations preserve_project_rollback_pre_cutover_policy; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER preserve_project_rollback_pre_cutover_policy BEFORE UPDATE OF receipt ON public.project_rollback_operations FOR EACH ROW EXECUTE FUNCTION public.preserve_project_rollback_pre_cutover_policy();
+
+
+--
+-- Name: project_rollback_operations preserve_project_rollback_stabilization; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER preserve_project_rollback_stabilization BEFORE UPDATE OF receipt ON public.project_rollback_operations FOR EACH ROW EXECUTE FUNCTION public.preserve_project_rollback_stabilization();
+
+
+--
+-- Name: project_rollback_operations preserve_project_rollback_undo_link; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER preserve_project_rollback_undo_link BEFORE UPDATE OF status, receipt ON public.project_rollback_operations FOR EACH ROW EXECUTE FUNCTION public.preserve_project_rollback_undo_link();
+
+
+--
 -- Name: private_network_peerings private_network_peering_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -97126,6 +98338,34 @@ CREATE TRIGGER reserved_ip_inventory_set_updated_at_trg BEFORE UPDATE ON public.
 --
 
 CREATE TRIGGER reserved_ip_leases_set_updated_at_trg BEFORE UPDATE ON public.reserved_ip_leases FOR EACH ROW EXECUTE FUNCTION public.reserved_ip_leases_set_updated_at();
+
+
+--
+-- Name: project_rollback_operations retain_project_rollback_phase; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER retain_project_rollback_phase BEFORE UPDATE ON public.project_rollback_operations FOR EACH ROW EXECUTE FUNCTION public.retain_project_rollback_phase();
+
+
+--
+-- Name: project_rollback_operations retain_project_rollback_plan_hash; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER retain_project_rollback_plan_hash BEFORE UPDATE OF receipt ON public.project_rollback_operations FOR EACH ROW EXECUTE FUNCTION public.retain_project_rollback_plan_hash();
+
+
+--
+-- Name: deployment_rollback_operations retain_project_rollback_preparation; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER retain_project_rollback_preparation BEFORE INSERT OR UPDATE ON public.deployment_rollback_operations FOR EACH ROW EXECUTE FUNCTION public.retain_project_rollback_preparation();
+
+
+--
+-- Name: project_rollback_operations retain_project_rollback_start_request; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER retain_project_rollback_start_request BEFORE INSERT OR UPDATE OF receipt ON public.project_rollback_operations FOR EACH ROW EXECUTE FUNCTION public.retain_project_rollback_start_request();
 
 
 --
@@ -99079,6 +100319,46 @@ ALTER TABLE ONLY public.api_consumer_credit_grants
 
 
 --
+-- Name: api_consumer_credit_pack_settings api_consumer_credit_pack_settings_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_pack_settings
+    ADD CONSTRAINT api_consumer_credit_pack_settings_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_credit_pack_settings api_consumer_credit_pack_settings_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_pack_settings
+    ADD CONSTRAINT api_consumer_credit_pack_settings_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_credit_purchases api_consumer_credit_purchases_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_purchases
+    ADD CONSTRAINT api_consumer_credit_purchases_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_credit_purchases api_consumer_credit_purchases_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_purchases
+    ADD CONSTRAINT api_consumer_credit_purchases_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_credit_purchases api_consumer_credit_purchases_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_purchases
+    ADD CONSTRAINT api_consumer_credit_purchases_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
+
+
+--
 -- Name: api_consumer_meter_usage_minutes api_consumer_meter_usage_minutes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -99156,6 +100436,22 @@ ALTER TABLE ONLY public.api_consumer_plan_assignments
 
 ALTER TABLE ONLY public.api_consumer_plan_assignments
     ADD CONSTRAINT api_consumer_plan_assignments_plan_fkey FOREIGN KEY (app_id, plan_id) REFERENCES public.api_consumer_plans(app_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_plan_route_admissions api_consumer_plan_route_admissions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plan_route_admissions
+    ADD CONSTRAINT api_consumer_plan_route_admissions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_plan_route_admissions api_consumer_plan_route_admissions_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plan_route_admissions
+    ADD CONSTRAINT api_consumer_plan_route_admissions_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
 
 
 --
@@ -100652,6 +101948,14 @@ ALTER TABLE ONLY public.app_udp_listeners
 
 ALTER TABLE ONLY public.app_udp_listeners
     ADD CONSTRAINT app_udp_listeners_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_verification_contracts app_verification_contracts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_verification_contracts
+    ADD CONSTRAINT app_verification_contracts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
@@ -103604,6 +104908,30 @@ ALTER TABLE ONLY public.deployment_submission_receipts
 
 ALTER TABLE ONLY public.deployment_submission_receipts
     ADD CONSTRAINT deployment_submission_receipts_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_verification_leases deployment_verification_leases_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_verification_leases
+    ADD CONSTRAINT deployment_verification_leases_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_verification_leases deployment_verification_leases_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_verification_leases
+    ADD CONSTRAINT deployment_verification_leases_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_verification_queries deployment_verification_queries_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_verification_queries
+    ADD CONSTRAINT deployment_verification_queries_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
@@ -107823,6 +109151,14 @@ ALTER TABLE ONLY public.managed_postgres_restore_verifications
 
 
 --
+-- Name: managed_postgres_suspend_timeouts managed_postgres_suspend_timeouts_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_suspend_timeouts
+    ADD CONSTRAINT managed_postgres_suspend_timeouts_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
 -- Name: managed_postgres_usage managed_postgres_usage_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -111175,6 +112511,22 @@ ALTER TABLE ONLY public.project_binding_verification_runs
 
 
 --
+-- Name: project_deploy_rollback_members project_deploy_rollback_members_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_deploy_rollback_members
+    ADD CONSTRAINT project_deploy_rollback_members_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_deploy_rollback_members project_deploy_rollback_members_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_deploy_rollback_members
+    ADD CONSTRAINT project_deploy_rollback_members_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
 -- Name: project_environment_approvals project_environment_approvals_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -112935,6 +114287,46 @@ ALTER TABLE ONLY public.project_release_worker_drains
 
 
 --
+-- Name: project_rollback_deploy_protections project_rollback_deploy_protections_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_rollback_deploy_protections
+    ADD CONSTRAINT project_rollback_deploy_protections_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_rollback_http_recovery project_rollback_http_recovery_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_rollback_http_recovery
+    ADD CONSTRAINT project_rollback_http_recovery_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_rollback_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_rollback_http_recovery project_rollback_http_recovery_rollback_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_rollback_http_recovery
+    ADD CONSTRAINT project_rollback_http_recovery_rollback_id_fkey FOREIGN KEY (rollback_id) REFERENCES public.deployment_rollback_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_rollback_operations project_rollback_operations_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_rollback_operations
+    ADD CONSTRAINT project_rollback_operations_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_rollback_undo_artifact_holds project_rollback_undo_artifact_holds_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_rollback_undo_artifact_holds
+    ADD CONSTRAINT project_rollback_undo_artifact_holds_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.project_rollback_operations(id) ON DELETE CASCADE;
+
+
+--
 -- Name: project_submissions project_submissions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -114316,6 +115708,22 @@ ALTER TABLE ONLY public.sandbox_templates
 
 ALTER TABLE ONLY public.sandbox_workspace_snapshots
     ADD CONSTRAINT sandbox_workspace_snapshots_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: saved_insights saved_insights_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.saved_insights
+    ADD CONSTRAINT saved_insights_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: saved_insights saved_insights_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.saved_insights
+    ADD CONSTRAINT saved_insights_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
 
 
 --

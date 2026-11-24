@@ -199,7 +199,10 @@ func cmdDeployments(args []string) int {
 	resolvedApp, resolveErr := resolveAppFlagOrContext(*app)
 	if resolveErr == nil {
 		*app = resolvedApp
-	} else if !errors.Is(resolveErr, errProjectContextNotFound) {
+	} else if !errors.Is(resolveErr, errProjectContextNotFound) && !linkedProjectOnlyHere() {
+		// A checkout linked to a whole project names no one app, like an
+		// unlinked one: list the account's releases. It failed "project has
+		// multiple or no workloads" in every Compose checkout (prod hunt r27).
 		return printErr("Could not read local project context", resolveErr)
 	}
 	client, err := authedClient()
@@ -273,8 +276,12 @@ func cmdDeployments(args []string) int {
 	if stdoutIsTTY() {
 		renderDeploymentHeader(osStdout, *wide)
 	}
+	serving := servingReleaseApps(page.Items)
 	for _, d := range page.Items {
 		d.Status = listedReleaseStatus(d)
+		if d.Status == "live" && d.TrafficPercent == 0 && serving[d.AppID] {
+			d.Status = "standby"
+		}
 		if parkedApp, ok := parked[d.ID]; ok && parkedApp.ID == d.AppID {
 			d.Status = parkedReleaseStatus(d.Status)
 		}
@@ -679,6 +686,15 @@ func cmdDeploymentGet(args []string) int {
 		return 1
 	}
 	id := pos[0]
+	if id == "list" || id == "ls" || id == "history" {
+		// Prod hunt r30: `deployment list --app X` printed the one-release
+		// usage; the list lives under `release`.
+		hint := "gregale release list"
+		if *appFlag != "" {
+			hint += " --app " + *appFlag
+		}
+		return printErr("Unknown deployment verb", fmt.Errorf("deployment shows one release; to list releases run: %s", hint))
+	}
 	if !validDeploymentReadRef(id) {
 		PrintUsage(os.Stderr, "usage: gregale deployment <id|vN|latest> [--app SLUG] [--show-scan] [--show-secret-scan]   (id is 32 hex chars, a vN revision, or latest)", "deployment")
 		return 1
@@ -782,6 +798,9 @@ func cmdDeploymentGet(args []string) int {
 	if d.ErrorCode != "" {
 		_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "error_code:", d.ErrorCode)
 	}
+	// Prod hunt r35: the error named only a raw task API path; show the
+	// release command's captured output as `deploys status` does.
+	printReleaseTaskOutput(ctx, client, osStdout, *appFlag, d)
 	if drain := d.WorkerDrain; drain != nil {
 		_, _ = fmt.Fprintf(osStdout, "%-14s active=%d completed=%d timed_out=%d failed=%d overdue=%d\n", "worker_drain:", drain.Active, drain.Completed, drain.TimedOut, drain.Failed, drain.Overdue)
 		if drain.Deadline != nil {
@@ -940,6 +959,7 @@ func renderDeploymentHostingReceiptFor(w io.Writer, raw json.RawMessage, functio
 	if receipt.Smoke.Error != "" {
 		_, _ = fmt.Fprintf(w, "%-14s %s\n", "hosting_detail:", receipt.Smoke.Error)
 	}
+	renderVerificationContractReport(w, receipt.Smoke.VerificationContract)
 }
 
 // cmdDeploymentSetMinInstances implements `gregale deployment

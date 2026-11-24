@@ -553,6 +553,11 @@ type Instance struct {
 	RestoreMs    int64
 	NetnsTapMs   int64
 	GuestReadyMs int64
+	// StartupOOM: the guest reported a workload OOM kill (ADR-121) before
+	// this wake returned, yet the instance became ready. The wake's latency
+	// includes the app's memory exhaustion, which is the app's fault, not
+	// the platform's.
+	StartupOOM bool
 	// RestoreError is populated when a requested snapshot restore falls
 	// back to a successful cold boot. It is diagnostic-only: the fallback
 	// remains a successful wake, but vmmd must retain the reason so an
@@ -5938,6 +5943,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs,
 		RestoreError: timings.restoreError, RestoreFallbackReason: timings.restoreFallbackReason,
 		BaseScanGrace: timings.baseScanGrace,
+	}
+	if oom, ok := m.vmm.(interface{ StartupOOMKilled(string) bool }); ok {
+		inst.StartupOOM = oom.StartupOOMKilled(req.Instance)
 	}
 	if err = m.stampNativeInstanceGeneration(inst); err != nil {
 		return nil, fmt.Errorf("wake %s: original launch identity: %w", req.Instance, err)

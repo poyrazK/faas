@@ -75,15 +75,23 @@ WHERE (v.owner_id=sqlc.arg(owner_id)::uuid OR sqlc.arg(all_owners)::boolean)
 ORDER BY v.account_id LIMIT sqlc.arg(row_limit)::integer;
 
 -- name: ReferralSummary :many
-SELECT kind,currency,count(*)::bigint AS signups,
- count(*) FILTER (WHERE paid)::bigint AS paid,
- count(*) FILTER (WHERE reward_status='eligible')::bigint AS eligible,
- COALESCE(sum(reward_cents) FILTER (WHERE reward_status='eligible'),0)::bigint AS reward_cents,
- COALESCE(sum(paid_cents) FILTER (WHERE paid AND reward_status NOT IN ('reversed','currency_mismatch')),0)::bigint AS paid_cents
-FROM sales_referral_overview
-WHERE (owner_id=sqlc.arg(owner_id)::uuid OR sqlc.arg(all_owners)::boolean)
- AND (sqlc.arg(kind)::text='' OR kind=sqlc.arg(kind)::text)
-GROUP BY kind,currency ORDER BY kind,currency;
+-- A sale is a paid first invoice that was not refunded or paid in another
+-- currency; "this month" is the calendar month in UTC of that first payment.
+SELECT v.kind,v.currency,count(*)::bigint AS signups,
+ count(*) FILTER (WHERE v.paid)::bigint AS paid,
+ count(*) FILTER (WHERE v.reward_status='eligible')::bigint AS eligible,
+ COALESCE(sum(v.reward_cents) FILTER (WHERE v.reward_status='eligible'),0)::bigint AS reward_cents,
+ COALESCE(sum(v.paid_cents) FILTER (WHERE v.paid AND v.reward_status NOT IN ('reversed','currency_mismatch')),0)::bigint AS paid_cents,
+ count(*) FILTER (WHERE v.paid AND v.reward_status NOT IN ('reversed','currency_mismatch'))::bigint AS sales,
+ count(*) FILTER (WHERE v.paid AND v.reward_status NOT IN ('reversed','currency_mismatch')
+  AND r.first_paid_at>=date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')::bigint AS sales_this_month,
+ COALESCE(sum(v.paid_cents) FILTER (WHERE v.paid AND v.reward_status NOT IN ('reversed','currency_mismatch')
+  AND r.first_paid_at>=date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'),0)::bigint AS paid_this_month_cents
+FROM sales_referral_overview v
+JOIN referral_attributions r ON r.account_id=v.account_id
+WHERE (v.owner_id=sqlc.arg(owner_id)::uuid OR sqlc.arg(all_owners)::boolean)
+ AND (sqlc.arg(kind)::text='' OR v.kind=sqlc.arg(kind)::text)
+GROUP BY v.kind,v.currency ORDER BY v.kind,v.currency;
 
 -- name: UpdateLead :execrows
 UPDATE referral_attributions r SET stage=$1,note=$2,follow_up=$3,updated_by=$4,updated_at=now()

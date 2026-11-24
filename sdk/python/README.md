@@ -33,7 +33,7 @@ calls answer `404 no such API route`.
 
 ## Usage
 Read the account through the default client. Supply your existing credential
-through `FAAS_TOKEN`, never a literal in source:
+through `GREGALE_TOKEN`, never a literal in source:
 
 <!-- sdk-install-quickstart:start -->
 ```python
@@ -44,8 +44,8 @@ from faas_sdk.api.account import get_account
 from faas_sdk.models.account_response import AccountResponse
 
 client = FaaSClient(
-    base_url=os.environ.get("FAAS_API", "https://api.gregale.dev"),
-    token=os.environ["FAAS_TOKEN"],
+    base_url=os.environ.get("GREGALE_API_URL", "https://api.gregale.dev"),
+    token=os.environ["GREGALE_TOKEN"],
 )
 try:
     account = get_account.sync(client=client.inner)
@@ -62,7 +62,7 @@ wrapper's async client and close it when finished:
 
 ```python
 async def read_account():
-    client = FaaSClient(base_url="https://api.gregale.dev", token=os.environ["FAAS_TOKEN"])
+    client = FaaSClient(base_url="https://api.gregale.dev", token=os.environ["GREGALE_TOKEN"])
     try:
         return await get_account.asyncio(client=client.inner)
     finally:
@@ -85,7 +85,7 @@ from faas_sdk.api.deployments import get_build
 async def read_build(build_id: str):
     client = FaaSClient(
         base_url="https://api.gregale.dev",
-        token=os.environ["FAAS_TOKEN"],
+        token=os.environ["GREGALE_TOKEN"],
         options=FaaSClientOptions(
             on_response=lambda info: print(info.request_id, info.status),
         ),

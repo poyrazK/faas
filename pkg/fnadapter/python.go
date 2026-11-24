@@ -37,6 +37,35 @@ class _Log:
 real_stdout = sys.stdout
 sys.stdout = sys.stderr
 handler_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".faas-handler.py")
+
+def _print_handler_exc():
+    # A customer traceback names the customer's file: the adapter's own
+    # frames are left out and the moved implementation shows under the name
+    # it was deployed as. Logs showed "/app/handler.py, line 453, in
+    # _serve_lines" (the adapter) above "/app/.faas-handler.py" (prod hunt r25).
+    try:
+        adapter = os.path.abspath(__file__)
+        impl = os.path.abspath(handler_path)
+        seen = set()
+        def clean(te):
+            if te is None or id(te) in seen:
+                return
+            seen.add(id(te))
+            kept = [f for f in te.stack if os.path.abspath(f.filename) != adapter]
+            if kept:
+                for f in kept:
+                    _ = f.line  # read the source line before renaming the file
+                    if os.path.abspath(f.filename) == impl:
+                        f.filename = adapter
+                te.stack = traceback.StackSummary.from_list(kept)
+            clean(te.__cause__)
+            clean(te.__context__)
+        te = traceback.TracebackException(*sys.exc_info()[:3])
+        clean(te)
+        sys.stderr.write("".join(te.format()))
+        sys.stderr.flush()
+    except Exception:
+        traceback.print_exc()
 spec = importlib.util.spec_from_file_location("faas_handler_impl", handler_path)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
@@ -91,7 +120,7 @@ if "init" in function_hooks:
             loop.run_until_complete(_result)
     except Exception:
         print("gregale: function init failed:", file=sys.stderr)
-        traceback.print_exc()
+        _print_handler_exc()
         raise
 
 if os.environ.get("FAAS_PERSISTENT_WORKER") == "1":
@@ -120,7 +149,7 @@ def _run_hook_sync(request):
             loop.run_until_complete(result)
     except Exception:
         print("gregale: function %s hook failed:" % request["function_hook"], file=sys.stderr)
-        traceback.print_exc()
+        _print_handler_exc()
         return _hook_envelope(500)
     return _hook_envelope(204)
 
@@ -137,7 +166,7 @@ async def _run_hook_async(request):
             await result
     except Exception:
         print("gregale: function %s hook failed:" % request["function_hook"], file=sys.stderr)
-        traceback.print_exc()
+        _print_handler_exc()
         return _hook_envelope(500)
     return _hook_envelope(204)
 
@@ -212,10 +241,27 @@ def _shape(result):
     status = 200
     response_headers = {}
     response_body = result
+    # A dict's HTTP status (100-599, an int or digit string) is its status;
+    # any other status value is data, so {"status": "ok"} answers 200 where it
+    # failed with "invalid literal for int()". A dict holding only a status
+    # and headers has an empty body; {"status": 201, "headers": ...} was sent
+    # as its own JSON (prod hunt r32). A dict without a body is otherwise sent
+    # whole, as before.
     if isinstance(result, dict):
-        status = int(result.get("statusCode", result.get("status", 200)))
+        code = None
+        for key in ("statusCode", "status"):
+            value = result.get(key)
+            if isinstance(value, str) and len(value) == 3 and value.isascii() and value.isdigit():
+                value = int(value)
+            if isinstance(value, int) and not isinstance(value, bool) and 100 <= value <= 599:
+                code = value
+                break
+        status = 200 if code is None else code
         response_headers = result.get("headers") or {}
-        if "body" in result: response_body = result["body"]
+        if "body" in result:
+            response_body = result["body"]
+        elif code is not None and set(result) <= {"status", "statusCode", "headers"}:
+            response_body = None
     # A header value may be a list, one line per element (ADR-999).
     headers_out = {str(k): ([str(x) for x in v] if isinstance(v, (list, tuple)) else str(v))
                    for k, v in response_headers.items()}
@@ -223,8 +269,17 @@ def _shape(result):
 
 def _whole(status, headers_out, response_body):
     if response_body is None: response_body = ""
+    # A body the adapter encodes says what it is; without this the runner's
+    # binary default made browsers download JSON (prod hunt r32).
+    default_type = ""
     if not isinstance(response_body, (str, bytes, bytearray)):
         response_body = json.dumps(response_body)
+        default_type = "application/json; charset=utf-8"
+    elif isinstance(response_body, str) and response_body:
+        default_type = "text/plain; charset=utf-8"
+    if default_type and not any(str(k).lower() == "content-type" for k in headers_out):
+        headers_out = dict(headers_out)
+        headers_out["content-type"] = default_type
     if isinstance(response_body, str): response_body = response_body.encode("utf-8")
     return {
         "status": status,
@@ -303,7 +358,7 @@ def _serve_lines():
                     continue
                 envelope = _whole(status, headers_out, response_body)
         except Exception as exc:
-            traceback.print_exc()
+            _print_handler_exc()
             message = _error_message(exc)
             if streaming:
                 # The status is already sent; the error frame tells the
@@ -354,7 +409,7 @@ async def _serve_one(request, rid, cancelled):
                 return
             emit(_whole(status, headers_out, response_body))
     except Exception as exc:
-        traceback.print_exc()
+        _print_handler_exc()
         message = _error_message(exc)
         emit({"frame": "error", "message": message} if streaming else _error_envelope(message, invocation_id))
 
@@ -401,7 +456,7 @@ def _serve_sync(request, rid, cancelled):
                 return
             emit(_whole(status, headers_out, response_body))
     except Exception as exc:
-        traceback.print_exc()
+        _print_handler_exc()
         message = _error_message(exc)
         emit({"frame": "error", "message": message} if streaming else _error_envelope(message, invocation_id))
 
@@ -437,7 +492,7 @@ async def _serve_shared():
         try:
             request = json.loads(line)
         except ValueError:
-            traceback.print_exc()
+            _print_handler_exc()
             continue
         cancel = request.get("__faas_cancel")
         if cancel is not None:

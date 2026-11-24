@@ -324,7 +324,7 @@ func EditRemove(key string) Edit {
 }
 
 // EditEdgeSet routes path at the edge: requests the flag decides as variant
-// are rewritten to rewrite (ADR-20261122090000). It adds the route, or the
+// are rewritten to rewrite (ADR-20261124212701). It adds the route, or the
 // variant's action to an existing route of the flag.
 func EditEdgeSet(key, path, variant, rewrite string) Edit {
 	return func(cfg *Config) (string, error) {

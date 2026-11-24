@@ -119,19 +119,20 @@ func TestEmbeddedCatalogBuildsAGate(t *testing.T) {
 	g := New(catalog, nil)
 	subject := platformflags.Subject{AccountID: account, Plan: "pro"}
 	for pattern, want := range map[string]bool{
-		"POST /v1/apps":                              true,
-		"GET /v1/apps/{slug}":                        true,
-		"POST /v1/apps/{slug}/deployments":           true,
-		"GET /v1/apps/{slug}/logs":                   true,
-		"POST /v1/auth/login":                        true,
-		"GET /v1/account/export":                     true,
-		"PATCH /v1/deployments/{id}/traffic":         true,
-		"GET /v1/apps/{slug}/realtime/endpoints":     false,
-		"GET /v1/postgres/databases":                 true,
-		"GET /v1/apps/{slug}/route-requirements":     false,
-		"GET /v1/account/platform-tenants":           false,
-		"GET /dashboard/apps/{slug}/secrets":         true,
-		"GET /dashboard/apps/{slug}/tenant-surfaces": false,
+		"POST /v1/apps":                                         true,
+		"GET /v1/apps/{slug}":                                   true,
+		"POST /v1/apps/{slug}/deployments":                      true,
+		"GET /v1/apps/{slug}/logs":                              true,
+		"POST /v1/auth/login":                                   true,
+		"GET /v1/account/export":                                true,
+		"PATCH /v1/deployments/{id}/traffic":                    true,
+		"GET /v1/apps/{slug}/realtime/endpoints":                true, // beta, ADR-20261123074615
+		"GET /v1/apps/{slug}/realtime/endpoints/{id}/occupancy": false,
+		"GET /v1/postgres/databases":                            true,
+		"GET /v1/apps/{slug}/route-requirements":                false,
+		"GET /v1/account/platform-tenants":                      false,
+		"GET /dashboard/apps/{slug}/secrets":                    true,
+		"GET /dashboard/apps/{slug}/tenant-surfaces":            false,
 	} {
 		if got := g.Allowed(pattern, subject); got != want {
 			t.Errorf("default Allowed(%q) = %v, want %v", pattern, got, want)

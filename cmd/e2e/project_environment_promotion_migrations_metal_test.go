@@ -43,7 +43,7 @@ func promotionMigrationNativeFiles(binary []byte, version string) fstest.MapFS {
 		generation = "stable" // old code reads the legacy column after expansion too
 	}
 	files := projectHTTPNativeFiles(binary, generation)
-	// Procfile commands use /bin/sh -lc. The scratch image supplies an adapter
+	// Procfile commands use /bin/sh -c. The scratch image supplies an adapter
 	// for this exact command instead of depending on a shell in the host base.
 	files["Dockerfile.frontend"].Data = append(files["Dockerfile.frontend"].Data, []byte("COPY projectworker /bin/sh\n")...)
 	if version == "tested" {

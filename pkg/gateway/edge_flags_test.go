@@ -59,7 +59,7 @@ func wantPath(t *testing.T, customer, subject string) string {
 	return "/pricing"
 }
 
-// ADR-20261122090000: a verified customer is routed as the SDK decides,
+// ADR-20261124212701: a verified customer is routed as the SDK decides,
 // and the decision joins the request's flag evidence.
 func TestEdgeFlagsRouteVerifiedCustomer(t *testing.T) {
 	served := map[string]bool{}

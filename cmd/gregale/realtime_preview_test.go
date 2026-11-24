@@ -72,3 +72,39 @@ func TestRealtimePreviewHiddenFromCLI(t *testing.T) {
 		t.Errorf("preview shell hides the preview: verbs %v, delivery %v", names, delivery)
 	}
 }
+
+// adr: 20261019102657 — an account in the rollout sees the preview once
+// apid's capability registry says so, without the operator variable; a
+// logged-out or unconfirmed CLI keeps it hidden.
+func TestRealtimePreviewFollowsAccountView(t *testing.T) {
+	t.Setenv("FAAS_REALTIME_PREVIEW_ACCOUNTS", "")
+	if main.RealtimePreviewInView(true) {
+		t.Fatal("tier defaults (logged out, unconfirmed) must hide the preview")
+	}
+	if !main.RealtimePreviewInView(false) {
+		t.Fatal("an account view that hides nothing must show the preview")
+	}
+	if main.RealtimePreviewInView(false, "realtime-channels") {
+		t.Fatal("an account outside the rollout (realtime-channels hidden) must not see the preview")
+	}
+
+	in := main.RealtimeVerbsDiscoveredBy()
+	for _, verb := range []string{"occupancy", "inbox", "push", "mark-read"} {
+		if !slices.Contains(in, verb) {
+			t.Errorf("discovery for an account in the rollout leaves out realtime %s: %v", verb, in)
+		}
+	}
+	occupancyOff := main.RealtimeVerbsDiscoveredBy("realtime-occupancy")
+	if slices.Contains(occupancyOff, "occupancy") || !slices.Contains(occupancyOff, "inbox") {
+		t.Errorf("occupancy flag off must hide only occupancy: %v", occupancyOff)
+	}
+	out := main.RealtimeVerbsDiscoveredBy("realtime-channels", "realtime-occupancy", "realtime-push")
+	for _, verb := range main.RealtimePreviewVerbs {
+		if slices.Contains(out, verb) {
+			t.Errorf("discovery outside the rollout lists realtime %s", verb)
+		}
+	}
+	if !slices.Contains(out, "publish") {
+		t.Fatalf("released verbs must stay: %v", out)
+	}
+}

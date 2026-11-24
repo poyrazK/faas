@@ -18,6 +18,33 @@ FETCH_FAILURE_BACKOFF_SECONDS = 1
 MAX_JWKS_BYTES = 1 << 20
 
 
+class JWKSUnusableError(jwt.PyJWKClientError):
+    """The JWKS URL answered in a way retrying cannot fix (4xx, bad document).
+
+    Transient failures (network, timeout, provider 5xx/429) stay
+    PyJWKClientConnectionError, which the authenticator answers with
+    Retry-After."""
+
+
+class JWKSRefusedError(JWKSUnusableError):
+    """The JWKS URL demanded credentials (HTTP 401 or 403).
+
+    An authorization server behind access protection (on Gregale, any app
+    that requires a key) cannot serve its public keys. The authenticator
+    answers it with error_description "signing keys refused" and no
+    Retry-After."""
+
+
+def refused_fetch_error(error):
+    return isinstance(error, urllib.error.HTTPError) and error.code in (401, 403)
+
+
+def transient_fetch_error(error):
+    if isinstance(error, urllib.error.HTTPError):
+        return error.code >= 500 or error.code == 429
+    return isinstance(error, (OSError, TimeoutError, http.client.HTTPException))
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *_args, **_kwargs):
         return None
@@ -57,6 +84,8 @@ class BoundedJWKClient(jwt.PyJWKClient):
         super().__init__(*args, **kwargs)
         self._refresh_job = None
         self._fetch_retry_at = 0
+        self._last_failure_transient = True
+        self._last_failure_refused = False
 
     def fetch_data(self):
         with self._client_lock:
@@ -81,10 +110,14 @@ class BoundedJWKClient(jwt.PyJWKClient):
 
     def _run_refresh(self, job):
         result = None
+        transient = True
+        refused = False
         try:
             result = jwt.PyJWKSet.from_dict(self.fetch_data())
-        except Exception:
-            pass  # Authentication exposes only a stable, redacted failure.
+        except Exception as error:
+            # Authentication exposes only a stable, redacted failure.
+            transient = transient_fetch_error(error)
+            refused = refused_fetch_error(error)
         with self._client_lock:
             now = time.monotonic()
             expired = job["expired"] or now >= job["deadline"]
@@ -95,6 +128,11 @@ class BoundedJWKClient(jwt.PyJWKClient):
                 self._fetch_retry_at = 0
                 job["result"] = result
             else:
+                # An expired job timed out, which can pass.
+                self._last_failure_transient = transient or expired
+                self._last_failure_refused = refused and not expired
+                job["transient"] = self._last_failure_transient
+                job["refused"] = self._last_failure_refused
                 retry_from = job["deadline"] if expired else now
                 self._fetch_retry_at = max(self._fetch_retry_at, retry_from + FETCH_FAILURE_BACKOFF_SECONDS)
             self._refresh_job = None
@@ -108,6 +146,10 @@ class BoundedJWKClient(jwt.PyJWKClient):
                     return cached
             now = time.monotonic()
             if now < self._fetch_retry_at:
+                if self._last_failure_refused:
+                    raise JWKSRefusedError("JWKS refresh is cooling down")
+                if not self._last_failure_transient:
+                    raise JWKSUnusableError("JWKS refresh is cooling down")
                 raise jwt.PyJWKClientConnectionError("JWKS refresh is cooling down")
             job = self._refresh_job
             if job is None:
@@ -119,6 +161,10 @@ class BoundedJWKClient(jwt.PyJWKClient):
         if not job["done"].wait(max(0, job["deadline"] - time.monotonic())):
             with self._client_lock:
                 job["expired"] = True
+                # A timeout can pass: the cooldown must not repeat an
+                # earlier non-transient failure's label.
+                self._last_failure_transient = True
+                self._last_failure_refused = False
                 self._fetch_retry_at = max(self._fetch_retry_at, job["deadline"] + FETCH_FAILURE_BACKOFF_SECONDS)
                 sock = job["socket"]
             # shutdown interrupts header/body trickles without waiting on the
@@ -131,5 +177,9 @@ class BoundedJWKClient(jwt.PyJWKClient):
                     pass
             raise jwt.PyJWKClientConnectionError("JWKS refresh deadline exceeded")
         if job["result"] is None:
+            if job.get("refused"):
+                raise JWKSRefusedError("JWKS refresh failed")
+            if not job.get("transient", True):
+                raise JWKSUnusableError("JWKS refresh failed")
             raise jwt.PyJWKClientConnectionError("JWKS refresh failed")
         return job["result"]

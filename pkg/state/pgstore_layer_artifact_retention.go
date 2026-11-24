@@ -97,6 +97,13 @@ func (s *PgStore) ClaimLayerArtifactDeletion(ctx context.Context, key string) (L
 		if referenced.Bool {
 			return row, false, tx.Commit(ctx)
 		}
+		var protected bool
+		if err := tx.QueryRow(ctx, `select project_rollback_protects_artifact($1)`, key).Scan(&protected); err != nil {
+			return row, false, err
+		}
+		if protected {
+			return row, false, tx.Commit(ctx)
+		}
 		row.State, row.DeletionID = LayerArtifactDeleting, uuid.NewString()
 		count, err := q.ClaimLayerArtifactDeletion(ctx, tx, sqlc.ClaimLayerArtifactDeletionParams{StorageKey: key, DeletionID: mustPgUUID(row.DeletionID)})
 		if err != nil {

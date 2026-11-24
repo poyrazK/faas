@@ -216,6 +216,9 @@ func newMCPVerificationFixture(t *testing.T, badInitialize bool, latency time.Du
 		case "/v1/apps/previous/park/conditional":
 			f.parks.Add(1)
 			w.WriteHeader(204)
+		case "/v1/apps/web/env", "/v1/apps/observer/env":
+			// Runtime variables; the fixture keeps its settings in the manifest.
+			_ = json.NewEncoder(w).Encode(api.AppEnvListResponse{Env: []api.AppEnvResponse{}})
 		default:
 			t.Errorf("unexpected API request %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(404)

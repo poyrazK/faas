@@ -1,4 +1,4 @@
-// Edge flag routing (ADR-20261122090000). A variant flag with edge routes is
+// Edge flag routing (ADR-20261124212701). A variant flag with edge routes is
 // evaluated here, before the response cache and the app, for each GET or HEAD
 // request whose path it routes: the decided variant's action rewrites the
 // path, so an app without an SDK (a static site, a page the code does not

@@ -198,14 +198,14 @@ func (s *server) updateFeatureFlags(w http.ResponseWriter, r *http.Request, acct
 	}
 	if !s.edgeRoutesAllowed(r, acct, store, scope, req.Config) {
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Edge flags unavailable", "edge flag routing is not enabled for this account").
-			WithHint("An operator releases edge flag routing account by account (ADR-20261122090000). Your credentials are not the cause."))
+			WithHint("An operator releases edge flag routing account by account (ADR-20261124212701). Your credentials are not the cause."))
 		return
 	}
 	s.publishFeatureFlags(w, r, store, state.FeatureFlagUpdate{Scope: scope, ExpectedVersion: *req.ExpectedVersion, Config: req.Config, Actor: acct.ID})
 }
 
 // edgeRoutesAllowed refuses a publish that adds or changes edge routes while
-// the edge_flags platform flag is off for the account (ADR-20261122090000).
+// the edge_flags platform flag is off for the account (ADR-20261124212701).
 // An edit that leaves existing routes as they are publishes, so turning the
 // flag off never blocks kills or rollouts.
 func (s *server) edgeRoutesAllowed(r *http.Request, acct state.Account, store state.FeatureFlagStore, scope state.FeatureFlagScope, next flags.Config) bool {
@@ -372,7 +372,7 @@ func (s *server) runtimeFeatureFlags(w http.ResponseWriter, r *http.Request) {
 // while a missing flag makes it serve the application fallback, which is
 // what a kill means (ADR 20261114150000 §3).
 //
-// Edge routes are the gateway's (ADR-20261122090000): no SDK reads them.
+// Edge routes are the gateway's (ADR-20261124212701): no SDK reads them.
 func runtimeBundleForSDK(b flags.Bundle, capabilities string) flags.Bundle {
 	b.Config = flags.WithoutEdge(b.Config)
 	if supportsFlagCapability(capabilities, api.FlagSDKKillCapability) || len(flags.KilledKeys(b.Config)) == 0 {

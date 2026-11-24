@@ -329,7 +329,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusForbidden,
 				api.CodePlanWarmPoolNotAllowed,
 				"Warm-pool capacity is not allowed on this plan",
-				"Free tier does not support per-app warm pools; upgrade to Hobby or higher.")
+				"Free tier does not support per-app warm pools; upgrade to Hobby or higher.").WithDocs("https://gregale.dev/docs/plans")
 		}
 		effectiveMaxConcurrency := app.MaxConcurrency
 		if req.MaxConcurrency != nil {
@@ -475,7 +475,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusForbidden,
 				api.CodePlanScaleUpNotAllowed,
 				"Autoscale target RPS is not allowed on this plan",
-				"Free tier does not support per-app autoscaling; upgrade to Hobby or higher.")
+				"Free tier does not support per-app autoscaling; upgrade to Hobby or higher.").WithDocs("https://gregale.dev/docs/plans")
 		}
 		// 0 is the explicit-disable form (the Set bit is set, so
 		// the column gets overwritten to 0). Negative values are
@@ -492,7 +492,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusForbidden,
 				api.CodePlanScaleUpNotAllowed,
 				"Autoscale target CPU%% is not allowed on this plan",
-				"Autoscale target CPU%% requires Pro or Scale; upgrade to a paid tier.")
+				"Autoscale target CPU%% requires Pro or Scale; upgrade to a paid tier.").WithDocs("https://gregale.dev/docs/plans")
 		}
 		// 0 is the explicit-disable form; values outside [1, 100]
 		// are invalid (PG CHECK enforces this as a second-layer
@@ -517,7 +517,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusForbidden,
 				api.CodePlanStreamingNotAllowed,
 				"Streaming responses are not allowed on this plan",
-				"Free tier does not support per-app streaming; upgrade to Hobby or higher.")
+				"Free tier does not support per-app streaming; upgrade to Hobby or higher.").WithDocs("https://gregale.dev/docs/plans")
 		}
 	}
 	// Issue #676 / ADR-080: per-app raw-bytes Upgrade bridge flag.
@@ -533,7 +533,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusForbidden,
 				api.CodePlanWebSocketNotAllowed,
 				"WebSocket / Upgrade traffic is not allowed on this plan",
-				"Free tier does not support per-app WebSocket; upgrade to Hobby or higher.")
+				"Free tier does not support per-app WebSocket; upgrade to Hobby or higher.").WithDocs("https://gregale.dev/docs/plans")
 		}
 	}
 	// ADR-093: per-route observability opt-in. Same plan-gate
@@ -551,7 +551,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusForbidden,
 				api.CodePlanRouteMetricsNotAllowed,
 				"Per-route metrics are not allowed on this plan",
-				"Free tier does not support per-route observability; upgrade to Hobby or higher.")
+				"Free tier does not support per-route observability; upgrade to Hobby or higher.").WithDocs("https://gregale.dev/docs/plans")
 		}
 	}
 	// Only-allow-declared-routes is deliberately plan-agnostic: the gateway
@@ -595,7 +595,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusForbidden,
 				api.CodePlanWarmSnapshotNotAllowed,
 				"Warm-tier snapshots are not allowed on this plan",
-				"Free and Hobby tiers do not support per-app warm snapshots; upgrade to Pro or higher.")
+				"Free and Hobby tiers do not support per-app warm snapshots; upgrade to Pro or higher.").WithDocs("https://gregale.dev/docs/plans")
 		}
 	}
 	// Issue #560: per-app require_authn opt-in. Same plan-gate
@@ -613,7 +613,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusForbidden,
 				api.CodePlanRequireAuthnNotAllowed,
 				"Per-deployment authentication is not allowed on this plan",
-				"Free and Hobby tiers do not support per-app require_authn; upgrade to Pro or higher.")
+				"Free and Hobby tiers do not support per-app require_authn; upgrade to Pro or higher.").WithDocs("https://gregale.dev/docs/plans")
 		}
 	}
 	if req.ConsumerAuthMode != nil {
@@ -659,7 +659,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusUnprocessableEntity,
 				api.CodeInvalidWarmSnapshotMinRequests,
 				"Invalid warm_snapshot_min_requests",
-				fmt.Sprintf("warm_snapshot_min_requests must be in [1, 100]; got %d", v))
+				fmt.Sprintf("warm_snapshot_min_requests must be in [1, 100]; got %d", v)).WithDocs("https://gregale.dev/docs/scale-to-zero#warm-snapshots-opt-in-pro-and-scale")
 		}
 	}
 	if req.WarmSnapshotMinMs != nil {
@@ -668,7 +668,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusUnprocessableEntity,
 				api.CodeInvalidWarmSnapshotMinMs,
 				"Invalid warm_snapshot_min_ms",
-				fmt.Sprintf("warm_snapshot_min_ms must be in [100, 60000]; got %d", v))
+				fmt.Sprintf("warm_snapshot_min_ms must be in [100, 60000]; got %d", v)).WithDocs("https://gregale.dev/docs/scale-to-zero#warm-snapshots-opt-in-pro-and-scale")
 		}
 	}
 	// Issue #475: per-app eviction_priority tier. The validation
@@ -2133,7 +2133,7 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			return
 		}
 		if len(buckets) != 0 {
-			api.WriteProblem(w, api.NewProblem(409, "app_has_buckets", "Conflict", "Delete this app's object storage buckets before deleting the app."))
+			api.WriteProblem(w, appHasBucketsProblem(app.Slug, buckets))
 			return
 		}
 	}
@@ -3021,22 +3021,26 @@ func (s *server) verifyRollbackTargetArtifact(ctx context.Context, target state.
 	if strings.TrimSpace(target.RootfsKey) == "" {
 		return api.ErrRollbackTargetUnavailable(fmt.Sprintf("deployment %q has no immutable rootfs artifact key", target.ID))
 	}
+	return s.verifyRollbackArtifact(ctx, target.ID, target.RootfsKey)
+}
+
+func (s *server) verifyRollbackArtifact(ctx context.Context, deploymentID, storageKey string) *api.Problem {
 	if s.rollbackArtifactVerifier == nil {
 		return customerCapacityProblem(s.log, "verify rollback target", "Deployment temporarily unavailable",
 			"Gregale could not verify this deployment right now.",
 			"Retry in a few seconds; if it still fails, contact support.", nil)
 	}
-	err := s.rollbackArtifactVerifier.CheckPresent(ctx, target.RootfsKey, "sigs/"+target.RootfsKey+".sig")
+	err := s.rollbackArtifactVerifier.CheckPresent(ctx, storageKey, "sigs/"+storageKey+".sig")
 	if err == nil {
 		return nil
 	}
 	s.log.Warn("rollback artifact verification failed",
-		"deployment", target.ID,
-		"rootfs_key", target.RootfsKey,
+		"deployment", deploymentID,
+		"rootfs_key", storageKey,
 		"err", err)
 	var problem *api.Problem
 	if artifactstorage.IsNotFound(err) || (errors.As(err, &problem) && problem.Code == api.CodeSigInvalid) {
-		return api.ErrRollbackTargetUnavailable(fmt.Sprintf("deployment %q does not have an accessible, attested cold-boot rootfs", target.ID))
+		return api.ErrRollbackTargetUnavailable(fmt.Sprintf("deployment %q does not have an accessible, attested cold-boot rootfs", deploymentID))
 	}
 	return api.ErrCapacity("could not verify rollback target artifact").WithHeader("Retry-After", "5")
 }
@@ -3522,6 +3526,10 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		// current app shape so retries don't 4xx.
 		resp := s.appResponseWithContext(r.Context(), app, acct.Plan)
 		writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, app))
+		return
+	}
+	if problem := s.blockedAppNameProblem(acct.ID, req.NewSlug); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	// Route rules name their target by slug, and host rules may name the
@@ -7742,7 +7750,7 @@ func (s *server) accountUsage(w http.ResponseWriter, r *http.Request, acct state
 				managedPostgresProblem(w, err)
 				return
 			}
-			view := managedPostgresUsageView(usage, limits, s.managedPostgresCapMode, overage)
+			view := managedPostgresUsageView(usage, limits, s.managedPostgresCapMode, s.managedPostgresHistoryMode, overage)
 			out.ManagedPostgres = &view
 		}
 	}

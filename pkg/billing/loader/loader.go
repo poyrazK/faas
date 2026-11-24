@@ -48,6 +48,7 @@
 //	FAAS_POLAR_OBJECT_STORAGE_METER_ID      separate charge_millicents meter for shadow/live
 //	FAAS_POLAR_MANAGED_POSTGRES_BILLING_MODE  off | shadow | live; default off (ADR-20261031110037)
 //	FAAS_POLAR_MANAGED_POSTGRES_BILLING_FROM  UTC-month activation boundary for shadow/live
+//	FAAS_POLAR_MANAGED_POSTGRES_HISTORY_BILLING_FROM  first UTC month restore history is charged; empty: never (ADR-20261123062111)
 //	FAAS_POLAR_MANAGED_POSTGRES_METER_ID      separate charge_millicents meter for shadow/live
 //	FAAS_POLAR_BASE_URL    optional; private API proxy / contract-test endpoint
 //
@@ -227,6 +228,9 @@ func resolvedPolarConfig(cfg *RootBillingConfig, env func(string) string) polar.
 	}
 	if v := env("FAAS_POLAR_MANAGED_POSTGRES_BILLING_FROM"); v != "" {
 		out.ManagedPostgresBillingFrom = v
+	}
+	if v := env("FAAS_POLAR_MANAGED_POSTGRES_HISTORY_BILLING_FROM"); v != "" {
+		out.ManagedPostgresHistoryBillingFrom = v
 	}
 	if v := env("FAAS_POLAR_MANAGED_POSTGRES_USAGE_EVENT_NAME"); v != "" {
 		out.ManagedPostgresUsageEventName = v
@@ -420,6 +424,7 @@ func Providers() []ProviderMeta {
 				"FAAS_POLAR_OBJECT_STORAGE_BILLING_MODE", "FAAS_POLAR_OBJECT_STORAGE_BILLING_FROM",
 				"FAAS_POLAR_OBJECT_STORAGE_USAGE_EVENT_NAME", "FAAS_POLAR_OBJECT_STORAGE_METER_ID",
 				"FAAS_POLAR_MANAGED_POSTGRES_BILLING_MODE", "FAAS_POLAR_MANAGED_POSTGRES_BILLING_FROM",
+				"FAAS_POLAR_MANAGED_POSTGRES_HISTORY_BILLING_FROM",
 				"FAAS_POLAR_MANAGED_POSTGRES_USAGE_EVENT_NAME", "FAAS_POLAR_MANAGED_POSTGRES_METER_ID",
 			},
 			BuildAPID: func(cfg *RootBillingConfig, env func(string) string, log *slog.Logger) (any, error) {

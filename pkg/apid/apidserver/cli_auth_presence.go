@@ -18,8 +18,12 @@ import (
 // step-up). An approved code becomes an admin-scoped key that outlives the
 // session, so a copied browser cookie must not be able to mint one
 // (account-flow audit 2026-11-10, ADR 20261111110000). A stale session is
-// sent to sign in again and comes back to the same code. It reports whether
-// it has answered the request.
+// sent to prove itself again and comes back to the same code: an account
+// with two-factor authentication to the authenticator challenge, since only
+// a code makes it fresh, and any other account to sign in. Sending an
+// enrolled account to sign in looped on a remembered browser, whose sign-in
+// skips the challenge and so never stamps a step-up (MCP connect,
+// 2026-11-24). It reports whether it has answered the request.
 func (h *cliAuthHandlers) cliApprovalRefused(w http.ResponseWriter, r *http.Request, acct state.Account, rawCode string) bool {
 	if !acct.EmailVerified() {
 		h.srv.audit.Emit(r.Context(), "auth.cli_approval_refused", &acct.ID, map[string]any{"reason": "email_unverified"})
@@ -33,11 +37,28 @@ func (h *cliAuthHandlers) cliApprovalRefused(w http.ResponseWriter, r *http.Requ
 		"action":     "cli_auth",
 		"window_sec": int(api.RecentSignInWindow.Seconds()),
 	})
-	http.Redirect(w, r, cliAuthSignInURL(r, rawCode), http.StatusSeeOther)
+	http.Redirect(w, r, cliApprovalFreshnessURL(acct, cliAuthReturnPath(r, rawCode)), http.StatusSeeOther)
 	return true
 }
 
+// cliApprovalFreshnessURL is where a session that cliApprovalFresh refused
+// goes to become fresh before returning to next: the authenticator
+// challenge for an account with two-factor authentication, sign-in for any
+// other.
+func cliApprovalFreshnessURL(acct state.Account, next string) string {
+	if acct.MFAEnrolled() {
+		return dashboardMFAPath + "?next=" + url.QueryEscape(next)
+	}
+	return loginPath + "?reauth=1&next=" + url.QueryEscape(next)
+}
+
 func cliAuthSignInURL(r *http.Request, rawCode string) string {
+	return loginPath + "?reauth=1&next=" + url.QueryEscape(cliAuthReturnPath(r, rawCode))
+}
+
+// cliAuthReturnPath is the approval page for rawCode, keeping the loopback
+// port and MCP return of the request.
+func cliAuthReturnPath(r *http.Request, rawCode string) string {
 	next := cliAuthPath + "?code=" + url.QueryEscape(rawCode)
 	if port := cliAuthLoopbackPort(r.FormValue("port"), rawCode); port != 0 {
 		next += "&port=" + strconv.Itoa(port)
@@ -45,7 +66,7 @@ func cliAuthSignInURL(r *http.Request, rawCode string) string {
 	if r.FormValue("return") == "mcp" {
 		next += "&return=mcp"
 	}
-	return loginPath + "?reauth=1&next=" + url.QueryEscape(next)
+	return next
 }
 
 func cliAuthSwitchAccountURL(r *http.Request, rawCode string) string {

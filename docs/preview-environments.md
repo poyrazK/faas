@@ -198,7 +198,7 @@ the implementation is deployed:
 ```bash
 gregale edge rule create --app pr-42-checkout \
   --kind respond \
-  --match-host pr-42-checkout.gregale.dev \
+  --match-host pr-42-checkout.gregale.app \
   --match-path /shipping/estimate \
   --match-method GET \
   --respond-status 200 \
@@ -499,12 +499,12 @@ done
 exit 1
 ```
 
-`gregale preview wait` reads the same routes, so the bearer (as `FAAS_TOKEN`) or
+`gregale preview wait` reads the same routes, so the bearer (as `GREGALE_TOKEN`) or
 an app-bound deploy token is enough. Pass `--commit "$HEAD_SHA"` so it waits for
 that head rather than returning the previous one's result:
 
 ```bash
-FAAS_TOKEN=$BEARER gregale preview wait "pr-$PR_NUMBER-shop-api" --commit "$HEAD_SHA" --timeout 15m
+GREGALE_TOKEN=$BEARER gregale preview wait "pr-$PR_NUMBER-shop-api" --commit "$HEAD_SHA" --timeout 15m
 ```
 
 The bearer reads only the status of that app's previews, from any branch or

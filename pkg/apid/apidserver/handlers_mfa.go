@@ -425,8 +425,9 @@ func (s *server) mfaRecover(w http.ResponseWriter, r *http.Request, acct state.A
 }
 
 // A new setup secret is handed to the calling session. It cannot establish
-// independent proof until the account's existing password authorizes enrollment.
-// OAuth-only accounts retain their session-based opt-in, as with set-password.
+// independent proof until the account's existing password, or a recent
+// sign-in by this session, authorizes enrollment. OAuth-only accounts keep
+// their session-based opt-in, as with set-password.
 func (s *server) confirmMFAFirstFactor(w http.ResponseWriter, r *http.Request, acct state.Account, password string) bool {
 	hash, err := s.store.AccountPasswordByAccountID(r.Context(), acct.ID)
 	if errors.Is(err, state.ErrNotFound) {
@@ -435,6 +436,15 @@ func (s *server) confirmMFAFirstFactor(w http.ResponseWriter, r *http.Request, a
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not check enrollment credentials"))
 		return false
+	}
+	// Without a password the proof is the session itself, as for accounts
+	// that have none: it must have signed in within api.RecentSignInWindow,
+	// so the dashboard can finish setup right after sign-in without asking
+	// for the password twice, while a cookie copied out of an old browser
+	// cannot enroll its own authenticator. A missing password is not a wrong
+	// guess, so the sign-in failure budget is left alone.
+	if password == "" {
+		return s.requireRecentSignIn(w, r, acct, "mfa_confirm")
 	}
 	if s.refuseWhileLoginLimited(w, r, acct.Email) {
 		return false

@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/capgrant"
 	"github.com/onebox-faas/faas/pkg/dispatch"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
@@ -978,6 +979,8 @@ type RequestAuditRecord struct {
 // APIConsumerUsageBucket is the read-side aggregate for one app, attributed
 // consumer, verified surface, or verified JWT rule, and UTC minute.
 type APIConsumerUsageBucket struct {
+	// Model is populated only by the pricing engine for a model-rated bucket.
+	Model                  string
 	AccountID              string
 	AppID                  string
 	ConsumerKey            string
@@ -1059,6 +1062,7 @@ type APIConsumerRateCard struct {
 	// units (ADR-952); unlisted routes count 1. Weighted units feed the
 	// allowance and tiers.
 	RouteWeights map[string]int64
+	ModelPrices  map[string]int64
 	// PlanID names the consumer plan whose price history this card belongs
 	// to (ADR-953); empty is the app default plan.
 	PlanID string
@@ -1073,7 +1077,10 @@ type APIConsumerRateCard struct {
 	// (ADR-1325).
 	ProrateMonthlyFees bool
 	EffectiveFrom      time.Time
-	CreatedAt          time.Time
+	// EffectiveUntil is the exclusive end of a resolved plan assignment.
+	// Stored rate cards have an open end until superseded.
+	EffectiveUntil time.Time
+	CreatedAt      time.Time
 }
 
 // MonthlyFees reports whether the card charges a base fee or a minimum.
@@ -1217,6 +1224,8 @@ const (
 // APIConsumerUsageStatementBucket is the priced snapshot for one UTC minute.
 // Empty RateCardID/Currency denotes an explicitly unpriced bucket.
 type APIConsumerUsageStatementBucket struct {
+	WaivedUnits            int64     `json:"waived_units,omitempty"`
+	Model                  string    `json:"model,omitempty"`
 	WindowStart            time.Time `json:"window_start"`
 	BillableUnits          int64     `json:"billable_units"`
 	RateCardID             string    `json:"rate_card_id,omitempty"`
@@ -1259,6 +1268,7 @@ func (b APIConsumerUsageStatementBucket) Charged() int64 {
 // period can hold several revisions: every revision after a finalized one
 // carries only the usage that arrived later, as an additive adjustment.
 type APIConsumerUsageStatement struct {
+	Waiver           *APIConsumerUsageWaiver
 	ID               string
 	AccountID        string
 	AppID            string
@@ -1320,6 +1330,7 @@ type APIConsumerUsageStatementHandoffInput struct {
 // and PriorStatus name the latest revision the quote was planned against, so
 // a concurrent change is rejected instead of overwritten.
 type APIConsumerUsageStatementInput struct {
+	Waiver           *APIConsumerUsageWaiver
 	AccountID        string
 	AppID            string
 	ConsumerID       string
@@ -2121,6 +2132,12 @@ type WorkerScaling struct {
 // as jsonb in Postgres; lifecycle fields are overlaid onto each deployment's
 // image manifest before it is written into the snapshot for guest-init.
 type AppManifest struct {
+	// DeclaredAccess is the public-URL access the app's project service
+	// declares in gregale.yaml or Compose ("public" or "key",
+	// ADR-20261124090000). A deploy that finds it set but no declaration
+	// in the source restores the plan's auth defaults; an app whose access
+	// was never declared keeps what its owner set by hand.
+	DeclaredAccess string `json:"declared_access,omitempty"`
 	// PublicBuildURLs are explicitly reviewed, non-secret frontend build inputs.
 	// New production source deployments capture an immutable copy at INSERT.
 	PublicBuildURLs map[string]string `json:"public_build_urls,omitempty"`
@@ -2182,6 +2199,10 @@ type AppManifest struct {
 	// AllowedServiceCallScopes is an optional, target-owned method/path policy.
 	// A non-nil empty map denies all callers; map keys are logical app names.
 	AllowedServiceCallScopes *api.ServiceCallerScopes `json:"allowed_service_call_scopes,omitempty"`
+	// Uses are the gregale.yaml `uses:` grants: what the app's workload
+	// identity may do on itself or a sibling app without an API key
+	// (ADR-20261122191423). Project apply replaces it on every reconcile.
+	Uses *capgrant.Uses `json:"uses,omitempty"`
 
 	WorkingDir string `json:"working_dir,omitempty"`
 	Port       int    `json:"port,omitempty"`
@@ -2280,7 +2301,7 @@ func (m AppManifest) EffectivePreviewServiceCallsPolicy() api.PreviewServiceCall
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
 	return len(m.PublicBuildURLs) == 0 && m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
-		m.BuildDockerfile == "" && m.DockerfileBuild == nil && m.BuildGoCommand == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && m.ProjectReadinessCheck == nil && m.ProjectImageProcess == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ProjectSecretFiles) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
+		m.BuildDockerfile == "" && m.DockerfileBuild == nil && m.BuildGoCommand == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && m.ProjectReadinessCheck == nil && m.ProjectImageProcess == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ProjectSecretFiles) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && (m.Uses == nil || m.Uses.IsZero()) && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Warmup == nil && m.Pause == "" && m.Profiling == nil && m.Tracing == nil &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 && m.FunctionConcurrency == 0 &&
@@ -2317,10 +2338,13 @@ func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
 	existing.PreviewServiceCallsPolicy = desired.PreviewServiceCallsPolicy
 	existing.AllowedServiceCallers = desired.AllowedServiceCallers
 	existing.AllowedServiceCallScopes = desired.AllowedServiceCallScopes
+	existing.Uses = desired.Uses.Clone()
 	if len(existing.Env) > 0 || len(desired.Env) > 0 {
 		merged := make(map[string]string, len(existing.Env)+len(desired.Env))
 		for key, value := range existing.Env {
-			if strings.HasPrefix(key, api.ServiceBindingEnvPrefix) && strings.HasSuffix(key, api.ServiceBindingEnvSuffix) {
+			if strings.HasPrefix(key, api.ServiceBindingEnvPrefix) && strings.HasSuffix(key, api.ServiceBindingEnvSuffix) ||
+				key == api.WorkloadCredentialsEnv && value == api.WorkloadObjectCredentialsEndpoint {
+				// Platform-managed values come back from desired only.
 				continue
 			}
 			merged[key] = value
@@ -2701,6 +2725,9 @@ func (m AppManifest) MarshalJSON() ([]byte, error) {
 
 // Deployment is one attempt to ship a version of an app.
 type Deployment struct {
+	// ProjectDeployGroupID is a server-assigned production fan-out identity used during creation only.
+	ProjectDeployGroupID   string `json:"-"`
+	projectDeployProjectID string
 	// submissionAttemptID is creation-only metadata, never copied onto the wire.
 	submissionAttemptID string
 	// eventSubscriptionIntent is creation-only: the event subscriptions a

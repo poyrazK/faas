@@ -105,7 +105,7 @@ func TestMCPPolicyUsesJSONRPCBody(t *testing.T) {
 		r := httptest.NewRequest("POST", "/mcp", strings.NewReader(tc.body))
 		r.Header.Set("MCP-Method", "tools/list")
 		r.Header.Set("MCP-Name", "read")
-		status, _ := mcpPolicyRequest(r, p, tc.scope)
+		status, _, _ := mcpPolicyRequest(r, p, tc.scope)
 		if status != tc.status {
 			t.Fatalf("%s status=%d want=%d", tc.body, status, tc.status)
 		}

@@ -224,7 +224,7 @@ func TestFlagsRuleAddAttributeConditions(t *testing.T) {
 	}
 }
 
-// ADR-20261122090000: edge routes are added per path and variant, listed,
+// ADR-20261124212701: edge routes are added per path and variant, listed,
 // and removed one path or all at once.
 func TestFlagsEdgeSetListDelete(t *testing.T) {
 	api := &fakeFlagsAPI{}

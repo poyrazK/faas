@@ -261,6 +261,7 @@ func (s *server) listManagedPostgresDatabases(w http.ResponseWriter, r *http.Req
 	}
 	excess := s.managedPostgresPlanExcess(databases, acct.Plan)
 	in, holdOK := s.managedPostgresHoldInputsOrLog(r.Context(), acct)
+	timeouts := s.managedPostgresSuspendTimeoutsOrLog(r.Context(), databases)
 	items := make([]api.ManagedPostgresDatabase, 0, len(databases))
 	for _, database := range databases {
 		if filter.keep(database.ID) {
@@ -268,6 +269,7 @@ func (s *server) listManagedPostgresDatabases(w http.ResponseWriter, r *http.Req
 			view.Labels = filter.labelsOf(database.ID)
 			view.PlanExcess = excess[database.ID]
 			s.withManagedPostgresHold(&view, database, in, holdOK)
+			managedpg.ApplySuspendTimeout(&view, timeouts)
 			items = append(items, view)
 		}
 	}
@@ -277,7 +279,7 @@ func (s *server) listManagedPostgresDatabases(w http.ResponseWriter, r *http.Req
 // managedPostgresUsageView projects the internal normalized usage summary to
 // the customer-safe API shape. In particular, it never serializes policy
 // rates, provider cost, backend IDs, or credential material.
-func managedPostgresUsageView(summary managedpostgres.UsageSummary, limits api.ManagedPostgresPlanLimits, capMode managedpostgres.CapEnforcementMode, overage bool) api.ManagedPostgresUsageResponse {
+func managedPostgresUsageView(summary managedpostgres.UsageSummary, limits api.ManagedPostgresPlanLimits, capMode, historyMode managedpostgres.CapEnforcementMode, overage bool) api.ManagedPostgresUsageResponse {
 	storageLimit := managedPostgresUsageCeilings(limits, false).MaxMonthlyStorageByteSeconds
 	remaining := int64(0)
 	if storageLimit > summary.Snapshot.StorageByteSeconds {
@@ -303,6 +305,9 @@ func managedPostgresUsageView(summary managedpostgres.UsageSummary, limits api.M
 		StorageByteSeconds:      summary.Snapshot.StorageByteSeconds,
 		StorageByteSecondsLimit: storageLimit, StorageByteSecondsRemaining: remaining,
 		HistoryByteSeconds: summary.Snapshot.HistoryByteSeconds, EgressBytes: summary.Snapshot.EgressBytes,
+		SnapshotByteSeconds:  summary.Snapshot.SnapshotByteSeconds,
+		IncludedHistoryBytes: api.ManagedPostgresIncludedHistoryBytes(limits.StorageLimitBytes),
+		HistoryState:         managedPostgresHistoryState(summary.Snapshot, limits, historyMode, overage),
 	}
 	if limits.MonthlyComputeUnitSeconds > 0 {
 		view.ComputeAllowanceUnitSeconds = limits.MonthlyComputeUnitSeconds
@@ -317,6 +322,20 @@ func managedPostgresUsageView(summary managedpostgres.UsageSummary, limits api.M
 		view.ObservedAt = &observed
 	}
 	return view
+}
+
+// managedPostgresHistoryState (ADR-20261123062111 D2) is judged from the
+// ledger the history pass reads, and reported only while the pass is on, so
+// shadow mode never tells a customer their restore window shrank.
+func managedPostgresHistoryState(snapshot managedpostgres.UsageSnapshot, limits api.ManagedPostgresPlanLimits, mode managedpostgres.CapEnforcementMode, overage bool) string {
+	switch {
+	case mode != managedpostgres.CapEnforcementOn || managedpostgres.HistoryLimitByteSeconds(limits.StorageLimitBytes) <= 0:
+		return ""
+	case managedpostgres.HistoryLimited(snapshot, limits.StorageLimitBytes, overage):
+		return "limited"
+	default:
+		return "normal"
+	}
 }
 
 // managedPostgresComputeCapState (ADR-20261025094915 decision 8). Suspension
@@ -365,7 +384,7 @@ func (s *server) getManagedPostgresUsage(w http.ResponseWriter, r *http.Request,
 		managedPostgresProblem(w, err)
 		return
 	}
-	view := managedPostgresUsageView(summary, limits, s.managedPostgresCapMode, overage)
+	view := managedPostgresUsageView(summary, limits, s.managedPostgresCapMode, s.managedPostgresHistoryMode, overage)
 	in, err := s.managedPostgresHoldInputsFrom(r.Context(), acct, subject, summary)
 	if err != nil {
 		managedPostgresProblem(w, err)
@@ -381,8 +400,8 @@ func (s *server) getManagedPostgresUsage(w http.ResponseWriter, r *http.Request,
 	writeJSON(w, http.StatusOK, view)
 }
 
-func managedPostgresUsageOperatorView(accountID string, summary managedpostgres.UsageSummary, limits api.ManagedPostgresPlanLimits, capMode managedpostgres.CapEnforcementMode, overage bool) (api.ManagedPostgresUsageOperatorResponse, error) {
-	customer := managedPostgresUsageView(summary, limits, capMode, overage)
+func managedPostgresUsageOperatorView(accountID string, summary managedpostgres.UsageSummary, limits api.ManagedPostgresPlanLimits, capMode, historyMode managedpostgres.CapEnforcementMode, overage bool) (api.ManagedPostgresUsageOperatorResponse, error) {
+	customer := managedPostgresUsageView(summary, limits, capMode, historyMode, overage)
 	lineItems, err := summary.EffectivePolicy.LineItems(summary.Snapshot)
 	if err != nil {
 		return api.ManagedPostgresUsageOperatorResponse{}, err
@@ -405,7 +424,7 @@ func managedPostgresUsageOperatorView(accountID string, summary managedpostgres.
 		ReadyDatabases: customer.ReadyDatabases, DatabaseLimit: customer.DatabaseLimit,
 		StorageLimitBytes: customer.StorageLimitBytes, ComputeUnitSeconds: customer.ComputeUnitSeconds,
 		StorageByteSeconds: customer.StorageByteSeconds, StorageByteSecondsLimit: storageLimit,
-		StorageByteSecondsRemaining: remaining, HistoryByteSeconds: customer.HistoryByteSeconds,
+		StorageByteSecondsRemaining: remaining, HistoryByteSeconds: customer.HistoryByteSeconds, SnapshotByteSeconds: customer.SnapshotByteSeconds,
 		EgressBytes: customer.EgressBytes, CostMillicents: summary.Snapshot.CostMillicents,
 		MaxMonthlyCostMillicents:     summary.EffectivePolicy.MaxMonthlyCostMillicents,
 		MaxMonthlyComputeUnitSeconds: summary.EffectivePolicy.MaxMonthlyComputeUnitSeconds,
@@ -450,7 +469,7 @@ func (s *server) getManagedPostgresUsageOperator(w http.ResponseWriter, r *http.
 		managedPostgresProblem(w, err)
 		return
 	}
-	view, err := managedPostgresUsageOperatorView(target.ID, summary, limits, s.managedPostgresCapMode, overage)
+	view, err := managedPostgresUsageOperatorView(target.ID, summary, limits, s.managedPostgresCapMode, s.managedPostgresHistoryMode, overage)
 	if err != nil {
 		managedPostgresProblem(w, err)
 		return
@@ -525,6 +544,7 @@ func (s *server) getManagedPostgresDatabase(w http.ResponseWriter, r *http.Reque
 	view.PlanExcess = s.managedPostgresPlanExcessOf(r.Context(), acct, database.ID)
 	in, holdOK := s.managedPostgresHoldInputsOrLog(r.Context(), acct)
 	s.withManagedPostgresHold(&view, database, in, holdOK)
+	managedpg.ApplySuspendTimeout(&view, s.managedPostgresSuspendTimeoutsOrLog(r.Context(), []managedpostgres.Database{database}))
 	writeJSON(w, http.StatusOK, view)
 }
 

@@ -203,3 +203,54 @@ func TestPruneKeepsProtectedReleases(t *testing.T) {
 		t.Fatalf("protected release pruned: %v", err)
 	}
 }
+
+func TestPruneKeepsReleasesARunningProcessExecutes(t *testing.T) {
+	root := t.TempDir()
+	releases := filepath.Join(root, "releases")
+	ids := []string{
+		"0000000000000000000000000000000000000001", // a long-lived bridge runs from it
+		"0000000000000000000000000000000000000002",
+		"0000000000000000000000000000000000000003",
+		"0000000000000000000000000000000000000004", // active
+	}
+	for i, id := range ids {
+		path := filepath.Join(releases, id, "bin")
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		when := time.Unix(int64(i+1), 0)
+		if err := os.Chtimes(filepath.Join(releases, id), when, when); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join("releases", ids[3]), filepath.Join(root, "current")); err != nil {
+		t.Fatal(err)
+	}
+	proc := filepath.Join(root, "proc")
+	for pid, exe := range map[string]string{
+		"4242": filepath.Join(releases, ids[0], "bin", "vmmd-stream-bridge"),
+		"4243": "/usr/bin/sleep",
+		"self": filepath.Join(releases, ids[1], "bin", "vmmd"),
+	} {
+		if err := os.MkdirAll(filepath.Join(proc, pid), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(exe, filepath.Join(proc, pid, "exe")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	previous := procRoot
+	procRoot = proc
+	t.Cleanup(func() { procRoot = previous })
+
+	report, err := Prune(releases, filepath.Join(root, "current"), 1)
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if len(report.Removed) != 1 || report.Removed[0] != ids[1] {
+		t.Fatalf("Removed = %v, want only %s", report.Removed, ids[1])
+	}
+	if _, err := os.Stat(filepath.Join(releases, ids[0])); err != nil {
+		t.Fatalf("release in use pruned: %v", err)
+	}
+}

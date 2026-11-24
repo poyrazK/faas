@@ -277,7 +277,10 @@ func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, re
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
-	if !consumerScopeAllows(key.Scopes, r.Method) {
+	// MCP scopes (ADR-20261122194324) reach only a consumer-key MCP server's
+	// endpoint, whose policy then checks them.
+	mcpScoped := len(api.ConsumerKeyMCPScopes(key.Scopes)) > 0 && h.mcpConsumerKeyEndpoint(r, app)
+	if !mcpScoped && !consumerScopeAllows(key.Scopes, r.Method) {
 		api.WriteProblem(w, api.ErrConsumerScopeMissing(r.Method))
 		rec.status = http.StatusForbidden
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})

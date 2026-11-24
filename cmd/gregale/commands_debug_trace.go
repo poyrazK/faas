@@ -158,7 +158,7 @@ func renderDebugRequestTrace(w io.Writer, resp api.DebugRequestEvidenceResponse)
 	_, _ = fmt.Fprintf(w, "%s · HTTP %d · %d ms\n", requestLine(request.Method, request.Route), request.Status, request.LatencyMS)
 	_, _ = fmt.Fprintf(w, "telemetry row %s", request.ID)
 	if traceID := debugRequestTraceID(request); traceID != "" {
-		_, _ = fmt.Fprintf(w, " · public request %s", traceID)
+		_, _ = fmt.Fprintf(w, " · trace %s", traceID)
 	}
 	_, _ = fmt.Fprintln(w)
 

@@ -17,11 +17,31 @@ UMask=0077
 # Deploy jobs share the split-box control plane with PostgreSQL; a low weight
 # yields CPU to the database under contention (roles/postgres raises its slice).
 CPUWeight={{ faas_runner_cpu_weight }}
+{% if faas_runner_cpu_quota %}
+CPUQuota={{ faas_runner_cpu_quota }}
+{% endif %}
+{% if faas_runner_io_weight %}
+IOWeight={{ faas_runner_io_weight }}
+{% endif %}
+{% if faas_runner_memory_high %}
+MemoryHigh={{ faas_runner_memory_high }}
+{% endif %}
+{% if faas_runner_memory_max %}
+MemoryMax={{ faas_runner_memory_max }}
+{% endif %}
+{% if faas_runner_gomaxprocs %}
+Environment=GOMAXPROCS={{ faas_runner_gomaxprocs }}
+{% endif %}
 Environment=HOME={{ faas_runner_home }}
+{% if faas_runner_kind == 'build' %}
+# A cancelled build's Go processes do not outlive it (the cleanup hook).
+Environment=ACTIONS_RUNNER_HOOK_JOB_STARTED={{ faas_runner_job_cleanup_hook }}
+Environment=ACTIONS_RUNNER_HOOK_JOB_COMPLETED={{ faas_runner_job_cleanup_hook }}
+{% endif %}
 Environment=RUNNER_ALLOW_RUNASROOT=0
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=full
+ProtectSystem={{ faas_runner_protect_system }}
 ProtectHome=read-only
 ReadWritePaths={{ faas_runner_root }} {{ faas_runner_home }}
 

@@ -621,7 +621,9 @@ func (p UsagePolicy) Cost(reading MeterReading) (int64, error) {
 		rate, denominator = p.ComputeUnitHourMillicents, secondsPerHour
 	case MeterStorageByteSeconds:
 		rate, denominator = p.StorageGiBHourMillicents, byteSecondsPerGiBHour
-	case MeterHistoryByteSeconds:
+	case MeterHistoryByteSeconds, MeterSnapshotByteSeconds:
+		// Snapshots cost the provider less than restore history; the
+		// operator's estimate uses the history rate, an upper bound.
 		rate, denominator = p.HistoryGiBHourMillicents, byteSecondsPerGiBHour
 	case MeterEgressBytes:
 		rate, denominator = p.EgressGiBMillicents, bytesPerGiB

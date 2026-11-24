@@ -21,6 +21,24 @@ if ! [[ "$baseline_sample_count" =~ ^[1-9][0-9]*$ ]]; then
   echo "ROLLOUT_BASELINE_SAMPLE_COUNT must be a positive integer, got '$baseline_sample_count'" >&2
   exit 2
 fi
+# A baseline sample that timed out (curl exit 28, no answer) is retaken, at
+# most ROLLOUT_BASELINE_TIMEOUT_BUDGET times per path. The control plane's
+# egress to the edge loses connection attempts in bursts: rc.372's rollout
+# was refused twice on 2026-11-22 by one timed-out sample of three, the other
+# two answering in under 150 ms. The baseline still needs
+# ROLLOUT_BASELINE_SAMPLE_COUNT healthy samples, and any other failure (an
+# HTTP error, a refused connection) still refuses the rollout.
+baseline_timeout_budget="${ROLLOUT_BASELINE_TIMEOUT_BUDGET:-2}"
+if ! [[ "$baseline_timeout_budget" =~ ^[0-9]+$ ]]; then
+  echo "ROLLOUT_BASELINE_TIMEOUT_BUDGET must be a non-negative integer, got '$baseline_timeout_budget'" >&2
+  exit 2
+fi
+# The final API sample after activation is retaken the same way (below).
+final_timeout_retake_budget="${ROLLOUT_FINAL_TIMEOUT_RETAKES:-2}"
+if ! [[ "$final_timeout_retake_budget" =~ ^[0-9]+$ ]]; then
+  echo "ROLLOUT_FINAL_TIMEOUT_RETAKES must be a non-negative integer, got '$final_timeout_retake_budget'" >&2
+  exit 2
+fi
 # A control plane rebuilt from backups has no API until its first
 # activation starts it (docs/runbooks/ControlPlaneStateBackup.md, "Rebuild a
 # control plane from backups"). Its baseline cannot be healthy, so that one
@@ -96,12 +114,32 @@ sample() {
     "$connect" "$first_byte" "$curl_exit" "$error" >> "$log"
 }
 
+last_sample_timed_out() {
+  tail -n 1 "$1" | awk -F '\t' '{ exit !($9 == 28) }'
+}
+
+# baseline_sample TARGET URL LOG TIMEOUT SEQUENCE_VAR RETAKES_VAR: one baseline
+# sample, retaken while it timed out and the path's retake budget lasts.
+baseline_sample() {
+  local target="$1" url="$2" log="$3" timeout="$4" sequence_var="$5" retakes_var="$6"
+  printf -v "$sequence_var" '%d' $(( ${!sequence_var} + 1 ))
+  sample baseline "$target" "$url" "${!sequence_var}" "$log" "$timeout"
+  while last_sample_timed_out "$log" && (( ${!retakes_var} < baseline_timeout_budget )); do
+    printf -v "$retakes_var" '%d' $(( ${!retakes_var} + 1 ))
+    printf -v "$sequence_var" '%d' $(( ${!sequence_var} + 1 ))
+    sleep "$probe_interval_seconds"
+    sample baseline "$target" "$url" "${!sequence_var}" "$log" "$timeout"
+  done
+}
+
 # Each target gets its own baseline. An unhealthy app cannot be blamed on the
 # activation, but a healthy API baseline can still detect an API regression.
+# shellcheck disable=SC2034 # baseline_sample updates these through printf -v.
+api_baseline_sequence=0 api_baseline_retakes=0 app_baseline_sequence=0 app_baseline_retakes=0
 for (( i=1; i<=baseline_sample_count; i++ )); do
-  sample baseline api "$probe_url" "$i" "$primary_log" 3
+  baseline_sample api "$probe_url" "$primary_log" 3 api_baseline_sequence api_baseline_retakes
   if [[ -n "$app_url" ]]; then
-    sample baseline app "$app_url" "$i" "$app_log" 8
+    baseline_sample app "$app_url" "$app_log" 8 app_baseline_sequence app_baseline_retakes
   fi
   sleep "$probe_interval_seconds"
 done
@@ -110,7 +148,13 @@ if [[ -n "$status_url" ]]; then
 fi
 
 if [[ "${ROLLOUT_REQUIRE_API_BASELINE:-false}" == true ]]; then
-  if ! awk -F '\t' 'BEGIN { healthy=1 } $5 < 200 || $5 >= 300 || $9 != 0 { healthy=0 } END { exit !(NR > 0 && healthy) }' "$primary_log"; then
+  # Healthy: the required healthy samples, timeouts within the retake
+  # budget, and no other failure.
+  if ! awk -F '\t' -v need="$baseline_sample_count" -v budget="$baseline_timeout_budget" '
+      $9 == 28 { timeouts++; next }
+      $9 == 0 && $5 >= 200 && $5 < 300 { healthy++; next }
+      { other++ }
+      END { exit !(healthy >= need && timeouts <= budget && other == 0) }' "$primary_log"; then
     echo "API readiness baseline failed; activation was not started" >&2
     exit 1
   fi
@@ -157,6 +201,20 @@ command_status=0
 wait "$command_pid" || command_status=$?
 sample_number=$((sample_number + 1))
 sample rollout api "$probe_url" "$sample_number" "$primary_log" 3
+# A final sample that timed out is retaken, at most
+# ROLLOUT_FINAL_TIMEOUT_RETAKES times, as a baseline sample is: the control
+# plane's egress to the edge loses connection attempts in bursts, and the
+# unit lane's first production run (2026-11-23) failed on a timed-out last
+# sample, the hand-off having passed its checks and the app path healthy.
+# The judge below still counts every retake against the timeout budget and
+# the consecutive-failure streak, and any answer other than a timeout fails.
+final_timeout_retakes=0
+while last_sample_timed_out "$primary_log" && (( final_timeout_retakes < final_timeout_retake_budget )); do
+  final_timeout_retakes=$((final_timeout_retakes + 1))
+  sleep "$probe_interval_seconds"
+  sample_number=$((sample_number + 1))
+  sample rollout api "$probe_url" "$sample_number" "$primary_log" 3
+done
 if [[ "$first_activation" == true ]] && (( command_status == 0 )); then
   ready_deadline=$((SECONDS + first_ready_seconds))
   until tail -n 1 "$primary_log" | awk -F '\t' '{ exit !($9 == 0 && $5 >= 200 && $5 < 300) }' \
@@ -179,7 +237,8 @@ done
 trap - INT TERM
 
 gate_status=0
-if summary="$(ROLLOUT_FIRST_ACTIVATION="$first_activation" python3 - "$probe_url" "$app_url" "${logs[@]}" <<'PY'
+if summary="$(ROLLOUT_FIRST_ACTIVATION="$first_activation" ROLLOUT_BASELINE_SAMPLE_COUNT="$baseline_sample_count" \
+  ROLLOUT_BASELINE_TIMEOUT_BUDGET="$baseline_timeout_budget" python3 - "$probe_url" "$app_url" "${logs[@]}" <<'PY'
 import collections
 import math
 import os
@@ -203,6 +262,10 @@ for path in sys.argv[3:]:
 CURL_TIMEOUT = 28
 TIMEOUT_BUDGET = 3
 TIMEOUT_STREAK = 2
+# The baseline retakes a timed-out sample within its own budget (see the
+# shell above); its health uses the same rule here.
+BASELINE_SAMPLES = int(os.environ.get("ROLLOUT_BASELINE_SAMPLE_COUNT", "1"))
+BASELINE_TIMEOUT_BUDGET = int(os.environ.get("ROLLOUT_BASELINE_TIMEOUT_BUDGET", "0"))
 
 gate_failed = False
 first_activation = os.environ.get("ROLLOUT_FIRST_ACTIVATION") == "true"
@@ -219,7 +282,14 @@ for target in ("api", "app", "status"):
     baseline_successful = [sample for sample in baseline if good(sample)]
     successful = [sample for sample in rollout if good(sample)]
     failed = [sample for sample in rollout if not good(sample)]
-    baseline_ready = bool(baseline) and len(baseline_successful) == len(baseline)
+    baseline_timeouts = [sample for sample in baseline if not good(sample) and sample[7] == CURL_TIMEOUT]
+    baseline_other = [sample for sample in baseline if not good(sample) and sample[7] != CURL_TIMEOUT]
+    # Status is sampled once and never retaken.
+    baseline_needed = 1 if target == "status" else BASELINE_SAMPLES
+    baseline_ready = (len(baseline_successful) >= baseline_needed and not baseline_other
+                      and len(baseline_timeouts) <= (0 if target == "status" else BASELINE_TIMEOUT_BUDGET))
+    if baseline_ready and baseline_timeouts:
+        tolerated.append(f"{target} baseline retook {len(baseline_timeouts)} timed-out sample(s) (budget {BASELINE_TIMEOUT_BUDGET}); {len(baseline_successful)} healthy.")
     judged_as_first = first_activation and target == "api"
     if judged_as_first:
         # The rebuilt control plane had no API before this activation; the

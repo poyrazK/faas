@@ -43,6 +43,9 @@ func cmdMCPTasksConfigure(args []string) int {
 	if *role == "web" && isWorkerApp(current) || *role != "web" && !isWorkerApp(current) {
 		return printErr("Invalid MCP task app mode", errors.New("web requires an HTTP app; worker and observer require worker-mode apps"))
 	}
+	// The settings this command writes are runtime variables, not part of
+	// the deployed manifest; compare against both.
+	current = mcpTasksRuntimeApp(ctx, client, current)
 	type setting struct {
 		Key     string `json:"key"`
 		Value   string `json:"value"`

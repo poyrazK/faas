@@ -64,6 +64,11 @@
     try {
       const words = addon.shared();
       if (words instanceof ArrayBuffer) generation = new Int32Array(words, 0, 2);
+      // Node 14's V8 rejects Atomics on a typed array over a plain
+      // ArrayBuffer ("is not an integer shared typed array"); probing here
+      // keeps that from killing the app at preload (prod 2026-11-23: an
+      // engines 14.x app crashed before its own code ran).
+      if (generation !== null) Atomics.load(generation, 0);
     } catch (_) {
       generation = null; // the event-loop client below registers instead
     }

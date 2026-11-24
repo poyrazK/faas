@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -153,14 +154,25 @@ func (s *server) ensureProjectEnvironmentDatabaseClone(ctx context.Context, acct
 			return deleteErr
 		})
 	}
-	if cloned.State != managedpostgres.StateReady || cloned.ID == copy.source.ID || cloned.ProviderResourceID == copy.source.ProviderResourceID ||
+	if cloned.ID == copy.source.ID || cloned.ProviderResourceID == copy.source.ProviderResourceID ||
 		cloned.RestoreSourceDatabaseID != copy.source.ID || cloned.RestoreSourceResourceID != projectEnvironmentDatabaseCopySourceID(copy.source) || cloned.Spec != copy.source.Spec ||
 		cloned.BackendID != copy.source.BackendID || cloned.BackendFingerprint != copy.source.BackendFingerprint ||
 		!cloned.RestorePointInTime.Equal(copy.pointInTime) {
 		return managedpostgres.Database{}, fmt.Errorf("isolated PostgreSQL copy is not ready: %w", managedpostgres.ErrConflict)
 	}
+	// The right copy, still being restored: only its state is not ready yet.
+	if cloned.State == managedpostgres.StateProvisioning {
+		return managedpostgres.Database{}, fmt.Errorf("isolated PostgreSQL copy is not ready: %w%w", errDatabaseCopyInProgress, managedpostgres.ErrConflict)
+	}
+	if cloned.State != managedpostgres.StateReady {
+		return managedpostgres.Database{}, fmt.Errorf("isolated PostgreSQL copy is not ready: %w", managedpostgres.ErrConflict)
+	}
 	return cloned, nil
 }
+
+// errDatabaseCopyInProgress marks a copy the provider is still restoring: a
+// retry adopts it. It also matches managedpostgres.ErrConflict.
+var errDatabaseCopyInProgress = errors.New("database copy is still being restored")
 
 // Ordinary legacy cloning retains its selector; complete clones require a pin.
 func projectEnvironmentDatabaseCopySourceID(source managedpostgres.Database) string {

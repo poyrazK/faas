@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ProjectRollbackBatch } from './ProjectRollbackBatch.js';
 import type { ProjectSummaryResponse } from './ProjectSummaryResponse.js';
 import type { ProjectWorkloadResponse } from './ProjectWorkloadResponse.js';
 /**
@@ -12,5 +13,6 @@ export type ProjectResponse = (ProjectSummaryResponse & {
   exclusions: Array<string>;
   last_reconciliation_status?: string;
   last_build_status?: string;
+  rollback_batch?: ProjectRollbackBatch;
 });
 

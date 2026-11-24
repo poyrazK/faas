@@ -14,6 +14,8 @@ import (
 // refused as a verb.
 var unknownVerbTakesAppSlug = map[string]bool{
 	"bindings": true, "deployment": true, "deployments": true, "logs": true, "rollback": true, "workers": true,
+	// `run CMD` runs its first word in a sandbox.
+	"run": true,
 }
 
 // TestEveryCommandNamesItsVerbsForAnUnknownSubcommand sweeps the customer
@@ -44,9 +46,15 @@ func TestEveryCommandNamesItsVerbsForAnUnknownSubcommand(t *testing.T) {
 			}
 			var missing []string
 			for _, sub := range command.Subcommands {
-				if !strings.Contains(out, sub.Name) {
-					missing = append(missing, sub.Name)
+				if strings.Contains(out, sub.Name) {
+					continue
 				}
+				// A verb may be named by its tree spelling (`queue tail` is
+				// `queue watch`, ADR-20261026145832).
+				if tree, ok := main.CliTreeSpelling([]string{command.Name, sub.Name}); ok && len(tree) > 1 && strings.Contains(out, strings.Join(tree[1:], " ")) {
+					continue
+				}
+				missing = append(missing, sub.Name)
 			}
 			if len(missing) > 0 {
 				t.Errorf("reply names none of %v:\n%s", missing, out)

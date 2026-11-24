@@ -10,9 +10,13 @@ package fcvm
 //
 // Traffic that reaches a paused app any other way, such as a reply on a
 // connection the app opened or a peer's keepalive, resumes it too. The ladder
-// pass compares the veth's ingress bytes with what they were when the guard
-// allowed the pause and resumes on any byte, within about two 250 ms ticks
-// (the netstats poll, then the pass). Without counters it resumes: a paused
+// pass compares the IPv4 packets addressed to the instance's network
+// namespace with what they were when the guard allowed the pause and resumes
+// on any packet, within about two 250 ms ticks (the poll, then the pass). The
+// bridge's ARP broadcasts and the unicast it floods to every port do not
+// count (ADR-20261107122928 amendment 4), nor do the host unreachable reports
+// the namespace sends its own sockets while the guest is paused (amendment 5). Without that reading the pass falls
+// back to the veth's ingress bytes, and without either it resumes: a paused
 // app it cannot watch must not stay paused.
 
 import (
@@ -28,8 +32,9 @@ const idleGuardMaxSampleAge = 750 * time.Millisecond
 
 // Causes for resuming a guarded app outside the forward path.
 const (
-	idleAppResumeInbound    = "inbound"     // traffic reached the guest
-	idleAppResumeNoCounters = "no_counters" // the guard lost its counters
+	idleAppResumeInbound     = "inbound"      // packets addressed to the instance arrived
+	idleAppResumeInboundVeth = "inbound_veth" // its veth moved and there was no addressed reading
+	idleAppResumeNoCounters  = "no_counters"  // the guard lost its counters
 )
 
 // idleLadderGuardedPauseFor reports whether vmmd may pause a woken instance
@@ -63,27 +68,38 @@ func (m *Manager) idleGuardAllows(id string, now time.Time) bool {
 		return false
 	}
 	g.wakeBase, g.wakeBaseSet = last.ingress, true
+	g.wakeAddressed, g.wakeAddressedSet = last.addressed, last.addressedOK
 	return true
 }
 
 // idleInboundReached reports whether a guarded app quiet pause holds paused
-// must resume: ingress moved since the guard allowed the pause, or its
-// counters are gone. The caller holds idleMu.
+// must resume: packets addressed to it arrived (or, without that reading, its
+// veth's ingress moved) since the guard allowed the pause, or its counters
+// are gone. The caller holds idleMu.
 func (m *Manager) idleInboundReached(st *idleLadderState, c idleLadderCandidate) (cause string, resume bool) {
 	g := &st.guard
 	if !m.idleAppsOn || !c.quietPaused || !c.inst.IdleLadderGuardedPause || !g.wakeBaseSet {
 		return "", false
 	}
 	if len(g.samples) == 0 {
-		g.wakeBaseSet = false
+		g.wakeBaseSet, g.wakeAddressedSet = false, false
 		return idleAppResumeNoCounters, true
 	}
-	// != rather than >: a counter reset (a recreated veth) resumes too.
-	if g.samples[len(g.samples)-1].ingress == g.wakeBase {
+	last := g.samples[len(g.samples)-1]
+	// != rather than >: a counter reset (a recreated veth or a replaced VM)
+	// resumes too.
+	if g.wakeAddressedSet && last.addressedOK {
+		if last.addressed == g.wakeAddressed {
+			return "", false
+		}
+		g.wakeBaseSet, g.wakeAddressedSet = false, false
+		return idleAppResumeInbound, true
+	}
+	if last.ingress == g.wakeBase {
 		return "", false
 	}
-	g.wakeBaseSet = false
-	return idleAppResumeInbound, true
+	g.wakeBaseSet, g.wakeAddressedSet = false, false
+	return idleAppResumeInboundVeth, true
 }
 
 // idleAppResume is a guarded app the ladder pass resumes, and why.

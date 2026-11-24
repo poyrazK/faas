@@ -16,12 +16,14 @@ profile, revokes the CLI key of the login it replaces. Use `gregale key list`
 device; CLI sessions are labelled `cli-login` and never expose their plaintext
 after creation.
 
-For CI, create a scoped project or organization token and expose it as `FAAS_TOKEN`, or pass it once with `gregale login --token "$FAAS_TOKEN"`. Prefer the narrowest scope and a short expiration. Do not commit tokens or pass them as command-line arguments where process listings can expose them.
-Tokens supplied through `FAAS_TOKEN` or `gregale login --token` remain
+For CI, create a scoped project or organization token and expose it as `GREGALE_TOKEN`, or pass it once with `gregale login --token "$GREGALE_TOKEN"`. Prefer the narrowest scope and a short expiration. Do not commit tokens or pass them as command-line arguments where process listings can expose them.
+Tokens supplied through `GREGALE_TOKEN` or `gregale login --token` remain
 non-owning: logout clears local state but does not revoke a shared CI key.
-`FAAS_TOKEN` outranks a saved login, so `gregale login` and `gregale start`
+`GREGALE_TOKEN` outranks a saved login, so `gregale login` and `gregale start`
 refuse to run while it is set (unless `--token` passes the same value), and
-`gregale logout` says when `FAAS_TOKEN` is still active.
+`gregale logout` says when `GREGALE_TOKEN` is still active.
+`FAAS_TOKEN`, the variable's earlier name, still works; when both are set,
+`GREGALE_TOKEN` wins. The Terraform provider reads `GREGALE_TOKEN` too.
 
 For a Runs-only agent, mint an account key with `runs:write` instead of the
 default full-access `admin` key:
@@ -196,6 +198,27 @@ private app starts with and opens a `bearer` URL. It leaves `basic`,
 `ip_allowlist` and `internal_only` in place. To block or rate-limit callers
 by path, header or country while staying public, use
 [edge rules](edge-rules.md).
+
+### Declare access in gregale.yaml
+
+To keep the choice with the code, set `access` at the top of the app's
+`gregale.yaml`:
+
+```yaml
+access: public   # anyone can open the URL, no Gregale API key
+```
+
+`public` does what `--no-require-authn` does; `key` turns the API-key
+requirement on (Free has no such requirement, so `key` changes nothing
+there). Every production deploy applies the file, including deploys an agent
+makes through the Gregale MCP server, so a later `app update` is undone by
+the next deploy. Removing the key returns the app to the plan default, which
+needs a key again on Hobby and above. An app that never declared `access`
+keeps whatever was set by hand. `gregale deploy --plan` shows the declared
+access, or how to open the URL when there is none. Deploying to a named
+environment leaves access alone, and `basic`, `ip_allowlist` and
+`internal_only` are kept. Services of a multi-service project declare it per
+service instead ([public or key-protected URLs](multi-service-apps.md#public-or-key-protected-urls)).
 
 ## Email verification
 

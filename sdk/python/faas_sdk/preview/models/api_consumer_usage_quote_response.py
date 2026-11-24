@@ -11,6 +11,7 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.api_consumer_quote_breakdown import APIConsumerQuoteBreakdown
     from ..models.api_consumer_usage_quote_bucket_response import APIConsumerUsageQuoteBucketResponse
 
 
@@ -30,6 +31,8 @@ class APIConsumerUsageQuoteResponse:
     priced: bool
     buckets: list[APIConsumerUsageQuoteBucketResponse]
     as_of: datetime.datetime
+    route_breakdown: list[APIConsumerQuoteBreakdown] | Unset = UNSET
+    meter_breakdown: list[APIConsumerQuoteBreakdown] | Unset = UNSET
     currency: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -55,6 +58,20 @@ class APIConsumerUsageQuoteResponse:
 
         as_of = self.as_of.isoformat()
 
+        route_breakdown: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.route_breakdown, Unset):
+            route_breakdown = []
+            for route_breakdown_item_data in self.route_breakdown:
+                route_breakdown_item = route_breakdown_item_data.to_dict()
+                route_breakdown.append(route_breakdown_item)
+
+        meter_breakdown: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.meter_breakdown, Unset):
+            meter_breakdown = []
+            for meter_breakdown_item_data in self.meter_breakdown:
+                meter_breakdown_item = meter_breakdown_item_data.to_dict()
+                meter_breakdown.append(meter_breakdown_item)
+
         currency = self.currency
 
         field_dict: dict[str, Any] = {}
@@ -72,6 +89,10 @@ class APIConsumerUsageQuoteResponse:
                 "as_of": as_of,
             }
         )
+        if route_breakdown is not UNSET:
+            field_dict["route_breakdown"] = route_breakdown
+        if meter_breakdown is not UNSET:
+            field_dict["meter_breakdown"] = meter_breakdown
         if currency is not UNSET:
             field_dict["currency"] = currency
 
@@ -79,6 +100,7 @@ class APIConsumerUsageQuoteResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.api_consumer_quote_breakdown import APIConsumerQuoteBreakdown
         from ..models.api_consumer_usage_quote_bucket_response import APIConsumerUsageQuoteBucketResponse
 
         d = dict(src_dict)
@@ -105,6 +127,24 @@ class APIConsumerUsageQuoteResponse:
 
         as_of = datetime.datetime.fromisoformat(d.pop("as_of"))
 
+        _route_breakdown = d.pop("route_breakdown", UNSET)
+        route_breakdown: list[APIConsumerQuoteBreakdown] | Unset = UNSET
+        if _route_breakdown is not UNSET:
+            route_breakdown = []
+            for route_breakdown_item_data in _route_breakdown:
+                route_breakdown_item = APIConsumerQuoteBreakdown.from_dict(route_breakdown_item_data)
+
+                route_breakdown.append(route_breakdown_item)
+
+        _meter_breakdown = d.pop("meter_breakdown", UNSET)
+        meter_breakdown: list[APIConsumerQuoteBreakdown] | Unset = UNSET
+        if _meter_breakdown is not UNSET:
+            meter_breakdown = []
+            for meter_breakdown_item_data in _meter_breakdown:
+                meter_breakdown_item = APIConsumerQuoteBreakdown.from_dict(meter_breakdown_item_data)
+
+                meter_breakdown.append(meter_breakdown_item)
+
         currency = d.pop("currency", UNSET)
 
         api_consumer_usage_quote_response = cls(
@@ -117,6 +157,8 @@ class APIConsumerUsageQuoteResponse:
             priced=priced,
             buckets=buckets,
             as_of=as_of,
+            route_breakdown=route_breakdown,
+            meter_breakdown=meter_breakdown,
             currency=currency,
         )
 

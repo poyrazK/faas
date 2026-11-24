@@ -14,7 +14,7 @@ import (
 
 // featureFlagEdgeForAppSQL reads the latest published flag configuration of
 // an app's project environment when any of its flags routes at the edge
-// (ADR-20261122090000). The gateway calls it once per app and environment and
+// (ADR-20261124212701). The gateway calls it once per app and environment and
 // caches the result until feature_flags_changed.
 const featureFlagEdgeForAppSQL = `
 SELECT e.id::text, latest.version, latest.config

@@ -273,6 +273,9 @@ type MemStore struct {
 	invocationAttemptHistory             map[int64]retainedInvocationAttempt
 	nextInvocationAttemptID              int64
 	checkedRollbacks                     map[string]api.RollbackOperation
+	projectRollbackOperations            map[string]ProjectRollbackRecord
+	projectRollbackProtections           map[projectRollbackProtectionKey]projectRollbackProtectionRecord
+	projectRollbackUndoArtifactHolds     map[string]map[string]projectRollbackUndoArtifactHold
 	checkedRollbackReleaseReviews        map[string][]ReleaseRun
 	plainRollbackReleaseReviews          map[string][]ReleaseRun
 	alertRollbacks                       map[string]api.AlertRollback
@@ -546,6 +549,7 @@ type MemStore struct {
 	objectGatewayStorage          map[string]*memGatewayStorage
 	objectAccessGrants            map[string]ObjectBucketAccessGrant
 	objectS3Credentials           map[string]ObjectS3Credential
+	objectWorkloadCredentials     map[string]ObjectWorkloadCredential
 	objectS3CopySources           map[string]ObjectS3CopySource
 	objectMultipartUploads        map[string]ObjectMultipartUpload
 	objectMultipartInitiations    map[string]ObjectMultipartInitiation
@@ -576,9 +580,13 @@ type MemStore struct {
 	outboundAIQualityAlerts       map[string][]OutboundAIQualityAlert
 	outboundAppBindings           map[string]OutboundAppBinding
 	outboundCredentials           map[string][]byte
-	mu                            sync.Mutex
-	outboundProbePolicies         map[string]api.OutboundBindingProbePolicy
-	outboundCredentialRevisions   map[string]int64
+	// ADR-20261122220000 verification contracts and their SQL handoff.
+	verificationContracts       map[string]VerificationContract
+	verificationQueries         map[string]VerificationQuery
+	verificationLeases          map[string]VerificationLease
+	mu                          sync.Mutex
+	outboundProbePolicies       map[string]api.OutboundBindingProbePolicy
+	outboundCredentialRevisions map[string]int64
 	// egressFlows is the ADR-371 egress flow log.
 	egressFlows               []EgressFlowRecord
 	accounts                  map[string]Account
@@ -643,7 +651,8 @@ type MemStore struct {
 	apiConsumerBillingPolicies           map[string]APIConsumerBillingPolicy       // ADR-1315, by app
 	apiConsumerOverdueHolds              map[string]APIConsumerOverdueHold         // ADR-1315, by consumer
 	platformTenants                      map[string]PlatformTenant
-	flagEvents                           *memFlagEvents // ADR 20261115163113, lazily made
+	flagEvents                           *memFlagEvents                 // ADR 20261115163113, lazily made
+	savedInsights                        map[string]*memSavedInsightRow // ADR-20261122190000, by ID, lazily made
 	platformTenantReconciliationReceipts map[string]api.PlatformTenantReconciliationReceiptResponse
 	platformTenantOffboardingReceipts    map[string]api.PlatformTenantOffboardingReceiptResponse
 	platformTenantAccessTokens           map[string]PlatformTenantAccessToken
@@ -742,6 +751,11 @@ type MemStore struct {
 	// buildPreemptions counts the times borrowed builder slots gave a build
 	// back to the queue (builds.preemptions, ADR-20261118154632).
 	buildPreemptions map[string]int
+	// buildNodeName records the node that claimed a running build
+	// (builds.builder_node_name, ADR-20261110210000) with that claim's start,
+	// so a requeued and reclaimed build names none until recorded again;
+	// allocated on first use.
+	buildNodeName map[string]memBuildNode
 	// ADR-740 developer live patches; allocated on first use.
 	devSourceManifests   map[string]DevSourceManifest
 	devSourceManifestSeq int64
@@ -1329,9 +1343,10 @@ type MemStore struct {
 	platformTenantSourceRouteUsage map[string]PlatformTenantSourceRouteUsageBucket
 	// Consumer plans (ADR-953): plans by ID, assignments by ID, and admission
 	// counters by consumer ID.
-	apiConsumerPlans           map[string]APIConsumerPlan
-	apiConsumerPlanAssignments map[string]APIConsumerPlanAssignment
-	apiConsumerPlanAdmissions  map[string]planAdmissionCounter
+	apiConsumerPlans               map[string]APIConsumerPlan
+	apiConsumerPlanAssignments     map[string]APIConsumerPlanAssignment
+	apiConsumerPlanAdmissions      map[string]planAdmissionCounter
+	apiConsumerPlanRouteAdmissions map[string]planAdmissionCounter // consumerID + "\x00" + route
 	// apiConsumerTelemetryHours is seeded by tests; the in-memory store keeps
 	// no request telemetry of its own (ADR-954).
 	apiConsumerTelemetryHours map[string]APIConsumerTelemetryHour
@@ -1341,6 +1356,8 @@ type MemStore struct {
 	// apiConsumerSpendCaps (by consumer ID) back prepaid credits and spend
 	// caps (ADR-1306).
 	apiConsumerCreditGrants       map[string]APIConsumerCreditGrant
+	apiConsumerCreditPackSettings map[string]api.ConsumerCreditPackSettings
+	apiConsumerCreditPurchases    map[string]APIConsumerCreditPurchase
 	apiConsumerCreditApplications []apiConsumerCreditApplication
 	apiConsumerSpendCaps          map[string]APIConsumerSpendCap
 	// platformTenantCreditGrants (by ID), platformTenantCreditApplications
@@ -2105,6 +2122,7 @@ func NewMemStore(options ...StoreOption) *MemStore {
 		apiConsumerPlans:                  map[string]APIConsumerPlan{},
 		apiConsumerPlanAssignments:        map[string]APIConsumerPlanAssignment{},
 		apiConsumerPlanAdmissions:         map[string]planAdmissionCounter{},
+		apiConsumerPlanRouteAdmissions:    map[string]planAdmissionCounter{},
 		apiConsumerUsageEvents:            map[string]usageEventIdentity{},
 		requestAuditEvents:                map[string]RequestAuditRecord{},
 		discoveredAPIRoutes:               map[string]DiscoveredAPIRoute{},
@@ -4254,6 +4272,12 @@ func (m *MemStore) deleteProjectLocked(projectID string) error {
 		}
 	}
 	delete(m.projects, projectID)
+	for id, operation := range m.projectRollbackOperations {
+		if operation.ProjectID == projectID {
+			delete(m.projectRollbackOperations, id)
+			delete(m.projectRollbackUndoArtifactHolds, id)
+		}
+	}
 	for id, receipt := range m.environmentRollbackReceipts {
 		if receipt.ProjectID == projectID {
 			delete(m.environmentRollbackReceipts, id)
@@ -6086,12 +6110,16 @@ func (m *MemStore) ListAllDeployments(_ context.Context) ([]Deployment, error) {
 // CountDeploymentOutcomesSince mirrors the production aggregate without
 // widening Store. Status evaluators discover it through a narrow optional
 // interface, keeping existing test stores source-compatible.
-func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Time) (DeploymentOutcomeCounts, error) {
+func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Time, excludedAccounts ...string) (DeploymentOutcomeCounts, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out DeploymentOutcomeCounts
 	failedTenants := map[string]struct{}{}
+	failures := map[string]struct{}{}
 	for _, d := range m.deployments {
+		if m.excludedOutcomeAccountLocked(d, excludedAccounts) {
+			continue
+		}
 		switch d.Status {
 		case DeployLive, DeploySuperseded:
 			terminalAt := d.CreatedAt
@@ -6111,7 +6139,11 @@ func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Ti
 				continue
 			}
 			if !m.customerCausedFailureLocked(d) {
-				out.Failed++
+				key := d.AppID
+				if key == "" {
+					key = d.ID
+				}
+				failures[key+":"+d.ErrorCode+":"+terminalAt.UTC().Truncate(time.Hour).String()] = struct{}{}
 				tenant := d.AppID
 				if app, ok := m.apps[d.AppID]; ok && app.AccountID != "" {
 					tenant = app.AccountID
@@ -6120,13 +6152,23 @@ func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Ti
 			}
 		}
 	}
+	out.Failed = len(failures)
 	out.FailedAccounts = len(failedTenants)
 	return out, nil
 }
 
+// excludedOutcomeAccountLocked reports whether d belongs to an account the
+// status aggregates leave out. Caller holds m.mu.
+func (m *MemStore) excludedOutcomeAccountLocked(d Deployment, excludedAccounts []string) bool {
+	app, ok := m.apps[d.AppID]
+	return ok && app.AccountID != "" && slices.Contains(excludedAccounts, app.AccountID)
+}
+
 // customerCausedFailureLocked mirrors the PgStore status aggregates' exclusion
-// of a failed deployment: a user_error build, or an error code that places the
-// failure in the customer's workload. Caller holds m.mu.
+// of a failed deployment: a user_error build, an error code that places the
+// failure in the customer's workload, a release command the task shows ended
+// on its own (api.IsCustomerCausedReleaseTask), or a proven 4xx smoke answer
+// (api.IsCustomerCausedSmokeStatus). Caller holds m.mu.
 func (m *MemStore) customerCausedFailureLocked(d Deployment) bool {
 	if api.IsCustomerCausedDeploymentFailure(d.ErrorCode) {
 		return true
@@ -6136,16 +6178,38 @@ func (m *MemStore) customerCausedFailureLocked(d Deployment) bool {
 			return true
 		}
 	}
+	switch d.ErrorCode {
+	case api.CodeReleaseCommandFailed:
+		for _, task := range m.appTasks {
+			if task.DeploymentID == d.ID && task.Kind == AppTaskKindRelease &&
+				api.IsCustomerCausedReleaseTask(task.ExitCode, derefString(task.FailureCode), task.StderrTail, task.Status == AppTaskTimedOut, task.Status == AppTaskCancelled && task.CancelRequested != nil) {
+				return true
+			}
+		}
+		return false
+	case api.CodeDeploymentSmokeFailed:
+		var receipt struct {
+			Smoke struct {
+				ErrorCode  string `json:"error_code"`
+				StatusCode int    `json:"status_code"`
+			} `json:"smoke"`
+		}
+		return json.Unmarshal(d.APIHostingReceipt, &receipt) == nil && receipt.Smoke.ErrorCode == api.CustomerCausedSmokeErrorCode &&
+			api.IsCustomerCausedSmokeStatus(receipt.Smoke.StatusCode)
+	}
 	return false
 }
 
 // LatestPlatformDeploymentOutcome mirrors the production last-known result.
-func (m *MemStore) LatestPlatformDeploymentOutcome(_ context.Context) (LatestDeploymentOutcome, error) {
+func (m *MemStore) LatestPlatformDeploymentOutcome(_ context.Context, excludedAccounts ...string) (LatestDeploymentOutcome, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var latest LatestDeploymentOutcome
 	found := false
 	for _, d := range m.deployments {
+		if m.excludedOutcomeAccountLocked(d, excludedAccounts) {
+			continue
+		}
 		succeeded := d.Status == DeployLive || d.Status == DeploySuperseded
 		if !succeeded && d.Status != DeployFailed {
 			continue
@@ -9138,6 +9202,13 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 	proposed[d.ID] = d
 	if err := appTrafficBindingError(m.checkMemTrafficBindingLocked(ctx, app.AccountID, nil, app.ID, memTrafficPolicyChange{Deployments: proposed})); err != nil {
 		return Deployment{}, 0, err
+	}
+	if d.ProjectDeployGroupID != "" {
+		if app.ProjectID == "" || !projectRollbackGroupEligible(d.ProjectDeployGroupID, normalizedDeploymentScope(d.Scope)) {
+			return Deployment{}, 0, ErrInvalidArgument
+		}
+		d.projectDeployProjectID = app.ProjectID
+		proposed[d.ID] = d
 	}
 	m.recordRecoveryPredecessorLocked(d)
 	if reviewedSpec.ID != "" {
@@ -29169,6 +29240,9 @@ func (m *MemStore) CreateConsumerKey(_ context.Context, accountID, appID, name, 
 		case "read", "write", "admin", "billing":
 			// ok
 		default:
+			if api.ValidConsumerKeyMCPScope(s) {
+				continue
+			}
 			return ConsumerKey{}, fmt.Errorf("memstore: CreateConsumerKey: scope %q is not in the closed-set {read, write, admin} (00329 vocab CHECK)", s)
 		}
 	}

@@ -51835,6 +51835,41 @@ func (q *Queries) ListEnvironmentWorkloadQualificationsForDispatch(ctx context.C
 	return items, nil
 }
 
+const listEventSubjectsWithKind = `-- name: ListEventSubjectsWithKind :many
+select distinct subject::uuid as subject
+from events
+where subject = any($1::uuid[]) and kind = $2 and at >= $3
+`
+
+type ListEventSubjectsWithKindParams struct {
+	Subjects []pgtype.UUID
+	Kind     string
+	Since    pgtype.Timestamptz
+}
+
+// Which of the given subjects have an event of one kind since a time, in one
+// read: app health asks it of an app's recently stopped instances
+// (liveness_failed, prod hunt r33). events_subject_idx (subject, at desc).
+func (q *Queries) ListEventSubjectsWithKind(ctx context.Context, db DBTX, arg ListEventSubjectsWithKindParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, listEventSubjectsWithKind, arg.Subjects, arg.Kind, arg.Since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var subject pgtype.UUID
+		if err := rows.Scan(&subject); err != nil {
+			return nil, err
+		}
+		items = append(items, subject)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEventSubscriptionsForApp = `-- name: ListEventSubscriptionsForApp :many
 
 select id, account_id, app_id, source, type, filter, enabled, created_at, updated_at, routing_retry_policy, schema_versions, acknowledgment_lease_seconds, deployment_scope, environment_id, clone_paused
@@ -66824,6 +66859,7 @@ SELECT
  COALESCE(sum(u.quantity) FILTER (WHERE u.meter='compute_unit_seconds'),0)::bigint AS compute_unit_seconds,
  COALESCE(sum(u.quantity) FILTER (WHERE u.meter='storage_byte_seconds'),0)::bigint AS storage_byte_seconds,
  COALESCE(sum(u.quantity) FILTER (WHERE u.meter='history_byte_seconds'),0)::bigint AS history_byte_seconds,
+ COALESCE(sum(u.quantity) FILTER (WHERE u.meter='snapshot_byte_seconds'),0)::bigint AS snapshot_byte_seconds,
  COALESCE(sum(u.quantity) FILTER (WHERE u.meter='egress_bytes'),0)::bigint AS egress_bytes,
  COALESCE(sum(u.cost_millicents),0)::bigint AS cost_millicents
 FROM managed_postgres_usage u JOIN managed_postgres_databases d ON d.id=u.database_id
@@ -66842,11 +66878,12 @@ type ManagedPostgresUsageForSubjectParams struct {
 }
 
 type ManagedPostgresUsageForSubjectRow struct {
-	ComputeUnitSeconds int64
-	StorageByteSeconds int64
-	HistoryByteSeconds int64
-	EgressBytes        int64
-	CostMillicents     int64
+	ComputeUnitSeconds  int64
+	StorageByteSeconds  int64
+	HistoryByteSeconds  int64
+	SnapshotByteSeconds int64
+	EgressBytes         int64
+	CostMillicents      int64
 }
 
 // ADR-20261029174950 decision 6: a window wholly inside a scheduled delete is
@@ -66858,6 +66895,7 @@ func (q *Queries) ManagedPostgresUsageForSubject(ctx context.Context, db DBTX, a
 		&i.ComputeUnitSeconds,
 		&i.StorageByteSeconds,
 		&i.HistoryByteSeconds,
+		&i.SnapshotByteSeconds,
 		&i.EgressBytes,
 		&i.CostMillicents,
 	)
@@ -77994,6 +78032,222 @@ func (q *Queries) ObjectVersioningSave(ctx context.Context, db DBTX, arg ObjectV
 	return err
 }
 
+const objectWorkloadCredentialCountLive = `-- name: ObjectWorkloadCredentialCountLive :one
+SELECT count(*)::int FROM object_storage_workload_credentials
+WHERE instance_id = $1 AND bucket_id = $2 AND expires_at > now()
+`
+
+type ObjectWorkloadCredentialCountLiveParams struct {
+	InstanceID string
+	BucketID   pgtype.UUID
+}
+
+func (q *Queries) ObjectWorkloadCredentialCountLive(ctx context.Context, db DBTX, arg ObjectWorkloadCredentialCountLiveParams) (int32, error) {
+	row := db.QueryRow(ctx, objectWorkloadCredentialCountLive, arg.InstanceID, arg.BucketID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const objectWorkloadCredentialDelete = `-- name: ObjectWorkloadCredentialDelete :execrows
+DELETE FROM object_storage_workload_credentials
+WHERE caller_app_id = $1 AND id = ANY($2::uuid[])
+`
+
+type ObjectWorkloadCredentialDeleteParams struct {
+	CallerAppID pgtype.UUID
+	Ids         []pgtype.UUID
+}
+
+func (q *Queries) ObjectWorkloadCredentialDelete(ctx context.Context, db DBTX, arg ObjectWorkloadCredentialDeleteParams) (int64, error) {
+	result, err := db.Exec(ctx, objectWorkloadCredentialDelete, arg.CallerAppID, arg.Ids)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectWorkloadCredentialDeleteExpired = `-- name: ObjectWorkloadCredentialDeleteExpired :execrows
+DELETE FROM object_storage_workload_credentials
+WHERE id IN (
+    SELECT id FROM object_storage_workload_credentials
+    WHERE expires_at <= $1::timestamptz
+    ORDER BY expires_at
+    LIMIT $2::int
+)
+`
+
+type ObjectWorkloadCredentialDeleteExpiredParams struct {
+	Before     pgtype.Timestamptz
+	BatchLimit int32
+}
+
+func (q *Queries) ObjectWorkloadCredentialDeleteExpired(ctx context.Context, db DBTX, arg ObjectWorkloadCredentialDeleteExpiredParams) (int64, error) {
+	result, err := db.Exec(ctx, objectWorkloadCredentialDeleteExpired, arg.Before, arg.BatchLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectWorkloadCredentialInsert = `-- name: ObjectWorkloadCredentialInsert :exec
+
+INSERT INTO object_storage_workload_credentials
+    (id, account_id, bucket_id, caller_app_id, instance_id, access_key_id, secret_sealed, kid, permission, key_prefix, created_at, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6,
+        $7, $8, $9, $10, $11, $12)
+`
+
+type ObjectWorkloadCredentialInsertParams struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	BucketID     pgtype.UUID
+	CallerAppID  pgtype.UUID
+	InstanceID   string
+	AccessKeyID  string
+	SecretSealed []byte
+	Kid          string
+	Permission   string
+	KeyPrefix    pgtype.Text
+	CreatedAt    pgtype.Timestamptz
+	ExpiresAt    pgtype.Timestamptz
+}
+
+// ADR-20261122191423 slice 2: short-lived workload S3 credentials.
+func (q *Queries) ObjectWorkloadCredentialInsert(ctx context.Context, db DBTX, arg ObjectWorkloadCredentialInsertParams) error {
+	_, err := db.Exec(ctx, objectWorkloadCredentialInsert,
+		arg.ID,
+		arg.AccountID,
+		arg.BucketID,
+		arg.CallerAppID,
+		arg.InstanceID,
+		arg.AccessKeyID,
+		arg.SecretSealed,
+		arg.Kid,
+		arg.Permission,
+		arg.KeyPrefix,
+		arg.CreatedAt,
+		arg.ExpiresAt,
+	)
+	return err
+}
+
+const objectWorkloadCredentialListLiveForApp = `-- name: ObjectWorkloadCredentialListLiveForApp :many
+SELECT id, bucket_id, permission, key_prefix FROM object_storage_workload_credentials
+WHERE caller_app_id = $1 AND expires_at > now()
+`
+
+type ObjectWorkloadCredentialListLiveForAppRow struct {
+	ID         pgtype.UUID
+	BucketID   pgtype.UUID
+	Permission string
+	KeyPrefix  pgtype.Text
+}
+
+func (q *Queries) ObjectWorkloadCredentialListLiveForApp(ctx context.Context, db DBTX, callerAppID pgtype.UUID) ([]ObjectWorkloadCredentialListLiveForAppRow, error) {
+	rows, err := db.Query(ctx, objectWorkloadCredentialListLiveForApp, callerAppID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectWorkloadCredentialListLiveForAppRow{}
+	for rows.Next() {
+		var i ObjectWorkloadCredentialListLiveForAppRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.BucketID,
+			&i.Permission,
+			&i.KeyPrefix,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectWorkloadCredentialResolve = `-- name: ObjectWorkloadCredentialResolve :one
+SELECT c.id, c.account_id, c.bucket_id, c.caller_app_id, c.access_key_id, c.secret_sealed, c.kid, c.permission, c.key_prefix,
+       c.created_at, c.expires_at,
+       b.app_id, b.org_id, b.name AS bucket_name, b.scope AS bucket_scope,
+       b.region AS bucket_region, b.backend_id, b.backend_fingerprint,
+       b.physical_name, b.state AS bucket_state, b.created_at AS bucket_created_at,
+       b.updated_at AS bucket_updated_at
+FROM object_storage_workload_credentials c
+JOIN object_buckets b ON b.id = c.bucket_id AND b.account_id = c.account_id
+JOIN orgs o ON o.id = b.org_id
+WHERE c.access_key_id = $1 AND c.expires_at > now() AND b.state = 'ready' AND NOT o.deleted_pending
+  AND b.environment_clone_operation_id IS NULL
+  AND EXISTS (SELECT 1 FROM apps ca WHERE ca.id = c.caller_app_id AND ca.status <> 'deleted')
+  AND EXISTS (SELECT 1 FROM instances i WHERE i.id::text = c.instance_id AND i.app_id = c.caller_app_id
+              AND i.state NOT IN ('parked','stopped','failed','evicting_account_deleting'))
+  AND (CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.status IN ('active','past_due') AND o.abuse_hold_at IS NULL
+       ELSE EXISTS (SELECT 1 FROM accounts a WHERE a.id = b.account_id AND a.status IN ('active','past_due') AND a.abuse_hold_at IS NULL) END)
+`
+
+type ObjectWorkloadCredentialResolveRow struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	BucketID           pgtype.UUID
+	CallerAppID        pgtype.UUID
+	AccessKeyID        string
+	SecretSealed       []byte
+	Kid                string
+	Permission         string
+	KeyPrefix          pgtype.Text
+	CreatedAt          pgtype.Timestamptz
+	ExpiresAt          pgtype.Timestamptz
+	AppID              pgtype.UUID
+	OrgID              pgtype.UUID
+	BucketName         string
+	BucketScope        string
+	BucketRegion       string
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+	BucketState        string
+	BucketCreatedAt    pgtype.Timestamptz
+	BucketUpdatedAt    pgtype.Timestamptz
+}
+
+// A workload credential resolves while it has not expired, its caller app
+// still exists, the instance it was issued to still holds a VM, its bucket is
+// ready and the bucket's resource owner may use object storage: the same
+// owner rule object_storage_credential_live applies to compute keys. A grant
+// that uses: drops is revoked by deleting the row (ObjectWorkloadCredentialDelete).
+func (q *Queries) ObjectWorkloadCredentialResolve(ctx context.Context, db DBTX, accessKeyID string) (ObjectWorkloadCredentialResolveRow, error) {
+	row := db.QueryRow(ctx, objectWorkloadCredentialResolve, accessKeyID)
+	var i ObjectWorkloadCredentialResolveRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.BucketID,
+		&i.CallerAppID,
+		&i.AccessKeyID,
+		&i.SecretSealed,
+		&i.Kid,
+		&i.Permission,
+		&i.KeyPrefix,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.AppID,
+		&i.OrgID,
+		&i.BucketName,
+		&i.BucketScope,
+		&i.BucketRegion,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.PhysicalName,
+		&i.BucketState,
+		&i.BucketCreatedAt,
+		&i.BucketUpdatedAt,
+	)
+	return i, err
+}
+
 const objectWriteInsert = `-- name: ObjectWriteInsert :exec
 INSERT INTO object_storage_write_admissions(id,bucket_id,key_hash,kind,multipart_upload_id,route_receipt,native_version,native_bytes)
 VALUES($1,$2,$3,$4,$5,$6,$7::boolean,$8::bigint)
@@ -78583,6 +78837,391 @@ func (q *Queries) OperationEffectDeliveryAllowed(ctx context.Context, db DBTX, d
 	var i OperationEffectDeliveryAllowedRow
 	err := row.Scan(&i.Managed, &i.Allowed)
 	return i, err
+}
+
+const operatorActiveBuilds = `-- name: OperatorActiveBuilds :many
+SELECT b.id::text AS id, b.deployment_id::text AS deployment_id,
+       COALESCE(d.app_id::text, '')::text AS app_id, COALESCE(a.slug, '')::text AS app_slug,
+       COALESCE(a.account_id::text, '')::text AS account_id,
+       b.kind, b.status, COALESCE(b.failure_class, '')::text AS failure_class, b.source_bytes,
+       b.enqueued_at, b.not_before, b.started_at, b.finished_at,
+       COALESCE(b.cache_status, '')::text AS cache_status,
+       COALESCE(b.builder_node_name, '')::text AS builder_node_name, b.preemptions,
+       COALESCE(b.coalesced_with::text, '')::text AS coalesced_with
+FROM builds b
+LEFT JOIN deployments d ON d.id = b.deployment_id
+LEFT JOIN apps a ON a.id = d.app_id
+WHERE b.status IN ('queued', 'running')
+ORDER BY (b.status = 'running') DESC, (b.not_before IS NOT NULL AND b.not_before > now()),
+         COALESCE(b.not_before, b.enqueued_at), b.id
+LIMIT $1::int
+`
+
+type OperatorActiveBuildsRow struct {
+	ID              string
+	DeploymentID    string
+	AppID           string
+	AppSlug         string
+	AccountID       string
+	Kind            string
+	Status          string
+	FailureClass    string
+	SourceBytes     int64
+	EnqueuedAt      pgtype.Timestamptz
+	NotBefore       pgtype.Timestamptz
+	StartedAt       pgtype.Timestamptz
+	FinishedAt      pgtype.Timestamptz
+	CacheStatus     string
+	BuilderNodeName string
+	Preemptions     int32
+	CoalescedWith   string
+}
+
+// The operator build queue report (ADR-20261123163340): queued and running
+// builds with their app. Running builds come first (slots bound them, so a
+// long backlog never cuts them), then due queued builds the longest waiting
+// first (from not_before when deferred), then builds deferred to a later
+// not_before. The caller asks for one row more than it keeps to learn whether
+// it was cut.
+func (q *Queries) OperatorActiveBuilds(ctx context.Context, db DBTX, rowLimit int32) ([]OperatorActiveBuildsRow, error) {
+	rows, err := db.Query(ctx, operatorActiveBuilds, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorActiveBuildsRow{}
+	for rows.Next() {
+		var i OperatorActiveBuildsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.DeploymentID,
+			&i.AppID,
+			&i.AppSlug,
+			&i.AccountID,
+			&i.Kind,
+			&i.Status,
+			&i.FailureClass,
+			&i.SourceBytes,
+			&i.EnqueuedAt,
+			&i.NotBefore,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CacheStatus,
+			&i.BuilderNodeName,
+			&i.Preemptions,
+			&i.CoalescedWith,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const operatorFinishedBuildsSince = `-- name: OperatorFinishedBuildsSince :many
+SELECT b.id::text AS id, b.deployment_id::text AS deployment_id,
+       COALESCE(d.app_id::text, '')::text AS app_id, COALESCE(a.slug, '')::text AS app_slug,
+       COALESCE(a.account_id::text, '')::text AS account_id,
+       b.kind, b.status, COALESCE(b.failure_class, '')::text AS failure_class, b.source_bytes,
+       b.enqueued_at, b.not_before, b.started_at, b.finished_at,
+       COALESCE(b.cache_status, '')::text AS cache_status,
+       COALESCE(b.builder_node_name, '')::text AS builder_node_name, b.preemptions,
+       COALESCE(b.coalesced_with::text, '')::text AS coalesced_with
+FROM builds b
+LEFT JOIN deployments d ON d.id = b.deployment_id
+LEFT JOIN apps a ON a.id = d.app_id
+WHERE b.finished_at >= $1::timestamptz
+  AND b.status IN ('succeeded', 'failed', 'cancelled')
+ORDER BY b.finished_at DESC, b.id DESC
+LIMIT $2::int
+`
+
+type OperatorFinishedBuildsSinceParams struct {
+	Since    pgtype.Timestamptz
+	RowLimit int32
+}
+
+type OperatorFinishedBuildsSinceRow struct {
+	ID              string
+	DeploymentID    string
+	AppID           string
+	AppSlug         string
+	AccountID       string
+	Kind            string
+	Status          string
+	FailureClass    string
+	SourceBytes     int64
+	EnqueuedAt      pgtype.Timestamptz
+	NotBefore       pgtype.Timestamptz
+	StartedAt       pgtype.Timestamptz
+	FinishedAt      pgtype.Timestamptz
+	CacheStatus     string
+	BuilderNodeName string
+	Preemptions     int32
+	CoalescedWith   string
+}
+
+// Builds that reached a terminal status at or after since, newest first,
+// for the build queue report's durations, failures and cache outcomes.
+// builds_finished_at_idx serves the range.
+func (q *Queries) OperatorFinishedBuildsSince(ctx context.Context, db DBTX, arg OperatorFinishedBuildsSinceParams) ([]OperatorFinishedBuildsSinceRow, error) {
+	rows, err := db.Query(ctx, operatorFinishedBuildsSince, arg.Since, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorFinishedBuildsSinceRow{}
+	for rows.Next() {
+		var i OperatorFinishedBuildsSinceRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.DeploymentID,
+			&i.AppID,
+			&i.AppSlug,
+			&i.AccountID,
+			&i.Kind,
+			&i.Status,
+			&i.FailureClass,
+			&i.SourceBytes,
+			&i.EnqueuedAt,
+			&i.NotBefore,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CacheStatus,
+			&i.BuilderNodeName,
+			&i.Preemptions,
+			&i.CoalescedWith,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const operatorLiveDeploymentsWithoutSnapshot = `-- name: OperatorLiveDeploymentsWithoutSnapshot :many
+SELECT d.id::text AS deployment_id, d.app_id::text AS app_id, a.slug AS app_slug,
+       a.account_id::text AS account_id, (d.rootfs_key <> '')::boolean AS cold_bootable,
+       d.created_at,
+       (SELECT max(s.stale_at) FROM snapshots s WHERE s.deployment_id = d.id)::timestamptz AS last_stale_at
+FROM deployments d
+JOIN apps a ON a.id = d.app_id
+WHERE d.status = 'live' AND d.deleted_at IS NULL AND a.status = 'active'
+  AND NOT EXISTS (SELECT 1 FROM snapshots s WHERE s.deployment_id = d.id AND NOT s.stale AND NOT s.delete_pending)
+ORDER BY (d.rootfs_key = '') DESC, d.created_at DESC, d.id
+LIMIT $1::int
+`
+
+type OperatorLiveDeploymentsWithoutSnapshotRow struct {
+	DeploymentID string
+	AppID        string
+	AppSlug      string
+	AccountID    string
+	ColdBootable bool
+	CreatedAt    pgtype.Timestamptz
+	LastStaleAt  pgtype.Timestamptz
+}
+
+// Live deployments of active apps with no usable snapshot (none, or every one
+// stale or pending deletion): they cold boot on every wake until a snapshot
+// is taken. cold_bootable is false when the deployment has no rootfs either,
+// which breaks spec invariant 6.2-3. Those come first, then the newest.
+func (q *Queries) OperatorLiveDeploymentsWithoutSnapshot(ctx context.Context, db DBTX, rowLimit int32) ([]OperatorLiveDeploymentsWithoutSnapshotRow, error) {
+	rows, err := db.Query(ctx, operatorLiveDeploymentsWithoutSnapshot, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorLiveDeploymentsWithoutSnapshotRow{}
+	for rows.Next() {
+		var i OperatorLiveDeploymentsWithoutSnapshotRow
+		if err := rows.Scan(
+			&i.DeploymentID,
+			&i.AppID,
+			&i.AppSlug,
+			&i.AccountID,
+			&i.ColdBootable,
+			&i.CreatedAt,
+			&i.LastStaleAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const operatorMemoryPressureEvents = `-- name: OperatorMemoryPressureEvents :many
+SELECT e.at, e.kind, COALESCE(e.data->>'reason', '')::text AS reason,
+       COALESCE(i.id::text, e.subject::text, e.data->>'instance_id', '')::text AS instance_id,
+       COALESCE(a.id::text, '')::text AS app_id, COALESCE(a.slug, '')::text AS app_slug,
+       COALESCE(a.account_id::text, '')::text AS account_id, COALESCE(ac.plan, '')::text AS plan,
+       COALESCE(i.node_id::text, '')::text AS node_id, COALESCE(n.name, '')::text AS node_name,
+       COALESCE(i.ram_mb, 0)::int AS ram_mb,
+       COALESCE(CASE WHEN e.data->>'peak_mb' ~ '^[0-9]{1,9}$' THEN (e.data->>'peak_mb')::int END, 0)::int AS peak_mb,
+       COALESCE(CASE WHEN e.data->>'plan_mb' ~ '^[0-9]{1,9}$' THEN (e.data->>'plan_mb')::int END, 0)::int AS plan_mb,
+       (COALESCE(e.data->>'deployment_failed', '') = 'true')::boolean AS deployment_failed
+FROM events e
+LEFT JOIN instances i ON i.id = COALESCE(e.subject,
+       CASE WHEN e.data->>'instance_id' ~ '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$' THEN (e.data->>'instance_id')::uuid END)
+LEFT JOIN apps a ON a.id = COALESCE(i.app_id,
+       CASE WHEN e.data->>'app_id' ~ '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$' THEN (e.data->>'app_id')::uuid END)
+LEFT JOIN accounts ac ON ac.id = a.account_id
+LEFT JOIN compute_nodes n ON n.id = i.node_id
+WHERE e.kind IN ('memory_eviction', 'frozen_park', 'instances.workload_oom_failed')
+  AND e.at >= $1::timestamptz
+  AND (e.kind <> 'frozen_park' OR e.data->>'reason' = 'memory_pressure')
+ORDER BY e.at DESC, e.id DESC
+LIMIT $2::int
+`
+
+type OperatorMemoryPressureEventsParams struct {
+	Since    pgtype.Timestamptz
+	RowLimit int32
+}
+
+type OperatorMemoryPressureEventsRow struct {
+	At               pgtype.Timestamptz
+	Kind             string
+	Reason           string
+	InstanceID       string
+	AppID            string
+	AppSlug          string
+	AccountID        string
+	Plan             string
+	NodeID           string
+	NodeName         string
+	RamMb            int32
+	PeakMb           int32
+	PlanMb           int32
+	DeploymentFailed bool
+}
+
+// The operator memory pressure report (ADR-20261123190507): RAM pressure
+// evictions of running instances (memory_eviction), frozen instances parked
+// under memory pressure (frozen_park, reason memory_pressure) and workload
+// OOM kills (instances.workload_oom_failed), newest first, each with its
+// instance's node and RAM and its app's account and plan. A transition names
+// its instance in subject; an OOM kill names instance and app in data. The
+// instance row may already be gone (terminal retention), so every join is
+// optional. events_kind_at_idx serves each kind's range.
+func (q *Queries) OperatorMemoryPressureEvents(ctx context.Context, db DBTX, arg OperatorMemoryPressureEventsParams) ([]OperatorMemoryPressureEventsRow, error) {
+	rows, err := db.Query(ctx, operatorMemoryPressureEvents, arg.Since, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorMemoryPressureEventsRow{}
+	for rows.Next() {
+		var i OperatorMemoryPressureEventsRow
+		if err := rows.Scan(
+			&i.At,
+			&i.Kind,
+			&i.Reason,
+			&i.InstanceID,
+			&i.AppID,
+			&i.AppSlug,
+			&i.AccountID,
+			&i.Plan,
+			&i.NodeID,
+			&i.NodeName,
+			&i.RamMb,
+			&i.PeakMb,
+			&i.PlanMb,
+			&i.DeploymentFailed,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const operatorSnapshotInventory = `-- name: OperatorSnapshotInventory :many
+SELECT s.id::text AS id, s.deployment_id::text AS deployment_id, d.app_id::text AS app_id,
+       a.slug AS app_slug, a.account_id::text AS account_id, d.status AS deployment_status,
+       s.tier, s.fc_version, s.cpu_template, s.cpu_model, s.stale, s.stale_at,
+       s.delete_pending, s.created_at,
+       (CASE WHEN s.stored_bytes > 0 THEN s.stored_bytes ELSE s.mem_bytes + s.disk_bytes END)::bigint AS snapshot_bytes,
+       COALESCE(d.rootfs_bytes, 0)::bigint AS layer_bytes
+FROM snapshots s
+JOIN deployments d ON d.id = s.deployment_id
+JOIN apps a ON a.id = d.app_id
+ORDER BY (CASE WHEN s.stored_bytes > 0 THEN s.stored_bytes ELSE s.mem_bytes + s.disk_bytes END) + COALESCE(d.rootfs_bytes, 0) DESC, s.id
+LIMIT $1::int
+`
+
+type OperatorSnapshotInventoryRow struct {
+	ID               string
+	DeploymentID     string
+	AppID            string
+	AppSlug          string
+	AccountID        string
+	DeploymentStatus string
+	Tier             string
+	FcVersion        string
+	CpuTemplate      string
+	CpuModel         string
+	Stale            bool
+	StaleAt          pgtype.Timestamptz
+	DeletePending    bool
+	CreatedAt        pgtype.Timestamptz
+	SnapshotBytes    int64
+	LayerBytes       int64
+}
+
+// The operator snapshot health report (ADR-20261122135018): every snapshot
+// row with its parked footprint (the fcvm_snapshot_fleet_avg_bytes
+// definition: allocated mem + vmstate, or logical bytes from a legacy writer,
+// plus the deployment's above-base layer) and its app, largest first. The
+// caller asks for one row more than it keeps to learn whether it was cut.
+func (q *Queries) OperatorSnapshotInventory(ctx context.Context, db DBTX, rowLimit int32) ([]OperatorSnapshotInventoryRow, error) {
+	rows, err := db.Query(ctx, operatorSnapshotInventory, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorSnapshotInventoryRow{}
+	for rows.Next() {
+		var i OperatorSnapshotInventoryRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.DeploymentID,
+			&i.AppID,
+			&i.AppSlug,
+			&i.AccountID,
+			&i.DeploymentStatus,
+			&i.Tier,
+			&i.FcVersion,
+			&i.CpuTemplate,
+			&i.CpuModel,
+			&i.Stale,
+			&i.StaleAt,
+			&i.DeletePending,
+			&i.CreatedAt,
+			&i.SnapshotBytes,
+			&i.LayerBytes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const orgByID = `-- name: OrgByID :one
@@ -85658,7 +86297,9 @@ SELECT (jsonb_build_object(
     'financial_preview_command_runtimes_deployment_id_fkey', (SELECT count(*) FROM financial_preview_command_runtimes WHERE deployment_id = $1::uuid AND phase <> 'retired'),
     -- Environment branches (ADR-20261031193635) record the deployments they created.
     'project_environment_branch_deployments_deployment_id_fkey', (SELECT count(*) FROM project_environment_branch_deployments WHERE deployment_id = $1::uuid),
-    'environment_branch_captures_deployment_id_fkey', (SELECT count(*) FROM environment_branch_captures WHERE deployment_id = $1::uuid)
+    'environment_branch_captures_deployment_id_fkey', (SELECT count(*) FROM environment_branch_captures WHERE deployment_id = $1::uuid),
+    -- Project deploy rollbacks (#7923) record each deployment's deploy group.
+    'project_deploy_rollback_members_deployment_id_fkey', (SELECT count(*) FROM project_deploy_rollback_members WHERE deployment_id = $1::uuid)
 ))::jsonb AS borrowers
 `
 
@@ -85745,7 +86386,13 @@ SELECT (jsonb_build_object(
  -- and capture objects (ADR-20261031193635) keep the id without a foreign key.
  'artifact_signatures.deployment_id', (SELECT count(*) FROM artifact_signatures WHERE deployment_id=$1::uuid),
  'environment_branch_capture_objects.deployment_id', (SELECT count(*) FROM environment_branch_capture_objects WHERE deployment_id=$1::uuid),
- 'project_environment_branch_deployments.source_deployment_id', (SELECT count(*) FROM project_environment_branch_deployments WHERE source_deployment_id=$1::uuid)
+ 'project_environment_branch_deployments.source_deployment_id', (SELECT count(*) FROM project_environment_branch_deployments WHERE source_deployment_id=$1::uuid),
+ -- Verification-contract SQL checks (ADR-20261122220000), route resource
+ -- minutes (ADR-20261121170000) and project rollback undo artifact holds
+ -- (#7923) keep the id without a foreign key.
+ 'deployment_verification_queries.deployment_id', (SELECT count(*) FROM deployment_verification_queries WHERE deployment_id=$1::uuid),
+ 'instance_resource_minutes.deployment_id', (SELECT count(*) FROM instance_resource_minutes WHERE deployment_id=$1::uuid),
+ 'project_rollback_undo_artifact_holds.deployment_id', (SELECT count(*) FROM project_rollback_undo_artifact_holds WHERE deployment_id=$1::uuid)
 ))::jsonb AS borrowers
 `
 

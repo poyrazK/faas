@@ -3,8 +3,13 @@ package bindingprobe
 
 import (
 	"context"
+	"crypto/tls"
+	"errors"
+	"fmt"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -14,11 +19,21 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const objectStorageTimeout = 5 * time.Second
+// objectStorageTimeout bounds the whole probe and objectStorageAttemptTimeout
+// one request. A verification task VM is cold: its first request pays DNS,
+// the first egress packet and a TLS handshake, and a single 5 s attempt
+// reported live, working bindings as unreachable. The whole probe stays
+// inside the 15 s app-task budget (api.BindingVerificationRunProbeTimeoutSeconds).
+const (
+	objectStorageTimeout        = 13 * time.Second
+	objectStorageAttemptTimeout = 6 * time.Second
+	objectStorageReadAttempts   = 2
+)
 
-// ObjectStorage uses only the selected injected credentials. It makes one
-// signed, path-style ListObjectsV2 request and never follows redirects, writes
-// objects, retries or returns object names or raw provider diagnostics.
+// ObjectStorage uses only the selected injected credentials. It makes a
+// signed, path-style ListObjectsV2 request, repeated once only when no HTTP
+// response arrived, and never follows redirects, writes objects or returns
+// object names or raw provider diagnostics.
 func ObjectStorage(ctx context.Context, prefix string, getenv func(string) string) api.ObjectStorageBindingProbeReport {
 	return objectStorage(ctx, prefix, getenv, "")
 }
@@ -80,7 +95,7 @@ func objectStorage(ctx context.Context, prefix string, getenv func(string) strin
 	client := s3.New(s3.Options{
 		Region: values[1], BaseEndpoint: aws.String(values[0]), UsePathStyle: true,
 		Credentials: credentials.NewStaticCredentialsProvider(values[3], values[4], ""),
-		HTTPClient: &http.Client{Transport: observation, Timeout: objectStorageTimeout,
+		HTTPClient: &http.Client{Transport: observation, Timeout: objectStorageAttemptTimeout,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 		RetryMaxAttempts:           1,
 		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
@@ -89,9 +104,14 @@ func objectStorage(ctx context.Context, prefix string, getenv func(string) strin
 	if mode != "" {
 		return objectStorageWrite(probeContext, client, observation, values[2], report)
 	}
-	output, err := client.ListObjectsV2(probeContext, &s3.ListObjectsV2Input{Bucket: aws.String(values[2]), MaxKeys: aws.Int32(1)})
+	var output *s3.ListObjectsV2Output
+	// A read-only listing is safe to repeat; only a request that got no HTTP
+	// response at all is tried again.
+	for attempt := 0; attempt < objectStorageReadAttempts && (attempt == 0 || observation.status == 0 && probeContext.Err() == nil); attempt++ {
+		output, err = client.ListObjectsV2(probeContext, &s3.ListObjectsV2Input{Bucket: aws.String(values[2]), MaxKeys: aws.Int32(1)})
+	}
 	if observation.status == 0 {
-		report.Connection = api.ObjectStorageBindingProbeCheck{Status: "failed", Detail: "could not reach the S3 endpoint; verify DNS, TLS and network access"}
+		report.Connection = api.ObjectStorageBindingProbeCheck{Status: "failed", Detail: objectStorageConnectionDetail(observation.err)}
 		report.Error = "object-storage connection failed"
 		return report
 	}
@@ -112,14 +132,39 @@ func objectStorage(ctx context.Context, prefix string, getenv func(string) strin
 type objectStorageTransport struct {
 	base   http.RoundTripper
 	status int
+	err    error
 }
 
 func (t *objectStorageTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	response, err := t.base.RoundTrip(req)
+	t.err = err
 	if response != nil {
 		t.status = response.StatusCode
 		// Bound success and error XML before the SDK parses it.
 		response.Body = http.MaxBytesReader(nil, response.Body, 64*1024)
 	}
 	return response, err
+}
+
+// objectStorageConnectionDetail names the step that failed without echoing
+// raw provider or resolver text.
+func objectStorageConnectionDetail(err error) string {
+	const advice = "; the binding was checked from a fresh verification VM"
+	var dnsErr *net.DNSError
+	var opErr *net.OpError
+	var certErr *tls.CertificateVerificationError
+	var recordErr tls.RecordHeaderError
+	switch {
+	case err == nil:
+		return "could not reach the S3 endpoint; verify DNS, TLS and network access" + advice
+	case errors.As(err, &dnsErr):
+		return "DNS lookup for the S3 endpoint host failed" + advice
+	case errors.As(err, &certErr) || errors.As(err, &recordErr):
+		return "TLS handshake with the S3 endpoint failed; verify the endpoint scheme and certificate" + advice
+	case errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded):
+		return fmt.Sprintf("the S3 endpoint did not answer within %s (%d attempts)", objectStorageAttemptTimeout, objectStorageReadAttempts) + advice
+	case errors.As(err, &opErr) && opErr.Op == "dial":
+		return "could not open a connection to the S3 endpoint; verify the app's egress rules allow it" + advice
+	}
+	return "could not reach the S3 endpoint; verify DNS, TLS and network access" + advice
 }

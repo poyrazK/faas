@@ -5,11 +5,13 @@ package mcpprotocol
 import (
 	"encoding/json"
 	"math"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -17,8 +19,15 @@ const MaxApps = 1024
 const Retention = time.Hour
 
 var buckets = []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30, 60, 300}
-var outcomes = []string{"success", "rpc_error", "tool_error", "task_created", "cancelled", "timeout", "unobserved", "authorization_error", "internal_error"}
-var tools = []string{"none", "greet", "add", "stream_demo", "build_report", "other"}
+var outcomes = []string{"success", "rpc_error", "tool_error", "task_created", "cancelled", "timeout", "unobserved", "authorization_error", "internal_error", "invalid_params"}
+
+// MaxToolsPerApp bounds the tool label: an app's first MaxToolsPerApp
+// distinct tool names in a retention window keep their own series and later
+// ones are "other" (ADR-20261122194324). The names are self-reported, so an
+// app can only mislabel its own series.
+const MaxToolsPerApp = api.MCPToolLabelsPerApp
+
+var toolLabel = regexp.MustCompile(`^[A-Za-z0-9_.:/-]{1,64}$`)
 var methods = strings.Fields("initialize server/discover ping tools/list tools/call resources/list resources/templates/list resources/read prompts/list prompts/get completion/complete tasks/get tasks/cancel tasks/update subscriptions/listen other")
 
 type histogram struct {
@@ -48,13 +57,14 @@ func (h *histogram) observe(ms *float64) {
 }
 
 type series struct {
-	counts            [9]uint64
+	counts            [10]uint64
 	cancellations     uint64
 	execution, stream histogram
 }
 type app struct {
 	last  time.Time
 	tools map[string]*series
+	named int // tools other than "none" and "other"
 }
 
 type Collector struct {
@@ -113,7 +123,7 @@ func (c *Collector) Observe(appID, line string, at time.Time) {
 	tool := "none"
 	if event.Method == "tools/call" {
 		tool = event.Tool
-		if !contains(tools, tool) || tool == "none" {
+		if !toolLabel.MatchString(tool) || tool == "none" {
 			tool = "other"
 		}
 	}
@@ -133,6 +143,14 @@ func (c *Collector) Observe(appID, line string, at time.Time) {
 		a.last = at
 	}
 	s := a.tools[tool]
+	if s == nil && tool != "none" && tool != "other" {
+		if a.named >= MaxToolsPerApp {
+			tool = "other"
+			s = a.tools[tool]
+		} else {
+			a.named++
+		}
+	}
 	if s == nil {
 		s = &series{}
 		a.tools[tool] = s

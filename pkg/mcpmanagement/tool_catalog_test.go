@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/productcap"
 )
@@ -90,7 +91,7 @@ func TestUnavailableCapabilitiesHideTheirTools(t *testing.T) {
 		status int
 		listed bool
 	}{
-		"hidden":   {body: `{"plan":"free","capabilities":[{"key":"incidents","enabled":false}],"hidden_capabilities":["log-search","product-analytics"]}`, status: 200},
+		"hidden":   {body: `{"plan":"free","capabilities":[{"key":"incidents","enabled":false}],"hidden_capabilities":["log-search","product-analytics","saved-insights"]}`, status: 200},
 		"released": {body: `{"plan":"pro","capabilities":[{"key":"incidents","enabled":true}]}`, status: 200, listed: true},
 		"failed":   {status: 503, listed: true},
 	} {
@@ -120,5 +121,14 @@ func TestUnavailableCapabilitiesHideTheirTools(t *testing.T) {
 				t.Error("an ungated tool was hidden")
 			}
 		})
+	}
+}
+
+// A long tool description is shortened on a rune boundary: a byte cut inside
+// a multi-byte rune would send invalid UTF-8 to the client.
+func TestFirstSentenceCutsOnARuneBoundary(t *testing.T) {
+	got := firstSentence(strings.Repeat("é", 200))
+	if !utf8.ValidString(got) || len(got) > 240 || !strings.HasSuffix(got, "...") {
+		t.Errorf("firstSentence = %d bytes, valid UTF-8 %v", len(got), utf8.ValidString(got))
 	}
 }
