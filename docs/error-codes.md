@@ -120,6 +120,8 @@ HTTP 503 Service Unavailable · App admission unavailable
 
 HTTP 422 Unprocessable Entity · Unsupported CPU architecture
 
+Your binary won't run on this control plane
+
 ### `app_concurrency_reached`
 
 HTTP 429 Too Many Requests · App concurrency reached
@@ -160,11 +162,15 @@ See [Errors](errors.md), [Troubleshooting](troubleshooting.md).
 
 HTTP 422 Unprocessable Entity · App_healthz_unauthorized; Health endpoint returning 401
 
+Your /healthz is gated behind auth — we treat that as 'down'
+
 See [Troubleshooting](troubleshooting.md).
 
 ### `app_layer_too_large`
 
 HTTP 403 Forbidden · App too large
+
+The built app is larger than your plan's app filesystem
 
 See [Builds and framework detection](build.md#limits), [Container compatibility](container-compatibility.md), [Deploy a Next.js app](deploy-nextjs.md), [Troubleshooting](troubleshooting.md).
 
@@ -186,6 +192,8 @@ See [CLI guide](cli-setup.md), [Logs](logs.md), [Errors](errors.md).
 
 HTTP 422 Unprocessable Entity · App bound to loopback; Application bound to loopback
 
+Your app is listening on 127.0.0.1 — gateway traffic can't reach it
+
 See [Errors](errors.md), [Troubleshooting](troubleshooting.md).
 
 ### `app_maintenance_mode`
@@ -203,6 +211,8 @@ HTTP 409 Conflict · App name unavailable
 ### `app_not_listening`
 
 HTTP 422 Unprocessable Entity · No process listening on $PORT; App listens on a different port
+
+Your app isn't accepting traffic on the port we expect
 
 See [Deployment overrides](deploy-overrides.md), [Errors](errors.md), [Deploy a web framework](frameworks.md), [Troubleshooting](troubleshooting.md).
 
@@ -232,11 +242,15 @@ See [Apps](apps.md).
 
 HTTP 422 Unprocessable Entity or 503 Service Unavailable · Container out of memory; App is out of memory; App ran out of memory during startup
 
+Your app used more than its RAM limit and was killed
+
 See [Errors](errors.md), [Troubleshooting](troubleshooting.md).
 
 ### `app_startup_crash`
 
 HTTP 422 Unprocessable Entity · App exited during startup
+
+Your app crashed before it became ready
 
 See [Errors](errors.md), [Troubleshooting](troubleshooting.md).
 
@@ -303,6 +317,8 @@ HTTP 400 Bad Request · Many operations send this code; the response's `title` a
 ### `before_checkpoint_failed`
 
 HTTP 422 Unprocessable Entity · Before checkpoint callback failed
+
+Your before_checkpoint callback did not complete successfully
 
 See [How scaling to zero works](cold-wake.md), [Functions and runtimes](functions.md).
 
@@ -404,13 +420,17 @@ Verify the exact deployment receiving traffic, then promote, advance its canary,
 
 ### `build_failed`
 
-The response's `title` and `detail` describe the failure.
+Build failed
+
+A step of your build exited with an error
 
 See [Troubleshooting](troubleshooting.md).
 
 ### `build_infrastructure_failed`
 
-The response's `title` and `detail` describe the failure.
+Build could not run
+
+A platform problem stopped the build; your code did not cause it
 
 See [Troubleshooting](troubleshooting.md).
 
@@ -618,6 +638,8 @@ HTTP 409 Conflict · Debug replay is unavailable; Mirror replay is unavailable
 
 HTTP 422 Unprocessable Entity · Dependency installation failure
 
+The build VM couldn't install your dependencies
+
 See [Errors](errors.md), [Troubleshooting](troubleshooting.md).
 
 ### `deploy_failed`
@@ -722,6 +744,8 @@ HTTP 409 Conflict · Scope already live
 
 HTTP 422 Unprocessable Entity
 
+Your new release started but did not answer its first request correctly
+
 See [Container compatibility](container-compatibility.md).
 
 ### `deployment_stalled`
@@ -733,6 +757,8 @@ See [Deploys](deploys.md).
 ### `deployment_verification_unavailable`
 
 HTTP 503 Service Unavailable
+
+Gregale could not start your new release to check it; your current release keeps serving
 
 See [Container compatibility](container-compatibility.md), [Troubleshooting](troubleshooting.md).
 
@@ -914,6 +940,8 @@ See [Environment variables](env.md).
 
 HTTP 422 Unprocessable Entity · Missing environment variable
 
+Your code references an env var we haven't been given
+
 ### `env_var_not_found`
 
 HTTP 400 Bad Request · Env var not set
@@ -1012,6 +1040,8 @@ HTTP 400 Bad Request · Exclude slug is not a workload in this commit
 
 HTTP 422 Unprocessable Entity · Execution mode conflicts with the app's behavior
 
+Your app did not behave like its execution mode
+
 See [Errors](errors.md).
 
 ### `export_rate_limited`
@@ -1051,6 +1081,8 @@ HTTP 403 Forbidden · GitHub installation could not be verified
 ### `function_init_failed`
 
 HTTP 422 Unprocessable Entity · Function init failed
+
+Your function's init hook failed before it became ready
 
 See [Errors](errors.md), [Functions and runtimes](functions.md).
 
@@ -1247,6 +1279,8 @@ See [Container compatibility](container-compatibility.md).
 ### `image_not_found`
 
 HTTP 422 Unprocessable Entity
+
+The container image you asked for could not be pulled
 
 ### `image_required`
 
@@ -3202,6 +3236,8 @@ See [Release approvals, freezes and schedules](release-controls.md#release-appro
 
 HTTP 422 Unprocessable Entity
 
+Your release command exited non-zero or timed out; the previous release keeps serving
+
 See [Safe releases](releases.md), [Troubleshooting](troubleshooting.md).
 
 ### `release_freeze_limit`
@@ -3254,7 +3290,9 @@ HTTP 409 Conflict · Active graph required; History unavailable; Release graph c
 
 ### `release_infrastructure_failed`
 
-The response's `title` and `detail` describe the failure.
+Release command could not run
+
+A platform problem stopped the release task; your release command did not cause it
 
 See [Deploys](deploys.md), [Safe releases](releases.md), [Troubleshooting](troubleshooting.md).
 
@@ -3612,35 +3650,51 @@ See [Builds and framework detection](build.md#limits).
 
 ### `stage_dependency_restore_failed`
 
-The response's `title` and `detail` describe the failure.
+Dependencies restore failed
+
+Your package manager install step exited non-zero inside the build VM
 
 ### `stage_image_build_oom`
 
-The response's `title` and `detail` describe the failure.
+Image build ran out of memory
+
+The build VM hit its 2 GB memory ceiling during image_build
 
 ### `stage_image_build_timeout`
 
-The response's `title` and `detail` describe the failure.
+Image build timed out
+
+The build VM exceeded the 15-minute build-time ceiling
 
 ### `stage_readiness_failed`
 
-The response's `title` and `detail` describe the failure.
+Readiness probe failed
+
+The deployed VM's /healthz never returned 200
 
 ### `stage_security_scan_findings`
 
-The response's `title` and `detail` describe the failure.
+Security scan flagged findings
+
+Grype found CVEs at or above the plan's severity threshold
 
 ### `stage_snapshot_prepare_timeout`
 
 HTTP 422 Unprocessable Entity · Snapshot prime exceeded the scheduler deadline
 
+The snapshot_prepare stage exceeded the scheduler's wall-clock ceiling
+
 ### `stage_source_download_failed`
 
-The response's `title` and `detail` describe the failure.
+Source download failed
+
+The build VM could not fetch your repository tarball
 
 ### `stateless_only_violation`
 
 HTTP 422 Unprocessable Entity · Stateless-only platform
+
+This app shape needs persistent storage we don't provide
 
 See [Storage](storage.md).
 
