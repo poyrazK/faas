@@ -5657,6 +5657,9 @@ func cmdTrafficStatus(args []string) int {
 		return 1
 	}
 	positional, err := mergeAppFlag(positional, strings.TrimSpace(*app), 1)
+	if err == nil {
+		positional = withLinkedApp(positional, 1)
+	}
 	if err != nil {
 		return printErr("Invalid arguments", err)
 	}
@@ -5839,7 +5842,7 @@ func cmdDomains(args []string) int {
 	case subAdd:
 		fs := newFlagSet("domains add", flag.ContinueOnError)
 		domain := fs.String("domain", "", "domain to attach (or pass it as the first argument)")
-		slug := fs.String("app", "", "app slug to attach to (required)")
+		slug := fs.String("app", "", "app slug to attach to (defaults to linked context)")
 		environment := fs.String("environment", "", "project environment to route this domain to")
 		// Every other domains subcommand takes <domain> positionally, so
 		// accept `domains add <domain> --app <slug>` too, with flags before
@@ -5864,6 +5867,10 @@ func cmdDomains(args []string) int {
 		} else if fs.NArg() != 0 {
 			PrintUsage(os.Stderr, "usage: gregale domain create <domain> --app <slug> [--env <environment>]", "domains")
 			return 1
+		}
+		if *slug == "" {
+			// Prod hunt r35: a linked checkout printed only the usage line.
+			*slug, *environment = linkedDomainTarget(*environment)
 		}
 		if *domain == "" || *slug == "" {
 			PrintUsage(os.Stderr, "usage: gregale domain create <domain> --app <slug> [--env <environment>]", "domains")
