@@ -92,6 +92,7 @@ func TestSandboxes(t *testing.T) {
 	s.check("persist_and_restore_workspace", j.persistAndRestore)
 	s.check("private_preview_port", j.previewPort)
 	s.check("persistent_pause_resume_fork", j.persistent)
+	s.check("desktop_actions_and_live_view", j.desktop)
 	s.step("close_session", j.close)
 }
 

@@ -56,7 +56,12 @@ with a file and a running process kept (not `resumed_cold`), and forks one
 ephemeral session that holds both. Persist, previews and persistent sessions
 skip when their switches are off (`sandbox_unsupported`,
 `sandbox_previews_off`) or the plan has none (`SandboxPersistentMax`,
-`SandboxForkMax`). The OpenAI Agents SDK client
+`SandboxForkMax`). On its own `desktop` preset session (ADR-20261124075005) it
+checks the screen size, a PNG screenshot and a pointer move through
+`gregale-desktop`, and with previews on, the noVNC page on 6080 and 6081 each
+with its own token and the view-only token refused on 6080; it skips when
+desktops are off (`sandbox_unsupported`) or the plan has none
+(`SandboxDesktopEnabled`). The OpenAI Agents SDK client
 and the E2B shim are not driven here yet.
 
 Application Auth (ADR-1190) is dark-launched, so it is not a GA row either.

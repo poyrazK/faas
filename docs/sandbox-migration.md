@@ -112,6 +112,32 @@ POST /v1/sandboxes
 - In the clients: `Sandbox.create({ kind: 'persistent' })`, `sandbox.betaPause()`, `Sandbox.connect(id)` and `sandbox.fork(n)` in the E2B clients (`kind="persistent"`, `beta_pause()` in Python); `options.kind`, `session.stop()` (which pauses a persistent session) and `client.resume(state)` in `@gregale/agents-sandbox`.
 - In the CLI: `gregale sandbox session list --paused`, `gregale sandbox session pause <id>`, `resume <id>`, `fork <id> --count N` and `delete <id>`.
 
+## Desktops and computer use
+
+`preset: "desktop"` (Pro and Scale) boots a Linux desktop (Xfce) on a virtual screen, with Chromium, a terminal and a text editor. Computer-use agents drive it with screenshots, clicks and keys; people watch it, or take it over, in a browser. Desktops are off until the operator publishes the desktop image.
+
+```ts
+import { Desktop } from '@gregale/sandbox-e2b';
+
+const desktop = await Desktop.create({ resolution: [1280, 800], network: 'web' });
+await desktop.launch('chromium', 'https://example.com');
+await desktop.wait(2000);
+const png = await desktop.screenshot();          // Uint8Array, PNG
+await desktop.leftClick(640, 400);
+await desktop.write('hello');
+await desktop.press(['ctrl', 'a']);
+console.log(await desktop.stream.getUrl());                  // watch and take over
+console.log(await desktop.stream.getUrl({ viewOnly: true })); // watch only, safe to share
+await desktop.kill();
+```
+
+- **Size:** a desktop has at least 2048 MB (the default) and the plan's vCPUs. An idle desktop uses about 700 MB, and about 1.4 GB with Chromium open. It is billed like any session: RAM + 8 MB per running second.
+- **Screen:** `resolution` is from 640x480 to 1920x1080, 1024x768 by default. Computer-use models work best near 1024x768.
+- **Actions:** every SDK call runs `gregale-desktop` in the session: `screenshot`, `click X Y`, `move`, `down`/`up`, `drag`, `scroll`, `type -- TEXT`, `key ctrl+c`, `cursor`, `size`, `launch APP`, `open FILE_OR_URL`, `windows`, `window`. You can run it yourself through `commands.run` or `/exec`. Your own GUI programs need `DISPLAY=:0`.
+- **Live view:** the desktop exposes two private preview ports: 6080 (interactive) and 6081 (view only, its server ignores input). Each URL carries its own preview token, and a token opens only its port. A tab left open keeps the session from freezing; close it to let the session idle. `stream.stop()` unexposes both views; `stream.start()` brings them back.
+- **Pause and fork:** with `kind: 'persistent'`, a paused desktop resumes with its windows open, and forks start with the same screen.
+- **Start time:** a new desktop is ready in about 10 s; a resume or fork restores in about 2 s.
+
 ## Move workspaces
 
 Upload a tar.gz of an existing workspace with `POST /v1/sandboxes/{id}/workspace:hydrate`, or `hydrateWorkspace` in either client. To keep a workspace between sessions, persist it (`workspace:persist`, `createSnapshot()` or `persistSnapshot()`) and create the next session with its `snapshot_id`.
