@@ -16,6 +16,7 @@ export type { APIConsumerPlanAssignmentResponse } from './APIConsumerPlanAssignm
 export type { APIConsumerPlanChangedWebhookPayload } from './APIConsumerPlanChangedWebhookPayload.js';
 export type { APIConsumerPlanListResponse } from './APIConsumerPlanListResponse.js';
 export type { APIConsumerPlanResponse } from './APIConsumerPlanResponse.js';
+export type { APIConsumerPlanRouteLimit } from './APIConsumerPlanRouteLimit.js';
 export type { APIConsumerRateCardListResponse } from './APIConsumerRateCardListResponse.js';
 export type { APIConsumerRateCardResponse } from './APIConsumerRateCardResponse.js';
 export type { APIConsumerRateCardTier } from './APIConsumerRateCardTier.js';
