@@ -41,6 +41,7 @@ func TestAcknowledgeTelemetryRows(t *testing.T) {
 		{"inserted", []string{"inserted", "inserted"}, nil, true, false},
 		{"not_retained", []string{"inserted", "not_retained"}, nil, true, false},
 		{"rate_limited", []string{"inserted", "rate_limited"}, nil, false, false},
+		{"invalid", []string{"inserted", "invalid"}, nil, false, false},
 		{"db_error", []string{"db_error"}, nil, false, true},
 		{"partial", []string{"inserted"}, nil, false, true},
 		{"unknown", []string{"ignored", "inserted"}, nil, false, false},
@@ -75,5 +76,11 @@ func TestAcknowledgeTelemetryAppIsolation(t *testing.T) {
 	}
 	if partial.Accepted[rows[2].EventID] || partial.Rejected[rows[2].EventID] {
 		t.Fatalf("db_error row must stay retryable: %+v", partial)
+	}
+	// An invalid row is final like a rate-limited one: retrying it dropped
+	// the whole batch as a platform loss.
+	err = acknowledgeTelemetryRows(&telemetryOutcomes{values: []string{"invalid", "inserted", "inserted"}}, rows)
+	if !errors.As(err, &partial) || !partial.Rejected[rows[0].EventID] || !partial.Accepted[rows[1].EventID] {
+		t.Fatalf("invalid row must be rejected for good: %v", err)
 	}
 }

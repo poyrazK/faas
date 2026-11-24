@@ -4395,7 +4395,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// IncrementRequestTelemetryRecorded.
 	requestTelemetryRecorded := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_request_telemetry_recorded_total",
-		Help: "Production debugger per-request telemetry ingest outcomes (ADR-127 PR-B), labelled by outcome ∈ {inserted, rate_limited, db_error}. `inserted` is the customer-telemetry-ingest panel (rate over 5m). `rate_limited` is the per-account token-bucket overflow path (DebugTelemetryRequestsPerMinute exceeded). `db_error` is the per-row INSERT failure path. Single-registry: registered on every daemon; only apid increments via IncrementRequestTelemetryRecorded.",
+		Help: "Production debugger per-request telemetry ingest outcomes (ADR-127 PR-B), labelled by outcome ∈ {inserted, rate_limited, not_retained, invalid, db_error, analytics_backpressure}. `invalid` is a row apid will never accept (malformed field, app or account gone); the gateway drops it as the app's loss. `inserted` is the customer-telemetry-ingest panel (rate over 5m). `rate_limited` is the per-account token-bucket overflow path (DebugTelemetryRequestsPerMinute exceeded). `db_error` is the per-row INSERT failure path. Single-registry: registered on every daemon; only apid increments via IncrementRequestTelemetryRecorded.",
 	}, []string{"outcome"})
 	commonCollectors = append(commonCollectors, requestTelemetryRecorded)
 	// ADR-127 PR-D: gatewayd-public OTel spans writer ingest

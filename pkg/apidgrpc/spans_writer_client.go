@@ -21,6 +21,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"time"
 
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -74,6 +75,9 @@ func DialSpansWriter(ctx context.Context, target string, tlsCfg *tls.Config) (*S
 	return &SpansWriterClientImpl{conn: conn, cli: apidpb.NewSpansWriterClient(conn)}, nil
 }
 
+// spansWriteTimeout bounds one WriteSpansSummary call.
+const spansWriteTimeout = 5 * time.Second
+
 // NewSpansWriterClient wraps an already-dialed connection
 // (used by bufconn tests in pkg/apidgrpc/).
 func NewSpansWriterClient(conn *grpc.ClientConn) *SpansWriterClientImpl {
@@ -94,6 +98,10 @@ func (c *SpansWriterClientImpl) WriteSpansSummary(ctx context.Context, traceID s
 
 // WriteSummary ships one coalesced summary with its full target.
 func (c *SpansWriterClientImpl) WriteSummary(ctx context.Context, req *apidpb.WriteSpansSummaryRequest) (string, int64, error) {
+	// One flush writes every pending trace in turn; a stalled apid must
+	// not hold the loop on the wire layer's one-minute default.
+	ctx, cancel := context.WithTimeout(ctx, spansWriteTimeout)
+	defer cancel()
 	resp, err := c.cli.WriteSpansSummary(ctx, req)
 	if err != nil {
 		return "", 0, fmt.Errorf("apidgrpc: WriteSpansSummary: %w", err)
