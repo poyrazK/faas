@@ -14505,3 +14505,24 @@ type SelectedTraceLookupResponse struct {
 func validMCPJWTAudience(audience []string, p *MCPResourcePolicy) bool {
 	return len(audience) == 1 && (audience[0] == p.Resource || p.Audience != "" && audience[0] == p.Audience)
 }
+
+// AppNameReportResponse is GET /v1/admin/app-names/report: the existing apps
+// whose names an app name blocklist matches. source is "live"
+// (app_name_blocklist) or "preview" (the request's ?blocklist=). Nothing is
+// changed; truncated means more apps matched than were listed.
+type AppNameReportResponse struct {
+	Source    string               `json:"source"`
+	Entries   int                  `json:"entries"`
+	Matches   []AppNameReportMatch `json:"matches"`
+	Truncated bool                 `json:"truncated"`
+}
+
+// AppNameReportMatch is one existing app a blocklist entry matches.
+type AppNameReportMatch struct {
+	Slug      string `json:"slug"`
+	AppID     string `json:"app_id"`
+	AccountID string `json:"account_id"`
+	OrgID     string `json:"org_id,omitempty"`
+	Status    string `json:"status"`
+	Entry     string `json:"entry"`
+}
