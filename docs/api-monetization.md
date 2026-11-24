@@ -715,8 +715,9 @@ In your billing page, use the customer's `billing`-scope consumer key to:
    `credit_purchase_id` query parameter. Keep showing a pending state until
    `status` is `credited` or `expired`.
 
-Gregale checks Stripe in the background, including when the customer closes
-the tab. It adds a single grant after Stripe confirms the exact payment.
+Credit packs require a live Stripe connection. Gregale checks Stripe in the
+background, including when the customer closes the tab. It adds a single grant
+after Stripe confirms the exact live payment.
 Show the refreshed prepaid credit balance from the consumer billing summary
 once the purchase returns its `credit_grant_id`. The grant applies to
 statements in the pack's currency. It has no expiry. If the consumer has a
@@ -724,11 +725,12 @@ spend cap in that currency, Gregale schedules a fresh cap check.
 
 Customers can resume one open purchase at a time. Checkout sessions expire
 after one hour. To stop new purchases, set `packs` to `[]`; open sessions
-keep their saved terms. Keep the original Stripe account connected until its
-open purchases settle. A restricted Stripe key needs Checkout Session read
-and write access. Use Stripe test mode with an isolated test app. If you
-issue a refund in Stripe, review the grant and void its unused balance in
-Gregale.
+keep their saved terms. Gregale blocks changes to the Stripe connection while
+purchases are pending. A restricted Stripe key needs Checkout Session read
+and write access. Stripe validates charge limits against the merchant's
+settlement currency. If Stripe rejects a new checkout, correct the pack as
+needed and use a new purchase ID. If you issue a refund in Stripe, review the
+grant and void its unused balance in Gregale.
 
 ### Spend caps
 

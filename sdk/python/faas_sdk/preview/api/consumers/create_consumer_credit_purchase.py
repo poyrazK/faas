@@ -104,7 +104,7 @@ def sync_detailed(
 
      Choose a unique purchase_id and reuse it when retrying the same pack.
     A consumer can have one pending purchase at a time. Granting credit
-    requires Stripe to confirm the exact paid amount and currency.
+    requires Stripe to confirm the exact live payment amount and currency.
 
     Args:
         slug (str):
@@ -141,7 +141,7 @@ def sync(
 
      Choose a unique purchase_id and reuse it when retrying the same pack.
     A consumer can have one pending purchase at a time. Granting credit
-    requires Stripe to confirm the exact paid amount and currency.
+    requires Stripe to confirm the exact live payment amount and currency.
 
     Args:
         slug (str):
@@ -173,7 +173,7 @@ async def asyncio_detailed(
 
      Choose a unique purchase_id and reuse it when retrying the same pack.
     A consumer can have one pending purchase at a time. Granting credit
-    requires Stripe to confirm the exact paid amount and currency.
+    requires Stripe to confirm the exact live payment amount and currency.
 
     Args:
         slug (str):
@@ -208,7 +208,7 @@ async def asyncio(
 
      Choose a unique purchase_id and reuse it when retrying the same pack.
     A consumer can have one pending purchase at a time. Granting credit
-    requires Stripe to confirm the exact paid amount and currency.
+    requires Stripe to confirm the exact live payment amount and currency.
 
     Args:
         slug (str):

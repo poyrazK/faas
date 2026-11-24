@@ -82,7 +82,7 @@ const creditAPIConsumerPurchase = `-- name: CreditAPIConsumerPurchase :one
 WITH purchase AS (
     SELECT id, account_id, app_id, consumer_id, currency, amount_millicents FROM api_consumer_credit_purchases
     WHERE api_consumer_credit_purchases.id = $1
-      AND stripe_session = $3::text AND status = 'pending'
+      AND stripe_session = $3::text AND status = 'pending' AND livemode
     FOR UPDATE
 ), grant_credit AS (
     INSERT INTO api_consumer_credit_grants

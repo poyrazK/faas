@@ -33,6 +33,8 @@ CREATE UNIQUE INDEX api_consumer_credit_purchases_pending_consumer
     ON api_consumer_credit_purchases (consumer_id) WHERE status = 'pending';
 CREATE INDEX api_consumer_credit_purchases_due
     ON api_consumer_credit_purchases (next_check_at, id) WHERE status = 'pending';
+CREATE INDEX api_consumer_credit_purchases_pending_live_account
+    ON api_consumer_credit_purchases (account_id) WHERE status = 'pending' AND livemode;
 
 -- +goose Down
 SET LOCAL lock_timeout = '5s';

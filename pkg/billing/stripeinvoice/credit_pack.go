@@ -9,6 +9,9 @@ import (
 	"time"
 )
 
+// creditPackAPIVersion supports explicitly disabling Adaptive Pricing.
+const creditPackAPIVersion = "2024-11-20.acacia"
+
 // CreditPackCheckoutParams describes a one-off card payment for prepaid credit.
 type CreditPackCheckoutParams struct {
 	PurchaseID, Customer, Label, Currency, ReturnURL string
@@ -33,11 +36,11 @@ func (c *Client) CreateCreditPackCheckout(ctx context.Context, key string, p Cre
 		"line_items[0][price_data][product_data][name]": {p.Label},
 	}
 	var session CheckoutSession
-	return session, c.do(ctx, key, http.MethodPost, "/v1/checkout/sessions", "gregale-credit-pack-"+p.PurchaseID, form, &session)
+	return session, c.doVersion(ctx, key, creditPackAPIVersion, http.MethodPost, "/v1/checkout/sessions", "gregale-credit-pack-"+p.PurchaseID, form, &session)
 }
 
 // GetCreditPackCheckout retrieves the payment session without expanding setup data.
 func (c *Client) GetCreditPackCheckout(ctx context.Context, key, id string) (CheckoutSession, error) {
 	var session CheckoutSession
-	return session, c.do(ctx, key, http.MethodGet, "/v1/checkout/sessions/"+url.PathEscape(id), "", nil, &session)
+	return session, c.doVersion(ctx, key, creditPackAPIVersion, http.MethodGet, "/v1/checkout/sessions/"+url.PathEscape(id), "", nil, &session)
 }

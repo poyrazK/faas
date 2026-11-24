@@ -77,6 +77,9 @@ func (s *PgStore) StartConsumerCreditPurchase(ctx context.Context, p APIConsumer
 		return APIConsumerCreditPurchase{}, fmt.Errorf("begin credit purchase: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockStripeCreditPurchases(ctx, tx, p.AccountID); err != nil {
+		return APIConsumerCreditPurchase{}, err
+	}
 	q := sqlc.New()
 	consumer, err := q.LockAPIConsumerCreditBuyer(ctx, tx, sqlc.LockAPIConsumerCreditBuyerParams{
 		AccountID: uuidToPgtype(p.AccountID), AppID: uuidToPgtype(p.AppID), ID: uuidToPgtype(p.ConsumerID), RequireActive: true,
@@ -96,6 +99,17 @@ func (s *PgStore) StartConsumerCreditPurchase(ctx context.Context, p APIConsumer
 	}
 	if !errors.Is(err, ErrNotFound) {
 		return APIConsumerCreditPurchase{}, err
+	}
+	var live bool
+	err = tx.QueryRow(ctx, `select livemode from account_billing_connections
+		where account_id = $1::uuid and provider = 'stripe'`, p.AccountID).Scan(&live)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return APIConsumerCreditPurchase{}, ErrStripeLiveConnectionRequired
+	case err != nil:
+		return APIConsumerCreditPurchase{}, fmt.Errorf("read Stripe connection for credit purchase: %w", err)
+	case !live || !p.Livemode:
+		return APIConsumerCreditPurchase{}, ErrStripeLiveConnectionRequired
 	}
 	count, err := q.CountReservedAPIConsumerCreditGrants(ctx, tx, consumer)
 	if err != nil {
@@ -120,6 +134,16 @@ func (s *PgStore) StartConsumerCreditPurchase(ctx context.Context, p APIConsumer
 		return APIConsumerCreditPurchase{}, fmt.Errorf("commit credit purchase: %w", err)
 	}
 	return fromConsumerCreditPurchase(row), nil
+}
+
+// lockStripeCreditPurchases serializes checkout reservation with replacement
+// or removal of the merchant connection, including its initial creation.
+func lockStripeCreditPurchases(ctx context.Context, tx pgx.Tx, accountID string) error {
+	_, err := tx.Exec(ctx, `select pg_advisory_xact_lock(hashtextextended('stripe-credit-purchases:' || $1::uuid::text, 0))`, accountID)
+	if err != nil {
+		return fmt.Errorf("lock Stripe credit purchases: %w", err)
+	}
+	return nil
 }
 
 func (s *PgStore) SetConsumerCreditPurchaseCheckout(ctx context.Context, id, sessionID string, nextCheckAt time.Time) (APIConsumerCreditPurchase, error) {

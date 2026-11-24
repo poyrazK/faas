@@ -27,6 +27,8 @@ type creditPackStripe struct {
 	post         url.Values
 	idempotency  string
 	starts       int
+	createStatus int
+	live         bool
 	status, paid string
 	amount       int64
 }
@@ -34,23 +36,36 @@ type creditPackStripe struct {
 func (f *creditPackStripe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if r.URL.Path != "/v1/invoices" && r.Header.Get("Stripe-Version") != "2024-11-20.acacia" {
+		http.Error(w, "unexpected Checkout API version", http.StatusBadRequest)
+		return
+	}
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/invoices":
 		_, _ = fmt.Fprint(w, `{"data":[]}`)
 		return
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/checkout/sessions":
+		switch f.createStatus {
+		case http.StatusBadRequest:
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = fmt.Fprint(w, `{"error":{"type":"invalid_request_error","code":"amount_too_small"}}`)
+			return
+		case http.StatusInternalServerError:
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		_ = r.ParseForm()
 		f.post, f.idempotency = r.PostForm, r.Header.Get("Idempotency-Key")
 		f.starts++
-	case r.Method == http.MethodGet && r.URL.Path == fmt.Sprintf("/v1/checkout/sessions/cs_test_packs_%d", f.starts):
+	case r.Method == http.MethodGet && r.URL.Path == fmt.Sprintf("/v1/checkout/sessions/cs_live_packs_%d", f.starts):
 	default:
 		http.NotFound(w, r)
 		return
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"id": fmt.Sprintf("cs_test_packs_%d", f.starts), "url": "https://checkout.stripe.test/pack", "mode": "payment", "customer": "cus_Buyer",
+		"id": fmt.Sprintf("cs_live_packs_%d", f.starts), "url": "https://checkout.stripe.test/pack", "mode": "payment", "customer": "cus_Buyer",
 		"currency": "usd", "amount_total": f.amount, "status": f.status, "payment_status": f.paid,
-		"client_reference_id": f.post.Get("client_reference_id"), "livemode": false,
+		"client_reference_id": f.post.Get("client_reference_id"), "livemode": f.live,
 	})
 }
 
@@ -85,13 +100,15 @@ func checkCreditPackPurchase(t *testing.T, do meteringRequest, store state.Store
 	if err != nil {
 		t.Fatal(err)
 	}
-	stripe := &creditPackStripe{status: "open", paid: "unpaid", amount: 2000}
+	stripe := &creditPackStripe{status: "open", paid: "unpaid", amount: 2000, live: true}
 	server := httptest.NewServer(stripe)
 	t.Cleanup(server.Close)
 	client := &stripeinvoice.Client{BaseURL: server.URL, HTTP: server.Client()}
 	service.Stripe, invoices.Stripe = client, client
-	meteringResponse(t, do, http.MethodPut, "/v1/account/billing-connections/stripe",
-		api.PutBillingConnectionRequest{SecretKey: "rk_test_51abcdWXYZ"}, http.StatusOK, nil)
+	connectionPath := "/v1/account/billing-connections/stripe"
+	testConnection := api.PutBillingConnectionRequest{SecretKey: "rk_test_51abcdWXYZ"}
+	liveConnection := api.PutBillingConnectionRequest{SecretKey: "rk_live_51abcdWXYZ"}
+	meteringResponse(t, do, http.MethodPut, connectionPath, testConnection, http.StatusOK, nil)
 
 	createBuyer := func(ref string) (string, map[string]string) {
 		t.Helper()
@@ -132,9 +149,33 @@ func checkCreditPackPurchase(t *testing.T, do meteringRequest, store state.Store
 
 	var offered api.ConsumerCreditPacksResponse
 	request(http.MethodGet, billingPath+"/credit-packs", nil, buyer, http.StatusOK, &offered)
+	if len(offered.Packs) != 0 {
+		t.Fatalf("test-mode connection offers packs: %+v", offered)
+	}
+	request(http.MethodPost, purchases, req, buyer, http.StatusConflict, nil)
+	request(http.MethodGet, purchases+"/"+req.PurchaseID, nil, buyer, http.StatusNotFound, nil)
+	request(http.MethodPut, connectionPath, liveConnection, nil, http.StatusOK, nil)
+
+	request(http.MethodGet, billingPath+"/credit-packs", nil, buyer, http.StatusOK, &offered)
 	if len(offered.Packs) != 1 || offered.Packs[0] != settings.Packs[0] {
 		t.Fatalf("offered packs = %+v", offered)
 	}
+	rejected := api.CreateConsumerCreditPurchaseRequest{PurchaseID: uuid.NewString(), PackID: req.PackID}
+	stripe.setCreateStatus(http.StatusBadRequest)
+	request(http.MethodPost, purchases, rejected, buyer, http.StatusUnprocessableEntity, nil)
+	var released api.ConsumerCreditPurchaseResponse
+	request(http.MethodGet, purchases+"/"+rejected.PurchaseID, nil, buyer, http.StatusOK, &released)
+	if released.Status != "expired" || released.CheckoutURL != "" {
+		t.Fatalf("rejected purchase = %+v", released)
+	}
+
+	stripe.setCreateStatus(http.StatusInternalServerError)
+	request(http.MethodPost, purchases, req, buyer, http.StatusBadGateway, nil)
+	request(http.MethodPost, purchases, api.CreateConsumerCreditPurchaseRequest{PurchaseID: uuid.NewString(), PackID: req.PackID},
+		buyer, http.StatusConflict, nil)
+	request(http.MethodDelete, connectionPath, nil, nil, http.StatusConflict, nil)
+	stripe.setCreateStatus(0)
+
 	var pending api.ConsumerCreditPurchaseResponse
 	request(http.MethodPost, purchases, req, buyer, http.StatusOK, &pending)
 	if pending.ID != req.PurchaseID || pending.Status != "pending" || pending.CheckoutURL == "" || pending.CreditGrantID != "" {
@@ -145,6 +186,8 @@ func checkCreditPackPurchase(t *testing.T, do meteringRequest, store state.Store
 	request(http.MethodPost, purchases, api.CreateConsumerCreditPurchaseRequest{PurchaseID: uuid.NewString(), PackID: req.PackID},
 		buyer, http.StatusConflict, nil)
 	checkStripeCreditCheckout(t, stripe, req.PurchaseID)
+	request(http.MethodPut, connectionPath, testConnection, nil, http.StatusConflict, nil)
+	request(http.MethodDelete, connectionPath, nil, nil, http.StatusConflict, nil)
 
 	// Disabling the catalog cannot strand a paid checkout.
 	request(http.MethodPut, catalogPath, api.ConsumerCreditPackSettings{}, nil, http.StatusOK, nil)
@@ -160,6 +203,19 @@ func checkCreditPackPurchase(t *testing.T, do meteringRequest, store state.Store
 		t.Fatal("accepted a paid checkout with the wrong amount")
 	}
 	checkPackGrants(t, store, app, buyerID, nil)
+
+	now = now.Add(3 * time.Minute)
+	stripe.mu.Lock()
+	stripe.live = false
+	stripe.mu.Unlock()
+	stripe.setPayment("complete", "paid", 2000)
+	if err := service.SyncCreditPurchases(ctx); err == nil {
+		t.Fatal("accepted a paid checkout in test mode")
+	}
+	checkPackGrants(t, store, app, buyerID, nil)
+	stripe.mu.Lock()
+	stripe.live = true
+	stripe.mu.Unlock()
 
 	caps := store.(state.APIConsumerSpendCapStore)
 	checkedAt := time.Now().UTC().Add(-time.Minute)
@@ -183,7 +239,7 @@ func checkCreditPackPurchase(t *testing.T, do meteringRequest, store state.Store
 	if credited.Status != "credited" || credited.CreditGrantID == "" || credited.CreditGrantID == credited.ID || credited.AmountMillicents != amount {
 		t.Fatalf("credited purchase = %+v", credited)
 	}
-	if err := store.(state.APIConsumerCreditPackStore).CreditConsumerPurchase(ctx, credited.ID, "cs_test_packs_1"); err != nil {
+	if err := store.(state.APIConsumerCreditPackStore).CreditConsumerPurchase(ctx, credited.ID, "cs_live_packs_1"); err != nil {
 		t.Fatal(err)
 	}
 	request(http.MethodPost, purchases, req, buyer, http.StatusOK, &credited)
@@ -207,6 +263,14 @@ func checkCreditPackPurchase(t *testing.T, do meteringRequest, store state.Store
 		t.Fatalf("expired purchase = %+v", expired)
 	}
 	checkPackGrants(t, store, app, buyerID, &credited)
+	request(http.MethodPut, connectionPath, testConnection, nil, http.StatusOK, nil)
+	request(http.MethodDelete, connectionPath, nil, nil, http.StatusNoContent, nil)
+}
+
+func (f *creditPackStripe) setCreateStatus(status int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.createStatus = status
 }
 
 func checkStripeCreditCheckout(t *testing.T, stripe *creditPackStripe, purchaseID string) {
@@ -214,6 +278,7 @@ func checkStripeCreditCheckout(t *testing.T, stripe *creditPackStripe, purchaseI
 	stripe.mu.Lock()
 	defer stripe.mu.Unlock()
 	if stripe.starts != 1 || stripe.idempotency != "gregale-credit-pack-"+purchaseID || stripe.post.Get("mode") != "payment" ||
+		stripe.post.Get("adaptive_pricing[enabled]") != "false" ||
 		stripe.post.Get("customer") != "cus_Buyer" || stripe.post.Get("line_items[0][price_data][unit_amount]") != "2000" ||
 		stripe.post.Get("success_url") != "https://billing.example/credits?credit_purchase_id="+purchaseID+"&source=api" {
 		t.Fatalf("Stripe checkout = %d starts, key=%q, form=%v", stripe.starts, stripe.idempotency, stripe.post)

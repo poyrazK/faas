@@ -138,7 +138,8 @@ func (s *Service) CreditPacks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := api.ConsumerCreditPacksResponse{Packs: []api.ConsumerCreditPack{}}
-	if s.canBuyCredit(r.Context(), c) {
+	_, live, problem := s.Host.StripeKey(r.Context(), c.app.AccountID)
+	if problem == nil && live && s.canBuyCredit(r.Context(), c) {
 		settings, err := creditPackSettings(r.Context(), store, c.app)
 		if err != nil {
 			api.WriteProblem(w, api.ErrInternal("could not read the credit packs"))
@@ -229,12 +230,9 @@ func (s *Service) openCreditPurchase(ctx context.Context, store state.APIConsume
 	if !s.canBuyCredit(ctx, c) {
 		return api.ConsumerCreditPurchaseResponse{}, creditPurchaseConflict("this account cannot buy credit through Stripe")
 	}
-	key, live, problem := s.Host.StripeKey(ctx, c.app.AccountID)
-	if problem != nil {
-		return api.ConsumerCreditPurchaseResponse{}, creditPurchaseConflict("the Stripe connection is unavailable")
-	}
 	if errors.Is(err, state.ErrNotFound) {
-		p, problem = s.startCreditPurchase(ctx, store, c, req, live)
+		var problem *api.Problem
+		p, problem = s.startCreditPurchase(ctx, store, c, req)
 		if problem != nil {
 			return api.ConsumerCreditPurchaseResponse{}, problem
 		}
@@ -242,13 +240,19 @@ func (s *Service) openCreditPurchase(ctx context.Context, store state.APIConsume
 	if p.Status != state.ConsumerCreditPurchasePending {
 		return purchaseResponse(p), nil
 	}
-	if p.Livemode != live || p.Customer != c.consumer.ExternalRef {
+	// The pending reservation prevents replacing the Stripe connection.
+	// Load the key after saving it so we use the connection that was reserved.
+	key, live, problem := s.Host.StripeKey(ctx, c.app.AccountID)
+	if problem != nil || !p.Livemode || !live {
+		return api.ConsumerCreditPurchaseResponse{}, creditPurchaseConflict("a live Stripe connection is required")
+	}
+	if p.Customer != c.consumer.ExternalRef {
 		return api.ConsumerCreditPurchaseResponse{}, creditPurchaseConflict("the Stripe customer or connection changed")
 	}
 	return s.creditCheckout(ctx, store, p, key)
 }
 
-func (s *Service) startCreditPurchase(ctx context.Context, store state.APIConsumerCreditPackStore, c caller, req api.CreateConsumerCreditPurchaseRequest, live bool) (state.APIConsumerCreditPurchase, *api.Problem) {
+func (s *Service) startCreditPurchase(ctx context.Context, store state.APIConsumerCreditPackStore, c caller, req api.CreateConsumerCreditPurchaseRequest) (state.APIConsumerCreditPurchase, *api.Problem) {
 	settings, err := creditPackSettings(ctx, store, c.app)
 	if err != nil {
 		return state.APIConsumerCreditPurchase{}, api.ErrInternal("could not read the credit packs")
@@ -264,9 +268,12 @@ func (s *Service) startCreditPurchase(ctx context.Context, store state.APIConsum
 	}
 	p, err := store.StartConsumerCreditPurchase(ctx, state.APIConsumerCreditPurchase{
 		ID: req.PurchaseID, AccountID: c.app.AccountID, AppID: c.app.ID, ConsumerID: c.consumer.ID, Pack: pack,
-		Customer: c.consumer.ExternalRef, Livemode: live, AmountMinor: minor, ReturnURL: settings.ReturnURL,
+		Customer: c.consumer.ExternalRef, Livemode: true, AmountMinor: minor, ReturnURL: settings.ReturnURL,
 		ExpiresAt: s.now().Add(api.ConsumerCreditPurchaseTTL).Truncate(time.Second),
 	})
+	if errors.Is(err, state.ErrStripeLiveConnectionRequired) {
+		return state.APIConsumerCreditPurchase{}, creditPurchaseConflict("a live Stripe connection is required")
+	}
 	if errors.Is(err, state.ErrConflict) {
 		return state.APIConsumerCreditPurchase{}, creditPurchaseConflict("finish the open purchase or use available credit before buying again")
 	}
@@ -301,6 +308,18 @@ func (s *Service) creditCheckout(ctx context.Context, store state.APIConsumerCre
 			ReturnURL: returnURL.String(), ExpiresAt: p.ExpiresAt,
 		})
 		if err != nil {
+			var stripeErr *stripeinvoice.Error
+			invalidRequest := errors.As(err, &stripeErr) && stripeErr.Status == http.StatusBadRequest &&
+				stripeErr.Type == "invalid_request_error" && stripeErr.Code != "idempotency_key_in_use"
+			if invalidRequest || errors.Is(err, stripeinvoice.ErrKeyRejected) {
+				// Release only a reservation that still has no session, in
+				// case another request saved one.
+				if err := store.ExpireConsumerCreditPurchase(ctx, p.ID, ""); err != nil {
+					return api.ConsumerCreditPurchaseResponse{}, api.ErrInternal("could not release the credit purchase")
+				}
+				return api.ConsumerCreditPurchaseResponse{}, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+					"Credit pack could not be charged", "Stripe rejected the checkout. Contact the app owner or choose another pack with a new purchase ID.")
+			}
 			return api.ConsumerCreditPurchaseResponse{}, creditStripeProblem()
 		}
 		if !matchesCreditCheckout(p, session) || session.Status != "open" || api.ProviderHostedURL(session.URL) == "" {

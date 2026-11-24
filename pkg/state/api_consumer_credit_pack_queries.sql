@@ -54,7 +54,7 @@ WHERE id = sqlc.arg(id) AND status = 'pending'
 WITH purchase AS (
     SELECT id, account_id, app_id, consumer_id, currency, amount_millicents FROM api_consumer_credit_purchases
     WHERE api_consumer_credit_purchases.id = sqlc.arg(purchase_id)
-      AND stripe_session = sqlc.arg(session_id)::text AND status = 'pending'
+      AND stripe_session = sqlc.arg(session_id)::text AND status = 'pending' AND livemode
     FOR UPDATE
 ), grant_credit AS (
     INSERT INTO api_consumer_credit_grants

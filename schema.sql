@@ -80215,6 +80215,13 @@ CREATE UNIQUE INDEX api_consumer_credit_purchases_pending_consumer ON public.api
 
 
 --
+-- Name: api_consumer_credit_purchases_pending_live_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_credit_purchases_pending_live_account ON public.api_consumer_credit_purchases USING btree (account_id) WHERE ((status = 'pending'::text) AND livemode);
+
+
+--
 -- Name: api_consumer_overdue_holds_app_idx; Type: INDEX; Schema: public; Owner: -
 --
 

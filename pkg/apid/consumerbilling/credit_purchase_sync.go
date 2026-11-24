@@ -60,9 +60,10 @@ func (s *Service) SyncCreditPurchases(ctx context.Context) error {
 }
 
 func (s *Service) syncCreditPurchase(ctx context.Context, store state.APIConsumerCreditPackStore, purchase state.APIConsumerCreditPurchase) error {
-	// No URL is returned to the buyer before a session is persisted.
-	if purchase.SessionID == "" {
-		return store.ExpireConsumerCreditPurchase(ctx, purchase.ID, "")
+	// Test payments never fund real usage. A sessionless purchase cannot
+	// have been paid because no checkout URL was returned.
+	if !purchase.Livemode || purchase.SessionID == "" {
+		return store.ExpireConsumerCreditPurchase(ctx, purchase.ID, purchase.SessionID)
 	}
 	key, live, problem := s.Host.StripeKey(ctx, purchase.AccountID)
 	if problem != nil || live != purchase.Livemode {

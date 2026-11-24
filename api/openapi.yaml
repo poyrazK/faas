@@ -10029,7 +10029,7 @@ paths:
       description: |
         Choose a unique purchase_id and reuse it when retrying the same pack.
         A consumer can have one pending purchase at a time. Granting credit
-        requires Stripe to confirm the exact paid amount and currency.
+        requires Stripe to confirm the exact live payment amount and currency.
       security:
         - consumerKey: []
       requestBody:
@@ -10048,7 +10048,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422':
-          description: The purchase ID or pack ID is invalid.
+          description: The purchase ID or pack ID is invalid, or Stripe rejected the new checkout.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -19467,7 +19467,7 @@ paths:
         read access to customers; Lago
         an API key and, for the EU region or a self-hosted Lago, api_url. Only
         the last four characters, the mode and the Lago API URL are ever
-        returned.
+        returned. Pending credit pack purchases prevent Stripe connection changes.
       requestBody:
         required: true
         content:
@@ -19481,6 +19481,7 @@ paths:
               schema: { $ref: '#/components/schemas/BillingConnectionResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '422':
           description: Not a key of this provider, a bad api_url, or the provider rejected the key.
           content:
@@ -19500,10 +19501,12 @@ paths:
       tags: [account]
       operationId: deleteBillingConnection
       summary: Remove the account's key for one billing provider.
+      description: Pending credit pack purchases prevent removing the Stripe connection.
       responses:
         '204': { description: Removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /v1/account/statement-invoices:
     get:

@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sort"
 	"time"
@@ -15,6 +16,11 @@ const (
 	ConsumerCreditPurchasePending  = "pending"
 	ConsumerCreditPurchaseCredited = "credited"
 	ConsumerCreditPurchaseExpired  = "expired"
+)
+
+var (
+	ErrStripeLiveConnectionRequired = errors.New("a live Stripe connection is required")
+	ErrStripeCreditPurchasesPending = errors.New("the Stripe connection has pending credit purchases")
 )
 
 // APIConsumerCreditPurchase holds the checkout terms and the statement credit receipt.
@@ -99,6 +105,10 @@ func (m *MemStore) StartConsumerCreditPurchase(_ context.Context, p APIConsumerC
 		}
 		return APIConsumerCreditPurchase{}, ErrConflict
 	}
+	conn, connected := m.billingConnections[p.AccountID+"/"+BillingProviderStripe]
+	if !connected || !conn.Livemode || !p.Livemode {
+		return APIConsumerCreditPurchase{}, ErrStripeLiveConnectionRequired
+	}
 	consumer, ok := m.apiConsumers[p.ConsumerID]
 	if !ok || consumer.AccountID != p.AccountID || consumer.AppID != p.AppID || consumer.RevokedAt != nil {
 		return APIConsumerCreditPurchase{}, ErrNotFound
@@ -117,6 +127,15 @@ func (m *MemStore) StartConsumerCreditPurchase(_ context.Context, p APIConsumerC
 	p.Status, p.NextCheckAt = ConsumerCreditPurchasePending, p.ExpiresAt
 	m.apiConsumerCreditPurchases[p.ID] = p
 	return p, nil
+}
+
+func (m *MemStore) hasPendingLiveCreditPurchaseLocked(accountID string) bool {
+	for _, p := range m.apiConsumerCreditPurchases {
+		if p.AccountID == accountID && p.Livemode && p.Status == ConsumerCreditPurchasePending {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *MemStore) SetConsumerCreditPurchaseCheckout(_ context.Context, id, sessionID string, nextCheckAt time.Time) (APIConsumerCreditPurchase, error) {
@@ -179,7 +198,7 @@ func (m *MemStore) CreditConsumerPurchase(_ context.Context, id, sessionID strin
 	if p.Status == ConsumerCreditPurchaseCredited {
 		return nil
 	}
-	if p.Status != ConsumerCreditPurchasePending {
+	if p.Status != ConsumerCreditPurchasePending || !p.Livemode {
 		return ErrConflict
 	}
 	if m.apiConsumerCreditGrants == nil {

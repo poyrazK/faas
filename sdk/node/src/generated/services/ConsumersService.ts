@@ -264,7 +264,7 @@ export class ConsumersService {
    * Start or resume a one-time Stripe Checkout for a credit pack.
    * Choose a unique purchase_id and reuse it when retrying the same pack.
    * A consumer can have one pending purchase at a time. Granting credit
-   * requires Stripe to confirm the exact paid amount and currency.
+   * requires Stripe to confirm the exact live payment amount and currency.
    *
    * @returns ConsumerCreditPurchaseResponse The purchase, with a checkout URL when the session is open.
    * @throws ApiError
@@ -292,7 +292,7 @@ export class ConsumersService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         409: `code: conflict`,
-        422: `The purchase ID or pack ID is invalid.`,
+        422: `The purchase ID or pack ID is invalid, or Stripe rejected the new checkout.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
