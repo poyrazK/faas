@@ -63,6 +63,12 @@ type target struct {
 	sensitive       []string // synthetic journey credentials; never included in reports
 	// session carries the signed-in dashboard session for owner-only steps.
 	session string
+	// otherToken is an API key of a second account (GREGALE_E2E_OTHER_TOKEN),
+	// for journeys about names another owner holds.
+	otherToken string
+	// blockedName is an exact entry of the target's app_name_blocklist
+	// (GREGALE_E2E_BLOCKED_NAME) that no other entry's pattern extends.
+	blockedName string
 
 	preflightOnce sync.Once
 	preflightErr  error
@@ -129,21 +135,29 @@ func loadTarget(getenv func(string) string) (*target, error) {
 		return nil, fmt.Errorf("GREGALE_E2E_API %q is not an http(s) origin", api)
 	}
 	t := &target{
-		api:        api,
-		appsDomain: getenv("GREGALE_E2E_APPS_DOMAIN"),
-		token:      getenv("GREGALE_E2E_TOKEN"),
-		useLogin:   getenv("GREGALE_E2E_AUTH") == "cli-login",
-		session:    getenv("GREGALE_E2E_SESSION"),
-		cli:        getenv("GREGALE_E2E_CLI"),
-		runID:      getenv("GREGALE_E2E_RUN_ID"),
-		tier:       getenv("GREGALE_E2E_TIER"),
-		keep:       getenv("GREGALE_E2E_KEEP") == "1",
+		api:         api,
+		appsDomain:  getenv("GREGALE_E2E_APPS_DOMAIN"),
+		token:       getenv("GREGALE_E2E_TOKEN"),
+		useLogin:    getenv("GREGALE_E2E_AUTH") == "cli-login",
+		session:     getenv("GREGALE_E2E_SESSION"),
+		otherToken:  getenv("GREGALE_E2E_OTHER_TOKEN"),
+		blockedName: getenv("GREGALE_E2E_BLOCKED_NAME"),
+		cli:         getenv("GREGALE_E2E_CLI"),
+		runID:       getenv("GREGALE_E2E_RUN_ID"),
+		tier:        getenv("GREGALE_E2E_TIER"),
+		keep:        getenv("GREGALE_E2E_KEEP") == "1",
 	}
 	if t.appsDomain == "" {
 		t.appsDomain = strings.TrimPrefix(u.Hostname(), "api.")
 	}
 	if t.useLogin && t.token != "" {
 		return nil, fmt.Errorf("GREGALE_E2E_AUTH=cli-login and GREGALE_E2E_TOKEN are mutually exclusive")
+	}
+	if t.otherToken != "" {
+		if t.otherToken == t.token {
+			return nil, fmt.Errorf("GREGALE_E2E_OTHER_TOKEN must belong to a second account, not repeat GREGALE_E2E_TOKEN")
+		}
+		t.sensitive = append(t.sensitive, t.otherToken)
 	}
 	if t.cli == "" {
 		t.cli = "gregale"
