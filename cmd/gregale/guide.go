@@ -54,7 +54,7 @@ var guidePages = []guidePage{
 		},
 		Notes: []string{
 			"A Compose file or several services: see `gregale guide compose-project`.",
-			"Public or private: on Hobby and above a new app's URL answers 401 without an API key, even after a successful deploy. Deploy with --no-require-authn when the user wants a website, a demo or a link to share, or the app was public where it ran before (Render, Heroku); keep the default for an API or anything the user did not ask to publish, and tell the user which you chose. release verify checks the deployment with owner access; it does not test anonymous access.",
+			"Public or private: on Hobby and above a new app's URL answers 401 without an API key, even after a successful deploy. When the user wants a website, a demo or a link to share, or the app was public where it ran before (Render, Heroku), add `access: public` to its gregale.yaml (every deploy keeps it public, MCP deploys too) or deploy with --no-require-authn; keep the default for an API or anything the user did not ask to publish, and tell the user which you chose. release verify checks the deployment with owner access; it does not test anonymous access.",
 			"Readiness: a health route found in the source (or hosting.health) must answer 2xx; with none, an open port is enough. Do not pass / as the health path. An app that checks the Host header (Django ALLOWED_HOSTS) needs the health route answered first; see `gregale guide health-checks`.",
 		},
 	},
