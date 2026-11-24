@@ -413,11 +413,11 @@ func TestRemoteManagementOAuthAccountIsolation(t *testing.T) {
 			aliceSession, ctx := f.connect(alice, version)
 			bobSession, _ := f.connect(bob, version)
 			aliceCatalog, err := aliceSession.ListTools(ctx, nil)
-			if err != nil || len(aliceCatalog.Tools) != 161 {
+			if err != nil || len(aliceCatalog.Tools) != 163 {
 				t.Fatalf("alice tools=%d error=%v", len(aliceCatalog.Tools), err)
 			}
 			bobCatalog, err := bobSession.ListTools(ctx, nil)
-			if err != nil || len(bobCatalog.Tools) != 140 {
+			if err != nil || len(bobCatalog.Tools) != 142 {
 				t.Fatalf("bob count=%d tools=%+v error=%v", len(bobCatalog.Tools), bobCatalog, err)
 			}
 			aliceContext := callTool(t, ctx, aliceSession, "gregale_context", map[string]any{}, false)

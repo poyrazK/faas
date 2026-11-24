@@ -3143,6 +3143,35 @@ const (
 	AnalyticsCohortRefreshInterval = time.Hour
 )
 
+// Saved insights (ADR-20261122190000).
+const (
+	// SavedInsightsMaxPerEnvironment bounds an environment's saved insights.
+	SavedInsightsMaxPerEnvironment = 50
+	// SavedInsightMaxChannels bounds the channels one saved insight sends to.
+	SavedInsightMaxChannels = 5
+	// SavedInsightAlertInterval is how often meterd checks a saved insight
+	// that has an alert.
+	SavedInsightAlertInterval = 15 * time.Minute
+	// SavedInsightDigestHourUTC is the hour digests go out: daily ones every
+	// day, weekly ones on Mondays.
+	SavedInsightDigestHourUTC = 8
+	// SavedInsightRunBatch bounds the saved insights one meterd pass runs.
+	SavedInsightRunBatch = 10
+	// SavedInsightItemBudget bounds one saved insight's run: its query
+	// (AnalyticsQueryTimeout) and at most two channel sends of 30 s each.
+	SavedInsightItemBudget = AnalyticsQueryTimeout + time.Minute
+	// SavedInsightLease is how long a claimed batch stays leased; a pass
+	// releases the items it cannot start with SavedInsightItemBudget left.
+	SavedInsightLease = SavedInsightRunBatch*SavedInsightItemBudget + time.Minute
+	// SavedInsightNotReleasedRetry is how long a saved insight of an account
+	// without saved insights waits before meterd looks at it again.
+	SavedInsightNotReleasedRetry = time.Hour
+	// SavedInsightNameMaxBytes bounds a saved insight's display name.
+	SavedInsightNameMaxBytes = 128
+	// SavedInsightRequestMaxBytes bounds a create or replace request body.
+	SavedInsightRequestMaxBytes = 32 << 10
+)
+
 // Subject units, layers and the holdout, richer metrics, bandits and
 // metric-driven rollouts (ADR 20261119173702).
 const (

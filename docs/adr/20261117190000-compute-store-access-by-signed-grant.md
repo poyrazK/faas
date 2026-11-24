@@ -158,6 +158,16 @@ secretd signing for a loopback MinIO) found what the unit tests could not:
   `FAAS_S3_ACCESS_KEY_ID`/`SECRET` even under `FAAS_STORAGE_ACCESS=secretd`,
   so deleting compute's key (slice 5) would have stopped the daemons. Under
   grants the key is optional and the client is anonymous.
+- **Compute schedd still used the key, and the gates required it.** A
+  compute node's schedd reads layer signatures and lists `snap/` for the
+  disk-drift scan with storage.env's identity, and the compute gates
+  (`compute_only_service`, `compute_admission`, `node_join.yml`,
+  `gregalectl deploy join` and `prepare-node`) refused a `storage.env` or
+  `imaged-storage.env` without an S3 key. Now schedd joins the grant
+  drop-in (`FAAS_STORAGE_ACCESS=secretd`, deletes deferred), the drift scan
+  runs only where schedd holds the store directly (the control plane), and
+  the gates accept a key-less file only with `faas_storage_grants`
+  (`--storage-grants` for the CLI); a half pair is still refused.
 
 A first run of 100 image deploy → park → wake cycles on grants passed on
 the nested-KVM test host, but it kept `snap/`, `base/`, `kernel/`,
