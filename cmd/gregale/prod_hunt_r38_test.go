@@ -172,6 +172,38 @@ func TestFlagListUsesLinkedProject(t *testing.T) {
 	}
 }
 
+// Prod hunt r44: `status` after a failed deploy said only "State active".
+func TestStatusNamesFailedLastDeploy(t *testing.T) {
+	for _, tc := range []struct {
+		name, items, want string
+	}{
+		{"earlier release live", `[{"id":"d2","status":"failed","revision":2},{"id":"d1","status":"live","revision":1}]`, "the previous release keeps serving"},
+		{"first deploy failed", `[{"id":"d1","status":"failed","revision":1}]`, "no release is live"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case strings.HasSuffix(r.URL.Path, "/deployments"):
+					_, _ = w.Write([]byte(`{"items":` + tc.items + `}`))
+				case strings.HasPrefix(r.URL.Path, "/v1/apps/demo"):
+					_, _ = w.Write([]byte(`{"id":"a","slug":"demo","status":"active"}`))
+				default:
+					_, _ = w.Write([]byte(`{}`))
+				}
+			}))
+			defer srv.Close()
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "test-token")
+			linkCheckout(t)
+			_, stdout, stderr := runCLI(t, "status")
+			if !strings.Contains(stdout, "Last deploy  failed: v") || !strings.Contains(stdout, tc.want) {
+				t.Fatalf("status = %q %q, want the failed deploy and %q", stdout, stderr, tc.want)
+			}
+		})
+	}
+}
+
 // Prod hunt r38: bare `gregale env` listed only the clone and sync verbs,
 // not set/unset/list.
 func TestEnvUsageListsSecretVerbs(t *testing.T) {
