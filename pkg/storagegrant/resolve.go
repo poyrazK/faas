@@ -18,8 +18,11 @@ type Class string
 
 const (
 	// ClassPlatform keys (base images, kernels, agent and sandbox layers,
-	// the shared sandbox preset snapshot) are readable by every node and
-	// writable by none.
+	// the shared sandbox preset snapshot, base scan sidecars) are readable
+	// by every node; a node may create one or replace the one it read,
+	// conditioned on its ETag or generation (ADR amendment 1: compute
+	// imaged stages and patches bases, and their integrity rests on the
+	// control plane's signature, not on who wrote them).
 	ClassPlatform Class = "platform"
 	// ClassDeployment keys belong to one deployment of one app.
 	ClassDeployment Class = "deployment"
@@ -29,6 +32,9 @@ const (
 	ClassJob Class = "job"
 	// ClassBuild keys (a build's uploaded source) belong to one build.
 	ClassBuild Class = "build"
+	// ClassBuildOutput keys (a build's SBOM) are created by the node
+	// running that build.
+	ClassBuildOutput Class = "build_output"
 	// ClassUnknown keys are refused.
 	ClassUnknown Class = "unknown"
 )
@@ -59,6 +65,24 @@ func Resolve(key string) Subject {
 	switch top {
 	case "base", "kernel":
 		return Subject{Class: ClassPlatform}
+	case "sigs":
+		// sigs/<key>.sig is the signature of <key> and belongs to its
+		// owner (pkg/cosign SignatureKey).
+		if inner, ok := strings.CutSuffix(rest, ".sig"); ok && !strings.HasPrefix(inner, "sigs/") {
+			return Resolve(inner)
+		}
+	case "scans":
+		// Grype sidecars of platform bases (pkg/wire BaseScanKeyForArch,
+		// ScanKeyForBaseKey): scans/<base name>.scan.json, or
+		// scans/generations/<sha256>/<base name>.scan.json for a
+		// generation-addressed base (storagekey.BaseGeneration).
+		if name, ok := strings.CutSuffix(rest, ".scan.json"); ok && baseScanName(name) {
+			return Subject{Class: ClassPlatform}
+		}
+	case "sboms":
+		if build, ok := strings.CutSuffix(rest, ".cdx.json"); ok && canonicalUUID(build) {
+			return Subject{Class: ClassBuildOutput, ID: build}
+		}
 	case "snap":
 		return resolveSnapshot(rest)
 	case "apps":
@@ -181,4 +205,18 @@ func canonicalUUID(s string) bool {
 		}
 	}
 	return true
+}
+
+// baseScanName reports whether name, from scans/<name>.scan.json, names a
+// platform base: a bare base file name, or generations/<sha256 hex>/<bare
+// base file name>.
+func baseScanName(name string) bool {
+	if gen, ok := strings.CutPrefix(name, "generations/"); ok {
+		sum, base, ok := strings.Cut(gen, "/")
+		if !ok || len(sum) != 64 || strings.Trim(sum, "0123456789abcdef") != "" {
+			return false
+		}
+		name = base
+	}
+	return name != "" && name != "." && name != ".." && !strings.Contains(name, "/")
 }

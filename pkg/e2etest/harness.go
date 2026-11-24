@@ -91,6 +91,8 @@ import (
 //
 // Fields are exported for test consumption: H.APIDURL, H.GatewayURL, H.Pool.
 type Harness struct {
+	// grants is the store-grants world (StorageGrantsEnv), nil when off.
+	grants     *storageGrants
 	T          *testing.T
 	Pool       *pgxpool.Pool
 	TmpDir     string
@@ -303,6 +305,11 @@ func StartWithAPIDEnv(t *testing.T, pool *pgxpool.Pool, which Which, apidOnlyEnv
 	// See e2eMigrationTarget for the head value and the bump rationale.
 	pgtest.WaitForMigration(t, pool, e2eMigrationTarget, 30*time.Second)
 
+	if StorageGrantsRequested() {
+		h.startStorageGrants(t, bin, dbURL)
+		t.Cleanup(func() { h.checkStorageGrants(t) })
+	}
+
 	// apid's rollback precheck verifies the signatures schedd does, so it
 	// gets the same key when schedd runs. This only writes the key: schedd
 	// itself still starts after vmmd (TestStart_BootsVMMDBeforeSchedd).
@@ -431,6 +438,11 @@ failure_report_dir = %q
 			"FAAS_SIGN_PUB="+signPubPath,
 			h.nativeRuntimeSnapshotEnv(tmp),
 		)
+		if h.grants != nil {
+			// The control plane decides the nodes' deferred deletes and
+			// sweeps jobs/ and sources/ (ADR-20261117190000).
+			env = append(env, "FAAS_SCHEDD_OBJECT_GC=1")
+		}
 		env = append(env, extraEnv...)
 		h.scheddConfigPath = cfgPath
 		h.scheddEnv = append([]string(nil), env...)
@@ -503,6 +515,7 @@ failure_report_dir = %q
 		if dbr := os.Getenv("FAAS_TEST_DEPLOY_BASE_REF"); dbr != "" {
 			env = append(env, "FAAS_TEST_DEPLOY_BASE_REF="+dbr)
 		}
+		env = append(env, h.StorageGrantsComputeEnv()...)
 		env = append(env, extraEnv...)
 		h.procs = append(h.procs, startProc(t, bin, "builderd", env))
 		h.BuilderdCfg = cfgPath
@@ -855,6 +868,11 @@ const e2eMigrationTarget = 416
 // only needs apid, no schedd/vmmd).
 func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []string) *Harness {
 	t.Helper()
+	if StorageGrantsRequested() {
+		// Only StartWithAPIDEnv wires the grant world; running keyed here
+		// would pass the storage-grants lane without testing grants.
+		t.Fatalf("e2etest: %s=1 needs a test started with StartWithAPIDEnv (StartWithEnv does not support storage grants)", StorageGrantsEnv)
+	}
 	tmp := harnessTempDir(t)
 	// Shared, built-once daemon binaries — see EnsureSharedBinaries.
 	bin := buildBinaries(t)
@@ -1584,6 +1602,9 @@ func testEnvCommon(dbURL string) []string {
 		"FAAS_PADDLE_WEBHOOK_SECRET=whk_test_e2e_placeholder",
 	}
 	env = append(env, forwardedStorageEnv()...)
+	if currentHarness != nil && currentHarness.grants != nil {
+		env = append(env, currentHarness.grants.controlEnv...)
+	}
 	env = append(env, forwardedLogArchiveEnv()...)
 	// Every artifact consumer, including schedd's layer verifier, must read
 	// the same per-test app store that imaged publishes into.
@@ -1641,6 +1662,9 @@ func vmmdEnv(dbURL, cfgPath, scheddSock string) []string {
 	}
 	if scheddSock != "" {
 		env = append(env, "FAAS_VMMD_SCHEDD_TARGET=unix://"+scheddSock)
+	}
+	if currentHarness != nil && currentHarness.grants != nil {
+		env = append(env, currentHarness.grants.computeEnv...)
 	}
 	// Outward NIC for tenant egress NAT. vmmd defaults to "eth0"
 	// (pkg/netns.DefaultHostPolicy.PublicIface) and production overrides it
@@ -3419,7 +3443,11 @@ func imagedEnv(t *testing.T, dbURL, guestInit, appsRoot, tmp string) []string {
 	// tree vmmd fills, and vmmd writes only under the tmpfs staging root
 	// faas-imaged.service names. The default TMPDIR is outside it, so every
 	// such base failed with "target_dir outside staging root".
-	return append(env, "FAAS_BASE_STAGING_ROOT="+imagedUnitEnv(t, "FAAS_BASE_STAGING_ROOT"))
+	env = append(env, "FAAS_BASE_STAGING_ROOT="+imagedUnitEnv(t, "FAAS_BASE_STAGING_ROOT"))
+	if currentHarness != nil && currentHarness.grants != nil {
+		env = append(env, currentHarness.grants.computeEnv...)
+	}
+	return env
 }
 
 // imagedUnitEnv returns the value faas-imaged.service sets for key.
