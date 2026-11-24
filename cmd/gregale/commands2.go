@@ -8096,12 +8096,18 @@ type streamDeployOptions struct {
 	// detaches with exit 0 because the rollout runs on Gregale.
 	followRollout bool
 	darkDeploy    bool
+	// streamIdleTimeout overrides defaultDeployStreamIdleTimeout (tests).
+	streamIdleTimeout time.Duration
 }
 
 func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.DeploymentResponse, appSlug string, opts streamDeployOptions) (exit int) {
 	waitTimeout := opts.waitTimeout
 	if waitTimeout <= 0 {
 		waitTimeout = defaultDeployWaitTimeout
+	}
+	streamIdleTimeout := opts.streamIdleTimeout
+	if streamIdleTimeout <= 0 {
+		streamIdleTimeout = defaultDeployStreamIdleTimeout
 	}
 	recoveryStage := "deployment"
 	defer func() {
@@ -8250,7 +8256,7 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 		warnWaitStopped("stream unreachable; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
 		return 3
 	}
-	body = newIdleWatchdogReader(body, deployStreamIdleTimeout)
+	body = newIdleWatchdogReader(body, streamIdleTimeout)
 	defer func() { _ = body.Close() }()
 	dec := api.NewDecoder(body)
 	dec.SetCloseFn(body.Close)
@@ -8282,7 +8288,7 @@ streamLoop:
 					streamErr = <-streamErrors
 				}
 				if waitCtx.Err() == nil && streamErr != nil && !errors.Is(streamErr, io.EOF) {
-					warnDeployStreamInterrupted(opts.quiet)
+					warnDeployStreamInterrupted(opts.quiet, streamErr)
 				}
 				break streamLoop
 			}
@@ -8362,7 +8368,7 @@ streamLoop:
 				}
 				break streamLoop
 			case streamEventError:
-				warnDeployStreamInterrupted(opts.quiet)
+				warnDeployStreamInterrupted(opts.quiet, nil)
 				break streamLoop
 			default:
 				// Unknown frame shape — print raw so the customer can see it.
@@ -9090,10 +9096,17 @@ func renderSecretScanWarnings(findings []secretscan.Finding, w io.Writer) {
 // closed; follow manually") although the deployment went live. The caller now
 // falls through to the build/deployment status poll, so the exit code is the
 // deployment's own outcome.
-func warnDeployStreamInterrupted(quiet bool) {
-	if !quiet {
-		PrintWarn(os.Stderr, "build log stream interrupted; following deployment status…")
+func warnDeployStreamInterrupted(quiet bool, err error) {
+	if quiet {
+		return
 	}
+	if errors.Is(err, errDeployStreamIdle) {
+		// The idle watchdog closed it: say so, so a silent connection is
+		// not mistaken for a server error.
+		PrintWarn(os.Stderr, "build log stream interrupted (%v); following deployment status…", err)
+		return
+	}
+	PrintWarn(os.Stderr, "build log stream interrupted; following deployment status…")
 }
 
 // cmdDomainsList lists the account's custom domains, or one app's with --app.
