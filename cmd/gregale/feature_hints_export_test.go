@@ -54,8 +54,8 @@ func ResolveHintCommand(line string) error {
 			continue
 		}
 		name, _, _ := strings.Cut(strings.TrimPrefix(word, "--"), "=")
-		if name == "help" || name == "all" {
-			continue // every command takes them
+		if name == "help" || name == "all" || name == "json" {
+			continue // every command takes them; run consumes --json globally
 		}
 		if !slices.ContainsFunc(node.Flags, func(f cliFlag) bool { return f.Name == name }) {
 			return fmt.Errorf("%q: the command declares no --%s", line, name)
