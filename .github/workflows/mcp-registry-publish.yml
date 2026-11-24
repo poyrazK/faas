@@ -1,0 +1,67 @@
+name: MCP registry publish
+
+# Lists Gregale's hosted MCP server (https://api.gregale.dev/mcp) in the
+# official MCP registry, which Claude, Cursor, VS Code and other clients'
+# server galleries read. packaging/mcp-registry/server.json is the listing;
+# bump its "version" to publish a change, since the registry refuses a
+# version it already has. Pull requests only validate.
+
+on:
+  pull_request:
+    paths:
+      - packaging/mcp-registry/server.json
+      - .github/workflows/mcp-registry-publish.yml
+  push:
+    branches: [main]
+    paths:
+      - packaging/mcp-registry/server.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-registry-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  MCP_PUBLISHER_VERSION: v1.8.9
+  SERVER_JSON: packaging/mcp-registry/server.json
+
+jobs:
+  publish:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write # GitHub OIDC login for the io.github.poyrazK namespace
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Download and verify mcp-publisher
+        run: |
+          set -euo pipefail
+          archive="mcp-publisher_linux_amd64.tar.gz"
+          base_url="https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}"
+          curl --fail --location --silent --show-error --output "$archive" "$base_url/$archive"
+          curl --fail --location --silent --show-error --output "$archive.sigstore.json" "$base_url/$archive.sigstore.json"
+          cosign verify-blob \
+            --bundle "$archive.sigstore.json" \
+            --certificate-identity "https://github.com/modelcontextprotocol/registry/.github/workflows/release.yml@refs/tags/${MCP_PUBLISHER_VERSION}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "$archive"
+          tar xzf "$archive" mcp-publisher
+          rm -f "$archive" "$archive.sigstore.json"
+
+      - name: Validate server.json
+        run: ./mcp-publisher validate "$SERVER_JSON"
+
+      - name: Publish to the MCP registry
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish "$SERVER_JSON"
