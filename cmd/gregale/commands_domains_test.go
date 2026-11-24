@@ -18,6 +18,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -354,6 +356,31 @@ func TestDomainsAdd_PositionalDomainWithTrailingFlags(t *testing.T) {
 	main.AuthedFakeAPI(t, "", http.StatusOK)
 	if code := main.CmdDomains([]string{"add", "a.example.com", "--domain", "b.example.com", "--app", "shop-api"}); code == 0 {
 		t.Fatal("conflicting positional and --domain accepted")
+	}
+}
+
+// Prod hunt r35: `domain add <domain>` in a linked checkout printed only the
+// usage line; it binds the domain to the linked app.
+func TestDomainsAdd_DefaultsToLinkedApp(t *testing.T) {
+	repo := t.TempDir()
+	for path, body := range map[string]string{".git/HEAD": "ref: refs/heads/main\n", ".gregale/project.json": `{"version":1,"project":"shop","app":"shop-web","environment":"staging"}`} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(repo, path)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(repo, path), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Chdir(repo)
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"domain":"shop.example.com","app_id":"app-1","challenge_token":"challenge"}`, http.StatusAccepted)
+	if code := main.CmdDomains([]string{"add", "shop.example.com"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	var request api.CreateCustomDomainRequest
+	// Review of r35: the linked environment comes with the linked app.
+	if err := json.Unmarshal((*f.SawBody()), &request); err != nil || request.AppID != "shop-web" || request.Environment != "staging" {
+		t.Fatalf("request = %+v err=%v", request, err)
 	}
 }
 

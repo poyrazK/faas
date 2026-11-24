@@ -62595,7 +62595,7 @@ CREATE TABLE public.storage_grant_audit (
     granted_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT storage_grant_audit_access_check CHECK ((access = ANY (ARRAY['read'::text, 'write'::text]))),
     CONSTRAINT storage_grant_audit_objects_check CHECK (((objects > 0) AND (objects <= 64))),
-    CONSTRAINT storage_grant_audit_subject_class_check CHECK ((subject_class = ANY (ARRAY['deployment'::text, 'sandbox_account'::text, 'job'::text, 'build'::text])))
+    CONSTRAINT storage_grant_audit_subject_class_v2_check CHECK ((subject_class = ANY (ARRAY['deployment'::text, 'sandbox_account'::text, 'job'::text, 'build'::text, 'build_output'::text, 'platform'::text])))
 );
 
 
