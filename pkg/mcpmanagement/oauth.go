@@ -61,10 +61,8 @@ func (r *remoteServer) validRegistration(input registrationRequest) bool {
 			return false
 		}
 	}
-	for _, grant := range input.GrantTypes {
-		if grant != "authorization_code" && grant != "refresh_token" {
-			return false
-		}
+	if !grantTypesAllowed(input.GrantTypes) {
+		return false
 	}
 	for _, response := range input.ResponseTypes {
 		if response != "code" {

@@ -97,6 +97,28 @@ func TestMetadataDocumentGrantTypes(t *testing.T) {
 	}
 }
 
+// Registration and metadata documents accept the same grant lists.
+func TestGrantTypesAllowed(t *testing.T) {
+	r := &remoteServer{opts: HTTPOptions{RedirectURIs: []string{testRedirect}}}
+	for name, tc := range map[string]struct {
+		grants []string
+		want   bool
+	}{
+		"code and refresh":  {[]string{"authorization_code", "refresh_token"}, true},
+		"extra device code": {[]string{"authorization_code", "urn:ietf:params:oauth:grant-type:device_code"}, true},
+		"none listed":       {nil, true},
+		"no code grant":     {[]string{"client_credentials"}, false},
+	} {
+		if got := grantTypesAllowed(tc.grants); got != tc.want {
+			t.Errorf("%s: grantTypesAllowed = %v, want %v", name, got, tc.want)
+		}
+		registration := registrationRequest{RedirectURIs: []string{testRedirect}, GrantTypes: tc.grants}
+		if got := r.validRegistration(registration); got != tc.want {
+			t.Errorf("%s: validRegistration = %v, want %v", name, got, tc.want)
+		}
+	}
+}
+
 // Clients that registered name their exact redirect URI; only metadata
 // document clients get the loopback port allowance.
 func TestRegisteredClientsKeepExactRedirects(t *testing.T) {
