@@ -99,7 +99,9 @@ class PairEvidenceTest(unittest.TestCase):
         case.setUp()
         self.addCleanup(case.doCleanups)
         old_root = case.args.root
-        for source_name in (*fixture.verdict.SOURCES.values(), *fixture.verdict.REMOTE_SUPPORT):
+        # The verdict reads published overage rates from LIMITS_SOURCE
+        # (#7769); the pair root needs it as much as the scenario sources.
+        for source_name in (*fixture.verdict.SOURCES.values(), *fixture.verdict.REMOTE_SUPPORT, fixture.verdict.LIMITS_SOURCE):
             path = self.root / source_name
             path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(old_root / source_name, path)
