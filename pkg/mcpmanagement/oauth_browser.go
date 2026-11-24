@@ -25,7 +25,11 @@ type consentView struct {
 	Capabilities       []string
 	RequestID          string
 	CSRF               string
-	Writes             bool
+	Writes bool
+	// OfferWrites: the client asked only to inspect, but this bridge allows
+	// writes, so the page before sign-in lets the person choose deploy
+	// access (ADR-20261028205920 amendment 1).
+	OfferWrites        bool
 	Invocations        bool
 	Publishing         bool
 	PrivateInvocations bool
@@ -102,6 +106,7 @@ func (r *remoteServer) renderConsent(w http.ResponseWriter, flow *authorizationR
 	if r.opts.Hosted {
 		view.APIBase = r.opts.ResourceURL
 	}
+	view.OfferWrites = r.offersWrites(flow)
 	if g := r.grants[flow.GrantID]; g != nil {
 		// The connection's key may carry less than the client asked for: an
 		// organization's agent policy caps it (ADR-20261101225122).

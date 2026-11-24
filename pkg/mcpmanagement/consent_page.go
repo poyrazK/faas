@@ -104,7 +104,9 @@ func consentPage(v consentView) string {
 		}
 		w("\n", `<fieldset><legend>Environment access</legend><p>Default app inspection is included. Named environments require separate consent for the selected apps.</p>`)
 		if v.Writes {
-			w(`<p><label><input type="checkbox" name="default_write" value="yes"> Allow writes to the default environment</label></p>`)
+			// Preselected: write access to no environment could not deploy
+			// at all (ADR-20261028205920 amendment 1).
+			w(`<p><label><input type="checkbox" name="default_write" value="yes" checked> Allow writes to the default environment</label></p>`)
 		}
 		for _, env := range v.Environments {
 			value := e(env.Project) + "/" + e(env.Environment)
@@ -121,7 +123,10 @@ func consentPage(v consentView) string {
 		// The hosted bridge sends the browser to sign-in and back here.
 		w(`<p>Continue to Gregale to sign in, or to create an account with GitHub, Google or email. You come back here to review the agent's access.</p>`, "\n")
 		w("\n", `<form id="gregale-connect" method="post" action="`, e(v.ConsentAction), `">`, hidden)
-		if v.Writes {
+		if v.OfferWrites {
+			w(consentAccessChoice)
+		}
+		if v.Writes || v.OfferWrites {
 			w(consentCapabilityChoices)
 		}
 		w(`<button name="decision" value="start-login" type="submit">Continue to Gregale</button><button name="decision" value="deny" type="submit">Cancel</button></form>`)
@@ -135,7 +140,10 @@ func consentPage(v consentView) string {
 			w(`<p><a class="button" href="`, e(v.LoginURL), `"`, target, `>Sign in to Gregale</a></p>`)
 		}
 		w("\n", `<form id="gregale-connect" method="post" action="`, e(v.ConsentAction), `">`, hidden)
-		if v.Writes && v.LoginURL == "" {
+		if v.OfferWrites && v.LoginURL == "" {
+			w(consentAccessChoice)
+		}
+		if (v.Writes || v.OfferWrites) && v.LoginURL == "" {
 			w(consentCapabilityChoices)
 		}
 		decision, label := "start-login", "Start Gregale sign-in"
