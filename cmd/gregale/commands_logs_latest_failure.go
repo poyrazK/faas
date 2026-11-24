@@ -74,7 +74,7 @@ func runLatestFailureLogs(slug string) int {
 	if dep == nil {
 		receipt.Type = "summary"
 		receipt.Message = "No failed deployment was found in the available app deployment history. Runtime or request failures are not covered by this selector."
-		receipt.NextCommand = recoveryCLI() + " inspect " + recoveryArgument(slug)
+		receipt.NextCommand = recoveryCLI() + " app health " + recoveryArgument(slug) + " --explain"
 		if jsonOutput {
 			if code := jsonOut(json.NewEncoder(osStdout).Encode(receipt)); code != 0 {
 				return code
