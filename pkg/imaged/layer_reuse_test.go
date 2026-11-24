@@ -50,6 +50,7 @@ func TestLayerReuseKeyCoversEveryLayerInput(t *testing.T) {
 		"runner base":       func(in *layerReuseInputs) { in.runtimeBaseDiffIDs = []string{"sha256:l1"} },
 		"start command":     func(in *layerReuseInputs) { in.startCommand = "npm start" },
 		"release toolchain": func(in *layerReuseInputs) { in.releaseKeepsToolchain = true },
+		"release app":       func(in *layerReuseInputs) { in.releaseKeepsApp = true },
 		"manifest command":  func(in *layerReuseInputs) { in.manifest.Entrypoint = []string{"node", "server.js"} },
 		"manifest PATH":     func(in *layerReuseInputs) { in.manifest.Env = map[string]string{"PATH": "/opt/bin"} },
 		"manifest workdir":  func(in *layerReuseInputs) { in.manifest.WorkingDir = "/srv" },

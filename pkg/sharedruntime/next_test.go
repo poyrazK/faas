@@ -150,6 +150,26 @@ func TestNextMajor(t *testing.T) {
 	}
 }
 
+func TestBunStartNeedsNodePackageManager(t *testing.T) {
+	tests := []struct {
+		command, pkg string
+		want         bool
+	}{
+		{"bun run start", `{"scripts":{"start":"bun index.ts"}}`, false},
+		{"bun start", `{"scripts":{"start":"bunx prisma generate && bun index.ts"}}`, false},
+		{"bun index.ts", ``, false},
+		{"bun run start", `{"scripts":{"start":"npx prisma migrate deploy && bun src/index.ts"}}`, true},
+		{"bun run serve", `{"scripts":{"preserve":"npm run build","serve":"bun x.ts"}}`, true},
+		{"bun run start", `{"scripts":{"start":"bun a.ts","poststart":"pnpm notify"}}`, true},
+		{"bun run start", `{`, true},
+	}
+	for _, tt := range tests {
+		if got := BunStartNeedsNodePackageManager(tt.command, []byte(tt.pkg)); got != tt.want {
+			t.Errorf("%q with %s = %v, want %v", tt.command, tt.pkg, got, tt.want)
+		}
+	}
+}
+
 func TestBunHelpers(t *testing.T) {
 	if !BunStart("bun run start") || !BunStart("bun index.ts") || BunStart("node index.js") || BunStart("") {
 		t.Fatal("BunStart")

@@ -62,12 +62,14 @@ module.exports = {
 
 // nextStandaloneCopy puts the static assets and public files next to the
 // standalone server, as Next's deployment docs do. It changes nothing when
-// the build wrote no standalone server (the app chose another output).
-const nextStandaloneCopy = `sh -c 'if [ -f .next/standalone/server.js ]; then ` +
+// the build wrote no standalone server (the app chose another output). It
+// never fails the build: a copy that fails leaves no marker, and imaged then
+// ships the app with its node_modules.
+const nextStandaloneCopy = `sh -c 'if [ -f .next/standalone/server.js ] && ` +
 	`rm -rf .next/standalone/.next/static && mkdir -p .next/standalone/.next && ` +
 	`{ [ ! -d .next/static ] || cp -R .next/static .next/standalone/.next/static; } && ` +
-	`{ [ ! -d public ] || { rm -rf .next/standalone/public && cp -R public .next/standalone/public; }; } && ` +
-	`: > .next/standalone/` + nextStandaloneMarkerName + `; fi'`
+	`{ [ ! -d public ] || { rm -rf .next/standalone/public && cp -R public .next/standalone/public; }; }; then ` +
+	`: > .next/standalone/` + nextStandaloneMarkerName + `; fi; true'`
 
 // nextStandaloneMarkerName is the file the copy step writes last. imaged ships
 // the standalone tree only when it is there: a standalone server built

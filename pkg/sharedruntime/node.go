@@ -76,7 +76,7 @@ func ClassifyNode(planJSON, packageJSON []byte) api.SharedRuntimeVerdict {
 		return ineligible(reason)
 	}
 	start, reason := resolveStart(p.Deploy.StartCommand, packageJSON)
-	if reason == ReasonPackageManagerStart && BunStart(p.Deploy.StartCommand) {
+	if reason == ReasonPackageManagerStart && BunStart(p.Deploy.StartCommand) && !BunStartNeedsNodePackageManager(p.Deploy.StartCommand, packageJSON) {
 		// ADR-20261124160000: the layer keeps Bun's own install.
 		start, reason = []string{"/bin/sh", "-c", strings.TrimSpace(p.Deploy.StartCommand)}, ""
 	}

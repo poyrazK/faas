@@ -305,7 +305,7 @@ func TestSharedRuntimeAppLayers(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := h.sharedRuntimeAppLayersAt(t.Context(), RuntimeNode24, baseDiffIDs, archive, config, layers, &manifest, state.App{Type: state.AppTypeApp}, tt.releaseKeeps)
+			got, err := h.sharedRuntimeAppLayersAt(t.Context(), RuntimeNode24, baseDiffIDs, archive, config, layers, &manifest, state.App{Type: state.AppTypeApp}, sharedRuntimeRelease{keepsToolchain: tt.releaseKeeps})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -395,7 +395,19 @@ func TestSharedRuntimeAppLayersNextAndBun(t *testing.T) {
 		entry      []string
 		env        map[string]string
 		wantHost   string
+		release    bool
 	}{
+		{
+			// A release command may read /app files the standalone tree drops.
+			name: "release command keeps all of /app", files: standalone, start: "npm run start", release: true,
+			wantArgv: []string{"/bin/sh", "-c", "next start"}, wantPath: sharedruntime.RunnerPath,
+			wantNames: append(slices.Clone(standaloneNames), "app/node_modules/next/dist/server.js", "app/package.json"),
+		},
+		{
+			name: "bun script calling npx keeps the toolchain", start: "bun run start",
+			files:      map[string]string{"app/package.json": `{"scripts":{"start":"npx prisma migrate deploy && bun src/index.ts"}}`, "mise/installs/bun/1.3.5/bin/bun": "elf", "mise/installs/node/24.1.0/bin/node": "elf"},
+			wantReason: sharedruntime.ReasonPackageManagerStart,
+		},
 		{
 			name: "next standalone", files: standalone, start: "npm run start",
 			wantArgv: sharedruntime.NextStandaloneStart, wantPath: sharedruntime.RunnerPath, wantHost: "0.0.0.0",
@@ -473,7 +485,7 @@ func TestSharedRuntimeAppLayersNextAndBun(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := h.sharedRuntimeAppLayersAt(t.Context(), RuntimeNode24, baseDiffIDs, archive, config, layers, &manifest, state.App{Type: state.AppTypeApp}, false)
+			got, err := h.sharedRuntimeAppLayersAt(t.Context(), RuntimeNode24, baseDiffIDs, archive, config, layers, &manifest, state.App{Type: state.AppTypeApp}, sharedRuntimeRelease{keepsApp: tt.release})
 			if err != nil {
 				t.Fatal(err)
 			}

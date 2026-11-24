@@ -1,6 +1,7 @@
 package sharedruntime
 
 import (
+	"encoding/json"
 	"path"
 	"strings"
 )
@@ -18,6 +19,40 @@ const bunInstallRoot = "mise/installs/bun"
 func BunStart(command string) bool {
 	fields := strings.Fields(command)
 	return len(fields) > 0 && fields[0] == "bun"
+}
+
+// BunStartNeedsNodePackageManager reports whether a Bun start command, or
+// the package.json script it runs with its pre/post hooks, calls npm, npx,
+// yarn, pnpm, corepack or mise. Those came with mise's Node, which a Bun
+// app layer drops, so such an app keeps its toolchain. A false positive
+// only keeps the toolchain.
+func BunStartNeedsNodePackageManager(command string, packageJSON []byte) bool {
+	texts := []string{command}
+	fields := strings.Fields(command)
+	script := ""
+	switch {
+	case len(fields) == 2 && fields[1] == "start":
+		script = "start"
+	case len(fields) >= 3 && fields[1] == "run":
+		script = fields[2]
+	}
+	if script != "" {
+		var pkg struct {
+			Scripts map[string]string `json:"scripts"`
+		}
+		if json.Unmarshal(packageJSON, &pkg) != nil {
+			return true
+		}
+		texts = append(texts, pkg.Scripts[script], pkg.Scripts["pre"+script], pkg.Scripts["post"+script])
+	}
+	for _, text := range texts {
+		for _, word := range strings.FieldsFunc(text, shellWordBreak) {
+			if name := path.Base(word); name != "bun" && name != "bunx" && nodePackageManagers[name] {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // BunInstallEntry reports whether name, a clean relative tar path, is part

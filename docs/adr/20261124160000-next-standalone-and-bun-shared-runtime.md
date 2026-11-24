@@ -46,14 +46,17 @@ through its package manager. The build step:
 3. copies `.next/static` and `public` into the standalone tree, as Next's
    deployment docs do, then writes the marker
    `.next/standalone/.gregale-standalone`. This step changes nothing when no
-   standalone server was written.
+   standalone server was written, and it never fails the build: a copy
+   that fails leaves no marker.
 
 The deploy inputs are unchanged. imaged decides. When the filtered `/app`
 layer holds the builder's marker and the start command is the plain
 `next start`, the app layer keeps only `/app/.next/standalone`. The
 app then starts with `node /app/.next/standalone/server.js`, with
-`HOSTNAME=0.0.0.0` unless the app sets `HOSTNAME`. A standalone server
-without the marker keeps `node_modules`. This covers an app that sets
+`HOSTNAME=0.0.0.0` unless the app sets `HOSTNAME`. A deployment with any
+release command also keeps all of `/app`, because the command may read
+sources, scripts or `node_modules` the standalone tree leaves out. A
+standalone server without the marker keeps `node_modules`. This covers an app that sets
 `output: "standalone"` itself, an older builder, and the off switch. In
 those cases the static and public files were never copied. Any other case, including a failed second pass, keeps
 the layer it would have had before. The adapter only runs at build time.
@@ -64,7 +67,10 @@ records, and verified 2026-11-24 that it serves with the file absent.
 imaged's `/app` filter also keeps `mise/installs/bun/**` and drops the rest
 of the toolchain. Node comes from the runner base. The app starts with its
 own command, with Bun's bin directory after `/app/node_modules/.bin` on
-PATH. If no bun executable was in the artifact, the layer keeps everything
+PATH. The start command, the script it runs and that script's pre/post
+hooks must not call npm, npx, yarn, pnpm, corepack or mise, which came
+with mise's Node. If one does, the layer keeps the toolchain
+(`package_manager_start`). If no bun executable was in the artifact, the layer keeps everything
 above the base, as before (`bun_not_installed`).
 
 Builder nodes turn the Next.js rewrite off with `FAAS_NEXT_STANDALONE=0`.

@@ -90,16 +90,27 @@ func (h *Handler) sharedRuntimeAppLayers(ctx context.Context, runtime, archivePa
 	if err != nil {
 		return sharedRuntimeLayers{}, err
 	}
-	return h.sharedRuntimeAppLayersAt(ctx, runtime, baseDiffIDs, archivePath, config, layers, manifest, app, false)
+	return h.sharedRuntimeAppLayersAt(ctx, runtime, baseDiffIDs, archivePath, config, layers, manifest, app, sharedRuntimeRelease{})
+}
+
+// sharedRuntimeRelease is what a deployment's release command needs from
+// the shared-runtime split.
+type sharedRuntimeRelease struct {
+	// keepsToolchain keeps every layer above the base: the release command
+	// calls a package manager the runner base lacks.
+	keepsToolchain bool
+	// keepsApp keeps all of /app: a release command may read sources,
+	// scripts or node_modules a Next.js standalone tree leaves out
+	// (ADR-20261124160000).
+	keepsApp bool
 }
 
 // sharedRuntimeAppLayersAt is sharedRuntimeAppLayers at the runner base
 // layers baseDiffIDs. The result follows from the artifact, baseDiffIDs,
-// runtime, manifest, app.StartCommand and releaseKeepsToolchain, so the app
-// layer reuse key names those instead of the result (ADR-20261112170911
-// amendment 1). releaseKeepsToolchain keeps every layer above the base: the
-// deployment's release command calls a package manager the runner base lacks.
-func (h *Handler) sharedRuntimeAppLayersAt(ctx context.Context, runtime string, baseDiffIDs []string, archivePath string, config oci.Config, layers []io.ReadCloser, manifest *api.AppManifest, app state.App, releaseKeepsToolchain bool) (sharedRuntimeLayers, error) {
+// runtime, manifest, app.StartCommand and release, so the app layer reuse
+// key names those instead of the result (ADR-20261112170911 amendment 1).
+func (h *Handler) sharedRuntimeAppLayersAt(ctx context.Context, runtime string, baseDiffIDs []string, archivePath string, config oci.Config, layers []io.ReadCloser, manifest *api.AppManifest, app state.App, release sharedRuntimeRelease) (sharedRuntimeLayers, error) {
+	releaseKeepsToolchain := release.keepsToolchain
 	above, err := oci.LayersAboveBase(baseDiffIDs, config.DiffIDs)
 	if err != nil {
 		return sharedRuntimeLayers{}, fmt.Errorf("runtime base %s does not match the build artifact: %w", runtime, err)
@@ -123,7 +134,7 @@ func (h *Handler) sharedRuntimeAppLayersAt(ctx context.Context, runtime string, 
 	case len(report.Unexpected) > 0:
 		reason = "content_outside_app"
 	default:
-		if nodeRunner && report.NextStandalone && sharedruntime.NextStart(command, report.PackageJSON) {
+		if nodeRunner && !release.keepsApp && report.NextStandalone && sharedruntime.NextStart(command, report.PackageJSON) {
 			// ADR-20261124160000: the standalone server needs neither
 			// node_modules nor a package manager.
 			selected, selectedCleanup, err := selectNextStandalone(filtered)
@@ -148,6 +159,12 @@ func (h *Handler) sharedRuntimeAppLayersAt(ctx context.Context, runtime string, 
 			// Bun's install and the runner base supplies Node.
 			if report.BunBinDir == "" {
 				reason = "bun_not_installed"
+				break
+			}
+			if sharedruntime.BunStartNeedsNodePackageManager(command, report.PackageJSON) {
+				// npm/npx/yarn/pnpm came with mise's Node, which the
+				// layer would drop.
+				reason = sharedruntime.ReasonPackageManagerStart
 				break
 			}
 			argv := []string{"/bin/sh", "-c", command}
