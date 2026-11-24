@@ -113,6 +113,31 @@ func TestCliApprovalFromRecentSignInClaimsTheCode(t *testing.T) {
 	}
 }
 
+// An account with two-factor authentication is fresh only after a code. A
+// remembered browser signs in without one, so sending it to sign in again
+// looped; it goes to the authenticator challenge and back to the code.
+func TestCliApprovalWithMFASendsToChallengeNotSignIn(t *testing.T) {
+	srv, _, store := apidserver.V1AuthTestHarness(t)
+	owner, _ := flowAccountKey(t, store, "cli-mfa@example.com", true)
+	if err := store.SetMFASecret(t.Context(), owner.ID, []byte("secret"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkMFAEnrolled(t.Context(), owner.ID); err != nil {
+		t.Fatal(err)
+	}
+	pendingCliCode(t, store, "c0ffee11")
+	// A just-issued session with no step-up: what a remembered browser's
+	// sign-in mints.
+	rec := approveCliCode(t, srv, flowSession(t, store, *srv.Sessions(), owner.ID), owner.ID, "c0ffee11")
+	want := "/dashboard/mfa?next=" + url.QueryEscape("/cli-auth?code=C0FFEE11")
+	if loc := rec.Header().Get("Location"); rec.Code != http.StatusSeeOther || loc != want {
+		t.Fatalf("approval without a step-up = %d %q, want 303 %q", rec.Code, loc, want)
+	}
+	if _, approver, err := store.PeekCliAuthCode(t.Context(), api.HashToken(mustHex(t, "c0ffee11"))); err != nil || approver != "" {
+		t.Fatalf("approval without a step-up claimed the code for %q (%v)", approver, err)
+	}
+}
+
 func mustHex(t *testing.T, s string) []byte {
 	t.Helper()
 	b, err := hex.DecodeString(s)
