@@ -5870,7 +5870,7 @@ func cmdDomains(args []string) int {
 		}
 		if *slug == "" {
 			// Prod hunt r35: a linked checkout printed only the usage line.
-			*slug, *environment = linkedDomainTarget(*environment)
+			*slug, *environment = linkedAppAndEnvironment(*environment)
 		}
 		if *domain == "" || *slug == "" {
 			PrintUsage(os.Stderr, "usage: gregale domain create <domain> --app <slug> [--env <environment>]", "domains")
@@ -6095,6 +6095,11 @@ func cmdCrons(args []string) int {
 				return readAppTargetError(err)
 			}
 			return cmdCronsAddInteractive(selected)
+		}
+		if *slug == "" {
+			// Prod hunt r36: a linked checkout printed only the usage line;
+			// `cron list` already reads the link (prod hunt r33).
+			*slug, *environment = linkedAppAndEnvironment(*environment)
 		}
 		if *slug == "" || *schedule == "" {
 			PrintUsage(os.Stderr, "usage: gregale cron create --app <slug> --schedule '*/5 * * * *' (--path / | --command EXEC [--arg ARG...]) [--timezone UTC] [--skip-if-running] [--retry-max N --retry-backoff-seconds N] [--environment ENV]", "crons")

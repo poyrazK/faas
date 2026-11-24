@@ -2407,7 +2407,7 @@ var cliCommands = []cliCommand{
 				{Name: "lock", Short: "run one at a time per --lock-key under this managed operation policy", Value: "POLICY", Capability: "operations"},
 				{Name: "lock-key", Short: "JSON value that must run one at a time (requires --lock)", Value: "JSON", Capability: "operations"},
 				{Name: "interactive", Short: "choose an HTTP path, schedule, and timezone, preview run times, and confirm creation", Bool: true},
-				{Name: "app", Short: "app slug (interactive mode can use linked app or picker)", Value: "slug"},
+				{Name: "app", Short: "app slug (defaults to linked context; interactive mode can also pick one)", Value: "slug"},
 				{Name: "schedule", Short: "five-field cron expression (required unless interactive)", Value: "EXPR"},
 				{Name: "path", Short: "path the cron sends a POST to (mutually exclusive with --command)", Value: "PATH"},
 				{Name: "command", Short: "executable for a deployment command cron (preview: needs app tasks)", Value: "EXEC"},

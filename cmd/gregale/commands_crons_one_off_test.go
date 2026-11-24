@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -112,5 +113,37 @@ func TestCronsOneOffFollowsDelayedExecutionVisibility(t *testing.T) {
 	// process stderr), not a delayed-task cancellation.
 	if code, stdout, _ := runCLI(t, "crons", "cancel", cronOneOffTaskID); code == 0 || strings.Contains(stdout, "cancelled") {
 		t.Errorf("one-id cancel with delayed execution hidden = %d %q, want a usage error", code, stdout)
+	}
+}
+
+// Prod hunt r36: `cron create` in a linked checkout printed only the usage
+// line; it creates the cron on the linked app.
+func TestCronCreateDefaultsToLinkedApp(t *testing.T) {
+	var posted string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && posted == "" {
+			body, _ := io.ReadAll(r.Body)
+			posted = r.URL.Path + " " + string(body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = fmt.Fprint(w, `{"title":"not found","status":404,"code":"not_found"}`)
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	repo := t.TempDir()
+	for path, body := range map[string]string{".git/HEAD": "ref: refs/heads/main\n", ".gregale/project.json": `{"version":1,"project":"demo","app":"demo"}`} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(repo, path)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(repo, path), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Chdir(repo)
+	_, stdout, stderr := runCLI(t, "cron", "create", "--schedule", "* * * * *", "--path", "/tick")
+	if !strings.HasPrefix(posted, "/v1/crons ") || !strings.Contains(posted, `"demo"`) {
+		t.Fatalf("posted %q, want the linked app demo\n%s%s", posted, stdout, stderr)
 	}
 }
