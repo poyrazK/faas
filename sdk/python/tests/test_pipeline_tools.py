@@ -5,7 +5,6 @@ from uuid import uuid4
 
 import httpx
 import pytest
-
 from faas_sdk.job_runtime import JobContract
 from faas_sdk.preview import (
     PIPELINE_TOOL_SCHEMA,

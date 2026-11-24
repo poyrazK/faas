@@ -2,8 +2,6 @@ import json
 from uuid import UUID
 
 import httpx
-
-from faas_sdk import FaaSClient
 from faas_sdk.preview.api.projects import (
     list_environment_git_releases,
     preview_environment_git_plan,
@@ -15,6 +13,8 @@ from faas_sdk.preview.models import (
     PreviewEnvironmentGitRevisionRequest,
     PreviewEnvironmentGitRollbackRequest,
 )
+
+from faas_sdk import FaaSClient
 
 
 def test_built_artifact_reference_round_trip_keeps_typed_provenance() -> None:

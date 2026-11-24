@@ -1,5 +1,5 @@
-from faas_sdk.preview.models.stored_workflow_revision_response import StoredWorkflowRevisionResponse
 from faas_sdk.preview.models.publish_stored_workflow_request import PublishStoredWorkflowRequest
+from faas_sdk.preview.models.stored_workflow_revision_response import StoredWorkflowRevisionResponse
 
 EVIDENCE = {
     "definition_hash": "a" * 64,

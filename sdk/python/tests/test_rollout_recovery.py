@@ -39,9 +39,9 @@ def test_recovery_receipt_preserves_exact_restoration() -> None:
 
 def test_service_abort_202_preserves_acceptance_and_pending_handoff() -> None:
     import httpx
+    from faas_sdk.preview.models.rollout_transition_response import RolloutTransitionResponse
 
     from faas_sdk.client import AuthenticatedClient
-    from faas_sdk.preview.models.rollout_transition_response import RolloutTransitionResponse
     from faas_sdk.types import UNSET
 
     candidate = "a2b9cc53-907f-4b5c-88a4-fd0c21214556"

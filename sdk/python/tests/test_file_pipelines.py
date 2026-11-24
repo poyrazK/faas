@@ -8,8 +8,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
-from faas_sdk import JobCheckpoint, JobContext, JobContract, JobInput, prepare_job_input
 from faas_sdk.job_runtime import job_bytes, job_hash
 from faas_sdk.preview.file_pipelines import (
     FILE_PIPELINE_SCHEMA,
@@ -25,6 +23,8 @@ from faas_sdk.preview.file_pipelines import (
     file_event_invocation_id,
     parse_file_created_event,
 )
+
+from faas_sdk import JobCheckpoint, JobContext, JobContract, JobInput, prepare_job_input
 
 ROOT = Path(__file__).resolve().parents[1] / "request-contracts"
 if not ROOT.exists():

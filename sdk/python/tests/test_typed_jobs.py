@@ -6,6 +6,9 @@ from pathlib import Path
 
 import httpx
 import pytest
+from faas_sdk.job_runtime import JobContext, job_bytes, job_hash
+from faas_sdk.job_types import generate_job_types
+from faas_sdk.preview import FaaSClient as PreviewClient
 
 from faas_sdk import (
     FaaSClient,
@@ -22,9 +25,6 @@ from faas_sdk import (
     run_job_task,
     run_local_job_batch,
 )
-from faas_sdk.job_runtime import JobContext, job_bytes, job_hash
-from faas_sdk.job_types import generate_job_types
-from faas_sdk.preview import FaaSClient as PreviewClient
 
 DIRECTORY = Path(__file__).resolve().parents[1] / "request-contracts"
 if not DIRECTORY.exists():
@@ -36,20 +36,43 @@ BASE = "https://jobs.test/prefix"
 
 
 async def test_optional_submit_scope_guards_stop_before_post():
-    h=Harness()
-    client=FaaSClient(base_url=BASE,token='owner',httpx_args={'transport':httpx.MockTransport(h.handler)})
+    h = Harness()
+    client = FaaSClient(base_url=BASE, token="owner", httpx_args={"transport": httpx.MockTransport(h.handler)})
     try:
-        job=client.define_job(CONTRACT,store=h)
-        with pytest.raises(JobError,match='invalid_receipt'):
-            job.submit(INPUTS,options=JobSubmitOptions(timeout=2,idempotency_key='guard-base',expected_base_url='https://other.test'))
-        with pytest.raises(JobError,match='invalid_receipt'):
-            job.submit(INPUTS,options=JobSubmitOptions(timeout=2,idempotency_key='guard-contract',expected_contract_sha256='0'*64))
-        with pytest.raises(JobError,match='invalid_response'):
-            await job.submit(INPUTS,options=JobSubmitOptions(timeout=2,idempotency_key='guard-account',expected_account_id='99999999-9999-4999-8999-999999999999'))
-        assert h.posts==0
-        await job.submit(INPUTS,options=JobSubmitOptions(timeout=2,idempotency_key='guard-match',expected_base_url=BASE,expected_account_id=F['account_id']))
-        assert h.posts==1
-    finally:await client.aclose()
+        job = client.define_job(CONTRACT, store=h)
+        with pytest.raises(JobError, match="invalid_receipt"):
+            job.submit(
+                INPUTS,
+                options=JobSubmitOptions(
+                    timeout=2, idempotency_key="guard-base", expected_base_url="https://other.test"
+                ),
+            )
+        with pytest.raises(JobError, match="invalid_receipt"):
+            job.submit(
+                INPUTS,
+                options=JobSubmitOptions(
+                    timeout=2, idempotency_key="guard-contract", expected_contract_sha256="0" * 64
+                ),
+            )
+        with pytest.raises(JobError, match="invalid_response"):
+            await job.submit(
+                INPUTS,
+                options=JobSubmitOptions(
+                    timeout=2,
+                    idempotency_key="guard-account",
+                    expected_account_id="99999999-9999-4999-8999-999999999999",
+                ),
+            )
+        assert h.posts == 0
+        await job.submit(
+            INPUTS,
+            options=JobSubmitOptions(
+                timeout=2, idempotency_key="guard-match", expected_base_url=BASE, expected_account_id=F["account_id"]
+            ),
+        )
+        assert h.posts == 1
+    finally:
+        await client.aclose()
 
 
 class Harness:

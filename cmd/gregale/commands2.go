@@ -4445,6 +4445,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 					return guardUnlinkedExistingApp(ctx, client, alt, contextDir, *yes) == 0
 				}
 			}
+			if *environment == "" {
+				if accessErr := checkManifestAccessFlags(ctx, client, slug, sourceDir, *requireAuthn, *noRequireAuthn); accessErr != nil {
+					return printErr("Manifest access conflicts with a flag", accessErr)
+				}
+			}
 			requestedSlug := slug
 			var nameUnavailable bool
 			slug, nameUnavailable, err = createOrFetchAppWithAlternatives(ctx, client, createReq, existingReq, sourceDir, confirmExisting, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)

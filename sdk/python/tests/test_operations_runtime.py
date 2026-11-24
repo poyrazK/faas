@@ -7,7 +7,6 @@ from datetime import UTC
 
 import httpx
 import pytest
-
 from faas_sdk.preview.models.operation_report_request import OperationReportRequest
 from faas_sdk.preview.operations_runtime import GregaleOperations, OperationHTTPError
 

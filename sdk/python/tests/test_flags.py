@@ -5,7 +5,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-
 from faas_sdk.preview import (
     GREGALE_FLAG_CONTEXT_HEADER,
     GREGALE_FLAG_EVIDENCE_HEADER,
@@ -187,7 +186,10 @@ def flags_client(bundle_state: dict, calls: list[httpx.Request], *, now=None):
                 raise httpx.ConnectError("offline", request=request)
             return httpx.Response(200, json={"access_token": "workload-token"})
         assert request.headers["authorization"] == "Bearer workload-token"
-        assert request.headers["x-faas-flags-capabilities"] == "subject-targeting-v1, attribute-targeting-v1, kill-v1, track-v1, track-v2, cohort-targeting-v1, experiment-layers-v1, subject-exposures-v1"
+        assert (
+            request.headers["x-faas-flags-capabilities"]
+            == "subject-targeting-v1, attribute-targeting-v1, kill-v1, track-v1, track-v2, cohort-targeting-v1, experiment-layers-v1, subject-exposures-v1"
+        )
         if offline["value"]:
             raise httpx.ConnectError("offline", request=request)
         return httpx.Response(200, json=bundle_state["value"])

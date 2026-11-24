@@ -1,6 +1,10 @@
 from uuid import UUID
 
-from faas_sdk.preview.models import CreateAppWebhookRequest, RouteHealthTransitionWebhookPayload, UpdateAppWebhookRequest
+from faas_sdk.preview.models import (
+    CreateAppWebhookRequest,
+    RouteHealthTransitionWebhookPayload,
+    UpdateAppWebhookRequest,
+)
 
 
 def test_route_health_notification_types_and_subscription_events():

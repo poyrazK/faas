@@ -1,10 +1,14 @@
 import json
 
 import httpx
-
-from faas_sdk.preview.api.workflows import get_stored_workflow_revision, list_stored_workflow_revisions, restore_stored_workflow_revision
-from faas_sdk.client import AuthenticatedClient
+from faas_sdk.preview.api.workflows import (
+    get_stored_workflow_revision,
+    list_stored_workflow_revisions,
+    restore_stored_workflow_revision,
+)
 from faas_sdk.preview.models.restore_stored_workflow_revision_request import RestoreStoredWorkflowRevisionRequest
+
+from faas_sdk.client import AuthenticatedClient
 
 
 def test_revision_history_and_restore_requests():

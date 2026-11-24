@@ -5,8 +5,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-
-from faas_sdk import JobCheckpoint, JobContract, JobInput, JobItemOutcome, JobProgress
 from faas_sdk.job_runtime import JobContext, job_hash, prepare_job_input
 from faas_sdk.preview import (
     FileOptions,
@@ -20,6 +18,8 @@ from faas_sdk.preview import (
     read_pipeline_artifact,
 )
 from faas_sdk.workflows import WORKFLOW_CODE_PROTOCOL, run_workflow_invocation
+
+from faas_sdk import JobCheckpoint, JobContract, JobInput, JobItemOutcome, JobProgress
 
 ROOT = Path(__file__).resolve().parents[1] / "request-contracts"
 if not ROOT.exists():

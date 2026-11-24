@@ -4,12 +4,12 @@ from uuid import UUID
 
 import httpx
 import pytest
-
-from faas_sdk import FaaSClient
 from faas_sdk.preview.api.apps import get_route_health_investigation
 from faas_sdk.preview.models import (
     RouteHealthInvestigation,
 )
+
+from faas_sdk import FaaSClient
 from faas_sdk.types import UNSET
 
 

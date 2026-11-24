@@ -22,7 +22,14 @@ def test_cold_start_budget_and_host_receipts_are_typed_and_round_trip():
         "method": "cold_boot",
         "startup_ms": 120,
     }
-    proof = {"version": 1, "run_id": "a" * 32, "spec": spec, "plan_sha256": "b" * 64, "status": "complete", "preparations": [receipt]}
+    proof = {
+        "version": 1,
+        "run_id": "a" * 32,
+        "spec": spec,
+        "plan_sha256": "b" * 64,
+        "status": "complete",
+        "preparations": [receipt],
+    }
     parsed = ScenarioColdStartEvidence.from_dict(proof)
     assert parsed.spec.within_ms == 1000
     assert str(parsed.preparations[0].boot_instance_id) == receipt["boot_instance_id"]

@@ -4,10 +4,10 @@ from uuid import uuid4
 
 import pytest
 from compensation_fixture import BUSINESS, CONTRACTS, SOURCE, F, Fixture
-
-from faas_sdk import JobContext
 from faas_sdk.preview import CompensationError, CompensationMCP, PipelineCompensation
 from faas_sdk.preview.pipeline_compensation_state import CompensationPlan, effect_identity
+
+from faas_sdk import JobContext
 
 
 @pytest.mark.asyncio

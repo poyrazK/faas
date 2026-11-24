@@ -24,18 +24,18 @@ import uuid
 import httpx
 import pytest
 from _constants import STABLE_IDEMPOTENCY_KEY
-
-from faas_sdk import (
-    ErrNotFound,
-    FaaSClient,
-    is_faas_error,
-)
 from faas_sdk.preview.models import (
     CancelDeploymentRequest,
     ClearObsoleteDeploymentsBody,
     CreateAppRequest,
     Problem,
     ReorderDeploymentBody,
+)
+
+from faas_sdk import (
+    ErrNotFound,
+    FaaSClient,
+    is_faas_error,
 )
 
 # UUIDv4 hex shape: 8-4-4-4-12 lower-case.
@@ -208,8 +208,9 @@ def test_with_idempotency_key_scopes_explicit_key(fakeapid) -> None:
     """`with with_idempotency_key('deploy-2026-07-27-abc')` overrides
     the auto-mint for the duration of the `with` block.
     """
-    from faas_sdk import with_idempotency_key
     from faas_sdk.preview.api.apps import create_app
+
+    from faas_sdk import with_idempotency_key
 
     client = FaaSClient(base_url=fakeapid.base_url, token="test-token")
     try:
@@ -354,8 +355,9 @@ def test_reorder_deployment_out_of_range_returns_409(fakeapid) -> None:
     (the closed ErrNotFound / ErrConflict set covers not_found +
     conflict only; the per-op 409 codes aren't typed).
     """
-    from faas_sdk import FaasProblemError
     from faas_sdk.preview.api.deployments import reorder_deployment
+
+    from faas_sdk import FaasProblemError
 
     client = FaaSClient(base_url=fakeapid.base_url, token="test-token")
     try:
@@ -376,8 +378,9 @@ def test_clear_deployment_live_returns_409(fakeapid) -> None:
     """`DELETE /v1/deployments/live-1` returns 409 with code
     "deployment_cancel_live_forbidden".
     """
-    from faas_sdk import FaasProblemError
     from faas_sdk.preview.api.deployments import clear_deployment
+
+    from faas_sdk import FaasProblemError
 
     client = FaaSClient(base_url=fakeapid.base_url, token="test-token")
     try:
@@ -396,8 +399,9 @@ def test_cancel_deployment_live_returns_409(fakeapid) -> None:
     DELETE branch's live-1 handling — fakeapid enforces the same
     409 path on both ops so the SDK error surface stays consistent.
     """
-    from faas_sdk import FaasProblemError
     from faas_sdk.preview.api.deployments import cancel_deployment
+
+    from faas_sdk import FaasProblemError
 
     client = FaaSClient(base_url=fakeapid.base_url, token="test-token")
     try:

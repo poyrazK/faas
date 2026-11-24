@@ -7,6 +7,7 @@ from time import time
 from uuid import UUID
 
 import pytest
+from faas_sdk.preview.models import CreateAppWebhookRequest, WorkflowFinishedWebhookPayload
 
 from faas_sdk import (
     DEFAULT_WEBHOOK_TIMESTAMP_TOLERANCE,
@@ -17,7 +18,6 @@ from faas_sdk import (
     WebhookVerificationError,
     verify_webhook,
 )
-from faas_sdk.preview.models import CreateAppWebhookRequest, WorkflowFinishedWebhookPayload
 
 SECRET = "whsec_test_123"
 TIMESTAMP = 1_712_345_678
