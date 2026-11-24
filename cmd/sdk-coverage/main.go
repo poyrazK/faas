@@ -653,6 +653,9 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	// Claimable deploys (ADR-20261124080000).
+	"POST /v1/anonymous/sessions": "CreateAnonymousSession",
+	"POST /v1/account/claim-link": "CreateClaimLink",
 	// Reviewed agent-tool publication, grants, invocation and execution credentials.
 	"DELETE /v1/tool-grants/{id}":                              "RevokeToolGrant",
 	"DELETE /v1/tool-oauth-connections/{id}":                   "RevokeToolOAuthConnection",
