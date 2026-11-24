@@ -5971,7 +5971,7 @@ func cmdCrons(args []string) int {
 			return cmdDelayedTaskList(rest)
 		}
 		fs := newFlagSet("crons-list", flag.ContinueOnError)
-		slug := fs.String("app", "", "app slug (required without -l)")
+		slug := fs.String("app", "", "app slug (defaults to the linked app; optional with -l)")
 		selector := addSelectorFlag(fs)
 		if err := fs.Parse(args[1:]); err != nil {
 			return 1
@@ -5979,8 +5979,12 @@ func cmdCrons(args []string) int {
 		if rejectUnexpectedFlagArgs(fs) {
 			return 1
 		}
+		if *selector == "" {
+			// A selector spans the account; only a plain list takes the link.
+			fillLinkedApp(slug)
+		}
 		if *slug == "" && *selector == "" {
-			PrintUsage(os.Stderr, "usage: gregale cron list --app <slug> | -l SELECTOR [--app <slug>]", "crons")
+			PrintUsage(os.Stderr, "usage: gregale cron list [--app <slug>] | -l SELECTOR [--app <slug>]", "crons")
 			return 1
 		}
 		client, err := authedClient()
