@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { APIConsumerStatementFeeResponse } from './APIConsumerStatementFeeResponse.js';
 import type { APIConsumerUsageStatementBucketResponse } from './APIConsumerUsageStatementBucketResponse.js';
+import type { APIConsumerUsageWaiverResponse } from './APIConsumerUsageWaiverResponse.js';
 /**
  * Immutable, auditable API consumer usage snapshot. One period can hold several revisions: a changed draft is superseded by the next revision, and every revision after a finalized one carries only usage that arrived later.
  */
@@ -19,6 +20,7 @@ export type APIConsumerUsageStatementResponse = {
   unpriced_units: number;
   amount_millicents: number;
   priced: boolean;
+  waiver?: APIConsumerUsageWaiverResponse;
   buckets: Array<APIConsumerUsageStatementBucketResponse>;
   /**
    * The month's base fees and minimum top-ups; amount_millicents includes them.
