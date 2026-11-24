@@ -48,3 +48,56 @@ vmmd already learns of such kills before readiness (ADR-121 amendment,
   lands after the wake returned leaves that wake counted as platform latency.
   A wake that failed over after an OOM on another node reports only the final
   attempt.
+
+## Amendment 1 (2026-11-24): deployment smoke wakes
+
+### Context
+
+On 2026-11-24 the status page showed App execution degraded (wake p95
+382–386 ms) with no customer wake over target. Over the previous 24 h the
+platform wake series held 504 customer-triggered restores at p95 157 ms
+(2 over 350 ms) and 172 `deployment.smoke` restores at p95 530 ms (24 over
+350 ms). A deployment smoke is admitted while the candidate's first-boot
+instance is still capturing the snapshot the smoke then restores: on
+deployment `4520429d`, gateway admission started at 14.899 s, the first-boot
+park ran 14.976–15.133 s, and schedd admitted the restore at 15.183 s; of the
+394 ms recorded, about 280 ms was the deploy pipeline waiting for its own
+snapshot. With light traffic the 30-minute window holds barely more than the
+20 samples the status page needs, so a burst of deployments (here an agent
+evaluation deploying one app 9 times in 10 minutes) moved the public figure.
+
+### Decision
+
+A wake admitted by an authorized deployment smoke verification is excluded
+from `gateway_platform_wake_latency_seconds` and its phase breakdown and
+counted in `gateway_platform_wake_excluded_total{reason="deployment_smoke"}`
+(pre-instantiated at 0). The app's own wake latency still records it. Route
+probes, previews, revision pins and project releases are unchanged: they are
+requests a customer or the platform's routing makes against a deployment that
+already has its snapshot.
+
+The exclusion covers every cold wake a smoke admits, including a smoke that
+re-verifies a deployment whose snapshot already exists (rollback, promote).
+The gateway cannot tell whether a smoke waited on a first-boot park, and a
+smoke is never customer demand either way.
+
+A smoke whose wake also reported a startup OOM is counted under
+`reason="startup_oom"`, not `deployment_smoke`: a release that grows guest
+overhead OOMs candidates first, and that must still move the startup-OOM rate
+the main decision treats as a platform signal.
+
+### Consequences
+
+- Deploy bursts no longer move the platform SLO or the status page; the
+  window holds customer wakes only, so quiet windows report no p95 (fewer
+  than 20 samples) more often instead of a deploy-weighted one.
+- A regression that slows only the smoke restore path is no longer visible in
+  the SLO series. It stays visible in the deployment receipt's smoke timing,
+  the `wake.*` events (`trigger = deployment.smoke`) and the excluded counter.
+- `gateway_wake_latency_seconds` (§12) and the per-app series are unchanged.
+- `faas_slo_platform_wakes_within_350ms:ratio_30d` changes population at
+  rollout: for 30 days it mixes pre-rollout smoke samples with post-rollout
+  customer-only samples, so `FaasMonthlyPlatformWakeGateMissed`'s ratio
+  climbs as the smokes age out (runbook `FaasMonthlySLO.md`).
+- `scripts/ops/obs_gate.py` requires at least 20 platform wakes in its
+  window and names a shortfall, rather than failing on a non-finite p95.

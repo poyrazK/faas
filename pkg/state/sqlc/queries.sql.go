@@ -51835,6 +51835,41 @@ func (q *Queries) ListEnvironmentWorkloadQualificationsForDispatch(ctx context.C
 	return items, nil
 }
 
+const listEventSubjectsWithKind = `-- name: ListEventSubjectsWithKind :many
+select distinct subject::uuid as subject
+from events
+where subject = any($1::uuid[]) and kind = $2 and at >= $3
+`
+
+type ListEventSubjectsWithKindParams struct {
+	Subjects []pgtype.UUID
+	Kind     string
+	Since    pgtype.Timestamptz
+}
+
+// Which of the given subjects have an event of one kind since a time, in one
+// read: app health asks it of an app's recently stopped instances
+// (liveness_failed, prod hunt r33). events_subject_idx (subject, at desc).
+func (q *Queries) ListEventSubjectsWithKind(ctx context.Context, db DBTX, arg ListEventSubjectsWithKindParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, listEventSubjectsWithKind, arg.Subjects, arg.Kind, arg.Since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var subject pgtype.UUID
+		if err := rows.Scan(&subject); err != nil {
+			return nil, err
+		}
+		items = append(items, subject)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEventSubscriptionsForApp = `-- name: ListEventSubscriptionsForApp :many
 
 select id, account_id, app_id, source, type, filter, enabled, created_at, updated_at, routing_retry_policy, schema_versions, acknowledgment_lease_seconds, deployment_scope, environment_id, clone_paused

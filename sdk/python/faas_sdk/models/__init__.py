@@ -2152,6 +2152,7 @@ from .plan_response import PlanResponse
 from .plan_response_scan_source import PlanResponseScanSource
 from .plan_source_host import PlanSourceHost
 from .plan_workload import PlanWorkload
+from .plan_workload_access import PlanWorkloadAccess
 from .plan_workload_action import PlanWorkloadAction
 from .plan_workload_class import PlanWorkloadClass
 from .plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
@@ -5208,6 +5209,7 @@ __all__ = (
     "PlanResponseScanSource",
     "PlanSourceHost",
     "PlanWorkload",
+    "PlanWorkloadAccess",
     "PlanWorkloadAction",
     "PlanWorkloadClass",
     "PlanWorkloadDependsOnConditions",

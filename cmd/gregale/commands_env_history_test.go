@@ -115,6 +115,41 @@ func TestEnvRollbackRejectsABadRevision(t *testing.T) {
 	}
 }
 
+// Prod hunt r33: the guard removed a value six minutes after env set, and
+// env list said only "No results". A restore in the last day is named.
+func TestEnvListNamesARecentGuardRestore(t *testing.T) {
+	for _, tc := range []struct {
+		closed time.Duration
+		want   bool
+	}{{time.Minute, true}, {25 * time.Hour, false}} {
+		guard := api.ConfigGuard{ID: "g1", Status: "restored", BaseRevision: 2, HeadRevision: 3,
+			ClosedAt: time.Now().UTC().Add(-tc.closed).Format(time.RFC3339Nano),
+			Decision: &api.ConfigGuardDecision{Rule: "fail_first_wake_5xx", Summary: "5xx after the config change (new config 5/7, 71.4%; old config 0/1, 0.0%)"}}
+		_, done := configCLIServer(t, guard)
+		out, code := captureConfigCLI(t, func() int { return main.CmdSecrets([]string{"list", "--app", "my-api"}) })
+		done()
+		if code != 0 {
+			t.Fatalf("env list exit = %d\n%s", code, out)
+		}
+		got := strings.Contains(out, "Config guard: restored revision 2") && strings.Contains(out, "env history --app my-api")
+		if got != tc.want {
+			t.Fatalf("closed %s ago: guard named = %t, want %t\n%s", tc.closed, got, tc.want, out)
+		}
+	}
+	// The history hint names the listed scope, or it would show another
+	// scope's revisions.
+	guard := api.ConfigGuard{ID: "g2", Status: "restored", BaseRevision: 2, HeadRevision: 3, Scope: "staging",
+		ClosedAt: time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano)}
+	_, done := configCLIServer(t, guard)
+	defer done()
+	out, code := captureConfigCLI(t, func() int {
+		return main.CmdSecrets([]string{"list", "--app", "my-api", "--scope", "staging"})
+	})
+	if code != 0 || !strings.Contains(out, "env history --app my-api --scope staging") {
+		t.Fatalf("env list --scope staging exit=%d, want the scoped history hint:\n%s", code, out)
+	}
+}
+
 func TestSecretsSetNoGuardAndGuardNotice(t *testing.T) {
 	guard := api.ConfigGuard{ID: "g1", Status: "watching", LastChangeAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	seen, done := configCLIServer(t, guard)
