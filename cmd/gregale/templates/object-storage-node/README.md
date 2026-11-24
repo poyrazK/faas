@@ -21,8 +21,13 @@ Create a file **outside this source directory**, chmod it to 0600, and put one
 do not commit the file or put tokens in the Dockerfile. Then deploy the source:
 
 ```sh
-gregale deploy --name my-files --secrets-file /absolute/private/files.secrets
+gregale deploy --name my-files --secrets-file /absolute/private/files.secrets --no-require-authn
 ```
+
+`--no-require-authn` makes the app public on purpose: the app checks
+`STORAGE_APP_TOKEN` itself, and a private app would need a Gregale API key in
+the same `Authorization` header, so every PUT/GET got `401`. It stays public
+on later deploys; requests without the storage token are still refused.
 
 Use the normal Gregale app URL from the deployment receipt. Every PUT/GET needs
 `Authorization: Bearer <STORAGE_APP_TOKEN>`. Set APP_URL and STORAGE_APP_TOKEN in

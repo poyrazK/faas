@@ -644,7 +644,8 @@ func nextStepsFor(tpl string) []string {
 			"  gregale deploy --create-only --template object-storage-python --name <slug>",
 			"  gregale add bucket assets --app <slug> --permission read_write --prefix GREGALE_S3_ASSETS",
 			"Set STORAGE_APP_TOKEN from a 0600 secrets file outside the source directory; see README.md.",
-			"  cd <dest> && gregale deploy --name <slug> --secrets-file <secrets-file>",
+			"  cd <dest> && gregale deploy --name <slug> --secrets-file <secrets-file> --no-require-authn",
+			"  (public on purpose: the app checks STORAGE_APP_TOKEN itself, and a Gregale API key would take the same Authorization header)",
 			"Use a Bearer token for PUT/GET /objects/<key>; /readyz reports adoption and restore readiness.",
 		}
 	case "object-storage-node":
@@ -654,7 +655,8 @@ func nextStepsFor(tpl string) []string {
 			"  gregale deploy --create-only --template object-storage-node --name <slug>",
 			"  gregale add bucket assets --app <slug> --permission read_write --prefix GREGALE_S3_ASSETS",
 			"Set STORAGE_APP_TOKEN from a 0600 secrets file outside the source directory; see README.md.",
-			"  cd <dest> && gregale deploy --name <slug> --secrets-file <secrets-file>",
+			"  cd <dest> && gregale deploy --name <slug> --secrets-file <secrets-file> --no-require-authn",
+			"  (public on purpose: the app checks STORAGE_APP_TOKEN itself, and a Gregale API key would take the same Authorization header)",
 			"Use a Bearer token for PUT/GET /objects/<key>; /readyz reports storage adoption and restore readiness.",
 		}
 	case "s3-uploader":

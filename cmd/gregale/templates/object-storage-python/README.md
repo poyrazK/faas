@@ -24,8 +24,13 @@ commit the file, put credentials in the Dockerfile, or pass them on command line
 The managed bucket supplies all six `GREGALE_S3_ASSETS_*` settings automatically.
 
 ```sh
-gregale deploy --name my-files --secrets-file /absolute/private/files.secrets
+gregale deploy --name my-files --secrets-file /absolute/private/files.secrets --no-require-authn
 ```
+
+`--no-require-authn` makes the app public on purpose: the app checks
+`STORAGE_APP_TOKEN` itself, and a private app would need a Gregale API key in
+the same `Authorization` header, so every PUT/GET got `401`. It stays public
+on later deploys; requests without the storage token are still refused.
 
 Set APP_URL to your deployment URL and STORAGE_APP_TOKEN in your local shell:
 

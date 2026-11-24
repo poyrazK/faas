@@ -14,12 +14,14 @@ import (
 // API key, and apps are private by default, so following the
 // webhook-receiver README answered every request with 401. These templates
 // deploy public on purpose (the handler checks the sender's own secret or
-// signature), in both the init next steps and the README.
+// signature), in both the init next steps and the README. The object-storage
+// templates check their own STORAGE_APP_TOKEN in the Authorization header a
+// private app reserves for a Gregale API key (prod hunt r35).
 func TestPublicSenderTemplatesDeployPublic(t *testing.T) {
-	for _, name := range []string{"webhook-receiver", "slack-bot", "cron-worker"} {
+	for _, name := range []string{"webhook-receiver", "slack-bot", "cron-worker", "object-storage-python", "object-storage-node"} {
 		t.Run(name, func(t *testing.T) {
 			steps := strings.Join(main.NextStepsFor(name), "\n")
-			if !strings.Contains(steps, "gregale deploy --secrets-file <secrets-file> --no-require-authn") {
+			if !strings.Contains(steps, "--secrets-file <secrets-file> --no-require-authn") {
 				t.Errorf("init next steps deploy without --no-require-authn:\n%s", steps)
 			}
 			if strings.Contains(steps, ".gregale.dev/") {
