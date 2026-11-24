@@ -120,7 +120,7 @@ var guidePages = []guidePage{
 		Task: "secrets-and-env", Title: "Environment variables and secrets",
 		Summary: "Set values before the first request; the dry run lists keys the code reads that will have no value.",
 		Steps: []guideStep{
-			{Do: "Set a value (stored sealed; never shown again)", Command: "gregale env set --app <app> KEY=<value>"},
+			{Do: "Set a value or secret (stored sealed; never shown again)", Command: "gregale env set --app <app> KEY=<value>"},
 			{Do: "Push a local .env file", Command: "gregale env push --app <app> -f .env"},
 			{Do: "List an app's key names", Command: "gregale env list --app <app>"},
 			{Do: "Set one value for every service of a project environment", Command: "gregale environment secrets set <project> <environment> KEY=<value>"},

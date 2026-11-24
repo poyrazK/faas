@@ -1225,7 +1225,8 @@ var CreateOrFetchApp = createOrFetchApp
 // caller's suffixed alternative when another owner holds slug.
 func DeployAppWithAlternatives(ctx context.Context, client *Client, slug, sourceDir string) (string, error) {
 	req := api.CreateAppRequest{Slug: slug}
-	return createOrFetchAppWithAlternatives(ctx, client, req, req, sourceDir, nil, nil, nil, nil, nil)
+	got, _, err := createOrFetchAppWithAlternatives(ctx, client, req, req, sourceDir, nil, nil, nil, nil, nil)
+	return got, err
 }
 
 var CreateTestAsyncRoutes = createTestAsyncRoutes
@@ -3047,10 +3048,13 @@ func WaitForDevPostgres(ctx context.Context, session api.DevSessionResponse, tim
 }
 
 // ADR-20261122194324: gateway-enforced MCP access modes.
-var (
-	MCPAuthEnableConfig  = mcpAuthEnableConfig
-	AuditMCPGatewayRules = auditMCPGatewayRules
-)
+var AuditMCPGatewayRules = auditMCPGatewayRules
+
+// MCPAuthEnableConfig is mcpAuthEnableConfig with a Gregale Auth issuer
+// URL (empty for api-key).
+func MCPAuthEnableConfig(cfg *mcphosting.Config, mode, endpoint, issuer, scopes string) error {
+	return mcpAuthEnableConfig(cfg, mode, endpoint, mcpAuthIssuer{url: issuer}, scopes)
+}
 
 // RealtimePreviewInView is realtimePreviewInView for the tier defaults
 // (tier) or for an account view that hides hidden.
@@ -3090,4 +3094,40 @@ func RunMCPReplayGateForTest(ctx context.Context, endpoint, candidate, serving s
 }
 
 // AnonymousDeployByDefault exposes the no-credential deploy default (ADR-20261124080000).
-func AnonymousDeployByDefault(getenv func(string) string) bool { return anonymousDeployByDefault(getenv) }
+func AnonymousDeployByDefault(getenv func(string) string) bool {
+	return anonymousDeployByDefault(getenv)
+}
+
+// MCPDiscoverJWKS is mcpDiscoverJWKS.
+var MCPDiscoverJWKS = mcpDiscoverJWKS
+
+// MCPToolKeyScopes is mcpToolKeyScopes.
+var MCPToolKeyScopes = mcpToolKeyScopes
+
+// MCPAuthNext is mcpAuthNext.
+var MCPAuthNext = mcpAuthNext
+
+// SetMCPOIDCHTTPClient replaces the issuer-discovery client until the test ends.
+func SetMCPOIDCHTTPClient(t interface{ Cleanup(func()) }, c *http.Client) {
+	previous := mcpOIDCHTTPClient
+	mcpOIDCHTTPClient = c
+	t.Cleanup(func() { mcpOIDCHTTPClient = previous })
+}
+
+// MCPAuthEnableExternalIssuer is mcpAuthEnableConfig with an external issuer.
+func MCPAuthEnableExternalIssuer(cfg *mcphosting.Config, mode, endpoint, issuer, jwksURL, audience, scopes string) error {
+	return mcpAuthEnableConfig(cfg, mode, endpoint, mcpAuthIssuer{url: issuer, jwksURL: jwksURL, audience: audience}, scopes)
+}
+
+// ParseToolWeights is parseToolWeights.
+var ParseToolWeights = parseToolWeights
+
+// ApplyRouteLimitSpecs parses --route-limit and --tool-limit values and
+// applies them to current, as plan-update does.
+func ApplyRouteLimitSpecs(current map[string]api.APIConsumerPlanRouteLimit, routes, tools []string) (map[string]api.APIConsumerPlanRouteLimit, error) {
+	edits, err := parseRouteLimitEdits(routes, tools)
+	if err != nil {
+		return nil, err
+	}
+	return applyRouteLimitEdits(current, edits), nil
+}

@@ -261,6 +261,7 @@ const RealtimedMetricsDiscoveryPath = realtimedMetricsDiscoveryPath
 const RequestAnalyticsRouteMaxLength = requestAnalyticsRouteMaxLength
 const RouteCostByRequestTime = routeCostByRequestTime
 const RouteCostByRequests = routeCostByRequests
+const RuntimeConfigAppNameBlocklist = runtimeConfigAppNameBlocklist
 const RuntimeConfigDataPlacement = runtimeConfigDataPlacement
 const RuntimeConfigDomainDoctor = runtimeConfigDomainDoctor
 const RuntimeConfigDomainDoctorTTL = runtimeConfigDomainDoctorTTL
@@ -840,6 +841,7 @@ var SelectDebugReplayMirrorRule = selectDebugReplayMirrorRule
 var SetS3Flag = setS3Flag
 var SeedCanaryFixture = seedCanaryFixture
 var Setup = setup
+var ValidateAppNameBlocklist = validateAppNameBlocklist
 var SetupAlerts = setupAlerts
 var SetupChangePlan = setupChangePlan
 var SetupMW = setupMW
@@ -1126,6 +1128,7 @@ func (r *runDeps) PreLoadedNodeVerifier() *wire.NodeVerifier                    
 func (r *runtimeConfigManager) Mu() *sync.RWMutex                         { return &r.mu }
 func (r *runtimeConfigManager) Versions() *map[string]int64               { return &r.versions }
 func (r *runtimeConfigManager) Apply(p0 string, p1 json.RawMessage) error { return r.apply(p0, p1) }
+func (r *runtimeConfigManager) AppNameBlocklist() []string                { return r.appNameBlocklist() }
 func (r *runtimeConfigManager) ApplyVersion(p0 string, p1 json.RawMessage, p2 int64) (bool, error) {
 	return r.applyVersion(p0, p1, p2)
 }

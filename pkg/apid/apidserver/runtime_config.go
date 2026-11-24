@@ -32,7 +32,12 @@ const (
 	// probe, release-acceptance) whose deployments the public status page's
 	// deployment-success indicator leaves out (prod 2026-11-22: two internal
 	// accounts alone met the two-tenant breach rule).
-	runtimeConfigStatusExcludedAccounts             = "status_excluded_account_ids"
+	runtimeConfigStatusExcludedAccounts = "status_excluded_account_ids"
+	// runtimeConfigAppNameBlocklist lists app names (and * patterns) no
+	// account may newly take: brand and phishing names under the apps
+	// domain. A create answers it like a taken name, so deploys fall back
+	// to a suffixed name; existing apps keep theirs.
+	runtimeConfigAppNameBlocklist                   = "app_name_blocklist"
 	runtimeConfigDataPlacement                      = "data_placement_enabled"
 	runtimeConfigAppErrors                          = "app_errors_enabled"
 	runtimeConfigRekey                              = "rekey_enabled"
@@ -157,6 +162,7 @@ var runtimeConfigCatalog = []runtimeConfigDefinition{
 	{Key: runtimeConfigUnclaimedLiveMax, Label: "Anonymous deploys alive at once", Description: "Platform-wide cap on unclaimed anonymous-deploy accounts alive at once; 0 refuses every new anonymous deploy.", Category: "Operational policies", Kind: "integer", Default: json.RawMessage("500"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateIntSetting(0, api.UnclaimedAccountsLiveMaxBound, func(v int) bool { return v >= 0 && v <= api.UnclaimedAccountsLiveMaxBound })},
 	{Key: runtimeConfigUnclaimedPerAddress, Label: "Anonymous deploys per address a day", Description: "Anonymous-deploy accounts one IP address may create in 24 hours, counted per apid apart from sign-ups.", Category: "Operational policies", Kind: "integer", Default: json.RawMessage("3"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateIntSetting(0, api.UnclaimedAccountsPerDayBound, func(v int) bool { return v >= 0 && v <= api.UnclaimedAccountsPerDayBound })},
 	{Key: runtimeConfigUnclaimedPerNetwork, Label: "Anonymous deploys per network a day", Description: "Anonymous-deploy accounts one /24 (IPv6 /48) may create in 24 hours, counted per apid apart from sign-ups.", Category: "Operational policies", Kind: "integer", Default: json.RawMessage("10"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateIntSetting(0, api.UnclaimedAccountsPerDayBound, func(v int) bool { return v >= 0 && v <= api.UnclaimedAccountsPerDayBound })},
+	{Key: runtimeConfigAppNameBlocklist, Label: "App name blocklist", Description: "App names no account may newly take under the apps domain (brand and phishing names), separated by commas, spaces or newlines. An entry is an exact name (paypal) or a pattern where * matches any characters (*-login, *paypal*). A deploy asking for a blocked name gets a suffixed name instead (the CLI treats it like a taken name); rename, the dashboard and new project workloads refuse it. Existing apps keep their names: gregalectl accounts app-name-report lists the ones a list would match. Empty blocks nothing.", Category: "Security", Kind: "string", Default: json.RawMessage(`""`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateAppNameBlocklist},
 	{Key: runtimeConfigDomainDoctorTTL, Label: "Domain doctor TTL", Description: "Maximum age in seconds before a domain doctor result is stale.", Category: "Operational policies", Kind: "integer", Default: json.RawMessage("300"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigDataPlacement, Label: "Data placement", Description: "Enable customer data-upstream placement and affinity behavior.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigAppErrors, Label: "Automatic app errors", Description: "Accept and aggregate gateway error reports; enabling the socket is a graceful daemon change.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("true"), ApplyMode: state.RuntimeConfigApplyGraceful, ControllerEnabled: false, Mutable: true},
@@ -795,6 +801,33 @@ func validateAccountIDList(value json.RawMessage) error {
 		}
 	}
 	return nil
+}
+
+// validateAppNameBlocklist checks app_name_blocklist (api.ParseAppNameBlocklist).
+func validateAppNameBlocklist(value json.RawMessage) error {
+	list, err := runtimeconfig.String(value)
+	if err != nil {
+		return err
+	}
+	_, err = api.ParseAppNameBlocklist(list)
+	return err
+}
+
+// appNameBlocklist is app_name_blocklist's entries; nil when unset or
+// unreadable.
+func (m *runtimeConfigManager) appNameBlocklist() []string {
+	if m == nil {
+		return nil
+	}
+	list, err := runtimeconfig.String(m.Value(runtimeConfigAppNameBlocklist))
+	if err != nil {
+		return nil
+	}
+	entries, err := api.ParseAppNameBlocklist(list)
+	if err != nil {
+		return nil
+	}
+	return entries
 }
 
 // statusExcludedAccounts is status_excluded_account_ids as canonical IDs.

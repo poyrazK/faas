@@ -32874,6 +32874,30 @@ COMMENT ON TABLE public.api_consumer_plan_assignments IS 'Append-only, minute-ef
 
 
 --
+-- Name: api_consumer_plan_route_admissions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_plan_route_admissions (
+    consumer_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    route text NOT NULL,
+    minute_start timestamp with time zone NOT NULL,
+    minute_used bigint DEFAULT 0 NOT NULL,
+    month_start timestamp with time zone NOT NULL,
+    month_used bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT api_consumer_plan_route_admissions_route_chk CHECK (((char_length(route) >= 3) AND (char_length(route) <= 256))),
+    CONSTRAINT api_consumer_plan_route_admissions_used_chk CHECK (((minute_used >= 0) AND (month_used >= 0)))
+);
+
+
+--
+-- Name: TABLE api_consumer_plan_route_admissions; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_plan_route_admissions IS 'Cross-replica admission counters for plan route limits: requests on one route this minute and this UTC month.';
+
+
+--
 -- Name: api_consumer_plans; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -32887,6 +32911,7 @@ CREATE TABLE public.api_consumer_plans (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     alert_thresholds_percent integer[] DEFAULT '{}'::integer[] NOT NULL,
+    route_limits jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT api_consumer_plans_alert_thresholds_chk CHECK (((cardinality(alert_thresholds_percent) <= 5) AND (1 <= ALL (alert_thresholds_percent)) AND (100 >= ALL (alert_thresholds_percent)) AND ((cardinality(alert_thresholds_percent) = 0) OR (max_units_per_month > 0)))),
     CONSTRAINT api_consumer_plans_limits_chk CHECK (((max_requests_per_minute >= 0) AND (max_units_per_month >= 0))),
     CONSTRAINT api_consumer_plans_name_chk CHECK ((name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))
@@ -32905,6 +32930,13 @@ COMMENT ON TABLE public.api_consumer_plans IS 'Named consumer plans: enforcement
 --
 
 COMMENT ON COLUMN public.api_consumer_plans.alert_thresholds_percent IS 'Percentages of max_units_per_month at which a consumer.usage_threshold webhook fires, once per consumer per UTC month.';
+
+
+--
+-- Name: COLUMN api_consumer_plans.route_limits; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.api_consumer_plans.route_limits IS 'Per-route caps keyed by billing route label: {"MCP /tools/search": {"max_requests_per_minute": n, "max_requests_per_month": n}}.';
 
 
 --
@@ -65267,6 +65299,14 @@ ALTER TABLE ONLY public.api_consumer_plan_assignments
 
 
 --
+-- Name: api_consumer_plan_route_admissions api_consumer_plan_route_admissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plan_route_admissions
+    ADD CONSTRAINT api_consumer_plan_route_admissions_pkey PRIMARY KEY (consumer_id, route);
+
+
+--
 -- Name: api_consumer_plans api_consumer_plans_app_id_uniq; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -65288,6 +65328,14 @@ ALTER TABLE ONLY public.api_consumer_plans
 
 ALTER TABLE ONLY public.api_consumer_plans
     ADD CONSTRAINT api_consumer_plans_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: api_consumer_plans api_consumer_plans_route_limits_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.api_consumer_plans
+    ADD CONSTRAINT api_consumer_plans_route_limits_chk CHECK ((jsonb_typeof(route_limits) = 'object'::text)) NOT VALID;
 
 
 --
@@ -80088,6 +80136,13 @@ CREATE INDEX api_consumer_overdue_holds_app_idx ON public.api_consumer_overdue_h
 --
 
 CREATE INDEX api_consumer_plan_assignments_lookup_idx ON public.api_consumer_plan_assignments USING btree (account_id, app_id, consumer_id, effective_from DESC);
+
+
+--
+-- Name: api_consumer_plan_route_admissions_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_plan_route_admissions_account_idx ON public.api_consumer_plan_route_admissions USING btree (account_id);
 
 
 --
@@ -100126,6 +100181,22 @@ ALTER TABLE ONLY public.api_consumer_plan_assignments
 
 ALTER TABLE ONLY public.api_consumer_plan_assignments
     ADD CONSTRAINT api_consumer_plan_assignments_plan_fkey FOREIGN KEY (app_id, plan_id) REFERENCES public.api_consumer_plans(app_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_plan_route_admissions api_consumer_plan_route_admissions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plan_route_admissions
+    ADD CONSTRAINT api_consumer_plan_route_admissions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_plan_route_admissions api_consumer_plan_route_admissions_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plan_route_admissions
+    ADD CONSTRAINT api_consumer_plan_route_admissions_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
 
 
 --

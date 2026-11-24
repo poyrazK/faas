@@ -1042,6 +1042,19 @@
     "kind": "operational"
   },
   {
+    "table": "api_consumer_plan_route_admissions",
+    "columns": [
+      "account_id",
+      "consumer_id",
+      "minute_start",
+      "minute_used",
+      "month_start",
+      "month_used",
+      "route"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "api_consumer_plan_assignments",
     "columns": [
       "account_id",
@@ -1069,6 +1082,7 @@
       "max_requests_per_minute",
       "max_units_per_month",
       "name",
+      "route_limits",
       "updated_at"
     ],
     "kind": "configuration",

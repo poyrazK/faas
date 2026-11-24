@@ -301,6 +301,9 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 	}
 	limits := api.MustLimitsFor(acct.Plan)
 	app, prob := s.buildApp(acct, req, limits)
+	if prob == nil {
+		prob = s.blockedAppNameProblem(acct.ID, app.Slug)
+	}
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
