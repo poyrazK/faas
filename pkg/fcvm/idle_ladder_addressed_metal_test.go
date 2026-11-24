@@ -1,9 +1,10 @@
 //go:build metal
 
-// adr: 20261107122928 amendment 4 — on a real bridge, the host's ARP
+// adr: 20261107122928 amendments 4 and 5 — on a real bridge, the host's ARP
 // broadcasts and unicast flooded to every port reach a tenant-style port's
-// veth but do not move its namespace's Ip InReceives; a packet addressed to
-// the namespace does.
+// veth but do not move its namespace's addressed reading, nor does the ICMP
+// host unreachable the namespace sends itself when a neighbour it probes never
+// answers; a packet addressed to the namespace does.
 package fcvm
 
 import (
@@ -64,13 +65,25 @@ func TestMetalNetnsIngressCountsOnlyAddressedIPv4(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	inReceives := func() uint64 {
+	snmp := func() []byte {
 		t.Helper()
 		raw, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "net", "snmp"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		v, err := parseIPInReceives(raw)
+		return raw
+	}
+	addressed := func() uint64 {
+		t.Helper()
+		v, err := parseAddressedIngress(snmp())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	inReceives := func() uint64 {
+		t.Helper()
+		v, err := parseSNMPField(snmp(), "Ip:", "InReceives")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -92,7 +105,7 @@ func TestMetalNetnsIngressCountsOnlyAddressedIPv4(t *testing.T) {
 	// Resolve the namespace once so the next pings are plain unicast to it.
 	run("ping", "-c", "1", "-W", "1", "10.250.77.2")
 	time.Sleep(200 * time.Millisecond)
-	baseIn, baseTX := inReceives(), vethTX()
+	baseIn, baseTX := addressed(), vethTX()
 
 	// The host's ARP for an address no namespace answers: broadcast.
 	try("ping", "-c", "1", "-W", "1", "10.250.77.77")
@@ -104,12 +117,24 @@ func TestMetalNetnsIngressCountsOnlyAddressedIPv4(t *testing.T) {
 	if tx := vethTX(); tx <= baseTX {
 		t.Fatalf("veth tx bytes %d → %d: the broadcast and the flood never reached the port", baseTX, tx)
 	}
-	if in := inReceives(); in != baseIn {
-		t.Fatalf("namespace Ip InReceives %d → %d on traffic not addressed to it", baseIn, in)
+	if in := addressed(); in != baseIn {
+		t.Fatalf("namespace addressed ingress %d → %d on traffic not addressed to it", baseIn, in)
+	}
+
+	// The namespace probes a neighbour that never answers, as it probes a
+	// paused guest; the kernel reports the dropped ping to the namespace's own
+	// socket with an ICMP host unreachable over lo.
+	rawIn := inReceives()
+	try("ip", "netns", "exec", ns, "ping", "-c", "1", "-W", "5", "10.250.77.99")
+	if raw := inReceives(); raw <= rawIn {
+		t.Fatalf("namespace Ip InReceives %d → %d: no host unreachable was delivered in the namespace", rawIn, raw)
+	}
+	if in := addressed(); in != baseIn {
+		t.Fatalf("namespace addressed ingress %d → %d on its own host unreachable report", baseIn, in)
 	}
 
 	run("ping", "-c", "1", "-W", "1", "10.250.77.2")
-	if in := inReceives(); in <= baseIn {
-		t.Fatalf("namespace Ip InReceives %d → %d on a ping addressed to it", baseIn, in)
+	if in := addressed(); in <= baseIn {
+		t.Fatalf("namespace addressed ingress %d → %d on a ping addressed to it", baseIn, in)
 	}
 }
