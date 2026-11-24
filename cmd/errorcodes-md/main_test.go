@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -175,6 +176,18 @@ func TestGeneratedEntries(t *testing.T) {
 	}
 	if !strings.Contains(page, "\n## P\n") || strings.Index(page, "## A") > strings.Index(page, "## P") {
 		t.Errorf("sections are not alphabetical letters:\n%s", page)
+	}
+	// The jump bar names each letter section once, in order, and no others.
+	jump := regexp.MustCompile(`(?m)^Jump to: (.*)$`).FindStringSubmatch(page)
+	if jump == nil {
+		t.Fatalf("no jump bar:\n%s", page)
+	}
+	var want []string
+	for _, m := range regexp.MustCompile(`(?m)^## ([A-Z])$`).FindAllStringSubmatch(page, -1) {
+		want = append(want, fmt.Sprintf("[%s](#%s)", m[1], strings.ToLower(m[1])))
+	}
+	if got := jump[1]; got != strings.Join(want, " · ") {
+		t.Errorf("jump bar %q, want %q", got, strings.Join(want, " · "))
 	}
 }
 
