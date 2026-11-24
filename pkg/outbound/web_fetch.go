@@ -19,6 +19,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/publicdest"
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 // WebFetch is the capability gateway's web_fetch tool (ADR-20261027090018
@@ -170,13 +171,11 @@ func webFetchResult(resp *http.Response) (string, bool, error) {
 		return "web_fetch: the page could not be read", true, nil //nolint:nilerr // A failed read is the page's fault: the agent reads it as an error result.
 	}
 	truncated := len(body) > api.AgentWebFetchMaxBytes
-	if truncated {
-		body = body[:api.AgentWebFetchMaxBytes]
-	}
 	if cs := strings.ToLower(params["charset"]); cs != "" && cs != "utf-8" && cs != "us-ascii" && !utf8.Valid(body) {
 		return fmt.Sprintf("web_fetch: %s is in %s, which web_fetch does not decode", resp.Request.URL, cs), true, nil
 	}
-	text := strings.ToValidUTF8(string(body), "�")
+	// Truncate cuts on a rune boundary and replaces invalid bytes and NUL.
+	text := safetext.Truncate(string(body), api.AgentWebFetchMaxBytes)
 	if mediaType == "text/html" || mediaType == "application/xhtml+xml" {
 		text = htmlText(text)
 	}
