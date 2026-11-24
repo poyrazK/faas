@@ -25,9 +25,8 @@ var ErrSavedInsightLimit = errors.New("state: saved insight limit reached")
 
 // Saved insight alert states.
 const (
-	SavedInsightOK      = "ok"
-	SavedInsightFiring  = "firing"
-	SavedInsightUnknown = "unknown"
+	SavedInsightOK     = "ok"
+	SavedInsightFiring = "firing"
 )
 
 // SavedInsight is one saved analytics query, its schedule and its last run.
@@ -78,8 +77,11 @@ type SavedInsightStore interface {
 	// check is due until leaseUntil.
 	ClaimDueSavedInsights(ctx context.Context, now, leaseUntil time.Time, limit int) ([]SavedInsight, error)
 	// SettleSavedInsight records a run and releases its lease. A saved
-	// insight changed since its claim keeps its new schedule.
-	SettleSavedInsight(ctx context.Context, s SavedInsightSettle) error
+	// insight changed since its claim keeps its new schedule, and applied
+	// is false.
+	SettleSavedInsight(ctx context.Context, s SavedInsightSettle) (applied bool, err error)
+	// ReleaseSavedInsight drops a claim's lease without recording a run.
+	ReleaseSavedInsight(ctx context.Context, id string) error
 	// SavedInsightChannels returns the account's channels among ids.
 	SavedInsightChannels(ctx context.Context, accountID string, ids []string) ([]NotificationChannel, error)
 }
@@ -128,12 +130,23 @@ func savedInsightErr(op string, err error) error {
 
 // CreateSavedInsight implements SavedInsightStore.
 func (s *PgStore) CreateSavedInsight(ctx context.Context, in SavedInsight, maxInsights int) (SavedInsight, error) {
-	row, err := sqlc.New().CreateSavedInsight(ctx, s.pool, sqlc.CreateSavedInsightParams{
-		AccountID: uuidToPgtype(in.AccountID), EnvironmentID: uuidToPgtype(in.EnvironmentID), Key: in.Key, Name: in.Name,
-		Kind: in.Kind, Query: []byte(in.Query), RangeDays: int32(in.RangeDays), Digest: in.Digest,
-		AlertComparison: in.AlertComparison, AlertThreshold: in.AlertThreshold, ChannelIds: pgUUIDList(in.ChannelIDs),
-		NextDigestAt: pgOptionalTimestamptz(in.NextDigestAt), NextCheckAt: pgOptionalTimestamptz(in.NextCheckAt),
-		CreatedBy: in.CreatedBy, MaxInsights: int64(maxInsights)})
+	var row sqlc.SavedInsight
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		q := sqlc.New()
+		// Concurrent creates would each see room under the cap; the
+		// environment row lock makes them take turns.
+		if err := q.LockSavedInsightEnvironment(ctx, tx, uuidToPgtype(in.EnvironmentID)); err != nil {
+			return err
+		}
+		var err error
+		row, err = q.CreateSavedInsight(ctx, tx, sqlc.CreateSavedInsightParams{
+			AccountID: uuidToPgtype(in.AccountID), EnvironmentID: uuidToPgtype(in.EnvironmentID), Key: in.Key, Name: in.Name,
+			Kind: in.Kind, Query: []byte(in.Query), RangeDays: int32(in.RangeDays), Digest: in.Digest,
+			AlertComparison: in.AlertComparison, AlertThreshold: in.AlertThreshold, ChannelIds: pgUUIDList(in.ChannelIDs),
+			NextDigestAt: pgOptionalTimestamptz(in.NextDigestAt), NextCheckAt: pgOptionalTimestamptz(in.NextCheckAt),
+			CreatedBy: in.CreatedBy, MaxInsights: int64(maxInsights)})
+		return err
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SavedInsight{}, ErrSavedInsightLimit
 	}
@@ -209,18 +222,26 @@ func (s *PgStore) ClaimDueSavedInsights(ctx context.Context, now, leaseUntil tim
 }
 
 // SettleSavedInsight implements SavedInsightStore.
-func (s *PgStore) SettleSavedInsight(ctx context.Context, st SavedInsightSettle) error {
+func (s *PgStore) SettleSavedInsight(ctx context.Context, st SavedInsightSettle) (bool, error) {
 	q := sqlc.New()
-	err := q.SettleSavedInsight(ctx, s.pool, sqlc.SettleSavedInsightParams{
+	n, err := q.SettleSavedInsight(ctx, s.pool, sqlc.SettleSavedInsightParams{
 		LastValue: pgFloat8(st.LastValue), Now: pgTimestamptzUTC(st.Now), LastError: truncateUTF8(st.LastError, 512),
 		AlertState: st.AlertState, NextDigestAt: pgOptionalTimestamptz(st.NextDigestAt),
 		NextCheckAt: pgOptionalTimestamptz(st.NextCheckAt), ID: uuidToPgtype(st.ID),
 		ClaimedUpdatedAt: pgtype.Timestamptz{Time: st.ClaimedUpdatedAt, Valid: true}})
 	if err != nil {
-		return savedInsightErr("settle", err)
+		return false, savedInsightErr("settle", err)
+	}
+	if n > 0 {
+		return true, nil
 	}
 	// A definition changed since the claim was not settled; drop the lease.
-	if err := q.ReleaseSavedInsightLease(ctx, s.pool, uuidToPgtype(st.ID)); err != nil {
+	return false, s.ReleaseSavedInsight(ctx, st.ID)
+}
+
+// ReleaseSavedInsight implements SavedInsightStore.
+func (s *PgStore) ReleaseSavedInsight(ctx context.Context, id string) error {
+	if err := sqlc.New().ReleaseSavedInsightLease(ctx, s.pool, uuidToPgtype(id)); err != nil {
 		return savedInsightErr("release", err)
 	}
 	return nil
@@ -391,20 +412,30 @@ func (m *MemStore) ClaimDueSavedInsights(_ context.Context, now, leaseUntil time
 }
 
 // SettleSavedInsight implements SavedInsightStore.
-func (m *MemStore) SettleSavedInsight(_ context.Context, st SavedInsightSettle) error {
+func (m *MemStore) SettleSavedInsight(_ context.Context, st SavedInsightSettle) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s, ok := m.savedInsights[st.ID]
 	if !ok {
-		return nil
+		return false, nil
 	}
 	s.leaseUntil = time.Time{}
 	if !s.UpdatedAt.Equal(st.ClaimedUpdatedAt) {
-		return nil
+		return false, nil
 	}
 	now := st.Now.UTC()
 	s.LastValue, s.LastRunAt, s.LastError, s.AlertState = st.LastValue, &now, st.LastError, st.AlertState
 	s.NextDigestAt, s.NextCheckAt = st.NextDigestAt, st.NextCheckAt
+	return true, nil
+}
+
+// ReleaseSavedInsight implements SavedInsightStore.
+func (m *MemStore) ReleaseSavedInsight(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s, ok := m.savedInsights[id]; ok {
+		s.leaseUntil = time.Time{}
+	}
 	return nil
 }
 

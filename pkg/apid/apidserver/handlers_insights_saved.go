@@ -111,7 +111,7 @@ func (s *server) createSavedInsight(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	var req api.SavedInsightRequest
-	if !decodeJSONLimit(w, r, &req, 32<<10) {
+	if !decodeJSONLimit(w, r, &req, api.SavedInsightRequestMaxBytes) {
 		return
 	}
 	in, err := s.savedInsightInput(r.Context(), sc, req)
@@ -134,7 +134,7 @@ func (s *server) replaceSavedInsight(w http.ResponseWriter, r *http.Request, acc
 		return
 	}
 	var req api.SavedInsightRequest
-	if !decodeJSONLimit(w, r, &req, 32<<10) {
+	if !decodeJSONLimit(w, r, &req, api.SavedInsightRequestMaxBytes) {
 		return
 	}
 	if req.Key == "" {

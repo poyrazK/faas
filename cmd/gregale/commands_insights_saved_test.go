@@ -33,7 +33,7 @@ func TestInsightSavedCommands(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(api.SavedInsightList{Insights: []api.SavedInsight{saved}})
 		case "GET " + base + "/conv/run":
 			at := time.Date(2026, 11, 22, 0, 0, 0, 0, time.UTC)
-			_ = json.NewEncoder(w).Encode(api.SavedInsightResult{Key: "conv", Kind: "funnel", Value: 0.25, From: at.AddDate(0, 0, -14), Until: at,
+			_ = json.NewEncoder(w).Encode(api.SavedInsightResult{Key: "conv", Kind: "funnel", Value: &value, From: at.AddDate(0, 0, -14), Until: at,
 				Funnel: &api.InsightFunnel{Unit: "customer", Window: "168h0m0s", Steps: []api.InsightFunnelStep{
 					{Event: "signup", Units: 4, ConversionFromFirst: 1, ConversionFromPrev: 1},
 					{Event: "order", Units: 1, ConversionFromFirst: 0.25, ConversionFromPrev: 0.25}}}})

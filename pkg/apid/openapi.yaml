@@ -92936,7 +92936,7 @@ components:
         - type: object
           required: [alert_state, created_by, created_at, updated_at]
           properties:
-            alert_state: { type: string, enum: [ok, firing, unknown] }
+            alert_state: { type: string, enum: [ok, firing], description: The alert's state after the last successful scheduled run. }
             last_value: { type: number, format: double }
             last_run_at: { type: string, format: date-time }
             last_error: { type: string }
@@ -92953,11 +92953,11 @@ components:
     SavedInsightResult:
       description: One run of a saved insight.
       type: object
-      required: [key, kind, value, from, until]
+      required: [key, kind, from, until]
       properties:
         key: { type: string }
         kind: { type: string, enum: [events, funnel, retention] }
-        value: { type: number, format: double }
+        value: { type: number, format: double, description: "Absent when there is no data: a funnel without entrants, or retention before a period has ended." }
         from: { type: string, format: date-time }
         until: { type: string, format: date-time }
         events: { $ref: '#/components/schemas/InsightEventSeries' }

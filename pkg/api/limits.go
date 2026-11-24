@@ -2978,9 +2978,20 @@ const (
 	// day, weekly ones on Mondays.
 	SavedInsightDigestHourUTC = 8
 	// SavedInsightRunBatch bounds the saved insights one meterd pass runs.
-	SavedInsightRunBatch = 20
-	// SavedInsightLease is how long a claimed saved insight stays leased.
-	SavedInsightLease = 5 * time.Minute
+	SavedInsightRunBatch = 10
+	// SavedInsightItemBudget bounds one saved insight's run: its query
+	// (AnalyticsQueryTimeout) and at most two channel sends of 30 s each.
+	SavedInsightItemBudget = AnalyticsQueryTimeout + time.Minute
+	// SavedInsightLease is how long a claimed batch stays leased; a pass
+	// releases the items it cannot start with SavedInsightItemBudget left.
+	SavedInsightLease = SavedInsightRunBatch*SavedInsightItemBudget + time.Minute
+	// SavedInsightNotReleasedRetry is how long a saved insight of an account
+	// without saved insights waits before meterd looks at it again.
+	SavedInsightNotReleasedRetry = time.Hour
+	// SavedInsightNameMaxBytes bounds a saved insight's display name.
+	SavedInsightNameMaxBytes = 128
+	// SavedInsightRequestMaxBytes bounds a create or replace request body.
+	SavedInsightRequestMaxBytes = 32 << 10
 )
 
 // Subject units, layers and the holdout, richer metrics, bandits and

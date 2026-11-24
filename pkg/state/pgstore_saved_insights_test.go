@@ -55,9 +55,9 @@ func TestPg_SavedInsights(t *testing.T) {
 	}
 
 	value, next := 4.0, now.Add(15*time.Minute)
-	if err := s.SettleSavedInsight(ctx, state.SavedInsightSettle{ID: si.ID, ClaimedUpdatedAt: claimed[0].UpdatedAt, Now: now,
-		LastValue: &value, AlertState: state.SavedInsightFiring, NextDigestAt: &next, NextCheckAt: &next}); err != nil {
-		t.Fatal(err)
+	if applied, err := s.SettleSavedInsight(ctx, state.SavedInsightSettle{ID: si.ID, ClaimedUpdatedAt: claimed[0].UpdatedAt, Now: now,
+		LastValue: &value, AlertState: state.SavedInsightFiring, NextDigestAt: &next, NextCheckAt: &next}); err != nil || !applied {
+		t.Fatalf("settle = %v, %v; want applied", applied, err)
 	}
 	got, err := s.GetSavedInsight(ctx, f.env, "orders")
 	if err != nil || got.AlertState != state.SavedInsightFiring || got.LastValue == nil || *got.LastValue != 4 || got.NextCheckAt == nil || !got.NextCheckAt.Equal(next) {
@@ -77,9 +77,9 @@ func TestPg_SavedInsights(t *testing.T) {
 	if updated, err := s.UpdateSavedInsight(ctx, edit); err != nil || updated.AlertState != state.SavedInsightOK || updated.AlertThreshold != 20 {
 		t.Fatalf("UpdateSavedInsight = %+v, %v", updated, err)
 	}
-	if err := s.SettleSavedInsight(ctx, state.SavedInsightSettle{ID: si.ID, ClaimedUpdatedAt: claimed[0].UpdatedAt, Now: next,
-		AlertState: state.SavedInsightFiring, NextCheckAt: &next}); err != nil {
-		t.Fatal(err)
+	if applied, err := s.SettleSavedInsight(ctx, state.SavedInsightSettle{ID: si.ID, ClaimedUpdatedAt: claimed[0].UpdatedAt, Now: next,
+		AlertState: state.SavedInsightFiring, NextCheckAt: &next}); err != nil || applied {
+		t.Fatalf("stale settle = %v, %v; want not applied", applied, err)
 	}
 	got, _ = s.GetSavedInsight(ctx, f.env, "orders")
 	if got.AlertState != state.SavedInsightOK || got.NextCheckAt == nil || !got.NextCheckAt.Equal(editNext) {

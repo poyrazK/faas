@@ -50,7 +50,7 @@ func TestSavedInsightsLifecycle(t *testing.T) {
 	if err := json.Unmarshal(res.Body.Bytes(), &run); res.Code != http.StatusOK || err != nil {
 		t.Fatalf("run = %d %s", res.Code, res.Body.String())
 	}
-	if run.Value != 1500 || run.Events == nil {
+	if run.Value == nil || *run.Value != 1500 || run.Events == nil {
 		t.Fatalf("run = %+v; want value 1500 with the series", run)
 	}
 	res = e.Do(t, http.MethodGet, base+"/orders/run?format=csv", nil, nil)

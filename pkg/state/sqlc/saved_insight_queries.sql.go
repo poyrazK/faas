@@ -293,6 +293,16 @@ func (q *Queries) ListSavedInsights(ctx context.Context, db DBTX, environmentID 
 	return items, nil
 }
 
+const lockSavedInsightEnvironment = `-- name: LockSavedInsightEnvironment :exec
+SELECT 1 FROM project_environments WHERE id = $1::uuid FOR UPDATE
+`
+
+// Serializes creates in one environment so the cap holds under concurrency.
+func (q *Queries) LockSavedInsightEnvironment(ctx context.Context, db DBTX, environmentID pgtype.UUID) error {
+	_, err := db.Exec(ctx, lockSavedInsightEnvironment, environmentID)
+	return err
+}
+
 const releaseSavedInsightLease = `-- name: ReleaseSavedInsightLease :exec
 UPDATE saved_insights SET lease_until = NULL WHERE id = $1::uuid
 `
@@ -349,7 +359,7 @@ func (q *Queries) SavedInsightChannels(ctx context.Context, db DBTX, arg SavedIn
 	return items, nil
 }
 
-const settleSavedInsight = `-- name: SettleSavedInsight :exec
+const settleSavedInsight = `-- name: SettleSavedInsight :execrows
 UPDATE saved_insights
 SET last_value = $1::float8, last_run_at = $2::timestamptz,
     last_error = $3::text, alert_state = $4::text,
@@ -371,8 +381,8 @@ type SettleSavedInsightParams struct {
 
 // Records a run's outcome and releases the lease. A definition changed
 // since the claim (updated_at) keeps its new schedule.
-func (q *Queries) SettleSavedInsight(ctx context.Context, db DBTX, arg SettleSavedInsightParams) error {
-	_, err := db.Exec(ctx, settleSavedInsight,
+func (q *Queries) SettleSavedInsight(ctx context.Context, db DBTX, arg SettleSavedInsightParams) (int64, error) {
+	result, err := db.Exec(ctx, settleSavedInsight,
 		arg.LastValue,
 		arg.Now,
 		arg.LastError,
@@ -382,7 +392,10 @@ func (q *Queries) SettleSavedInsight(ctx context.Context, db DBTX, arg SettleSav
 		arg.ID,
 		arg.ClaimedUpdatedAt,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateSavedInsight = `-- name: UpdateSavedInsight :one

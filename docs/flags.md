@@ -938,8 +938,10 @@ gregale insight saved create orders --kind events --event order_completed --days
   get no digests.
 - An alert (`gt`, `gte`, `lt` or `lte` a threshold) is checked every 15
   minutes. It notifies once when the value crosses the threshold and once
-  when it comes back. If the query fails, the state becomes `unknown` and
-  nothing is sent.
+  when it comes back. If the query fails, nothing is sent, the state is kept,
+  `last_error` says why and the insight is retried in 15 minutes; a due
+  digest goes out once a run succeeds. A funnel without entrants or
+  retention before its first period ends has no value and does not alert.
 - Replace a saved insight with `gregale insight saved create KEY --replace ...`;
   changing its query, range or alert resets the alert state.
 

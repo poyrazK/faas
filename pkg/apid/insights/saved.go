@@ -22,7 +22,6 @@ import (
 const (
 	savedDefaultDays          = 7
 	savedRetentionDefaultDays = 28
-	savedNameMaxBytes         = 128
 )
 
 var savedComparisons = []string{"gt", "gte", "lt", "lte"}
@@ -36,8 +35,8 @@ func NormalizeSaved(req *api.SavedInsightRequest, retentionDays int) (json.RawMe
 	if req.Name == "" {
 		req.Name = req.Key
 	}
-	if len(req.Name) > savedNameMaxBytes {
-		return nil, invalid("name is at most %d bytes", savedNameMaxBytes)
+	if len(req.Name) > api.SavedInsightNameMaxBytes {
+		return nil, invalid("name is at most %d bytes", api.SavedInsightNameMaxBytes)
 	}
 	query, defaultDays, err := savedQuery(req)
 	if err != nil {
@@ -234,21 +233,26 @@ func RunSaved(ctx context.Context, store Store, s state.SavedInsight, retentionD
 			return api.SavedInsightResult{}, err
 		}
 		out.Events = &series
+		total := 0.0
 		for _, p := range series.Points {
 			if q.Measure == "value" {
-				out.Value += float64(p.Value)
+				total += float64(p.Value)
 			} else {
-				out.Value += float64(p.Events)
+				total += float64(p.Events)
 			}
 		}
+		// No events is a real zero.
+		out.Value = &total
 	case api.SavedInsightKindFunnel:
 		f, err := Funnel(ctx, store, FunnelQuery{EnvironmentID: s.EnvironmentID, Request: *req.Funnel, Range: rng})
 		if err != nil {
 			return api.SavedInsightResult{}, err
 		}
 		out.Funnel = &f
-		if n := len(f.Steps); n > 0 {
-			out.Value = f.Steps[n-1].ConversionFromFirst
+		// Without entrants there is no conversion rate.
+		if n := len(f.Steps); n > 0 && f.Steps[0].Units > 0 {
+			v := f.Steps[n-1].ConversionFromFirst
+			out.Value = &v
 		}
 	case api.SavedInsightKindRetention:
 		r, err := Retention(ctx, store, RetentionQuery{EnvironmentID: s.EnvironmentID, Request: *req.Retention, Range: rng, Now: now})
@@ -256,9 +260,11 @@ func RunSaved(ctx context.Context, store Store, s state.SavedInsight, retentionD
 			return api.SavedInsightResult{}, err
 		}
 		out.Retention = &r
-		// Rates[k-1] is period k's rate.
-		if rates := r.Overall.Rates; len(rates) > 0 {
-			out.Value = rates[0]
+		// Rates[k-1] is period k's rate; with nobody eligible for period 1
+		// (no period has ended) there is no rate yet.
+		if o := r.Overall; len(o.Rates) > 0 && len(o.Eligible) > 0 && o.Eligible[0] > 0 {
+			v := o.Rates[0]
+			out.Value = &v
 		}
 	default:
 		return api.SavedInsightResult{}, invalid("kind is events, funnel or retention")

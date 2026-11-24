@@ -5144,6 +5144,8 @@ type Querier interface {
 	LockSafeProjectReleaseCandidate(ctx context.Context, db DBTX, deploymentID string) (LockSafeProjectReleaseCandidateRow, error)
 	LockSafeProjectReleaseProject(ctx context.Context, db DBTX, arg LockSafeProjectReleaseProjectParams) error
 	LockSafeProjectSubmission(ctx context.Context, db DBTX, arg LockSafeProjectSubmissionParams) (LockSafeProjectSubmissionRow, error)
+	// Serializes creates in one environment so the cap holds under concurrency.
+	LockSavedInsightEnvironment(ctx context.Context, db DBTX, environmentID pgtype.UUID) error
 	LockScenarioActionApp(ctx context.Context, db DBTX, arg LockScenarioActionAppParams) (pgtype.Bool, error)
 	LockScenarioActionRun(ctx context.Context, db DBTX, arg LockScenarioActionRunParams) error
 	LockScheduledRelease(ctx context.Context, db DBTX, id pgtype.UUID) (ScheduledRelease, error)
@@ -8543,7 +8545,7 @@ type Querier interface {
 	SettleEventSubscriptionIntent(ctx context.Context, db DBTX, arg SettleEventSubscriptionIntentParams) error
 	// Records a run's outcome and releases the lease. A definition changed
 	// since the claim (updated_at) keeps its new schedule.
-	SettleSavedInsight(ctx context.Context, db DBTX, arg SettleSavedInsightParams) error
+	SettleSavedInsight(ctx context.Context, db DBTX, arg SettleSavedInsightParams) (int64, error)
 	SettleSpendCapNotice(ctx context.Context, db DBTX, arg SettleSpendCapNoticeParams) (pgtype.UUID, error)
 	SettleWorkflowCallOp(ctx context.Context, db DBTX, arg SettleWorkflowCallOpParams) (int64, error)
 	ShareProjectBindingVerificationRun(ctx context.Context, db DBTX, arg ShareProjectBindingVerificationRunParams) (ProjectBindingVerificationRun, error)

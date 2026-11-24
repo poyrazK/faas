@@ -189,6 +189,13 @@ func savedInsightValue(kind string, v float64) string {
 	return strconv.FormatFloat(v, 'f', -1, 64)
 }
 
+func savedInsightValueOf(kind string, v *float64) string {
+	if v == nil {
+		return "no data"
+	}
+	return savedInsightValue(kind, *v)
+}
+
 func savedInsightSchedule(si api.SavedInsight) string {
 	var parts []string
 	if si.Digest != "" {
@@ -241,7 +248,7 @@ func printSavedInsight(si api.SavedInsight, project, environment, verb string) {
 
 func printSavedInsightResult(res api.SavedInsightResult) {
 	_, _ = fmt.Fprintf(osStdout, "%s (%s), %s to %s: value %s\n", res.Key, res.Kind, res.From.Format(time.RFC3339), res.Until.Format(time.RFC3339),
-		savedInsightValue(res.Kind, res.Value))
+		savedInsightValueOf(res.Kind, res.Value))
 	switch {
 	case res.Events != nil:
 		printInsightEvents(*res.Events)

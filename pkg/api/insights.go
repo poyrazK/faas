@@ -246,11 +246,12 @@ type SavedInsightList struct {
 }
 
 // SavedInsightResult is one run of a saved insight: its value and the
-// result of its kind.
+// result of its kind. Value is absent when there is no data to compute it
+// from: a funnel without entrants or retention before a period has ended.
 type SavedInsightResult struct {
 	Key       string              `json:"key"`
 	Kind      string              `json:"kind"`
-	Value     float64             `json:"value"`
+	Value     *float64            `json:"value,omitempty"`
 	From      time.Time           `json:"from"`
 	Until     time.Time           `json:"until"`
 	Events    *InsightEventSeries `json:"events,omitempty"`

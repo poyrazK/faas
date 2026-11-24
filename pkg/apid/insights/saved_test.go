@@ -40,7 +40,7 @@ func TestRunSavedValues(t *testing.T) {
 	tests := []struct {
 		name string
 		req  api.SavedInsightRequest
-		want float64
+		want float64 // -1: no data, no value
 	}{
 		{"events total", api.SavedInsightRequest{Key: "orders", Kind: "events", Events: &api.InsightEventsQuery{Event: "order"}}, 2},
 		{"events value", api.SavedInsightRequest{Key: "revenue", Kind: "events", Events: &api.InsightEventsQuery{Event: "order", Measure: "value"}}, 1700},
@@ -49,6 +49,8 @@ func TestRunSavedValues(t *testing.T) {
 			Steps: []api.InsightStepRequest{{Event: "signup"}, {Event: "order"}}}}, 0.5},
 		{"retention", api.SavedInsightRequest{Key: "ret", Kind: "retention", Retention: &api.InsightRetentionRequest{
 			Start: api.InsightStepRequest{Event: "signup"}, Return: api.InsightStepRequest{Event: "visit"}, Periods: 2}}, 1}, // b's day 1 has not ended, so only a counts.
+		{"funnel without entrants", api.SavedInsightRequest{Key: "none", Kind: "funnel", Funnel: &api.InsightFunnelRequest{
+			Steps: []api.InsightStepRequest{{Event: "never"}, {Event: "order"}}}}, -1},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -56,7 +58,10 @@ func TestRunSavedValues(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if res.Value != tc.want {
+			switch {
+			case tc.want < 0 && res.Value != nil:
+				t.Fatalf("value = %v, want none (%+v)", *res.Value, res)
+			case tc.want >= 0 && (res.Value == nil || *res.Value != tc.want):
 				t.Fatalf("value = %v, want %v (%+v)", res.Value, tc.want, res)
 			}
 			var csv strings.Builder

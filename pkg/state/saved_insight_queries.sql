@@ -57,7 +57,7 @@ FROM due, accounts a, project_environments e
 WHERE s.id = due.id AND a.id = s.account_id AND e.id = s.environment_id
 RETURNING s.*, a.plan::text AS plan, e.project_id AS project_id, e.slug AS environment_slug;
 
--- name: SettleSavedInsight :exec
+-- name: SettleSavedInsight :execrows
 -- Records a run's outcome and releases the lease. A definition changed
 -- since the claim (updated_at) keeps its new schedule.
 UPDATE saved_insights
@@ -66,6 +66,10 @@ SET last_value = sqlc.narg(last_value)::float8, last_run_at = sqlc.arg(now)::tim
     next_digest_at = sqlc.narg(next_digest_at)::timestamptz, next_check_at = sqlc.narg(next_check_at)::timestamptz,
     lease_until = NULL
 WHERE id = sqlc.arg(id)::uuid AND updated_at = sqlc.arg(claimed_updated_at)::timestamptz;
+
+-- name: LockSavedInsightEnvironment :exec
+-- Serializes creates in one environment so the cap holds under concurrency.
+SELECT 1 FROM project_environments WHERE id = sqlc.arg(environment_id)::uuid FOR UPDATE;
 
 -- name: ReleaseSavedInsightLease :exec
 UPDATE saved_insights SET lease_until = NULL WHERE id = sqlc.arg(id)::uuid;

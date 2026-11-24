@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS saved_insights (
         AND alert_comparison IN ('', 'gt', 'gte', 'lt', 'lte')
         AND alert_threshold = alert_threshold
         AND cardinality(channel_ids) <= 5
-        AND alert_state IN ('ok', 'firing', 'unknown')
+        AND alert_state IN ('ok', 'firing')
         AND length(last_error) <= 512
         AND length(created_by) BETWEEN 1 AND 256
         AND ((digest = '' AND alert_comparison = '') = (next_check_at IS NULL)))

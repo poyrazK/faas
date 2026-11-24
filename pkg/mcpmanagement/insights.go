@@ -71,7 +71,7 @@ type savedInsightArgs struct {
 	Key         string `json:"key" jsonschema:"Saved insight key"`
 }
 
-const savedInsightGuidance = "A saved insight's value is an events total (or value sum), a funnel's overall conversion or the first-period retention rate, as a fraction. Each run covers the last range_days days. alert_state unknown means the last scheduled run failed; see last_error."
+const savedInsightGuidance = "A saved insight's value is an events total (or value sum), a funnel's overall conversion or the first-period retention rate, as a fraction. Each run covers the last range_days days. value is absent when there is no data (a funnel without entrants, retention before a period ends). A non-empty last_error means the last scheduled run failed; alert_state is kept from the last good run."
 
 func (m *management) listSavedInsights(ctx context.Context, args insightCohortsArgs) (any, error) {
 	if err := validateFlagExperimentScope(args.Project, args.Environment); err != nil {
