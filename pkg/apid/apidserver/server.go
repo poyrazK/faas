@@ -4950,6 +4950,9 @@ func (s *server) handler() http.Handler {
 	// Memory pressure: node headroom, evictions and OOM kills (ADR-20261123190507).
 	mux.HandleFunc("GET /v1/admin/obs/memory-pressure",
 		s.authLimited(s.requireOperatorSessionRead(s.obsMemoryPressure)))
+	// Gateway traffic: status codes, platform errors, wake queues (ADR-20261124093000).
+	mux.HandleFunc("GET /v1/admin/obs/gateway-traffic",
+		s.authLimited(s.requireOperatorSessionRead(s.obsGatewayTraffic)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/heartbeats",
 		s.authLimited(s.requireOperatorRead(s.obsNodeHeartbeats)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/probe-notifications",

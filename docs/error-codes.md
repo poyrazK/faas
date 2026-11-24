@@ -178,6 +178,8 @@ See [Builds and framework detection](build.md#limits), [Container compatibility]
 
 HTTP 400 Bad Request · Bad request; Invalid log drain
 
+See [Logs](logs.md#log-drains).
+
 ### `app_logs_unavailable`
 
 HTTP 503 Service Unavailable · App logs unavailable; Live logs temporarily unavailable
@@ -218,9 +220,13 @@ See [Deployment overrides](deploy-overrides.md), [Errors](errors.md), [Deploy a 
 
 HTTP 409 Conflict · App not purgeable
 
+See [Apps](apps.md#purge-a-deleted-app-to-reuse-its-name).
+
 ### `app_not_restorable`
 
 HTTP 409 Conflict · App not restorable
+
+See [Apps](apps.md#retained-deleted-apps).
 
 ### `app_protocol_invalid`
 
@@ -1366,6 +1372,8 @@ See [Scaling policy](scaling-policy.md).
 
 HTTP 422 Unprocessable Entity · Invalid CPU
 
+See [Plans and pricing](plans.md#what-each-limit-means).
+
 ### `invalid_cpu_ram_pair`
 
 HTTP 422 Unprocessable Entity · Invalid CPU/RAM pair
@@ -1440,6 +1448,8 @@ See [Authentication](auth.md#app-access-control).
 
 HTTP 422 Unprocessable Entity · Invalid RAM
 
+See [Plans and pricing](plans.md#what-each-limit-means).
+
 ### `invalid_recover_action`
 
 HTTP 422 Unprocessable Entity · Invalid recover_rollout action
@@ -1494,9 +1504,13 @@ HTTP 422 Unprocessable Entity · Invalid warm_pool_size; Invalid max_concurrency
 
 HTTP 422 Unprocessable Entity · Invalid warm_snapshot_min_ms
 
+See [How scaling to zero works](cold-wake.md#warm-snapshots-opt-in-pro-and-scale).
+
 ### `invalid_warm_snapshot_min_requests`
 
 HTTP 422 Unprocessable Entity · Invalid warm_snapshot_min_requests
+
+See [How scaling to zero works](cold-wake.md#warm-snapshots-opt-in-pro-and-scale).
 
 ### `invocation_environment_work_isolation_unavailable`
 
@@ -2302,6 +2316,8 @@ See [Event-driven workloads](event-driven.md#async-backlog).
 
 HTTP 403 Forbidden · Autoscale target CPU% is not allowed on this plan; Autoscale target RPS is not allowed on this plan
 
+See [Plans and pricing](plans.md).
+
 ### `plan_cors_preset_quota_reached`
 
 HTTP 403 Forbidden · CORS preset limit reached
@@ -2329,6 +2345,8 @@ See [Crons](crons.md).
 ### `plan_custom_metrics_not_allowed`
 
 HTTP 402 Payment Required · Custom metrics not available on this plan
+
+See [Plans and pricing](plans.md).
 
 ### `plan_delayed_tasks_cap`
 
@@ -2397,6 +2415,8 @@ HTTP 403 Forbidden · Plan gate blocked
 ### `plan_health_path_wakes_not_allowed`
 
 HTTP 403 Forbidden · Health-path wakes are not allowed on this plan
+
+See [Plans and pricing](plans.md).
 
 ### `plan_inbound_webhook_quota`
 
@@ -2632,6 +2652,8 @@ See [Plans and pricing](plans.md).
 
 HTTP 403 Forbidden · Per-app authentication is not allowed on this plan; Per-deployment authentication is not allowed on this plan
 
+See [Plans and pricing](plans.md).
+
 ### `plan_rollback_on_5xx_not_allowed`
 
 HTTP 403 Forbidden · Plan doesn't allow 5xx auto-rollback
@@ -2641,6 +2663,8 @@ See [Plans and pricing](plans.md).
 ### `plan_route_metrics_not_allowed`
 
 HTTP 403 Forbidden · Per-route metrics are not allowed on this plan
+
+See [Plans and pricing](plans.md).
 
 ### `plan_source_bytes`
 
@@ -2663,6 +2687,8 @@ See [Static egress IP](static-egress-ip.md).
 ### `plan_streaming_not_allowed`
 
 HTTP 403 Forbidden · Streaming responses are not allowed on this plan
+
+See [Plans and pricing](plans.md).
 
 ### `plan_token_stale`
 
@@ -2690,9 +2716,13 @@ See [Plans and pricing](plans.md).
 
 HTTP 403 Forbidden · Warm-pool capacity is not allowed on this plan
 
+See [Plans and pricing](plans.md).
+
 ### `plan_warm_snapshot_not_allowed`
 
 HTTP 403 Forbidden · Warm-tier snapshots are not allowed on this plan
+
+See [Plans and pricing](plans.md).
 
 ### `plan_webhook_quota`
 
@@ -2709,6 +2739,8 @@ See [Plans and pricing](plans.md).
 ### `plan_websocket_not_allowed`
 
 HTTP 403 Forbidden · WebSocket / Upgrade traffic is not allowed on this plan
+
+See [Plans and pricing](plans.md).
 
 ### `plan_workflows_not_allowed`
 
