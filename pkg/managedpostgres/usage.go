@@ -58,6 +58,10 @@ type UsageCollectorOptions struct {
 	Logger       *slog.Logger
 	Observe      func(UsageCollectionObservation)
 	ObserveSweep func(UsageCollectionSummary, error)
+	// ObserveIdleTail, when set, gets each scale-to-zero database's newly
+	// collected window and its idle tail (one extra provider read when the
+	// window has compute).
+	ObserveIdleTail func(IdleTailObservation)
 	// AfterSweep runs after every sweep, successful or not, on the
 	// collector's goroutine (the compute cap enforcer, ADR-20261025094915).
 	AfterSweep func(context.Context)
@@ -83,6 +87,8 @@ type UsageCollector struct {
 	observeSweep func(UsageCollectionSummary, error)
 	afterSweep   func(context.Context)
 	exclusive    func(context.Context) (func(), bool, error)
+
+	idleTailObserver func(IdleTailObservation)
 }
 
 func NewUsageCollector(registry *Registry, store UsageStore, options UsageCollectorOptions) (*UsageCollector, error) {
@@ -123,6 +129,8 @@ func NewUsageCollector(registry *Registry, store UsageStore, options UsageCollec
 		observeSweep: options.ObserveSweep,
 		afterSweep:   options.AfterSweep,
 		exclusive:    options.Exclusive,
+
+		idleTailObserver: options.ObserveIdleTail,
 	}, nil
 }
 
@@ -345,7 +353,7 @@ func (c *UsageCollector) collectUsageRounds(ctx context.Context, work []*usageCo
 			}
 			attempted = true
 			item.requests++
-			item.err = c.collectWindow(ctx, item.database, item.backend, from, from.Add(c.policy.Window), observedAt)
+			item.err = c.collectWindow(ctx, item.database, item.backend, from, from.Add(c.policy.Window), observedAt, !corrections)
 			if item.err == nil {
 				if corrections {
 					item.replayUntil = from
@@ -431,7 +439,9 @@ func (c *UsageCollector) recordSharedUsage(ctx context.Context, database Databas
 	return c.store.RecordSharedUsage(ctx, database.AccountID, database.ID, source.ID, c.policy.Window)
 }
 
-func (c *UsageCollector) collectWindow(ctx context.Context, database Database, backend Backend, from, to, observedAt time.Time) error {
+// collectWindow records one window; fresh marks a first collection, not a
+// correction replay.
+func (c *UsageCollector) collectWindow(ctx context.Context, database Database, backend Backend, from, to, observedAt time.Time, fresh bool) error {
 	usage, err := backend.Provider.Usage(ctx, database.ProviderResourceID, UsageWindow{From: from, To: to})
 	if err != nil {
 		return normalizeProviderError(err)
@@ -476,7 +486,13 @@ func (c *UsageCollector) collectWindow(ctx context.Context, database Database, b
 	if len(records) == 0 {
 		return ErrUnavailable
 	}
-	return c.store.RecordUsage(ctx, records)
+	if err := c.store.RecordUsage(ctx, records); err != nil {
+		return err
+	}
+	if fresh {
+		c.observeIdleTail(ctx, database, backend, usage)
+	}
+	return nil
 }
 
 func (c *UsageCollector) Run(ctx context.Context) error {
