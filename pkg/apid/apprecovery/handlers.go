@@ -214,7 +214,7 @@ func (s Handler) Restore(w http.ResponseWriter, r *http.Request, acct state.Acco
 	lifecycle := deletedAppSummary(row, acct.ID, time.Now().UTC())
 	if !lifecycle.RestoreEligible {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeAppNotRestorable,
-			"App not restorable", "the lifecycle review is blocked: "+lifecycle.RestoreBlocker))
+			"App not restorable", "the lifecycle review is blocked: "+lifecycle.RestoreBlocker).WithDocs("https://gregale.dev/docs/apps#retained-deleted-apps"))
 		return
 	}
 	app, err := s.Store.AppByID(r.Context(), row.ID)
@@ -281,11 +281,11 @@ func (s Handler) Purge(w http.ResponseWriter, r *http.Request, acct state.Accoun
 	switch {
 	case errors.Is(err, state.ErrConflict):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeAppNotPurgeable, "App not purgeable",
-			"the deleted app still has object storage buckets; restore it and delete its buckets first"))
+			"the deleted app still has object storage buckets; restore it and delete its buckets first").WithDocs("https://gregale.dev/docs/apps#purge-a-deleted-app-to-reuse-its-name"))
 		return
 	case errors.Is(err, state.ErrNotFound):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeAppNotPurgeable, "App not purgeable",
-			"the deleted app has no purge deadline; contact support"))
+			"the deleted app has no purge deadline; contact support").WithDocs("https://gregale.dev/docs/apps#purge-a-deleted-app-to-reuse-its-name"))
 		return
 	case err != nil:
 		api.WriteProblem(w, api.ErrCapacity("could not close the restore window"))
@@ -384,7 +384,7 @@ func (s Handler) restoreOwnedApp(w http.ResponseWriter, r *http.Request, acct st
 		if errors.Is(err, state.ErrConflict) {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict,
 				api.CodeAppNotRestorable, "App not restorable",
-				"the deletion window is closed or the app cannot be restored in its current state"))
+				"the deletion window is closed or the app cannot be restored in its current state").WithDocs("https://gregale.dev/docs/apps#retained-deleted-apps"))
 			return
 		}
 		api.WriteProblem(w, trafficproblem.Policy(err, api.ErrCapacity("could not restore app")))

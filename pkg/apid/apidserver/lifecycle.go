@@ -45,7 +45,7 @@ func lifecycleProblem(plan api.Plan, manifest api.AppManifest, maxConcurrency in
 		return api.NewProblem(http.StatusForbidden,
 			api.CodePlanHealthPathWakesNotAllowed,
 			"Health-path wakes are not allowed on this plan",
-			"health_path_wakes requires Pro or Scale; upgrade to use real health probes")
+			"health_path_wakes requires Pro or Scale; upgrade to use real health probes").WithDocs("https://gregale.dev/docs/plans")
 	}
 	if err := manifest.ValidateCrawlerPolicy(); err != nil {
 		return api.NewProblem(http.StatusBadRequest, api.CodeValidation,

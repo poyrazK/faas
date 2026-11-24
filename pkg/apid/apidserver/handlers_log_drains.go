@@ -208,7 +208,7 @@ func (s *server) listAppLogDrains(w http.ResponseWriter, r *http.Request, acct s
 func (s *server) createAppLogDrain(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.CreateAppLogDrainRequest
 	if err := decodeJSON(r, &req); err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeAppLogDrainInvalid, "Bad request", err.Error()))
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeAppLogDrainInvalid, "Bad request", err.Error()).WithDocs("https://gregale.dev/docs/logs#log-drains"))
 		return
 	}
 	limits, ok := s.logDrainsAllowed(w, acct)
@@ -342,7 +342,7 @@ func (s *server) getAppLogDrainHealth(w http.ResponseWriter, r *http.Request, ac
 func (s *server) updateAppLogDrain(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.UpdateAppLogDrainRequest
 	if err := decodeJSON(r, &req); err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeAppLogDrainInvalid, "Bad request", err.Error()))
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeAppLogDrainInvalid, "Bad request", err.Error()).WithDocs("https://gregale.dev/docs/logs#log-drains"))
 		return
 	}
 	if !appLogDrainUpdateOnlyStops(req) {
