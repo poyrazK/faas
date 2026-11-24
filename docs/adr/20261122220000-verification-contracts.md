@@ -105,3 +105,48 @@ retried with the delivery. A missing file keeps the stored contract. PR
 preview apps (`pr-N-*`) apply the PR's file to themselves. Branch previews
 share the parent app's ID, so they keep the parent's stored contract: an
 unmerged pull request never changes production's checks.
+
+## Amendment 2 (2026-11-24): secret references in check headers
+
+Checks of apps behind authentication need a credential, and the contract is
+stored as plain configuration. An HTTP check's header value may now reference
+one of the app's own secrets as `${secret:NAME}` (owner decision: the app's
+env secrets, not a second secret store and not a platform-signed token). The
+reference is substituted only in HTTP header values; anywhere else it is a
+validation error. A contract references at most
+`api.VerificationContractMaxSecretRefs` (8) distinct names.
+
+Only secretd opens app secrets, and it trusts a node only for apps it owns,
+holds a grant for, or builds. Activation runs in whichever imaged takes the
+deployment's notification, so before opening anything imaged writes a
+`deployment_verification_leases` row naming itself, valid for the contract's
+budget plus `api.VerificationLeaseGrace`, and deletes it when the run ends.
+The new secretd RPC `OpenVerificationSecrets` opens a key only when:
+
+- the caller is the active node named on the deployment's unexpired lease;
+- the deployment is still a candidate (pending, building, imaging or
+  snapshotting), so a live or finished deployment opens nothing;
+- the app's stored contract references the key;
+- the secret is read from `app_secrets` in the deployment's own scope, its
+  envelope bound to the app's resource account.
+
+Every open is recorded in `secret_open_audit` (via `grant`, like a build's)
+and counts against the node's distinct-app budget. A key the scope does not
+hold comes back as missing, and the check fails with `verify_secret_missing`,
+naming the secret: that is the customer's configuration, so it blocks like a
+failed assertion. secretd being unreachable, or a node without a secretd
+client, is unavailable evidence and is retried through the hosting
+verification recovery window.
+
+The value goes only to the candidate, which already holds it as env, through
+the candidate-pinned session; reports, receipts and logs carry the name,
+never the value. Like the lease rows the registry path trusts
+(`deployment_image_preparations`), the lease is written by compute; a
+compromised node could name itself on a candidate of another app, but could
+open only secrets that app's contract references, and every such open is
+audited and budgeted.
+
+Rollout: the migration and secretd ship before imaged. An imaged that calls
+a secretd without the RPC gets Unimplemented, which is unavailable evidence,
+so a deployment whose contract uses references waits rather than promoting
+unverified.

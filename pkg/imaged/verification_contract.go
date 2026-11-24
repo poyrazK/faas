@@ -38,6 +38,19 @@ type ContractVerification struct {
 	Released func(platformflags.Subject) bool
 	// QueryPoll is how often a SQL check's handoff row is read; zero is 250ms.
 	QueryPoll time.Duration
+	// Secrets opens the app secrets check headers reference (amendment 2);
+	// nil makes a contract with references unavailable evidence.
+	Secrets VerificationSecretOpener
+	// NodeName is this node's name, recorded on the verification lease
+	// secretd checks.
+	NodeName string
+}
+
+// VerificationSecretOpener asks secretd for the app secrets a contract's
+// check headers reference. missing lists names the deployment's scope does
+// not hold.
+type VerificationSecretOpener interface {
+	OpenVerificationSecrets(ctx context.Context, appID, deploymentID string, keys []string) (values map[string]string, missing []string, err error)
 }
 
 // ApplyVerificationContract runs the app's contract, when it has one and the
@@ -89,6 +102,16 @@ func ApplyVerificationContract(ctx context.Context, cv ContractVerification, app
 		return contractUnavailable(smoke, apihostingreceipt.SmokeErrorGatewayUnavailable, err)
 	}
 	exec := &contractExecutor{session: session, app: app, dep: dep, poll: cv.QueryPoll}
+	if refs := contract.SecretRefs(); len(refs) > 0 {
+		release, err := openVerificationSecrets(runCtx, cv, app, dep, refs, budget, exec)
+		if err != nil {
+			if ctx.Err() != nil {
+				return smoke, ctx.Err()
+			}
+			return contractUnavailable(smoke, apihostingreceipt.SmokeErrorContractUnavailable, err)
+		}
+		defer release()
+	}
 	if queries, ok := cv.Store.(state.VerificationQueryStore); ok {
 		exec.queries = queries
 	}
@@ -134,12 +157,42 @@ func contractUnavailable(smoke apihostingreceipt.SmokeResult, code string, cause
 	return smoke, unavailable
 }
 
+// openVerificationSecrets records this node as the deployment's verifier and
+// asks secretd for the referenced secrets. The returned release clears the
+// values and ends the lease.
+func openVerificationSecrets(ctx context.Context, cv ContractVerification, app state.App, dep state.Deployment, refs []string, budget time.Duration, exec *contractExecutor) (func(), error) {
+	leases, ok := cv.Store.(state.VerificationLeaseStore)
+	if cv.Secrets == nil || cv.NodeName == "" || !ok {
+		return nil, errors.New("this node cannot open the secrets the verification contract references")
+	}
+	until := time.Now().Add(budget + api.VerificationLeaseGrace)
+	if err := leases.PutDeploymentVerificationLease(ctx, dep.ID, app.ID, cv.NodeName, until); err != nil {
+		return nil, fmt.Errorf("record verification lease: %w", err)
+	}
+	release := func() {
+		clear(exec.secrets)
+		// A lease that cannot be deleted expires on its own; secretd checks
+		// the expiry.
+		_ = leases.DeleteDeploymentVerificationLease(context.WithoutCancel(ctx), dep.ID)
+	}
+	values, _, err := cv.Secrets.OpenVerificationSecrets(ctx, app.ID, dep.ID, refs)
+	if err != nil {
+		release()
+		return nil, fmt.Errorf("open verification secrets: %w", err)
+	}
+	exec.secrets = values
+	return release, nil
+}
+
 type contractExecutor struct {
 	session *apihostingreceipt.CandidateSession
 	queries state.VerificationQueryStore
 	app     state.App
 	dep     state.Deployment
 	poll    time.Duration
+	// secrets holds the referenced app secrets; a reference it lacks is a
+	// secret the deployment's scope does not hold.
+	secrets map[string]string
 }
 
 func (e *contractExecutor) HTTP(ctx context.Context, check verifycontract.HTTPCheck) (verifycontract.HTTPResponse, error) {
@@ -160,7 +213,12 @@ func (e *contractExecutor) HTTP(ctx context.Context, check verifycontract.HTTPCh
 		return verifycontract.HTTPResponse{}, &verifycontract.CheckError{Code: verifycontract.CodeRequestFailed, Message: "request could not be built"}
 	}
 	for name, value := range check.Headers {
-		req.Header.Set(name, value)
+		expanded, err := verifycontract.ExpandSecrets(value, e.secrets)
+		if err != nil {
+			// The message names the secret, never a value.
+			return verifycontract.HTTPResponse{}, &verifycontract.CheckError{Code: verifycontract.CodeSecretMissing, Message: err.Error()}
+		}
+		req.Header.Set(name, expanded)
 	}
 	if contentType != "" && req.Header.Get("Content-Type") == "" {
 		req.Header.Set("Content-Type", contentType)

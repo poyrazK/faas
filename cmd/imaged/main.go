@@ -695,7 +695,15 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 				return notifier.Notify(ctx, db.NotifyDeploymentSmokeChallenge, string(payload))
 			},
 		}
-		contracts := imaged.ContractVerification{Verifier: verifier, Store: store, Released: releases.verificationContracts}
+		// ADR-20261122220000 amendment 2: contract headers' ${secret:NAME}
+		// references open through secretd for this node's verification lease.
+		verificationSecrets, closeVerificationSecrets, err := verificationSecretsFromEnv(ctx, getenv, log)
+		if err != nil {
+			return err
+		}
+		defer closeVerificationSecrets()
+		contracts := imaged.ContractVerification{Verifier: verifier, Store: store, Released: releases.verificationContracts,
+			Secrets: verificationSecrets, NodeName: getenv("FAAS_NODE_NAME")}
 		h.WithHostingSmoke(func(ctx context.Context, app state.App, dep state.Deployment) (apihostingreceipt.SmokeResult, error) {
 			smoke, err := imaged.VerifyHostingDeploymentWithContract(ctx, verifier, store, app, dep)
 			if err != nil {
