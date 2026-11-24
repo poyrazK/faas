@@ -40,6 +40,10 @@ func TestCreateDesktop(t *testing.T) {
 		t.Fatalf("ensured %+v", ensured)
 	}
 
+	if _, code := f.create(t, pro(), `{"preset":"desktop","ram_mb":1536}`); code != http.StatusCreated || f.store.admitted.RAMMB != api.SandboxDesktopRAMMBMin {
+		t.Fatalf("desktop at the RAM minimum = %d, admitted %d MB", code, f.store.admitted.RAMMB)
+	}
+
 	f.h.PreviewDomain = previewDomain
 	if _, code := f.create(t, pro(), `{"preset":"desktop","resolution":"1280x800","ports":[{"port":3000},{"port":6081}]}`); code != http.StatusCreated {
 		t.Fatalf("desktop with previews = %d", code)
@@ -74,7 +78,7 @@ func TestCreateDesktopRefused(t *testing.T) {
 		{"an image", pro(), `{"preset":"desktop","image":"ghcr.io/acme/box"}`, http.StatusBadRequest},
 		{"a template", pro(), `{"preset":"desktop","template":"mine"}`, http.StatusBadRequest},
 		{"browser", pro(), `{"preset":"desktop","browser":true}`, http.StatusBadRequest},
-		{"too little RAM", pro(), `{"preset":"desktop","ram_mb":1024}`, http.StatusBadRequest},
+		{"too little RAM", pro(), `{"preset":"desktop","ram_mb":1535}`, http.StatusBadRequest},
 		{"too wide", pro(), `{"preset":"desktop","resolution":"2560x1080"}`, http.StatusBadRequest},
 		{"too short", pro(), `{"preset":"desktop","resolution":"1024x400"}`, http.StatusBadRequest},
 		{"not WxH", pro(), `{"preset":"desktop","resolution":"1024*768"}`, http.StatusBadRequest},

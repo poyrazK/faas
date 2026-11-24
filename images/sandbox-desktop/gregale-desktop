@@ -108,23 +108,28 @@ def key_chord(value):
 
 
 def xdotool_argv(cmd, args, size):
-    """The xdotool argv for an input command; raises UsageError."""
+    """The xdotool argv for an input command; raises UsageError.
+
+    mousemove has no --sync: xdotool's --sync waits for the pointer to move
+    and so never returns when it is already at the target. The events of
+    one xdotool call reach the X server in order, so a click still lands
+    after its move."""
     if cmd == "click":
         x, y = parse_point(args.x, args.y, size)
-        argv = ["xdotool", "mousemove", "--sync", x, y, "click"]
+        argv = ["xdotool", "mousemove", x, y, "click"]
         if args.double:
             argv += ["--repeat", "2", "--delay", "80"]
         return argv + [BUTTONS[args.button]]
     if cmd == "move":
         x, y = parse_point(args.x, args.y, size)
-        return ["xdotool", "mousemove", "--sync", x, y]
+        return ["xdotool", "mousemove", x, y]
     if cmd in ("down", "up"):
         return ["xdotool", "mouse" + cmd, BUTTONS[args.button]]
     if cmd == "drag":
         x1, y1 = parse_point(args.x1, args.y1, size)
         x2, y2 = parse_point(args.x2, args.y2, size)
-        return ["xdotool", "mousemove", "--sync", x1, y1, "mousedown", "1",
-                "sleep", "0.1", "mousemove", "--sync", x2, y2, "sleep", "0.1", "mouseup", "1"]
+        return ["xdotool", "mousemove", x1, y1, "mousedown", "1",
+                "sleep", "0.1", "mousemove", x2, y2, "sleep", "0.1", "mouseup", "1"]
     if cmd == "scroll":
         if not 1 <= args.amount <= SCROLL_MAX:
             raise UsageError(f"scroll amount must be 1-{SCROLL_MAX}; got {args.amount}")
@@ -257,11 +262,23 @@ def panel_up():
     return mapped("xfdesktop") and mapped("xfce4-panel")
 
 
-def cmd_wait(_args):
-    ok = os.path.exists(X_SOCKET) and all(listening(p) for p in (VNC_PORT, VNC_VIEW_ONLY_PORT, VIEW_PORT, VIEW_ONLY_PORT))
-    if not ok or not panel_up():
-        print("the desktop is not ready", file=sys.stderr)
-        sys.exit(1)
+def desktop_ready():
+    return (os.path.exists(X_SOCKET) and all(listening(p) for p in (VNC_PORT, VNC_VIEW_ONLY_PORT, VIEW_PORT, VIEW_ONLY_PORT))
+            and panel_up())
+
+
+def cmd_wait(args):
+    """Waits up to --timeout seconds for the desktop, checking every 50 ms.
+    guest-init runs this as the ready command and retries it only once a
+    second, so waiting here lets the session be ready the moment the
+    desktop is. The default stays under guest-init's 10 s bound on one
+    attempt; --timeout 0 checks once."""
+    deadline = time.monotonic() + max(args.timeout, 0)
+    while not desktop_ready():
+        if time.monotonic() >= deadline:
+            print("the desktop is not ready", file=sys.stderr)
+            sys.exit(1)
+        time.sleep(0.05)
 
 
 def desktop_processes():
@@ -335,7 +352,8 @@ def parser():
     sub = p.add_subparsers(dest="cmd", required=True, parser_class=Parser)
     s = sub.add_parser("start")
     s.add_argument("--resolution", required=True)
-    sub.add_parser("wait")
+    s = sub.add_parser("wait")
+    s.add_argument("--timeout", type=float, default=8.0)
     s = sub.add_parser("screenshot")
     s.add_argument("--format", choices=["png", "jpeg"], default="png")
     s.add_argument("--quality", type=int, default=80)

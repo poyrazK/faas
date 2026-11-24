@@ -27,14 +27,14 @@ def argv_for(*cli):
 class InputArgv(unittest.TestCase):
     def test_commands(self):
         cases = {
-            ("click", "10", "20"): ["xdotool", "mousemove", "--sync", "10", "20", "click", "1"],
+            ("click", "10", "20"): ["xdotool", "mousemove", "10", "20", "click", "1"],
             ("click", "10", "20", "--button", "right", "--double"):
-                ["xdotool", "mousemove", "--sync", "10", "20", "click", "--repeat", "2", "--delay", "80", "3"],
-            ("move", "0", "767"): ["xdotool", "mousemove", "--sync", "0", "767"],
+                ["xdotool", "mousemove", "10", "20", "click", "--repeat", "2", "--delay", "80", "3"],
+            ("move", "0", "767"): ["xdotool", "mousemove", "0", "767"],
             ("down", "--button", "middle"): ["xdotool", "mousedown", "2"],
             ("up",): ["xdotool", "mouseup", "1"],
-            ("drag", "1", "2", "3", "4"): ["xdotool", "mousemove", "--sync", "1", "2", "mousedown", "1", "sleep", "0.1",
-                                           "mousemove", "--sync", "3", "4", "sleep", "0.1", "mouseup", "1"],
+            ("drag", "1", "2", "3", "4"): ["xdotool", "mousemove", "1", "2", "mousedown", "1", "sleep", "0.1",
+                                           "mousemove", "3", "4", "sleep", "0.1", "mouseup", "1"],
             ("scroll", "down"): ["xdotool", "click", "--repeat", "1", "--delay", "30", "5"],
             ("scroll", "left", "3"): ["xdotool", "click", "--repeat", "3", "--delay", "30", "6"],
             ("type", "--", "-rf /; $(reboot)"): ["xdotool", "type", "--clearmodifiers", "--delay", "8", "--", "-rf /; $(reboot)"],
@@ -107,6 +107,32 @@ class Processes(unittest.TestCase):
         self.assertIn("-viewonly", procs["x11vnc-viewonly"])
         self.assertEqual(procs["novnc"][-2:], ["127.0.0.1:6080", "127.0.0.1:5900"])
         self.assertEqual(procs["novnc-viewonly"][-2:], ["127.0.0.1:6081", "127.0.0.1:5901"])
+
+
+class Wait(unittest.TestCase):
+    def run_wait(self, answers, *cli):
+        calls = []
+
+        def ready():
+            calls.append(1)
+            return answers[min(len(calls), len(answers)) - 1]
+        real, gd.desktop_ready = gd.desktop_ready, ready
+        try:
+            gd.cmd_wait(gd.parser().parse_args(["wait", *cli]))
+            return len(calls), 0
+        except SystemExit as e:
+            return len(calls), e.code
+        finally:
+            gd.desktop_ready = real
+
+    def test_waits_until_ready(self):
+        self.assertEqual(self.run_wait([False, False, True]), (3, 0))
+
+    def test_timeout_zero_checks_once(self):
+        self.assertEqual(self.run_wait([False], "--timeout", "0"), (1, 1))
+
+    def test_default_stays_under_guest_init_attempt_bound(self):
+        self.assertLess(gd.parser().parse_args(["wait"]).timeout, 10)
 
 
 if __name__ == "__main__":

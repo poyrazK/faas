@@ -24,11 +24,7 @@ docker run -d --name "${name}" --platform "${platform}" --network none --user 10
 gd() { docker exec "${name}" /usr/local/bin/gregale-desktop "$@"; }
 
 started=$(date +%s%N)
-for _ in $(seq 1 90); do
-  if gd wait 2>/dev/null; then break; fi
-  sleep 0.5
-done
-gd wait
+gd wait --timeout 45
 echo "ready in $(( ($(date +%s%N) - started) / 1000000 )) ms"
 
 size=$(gd size)

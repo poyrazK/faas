@@ -11710,14 +11710,16 @@ var (
 	// Sandbox desktops (ADR-20261124075005). SandboxDesktopEnabled admits
 	// preset desktop on the plan. A desktop has at least
 	// SandboxDesktopRAMMBMin and defaults to SandboxDesktopDefaultRAMMB, within
-	// the plan's RAM cap: Xfce, x11vnc and Chromium sit near 1 GB. Its screen
+	// the plan's RAM cap: an idle desktop resides near 500 MB and one with
+	// Chromium open near 950 MB, so the minimum leaves Chromium about 600 MB
+	// of headroom and the default room for a heavier page. Its screen
 	// is SandboxDesktopDefaultResolution unless the create names one from
 	// SandboxDesktopWidthMin x SandboxDesktopHeightMin to
 	// SandboxDesktopWidthMax x SandboxDesktopHeightMax. The desktop must be
 	// ready within SandboxDesktopReadyTimeoutSec, and one gregale-desktop type
 	// call enters at most SandboxDesktopTypeMaxChars.
 	SandboxDesktopEnabled           = [4]bool{false, false, true, true}
-	SandboxDesktopRAMMBMin          = 2048
+	SandboxDesktopRAMMBMin          = 1536
 	SandboxDesktopDefaultRAMMB      = 2048
 	SandboxDesktopDefaultResolution = "1024x768"
 	SandboxDesktopWidthMin          = 640

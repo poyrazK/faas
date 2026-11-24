@@ -42,8 +42,8 @@ func (j *sandboxJourney) desktop(t *testing.T) {
 		t.Fatalf("create desktop answered no id: %s", tail(string(res.body), 500))
 	}
 	t.Cleanup(func() { j.tg.apiCall(http.MethodDelete, "/v1/sandboxes/"+v.ID, nil, j.key) })
-	if v.Resolution != "1024x768" || v.RAMMB < 2048 {
-		t.Errorf("desktop view: resolution %q, ram_mb %d; want 1024x768 and at least 2048", v.Resolution, v.RAMMB)
+	if v.Resolution != "1024x768" || v.RAMMB < 1536 {
+		t.Errorf("desktop view: resolution %q, ram_mb %d; want 1024x768 and at least 1536", v.Resolution, v.RAMMB)
 	}
 	token := j.waitReady(t, v.ID)
 

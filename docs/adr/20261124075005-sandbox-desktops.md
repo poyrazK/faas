@@ -19,7 +19,7 @@ A desktop is just more programs in the guest: an X server, a window manager, a V
   - The preset takes no `image`, `template`, `pull`, `registry_auth` or `browser`. The desktop image has Chromium; the `browser` flag is for the headless agent-base browser.
   - It works with `kind: "persistent"` (pause, resume, fork keep the open windows) and with every network mode. A desktop without `web` network can still be driven; its browser just cannot reach the internet.
 - `resolution: "WIDTHxHEIGHT"` sets the screen. The default is `SandboxDesktopDefaultResolution` (1024x768: computer-use models are trained on and scale screenshots to about this size). Width is 640–`SandboxDesktopWidthMax` (1920), height 480–`SandboxDesktopHeightMax` (1080). It is refused on any other preset.
-- RAM defaults to `SandboxDesktopDefaultRAMMB` (2048) and may not go below `SandboxDesktopRAMMBMin` (2048). An ephemeral session gets the plan's `AgentRunVCPUMax` vCPUs (2 on Pro and Scale); a persistent one may ask for more.
+- RAM defaults to `SandboxDesktopDefaultRAMMB` (2048) and may not go below `SandboxDesktopRAMMBMin` (1536). An ephemeral session gets the plan's `AgentRunVCPUMax` vCPUs (2 on Pro and Scale); a persistent one may ask for more.
 - **Plans:** `SandboxDesktopEnabled` is false on Free and Hobby. A create there is a limit error.
 
 ### 2. The session row and who starts the desktop
@@ -101,14 +101,14 @@ Capture and restore are from runs with the work directory on the host's NVMe dri
 
 The image is 1.75 GB (1.2 GB unpacked root). In Docker on the same host the desktop is ready in 0.9–1.6 s.
 
-`gregale-desktop start` runs Xfce's parts (xfsettingsd, xfwm4, xfdesktop, xfce4-panel) at once under one D-Bus session instead of through `xfce4-session`. A boot breakdown in the metal test showed `xfce4-session` starting them one by one, with the panel appearing 5.5 s after Xvfb on a cold guest. It also started the session's autostart extras, which cost about 190 MB idle. With the direct start the guest is ready about 2 s after boot, and the rest of the cold boot is Firecracker bringing the VM up and reading the image drive. `wait` requires xfdesktop's and the panel's windows to be mapped, since with everything starting at once a window can exist before it is on screen. A desktop should still resume from a pause capture or warm snapshot where it can. 2048 MB stays the default: it leaves room for a second browser or a heavier page.
+`gregale-desktop start` runs Xfce's parts (xfsettingsd, xfwm4, xfdesktop, xfce4-panel) at once under one D-Bus session instead of through `xfce4-session`. A boot breakdown in the metal test showed `xfce4-session` starting them one by one, with the panel appearing 5.5 s after Xvfb on a cold guest. It also started the session's autostart extras, which cost about 190 MB idle. With the direct start the guest is ready about 2 s after boot, and the rest of the cold boot is Firecracker bringing the VM up and reading the image drive. `wait` requires xfdesktop's and the panel's windows to be mapped, since with everything starting at once a window can exist before it is on screen. A desktop should still resume from a pause capture or warm snapshot where it can. 2048 MB stays the default: it leaves room for a second browser or a heavier page. The minimum is 1536 MB (2048 MB until these measurements): Chromium's 923 MB leaves about 600 MB of headroom, and since a session is billed on its RAM, a desktop at the minimum costs a quarter less.
 
 ### Limits (`pkg/api/limits.go`)
 
 | Limit | Free | Hobby | Pro | Scale |
 |---|---:|---:|---:|---:|
 | `SandboxDesktopEnabled` | no | no | yes | yes |
-| `SandboxDesktopRAMMBMin` | 2048 | 2048 | 2048 | 2048 |
+| `SandboxDesktopRAMMBMin` | 1536 | 1536 | 1536 | 1536 |
 | `SandboxDesktopDefaultRAMMB` | 2048 | 2048 | 2048 | 2048 |
 | `SandboxDesktopDefaultResolution` | 1024x768 | | | |
 | `SandboxDesktopWidthMax` × `SandboxDesktopHeightMax` | 1920 × 1080 | | | |
