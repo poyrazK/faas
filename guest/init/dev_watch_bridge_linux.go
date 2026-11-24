@@ -66,7 +66,7 @@ func runDevWatchBridge(appPID func() int, want int, log *slog.Logger) {
 		log.Info("dev watch: bridging the runtime port to the development server", "port", want, "target", target)
 		return
 	}
-	log.Warn("dev watch: the development server did not listen", "window", devWatchBridgeWindow)
+	logDevWatchBridgeTimeout(log, devWatchActive.Load(), devWatchBridgeWindow)
 }
 
 // startDevWatchBridge listens on guestIP:port and proxies every connection

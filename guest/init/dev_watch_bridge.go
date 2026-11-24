@@ -1,9 +1,11 @@
 package main
 
 import (
+	"log/slog"
 	"net"
 	"slices"
 	"strconv"
+	"time"
 )
 
 // ADR-1170: the host reaches a guest on the deployment's runtime port
@@ -48,4 +50,18 @@ func devWatchBridgeTarget(want int, guestIP net.IP, listeners []listenSocket) (t
 // waits for the development server's listeners to settle before choosing.
 func sameListeners(a, b []listenSocket) bool {
 	return slices.EqualFunc(a, b, func(x, y listenSocket) bool { return x.Port == y.Port && x.IP.Equal(y.IP) })
+}
+
+// logDevWatchBridgeTimeout reports a watch-mode development server that never
+// listened. The bridge waits for a PID before it can tell whether the image
+// is watch-mode at all, and a function runtime never reports one, so the
+// window also ends in every production function VM; restored from a snapshot
+// with a stale deadline it ended at once. Those log nothing: on prod a
+// function-rust app printed "WARN dev watch: the development server did not
+// listen" on every wake (prod hunt r35).
+func logDevWatchBridgeTimeout(log *slog.Logger, active bool, window time.Duration) {
+	if !active {
+		return
+	}
+	log.Warn("dev watch: the development server did not listen", "window", window)
 }

@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"log/slog"
 	"net"
+	"strings"
 	"testing"
+	"time"
 )
 
 // adr: 1170 — a watch-mode development server is bridged from the runtime
@@ -42,5 +46,17 @@ func TestSameListeners(t *testing.T) {
 	}
 	if sameListeners(a, nil) || sameListeners(a, []listenSocket{{IP: net.ParseIP("::1"), Port: 5174}}) {
 		t.Fatal("different scans compare equal")
+	}
+}
+
+// Prod hunt r35: only a watch-mode image reports a development server that
+// never listened; production function VMs logged it on every wake.
+func TestLogDevWatchBridgeTimeoutOnlyInWatchMode(t *testing.T) {
+	for _, active := range []bool{false, true} {
+		var out bytes.Buffer
+		logDevWatchBridgeTimeout(slog.New(slog.NewTextHandler(&out, nil)), active, 5*time.Minute)
+		if got := strings.Contains(out.String(), "did not listen"); got != active {
+			t.Errorf("active=%v: logged %q", active, out.String())
+		}
 	}
 }
