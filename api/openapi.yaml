@@ -103242,6 +103242,10 @@ components:
           description: "Per-deployment token-gate flag. When true, the gateway demands `Authorization: Bearer <token>` on every request; cross-account tokens receive 403 insufficient_scope. Pro/Scale only — Free/Hobby PATCH-true is rejected with 403 plan_require_authn_not_allowed."
           type: boolean
           example: false
+        declared_access:
+          description: "The access the app's source declares in gregale.yaml: `public` (no Gregale API key) or `key`. Every production deploy applies it. Omitted when the source declares none."
+          type: string
+          enum: [public, key]
         consumer_auth_mode:
           description: "End-customer credential policy. optional accepts anonymous requests and attributes valid consumer keys; required mandates a valid consumer key."
           type: string

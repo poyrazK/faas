@@ -2721,3 +2721,12 @@ func AvailabilityQueryExcluding(appIDs []string) string { return availabilityQue
 
 // StatusAPIAvailabilityQuery exposes statusAPIAvailabilityQuery.
 const StatusAPIAvailabilityQuery = statusAPIAvailabilityQuery
+
+// StageSourceDeploymentManifest exposes the source deploy manifest staging
+// (ADR-20261124090000 amendment 1 applies access there).
+func (r *server) StageSourceDeploymentManifest(p0 *http.Request, p1 state.Account, p2 state.App, p3 *gregalemanifest.Manifest, p4 state.Deployment, p5 bool) (sourceRefManifestStaged, *api.Problem) {
+	return r.stageSourceDeploymentManifest(p0, p1, p2, p3, p4, p5)
+}
+
+// SourceRefManifestStaged is the staged manifest a rollback undoes.
+type SourceRefManifestStaged = sourceRefManifestStaged
