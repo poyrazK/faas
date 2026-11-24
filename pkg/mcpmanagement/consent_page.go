@@ -41,7 +41,14 @@ func consentPage(v consentView) string {
 	w(`<p class="fine">Complete sign-in and access review within `, strconv.Itoa(int(api.MCPBrowserAuthorizationTTL/time.Minute)), ` minutes of starting this connection.</p>`)
 	if v.Account == "" && v.LoginURL == "" {
 		w(`<details><summary>Tools and optional access</summary><p class="fine">Core tools cover apps, deployments, logs and health. Choosing more tools does not grant extra permissions.</p><label>Agent tools <select name="toolsets" form="gregale-connect">`)
-		for _, choice := range []struct{ value, label string }{{"core", "Core tools (default)"}, {"core,release,provision,operate", "Deploy and operate"}, {"core,diagnose,operate", "Diagnose and recover"}, {"core,build-tools,registry", "Build and publish tools"}, {"core,registry", "Discover approved tools"}, {"core,registry,invoke", "Use approved tools"}, {"all", "All available tools"}} {
+		coreLabel := "Core tools (default)"
+		if v.OfferWrites {
+			// An empty selection follows the access choice: deploy tools with
+			// deploy access, core tools when inspecting.
+			w(`<option value="" selected>Default for the access you choose</option>`)
+			coreLabel = "Core tools"
+		}
+		for _, choice := range []struct{ value, label string }{{"core", coreLabel}, {"core,release,provision,operate", "Deploy and operate"}, {"core,diagnose,operate", "Diagnose and recover"}, {"core,build-tools,registry", "Build and publish tools"}, {"core,registry", "Discover approved tools"}, {"core,registry,invoke", "Use approved tools"}, {"all", "All available tools"}} {
 			if _, err := connectionToolsets(choice.value, v.MaximumToolsets); err == nil {
 				w(`<option value="`, e(choice.value), `">`, e(choice.label), `</option>`)
 			}

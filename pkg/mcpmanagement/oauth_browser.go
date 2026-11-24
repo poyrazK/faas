@@ -22,10 +22,10 @@ type consentView struct {
 	// ConsentAction is the consent endpoint, under /mcp on the hosted bridge.
 	ConsentAction string
 	// Capabilities describe the extra scopes chosen before sign-in.
-	Capabilities       []string
-	RequestID          string
-	CSRF               string
-	Writes bool
+	Capabilities []string
+	RequestID    string
+	CSRF         string
+	Writes       bool
 	// OfferWrites: the client asked only to inspect, but this bridge allows
 	// writes, so the page before sign-in lets the person choose deploy
 	// access (ADR-20261028205920 amendment 1).

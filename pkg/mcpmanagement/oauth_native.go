@@ -117,11 +117,18 @@ func (r *remoteServer) startNativeLogin(ctx context.Context, w http.ResponseWrit
 	}
 	writes := slices.Contains(flow.Scopes, scopeWrite)
 	toolsetSpec := req.PostForm.Get("toolsets")
-	if r.offersWrites(flow) && req.PostForm.Get("access") == accessDeploy {
-		writes = true
-		toolsetSpec = deployToolsets(toolsetSpec, r.opts.Toolsets)
+	chosen := req.PostForm["capability"]
+	if r.offersWrites(flow) {
+		if req.PostForm.Get("access") == accessDeploy {
+			writes = true
+			toolsetSpec = deployToolsets(toolsetSpec, r.opts.Toolsets)
+		} else {
+			// The extras need write access; ticking one and then choosing
+			// "Inspect only" must not fail the connection.
+			chosen = readOnlyCapabilities(chosen)
+		}
 	}
-	capabilities, err := chosenCapabilities(req.PostForm["capability"], writes)
+	capabilities, err := chosenCapabilities(chosen, writes)
 	if err != nil {
 		oauthError(w, 400, "invalid_request", err.Error())
 		return

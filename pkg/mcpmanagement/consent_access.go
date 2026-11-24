@@ -26,10 +26,17 @@ func (r *remoteServer) offersWrites(flow *authorizationRequest) bool {
 	return r.opts.AllowWrites && r.opts.Onboarding == "browser" && flow.NativeCode == "" && flow.GrantID == "" && !slices.Contains(flow.Scopes, scopeWrite)
 }
 
-// deployToolsets upgrades the default core selection to the deploy tools when
-// this bridge offers them; any other explicit selection is kept.
+// readOnlyCapabilities keeps the chosen capabilities a read-only connection
+// may carry.
+func readOnlyCapabilities(values []string) []string {
+	return slices.DeleteFunc(slices.Clone(values), func(v string) bool { return !slices.Contains(readCapabilities, v) })
+}
+
+// deployToolsets turns the default selection (empty: "Default for the access
+// you choose") into the deploy tools when this bridge offers them; an
+// explicit selection, core tools included, is kept.
 func deployToolsets(spec string, maximum []string) string {
-	if trimmed := strings.TrimSpace(spec); trimmed != "" && trimmed != ToolsetCore {
+	if strings.TrimSpace(spec) != "" {
 		return spec
 	}
 	if _, err := connectionToolsets(deployToolsetSpec, maximum); err != nil {
