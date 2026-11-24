@@ -106,7 +106,7 @@
     },
     "profiled": {
       "lane": "compute",
-      "services": [{"name": "profiled", "host": "compute-only", "readyz": "http://127.0.0.1:9160/readyz"}]
+      "services": [{"name": "profiled", "host": "compute-only", "optional": true, "readyz": "http://127.0.0.1:9160/readyz"}]
     },
     "hostage-gen": {"lane": "compute"},
     "mailctl": {"lane": "tool"},
