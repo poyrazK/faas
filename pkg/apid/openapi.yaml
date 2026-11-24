@@ -65456,7 +65456,7 @@ paths:
             schema: { $ref: '#/components/schemas/SavedInsightRequest' }
       responses:
         '201':
-          description: The saved insight.
+          description: The created saved insight.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SavedInsight' }
@@ -93528,7 +93528,7 @@ components:
         where: { type: object, maxProperties: 10, additionalProperties: { type: string } }
         interval: { type: string, enum: [day, hour], default: day }
         unit: { type: string, enum: [customer, subject], default: customer }
-        by: { type: string, description: "flag:KEY or property:KEY." }
+        by: { type: string, description: "Breakdown of the series: flag:KEY or property:KEY." }
         measure: { type: string, enum: [events, value], default: events, description: "What the insight's value totals." }
     SavedInsightAlert:
       description: "Fires when the saved insight's value compares to threshold; funnel and retention values are fractions."
