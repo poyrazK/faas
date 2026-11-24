@@ -4,9 +4,9 @@ import "strings"
 
 // lenientJSON returns s with what the build's package.json readers accept
 // (Railpack's hujson, Bun's JSONC reader) blanked out: // and /* */
-// comments and a trailing comma before } or ]. npm itself rejects these
-// with a clear EJSONPARSE error in the build log, so they are left to it.
-// Blanked bytes become spaces and newlines stay, so a parse error's offset
+// comments and a trailing comma before } or ]. They are blanked because
+// those readers accept them; npm does not, but its EJSONPARSE error names
+// the line in the build log, so the build reports them itself. Blanked bytes become spaces and newlines stay, so a parse error's offset
 // and line still point into the original text. Text inside JSON strings is
 // never touched. A byte order mark is not stripped: hujson rejects it.
 func lenientJSON(s string) string {

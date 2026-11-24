@@ -9,8 +9,9 @@ import (
 )
 
 // Prod 2026-11-23: an invalid package.json built into an image with no app
-// layer and failed later with an internal error blamed on the platform. Only
-// what no Node package manager reads is a problem.
+// layer and failed later with an internal error blamed on the platform. What
+// Railpack's hujson reader rejects is a problem (including a leading BOM,
+// prod 2026-11-24); comments and trailing commas are not.
 func TestNodePackageJSONProblemAtRoot(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
