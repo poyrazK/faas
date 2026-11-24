@@ -28,6 +28,9 @@ var (
 	// ErrOAuthLinkConflict: the identity is linked to another key's
 	// consumer; the app owner unlinks it first.
 	ErrOAuthLinkConflict = errors.New("apidgrpc: the identity is linked to another consumer")
+	// ErrOAuthLinkInvalidIdentity: the caller's issuer or subject cannot be
+	// an identity (too long, not UTF-8).
+	ErrOAuthLinkInvalidIdentity = errors.New("apidgrpc: the caller's identity is invalid")
 )
 
 // LinkOAuthConsumer points a verified OAuth caller at the consumer whose
@@ -43,8 +46,10 @@ func (c OAuthConsumers) LinkOAuthConsumer(ctx context.Context, accountID, appID,
 		return resp.GetConsumerId(), nil
 	case codes.FailedPrecondition, codes.Unimplemented, codes.NotFound:
 		return "", ErrOAuthConsumersOff
-	case codes.PermissionDenied, codes.InvalidArgument:
+	case codes.PermissionDenied:
 		return "", ErrOAuthLinkKeyRejected
+	case codes.InvalidArgument:
+		return "", ErrOAuthLinkInvalidIdentity
 	case codes.AlreadyExists:
 		return "", ErrOAuthLinkConflict
 	}

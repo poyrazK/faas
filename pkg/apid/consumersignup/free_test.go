@@ -32,6 +32,12 @@ func TestPlanChargesNothing(t *testing.T) {
 		"priced tier": {[]state.APIConsumerRateCard{card("free", "request", past, func(c *state.APIConsumerRateCard) {
 			c.Tiers = []state.APIConsumerRateCardTier{{PriceMillicentsPerUnit: 2}}
 		})}, false},
+		"model price": {[]state.APIConsumerRateCard{card("free", "token", past, func(c *state.APIConsumerRateCard) {
+			c.ModelPrices = map[string]int64{"gpt-4o": 500}
+		})}, false},
+		"zero model price": {[]state.APIConsumerRateCard{card("free", "token", past, func(c *state.APIConsumerRateCard) {
+			c.ModelPrices = map[string]int64{"gpt-4o": 0}
+		})}, true},
 		"future charges": {[]state.APIConsumerRateCard{card("free", "request", past, nil), card("free", "request", future, func(c *state.APIConsumerRateCard) { c.PriceMillicentsPerUnit = 1 })}, false},
 		"old charge superseded": {[]state.APIConsumerRateCard{
 			card("free", "request", past.Add(-time.Hour), func(c *state.APIConsumerRateCard) { c.PriceMillicentsPerUnit = 1 }),

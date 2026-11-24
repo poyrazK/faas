@@ -66,6 +66,10 @@ func (h *Handler) linkOAuthConsumer(w http.ResponseWriter, r *http.Request, app 
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeConsumerLinkKeyRejected, "Key rejected",
 			"the key is not a live consumer key for this MCP server"))
 		return
+	case errors.Is(err, apidgrpc.ErrOAuthLinkInvalidIdentity):
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid sign-in",
+			"your sign-in's issuer or subject is too long to link"))
+		return
 	case errors.Is(err, apidgrpc.ErrOAuthLinkConflict):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConsumerLinkConflict, "Already linked",
 			"your sign-in is linked to another consumer key; ask the MCP server's owner to unlink it"))

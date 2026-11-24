@@ -135,18 +135,20 @@ func (m *MemStore) EnrollAPIConsumerIdentity(_ context.Context, in APIConsumerEn
 	in.Email = apiConsumerIdentityEmail(in.Email)
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	settings, ok := m.apiConsumerSignupSettings[in.AppID]
-	if !ok || settings.AccountID != in.AccountID || !apiConsumerOAuthEnrollable(settings) {
-		return APIConsumerIdentity{}, APIConsumer{}, false, ErrAPIConsumerOAuthOff
-	}
+	// Turning sign-up or OAuth consumers off stops new enrollments only:
+	// callers who already joined stay metered and limited.
 	for _, id := range m.apiConsumerIdentities {
-		if id.AppID == in.AppID && id.Issuer == in.Issuer && id.Subject == in.Subject {
+		if id.AccountID == in.AccountID && id.AppID == in.AppID && id.Issuer == in.Issuer && id.Subject == in.Subject {
 			c, ok := m.apiConsumers[id.ConsumerID]
 			if !ok {
 				return APIConsumerIdentity{}, APIConsumer{}, false, ErrNotFound
 			}
 			return id, c, false, nil
 		}
+	}
+	settings, ok := m.apiConsumerSignupSettings[in.AppID]
+	if !ok || settings.AccountID != in.AccountID || !apiConsumerOAuthEnrollable(settings) {
+		return APIConsumerIdentity{}, APIConsumer{}, false, ErrAPIConsumerOAuthOff
 	}
 	now := time.Now().UTC()
 	ref := apiConsumerIdentityRef(in.Issuer, in.Subject)

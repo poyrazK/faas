@@ -20,6 +20,11 @@ func rateCardChargesNothing(card state.APIConsumerRateCard) bool {
 	if card.PriceMillicentsPerUnit != 0 || card.BaseFeeMillicentsPerMonth != 0 || card.MinimumMillicentsPerMonth != 0 {
 		return false
 	}
+	for _, price := range card.ModelPrices {
+		if price != 0 {
+			return false
+		}
+	}
 	return !slices.ContainsFunc(card.Tiers, func(t state.APIConsumerRateCardTier) bool { return t.PriceMillicentsPerUnit != 0 })
 }
 
@@ -103,6 +108,22 @@ func (s *Service) FreePlanCardProblem(ctx context.Context, app state.App, card s
 				"pick another free plan first (gregale api consumer signup set APP --free-plan NAME)")
 	}
 	return s.CardlessPlanProblem(ctx, app, card.PlanID)
+}
+
+// PlanChargesNothingNow reports whether planID charges nothing now.
+func (s *Service) PlanChargesNothingNow(ctx context.Context, app state.App, planID string) bool {
+	return PlanChargesNothingIn(ctx, s.Host.Store(), app, planID, s.now())
+}
+
+// PlanChargesNothingIn reports whether planID charges nothing at now,
+// reading the app's rate cards from store; false when they cannot be read.
+func PlanChargesNothingIn(ctx context.Context, store any, app state.App, planID string, now time.Time) bool {
+	cardsStore, ok := store.(state.APIConsumerRateCardStore)
+	if !ok {
+		return false
+	}
+	cards, err := cardsStore.ListAPIConsumerRateCardsForApp(ctx, app.AccountID, app.ID)
+	return err == nil && PlanChargesNothing(cards, planID, now)
 }
 
 // CardlessPlanProblem refuses charging on planID while card-less consumers

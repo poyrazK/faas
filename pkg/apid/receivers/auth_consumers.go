@@ -125,6 +125,8 @@ func (r *authReceiver) LinkOAuthConsumer(ctx context.Context, req *apidpb.LinkOA
 	switch {
 	case errors.Is(err, state.ErrAPIConsumerKeyRejected):
 		return nil, status.Error(codes.PermissionDenied, "the key is not a live key of this app's consumers")
+	case errors.Is(err, state.ErrAPIConsumerIdentityInvalid):
+		return nil, status.Error(codes.InvalidArgument, "invalid identity")
 	case errors.Is(err, state.ErrAPIConsumerOAuthOff):
 		return nil, status.Error(codes.FailedPrecondition, "the app does not enroll OAuth callers")
 	case errors.Is(err, state.ErrConflict):

@@ -114,6 +114,23 @@ func checkAPIConsumerIdentityLinks(t *testing.T, ctx context.Context, st state.S
 	if err != nil || !created || !fresh.Active() || fresh.ID == enrolled.ID {
 		t.Fatalf("enroll after unlink = %+v %v %v; want a new consumer", fresh, created, err)
 	}
+	// Turning sign-up off stops new enrollments, not existing consumers.
+	if _, err := signups.PutAPIConsumerSignupSettings(ctx, state.APIConsumerSignupSettings{AccountID: accountID, AppID: appID, Enabled: false,
+		Provider: state.APIConsumerSignupProviderStripe, PlanIDs: []string{free.ID}, KeyScopes: []string{"write"}, DisplayName: "Tools",
+		DailyLimit: 10, FreePlanID: free.ID, OAuthConsumers: true}); err != nil {
+		t.Fatal(err)
+	}
+	enrollAs := func(subject string) (state.APIConsumer, error) {
+		_, c, _, err := st.(state.APIConsumerIdentityStore).EnrollAPIConsumerIdentity(ctx, state.APIConsumerEnrollment{AccountID: accountID,
+			AppID: appID, Issuer: "https://login.example", Subject: subject, EffectiveFrom: minute, DayStart: minute.Truncate(24 * time.Hour)})
+		return c, err
+	}
+	if c, err := enrollAs("u1"); err != nil || c.ID != fresh.ID {
+		t.Fatalf("existing caller with sign-up off = %+v %v; want its consumer", c, err)
+	}
+	if _, err := enrollAs("u-new"); !errors.Is(err, state.ErrAPIConsumerOAuthOff) {
+		t.Fatalf("new caller with sign-up off = %v; want OAuth off", err)
+	}
 }
 
 // adr: 20261124094745

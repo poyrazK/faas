@@ -235,7 +235,10 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request) {
 	free := planID != "" && planID == set.FreePlanID
 	var key string
 	var livemode bool
-	if !free {
+	if free {
+		// No checkout, but the sign-up still records the connection's mode.
+		_, livemode, _ = s.Host.StripeKey(ctx, app.AccountID)
+	} else {
 		var problem *api.Problem
 		if key, livemode, problem = s.Host.StripeKey(ctx, app.AccountID); problem != nil {
 			s.failed(ctx, app, "", "the Stripe connection cannot be used: "+problem.Detail)
@@ -355,6 +358,12 @@ func (s *Service) completedConsumer(ctx context.Context, w http.ResponseWriter, 
 	}
 	if signup.CheckoutSessionID == "" && signup.PlanID != "" && signup.PlanID == set.FreePlanID {
 		return s.completeFree(ctx, w, app, signup, now)
+	}
+	if signup.CheckoutSessionID == "" {
+		// A free sign-up whose plan stopped being the free plan.
+		api.WriteProblem(w, api.NewProblem(http.StatusGone, api.CodeConsumerSignupExpired, "Sign-up expired",
+			"this API's plans changed since you started; start the sign-up again"))
+		return state.APIConsumer{}, false
 	}
 	key, _, problem := s.Host.StripeKey(ctx, app.AccountID)
 	if problem != nil {

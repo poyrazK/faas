@@ -61,7 +61,7 @@ func validateAPIConsumerIdentityLink(in APIConsumerIdentityLink) error {
 		return err
 	}
 	if _, err := uuid.Parse(in.ConsumerID); err != nil {
-		return fmt.Errorf("consumer identity link: consumer_id must be a UUID: %w", err)
+		return fmt.Errorf("consumer identity link: consumer_id must be a UUID (%v): %w", err, ErrAPIConsumerIdentityInvalid)
 	}
 	return nil
 }

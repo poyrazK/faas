@@ -149,9 +149,9 @@ type upgradeCaller struct {
 	consumer state.APIConsumer
 }
 
-// upgradeCaller verifies token for the route's app. On false it has
-// written the problem.
-func (s *Service) upgradeCaller(w http.ResponseWriter, r *http.Request, token string) (upgradeCaller, bool) {
+// upgradeCaller verifies token for the route's app as of at. On false it
+// has written the problem.
+func (s *Service) upgradeCaller(w http.ResponseWriter, r *http.Request, token string, at time.Time) (upgradeCaller, bool) {
 	if !s.allow(s.Host.ClientIP(r), false) {
 		rateLimited(w, api.CodeConsumerSignupRateLimited, "too many requests from this address", api.ConsumerSignupReadsPerIPPerMinute)
 		return upgradeCaller{}, false
@@ -160,7 +160,7 @@ func (s *Service) upgradeCaller(w http.ResponseWriter, r *http.Request, token st
 	if !ok {
 		return upgradeCaller{}, false
 	}
-	claims, err := s.verifyUpgrade(upgradeTokenPrefix, token, s.now())
+	claims, err := s.verifyUpgrade(upgradeTokenPrefix, token, at)
 	if err != nil || claims.AppID != app.ID {
 		upgradeLinkInvalid(w)
 		return upgradeCaller{}, false
@@ -199,7 +199,7 @@ func (s *Service) currentPlanID(ctx context.Context, c upgradeCaller) string {
 // Upgrade answers the upgrade page with the customer's plan and the plans
 // it can move to.
 func (s *Service) Upgrade(w http.ResponseWriter, r *http.Request) {
-	c, ok := s.upgradeCaller(w, r, r.URL.Query().Get("token"))
+	c, ok := s.upgradeCaller(w, r, r.URL.Query().Get("token"), s.now())
 	if !ok {
 		return
 	}
@@ -222,7 +222,7 @@ func (s *Service) StartUpgrade(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
-	c, ok := s.upgradeCaller(w, r, req.Token)
+	c, ok := s.upgradeCaller(w, r, req.Token, s.now())
 	if !ok {
 		return
 	}
@@ -232,7 +232,7 @@ func (s *Service) StartUpgrade(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid plan", "plan_id must be one of the offered plans"))
 		return
 	}
-	if target == c.set.FreePlanID || state.APIConsumerHasStripeCustomer(c.consumer.ExternalRef) {
+	if target == c.set.FreePlanID || state.APIConsumerHasStripeCustomer(c.consumer.ExternalRef) || s.PlanChargesNothingNow(ctx, c.app, target) {
 		s.changePlan(ctx, w, c, target)
 		return
 	}
@@ -241,45 +241,69 @@ func (s *Service) StartUpgrade(w http.ResponseWriter, r *http.Request) {
 		billedElsewhere(w)
 		return
 	}
+	result, ok := s.startCheckout(ctx, w, c, target, req.Token)
+	if !ok {
+		return
+	}
+	s.Host.Audit(ctx, "api_consumer.upgrade_started", c.app.AccountID, map[string]any{"app_id": c.app.ID, "consumer_id": c.consumer.ID,
+		"plan_id": target})
+	w.Header().Set("Cache-Control", "no-store")
+	httpkit.WriteJSON(w, http.StatusOK, result)
+}
+
+// startCheckout creates c's Stripe customer and the setup Checkout that
+// saves its card, returning to the upgrade page with a complete token. On
+// false it has written the problem.
+func (s *Service) startCheckout(ctx context.Context, w http.ResponseWriter, c upgradeCaller, target, token string) (api.ConsumerUpgradeResult, bool) {
 	key, _, problem := s.Host.StripeKey(ctx, c.app.AccountID)
 	if problem != nil {
 		s.failed(ctx, c.app, "", "the Stripe connection cannot be used: "+problem.Detail)
 		unavailable(w)
-		return
+		return api.ConsumerUpgradeResult{}, false
 	}
 	nonce := make([]byte, 8)
 	_, _ = rand.Read(nonce)
 	attempt := "gregale-upgrade-" + c.consumer.ID + "-" + hex.EncodeToString(nonce)
 	metadata := map[string]string{"gregale_app": c.app.Slug, "gregale_consumer": c.consumer.ID}
 	stripe := s.stripe()
-	email := "" // An OAuth consumer is named after its token's email, when it has one.
-	if strings.Contains(c.consumer.Name, "@") {
-		email = c.consumer.Name
-	}
-	customer, err := stripe.CreateCustomer(ctx, key, attempt+"-customer", email, c.consumer.Name, metadata)
+	// An OAuth consumer's name may be its token's email claim, which no one
+	// verified, so Stripe gets an email only from a sign-up, which typed it.
+	customer, err := stripe.CreateCustomer(ctx, key, attempt+"-customer", s.signupEmail(ctx, c), c.consumer.Name, metadata)
 	if err != nil {
 		s.stripeFailed(ctx, w, c.app, "", err)
-		return
+		return api.ConsumerUpgradeResult{}, false
 	}
 	now := s.now()
 	complete, err := s.signUpgrade(completeTokenPrefix, upgradeClaims{AppID: c.app.ID, ConsumerID: c.consumer.ID, PlanID: target,
 		Customer: customer, Expires: now.Add(api.ConsumerSignupTTL).Unix()})
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("could not start the upgrade"))
-		return
+		return api.ConsumerUpgradeResult{}, false
 	}
-	page := s.upgradePageURL(c.app.Slug) + "?token=" + url.QueryEscape(req.Token)
+	page := s.upgradePageURL(c.app.Slug) + "?token=" + url.QueryEscape(token)
 	session, err := stripe.CreateSetupCheckout(ctx, key, attempt+"-checkout", stripeinvoice.SetupCheckoutParams{
 		Customer: customer, SuccessURL: page + "&complete=" + url.QueryEscape(complete) + "&session={CHECKOUT_SESSION_ID}",
 		CancelURL: page + "&canceled=1", ExpiresAt: now.Add(api.ConsumerSignupCheckoutTTL), ClientReferenceID: c.consumer.ID, Metadata: metadata})
 	if err != nil {
 		s.stripeFailed(ctx, w, c.app, "", err)
-		return
+		return api.ConsumerUpgradeResult{}, false
 	}
-	s.Host.Audit(ctx, "api_consumer.upgrade_started", c.app.AccountID, map[string]any{"app_id": c.app.ID, "consumer_id": c.consumer.ID,
-		"plan_id": target})
-	w.Header().Set("Cache-Control", "no-store")
-	httpkit.WriteJSON(w, http.StatusOK, api.ConsumerUpgradeResult{PlanID: target, CheckoutURL: session.URL, CompleteToken: complete})
+	return api.ConsumerUpgradeResult{PlanID: target, CheckoutURL: session.URL, CompleteToken: complete}, true
+}
+
+// signupEmail is the email a free-plan sign-up typed for c's consumer, or
+// "" for any other consumer.
+func (s *Service) signupEmail(ctx context.Context, c upgradeCaller) string {
+	id, ok := strings.CutPrefix(c.consumer.ExternalRef, "signup:")
+	signups, isStore := s.Host.Store().(state.APIConsumerSignupStore)
+	if !ok || !isStore {
+		return ""
+	}
+	signup, err := signups.GetAPIConsumerSignup(ctx, c.app.AccountID, id)
+	if err != nil || signup.AppID != c.app.ID {
+		return ""
+	}
+	return signup.Email
 }
 
 // billedElsewhere answers a consumer the owner bills outside Gregale's
@@ -297,55 +321,73 @@ func (s *Service) CompleteUpgrade(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
-	c, ok := s.upgradeCaller(w, r, req.Token)
-	if !ok {
-		return
-	}
-	ctx := r.Context()
 	claims, err := s.verifyUpgrade(completeTokenPrefix, req.CompleteToken, s.now())
-	if err != nil || claims.AppID != c.app.ID || claims.ConsumerID != c.consumer.ID || !slices.Contains(c.set.PlanIDs, claims.PlanID) {
+	if err != nil {
 		upgradeLinkInvalid(w)
 		return
 	}
-	key, _, problem := s.Host.StripeKey(ctx, c.app.AccountID)
-	if problem != nil {
-		s.failed(ctx, c.app, "", "the Stripe connection cannot be used: "+problem.Detail)
-		unavailable(w)
-		return
-	}
-	stripe := s.stripe()
-	session, err := stripe.GetCheckoutSession(ctx, key, req.CheckoutSessionID)
-	if err != nil {
-		s.stripeFailed(ctx, w, c.app, "", err)
-		return
-	}
-	if !session.Complete() || session.Customer != claims.Customer {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConsumerSignupCheckoutIncomplete, "Card not saved yet",
-			"finish the checkout to save a card, then complete the upgrade"))
-		return
-	}
-	if err := stripe.SetDefaultPaymentMethod(ctx, key, claims.Customer, session.SetupIntent.PaymentMethod); err != nil {
-		s.stripeFailed(ctx, w, c.app, "", err)
-		return
-	}
-	upgrades, ok := s.Host.Store().(state.APIConsumerUpgradeStore)
+	// The upgrade link only had to be valid when the checkout started: a
+	// customer who saves the card after it expires still finishes.
+	started := time.Unix(claims.Expires, 0).Add(-api.ConsumerSignupTTL)
+	c, ok := s.upgradeCaller(w, r, req.Token, started)
 	if !ok {
-		api.WriteProblem(w, api.ErrInternal("upgrades are unavailable"))
 		return
 	}
-	consumer, err := upgrades.AttachAPIConsumerStripeCustomer(ctx, c.app.AccountID, c.consumer.ID, claims.Customer)
-	if errors.Is(err, state.ErrConflict) {
-		billedElsewhere(w)
+	if claims.AppID != c.app.ID || claims.ConsumerID != c.consumer.ID || !slices.Contains(c.set.PlanIDs, claims.PlanID) {
+		upgradeLinkInvalid(w)
 		return
 	}
-	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not save the card to the account; try again"))
+	ctx := r.Context()
+	consumer, ok := s.saveCheckoutCard(ctx, w, c, claims, req.CheckoutSessionID)
+	if !ok {
 		return
 	}
 	s.Host.Audit(ctx, "api_consumer.card_saved", c.app.AccountID, map[string]any{"app_id": c.app.ID, "consumer_id": consumer.ID,
 		"external_ref": consumer.ExternalRef})
 	c.consumer = consumer
 	s.changePlan(ctx, w, c, claims.PlanID)
+}
+
+// saveCheckoutCard checks that the checkout saved a card for the complete
+// token's customer, makes it the default and attaches the customer to c's
+// consumer. On false it has written the problem.
+func (s *Service) saveCheckoutCard(ctx context.Context, w http.ResponseWriter, c upgradeCaller, claims upgradeClaims, sessionID string) (state.APIConsumer, bool) {
+	key, _, problem := s.Host.StripeKey(ctx, c.app.AccountID)
+	if problem != nil {
+		s.failed(ctx, c.app, "", "the Stripe connection cannot be used: "+problem.Detail)
+		unavailable(w)
+		return state.APIConsumer{}, false
+	}
+	stripe := s.stripe()
+	session, err := stripe.GetCheckoutSession(ctx, key, sessionID)
+	if err != nil {
+		s.stripeFailed(ctx, w, c.app, "", err)
+		return state.APIConsumer{}, false
+	}
+	if !session.Complete() || session.Customer != claims.Customer {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConsumerSignupCheckoutIncomplete, "Card not saved yet",
+			"finish the checkout to save a card, then complete the upgrade"))
+		return state.APIConsumer{}, false
+	}
+	if err := stripe.SetDefaultPaymentMethod(ctx, key, claims.Customer, session.SetupIntent.PaymentMethod); err != nil {
+		s.stripeFailed(ctx, w, c.app, "", err)
+		return state.APIConsumer{}, false
+	}
+	upgrades, ok := s.Host.Store().(state.APIConsumerUpgradeStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrInternal("upgrades are unavailable"))
+		return state.APIConsumer{}, false
+	}
+	consumer, err := upgrades.AttachAPIConsumerStripeCustomer(ctx, c.app.AccountID, c.consumer.ID, claims.Customer)
+	if errors.Is(err, state.ErrConflict) {
+		billedElsewhere(w)
+		return state.APIConsumer{}, false
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrInternal("could not save the card to the account; try again"))
+		return state.APIConsumer{}, false
+	}
+	return consumer, true
 }
 
 // changePlan moves c's consumer to target from the next minute; already

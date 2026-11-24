@@ -225,7 +225,8 @@ func (s *server) createAPIConsumerRateCard(w http.ResponseWriter, r *http.Reques
 	if problem == nil {
 		problem = s.consumerSignup.FreePlanCardProblem(r.Context(), app, state.APIConsumerRateCard{PlanID: req.PlanID,
 			PriceMillicentsPerUnit: req.PriceMillicentsPerUnit, Tiers: stateRateCardTiers(req.Tiers),
-			BaseFeeMillicentsPerMonth: req.BaseFeeMillicentsPerMonth, MinimumMillicentsPerMonth: req.MinimumMillicentsPerMonth})
+			BaseFeeMillicentsPerMonth: req.BaseFeeMillicentsPerMonth, MinimumMillicentsPerMonth: req.MinimumMillicentsPerMonth,
+			ModelPrices: req.ModelPrices})
 	}
 	if problem != nil {
 		api.WriteProblem(w, problem)

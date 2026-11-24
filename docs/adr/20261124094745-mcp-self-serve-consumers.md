@@ -129,7 +129,10 @@ link; an OAuth consumer is identified by issuer + subject.
 - New RPCs on `Auth`; an old apid answers `Unimplemented`, which the gateway
   reads as "this app enrolls nobody". The gateway cannot tell an opted-in app
   from others before apid answers, so it asks for every MCP OAuth caller of a
-  monetized account and caches "off" per app for 5 minutes. When apid cannot
+  monetized account and caches "off" per caller for 5 minutes (per
+  caller, because turning sign-up or OAuth consumers off stops new
+  enrollments only: callers who already joined keep their consumer, so
+  they stay metered and limited). When apid cannot
   answer, an app that enrolled a caller in the last 24 hours fails closed
   (`503`); any other app keeps serving its callers unattributed, as before
   this ADR. Deploy order: data → apid → gateway.

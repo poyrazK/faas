@@ -38,12 +38,12 @@ func (s *PgStore) EnrollAPIConsumerIdentity(ctx context.Context, in APIConsumerE
 	err = tx.QueryRow(ctx, `select enabled, oauth_consumers, coalesce(free_plan_id::text, ''), daily_limit
 		from api_consumer_signup_settings where app_id = $1::uuid and account_id = $2::uuid for update`, in.AppID, in.AccountID).
 		Scan(&settings.Enabled, &settings.OAuthConsumers, &settings.FreePlanID, &settings.DailyLimit)
-	if errors.Is(err, pgx.ErrNoRows) || err == nil && !apiConsumerOAuthEnrollable(settings) {
-		return APIConsumerIdentity{}, APIConsumer{}, false, ErrAPIConsumerOAuthOff
-	}
-	if err != nil {
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return APIConsumerIdentity{}, APIConsumer{}, false, fmt.Errorf("lock consumer sign-up settings: %w", err)
 	}
+	// Turning sign-up or OAuth consumers off stops new enrollments only:
+	// callers who already joined stay metered and limited.
+	enrollable := err == nil && apiConsumerOAuthEnrollable(settings)
 	id, err := scanAPIConsumerIdentity(tx.QueryRow(ctx, `select `+apiConsumerIdentityCols+` from api_consumer_identities
 		where app_id = $1::uuid and issuer = $2 and subject = $3`, in.AppID, in.Issuer, in.Subject))
 	if err == nil {
@@ -58,6 +58,9 @@ func (s *PgStore) EnrollAPIConsumerIdentity(ctx context.Context, in APIConsumerE
 	}
 	if !errors.Is(err, ErrNotFound) {
 		return APIConsumerIdentity{}, APIConsumer{}, false, fmt.Errorf("get consumer identity: %w", err)
+	}
+	if !enrollable {
+		return APIConsumerIdentity{}, APIConsumer{}, false, ErrAPIConsumerOAuthOff
 	}
 	ref := apiConsumerIdentityRef(in.Issuer, in.Subject)
 	// A consumer whose identity row is gone keeps its ref unless a link

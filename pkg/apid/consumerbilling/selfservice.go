@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/consumersignup"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/billing/stripeinvoice"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -111,7 +112,7 @@ func (s *Service) ChangePlan(w http.ResponseWriter, r *http.Request) {
 	}
 	// A customer that joined the free plan has no card to bill
 	// (ADR-20261124094745): it saves one through an upgrade link first.
-	if target != set.FreePlanID && state.APIConsumerCardless(c.consumer.ExternalRef) {
+	if target != set.FreePlanID && state.APIConsumerCardless(c.consumer.ExternalRef) && !consumersignup.PlanChargesNothingIn(ctx, s.Host.Store(), c.app, target, s.now()) {
 		selfServiceUnavailable(w, "a paid plan needs a saved card; open the upgrade link from the API's plan-limit error to add one")
 		return
 	}

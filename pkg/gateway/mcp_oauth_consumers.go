@@ -99,10 +99,6 @@ func (h *Handler) WithOAuthConsumers(e OAuthConsumerEnroller) *Handler {
 // or is not known to while apid cannot answer.
 func (h *Handler) oauthConsumer(ctx context.Context, app App, issuer, subject, email string) (oauthConsumerEntry, error) {
 	now := time.Now()
-	appKey := "app\x00" + app.ID
-	if e, ok := h.oauthConsumerCache.get(appKey, now); ok {
-		return e, e.err
-	}
 	key := oauthConsumerCacheKey(app.ID, issuer, subject)
 	if e, ok := h.oauthConsumerCache.get(key, now); ok {
 		return e, e.err
@@ -113,8 +109,10 @@ func (h *Handler) oauthConsumer(ctx context.Context, app App, issuer, subject, e
 	onKey := "on\x00" + app.ID
 	switch {
 	case errors.Is(err, apidgrpc.ErrOAuthConsumersOff):
+		// Cached per caller, not per app: an app that stopped enrolling
+		// still answers callers who joined before with their consumer.
 		e := oauthConsumerEntry{expires: now.Add(oauthConsumersOffTTL)}
-		h.oauthConsumerCache.put(appKey, e)
+		h.oauthConsumerCache.put(key, e)
 		h.oauthConsumerCache.put(onKey, oauthConsumerEntry{expires: now})
 		return e, nil
 	case errors.Is(err, apidgrpc.ErrOAuthConsumerSignupLimit), errors.Is(err, apidgrpc.ErrOAuthConsumerRefused):
