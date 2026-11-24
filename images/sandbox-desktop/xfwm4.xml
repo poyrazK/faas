@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ADR-20261124075005 §3: no compositing on a software framebuffer; it
+     costs CPU and gains an agent nothing. -->
+<channel name="xfwm4" version="1.0">
+  <property name="general" type="empty">
+    <property name="use_compositing" type="bool" value="false"/>
+    <property name="workspace_count" type="int" value="1"/>
+  </property>
+</channel>

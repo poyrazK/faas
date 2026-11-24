@@ -40,6 +40,13 @@ case "${runtime_image}" in
     # guest-init starts on the first code call.
     required=(etc/passwd usr/local/bin/python3 opt/gregale/code-interpreter/driver.py workspace)
     ;;
+  sandbox-desktop)
+    # ADR-20261124075005 §3: the desktop, its VNC and noVNC servers, the
+    # input and screenshot tools, and the one command that drives them.
+    required=(etc/passwd usr/bin/python3 usr/local/bin/gregale-desktop usr/bin/Xvfb usr/bin/xfce4-session
+      usr/bin/x11vnc usr/bin/websockify usr/share/novnc/vnc.html usr/share/novnc/index.html usr/bin/xdotool
+      usr/bin/wmctrl usr/bin/chromium workspace)
+    ;;
   agent-base)
     # ADR-20261027090010 §2: the preset harnesses, their catalog, and the tools agents
     # expect in a checkout.
@@ -173,6 +180,22 @@ if [[ "${runtime_image}" == sandbox-code-interpreter ]]; then
 import importlib.util
 assert importlib.util.find_spec("pip") is None, "pip is left in the image"
 '
+fi
+if [[ "${runtime_image}" == sandbox-desktop ]]; then
+  # gregale-desktop's argument checks, inside the image's own Python, then
+  # the real desktop as the tenant uid with no network: ready, a screenshot,
+  # input, an app window and both noVNC ports.
+  docker run --rm --platform "${expected_platform}" --network none --read-only --user 1000:1000 \
+    -v "${PWD}/images/sandbox-desktop:/tmp/desktop-src:ro" -w /tmp/desktop-src \
+    --entrypoint /usr/bin/python3 "${image_ref}" -m unittest -v gregale_desktop_test
+  bash images/sandbox-desktop/smoke.sh "${image_ref}" "${expected_platform}"
+  # Nothing setuid: the microVM is the sandbox (ADR-20261124075005 §3).
+  setuid=$(docker run --rm --platform "${expected_platform}" --network none --entrypoint /usr/bin/find "${image_ref}" \
+    / -xdev -perm /6000 -type f)
+  if [[ -n "${setuid}" ]]; then
+    echo "::error::${image_ref} has setuid or setgid files: ${setuid}" >&2
+    exit 1
+  fi
 fi
 if [[ "${runtime_image}" == agent-base ]]; then
   # The image must carry this checkout's preset catalog, and every preset must

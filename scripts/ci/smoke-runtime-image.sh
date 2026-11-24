@@ -27,6 +27,11 @@ case "${runtime_image}" in
     fixture_body='import numpy, pandas, scipy, sklearn, matplotlib, ipykernel, jupyter_client; assert pandas.DataFrame({"x": [1, 2]}).x.sum() == 3; print("runtime-smoke-ok")'
     runtime_command=(/usr/local/bin/python3 -I "/tmp/gregale-runtime-smoke/${fixture_name}")
     ;;
+  sandbox-desktop)
+    fixture_name=handler.py
+    fixture_body='import shutil; assert all(shutil.which(p) for p in ("Xvfb", "xfce4-session", "x11vnc", "websockify", "xdotool", "import", "wmctrl", "chromium", "gregale-desktop")); print("runtime-smoke-ok")'
+    runtime_command=(/usr/bin/python3 -I "/tmp/gregale-runtime-smoke/${fixture_name}")
+    ;;
   runner-python312|runner-python313)
     fixture_name=handler.py
     fixture_body='print("runtime-smoke-ok")'

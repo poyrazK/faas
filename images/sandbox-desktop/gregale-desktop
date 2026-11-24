@@ -1,0 +1,396 @@
+#!/usr/bin/python3 -I
+"""gregale-desktop: the sandbox desktop's one command (ADR-20261124075005).
+
+agentd starts the desktop with `start --resolution WxH` and polls `wait`;
+agents act on it with the other subcommands, run through the sandbox exec
+operation with an argv, never shell text:
+
+  screenshot [--format png|jpeg] [--quality N]   the screen on stdout
+  click X Y [--button left|right|middle] [--double]
+  move X Y
+  down [--button B] / up [--button B]
+  drag X1 Y1 X2 Y2
+  scroll up|down|left|right [AMOUNT]
+  type -- TEXT
+  key KEY...                                     e.g. Return, ctrl+c
+  cursor                                         prints "X Y"
+  size                                           prints "WIDTHxHEIGHT"
+  launch APP [-- ARGS...]
+  open TARGET                                    a file or URL
+  windows [--app APP]                            "id<TAB>class<TAB>title" lines
+  window                                         the focused window, same form
+
+Bad input exits 2 with a message on stderr; a failed X call exits 1.
+"""
+
+import argparse
+import os
+import re
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import time
+
+DISPLAY = ":0"
+X_SOCKET = "/tmp/.X11-unix/X0"
+# The bounds match pkg/api/limits.go SandboxDesktop{Width,Height}{Min,Max}
+# and SandboxDesktopTypeMaxChars.
+WIDTH_MIN, WIDTH_MAX = 640, 1920
+HEIGHT_MIN, HEIGHT_MAX = 480, 1080
+TYPE_MAX_CHARS = 8192
+SCROLL_MAX = 50
+# x11vnc serves VNC on loopback; websockify serves noVNC and bridges to it.
+# 6080 takes input, 6081 is view only (ADR-20261124075005 §5).
+VNC_PORT, VNC_VIEW_ONLY_PORT = 5900, 5901
+VIEW_PORT, VIEW_ONLY_PORT = 6080, 6081
+NOVNC_WEB = "/usr/share/novnc"
+LOG_DIR = "/tmp/gregale-desktop"
+
+BUTTONS = {"left": "1", "middle": "2", "right": "3"}
+SCROLL_BUTTONS = {"up": "4", "down": "5", "left": "6", "right": "7"}
+# Friendly key names agents send, mapped to X keysyms.
+KEY_ALIASES = {
+    "enter": "Return", "return": "Return", "esc": "Escape", "escape": "Escape",
+    "tab": "Tab", "space": "space", "backspace": "BackSpace", "delete": "Delete",
+    "del": "Delete", "insert": "Insert", "home": "Home", "end": "End",
+    "pageup": "Prior", "page_up": "Prior", "pagedown": "Next", "page_down": "Next",
+    "up": "Up", "down": "Down", "left": "Left", "right": "Right",
+    "control": "ctrl", "ctl": "ctrl", "cmd": "super", "command": "super",
+    "win": "super", "windows": "super", "meta": "super", "option": "alt",
+    "capslock": "Caps_Lock", "printscreen": "Print",
+}
+KEYSYM_RE = re.compile(r"^[A-Za-z0-9_]{1,32}$")
+RESOLUTION_RE = re.compile(r"^([1-9][0-9]{2,3})x([1-9][0-9]{2,3})$")
+APP_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
+
+
+class UsageError(Exception):
+    """Input the command refuses; exits 2."""
+
+
+def parse_resolution(value):
+    m = RESOLUTION_RE.match(value or "")
+    if not m:
+        raise UsageError(f"resolution must be WIDTHxHEIGHT; got {value!r}")
+    width, height = int(m.group(1)), int(m.group(2))
+    if not (WIDTH_MIN <= width <= WIDTH_MAX and HEIGHT_MIN <= height <= HEIGHT_MAX):
+        raise UsageError(f"resolution must be from {WIDTH_MIN}x{HEIGHT_MIN} to {WIDTH_MAX}x{HEIGHT_MAX}; got {value}")
+    return width, height
+
+
+def parse_point(x, y, size):
+    try:
+        px, py = int(x), int(y)
+    except ValueError:
+        raise UsageError(f"coordinates must be integers; got {x!r} {y!r}") from None
+    width, height = size
+    if not (0 <= px < width and 0 <= py < height):
+        raise UsageError(f"({px}, {py}) is outside the {width}x{height} screen")
+    return str(px), str(py)
+
+
+def key_chord(value):
+    """One key or chord, e.g. ctrl+shift+t, as an xdotool keysym chord."""
+    parts = value.split("+") if value != "+" else ["plus"]
+    out = []
+    for part in parts:
+        if part == "":
+            raise UsageError(f"key {value!r} has an empty part")
+        name = KEY_ALIASES.get(part.lower(), part)
+        if not KEYSYM_RE.match(name):
+            raise UsageError(f"key {part!r} is not a key name")
+        out.append(name)
+    return "+".join(out)
+
+
+def xdotool_argv(cmd, args, size):
+    """The xdotool argv for an input command; raises UsageError."""
+    if cmd == "click":
+        x, y = parse_point(args.x, args.y, size)
+        argv = ["xdotool", "mousemove", "--sync", x, y, "click"]
+        if args.double:
+            argv += ["--repeat", "2", "--delay", "80"]
+        return argv + [BUTTONS[args.button]]
+    if cmd == "move":
+        x, y = parse_point(args.x, args.y, size)
+        return ["xdotool", "mousemove", "--sync", x, y]
+    if cmd in ("down", "up"):
+        return ["xdotool", "mouse" + cmd, BUTTONS[args.button]]
+    if cmd == "drag":
+        x1, y1 = parse_point(args.x1, args.y1, size)
+        x2, y2 = parse_point(args.x2, args.y2, size)
+        return ["xdotool", "mousemove", "--sync", x1, y1, "mousedown", "1",
+                "sleep", "0.1", "mousemove", "--sync", x2, y2, "sleep", "0.1", "mouseup", "1"]
+    if cmd == "scroll":
+        if not 1 <= args.amount <= SCROLL_MAX:
+            raise UsageError(f"scroll amount must be 1-{SCROLL_MAX}; got {args.amount}")
+        return ["xdotool", "click", "--repeat", str(args.amount), "--delay", "30", SCROLL_BUTTONS[args.direction]]
+    if cmd == "type":
+        text = args.text
+        if len(text) > TYPE_MAX_CHARS:
+            raise UsageError(f"type takes at most {TYPE_MAX_CHARS} characters; got {len(text)}")
+        return ["xdotool", "type", "--clearmodifiers", "--delay", "8", "--", text]
+    if cmd == "key":
+        if not args.keys:
+            raise UsageError("key needs at least one key")
+        return ["xdotool", "key", "--clearmodifiers", "--"] + [key_chord(k) for k in args.keys]
+    raise UsageError(f"unknown command {cmd}")
+
+
+def x_env():
+    env = dict(os.environ)
+    env["DISPLAY"] = DISPLAY
+    env.setdefault("HOME", "/tmp")
+    env.setdefault("XDG_RUNTIME_DIR", f"/tmp/runtime-{os.getuid()}")
+    return env
+
+
+def run(argv, capture=False):
+    out = subprocess.run(argv, env=x_env(), stdout=subprocess.PIPE if capture else None,
+                         stderr=subprocess.PIPE, check=False)
+    if out.returncode != 0:
+        msg = out.stderr.decode(errors="replace").strip() or f"exit {out.returncode}"
+        raise RuntimeError(f"{argv[0]}: {msg}")
+    return out.stdout if capture else b""
+
+
+def screen_size():
+    w, h = run(["xdotool", "getdisplaygeometry"], capture=True).split()
+    return int(w), int(h)
+
+
+def cmd_screenshot(args):
+    if args.format == "jpeg" and not 1 <= args.quality <= 100:
+        raise UsageError(f"quality must be 1-100; got {args.quality}")
+    argv = ["import", "-silent", "-window", "root"]
+    if args.format == "jpeg":
+        argv += ["-quality", str(args.quality), "jpeg:-"]
+    else:
+        argv += ["png:-"]
+    sys.stdout.buffer.write(run(argv, capture=True))
+    sys.stdout.buffer.flush()
+
+
+def cmd_cursor(_args):
+    fields = dict(line.split("=", 1) for line in
+                  run(["xdotool", "getmouselocation", "--shell"], capture=True).decode().split() if "=" in line)
+    print(f"{fields['X']} {fields['Y']}")
+
+
+def cmd_size(_args):
+    w, h = screen_size()
+    print(f"{w}x{h}")
+
+
+def detach(argv, name):
+    os.makedirs(LOG_DIR, exist_ok=True)
+    log = open(os.path.join(LOG_DIR, f"{name}.log"), "ab")  # noqa: SIM115 - handed to the child
+    subprocess.Popen(argv, env=x_env(), stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+                     start_new_session=True, cwd=os.environ.get("HOME", "/tmp"))
+
+
+def cmd_launch(args):
+    if not APP_RE.match(args.app):
+        raise UsageError(f"app must be a program name; got {args.app!r}")
+    path = shutil.which(args.app)
+    if path is None:
+        raise UsageError(f"no program named {args.app}")
+    detach([path] + args.args, args.app)
+
+
+def cmd_open(args):
+    if not args.target or args.target.startswith("-"):
+        raise UsageError("open needs a file or URL that does not start with -")
+    detach(["xdg-open", args.target], "xdg-open")
+
+
+def window_lines(app):
+    out = run(["wmctrl", "-lx"], capture=True).decode(errors="replace")
+    for line in out.splitlines():
+        # id desktop class host title...
+        parts = line.split(None, 4)
+        if len(parts) < 4 or parts[1] == "-1":
+            continue
+        wid, cls = parts[0], parts[2]
+        title = parts[4] if len(parts) > 4 else ""
+        if app and app.lower() not in cls.lower():
+            continue
+        yield f"{int(wid, 16)}\t{cls}\t{title}"
+
+
+def cmd_windows(args):
+    for line in window_lines(args.app):
+        print(line)
+
+
+def cmd_window(_args):
+    wid = run(["xdotool", "getactivewindow"], capture=True).decode().strip()
+    title = run(["xdotool", "getwindowname", wid], capture=True).decode(errors="replace").strip()
+    print(f"{wid}\t\t{title}")
+
+
+def listening(port):
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+def panel_up():
+    """Whether Xfce's panel has a window, so a first screenshot shows the
+    desktop and not a bare root window."""
+    out = subprocess.run(["xdotool", "search", "--limit", "1", "--class", "xfce4-panel"], env=x_env(),
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, timeout=5)
+    return out.returncode == 0
+
+
+def cmd_wait(_args):
+    ok = os.path.exists(X_SOCKET) and all(listening(p) for p in (VNC_PORT, VNC_VIEW_ONLY_PORT, VIEW_PORT, VIEW_ONLY_PORT))
+    if not ok or not panel_up():
+        print("the desktop is not ready", file=sys.stderr)
+        sys.exit(1)
+
+
+def desktop_processes():
+    """The desktop's processes after Xvfb, in start order: name, argv."""
+    vnc = ["x11vnc", "-display", DISPLAY, "-localhost", "-forever", "-shared", "-nopw",
+           "-noxdamage", "-ncache", "0", "-quiet"]
+    web = ["websockify", "--web", NOVNC_WEB]
+    return [
+        ("xfce", ["dbus-run-session", "--", "xfce4-session"]),
+        ("x11vnc", vnc + ["-rfbport", str(VNC_PORT)]),
+        ("x11vnc-viewonly", vnc + ["-viewonly", "-rfbport", str(VNC_VIEW_ONLY_PORT)]),
+        ("novnc", web + [f"127.0.0.1:{VIEW_PORT}", f"127.0.0.1:{VNC_PORT}"]),
+        ("novnc-viewonly", web + [f"127.0.0.1:{VIEW_ONLY_PORT}", f"127.0.0.1:{VNC_VIEW_ONLY_PORT}"]),
+    ]
+
+
+def spawn(name, argv):
+    os.makedirs(LOG_DIR, exist_ok=True)
+    log = open(os.path.join(LOG_DIR, f"{name}.log"), "ab")  # noqa: SIM115 - handed to the child
+    return subprocess.Popen(argv, env=x_env(), stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+                            cwd=os.environ.get("HOME", "/tmp"))
+
+
+def cmd_start(args):
+    """Starts the desktop and supervises it: a helper that exits is started
+    again; if the X server exits, everything stops and so does start."""
+    width, height = parse_resolution(args.resolution)
+    os.makedirs(os.environ.get("XDG_RUNTIME_DIR") or x_env()["XDG_RUNTIME_DIR"], mode=0o700, exist_ok=True)
+    xvfb = spawn("xvfb", ["Xvfb", DISPLAY, "-screen", "0", f"{width}x{height}x24", "-nolisten", "tcp",
+                          "-dpi", "96", "+extension", "RANDR"])
+    deadline = time.monotonic() + 15
+    while not os.path.exists(X_SOCKET):
+        if xvfb.poll() is not None or time.monotonic() > deadline:
+            raise RuntimeError("Xvfb did not start; see /tmp/gregale-desktop/xvfb.log")
+        time.sleep(0.05)
+    procs = {name: [argv, spawn(name, argv), 0.0] for name, argv in desktop_processes()}
+
+    def stop(*_):
+        for _argv, p, _t in procs.values():
+            if p.poll() is None:
+                p.terminate()
+        xvfb.terminate()
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    while xvfb.poll() is None:
+        now = time.monotonic()
+        for name, entry in procs.items():
+            argv, p, restarted = entry
+            if p.poll() is not None and now - restarted > 2:
+                entry[1], entry[2] = spawn(name, argv), now
+        time.sleep(0.5)
+    for _argv, p, _t in procs.values():
+        if p.poll() is None:
+            p.terminate()
+    raise RuntimeError("the X server exited; see /tmp/gregale-desktop/xvfb.log")
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        raise UsageError(message)
+
+
+def parser():
+    p = Parser(prog="gregale-desktop", description="Drive the sandbox desktop.")
+    sub = p.add_subparsers(dest="cmd", required=True, parser_class=Parser)
+    s = sub.add_parser("start")
+    s.add_argument("--resolution", required=True)
+    sub.add_parser("wait")
+    s = sub.add_parser("screenshot")
+    s.add_argument("--format", choices=["png", "jpeg"], default="png")
+    s.add_argument("--quality", type=int, default=80)
+    s = sub.add_parser("click")
+    s.add_argument("x")
+    s.add_argument("y")
+    s.add_argument("--button", choices=sorted(BUTTONS), default="left")
+    s.add_argument("--double", action="store_true")
+    s = sub.add_parser("move")
+    s.add_argument("x")
+    s.add_argument("y")
+    for name in ("down", "up"):
+        s = sub.add_parser(name)
+        s.add_argument("--button", choices=sorted(BUTTONS), default="left")
+    s = sub.add_parser("drag")
+    for name in ("x1", "y1", "x2", "y2"):
+        s.add_argument(name)
+    s = sub.add_parser("scroll")
+    s.add_argument("direction", choices=sorted(SCROLL_BUTTONS))
+    s.add_argument("amount", nargs="?", type=int, default=1)
+    s = sub.add_parser("type")
+    s.add_argument("text")
+    s = sub.add_parser("key")
+    s.add_argument("keys", nargs="*")
+    sub.add_parser("cursor")
+    sub.add_parser("size")
+    s = sub.add_parser("launch")
+    s.add_argument("app")
+    s.add_argument("args", nargs=argparse.REMAINDER)
+    s = sub.add_parser("open")
+    s.add_argument("target")
+    s = sub.add_parser("windows")
+    s.add_argument("--app")
+    sub.add_parser("window")
+    return p
+
+
+INPUT_COMMANDS = {"click", "move", "down", "up", "drag", "scroll", "type", "key"}
+COMMANDS = {
+    "start": cmd_start, "wait": cmd_wait, "screenshot": cmd_screenshot, "cursor": cmd_cursor,
+    "size": cmd_size, "launch": cmd_launch, "open": cmd_open, "windows": cmd_windows, "window": cmd_window,
+}
+
+
+def parse(argv):
+    """Parses argv; launch's program arguments lose a leading --, which some
+    Python versions keep."""
+    args = parser().parse_args(argv)
+    if getattr(args, "args", None) and args.args[0] == "--":
+        args.args = args.args[1:]
+    return args
+
+
+def main(argv):
+    try:
+        args = parse(argv)
+        if args.cmd in INPUT_COMMANDS:
+            size = screen_size() if args.cmd in ("click", "move", "drag") else (0, 0)
+            run(xdotool_argv(args.cmd, args, size))
+        else:
+            COMMANDS[args.cmd](args)
+    except UsageError as e:
+        print(f"gregale-desktop: {e}", file=sys.stderr)
+        return 2
+    except (RuntimeError, OSError) as e:
+        print(f"gregale-desktop: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

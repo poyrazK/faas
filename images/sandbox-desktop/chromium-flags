@@ -1,0 +1,3 @@
+# ADR-20261124075005 §3: the microVM is the sandbox, and the guest has no
+# user namespaces for Chromium's own; there is no GPU or large /dev/shm.
+export CHROMIUM_FLAGS="$CHROMIUM_FLAGS --no-sandbox --test-type --disable-gpu --disable-dev-shm-usage --no-first-run --no-default-browser-check --password-store=basic"
