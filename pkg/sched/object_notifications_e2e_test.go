@@ -187,7 +187,9 @@ func objectNotificationsSDKEndToEnd(t *testing.T, st objectEventIntegrationStore
 			continue
 		}
 		received++
-		if row.QueueBindingID != qb.ID || row.DeploymentScope != "" || row.EnvironmentID != "" {
+		// A project app captures production work as "production"
+		// (state.DefaultInvocationDeploymentScope), not the default scope.
+		if row.QueueBindingID != qb.ID || !state.ProductionDeploymentScope(row.DeploymentScope) || row.EnvironmentID != "" {
 			t.Fatal("S3 notification lost captured queue scope", row)
 		}
 		var msg objectNotificationMessage
