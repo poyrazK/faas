@@ -175,6 +175,10 @@ gregale mcp server deploy --path ./private-mcp --name private-mcp --token-env MC
 The token is read from the environment variable and never written to your
 source.
 
+**Charge for it.** Signed-in callers can become your customers on a free
+plan the first time they call, and move to a paid plan later; see
+[MCP callers become customers](api-monetization.md#mcp-callers-become-customers).
+
 **Browser clients.** `allowed_origins` in `gregale-mcp.json` is empty, which
 rejects every request that carries a browser `Origin` header. Desktop and CLI
 clients normally don't send one. Add the exact origins of browser-based clients you

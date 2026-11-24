@@ -747,6 +747,55 @@ curl -X POST -H "Authorization: Bearer ck_..." https://api.gregale.dev/v1/consum
   `signup-set --customer-closing`.
 - Anything you have not allowed gets `409 consumer_self_service_unavailable`.
 
+### A free plan without a card
+
+Offer a plan whose rate cards charge nothing, and customers can join it
+without Stripe Checkout:
+
+```bash
+gregale consumers plan-create my-api --name free --max-units-per-month 1000
+gregale consumers rate-card-create my-api --plan free --currency USD --price-millicents 0
+gregale consumers signup-set my-api --display-name "Weather API" --plans free,pro --free-plan free
+```
+
+- **What counts as free.** Every rate card of the plan, in force or
+  scheduled, has no unit price, priced tier, base fee or minimum, and the
+  plan has at least one. Gregale refuses `--free-plan` otherwise, and
+  refuses a charging rate card on the free plan while it is the free plan.
+- **Joining.** `POST /v1/consumer-signup/my-api` with the free plan's
+  `plan_id` returns an empty `checkout_url`; complete the sign-up at once
+  with the claim token. The hosted page does this for you. No Stripe
+  customer is created, so the consumer's `external_ref` is `signup:<id>`.
+- **Moving to a paid plan.** With `--customer-plan-changes`, a customer can
+  switch to a paid plan with their own key once you have a card for them.
+
+### MCP callers become customers
+
+For an MCP server behind OAuth (`gregale mcp server auth enable --mode
+oauth-proxy`, or `--auth external-oauth`; see
+[Host an MCP server](mcp-hosting.md#control-who-can-call-it)), people who
+sign in can become your customers on the free plan the first time they call
+it:
+
+```bash
+gregale consumers signup-set my-mcp --display-name "Search tools" --plans free,pro --free-plan free --oauth-consumers
+```
+
+- **Who they are.** A customer is the token's issuer and subject: the same
+  person signing in again is the same consumer. The token's `email`, when it
+  has one, names the consumer; it is never used to match one.
+- **Billing and limits.** Their calls are metered, priced and capped by the
+  free plan like a consumer key's, including tool route limits.
+- **Daily limit.** New customers count against `--daily-limit` with the
+  sign-up page's. Past it, new callers get `429 consumer_signup_daily_limit`
+  until the next UTC day; existing customers are not affected.
+- **Closing someone.** `gregale consumers revoke my-mcp CONSUMER` refuses
+  their calls with `403` within five minutes.
+- **Turning it on and off.** Changes reach the gateway within five
+  minutes. If Gregale cannot reach its API while your server enrolls
+  callers, they get `503 consumer_enrollment_unavailable` rather than free
+  calls.
+
 ### Know when customers sign up or change
 
 Subscribe an app webhook to these events to provision accounts, send
