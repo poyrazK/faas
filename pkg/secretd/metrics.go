@@ -62,6 +62,8 @@ const (
 	// rpcMintWorkflowIdentity is slice 3k-2.
 	rpcMintWorkflowIdentity = "MintWorkflowIdentity"
 	rpcGrantStorageObjects  = "GrantStorageObjects"
+	// rpcOpenVerificationSecrets is ADR-20261122220000 amendment 2.
+	rpcOpenVerificationSecrets = "OpenVerificationSecrets"
 )
 
 var (
@@ -107,7 +109,7 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 	}
 	// Pre-create the series alerts read, so increase() sees the first
 	// refusal instead of a series appearing at 1.
-	for _, rpc := range []string{rpcOpenAppSecrets, rpcGrantPeer, rpcOpenCaptureKey, rpcOpenSidecarEnv, rpcOpenLogDrainHeader, rpcOpenTriggerConfig, rpcOpenEdgeHeaderSecret, rpcRegistryFetch, rpcVerifyPostgresCutover, rpcMintInternalServiceToken, rpcMintWorkflowIdentity, rpcGrantStorageObjects} {
+	for _, rpc := range []string{rpcOpenAppSecrets, rpcGrantPeer, rpcOpenCaptureKey, rpcOpenSidecarEnv, rpcOpenLogDrainHeader, rpcOpenTriggerConfig, rpcOpenEdgeHeaderSecret, rpcRegistryFetch, rpcVerifyPostgresCutover, rpcMintInternalServiceToken, rpcMintWorkflowIdentity, rpcGrantStorageObjects, rpcOpenVerificationSecrets} {
 		for _, reason := range []string{ReasonUnauthenticated, ReasonUnknownNode, ReasonNotAuthorized,
 			ReasonBudgetExhausted, ReasonUnreferenced, ReasonWrongAccount, ReasonOtherApp, ReasonEnvelope, ReasonOutOfScope} {
 			m.refusals.WithLabelValues(rpc, reason)

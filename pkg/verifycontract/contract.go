@@ -41,6 +41,7 @@ const (
 	MaxJSONAssertions     = api.VerificationContractMaxJSONAssertions
 	MaxSQLBytes           = api.VerificationContractMaxSQLBytes
 	MaxResponseBytes      = api.VerificationContractMaxResponseBytes
+	MaxSecretRefs         = api.VerificationContractMaxSecretRefs
 	DefaultMCPPath        = "/mcp"
 )
 
@@ -314,8 +315,11 @@ func (c Contract) Validate() error {
 		if err != nil {
 			return invalidf("check %q: %v", check.Name, err)
 		}
+		if misplacedSecretRef(check) {
+			return invalidf("check %q: ${secret:NAME} is substituted only in http header values", check.Name)
+		}
 	}
-	return nil
+	return c.validateSecretRefs()
 }
 
 func validatePath(path string) error {
@@ -346,6 +350,9 @@ func (h HTTPCheck) validate() error {
 		}
 		if len(value) > MaxHeaderValueBytes || strings.ContainsAny(value, "\r\n") {
 			return fmt.Errorf("header %q value must be one line of at most %d bytes", name, MaxHeaderValueBytes)
+		}
+		if _, err := headerSecretRefs(value); err != nil {
+			return fmt.Errorf("header %q: %w", name, err)
 		}
 	}
 	if h.Body != "" && h.JSON != nil {
