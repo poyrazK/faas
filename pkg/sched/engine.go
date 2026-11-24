@@ -7527,6 +7527,12 @@ func (e *Engine) markPrimeFailed(ctx context.Context, deploymentID string, cause
 		observed = serviceConflict
 	}
 	_ = whycopy.Decorate(problem, code, observed)
+	// The fix names this app and deployment, not <slug> (ADR-20261123230000).
+	values := whycopy.Values{Deployment: deploymentID}
+	if app, appErr := e.store.AppByID(markCtx, dep.AppID); appErr == nil {
+		values.App = app.Slug
+	}
+	_ = whycopy.Complete(problem, values)
 
 	message := "snapshot prime failed: " + cause.Error()
 	if capacity != nil {

@@ -72,7 +72,9 @@ var consumerKeyExpectedConstraints = []string{
 	"consumer_keys_prefix_len_chk",
 	// Widened to admit keyed digests (ADR 20261029202403).
 	"consumer_keys_hashed_secret_credhash_chk",
-	"consumer_keys_scopes_vocab_chk",
+	// The closed vocabulary moved to the v2 check, which also admits
+	// "mcp:<scope>" (ADR-20261122194324, migrations 20261123084446100-300).
+	"consumer_keys_scopes_vocab_v2_chk",
 	"consumer_keys_expires_after_created_chk",
 	"consumer_keys_revoked_state_chk",
 }
@@ -202,7 +204,7 @@ func TestMigrations_00329_ConsumerKeys(t *testing.T) {
 
 	// (6) Closed-vocab scope rejection. INSERT with scope='superadmin'
 	// must fail with SQLSTATE 23514 (check_violation). The CHECK
-	// consumer_keys_scopes_vocab_chk is the floor — apid handlers
+	// consumer_keys_scopes_vocab_v2_chk is the floor — apid handlers
 	// validate at the write boundary, but a hand-rolled INSERT must
 	// also be rejected.
 	var accountID = "00000000-0000-0000-0000-0000003308aa"
@@ -230,8 +232,8 @@ func TestMigrations_00329_ConsumerKeys(t *testing.T) {
 	if vocabErr.Code != "23514" {
 		t.Errorf("expected SQLSTATE 23514 check_violation, got %s (closed vocabulary contract)", vocabErr.Code)
 	}
-	if !strings.Contains(vocabErr.ConstraintName, "consumer_keys_scopes_vocab_chk") {
-		t.Errorf("expected violation of consumer_keys_scopes_vocab_chk, got %q", vocabErr.ConstraintName)
+	if !strings.Contains(vocabErr.ConstraintName, "consumer_keys_scopes_vocab_v2_chk") {
+		t.Errorf("expected violation of consumer_keys_scopes_vocab_v2_chk, got %q", vocabErr.ConstraintName)
 	}
 
 	// (7) Replay safety: re-running db.MigrateUp is a no-op.

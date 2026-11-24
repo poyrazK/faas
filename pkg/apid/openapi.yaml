@@ -52491,6 +52491,40 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  /v1/workload/object-storage/credentials:
+    post:
+      tags: [storage]
+      operationId: workloadObjectCredentialIssue
+      summary: Trade a binding token for a one-hour S3 credential on a granted bucket.
+      description: |
+        Called by guest-init's loopback credential endpoint, not by customer
+        code. A live production instance presents its gregale:bindings
+        workload token and names a bucket its app's gregale.yaml `uses:`
+        grants (or omits the bucket when it holds exactly one bucket grant).
+        The answer is the AWS container credential shape, limited to the
+        grant's access and key prefix, and expires within the hour. Each
+        instance holds at most 8 live credentials per bucket. Gated by the
+        cross_app_bindings platform flag (off: 404).
+      security:
+        - bindingsWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ObjectWorkloadCredentialRequest' }
+      responses:
+        '200':
+          description: The credential.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectWorkloadCredentialResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/queues/send:
     post:
       tags: [queues]
@@ -76284,6 +76318,11 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Platform-issued short-lived RS256 workload JWT with audience gregale:flags.
+    bindingsWorkloadIdentity:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Platform-issued short-lived RS256 workload JWT with audience gregale:bindings, from a live production instance.
     bearerAuth:
       type: http
       scheme: bearer
@@ -133528,6 +133567,24 @@ components:
         id: { type: string, format: uuid }
         cancelled_count: { type: integer, minimum: 0 }
 
+    ObjectWorkloadCredentialRequest:
+      description: Body for POST /v1/workload/object-storage/credentials.
+      type: object
+      properties:
+        bucket: { type: string, maxLength: 128, description: "Granted bucket name. Optional when the app holds exactly one bucket grant." }
+    ObjectWorkloadCredentialResponse:
+      description: A workload S3 credential in the AWS container credential shape, plus where the workload may write.
+      type: object
+      required: [AccessKeyId, SecretAccessKey, Token, Expiration, Bucket]
+      properties:
+        AccessKeyId: { type: string, pattern: '^GRGW[A-Z2-7]{16}$' }
+        SecretAccessKey: { type: string }
+        Token: { type: string }
+        Expiration: { type: string, format: date-time }
+        Bucket: { type: string }
+        KeyPrefix: { type: string }
+        Endpoint: { type: string }
+        Region: { type: string }
     QueueSendRequest:
       description: "Body for POST /v1/apps/{slug}/queues/send. Cap-checked against MaxQueueDepth. Unkeyed messages retain legacy FIFO dispatch; keyed messages use per-key ordering."
       type: object
@@ -134249,6 +134306,21 @@ components:
             each per CLI tripwire). The CLI renders the first 5
             inline as a fenced block. Optional + omitempty.
           items: { $ref: '#/components/schemas/LogExcerpt' }
+        fix_commands:
+          type: array
+          description: |
+            The runnable commands quoted in `fix`, in order, with this
+            failure's values (app, deployment) filled in. A command that
+            still needs a value nobody knew is left out rather than shown
+            with a placeholder. Omitted when there are none.
+          items: { type: string }
+        retryable:
+          type: boolean
+          description: |
+            Whether repeating the same request can succeed without a
+            change: true for rate limits, a Retry-After and transient
+            platform errors; false when the request or the app must
+            change. Absent when unknown.
 
     LogExcerpt:
       type: object

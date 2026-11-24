@@ -280,7 +280,7 @@ func (f *hostedTaskAcceptance) connect(t *testing.T, protocol string) (*mcp.Clie
 	bridge.StartTLS()
 	t.Cleanup(bridge.Close)
 	client := *bridge.Client()
-	client.Transport = hostedTaskAgentTransport{base: client.Transport, token: f.agentToken}
+	client.Transport = hostedTaskAgentTransport{base: client.Transport, token: f.agentToken, toolset: mcpmanagement.ToolsetBuildTools}
 	session, err := mcp.NewClient(&mcp.Implementation{Name: "hosted-task-acceptance", Version: "1"}, nil).
 		Connect(t.Context(), &mcp.StreamableClientTransport{Endpoint: resource, HTTPClient: &client, DisableStandaloneSSE: true},
 			&mcp.ClientSessionOptions{ProtocolVersion: protocol})
@@ -290,14 +290,14 @@ func (f *hostedTaskAcceptance) connect(t *testing.T, protocol string) (*mcp.Clie
 }
 
 type hostedTaskAgentTransport struct {
-	base  http.RoundTripper
-	token string
+	base           http.RoundTripper
+	token, toolset string
 }
 
 func (tr hostedTaskAgentTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	next := req.Clone(req.Context())
 	next.Header.Set("Authorization", "Bearer "+tr.token)
-	next.Header.Set("Gregale-MCP-Toolsets", mcpmanagement.ToolsetBuildTools)
+	next.Header.Set("Gregale-MCP-Toolsets", tr.toolset)
 	return tr.base.RoundTrip(next)
 }
 
@@ -399,6 +399,13 @@ func assertHostedTaskReceipt(t *testing.T, receipt api.HostedTaskBindingVerifica
 
 func getHostedTaskTool(t *testing.T, session *mcp.ClientSession, name string, args map[string]any, out any) {
 	t.Helper()
+	getHostedAcceptanceTool(t, session, name, args, out, acceptanceSource, acceptanceOwnerKey, acceptanceMigration,
+		"binding-fixture-only", "rotated-credential-sentinel", "fixture.example.com", "postgres://",
+		"\"ciphertext\"", "\"pins\"", "\"claim\"", "\"selection\"", "\"sources\"")
+}
+
+func getHostedAcceptanceTool(t *testing.T, session *mcp.ClientSession, name string, args map[string]any, out any, privateFields ...string) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
@@ -407,9 +414,7 @@ func getHostedTaskTool(t *testing.T, session *mcp.ClientSession, name string, ar
 	}
 	raw, err := json.Marshal(result)
 	mustHostedTaskAcceptance(t, err)
-	for _, private := range []string{acceptanceSource, acceptanceOwnerKey, acceptanceMigration,
-		"binding-fixture-only", "rotated-credential-sentinel", "fixture.example.com", "postgres://",
-		"\"ciphertext\"", "\"pins\"", "\"claim\"", "\"selection\"", "\"sources\""} {
+	for _, private := range privateFields {
 		if bytes.Contains(raw, []byte(private)) {
 			t.Fatalf("%s returned private source or binding data", name)
 		}

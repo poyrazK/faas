@@ -116,7 +116,7 @@ func writeParkedNotice(w io.Writer, app api.AppResponse) {
 	switch inspectParkedReason(app) {
 	case "liveness_exhausted":
 		if appIsWorker(app) {
-			_, _ = fmt.Fprintf(w, "! %s is parked: the worker's process kept exiting (workers get no HTTP health check). Read `gregale logs %s --since 1h`, fix the crash and deploy (a new release starts it), or run `gregale wake %s`.\n", app.Slug, app.Slug, app.Slug)
+			_, _ = fmt.Fprintf(w, "! %s is parked: the worker's process kept exiting (workers get no HTTP health check). Read `gregale logs %s --since 1h`, fix the crash and deploy (a new release starts it), or run `gregale app wake %s`.\n", app.Slug, app.Slug, app.Slug)
 			return
 		}
 		_, _ = fmt.Fprintf(w, "! %s is parked: its instances repeatedly failed liveness checks or crashed, so callers get errors or timeouts. Run `gregale app health %s --explain`.\n", app.Slug, app.Slug)

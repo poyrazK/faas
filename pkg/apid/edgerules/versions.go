@@ -208,7 +208,7 @@ func (s *Service) RollbackEdgeRules(w http.ResponseWriter, r *http.Request, acct
 	restored, err := store.RestoreEdgeRuleSetVersion(r.Context(), app.ID, req.Version, limits)
 	if err != nil {
 		convergence.Abort(r.Context())
-		s.writeEdgeRuleRestoreError(w, err)
+		s.writeEdgeRuleRestoreError(w, app.ID, err)
 		return
 	}
 	s.Host.Logger().Info("edge rules rolled back",
@@ -252,7 +252,7 @@ func edgeRuleRollbackHosts(current, restored []state.EdgeRule) []string {
 	return hosts
 }
 
-func (s *Service) writeEdgeRuleRestoreError(w http.ResponseWriter, err error) {
+func (s *Service) writeEdgeRuleRestoreError(w http.ResponseWriter, appID string, err error) {
 	var qe *state.EdgeRuleQuotaError
 	switch {
 	case listMissingProblem(err) != nil:
@@ -265,6 +265,8 @@ func (s *Service) writeEdgeRuleRestoreError(w http.ResponseWriter, err error) {
 	case errors.Is(err, state.ErrNotFound):
 		httpkit.NotFound(w, "no such edge-rule version")
 	default:
+		// The answer is a generic 503; keep the cause for the operator.
+		s.Host.Logger().Warn("edge rules rollback failed", "app", appID, "err", err)
 		api.WriteProblem(w, trafficproblem.Policy(err, api.ErrCapacity("could not roll back edge rules")))
 	}
 }

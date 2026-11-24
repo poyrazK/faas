@@ -53,6 +53,8 @@ import type { ObjectVersionList } from '../models/ObjectVersionList.js';
 import type { ObjectVersionProtection } from '../models/ObjectVersionProtection.js';
 import type { ObjectVersionRetentionRequest } from '../models/ObjectVersionRetentionRequest.js';
 import type { ObjectVersionRetentionResult } from '../models/ObjectVersionRetentionResult.js';
+import type { ObjectWorkloadCredentialRequest } from '../models/ObjectWorkloadCredentialRequest.js';
+import type { ObjectWorkloadCredentialResponse } from '../models/ObjectWorkloadCredentialResponse.js';
 import type { ObjectWriteReceipt } from '../models/ObjectWriteReceipt.js';
 import type { ObjectWriteReceiptList } from '../models/ObjectWriteReceiptList.js';
 import type { Problem } from '../models/Problem.js';
@@ -2488,6 +2490,47 @@ export class StorageService {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/object-storage-usage',
+    });
+  }
+  /**
+   * Trade a binding token for a one-hour S3 credential on a granted bucket.
+   * Called by guest-init's loopback credential endpoint, not by customer
+   * code. A live production instance presents its gregale:bindings
+   * workload token and names a bucket its app's gregale.yaml `uses:`
+   * grants (or omits the bucket when it holds exactly one bucket grant).
+   * The answer is the AWS container credential shape, limited to the
+   * grant's access and key prefix, and expires within the hour. Each
+   * instance holds at most 8 live credentials per bucket. Gated by the
+   * cross_app_bindings platform flag (off: 404).
+   *
+   * @returns ObjectWorkloadCredentialResponse The credential.
+   * @throws ApiError
+   */
+  public static workloadObjectCredentialIssue({
+    requestBody,
+  }: {
+    requestBody: ObjectWorkloadCredentialRequest,
+  }): CancelablePromise<ObjectWorkloadCredentialResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/workload/object-storage/credentials',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
     });
   }
   /**

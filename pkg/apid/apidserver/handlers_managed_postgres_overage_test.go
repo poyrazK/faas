@@ -21,14 +21,21 @@ func TestManagedPostgresOverageRoutes(t *testing.T) {
 	if err := srv.InstallCapabilityGate(); err != nil {
 		t.Fatal(err)
 	}
-	if r := e.Do(t, http.MethodGet, "/v1/postgres/overage", nil, nil); !missingRoute(r) {
-		t.Fatalf("overage before its capability is released = %d %s, want a missing route", r.Code, r.Body)
+	// postgres-overage is GA (#7846), so it is served by default; switching
+	// it, or its managed-postgres parent, off hides the route.
+	if r := e.Do(t, http.MethodGet, "/v1/postgres/overage", nil, nil); missingRoute(r) {
+		t.Fatalf("overage at its GA default = %d %s, want it served", r.Code, r.Body)
 	}
-	srv.SeedPlatformFlag(capabilityFlag(t, "managed-postgres"), platformflags.Definition{Enabled: true, Default: true})
+	srv.SeedPlatformFlag(capabilityFlag(t, "postgres-overage"), platformflags.Definition{Enabled: true, Default: false})
 	if r := e.Do(t, http.MethodGet, "/v1/postgres/overage", nil, nil); !missingRoute(r) {
-		t.Fatalf("overage with only its parent released = %d %s, want a missing route", r.Code, r.Body)
+		t.Fatalf("overage with its capability switched off = %d %s, want a missing route", r.Code, r.Body)
 	}
 	srv.SeedPlatformFlag(capabilityFlag(t, "postgres-overage"), platformflags.Definition{Enabled: true, Default: true})
+	srv.SeedPlatformFlag(capabilityFlag(t, "managed-postgres"), platformflags.Definition{Enabled: true, Default: false})
+	if r := e.Do(t, http.MethodGet, "/v1/postgres/overage", nil, nil); !missingRoute(r) {
+		t.Fatalf("overage with its parent switched off = %d %s, want a missing route", r.Code, r.Body)
+	}
+	srv.SeedPlatformFlag(capabilityFlag(t, "managed-postgres"), platformflags.Definition{Enabled: true, Default: true})
 
 	const allowance = int64(75 * 3600)
 	read := func(t *testing.T, body string) api.ManagedPostgresOverage {

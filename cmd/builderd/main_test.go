@@ -294,8 +294,14 @@ func writeNodeTarball(path string) error {
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
-	hdr := &tar.Header{Name: "package.json", Mode: 0o644, Size: 0, Typeflag: tar.TypeReg}
+	// builderd parses package.json before a Node build: an empty one is
+	// invalid JSON and fails the build before Spawn.
+	body := []byte("{}")
+	hdr := &tar.Header{Name: "package.json", Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg}
 	if err := tw.WriteHeader(hdr); err != nil {
+		return err
+	}
+	if _, err := tw.Write(body); err != nil {
 		return err
 	}
 	if err := tw.Close(); err != nil {

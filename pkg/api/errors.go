@@ -219,6 +219,16 @@ type Problem struct {
 	// secret-scan specific. Optional + omitempty so every other
 	// problem+json site keeps its existing flat shape unchanged.
 	RelevantLogs []LogExcerpt `json:"relevant_logs,omitempty"`
+	// FixCommands are the runnable commands from Fix with this failure's
+	// values (app, deployment) filled in, in order. A command that still
+	// needs a value nobody knew is left out rather than shown with a
+	// placeholder. Optional + omitempty (ADR-20261123230000).
+	FixCommands []string `json:"fix_commands,omitempty"`
+	// Retryable reports whether repeating the same request can succeed
+	// without changing anything: true for rate limits and transient
+	// platform errors, false when the request or the app must change.
+	// Absent when unknown. Optional + omitempty (ADR-20261123230000).
+	Retryable *bool `json:"retryable,omitempty"`
 	// extraHeaders are non-JSON response headers attached via WithHeader.
 	// Kept unexported so the wire body (RFC 9457 problem+json) is
 	// exactly the spec; WriteProblem flushes these onto the wire
