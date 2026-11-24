@@ -8722,7 +8722,17 @@ haveApp:
 		if cold && wakeMethod != WakeMethodUnspecified {
 			h.metrics.ObserveColdBootWithTrace(app.ID, firstByteAt.Sub(wakeStart), target.NodeID, traceID)
 			if !platformWakeStart.IsZero() {
-				if startupOOM.Any() {
+				switch {
+				case deploymentSmoke:
+					// A deployment smoke verifies a candidate, not customer
+					// demand. It is admitted while the candidate's first-boot
+					// instance is still capturing the snapshot the smoke then
+					// restores, so its wait is the deploy pipeline's
+					// (2026-11-24: 24 of 32 platform wakes over 350 ms were
+					// smokes; customer restores held p95 157 ms). The app's
+					// own wake latency (above) keeps it.
+					h.metrics.ObservePlatformWakeExcluded(platformWakeExcludedDeploymentSmoke)
+				case startupOOM.Any():
 					// The app ran out of memory while a wake this request
 					// admitted booted it: the kernel's OOM kill, not the
 					// platform, set the latency this request waited out,
@@ -8730,7 +8740,7 @@ haveApp:
 					// app's own wake latency (above) keeps it; the phase
 					// breakdown follows the SLO series it decomposes.
 					h.metrics.ObservePlatformWakeExcluded(platformWakeExcludedStartupOOM)
-				} else {
+				default:
 					h.metrics.ObservePlatformWakeWithTrace(firstByteAt.Sub(platformWakeStart), traceID)
 					platformWakeTrace.observe(h.metrics, firstByteAt)
 				}

@@ -82,12 +82,22 @@ func TestExactDeploymentWakeRecordsPlatformTiming(t *testing.T) {
 				if err := metrics.platformWakeLatency.Write(&metric); err != nil {
 					t.Fatal(err)
 				}
-				wantCount := uint64(0)
-				if state == "cold" {
+				// A cold preview is a platform wake. A cold smoke still records
+				// its phase trace but stays out of the platform SLO histogram:
+				// it waits for its candidate's first-boot snapshot, which is
+				// deploy-pipeline time (counted as excluded instead).
+				wantCount, wantExcluded := uint64(0), 0
+				if state == "cold" && entry == "preview" {
 					wantCount = 1
+				}
+				if state == "cold" && entry == "smoke" {
+					wantExcluded = 1
 				}
 				if got := metric.GetHistogram().GetSampleCount(); got != wantCount {
 					t.Fatalf("platform wake observations=%d, want %d", got, wantCount)
+				}
+				if got := metricLineValue(t, metrics, `gateway_platform_wake_excluded_total{reason="deployment_smoke"} `); got != wantExcluded {
+					t.Fatalf("deployment smoke exclusions=%d, want %d", got, wantExcluded)
 				}
 			})
 		}
