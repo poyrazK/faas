@@ -5784,6 +5784,7 @@ paths:
       - name: id
         in: path
         required: true
+        description: The identity to unlink, as listed by the consumer identities endpoint.
         schema: {type: string, format: uuid}
     delete:
       tags: [consumers]

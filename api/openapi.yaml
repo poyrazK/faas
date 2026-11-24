@@ -10268,7 +10268,7 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '429':
-          description: Too many requests from this address (`consumer_signup_rate_limited`).
+          description: Too many upgrade-page requests from this address (`consumer_signup_rate_limited`).
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -10278,7 +10278,7 @@ paths:
       - name: slug
         in: path
         required: true
-        description: The app whose plan the customer changes.
+        description: The app of the upgrade being started.
         schema: { type: string }
     post:
       tags: [consumers]
@@ -10303,7 +10303,7 @@ paths:
               schema: { $ref: '#/components/schemas/ConsumerUpgradeResult' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '404':
-          description: The app takes no sign-ups, or the link is invalid or expired.
+          description: The app takes no sign-ups, or the upgrade link is invalid or expired.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -10318,12 +10318,12 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '429':
-          description: Too many requests from this address (`consumer_signup_rate_limited`).
+          description: Too many upgrade starts from this address (`consumer_signup_rate_limited`).
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '502':
-          description: Stripe could not be reached (`billing_provider_unavailable`).
+          description: Stripe could not be reached to start Checkout (`billing_provider_unavailable`).
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -10338,7 +10338,7 @@ paths:
       - name: slug
         in: path
         required: true
-        description: The app whose plan the customer changes.
+        description: The app of the upgrade being completed.
         schema: { type: string }
     post:
       tags: [consumers]
@@ -10372,17 +10372,17 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '429':
-          description: Too many requests from this address (`consumer_signup_rate_limited`).
+          description: Too many upgrade completions from this address (`consumer_signup_rate_limited`).
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '502':
-          description: Stripe could not be reached (`billing_provider_unavailable`).
+          description: Stripe could not be reached to finish the upgrade (`billing_provider_unavailable`).
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '503':
-          description: The app's billing setup cannot take cards (`consumer_signup_unavailable`).
+          description: The app's billing setup cannot save the card (`consumer_signup_unavailable`).
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -24046,6 +24046,7 @@ paths:
       - name: id
         in: path
         required: true
+        description: The identity to unlink, as listed by the consumer identities endpoint.
         schema: { type: string, format: uuid }
     delete:
       tags: [consumers]

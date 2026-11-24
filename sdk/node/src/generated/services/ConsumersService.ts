@@ -437,7 +437,7 @@ export class ConsumersService {
       errors: {
         404: `The app takes no sign-ups, or the link is invalid or expired.`,
         409: `The app does not let customers change plans (\`consumer_self_service_unavailable\`).`,
-        429: `Too many requests from this address (\`consumer_signup_rate_limited\`).`,
+        429: `Too many upgrade-page requests from this address (\`consumer_signup_rate_limited\`).`,
       },
     });
   }
@@ -456,7 +456,7 @@ export class ConsumersService {
     requestBody,
   }: {
     /**
-     * The app whose plan the customer changes.
+     * The app of the upgrade being started.
      */
     slug: string,
     requestBody: StartConsumerUpgradeRequest,
@@ -471,11 +471,11 @@ export class ConsumersService {
       mediaType: 'application/json',
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
-        404: `The app takes no sign-ups, or the link is invalid or expired.`,
+        404: `The app takes no sign-ups, or the upgrade link is invalid or expired.`,
         409: `Plan changes are off (\`consumer_self_service_unavailable\`) or one starts at the next minute already.`,
         422: `The plan is not offered.`,
-        429: `Too many requests from this address (\`consumer_signup_rate_limited\`).`,
-        502: `Stripe could not be reached (\`billing_provider_unavailable\`).`,
+        429: `Too many upgrade starts from this address (\`consumer_signup_rate_limited\`).`,
+        502: `Stripe could not be reached to start Checkout (\`billing_provider_unavailable\`).`,
         503: `The app's billing setup cannot take cards (\`consumer_signup_unavailable\`).`,
       },
     });
@@ -494,7 +494,7 @@ export class ConsumersService {
     requestBody,
   }: {
     /**
-     * The app whose plan the customer changes.
+     * The app of the upgrade being completed.
      */
     slug: string,
     requestBody: CompleteConsumerUpgradeRequest,
@@ -511,9 +511,9 @@ export class ConsumersService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         404: `The app takes no sign-ups, or a token is invalid or expired.`,
         409: `The card is not saved yet (\`consumer_signup_checkout_incomplete\`), the consumer already has another payment account, or a plan change starts at the next minute already.`,
-        429: `Too many requests from this address (\`consumer_signup_rate_limited\`).`,
-        502: `Stripe could not be reached (\`billing_provider_unavailable\`).`,
-        503: `The app's billing setup cannot take cards (\`consumer_signup_unavailable\`).`,
+        429: `Too many upgrade completions from this address (\`consumer_signup_rate_limited\`).`,
+        502: `Stripe could not be reached to finish the upgrade (\`billing_provider_unavailable\`).`,
+        503: `The app's billing setup cannot save the card (\`consumer_signup_unavailable\`).`,
       },
     });
   }
@@ -1988,6 +1988,9 @@ export class ConsumersService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * The identity to unlink, as listed by the consumer identities endpoint.
+     */
     id: string,
   }): CancelablePromise<void> {
     return __request(this?.clientConfig ?? OpenAPI, {
