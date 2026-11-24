@@ -122,14 +122,15 @@ func TestCapabilitiesReportGateDecision(t *testing.T) {
 	if !enabled["crons"] {
 		t.Error("a GA capability the plan includes must be enabled")
 	}
-	if enabled["realtime"] {
+	// Core realtime is beta (ADR-20261123074615); queues is still preview.
+	if enabled["queues"] {
 		t.Error("a preview capability must be unavailable until its flag includes the account")
 	}
 	hidden := map[string]bool{}
 	for _, id := range out.HiddenCapabilities {
 		hidden[id] = true
 	}
-	if !hidden["realtime"] || !hidden["realtime-push"] || !hidden["service-map"] || hidden["crons"] {
+	if !hidden["queues"] || !hidden["realtime-push"] || !hidden["service-map"] || hidden["crons"] {
 		t.Errorf("hidden_capabilities = %v, want preview, sub-feature and internal capabilities but not GA crons", out.HiddenCapabilities)
 	}
 }

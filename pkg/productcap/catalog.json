@@ -4707,7 +4707,8 @@
         "/v1/projects/{}/environments/{}/config",
         "/v1/projects/{}/environments/{}/secrets",
         "/v1/projects/{}/exclusions",
-        "/v1/projects/{}/release-secrets"
+        "/v1/projects/{}/release-secrets",
+        "/v1/projects/{}/rollbacks"
       ],
       "cli": [
         "projects",

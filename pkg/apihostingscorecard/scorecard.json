@@ -188,7 +188,8 @@
         {"kind": "test", "locator": "pkg/state/pgstore_realtime_credentials_test.go::TestPgStoreRealtimePublisherCredentialPublishes"},
         {"kind": "test", "locator": "pkg/state/pgstore_realtime_credentials_test.go::TestPgStoreRealtimeWorkerCredentialScopesOperations"},
         {"kind": "test", "locator": "pkg/tcpd/supervisor_test.go::TestSupervisorRecreationCancelsPreviousIdentitySessions"},
-        {"kind": "test", "locator": "tests/journeys/postgres_test.go::TestManagedPostgres"}
+        {"kind": "test", "locator": "tests/journeys/postgres_test.go::TestManagedPostgres"},
+        {"kind": "test", "locator": "tests/journeys/realtime_test.go::TestRealtime"}
       ]
     },
     {
