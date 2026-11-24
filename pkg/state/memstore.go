@@ -603,6 +603,7 @@ type MemStore struct {
 	apps                      map[string]App
 	appOwnerHome              map[string]string
 	managedValkeyCaches       sync.Map               // app id -> ManagedValkeyCache (ADR-20261116192126)
+	managedValkeyCacheGrants  sync.Map               // cache app id + "\x00" + app id -> account id (ADR-20261124174500)
 	appSlugHolds              map[string]appSlugHold // mirrors app_slug_holds (H80)
 	scenarioTestMembers       map[string]ScenarioTestMember
 	scenarioPostgres          map[string]rehearsalpg.Resource

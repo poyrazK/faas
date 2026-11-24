@@ -50434,6 +50434,19 @@ CREATE TABLE public.managed_realtime_worker_heartbeats (
 
 
 --
+-- Name: managed_valkey_cache_grants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_valkey_cache_grants (
+    cache_app_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT managed_valkey_cache_grants_check CHECK ((cache_app_id <> app_id))
+);
+
+
+--
 -- Name: managed_valkey_caches; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -73329,6 +73342,14 @@ ALTER TABLE ONLY public.managed_realtime_worker_heartbeats
 
 
 --
+-- Name: managed_valkey_cache_grants managed_valkey_cache_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_valkey_cache_grants
+    ADD CONSTRAINT managed_valkey_cache_grants_pkey PRIMARY KEY (cache_app_id, app_id);
+
+
+--
 -- Name: managed_valkey_caches managed_valkey_caches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -86831,6 +86852,13 @@ CREATE UNIQUE INDEX managed_realtime_subscription_tickets_id ON public.managed_r
 --
 
 CREATE INDEX managed_realtime_subscription_tickets_principal ON public.managed_realtime_subscription_tickets USING btree (endpoint_id, principal);
+
+
+--
+-- Name: managed_valkey_cache_grants_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_valkey_cache_grants_app_idx ON public.managed_valkey_cache_grants USING btree (app_id);
 
 
 --
@@ -109718,6 +109746,22 @@ ALTER TABLE ONLY public.managed_realtime_worker_credentials
 
 ALTER TABLE ONLY public.managed_realtime_worker_heartbeats
     ADD CONSTRAINT managed_realtime_worker_heartbeats_group_id_fkey FOREIGN KEY (group_id) REFERENCES public.managed_realtime_consumer_groups(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_valkey_cache_grants managed_valkey_cache_grants_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_valkey_cache_grants
+    ADD CONSTRAINT managed_valkey_cache_grants_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_valkey_cache_grants managed_valkey_cache_grants_cache_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_valkey_cache_grants
+    ADD CONSTRAINT managed_valkey_cache_grants_cache_app_id_fkey FOREIGN KEY (cache_app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

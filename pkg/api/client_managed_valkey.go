@@ -61,3 +61,10 @@ func (c *Client) BindRedisCache(ctx context.Context, name string, request BindRe
 	err := c.do(ctx, http.MethodPost, "/v1/redis/"+url.PathEscape(name)+"/bindings", request, &out)
 	return out, err
 }
+
+// UnbindRedisCache revokes an app's grant to call a cache.
+func (c *Client) UnbindRedisCache(ctx context.Context, name, app string) (RedisCacheUnbinding, error) {
+	var out RedisCacheUnbinding
+	err := c.do(ctx, http.MethodDelete, "/v1/redis/"+url.PathEscape(name)+"/bindings/"+url.PathEscape(app), nil, &out)
+	return out, err
+}

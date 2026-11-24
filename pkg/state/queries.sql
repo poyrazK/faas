@@ -10210,6 +10210,24 @@ FROM apps WHERE id = (SELECT app_id FROM scenario_test_members WHERE account_id 
 -- name: ReadServicePolicyTestMember :one
 SELECT account_id, run_id, workload_name, app_id FROM scenario_test_members WHERE app_id = sqlc.arg(app_id)::uuid;
 
+-- name: ReadServicePolicyCacheGrant :one
+-- A grant counts only while its target is still a managed cache
+-- (ADR-20261124174500).
+SELECT EXISTS (
+    SELECT 1 FROM managed_valkey_cache_grants g
+    JOIN managed_valkey_caches c ON c.app_id = g.cache_app_id
+    WHERE g.cache_app_id = sqlc.arg(cache_app_id)::uuid AND g.app_id = sqlc.arg(app_id)::uuid
+)::boolean AS granted;
+
+-- name: GrantManagedValkeyCache :exec
+INSERT INTO managed_valkey_cache_grants (cache_app_id, app_id, account_id)
+VALUES (sqlc.arg(cache_app_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(account_id)::uuid)
+ON CONFLICT (cache_app_id, app_id) DO NOTHING;
+
+-- name: RevokeManagedValkeyCacheGrant :execrows
+DELETE FROM managed_valkey_cache_grants
+WHERE cache_app_id = sqlc.arg(cache_app_id)::uuid AND app_id = sqlc.arg(app_id)::uuid;
+
 -- name: ReadServicePolicyProject :one
 SELECT preview_service_policy FROM github_deploy_policies
 WHERE project_id = sqlc.arg(project_id)::uuid AND account_id = sqlc.arg(account_id)::uuid;
