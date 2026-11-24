@@ -114,6 +114,21 @@ func TestAppSettingsFlagsDefaultToLinkedApp(t *testing.T) {
 	}
 }
 
+// Prod hunt r42: adding an already allowed egress port printed nothing.
+func TestEgressPortsAddAlreadyAllowedSaysSo(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"a","slug":"demo","egress_ports":[5432]}`))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	code, stdout, stderr := runCLI(t, "app", "demo", "egress-ports", "add", "5432")
+	if code != 0 || !strings.Contains(stdout, "already allows TCP 5432") {
+		t.Fatalf("egress-ports add = %d %q %q, want an already-allowed note", code, stdout, stderr)
+	}
+}
+
 // Prod hunt r38: bare `gregale env` listed only the clone and sync verbs,
 // not set/unset/list.
 func TestEnvUsageListsSecretVerbs(t *testing.T) {

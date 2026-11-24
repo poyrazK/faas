@@ -690,6 +690,27 @@ func pythonModuleName(name string) string {
 	return strings.ReplaceAll(name, "/", ".")
 }
 
+// loopbackBindLine reports whether a line names a loopback address where an
+// address is bound: beside listen, bind, host or serve. rest-api-postgres's
+// check that a caller's remoteAddress is 127.0.0.1, and a client URL such as
+// http://localhost:5432, warned on every deploy of our own starter (prod hunt
+// r42).
+func loopbackBindLine(body string) bool {
+	for _, line := range strings.Split(body, "\n") {
+		lower := strings.ToLower(line)
+		if !strings.Contains(lower, "127.0.0.1") && !strings.Contains(lower, "localhost") {
+			continue
+		}
+		rest := strings.ReplaceAll(lower, "localhost", "")
+		for _, word := range []string{"listen", "bind", "host", "serve"} {
+			if strings.Contains(rest, word) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func loopbackWarnings(fsys fs.FS) []Warning {
 	var warnings []Warning
 	files := collectSourceFiles(fsys, 256, isSourceCodeFile)
@@ -701,7 +722,7 @@ func loopbackWarnings(fsys fs.FS) []Warning {
 			continue
 		}
 		body := readFile(fsys, path)
-		if (strings.Contains(body, "127.0.0.1") || strings.Contains(body, "localhost")) && !strings.Contains(body, "0.0.0.0") {
+		if loopbackBindLine(body) && !strings.Contains(body, "0.0.0.0") {
 			warnings = append(warnings, Warning{Code: "loopback_bind_possible", Message: "The source references localhost or 127.0.0.1; bind to 0.0.0.0 for public API traffic.", Sources: []string{path}})
 		}
 	}
