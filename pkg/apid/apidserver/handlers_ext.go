@@ -329,7 +329,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusForbidden,
 				api.CodePlanWarmPoolNotAllowed,
 				"Warm-pool capacity is not allowed on this plan",
-				"Free tier does not support per-app warm pools; upgrade to Hobby or higher.")
+				"Free tier does not support per-app warm pools; upgrade to Hobby or higher.").WithDocs("https://gregale.dev/docs/plans")
 		}
 		effectiveMaxConcurrency := app.MaxConcurrency
 		if req.MaxConcurrency != nil {
@@ -475,7 +475,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusForbidden,
 				api.CodePlanScaleUpNotAllowed,
 				"Autoscale target RPS is not allowed on this plan",
-				"Free tier does not support per-app autoscaling; upgrade to Hobby or higher.")
+				"Free tier does not support per-app autoscaling; upgrade to Hobby or higher.").WithDocs("https://gregale.dev/docs/plans")
 		}
 		// 0 is the explicit-disable form (the Set bit is set, so
 		// the column gets overwritten to 0). Negative values are
@@ -492,7 +492,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusForbidden,
 				api.CodePlanScaleUpNotAllowed,
 				"Autoscale target CPU%% is not allowed on this plan",
-				"Autoscale target CPU%% requires Pro or Scale; upgrade to a paid tier.")
+				"Autoscale target CPU%% requires Pro or Scale; upgrade to a paid tier.").WithDocs("https://gregale.dev/docs/plans")
 		}
 		// 0 is the explicit-disable form; values outside [1, 100]
 		// are invalid (PG CHECK enforces this as a second-layer
@@ -517,7 +517,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusForbidden,
 				api.CodePlanStreamingNotAllowed,
 				"Streaming responses are not allowed on this plan",
-				"Free tier does not support per-app streaming; upgrade to Hobby or higher.")
+				"Free tier does not support per-app streaming; upgrade to Hobby or higher.").WithDocs("https://gregale.dev/docs/plans")
 		}
 	}
 	// Issue #676 / ADR-080: per-app raw-bytes Upgrade bridge flag.
@@ -533,7 +533,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusForbidden,
 				api.CodePlanWebSocketNotAllowed,
 				"WebSocket / Upgrade traffic is not allowed on this plan",
-				"Free tier does not support per-app WebSocket; upgrade to Hobby or higher.")
+				"Free tier does not support per-app WebSocket; upgrade to Hobby or higher.").WithDocs("https://gregale.dev/docs/plans")
 		}
 	}
 	// ADR-093: per-route observability opt-in. Same plan-gate
@@ -551,7 +551,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusForbidden,
 				api.CodePlanRouteMetricsNotAllowed,
 				"Per-route metrics are not allowed on this plan",
-				"Free tier does not support per-route observability; upgrade to Hobby or higher.")
+				"Free tier does not support per-route observability; upgrade to Hobby or higher.").WithDocs("https://gregale.dev/docs/plans")
 		}
 	}
 	// Only-allow-declared-routes is deliberately plan-agnostic: the gateway
@@ -595,7 +595,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusForbidden,
 				api.CodePlanWarmSnapshotNotAllowed,
 				"Warm-tier snapshots are not allowed on this plan",
-				"Free and Hobby tiers do not support per-app warm snapshots; upgrade to Pro or higher.")
+				"Free and Hobby tiers do not support per-app warm snapshots; upgrade to Pro or higher.").WithDocs("https://gregale.dev/docs/plans")
 		}
 	}
 	// Issue #560: per-app require_authn opt-in. Same plan-gate
@@ -613,7 +613,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusForbidden,
 				api.CodePlanRequireAuthnNotAllowed,
 				"Per-deployment authentication is not allowed on this plan",
-				"Free and Hobby tiers do not support per-app require_authn; upgrade to Pro or higher.")
+				"Free and Hobby tiers do not support per-app require_authn; upgrade to Pro or higher.").WithDocs("https://gregale.dev/docs/plans")
 		}
 	}
 	if req.ConsumerAuthMode != nil {
@@ -659,7 +659,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusUnprocessableEntity,
 				api.CodeInvalidWarmSnapshotMinRequests,
 				"Invalid warm_snapshot_min_requests",
-				fmt.Sprintf("warm_snapshot_min_requests must be in [1, 100]; got %d", v))
+				fmt.Sprintf("warm_snapshot_min_requests must be in [1, 100]; got %d", v)).WithDocs("https://gregale.dev/docs/scale-to-zero#warm-snapshots-opt-in-pro-and-scale")
 		}
 	}
 	if req.WarmSnapshotMinMs != nil {
@@ -668,7 +668,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusUnprocessableEntity,
 				api.CodeInvalidWarmSnapshotMinMs,
 				"Invalid warm_snapshot_min_ms",
-				fmt.Sprintf("warm_snapshot_min_ms must be in [100, 60000]; got %d", v))
+				fmt.Sprintf("warm_snapshot_min_ms must be in [100, 60000]; got %d", v)).WithDocs("https://gregale.dev/docs/scale-to-zero#warm-snapshots-opt-in-pro-and-scale")
 		}
 	}
 	// Issue #475: per-app eviction_priority tier. The validation

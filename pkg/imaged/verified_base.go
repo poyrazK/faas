@@ -363,7 +363,7 @@ func (h *Handler) finishVerifiedBase(ctx context.Context, r verifiedBaseRequest,
 	// multi-line digest sidecar value is not a valid generation, so marking
 	// with it failed the first stage of every new base and stopped the
 	// rc.266 rollout on fsn-2 (hunt #10, H10-91).
-	if err := markCachedBaseGeneration(r.be, r.key, r.digestKey, r.ref); err != nil {
+	if err := markCachedBaseGeneration(ctx, r.be, r.key, r.digestKey, r.ref); err != nil {
 		return BaseStageResult{}, err
 	}
 	return BaseStageResult{OutImage: r.out, StorageKey: r.key, ConfigDigest: configDigest, Skipped: skipped, Producer: producer}, nil
