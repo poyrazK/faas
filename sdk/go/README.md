@@ -92,7 +92,7 @@ import (
 )
 
 func main() {
-    baseURL := os.Getenv("FAAS_API")
+    baseURL := os.Getenv("GREGALE_API_URL")
     if baseURL == "" {
         baseURL = "https://api.gregale.dev"
     }

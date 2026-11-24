@@ -899,6 +899,8 @@ func TestEveryCodeHasWhycopyEntry(t *testing.T) {
 		api.CodeDeploymentSmokeFailed,
 		api.CodeDeploymentVerificationUnavailable,
 		api.CodeReleaseCommandFailed,
+		// Verification contracts (#7906, ADR-20261122220000).
+		api.CodeDeploymentVerificationContractFailed,
 	}
 
 	// Forward direction: every cluster-owned Code must have a

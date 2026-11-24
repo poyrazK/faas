@@ -181,6 +181,10 @@ func TestApprovalRequestSummary(t *testing.T) {
 	if got := approvalRequest("web_fetch", []byte{0xff, 0xfe}); got.ArgumentsSummary != "" {
 		t.Errorf("invalid UTF-8 kept: %q", got.ArgumentsSummary)
 	}
+	// A Postgres text column rejects NUL even though it is valid UTF-8.
+	if got := approvalRequest("web_fetch", []byte("{\"q\":\"a\x00b\"}")); strings.Contains(got.ArgumentsSummary, "\x00") || got.ArgumentsSummary == "" {
+		t.Errorf("NUL kept or summary dropped: %q", got.ArgumentsSummary)
+	}
 }
 
 func callRequest(name, args string) *mcp.CallToolRequest {

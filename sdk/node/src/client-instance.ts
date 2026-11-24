@@ -48,9 +48,11 @@ export function bindService<T extends object>(service: T, getConfig: () => Clien
   return Object.freeze(methods) as Methods<T>;
 }
 
-export type BoundClient<Services> = {
+/** Files selects the preview application-files helpers on `storage`; the
+ * public client's storage namespace has only the generated methods. */
+export type BoundClient<Services, Files extends boolean = false> = {
   readonly [K in keyof Services as K extends `${infer Name}Service` ? Uncapitalize<Name> : never]: Methods<Services[K]> &
-    (K extends 'DeploymentsService' ? DeploymentPagination & DeploymentWaiters & SourceDeployments : K extends 'UploadsService' ? SourceUploads : K extends 'ProjectsService' ? ProjectWorkflows & ProjectVerification : K extends 'JobsService' ? TypedJobs : K extends 'StorageService' ? FileHelpers : object);
+    (K extends 'DeploymentsService' ? DeploymentPagination & DeploymentWaiters & SourceDeployments : K extends 'UploadsService' ? SourceUploads : K extends 'ProjectsService' ? ProjectWorkflows & ProjectVerification : K extends 'JobsService' ? TypedJobs : K extends 'StorageService' ? (Files extends true ? FileHelpers : object) : object);
 } & {
   /** Applies to future requests; in-flight requests keep their original token. */
   setToken(token: string | undefined): void;
@@ -72,13 +74,16 @@ function normalizeBaseURL(value: string): string {
 /** Internal shared builder for public and preview service surfaces. Each call
  * snapshots its config before the generated request starts resolving headers.
  * Replacing config on updates also isolates requests waiting to retry.
+ * Application files stay preview: only a client built with files binds
+ * `storage.files`, even though StorageService is in the GA spec.
  */
-export function bindClient<Services extends Record<string, object>, Helpers extends object = object>(
+export function bindClient<Services extends Record<string, object>, Helpers extends object = object, Files extends boolean = false>(
   services: Services,
   baseURL: string,
   options: FaaSClientOptions = {},
   helpers?: (getConfig: () => ClientConfig) => Helpers,
-): BoundClient<Services> & Helpers {
+  files?: Files,
+): BoundClient<Services, Files> & Helpers {
   const transportOptions = { ...options, retry: options.retry && { ...options.retry } };
   const transports = (key?: IdempotencyKey) => ({
     FETCH: createHttpTransport(transportOptions, () => key),
@@ -122,7 +127,7 @@ export function bindClient<Services extends Record<string, object>, Helpers exte
       const additions = bindSourceUploads(() => config);
       for (const key of Object.keys(additions)) if (key in methods) throw new Error(`Duplicate SDK helper: ${namespace}.${key}`);
       client[namespace] = Object.freeze({ ...methods, ...additions });
-    } else if (name === 'StorageService') {
+    } else if (name === 'StorageService' && files) {
       const additions = bindFiles(() => config);
       for (const key of Object.keys(additions)) if (key in methods) throw new Error(`Duplicate SDK helper: ${namespace}.${key}`);
       client[namespace] = Object.freeze({ ...methods, ...additions });
@@ -140,5 +145,5 @@ export function bindClient<Services extends Record<string, object>, Helpers exte
     if (name in client) throw new Error(`Duplicate SDK helper: ${name}`);
     client[name] = helper;
   }
-  return Object.freeze(client) as BoundClient<Services> & Helpers;
+  return Object.freeze(client) as BoundClient<Services, Files> & Helpers;
 }

@@ -165,7 +165,7 @@ qualification.
 ### Verify a deployed stored workflow from CI
 
 `gregale workflow stored live` exposes the same saved-case verification through the
-CLI. Authenticate the CI job with `GREGALE_TOKEN`; use `FAAS_API` when selecting a
+CLI. Authenticate the CI job with `GREGALE_TOKEN`; use `GREGALE_API_URL` when selecting a
 different control-plane endpoint.
 Use `live list --app billing --name paid-invoice --json` to read the current
 published revision, default deployment and recent verification IDs. Read the

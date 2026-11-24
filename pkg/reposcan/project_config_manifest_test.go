@@ -107,3 +107,46 @@ func keys(m map[string]reposcan.Workload) []string {
 	slices.Sort(out)
 	return out
 }
+
+// ADR-20261122191423: a service's `uses:` grants reach its workload
+// normalized, and an invalid grant fails the scan.
+func TestProjectBlockUsesGrants(t *testing.T) {
+	fsys := fstest.MapFS{
+		"services/web/package.json":    nodeService("web"),
+		"services/worker/package.json": nodeService("worker"),
+		"gregale.yaml": {Data: []byte(`project:
+  services:
+    web:
+      uses:
+        queues:
+          - app: Worker
+            queue: transforms
+        delayed_tasks: [self]
+        buckets:
+          - bucket: assets
+            prefix: rooms/
+`)},
+	}
+	result, err := reposcan.Scan(fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := workloadsByName(t, result)
+	uses := got["web"].Uses
+	if uses == nil || len(uses.Queues) != 1 || uses.Queues[0].App != "worker" || uses.DelayedTasks[0] != "self" ||
+		uses.Buckets[0].App != "self" || uses.Buckets[0].Access != "read_write" {
+		t.Fatalf("web uses = %+v", uses)
+	}
+	if got["worker"].Uses != nil {
+		t.Fatalf("worker uses = %+v, want none", got["worker"].Uses)
+	}
+
+	fsys["gregale.yaml"] = &fstest.MapFile{Data: []byte("project:\n  services:\n    web:\n      uses:\n        queues:\n          - queue: transforms\n")}
+	if _, err := reposcan.Scan(fsys); err == nil || !strings.Contains(err.Error(), "app is required") {
+		t.Fatalf("grant without app: %v", err)
+	}
+	fsys["gregale.yaml"] = &fstest.MapFile{Data: []byte("project:\n  services:\n    web:\n      uses:\n        topics: [x]\n")}
+	if _, err := reposcan.Scan(fsys); err == nil {
+		t.Fatal("unknown uses key accepted")
+	}
+}

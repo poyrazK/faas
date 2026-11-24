@@ -1500,6 +1500,8 @@ from .object_version_legal_hold_status import ObjectVersionLegalHoldStatus
 from .object_version_retention import ObjectVersionRetention
 from .object_version_retention_event_hold import ObjectVersionRetentionEventHold
 from .object_version_retention_mode import ObjectVersionRetentionMode
+from .object_workload_credential_request import ObjectWorkloadCredentialRequest
+from .object_workload_credential_response import ObjectWorkloadCredentialResponse
 from .object_write_protection import ObjectWriteProtection
 from .obs_alert_episode import ObsAlertEpisode
 from .obs_alert_episode_observation_state import ObsAlertEpisodeObservationState
@@ -4662,6 +4664,8 @@ __all__ = (
     "ObjectVersionRetention",
     "ObjectVersionRetentionEventHold",
     "ObjectVersionRetentionMode",
+    "ObjectWorkloadCredentialRequest",
+    "ObjectWorkloadCredentialResponse",
     "ObjectWriteProtection",
     "ObsAlertEpisode",
     "ObsAlertEpisodeObservationState",

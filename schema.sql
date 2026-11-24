@@ -52210,6 +52210,40 @@ CREATE TABLE public.object_storage_version_inventory_entries (
 
 
 --
+-- Name: object_storage_workload_credentials; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_storage_workload_credentials (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    bucket_id uuid NOT NULL,
+    caller_app_id uuid NOT NULL,
+    instance_id text NOT NULL,
+    access_key_id text NOT NULL,
+    secret_sealed bytea NOT NULL,
+    kid text NOT NULL,
+    permission text NOT NULL,
+    key_prefix text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT object_storage_workload_credentials_access_key_id_check CHECK ((access_key_id ~ '^GRGW[A-Z2-7]{16}$'::text)),
+    CONSTRAINT object_storage_workload_credentials_check CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '01:05:00'::interval)))),
+    CONSTRAINT object_storage_workload_credentials_instance_id_check CHECK (((octet_length(instance_id) >= 1) AND (octet_length(instance_id) <= 128))),
+    CONSTRAINT object_storage_workload_credentials_key_prefix_check CHECK (((key_prefix IS NULL) OR (((octet_length(key_prefix) >= 1) AND (octet_length(key_prefix) <= 512)) AND ("left"(key_prefix, 1) <> '/'::text)))),
+    CONSTRAINT object_storage_workload_credentials_kid_check CHECK (((length(kid) >= 1) AND (length(kid) <= 255))),
+    CONSTRAINT object_storage_workload_credentials_permission_check CHECK ((permission = ANY (ARRAY['read'::text, 'write'::text, 'read_write'::text]))),
+    CONSTRAINT object_storage_workload_credentials_secret_sealed_check CHECK ((octet_length(secret_sealed) > 0))
+);
+
+
+--
+-- Name: TABLE object_storage_workload_credentials; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.object_storage_workload_credentials IS 'Short-lived per-instance S3 credentials for buckets granted by gregale.yaml uses:; written by apid, resolved by s3-gatewayd, swept by apid after expiry (ADR-20261122191423).';
+
+
+--
 -- Name: object_storage_write_admissions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -73870,6 +73904,22 @@ ALTER TABLE ONLY public.object_storage_version_inventory_entries
 
 
 --
+-- Name: object_storage_workload_credentials object_storage_workload_credentials_access_key_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_workload_credentials
+    ADD CONSTRAINT object_storage_workload_credentials_access_key_id_key UNIQUE (access_key_id);
+
+
+--
+-- Name: object_storage_workload_credentials object_storage_workload_credentials_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_workload_credentials
+    ADD CONSTRAINT object_storage_workload_credentials_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: object_storage_write_admissions object_storage_write_admissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -87125,6 +87175,27 @@ CREATE UNIQUE INDEX object_storage_s3_credentials_rotation_parent_idx ON public.
 --
 
 CREATE INDEX object_storage_upload_grants_expiry_idx ON public.object_storage_upload_grants USING btree (expires_at, id);
+
+
+--
+-- Name: object_storage_workload_credentials_caller_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_storage_workload_credentials_caller_idx ON public.object_storage_workload_credentials USING btree (caller_app_id);
+
+
+--
+-- Name: object_storage_workload_credentials_expires_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_storage_workload_credentials_expires_idx ON public.object_storage_workload_credentials USING btree (expires_at);
+
+
+--
+-- Name: object_storage_workload_credentials_instance_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_storage_workload_credentials_instance_idx ON public.object_storage_workload_credentials USING btree (instance_id, bucket_id);
 
 
 --
