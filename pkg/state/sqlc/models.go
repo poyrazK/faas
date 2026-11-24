@@ -5021,6 +5021,15 @@ type DeploymentSubmissionReceipt struct {
 	AcceptedAt   pgtype.Timestamptz
 }
 
+// Node verifying a deployment candidate; secretd opens contract-referenced app secrets only for it (ADR-20261122220000 amendment 2).
+type DeploymentVerificationLease struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	NodeName     string
+	ExpiresAt    pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+}
+
 // Read-only SQL checks imaged hands to apid during candidate verification; result is row count and first value only (ADR-20261122220000).
 type DeploymentVerificationQuery struct {
 	ID           pgtype.UUID

@@ -2761,6 +2761,12 @@ const (
 	VerificationContractMaxBodyContains     = 16
 	VerificationContractMaxJSONAssertions   = 32
 	VerificationContractMaxSQLBytes         = 64 << 10
+	// VerificationContractMaxSecretRefs bounds the distinct app secrets one
+	// contract's check headers reference (${secret:NAME}, amendment 2).
+	VerificationContractMaxSecretRefs = 8
+	// VerificationLeaseGrace is how long past the contract's own timeout the
+	// verifying node's lease lets secretd open referenced secrets.
+	VerificationLeaseGrace = 2 * time.Minute
 	// VerificationContractMaxResponseBytes is how much of a check's response
 	// body is read for body and JSON assertions.
 	VerificationContractMaxResponseBytes = 1 << 20

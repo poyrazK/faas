@@ -591,3 +591,37 @@ func (q *Queries) UpsertSecretGrant(ctx context.Context, db DBTX, arg UpsertSecr
 	err := row.Scan(&expires_at)
 	return expires_at, err
 }
+
+const verificationLease = `-- name: VerificationLease :one
+SELECT l.app_id, l.node_name, l.expires_at, d.status, d.scope,
+       c.contract::jsonb AS contract
+  FROM deployment_verification_leases l
+  JOIN deployments d ON d.id = l.deployment_id AND d.app_id = l.app_id
+  LEFT JOIN app_verification_contracts c ON c.app_id = l.app_id
+ WHERE l.deployment_id = $1::uuid
+`
+
+type VerificationLeaseRow struct {
+	AppID     pgtype.UUID
+	NodeName  string
+	ExpiresAt pgtype.Timestamptz
+	Status    string
+	Scope     string
+	Contract  []byte
+}
+
+// The node verifying a deployment, the deployment's status and scope, and the
+// app's stored verification contract (ADR-20261122220000 amendment 2).
+func (q *Queries) VerificationLease(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (VerificationLeaseRow, error) {
+	row := db.QueryRow(ctx, verificationLease, deploymentID)
+	var i VerificationLeaseRow
+	err := row.Scan(
+		&i.AppID,
+		&i.NodeName,
+		&i.ExpiresAt,
+		&i.Status,
+		&i.Scope,
+		&i.Contract,
+	)
+	return i, err
+}

@@ -583,6 +583,7 @@ type MemStore struct {
 	// ADR-20261122220000 verification contracts and their SQL handoff.
 	verificationContracts       map[string]VerificationContract
 	verificationQueries         map[string]VerificationQuery
+	verificationLeases          map[string]VerificationLease
 	mu                          sync.Mutex
 	outboundProbePolicies       map[string]api.OutboundBindingProbePolicy
 	outboundCredentialRevisions map[string]int64
