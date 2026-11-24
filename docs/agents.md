@@ -7,6 +7,9 @@ CLI, the CLI's automation contract, running the MCP server locally, the
 Claude Code plugin, project instructions, and documentation an agent can read
 directly.
 
+To deploy an MCP server of your own for agents to call, see
+[Host an MCP server](mcp-hosting.md).
+
 To set up one agent step by step, see
 [Deploy with Claude Code](claude-code.md), [Deploy with Codex](codex.md),
 [Deploy with Cursor](cursor.md), [Deploy with Antigravity](antigravity.md) or
@@ -124,6 +127,11 @@ access and works with private apps. Public access remains unverified
 Connect any MCP client to Gregale's hosted MCP server at
 `https://api.gregale.dev/mcp`. There's nothing to install and no key to copy.
 
+In Cursor or VS Code, one click adds it:
+[Add to Cursor](https://cursor.com/en/install-mcp?name=gregale&config=eyJ1cmwiOiJodHRwczovL2FwaS5ncmVnYWxlLmRldi9tY3AifQ==)
+or
+[Add to VS Code](https://vscode.dev/redirect/mcp/install?name=gregale&config=%7B%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Fapi.gregale.dev%2Fmcp%22%7D).
+
 With the Gregale CLI installed, one command sets up Claude Code, Codex,
 Cursor, VS Code, Windsurf and Antigravity, and prints the steps for Claude
 Desktop:
@@ -230,7 +238,7 @@ Add `secrets:write` only if the agent stores secrets itself with
 with `postgres:read` for databases. A key without `--scopes` is a full-access
 `admin` key.
 
-Put the key in the agent's environment as `FAAS_TOKEN`. It overrides the
+Put the key in the agent's environment as `GREGALE_TOKEN`. It overrides the
 saved login for every `gregale` command and for the MCP server. Don't paste
 it into a prompt, a command argument or a committed file. Remove it with
 `gregale key delete <id>` when the agent no longer needs it.
@@ -248,7 +256,7 @@ what the app costs. It still can't see your account's billing or other apps, and
 figures are usage Gregale recorded for the app, not an invoice estimate.
 
 With the `provision` toolset (`gregale mcp serve --tools core,provision`, the
-credential in `FAAS_TOKEN`), the same credential can also list the app's
+credential in `GREGALE_TOKEN`), the same credential can also list the app's
 domains, crons, buckets and databases. It sees their settings only: no
 object contents, no SQL access and no database passwords. It stays read-only
 unless you add `--allow-writes`.
@@ -537,7 +545,7 @@ credentials are redacted from both.
 |---|---|---|
 | `0` | — | Continue |
 | `1` | `invalid_request` | Fix the arguments or the project; don't retry unchanged |
-| `2` | `authentication` | Stop and ask for a valid `FAAS_TOKEN` |
+| `2` | `authentication` | Stop and ask for a valid `GREGALE_TOKEN` |
 | `3` | `temporary_failure` | Run the `resume_command` if the output has one; otherwise inspect state, then retry |
 | `4` | `not_found` | Check the app or deployment name |
 | `5` | `conflict` | Read the current state before retrying |
@@ -588,7 +596,7 @@ The hosted server is the default. Run the server on your own machine instead
 when the agent can't reach `api.gregale.dev`, or when it should deploy a
 directory straight from your disk. `gregale mcp serve` gives an agent
 Gregale's management tools over MCP. The agent starts it as a subprocess, and
-it uses `FAAS_TOKEN` or the selected profile's login.
+it uses `GREGALE_TOKEN` or the selected profile's login.
 
 Claude Code:
 
@@ -822,7 +830,7 @@ The first time Claude Code connects, you sign in to Gregale in the browser as
 above. Choose "Diagnose and recover" there if you want `/gregale:diagnose` to
 use the request and regression tools; with "Core tools" it runs the matching
 `gregale` CLI commands instead. The skills deploy with the `gregale` CLI, so
-install it and log in or set `FAAS_TOKEN` first.
+install it and log in or set `GREGALE_TOKEN` first.
 
 ## Project instructions for agents
 

@@ -20,6 +20,21 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/capgrant"
+)
+
+// Cross-app capability bindings (ADR-20261122191423). A workload S3
+// credential lives an hour; guest-init caches it until five minutes before
+// expiry, so a well-behaved instance holds one or two per bucket and the
+// per-instance cap only bounds rows a looping workload can create.
+// CapabilityGrantsPerKindMax is pkg/capgrant's cap on each `uses:` list;
+// capgrant keeps it as its own constant because it stays stdlib-only, so
+// the manifest parser can validate `uses:` without importing this package.
+const (
+	WorkloadObjectCredentialTTL                = time.Hour
+	WorkloadObjectCredentialsPerInstanceBucket = 8
+	CapabilityGrantsPerKindMax                 = capgrant.MaxGrantsPerKind
 )
 
 // Pipeline limits bound durable orchestration independently of Run concurrency.
@@ -240,6 +255,39 @@ const (
 	ObsSnapshotUnsnapshottedMax = 200
 	ObsSnapshotFleetAvgWarnMB   = 160
 	ObsSnapshotFleetAvgPageMB   = 200
+)
+
+// Operator build queue report (ADR-20261123163340). The report reads at most
+// ObsBuildQueueActiveMax queued and running builds and ObsBuildQueueFinishedMax
+// builds finished in the window (beyond either it says it was truncated). A
+// build waiting longer than ObsBuildQueueWaitWarnSeconds is flagged, and a
+// running one past BuildTimeoutSeconds is overdue. Builder slot use comes from
+// builderd's gauges in Prometheus under ObsBuildQueuePrometheusBudget.
+const (
+	ObsBuildQueueActiveMax        = 500
+	ObsBuildQueueFinishedMax      = 20000
+	ObsBuildQueueListMax          = 50
+	ObsBuildQueueSlowestMax       = 25
+	ObsBuildQueueWaitWarnSeconds  = 300
+	ObsBuildQueueWindowDefault    = 24 * time.Hour
+	ObsBuildQueueWindowMax        = 7 * 24 * time.Hour
+	ObsBuildQueuePrometheusBudget = 2 * time.Second
+)
+
+// Operator memory pressure report (ADR-20261123190507). The report reads at
+// most ObsMemoryPressureEventsMax evictions, frozen parks and OOM kills in
+// the window (beyond that it says it was truncated), lists the newest
+// ObsMemoryPressureListMax and the ObsMemoryPressureAppsMax most affected
+// apps. A node's measured memory older than ObsMemoryMeasurementStaleSeconds
+// is stale; a node at or above MeasuredEvictionTargetPercent of its ceiling
+// is near it.
+const (
+	ObsMemoryPressureEventsMax       = 20000
+	ObsMemoryPressureListMax         = 100
+	ObsMemoryPressureAppsMax         = 25
+	ObsMemoryMeasurementStaleSeconds = 30
+	ObsMemoryPressureWindowDefault   = 24 * time.Hour
+	ObsMemoryPressureWindowMax       = 7 * 24 * time.Hour
 )
 
 // Customer attention signals (ADR-20261113123000): when a customer is
@@ -1275,6 +1323,36 @@ const ManagedPostgresEgressOverageMillicentsPerGB = ManagedPostgresNeonMillicent
 // over the UTC month (ADR-20261102072425; ADR-20261031110037 amendment 2).
 const ManagedPostgresStorageOverageMillicentsPerGiBMonth = 50_000
 
+// ManagedPostgresNeonMillicentsPerRestoreHistoryGBMonth and
+// ManagedPostgresNeonMillicentsPerSnapshotGBMonth are what Neon's Scale plan
+// charges Gregale per GB-month of instant-restore history ($0.20) and of
+// snapshot storage ($0.09): 10^9 bytes held for Neon's 744-hour month
+// (neon.com/pricing, last updated 2026-11-04; ADR-20261123062111).
+const ManagedPostgresNeonMillicentsPerRestoreHistoryGBMonth = 20_000
+const ManagedPostgresNeonMillicentsPerSnapshotGBMonth = 9_000
+
+// ManagedPostgresRestoreHistoryOverageMillicentsPerGBMonth and
+// ManagedPostgresSnapshotOverageMillicentsPerGBMonth price restore history
+// and snapshot storage past the plan's included history for a subject with
+// overage on: Neon's price plus the markup, $0.21 and $0.0945 per GB-month
+// (ADR-20261123062111). No overage ceiling applies; the spend cap bounds the
+// charge.
+const ManagedPostgresRestoreHistoryOverageMillicentsPerGBMonth = ManagedPostgresNeonMillicentsPerRestoreHistoryGBMonth * (100 + ManagedPostgresOverageMarkupPercent) / 100
+const ManagedPostgresSnapshotOverageMillicentsPerGBMonth = ManagedPostgresNeonMillicentsPerSnapshotGBMonth * (100 + ManagedPostgresOverageMarkupPercent) / 100
+
+// ManagedPostgresHistoryMonthSeconds is the month restore history is priced
+// over: Neon reports byte-months normalised to 744 hours, so one GB-month is
+// 10^9 bytes held for this many seconds whatever the calendar month.
+const ManagedPostgresHistoryMonthSeconds int64 = 744 * 3600
+
+// ManagedPostgresIncludedHistoryBytes is the restore history and snapshot
+// storage a plan includes, held for the whole month: its managed PostgreSQL
+// storage pool (Hobby 1 GiB, Pro 5 GiB, Scale 20 GiB; ADR-20261123062111
+// D1). It covers restore history first, then snapshots.
+func ManagedPostgresIncludedHistoryBytes(storagePoolBytes int64) int64 {
+	return max(storagePoolBytes, 0)
+}
+
 // Production managed PostgreSQL provisioning (ADR-20261028103115). An
 // operator approval pins one backend for at most the approval window; the
 // expiry alert fires the warning lead before it closes provisioning.
@@ -1411,9 +1489,30 @@ const (
 	MCPTaskDefaultMaxOutstandingPerOwner = 100
 	MCPPolicyMaxEntries                  = 256
 	MCPPolicyMaxKeyBytes                 = 4096
-	MCPPolicyMaxRequestBytes             = 1 << 20
-	MCPReleaseMaxRoles                   = 32
-	MCPReleasePolicyMaxBytes             = 64 << 10
+	// MCPBillingNameMaxBytes bounds a tool or prompt name in an MCP billing
+	// label (ADR-20261123192254).
+	MCPBillingNameMaxBytes = 128
+	// MCPJWTAudienceMaxBytes bounds the audience an external OAuth issuer
+	// declares for an MCP server (ADR-20261123192254).
+	MCPJWTAudienceMaxBytes = 512
+	// APIConsumerPlanMaxRouteLimits bounds a consumer plan's per-route and
+	// per-tool caps (ADR-20261123192254).
+	APIConsumerPlanMaxRouteLimits = 50
+	MCPPolicyMaxRequestBytes      = 1 << 20
+	// MCP tool limits (ADR-20261122194324): per caller and tool.
+	MCPToolLimitMaxRequests      = 100000
+	MCPToolLimitMaxWindowSeconds = 3600
+	// MCPToolLabelsPerApp bounds an app's named tool telemetry labels.
+	MCPToolLabelsPerApp = 16
+	// MCP replay diagnostic bounds: static resources read, runs per probe.
+	MCPReplayMaxResources = 32
+	MCPReplayMaxRuns      = 5
+	// ConsumerKeyMCPScopeMaxBytes bounds one "mcp:<scope>" consumer-key scope.
+	ConsumerKeyMCPScopeMaxBytes = 128
+	// ConsumerKeyNameMaxBytes bounds a consumer key's name.
+	ConsumerKeyNameMaxBytes  = 64
+	MCPReleaseMaxRoles       = 32
+	MCPReleasePolicyMaxBytes = 64 << 10
 )
 
 // Historical replay preview bounds retained-envelope reads (ADR-645).
@@ -2617,6 +2716,42 @@ const (
 // HostingVerificationRecoveryWindow bounds unavailable public verification for
 // one candidate. Restarts cannot renew this operational budget.
 const HostingVerificationRecoveryWindow = 5 * time.Minute
+
+// Verification contract bounds (ADR-20261122220000) are abuse limits on the
+// work one deployment's gregale.verify.yaml can ask for, not plan tiers.
+// docs/verification-contracts.md states the customer-visible ones.
+const (
+	VerificationContractMaxBytes            = 256 << 10
+	VerificationContractMaxChecks           = 32
+	VerificationContractDefaultTimeoutSecs  = 30
+	VerificationContractMaxTimeoutSecs      = 120
+	VerificationContractMaxPathBytes        = 2048
+	VerificationContractMaxHeaders          = 16
+	VerificationContractMaxHeaderValueBytes = 1024
+	VerificationContractMaxBodyBytes        = 64 << 10
+	VerificationContractMaxStatuses         = 16
+	VerificationContractMaxBodyContains     = 16
+	VerificationContractMaxJSONAssertions   = 32
+	VerificationContractMaxSQLBytes         = 64 << 10
+	// VerificationContractMaxResponseBytes is how much of a check's response
+	// body is read for body and JSON assertions.
+	VerificationContractMaxResponseBytes = 1 << 20
+	// VerificationQueryWorkers bounds the SQL checks one apid runs at once.
+	VerificationQueryWorkers = 8
+	// VerificationQueryStaleClaim returns a claimed SQL check to the queue
+	// when the apid that claimed it stopped without finishing it. A live
+	// worker finishes a check within its 30 s query call plus
+	// VerificationQueryBusyWait, so a claim older than this is abandoned.
+	VerificationQueryStaleClaim = 90 * time.Second
+	// VerificationQueryBusyWait bounds how long a SQL check waits for another
+	// query of the same database to end.
+	VerificationQueryBusyWait = 5 * time.Second
+	// VerificationQueryRetention keeps expired SQL handoff rows this long.
+	VerificationQueryRetention = time.Hour
+	// VerificationFirstValueMaxBytes bounds the first value a SQL check
+	// returns to imaged.
+	VerificationFirstValueMaxBytes = 1024
+)
 
 // Route customer analytics bounds are structural safeguards, not plan quotas.
 const (
@@ -10344,6 +10479,11 @@ const (
 	// the same Hobby+ plans) so an LLM-style upgrade stream has
 	// the same headroom.
 	RawStreamMaxRequestBytes int64 = 100 * 1024 * 1024
+	// ForwardRequestBodyDiscardTimeout bounds how long the gateway drains
+	// an HTTP/1 upload the guest left unread after answering, so the
+	// connection ends cleanly instead of resetting (and losing the answer)
+	// without a stalled client holding the request open.
+	ForwardRequestBodyDiscardTimeout = 10 * time.Second
 
 	// RawStreamMaxResponseBytes (issue #676 / ADR-080 follow-up,
 	// PR-C) bounds the per-session egress bytes on the raw-bytes

@@ -75,14 +75,14 @@ obtain a verified tarball from the `sdk-mirror` workflow's
 
 ### First request
 
-Use your existing credential through `FAAS_TOKEN`, never a literal in source:
+Use your existing credential through `GREGALE_TOKEN`, never a literal in source:
 
 <!-- sdk-install-quickstart:start -->
 ```js
 import { AccountService, FaaSClient } from '@gregale/sdk-node';
 
-const client = new FaaSClient(process.env.FAAS_API ?? 'https://api.gregale.dev', {
-  token: process.env.FAAS_TOKEN,
+const client = new FaaSClient(process.env.GREGALE_API_URL ?? 'https://api.gregale.dev', {
+  token: process.env.GREGALE_TOKEN,
 });
 try {
   const account = await AccountService.getAccount();
@@ -189,7 +189,7 @@ disabled endpoint; enable it explicitly after deployment and rollout checks:
 ```ts
 import { FaaSClient, AppsService } from '@gregale/sdk-node';
 
-new FaaSClient('https://api.example.com', { token: process.env.FAAS_TOKEN! });
+new FaaSClient('https://api.example.com', { token: process.env.GREGALE_TOKEN! });
 const udp = await AppsService.createAppUdpListener({
   slug: 'app', requestBody: { name: 'dns', guest_port: 5353 },
 });
@@ -226,7 +226,7 @@ Native listener qualification remains pending; see the
 import { createClient, ErrNotFound } from '@gregale/sdk-node';
 
 const client = createClient('https://api.example.com', {
-  token: process.env.FAAS_TOKEN!,
+  token: process.env.GREGALE_TOKEN!,
   retry: { maxAttempts: 3, backoffMs: 100 },
 });
 
@@ -653,7 +653,7 @@ available separately.
 import { createClient, parseReviewedProjectPlan } from '@gregale/sdk-node';
 import { writeFile, readFile } from 'node:fs/promises';
 
-const client = createClient(process.env.FAAS_API!, { token: process.env.FAAS_TOKEN });
+const client = createClient(process.env.GREGALE_API_URL!, { token: process.env.GREGALE_TOKEN });
 const plan = await client.projects.previewLocal({
   directory: './my-project', projectSlug: 'shop',
   appSlugs: { api: 'shop-api', worker: 'shop-worker' },
@@ -727,7 +727,7 @@ if (project.issues.some(issue => issue.severity === 'error')) {
 }
 // Save the reviewed intent outside the repository for process recovery.
 await writeFile('../project-plan.json', JSON.stringify(project));
-const client = createClient(process.env.FAAS_API!, { token: process.env.FAAS_TOKEN });
+const client = createClient(process.env.GREGALE_API_URL!, { token: process.env.GREGALE_TOKEN });
 const options = { statePath: '../deployment.json', timeoutMs: 120_000 };
 const result = await client.deployments.deployProject(project, options);
 // After a restart, deserialize the original plan and use the same journal.
@@ -1792,7 +1792,7 @@ scratch filesystem; no customer storage disk is attached.
 import { streamSse } from '@gregale/sdk-node';
 
 const resp = await fetch(`${client.baseURL}/v1/logs/hello/tail`, {
-  headers: { Authorization: `Bearer ${process.env.FAAS_TOKEN}` },
+  headers: { Authorization: `Bearer ${process.env.GREGALE_TOKEN}` },
 });
 for await (const ev of streamSse(resp, signal)) {
   console.log(ev.event, ev.data);

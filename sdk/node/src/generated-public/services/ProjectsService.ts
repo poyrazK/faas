@@ -18,10 +18,18 @@ import type { ProjectReleaseControlRequest } from '../models/ProjectReleaseContr
 import type { ProjectReleaseSecretStageRequest } from '../models/ProjectReleaseSecretStageRequest.js';
 import type { ProjectReleaseSecretStageResponse } from '../models/ProjectReleaseSecretStageResponse.js';
 import type { ProjectResponse } from '../models/ProjectResponse.js';
+import type { ProjectRollbackHistory } from '../models/ProjectRollbackHistory.js';
+import type { ProjectRollbackOperation } from '../models/ProjectRollbackOperation.js';
+import type { ProjectRollbackProtection } from '../models/ProjectRollbackProtection.js';
+import type { ProjectRollbackRequest } from '../models/ProjectRollbackRequest.js';
+import type { ProjectRollbackResumeRequest } from '../models/ProjectRollbackResumeRequest.js';
+import type { ProjectRollbackTargets } from '../models/ProjectRollbackTargets.js';
+import type { ProjectRollbackUndoRequest } from '../models/ProjectRollbackUndoRequest.js';
 import type { ProjectScanRequest } from '../models/ProjectScanRequest.js';
 import type { ProjectSourceRefScanRequest } from '../models/ProjectSourceRefScanRequest.js';
 import type { ProjectSubmissionReceipt } from '../models/ProjectSubmissionReceipt.js';
 import type { ProjectSummaryResponse } from '../models/ProjectSummaryResponse.js';
+import type { ProtectProjectRollbackDeployRequest } from '../models/ProtectProjectRollbackDeployRequest.js';
 import type { SetProjectEnvironmentSharedSecretRequest } from '../models/SetProjectEnvironmentSharedSecretRequest.js';
 import type { UpdateProjectEnvironmentConfigRequest } from '../models/UpdateProjectEnvironmentConfigRequest.js';
 import type { UpdateProjectRequest } from '../models/UpdateProjectRequest.js';
@@ -529,17 +537,25 @@ export class ProjectsService {
    */
   public static getProject({
     slug,
+    includeRollback,
   }: {
     /**
      * Project slug to inspect, update, or delete in the authenticated account.
      */
     slug: string,
+    /**
+     * Include recorded membership and predecessor revisions for the latest serving project deploy, when available.
+     */
+    includeRollback?: boolean,
   }): CancelablePromise<ProjectResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/projects/{slug}',
       path: {
         'slug': slug,
+      },
+      query: {
+        'include_rollback': includeRollback,
       },
       errors: {
         401: `code: unauthorized`,
@@ -629,6 +645,540 @@ export class ProjectsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Preview a project rollback and its service blockers.
+   * @returns ProjectRollbackOperation Read-only rollback plan with no operation ID. A runnable plan includes a hash that can be supplied when starting it.
+   * @throws ApiError
+   */
+  public static previewProjectRollback({
+    slug,
+    toDeploy,
+    all = false,
+    acknowledgeReleases = false,
+    verify = false,
+    verifyBeforeCutover = false,
+    stabilizeForSeconds,
+    verifyLiveTraffic = false,
+    undoOnHealthFailure = false,
+    undoOnLiveTrafficFailure = false,
+  }: {
+    /**
+     * Slug of the project whose rollback plan is being previewed.
+     */
+    slug: string,
+    /**
+     * Restore the production revisions recorded for this project deploy. Used without all.
+     */
+    toDeploy?: string,
+    /**
+     * Select each serving service and its current predecessor.
+     */
+    all?: boolean,
+    /**
+     * Acknowledge the release commands the rollback crosses.
+     */
+    acknowledgeReleases?: boolean,
+    /**
+     * Include configured HTTP health verification in the plan.
+     */
+    verify?: boolean,
+    /**
+     * Include configured HTTP probes of prepared revisions before moving project traffic. Requires verify.
+     */
+    verifyBeforeCutover?: boolean,
+    /**
+     * Require this many seconds of healthy post-cutover HTTP probes before advancing. A positive value requires verify.
+     */
+    stabilizeForSeconds?: number,
+    /**
+     * Require healthy production 5xx budgets for restored revisions before advancing. Requires verify.
+     */
+    verifyLiveTraffic?: boolean,
+    /**
+     * Include automatic undo of switched services on a confirmed health probe 5xx. Requires verify.
+     */
+    undoOnHealthFailure?: boolean,
+    /**
+     * Include automatic undo of switched services on a reconfirmed production 5xx budget breach. Requires verify_live_traffic.
+     */
+    undoOnLiveTrafficFailure?: boolean,
+  }): CancelablePromise<ProjectRollbackOperation> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/rollbacks/preview',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'to_deploy': toDeploy,
+        'all': all,
+        'acknowledge_releases': acknowledgeReleases,
+        'verify': verify,
+        'verify_before_cutover': verifyBeforeCutover,
+        'stabilize_for_seconds': stabilizeForSeconds,
+        'verify_live_traffic': verifyLiveTraffic,
+        'undo_on_health_failure': undoOnHealthFailure,
+        'undo_on_live_traffic_failure': undoOnLiveTrafficFailure,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `The rollback intent conflicts with current project state.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * List recorded project deploys to preview for rollback.
+   * Return up to 20 recent deploy groups whose recorded members have served and still belong to the project, with any active artifact protection. Preview checks artifact availability and current policy.
+   * @returns ProjectRollbackTargets Recent deploys in order of their newest member creation time.
+   * @throws ApiError
+   */
+  public static listProjectRollbackTargets({
+    slug,
+  }: {
+    /**
+     * Slug of the project whose recorded deploys are being listed.
+     */
+    slug: string,
+  }): CancelablePromise<ProjectRollbackTargets> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/rollbacks/targets',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Protect the artifacts of a recorded project deploy.
+   * Verify and hold the recorded members' root filesystems, sidecar layers, and signatures together. An active hold for the same artifacts can be extended.
+   * @returns ProjectRollbackProtection Artifact protection and its expiry.
+   * @throws ApiError
+   */
+  public static protectProjectRollbackDeploy({
+    slug,
+    deploy,
+    requestBody,
+  }: {
+    /**
+     * Slug of the project that owns the deploy artifacts.
+     */
+    slug: string,
+    /**
+     * ID of the recorded deploy group whose artifacts will be protected.
+     */
+    deploy: string,
+    requestBody: ProtectProjectRollbackDeployRequest,
+  }): CancelablePromise<ProjectRollbackProtection> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/rollbacks/targets/{deploy}/protection',
+      path: {
+        'slug': slug,
+        'deploy': deploy,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `A recorded member is ineligible, its artifact is unavailable, or the deploy changed during verification.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * List recent project rollbacks and undos.
+   * Return up to 20 receipts, with the running operation first and the rest newest first.
+   * @returns ProjectRollbackHistory Recent operation summaries for this project.
+   * @throws ApiError
+   */
+  public static listProjectRollbacks({
+    slug,
+  }: {
+    /**
+     * Slug of the project to roll back or list rollback operations for.
+     */
+    slug: string,
+  }): CancelablePromise<ProjectRollbackHistory> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/rollbacks',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Start a durable project rollback.
+   * Gregale checks all targeted services, then saves the exact plan and advances it in the background. Supply expected_plan_hash to apply a reviewed preview. An accepted request_id returns the current state of its saved receipt on retry with the same options.
+   * @returns ProjectRollbackOperation The plan is blocked or empty, or a retried request has a blocked or completed receipt.
+   * @throws ApiError
+   */
+  public static startProjectRollback({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * Slug of the project to roll back or list rollback operations for.
+     */
+    slug: string,
+    requestBody: ProjectRollbackRequest,
+  }): CancelablePromise<ProjectRollbackOperation> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/rollbacks',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `The intent conflicts with current project state, the reviewed plan changed, or the request ID was accepted with different options. An existing running rollback is identified in the problem.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read a durable project rollback receipt.
+   * @returns ProjectRollbackOperation Current operation status, blockers, and service receipts.
+   * @throws ApiError
+   */
+  public static getProjectRollback({
+    slug,
+    operation,
+  }: {
+    /**
+     * Slug of the project that owns the rollback receipt.
+     */
+    slug: string,
+    /**
+     * ID of the operation whose receipt is requested.
+     */
+    operation: string,
+  }): CancelablePromise<ProjectRollbackOperation> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/rollbacks/{operation}',
+      path: {
+        'slug': slug,
+        'operation': operation,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `The project cannot provide this rollback receipt in its current state.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Retry a blocked project rollback using its saved plan.
+   * Supply the resume preview hash to admit the reviewed plan. Retrying an accepted hash returns the same receipt without starting another attempt.
+   * @returns ProjectRollbackOperation Current receipt after requesting that the operation continue.
+   * @throws ApiError
+   */
+  public static resumeProjectRollback({
+    slug,
+    operation,
+    requestBody,
+  }: {
+    /**
+     * Slug of the project whose rollback is resuming.
+     */
+    slug: string,
+    /**
+     * ID of the paused rollback or undo to continue.
+     */
+    operation: string,
+    requestBody?: ProjectRollbackResumeRequest,
+  }): CancelablePromise<ProjectRollbackOperation> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/rollbacks/{operation}/resume',
+      path: {
+        'slug': slug,
+        'operation': operation,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `The operation cannot resume, or the reviewed resume plan has changed.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Preview the remaining steps of a paused project rollback or undo.
+   * Returns completed and pending cutovers, planned verification, and any current blockers. A runnable preview includes a resume plan hash and the existing operation ID.
+   * @returns ProjectRollbackOperation Read-only resume plan for the paused operation.
+   * @throws ApiError
+   */
+  public static previewProjectRollbackResume({
+    slug,
+    operation,
+  }: {
+    /**
+     * Slug of the project whose paused rollback is being reviewed for resume.
+     */
+    slug: string,
+    /**
+     * ID of the paused operation to check before resuming.
+     */
+    operation: string,
+  }): CancelablePromise<ProjectRollbackOperation> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/rollbacks/{operation}/resume/preview',
+      path: {
+        'slug': slug,
+        'operation': operation,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `The operation is unavailable for resume preview.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Pause a running project rollback or undo.
+   * Close the cutover gate, settle committed handoffs, and release unused preparations. Repeating a pause returns the same receipt.
+   * @returns ProjectRollbackOperation The operation is already paused or blocked.
+   * @throws ApiError
+   */
+  public static pauseProjectRollback({
+    slug,
+    operation,
+  }: {
+    /**
+     * Slug of the project whose rollback is being paused.
+     */
+    slug: string,
+    /**
+     * ID of the running rollback or undo to pause.
+     */
+    operation: string,
+  }): CancelablePromise<ProjectRollbackOperation> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/rollbacks/{operation}/pause',
+      path: {
+        'slug': slug,
+        'operation': operation,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `The project rollback has already completed.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Undo completed cutovers of a paused project rollback.
+   * Preflight and restore the exact original revisions in reverse cutover order. Supply the preview hash to admit only the reviewed plan. Repeated requests with the same options return the same undo receipt.
+   * @returns ProjectRollbackOperation Previously accepted undo is blocked or complete.
+   * @throws ApiError
+   */
+  public static undoProjectRollback({
+    slug,
+    operation,
+    requestBody,
+  }: {
+    /**
+     * Slug of the project whose switched revisions are being restored.
+     */
+    slug: string,
+    /**
+     * The paused project rollback to undo.
+     */
+    operation: string,
+    requestBody?: ProjectRollbackUndoRequest,
+  }): CancelablePromise<ProjectRollbackOperation> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/rollbacks/{operation}/undo',
+      path: {
+        'slug': slug,
+        'operation': operation,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Undo is unavailable, the reviewed plan changed, or a serving revision or release check conflicts with the saved rollback.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Preview the exact undo of a paused project rollback.
+   * Returns the inverse cutovers in execution order, crossed release runs, and any blockers. A runnable preview includes a hash for undo admission.
+   * @returns ProjectRollbackOperation The read-only undo plan, with no operation ID.
+   * @throws ApiError
+   */
+  public static previewProjectRollbackUndo({
+    slug,
+    operation,
+    acknowledgeReleases = false,
+  }: {
+    /**
+     * Slug of the project whose inverse cutovers are being previewed.
+     */
+    slug: string,
+    /**
+     * ID of the paused rollback whose completed cutovers would be undone.
+     */
+    operation: string,
+    /**
+     * Acknowledge the release runs crossed by the previewed undo.
+     */
+    acknowledgeReleases?: boolean,
+  }): CancelablePromise<ProjectRollbackOperation> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/rollbacks/{operation}/undo/preview',
+      path: {
+        'slug': slug,
+        'operation': operation,
+      },
+      query: {
+        'acknowledge_releases': acknowledgeReleases,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `The source cannot be undone or already has a linked undo.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
         `,
       },
     });

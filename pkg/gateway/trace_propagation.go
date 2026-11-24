@@ -32,13 +32,13 @@ func injectGuestTraceContext(ctx context.Context, headers http.Header) {
 	if spanContext := pkgtrace.SpanFromContext(ctx).SpanContext(); spanContext.IsValid() {
 		headers.Set(api.TraceIDHeader, spanContext.TraceID().String())
 	}
-	if len(headers.Get("tracestate")) > maxGuestTraceStateBytes {
-		headers.Del("tracestate")
+	if len(headers.Get("Tracestate")) > maxGuestTraceStateBytes {
+		headers.Del("Tracestate")
 	}
 
 	// A cloned inbound header must not bypass the baggage budget when the
 	// request has no valid baggage in its OTel context.
-	headers.Del("baggage")
+	headers.Del("Baggage")
 	b := baggage.FromContext(ctx)
 	if b.Len() == 0 || b.Len() > maxGuestBaggageMembers {
 		return

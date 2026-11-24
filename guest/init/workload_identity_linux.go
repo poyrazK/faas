@@ -49,6 +49,7 @@ func startWorkloadIdentityProxy(log *slog.Logger) error {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc(workloadIdentityTokenPath, workloadIdentityTokenHandler)
+	mux.Handle(workloadObjectCredentialsPath, newWorkloadObjectCredentials(fetchWorkloadIdentity, nil, time.Now, restoreGeneration.current))
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 2 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second}
 	go func() {
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
@@ -72,25 +73,8 @@ func workloadIdentityTokenHandler(w http.ResponseWriter, r *http.Request) {
 		writeIdentityGuestError(w, http.StatusBadRequest, "audience_required")
 		return
 	}
-	conn, err := dialWorkloadIdentityHost()
+	response, err := fetchWorkloadIdentity(audience)
 	if err != nil {
-		writeIdentityGuestError(w, http.StatusServiceUnavailable, "identity_unavailable")
-		return
-	}
-	defer func() { _ = conn.Close() }()
-	_ = conn.SetDeadline(time.Now().Add(4 * time.Second))
-	reqBody, _ := json.Marshal(workloadIdentityGuestRequest{Audience: audience})
-	if err := writeIdentityFrame(conn, reqBody); err != nil {
-		writeIdentityGuestError(w, http.StatusServiceUnavailable, "identity_unavailable")
-		return
-	}
-	body, err := readIdentityFrameConn(conn)
-	if err != nil {
-		writeIdentityGuestError(w, http.StatusServiceUnavailable, "identity_unavailable")
-		return
-	}
-	var response workloadIdentityGuestResponse
-	if err := json.Unmarshal(body, &response); err != nil {
 		writeIdentityGuestError(w, http.StatusServiceUnavailable, "identity_unavailable")
 		return
 	}
@@ -104,6 +88,33 @@ func workloadIdentityTokenHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(response)
+}
+
+// workloadIdentityFetchTimeout bounds one token request to the host.
+const workloadIdentityFetchTimeout = 4 * time.Second
+
+// fetchWorkloadIdentity asks the host for a token over AF_VSOCK. A host
+// refusal comes back in response.Error with a nil error.
+func fetchWorkloadIdentity(audience string) (workloadIdentityGuestResponse, error) {
+	conn, err := dialWorkloadIdentityHost()
+	if err != nil {
+		return workloadIdentityGuestResponse{}, err
+	}
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(workloadIdentityFetchTimeout))
+	reqBody, _ := json.Marshal(workloadIdentityGuestRequest{Audience: audience})
+	if err := writeIdentityFrame(conn, reqBody); err != nil {
+		return workloadIdentityGuestResponse{}, err
+	}
+	body, err := readIdentityFrameConn(conn)
+	if err != nil {
+		return workloadIdentityGuestResponse{}, err
+	}
+	var response workloadIdentityGuestResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return workloadIdentityGuestResponse{}, err
+	}
+	return response, nil
 }
 
 func writeIdentityGuestError(w http.ResponseWriter, status int, code string) {
@@ -156,5 +167,6 @@ func readIdentityFrameConn(r io.Reader) ([]byte, error) {
 // The variable is platform-owned and is appended after customer values by the
 // caller, so an image cannot redirect identity requests to an external host.
 func StampWorkloadIdentityEnv(env []string) []string {
+	rememberWorkloadAPIURL(env)
 	return append(env, "FAAS_WORKLOAD_IDENTITY_ENDPOINT="+workloadIdentityEndpoint)
 }

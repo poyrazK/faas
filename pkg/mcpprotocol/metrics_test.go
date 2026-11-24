@@ -1,6 +1,7 @@
 package mcpprotocol
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -27,7 +28,9 @@ func TestHostIdentityBoundedLabelsAndHistograms(t *testing.T) {
 				if l.GetName() == "app_id" && l.GetValue() != hostApp {
 					t.Fatal("tenant-supplied identity escaped")
 				}
-				if strings.Contains(l.GetValue(), "secret") || l.GetValue() == "forged-app" {
+				// The tool name is a label (ADR-20261122194324); the app
+				// identity and arguments never are.
+				if strings.Contains(l.GetValue(), "never-retained") || l.GetValue() == "forged-app" {
 					t.Fatal("unbounded label escaped")
 				}
 			}
@@ -92,7 +95,7 @@ func TestCollectorConcurrentIntakeAndScrape(t *testing.T) {
 		}
 	}
 	<-done
-	if count := testutil.CollectAndCount(c, "vmmd_mcp_protocol_requests_total"); count != 9 {
+	if count := testutil.CollectAndCount(c, "vmmd_mcp_protocol_requests_total"); count != len(outcomes) {
 		t.Fatalf("outcome series=%d", count)
 	}
 }
@@ -105,5 +108,33 @@ func TestDeliveryCancellationPreservesRPCOutcome(t *testing.T) {
 	s := c.apps[id].tools["greet"]
 	if s.counts[0] != 1 || s.counts[4] != 1 || s.cancellations != 2 {
 		t.Fatal("RPC outcome overwritten or cancellation counted twice")
+	}
+}
+
+// adr: 20261122194324 — an app keeps its first MaxToolsPerApp tool names;
+// later and malformed names share "other".
+func TestToolLabelsBoundedPerApp(t *testing.T) {
+	c := New(nil)
+	id := uuid.NewString()
+	call := func(tool string) {
+		c.Observe(id, `{"event":"mcp_protocol_request","method":"tools/call","tool":"`+tool+`","outcome":"success"}`, time.Now())
+	}
+	for i := range MaxToolsPerApp + 3 {
+		call(fmt.Sprintf("tool_%02d", i))
+	}
+	call("tool_00")
+	call("has space")
+	call("none")
+	call(strings.Repeat("a", 65))
+	a := c.apps[id]
+	if a.named != MaxToolsPerApp || len(a.tools) != MaxToolsPerApp+1 {
+		t.Fatalf("named=%d series=%d", a.named, len(a.tools))
+	}
+	if a.tools["tool_00"].counts[0] != 2 || a.tools["other"].counts[0] != 3+3 {
+		t.Fatalf("tool_00=%d other=%d", a.tools["tool_00"].counts[0], a.tools["other"].counts[0])
+	}
+	c.Observe(id, `{"event":"mcp_protocol_request","method":"tools/call","tool":"tool_01","outcome":"invalid_params"}`, time.Now())
+	if a.tools["tool_01"].counts[len(outcomes)-1] != 1 {
+		t.Fatal("invalid_params not counted")
 	}
 }

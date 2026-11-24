@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.update_api_consumer_plan_limits_request_route_limits import (
+        UpdateAPIConsumerPlanLimitsRequestRouteLimits,
+    )
+
 
 T = TypeVar("T", bound="UpdateAPIConsumerPlanLimitsRequest")
 
@@ -23,6 +29,8 @@ class UpdateAPIConsumerPlanLimitsRequest:
     alert_thresholds_percent: list[int] | Unset = UNSET
     """Replacement alert thresholds, as percentages of max_units_per_month (at most 5). Omit to keep the current
     thresholds; send an empty list to remove them."""
+    route_limits: UpdateAPIConsumerPlanLimitsRequestRouteLimits | Unset = UNSET
+    """Replacement route limits. Omit to keep the current ones; send an empty object to remove them."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -34,6 +42,10 @@ class UpdateAPIConsumerPlanLimitsRequest:
         if not isinstance(self.alert_thresholds_percent, Unset):
             alert_thresholds_percent = self.alert_thresholds_percent
 
+        route_limits: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.route_limits, Unset):
+            route_limits = self.route_limits.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -44,11 +56,17 @@ class UpdateAPIConsumerPlanLimitsRequest:
         )
         if alert_thresholds_percent is not UNSET:
             field_dict["alert_thresholds_percent"] = alert_thresholds_percent
+        if route_limits is not UNSET:
+            field_dict["route_limits"] = route_limits
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.update_api_consumer_plan_limits_request_route_limits import (
+            UpdateAPIConsumerPlanLimitsRequestRouteLimits,
+        )
+
         d = dict(src_dict)
         max_requests_per_minute = d.pop("max_requests_per_minute")
 
@@ -56,10 +74,18 @@ class UpdateAPIConsumerPlanLimitsRequest:
 
         alert_thresholds_percent = cast(list[int], d.pop("alert_thresholds_percent", UNSET))
 
+        _route_limits = d.pop("route_limits", UNSET)
+        route_limits: UpdateAPIConsumerPlanLimitsRequestRouteLimits | Unset
+        if isinstance(_route_limits, Unset):
+            route_limits = UNSET
+        else:
+            route_limits = UpdateAPIConsumerPlanLimitsRequestRouteLimits.from_dict(_route_limits)
+
         update_api_consumer_plan_limits_request = cls(
             max_requests_per_minute=max_requests_per_minute,
             max_units_per_month=max_units_per_month,
             alert_thresholds_percent=alert_thresholds_percent,
+            route_limits=route_limits,
         )
 
         update_api_consumer_plan_limits_request.additional_properties = d

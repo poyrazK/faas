@@ -124,6 +124,8 @@ var previewFields = map[string]map[string]bool{
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
+	// ADR-20261122194324: fixed empty key set for old gateways' fail-closed api-key MCP policies.
+	"GET /v1/mcp/consumer-key-jwks.json":                      true,
 	"GET /v1/referrals/checkout":                              true, // private browser checkout hint; mounted in sales.go
 	"GET /v1/orgs/{slug}/referrals/checkout":                  true, // private browser checkout hint for an organization's first purchase
 	"GET /v1/sales/templates":                                 true, // private sales message tools; session authentication
@@ -562,6 +564,8 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/instances/{id}":               true,
 	"GET /v1/admin/obs/wake-latency":                 true, // operator wake-latency report (ADR-20261121200409)
 	"GET /v1/admin/obs/snapshot-health":              true, // operator snapshot health report (ADR-20261122135018)
+	"GET /v1/admin/obs/build-queue":                  true, // operator build queue report (ADR-20261123163340)
+	"GET /v1/admin/obs/memory-pressure":              true, // operator memory pressure report (ADR-20261123190507)
 	"GET /v1/admin/obs/tenants/{id}":                 true, // ADR-091 — operator-only
 	"GET /v1/admin/obs/tenants/{id}/activity":        true, // operator-only tenant activity drill-down
 	"GET /v1/admin/obs/apps/{id}":                    true, // operator-only app workload drill-down
@@ -1121,6 +1125,20 @@ var dtoExclude = map[string]bool{
 	"ObsWakeReasonCount":   true,
 	"ObsWakeSample":        true,
 	"ObsWakeAppStat":       true,
+	// ADR-20261123190507 operator memory pressure report.
+	"ObsMemoryPressureReport": true,
+	"ObsMemoryPressureTotals": true,
+	"ObsMemoryNode":           true,
+	"ObsMemoryReasonCount":    true,
+	"ObsMemoryApp":            true,
+	"ObsMemoryEvent":          true,
+	// ADR-20261123163340 operator build queue report.
+	"ObsBuildQueueReport":  true,
+	"ObsBuildQueueTotals":  true,
+	"ObsBuildKindStat":     true,
+	"ObsBuildFailureCount": true,
+	"ObsBuilderNodeSlots":  true,
+	"ObsBuildRow":          true,
 	// ADR-20261122135018 operator snapshot health report.
 	"ObsSnapshotHealthReport":    true,
 	"ObsSnapshotTotals":          true,
@@ -2143,6 +2161,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "rollout_recovery.go"),
 		filepath.Join(root, "pkg", "api", "service_rollout_bindings.go"),
 		filepath.Join(root, "pkg", "api", "checked_rollback.go"),
+		filepath.Join(root, "pkg", "api", "project_rollback_operations.go"),
 		filepath.Join(root, "pkg", "api", "alert_rollbacks.go"),
 		filepath.Join(root, "pkg", "api", "binding_application_adoption.go"),
 		filepath.Join(root, "pkg", "api", outboundBindingsFile),
@@ -2254,6 +2273,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "route_advice.go"),
 		filepath.Join(root, "pkg", "api", "service_wake_ahead.go"),
 		filepath.Join(root, "pkg", "api", "route_priority.go"),
+		filepath.Join(root, "pkg", "api", "verification_contracts.go"), // ADR-20261122220000: verification contracts
 		filepath.Join(root, "pkg", "api", "route_awake.go"),
 		filepath.Join(root, "pkg", "api", "route_insights.go"),
 		filepath.Join(root, "pkg", "api", "debug_rollout.go"),          // ADR-1447 amendment: rollout explanation + debug status
@@ -2318,6 +2338,15 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	dtos["RouteResourcesResponse"] = routePeaksResponse
 	dtos["RouteResourceAttribution"] = routePeakDTOs["RouteReport"]
 	dtos["RouteResourceSplit"] = routePeakDTOs["Split"]
+
+	// ADR-20261123110137: per-tool MCP insights.
+	mcpInsightDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "api", "mcp_tool_insights.go")})
+	if err != nil {
+		t.Fatalf("scan MCP insight DTOs: %v", err)
+	}
+	for _, name := range []string{"MCPToolInsightsResponse", "MCPToolInsight"} {
+		dtos[name] = mcpInsightDTOs[name]
+	}
 	objectDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "rehearsalobj", "protocol.go")})
 	if err != nil {
 		t.Fatalf("scan rehearsal object DTOs: %v", err)

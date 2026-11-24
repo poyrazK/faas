@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from queue import Queue
+from queue import Empty, Queue
 
 import pytest
 
@@ -628,14 +628,36 @@ except ObjectStorageBindingError:
             stderr=subprocess.PIPE,
         )
 
-        def ack(revision, status):
-            assert acknowledgements.get(timeout=5) == {
+        def child_failure(reason):
+            # The child's stderr is the only record of why it never
+            # acknowledged; surface it instead of a bare queue.Empty.
+            if process.poll() is None:
+                process.kill()
+            _, errors = process.communicate(timeout=5)
+            stderr = errors.decode(errors="replace")
+            return f"{reason}; child exit code {process.returncode}; stderr:\n{stderr}"
+
+        def ack(revision, status, timeout=10):
+            deadline = time.monotonic() + timeout
+            while True:
+                try:
+                    body = acknowledgements.get(timeout=0.1)
+                    break
+                except Empty:
+                    if process.poll() is not None:
+                        pytest.fail(child_failure(f"child exited before acknowledging revision {revision!r}"))
+                    if time.monotonic() >= deadline:
+                        pytest.fail(child_failure(f"no acknowledgement for revision {revision!r} within {timeout} s"))
+            assert body == {
                 "revision": revision * 64,
                 "status": status,
                 "generation": "1" * 32,
             }
 
-        ack("a", "applied")
+        # The first acknowledgement waits for a cold interpreter to import
+        # faas_sdk and start the coordinator; a busy CI runner has taken
+        # longer than 5 s for that alone.
+        ack("a", "applied", timeout=30)
         assert (tmp_path / "ready").stat().st_mode & 0o777 == 0o600
         for revision, secrets, status in [
             ("b", values("private-b"), "applied"),

@@ -91,9 +91,12 @@ SELECTIVE_WEIGHT = 6
 # no package, so the docs search eval (pkg/mcpmanagement) did not run: #7514
 # changed the FastAPI answer, main fell below the eval's floors, and the next
 # Go change to pkg/mcpmanagement found it failing. pkg/gregalemanifest checks
-# the gregale.yaml examples in docs/ and pkg/legal the DPA.
+# the gregale.yaml examples in docs/ and pkg/legal the DPA. pkg/docsindex
+# checks that its shipped index (index.json.gz) matches docs/: a docs change
+# that skipped UPDATE_DOCS_INDEX=1 must fail on its own pull request.
 TEXT_CONTRACT_PACKAGES = ("cmd/gregalectl", "pkg/daemonunitspec", "pkg/db",
-                          "pkg/gregalemanifest", "pkg/legal", "pkg/mcpmanagement")
+                          "pkg/docsindex", "pkg/gregalemanifest", "pkg/legal",
+                          "pkg/mcpmanagement")
 
 # The ways those tests name a repository file: filepath.Join climbing from the
 # package directory to the repository root, or from the repository root by

@@ -5,6 +5,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/queueaccess"
+	"github.com/onebox-faas/faas/pkg/capgrant"
 )
 
 func (s *server) registerOrgQueueRoutes(mux *http.ServeMux) {
@@ -16,8 +17,8 @@ func (s *server) registerOrgQueueRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/orgs/{organization}/apps/{slug}/queue-bindings/{id}/status", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getQueueBindingStatus))))
 	mux.HandleFunc("PATCH /v1/orgs/{organization}/apps/{slug}/queue-bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateQueueBinding))))
 	mux.HandleFunc("DELETE /v1/orgs/{organization}/apps/{slug}/queue-bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteQueueBinding))))
-	mux.HandleFunc("POST /v1/orgs/{organization}/apps/{slug}/queues/send", s.authLimited(s.requireMFA(s.requireScope(api.ScopesQueuesSendSurface...)(productionQueueBindingHandler(s.idempotentInRequestedEnvironment(queueSendBodyLimit, s.queueSend))))))
-	mux.HandleFunc("POST /v1/orgs/{organization}/apps/{slug}/queues/send-batch", s.authLimited(s.requireMFA(s.requireScope(api.ScopesQueuesSendSurface...)(productionQueueBindingHandler(s.idempotentInRequestedEnvironment(queueSendBatchBodyLimit, s.queueSendBatch))))))
+	mux.HandleFunc("POST /v1/orgs/{organization}/apps/{slug}/queues/send", s.bindingRoute(capgrant.KindQueues, nil, s.authLimited(s.requireMFA(s.requireScope(api.ScopesQueuesSendSurface...)(productionQueueBindingHandler(s.idempotentInRequestedEnvironment(queueSendBodyLimit, s.queueSend))))), productionQueueBindingHandler(s.idempotentInRequestedEnvironment(queueSendBodyLimit, s.queueSend))))
+	mux.HandleFunc("POST /v1/orgs/{organization}/apps/{slug}/queues/send-batch", s.bindingRoute(capgrant.KindQueues, nil, s.authLimited(s.requireMFA(s.requireScope(api.ScopesQueuesSendSurface...)(productionQueueBindingHandler(s.idempotentInRequestedEnvironment(queueSendBatchBodyLimit, s.queueSendBatch))))), productionQueueBindingHandler(s.idempotentInRequestedEnvironment(queueSendBatchBodyLimit, s.queueSendBatch))))
 	mux.HandleFunc("POST /v1/orgs/{organization}/apps/{slug}/queues/receive", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.queueReceive))))
 	mux.HandleFunc("POST /v1/orgs/{organization}/apps/{slug}/queues/{id}/ack", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(productionQueueBindingHandler(s.idempotent(s.queueAck))))))
 	mux.HandleFunc("POST /v1/orgs/{organization}/apps/{slug}/queues/{queue}/leases", s.queueLeaseRoute(s.queueLeases.Lease))

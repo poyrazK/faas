@@ -101,7 +101,7 @@ func ErrReleaseFrozen(app string, active []ReleaseFreeze) *Problem {
 	p := NewProblem(http.StatusConflict, CodeReleaseFrozen, "Production releases are frozen",
 		fmt.Sprintf("Production releases of %s are frozen: %s.", app, strings.Join(reasons, "; "))).
 		WithHint("Wait for the freeze to end, lift it with `gregale release freeze lift`, or release anyway with override_freeze and a reason (CLI: --override-freeze REASON); the override is audited.").
-		WithDocs(docsBase + "/deploys#deploy-freezes")
+		WithDocs(docsBase + "/release-controls#deploy-freezes")
 	p.Freezes = active
 	return p
 }
@@ -118,7 +118,7 @@ func ErrReleaseFreezeLimit(observed int) *Problem {
 	return NewProblem(http.StatusConflict, CodeReleaseFreezeLimit, "Too many freezes",
 		fmt.Sprintf("An account or organization can hold %d freezes that have not ended; this one holds %d.", ReleaseFreezesMax, observed)).
 		WithHint("Lift freezes you no longer need with `gregale release freeze lift`.").
-		WithDocs(docsBase + "/deploys#deploy-freezes")
+		WithDocs(docsBase + "/release-controls#deploy-freezes")
 }
 
 // ErrReleaseFreezeOverrideNotAllowed refuses overriding a company
@@ -128,7 +128,7 @@ func ErrReleaseFreezeOverrideNotAllowed(freezeID, why string) *Problem {
 	return NewProblem(http.StatusForbidden, CodeReleaseFreezeOverrideNotAllowed, "Freeze override not allowed",
 		fmt.Sprintf("%s Freeze %s belongs to the organization.", why, freezeID)).
 		WithHint("Ask an owner or admin to lift the freeze with `gregale release freeze lift`, or to deploy with --override-freeze.").
-		WithDocs(docsBase + "/deploys#deploy-freezes")
+		WithDocs(docsBase + "/release-controls#deploy-freezes")
 }
 
 // ErrReleaseFreezeCompanyApp refuses an account freeze route that names a
@@ -138,7 +138,7 @@ func ErrReleaseFreezeCompanyApp(app, org string) *Problem {
 	return NewProblem(http.StatusConflict, CodeConflict, "App freezes belong to its organization",
 		fmt.Sprintf("%s belongs to the organization %s, which owns its freezes; /v1/freezes holds your personal apps' freezes.", app, org)).
 		WithHint(fmt.Sprintf("Use /v1/apps/%s/freezes (CLI: gregale freeze ... --app %s), or /v1/orgs/%s/freezes for all of the organization's apps (CLI: --org %s).", app, app, org, org)).
-		WithDocs(docsBase + "/deploys#deploy-freezes")
+		WithDocs(docsBase + "/release-controls#deploy-freezes")
 }
 
 // ListReleaseFreezes lists the account's freezes; app filters to the freezes

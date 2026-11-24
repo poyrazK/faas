@@ -159,6 +159,7 @@ var adoptionInstanceInventory = map[string]string{
 	"RestoreError":                    "reset",
 	"RestoreFallbackReason":           "reset",
 	"BaseScanGrace":                   "reset", // read once into the wake response (deploy-path P5)
+	"StartupOOM":                      "reset", // read once into the wake response (ADR-20261123170000)
 	"AppID":                           "rebuilt",
 	"WakeID":                          "rebuilt", // channel and readiness identity (ADR-570)
 	"NodeID":                          "rebuilt",

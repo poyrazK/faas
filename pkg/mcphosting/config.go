@@ -72,15 +72,51 @@ type TasksConfig struct {
 }
 
 type AuthConfig struct {
-	Mode           string          `json:"mode"`
-	Issuer         string          `json:"issuer,omitempty"`
-	JWKSURL        string          `json:"jwks_url,omitempty"`
-	Resource       string          `json:"resource,omitempty"`
+	Mode     string `json:"mode"`
+	Issuer   string `json:"issuer,omitempty"`
+	JWKSURL  string `json:"jwks_url,omitempty"`
+	Resource string `json:"resource,omitempty"`
+	// Audience is the aud claim an external oauth-proxy issuer puts in its
+	// access tokens when it cannot use the resource URL; empty means the
+	// resource (ADR-20261123192254).
+	Audience       string          `json:"audience,omitempty"`
 	Scopes         []string        `json:"scopes,omitempty"`
 	ToolScopes     ToolScopePolicy `json:"tool_scopes,omitzero"`
 	ResourceScopes ScopePolicy     `json:"resource_scopes,omitzero"`
 	PromptScopes   ScopePolicy     `json:"prompt_scopes,omitzero"`
+	// ToolLimits caps tools/call per caller (ADR-20261122194324). Callers
+	// are identified by key or token, so open servers cannot use them.
+	ToolLimits map[string]api.MCPToolLimit `json:"tool_limits,omitempty"`
 }
+
+// Auth modes. AuthAPIKey and AuthOAuthProxy are enforced only at the gateway
+// (ADR-20261122194324).
+const (
+	AuthOpen          = "open"
+	AuthExternalOAuth = "external-oauth"
+	AuthAPIKey        = "api-key"
+	AuthOAuthProxy    = "oauth-proxy"
+)
+
+// GatewayOnly reports whether the mode has no guest-side verification: the
+// gateway policy is the only access control.
+func (a AuthConfig) GatewayOnly() bool { return a.Mode == AuthAPIKey || a.Mode == AuthOAuthProxy }
+
+// ExternalIssuer reports an oauth-proxy server whose tokens come from an
+// owner-chosen OpenID Connect issuer instead of Gregale Auth: its jwks_url
+// was discovered from the issuer's metadata (ADR-20261123192254).
+func (a AuthConfig) ExternalIssuer() bool { return a.Mode == AuthOAuthProxy && a.JWKSURL != "" }
+
+// TokenAudience is the aud claim the gateway requires.
+func (a AuthConfig) TokenAudience() string {
+	if a.Audience != "" {
+		return a.Audience
+	}
+	return a.Resource
+}
+
+// UsesJWT reports whether callers present bearer JWTs from an issuer.
+func (a AuthConfig) UsesJWT() bool { return a.Mode == AuthExternalOAuth || a.Mode == AuthOAuthProxy }
 
 // ToolScopePolicy preserves the existing tool policy type name.
 type ToolScopePolicy = ScopePolicy
@@ -110,8 +146,8 @@ func (p ScopePolicy) validate(field, mode string, validateKey func(string) error
 		if scopes == nil {
 			return fmt.Errorf("%s values must be explicit scope arrays", field)
 		}
-		if mode == "open" && len(scopes) > 0 {
-			return fmt.Errorf("scoped %s entries require external-oauth", field)
+		if (mode == AuthOpen || mode == AuthOAuthProxy) && len(scopes) > 0 {
+			return fmt.Errorf("scoped %s entries require external-oauth or api-key", field)
 		}
 		if err := validateScopes(scopes); err != nil {
 			return fmt.Errorf("%s: %w", field, err)
@@ -212,42 +248,123 @@ func (c Config) Validate() error {
 			return fmt.Errorf("allowed_origins must contain exact HTTP origins")
 		}
 	}
-	if err := c.Auth.ToolScopes.validate("tool_scopes", c.Auth.Mode, validatePolicyName); err != nil {
+	// An external oauth-proxy issuer can issue any scope, so its catalog
+	// entries may be scoped like external-oauth ones.
+	scopeMode := c.Auth.Mode
+	if c.Auth.ExternalIssuer() {
+		scopeMode = AuthExternalOAuth
+	}
+	if err := c.Auth.ToolScopes.validate("tool_scopes", scopeMode, validatePolicyName); err != nil {
 		return err
 	}
-	if err := c.Auth.ResourceScopes.validate("resource_scopes", c.Auth.Mode, validateResourcePolicyKey); err != nil {
+	if err := c.Auth.ResourceScopes.validate("resource_scopes", scopeMode, validateResourcePolicyKey); err != nil {
 		return err
 	}
-	if err := c.Auth.PromptScopes.validate("prompt_scopes", c.Auth.Mode, validatePolicyName); err != nil {
+	if err := c.Auth.PromptScopes.validate("prompt_scopes", scopeMode, validatePolicyName); err != nil {
 		return err
 	}
 	if err := c.Tasks.validate(); err != nil {
 		return err
 	}
-	if c.Auth.Mode == "open" {
-		if c.Auth.Issuer != "" || c.Auth.JWKSURL != "" || c.Auth.Resource != "" || len(c.Auth.Scopes) > 0 {
-			return fmt.Errorf("open auth must not contain OAuth settings")
+	if c.Auth.GatewayOnly() && c.Tasks != nil && c.Tasks.Enabled != nil && *c.Tasks.Enabled {
+		// The server cannot tell callers apart in these modes, so tasks would
+		// have no owner (ADR-20261122194324).
+		return fmt.Errorf("tasks need per-caller ownership; use external-oauth with tasks enabled")
+	}
+	return c.Auth.validate(c.Endpoint)
+}
+
+// maxAudienceBytes bounds auth.audience.
+const maxAudienceBytes = api.MCPJWTAudienceMaxBytes
+
+// OAuthProxyScopes are the scopes a Gregale Auth OAuth server issues.
+var OAuthProxyScopes = map[string]bool{"openid": true, "email": true, "profile": true, "phone": true}
+
+// OAuthProxyJWKSURL is the key set of a Gregale Auth issuer
+// (https://<auth app>/auth/v1).
+func OAuthProxyJWKSURL(issuer string) string {
+	return strings.TrimSuffix(issuer, "/") + "/.well-known/jwks.json"
+}
+
+func (a AuthConfig) validate(endpoint string) error {
+	if len(a.ToolLimits) > api.MCPPolicyMaxEntries {
+		return fmt.Errorf("auth.tool_limits exceeds %d entries", api.MCPPolicyMaxEntries)
+	}
+	for name, limit := range a.ToolLimits {
+		if validatePolicyName(name) != nil {
+			return fmt.Errorf("auth.tool_limits keys must be tool names")
+		}
+		if limit.Requests < 1 || limit.Requests > api.MCPToolLimitMaxRequests || limit.WindowSeconds < 1 || limit.WindowSeconds > api.MCPToolLimitMaxWindowSeconds {
+			return fmt.Errorf("auth.tool_limits.%s needs 1 to %d requests per 1 to %d seconds", name, api.MCPToolLimitMaxRequests, api.MCPToolLimitMaxWindowSeconds)
+		}
+	}
+	switch a.Mode {
+	case AuthOpen:
+		if a.Issuer != "" || a.JWKSURL != "" || a.Resource != "" || a.Audience != "" || len(a.Scopes) > 0 || len(a.ToolLimits) > 0 {
+			return fmt.Errorf("open auth must not contain OAuth settings or tool limits")
 		}
 		return nil
+	case AuthExternalOAuth, AuthAPIKey, AuthOAuthProxy:
+	default:
+		return fmt.Errorf("auth.mode must explicitly be open, external-oauth, api-key or oauth-proxy")
 	}
-	if c.Auth.Mode != "external-oauth" {
-		return fmt.Errorf("auth.mode must explicitly be open or external-oauth")
+	urls := []struct{ name, value string }{{"resource", a.Resource}}
+	switch a.Mode {
+	case AuthExternalOAuth:
+		urls = append(urls, struct{ name, value string }{"issuer", a.Issuer}, struct{ name, value string }{"jwks_url", a.JWKSURL})
+	case AuthOAuthProxy:
+		urls = append(urls, struct{ name, value string }{"issuer", a.Issuer})
+		if a.JWKSURL != "" {
+			urls = append(urls, struct{ name, value string }{"jwks_url", a.JWKSURL})
+		}
+	case AuthAPIKey:
+		if a.Issuer != "" || a.JWKSURL != "" {
+			return fmt.Errorf("api-key auth must not name an issuer or jwks_url")
+		}
 	}
-	for _, field := range []struct{ name, value string }{{"issuer", c.Auth.Issuer}, {"jwks_url", c.Auth.JWKSURL}, {"resource", c.Auth.Resource}} {
-		value := field.value
-		u, err := url.Parse(value)
+	for _, field := range urls {
+		u, err := url.Parse(field.value)
 		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 			return fmt.Errorf("auth.%s must be an HTTPS URL without credentials, query, or fragment", field.name)
 		}
 	}
-	resource, _ := url.Parse(c.Auth.Resource)
-	if resource.Path != c.Endpoint {
+	resource, _ := url.Parse(a.Resource)
+	if resource.Path != endpoint {
 		return fmt.Errorf("auth.resource must identify the canonical MCP endpoint")
 	}
-	if len(c.Auth.Scopes) == 0 {
-		return fmt.Errorf("external-oauth requires at least one scope")
+	if a.Audience != "" && (!a.ExternalIssuer() || len(a.Audience) > maxAudienceBytes || strings.IndexFunc(a.Audience, func(r rune) bool { return r <= 0x20 || r == 0x7f }) >= 0) {
+		return fmt.Errorf("auth.audience is only for an external oauth-proxy issuer and must be 1 to %d bytes without whitespace", maxAudienceBytes)
 	}
-	return validateScopes(c.Auth.Scopes)
+	switch {
+	case a.ExternalIssuer():
+		if len(a.Scopes) == 0 {
+			return fmt.Errorf("oauth-proxy with an external issuer requires at least one scope")
+		}
+	case a.Mode == AuthOAuthProxy:
+		// Gregale Auth client tokens are audience-bound to the resource and
+		// carry only OpenID scopes, so per-entry scopes cannot gate tools.
+		if issuer, _ := url.Parse(a.Issuer); issuer.Path != "/auth/v1" {
+			return fmt.Errorf("oauth-proxy auth.issuer must be a Gregale Auth issuer, https://<auth app>/auth/v1, or an OpenID Connect issuer with its jwks_url")
+		}
+		if len(a.Scopes) == 0 {
+			return fmt.Errorf("oauth-proxy requires at least one scope, such as openid")
+		}
+		for _, scope := range a.Scopes {
+			if !OAuthProxyScopes[scope] {
+				return fmt.Errorf("oauth-proxy scope %q: Gregale Auth issues only the openid, email, profile and phone scopes", scope)
+			}
+		}
+		return nil
+	case a.Mode == AuthAPIKey:
+		if len(a.Scopes) == 0 {
+			return fmt.Errorf("api-key requires at least one scope; consumer keys grant it as mcp:<scope>")
+		}
+	default:
+		if len(a.Scopes) == 0 {
+			return fmt.Errorf("external-oauth requires at least one scope")
+		}
+	}
+	return validateScopes(a.Scopes)
 }
 
 func (c *TasksConfig) validate() error {

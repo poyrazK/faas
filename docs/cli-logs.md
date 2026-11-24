@@ -399,7 +399,7 @@ app completion works after completed name filters.
 ## Inspect the configured connection in log previews
 
 `logs --view errors --dry-run` now includes configured profile/API details
-with their sources, including a `FAAS_API` override. JSON adds `connection`
+with their sources, including a `GREGALE_API_URL` override. JSON adds `connection`
 with profile, profile_source, api_base, api_source, verified (false), and
 address_redacted, while preserving the existing profile field.
 The same shared offline formatter is used by Job previews. API URL credentials,

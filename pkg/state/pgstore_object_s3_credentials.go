@@ -354,6 +354,9 @@ func (s *PgStore) FinalizeObjectS3CredentialRotationsForApp(ctx context.Context,
 }
 
 func (s *PgStore) ResolveObjectS3Credential(ctx context.Context, accessKeyID string) (ObjectS3Credential, ObjectBucket, error) {
+	if isObjectWorkloadAccessKey(accessKeyID) {
+		return s.resolveObjectWorkloadCredential(ctx, accessKeyID)
+	}
 	row, err := sqlc.New().ObjectS3CredentialResolve(ctx, s.pool, accessKeyID)
 	if err != nil {
 		return ObjectS3Credential{}, ObjectBucket{}, mapErr(err)

@@ -6,6 +6,7 @@ from email.message import Message
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 import test_server
+import server as mcp_server
 from protocol_telemetry import ProtocolObservation
 from auth import Authenticator
 
@@ -19,9 +20,13 @@ class ProtocolTelemetryTests(unittest.TestCase):
         self.http.protocol_telemetry_sink=events.append
         self.config["auth"]={"mode":"open"}
         self.http.authenticator=Authenticator(self.config)
+        mcp_server.register_tool({"name":"lookup_order","inputSchema":{"type":"object","required":["order"],"properties":{"order":{"type":"string"}}}},lambda args,_caller:{"content":[]})
+        self.addCleanup(mcp_server.remove_tool,"lookup_order")
         for method,params,outcome,tool in [
             ("tools/call",{"name":"greet","arguments":{"name":"sensitive-payload"}},"success","greet"),
             ("tools/call",{"name":"add","arguments":{"a":"sensitive-payload","b":1}},"tool_error","add"),
+            # ADR-20261122194324: a registered tool's schema rejection.
+            ("tools/call",{"name":"lookup_order","arguments":{"order":7}},"invalid_params","lookup_order"),
             ("resources/read",{"uri":"missing://private-resource"},"rpc_error","none"),
             ("private-method-token",{},"rpc_error","none"),
             ("tools/call",{"name":"private-tool-token","arguments":{}},"tool_error","other"),

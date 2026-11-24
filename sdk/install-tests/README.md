@@ -14,7 +14,7 @@ workflow import and packaged `py.typed` marker. The full language unit and
 contract suites continue to run separately.
 
 Each check also extracts and runs the marked first-request code block from the
-public tree's README against the same fixture. Its `FAAS_API` and `FAAS_TOKEN`
+public tree's README against the same fixture. Its `GREGALE_API_URL` and `GREGALE_TOKEN`
 are set to the fixture URL and a dummy token. Missing or malformed example
 markers fail the check. Editing a README example therefore exercises the
 installed SDK, not a separate copy of that example in a source-tree test.

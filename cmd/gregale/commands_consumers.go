@@ -85,6 +85,7 @@ type consumerFlags struct {
 	prorateMonthlyFees                   bool
 	tiers                                multiFlag
 	weights                              multiFlag
+	toolWeights, toolLimits, routeLimits multiFlag
 	plan                                 string
 	maxPerMinute, maxPerMonth            int64
 	alertAt                              string
@@ -104,9 +105,9 @@ var consumerVerbFlags = map[string][]string{
 	"usage":              {"since", "until"},
 	"quote":              {"since", "until"},
 	"completeness":       {"period-start", "period-end", "month"},
-	"rate-card-create":   {"currency", "price-millicents", "included-units", "tier", "weight", "plan", "effective-from", "unit", "tier-mode", "base-fee-millicents", "minimum-millicents", "prorate-monthly-fees"},
-	"plan-create":        {"name", "max-requests-per-minute", "max-units-per-month", "alert-at"},
-	"plan-update":        {"plan", "max-requests-per-minute", "max-units-per-month", "alert-at"},
+	"rate-card-create":   {"currency", "price-millicents", "included-units", "tier", "weight", "tool-weight", "plan", "effective-from", "unit", "tier-mode", "base-fee-millicents", "minimum-millicents", "prorate-monthly-fees"},
+	"plan-create":        {"name", "max-requests-per-minute", "max-units-per-month", "alert-at", "route-limit", "tool-limit"},
+	"plan-update":        {"plan", "max-requests-per-minute", "max-units-per-month", "alert-at", "route-limit", "tool-limit"},
 	"set-plan":           {"plan", "effective-from"},
 	"statement-draft":    {"period-start", "period-end", "month"},
 	"statement-handoff":  {"invoice-id"},
@@ -134,7 +135,7 @@ func cmdConsumers(args []string) int {
 	fs.StringVar(&f.externalRef, "external-ref", "", "stable consumer reference (create)")
 	fs.StringVar(&f.environment, "environment", "", "project environment whose consumers to list or create; omitted is production (list, create)")
 	fs.StringVar(&f.name, "name", "", "consumer or key display name")
-	fs.StringVar(&f.scopes, "scopes", "write", "comma-separated key scopes: read, write, admin (key-create)")
+	fs.StringVar(&f.scopes, "scopes", "write", "comma-separated key scopes: read, write, admin, billing, mcp:<scope> (key-create)")
 	fs.StringVar(&f.expires, "expires", "", "key or credit expiry, RFC3339 (key-create, credit-grant)")
 	fs.StringVar(&f.since, "since", "", "usage window start (RFC3339)")
 	fs.StringVar(&f.until, "until", "", "usage window end (RFC3339)")
@@ -174,6 +175,9 @@ func registerConsumerMonetizationFlags(fs *flag.FlagSet, f *consumerFlags) {
 	fs.Int64Var(&f.includedUnits, "included-units", 0, "free requests per consumer per UTC calendar month (rate-card-create)")
 	fs.Var(&f.tiers, "tier", "graduated step UP_TO:PRICE_MILLICENTS, repeatable; the last step's UP_TO is inf (rate-card-create)")
 	fs.Var(&f.weights, "weight", "route weight \"METHOD /template=N\", repeatable; unlisted routes count 1 (rate-card-create)")
+	fs.Var(&f.toolWeights, "tool-weight", "MCP tool weight TOOL=N, repeatable; the route \"MCP /tools/TOOL\" (rate-card-create)")
+	fs.Var(&f.routeLimits, "route-limit", "per-consumer route cap \"METHOD /template=100/minute,5000/month\" or =none, repeatable (plan-create, plan-update)")
+	fs.Var(&f.toolLimits, "tool-limit", "per-consumer MCP tool cap TOOL=1000/month or TOOL=none, repeatable (plan-create, plan-update)")
 	fs.StringVar(&f.effectiveFrom, "effective-from", "", "UTC minute the price starts, RFC3339 (default: next minute)")
 	fs.StringVar(&f.periodStart, "period-start", "", "statement period start, RFC3339 UTC minute")
 	fs.StringVar(&f.periodEnd, "period-end", "", "statement period end (exclusive), RFC3339 UTC minute")
@@ -254,8 +258,8 @@ func buildConsumerRequest(verb string, f consumerFlags) (any, error) {
 		}
 		return nil, nil
 	case "plan-update":
-		if f.plan == "" || f.plan == defaultPlanName || (f.maxPerMinute < 0 && f.maxPerMonth < 0 && f.alertAt == "") {
-			return nil, errors.New("--plan and at least one of --max-requests-per-minute, --max-units-per-month, or --alert-at are required")
+		if f.plan == "" || f.plan == defaultPlanName || (f.maxPerMinute < 0 && f.maxPerMonth < 0 && f.alertAt == "" && len(f.routeLimits) == 0 && len(f.toolLimits) == 0) {
+			return nil, errors.New("--plan and at least one of --max-requests-per-minute, --max-units-per-month, --alert-at, --route-limit or --tool-limit are required")
 		}
 		return nil, nil
 	case "set-plan":
@@ -291,8 +295,8 @@ func buildConsumerKeyRequest(f consumerFlags) (api.CreateConsumerKeyRequest, err
 	}
 	for _, scope := range strings.Split(f.scopes, ",") {
 		scope = strings.TrimSpace(scope)
-		if scope != "read" && scope != "write" && scope != "admin" && scope != api.ConsumerScopeBilling {
-			return req, fmt.Errorf("unknown scope %q; use read, write, admin, or billing", scope)
+		if scope != "read" && scope != "write" && scope != "admin" && scope != api.ConsumerScopeBilling && !api.ValidConsumerKeyMCPScope(scope) {
+			return req, fmt.Errorf("unknown scope %q; use read, write, admin, billing, or mcp:<scope>", scope)
 		}
 		req.Scopes = append(req.Scopes, scope)
 	}
@@ -317,6 +321,9 @@ func buildAppRateCardRequest(f consumerFlags) (api.CreateAPIConsumerRateCardRequ
 	req.BaseFeeMillicentsPerMonth, req.MinimumMillicentsPerMonth = f.baseFeeMillicents, f.minimumMillicents
 	req.ProrateMonthlyFees = f.prorateMonthlyFees
 	req.RouteWeights, err = parseRouteWeights(f.weights)
+	if err == nil {
+		req.RouteWeights, err = parseToolWeights(req.RouteWeights, f.toolWeights)
+	}
 	return req, err
 }
 

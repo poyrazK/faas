@@ -225,7 +225,12 @@ type ManagedPostgresUsageResponse struct {
 	StorageByteSecondsLimit     int64      `json:"storage_byte_seconds_limit"`
 	StorageByteSecondsRemaining int64      `json:"storage_byte_seconds_remaining"`
 	HistoryByteSeconds          int64      `json:"history_byte_seconds"`
-	EgressBytes                 int64      `json:"egress_bytes"`
+	// SnapshotByteSeconds is snapshot storage, apart from restore history,
+	// and IncludedHistoryBytes the history the plan includes for the month
+	// (ADR-20261123062111).
+	SnapshotByteSeconds  int64 `json:"snapshot_byte_seconds"`
+	IncludedHistoryBytes int64 `json:"included_history_bytes"`
+	EgressBytes          int64 `json:"egress_bytes"`
 	// Compute caps on running databases (ADR-20261025094915). The allowance is
 	// the plan's monthly compute; the ceiling is where running databases are
 	// suspended. ComputeCapState is healthy, warning (at 80% of the allowance),
@@ -334,6 +339,7 @@ type ManagedPostgresUsageOperatorResponse struct {
 	StorageByteSecondsLimit      int64                          `json:"storage_byte_seconds_limit"`
 	StorageByteSecondsRemaining  int64                          `json:"storage_byte_seconds_remaining"`
 	HistoryByteSeconds           int64                          `json:"history_byte_seconds"`
+	SnapshotByteSeconds          int64                          `json:"snapshot_byte_seconds"`
 	EgressBytes                  int64                          `json:"egress_bytes"`
 	CostMillicents               int64                          `json:"cost_millicents"`
 	MaxMonthlyCostMillicents     int64                          `json:"max_monthly_cost_millicents"`

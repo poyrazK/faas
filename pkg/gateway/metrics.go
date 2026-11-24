@@ -161,6 +161,10 @@ type Metrics struct {
 	// request routing/auth work before admission and every public edge/client
 	// hop, while retaining scheduler, VM restore, and internal proxy overhead.
 	platformWakeLatency prometheus.Histogram
+	// platformWakeExcluded counts admitted wakes kept out of
+	// platformWakeLatency because the app, not the platform, set their
+	// latency. reason ∈ {startup_oom}.
+	platformWakeExcluded *prometheus.CounterVec
 	// drainWaitSeconds (issue #587 / PR-A) is the per-daemon
 	// graceful-shutdown drain histogram (see ObserveDrainWait).
 	drainWaitSeconds *prometheus.HistogramVec
@@ -1359,9 +1363,13 @@ func NewMetrics() *Metrics {
 			// The SLO histogram's buckets, so the two overlay on one panel.
 			Buckets: wakeLatencyBuckets(),
 		}),
+		platformWakeExcluded: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_platform_wake_excluded_total",
+			Help: "Admitted wakes kept out of gateway_platform_wake_latency_seconds because the app set their latency. reason=startup_oom: the kernel killed an app process for memory while the wake booted it (vmmd WakeResponse.startup_oom); the app's own wake latency still records the wake.",
+		}, []string{"reason"}),
 		platformWakeLatency: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:    "gateway_platform_wake_latency_seconds",
-			Help:    "Platform-only wake latency from gateway capacity-admission start to first upstream byte. Excludes pre-admission routing/auth, CDN, Internet, and client latency. Public-beta SSD gate: p95 < 0.35 seconds.",
+			Help:    "Platform-only wake latency from gateway capacity-admission start to first upstream byte. Excludes pre-admission routing/auth, CDN, Internet, and client latency, and wakes whose app ran out of memory while booting (counted in gateway_platform_wake_excluded_total). Public-beta SSD gate: p95 < 0.35 seconds.",
 			Buckets: platformWakeLatencyBuckets(),
 		}),
 		// PR #4 / ADR-092 §3.5. Same bucket layout as wakeLatency
@@ -2084,6 +2092,8 @@ func NewMetrics() *Metrics {
 	for _, tier := range []string{tierWarm, tierInit, tierCold} {
 		m.wakeSnapshotTier.WithLabelValues(tier)
 	}
+	// Pre-instantiated so a zero exclusion count is visible from boot.
+	m.platformWakeExcluded.WithLabelValues(platformWakeExcludedStartupOOM)
 	// ADR-098 C7: pre-instantiate the closed (reason) set on the
 	// leader-bootstrap-aborts counter so the §12 dashboard chip
 	// "leader bootstrap aborts" surfaces every reason from boot.
@@ -2247,7 +2257,7 @@ func NewMetrics() *Metrics {
 		Name: "geoip_db_build_timestamp_seconds",
 		Help: "Unix time the loaded geoip country database was built (its build_epoch); NaN when none is loaded. time() minus it is the database's age (ADR-091 amendment 2026-11-02, later).",
 	}, m.geoipDBBuildTimestamp)
-	reg.MustRegister(m.requests, m.platformErrors, m.capacityRefusals, m.appInflight, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestIDJournalEvicted, m.requestTelemetryShipped, m.requestAnalyticsRollups, m.instanceRouteMinutesDropped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.wakeRequestLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.appWakeLatency, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.trafficFenceOff, m.trafficRefusals, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.rateLimitLocalFallback, m.rateLimitLeaseRequests, m.rateLimitLeaseTokens, m.rateLimitSyncConsults, m.rateLimitShared, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleListenerHeartbeat, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.edgeRuleLoad, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBBuildTime, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
+	reg.MustRegister(m.requests, m.platformErrors, m.capacityRefusals, m.appInflight, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestIDJournalEvicted, m.requestTelemetryShipped, m.requestAnalyticsRollups, m.instanceRouteMinutesDropped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.wakeRequestLatency, m.platformWakeLatency, m.platformWakeExcluded, m.wakeLatencyByNode, m.appWakeLatency, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.trafficFenceOff, m.trafficRefusals, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.rateLimitLocalFallback, m.rateLimitLeaseRequests, m.rateLimitLeaseTokens, m.rateLimitSyncConsults, m.rateLimitShared, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleListenerHeartbeat, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.edgeRuleLoad, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBBuildTime, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
 	reg.MustRegister(m.retryBudgetBackendInfo)
 	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow, m.edgeRejections)
@@ -3315,6 +3325,19 @@ func (m *Metrics) ObservePlatformWakeWithTrace(latency time.Duration, traceID st
 		return
 	}
 	observeWithTraceExemplar(m.platformWakeLatency, latency.Seconds(), traceID)
+}
+
+// platformWakeExcludedStartupOOM is the gateway_platform_wake_excluded_total
+// reason for a wake whose app ran out of memory while it booted.
+const platformWakeExcludedStartupOOM = "startup_oom"
+
+// ObservePlatformWakeExcluded counts one admitted wake kept out of the
+// platform wake histogram. Nil-safe.
+func (m *Metrics) ObservePlatformWakeExcluded(reason string) {
+	if m == nil || m.platformWakeExcluded == nil {
+		return
+	}
+	m.platformWakeExcluded.WithLabelValues(reason).Inc()
 }
 
 // observeWithTraceExemplar keeps the exemplar path optional. Older/custom

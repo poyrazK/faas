@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 // wakePhaseTrace is a request-local timing carrier for the platform-only cold
@@ -29,6 +31,17 @@ type wakePhaseMeasurement struct {
 
 func newWakePhaseTrace(start time.Time) *wakePhaseTrace {
 	return &wakePhaseTrace{platformStarted: start}
+}
+
+// withStartupOOMRecorder attaches the request's startup-OOM recorder to a wake
+// context, creating it on the request's first wake so warm requests never
+// allocate one. The schedd client marks admitted instances whose app ran out
+// of memory while booting; the handler then files that wake as an app fault.
+func withStartupOOMRecorder(ctx context.Context, rec **sched.StartupOOMRecorder) context.Context {
+	if *rec == nil {
+		*rec = &sched.StartupOOMRecorder{}
+	}
+	return sched.WithStartupOOMRecorder(ctx, *rec)
 }
 
 func withWakePhaseTrace(ctx context.Context, trace *wakePhaseTrace) context.Context {
