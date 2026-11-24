@@ -136,6 +136,18 @@ func TestEnvListNamesARecentGuardRestore(t *testing.T) {
 			t.Fatalf("closed %s ago: guard named = %t, want %t\n%s", tc.closed, got, tc.want, out)
 		}
 	}
+	// The history hint names the listed scope, or it would show another
+	// scope's revisions.
+	guard := api.ConfigGuard{ID: "g2", Status: "restored", BaseRevision: 2, HeadRevision: 3, Scope: "staging",
+		ClosedAt: time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano)}
+	_, done := configCLIServer(t, guard)
+	defer done()
+	out, code := captureConfigCLI(t, func() int {
+		return main.CmdSecrets([]string{"list", "--app", "my-api", "--scope", "staging"})
+	})
+	if code != 0 || !strings.Contains(out, "env history --app my-api --scope staging") {
+		t.Fatalf("env list --scope staging exit=%d, want the scoped history hint:\n%s", code, out)
+	}
 }
 
 func TestSecretsSetNoGuardAndGuardNotice(t *testing.T) {

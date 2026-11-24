@@ -31,6 +31,8 @@ func TestGuideSearchAnswersAgentQuestions(t *testing.T) {
 	t.Setenv("GREGALE_DOCS_OFFLINE", "1")
 	for _, tc := range []struct{ query, want string }{
 		{"make my app public without an api key", "--no-require-authn"},
+		{"protect my app with an api key", "--require-authn"},
+		{"require an api key for my app", "--require-authn"},
 		{"open an outbound tcp port", "egress-ports"},
 		{"set an environment variable", "env set"},
 		{"add a secret", "env set"},

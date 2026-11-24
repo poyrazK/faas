@@ -44,20 +44,22 @@ const (
 // thing. Each entry comes from an eval transcript or a guide step;
 // TestGuideSearchAnswersAgentQuestions keeps them honest.
 var guideSynonyms = map[string]string{
-	"public":      "anonymous no-require-authn",
-	"private":     "require-authn",
-	"env var":     "env",
-	"environment": "env",
-	"variable":    "env",
-	"secret":      "secrets env",
-	"migration":   "migrate",
-	"migrations":  "migrate",
-	"roll back":   "rollback",
-	"revert":      "rollback",
-	"outbound":    "egress",
-	"logs":        "logs",
-	"cache":       "redis",
-	"redis":       "redis",
+	"public":             "anonymous no-require-authn",
+	"private":            "require-authn",
+	"protect":            "bearer token require-authn",
+	"require an api key": "bearer token require-authn",
+	"env var":            "env",
+	"environment":        "env",
+	"variable":           "env",
+	"secret":             "secrets env",
+	"migration":          "migrate",
+	"migrations":         "migrate",
+	"roll back":          "rollback",
+	"revert":             "rollback",
+	"outbound":           "egress",
+	"logs":               "logs",
+	"cache":              "redis",
+	"redis":              "redis",
 }
 
 // expandGuideQuery appends the CLI's words for the query's words.

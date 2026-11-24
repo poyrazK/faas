@@ -30,7 +30,7 @@ func healthEvidence() Evidence {
 func TestAppHealth_ReportsRecentBootFailures(t *testing.T) {
 	check := func(e Evidence) (string, bool) {
 		for _, c := range Evaluate(e).Checks {
-			if c.Code == "readiness" && strings.Contains(c.Detail, "failed to boot or exited in the last") {
+			if c.Code == "readiness" && strings.Contains(c.Detail, "failed to boot, exited or failed liveness in the last") {
 				return c.Status, true
 			}
 		}
@@ -70,10 +70,10 @@ func TestAppHealth_ReportsInstancesThatExited(t *testing.T) {
 		{ID: "crashed", DeploymentID: "serving", State: string(state.StateStopped), StartedAt: e.Now.Add(-time.Hour)},
 		{ID: "parked-normally", DeploymentID: "serving", State: string(state.StateStopped), StartedAt: e.Now.Add(-time.Minute)},
 	}
-	e.ExitedInstances = map[string]bool{"crashed": true}
+	e.LivenessFailed = map[string]bool{"crashed": true}
 	found := false
 	for _, c := range Evaluate(e).Checks {
-		if c.Code == "readiness" && strings.Contains(c.Detail, "1 instance(s) of a serving release failed to boot or exited") {
+		if c.Code == "readiness" && strings.Contains(c.Detail, "1 instance(s) of a serving release failed to boot, exited or failed liveness") {
 			found = c.Status == Warning || c.Status == Fail
 		}
 	}
@@ -82,25 +82,30 @@ func TestAppHealth_ReportsInstancesThatExited(t *testing.T) {
 	}
 }
 
-type exitedEvidenceStore struct {
+type livenessEvidenceStore struct {
 	EvidenceStore
-	events map[string][]state.Event
+	failed map[string]bool
+	calls  int
 	asked  []string
 }
 
-func (s *exitedEvidenceStore) ListEventsBySubjectKind(_ context.Context, subject, kind string, _ time.Time, _ int) ([]state.Event, error) {
-	s.asked = append(s.asked, subject)
-	if kind != livenessFailedKind {
-		return nil, nil
+func (s *livenessEvidenceStore) ListEventSubjectsWithKind(_ context.Context, subjects []string, kind string, _ time.Time) (map[string]bool, error) {
+	s.calls++
+	s.asked = append(s.asked, subjects...)
+	out := map[string]bool{}
+	for _, subject := range subjects {
+		if kind == livenessFailedKind && s.failed[subject] {
+			out[subject] = true
+		}
 	}
-	return s.events[subject], nil
+	return out, nil
 }
 
-// Only recent STOPPED non-worker instances are looked up, and only those
-// with a liveness_failed transition are marked.
-func TestCollectExitedInstances(t *testing.T) {
+// Recent STOPPED non-worker instances are looked up in one read, and only
+// those with a liveness_failed transition are marked.
+func TestCollectLivenessFailures(t *testing.T) {
 	now := time.Now().UTC()
-	store := &exitedEvidenceStore{events: map[string][]state.Event{"crashed": {{Kind: livenessFailedKind, At: now}}}}
+	store := &livenessEvidenceStore{failed: map[string]bool{"crashed": true}}
 	e := &Evidence{RecentInstances: []state.Instance{
 		{ID: "crashed", State: string(state.StateStopped), LastRequestAt: now.Add(-time.Minute)},
 		{ID: "parked", State: string(state.StateStopped), LastRequestAt: now.Add(-time.Minute)},
@@ -108,12 +113,12 @@ func TestCollectExitedInstances(t *testing.T) {
 		{ID: "worker", State: string(state.StateStopped), Mode: string(state.InstanceModeWorker), LastRequestAt: now},
 		{ID: "running", State: string(state.StateRunning), LastRequestAt: now},
 	}}
-	collectExitedInstances(t.Context(), store, e)
-	if len(e.ExitedInstances) != 1 || !e.ExitedInstances["crashed"] {
-		t.Fatalf("exited = %v", e.ExitedInstances)
+	collectLivenessFailures(t.Context(), store, e)
+	if len(e.LivenessFailed) != 1 || !e.LivenessFailed["crashed"] {
+		t.Fatalf("liveness failed = %v", e.LivenessFailed)
 	}
-	if strings.Join(store.asked, ",") != "crashed,parked" {
-		t.Fatalf("looked up %v, want only recent stopped non-workers", store.asked)
+	if store.calls != 1 || strings.Join(store.asked, ",") != "crashed,parked" {
+		t.Fatalf("%d reads of %v, want one read of the recent stopped non-workers", store.calls, store.asked)
 	}
 }
 

@@ -86,30 +86,31 @@ func collectDeployments(ctx context.Context, store EvidenceStore, e *Evidence) {
 // process exits or its liveness probe fails (sched DestroyForLivenessFailure).
 const livenessFailedKind = "liveness_failed"
 
-// collectExitedInstances marks recent STOPPED instances that schedd stopped
-// because their process exited. A worker's process may end its work and
-// exit, so workers are left out. Best effort, like RecentInstances: a read
-// error leaves the instance unmarked.
-func collectExitedInstances(ctx context.Context, store EvidenceStore, e *Evidence) {
-	events, ok := store.(state.EventKindLister)
+// collectLivenessFailures marks recent STOPPED instances that schedd stopped
+// because their process exited or their liveness probe failed, in one events
+// read. A worker's process may end its work and exit, so workers are left
+// out. Best effort, like RecentInstances: a read error marks none.
+func collectLivenessFailures(ctx context.Context, store EvidenceStore, e *Evidence) {
+	events, ok := store.(state.EventSubjectKindLister)
 	if !ok {
 		return
 	}
 	since := time.Now().UTC().Add(-BootFailureWindow)
+	var candidates []string
 	for _, i := range e.RecentInstances {
 		// last_request_at is touched when schedd records the failure.
-		if state.State(i.State) != state.StateStopped || i.Mode == string(state.InstanceModeWorker) || i.LastRequestAt.Before(since) {
-			continue
+		if state.State(i.State) == state.StateStopped && i.Mode != string(state.InstanceModeWorker) && !i.LastRequestAt.Before(since) {
+			candidates = append(candidates, i.ID)
 		}
-		got, err := events.ListEventsBySubjectKind(ctx, i.ID, livenessFailedKind, since, 1)
-		if err != nil || len(got) == 0 {
-			continue
-		}
-		if e.ExitedInstances == nil {
-			e.ExitedInstances = map[string]bool{}
-		}
-		e.ExitedInstances[i.ID] = true
 	}
+	if len(candidates) == 0 {
+		return
+	}
+	failed, err := events.ListEventSubjectsWithKind(ctx, candidates, livenessFailedKind, since)
+	if err != nil || len(failed) == 0 {
+		return
+	}
+	e.LivenessFailed = failed
 }
 
 func collectInstances(ctx context.Context, store EvidenceStore, e *Evidence) {
@@ -129,7 +130,7 @@ func collectInstances(ctx context.Context, store EvidenceStore, e *Evidence) {
 	}); ok {
 		// Best effort: without it, failed boots simply go unreported.
 		e.RecentInstances, _ = recent.ListLatestInstancesForApp(ctx, e.App.ID, RecentInstanceScan)
-		collectExitedInstances(ctx, store, e)
+		collectLivenessFailures(ctx, store, e)
 	}
 	ids := make([]string, 0, len(instances))
 	e.Nodes = make(map[string]state.ComputeNode)
