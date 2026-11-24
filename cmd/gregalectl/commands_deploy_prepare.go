@@ -744,7 +744,7 @@ func stagePrepareSecrets(sourceDir, outputDir string, grants bool) error {
 		if err != nil {
 			return fmt.Errorf("read secret %s: %w", item.name, err)
 		}
-		if len(bytes.TrimSpace(body)) == 0 && !(imagedGrants && item.name == "imaged-storage.env") {
+		if len(bytes.TrimSpace(body)) == 0 && (!imagedGrants || item.name != "imaged-storage.env") {
 			// Under grants imaged needs no lifecycle key, so its file may be empty.
 			return fmt.Errorf("secret %s is empty", item.name)
 		}
