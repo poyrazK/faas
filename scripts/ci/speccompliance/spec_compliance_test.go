@@ -566,6 +566,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/snapshot-health":              true, // operator snapshot health report (ADR-20261122135018)
 	"GET /v1/admin/obs/build-queue":                  true, // operator build queue report (ADR-20261123163340)
 	"GET /v1/admin/obs/memory-pressure":              true, // operator memory pressure report (ADR-20261123190507)
+	"GET /v1/admin/obs/gateway-traffic":              true, // operator gateway traffic report (ADR-20261124093000)
 	"GET /v1/admin/obs/tenants/{id}":                 true, // ADR-091 — operator-only
 	"GET /v1/admin/obs/tenants/{id}/activity":        true, // operator-only tenant activity drill-down
 	"GET /v1/admin/obs/apps/{id}":                    true, // operator-only app workload drill-down
@@ -1132,6 +1133,15 @@ var dtoExclude = map[string]bool{
 	"ObsMemoryReasonCount":    true,
 	"ObsMemoryApp":            true,
 	"ObsMemoryEvent":          true,
+	// ADR-20261124093000 operator gateway traffic report.
+	"ObsGatewayTrafficReport":  true,
+	"ObsGatewayTrafficTotals":  true,
+	"ObsGatewayNodeTraffic":    true,
+	"ObsGatewayStatusCount":    true,
+	"ObsGatewayAdmissionCount": true,
+	"ObsGatewayEdgeRejection":  true,
+	"ObsGatewayReasonCount":    true,
+	"ObsGatewayAppTraffic":     true,
 	// ADR-20261123163340 operator build queue report.
 	"ObsBuildQueueReport":  true,
 	"ObsBuildQueueTotals":  true,
