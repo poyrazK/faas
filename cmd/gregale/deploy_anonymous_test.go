@@ -13,32 +13,60 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// A deploy with no credential falls back to an anonymous session in an
-// agent's shell, but never in CI or when switched off (ADR-20261124080000).
-// A person at a terminal gets the usual "not logged in" instead.
+// A deploy with no credential falls back to an anonymous session only in a
+// known coding agent's shell, never in CI, cron or a build server, and not
+// when switched off (ADR-20261124080000).
 func TestAnonymousDeployByDefault(t *testing.T) {
+	agent := map[string]string{"CLAUDECODE": "1"}
+	with := func(extra map[string]string) map[string]string {
+		out := map[string]string{"CLAUDECODE": "1"}
+		for k, v := range extra {
+			out[k] = v
+		}
+		return out
+	}
 	for _, tt := range []struct {
 		name string
-		tty  bool
 		env  map[string]string
 		want bool
 	}{
-		{name: "agent shell", want: true},
-		{name: "terminal", tty: true, want: false},
-		{name: "ci", env: map[string]string{"CI": "true"}, want: false},
-		{name: "ci false", env: map[string]string{"CI": "false"}, want: true},
-		{name: "opted out", env: map[string]string{"GREGALE_NO_ANONYMOUS_DEPLOY": "1"}, want: false},
-		{name: "opt-out zero", env: map[string]string{"GREGALE_NO_ANONYMOUS_DEPLOY": "0"}, want: true},
+		{name: "coding agent", env: agent, want: true},
+		{name: "unattended job without a terminal", env: map[string]string{}, want: false},
+		{name: "jenkins", env: map[string]string{"JENKINS_URL": "https://ci.example"}, want: false},
+		{name: "agent in ci", env: with(map[string]string{"CI": "true"}), want: false},
+		{name: "agent, ci false", env: with(map[string]string{"CI": "false"}), want: true},
+		{name: "opted out", env: with(map[string]string{"GREGALE_NO_ANONYMOUS_DEPLOY": "1"}), want: false},
+		{name: "opt-out zero", env: with(map[string]string{"GREGALE_NO_ANONYMOUS_DEPLOY": "0"}), want: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			prev := *main.TestOnlyTTY
-			tty := tt.tty
-			*main.TestOnlyTTY = &tty
-			defer func() { *main.TestOnlyTTY = prev }()
 			if got := main.AnonymousDeployByDefault(func(k string) string { return tt.env[k] }); got != tt.want {
 				t.Fatalf("AnonymousDeployByDefault = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// The anonymous deploy key lives in its own file, never the login store:
+// later commands use it only while no login exists and its window is open.
+func TestAnonymousSessionKeyIsNotTheLogin(t *testing.T) {
+	main.SetupCLIRegression(t)
+	t.Setenv("FAAS_TOKEN", "")
+	t.Setenv("GREGALE_TOKEN", "")
+	key := main.TestAPIKey('b')
+	if err := main.SaveAnonymousSession(api.AnonymousSessionResponse{APIKey: key, ClaimURL: "https://api.example.test/claim/x", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if got := main.LoadToken(); got != key {
+		t.Fatalf("token with only an anonymous session = %q, want the anonymous key", got)
+	}
+	if got := main.LoadStoredToken(); got != "" {
+		t.Fatalf("anonymous key reached the login store: %q", got)
+	}
+	if err := main.SaveAnonymousSession(api.AnonymousSessionResponse{APIKey: key, ExpiresAt: time.Now().Add(-time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	if got := main.LoadToken(); got != "" {
+		t.Fatalf("expired anonymous session still used: %q", got)
 	}
 }
 

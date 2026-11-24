@@ -6,6 +6,8 @@ import (
 	"net/url"
 
 	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/onebox-faas/faas/pkg/apid/claim"
 )
 
 // Sign-up methods and sources (ADR-20261028205920). The source says where a
@@ -81,7 +83,7 @@ func newSignupMetrics(reg prometheus.Registerer, prefix string) *signupMetrics {
 		Name: prefix + "_unclaimed_accounts_total",
 		Help: "Anonymous-deploy accounts by event: created, claimed, expired, or refused (refused_network, refused_live_cap, refused_held_link).",
 	}, []string{"event"})
-	for _, event := range unclaimedEvents {
+	for _, event := range claim.Events {
 		m.unclaimed.WithLabelValues(event).Add(0)
 	}
 	for _, scope := range []string{signupCapNetwork, signupCapFleet} {

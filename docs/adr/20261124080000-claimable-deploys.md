@@ -48,17 +48,22 @@ them. The claim converts the account in place instead (section 4).
 
 `unclaimedAllowed` runs in `authLimited` and `authVerifiedLimited`, after
 the capability gate. The placeholder address marks the account, so the
-check needs no store read.
+check needs no store read. The code lives in `pkg/apid/claim` (ADR-982);
+apid keeps the route table, the middleware and a `claim.Host` adapter.
 
 - Allowed: reads under `/v1/apps`, `/v1/deployments`, `/v1/uploads`,
   `/v1/projects`, `/v1/builds`, `/v1/account`, `/v1/me`, `/v1/whoami`,
-  `/v1/usage` and `/v1/runtimes`, and writes under them.
-- Refused with `403 claim_required`: writes whose path names domains,
-  certificates, databases, caches, buckets, keys, tokens, billing, plans,
-  orgs, members, crons, webhooks, email, mirrors, egress, private networks,
-  TCP/UDP, forks, sandboxes, consumers, MCP or agents. Every other root is
-  refused too: deny by default. Under `/v1/account` the only allowed write
-  is `POST /v1/account/claim-link`.
+  `/v1/usage` and `/v1/runtimes`.
+- Allowed writes are listed route by route (`claim.RouteAllowed`): create,
+  deploy (including source tarballs and staging), cancel, roll back,
+  restart and delete an app; source uploads; the app's environment
+  variables and secrets; project scans; and `POST /v1/account/claim-link`.
+  A test keeps the list in step with the route table.
+- Every other request answers `403 claim_required`: deny by default, so a
+  new route is closed to unclaimed accounts until it is added on purpose. A
+  block list by path segment was rejected: it let app-scoped credentials
+  (AI-gateway tokens, realtime publish keys), log drains and environment
+  clones through, and those outlive the claim.
 - The Free plan's own limits apply unchanged: one app, the Free RAM cap and
   no cron. The ADR-20261112120603 CPU rule already enforces on Free.
 
@@ -68,24 +73,31 @@ check needs no store read.
 |---|---:|---|
 | `unclaimed_deploy_ttl_hours` | 72 | claim window; 1–168 |
 | `unclaimed_accounts_live_max` | 500 *assumed* | unclaimed accounts alive at once; 0 closes |
-| `unclaimed_accounts_per_address_per_day` | 3 *assumed* | per IP, per apid |
-| `unclaimed_accounts_per_network_per_day` | 10 *assumed* | per /24 or /48, per apid |
+| `unclaimed_accounts_per_address_per_day` | 3 *assumed* | per IP, last 24 h; 0 closes |
+| `unclaimed_accounts_per_network_per_day` | 10 *assumed* | per /24 or /48, last 24 h; 0 closes |
 
-- The per-network limiter is separate from human sign-ups, so anonymous
-  deploys never use up a network's sign-ups. Unclaimed accounts are left
-  out of the platform-wide daily sign-up count
-  (`CountVerifiedAccountsCreatedSince`) until they are claimed.
-- A failed live count refuses. Anonymous deploys are optional; sign-up
-  admits on the same failure.
+- The caps are checked in the transaction that creates the account,
+  under a transaction-scoped advisory lock, from `unclaimed_accounts`
+  itself (`created_ip`, `created_at`). Concurrent requests and several apids
+  therefore cannot exceed them, and a refused request creates nothing. They
+  are separate from human sign-ups, so anonymous deploys never use up a
+  network's sign-ups. Unclaimed accounts are left out of the platform-wide
+  daily sign-up count (`CountVerifiedAccountsCreatedSince`) until claimed.
+- A failed count fails the creation. Anonymous deploys are optional;
+  sign-up admits on the same failure.
 - Every session records `account_signup_facts` (method `anonymous`). If the
   ADR-20261114174600 check links it to an abuse-held account, the new
   account is ended at once and the caller gets `429
   anonymous_deploys_unavailable`. Sign-up only flags such links; an account
   nobody has identified gets the stricter rule.
-- apid sweeps every 5 minutes. An open account past its expiry is marked
-  `expired_at` and goes through the usual `scheduleDeletion` (via
-  `unclaimed_expiry`). That stops its apps and keys and starts the normal
-  erasure pipeline; the placeholder receives no notice.
+- apid sweeps every 5 minutes. An open account past its expiry goes
+  through the usual `scheduleDeletion` (via `unclaimed_expiry`) first, and
+  only then is the row marked `expired_at`: a transient failure leaves the
+  row open for the next sweep. A refusal that will not change (a suspended
+  or abuse-held account, whose hold owns it) still ends the claim window.
+  Deletion stops its apps and keys and starts the normal erasure pipeline;
+  the placeholder receives no notice. Marking the row also drops pending
+  claim confirmations.
 - Metric `apid_unclaimed_accounts_total{event}`: created, claimed, expired,
   refused_network, refused_live_cap, refused_held_link. Audit events:
   `account.unclaimed_created`, `account.unclaimed_refused`,
@@ -105,11 +117,25 @@ to apid (`apid.ApidRootClaim`; it is reserved on platform hosts only):
 3. `GET /claim/confirm` renders a button. Mail scanners that prefetch links
    consume nothing.
 4. `POST /claim/confirm` consumes the change. The store refuses an address
-   another account took meanwhile. `finishEmailChange` sees the
-   placeholder as the old address and calls `completeClaim`: the row is
-   marked `claimed_at` and every API key on the account is revoked. The
-   browser then gets a one-time magic-link sign-in and lands on the
-   dashboard as the owner.
+   another account took meanwhile, and an account that is no longer active.
+   `finishEmailChange` sees the placeholder as the old address and calls
+   `claim.Service.FinishClaim`: every API key on the account is revoked
+   first, and only then is the row marked `claimed_at`. The browser then
+   gets a one-time magic-link sign-in and lands on the dashboard as the
+   owner.
+
+The confirmation is bounded three ways. It expires after an hour or at the
+end of the claim window, whichever is first. `POST /v1/account/claim-link`
+drops pending confirmations together with the old link, so a confirmation
+mailed through a leaked link stops working once the agent replaces it.
+Expiry drops them too.
+
+If the address moved but recording the claim failed, the row stays open.
+Two things cover that gap. The middleware refuses an `anonymous-deploy` key
+on an account that has an `unclaimed_accounts` row but no placeholder
+address. And the sweep, finding such a row past its expiry, finishes the
+claim instead of deleting the account. The anonymous key also expires with
+the claim window.
 
 The account, its apps, deployments and data stay where they are. The agent's
 key stops working; the agent signs in as the person (`gregale login`) to
@@ -123,13 +149,19 @@ another address, or sign in and redeploy.
 
 `gregale deploy` with no saved login and no `GREGALE_TOKEN`:
 
-- deploys anonymously when it has no terminal (an agent's shell) or when
-  `--anonymous` is given;
-- does not when `CI` is set or `GREGALE_NO_ANONYMOUS_DEPLOY` is set. A CI job
-  that lost its token must fail, not deploy somewhere nobody owns.
+- deploys anonymously when a known coding agent runs it (its marker from
+  `api.CodingAgents` is set: Claude Code, Codex, Gemini CLI, Cursor) or
+  when `--anonymous` is given;
+- does not when `CI` is set or `GREGALE_NO_ANONYMOUS_DEPLOY` is set. A job
+  without a terminal is not enough: cron, Jenkins and build servers often
+  set no `CI`, and one that lost its token must fail, not deploy somewhere
+  nobody owns.
 
-It saves the session's key like a login, prints the claim link before the
-upload, and prints it again after the deploy. `gregale claim` prints a fresh
+It keeps the session's key in `anonymous-deploy.json` next to the profile's
+token file, never in the login store. Later commands use it only while no
+login exists, only for the same API, and only until the claim window ends;
+`gregale logout` removes it. The CLI prints the claim link before the upload
+and again after the deploy. `gregale claim` prints a fresh
 link; the previous link stops working. A server without the capability
 answers 404, and the CLI shows the usual "not logged in" error.
 
@@ -150,6 +182,6 @@ existing unclaimed accounts keep their expiry. `unclaimed_accounts_live_max
   follow-ups that need gateway work.
 - Placeholder accounts appear in operator views (`gregalectl accounts risk`)
   with their sign-up facts.
-- The per-address limits are per apid process, like the sign-up caps; the
-  live cap is global.
+- All caps are global, unlike the sign-up caps, which are per apid
+  process.
 - Claiming into an existing account and app transfer remain open.

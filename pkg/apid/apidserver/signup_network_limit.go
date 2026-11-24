@@ -50,12 +50,6 @@ func (l *signupNetworkLimiter) rollLocked() {
 }
 
 func (l *signupNetworkLimiter) allow(ip string) bool {
-	return l.allowWithin(ip, api.SignupAccountsPerAddressPerDay, api.SignupAccountsPerNetworkPerDay)
-}
-
-// allowWithin is allow with explicit per-address and per-network daily
-// limits; the anonymous-deploy limiter reads its limits from runtime config.
-func (l *signupNetworkLimiter) allowWithin(ip string, perAddress, perNetwork int) bool {
 	addr, network := signupNetworkKeys(ip)
 	if l == nil || addr == "" {
 		return true
@@ -63,7 +57,7 @@ func (l *signupNetworkLimiter) allowWithin(ip string, perAddress, perNetwork int
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.rollLocked()
-	return l.created[addr] < perAddress && l.created[network] < perNetwork
+	return l.created[addr] < api.SignupAccountsPerAddressPerDay && l.created[network] < api.SignupAccountsPerNetworkPerDay
 }
 
 func (l *signupNetworkLimiter) record(ip string) {

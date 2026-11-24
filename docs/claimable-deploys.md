@@ -8,10 +8,12 @@ link, confirms an email address, and the app is theirs on the Free plan.
 
 Run `gregale deploy` with no saved login and no `GREGALE_TOKEN`:
 
-- From an agent's shell (no terminal), the CLI deploys without an account.
-- From a terminal, add `--anonymous`.
+- When a coding agent runs it (Claude Code, Codex, Gemini CLI or Cursor),
+  the CLI deploys without an account.
+- Anywhere else, add `--anonymous`.
 - In CI (`CI` is set), or with `GREGALE_NO_ANONYMOUS_DEPLOY=1`, the CLI never
-  does this and fails with "not logged in" instead.
+  does this and fails with "not logged in" instead. So does any other
+  script without a login, such as a cron job.
 
 ```console
 $ gregale deploy --anonymous
@@ -22,9 +24,11 @@ This app has no owner yet. Give this link to the person you are working for;
 they claim the app by opening it and confirming their email.
 ```
 
-The CLI saves the session's key like a login, so `gregale logs`,
-`gregale status` and later deploys of the same app work. `gregale claim`
-prints a fresh claim link; earlier links stop working.
+The CLI keeps the session's key in a file of its own, separate from your
+login. Until the claim window ends, `gregale logs`, `gregale status` and later
+deploys of the same app use it whenever no one is logged in. `gregale logout`
+forgets it. `gregale claim` prints a fresh claim link. Earlier links, and
+confirmation emails sent through them, stop working.
 
 Other clients call the API directly:
 
@@ -41,12 +45,12 @@ Use the key as a bearer token.
 Until someone claims it, the account:
 
 - has the Free plan's limits: one app and the Free memory size;
-- can deploy, set environment variables and secrets, and read logs, status
-  and usage;
-- cannot add custom domains, managed databases or caches, buckets, cron
-  jobs, webhooks or outbound email;
-- cannot create API keys or deploy tokens, organizations or invitations,
-  and cannot change billing or plans.
+- can create, deploy, roll back, restart and delete its app, set
+  environment variables and secrets, and read logs, status and usage;
+- cannot do anything else. That includes custom domains, managed databases
+  or caches, buckets, cron jobs, webhooks, log drains, outbound email, API
+  keys, deploy tokens and other credentials, organizations, billing and
+  plans.
 
 A refused request answers `403 claim_required`. Unclaimed apps are deleted
 72 hours after the deploy.
@@ -59,7 +63,7 @@ a limit they answer `429 anonymous_deploys_unavailable`; sign up with
 
 1. Open the claim link. It lists the apps and when they will be deleted.
 2. Enter your email address and open the confirmation link we send. It is
-   valid for an hour.
+   valid for an hour, and never past the claim window.
 3. Select **Claim and sign in**. The account and its apps become yours, and
    you are signed in to the dashboard.
 

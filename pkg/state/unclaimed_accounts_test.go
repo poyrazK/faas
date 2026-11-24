@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -49,7 +50,7 @@ func TestUnclaimedAccountLifecycle(t *testing.T) {
 			mk := func(email, token string, expires time.Time) string {
 				res, err := s.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{
 					Email: email, Plan: api.PlanFree,
-					Unclaimed: &state.UnclaimedAccountParams{ClaimTokenSHA256: claimHash(token), ExpiresAt: expires, CreatedIP: "203.0.113.9", UserAgent: "agent"},
+					Unclaimed: &state.UnclaimedAccountParams{ClaimTokenSHA256: claimHash(token), ExpiresAt: expires, CreatedIP: "203.0.113.9", UserAgent: "agent", LiveMax: 100, PerAddress: 100, PerNetwork: 100},
 				})
 				if err != nil {
 					t.Fatal(err)
@@ -66,7 +67,7 @@ func TestUnclaimedAccountLifecycle(t *testing.T) {
 			// A duplicate claim token never creates a second account.
 			if _, err := s.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{
 				Email: "anon-c@" + api.UnclaimedEmailDomain, Plan: api.PlanFree,
-				Unclaimed: &state.UnclaimedAccountParams{ClaimTokenSHA256: claimHash("a"), ExpiresAt: now.Add(time.Hour)},
+				Unclaimed: &state.UnclaimedAccountParams{ClaimTokenSHA256: claimHash("a"), ExpiresAt: now.Add(time.Hour), LiveMax: 100, PerAddress: 100, PerNetwork: 100},
 			}); !errors.Is(err, state.ErrConflict) {
 				t.Fatalf("duplicate token err = %v, want ErrConflict", err)
 			}
@@ -113,6 +114,62 @@ func TestUnclaimedAccountLifecycle(t *testing.T) {
 			}
 			if _, err := s.UnclaimedAccountByID(ctx, "00000000-0000-0000-0000-000000000000"); !errors.Is(err, state.ErrNotFound) {
 				t.Fatalf("missing row err = %v", err)
+			}
+		})
+	}
+}
+
+// The caps are enforced in the creating transaction: per address, per /24,
+// and across the platform; an over-cap request creates no account.
+func TestUnclaimedAccountCaps(t *testing.T) {
+	for name, open := range unclaimedBackends() {
+		t.Run(name, func(t *testing.T) {
+			s := open(t)
+			ctx := t.Context()
+			n := 0
+			create := func(ip string, p state.UnclaimedAccountParams) error {
+				n++
+				p.ClaimTokenSHA256 = claimHash(name + ip + string(rune('a'+n)))
+				p.ExpiresAt = time.Now().Add(time.Hour)
+				p.CreatedIP = ip
+				_, err := s.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{
+					Email: fmt.Sprintf("anon-%s-%d@%s", name, n, api.UnclaimedEmailDomain), Plan: api.PlanFree, Unclaimed: &p,
+				})
+				return err
+			}
+			reason := func(err error) string {
+				var limit *state.UnclaimedLimitError
+				if errors.As(err, &limit) {
+					return limit.Reason
+				}
+				return fmt.Sprint(err)
+			}
+			caps := state.UnclaimedAccountParams{LiveMax: 4, PerAddress: 2, PerNetwork: 3}
+			for _, ip := range []string{"198.51.100.1", "198.51.100.1"} {
+				if err := create(ip, caps); err != nil {
+					t.Fatalf("within caps: %v", err)
+				}
+			}
+			if got := reason(create("198.51.100.1", caps)); got != state.UnclaimedLimitAddress {
+				t.Fatalf("third from one address = %s, want %s", got, state.UnclaimedLimitAddress)
+			}
+			if err := create("198.51.100.2", caps); err != nil {
+				t.Fatalf("other address in the network: %v", err)
+			}
+			if got := reason(create("198.51.100.3", caps)); got != state.UnclaimedLimitNetwork {
+				t.Fatalf("fourth from one /24 = %s, want %s", got, state.UnclaimedLimitNetwork)
+			}
+			if err := create("203.0.113.1", caps); err != nil {
+				t.Fatalf("other network: %v", err)
+			}
+			if got := reason(create("192.0.2.1", caps)); got != state.UnclaimedLimitLive {
+				t.Fatalf("fifth live account = %s, want %s", got, state.UnclaimedLimitLive)
+			}
+			if live, _ := s.CountLiveUnclaimedAccounts(ctx, time.Now()); live != 4 {
+				t.Fatalf("live = %d, want 4: a refused request must not create an account", live)
+			}
+			if got := reason(create("192.0.2.2", state.UnclaimedAccountParams{LiveMax: 100})); got != state.UnclaimedLimitAddress {
+				t.Fatalf("zero per-address cap = %s, want it to refuse", got)
 			}
 		})
 	}

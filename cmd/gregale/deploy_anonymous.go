@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -15,10 +17,12 @@ import (
 )
 
 // Claimable deploys (ADR-20261124080000). `gregale deploy` with no saved
-// login and no GREGALE_TOKEN deploys without an account when an agent runs
-// it (no terminal, not CI) or when --anonymous is given: the CLI asks for an
-// anonymous session, saves its deploy key like a login, deploys, and prints
-// the claim link a person opens to keep the app.
+// login and no GREGALE_TOKEN deploys without an account when a known coding
+// agent runs it (api.CodingAgents, not CI) or when --anonymous is given: the
+// CLI asks for an anonymous session, keeps its deploy key in a file of its
+// own (never the login store), deploys, and prints the claim link a person
+// opens to keep the app. Later commands use that key only while no login
+// exists and only until the claim window ends.
 
 // anonymousDeploySession is the session this invocation created, so the
 // deploy can print the claim link when it ends. Reset per deploy.
@@ -27,18 +31,21 @@ var anonymousDeploySession *api.AnonymousSessionResponse
 // anonymousDeployDisabledEnv turns the automatic fallback off.
 const anonymousDeployDisabledEnv = "GREGALE_NO_ANONYMOUS_DEPLOY"
 
+// envSet reports a variable set to anything but empty, 0 or false.
+func envSet(getenv func(string) string, name string) bool {
+	v := strings.TrimSpace(getenv(name))
+	return v != "" && v != "0" && !strings.EqualFold(v, "false")
+}
+
 // anonymousDeployByDefault reports whether a deploy with no credential
-// should deploy without an account rather than fail: an agent's shell has
-// no terminal. CI runs without a terminal too, but a CI job that lost its
-// token must fail rather than deploy somewhere nobody owns.
+// should deploy without an account rather than fail. Only a known coding
+// agent's shell qualifies: a cron job, CI runner or build server that lost
+// its token must fail rather than deploy somewhere nobody owns.
 func anonymousDeployByDefault(getenv func(string) string) bool {
-	if v := strings.TrimSpace(getenv(anonymousDeployDisabledEnv)); v != "" && v != "0" && !strings.EqualFold(v, "false") {
+	if envSet(getenv, anonymousDeployDisabledEnv) || envSet(getenv, "CI") {
 		return false
 	}
-	if v := strings.TrimSpace(getenv("CI")); v != "" && v != "0" && !strings.EqualFold(v, "false") {
-		return false
-	}
-	return nonInteractive || !stdinIsTTY()
+	return api.CodingAgentFromEnv(getenv) != ""
 }
 
 // deployClientOrAnonymous returns the deploy client: the saved login, or an
@@ -56,13 +63,71 @@ func deployClientOrAnonymous(ctx context.Context, timeout time.Duration, anonymo
 		}
 		return nil, errAuth(fmt.Errorf("not logged in, and deploying without an account failed: %w — %s", err, authenticationHint()))
 	}
-	if err := saveToken(sess.APIKey); err != nil {
+	if err := saveAnonymousSession(sess); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not save the anonymous deploy key (%v); later commands will need it again\n", err)
 	}
 	anonymousDeploySession = &sess
 	fmt.Fprintf(os.Stderr, "Deploying without a Gregale account. A person must claim this app by %s or it is deleted:\n  %s\n",
 		sess.ExpiresAt.Local().Format("Mon 2 Jan 15:04 MST"), sess.ClaimURL)
 	return NewClientWithDeployTimeout(apiBase(), sess.APIKey, timeout), nil
+}
+
+// savedAnonymousSession is the anonymous-deploy file: the key, the API it
+// belongs to and when the claim window ends.
+type savedAnonymousSession struct {
+	APIKey    string    `json:"api_key"`
+	APIBase   string    `json:"api_base"`
+	ClaimURL  string    `json:"claim_url"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// anonymousSessionPath sits next to the profile's token file.
+func anonymousSessionPath() (string, error) {
+	p, err := tokenPath()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(filepath.Dir(p), "anonymous-deploy.json"), nil
+}
+
+func saveAnonymousSession(sess api.AnonymousSessionResponse) error {
+	p, err := anonymousSessionPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return err
+	}
+	b, err := json.Marshal(savedAnonymousSession{APIKey: sess.APIKey, APIBase: apiBase(), ClaimURL: sess.ClaimURL, ExpiresAt: sess.ExpiresAt})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(p, b, 0o600)
+}
+
+// loadAnonymousSessionToken returns the saved anonymous deploy key while its
+// claim window is open and it belongs to the current API, else "".
+func loadAnonymousSessionToken() string {
+	p, err := anonymousSessionPath()
+	if err != nil {
+		return ""
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return ""
+	}
+	var saved savedAnonymousSession
+	if json.Unmarshal(b, &saved) != nil || !time.Now().Before(saved.ExpiresAt) || saved.APIBase != apiBase() || !validPersistedToken(saved.APIKey) {
+		return ""
+	}
+	return saved.APIKey
+}
+
+// deleteAnonymousSession forgets the anonymous deploy key (logout).
+func deleteAnonymousSession() {
+	if p, err := anonymousSessionPath(); err == nil {
+		_ = os.Remove(p)
+	}
 }
 
 func createAnonymousDeploySession(ctx context.Context) (api.AnonymousSessionResponse, error) {

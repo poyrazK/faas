@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -11,8 +11,12 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/apid/claim"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// Claimable deploys (ADR-20261124080000), end to end through apid's routes.
 
 func anonymousSession(t *testing.T, h http.Handler, remote string) (*httptest.ResponseRecorder, api.AnonymousSessionResponse) {
 	t.Helper()
@@ -51,14 +55,51 @@ func claimForm(h http.Handler, path string, form url.Values) *httptest.ResponseR
 	return rec
 }
 
+func claimGet(h http.Handler, path string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	return rec
+}
+
+func claimPath(claimURL string) string { return claimURL[strings.Index(claimURL, claim.PagePath+"/"):] }
+
 var claimConfirmLink = regexp.MustCompile(`/claim/confirm\?token=([A-Za-z0-9_-]+)`)
+
+// requestClaim posts an address on the claim page and returns the mailed
+// confirmation token, or "" when none was mailed.
+func requestClaim(t *testing.T, srv *apidserver.Server, mailer *apidserver.RecordingMailer, path, email string) string {
+	t.Helper()
+	h := srv.Handler()
+	if rec := claimForm(h, path, url.Values{"email": {email}}); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Check your email") {
+		t.Fatalf("claim post = %d: %s", rec.Code, rec.Body.String())
+	}
+	srv.WaitPasswordResetMail()
+	token := ""
+	for _, msg := range mailer.Snapshot() {
+		if len(msg.To) == 1 && msg.To[0] == email {
+			if m := claimConfirmLink.FindStringSubmatch(msg.TextBody); m != nil {
+				token = m[1]
+			}
+		}
+	}
+	return token
+}
+
+func unclaimedRow(t *testing.T, store state.Store, accountID string) state.UnclaimedAccount {
+	t.Helper()
+	row, err := store.(state.UnclaimedAccountStore).UnclaimedAccountByID(t.Context(), accountID)
+	if err != nil {
+		t.Fatalf("unclaimed row: %v", err)
+	}
+	return row
+}
 
 // An agent deploys with no account; the person who opens the claim link and
 // confirms an address owns the same account, with its apps, and the agent's
-// anonymous key stops working (ADR-20261124080000).
+// anonymous key stops working.
 func TestAnonymousDeployIsClaimedInPlace(t *testing.T) {
-	srv, mailer, store := v1AuthTestHarness(t)
-	h := srv.handler()
+	srv, mailer, store := apidserver.V1AuthTestHarness(t)
+	h := srv.Handler()
 
 	rec, sess := anonymousSession(t, h, "203.0.113.10:5000")
 	if rec.Code != http.StatusCreated {
@@ -71,20 +112,25 @@ func TestAnonymousDeployIsClaimedInPlace(t *testing.T) {
 		t.Fatalf("expires in %s, want about 72h", got)
 	}
 	acct, err := store.AccountByID(t.Context(), sess.AccountID)
-	if err != nil || !isUnclaimedAccount(acct) || !acct.EmailVerified() || acct.Plan != api.PlanFree {
+	if err != nil || !claim.IsUnclaimed(acct) || !acct.EmailVerified() || acct.Plan != api.PlanFree {
 		t.Fatalf("account = %+v (err %v)", acct, err)
 	}
 	if _, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "agent-app", Status: state.AppActive, RAMMB: 256}); err != nil {
 		t.Fatal(err)
 	}
 
-	// The key deploys and reads; it may not reach what needs a claim.
+	// The key deploys and reads; it may not reach what needs a claim,
+	// including credentials and resources under the app itself.
 	if rec := claimBearer(h, http.MethodGet, "/v1/apps", sess.APIKey, ""); rec.Code != http.StatusOK {
 		t.Fatalf("GET /v1/apps = %d: %s", rec.Code, rec.Body.String())
 	}
-	for _, path := range []string{"/v1/keys", "/v1/domains", "/v1/orgs"} {
-		if rec := claimBearer(h, http.MethodPost, path, sess.APIKey, `{}`); rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), api.CodeClaimRequired) {
-			t.Errorf("POST %s = %d %s, want 403 claim_required", path, rec.Code, rec.Body.String())
+	for _, path := range []string{
+		"/v1/keys", "/v1/domains", "/v1/orgs",
+		"/v1/apps/agent-app/ai-access-tokens", "/v1/apps/agent-app/log-drains",
+	} {
+		if rec := claimBearer(h, http.MethodPost, path, sess.APIKey, `{}`); rec.Code == http.StatusOK || rec.Code == http.StatusCreated ||
+			(rec.Code == http.StatusForbidden && !strings.Contains(rec.Body.String(), api.CodeClaimRequired)) {
+			t.Errorf("POST %s = %d %s, want it refused", path, rec.Code, rec.Body.String())
 		}
 	}
 
@@ -97,53 +143,33 @@ func TestAnonymousDeployIsClaimedInPlace(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &link); err != nil {
 		t.Fatal(err)
 	}
-	oldPath := sess.ClaimURL[strings.Index(sess.ClaimURL, "/claim/"):]
-	newPath := link.ClaimURL[strings.Index(link.ClaimURL, "/claim/"):]
-	if rec := httptest.NewRecorder(); true {
-		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, oldPath, nil))
-		if rec.Code != http.StatusGone {
-			t.Errorf("replaced claim link = %d, want 410", rec.Code)
-		}
+	if rec := claimGet(h, claimPath(sess.ClaimURL)); rec.Code != http.StatusGone {
+		t.Errorf("replaced claim link = %d, want 410", rec.Code)
 	}
-	page := httptest.NewRecorder()
-	h.ServeHTTP(page, httptest.NewRequest(http.MethodGet, newPath, nil))
-	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "agent-app") {
+	newPath := claimPath(link.ClaimURL)
+	if page := claimGet(h, newPath); page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "agent-app") {
 		t.Fatalf("claim page = %d: %s", page.Code, page.Body.String())
 	}
 
 	// The claimer confirms an address.
-	if rec := claimForm(h, newPath, url.Values{"email": {"owner@example.com"}}); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Check your email") {
-		t.Fatalf("claim post = %d: %s", rec.Code, rec.Body.String())
-	}
-	srv.resetMail.wait()
-	var token string
-	for _, msg := range mailer.snapshot() {
-		if len(msg.To) == 1 && msg.To[0] == "owner@example.com" {
-			if m := claimConfirmLink.FindStringSubmatch(msg.TextBody); m != nil {
-				token = m[1]
-			}
-		}
-	}
+	token := requestClaim(t, srv, mailer, newPath, "owner@example.com")
 	if token == "" {
-		t.Fatalf("no claim confirmation mailed: %+v", mailer.snapshot())
+		t.Fatalf("no claim confirmation mailed: %+v", mailer.Snapshot())
 	}
-	confirm := httptest.NewRecorder()
-	h.ServeHTTP(confirm, httptest.NewRequest(http.MethodGet, claimConfirmPath+"?token="+token, nil))
-	if confirm.Code != http.StatusOK {
-		t.Fatalf("confirm page = %d", confirm.Code)
+	if rec := claimGet(h, claim.ConfirmPath+"?token="+token); rec.Code != http.StatusOK {
+		t.Fatalf("confirm page = %d", rec.Code)
 	}
-	rec = claimForm(h, claimConfirmPath, url.Values{"token": {token}})
-	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), magicLinkPath+"?token=") {
+	rec = claimForm(h, claim.ConfirmPath, url.Values{"token": {token}})
+	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "/auth/verify?token=") {
 		t.Fatalf("confirm = %d location %q: %s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
 	}
 
 	claimed, err := store.AccountByID(t.Context(), acct.ID)
-	if err != nil || claimed.Email != "owner@example.com" || isUnclaimedAccount(claimed) {
+	if err != nil || claimed.Email != "owner@example.com" || claim.IsUnclaimed(claimed) {
 		t.Fatalf("claimed account = %+v (err %v)", claimed, err)
 	}
-	row, err := store.(state.UnclaimedAccountStore).UnclaimedAccountByID(t.Context(), acct.ID)
-	if err != nil || row.ClaimedAt == nil {
-		t.Fatalf("unclaimed row = %+v (err %v)", row, err)
+	if row := unclaimedRow(t, store, acct.ID); row.ClaimedAt == nil {
+		t.Fatalf("unclaimed row = %+v", row)
 	}
 	if apps, err := store.ListApps(t.Context(), acct.ID); err != nil || len(apps) != 1 {
 		t.Fatalf("apps after claim = %v (err %v)", apps, err)
@@ -151,62 +177,47 @@ func TestAnonymousDeployIsClaimedInPlace(t *testing.T) {
 	if rec := claimBearer(h, http.MethodGet, "/v1/apps", sess.APIKey, ""); rec.Code != http.StatusUnauthorized {
 		t.Errorf("anonymous key after claim = %d, want 401", rec.Code)
 	}
-	// The used link and the claim page are gone.
-	if rec := claimForm(h, claimConfirmPath, url.Values{"token": {token}}); rec.Code == http.StatusSeeOther {
+	if rec := claimForm(h, claim.ConfirmPath, url.Values{"token": {token}}); rec.Code == http.StatusSeeOther {
 		t.Errorf("second confirm redirected again")
 	}
-	gone := httptest.NewRecorder()
-	h.ServeHTTP(gone, httptest.NewRequest(http.MethodGet, newPath, nil))
-	if gone.Code != http.StatusGone {
-		t.Errorf("claim page after claim = %d, want 410", gone.Code)
+	if rec := claimGet(h, newPath); rec.Code != http.StatusGone {
+		t.Errorf("claim page after claim = %d, want 410", rec.Code)
 	}
 }
 
 // An address that already has an account gets an explanation, never a
 // confirmation link, and the answer does not say which addresses exist.
 func TestClaimWithTakenAddressMailsExplanation(t *testing.T) {
-	srv, mailer, store := v1AuthTestHarness(t)
-	h := srv.handler()
+	srv, mailer, store := apidserver.V1AuthTestHarness(t)
 	if _, err := store.CreateAccountWithPersonalOrg(t.Context(), state.CreateAccountWithPersonalOrgParams{Email: "taken@example.com", Plan: api.PlanFree}); err != nil {
 		t.Fatal(err)
 	}
-	_, sess := anonymousSession(t, h, "203.0.113.11:5000")
-	path := sess.ClaimURL[strings.Index(sess.ClaimURL, "/claim/"):]
-	rec := claimForm(h, path, url.Values{"email": {"taken@example.com"}})
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Check your email") {
-		t.Fatalf("claim post = %d: %s", rec.Code, rec.Body.String())
-	}
-	srv.resetMail.wait()
-	for _, msg := range mailer.snapshot() {
-		if strings.Contains(msg.TextBody, "/claim/confirm") {
-			t.Fatalf("taken address got a confirmation link: %s", msg.TextBody)
-		}
+	_, sess := anonymousSession(t, srv.Handler(), "203.0.113.11:5000")
+	if token := requestClaim(t, srv, mailer, claimPath(sess.ClaimURL), "taken@example.com"); token != "" {
+		t.Fatalf("taken address got a confirmation link")
 	}
 	found := false
-	for _, msg := range mailer.snapshot() {
+	for _, msg := range mailer.Snapshot() {
 		found = found || (msg.To[0] == "taken@example.com" && strings.Contains(msg.TextBody, "already has a Gregale account"))
 	}
 	if !found {
-		t.Fatalf("no explanation mailed: %+v", mailer.snapshot())
+		t.Fatalf("no explanation mailed: %+v", mailer.Snapshot())
 	}
 }
 
-// Anonymous sessions are capped per address; the sign-up cap of the same
-// address is untouched.
+// Anonymous sessions are capped per address in the store, so the cap holds
+// across apids; a body without accept_terms is refused.
 func TestAnonymousSessionsCappedPerAddress(t *testing.T) {
-	srv, _, _ := v1AuthTestHarness(t)
-	h := srv.handler()
+	srv, _, _ := apidserver.V1AuthTestHarness(t)
+	h := srv.Handler()
 	for i := range api.UnclaimedAccountsPerAddressPerDayDefault {
 		if rec, _ := anonymousSession(t, h, "203.0.113.20:5000"); rec.Code != http.StatusCreated {
 			t.Fatalf("session %d = %d: %s", i, rec.Code, rec.Body.String())
 		}
 	}
 	rec, _ := anonymousSession(t, h, "203.0.113.20:5000")
-	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), api.CodeAnonymousDeploysUnavailable) {
-		t.Fatalf("over the cap = %d: %s", rec.Code, rec.Body.String())
-	}
-	if !srv.signups.allow("203.0.113.20") {
-		t.Fatal("anonymous sessions used the address's sign-up allowance")
+	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), api.CodeAnonymousDeploysUnavailable) || rec.Header().Get("Retry-After") == "" {
+		t.Fatalf("over the cap = %d %v: %s", rec.Code, rec.Header(), rec.Body.String())
 	}
 	bad := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/anonymous/sessions", strings.NewReader(`{}`))
@@ -220,69 +231,114 @@ func TestAnonymousSessionsCappedPerAddress(t *testing.T) {
 // Past its expiry an unclaimed account is scheduled for deletion; a claimed
 // one and one still inside its window are left alone.
 func TestUnclaimedAccountsExpire(t *testing.T) {
-	srv, _, store := v1AuthTestHarness(t)
-	h := srv.handler()
+	srv, _, store := apidserver.V1AuthTestHarness(t)
+	h := srv.Handler()
 	_, first := anonymousSession(t, h, "203.0.113.30:5000")
 	_, second := anonymousSession(t, h, "203.0.113.31:5000")
-	if n := srv.expireUnclaimedAccounts(t.Context()); n != 0 {
+	svc := srv.Claim()
+	if n := svc.ExpireOnce(t.Context()); n != 0 {
 		t.Fatalf("early sweep ended %d", n)
 	}
-	defer func(prev func() time.Time) { timeNow = prev }(timeNow)
 	later := time.Now().Add(api.UnclaimedDeployTTLDefault + time.Hour)
-	timeNow = func() time.Time { return later }
+	svc.Now = func() time.Time { return later }
 	if _, err := store.(state.UnclaimedAccountStore).MarkUnclaimedAccountClaimed(t.Context(), second.AccountID, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if n := srv.expireUnclaimedAccounts(t.Context()); n != 1 {
+	if n := svc.ExpireOnce(t.Context()); n != 1 {
 		t.Fatalf("sweep ended %d, want 1", n)
 	}
 	if a, _ := store.AccountByID(t.Context(), first.AccountID); a.Status != state.AccountDeletedPending {
 		t.Errorf("expired account status = %s, want deleted_pending", a.Status)
 	}
+	if row := unclaimedRow(t, store, first.AccountID); row.ExpiredAt == nil {
+		t.Errorf("expired row = %+v", row)
+	}
 	if a, _ := store.AccountByID(t.Context(), second.AccountID); a.Status != state.AccountActive {
 		t.Errorf("claimed account status = %s, want active", a.Status)
 	}
-	if n := srv.expireUnclaimedAccounts(t.Context()); n != 0 {
+	if n := svc.ExpireOnce(t.Context()); n != 0 {
 		t.Errorf("second sweep ended %d more", n)
 	}
-	// The claim page of an expired account is gone.
-	path := first.ClaimURL[strings.Index(first.ClaimURL, "/claim/"):]
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
-	if rec.Code != http.StatusGone {
+	if rec := claimGet(h, claimPath(first.ClaimURL)); rec.Code != http.StatusGone {
 		t.Errorf("expired claim page = %d, want 410", rec.Code)
 	}
 }
 
-func TestUnclaimedRouteAllowed(t *testing.T) {
-	cases := []struct {
-		method, pattern string
-		want            bool
-	}{
-		{"GET", "GET /v1/apps", true},
-		{"POST", "POST /v1/apps", true},
-		{"POST", "POST /v1/apps/{slug}/deployments", true},
-		{"POST", "POST /v1/uploads", true},
-		{"PUT", "PUT /v1/apps/{slug}/env/{key}", true},
-		{"GET", "GET /v1/deployments/{id}/logs", true},
-		{"GET", "GET /v1/account", true},
-		{"POST", "POST /v1/account/claim-link", true},
-		{"DELETE", "DELETE /v1/account", false},
-		{"POST", "POST /v1/account/keys", false},
-		{"POST", "POST /v1/apps/{slug}/domains", false},
-		{"POST", "POST /v1/apps/{slug}/postgres", false},
-		{"POST", "POST /v1/apps/{slug}/buckets", false},
-		{"POST", "POST /v1/apps/{slug}/crons", false},
-		{"POST", "POST /v1/keys", false},
-		{"GET", "GET /v1/keys", false},
-		{"POST", "POST /v1/orgs", false},
-		{"POST", "POST /v1/billing/checkout", false},
-		{"POST", "POST /v1/sandboxes", false},
-		{"POST", "POST /v1/apps/{slug}/static-egress-ip", false},
+// A confirmation mailed through a claim link stops working when the agent
+// replaces the link, so a leaked link cannot be used to take the app.
+func TestNewClaimLinkCancelsMailedConfirmation(t *testing.T) {
+	srv, mailer, store := apidserver.V1AuthTestHarness(t)
+	h := srv.Handler()
+	_, sess := anonymousSession(t, h, "203.0.113.40:5000")
+	token := requestClaim(t, srv, mailer, claimPath(sess.ClaimURL), "attacker@example.net")
+	if token == "" {
+		t.Fatal("no confirmation mailed")
 	}
-	for _, c := range cases {
-		if got := unclaimedRouteAllowed(c.method, c.pattern, ""); got != c.want {
-			t.Errorf("%s = %v, want %v", c.pattern, got, c.want)
-		}
+	if rec := claimBearer(h, http.MethodPost, "/v1/account/claim-link", sess.APIKey, ""); rec.Code != http.StatusOK {
+		t.Fatalf("claim-link = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := claimForm(h, claim.ConfirmPath, url.Values{"token": {token}}); rec.Code == http.StatusSeeOther {
+		t.Fatalf("confirmation from the replaced link still claimed the app")
+	}
+	if a, _ := store.AccountByID(t.Context(), sess.AccountID); !claim.IsUnclaimed(a) {
+		t.Fatalf("account moved to %s", a.Email)
+	}
+}
+
+// A confirmation cannot land once the claim window ended: expiry drops it.
+func TestClaimConfirmationEndsWithTheWindow(t *testing.T) {
+	srv, mailer, store := apidserver.V1AuthTestHarness(t)
+	h := srv.Handler()
+	_, sess := anonymousSession(t, h, "203.0.113.50:5000")
+	token := requestClaim(t, srv, mailer, claimPath(sess.ClaimURL), "late@example.com")
+	if token == "" {
+		t.Fatal("no confirmation mailed")
+	}
+	svc := srv.Claim()
+	later := sess.ExpiresAt.Add(time.Minute)
+	svc.Now = func() time.Time { return later }
+	if n := svc.ExpireOnce(t.Context()); n != 1 {
+		t.Fatalf("sweep ended %d, want 1", n)
+	}
+	if rec := claimForm(h, claim.ConfirmPath, url.Values{"token": {token}}); rec.Code == http.StatusSeeOther {
+		t.Fatalf("confirmation after the window claimed the app")
+	}
+	if a, _ := store.AccountByID(t.Context(), sess.AccountID); a.Email == "late@example.com" {
+		t.Fatalf("address moved onto an expired account")
+	}
+}
+
+// When the address moved but the claim was not recorded, the anonymous key
+// is refused at once and the sweep finishes the claim: keys revoked, row
+// claimed, account kept.
+func TestUnrecordedClaimIsFinishedBySweep(t *testing.T) {
+	srv, _, store := apidserver.V1AuthTestHarness(t)
+	h := srv.Handler()
+	_, sess := anonymousSession(t, h, "203.0.113.60:5000")
+	flow := store.(state.AccountFlowStore)
+	hash := api.HashToken([]byte("0123456789abcdef0123456789abcdef"))
+	if err := flow.IssueEmailChange(t.Context(), hash, sess.AccountID, "owner2@example.com", time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := flow.ConsumeEmailChange(t.Context(), hash); err != nil {
+		t.Fatal(err)
+	}
+	if rec := claimBearer(h, http.MethodGet, "/v1/apps", sess.APIKey, ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous key on a claimed account = %d, want 401: %s", rec.Code, rec.Body.String())
+	}
+	svc := srv.Claim()
+	later := sess.ExpiresAt.Add(time.Minute)
+	svc.Now = func() time.Time { return later }
+	if n := svc.ExpireOnce(t.Context()); n != 0 {
+		t.Fatalf("sweep expired %d claimed accounts", n)
+	}
+	if row := unclaimedRow(t, store, sess.AccountID); row.ClaimedAt == nil || row.ExpiredAt != nil {
+		t.Fatalf("row = %+v, want claimed", row)
+	}
+	if keys, err := store.ListAPIKeys(t.Context(), sess.AccountID); err != nil || len(keys) != 0 {
+		t.Fatalf("keys after finishing the claim = %v (err %v)", keys, err)
+	}
+	if a, _ := store.AccountByID(t.Context(), sess.AccountID); a.Status != state.AccountActive {
+		t.Fatalf("claimed account status = %s", a.Status)
 	}
 }

@@ -1,0 +1,59 @@
+package claim_test
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/onebox-faas/faas/pkg/apid/claim"
+)
+
+func TestRouteAllowed(t *testing.T) {
+	for _, c := range []struct {
+		pattern string
+		want    bool
+	}{
+		{"GET /v1/apps", true},
+		{"GET /v1/deployments/{id}/logs", true},
+		{"GET /v1/account", true},
+		{"POST /v1/apps", true},
+		{"POST /v1/apps/{slug}/deployments", true},
+		{"POST /v1/uploads", true},
+		{"PUT /v1/apps/{slug}/env/{key}", true},
+		{"POST /v1/account/claim-link", true},
+		// Writes not listed are refused, whatever their path says.
+		{"POST /v1/apps/{slug}/ai-access-tokens", false},
+		{"POST /v1/apps/{slug}/log-drains", false},
+		{"POST /v1/projects/{slug}/environment-clones", false},
+		{"POST /v1/apps/{slug}/realtime/endpoints/{id}/publish-credentials", false},
+		{"PATCH /v1/apps/{slug}", false},
+		{"DELETE /v1/account", false},
+		{"POST /v1/account/keys", false},
+		{"POST /v1/apps/{slug}/domains", false},
+		{"POST /v1/keys", false},
+		{"GET /v1/keys", false},
+		{"POST /v1/orgs", false},
+		{"POST /v1/billing/checkout", false},
+		{"", false},
+		{"/v1/apps", false},
+	} {
+		if got := claim.RouteAllowed(c.pattern); got != c.want {
+			t.Errorf("RouteAllowed(%q) = %v, want %v", c.pattern, got, c.want)
+		}
+	}
+}
+
+// Every writable route is one apid registers, so a renamed route cannot
+// silently drop out of what an anonymous deploy needs.
+func TestWriteRoutesAreRegistered(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "apidserver", "server.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range claim.WriteRoutes() {
+		if !strings.Contains(string(src), `"`+p+`"`) {
+			t.Errorf("writable route %q is not registered in apidserver/server.go", p)
+		}
+	}
+}

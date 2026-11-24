@@ -215,7 +215,10 @@ func (s *server) finishEmailChange(r *http.Request, change state.EmailChange) {
 	if api.IsUnclaimedPlaceholderEmail(change.OldEmail) {
 		// The address replaced an anonymous deploy's placeholder: that
 		// is the claim (ADR-20261124080000), however it was confirmed.
-		s.completeClaim(r.Context(), change.AccountID)
+		if err := s.claim.FinishClaim(r.Context(), change.AccountID); err != nil {
+			// The sweep finishes it; the anonymous key is refused meanwhile.
+			s.log.Error("claim.finish", "err", err, "account_id", change.AccountID)
+		}
 	}
 	s.moveBillingEmailsInBackground(r.Context(), change)
 	subject, body := mailpkg.EmailChangedNoticeBody(change.OldEmail, change.NewEmail, time.Now())

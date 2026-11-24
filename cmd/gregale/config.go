@@ -331,7 +331,12 @@ func loadTokenWithDiagnostics(diagnostics io.Writer) string {
 	if _, v := envTokenVar(); v != "" {
 		return strings.TrimSpace(v)
 	}
-	return loadStoredToken(diagnostics)
+	if v := loadStoredToken(diagnostics); v != "" {
+		return v
+	}
+	// An agent's anonymous deploy (ADR-20261124080000), only while no
+	// login exists and its claim window is open.
+	return loadAnonymousSessionToken()
 }
 
 // tokenEnvVar is the variable users set to authenticate without a saved

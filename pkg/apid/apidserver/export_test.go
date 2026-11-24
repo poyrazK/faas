@@ -41,6 +41,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/billingruns"
 	"github.com/onebox-faas/faas/pkg/apid/billingsync"
+	"github.com/onebox-faas/faas/pkg/apid/claim"
 	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
 	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
 	"github.com/onebox-faas/faas/pkg/apid/consumercredits"
@@ -2711,3 +2712,6 @@ func AvailabilityQueryExcluding(appIDs []string) string { return availabilityQue
 
 // StatusAPIAvailabilityQuery exposes statusAPIAvailabilityQuery.
 const StatusAPIAvailabilityQuery = statusAPIAvailabilityQuery
+
+// Claim exposes the claimable-deploys service (ADR-20261124080000).
+func (r *server) Claim() *claim.Service { return &r.claim }
