@@ -9941,6 +9941,13 @@ const (
 	GatewaydInternalControlReadTimeoutSecondsDefault  = 30 // control + unix-socket
 	GatewaydInternalControlWriteTimeoutSecondsDefault = 30 // control + unix-socket
 	GatewaydInternalControlIdleTimeoutSecondsDefault  = 60 // control + unix-socket keep-alive
+	// GatewaydInternalGuestServiceIdleTimeoutSecondsDefault closes a guest's
+	// idle connection to the service proxy (<name>.svc.gregale:10081/10080,
+	// and its HTTPS alias). Those connections carry no TCP keepalive: with
+	// Go's default of one probe every 15 s, an app holding idle service
+	// connections was woken from quiet pause four times a minute, and so was
+	// each close and the client's reconnect (ADR-384 amendment 1).
+	GatewaydInternalGuestServiceIdleTimeoutSecondsDefault = 300
 
 	// VmmdLocalDataSocket is where vmmd serves its own node's
 	// gatewayd-internal without TLS, admitting only GatewaydInternalUser by
