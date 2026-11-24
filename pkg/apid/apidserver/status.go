@@ -49,8 +49,8 @@ const (
 	// gateway_platform_errors_total (5xx produced before any guest response
 	// byte) counts against the public figure (production-us hunt #9).
 	statusAPIAvailabilityQuery = `(
-		((1 - (sum(rate(gateway_platform_errors_total{app!="-"}[5m])) or vector(0)) / sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m]))) * 100)
-		and sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])) > 0
+		((1 - (sum(rate(gateway_platform_errors_total{app!="-"}[5m])) or vector(0)) / (sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])) - (sum(rate(gateway_service_requests_total{app!="-",code=~"2..|5.."}[5m])) or vector(0)))) * 100)
+		and (sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])) - (sum(rate(gateway_service_requests_total{app!="-",code=~"2..|5.."}[5m])) or vector(0))) > 0
 	) or vector(100)`
 	statusWakeP95Query = `(
 		(histogram_quantile(0.95, sum(rate(gateway_platform_wake_latency_seconds_bucket[30m])) by (le)) * 1000)

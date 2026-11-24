@@ -29,9 +29,10 @@ func TestByDimensionTakesSampledMeasuresFromMatchingRawGroups(t *testing.T) {
 	if rows[0].Requests != 7 || !rows[0].GuestCpuAvgMs.Valid || rows[0].GuestCpuAvgMs.Int32 != 4 || rows[1].GuestCpuAvgMs.Valid {
 		t.Fatalf("rows = %+v, want rollup counts and GET /a's sampled CPU only", rows)
 	}
-	// Every request is at <=30 ms but none above 25 ms.
-	if rows[0].P50Ms != 25 {
-		t.Fatalf("p50 = %d, want the 25 ms maximum, not the 30 ms bound", rows[0].P50Ms)
+	// Every request is in the 20-30 ms bucket but none above 25 ms: the
+	// median interpolates inside [20, 25], never reaching the 30 ms bound.
+	if rows[0].P50Ms != 23 {
+		t.Fatalf("p50 = %d, want 23 (interpolated below the 25 ms maximum)", rows[0].P50Ms)
 	}
 }
 
@@ -46,6 +47,16 @@ func TestHistPercentileAndHours(t *testing.T) {
 	}
 	if got := state.RequestAnalyticsHistPercentile(make([]int64, api.RequestAnalyticsLatencyBuckets), 0, 0.5); got != 0 {
 		t.Fatalf("empty p50 = %d", got)
+	}
+	// Fast requests no longer read as the 10 ms bucket bound (prod
+	// 2026-11-24: analytics p50 10 ms, gateway histogram 3.6 ms).
+	fast := make([]int64, api.RequestAnalyticsLatencyBuckets)
+	fast[0], fast[2] = 90, 10
+	if got := state.RequestAnalyticsHistPercentile(fast, 30, 0.5); got != 6 {
+		t.Fatalf("fast p50 = %d, want 6 (interpolated in the 0-10 ms bucket)", got)
+	}
+	if got := state.RequestAnalyticsHistPercentile(fast, 30, 0.95); got != 25 {
+		t.Fatalf("fast p95 = %d, want 25 (half way into the 20-30 ms bucket)", got)
 	}
 	from := time.Date(2026, 11, 3, 10, 30, 0, 0, time.UTC)
 	if hours := analyticsrollup.Hours(from, from.Add(90*time.Minute)); len(hours) != 2 || !hours[0].Equal(from.Truncate(time.Hour)) {
