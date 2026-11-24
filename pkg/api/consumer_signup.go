@@ -31,7 +31,43 @@ const (
 	// (ADR-20261124094745), so the call is refused rather than served
 	// unbilled.
 	CodeConsumerEnrollmentUnavailable = "consumer_enrollment_unavailable"
+	// CodeConsumerLinkKeyRejected reports a key that is not a live key of
+	// one of the app's consumers (ADR-20261124094745).
+	CodeConsumerLinkKeyRejected = "consumer_link_key_rejected"
+	// CodeConsumerLinkConflict reports an OAuth identity already linked to
+	// another key's consumer; the app owner unlinks it first.
+	CodeConsumerLinkConflict = "consumer_link_conflict"
 )
+
+// LinkConsumerRequest is the body of a signed-in MCP caller's
+// POST /.well-known/gregale-consumer-link<endpoint path>: the consumer key
+// it already holds for the app (ADR-20261124094745).
+type LinkConsumerRequest struct {
+	Key string `json:"key"`
+}
+
+// LinkConsumerResponse names the consumer the caller now bills to.
+type LinkConsumerResponse struct {
+	ConsumerID string `json:"consumer_id"`
+}
+
+// ConsumerIdentity is one OAuth sign-in of an app's MCP server and the
+// consumer it bills to (ADR-20261124094745).
+type ConsumerIdentity struct {
+	ID         string    `json:"id"`
+	ConsumerID string    `json:"consumer_id"`
+	Issuer     string    `json:"issuer"`
+	Subject    string    `json:"subject"`
+	Email      string    `json:"email,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// ConsumerIdentityListResponse lists an app's OAuth identities, newest
+// first.
+type ConsumerIdentityListResponse struct {
+	Identities []ConsumerIdentity `json:"identities"`
+}
 
 // PutConsumerSignupRequest turns sign-up on for an app. Omitted fields
 // take their defaults: enabled, Stripe, the app's default plan, keys with
@@ -217,6 +253,18 @@ func (c *Client) DeleteConsumerSignup(ctx context.Context, app string) error {
 func (c *Client) ListConsumerSignups(ctx context.Context, app string) (ConsumerSignupListResponse, error) {
 	var out ConsumerSignupListResponse
 	return out, c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(app)+"/consumer-signups", nil, &out)
+}
+
+// ListConsumerIdentities lists the OAuth sign-ins of an app's MCP server
+// and the consumers they bill to (ADR-20261124094745).
+func (c *Client) ListConsumerIdentities(ctx context.Context, app string) (ConsumerIdentityListResponse, error) {
+	var out ConsumerIdentityListResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(app)+"/consumer-identities", nil, &out)
+}
+
+// DeleteConsumerIdentity unlinks an OAuth sign-in from its consumer.
+func (c *Client) DeleteConsumerIdentity(ctx context.Context, app, id string) error {
+	return c.do(ctx, "DELETE", "/v1/apps/"+url.PathEscape(app)+"/consumer-identities/"+url.PathEscape(id), nil, nil)
 }
 
 // GetConsumerSignupForm reads an app's public sign-up form. It needs no

@@ -123,4 +123,44 @@ func TestConsumerSignupFreePlanAndOAuthConsumers(t *testing.T) {
 		AppID: appID, Issuer: "https://login.example", Subject: "u2"}); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("foreign account = %v; want not found", err)
 	}
+
+	// Linking by key: u1 proves Ada's key, so u1 now bills to Ada's
+	// consumer and the consumer u1's first sign-in enrolled is closed.
+	link := func(subject, key string) (state.APIConsumerIdentity, string, error) {
+		return (*e.S()).ConsumerSignup().LinkOAuthConsumer(t.Context(), state.APIConsumerIdentityLink{AccountID: e.Acct().ID, AppID: appID,
+			Issuer: "https://login.example", Subject: subject}, key)
+	}
+	wrongKey := done.Key[:len(done.Key)-1] + "0"
+	if wrongKey == done.Key {
+		wrongKey = done.Key[:len(done.Key)-1] + "1"
+	}
+	for name, key := range map[string]string{"malformed": "ck_nope", "wrong secret": wrongKey} {
+		if _, _, err := link("u1", key); !errors.Is(err, state.ErrAPIConsumerKeyRejected) {
+			t.Errorf("%s key = %v; want rejected", name, err)
+		}
+	}
+	identity, revoked, err := link("u1", done.Key)
+	if err != nil || identity.ConsumerID != done.ConsumerID || revoked != consumer.ID {
+		t.Fatalf("link = %+v %q %v", identity, revoked, err)
+	}
+	if again, _, err := enroll("u1"); err != nil || again.ID != done.ConsumerID {
+		t.Fatalf("enroll after link = %+v %v; want Ada's consumer", again, err)
+	}
+	if _, _, err := (*e.S()).ConsumerSignup().LinkOAuthConsumer(t.Context(), state.APIConsumerIdentityLink{
+		AccountID: "00000000-0000-4000-8000-000000000001", AppID: appID, Issuer: "https://login.example", Subject: "u1"},
+		done.Key); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("foreign account link = %v; want not found", err)
+	}
+
+	// The owner sees which sign-in bills to which consumer and can unlink.
+	var ids api.ConsumerIdentityListResponse
+	decode(t, e.Do(t, http.MethodGet, "/v1/apps/search/consumer-identities", nil, nil), http.StatusOK, &ids)
+	if len(ids.Identities) != 1 || ids.Identities[0].ConsumerID != done.ConsumerID || ids.Identities[0].Subject != "u1" {
+		t.Fatalf("identities = %+v", ids)
+	}
+	decode(t, e.Do(t, http.MethodDelete, "/v1/apps/search/consumer-identities/"+ids.Identities[0].ID, nil, nil), http.StatusNoContent, nil)
+	decode(t, e.Do(t, http.MethodDelete, "/v1/apps/search/consumer-identities/"+ids.Identities[0].ID, nil, nil), http.StatusNotFound, nil)
+	if fresh, created, err := enroll("u1"); err != nil || !created || fresh.ID == done.ConsumerID {
+		t.Fatalf("enroll after unlink = %+v %v %v; want a new consumer", fresh, created, err)
+	}
 }

@@ -1068,6 +1068,9 @@ type Handler struct {
 	// apid (ADR-20261124094745); nil leaves them unattributed.
 	oauthConsumers     OAuthConsumerEnroller
 	oauthConsumerCache *oauthConsumerCache
+	// oauthLinks links signed-in MCP callers to consumer keys they hold
+	// (ADR-20261124094745); nil answers the link path 404.
+	oauthLinks OAuthConsumerLinker
 	// upgradeLinks adds upgrade_url to plan-limit refusals
 	// (ADR-20261124094745); nil leaves it out.
 	upgradeLinks               ConsumerUpgradeLinker

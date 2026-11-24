@@ -431,6 +431,8 @@ export type { ConsumerBillingStatement } from './ConsumerBillingStatement.js';
 export type { ConsumerBillingStatementsResponse } from './ConsumerBillingStatementsResponse.js';
 export type { ConsumerBillingSummaryResponse } from './ConsumerBillingSummaryResponse.js';
 export type { ConsumerBillingUsageResponse } from './ConsumerBillingUsageResponse.js';
+export type { ConsumerIdentity } from './ConsumerIdentity.js';
+export type { ConsumerIdentityListResponse } from './ConsumerIdentityListResponse.js';
 export type { ConsumerKeyListResponse } from './ConsumerKeyListResponse.js';
 export type { ConsumerKeyResponse } from './ConsumerKeyResponse.js';
 export type { ConsumerSignupFormResponse } from './ConsumerSignupFormResponse.js';

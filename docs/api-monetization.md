@@ -802,6 +802,25 @@ gregale consumers signup-set my-mcp --display-name "Search tools" --plans free,p
   minutes. If Gregale cannot reach its API while your server enrolls
   callers, they get `503 consumer_enrollment_unavailable` rather than free
   calls.
+- **Customers who already have a key.** Someone who signed up for a key
+  and also signs in to your MCP server can make their sign-ins bill to
+  that key's account. Their MCP client, or they with the access token it
+  holds, send the key once:
+
+  ```bash
+  curl -X POST https://my-mcp.gregale.app/.well-known/gregale-consumer-link/mcp \
+    -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
+    -d '{"key": "ck_..."}'
+  ```
+
+  The path is `/.well-known/gregale-consumer-link` followed by your MCP
+  endpoint's path. The answer names the consumer they now bill to; the
+  free-plan consumer their first sign-in created is closed. A key that is
+  not a live key of your app gets `403 consumer_link_key_rejected`. A
+  sign-in already linked to another key gets `409 consumer_link_conflict`:
+  `gregale consumers identities my-mcp` lists sign-ins and the consumers
+  they bill to, and `gregale consumers identity-unlink my-mcp ID` frees one
+  (its next call starts on the free plan again, or it links again).
 
 ### Know when customers sign up or change
 

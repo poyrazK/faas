@@ -88,6 +88,14 @@ func callConsumerSignup(ctx context.Context, client *Client, verb string, args [
 	case "signups":
 		out, err := client.ListConsumerSignups(ctx, slug)
 		return out, true, err
+	case "identities":
+		out, err := client.ListConsumerIdentities(ctx, slug)
+		return out, true, err
+	case "identity-unlink":
+		if err := client.DeleteConsumerIdentity(ctx, slug, args[1]); err != nil {
+			return nil, true, err
+		}
+		return map[string]string{"status": "unlinked; the next sign-in enrolls again or links by key"}, true, nil
 	}
 	return nil, false, nil
 }
@@ -124,6 +132,12 @@ func printConsumerSignupResult(tw *tabwriter.Writer, out any) bool {
 			}
 			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", s.ID, status, s.Email, s.Name, dashIfEmpty(s.ConsumerID),
 				s.CreatedAt.Format(time.RFC3339))
+		}
+	case api.ConsumerIdentityListResponse:
+		_, _ = fmt.Fprintln(tw, "ID\tCONSUMER\tISSUER\tSUBJECT\tEMAIL\tLINKED")
+		for _, id := range v.Identities {
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", id.ID, id.ConsumerID, id.Issuer, id.Subject, dashIfEmpty(id.Email),
+				id.UpdatedAt.Format(time.RFC3339))
 		}
 	default:
 		return false

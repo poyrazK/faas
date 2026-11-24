@@ -18,7 +18,34 @@ var (
 	ErrOAuthConsumersOff = errors.New("apidgrpc: OAuth consumers are off for the app")
 	// ErrOAuthConsumerSignupLimit: the app took its sign-ups for the day.
 	ErrOAuthConsumerSignupLimit = errors.New("apidgrpc: the app took its sign-ups for the day")
+	// ErrOAuthLinkKeyRejected: the key is not a live key of the app's
+	// consumers.
+	ErrOAuthLinkKeyRejected = errors.New("apidgrpc: the key is not a live key of the app's consumers")
+	// ErrOAuthLinkConflict: the identity is linked to another key's
+	// consumer; the app owner unlinks it first.
+	ErrOAuthLinkConflict = errors.New("apidgrpc: the identity is linked to another consumer")
 )
+
+// LinkOAuthConsumer points a verified OAuth caller at the consumer whose
+// key it proved and returns that consumer's ID. ErrOAuthConsumersOff (also
+// for an apid older than the RPC), ErrOAuthLinkKeyRejected and
+// ErrOAuthLinkConflict are refusals; any other error means apid could not
+// answer.
+func (c OAuthConsumers) LinkOAuthConsumer(ctx context.Context, accountID, appID, issuer, subject, email, key string) (string, error) {
+	resp, err := c.Auth.cli.LinkOAuthConsumer(ctx, &apidpb.LinkOAuthConsumerRequest{
+		AccountId: accountID, AppId: appID, Issuer: issuer, Subject: subject, Email: email, Key: key})
+	switch status.Code(err) {
+	case codes.OK:
+		return resp.GetConsumerId(), nil
+	case codes.FailedPrecondition, codes.Unimplemented, codes.NotFound:
+		return "", ErrOAuthConsumersOff
+	case codes.PermissionDenied, codes.InvalidArgument:
+		return "", ErrOAuthLinkKeyRejected
+	case codes.AlreadyExists:
+		return "", ErrOAuthLinkConflict
+	}
+	return "", fmt.Errorf("apidgrpc: LinkOAuthConsumer: %w", err)
+}
 
 // UpgradeLink returns the consumer's upgrade page link and when it
 // expires, or "" when the app offers no upgrade (or apid predates the

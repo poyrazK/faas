@@ -24024,6 +24024,39 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/apps/{slug}/consumer-identities:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [consumers]
+      operationId: listConsumerIdentities
+      summary: List the OAuth sign-ins of the app's MCP server and the consumers they bill to, newest first.
+      responses:
+        '200':
+          description: The app's consumer identities.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerIdentityListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/consumer-identities/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [consumers]
+      operationId: deleteConsumerIdentity
+      summary: Unlink an OAuth sign-in from its consumer; the next sign-in enrolls again or links by key.
+      responses:
+        '204':
+          description: Unlinked.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/apps/{slug}/consumer-overdue-holds:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -137031,6 +137064,28 @@ components:
         signups:
           type: array
           items: { $ref: '#/components/schemas/ConsumerSignupResponse' }
+
+    ConsumerIdentity:
+      description: "An OAuth sign-in of an app's MCP server and the consumer it bills to."
+      type: object
+      required: [id, consumer_id, issuer, subject, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        issuer: { type: string }
+        subject: { type: string }
+        email: { type: string, description: "The token's email claim; display only." }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ConsumerIdentityListResponse:
+      description: "An app's OAuth identities, newest first."
+      type: object
+      required: [identities]
+      properties:
+        identities:
+          type: array
+          items: { $ref: '#/components/schemas/ConsumerIdentity' }
 
     ConsumerSignupPrice:
       description: "One unit's current price on a plan."

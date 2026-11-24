@@ -1208,6 +1208,8 @@ type runDeps struct {
 	// oauthConsumers enrolls MCP OAuth callers as API consumers through
 	// apid (ADR-20261124094745); nil leaves them unattributed.
 	oauthConsumers gateway.OAuthConsumerEnroller
+	// oauthLinks links signed-in MCP callers to consumer keys they hold.
+	oauthLinks gateway.OAuthConsumerLinker
 	// upgradeLinks adds apid's upgrade links to plan-limit refusals.
 	upgradeLinks gateway.ConsumerUpgradeLinker
 	// apiMonetization is the API monetization release gate
@@ -2470,6 +2472,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// verified MCP OAuth caller as the app's consumer.
 	deps.oauthConsumers = apidgrpc.OAuthConsumers{Auth: credentialAuth}
 	deps.upgradeLinks = apidgrpc.OAuthConsumers{Auth: credentialAuth}
+	deps.oauthLinks = apidgrpc.OAuthConsumers{Auth: credentialAuth}
 	// Issue #560: per-deployment require_authn (pro/Scale opt-in).
 	// Build the narrow gateway.RequireAuthnAuthenticator
 	// adapter around the production middleware and the
@@ -3168,6 +3171,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	if deps.oauthConsumers != nil {
 		handler.WithOAuthConsumers(deps.oauthConsumers)
+	}
+	if deps.oauthLinks != nil {
+		handler.WithOAuthConsumerLinks(deps.oauthLinks)
 	}
 	if deps.upgradeLinks != nil {
 		handler.WithUpgradeLinks(deps.upgradeLinks)

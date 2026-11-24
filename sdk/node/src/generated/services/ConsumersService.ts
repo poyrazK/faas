@@ -36,6 +36,7 @@ import type { ConsumerBillingPortalResponse } from '../models/ConsumerBillingPor
 import type { ConsumerBillingStatementsResponse } from '../models/ConsumerBillingStatementsResponse.js';
 import type { ConsumerBillingSummaryResponse } from '../models/ConsumerBillingSummaryResponse.js';
 import type { ConsumerBillingUsageResponse } from '../models/ConsumerBillingUsageResponse.js';
+import type { ConsumerIdentityListResponse } from '../models/ConsumerIdentityListResponse.js';
 import type { ConsumerKeyListResponse } from '../models/ConsumerKeyListResponse.js';
 import type { ConsumerKeyResponse } from '../models/ConsumerKeyResponse.js';
 import type { ConsumerSignupFormResponse } from '../models/ConsumerSignupFormResponse.js';
@@ -1942,6 +1943,59 @@ export class ConsumersService {
       url: '/v1/apps/{slug}/consumer-signups',
       path: {
         'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * List the OAuth sign-ins of the app's MCP server and the consumers they bill to, newest first.
+   * @returns ConsumerIdentityListResponse The app's consumer identities.
+   * @throws ApiError
+   */
+  public static listConsumerIdentities({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ConsumerIdentityListResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumer-identities',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Unlink an OAuth sign-in from its consumer; the next sign-in enrolls again or links by key.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteConsumerIdentity({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    id: string,
+  }): CancelablePromise<void> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/consumer-identities/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
       },
       errors: {
         401: `code: unauthorized`,

@@ -108,6 +108,33 @@ service Auth {
   // only the consumer's plan change. Errors are InvalidArgument, NotFound
   // (no such app on the account) and Unavailable.
   rpc ConsumerUpgradeLink(ConsumerUpgradeLinkRequest) returns (ConsumerUpgradeLinkResponse);
+
+  // LinkOAuthConsumer points a verified OAuth caller of an app's MCP server
+  // at the consumer whose key the caller proved (ADR-20261124094745), and
+  // revokes the consumer the caller's first sign-in enrolled. The gateway
+  // verifies the token; apid verifies the key. Errors are InvalidArgument,
+  // PermissionDenied (the key is not a live key of this app's consumer),
+  // FailedPrecondition (the app does not enroll OAuth callers),
+  // AlreadyExists (the identity is linked to another key's consumer; the
+  // owner unlinks it first) and Unavailable.
+  rpc LinkOAuthConsumer(LinkOAuthConsumerRequest) returns (LinkOAuthConsumerResponse);
+}
+
+message LinkOAuthConsumerRequest {
+  string account_id = 1;
+  string app_id = 2;
+  // issuer and subject are the verified token's iss and sub claims.
+  string issuer = 3;
+  string subject = 4;
+  string email = 5;
+  // key is the consumer key the caller sent; apid compares its hash.
+  string key = 6;
+}
+
+message LinkOAuthConsumerResponse {
+  string consumer_id = 1;
+  // revoked_consumer_id is the enrolled consumer the link closed, if any.
+  string revoked_consumer_id = 2;
 }
 
 message ConsumerUpgradeLinkRequest {

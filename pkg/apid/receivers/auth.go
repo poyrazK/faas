@@ -71,6 +71,8 @@ type authReceiver struct {
 	consumers OAuthConsumers
 	// upgrades mints consumers' upgrade links; nil answers Unavailable.
 	upgrades UpgradeLinks
+	// links links OAuth callers to key consumers; nil answers Unavailable.
+	links OAuthLinks
 }
 
 // sessionKeyHolder is a SessionOpener that can derive keys:

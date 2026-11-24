@@ -816,6 +816,8 @@ from .consumer_billing_statement import ConsumerBillingStatement
 from .consumer_billing_statements_response import ConsumerBillingStatementsResponse
 from .consumer_billing_summary_response import ConsumerBillingSummaryResponse
 from .consumer_billing_usage_response import ConsumerBillingUsageResponse
+from .consumer_identity import ConsumerIdentity
+from .consumer_identity_list_response import ConsumerIdentityListResponse
 from .consumer_key_list_response import ConsumerKeyListResponse
 from .consumer_key_response import ConsumerKeyResponse
 from .consumer_key_response_scopes_item import ConsumerKeyResponseScopesItem
@@ -8068,6 +8070,8 @@ __all__ = (
     "ConsumerBillingStatementsResponse",
     "ConsumerBillingSummaryResponse",
     "ConsumerBillingUsageResponse",
+    "ConsumerIdentity",
+    "ConsumerIdentityListResponse",
     "ConsumerKeyListResponse",
     "ConsumerKeyResponse",
     "ConsumerKeyResponseScopesItem",

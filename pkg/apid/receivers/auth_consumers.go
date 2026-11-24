@@ -91,3 +91,46 @@ func (r *authReceiver) EnrollOAuthConsumer(ctx context.Context, req *apidpb.Enro
 	}
 	return &apidpb.EnrollOAuthConsumerResponse{ConsumerId: consumer.ID, Active: consumer.Active(), Created: created}, nil
 }
+
+// OAuthLinks links a gateway's verified OAuth callers to the consumer whose
+// key they proved (ADR-20261124094745): apid's *consumersignup.Service.
+type OAuthLinks interface {
+	// LinkOAuthConsumer returns the identity and the revoked enrolled
+	// consumer's ID. state.ErrAPIConsumerKeyRejected,
+	// state.ErrAPIConsumerOAuthOff, state.ErrConflict and state.ErrNotFound.
+	LinkOAuthConsumer(ctx context.Context, in state.APIConsumerIdentityLink, key string) (state.APIConsumerIdentity, string, error)
+}
+
+// WithOAuthLinks lets the Auth service link OAuth callers by key.
+func WithOAuthLinks(links OAuthLinks) AuthOption {
+	return func(r *authReceiver) { r.links = links }
+}
+
+// LinkOAuthConsumer points a verified OAuth caller at a key's consumer.
+func (r *authReceiver) LinkOAuthConsumer(ctx context.Context, req *apidpb.LinkOAuthConsumerRequest) (*apidpb.LinkOAuthConsumerResponse, error) {
+	if r.links == nil {
+		return nil, status.Error(codes.Unavailable, "OAuth consumer links are not configured")
+	}
+	if req.GetAccountId() == "" || req.GetAppId() == "" || req.GetIssuer() == "" || req.GetSubject() == "" || req.GetKey() == "" {
+		return nil, status.Error(codes.InvalidArgument, "account_id, app_id, issuer, subject and key are required")
+	}
+	if len(req.GetIssuer()) > state.MaxAPIConsumerIdentityIssuerLen || len(req.GetSubject()) > state.MaxAPIConsumerIdentitySubjectLen ||
+		!utf8.ValidString(req.GetSubject()) {
+		return nil, status.Error(codes.InvalidArgument, "issuer or subject is too long")
+	}
+	identity, revoked, err := r.links.LinkOAuthConsumer(ctx, state.APIConsumerIdentityLink{AccountID: req.GetAccountId(),
+		AppID: req.GetAppId(), Issuer: req.GetIssuer(), Subject: req.GetSubject(), Email: req.GetEmail()}, req.GetKey())
+	switch {
+	case errors.Is(err, state.ErrAPIConsumerKeyRejected):
+		return nil, status.Error(codes.PermissionDenied, "the key is not a live key of this app's consumers")
+	case errors.Is(err, state.ErrAPIConsumerOAuthOff):
+		return nil, status.Error(codes.FailedPrecondition, "the app does not enroll OAuth callers")
+	case errors.Is(err, state.ErrConflict):
+		return nil, status.Error(codes.AlreadyExists, "the identity is linked to another consumer; the app owner unlinks it first")
+	case errors.Is(err, state.ErrNotFound):
+		return nil, status.Error(codes.NotFound, "no such app")
+	case err != nil:
+		return nil, status.Error(codes.Unavailable, "could not link the consumer")
+	}
+	return &apidpb.LinkOAuthConsumerResponse{ConsumerId: identity.ConsumerID, RevokedConsumerId: revoked}, nil
+}

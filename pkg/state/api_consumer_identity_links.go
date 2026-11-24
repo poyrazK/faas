@@ -16,6 +16,11 @@ import (
 // The consumer their first sign-in enrolled is revoked. An identity linked
 // to a key's consumer is moved again only after the owner unlinks it.
 
+// ErrAPIConsumerKeyRejected reports a consumer key that is not a live key
+// of one of the app's active consumers. Callers answer every such key the
+// same way.
+var ErrAPIConsumerKeyRejected = errors.New("consumer key rejected")
+
 // APIConsumerIdentityLink points an issuer and subject at ConsumerID.
 type APIConsumerIdentityLink struct {
 	AccountID, AppID, Issuer, Subject, Email, ConsumerID string

@@ -90,7 +90,7 @@ func (h *Handler) oauthConsumer(ctx context.Context, app App, issuer, subject, e
 	if e, ok := h.oauthConsumerCache.get(appKey, now); ok {
 		return e, e.err
 	}
-	key := "sub\x00" + app.ID + "\x00" + issuer + "\x00" + subject
+	key := oauthConsumerCacheKey(app.ID, issuer, subject)
 	if e, ok := h.oauthConsumerCache.get(key, now); ok {
 		return e, e.err
 	}
@@ -122,6 +122,19 @@ func (h *Handler) oauthConsumer(ctx context.Context, app App, issuer, subject, e
 	return e, nil
 }
 
+// oauthIssuer is the issuer an OAuth consumer's identity is keyed by: the
+// token's iss, or the rule's pinned issuer when the token has none.
+func oauthIssuer(rule *EdgeRuleJWTResolved, claims *JWTClaims) string {
+	if claims.Issuer != "" {
+		return claims.Issuer
+	}
+	return rule.Issuer
+}
+
+func oauthConsumerCacheKey(appID, issuer, subject string) string {
+	return "sub\x00" + appID + "\x00" + issuer + "\x00" + subject
+}
+
 // attachOAuthConsumer stamps the verified caller's consumer on r. It reports
 // true after answering: 403 for a revoked consumer, 429 past the app's daily
 // sign-ups, and 503 when apid cannot answer for an app known to enroll
@@ -132,11 +145,7 @@ func (h *Handler) attachOAuthConsumer(w http.ResponseWriter, r *http.Request, ap
 	if h.oauthConsumers == nil || authenticated.ConsumerID != "" || !h.APIMonetizationEnabledFor(app.AccountID) {
 		return false
 	}
-	issuer := claims.Issuer
-	if issuer == "" {
-		issuer = rule.Issuer
-	}
-	e, err := h.oauthConsumer(r.Context(), app, issuer, claims.Subject, claims.Custom["email"])
+	e, err := h.oauthConsumer(r.Context(), app, oauthIssuer(rule, claims), claims.Subject, claims.Custom["email"])
 	switch {
 	case errors.Is(err, apidgrpc.ErrOAuthConsumerSignupLimit):
 		w.Header().Set("Retry-After", "3600")

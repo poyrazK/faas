@@ -97,13 +97,24 @@ link; an OAuth consumer is identified by issuer + subject.
 ### 4. Linking by key
 
 - A signed-in OAuth user who already has a key consumer for the same app
-  sends `POST /v1/consumer-signup/APP/link` with the OAuth access token as
-  bearer and `{"key": "ck_…"}`. apid verifies both: the token against the
-  app's MCP rule (issuer, audience, signature), the key against the app's
-  consumers. It then points the identity at the key's consumer and revokes
-  the consumer enrollment created, if it has no billed usage; otherwise it
-  stays as a closed separate consumer. One identity links to at most one
-  consumer; relinking needs the owner (`gregale consumers identity-unlink`).
+  sends `POST /.well-known/gregale-consumer-link<endpoint path>` on the
+  app's host, with the OAuth access token as bearer and `{"key": "ck_…"}`.
+  (Implementation note: the draft put this on apid at
+  `/v1/consumer-signup/APP/link`, but apid cannot verify tokens of an
+  arbitrary external issuer; the gateway already verifies them for the MCP
+  rule.) The gateway verifies the token against the app's MCP rule (issuer,
+  audience, signature, endpoint scopes) and calls a new apid
+  `Auth.LinkOAuthConsumer` RPC; apid verifies the key against the app's
+  consumers (live, unexpired, hash match) and, in one transaction, points
+  the identity at the key's consumer and revokes the consumer enrollment
+  created. Its billed usage stays on that closed consumer's statements.
+  The answering gateway bills the next call to the key's consumer at once;
+  other gateways do when their 5-minute cache entry expires.
+- One identity links to at most one key consumer; relinking needs the
+  owner: `gregale consumers identities APP` lists identities and
+  `gregale consumers identity-unlink APP ID` deletes one
+  (`GET`/`DELETE /v1/apps/APP/consumer-identities[/ID]`). An unlinked
+  identity enrolls a new free consumer on its next call.
 - No email matching: sign-up emails are typed in and never verified, so a
   stranger could claim a victim's address.
 

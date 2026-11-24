@@ -45,6 +45,7 @@ const (
 	Auth_RecordAgentActivity_FullMethodName    = "/onebox.faas.apid.v1.Auth/RecordAgentActivity"
 	Auth_EnrollOAuthConsumer_FullMethodName    = "/onebox.faas.apid.v1.Auth/EnrollOAuthConsumer"
 	Auth_ConsumerUpgradeLink_FullMethodName    = "/onebox.faas.apid.v1.Auth/ConsumerUpgradeLink"
+	Auth_LinkOAuthConsumer_FullMethodName      = "/onebox.faas.apid.v1.Auth/LinkOAuthConsumer"
 )
 
 // AuthClient is the client API for Auth service.
@@ -128,6 +129,15 @@ type AuthClient interface {
 	// only the consumer's plan change. Errors are InvalidArgument, NotFound
 	// (no such app on the account) and Unavailable.
 	ConsumerUpgradeLink(ctx context.Context, in *ConsumerUpgradeLinkRequest, opts ...grpc.CallOption) (*ConsumerUpgradeLinkResponse, error)
+	// LinkOAuthConsumer points a verified OAuth caller of an app's MCP server
+	// at the consumer whose key the caller proved (ADR-20261124094745), and
+	// revokes the consumer the caller's first sign-in enrolled. The gateway
+	// verifies the token; apid verifies the key. Errors are InvalidArgument,
+	// PermissionDenied (the key is not a live key of this app's consumer),
+	// FailedPrecondition (the app does not enroll OAuth callers),
+	// AlreadyExists (the identity is linked to another key's consumer; the
+	// owner unlinks it first) and Unavailable.
+	LinkOAuthConsumer(ctx context.Context, in *LinkOAuthConsumerRequest, opts ...grpc.CallOption) (*LinkOAuthConsumerResponse, error)
 }
 
 type authClient struct {
@@ -228,6 +238,16 @@ func (c *authClient) ConsumerUpgradeLink(ctx context.Context, in *ConsumerUpgrad
 	return out, nil
 }
 
+func (c *authClient) LinkOAuthConsumer(ctx context.Context, in *LinkOAuthConsumerRequest, opts ...grpc.CallOption) (*LinkOAuthConsumerResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LinkOAuthConsumerResponse)
+	err := c.cc.Invoke(ctx, Auth_LinkOAuthConsumer_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AuthServer is the server API for Auth service.
 // All implementations must embed UnimplementedAuthServer
 // for forward compatibility.
@@ -309,6 +329,15 @@ type AuthServer interface {
 	// only the consumer's plan change. Errors are InvalidArgument, NotFound
 	// (no such app on the account) and Unavailable.
 	ConsumerUpgradeLink(context.Context, *ConsumerUpgradeLinkRequest) (*ConsumerUpgradeLinkResponse, error)
+	// LinkOAuthConsumer points a verified OAuth caller of an app's MCP server
+	// at the consumer whose key the caller proved (ADR-20261124094745), and
+	// revokes the consumer the caller's first sign-in enrolled. The gateway
+	// verifies the token; apid verifies the key. Errors are InvalidArgument,
+	// PermissionDenied (the key is not a live key of this app's consumer),
+	// FailedPrecondition (the app does not enroll OAuth callers),
+	// AlreadyExists (the identity is linked to another key's consumer; the
+	// owner unlinks it first) and Unavailable.
+	LinkOAuthConsumer(context.Context, *LinkOAuthConsumerRequest) (*LinkOAuthConsumerResponse, error)
 	mustEmbedUnimplementedAuthServer()
 }
 
@@ -345,6 +374,9 @@ func (UnimplementedAuthServer) EnrollOAuthConsumer(context.Context, *EnrollOAuth
 }
 func (UnimplementedAuthServer) ConsumerUpgradeLink(context.Context, *ConsumerUpgradeLinkRequest) (*ConsumerUpgradeLinkResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ConsumerUpgradeLink not implemented")
+}
+func (UnimplementedAuthServer) LinkOAuthConsumer(context.Context, *LinkOAuthConsumerRequest) (*LinkOAuthConsumerResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method LinkOAuthConsumer not implemented")
 }
 func (UnimplementedAuthServer) mustEmbedUnimplementedAuthServer() {}
 func (UnimplementedAuthServer) testEmbeddedByValue()              {}
@@ -529,6 +561,24 @@ func _Auth_ConsumerUpgradeLink_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Auth_LinkOAuthConsumer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LinkOAuthConsumerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AuthServer).LinkOAuthConsumer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Auth_LinkOAuthConsumer_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AuthServer).LinkOAuthConsumer(ctx, req.(*LinkOAuthConsumerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Auth_ServiceDesc is the grpc.ServiceDesc for Auth service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -571,6 +621,10 @@ var Auth_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ConsumerUpgradeLink",
 			Handler:    _Auth_ConsumerUpgradeLink_Handler,
+		},
+		{
+			MethodName: "LinkOAuthConsumer",
+			Handler:    _Auth_LinkOAuthConsumer_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
