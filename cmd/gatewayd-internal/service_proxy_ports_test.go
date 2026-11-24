@@ -50,6 +50,9 @@ func TestGuestServiceHTTPPortsShareHandlerAndTransport(t *testing.T) {
 		if !server.Protocols.HTTP1() || !server.Protocols.UnencryptedHTTP2() || server.WriteTimeout != writeTimeoutOrDefault(0) {
 			t.Fatalf("listener %s lost H1/H2C or request envelope", server.Addr)
 		}
+		if server.IdleTimeout != guestServiceIdleTimeout {
+			t.Fatalf("listener %s idle timeout = %s, want %s", server.Addr, server.IdleTimeout, guestServiceIdleTimeout)
+		}
 		for _, protocol := range []string{"h1", "h2c"} {
 			transport := &http2.Transport{AllowHTTP: true, DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
 				return (&net.Dialer{}).DialContext(ctx, network, addr)

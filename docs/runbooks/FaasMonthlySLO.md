@@ -47,6 +47,16 @@ shows them in the "API availability (30 d)" row of stat panels.
    - If only the first is bad, the slow part is app start inside the guest.
    - If both are bad, `vmmd_restore_phase_duration_seconds` and the wake
      phase events (`gregalectl obs evidence`) name the phase.
+   - The platform series leaves out startup-OOM wakes and deployment smokes
+     (`gateway_platform_wake_excluded_total` by `reason`,
+     ADR-20261123170000 and amendment 1). For 30 days after the gateway
+     release carrying amendment 1, the window still holds older smoke
+     samples, so `FaasMonthlyPlatformWakeGateMissed`'s ratio climbs as they
+     age out without any platform change. Judge a trend in that period
+     from the 1-day ratio, not the 30-day one.
+   - A rise in `gateway_platform_wake_excluded_total{reason="startup_oom"}`
+     across many apps is a platform signal (for example guest overhead
+     grew), not app behaviour.
 3. **Builds.** `sum by (code) (increase(builderd_ops_total{op="build"}[30d]))`
    shows which failure class dominated.
 4. **Retention.**

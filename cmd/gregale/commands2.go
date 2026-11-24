@@ -1528,12 +1528,20 @@ func createOrFetchAppWith(ctx context.Context, client *Client, req, existingReq 
 func slugInUseError(ctx context.Context, client *Client, slug string) error {
 	if app, err := findDeletedApp(ctx, client, slug); err == nil && app != nil {
 		if app.RestoreEligible {
-			return fmt.Errorf("slug %q belongs to an app you deleted%s; restore it with `gregale app restore %s`, free the name now with `gregale app purge %s`, or pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " that can be restored until "), slug, slug)
+			return &ownDeletedSlugError{msg: fmt.Sprintf("slug %q belongs to an app you deleted%s; restore it with `gregale app restore %s`, free the name now with `gregale app purge %s`, or pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " that can be restored until "), slug, slug)}
 		}
-		return fmt.Errorf("slug %q is held by an app you deleted until it is purged%s; free it now with `gregale app purge %s`, or pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " after "), slug)
+		return &ownDeletedSlugError{msg: fmt.Sprintf("slug %q is held by an app you deleted until it is purged%s; free it now with `gregale app purge %s`, or pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " after "), slug)}
 	}
 	return &slugTakenError{slug: slug}
 }
+
+// ownDeletedSlugError is a 409 on create for a slug one of the caller's own
+// deleted apps still holds. A deploy that asked for the name gets the
+// restore/purge hint; a suffixed alternative held this way is skipped
+// (createOrFetchAppWithAlternatives).
+type ownDeletedSlugError struct{ msg string }
+
+func (e *ownDeletedSlugError) Error() string { return e.msg }
 
 // slugTakenError is a 409 on create for a slug the caller does not hold:
 // another owner has it. A deploy may then take an alternative name
@@ -5971,7 +5979,7 @@ func cmdCrons(args []string) int {
 			return cmdDelayedTaskList(rest)
 		}
 		fs := newFlagSet("crons-list", flag.ContinueOnError)
-		slug := fs.String("app", "", "app slug (required without -l)")
+		slug := fs.String("app", "", "app slug (defaults to the linked app; optional with -l)")
 		selector := addSelectorFlag(fs)
 		if err := fs.Parse(args[1:]); err != nil {
 			return 1
@@ -5979,8 +5987,12 @@ func cmdCrons(args []string) int {
 		if rejectUnexpectedFlagArgs(fs) {
 			return 1
 		}
+		if *selector == "" {
+			// A selector spans the account; only a plain list takes the link.
+			fillLinkedApp(slug)
+		}
 		if *slug == "" && *selector == "" {
-			PrintUsage(os.Stderr, "usage: gregale cron list --app <slug> | -l SELECTOR [--app <slug>]", "crons")
+			PrintUsage(os.Stderr, "usage: gregale cron list [--app <slug>] | -l SELECTOR [--app <slug>]", "crons")
 			return 1
 		}
 		client, err := authedClient()
