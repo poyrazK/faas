@@ -87,6 +87,9 @@ func (h *Handler) applyMCPResourcePolicy(w http.ResponseWriter, r *http.Request,
 	if status != 0 {
 		return mcpPolicyReject(w, status, p, reason)
 	}
+	if h.attachOAuthConsumer(w, r, app, rule, claims) {
+		return true
+	}
 	if h.mcpToolLimited(w, r, app, rule, call.tool(), "sub\x00"+claims.Subject) {
 		return true
 	}
@@ -169,7 +172,8 @@ func (h *Handler) authenticateMCPResource(w http.ResponseWriter, r *http.Request
 		return nil, mcpPolicyReject(w, http.StatusUnauthorized, rule.MCP, "Bearer token required")
 	}
 	verifyRule := *rule
-	verifyRule.ExtractClaims = append(append([]string{}, rule.ExtractClaims...), "scope")
+	// email names an enrolled OAuth consumer (ADR-20261124094745).
+	verifyRule.ExtractClaims = append(append([]string{}, rule.ExtractClaims...), "scope", "email")
 	if rule.PlatformTenantExternalRefClaim != "" {
 		verifyRule.ExtractClaims = append(verifyRule.ExtractClaims, rule.PlatformTenantExternalRefClaim)
 	}

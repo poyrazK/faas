@@ -26,6 +26,11 @@ const (
 	// CodeConsumerSignupUnavailable reports that the app's billing setup
 	// cannot take sign-ups right now; the owner gets an audit event.
 	CodeConsumerSignupUnavailable = "consumer_signup_unavailable"
+	// CodeConsumerEnrollmentUnavailable reports that the gateway could not
+	// turn a verified OAuth caller into the app's consumer
+	// (ADR-20261124094745), so the call is refused rather than served
+	// unbilled.
+	CodeConsumerEnrollmentUnavailable = "consumer_enrollment_unavailable"
 )
 
 // PutConsumerSignupRequest turns sign-up on for an app. Omitted fields

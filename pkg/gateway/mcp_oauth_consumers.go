@@ -1,0 +1,147 @@
+package gateway
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apidgrpc"
+)
+
+// OAuth consumers (ADR-20261124094745): a caller whose token an MCP
+// resource policy verified becomes the app's API consumer, so its calls are
+// billed and admitted against the app's free plan like a consumer key's.
+// apid owns enrollment; the gateway caches the answer.
+
+// OAuthConsumerEnroller asks apid for the consumer an OAuth caller is:
+// apidgrpc.OAuthConsumers. Refusals are apidgrpc.ErrOAuthConsumersOff and
+// apidgrpc.ErrOAuthConsumerSignupLimit.
+type OAuthConsumerEnroller interface {
+	EnrollOAuthConsumer(ctx context.Context, accountID, appID, issuer, subject, email string) (consumerID string, active bool, err error)
+}
+
+const (
+	// oauthConsumerTTL keeps an enrolled caller's consumer, so a revoked
+	// consumer is refused within it.
+	oauthConsumerTTL = 5 * time.Minute
+	// oauthConsumersOffTTL keeps an app's "off" answer, so turning OAuth
+	// consumers on takes effect within it.
+	oauthConsumersOffTTL = 5 * time.Minute
+	// oauthConsumerRefusedTTL keeps a daily-limit refusal briefly.
+	oauthConsumerRefusedTTL = 30 * time.Second
+	// oauthConsumerCacheMax bounds the cache; past it, it starts over.
+	oauthConsumerCacheMax = 100_000
+	// oauthConsumerEnrollTimeout bounds the apid call on the request path.
+	oauthConsumerEnrollTimeout = 2 * time.Second
+)
+
+type oauthConsumerEntry struct {
+	id      string
+	active  bool
+	err     error
+	expires time.Time
+}
+
+type oauthConsumerCache struct {
+	mu      sync.Mutex
+	entries map[string]oauthConsumerEntry
+}
+
+func (c *oauthConsumerCache) get(key string, now time.Time) (oauthConsumerEntry, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[key]
+	if !ok || !now.Before(e.expires) {
+		return oauthConsumerEntry{}, false
+	}
+	return e, true
+}
+
+func (c *oauthConsumerCache) put(key string, e oauthConsumerEntry) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.entries == nil || len(c.entries) >= oauthConsumerCacheMax {
+		c.entries = map[string]oauthConsumerEntry{}
+	}
+	c.entries[key] = e
+}
+
+// WithOAuthConsumers lets MCP resource policies enroll verified callers as
+// API consumers. Nil leaves them unattributed, as before.
+func (h *Handler) WithOAuthConsumers(e OAuthConsumerEnroller) *Handler {
+	h.oauthConsumers, h.oauthConsumerCache = e, &oauthConsumerCache{}
+	return h
+}
+
+// oauthConsumer returns the consumer an OAuth caller is, from the cache or
+// apid. An empty ID with a nil error means the app does not enroll callers.
+func (h *Handler) oauthConsumer(ctx context.Context, app App, issuer, subject, email string) (oauthConsumerEntry, error) {
+	now := time.Now()
+	appKey := "app\x00" + app.ID
+	if e, ok := h.oauthConsumerCache.get(appKey, now); ok {
+		return e, e.err
+	}
+	key := "sub\x00" + app.ID + "\x00" + issuer + "\x00" + subject
+	if e, ok := h.oauthConsumerCache.get(key, now); ok {
+		return e, e.err
+	}
+	ctx, cancel := context.WithTimeout(ctx, oauthConsumerEnrollTimeout)
+	defer cancel()
+	id, active, err := h.oauthConsumers.EnrollOAuthConsumer(ctx, app.AccountID, app.ID, issuer, subject, email)
+	switch {
+	case errors.Is(err, apidgrpc.ErrOAuthConsumersOff):
+		e := oauthConsumerEntry{expires: now.Add(oauthConsumersOffTTL)}
+		h.oauthConsumerCache.put(appKey, e)
+		return e, nil
+	case errors.Is(err, apidgrpc.ErrOAuthConsumerSignupLimit):
+		h.oauthConsumerCache.put(key, oauthConsumerEntry{err: err, expires: now.Add(oauthConsumerRefusedTTL)})
+		return oauthConsumerEntry{}, err
+	case err != nil:
+		return oauthConsumerEntry{}, err
+	}
+	e := oauthConsumerEntry{id: id, active: active, expires: now.Add(oauthConsumerTTL)}
+	h.oauthConsumerCache.put(key, e)
+	return e, nil
+}
+
+// attachOAuthConsumer stamps the verified caller's consumer on r. It reports
+// true after answering: 403 for a revoked consumer, 429 past the app's daily
+// sign-ups, and 503 when apid cannot answer, because an unattributed call
+// would be served unbilled and unlimited.
+func (h *Handler) attachOAuthConsumer(w http.ResponseWriter, r *http.Request, app App, rule *EdgeRuleJWTResolved, claims *JWTClaims) bool {
+	authenticated := authenticatedFrom(r.Context())
+	if h.oauthConsumers == nil || authenticated.ConsumerID != "" || !h.APIMonetizationEnabledFor(app.AccountID) {
+		return false
+	}
+	issuer := claims.Issuer
+	if issuer == "" {
+		issuer = rule.Issuer
+	}
+	e, err := h.oauthConsumer(r.Context(), app, issuer, claims.Subject, claims.Custom["email"])
+	switch {
+	case errors.Is(err, apidgrpc.ErrOAuthConsumerSignupLimit):
+		w.Header().Set("Retry-After", "3600")
+		w.Header().Set("Cache-Control", "no-store")
+		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeConsumerSignupDailyLimit, "Sign-ups closed for today",
+			"this MCP server took its new customers for the day; try again tomorrow"))
+		return true
+	case err != nil:
+		if h.log != nil {
+			h.log.Error("oauth consumer enrollment unavailable", "err", err, "app_id", app.ID)
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeConsumerEnrollmentUnavailable,
+			"Consumer enrollment unavailable", "this MCP server could not verify your account; try again shortly"))
+		return true
+	case e.id == "":
+		return false
+	case !e.active:
+		return mcpPolicyReject(w, http.StatusForbidden, rule.MCP, "This account was closed by the MCP server's owner")
+	}
+	authenticated.ConsumerID = e.id
+	*r = *r.WithContext(withAuthenticated(r.Context(), authenticated))
+	return false
+}
