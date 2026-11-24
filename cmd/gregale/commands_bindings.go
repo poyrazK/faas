@@ -49,6 +49,27 @@ type objectStorageBindingCLIRevokeResult struct {
 	State     string `json:"state"`
 }
 
+// bindingListPositionals reads `app binding list [<app>]` as the listing, and
+// fills a missing app from the linked checkout. `app binding list` in a linked
+// checkout answered "no app named list" (prod hunt r39). A lone "list" with no
+// linked app and no --app still names an app called list.
+func bindingListPositionals(positionals []string, app string) []string {
+	if len(positionals) > 0 && (positionals[0] == "list" || positionals[0] == "ls") {
+		switch {
+		case len(positionals) == 2 || app != "":
+			positionals = positionals[1:]
+		case len(positionals) == 1:
+			if linked := linkedAppForMissingSlug(); linked != "" {
+				return []string{linked}
+			}
+		}
+	}
+	if len(positionals) == 0 && app == "" {
+		return withLinkedApp(positionals, 1)
+	}
+	return positionals
+}
+
 func cmdBindings(args []string) int {
 	if len(args) > 0 {
 		switch args[0] {
@@ -77,6 +98,7 @@ func cmdBindings(args []string) int {
 	app := fs.String("app", "", appSlugFlagUsage)
 	flags, positionals := splitArgsForFlags(args, "require-complete")
 	parseErr := fs.Parse(flags)
+	positionals = bindingListPositionals(positionals, *app)
 	positionals, mergeErr := mergeAppFlag(positionals, *app, 1)
 	if parseErr != nil || mergeErr != nil || fs.NArg() != 0 || len(positionals) != 1 || !api.ValidAppSlug(strings.TrimSpace(positionals[0])) {
 		PrintUsage(osStderr, "usage: gregale app binding <app> [--env SCOPE] [--release ID|vN] [--require-complete] | gregale app binding check <app> [--scope SCOPE] [--max-verification-age DURATION] [--allow-unsupported] | gregale app binding object-storage <list|rotate|revoke> ... | gregale app binding verify <app> <service>|--all | gregale app binding call <app> <service> --release <id> --path </path>", "bindings")

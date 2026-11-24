@@ -776,6 +776,15 @@ func nextStepsFor(tpl string) []string {
 			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",
 			"After the app exists, rotate the credential with `gregale env rotate --app <slug> ... --wait-for-ack`.",
 		}
+	case "cron-example":
+		// Prod hunt r39: the steps ended at deploy, so `init --deploy` left an
+		// app that nothing ever called; the schedule was only in README.md.
+		return []string{
+			"cd <dest> && gregale deploy",
+			"Schedule it (a POST to / every 5 minutes):",
+			"  cd <dest> && gregale cron create --schedule '*/5 * * * *' --path /",
+			"Watch it fire: cd <dest> && gregale logs --follow",
+		}
 	case "cron-worker":
 		return []string{
 			"Create a 0600 secrets file outside this directory (one KEY=VALUE per line):",
