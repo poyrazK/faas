@@ -3099,6 +3099,9 @@ var SaveAnonymousSession = saveAnonymousSession
 
 func LoadStoredToken() string { return loadStoredToken(io.Discard) }
 
+// LoadAnonymousSessionToken exposes the saved anonymous deploy key.
+var LoadAnonymousSessionToken = loadAnonymousSessionToken
+
 // AnonymousDeployByDefault exposes the no-credential deploy default (ADR-20261124080000).
 func AnonymousDeployByDefault(getenv func(string) string) bool {
 	return anonymousDeployByDefault(getenv)

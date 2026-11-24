@@ -76,35 +76,71 @@ func (q *Queries) InsertUnclaimedAccount(ctx context.Context, db DBTX, arg Inser
 }
 
 const listExpiredUnclaimedAccounts = `-- name: ListExpiredUnclaimedAccounts :many
-SELECT account_id::text FROM unclaimed_accounts
+SELECT account_id::text AS account_id, expires_at FROM unclaimed_accounts
  WHERE claimed_at IS NULL AND expired_at IS NULL AND expires_at <= $1::timestamptz
- ORDER BY expires_at
- LIMIT $2
+   AND (expires_at, account_id) > ($2::timestamptz, $3::uuid)
+ ORDER BY expires_at, account_id
+ LIMIT $4
 `
 
 type ListExpiredUnclaimedAccountsParams struct {
-	Now      pgtype.Timestamptz
-	RowLimit int32
+	Now            pgtype.Timestamptz
+	AfterExpiresAt pgtype.Timestamptz
+	AfterAccountID pgtype.UUID
+	RowLimit       int32
 }
 
-func (q *Queries) ListExpiredUnclaimedAccounts(ctx context.Context, db DBTX, arg ListExpiredUnclaimedAccountsParams) ([]string, error) {
-	rows, err := db.Query(ctx, listExpiredUnclaimedAccounts, arg.Now, arg.RowLimit)
+type ListExpiredUnclaimedAccountsRow struct {
+	AccountID string
+	ExpiresAt pgtype.Timestamptz
+}
+
+// Keyset pages by (expires_at, account_id), so rows the sweep cannot finish
+// never hide the ones after them.
+func (q *Queries) ListExpiredUnclaimedAccounts(ctx context.Context, db DBTX, arg ListExpiredUnclaimedAccountsParams) ([]ListExpiredUnclaimedAccountsRow, error) {
+	rows, err := db.Query(ctx, listExpiredUnclaimedAccounts,
+		arg.Now,
+		arg.AfterExpiresAt,
+		arg.AfterAccountID,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []string{}
+	items := []ListExpiredUnclaimedAccountsRow{}
 	for rows.Next() {
-		var account_id string
-		if err := rows.Scan(&account_id); err != nil {
+		var i ListExpiredUnclaimedAccountsRow
+		if err := rows.Scan(&i.AccountID, &i.ExpiresAt); err != nil {
 			return nil, err
 		}
-		items = append(items, account_id)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockLiveUnclaimedAccountByClaimToken = `-- name: LockLiveUnclaimedAccountByClaimToken :one
+SELECT account_id FROM unclaimed_accounts
+ WHERE claim_token_sha256 = $1
+   AND claimed_at IS NULL AND expired_at IS NULL AND expires_at > $2::timestamptz
+ FOR UPDATE
+`
+
+type LockLiveUnclaimedAccountByClaimTokenParams struct {
+	ClaimTokenSha256 []byte
+	Now              pgtype.Timestamptz
+}
+
+// Holds the row while a claim confirmation is issued, so a concurrent link
+// rotation or expiry (both update this row) runs wholly before or after it.
+func (q *Queries) LockLiveUnclaimedAccountByClaimToken(ctx context.Context, db DBTX, arg LockLiveUnclaimedAccountByClaimTokenParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockLiveUnclaimedAccountByClaimToken, arg.ClaimTokenSha256, arg.Now)
+	var account_id pgtype.UUID
+	err := row.Scan(&account_id)
+	return account_id, err
 }
 
 const lockUnclaimedAccountCreation = `-- name: LockUnclaimedAccountCreation :exec

@@ -147,7 +147,11 @@ func (s *Service) Page(w http.ResponseWriter, r *http.Request) {
 }
 
 // Request is POST /claim/{token}: mail a confirmation to the address. The
-// answer is the same whether or not the address has an account.
+// answer is the same whether or not the address has an account. The
+// confirmation is issued here, atomically with the claim link still being
+// live (state.IssueClaimEmailChange), so a link rotation or expiry racing
+// this request either runs first and refuses it or drops what it issued;
+// only the mail goes to the background.
 func (s *Service) Request(w http.ResponseWriter, r *http.Request) {
 	row, acct, ok := s.row(r.Context(), r.PathValue("token"))
 	if !ok {
@@ -159,53 +163,69 @@ func (s *Service) Request(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblemForRequest(w, r, api.ErrValidation("email must be a valid address"))
 		return
 	}
-	flow, ok := s.Host.Store().(state.AccountFlowStore)
-	if !ok {
-		api.WriteProblemForRequest(w, r, api.ErrCapacity("claiming is unavailable"))
-		return
-	}
 	// The confirmation never outlives the claim window.
 	expiresAt := s.now().Add(api.UnclaimedClaimEmailTTL)
 	if row.ExpiresAt.Before(expiresAt) {
 		expiresAt = row.ExpiresAt
 	}
-	base := s.Host.ClaimBase(r)
-	if !s.Host.Background(func(ctx context.Context) { s.startClaim(ctx, flow, base, acct, email, expiresAt) }) {
+	sent := pageData{Sent: true, Expires: formatExpiry(expiresAt)}
+	if !s.Host.AllowSecurityMail(r.Context(), acct, "email_change") {
+		writeHTML(w, http.StatusOK, claimPage, sent)
+		return
+	}
+	mail, ok := s.prepareClaimMail(w, r, row, acct, email, expiresAt)
+	if !ok {
+		return
+	}
+	if !s.Host.Background(mail) {
 		s.Host.Log().Warn("claim.busy", "account_id", acct.ID)
+		api.WriteProblemForRequest(w, r, api.ErrCapacity("could not send the confirmation now; try again in a minute"))
+		return
 	}
 	s.Host.Audit(r.Context(), "account.claim_requested", &acct.ID, nil)
-	writeHTML(w, http.StatusOK, claimPage, pageData{Sent: true, Expires: formatExpiry(expiresAt)})
+	writeHTML(w, http.StatusOK, claimPage, sent)
 }
 
-// startClaim mails the confirmation link, or, when the address already has
-// an account, explains that claiming moves the app into a new account only.
-func (s *Service) startClaim(ctx context.Context, flow state.AccountFlowStore, base string, acct state.Account, email string, expiresAt time.Time) {
+// prepareClaimMail issues the confirmation (or, for an address that already
+// has an account, nothing) and returns the mail to send. On false it has
+// written the answer.
+func (s *Service) prepareClaimMail(w http.ResponseWriter, r *http.Request, row state.UnclaimedAccount, acct state.Account, email string, expiresAt time.Time) (func(context.Context), bool) {
 	log := s.Host.Log()
-	if !s.Host.AllowSecurityMail(ctx, acct, "email_change") {
-		return
-	}
-	if _, err := s.Host.Store().AccountByEmail(ctx, email); err == nil {
+	if _, err := s.Host.Store().AccountByEmail(r.Context(), email); err == nil {
 		subject, body := mailpkg.ClaimAddressTakenBody(email)
-		if err := s.Host.SendMail(ctx, email, subject, body); err != nil {
-			log.Error("claim.taken_mailer", "err", err, "account_id", acct.ID)
-		}
-		return
+		return func(ctx context.Context) {
+			if err := s.Host.SendMail(ctx, email, subject, body); err != nil {
+				log.Error("claim.taken_mailer", "err", err, "account_id", acct.ID)
+			}
+		}, true
+	}
+	store, ok := s.unclaimedStore()
+	if !ok {
+		api.WriteProblemForRequest(w, r, api.ErrCapacity("claiming is unavailable"))
+		return nil, false
 	}
 	raw, err := newToken(confirmTokenBytes)
 	if err != nil {
-		log.Error("claim.token", "err", err, "account_id", acct.ID)
-		return
+		api.WriteProblemForRequest(w, r, api.ErrCapacity("could not start the claim; try again"))
+		return nil, false
 	}
 	defer clear(raw)
-	if err := flow.IssueEmailChange(ctx, api.HashToken(raw), acct.ID, email, expiresAt); err != nil {
+	if _, err := store.IssueClaimEmailChange(r.Context(), row.ClaimTokenSHA256, api.HashToken(raw), email, expiresAt, s.now()); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			writeHTML(w, http.StatusGone, claimPage, pageData{Gone: true})
+			return nil, false
+		}
 		log.Error("claim.issue", "err", err, "account_id", acct.ID)
-		return
+		api.WriteProblemForRequest(w, r, api.ErrCapacity("could not start the claim; try again"))
+		return nil, false
 	}
-	link := base + ConfirmPath + "?token=" + base64.RawURLEncoding.EncodeToString(raw)
+	link := s.Host.ClaimBase(r) + ConfirmPath + "?token=" + base64.RawURLEncoding.EncodeToString(raw)
 	subject, body := mailpkg.ClaimConfirmBody(link, expiresAt)
-	if err := s.Host.SendMail(ctx, email, subject, body); err != nil {
-		log.Error("claim.mailer", "err", err, "account_id", acct.ID)
-	}
+	return func(ctx context.Context) {
+		if err := s.Host.SendMail(ctx, email, subject, body); err != nil {
+			log.Error("claim.mailer", "err", err, "account_id", acct.ID)
+		}
+	}, true
 }
 
 // ConfirmPage is GET /claim/confirm. It consumes nothing.

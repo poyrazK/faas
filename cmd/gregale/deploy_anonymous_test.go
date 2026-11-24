@@ -56,22 +56,61 @@ func TestAnonymousSessionKeyIsNotTheLogin(t *testing.T) {
 	if err := main.SaveAnonymousSession(api.AnonymousSessionResponse{APIKey: key, ClaimURL: "https://api.example.test/claim/x", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
-	if got := main.LoadToken(); got != key {
-		t.Fatalf("token with only an anonymous session = %q, want the anonymous key", got)
+	// Only deploy and claim use the key; every other command sees no login.
+	if got := main.LoadToken(); got != "" {
+		t.Fatalf("token with only an anonymous session = %q, want none", got)
 	}
 	if got := main.LoadStoredToken(); got != "" {
 		t.Fatalf("anonymous key reached the login store: %q", got)
 	}
+	if got := main.LoadAnonymousSessionToken(); got != key {
+		t.Fatalf("anonymous key = %q, want the saved one", got)
+	}
 	if err := main.SaveAnonymousSession(api.AnonymousSessionResponse{APIKey: key, ExpiresAt: time.Now().Add(-time.Minute)}); err != nil {
 		t.Fatal(err)
 	}
-	if got := main.LoadToken(); got != "" {
+	if got := main.LoadAnonymousSessionToken(); got != "" {
 		t.Fatalf("expired anonymous session still used: %q", got)
 	}
 }
 
 // `gregale claim` prints a fresh claim link for an anonymous deploy's key
 // and explains a regular account has nothing to claim.
+// TestClaimWithEndedAnonymousKey: once the claim revoked the saved key,
+// `gregale claim` says so and forgets the key.
+func TestClaimWithEndedAnonymousKey(t *testing.T) {
+	main.SetupCLIRegression(t)
+	t.Setenv("FAAS_TOKEN", "")
+	t.Setenv("GREGALE_TOKEN", "")
+	key := main.TestAPIKey('c')
+	var gotAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(api.Problem{Status: http.StatusUnauthorized, Code: "unauthorized", Title: "Anonymous deploy key ended"})
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	if err := main.SaveAnonymousSession(api.AnonymousSessionResponse{APIKey: key, ClaimURL: "https://api.example.test/claim/x", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	oldOut, oldErr := *main.OsStdout, *main.OsStderr
+	*main.OsStdout, *main.OsStderr = &out, &errOut
+	code := main.Run([]string{"claim"})
+	*main.OsStdout, *main.OsStderr = oldOut, oldErr
+	if code != 1 || !strings.Contains(out.String()+errOut.String(), "claimed or has ended") {
+		t.Fatalf("exit = %d; out:\n%s%s", code, out.String(), errOut.String())
+	}
+	if gotAuth != "Bearer "+key {
+		t.Fatalf("claim sent %q, want the anonymous key", gotAuth)
+	}
+	if got := main.LoadAnonymousSessionToken(); got != "" {
+		t.Fatalf("refused anonymous key kept: %q", got)
+	}
+}
+
 func TestClaimCommand(t *testing.T) {
 	for _, tt := range []struct {
 		name     string

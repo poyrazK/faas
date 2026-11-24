@@ -46,7 +46,18 @@ UPDATE unclaimed_accounts SET expired_at = sqlc.arg(at)
  WHERE account_id = sqlc.arg(account_id) AND claimed_at IS NULL AND expired_at IS NULL;
 
 -- name: ListExpiredUnclaimedAccounts :many
-SELECT account_id::text FROM unclaimed_accounts
+-- Keyset pages by (expires_at, account_id), so rows the sweep cannot finish
+-- never hide the ones after them.
+SELECT account_id::text AS account_id, expires_at FROM unclaimed_accounts
  WHERE claimed_at IS NULL AND expired_at IS NULL AND expires_at <= sqlc.arg(now)::timestamptz
- ORDER BY expires_at
+   AND (expires_at, account_id) > (sqlc.arg(after_expires_at)::timestamptz, sqlc.arg(after_account_id)::uuid)
+ ORDER BY expires_at, account_id
  LIMIT sqlc.arg(row_limit);
+
+-- name: LockLiveUnclaimedAccountByClaimToken :one
+-- Holds the row while a claim confirmation is issued, so a concurrent link
+-- rotation or expiry (both update this row) runs wholly before or after it.
+SELECT account_id FROM unclaimed_accounts
+ WHERE claim_token_sha256 = sqlc.arg(claim_token_sha256)
+   AND claimed_at IS NULL AND expired_at IS NULL AND expires_at > sqlc.arg(now)::timestamptz
+ FOR UPDATE;

@@ -133,6 +133,16 @@ func TestAnonymousDeployIsClaimedInPlace(t *testing.T) {
 			t.Errorf("POST %s = %d %s, want it refused", path, rec.Code, rec.Body.String())
 		}
 	}
+	// Account-level routes behind the plain auth chain are closed too.
+	for _, route := range []struct{ method, path string }{
+		{http.MethodDelete, "/v1/account"},
+		{http.MethodPost, "/v1/account/restore"},
+		{http.MethodGet, "/v1/auth/sessions"},
+	} {
+		if rec := claimBearer(h, route.method, route.path, sess.APIKey, `{}`); rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), api.CodeClaimRequired) {
+			t.Errorf("%s %s = %d %s, want claim_required", route.method, route.path, rec.Code, rec.Body.String())
+		}
+	}
 
 	// A fresh claim link replaces the first one.
 	rec = claimBearer(h, http.MethodPost, "/v1/account/claim-link", sess.APIKey, "")
@@ -218,6 +228,11 @@ func TestAnonymousSessionsCappedPerAddress(t *testing.T) {
 	rec, _ := anonymousSession(t, h, "203.0.113.20:5000")
 	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), api.CodeAnonymousDeploysUnavailable) || rec.Header().Get("Retry-After") == "" {
 		t.Fatalf("over the cap = %d %v: %s", rec.Code, rec.Header(), rec.Body.String())
+	}
+	var prob api.Problem
+	if err := json.Unmarshal(rec.Body.Bytes(), &prob); err != nil || prob.Limit == nil || prob.Observed == nil ||
+		*prob.Limit != int64(api.UnclaimedAccountsPerAddressPerDayDefault) || *prob.Observed < *prob.Limit {
+		t.Fatalf("over the cap problem = %+v (err %v), want limit and observed", prob, err)
 	}
 	bad := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/anonymous/sessions", strings.NewReader(`{}`))
@@ -326,6 +341,12 @@ func TestUnrecordedClaimIsFinishedBySweep(t *testing.T) {
 	if rec := claimBearer(h, http.MethodGet, "/v1/apps", sess.APIKey, ""); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("anonymous key on a claimed account = %d, want 401: %s", rec.Code, rec.Body.String())
 	}
+	// The new owner makes a key of their own before the sweep runs; the
+	// late finish must leave it alone.
+	owned, err := store.CreateAPIKey(t.Context(), sess.AccountID, api.HashToken([]byte("owner-key")), "laptop", api.ScopesAdminOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
 	svc := srv.Claim()
 	later := sess.ExpiresAt.Add(time.Minute)
 	svc.Now = func() time.Time { return later }
@@ -335,8 +356,8 @@ func TestUnrecordedClaimIsFinishedBySweep(t *testing.T) {
 	if row := unclaimedRow(t, store, sess.AccountID); row.ClaimedAt == nil || row.ExpiredAt != nil {
 		t.Fatalf("row = %+v, want claimed", row)
 	}
-	if keys, err := store.ListAPIKeys(t.Context(), sess.AccountID); err != nil || len(keys) != 0 {
-		t.Fatalf("keys after finishing the claim = %v (err %v)", keys, err)
+	if keys, err := store.ListAPIKeys(t.Context(), sess.AccountID); err != nil || len(keys) != 1 || keys[0].ID != owned.ID {
+		t.Fatalf("keys after finishing the claim = %v (err %v), want only the owner's", keys, err)
 	}
 	if a, _ := store.AccountByID(t.Context(), sess.AccountID); a.Status != state.AccountActive {
 		t.Fatalf("claimed account status = %s", a.Status)

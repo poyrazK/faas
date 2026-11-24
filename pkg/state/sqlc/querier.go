@@ -4291,7 +4291,9 @@ type Querier interface {
 	ListExpiredCrashCaptures(ctx context.Context, db DBTX, arg ListExpiredCrashCapturesParams) ([]CrashCapture, error)
 	ListExpiredCustomerOperationExecutions(ctx context.Context, db DBTX, arg ListExpiredCustomerOperationExecutionsParams) ([]string, error)
 	ListExpiredFunctionMigrationSources(ctx context.Context, db DBTX, arg ListExpiredFunctionMigrationSourcesParams) ([]FunctionMigrationSource, error)
-	ListExpiredUnclaimedAccounts(ctx context.Context, db DBTX, arg ListExpiredUnclaimedAccountsParams) ([]string, error)
+	// Keyset pages by (expires_at, account_id), so rows the sweep cannot finish
+	// never hide the ones after them.
+	ListExpiredUnclaimedAccounts(ctx context.Context, db DBTX, arg ListExpiredUnclaimedAccountsParams) ([]ListExpiredUnclaimedAccountsRow, error)
 	// Accounts never verified long after signup (ADR 20261110120000): still
 	// active, no app ever created and no billing customer. The grace clock
 	// starts at signup or at enforced_from, whichever is later.
@@ -4928,6 +4930,9 @@ type Querier interface {
 	LockLeasedOperationSchedule(ctx context.Context, db DBTX, arg LockLeasedOperationScheduleParams) (CustomerOperationSchedule, error)
 	LockLegacyInvocationReceiptFence(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	LockLifecycleSuccessorProject(ctx context.Context, db DBTX, projectID string) (string, error)
+	// Holds the row while a claim confirmation is issued, so a concurrent link
+	// rotation or expiry (both update this row) runs wholly before or after it.
+	LockLiveUnclaimedAccountByClaimToken(ctx context.Context, db DBTX, arg LockLiveUnclaimedAccountByClaimTokenParams) (pgtype.UUID, error)
 	LockMCPAccessPolicyAccount(ctx context.Context, db DBTX, accountID string) error
 	LockMCPCatalogMonitor(ctx context.Context, db DBTX, arg LockMCPCatalogMonitorParams) ([]byte, error)
 	LockMCPCatalogMonitorApp(ctx context.Context, db DBTX, arg LockMCPCatalogMonitorAppParams) (pgtype.UUID, error)

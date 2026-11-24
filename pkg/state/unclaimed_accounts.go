@@ -88,6 +88,19 @@ func (e *UnclaimedLimitError) Error() string {
 	return fmt.Sprintf("state: unclaimed account %s limit reached (%d of %d)", e.Reason, e.Observed, e.Limit)
 }
 
+// UnclaimedCursor is a position in the expiry sweep's order.
+type UnclaimedCursor struct {
+	ExpiresAt time.Time
+	AccountID string
+}
+
+func (c UnclaimedCursor) before(u UnclaimedAccount) bool {
+	if !u.ExpiresAt.Equal(c.ExpiresAt) {
+		return c.ExpiresAt.Before(u.ExpiresAt)
+	}
+	return c.AccountID < u.AccountID
+}
+
 // UnclaimedAccountStore reads and moves unclaimed accounts. Both stores
 // implement it; apid asserts it like the other optional store interfaces.
 type UnclaimedAccountStore interface {
@@ -110,8 +123,14 @@ type UnclaimedAccountStore interface {
 	// it. It reports false when the account was not open.
 	MarkUnclaimedAccountExpired(ctx context.Context, accountID string, at time.Time) (bool, error)
 	// ListExpiredUnclaimedAccounts returns up to limit open accounts whose
-	// expiry is at or before now, oldest expiry first.
-	ListExpiredUnclaimedAccounts(ctx context.Context, now time.Time, limit int) ([]string, error)
+	// expiry is at or before now, ordered by (ExpiresAt, AccountID) and
+	// strictly after the cursor; the zero cursor starts at the beginning.
+	ListExpiredUnclaimedAccounts(ctx context.Context, now time.Time, after UnclaimedCursor, limit int) ([]UnclaimedCursor, error)
+	// IssueClaimEmailChange issues the claim's email change (as
+	// IssueEmailChange) only while claimHash still names a live account,
+	// serialised with the link rotation and the expiry that would drop it.
+	// It returns the account, or ErrNotFound.
+	IssueClaimEmailChange(ctx context.Context, claimHash, changeHash []byte, newEmail string, expiresAt, now time.Time) (string, error)
 	// CountLiveUnclaimedAccounts counts open accounts before their expiry.
 	CountLiveUnclaimedAccounts(ctx context.Context, now time.Time) (int, error)
 }
@@ -319,21 +338,50 @@ func (m *MemStore) MarkUnclaimedAccountExpired(_ context.Context, accountID stri
 	return true, nil
 }
 
-func (m *MemStore) ListExpiredUnclaimedAccounts(_ context.Context, now time.Time, limit int) ([]string, error) {
+func (m *MemStore) ListExpiredUnclaimedAccounts(_ context.Context, now time.Time, after UnclaimedCursor, limit int) ([]UnclaimedCursor, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var due []UnclaimedAccount
 	for id := range m.unclaimedAccounts {
-		if u, ok := m.unclaimedRowLocked(id); ok && u.Open() && !u.ExpiresAt.After(now) {
+		if u, ok := m.unclaimedRowLocked(id); ok && u.Open() && !u.ExpiresAt.After(now) && after.before(u) {
 			due = append(due, u)
 		}
 	}
-	sort.Slice(due, func(i, j int) bool { return due[i].ExpiresAt.Before(due[j].ExpiresAt) })
-	ids := make([]string, 0, min(limit, len(due)))
+	sort.Slice(due, func(i, j int) bool {
+		return UnclaimedCursor{ExpiresAt: due[i].ExpiresAt, AccountID: due[i].AccountID}.before(due[j])
+	})
+	out := make([]UnclaimedCursor, 0, min(limit, len(due)))
 	for i := 0; i < len(due) && i < limit; i++ {
-		ids = append(ids, due[i].AccountID)
+		out = append(out, UnclaimedCursor{ExpiresAt: due[i].ExpiresAt, AccountID: due[i].AccountID})
 	}
-	return ids, nil
+	return out, nil
+}
+
+func (m *MemStore) IssueClaimEmailChange(_ context.Context, claimHash, changeHash []byte, newEmail string, expiresAt, now time.Time) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var row UnclaimedAccount
+	found := false
+	for id := range m.unclaimedAccounts {
+		if u, ok := m.unclaimedRowLocked(id); ok && bytes.Equal(u.ClaimTokenSHA256, claimHash) {
+			row, found = u, true
+			break
+		}
+	}
+	if !found || !row.Live(now) {
+		return "", ErrNotFound
+	}
+	a, ok := m.accounts[row.AccountID]
+	if !ok || a.Status != AccountActive {
+		return "", ErrNotFound
+	}
+	if m.accountFlow.emailChanges == nil {
+		m.accountFlow.emailChanges = map[string]memEmailChange{}
+	}
+	m.clearPendingEmailChangesLocked(row.AccountID)
+	key := string(storedCredential(credTagEmailChange, changeHash))
+	m.accountFlow.emailChanges[key] = memEmailChange{accountID: row.AccountID, oldEmail: strings.ToLower(a.Email), newEmail: newEmail, expiresAt: expiresAt}
+	return row.AccountID, nil
 }
 
 func (m *MemStore) CountLiveUnclaimedAccounts(_ context.Context, now time.Time) (int, error) {
@@ -499,14 +547,56 @@ func (s *PgStore) MarkUnclaimedAccountExpired(ctx context.Context, accountID str
 	return marked, err
 }
 
-func (s *PgStore) ListExpiredUnclaimedAccounts(ctx context.Context, now time.Time, limit int) ([]string, error) {
-	ids, err := sqlc.New().ListExpiredUnclaimedAccounts(ctx, s.pool, sqlc.ListExpiredUnclaimedAccountsParams{
-		Now: pgTime(now), RowLimit: int32(max(0, min(limit, 10_000))), //nolint:gosec // bounded above
+func (s *PgStore) ListExpiredUnclaimedAccounts(ctx context.Context, now time.Time, after UnclaimedCursor, limit int) ([]UnclaimedCursor, error) {
+	afterID := pgtype.UUID{Valid: true}
+	if after.AccountID != "" {
+		id, err := parsePgUUID(after.AccountID)
+		if err != nil {
+			return nil, fmt.Errorf("state: unclaimed sweep cursor: %w", err)
+		}
+		afterID = id
+	}
+	rows, err := sqlc.New().ListExpiredUnclaimedAccounts(ctx, s.pool, sqlc.ListExpiredUnclaimedAccountsParams{
+		Now: pgTime(now), AfterExpiresAt: pgTime(after.ExpiresAt), AfterAccountID: afterID,
+		RowLimit: int32(max(0, min(limit, 10_000))), //nolint:gosec // bounded above
 	})
 	if err != nil {
 		return nil, fmt.Errorf("state: list expired unclaimed accounts: %w", mapErr(err))
 	}
-	return ids, nil
+	out := make([]UnclaimedCursor, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, UnclaimedCursor{ExpiresAt: r.ExpiresAt.Time.UTC(), AccountID: r.AccountID})
+	}
+	return out, nil
+}
+
+func (s *PgStore) IssueClaimEmailChange(ctx context.Context, claimHash, changeHash []byte, newEmail string, expiresAt, now time.Time) (string, error) {
+	var accountID string
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		q := sqlc.New()
+		account, err := q.LockLiveUnclaimedAccountByClaimToken(ctx, tx, sqlc.LockLiveUnclaimedAccountByClaimTokenParams{
+			ClaimTokenSha256: claimHash, Now: pgTime(now),
+		})
+		if err != nil {
+			return mapErr(err)
+		}
+		if err := q.ClearPendingAccountEmailChanges(ctx, tx, account); err != nil {
+			return fmt.Errorf("state: clear pending claim confirmations: %w", mapErr(err))
+		}
+		n, err := q.InsertAccountEmailChange(ctx, tx, sqlc.InsertAccountEmailChangeParams{
+			TokenHash: storedCredential(credTagEmailChange, changeHash), NewEmail: newEmail,
+			ExpiresAt: pgTime(expiresAt), AccountID: account,
+		})
+		if err != nil {
+			return fmt.Errorf("state: issue claim confirmation: %w", mapErr(err))
+		}
+		if n == 0 {
+			return ErrNotFound
+		}
+		accountID = pgUUIDStringOrEmpty(account)
+		return nil
+	})
+	return accountID, err
 }
 
 func (s *PgStore) CountLiveUnclaimedAccounts(ctx context.Context, now time.Time) (int, error) {

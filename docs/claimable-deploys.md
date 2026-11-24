@@ -25,9 +25,10 @@ they claim the app by opening it and confirming their email.
 ```
 
 The CLI keeps the session's key in a file of its own, separate from your
-login. Until the claim window ends, `gregale logs`, `gregale status` and later
-deploys of the same app use it whenever no one is logged in. `gregale logout`
-forgets it. `gregale claim` prints a fresh claim link. Earlier links, and
+login. Until the claim window ends, later `gregale deploy` runs and `gregale
+claim` use it whenever no one is logged in; other commands need a login.
+Once the app is claimed the key stops working: the CLI forgets it and asks
+you to run `gregale login`. `gregale logout` forgets it too. `gregale claim` prints a fresh claim link. Earlier links, and
 confirmation emails sent through them, stop working.
 
 Other clients call the API directly:

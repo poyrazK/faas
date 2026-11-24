@@ -34,6 +34,9 @@ creates an ordinary account in one transaction:
 - A row in `unclaimed_accounts`: the SHA-256 of a 32-byte claim token, the
   expiry, the creating address and user agent.
 - A deploy key labelled `anonymous-deploy` that expires with the account.
+  apid reserves the label: `POST /v1/keys` refuses it, so only this key
+  carries it. If the key cannot be minted, the account is deleted, so it
+  takes no place under the caps.
 
 The response carries the key, the claim URL and the expiry. Every app,
 quota, billing and abuse path already assumes an owning account, so an
@@ -63,7 +66,9 @@ apid keeps the route table, the middleware and a `claim.Host` adapter.
   new route is closed to unclaimed accounts until it is added on purpose. A
   block list by path segment was rejected: it let app-scoped credentials
   (AI-gateway tokens, realtime publish keys), log drains and environment
-  clones through, and those outlive the claim.
+  clones through, and those outlive the claim. The gate sits in every
+  authenticated middleware chain, the plain one included, so account
+  routes (delete, restore, email change, sessions) are closed too.
 - The Free plan's own limits apply unchanged: one app, the Free RAM cap and
   no cron. The ADR-20261112120603 CPU rule already enforces on Free.
 
@@ -83,14 +88,19 @@ apid keeps the route table, the middleware and a `claim.Host` adapter.
   are separate from human sign-ups, so anonymous deploys never use up a
   network's sign-ups. Unclaimed accounts are left out of the platform-wide
   daily sign-up count (`CountVerifiedAccountsCreatedSince`) until claimed.
+- A refusal is `429 anonymous_deploys_unavailable` with `Retry-After` and
+  the `limit` and `observed` values of the cap that refused it.
 - A failed count fails the creation. Anonymous deploys are optional;
   sign-up admits on the same failure.
 - Every session records `account_signup_facts` (method `anonymous`). If the
   ADR-20261114174600 check links it to an abuse-held account, the new
   account is ended at once and the caller gets `429
-  anonymous_deploys_unavailable`. Sign-up only flags such links; an account
+  anonymous_deploys_unavailable`; the sweep retries an ending that fails.
+  The sign-up itself is counted only once the session is granted. Sign-up only flags such links; an account
   nobody has identified gets the stricter rule.
-- apid sweeps every 5 minutes. An open account past its expiry goes
+- apid sweeps every 5 minutes, paging through due rows by
+  `(expires_at, account_id)`, so rows it cannot finish never hold back the
+  ones after them. An open account past its expiry goes
   through the usual `scheduleDeletion` (via `unclaimed_expiry`) first, and
   only then is the row marked `expired_at`: a transient failure leaves the
   row open for the next sweep. A refusal that will not change (a suspended
@@ -111,7 +121,11 @@ to apid (`apid.ApidRootClaim`; it is reserved on platform hosts only):
 1. `GET /claim/{token}` lists the apps, the deletion time and an email form.
 2. `POST /claim/{token}` issues an email change from the placeholder to the
    given address (the ADR 20261107103000 flow) and mails a confirmation
-   link. The answer is the same whether or not the address has an account.
+   link. The change is issued in the request, in one transaction that locks
+   the live claim row (`IssueClaimEmailChange`), so a link rotation or
+   expiry runs wholly before it (and the page answers 410) or after it (and
+   drops it). Only the mail is sent in the background; if apid is too busy
+   to queue it, the page answers 503 rather than claim a mail was sent. The answer is the same whether or not the address has an account.
    An address that already has an account gets an explanation instead of a
    link.
 3. `GET /claim/confirm` renders a button. Mail scanners that prefetch links
@@ -119,8 +133,9 @@ to apid (`apid.ApidRootClaim`; it is reserved on platform hosts only):
 4. `POST /claim/confirm` consumes the change. The store refuses an address
    another account took meanwhile, and an account that is no longer active.
    `finishEmailChange` sees the placeholder as the old address and calls
-   `claim.Service.FinishClaim`: every API key on the account is revoked
-   first, and only then is the row marked `claimed_at`. The browser then
+   `claim.Service.FinishClaim`: the `anonymous-deploy` keys are revoked
+   first (keys the owner made since are left alone, even when the sweep
+   finishes a claim late), and only then is the row marked `claimed_at`. The browser then
    gets a one-time magic-link sign-in and lands on the dashboard as the
    owner.
 
@@ -158,9 +173,11 @@ another address, or sign in and redeploy.
   nobody owns.
 
 It keeps the session's key in `anonymous-deploy.json` next to the profile's
-token file, never in the login store. Later commands use it only while no
-login exists, only for the same API, and only until the claim window ends;
-`gregale logout` removes it. The CLI prints the claim link before the upload
+token file, never in the login store. Only `gregale deploy` and `gregale
+claim` use it, only while no login exists, only for the same API, and only
+until the claim window ends; other commands see no login. A redeploy checks
+the key first; a refused key (the app was claimed) is deleted and the CLI
+says to run `gregale login`. `gregale logout` removes it too. The CLI prints the claim link before the upload
 and again after the deploy. `gregale claim` prints a fresh
 link; the previous link stops working. A server without the capability
 answers 404, and the CLI shows the usual "not logged in" error.

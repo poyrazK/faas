@@ -58,7 +58,9 @@ import (
 // mfa_pending session legitimately needs are in the middleware's MFA
 // allowlist; bearer principals are unaffected.
 func (s *server) auth(next accountHandler) http.HandlerFunc {
-	pkgNext := middleware.AccountHandler(s.recordCustomerErrors(s.sameOriginSessionWrites(s.requireMFA(s.requireVerificationNotOverdue(s.authorizeAppResource(next))))))
+	// unclaimedAllowed runs on every auth chain: an anonymous deploy key
+	// (ADR-20261124080000) reaches only the routes claim.RouteAllowed lists.
+	pkgNext := middleware.AccountHandler(s.recordCustomerErrors(s.unclaimedAllowed(s.sameOriginSessionWrites(s.requireMFA(s.requireVerificationNotOverdue(s.authorizeAppResource(next)))))))
 	return s.recordCredentialRefusals(s.authMw.RequireSession(pkgNext))
 }
 

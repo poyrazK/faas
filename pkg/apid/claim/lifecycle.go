@@ -5,15 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// FinishClaim runs once the claimer's address is on the account: every key
-// on it (only the anonymous session could mint them) is revoked first, and
-// only then is the claim recorded. A failure leaves the row open, so the
+// FinishClaim runs once the claimer's address is on the account: the
+// anonymous session's keys (KeyLabel, which no customer key may take) are
+// revoked first, and only then is the claim recorded. Keys the owner created
+// after the claim are never touched, even when the sweep finishes a claim
+// late. A failure leaves the row open, so the
 // sweep finishes the claim later (FinishPending); until then the middleware
 // refuses the anonymous key on a claimed account, and the key expires with
 // the claim window anyway.
@@ -27,6 +30,9 @@ func (s *Service) FinishClaim(ctx context.Context, accountID string) error {
 		return fmt.Errorf("claim: list keys: %w", err)
 	}
 	for _, k := range keys {
+		if !isAnonymousKey(k) {
+			continue
+		}
 		if err := s.Host.Store().DeleteAPIKey(ctx, accountID, k.ID); err != nil && !errors.Is(err, state.ErrNotFound) {
 			return fmt.Errorf("claim: revoke key %s: %w", k.ID, err)
 		}
@@ -46,7 +52,7 @@ func (s *Service) FinishClaim(ctx context.Context, accountID string) error {
 // account that has been claimed: the claim revokes those keys, and this
 // refuses one whose revocation has not landed yet.
 func (s *Service) EndedAnonymousKey(r *http.Request, actor state.Account, key *state.APIKey) bool {
-	if key == nil || key.Label != KeyLabel || IsUnclaimed(actor) {
+	if key == nil || !isAnonymousKey(*key) || IsUnclaimed(actor) {
 		return false
 	}
 	store, ok := s.unclaimedStore()
@@ -56,6 +62,10 @@ func (s *Service) EndedAnonymousKey(r *http.Request, actor state.Account, key *s
 	_, err := store.UnclaimedAccountByID(r.Context(), actor.ID)
 	return err == nil
 }
+
+// isAnonymousKey reports an anonymous session's key. apid reserves the
+// label, so no customer key carries it.
+func isAnonymousKey(k state.APIKey) bool { return strings.TrimSpace(k.Label) == KeyLabel }
 
 // expire ends an unclaimed account: its deletion is scheduled first, and the
 // row is marked expired only once that is done or cannot be done, so a
@@ -107,42 +117,62 @@ func (s *Service) RunExpiry(ctx context.Context) {
 	}
 }
 
-// ExpireOnce ends one batch of unclaimed accounts past their expiry and
-// returns how many it ended. A row whose account already carries a real
-// address was claimed but not recorded: the sweep finishes that claim
-// instead. Several apids may run it at once; marking the row is the claim on
-// the work.
+// sweepMaxPages bounds one sweep run; the next run carries on.
+const sweepMaxPages = 50
+
+// ExpireOnce ends the unclaimed accounts past their expiry and returns how
+// many it ended. It pages through every due row, so rows it cannot finish
+// (a failing deletion, a store error) never hold back the ones after them;
+// they are retried on the next run. A row whose account already carries a
+// real address was claimed but not recorded: the sweep finishes that claim
+// instead. Several apids may run it at once; marking the row is the claim
+// on the work.
 func (s *Service) ExpireOnce(ctx context.Context) int {
 	store, ok := s.unclaimedStore()
 	if !ok {
 		return 0
 	}
 	log := s.Host.Log()
-	ids, err := store.ListExpiredUnclaimedAccounts(ctx, s.now(), api.UnclaimedAccountExpiryBatch)
-	if err != nil {
-		log.Warn("unclaimed_expiry.list", "err", err)
-		return 0
-	}
+	now := s.now()
 	ended := 0
-	for _, id := range ids {
-		acct, err := s.Host.Store().AccountByID(ctx, id)
+	var cursor state.UnclaimedCursor
+	for range sweepMaxPages {
+		rows, err := store.ListExpiredUnclaimedAccounts(ctx, now, cursor, api.UnclaimedAccountExpiryBatch)
 		if err != nil {
-			log.Warn("unclaimed_expiry.account", "account_id", id, "err", err)
-			continue
+			log.Warn("unclaimed_expiry.list", "err", err)
+			break
 		}
-		if !IsUnclaimed(acct) {
-			if err := s.FinishClaim(ctx, id); err != nil {
-				log.Error("unclaimed_expiry.finish_claim", "account_id", id, "err", err)
-			}
-			continue
+		for _, row := range rows {
+			ended += s.sweepOne(ctx, store, row.AccountID)
 		}
-		if s.expire(ctx, store, acct, "unclaimed_expiry") {
-			s.Host.Observe(EventExpired)
-			ended++
+		if len(rows) < api.UnclaimedAccountExpiryBatch || ctx.Err() != nil {
+			break
 		}
+		cursor = rows[len(rows)-1]
 	}
 	if ended > 0 {
 		log.Info("unclaimed_expiry.ended", "count", ended)
 	}
 	return ended
+}
+
+// sweepOne ends or finishes one due account; 1 when it ended it.
+func (s *Service) sweepOne(ctx context.Context, store state.UnclaimedAccountStore, id string) int {
+	log := s.Host.Log()
+	acct, err := s.Host.Store().AccountByID(ctx, id)
+	if err != nil {
+		log.Warn("unclaimed_expiry.account", "account_id", id, "err", err)
+		return 0
+	}
+	if !IsUnclaimed(acct) {
+		if err := s.FinishClaim(ctx, id); err != nil {
+			log.Error("unclaimed_expiry.finish_claim", "account_id", id, "err", err)
+		}
+		return 0
+	}
+	if !s.expire(ctx, store, acct, "unclaimed_expiry") {
+		return 0
+	}
+	s.Host.Observe(EventExpired)
+	return 1
 }

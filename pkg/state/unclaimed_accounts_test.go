@@ -17,6 +17,7 @@ import (
 type unclaimedBackend interface {
 	state.UnclaimedAccountStore
 	state.SignupCountStore
+	state.AccountFlowStore
 	CreateAccountWithPersonalOrg(ctx context.Context, params state.CreateAccountWithPersonalOrgParams) (state.CreateAccountWithPersonalOrgResult, error)
 }
 
@@ -82,8 +83,8 @@ func TestUnclaimedAccountLifecycle(t *testing.T) {
 			if n, _ := s.CountLiveUnclaimedAccounts(ctx, now.Add(time.Minute)); n != 1 {
 				t.Fatalf("live = %d, want 1", n)
 			}
-			ids, err := s.ListExpiredUnclaimedAccounts(ctx, now.Add(time.Minute), 10)
-			if err != nil || len(ids) != 1 || ids[0] != due {
+			ids, err := s.ListExpiredUnclaimedAccounts(ctx, now.Add(time.Minute), state.UnclaimedCursor{}, 10)
+			if err != nil || len(ids) != 1 || ids[0].AccountID != due {
 				t.Fatalf("expired = %v (err %v), want [%s]", ids, err, due)
 			}
 
@@ -109,7 +110,7 @@ func TestUnclaimedAccountLifecycle(t *testing.T) {
 			if ok, err := s.MarkUnclaimedAccountExpired(ctx, due, now); err != nil || !ok {
 				t.Fatalf("expire = %v %v", ok, err)
 			}
-			if ids, _ := s.ListExpiredUnclaimedAccounts(ctx, now.Add(time.Hour), 10); len(ids) != 0 {
+			if ids, _ := s.ListExpiredUnclaimedAccounts(ctx, now.Add(time.Hour), state.UnclaimedCursor{}, 10); len(ids) != 0 {
 				t.Fatalf("expired list after sweep = %v", ids)
 			}
 			if _, err := s.UnclaimedAccountByID(ctx, "00000000-0000-0000-0000-000000000000"); !errors.Is(err, state.ErrNotFound) {
@@ -170,6 +171,95 @@ func TestUnclaimedAccountCaps(t *testing.T) {
 			}
 			if got := reason(create("192.0.2.2", state.UnclaimedAccountParams{LiveMax: 100})); got != state.UnclaimedLimitAddress {
 				t.Fatalf("zero per-address cap = %s, want it to refuse", got)
+			}
+		})
+	}
+}
+
+// The sweep pages past rows it cannot finish: every due row is reached in
+// (expiry, account) order, page by page.
+func TestUnclaimedSweepPages(t *testing.T) {
+	for name, open := range unclaimedBackends() {
+		t.Run(name, func(t *testing.T) {
+			s := open(t)
+			ctx := t.Context()
+			now := time.Now().UTC()
+			for i := range 5 {
+				if _, err := s.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{
+					Email: fmt.Sprintf("anon-page-%d@%s", i, api.UnclaimedEmailDomain), Plan: api.PlanFree,
+					Unclaimed: &state.UnclaimedAccountParams{
+						ClaimTokenSHA256: claimHash(fmt.Sprintf("page-%d", i)), ExpiresAt: now.Add(time.Duration(i%2+1) * time.Second),
+						LiveMax: 100, PerAddress: 100, PerNetwork: 100,
+					},
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			seen := map[string]bool{}
+			var cursor state.UnclaimedCursor
+			for page := 0; ; page++ {
+				rows, err := s.ListExpiredUnclaimedAccounts(ctx, now.Add(time.Minute), cursor, 2)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(rows) == 0 {
+					break
+				}
+				if page > 5 {
+					t.Fatal("paging does not end")
+				}
+				for _, r := range rows {
+					if seen[r.AccountID] {
+						t.Fatalf("row %s listed twice", r.AccountID)
+					}
+					seen[r.AccountID] = true
+				}
+				cursor = rows[len(rows)-1]
+			}
+			if len(seen) != 5 {
+				t.Fatalf("paged through %d rows, want 5", len(seen))
+			}
+		})
+	}
+}
+
+// A claim confirmation is issued only while the claim link names a live
+// account; a rotated link or an expired account issues nothing.
+func TestIssueClaimEmailChange(t *testing.T) {
+	for name, open := range unclaimedBackends() {
+		t.Run(name, func(t *testing.T) {
+			s := open(t)
+			ctx := t.Context()
+			now := time.Now().UTC()
+			res, err := s.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{
+				Email: "anon-issue@" + api.UnclaimedEmailDomain, Plan: api.PlanFree,
+				Unclaimed: &state.UnclaimedAccountParams{ClaimTokenSHA256: claimHash("issue"), ExpiresAt: now.Add(time.Hour), LiveMax: 100, PerAddress: 100, PerNetwork: 100},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			id := res.Account.ID
+			got, err := s.IssueClaimEmailChange(ctx, claimHash("issue"), claimHash("change-1"), "first@example.com", now.Add(time.Hour), now)
+			if err != nil || got != id {
+				t.Fatalf("issue = %q %v, want %s", got, err, id)
+			}
+			if err := s.RotateUnclaimedClaimToken(ctx, id, claimHash("issue-2")); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.ConsumeEmailChange(ctx, claimHash("change-1")); err == nil {
+				t.Fatal("rotation left the mailed confirmation usable")
+			}
+			if _, err := s.IssueClaimEmailChange(ctx, claimHash("issue"), claimHash("change-2"), "second@example.com", now.Add(time.Hour), now); !errors.Is(err, state.ErrNotFound) {
+				t.Fatalf("issue through a replaced link err = %v, want ErrNotFound", err)
+			}
+			if _, err := s.IssueClaimEmailChange(ctx, claimHash("issue-2"), claimHash("change-3"), "third@example.com", now.Add(time.Hour), now.Add(2*time.Hour)); !errors.Is(err, state.ErrNotFound) {
+				t.Fatalf("issue past the window err = %v, want ErrNotFound", err)
+			}
+			if _, err := s.MarkUnclaimedAccountExpired(ctx, id, now); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.IssueClaimEmailChange(ctx, claimHash("issue-2"), claimHash("change-4"), "fourth@example.com", now.Add(time.Hour), now); !errors.Is(err, state.ErrNotFound) {
+				t.Fatalf("issue on an expired account err = %v, want ErrNotFound", err)
 			}
 		})
 	}

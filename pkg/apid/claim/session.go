@@ -32,7 +32,11 @@ func (s *Service) Session(w http.ResponseWriter, r *http.Request) {
 	}
 	defer clear(raw)
 	if links := s.Host.RecordSignupFacts(r.Context(), r, acct.ID, acct.Email); links > 0 {
-		s.expire(r.Context(), store, acct, "unclaimed_held_link")
+		// Kept (scheduled for deletion) rather than removed, so the link
+		// stays reviewable; the sweep retries a deletion that fails now.
+		if !s.expire(r.Context(), store, acct, "unclaimed_held_link") {
+			s.Host.Log().Warn("anonymous_session.held_link_expire", "account_id", acct.ID)
+		}
 		s.Host.Observe(EventRefusedHeldLink)
 		api.WriteProblem(w, api.ErrAnonymousDeploysUnavailable(0))
 		return
@@ -40,9 +44,16 @@ func (s *Service) Session(w http.ResponseWriter, r *http.Request) {
 	key, err := s.mintKey(r, acct, expiresAt)
 	if err != nil {
 		s.Host.Log().Error("anonymous_session.key", "err", err, "account_id", acct.ID)
+		// The account is unusable without its key: remove it, so it holds
+		// no place under the caps.
+		if derr := s.Host.Store().DeleteAccount(context.WithoutCancel(r.Context()), acct.ID); derr != nil {
+			s.Host.Log().Error("anonymous_session.cleanup", "err", derr, "account_id", acct.ID)
+		}
 		api.WriteProblem(w, api.ErrCapacity("could not create the anonymous session; try again"))
 		return
 	}
+	// Counted only once the session is granted.
+	s.Host.RecordSignup(r.Context(), acct.ID)
 	s.Host.Observe(EventCreated)
 	s.Host.Audit(r.Context(), "account.unclaimed_created", &acct.ID, map[string]any{
 		"expires_at": expiresAt.UTC().Format(time.RFC3339), "client": truncateClient(req.Client),
@@ -73,7 +84,7 @@ func (s *Service) refusal(ctx context.Context, err error) *api.Problem {
 	s.Host.Audit(ctx, "account.unclaimed_refused", nil, map[string]any{
 		"reason": limit.Reason, "limit": limit.Limit, "observed": limit.Observed,
 	})
-	return api.ErrAnonymousDeploysUnavailable(retry)
+	return api.ErrAnonymousDeploysUnavailable(retry).WithLimit(int64(limit.Limit), int64(limit.Observed))
 }
 
 // createAccount creates the Free account and its unclaimed row in one
@@ -106,7 +117,6 @@ func (s *Service) createAccount(r *http.Request) (state.Account, []byte, time.Ti
 		clear(raw)
 		return state.Account{}, nil, time.Time{}, err
 	}
-	s.Host.RecordSignup(r.Context(), res.Account.ID)
 	return res.Account, raw, expiresAt, nil
 }
 

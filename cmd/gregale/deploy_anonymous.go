@@ -55,6 +55,13 @@ func deployClientOrAnonymous(ctx context.Context, timeout time.Duration, anonymo
 	if loadToken() != "" || (!anonymous && !anonymousDeployByDefault(os.Getenv)) {
 		return authedClientWithDeployTimeout(timeout)
 	}
+	if key := loadAnonymousSessionToken(); key != "" {
+		// Redeploy with the open anonymous deploy rather than start another.
+		if err := checkAnonymousKey(ctx, key); err != nil {
+			return nil, err
+		}
+		return NewClientWithDeployTimeout(apiBase(), key, timeout), nil
+	}
 	sess, err := createAnonymousDeploySession(ctx)
 	if err != nil {
 		var apiErr *api.APIError
@@ -123,6 +130,30 @@ func loadAnonymousSessionToken() string {
 	return saved.APIKey
 }
 
+// errAnonymousEnded is the answer once the saved anonymous key stops
+// working: the deploy was claimed (the claim revokes the key) or it ended.
+var errAnonymousEnded = errors.New("this deploy without an account was claimed or has ended; run gregale login")
+
+// checkAnonymousKey asks the API whether the saved anonymous key still
+// works. A refused key is forgotten; any other failure is left to the
+// command that uses the key.
+func checkAnonymousKey(ctx context.Context, key string) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	_, err := NewClient(apiBase(), key).Whoami(ctx)
+	if anonymousKeyRefused(err) {
+		deleteAnonymousSession()
+		return errAuth(errAnonymousEnded)
+	}
+	return nil
+}
+
+// anonymousKeyRefused reports a 401 for the anonymous key.
+func anonymousKeyRefused(err error) bool {
+	var apiErr *api.APIError
+	return errors.As(err, &apiErr) && apiErr.Problem.Status == http.StatusUnauthorized
+}
+
 // deleteAnonymousSession forgets the anonymous deploy key (logout).
 func deleteAnonymousSession() {
 	if p, err := anonymousSessionPath(); err == nil {
@@ -169,14 +200,29 @@ func cmdClaim(args []string) int {
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
-	client, err := authedClient()
-	if err != nil {
-		return printErr("Not logged in", err)
+	// The login when there is one, else the saved anonymous deploy key.
+	var client *Client
+	anonymousKey := ""
+	if loadToken() == "" {
+		anonymousKey = loadAnonymousSessionToken()
+	}
+	if anonymousKey != "" {
+		client = NewClient(apiBase(), anonymousKey)
+	} else {
+		c, err := authedClient()
+		if err != nil {
+			return printErr("Not logged in", err)
+		}
+		client = c
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	link, err := client.CreateClaimLink(ctx)
 	if err != nil {
+		if anonymousKey != "" && anonymousKeyRefused(err) {
+			deleteAnonymousSession()
+			return printErr("Nothing to claim", errAnonymousEnded)
+		}
 		var apiErr *api.APIError
 		if errors.As(err, &apiErr) && apiErr.Problem.Status == http.StatusConflict {
 			return printErr("Nothing to claim", errors.New("this login is a regular Gregale account; only an app deployed without an account has a claim link"))
