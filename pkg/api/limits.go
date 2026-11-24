@@ -1392,6 +1392,15 @@ func ManagedPostgresIncludedHistoryBytes(storagePoolBytes int64) int64 {
 	return max(storagePoolBytes, 0)
 }
 
+// ManagedPostgresHistoryLimitFactor and
+// ManagedPostgresHistoryLimitedRestoreWindow bound the restore history of a
+// subject with overage off (ADR-20261123062111 D2): once its month-to-date
+// restore history and snapshots pass this many times its included history,
+// its databases keep only this restore window until the 1st of the next UTC
+// month, or until overage is turned on.
+const ManagedPostgresHistoryLimitFactor = 2
+const ManagedPostgresHistoryLimitedRestoreWindow = 24 * time.Hour
+
 // Production managed PostgreSQL provisioning (ADR-20261028103115). An
 // operator approval pins one backend for at most the approval window; the
 // expiry alert fires the warning lead before it closes provisioning.
