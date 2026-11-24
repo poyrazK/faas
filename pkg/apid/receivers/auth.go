@@ -66,6 +66,9 @@ type authReceiver struct {
 	// agents answers gateways' agent approval and activity calls; nil
 	// answers Unavailable (ADR-20261111150000).
 	agents AgentRequests
+	// consumers enrolls gateways' verified OAuth callers as API consumers;
+	// nil answers Unavailable (ADR-20261124094745).
+	consumers OAuthConsumers
 }
 
 // sessionKeyHolder is a SessionOpener that can derive keys:

@@ -1,0 +1,126 @@
+package apidserver_test
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/billing/stripeinvoice"
+	"github.com/onebox-faas/faas/pkg/state"
+)
+
+// adr: 20261124094745 — a free plan whose rate cards charge nothing is
+// joined without a card, and with OAuth consumers on, a verified OAuth caller
+// becomes a consumer on it once, however often it calls.
+func TestConsumerSignupFreePlanAndOAuthConsumers(t *testing.T) {
+	withBillingKeys(t)
+	e := apidserver.Setup(t, api.PlanHobby)
+	stripe := &consumerSignupStripe{}
+	srv := httptest.NewServer(stripe)
+	defer srv.Close()
+	client := &stripeinvoice.Client{BaseURL: srv.URL, HTTP: srv.Client()}
+	(*e.S()).StatementInvoices().Stripe = client
+	(*e.S()).ConsumerSignup().Stripe = client
+	appID := apidserver.MustSeedApp(t, e, "search")
+	decode := func(t *testing.T, res *httptest.ResponseRecorder, want int, out any) {
+		t.Helper()
+		if res.Code != want {
+			t.Fatalf("status %d, want %d: %s", res.Code, want, res.Body)
+		}
+		if out != nil {
+			if err := json.Unmarshal(res.Body.Bytes(), out); err != nil {
+				t.Fatalf("decode: %v: %s", err, res.Body)
+			}
+		}
+	}
+	plan := func(name string, price int64) string {
+		var p api.APIConsumerPlanResponse
+		decode(t, e.Do(t, http.MethodPost, "/v1/apps/search/consumer-plans", api.CreateAPIConsumerPlanRequest{Name: name, MaxUnitsPerMonth: 1000}, nil),
+			http.StatusCreated, &p)
+		decode(t, e.Do(t, http.MethodPost, "/v1/apps/search/rate-cards", api.CreateAPIConsumerRateCardRequest{Currency: "USD",
+			PriceMillicentsPerUnit: price, PlanID: p.ID}, nil), http.StatusCreated, nil)
+		return p.ID
+	}
+	free, pro := plan("free", 0), plan("pro", 50)
+	decode(t, e.Do(t, http.MethodPut, "/v1/account/billing-connections/stripe", api.PutBillingConnectionRequest{SecretKey: "rk_test_51abcdWXYZ"}, nil),
+		http.StatusOK, nil)
+
+	// Before OAuth consumers are on, enrollment is refused.
+	enroll := func(subject string) (state.APIConsumer, bool, error) {
+		return (*e.S()).ConsumerSignup().EnrollOAuthConsumer(t.Context(), state.APIConsumerEnrollment{AccountID: e.Acct().ID, AppID: appID,
+			Issuer: "https://login.example", Subject: subject, Email: subject + "@example.com"})
+	}
+	if _, _, err := enroll("u1"); !errors.Is(err, state.ErrAPIConsumerOAuthOff) {
+		t.Fatalf("enroll before sign-up = %v; want OAuth off", err)
+	}
+
+	settings := api.PutConsumerSignupRequest{DisplayName: "Search tools", PlanIDs: []string{free, pro}}
+	for name, bad := range map[string]api.PutConsumerSignupRequest{
+		"oauth without a free plan": {DisplayName: "Search tools", PlanIDs: settings.PlanIDs, OAuthConsumers: true},
+		"free plan that charges":    {DisplayName: "Search tools", PlanIDs: settings.PlanIDs, FreePlanID: pro},
+		"free plan not offered":     {DisplayName: "Search tools", PlanIDs: []string{pro}, FreePlanID: free},
+	} {
+		if res := e.Do(t, http.MethodPut, "/v1/apps/search/consumer-signup", bad, nil); res.Code != http.StatusUnprocessableEntity {
+			t.Errorf("%s: %d %s", name, res.Code, res.Body)
+		}
+	}
+	settings.FreePlanID, settings.OAuthConsumers = free, true
+	var set api.ConsumerSignupSettingsResponse
+	decode(t, e.Do(t, http.MethodPut, "/v1/apps/search/consumer-signup", settings, nil), http.StatusOK, &set)
+	if set.FreePlanID != free || !set.OAuthConsumers {
+		t.Fatalf("settings = %+v", set)
+	}
+	// The free plan stays free: a charging card on it is refused.
+	if res := e.Do(t, http.MethodPost, "/v1/apps/search/rate-cards", api.CreateAPIConsumerRateCardRequest{Currency: "USD",
+		BaseFeeMillicentsPerMonth: 100, PlanID: free}, nil); res.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("charging card on the free plan: %d %s", res.Code, res.Body)
+	}
+
+	public := map[string]string{"Authorization": ""}
+	var form api.ConsumerSignupFormResponse
+	decode(t, e.Do(t, http.MethodGet, "/v1/consumer-signup/search", nil, public), http.StatusOK, &form)
+	for _, p := range form.Plans {
+		if p.Free != (p.ID == free) {
+			t.Errorf("plan %s free = %v", p.Name, p.Free)
+		}
+	}
+
+	// The free plan skips Checkout: no Stripe customer, no checkout URL.
+	var started api.CreateConsumerSignupResponse
+	decode(t, e.Do(t, http.MethodPost, "/v1/consumer-signup/search", api.CreateConsumerSignupRequest{Email: "ada@example.com", Name: "Ada",
+		PlanID: free}, public), http.StatusCreated, &started)
+	if started.CheckoutURL != "" || started.ClaimToken == "" || len(stripe.customers) != 0 {
+		t.Fatalf("started = %+v, customers %v", started, stripe.customers)
+	}
+	var done api.CompleteConsumerSignupResponse
+	decode(t, e.Do(t, http.MethodPost, "/v1/consumer-signup/search/signups/"+started.ID+"/complete",
+		api.CompleteConsumerSignupRequest{ClaimToken: started.ClaimToken}, public), http.StatusOK, &done)
+	if !strings.HasPrefix(done.Key, api.ConsumerKeyPrefix) || done.PlanID != free {
+		t.Fatalf("completed = %+v", done)
+	}
+
+	consumer, created, err := enroll("u1")
+	if err != nil || !created || !consumer.Active() || !strings.HasPrefix(consumer.ExternalRef, "oauth:") || consumer.Name != "u1@example.com" {
+		t.Fatalf("enroll = %+v %v %v", consumer, created, err)
+	}
+	again, created, err := enroll("u1")
+	if err != nil || created || again.ID != consumer.ID {
+		t.Fatalf("second enroll = %+v %v %v", again, created, err)
+	}
+	var consumers api.APIConsumerListResponse
+	decode(t, e.Do(t, http.MethodGet, "/v1/apps/search/consumers", nil, nil), http.StatusOK, &consumers)
+	if len(consumers.Consumers) != 2 {
+		t.Fatalf("consumers = %+v", consumers)
+	}
+
+	// Another account's app is not found.
+	if _, _, err := (*e.S()).ConsumerSignup().EnrollOAuthConsumer(t.Context(), state.APIConsumerEnrollment{AccountID: "00000000-0000-4000-8000-000000000001",
+		AppID: appID, Issuer: "https://login.example", Subject: "u2"}); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("foreign account = %v; want not found", err)
+	}
+}

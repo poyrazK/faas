@@ -92,6 +92,34 @@ service Auth {
   // (ADR-20261111150000); apid is the only writer of the activity log.
   // Errors are InvalidArgument, NotFound and Unavailable.
   rpc RecordAgentActivity(RecordAgentActivityRequest) returns (RecordAgentActivityResponse);
+
+  // EnrollOAuthConsumer returns the API consumer a verified OAuth caller of
+  // an app's MCP server is, creating it on the app's free plan the first
+  // time (ADR-20261124094745): apid is the only writer of consumers, so a
+  // gateway that verified the caller's token asks apid. Errors are
+  // InvalidArgument, NotFound (no such app or free plan), FailedPrecondition
+  // (the app does not enroll OAuth callers), ResourceExhausted (the app took
+  // its sign-ups for the day) and Unavailable.
+  rpc EnrollOAuthConsumer(EnrollOAuthConsumerRequest) returns (EnrollOAuthConsumerResponse);
+}
+
+message EnrollOAuthConsumerRequest {
+  string account_id = 1;
+  string app_id = 2;
+  // issuer and subject are the verified token's iss and sub claims.
+  string issuer = 3;
+  string subject = 4;
+  // email is the token's email claim, when it has one; it names the
+  // consumer and is never used to match one.
+  string email = 5;
+}
+
+message EnrollOAuthConsumerResponse {
+  string consumer_id = 1;
+  // active is false for a revoked or closed consumer: the gateway refuses it.
+  bool active = 2;
+  // created reports a new consumer.
+  bool created = 3;
 }
 
 message DecideAgentRequestRequest {

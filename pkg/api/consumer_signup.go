@@ -47,6 +47,11 @@ type PutConsumerSignupRequest struct {
 	// (ADR-20261021183000).
 	CustomerPlanChanges bool `json:"customer_plan_changes,omitempty"`
 	CustomerClosing     bool `json:"customer_closing,omitempty"`
+	// FreePlanID is an offered plan that charges nothing: joining it needs
+	// no card. OAuthConsumers enrolls callers signed in through the app's
+	// MCP oauth-proxy issuer as consumers on it (ADR-20261124094745).
+	FreePlanID     string `json:"free_plan_id,omitempty"`
+	OAuthConsumers bool   `json:"oauth_consumers,omitempty"`
 }
 
 // ConsumerSignupSettingsResponse is an app's sign-up settings. PageURL is
@@ -67,6 +72,8 @@ type ConsumerSignupSettingsResponse struct {
 	// with their own key (ADR-20261021183000).
 	CustomerPlanChanges bool      `json:"customer_plan_changes"`
 	CustomerClosing     bool      `json:"customer_closing"`
+	FreePlanID          string    `json:"free_plan_id,omitempty"`
+	OAuthConsumers      bool      `json:"oauth_consumers"`
 	CreatedAt           time.Time `json:"created_at"`
 	UpdatedAt           time.Time `json:"updated_at"`
 }
@@ -110,6 +117,8 @@ type ConsumerSignupPlan struct {
 	MaxRequestsPerMinute int64                 `json:"max_requests_per_minute,omitempty"`
 	MaxUnitsPerMonth     int64                 `json:"max_units_per_month,omitempty"`
 	Prices               []ConsumerSignupPrice `json:"prices"`
+	// Free marks the plan joining which needs no card (ADR-20261124094745).
+	Free bool `json:"free,omitempty"`
 }
 
 // ConsumerSignupFormResponse is what the sign-up page shows.
@@ -145,7 +154,9 @@ func (r *CreateConsumerSignupRequest) Validate() error {
 // CreateConsumerSignupResponse sends the customer to CheckoutURL. The
 // claim token completes the sign-up and is shown only here.
 type CreateConsumerSignupResponse struct {
-	ID          string    `json:"id"`
+	ID string `json:"id"`
+	// CheckoutURL is empty for the free plan: complete the sign-up at once
+	// (ADR-20261124094745).
 	CheckoutURL string    `json:"checkout_url"`
 	ClaimToken  string    `json:"claim_token"`
 	ExpiresAt   time.Time `json:"expires_at"`

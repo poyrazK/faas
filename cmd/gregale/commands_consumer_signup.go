@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -26,7 +27,10 @@ func buildConsumerSignupRequest(verb string, f consumerFlags) (any, bool, error)
 	enabled := !f.disabled
 	req := api.PutConsumerSignupRequest{Enabled: &enabled, DisplayName: strings.TrimSpace(f.displayName), TermsURL: f.termsURL,
 		ReturnURL: f.returnURL, TrialDays: f.trialDays, DailyLimit: f.dailyLimit, CustomerPlanChanges: f.customerPlanChanges,
-		CustomerClosing: f.customerClosing}
+		CustomerClosing: f.customerClosing, OAuthConsumers: f.oauthConsumers}
+	if f.oauthConsumers && strings.TrimSpace(f.freePlan) == "" {
+		return nil, true, errors.New("--oauth-consumers needs --free-plan: OAuth callers join the free plan")
+	}
 	if f.keyScopes != "" {
 		req.KeyScopes = splitList(f.keyScopes)
 	}
@@ -61,6 +65,17 @@ func callConsumerSignup(ctx context.Context, client *Client, verb string, args [
 				return nil, true, err
 			}
 			req.PlanIDs = append(req.PlanIDs, id)
+		}
+		if name := strings.TrimSpace(f.freePlan); name != "" {
+			id, err := resolvePlanID(ctx, client, slug, name)
+			if err != nil {
+				return nil, true, err
+			}
+			// The free plan is always offered.
+			if !slices.Contains(req.PlanIDs, id) {
+				req.PlanIDs = append(req.PlanIDs, id)
+			}
+			req.FreePlanID = id
 		}
 		out, err := client.PutConsumerSignup(ctx, slug, req)
 		return out, true, err

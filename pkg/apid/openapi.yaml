@@ -136812,6 +136812,8 @@ components:
         daily_limit: { type: integer, minimum: 1, maximum: 1000, description: "Sign-ups per UTC day (default 100)." }
         customer_plan_changes: { type: boolean, description: "Let customers switch between plan_ids with their own key." }
         customer_closing: { type: boolean, description: "Let customers close their account with their own key." }
+        free_plan_id: { type: string, format: uuid, description: "One of plan_ids whose rate cards charge nothing; joining it needs no card (ADR-20261124094745)." }
+        oauth_consumers: { type: boolean, description: "People signed in through the app's MCP oauth-proxy issuer become consumers on free_plan_id; needs free_plan_id." }
 
     ConsumerSignupSettingsResponse:
       description: "An app's sign-up settings."
@@ -136835,6 +136837,8 @@ components:
         page_url: { type: string, format: uri, description: "The hosted sign-up page to link customers to." }
         customer_plan_changes: { type: boolean }
         customer_closing: { type: boolean }
+        free_plan_id: { type: string, format: uuid }
+        oauth_consumers: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -136886,6 +136890,7 @@ components:
         name: { type: string }
         max_requests_per_minute: { type: integer, format: int64 }
         max_units_per_month: { type: integer, format: int64 }
+        free: { type: boolean, description: "Joining this plan needs no card." }
         prices:
           type: array
           items: { $ref: '#/components/schemas/ConsumerSignupPrice' }
@@ -136919,7 +136924,7 @@ components:
       required: [id, checkout_url, claim_token, expires_at]
       properties:
         id: { type: string, format: uuid }
-        checkout_url: { type: string, format: uri }
+        checkout_url: { type: string, description: "Stripe Checkout URL; empty for the free plan, which completes at once." }
         claim_token: { type: string }
         expires_at: { type: string, format: date-time }
 
