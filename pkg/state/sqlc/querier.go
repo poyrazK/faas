@@ -987,6 +987,8 @@ type Querier interface {
 	// Accounts created at or after since that have verified their email
 	// (ADR-20261104145353 amendment 1: the platform-wide daily sign-up cap counts
 	// the accounts that can use a Free allowance). Read only on a sign-up attempt.
+	// Unclaimed anonymous-deploy accounts have their own cap (ADR-20261124080000)
+	// and count here only once a human claims them.
 	CountVerifiedAccountsCreatedSince(ctx context.Context, db DBTX, since pgtype.Timestamptz) (int64, error)
 	CountWorkflowRunningActionsForAdmission(ctx context.Context, db DBTX, arg CountWorkflowRunningActionsForAdmissionParams) (int64, error)
 	// scopes is $4 (text[]). The handler is responsible for validating the

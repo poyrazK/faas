@@ -174,3 +174,5 @@ plain trigger_records.work_fairness_digest
 plain trigger_records.work_key_digest
 plain workflow_runs.create_request_fingerprint
 plain workflow_webhook_receipts.body_hash
+# ADR-20261124080000: SHA-256 of an anonymous deploy claim token; the token itself is never stored.
+plain unclaimed_accounts.claim_token_sha256

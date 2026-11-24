@@ -1018,9 +1018,6 @@
       ],
       "docs_url": "/docs/claimable-deploys",
       "acceptance_test": "pkg/apid/apidserver/claimable_deploys_test.go::TestAnonymousDeployIsClaimedInPlace",
-      "consumers": [
-        "apid"
-      ],
       "routes": [
         "/claim",
         "/v1/account/claim-link",

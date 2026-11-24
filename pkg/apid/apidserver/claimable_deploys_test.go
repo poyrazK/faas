@@ -82,7 +82,7 @@ func TestAnonymousDeployIsClaimedInPlace(t *testing.T) {
 	if rec := claimBearer(h, http.MethodGet, "/v1/apps", sess.APIKey, ""); rec.Code != http.StatusOK {
 		t.Fatalf("GET /v1/apps = %d: %s", rec.Code, rec.Body.String())
 	}
-	for _, path := range []string{"/v1/keys", "/v1/apps/agent-app/domains", "/v1/orgs"} {
+	for _, path := range []string{"/v1/keys", "/v1/domains", "/v1/orgs"} {
 		if rec := claimBearer(h, http.MethodPost, path, sess.APIKey, `{}`); rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), api.CodeClaimRequired) {
 			t.Errorf("POST %s = %d %s, want 403 claim_required", path, rec.Code, rec.Body.String())
 		}

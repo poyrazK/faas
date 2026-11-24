@@ -3088,3 +3088,6 @@ func RunMCPReplayGateForTest(ctx context.Context, endpoint, candidate, serving s
 	report, ok := runMCPReplayGate(ctx, endpoint, candidate, serving, "", gate)
 	return report.Skipped, ok
 }
+
+// AnonymousDeployByDefault exposes the no-credential deploy default (ADR-20261124080000).
+func AnonymousDeployByDefault(getenv func(string) string) bool { return anonymousDeployByDefault(getenv) }

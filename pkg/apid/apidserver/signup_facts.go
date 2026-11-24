@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -125,7 +126,11 @@ func (s *server) linkSignupToHeld(ctx context.Context, accountID, emailDomain st
 		return 0
 	}
 	now := timeNow()
-	links, err := store.LinkAccountToHeld(ctx, accountID, disposableemail.Linkable(emailDomain), now.Add(-api.SignupFactsPersonalRetention), now)
+	// Every unclaimed anonymous-deploy account shares the placeholder
+	// domain (ADR-20261124080000): linking on it would tie each new one to
+	// any held one, so only the network signals apply to them.
+	domainLinkable := disposableemail.Linkable(emailDomain) && !strings.EqualFold(emailDomain, api.UnclaimedEmailDomain)
+	links, err := store.LinkAccountToHeld(ctx, accountID, domainLinkable, now.Add(-api.SignupFactsPersonalRetention), now)
 	if err != nil {
 		s.log.Warn("apid: held-account linking failed", "account", accountID, "err", err)
 		s.signupMetrics.observeHeldLink("error")
