@@ -43,9 +43,10 @@ func gatewayRefusalUnbillable(r *http.Request, status int) bool {
 // usageUnbillable is the billing rule: a response the guest never started
 // answering is not billed, whatever its error status. It is deliberately
 // separate from platformErrorForSLO, which counts only 5xx: a gateway refusal
-// is the platform working, not failing.
+// is the platform working, not failing. MCP protocol overhead an MCP resource
+// policy admitted is not billed either (ADR-20261123192254).
 func usageUnbillable(r *http.Request, status int) bool {
-	return platformFailureUnbillable(r, status) || gatewayRefusalUnbillable(r, status)
+	return platformFailureUnbillable(r, status) || gatewayRefusalUnbillable(r, status) || mcpProtocolOverheadFrom(r)
 }
 
 // platformErrorForSLO reports whether a response counts in

@@ -29,6 +29,11 @@ type MCPResourcePolicy struct {
 	Credential string `json:"credential,omitempty"`
 	// ToolLimits caps tools/call per caller and tool name.
 	ToolLimits map[string]MCPToolLimit `json:"tool_limits,omitempty"`
+	// Audience is the token audience an external OAuth issuer uses for this
+	// server when it is not the resource, such as Entra's "api://…" IDs
+	// (ADR-20261123192254). The rule's JWT audience must then be exactly
+	// it. Bearer-token policies only.
+	Audience string `json:"audience,omitempty"`
 }
 
 // MCPCredentialConsumerKey is the MCPResourcePolicy.Credential for api-key
@@ -55,6 +60,38 @@ const MCPGatewayAuthorizedHeader = "Gregale-Mcp-Gateway-Authorized"
 // CodeMCPToolRateLimited is the problem code of a tools/call refused by an
 // MCP policy tool limit.
 const CodeMCPToolRateLimited = "mcp_tool_rate_limited"
+
+// MCP billing labels (ADR-20261123192254). The gateway gives each billable
+// MCP request an ordinary "METHOD /template" billing route, so rate-card
+// route weights, monthly allowances and plan limits price and cap MCP tools
+// like HTTP routes: "MCP /tools/<name>", "MCP /prompts/<name>", the unnamed
+// "MCP /tools" and "MCP /prompts" for entries the policy does not list, and
+// "MCP /resources". Protocol overhead has no label and no billable units.
+const (
+	MCPBillingToolsPrefix    = "MCP /tools"
+	MCPBillingPromptsPrefix  = "MCP /prompts"
+	MCPBillingResourcesLabel = "MCP /resources"
+)
+
+// MCPToolBillingLabel is the billing route of a call to tool.
+func MCPToolBillingLabel(tool string) string { return MCPBillingToolsPrefix + "/" + tool }
+
+// ValidMCPBillingName reports whether an MCP tool or prompt name can appear
+// in a billing label: 1 to MCPBillingNameMaxBytes ASCII letters, digits,
+// '_', '-' or '.', the MCP tool-name alphabet.
+func ValidMCPBillingName(name string) bool {
+	if name == "" || len(name) > MCPBillingNameMaxBytes {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		switch c := name[i]; {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '_', c == '-', c == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
 
 // MCPToolLimit allows Requests tools/call requests per caller in each
 // WindowSeconds window.
@@ -96,6 +133,9 @@ func (p *MCPResourcePolicy) Validate() error {
 	}
 	if err := validateMCPScopes(p.Scopes); err != nil {
 		return err
+	}
+	if p.Audience != "" && (p.Credential != "" || len(p.Audience) > MCPJWTAudienceMaxBytes || strings.IndexFunc(p.Audience, func(r rune) bool { return r <= 0x20 || r == 0x7f }) >= 0) {
+		return fmt.Errorf("MCP audience must be a bearer-token policy's audience of at most %d bytes without spaces", MCPJWTAudienceMaxBytes)
 	}
 	if p.Credential != "" && p.Credential != MCPCredentialConsumerKey {
 		return fmt.Errorf("MCP credential must be empty or %q", MCPCredentialConsumerKey)
