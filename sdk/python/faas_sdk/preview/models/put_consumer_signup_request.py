@@ -45,7 +45,7 @@ class PutConsumerSignupRequest:
     customer_closing: bool | Unset = UNSET
     """Let customers close their account with their own key."""
     free_plan_id: UUID | Unset = UNSET
-    """One of plan_ids whose rate cards charge nothing; joining it needs no card (ADR-20261124094745)."""
+    """One of plan_ids whose rate cards charge nothing; joining it needs no card."""
     oauth_consumers: bool | Unset = UNSET
     """People signed in through the app's MCP oauth-proxy issuer become consumers on free_plan_id; needs
     free_plan_id."""

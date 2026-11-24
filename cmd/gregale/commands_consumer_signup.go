@@ -91,7 +91,7 @@ func callConsumerSignup(ctx context.Context, client *Client, verb string, args [
 	case "identities":
 		out, err := client.ListConsumerIdentities(ctx, slug)
 		return out, true, err
-	case "identity-unlink":
+	case "identity-delete":
 		if err := client.DeleteConsumerIdentity(ctx, slug, args[1]); err != nil {
 			return nil, true, err
 		}

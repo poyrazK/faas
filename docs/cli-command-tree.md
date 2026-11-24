@@ -224,6 +224,8 @@ touch them. The tables below map each earlier name.
 | `gregale consumers billing-policy` | `gregale api consumer billing-policy get` |
 | `gregale consumers credit-grant` | `gregale api consumer credit grant` |
 | `gregale consumers credit-void` | `gregale api consumer credit void` |
+| `gregale consumers identities` | `gregale api consumer identity list` |
+| `gregale consumers identity-delete` | `gregale api consumer identity delete` |
 | `gregale consumers key-create` | `gregale api consumer key create` |
 | `gregale consumers key-revoke` | `gregale api consumer key revoke` |
 | `gregale consumers overdue-holds` | `gregale api consumer overdue-hold list` |

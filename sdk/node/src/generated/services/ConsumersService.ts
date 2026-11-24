@@ -405,7 +405,7 @@ export class ConsumersService {
   }
   /**
    * Read the plans an upgrade link's customer can move to.
-   * Needs no credential: the upgrade link's token (ADR-20261124094745)
+   * Needs no credential: the upgrade link's token
    * names the customer. A plan-limit `429` carries the link in
    * `upgrade_url`.
    *

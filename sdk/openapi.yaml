@@ -53432,7 +53432,7 @@ components:
           format: uri
           description: |
             On a `consumer_plan_limit_exceeded` 429, the API's hosted page
-            where the consumer moves to another plan (ADR-20261124094745).
+            where the consumer moves to another plan.
         billing_portal_url: {type: string, format: uri}
         paddle_checkout_url:
           type: string

@@ -3997,7 +3997,7 @@ var cliCommands = []cliCommand{
 			{Name: "signup-delete", Short: "Turn sign-up off; pending sign-ups can no longer complete", Positionals: []string{"<slug>"}},
 			{Name: "signups", Short: "List the app's latest sign-ups", Positionals: []string{"<slug>"}},
 			{Name: "identities", Short: "List MCP OAuth sign-ins and the consumers they bill to", Positionals: []string{"<slug>"}},
-			{Name: "identity-unlink", Short: "Unlink an MCP OAuth sign-in from its consumer so it can link to another key",
+			{Name: "identity-delete", Short: "Unlink an MCP OAuth sign-in from its consumer so it can link to another key",
 				Positionals: []string{"<slug>", "<identity-id>"}},
 		},
 	},

@@ -10241,7 +10241,7 @@ paths:
       operationId: getConsumerUpgrade
       summary: Read the plans an upgrade link's customer can move to.
       description: |
-        Needs no credential: the upgrade link's token (ADR-20261124094745)
+        Needs no credential: the upgrade link's token
         names the customer. A plan-limit `429` carries the link in
         `upgrade_url`.
       security: []
@@ -134423,7 +134423,7 @@ components:
           format: uri
           description: |
             On a `consumer_plan_limit_exceeded` 429, the API's hosted page
-            where the consumer moves to another plan (ADR-20261124094745).
+            where the consumer moves to another plan.
         billing_portal_url: { type: string, format: uri }
         paddle_checkout_url:
           type: string
@@ -137009,7 +137009,7 @@ components:
         daily_limit: { type: integer, minimum: 1, maximum: 1000, description: "Sign-ups per UTC day (default 100)." }
         customer_plan_changes: { type: boolean, description: "Let customers switch between plan_ids with their own key." }
         customer_closing: { type: boolean, description: "Let customers close their account with their own key." }
-        free_plan_id: { type: string, format: uuid, description: "One of plan_ids whose rate cards charge nothing; joining it needs no card (ADR-20261124094745)." }
+        free_plan_id: { type: string, format: uuid, description: "One of plan_ids whose rate cards charge nothing; joining it needs no card." }
         oauth_consumers: { type: boolean, description: "People signed in through the app's MCP oauth-proxy issuer become consumers on free_plan_id; needs free_plan_id." }
 
     ConsumerSignupSettingsResponse:

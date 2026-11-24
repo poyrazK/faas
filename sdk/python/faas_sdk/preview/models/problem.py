@@ -108,7 +108,7 @@ class Problem:
     """
     upgrade_url: str | Unset = UNSET
     """On a `consumer_plan_limit_exceeded` 429, the API's hosted page
-    where the consumer moves to another plan (ADR-20261124094745).
+    where the consumer moves to another plan.
     """
     billing_portal_url: str | Unset = UNSET
     paddle_checkout_url: str | Unset = UNSET

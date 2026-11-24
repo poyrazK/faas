@@ -435,7 +435,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"api consumer rate-card list", "consumers rate-cards"},
 	{"api consumer plan set", "consumers set-plan"},
 	{"api consumer identity list", "consumers identities"},
-	{"api consumer identity unlink", "consumers identity-unlink"},
+	{"api consumer identity delete", "consumers identity-delete"},
 	{"api consumer signup get", "consumers signup"},
 	{"api consumer signup delete", "consumers signup-delete"},
 	{"api consumer signup set", "consumers signup-set"},

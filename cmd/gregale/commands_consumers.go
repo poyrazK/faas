@@ -61,10 +61,10 @@ var consumerVerbPositionals = map[string][]string{
 	"signup-delete":         {"slug"},
 	"signups":               {"slug"},
 	"identities":            {"slug"},
-	"identity-unlink":       {"slug", "identity-id"},
+	"identity-delete":       {"slug", "identity-id"},
 }
 
-const consumersUsage = "usage: gregale api consumer <list|create|info|revoke|keys|key-create|key-revoke|usage|quote|completeness|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff|statement-export|plans|plan-create|plan-update|set-plan|plan-history|usage-alerts|credits|credit-grant|credit-void|spend-cap|spend-cap-set|spend-cap-delete|trial|trial-set|trial-end|billing-policy|billing-policy-set|billing-policy-delete|overdue-holds|signup|signup-set|signup-delete|signups|identities|identity-unlink> <slug> [consumer-id] [id] [flags]"
+const consumersUsage = "usage: gregale api consumer <list|create|info|revoke|keys|key-create|key-revoke|usage|quote|completeness|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff|statement-export|plans|plan-create|plan-update|set-plan|plan-history|usage-alerts|credits|credit-grant|credit-void|spend-cap|spend-cap-set|spend-cap-delete|trial|trial-set|trial-end|billing-policy|billing-policy-set|billing-policy-delete|overdue-holds|signup|signup-set|signup-delete|signups|identities|identity-delete> <slug> [consumer-id] [id] [flags]"
 
 // consumerFlags holds every leaf flag; consumerVerbFlags decides which
 // verb may set which, so a misplaced flag is a usage error, not ignored.

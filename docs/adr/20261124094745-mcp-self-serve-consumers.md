@@ -107,12 +107,15 @@ link; an OAuth consumer is identified by issuer + subject.
   `Auth.LinkOAuthConsumer` RPC; apid verifies the key against the app's
   consumers (live, unexpired, hash match) and, in one transaction, points
   the identity at the key's consumer and revokes the consumer enrollment
-  created. Its billed usage stays on that closed consumer's statements.
+  created; the closed consumer's external ref becomes `linked:<id>`, so an
+  unlinked identity enrolls afresh, while a consumer the owner revoked
+  keeps its ref and stays refused. Its billed usage stays on that closed
+  consumer's statements.
   The answering gateway bills the next call to the key's consumer at once;
   other gateways do when their 5-minute cache entry expires.
 - One identity links to at most one key consumer; relinking needs the
-  owner: `gregale consumers identities APP` lists identities and
-  `gregale consumers identity-unlink APP ID` deletes one
+  owner: `gregale api consumer identity list APP` lists identities and
+  `gregale api consumer identity delete APP ID` deletes one
   (`GET`/`DELETE /v1/apps/APP/consumer-identities[/ID]`). An unlinked
   identity enrolls a new free consumer on its next call.
 - No email matching: sign-up emails are typed in and never verified, so a

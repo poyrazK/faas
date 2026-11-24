@@ -267,6 +267,26 @@ func (c *Client) DeleteConsumerIdentity(ctx context.Context, app, id string) err
 	return c.do(ctx, "DELETE", "/v1/apps/"+url.PathEscape(app)+"/consumer-identities/"+url.PathEscape(id), nil, nil)
 }
 
+// GetConsumerUpgrade reads the plans a customer's upgrade link offers. It
+// needs no credential: token is the link's token.
+func (c *Client) GetConsumerUpgrade(ctx context.Context, app, token string) (ConsumerUpgradeResponse, error) {
+	var out ConsumerUpgradeResponse
+	return out, c.do(ctx, "GET", "/v1/consumer-signup/"+url.PathEscape(app)+"/upgrade/plans?token="+url.QueryEscape(token), nil, &out)
+}
+
+// StartConsumerUpgrade moves the link's customer to req.PlanID, or returns
+// the Stripe Checkout that saves their card first.
+func (c *Client) StartConsumerUpgrade(ctx context.Context, app string, req StartConsumerUpgradeRequest) (ConsumerUpgradeResult, error) {
+	var out ConsumerUpgradeResult
+	return out, c.do(ctx, "POST", "/v1/consumer-signup/"+url.PathEscape(app)+"/upgrade", req, &out)
+}
+
+// CompleteConsumerUpgrade finishes an upgrade after Checkout saved the card.
+func (c *Client) CompleteConsumerUpgrade(ctx context.Context, app string, req CompleteConsumerUpgradeRequest) (ConsumerUpgradeResult, error) {
+	var out ConsumerUpgradeResult
+	return out, c.do(ctx, "POST", "/v1/consumer-signup/"+url.PathEscape(app)+"/upgrade/complete", req, &out)
+}
+
 // GetConsumerSignupForm reads an app's public sign-up form. It needs no
 // credential.
 func (c *Client) GetConsumerSignupForm(ctx context.Context, app string) (ConsumerSignupFormResponse, error) {

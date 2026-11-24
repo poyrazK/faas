@@ -45,7 +45,7 @@ export type PutConsumerSignupRequest = {
    */
   customer_closing?: boolean;
   /**
-   * One of plan_ids whose rate cards charge nothing; joining it needs no card (ADR-20261124094745).
+   * One of plan_ids whose rate cards charge nothing; joining it needs no card.
    */
   free_plan_id?: string;
   /**

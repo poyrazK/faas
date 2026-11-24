@@ -82,7 +82,7 @@ def sync_detailed(
 ) -> Response[ConsumerUpgradeResponse | Problem]:
     """Read the plans an upgrade link's customer can move to.
 
-     Needs no credential: the upgrade link's token (ADR-20261124094745)
+     Needs no credential: the upgrade link's token
     names the customer. A plan-limit `429` carries the link in
     `upgrade_url`.
 
@@ -118,7 +118,7 @@ def sync(
 ) -> ConsumerUpgradeResponse | Problem | None:
     """Read the plans an upgrade link's customer can move to.
 
-     Needs no credential: the upgrade link's token (ADR-20261124094745)
+     Needs no credential: the upgrade link's token
     names the customer. A plan-limit `429` carries the link in
     `upgrade_url`.
 
@@ -149,7 +149,7 @@ async def asyncio_detailed(
 ) -> Response[ConsumerUpgradeResponse | Problem]:
     """Read the plans an upgrade link's customer can move to.
 
-     Needs no credential: the upgrade link's token (ADR-20261124094745)
+     Needs no credential: the upgrade link's token
     names the customer. A plan-limit `429` carries the link in
     `upgrade_url`.
 
@@ -183,7 +183,7 @@ async def asyncio(
 ) -> ConsumerUpgradeResponse | Problem | None:
     """Read the plans an upgrade link's customer can move to.
 
-     Needs no credential: the upgrade link's token (ADR-20261124094745)
+     Needs no credential: the upgrade link's token
     names the customer. A plan-limit `429` carries the link in
     `upgrade_url`.
 

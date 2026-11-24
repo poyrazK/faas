@@ -13,8 +13,14 @@ import (
 // Linking an OAuth identity to an existing consumer (ADR-20261124094745):
 // a person who already holds a consumer key for an app and then signs in to
 // its MCP server proves the key, and their sign-ins bill to that consumer.
-// The consumer their first sign-in enrolled is revoked. An identity linked
+// The consumer their first sign-in enrolled is revoked, and its external ref
+// becomes linkedConsumerRef so the ref is free: after the owner unlinks the
+// identity, its next sign-in enrolls a new consumer. (A consumer the owner
+// revoked keeps its ref, so its sign-ins stay refused.) An identity linked
 // to a key's consumer is moved again only after the owner unlinks it.
+
+// linkedConsumerRef is the external ref of a consumer a link closed.
+func linkedConsumerRef(consumerID string) string { return "linked:" + consumerID }
 
 // ErrAPIConsumerKeyRejected reports a consumer key that is not a live key
 // of one of the app's active consumers. Callers answer every such key the
@@ -89,8 +95,11 @@ func (m *MemStore) LinkAPIConsumerIdentity(_ context.Context, in APIConsumerIden
 		revoked := ""
 		if ok && previous.Active() {
 			previous.Status, previous.RevokedAt, previous.UpdatedAt = APIConsumerStatusRevoked, &now, now
-			m.apiConsumers[previous.ID] = previous
 			revoked = previous.ID
+		}
+		if ok {
+			previous.ExternalRef = linkedConsumerRef(previous.ID)
+			m.apiConsumers[previous.ID] = previous
 		}
 		id.ConsumerID, id.UpdatedAt = target.ID, now
 		m.apiConsumerIdentities[key] = id
@@ -181,11 +190,11 @@ func (s *PgStore) LinkAPIConsumerIdentity(ctx context.Context, in APIConsumerIde
 	}
 	revoked := ""
 	if previous.Active() {
-		if _, err := tx.Exec(ctx, `update api_consumers set status = 'revoked', revoked_at = coalesce(revoked_at, now()), updated_at = now()
-			where id = $1::uuid`, previous.ID); err != nil {
-			return APIConsumerIdentity{}, "", fmt.Errorf("link consumer identity: revoke: %w", err)
-		}
 		revoked = previous.ID
+	}
+	if _, err := tx.Exec(ctx, `update api_consumers set status = 'revoked', revoked_at = coalesce(revoked_at, now()), updated_at = now(),
+		external_ref = $2 where id = $1::uuid`, previous.ID, linkedConsumerRef(previous.ID)); err != nil {
+		return APIConsumerIdentity{}, "", fmt.Errorf("link consumer identity: revoke: %w", err)
 	}
 	id, err = scanAPIConsumerIdentity(tx.QueryRow(ctx, `update api_consumer_identities set consumer_id = $2::uuid, updated_at = now()
 		where id = $1::uuid returning `+apiConsumerIdentityCols, id.ID, target.ID))

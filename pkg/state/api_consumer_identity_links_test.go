@@ -89,6 +89,24 @@ func checkAPIConsumerIdentityLinks(t *testing.T, ctx context.Context, st state.S
 	if moved, _, err := link("u1", third.ID); err != nil || moved.ConsumerID != third.ID {
 		t.Fatalf("link after unlink = %+v %v", moved, err)
 	}
+	// The consumer the link closed gave up its ref: after an unlink, the
+	// identity enrolls a new consumer rather than the closed one.
+	if c, _ := st.GetAPIConsumerByID(ctx, accountID, enrolled.ID); c.ExternalRef != "linked:"+enrolled.ID {
+		t.Fatalf("closed consumer ref = %q", c.ExternalRef)
+	}
+	listed, _ = links.ListAPIConsumerIdentities(ctx, accountID, appID)
+	for _, id := range listed {
+		if id.Subject == "u1" {
+			if err := links.DeleteAPIConsumerIdentity(ctx, accountID, appID, id.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	_, fresh, created, err := st.(state.APIConsumerIdentityStore).EnrollAPIConsumerIdentity(ctx, state.APIConsumerEnrollment{AccountID: accountID,
+		AppID: appID, Issuer: "https://login.example", Subject: "u1", EffectiveFrom: minute, DayStart: minute.Truncate(24 * time.Hour)})
+	if err != nil || !created || !fresh.Active() || fresh.ID == enrolled.ID {
+		t.Fatalf("enroll after unlink = %+v %v %v; want a new consumer", fresh, created, err)
+	}
 }
 
 // adr: 20261124094745
