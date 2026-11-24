@@ -64,6 +64,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	agentstore "github.com/onebox-faas/faas/pkg/state/agents"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagegrant/secretdgrant"
 	"github.com/onebox-faas/faas/pkg/webhook"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/onebox-faas/faas/pkg/wire/otelinit"
@@ -1043,6 +1044,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	storageBackend, err := storage.BackendFromEnvContext(ctx)
 	if err != nil {
 		return fmt.Errorf("schedd: storage backend: %w", err)
+	}
+	// ADR-20261117190000: on a granted compute node schedd holds no store
+	// credential either; its signature and snapshot reads go through
+	// secretd grants and its deletes become control-plane requests.
+	storageGranted, closeStorageGrants, err := secretdgrant.FromEnv(ctx, os.Getenv, storageBackend, "schedd", log)
+	if err != nil {
+		return err
+	}
+	defer closeStorageGrants()
+	if deferred, err := objectgc.DeferFromEnv(os.Getenv, storageBackend, store, "schedd"); err != nil {
+		return fmt.Errorf("schedd: %w", err)
+	} else if deferred {
+		log.Info("schedd: shared-store deletes deferred to the control plane")
 	}
 	// ADR-054 acceptance: wire the LocalCacheBackend observer so
 	// stale-fallback serves on the wake path emit
@@ -2214,6 +2228,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// scale-up, targets and floor triggers, the reaper and the scaling-policy
 	// observer. It rereads the rows only when their version changed.
 	appSnapshot := sched.NewAppSnapshot(store)
+	// PR scale-out readiness #3: read-only snap/ vs DB drift sweep, hourly
+	// (api.DefaultDiskDriftInterval). Diagnostic only — never writes, never
+	// follows symlinks, never repairs; ops alert on
+	// rate(snapshot_disk_drift_total[5m]). ADR-054 §3: it enumerates snap/
+	// through the storage backend (a remote backend degrades to a presence
+	// check); ADR 20261022184951 amendment 1 adds vmmd's native runtime
+	// snapshots. A granted node cannot list the shared store, and with a
+	// shared store the sweep is fleet-wide: the control plane's schedd
+	// runs it (ADR-20261117190000).
+	var diskDrift *sched.DiskDrift
+	if !storageGranted {
+		diskDrift = sched.NewDiskDrift(store, log).WithMetrics(ops).
+			WithStorage(storageBackend).
+			WithNativeRuntimeSnapshots(nativeRuntimeSnapshotLister(log))
+	}
 	loop := sched.NewLoop(pool, engine, log)
 	if databases != nil {
 		loop.WithDatabaseMover(databaseMover{sched: databases}).WithDatabaseRestarter(databaseMover{sched: databases}).
@@ -2263,22 +2292,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// engine got) — needed by the aggressive-reaper scale-down
 		// counter (ObserveScaleDown) and the audit-row emission.
 		WithOpsMetrics(ops).
-		// PR scale-out readiness #3: read-only /srv/fc/snap vs DB drift
-		// sweep. Hourly cadence (api.DefaultDiskDriftInterval = 1h).
-		// Diagnostic only — never writes, never follows symlinks,
-		// never repairs. Ops reads rate(snapshot_disk_drift_total[5m])
-		// and alerts on a non-zero rate. Shares the OpsMetrics
-		// receiver the engine + retention + watchdog already use.
-		WithDiskDrift(sched.NewDiskDrift(store, log).WithMetrics(ops).
-			// ADR-054 §3: enumerate the snap/ prefix via the
-			// production storage backend instead of os.ReadDir on
-			// /srv/fc/snap. The byte-comparison path stays in
-			// place for the local backend; a remote backend (OCI)
-			// degrades to a presence check.
-			WithStorage(storageBackend).
-			// ADR 20261022184951 amendment 1: native runtime snapshots
-			// sit in vmmd's private tree under the same snap/ keys.
-			WithNativeRuntimeSnapshots(nativeRuntimeSnapshotLister(log))).
+		// nil on a granted compute node (see diskDrift above).
+		WithDiskDrift(diskDrift).
 		// Audit seam (lifted from cmd/apid/audit.go into pkg/audit
 		// for cross-daemon reuse). schedd uses actor="schedd" so the
 		// cron-fire path can emit a `cron.fired` events row after

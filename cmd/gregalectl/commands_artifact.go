@@ -644,7 +644,7 @@ var imagedLifecycleEnvNames = []string{"FAAS_OCI_USERNAME", "FAAS_OCI_PASSWORD",
 // stays authoritative for store location and routing, while imaged gains the
 // narrower write/delete authority needed for artifact lifecycle work.
 func loadImagedStorageEnv(path string) (func(), error) {
-	if err := validateImagedStorageEnv(path); err != nil {
+	if err := validateImagedStorageEnv(path, false); err != nil {
 		return func() {}, fmt.Errorf("read lifecycle env: %w", err)
 	}
 	body, err := os.ReadFile(path)

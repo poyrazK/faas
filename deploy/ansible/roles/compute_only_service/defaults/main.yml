@@ -29,9 +29,10 @@ faas_imaged_secretd_registry_pulls: false
 
 # ADR-20261117190000, per compute node after faas_secretd_target, the
 # control plane's faas_secretd_storage_grants and its object GC worker: true
-# makes imaged, builderd and vmmd defer deletes and reach the shared store
-# only through secretd grants (FAAS_STORAGE_ACCESS=secretd). Each daemon
-# picks it up at its next restart.
+# makes imaged, builderd, vmmd and schedd defer deletes and reach the shared
+# store only through secretd grants (FAAS_STORAGE_ACCESS=secretd). Each
+# daemon picks it up at its next restart. With it on, an S3 node's
+# storage.env and imaged-storage.env may carry no key at all (slice 5).
 faas_storage_grants: false
 
 # ADR-20261110120000 (amended 2026-11-15): a daemon listening on every

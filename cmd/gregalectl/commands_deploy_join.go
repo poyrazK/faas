@@ -59,6 +59,7 @@ type deployJoinOptions struct {
 	ComputeDBRolesSource    string
 	StorageEnvSource        string
 	ImagedStorageEnvSource  string
+	StorageGrants           bool
 	RuntimeBasesEnvSource   string
 	StorageDevice           string
 	FormatStorage           bool
@@ -195,6 +196,7 @@ func cmdDeployJoinNode(args []string) int {
 	computeDBRoles := fs.String("compute-db-roles", "", "optional per-daemon compute database logins, <unit>=<dsn> lines (artifact-dir convention: compute-db-roles.env)")
 	storageEnv := fs.String("storage-env", "", "shared remote storage.env source (required for multi-box apply)")
 	imagedStorageEnv := fs.String("imaged-storage-env", "", "imaged-only migration lifecycle credential source (required for multi-box apply)")
+	storageGrants := fs.Bool("storage-grants", false, "the node reaches the shared store through secretd grants (ADR-20261117190000): accept S3 storage env files without an access key and set faas_storage_grants")
 	runtimeBasesEnv := fs.String("runtime-bases-env", "", "release-bound digest-pinned runtime base refs (required for apply)")
 	storageDevice := fs.String("storage-device", "", "optional fast-root block device (must be an absolute path; manifest host value is used when omitted)")
 	formatStorage := fs.Bool("format-storage", false, "format an explicitly supplied blank storage device as XFS with reflink support")
@@ -258,6 +260,7 @@ func cmdDeployJoinNode(args []string) int {
 		ComputeDBRolesSource:    *computeDBRoles,
 		StorageEnvSource:        *storageEnv,
 		ImagedStorageEnvSource:  *imagedStorageEnv,
+		StorageGrants:           *storageGrants,
 		RuntimeBasesEnvSource:   *runtimeBasesEnv,
 		StorageDevice:           *storageDevice,
 		FormatStorage:           *formatStorage,
@@ -653,10 +656,10 @@ func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 			return report, fmt.Errorf("--%s must be a regular file", name)
 		}
 	}
-	if err := validateSharedStorageEnv(opts.StorageEnvSource); err != nil {
+	if err := validateSharedStorageEnv(opts.StorageEnvSource, opts.StorageGrants); err != nil {
 		return report, fmt.Errorf("--storage-env: %w", err)
 	}
-	if err := validateImagedStorageEnv(opts.ImagedStorageEnvSource); err != nil {
+	if err := validateImagedStorageEnv(opts.ImagedStorageEnvSource, opts.StorageGrants); err != nil {
 		return report, fmt.Errorf("--imaged-storage-env: %w", err)
 	}
 	for name, path := range map[string]string{
@@ -969,6 +972,11 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		// and readiness verification until node_join.yml has installed and
 		// rendered both; its final play restarts and verifies every daemon.
 		"faas_join_defer_service_handlers": true,
+	}
+	if opts.StorageGrants {
+		// Set only when asked, so --ansible-vars-file or the inventory keeps
+		// the say when the flag is absent.
+		vars["faas_storage_grants"] = true
 	}
 	varsPath := filepath.Join(tempRoot, "join-vars.json")
 	body, err := json.Marshal(vars)
@@ -1977,7 +1985,9 @@ func isDigestPinnedRuntimeRef(value string) bool {
 // provider-neutral join boundary. The file is still copied verbatim to both
 // hosts; parsing here only prevents a join that would silently run with
 // host-local snapshots, stale-cache fallback, or without a shared registry.
-func validateSharedStorageEnv(path string) error {
+// With grants (ADR-20261117190000) the node reaches S3 through secretd, so an
+// S3 file may carry no access key at all.
+func validateSharedStorageEnv(path string, grants bool) error {
 	body, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -2023,6 +2033,7 @@ func validateSharedStorageEnv(path string) error {
 			AccessKeyID:     values["FAAS_S3_ACCESS_KEY_ID"],
 			SecretAccessKey: values["FAAS_S3_SECRET_ACCESS_KEY"],
 			PathStyle:       pathStyle,
+			Granted:         grants,
 		}).Validate(); err != nil {
 			return err
 		}
@@ -2072,8 +2083,9 @@ func validateSharedStorageEnv(path string) error {
 // validateImagedStorageEnv checks imaged's lifecycle credential file. It holds
 // exactly one credential pair that overrides the shared read/write identity for
 // imaged alone: the OCI registry login, or an S3 access key pair. Storage
-// topology stays in the shared storage.env.
-func validateImagedStorageEnv(path string) error {
+// topology stays in the shared storage.env. Under grants the file may be
+// empty: imaged then publishes through secretd grants with no key.
+func validateImagedStorageEnv(path string, grants bool) error {
 	body, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -2098,6 +2110,9 @@ func validateImagedStorageEnv(path string) error {
 			return fmt.Errorf("duplicate %s assignment", key)
 		}
 		values[key] = strings.Trim(strings.TrimSpace(value), "\"'")
+	}
+	if grants && len(values) == 0 {
+		return nil
 	}
 	pair := []string{"FAAS_OCI_USERNAME", "FAAS_OCI_PASSWORD"}
 	_, s3Key := values["FAAS_S3_ACCESS_KEY_ID"]

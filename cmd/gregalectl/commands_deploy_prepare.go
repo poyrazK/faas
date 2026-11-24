@@ -55,15 +55,16 @@ var prepareChecksumAssetNames = []string{
 }
 
 type deployPrepareOptions struct {
-	ClaimFile    string
-	NodesFile    string
-	ManifestFile string
-	ReleaseTag   string
-	ReleaseRepo  string
-	SecretsDir   string
-	OutputDir    string
-	CacheDir     string
-	CosignBinary string
+	ClaimFile     string
+	NodesFile     string
+	ManifestFile  string
+	ReleaseTag    string
+	ReleaseRepo   string
+	SecretsDir    string
+	OutputDir     string
+	CacheDir      string
+	CosignBinary  string
+	StorageGrants bool
 }
 
 type prepareNodeReport struct {
@@ -136,6 +137,7 @@ func cmdDeployPrepareNode(args []string) int {
 	outputDir := fs.String("output-dir", "", "prepared join artifact directory (required)")
 	cacheDir := fs.String("cache-dir", "", "persistent cache for verified public release assets")
 	cosignBinary := fs.String("cosign-binary", "", "Linux/amd64 cosign binary to verify and stage (default: COSIGN_BINARY or PATH)")
+	storageGrants := fs.Bool("storage-grants", false, "the node reaches the shared store through secretd grants (ADR-20261117190000): accept storage.env and imaged-storage.env without an S3 access key")
 	jsonOut := fs.Bool("json", false, "emit structured JSON")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -168,6 +170,7 @@ func cmdDeployPrepareNode(args []string) int {
 		ClaimFile: *claimFile, NodesFile: *nodesFile, ManifestFile: *manifestFile,
 		ReleaseTag: *releaseTag, ReleaseRepo: *releaseRepo, SecretsDir: *secretsDir,
 		OutputDir: *outputDir, CacheDir: *cacheDir, CosignBinary: *cosignBinary,
+		StorageGrants: *storageGrants,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "gregalectl deploy prepare-node: %v\n", err)
@@ -284,7 +287,7 @@ func prepareNode(ctx context.Context, opts deployPrepareOptions) (prepareNodeRep
 	if err := prepareCopyFile(cosignCachedPath, filepath.Join(opts.OutputDir, "cosign-linux-amd64"), 0o755); err != nil {
 		return report, fmt.Errorf("stage cosign: %w", err)
 	}
-	if err := stagePrepareSecrets(opts.SecretsDir, opts.OutputDir); err != nil {
+	if err := stagePrepareSecrets(opts.SecretsDir, opts.OutputDir, opts.StorageGrants); err != nil {
 		return report, err
 	}
 
@@ -699,7 +702,7 @@ func cachePrepareTool(cacheDir, source string) (bool, string, string, error) {
 	return false, destination, digest, nil
 }
 
-func stagePrepareSecrets(sourceDir, outputDir string) error {
+func stagePrepareSecrets(sourceDir, outputDir string, grants bool) error {
 	if info, err := os.Stat(sourceDir); err != nil || !info.IsDir() {
 		if err == nil {
 			err = errors.New("not a directory")
@@ -728,7 +731,8 @@ func stagePrepareSecrets(sourceDir, outputDir string) error {
 		if err != nil {
 			return fmt.Errorf("read secret %s: %w", item.name, err)
 		}
-		if len(bytes.TrimSpace(body)) == 0 {
+		if len(bytes.TrimSpace(body)) == 0 && !(grants && item.name == "imaged-storage.env") {
+			// Under grants imaged needs no lifecycle key, so its file may be empty.
 			return fmt.Errorf("secret %s is empty", item.name)
 		}
 		if err := prepareCopyFile(source, filepath.Join(outputDir, item.name), item.mode); err != nil {
@@ -738,10 +742,10 @@ func stagePrepareSecrets(sourceDir, outputDir string) error {
 	if err := hasComputeDatabaseEnv(filepath.Join(sourceDir, "compute-db.env")); !err {
 		return errors.New("compute-db.env must contain non-empty DATABASE_URL and FAAS_VMMD_DBURL entries")
 	}
-	if err := validateSharedStorageEnv(filepath.Join(sourceDir, "storage.env")); err != nil {
+	if err := validateSharedStorageEnv(filepath.Join(sourceDir, "storage.env"), grants); err != nil {
 		return fmt.Errorf("storage.env: %w", err)
 	}
-	if err := validateImagedStorageEnv(filepath.Join(sourceDir, "imaged-storage.env")); err != nil {
+	if err := validateImagedStorageEnv(filepath.Join(sourceDir, "imaged-storage.env"), grants); err != nil {
 		return fmt.Errorf("imaged-storage.env: %w", err)
 	}
 
