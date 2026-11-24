@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
@@ -40,14 +41,17 @@ type APIConsumerPlanRouteLimit struct {
 	MaxRequestsPerMonth  int64 `json:"max_requests_per_month,omitempty"`
 }
 
-// MaxAPIConsumerPlanRouteLimits bounds a plan's route limits, like rate-card
-// route weights (MaxAPIConsumerRouteWeights).
-const MaxAPIConsumerPlanRouteLimits = MaxAPIConsumerRouteWeights
+// MaxAPIConsumerPlanRouteLimits bounds a plan's route limits
+// (api.APIConsumerPlanMaxRouteLimits).
+const MaxAPIConsumerPlanRouteLimits = api.APIConsumerPlanMaxRouteLimits
+
+// apiConsumerPlanRouteLimitsDocs explains plan route limits.
+const apiConsumerPlanRouteLimitsDocs = "https://gregale.dev/docs/api-monetization#route-limits"
 
 // ValidateAPIConsumerPlanRouteLimits checks a plan's route limits.
 func ValidateAPIConsumerPlanRouteLimits(limits map[string]APIConsumerPlanRouteLimit) error {
 	if len(limits) > MaxAPIConsumerPlanRouteLimits {
-		return fmt.Errorf("consumer plan: at most %d route limits", MaxAPIConsumerPlanRouteLimits)
+		return fmt.Errorf("consumer plan: %d route limits exceed the limit of %d; see %s", len(limits), MaxAPIConsumerPlanRouteLimits, apiConsumerPlanRouteLimitsDocs)
 	}
 	for route, limit := range limits {
 		if !ValidBillingRoute(route) {

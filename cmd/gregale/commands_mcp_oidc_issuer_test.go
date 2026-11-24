@@ -70,7 +70,7 @@ func TestMCPAuthEnableConfigExternalIssuer(t *testing.T) {
 		t.Fatalf("auth = %+v, want the external issuer with the reviewed scopes kept", cfg.Auth)
 	}
 	action := main.McpExpectedGatewayAction(cfg, []string{"ES256"}, "https://api.example")
-	if action.JWKSURL != jwks || action.Audience[0] != "api://tools" || len(action.Algorithms) != 2 || action.Issuer != "https://idp.example/" {
+	if action.JWKSURL != jwks || action.Audience[0] != "api://tools" || action.MCP.Audience != "api://tools" || action.Validate() != nil || len(action.Algorithms) != 2 || action.Issuer != "https://idp.example/" {
 		t.Fatalf("gateway action = %+v", action)
 	}
 	next := strings.Join(main.MCPAuthNext(cfg, "tools"), "\n")
@@ -98,6 +98,8 @@ func TestMCPToolKeyScopes(t *testing.T) {
 		{tools: []string{"search"}, want: "tools"},
 		{tools: []string{"delete", "export"}, want: "admin,export,tools"},
 		{tools: []string{"missing"}, err: `tool "missing" is not in auth.tool_scopes`},
+		// export's scopes include admin, which also unlocks delete.
+		{tools: []string{"export"}, err: "would also let the key call delete"},
 	} {
 		got, err := main.MCPToolKeyScopes(dir, tc.tools)
 		if tc.err != "" {

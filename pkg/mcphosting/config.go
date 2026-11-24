@@ -275,7 +275,7 @@ func (c Config) Validate() error {
 }
 
 // maxAudienceBytes bounds auth.audience.
-const maxAudienceBytes = 512
+const maxAudienceBytes = api.MCPJWTAudienceMaxBytes
 
 // OAuthProxyScopes are the scopes a Gregale Auth OAuth server issues.
 var OAuthProxyScopes = map[string]bool{"openid": true, "email": true, "profile": true, "phone": true}

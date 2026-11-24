@@ -54,6 +54,24 @@ func mcpNamedBillingLabel(prefix, name string, scopes map[string][]string, limit
 	return prefix
 }
 
+// mcpPlanLabel is the route consumer plans cap and weight: the entry's own
+// label for any valid tool or prompt name, listed in the policy or not, so
+// a --tool-limit or plan --tool-weight never silently misses a tool. It
+// never enters the app's bounded billing label set; statements still name
+// only listed entries (ADR-20261123192254).
+func mcpPlanLabel(call mcpCall, billing string) string {
+	if !api.ValidMCPBillingName(call.name) {
+		return billing
+	}
+	switch call.method {
+	case "tools/call":
+		return api.MCPBillingToolsPrefix + "/" + call.name
+	case "prompts/get":
+		return api.MCPBillingPromptsPrefix + "/" + call.name
+	}
+	return billing
+}
+
 type mcpProtocolOverheadKey struct{}
 
 // applyMCPBilling relabels an admitted MCP request for billing. A billable
@@ -68,7 +86,7 @@ func (h *Handler) applyMCPBilling(r *http.Request, app App, p *api.MCPResourcePo
 		return
 	}
 	if current, _ := r.Context().Value(billingRouteKey{}).(string); current != "" {
-		*r = *withBillingRoute(r, h.billingRouteSetFor(app.ID).admit(label))
+		*r = *withPlanRoute(withBillingRoute(r, h.billingRouteSetFor(app.ID).admit(label)), mcpPlanLabel(call, label))
 		return
 	}
 	if candidate, _ := r.Context().Value(billingRouteCandidateKey{}).(string); candidate != "" {

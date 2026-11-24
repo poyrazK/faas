@@ -99,7 +99,7 @@ func cmdMCPKeys(args []string) int {
 	newConsumer := fs.String("new-consumer", "", "create an API consumer with this name and give it the key (create)")
 	name := fs.String("name", "", "key name (create)")
 	scopes := fs.String("scopes", "", "comma-separated MCP scopes without the mcp: prefix (create; default the endpoint scopes)")
-	tools := fs.String("tools", "", "comma-separated tools the key may call: the endpoint scopes plus each tool's scopes from gregale-mcp.json (create)")
+	tools := fs.String("tools", "", "comma-separated tools the key may call; grants the endpoint scopes plus their scopes from gregale-mcp.json and refuses if those unlock other scoped tools (create)")
 	expires := fs.String("expires", "", "key expiry, RFC3339 (create)")
 	key := fs.String("key", "", "key ID (revoke)")
 	timeout := fs.Duration("timeout", 30*time.Second, "API deadline")
@@ -296,8 +296,10 @@ func requireMCPKey(ctx context.Context, c *Client, slug, consumer, keyID string)
 
 // mcpToolKeyScopes returns the scopes a key needs to call tools on an
 // api-key server: the endpoint scopes and each tool's scopes in
-// gregale-mcp.json (ADR-20261123192254). Tools that need no scope stay
-// callable by every key; the gateway still checks each call.
+// gregale-mcp.json (ADR-20261123192254). Keys carry scopes, not tool
+// lists, so it refuses when those scopes would also unlock a scoped tool
+// that was not asked for. Tools that need no scope stay callable by every
+// key.
 func mcpToolKeyScopes(path string, tools []string) ([]string, error) {
 	dir, err := filepath.Abs(path)
 	if err != nil {
@@ -319,5 +321,20 @@ func mcpToolKeyScopes(path string, tools []string) ([]string, error) {
 		scopes = append(scopes, required...)
 	}
 	slices.Sort(scopes)
-	return slices.Compact(scopes), nil
+	scopes = slices.Compact(scopes)
+	var extra []string
+	for tool, required := range cfg.Auth.ToolScopes {
+		if len(required) == 0 || slices.Contains(tools, tool) {
+			continue
+		}
+		if !slices.ContainsFunc(required, func(s string) bool { return !slices.Contains(scopes, s) }) {
+			extra = append(extra, tool)
+		}
+	}
+	if len(extra) > 0 {
+		slices.Sort(extra)
+		return nil, fmt.Errorf("scopes %s would also let the key call %s; give those tools scopes of their own in %s or include them in --tools",
+			strings.Join(scopes, ","), strings.Join(extra, ","), mcphosting.ConfigFile)
+	}
+	return scopes, nil
 }

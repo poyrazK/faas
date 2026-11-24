@@ -29,6 +29,11 @@ type MCPResourcePolicy struct {
 	Credential string `json:"credential,omitempty"`
 	// ToolLimits caps tools/call per caller and tool name.
 	ToolLimits map[string]MCPToolLimit `json:"tool_limits,omitempty"`
+	// Audience is the token audience an external OAuth issuer uses for this
+	// server when it is not the resource, such as Entra's "api://…" IDs
+	// (ADR-20261123192254). The rule's JWT audience must then be exactly
+	// it. Bearer-token policies only.
+	Audience string `json:"audience,omitempty"`
 }
 
 // MCPCredentialConsumerKey is the MCPResourcePolicy.Credential for api-key
@@ -128,6 +133,9 @@ func (p *MCPResourcePolicy) Validate() error {
 	}
 	if err := validateMCPScopes(p.Scopes); err != nil {
 		return err
+	}
+	if p.Audience != "" && (p.Credential != "" || len(p.Audience) > MCPJWTAudienceMaxBytes || strings.IndexFunc(p.Audience, func(r rune) bool { return r <= 0x20 || r == 0x7f }) >= 0) {
+		return fmt.Errorf("MCP audience must be a bearer-token policy's audience of at most %d bytes without spaces", MCPJWTAudienceMaxBytes)
 	}
 	if p.Credential != "" && p.Credential != MCPCredentialConsumerKey {
 		return fmt.Errorf("MCP credential must be empty or %q", MCPCredentialConsumerKey)

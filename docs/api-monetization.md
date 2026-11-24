@@ -315,6 +315,11 @@ gregale consumers plan-update my-api --plan free --route-limit "POST /generate=n
   `x-faas-rate-limit-scope: consumer-plan-route-minute` or
   `consumer-plan-route-month`. The response names the route and the limit.
 - A request counts toward the route only when the plan admits it too.
+- On an MCP server, cap tools with `--tool-limit`, not the endpoint's own
+  route: `POST /mcp` then matches only free protocol requests, such as
+  `initialize` and list calls. A tool limit applies to any tool name, listed
+  in `gregale-mcp.json` or not; statements price a tool by name only when it
+  is listed there.
 
 ### Usage alerts
 

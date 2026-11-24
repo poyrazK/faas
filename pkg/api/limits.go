@@ -1492,6 +1492,12 @@ const (
 	// MCPBillingNameMaxBytes bounds a tool or prompt name in an MCP billing
 	// label (ADR-20261123192254).
 	MCPBillingNameMaxBytes   = 128
+	// MCPJWTAudienceMaxBytes bounds the audience an external OAuth issuer
+	// declares for an MCP server (ADR-20261123192254).
+	MCPJWTAudienceMaxBytes = 512
+	// APIConsumerPlanMaxRouteLimits bounds a consumer plan's per-route and
+	// per-tool caps (ADR-20261123192254).
+	APIConsumerPlanMaxRouteLimits = 50
 	MCPPolicyMaxRequestBytes = 1 << 20
 	// MCP tool limits (ADR-20261122194324): per caller and tool.
 	MCPToolLimitMaxRequests      = 100000

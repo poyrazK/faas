@@ -4,6 +4,7 @@ package gateway
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -127,5 +128,39 @@ func TestEnforceConsumerPlanRouteLimitDenial(t *testing.T) {
 		!strings.Contains(body, "100 requests per month on MCP /tools/generate") || !strings.Contains(body, `"limit":100`) ||
 		!strings.Contains(body, "route-limits") {
 		t.Fatalf("code=%d scope=%q body=%s", w.Code, w.Header().Get("X-Faas-Rate-Limit-Scope"), body)
+	}
+}
+
+// A full billing label set folds new labels into the overflow label, which
+// carries no route; plan caps must still see the tool, listed or not.
+func TestMCPPlanRouteSurvivesFullBillingLabelSet(t *testing.T) {
+	h := &Handler{}
+	set := h.billingRouteSetFor("app-1")
+	for i := range 200 {
+		set.admit(fmt.Sprintf("GET /junk/%d", i))
+	}
+	for _, tc := range []struct{ tool, plan string }{
+		{"search", "MCP /tools/search"},     // listed in the policy
+		{"generate", "MCP /tools/generate"}, // not listed: still capped
+		{"bad/name", "MCP /tools"},
+	} {
+		r := withBillingRoute(planRequest("POST /mcp"), "POST /mcp")
+		h.applyMCPBilling(r, App{ID: "app-1"}, consumerKeyMCPRule().MCP, mcpCall{method: "tools/call", name: tc.tool})
+		if got := planRouteFrom(r); got != tc.plan {
+			t.Fatalf("%s: plan route = %q want %q (billing %q)", tc.tool, got, tc.plan, billingRouteFrom(r))
+		}
+	}
+}
+
+// A plan that caps only some routes admits other routes without a counter.
+func TestEnforceConsumerPlanSkipsUncappedRoutes(t *testing.T) {
+	store := &fakeConsumerPlanStore{policy: ConsumerPlanPolicy{RouteLimits: map[string]api.APIConsumerPlanRouteLimit{"MCP /tools/generate": {MaxRequestsPerMonth: 100}}},
+		decision: ConsumerPlanDecision{Allowed: true}}
+	h := (&Handler{apiMonetization: monetizationOn}).WithConsumerPlanStore(store)
+	if !h.enforceConsumerPlan(httptest.NewRecorder(), planRequest("MCP /tools/search"), &statusRecorder{}, App{ID: "app-1", AccountID: "acct-1"}, false) {
+		t.Fatal("uncapped route refused")
+	}
+	if len(store.admitRoutes) != 0 {
+		t.Fatalf("uncapped route took a counter: %v", store.admitRoutes)
 	}
 }

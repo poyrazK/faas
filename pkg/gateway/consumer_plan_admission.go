@@ -38,8 +38,15 @@ type ConsumerPlanPolicy struct {
 	OverdueDueAt   time.Time
 }
 
-func (p ConsumerPlanPolicy) limited() bool {
-	return p.MaxRequestsPerMinute > 0 || p.MaxUnitsPerMonth > 0 || len(p.RouteLimits) > 0
+// limits reports whether route needs a counter: the plan has a plan-wide
+// limit, or caps this route. A plan that caps only some routes costs other
+// routes one cached lookup and no counter write.
+func (p ConsumerPlanPolicy) limits(route string) bool {
+	if p.MaxRequestsPerMinute > 0 || p.MaxUnitsPerMonth > 0 {
+		return true
+	}
+	_, ok := p.RouteLimits[route]
+	return ok
 }
 
 // units is what a request counts toward the monthly cap: its route weight,
@@ -49,7 +56,7 @@ func (p ConsumerPlanPolicy) units(r *http.Request) int64 {
 	if mcpProtocolOverheadFrom(r) {
 		return 0
 	}
-	if weight, ok := p.RouteWeights[billingRouteFrom(r)]; ok && weight > 0 {
+	if weight, ok := p.RouteWeights[planRouteFrom(r)]; ok && weight > 0 {
 		return weight
 	}
 	return 1
@@ -127,12 +134,13 @@ func (h *Handler) enforceConsumerPlan(w http.ResponseWriter, r *http.Request, re
 		h.denyOverdue(w, r, rec, app, policy)
 		return false
 	}
-	if err == nil && !policy.limited() {
+	route := planRouteFrom(r)
+	if err == nil && !policy.limits(route) {
 		return true
 	}
 	var decision ConsumerPlanDecision
 	if err == nil {
-		decision, err = h.consumerPlanStore.AdmitConsumerPlanRequest(r.Context(), app.AccountID, consumerID, policy, billingRouteFrom(r), policy.units(r))
+		decision, err = h.consumerPlanStore.AdmitConsumerPlanRequest(r.Context(), app.AccountID, consumerID, policy, route, policy.units(r))
 	}
 	if err != nil {
 		if h.log != nil {
@@ -150,7 +158,7 @@ func (h *Handler) enforceConsumerPlan(w http.ResponseWriter, r *http.Request, re
 	suppressFinancialUsage(r)
 	w.Header().Set("Retry-After", strconv.FormatInt(max(1, decision.RetryAfterSeconds), 10))
 	w.Header().Set("X-Faas-Rate-Limit-Scope", "consumer-plan-"+strings.ReplaceAll(decision.Scope, "_", "-"))
-	problem := api.NewProblem(http.StatusTooManyRequests, api.CodeConsumerPlanLimitExceeded, "Plan limit exceeded", consumerPlanDenialDetail(decision, billingRouteFrom(r)))
+	problem := api.NewProblem(http.StatusTooManyRequests, api.CodeConsumerPlanLimitExceeded, "Plan limit exceeded", consumerPlanDenialDetail(decision, route))
 	if strings.HasPrefix(decision.Scope, "route_") {
 		problem = problem.WithLimit(decision.Limit, decision.Observed).WithDocs("https://gregale.dev/docs/api-monetization#route-limits")
 	}

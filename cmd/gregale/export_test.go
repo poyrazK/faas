@@ -3109,3 +3109,16 @@ func SetMCPOIDCHTTPClient(t interface{ Cleanup(func()) }, c *http.Client) {
 func MCPAuthEnableExternalIssuer(cfg *mcphosting.Config, mode, endpoint, issuer, jwksURL, audience, scopes string) error {
 	return mcpAuthEnableConfig(cfg, mode, endpoint, mcpAuthIssuer{url: issuer, jwksURL: jwksURL, audience: audience}, scopes)
 }
+
+// ParseToolWeights is parseToolWeights.
+var ParseToolWeights = parseToolWeights
+
+// ApplyRouteLimitSpecs parses --route-limit and --tool-limit values and
+// applies them to current, as plan-update does.
+func ApplyRouteLimitSpecs(current map[string]api.APIConsumerPlanRouteLimit, routes, tools []string) (map[string]api.APIConsumerPlanRouteLimit, error) {
+	edits, err := parseRouteLimitEdits(routes, tools)
+	if err != nil {
+		return nil, err
+	}
+	return applyRouteLimitEdits(current, edits), nil
+}

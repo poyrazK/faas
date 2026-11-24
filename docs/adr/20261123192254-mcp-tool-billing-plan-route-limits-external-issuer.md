@@ -40,7 +40,12 @@ gateway replaces the request's billing route label with an MCP label:
 
 Names are labelled only when the owner's policy lists them and they match
 `[A-Za-z0-9_.-]{1,128}` (`api.MCPBillingNameMaxBytes`), so a caller cannot
-mint unbounded label cardinality. Labels reuse the existing per-app label set
+mint unbounded label cardinality. Plan admission keeps a second, unbounded
+label per request (the declared or inferred route, or `MCP /tools/<name>`
+for any valid tool name): plan route limits and plan unit weights look
+routes up by it, so a full billing label set, or a tool the policy does not
+list, cannot switch a cap off. It never enters the bounded set or the usage
+ledger. Labels reuse the existing per-app label set
 (first 50 labels, ADR-952), the existing `route_weights` on rate cards and the
 existing usage tables; no billing schema changes.
 
@@ -53,7 +58,8 @@ count toward per-minute admission, so a client cannot flood `ping`.
 unlimited) caps one route per consumer. Counters live in
 `api_consumer_plan_route_admissions` keyed by (consumer, route), locked after
 the consumer's plan admission row, and are written only when both the route
-and the plan admit the request. A refusal is a `429` with
+and the plan admit the request. A plan with only route limits takes no
+counter for routes it does not cap. A refusal is a `429` with
 `x-faas-rate-limit-scope: consumer-plan-route-minute|month`, the limit and the
 observed value. The CLI takes `--route-limit "LABEL=N/minute,N/month"` and the
 MCP shorthand `--tool-limit NAME=...`; rate cards take `--tool-weight NAME=W`.
@@ -65,17 +71,29 @@ must be https, the document must name exactly that issuer, and its `jwks_uri`
 must be https. `gregale-mcp.json` stores the issuer, JWKS and optional
 audience (default: the resource); the gateway JWT rule pins all three and
 accepts RS256 and ES256. No gateway change: JWT rules already accept any
-issuer.
+issuer. An audience other than the resource (Entra issues `api://…`
+audiences) is declared on the policy as `MCPResourcePolicy.audience`;
+apid accepts a rule whose JWT audience is exactly the resource or exactly
+that declared value, for bearer-token policies only. This narrows the
+RFC 8707 resource binding of ADR-644 to an owner-declared value, never to
+an arbitrary one.
 
 **Keys for named tools.** `gregale mcp server keys create --tools a,b` grants
 the endpoint scopes plus each tool's scopes from `gregale-mcp.json`, and fails
-for a tool not listed there.
+for a tool not listed there. Keys carry scopes, not tool lists, so it also
+refuses when those scopes would unlock another scoped tool that was not
+asked for, and names it.
 
 ## Consequences
 
 - Owners price and cap tools with the plan and rate-card machinery they
   already have; statements, quotes and alerts show MCP labels like any route.
-- Unlisted tools share `MCP /tools`, so pricing a tool requires listing it.
+- Unlisted tools share `MCP /tools` on statements, so pricing a tool on a
+  statement requires listing it; plan caps work either way.
+- MCP protocol overhead is unbillable, so when the usage outbox append fails
+  it is kept out of the debugger fallback ledger (which bills every row),
+  like gateway refusals: its request count is lost in that incident path
+  rather than billed.
 - A plan with route limits adds one row lock per limited request; plans
   without route limits take the old path.
 - External issuers are trusted for their whole key set; rotating keys at the
