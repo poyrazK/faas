@@ -5649,6 +5649,9 @@ func cmdTrafficStatus(args []string) int {
 		return 1
 	}
 	positional, err := mergeAppFlag(positional, strings.TrimSpace(*app), 1)
+	if err == nil {
+		positional = withLinkedApp(positional, 1)
+	}
 	if err != nil {
 		return printErr("Invalid arguments", err)
 	}

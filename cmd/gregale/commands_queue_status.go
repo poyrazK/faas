@@ -115,6 +115,9 @@ func cmdQueueStatus(args []string) int {
 		return 1
 	}
 	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 1)
+	if mergeErr == nil {
+		pos = withLinkedApp(pos, 1)
+	}
 	if mergeErr != nil {
 		return printErr("Invalid arguments", mergeErr)
 	}

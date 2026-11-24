@@ -23,6 +23,7 @@ func cmdDebugRunning(args []string) int {
 	if err := fs.Parse(flagArgs); err != nil {
 		return 1
 	}
+	positional = withLinkedApp(positional, 1)
 	if len(positional) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale debug running [--since D] [--limit N] <slug>", debugCmdDocsTopic)
 		return 1

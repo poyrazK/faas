@@ -342,6 +342,9 @@ func cmdDebugRequestsList(args []string) int {
 		return 1
 	}
 	positional, mergeErr := mergeAppFlag(positional, *app, 1)
+	if mergeErr == nil {
+		positional = withLinkedApp(positional, 1)
+	}
 	if mergeErr != nil || len(positional) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale debug requests list [--all] [--since D] [--route P] [--release UUID] [--status N] [--cold-boot true|false] [--consumer-id UUID|__anonymous__] [--min-latency-ms N] [--cursor C] [--limit N] <slug>", debugCmdDocsTopic)
 		return 1

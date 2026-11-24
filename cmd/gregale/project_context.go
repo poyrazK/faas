@@ -402,6 +402,23 @@ func mergeAppFlag(positional []string, app string, maxPositionals int) ([]string
 	return append([]string{app}, positional...), nil
 }
 
+// withLinkedApp puts the linked app in front of a command's positionals when
+// exactly its leading <slug> is missing: the command takes n positionals and
+// got n-1. Commands whose --app says "defaults to linked context" call it
+// after mergeAppFlag; mergeAppFlag alone never read the link, so `queue send`
+// and `dlq list` in a linked checkout printed their usage (prod hunt r34).
+// With no link the positionals are returned as they are.
+func withLinkedApp(positional []string, n int) []string {
+	if len(positional) != n-1 {
+		return positional
+	}
+	app, err := resolveAppFlagOrContext("")
+	if err != nil || app == "" {
+		return positional
+	}
+	return append([]string{app}, positional...)
+}
+
 // resolveRequiredAppSlug gives app-scoped read commands a consistent
 // context fallback. Callers own their usage text so each PrintUsage call
 // keeps a statically discoverable docs topic. Explicit slugs still win

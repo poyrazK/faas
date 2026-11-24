@@ -82,6 +82,9 @@ func cmdDLQList(args []string) int {
 		}
 	}
 	pos, mergeErr := mergeAppFlag(pos, *app, 1)
+	if mergeErr == nil {
+		pos = withLinkedApp(pos, 1)
+	}
 	if mergeErr != nil || len(pos) != 1 {
 		PrintUsage(os.Stderr, usage, "dlq")
 		return 1

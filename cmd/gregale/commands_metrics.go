@@ -334,6 +334,9 @@ func cmdThrottleSuggestions(args []string) int {
 		return 1
 	}
 	pos, mergeErr := mergeAppFlag(pos, *app, 1)
+	if mergeErr == nil {
+		pos = withLinkedApp(pos, 1)
+	}
 	if mergeErr != nil || len(pos) != 1 {
 		PrintUsage(os.Stderr, throttleSuggestionsCmdUsage, throttleSuggestionsCmdDocsTopic)
 		return 1

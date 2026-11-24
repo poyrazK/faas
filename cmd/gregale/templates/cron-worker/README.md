@@ -37,8 +37,12 @@ UPSTASH_REDIS_REST_URL=https://<instance>.upstash.io
 UPSTASH_REDIS_REST_TOKEN=<redis-rest-token>
 EOF
 chmod 600 ../cron-worker.secrets
-gregale deploy --secrets-file ../cron-worker.secrets
+gregale deploy --secrets-file ../cron-worker.secrets --no-require-authn
 ```
+
+`--no-require-authn` makes the app public on purpose: the sender cannot
+present a Gregale API key, so the handler checks the sender's own secret or
+signature instead. It stays public on later deploys.
 
 ## Reserve then configure separately
 
@@ -47,7 +51,7 @@ If you prefer to set secrets through the app API, reserve the app first:
 ```sh
 gregale deploy --create-only --template cron-worker --name <slug>
 gregale env set --app <slug> QSTASH_CURRENT_SIGNING_KEY=<current-signing-key> QSTASH_NEXT_SIGNING_KEY=<next-signing-key> UPSTASH_REDIS_REST_URL=https://<instance>.upstash.io UPSTASH_REDIS_REST_TOKEN=<redis-rest-token>
-cd <this-directory> && gregale deploy
+cd <this-directory> && gregale deploy --no-require-authn
 ```
 
 ## Rotate or update secrets
@@ -70,7 +74,7 @@ customer sees the actionable hint in `gregale logs <slug>`.
 From this directory:
 
 ```sh
-gregale deploy
+gregale deploy --no-require-authn
 ```
 
 The CLI forces `--runtime node22 --handler handler.handler` for

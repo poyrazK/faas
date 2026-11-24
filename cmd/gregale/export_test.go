@@ -3126,3 +3126,6 @@ func ApplyRouteLimitSpecs(current map[string]api.APIConsumerPlanRouteLimit, rout
 	}
 	return applyRouteLimitEdits(current, edits), nil
 }
+
+// WithLinkedApp fills a missing leading <slug> from the linked app.
+var WithLinkedApp = withLinkedApp

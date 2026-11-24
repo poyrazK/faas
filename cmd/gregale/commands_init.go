@@ -674,12 +674,13 @@ func nextStepsFor(tpl string) []string {
 			"  SLACK_SIGNING_SECRET=...",
 			"  (optional SLACK_BOT_TOKEN=xoxb-...)",
 			"First deploy with secrets sealed before startup:",
-			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",
+			"  cd <dest> && gregale deploy --secrets-file <secrets-file> --no-require-authn",
+			"  (public on purpose: the sender cannot present a Gregale API key; the handler checks the sender's own secret or signature)",
 			"After the app exists, rotate/add with `gregale env set --app <slug> ...`.",
 			"Or reserve the app before setting secrets separately:",
 			"  gregale deploy --create-only --template slack-bot --name <slug>",
 			"  gregale env set --app <slug> SLACK_SIGNING_SECRET=... SLACK_BOT_TOKEN=xoxb-...",
-			"  cd <dest> && gregale deploy",
+			"  cd <dest> && gregale deploy --no-require-authn",
 		}
 	case "auth":
 		return []string{"Deploy application Auth bound to a ready managed database:", "  gregale auth create <slug> --database <database> --site-url https://app.example.com", "See README.md for sign-up, tokens and Data API RLS."}
@@ -733,13 +734,14 @@ func nextStepsFor(tpl string) []string {
 			"  UPSTASH_REDIS_REST_URL=...",
 			"  UPSTASH_REDIS_REST_TOKEN=...",
 			"First deploy with secrets sealed before startup:",
-			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",
+			"  cd <dest> && gregale deploy --secrets-file <secrets-file> --no-require-authn",
+			"  (public on purpose: the sender cannot present a Gregale API key; the handler checks the sender's own secret or signature)",
 			"Then wire QStash to invoke the function (curl or the QStash dashboard).",
 			"After the app exists, rotate/add with `gregale env set --app <slug> ...`.",
 			"Or reserve the app before setting secrets separately:",
 			"  gregale deploy --create-only --template cron-worker --name <slug>",
 			"  gregale env set --app <slug> QSTASH_CURRENT_SIGNING_KEY=... QSTASH_NEXT_SIGNING_KEY=... UPSTASH_REDIS_REST_URL=... UPSTASH_REDIS_REST_TOKEN=...",
-			"  cd <dest> && gregale deploy",
+			"  cd <dest> && gregale deploy --no-require-authn",
 		}
 	case "webhook-receiver":
 		return []string{
@@ -747,8 +749,9 @@ func nextStepsFor(tpl string) []string {
 			"  WEBHOOK_SECRET=$(openssl rand -hex 32)",
 			"  (optional WEBHOOK_ALLOWED_PATHS=/stripe,/github)",
 			"First deploy with secrets sealed before startup:",
-			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",
-			"Wire the provider's webhook URL to https://<slug>.gregale.dev/<your-path>.",
+			"  cd <dest> && gregale deploy --secrets-file <secrets-file> --no-require-authn",
+			"  (public on purpose: the sender cannot present a Gregale API key; the handler checks the sender's own secret or signature)",
+			"Wire the provider's webhook URL to https://<slug>.gregale.app/<your-path>.",
 			"After the app exists, rotate/add with `gregale env set --app <slug> ...`.",
 		}
 	case "ai-chat":

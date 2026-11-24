@@ -1594,6 +1594,9 @@ func cmdQueueSend(args []string) int {
 		return 1
 	}
 	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 1)
+	if mergeErr == nil {
+		pos = withLinkedApp(pos, 1)
+	}
 	if mergeErr != nil {
 		return printErr("Invalid arguments", mergeErr)
 	}
@@ -1676,6 +1679,9 @@ func cmdQueueReceive(args []string) int {
 		return 1
 	}
 	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 1)
+	if mergeErr == nil {
+		pos = withLinkedApp(pos, 1)
+	}
 	if mergeErr != nil {
 		return printErr("Invalid arguments", mergeErr)
 	}
@@ -1739,6 +1745,9 @@ func cmdQueueState(args []string) int {
 		return 1
 	}
 	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 1)
+	if mergeErr == nil {
+		pos = withLinkedApp(pos, 1)
+	}
 	if mergeErr != nil {
 		return printErr("Invalid arguments", mergeErr)
 	}
@@ -1783,6 +1792,9 @@ func cmdQueuePeek(args []string) int {
 		return 1
 	}
 	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 1)
+	if mergeErr == nil {
+		pos = withLinkedApp(pos, 1)
+	}
 	if mergeErr != nil {
 		return printErr("Invalid arguments", mergeErr)
 	}
@@ -1841,6 +1853,9 @@ func cmdQueueDeadLetter(args []string) int {
 		return 1
 	}
 	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 1)
+	if mergeErr == nil {
+		pos = withLinkedApp(pos, 1)
+	}
 	if mergeErr != nil {
 		return printErr("Invalid arguments", mergeErr)
 	}
@@ -1896,6 +1911,9 @@ func cmdQueueAck(args []string) int {
 		return 1
 	}
 	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 2)
+	if mergeErr == nil {
+		pos = withLinkedApp(pos, 2)
+	}
 	if mergeErr != nil {
 		return printErr("Invalid arguments", mergeErr)
 	}
@@ -2325,6 +2343,9 @@ func cmdQueueTail(args []string) int {
 		return 1
 	}
 	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 1)
+	if mergeErr == nil {
+		pos = withLinkedApp(pos, 1)
+	}
 	if mergeErr != nil {
 		return printErr("Invalid arguments", mergeErr)
 	}

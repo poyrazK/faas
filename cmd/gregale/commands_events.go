@@ -534,6 +534,9 @@ func cmdEventsSubscriptions(args []string) int {
 		return 1
 	}
 	positional, mergeErr := mergeAppFlag(positional, *app, 1)
+	if mergeErr == nil {
+		positional = withLinkedApp(positional, 1)
+	}
 	if mergeErr != nil || len(positional) != 1 || rejectUnexpectedFlagArgs(fs) {
 		PrintUsage(os.Stderr, "usage: gregale event subscription list <app>", "events")
 		return 1
