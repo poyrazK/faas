@@ -55,6 +55,8 @@ var profiles = map[managedpostgres.ServiceClass]classProfile{
 // Project IDs and endpoint hosts are treated as opaque/sensitive outside the
 // adapter and are never included in returned errors.
 type Provider struct {
+	// idleTailPageSize overrides operationsPageSize in tests.
+	idleTailPageSize       int
 	baseURL                *url.URL
 	httpClient             *http.Client
 	apiKey                 string

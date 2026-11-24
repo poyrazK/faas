@@ -12,7 +12,7 @@ lane on one host role:
   refuse    the unit release's base is not the previous full release (the
             N±1 rule: CI checked these units against that release only), or
             the host runs another full release, or a unit release whose
-            commit is not an ancestor of this one (newer or diverged), or
+            commit has diverged from this one, or
             one listing a unit of this lane that this release does not
             carry;
   deploy    a carried unit of this lane that runs on this host role
@@ -25,7 +25,8 @@ lane on one host role:
             lane: re-run its activation and gate, so a restart or gate an
             interrupted run never finished still happens;
   none      nothing changed and the active release replaced no unit of this
-            lane.
+            lane, or the host runs a unit release built at a later commit
+            (it already has everything this one carries).
 
 The data step (docs/adr/20261018084150-unit-lane-expand-migrations.md):
 a unit release whose range added lane-eligible migrations carries
@@ -196,6 +197,12 @@ def plan(release, host, lane, host_role, is_ancestor=git_is_ancestor, expect=Non
         if previous.get("kind") != KIND_VERSIONS or previous.get("base_sha") != base:
             raise Refused(f"active release {current} records unit versions for another base")
         if not is_ancestor(previous["git_sha"], commit):
+            # A host ahead of this release (an owner-dispatched run released
+            # a later commit, ADR-20261123122457) already runs everything it
+            # carries: nothing to do, never a downgrade. Diverged is refused.
+            if is_ancestor(commit, previous["git_sha"]):
+                return {"action": "none", "lane": lane, "release_id": current, "units": [], "only": [],
+                        "verify": [], "gate": [], "replace": {}, "kept": [], "ahead": previous["git_sha"]}
             raise Refused(f"host runs a unit release built at {previous['git_sha']}, which is not an ancestor of {commit}")
         host_versions = previous["units"]
         host_lanes = previous.get("unit_lanes") or {}

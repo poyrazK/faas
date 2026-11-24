@@ -116,12 +116,26 @@ func (r *remoteServer) startNativeLogin(ctx context.Context, w http.ResponseWrit
 		return
 	}
 	writes := slices.Contains(flow.Scopes, scopeWrite)
-	capabilities, err := chosenCapabilities(req.PostForm["capability"], writes)
+	toolsetSpec := req.PostForm.Get("toolsets")
+	chosen := req.PostForm["capability"]
+	if r.offersWrites(flow) {
+		switch req.PostForm.Get("access") {
+		case accessDeploy:
+			writes = true
+			toolsetSpec = deployToolsets(toolsetSpec, r.opts.Toolsets)
+		case accessInspect:
+			// The extras need write access; ticking one and then choosing
+			// "Inspect only" must not fail the connection. A form without
+			// the choice is still refused below.
+			chosen = readOnlyCapabilities(chosen)
+		}
+	}
+	capabilities, err := chosenCapabilities(chosen, writes)
 	if err != nil {
 		oauthError(w, 400, "invalid_request", err.Error())
 		return
 	}
-	toolsets, err := connectionToolsets(req.PostForm.Get("toolsets"), r.opts.Toolsets)
+	toolsets, err := connectionToolsets(toolsetSpec, r.opts.Toolsets)
 	if err != nil {
 		oauthError(w, 400, "invalid_request", err.Error())
 		return
@@ -154,6 +168,12 @@ func (r *remoteServer) startNativeLogin(ctx context.Context, w http.ResponseWrit
 	}
 	active.NativeCode, active.NativeURL, active.Capabilities = code.Code, code.URL, capabilities
 	active.Toolsets = toolsets
+	if writes && !slices.Contains(active.Scopes, scopeWrite) {
+		// The person chose deploy access for a client that asked only to
+		// inspect; the token response names the scope granted (RFC 6749 §3.3).
+		active.Scopes = append(slices.Clone(active.Scopes), scopeWrite)
+		slices.Sort(active.Scopes)
+	}
 	r.opts.Telemetry.consentStep("sign_in_started")
 	if r.opts.Hosted {
 		// One tab: approval sends the browser back to continueLogin

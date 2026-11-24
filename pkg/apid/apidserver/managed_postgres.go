@@ -142,6 +142,7 @@ func loadManagedPostgres(ctx context.Context, pool *pgxpool.Pool, getenv func(st
 	if metrics != nil {
 		usageOptions.Observe = metrics.ObserveUsage
 		usageOptions.ObserveSweep = metrics.ObserveUsageSweep
+		usageOptions.ObserveIdleTail = metrics.ObserveIdleTail
 	}
 	overage, released := hooks.overage(), hooks.released()
 	capEnforcer, err := loadManagedPostgresCapEnforcer(registry, store, accountStore, getenv, log, hooks, registerers...)
