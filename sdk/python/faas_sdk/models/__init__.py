@@ -1246,6 +1246,7 @@ from .managed_postgres_resize_from_class import ManagedPostgresResizeFromClass
 from .managed_postgres_resize_state import ManagedPostgresResizeState
 from .managed_postgres_resize_target_class import ManagedPostgresResizeTargetClass
 from .managed_postgres_restore_range import ManagedPostgresRestoreRange
+from .managed_postgres_suspend_timeout import ManagedPostgresSuspendTimeout
 from .managed_postgres_usage_response import ManagedPostgresUsageResponse
 from .managed_postgres_usage_response_compute_cap_state import ManagedPostgresUsageResponseComputeCapState
 from .managed_postgres_usage_response_egress_state import ManagedPostgresUsageResponseEgressState
@@ -2692,6 +2693,7 @@ from .set_custom_domain_hosts_request import SetCustomDomainHostsRequest
 from .set_deployment_alias_request import SetDeploymentAliasRequest
 from .set_financial_budget_channels_request import SetFinancialBudgetChannelsRequest
 from .set_grace_window_request import SetGraceWindowRequest
+from .set_managed_postgres_suspend_timeout_request import SetManagedPostgresSuspendTimeoutRequest
 from .set_mcp_readiness_fallback_request import SetMCPReadinessFallbackRequest
 from .set_mcp_readiness_fallback_request_provider import SetMCPReadinessFallbackRequestProvider
 from .set_mcp_readiness_fallback_request_region import SetMCPReadinessFallbackRequestRegion
@@ -4423,6 +4425,7 @@ __all__ = (
     "ManagedPostgresResizeState",
     "ManagedPostgresResizeTargetClass",
     "ManagedPostgresRestoreRange",
+    "ManagedPostgresSuspendTimeout",
     "ManagedPostgresUsageResponse",
     "ManagedPostgresUsageResponseComputeCapState",
     "ManagedPostgresUsageResponseEgressState",
@@ -5729,6 +5732,7 @@ __all__ = (
     "SetDeploymentAliasRequest",
     "SetFinancialBudgetChannelsRequest",
     "SetGraceWindowRequest",
+    "SetManagedPostgresSuspendTimeoutRequest",
     "SetMCPReadinessFallbackRequest",
     "SetMCPReadinessFallbackRequestProvider",
     "SetMCPReadinessFallbackRequestRegion",

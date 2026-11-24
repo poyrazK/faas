@@ -32825,6 +32825,48 @@ COMMENT ON TABLE public.api_consumer_credit_grants IS 'Prepaid credit granted to
 
 
 --
+-- Name: api_consumer_credit_pack_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_credit_pack_settings (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    return_url text NOT NULL,
+    packs jsonb NOT NULL,
+    CONSTRAINT api_consumer_credit_pack_settings_packs_check CHECK ((jsonb_typeof(packs) = 'array'::text))
+);
+
+
+--
+-- Name: api_consumer_credit_purchases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_credit_purchases (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    consumer_id uuid NOT NULL,
+    pack_id text NOT NULL,
+    label text NOT NULL,
+    currency text NOT NULL,
+    amount_millicents bigint NOT NULL,
+    amount_minor bigint NOT NULL,
+    return_url text NOT NULL,
+    stripe_customer text NOT NULL,
+    stripe_session text,
+    livemode boolean NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    next_check_at timestamp with time zone NOT NULL,
+    CONSTRAINT api_consumer_credit_purchases_amount_millicents_check CHECK (((amount_millicents >= 1) AND (amount_millicents <= '1000000000000'::bigint))),
+    CONSTRAINT api_consumer_credit_purchases_amount_minor_check CHECK ((amount_minor > 0)),
+    CONSTRAINT api_consumer_credit_purchases_check CHECK (((status <> 'credited'::text) OR (stripe_session IS NOT NULL))),
+    CONSTRAINT api_consumer_credit_purchases_currency_check CHECK ((currency ~ '^[A-Z]{3}$'::text)),
+    CONSTRAINT api_consumer_credit_purchases_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'credited'::text, 'expired'::text])))
+);
+
+
+--
 -- Name: api_consumer_meter_usage_minutes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -49054,6 +49096,26 @@ CREATE TABLE public.managed_postgres_restore_verifications (
     CONSTRAINT managed_postgres_restore_verifications_source_resource_id_check CHECK (((source_resource_id <> ''::text) AND (length(source_resource_id) <= 255))),
     CONSTRAINT managed_postgres_restore_verifications_verified_at_check CHECK (isfinite(verified_at))
 );
+
+
+--
+-- Name: managed_postgres_suspend_timeouts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_suspend_timeouts (
+    database_id uuid NOT NULL,
+    seconds integer NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT managed_postgres_suspend_timeouts_seconds_check CHECK (((seconds >= 60) AND (seconds <= 3600))),
+    CONSTRAINT managed_postgres_suspend_timeouts_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
+-- Name: TABLE managed_postgres_suspend_timeouts; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.managed_postgres_suspend_timeouts IS 'Customer-chosen scale-to-zero suspend timeout per managed PostgreSQL database; no row is the platform default; written only by apid.';
 
 
 --
@@ -65344,6 +65406,30 @@ ALTER TABLE ONLY public.api_consumer_credit_grants
 
 
 --
+-- Name: api_consumer_credit_pack_settings api_consumer_credit_pack_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_pack_settings
+    ADD CONSTRAINT api_consumer_credit_pack_settings_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: api_consumer_credit_purchases api_consumer_credit_purchases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_purchases
+    ADD CONSTRAINT api_consumer_credit_purchases_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: api_consumer_credit_purchases api_consumer_credit_purchases_stripe_session_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_purchases
+    ADD CONSTRAINT api_consumer_credit_purchases_stripe_session_key UNIQUE (stripe_session);
+
+
+--
 -- Name: api_consumer_meter_usage_minutes api_consumer_meter_usage_minutes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -72733,6 +72819,14 @@ ALTER TABLE ONLY public.managed_postgres_restore_verifications
 
 ALTER TABLE ONLY public.managed_postgres_restore_verifications
     ADD CONSTRAINT managed_postgres_restore_verifications_pkey PRIMARY KEY (database_id);
+
+
+--
+-- Name: managed_postgres_suspend_timeouts managed_postgres_suspend_timeouts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_suspend_timeouts
+    ADD CONSTRAINT managed_postgres_suspend_timeouts_pkey PRIMARY KEY (database_id);
 
 
 --
@@ -80215,6 +80309,27 @@ CREATE INDEX api_consumer_credit_applications_statement_idx ON public.api_consum
 --
 
 CREATE INDEX api_consumer_credit_grants_consumer_idx ON public.api_consumer_credit_grants USING btree (consumer_id, currency, created_at);
+
+
+--
+-- Name: api_consumer_credit_purchases_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_credit_purchases_due ON public.api_consumer_credit_purchases USING btree (next_check_at, id) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: api_consumer_credit_purchases_pending_consumer; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX api_consumer_credit_purchases_pending_consumer ON public.api_consumer_credit_purchases USING btree (consumer_id) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: api_consumer_credit_purchases_pending_live_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_credit_purchases_pending_live_account ON public.api_consumer_credit_purchases USING btree (account_id) WHERE ((status = 'pending'::text) AND livemode);
 
 
 --
@@ -100204,6 +100319,46 @@ ALTER TABLE ONLY public.api_consumer_credit_grants
 
 
 --
+-- Name: api_consumer_credit_pack_settings api_consumer_credit_pack_settings_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_pack_settings
+    ADD CONSTRAINT api_consumer_credit_pack_settings_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_credit_pack_settings api_consumer_credit_pack_settings_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_pack_settings
+    ADD CONSTRAINT api_consumer_credit_pack_settings_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_credit_purchases api_consumer_credit_purchases_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_purchases
+    ADD CONSTRAINT api_consumer_credit_purchases_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_credit_purchases api_consumer_credit_purchases_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_purchases
+    ADD CONSTRAINT api_consumer_credit_purchases_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_credit_purchases api_consumer_credit_purchases_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_purchases
+    ADD CONSTRAINT api_consumer_credit_purchases_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
+
+
+--
 -- Name: api_consumer_meter_usage_minutes api_consumer_meter_usage_minutes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -108993,6 +109148,14 @@ ALTER TABLE ONLY public.managed_postgres_restore_verifications
 
 ALTER TABLE ONLY public.managed_postgres_restore_verifications
     ADD CONSTRAINT managed_postgres_restore_verifications_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_suspend_timeouts managed_postgres_suspend_timeouts_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_suspend_timeouts
+    ADD CONSTRAINT managed_postgres_suspend_timeouts_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
 
 
 --

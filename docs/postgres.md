@@ -28,8 +28,19 @@ Operators: see the [operator guide](managed-postgres.md).
   database.
 - Storage is pooled across your databases: one database may use the whole
   pool.
-- Compute suspends when a database is idle. Always-on compute is not part of
-  these plans.
+- Compute suspends when a database is idle, by default after 2 minutes
+  without activity. Every wake bills at least that long, so a shorter time
+  costs less and a longer one avoids more cold starts. Choose it per database
+  from 1 minute to 1 hour:
+
+  ```sh
+  gregale postgres suspend-timeout set orders-db 5m
+  gregale postgres suspend-timeout set orders-db default
+  ```
+
+  A suspended database takes the new time at once; a running one takes it
+  the next time it suspends, without dropping connections. `gregale postgres
+  get` shows the current value. Always-on compute is not part of these plans.
 - Restore history (what point-in-time restore keeps) and snapshots are
   included up to the size of the storage pool, averaged over the month.
 - Without overage, storage is a limit and nothing past the plan is billed.
