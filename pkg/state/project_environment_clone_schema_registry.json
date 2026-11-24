@@ -1002,6 +1002,38 @@
     "kind": "operational"
   },
   {
+    "table": "api_consumer_credit_pack_settings",
+    "columns": [
+      "account_id",
+      "app_id",
+      "packs",
+      "return_url"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_consumer_credit_purchases",
+    "columns": [
+      "account_id",
+      "amount_millicents",
+      "amount_minor",
+      "app_id",
+      "consumer_id",
+      "currency",
+      "expires_at",
+      "id",
+      "label",
+      "livemode",
+      "next_check_at",
+      "pack_id",
+      "return_url",
+      "status",
+      "stripe_customer",
+      "stripe_session"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "api_consumer_meter_usage_minutes",
     "columns": [
       "account_id",
@@ -11255,6 +11287,15 @@
       "recorded_at",
       "restorable_until",
       "slot_until"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_postgres_suspend_timeouts",
+    "columns": [
+      "database_id",
+      "seconds",
+      "updated_at"
     ],
     "kind": "operational"
   },

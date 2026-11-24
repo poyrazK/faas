@@ -225,5 +225,23 @@ func applyCapabilityRuntimeAvailability(capability *api.CapabilityStatus, availa
 	}
 	capability.Enabled = false
 	capability.UnavailableReason = api.CapabilityUnavailableRuntime
-	capability.UnavailableDetail = "This feature is not available on this Gregale installation right now. Contact support for availability."
+	capability.UnavailableDetail = runtimeUnavailableDetail(capability.Key)
+}
+
+// runtimeUnavailableDetail explains a capability this installation does not
+// run. Public TCP and UDP listeners are easy to confuse with private TCP
+// between a customer's own apps: an agent read "tcp-listeners unavailable"
+// as "private TCP is off", told the user managed Redis could not work and to
+// contact support, while managed Redis was available (agent eval 2026-11-24).
+func runtimeUnavailableDetail(key string) string {
+	switch key {
+	case "tcp-listeners":
+		return "Public TCP ports at the edge are not enabled on this Gregale installation. " +
+			"This is not about private TCP between your own apps (managed Redis, <name>.svc.gregale addresses), which has its own availability: check managed-redis and internal-services. " +
+			"Contact support if you need a public port."
+	case "udp-listeners":
+		return "Public UDP ports at the edge are not enabled on this Gregale installation. " +
+			"This is not about traffic between your own apps. Contact support if you need a public port."
+	}
+	return "This feature is not available on this Gregale installation right now. Contact support for availability."
 }
