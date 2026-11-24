@@ -686,13 +686,15 @@ migration removes the retained revisions.
 ## Next steps
 
 - [Test stored workflows](stored-workflow-testing.md): test cases, verification suites, scenarios, simulation and publishing checks.
-- [Run and recover stored workflows](stored-workflow-operations.md): find and cancel runs, health, alerts, and recovery.
+- [Run and monitor stored workflows](stored-workflow-operations.md): find and cancel runs, health, and alerts.
+- [Recover stored workflow runs](stored-workflow-recovery.md): resume failed runs, recover missed and paused work, and recovery policies.
 
 ## Moved sections
 
-Testing and recovery now have their own pages:
-[Test stored workflows](stored-workflow-testing.md) and
-[Run and recover stored workflows](stored-workflow-operations.md). The two
+Testing, monitoring and recovery now have their own pages:
+[Test stored workflows](stored-workflow-testing.md),
+[Run and monitor stored workflows](stored-workflow-operations.md) and
+[Recover stored workflow runs](stored-workflow-recovery.md). The two
 headings below stay because errors from earlier CLI and API releases link to
 them.
 
