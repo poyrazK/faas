@@ -441,6 +441,18 @@ class ShimTest(unittest.TestCase):
         with self.assertRaises(NotFoundException):
             sbx.commands.send_stdin(42, "x")
 
+    # adr: 20261122132055 §3 — a background command may ask for SIGUSR2 in forks.
+    def test_background_commands_may_ask_to_reseed_in_forks(self) -> None:
+        sbx = Sandbox.create(**self.opts)
+        sbx.commands.run("worker", background=True, reseed_on_fork=True)
+        self.assertIs(self.fake.execs[-1].get("reseed_on_fork"), True)
+        sbx.commands.run("other", background=True)
+        self.assertNotIn("reseed_on_fork", self.fake.execs[-1])
+        before = len(self.fake.execs)
+        with self.assertRaises(UnsupportedException):
+            sbx.commands.run("worker", reseed_on_fork=True)
+        self.assertEqual(len(self.fake.execs), before)
+
 
 if __name__ == "__main__":
     unittest.main()

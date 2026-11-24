@@ -25,6 +25,11 @@ export type CommandStartOpts = CommandRequestOpts & {
   stdin?: boolean;
   /** How long the command may run; 60 s by default, within the plan's cap. */
   timeoutMs?: number;
+  /**
+   * Gregale extension, background commands only: the command gets SIGUSR2 in
+   * each fork of the session, so it can reseed its own random state.
+   */
+  reseedOnFork?: boolean;
 };
 
 export type ProcessInfo = { pid: number; tag?: string; cmd: string; args: string[]; envs: Record<string, string>; cwd?: string };
@@ -219,6 +224,9 @@ export class Commands {
     if (opts.stdin && !opts.background) {
       throw new UnsupportedError('commands.run({ stdin: true })', 'only background commands take input; run it with background: true and use sendStdin');
     }
+    if (opts.reseedOnFork && !opts.background) {
+      throw new UnsupportedError('commands.run({ reseedOnFork: true })', 'only a background command runs on in a fork; run it with background: true');
+    }
     const envs = { ...this.#conn.envs, ...opts.envs };
     const body = {
       cmd: ['/bin/bash', '-l', '-c', cmd],
@@ -227,6 +235,7 @@ export class Commands {
       run_as: runAs(opts.user),
       timeout_ms: opts.timeoutMs || undefined,
       background: opts.background || undefined,
+      reseed_on_fork: opts.reseedOnFork || undefined,
     };
     const req: RequestArgs = { json: body, signal: opts.signal };
     if (opts.background) {
