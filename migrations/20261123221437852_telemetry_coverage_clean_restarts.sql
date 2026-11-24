@@ -18,7 +18,9 @@ SET LOCAL lock_timeout = '5s';
 --    time, which is normal, so every busy app read "window incomplete" for
 --    the retention period. A gap is now written only when the app's dropped
 --    total grows; in-flight rows stay visible as telemetry_ingestion_pending
---    while they are pending.
+--    while they are pending. pending_since records when an app's backlog
+--    began, so a loss marks the whole backlog and a long backlog holds every
+--    window it touches.
 -- The checks are validated by the next migration.
 ALTER TABLE request_telemetry_coverage ADD COLUMN clean_stop_at timestamptz;
 ALTER TABLE request_telemetry_coverage ADD CONSTRAINT request_telemetry_coverage_clean_stop_at_check
@@ -27,6 +29,13 @@ ALTER TABLE request_telemetry_coverage ADD CONSTRAINT request_telemetry_coverage
 ALTER TABLE request_analytics_app_gaps ADD COLUMN dropped_total bigint NOT NULL DEFAULT 0;
 ALTER TABLE request_analytics_app_gaps ADD CONSTRAINT request_analytics_app_gaps_dropped_total_check
  CHECK (dropped_total >= 0) NOT VALID;
+
+ALTER TABLE request_telemetry_app_gaps ADD COLUMN pending_since timestamptz;
+ALTER TABLE request_telemetry_app_gaps ADD CONSTRAINT request_telemetry_app_gaps_pending_since_check
+ CHECK (pending_since IS NULL OR (pending_count > 0 AND pending_since <= updated_at)) NOT VALID;
+ALTER TABLE request_analytics_app_gaps ADD COLUMN pending_since timestamptz;
+ALTER TABLE request_analytics_app_gaps ADD CONSTRAINT request_analytics_app_gaps_pending_since_check
+ CHECK (pending_since IS NULL OR (pending_count > 0 AND pending_since <= updated_at)) NOT VALID;
 
 CREATE OR REPLACE FUNCTION record_telemetry_coverage(node text, boot uuid, seq bigint, is_enabled boolean, sampling integer, drops bigint, pending integer, source_stamp timestamptz, scoped boolean, unattributed_drops bigint, app_gaps jsonb, stopped boolean) RETURNS void LANGUAGE plpgsql AS $$
 DECLARE stamp timestamptz:=clock_timestamp(); attributed_pending bigint; attributed_losses bigint; gap record;
@@ -66,13 +75,18 @@ BEGIN
  WHERE excluded.source_at>old.source_at AND (old.boot_id<>excluded.boot_id OR excluded.sequence>old.sequence);
  IF NOT FOUND THEN RAISE EXCEPTION 'telemetry coverage replay or out-of-order heartbeat' USING ERRCODE='22023'; END IF;
  -- Omitted apps have no current backlog. Recovery starts at this receipt,
- -- never at the previous unhealthy heartbeat.
- UPDATE request_telemetry_app_gaps SET last_gap_at=stamp,pending_count=0,updated_at=stamp WHERE node_name=node AND pending_count>0;
+ -- never at the previous unhealthy heartbeat. Reported apps are left to the
+ -- upsert, so the gap trigger still sees when their backlog began.
+ UPDATE request_telemetry_app_gaps SET last_gap_at=stamp,pending_count=0,pending_since=NULL,updated_at=stamp WHERE node_name=node AND pending_count>0
+  AND app_id NOT IN (SELECT g.app_id FROM jsonb_to_recordset(app_gaps) g(app_id uuid,dropped_count bigint,pending_count integer)
+   JOIN apps a ON a.id=g.app_id AND a.status<>'deleted' WHERE g.dropped_count>0 OR g.pending_count>0);
  FOR gap IN SELECT * FROM jsonb_to_recordset(app_gaps) g(app_id uuid,dropped_count bigint,pending_count integer) ORDER BY app_id LOOP
  IF (gap.dropped_count>0 OR gap.pending_count>0) AND EXISTS(SELECT 1 FROM apps WHERE id=gap.app_id AND status<>'deleted') THEN
- INSERT INTO request_telemetry_app_gaps AS old(node_name,app_id,last_gap_at,pending_count,dropped_total,updated_at)
- VALUES(node,gap.app_id,stamp,gap.pending_count,gap.dropped_count,stamp)
- ON CONFLICT(node_name,app_id) DO UPDATE SET last_gap_at=stamp,pending_count=excluded.pending_count,dropped_total=old.dropped_total+excluded.dropped_total,updated_at=stamp;
+ INSERT INTO request_telemetry_app_gaps AS old(node_name,app_id,last_gap_at,pending_count,pending_since,dropped_total,updated_at)
+ VALUES(node,gap.app_id,stamp,gap.pending_count,CASE WHEN gap.pending_count>0 THEN stamp END,gap.dropped_count,stamp)
+ ON CONFLICT(node_name,app_id) DO UPDATE SET last_gap_at=stamp,pending_count=excluded.pending_count,
+  pending_since=CASE WHEN excluded.pending_count>0 THEN coalesce(old.pending_since,CASE WHEN old.pending_count>0 THEN old.last_gap_at END,stamp) END,
+  dropped_total=old.dropped_total+excluded.dropped_total,updated_at=stamp;
  END IF;
  END LOOP;
 END $$;
@@ -97,30 +111,38 @@ BEGIN
   WHEN old.counting_since IS NULL OR old.boot_id<>excluded.boot_id OR old.heartbeat_at<stamp-interval '30 seconds'
    OR excluded.unattributed_dropped_total<>old.unattributed_dropped_total THEN stamp
   ELSE old.counting_since END;
- -- Omitted apps have nothing late any more.
- UPDATE request_analytics_app_gaps SET last_gap_at=stamp,pending_count=0,updated_at=stamp WHERE node_name=node AND pending_count>0;
+ -- Omitted apps have nothing late any more; reported ones are left to the
+ -- upsert, so the gap trigger still sees when their backlog began.
+ UPDATE request_analytics_app_gaps SET last_gap_at=stamp,pending_count=0,pending_since=NULL,updated_at=stamp WHERE node_name=node AND pending_count>0
+  AND app_id NOT IN (SELECT g.app_id FROM jsonb_to_recordset(app_gaps) g(app_id uuid,analytics_dropped_count bigint,analytics_pending_count integer)
+   JOIN apps a ON a.id=g.app_id AND a.status<>'deleted' WHERE coalesce(g.analytics_dropped_count,0)>0 OR coalesce(g.analytics_pending_count,0)>0);
  FOR gap IN SELECT g.app_id,coalesce(g.analytics_dropped_count,0) AS dropped,coalesce(g.analytics_pending_count,0) AS pending
   FROM jsonb_to_recordset(app_gaps) g(app_id uuid,analytics_dropped_count bigint,analytics_pending_count integer) ORDER BY g.app_id LOOP
  IF (gap.dropped>0 OR gap.pending>0) AND EXISTS(SELECT 1 FROM apps WHERE id=gap.app_id AND status<>'deleted') THEN
  -- The dropped total is cumulative: the gap trigger marks a loss only when
  -- it grows, not for counts still in flight.
- INSERT INTO request_analytics_app_gaps AS old(node_name,app_id,last_gap_at,pending_count,dropped_total,updated_at)
- VALUES(node,gap.app_id,stamp,gap.pending,gap.dropped,stamp)
- ON CONFLICT(node_name,app_id) DO UPDATE SET last_gap_at=stamp,pending_count=excluded.pending_count,dropped_total=old.dropped_total+excluded.dropped_total,updated_at=stamp;
+ INSERT INTO request_analytics_app_gaps AS old(node_name,app_id,last_gap_at,pending_count,pending_since,dropped_total,updated_at)
+ VALUES(node,gap.app_id,stamp,gap.pending,CASE WHEN gap.pending>0 THEN stamp END,gap.dropped,stamp)
+ ON CONFLICT(node_name,app_id) DO UPDATE SET last_gap_at=stamp,pending_count=excluded.pending_count,
+  pending_since=CASE WHEN excluded.pending_count>0 THEN coalesce(old.pending_since,CASE WHEN old.pending_count>0 THEN old.last_gap_at END,stamp) END,
+  dropped_total=old.dropped_total+excluded.dropped_total,updated_at=stamp;
  END IF;
  END LOOP;
 END $$;
 
--- A loss marks the app's evidence from RequestTelemetryLossLookback before the
--- report that carried it: the lost rows were buffered (a collapsed minute, a
--- delivery backoff) before the gateway gave up on them.
+-- A loss marks the app's evidence from the start of the backlog it was lost
+-- from, and at least ten minutes before the report that carried it: rows are
+-- buffered (a collapsed minute, a delivery backoff) before the gateway gives
+-- up on them, and a backlog can last longer than that.
 CREATE OR REPLACE FUNCTION request_analytics_record_coverage_gap() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE kind text:=CASE WHEN TG_TABLE_NAME='request_analytics_app_gaps' THEN 'analytics' ELSE 'raw' END;
- lost bigint:=NEW.dropped_total; first_gap timestamptz;
+ lost bigint:=NEW.dropped_total; first_gap timestamptz:=NEW.updated_at-interval '10 minutes';
 BEGIN
- IF TG_OP='UPDATE' THEN lost:=NEW.dropped_total-OLD.dropped_total; END IF;
+ IF TG_OP='UPDATE' THEN
+  lost:=NEW.dropped_total-OLD.dropped_total;
+  IF OLD.pending_count>0 THEN first_gap:=least(first_gap,coalesce(OLD.pending_since,OLD.last_gap_at)-interval '10 minutes'); END IF;
+ END IF;
  IF lost<=0 THEN RETURN NEW; END IF;
- first_gap:=NEW.updated_at-interval '10 minutes';
  INSERT INTO request_analytics_coverage_gaps(node_name,source_kind,app_id,gap_from,gap_until)
  VALUES(NEW.node_name,kind,NEW.app_id,first_gap,NEW.updated_at)
  ON CONFLICT(node_name,source_kind,app_id,gap_from) DO UPDATE SET gap_until=greatest(request_analytics_coverage_gaps.gap_until,EXCLUDED.gap_until);
@@ -206,6 +228,10 @@ BEGIN
 END $$;
 
 DROP FUNCTION IF EXISTS record_telemetry_coverage(text, uuid, bigint, boolean, integer, bigint, integer, timestamptz, boolean, bigint, jsonb, boolean);
+ALTER TABLE request_analytics_app_gaps DROP CONSTRAINT IF EXISTS request_analytics_app_gaps_pending_since_check;
+ALTER TABLE request_analytics_app_gaps DROP COLUMN IF EXISTS pending_since;
+ALTER TABLE request_telemetry_app_gaps DROP CONSTRAINT IF EXISTS request_telemetry_app_gaps_pending_since_check;
+ALTER TABLE request_telemetry_app_gaps DROP COLUMN IF EXISTS pending_since;
 ALTER TABLE request_analytics_app_gaps DROP CONSTRAINT IF EXISTS request_analytics_app_gaps_dropped_total_check;
 ALTER TABLE request_analytics_app_gaps DROP COLUMN IF EXISTS dropped_total;
 ALTER TABLE request_telemetry_coverage DROP CONSTRAINT IF EXISTS request_telemetry_coverage_clean_stop_at_check;

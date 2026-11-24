@@ -28,6 +28,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"sort"
 	"time"
 )
 
@@ -57,6 +58,15 @@ type FlushLoopConfig struct {
 	// the shared three-attempt budget (90 s at the default interval) dropped
 	// ~40% of traces on prod (2026-11-24). Default 10 when zero.
 	NoRowRetries int
+	// MaxPendingTraces caps the traces held between flushes. With a longer
+	// no_row budget, a request-row delivery outage at high trace volume
+	// would otherwise grow gateway memory and the serial writes of each
+	// flush without bound. The oldest traces are dropped first. Default
+	// 4096 when zero.
+	MaxPendingTraces int
+	// OnPendingDropped receives the number of traces dropped to stay under
+	// MaxPendingTraces. nil = no-op.
+	OnPendingDropped func(n int)
 	// MaxSpansPerTrace is the per-trace cap applied at flush
 	// time (PR-D code-review #5). Pulled via a closure so
 	// the value tracks the customer's plan dynamically.
@@ -77,9 +87,39 @@ type pendingEntry struct {
 	target  SpanTarget
 	spans   []summarizedSpan
 	retries int
+	// queuedAt orders entries for MaxPendingTraces: the oldest go first.
+	queuedAt time.Time
 	// noRows counts flushes answered no_row (the request row was not
 	// written yet); it has its own budget, NoRowRetries.
 	noRows int
+}
+
+// capPendingTraces drops the oldest pending traces above MaxPendingTraces.
+func capPendingTraces(cfg FlushLoopConfig, pending map[spanBucketKey]*pendingEntry) {
+	limit := cfg.MaxPendingTraces
+	if limit <= 0 {
+		limit = 4096
+	}
+	excess := len(pending) - limit
+	if excess <= 0 {
+		return
+	}
+	keys := make([]spanBucketKey, 0, len(pending))
+	for k := range pending {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return pending[keys[i]].queuedAt.Before(pending[keys[j]].queuedAt) })
+	for _, k := range keys[:excess] {
+		delete(pending, k)
+	}
+	log := cfg.Log
+	if log == nil {
+		log = slog.Default()
+	}
+	log.Warn("otel spans pending traces over cap; dropping oldest", "dropped", excess, "cap", limit)
+	if cfg.OnPendingDropped != nil {
+		cfg.OnPendingDropped(excess)
+	}
 }
 
 // errNarrowedTargetWithoutWriter refuses to write a narrowed target through
@@ -212,13 +252,15 @@ func (s *SpansAccumulator) drainOnce(ctx context.Context, cfg FlushLoopConfig, p
 			}
 		} else {
 			pending[key] = &pendingEntry{
-				traceID: traceID,
-				target:  key.target,
-				spans:   spans,
+				traceID:  traceID,
+				target:   key.target,
+				spans:    spans,
+				queuedAt: time.Now(),
 			}
 		}
 		return true
 	})
+	capPendingTraces(cfg, pending)
 
 	// Now iterate the pending map. drainOnce is the single
 	// caller; mutating during iteration is safe because we

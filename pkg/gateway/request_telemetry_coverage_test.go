@@ -124,6 +124,11 @@ func TestRequestTelemetryRejectedRowsAreNotRetried(t *testing.T) {
 	if publisher.ShippedTotal() != 1 || publisher.DroppedTotal() != 1 {
 		t.Fatalf("shipping counts: shipped %d dropped %d", publisher.ShippedTotal(), publisher.DroppedTotal())
 	}
+	// A row apid refused for its app (an ingest quota) is not a platform loss:
+	// FaasRequestTelemetryLoss reads the platform counter.
+	if n := publisher.platformDroppedTotal.Load(); n != 0 {
+		t.Fatalf("refused row counted as a platform drop: %d", n)
+	}
 	if len(coverage.AppGaps) != 1 || coverage.AppGaps[0].AppID != capped.AppID || coverage.AppGaps[0].DroppedCount != 1 {
 		t.Fatalf("rejected row missing from the loss journal: %+v", coverage)
 	}
@@ -190,12 +195,17 @@ func TestRequestTelemetryUndeliveredBatchIsPlatformLoss(t *testing.T) {
 // drain gave rows up still reports them last, without claiming a clean stop.
 func TestRequestTelemetryCleanStopHeartbeat(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		fail  bool
-		clean bool
+		name    string
+		fail    bool
+		refuse  bool
+		clean   bool
+		dropped bool
 	}{
-		{"delivered", false, true},
-		{"dropped in final drain", true, false},
+		{"delivered", false, false, true, false},
+		{"dropped in final drain", true, false, false, true},
+		// A row apid refused for its app is that app's gap, which the next
+		// boot's coverage tolerates: the stop stays clean.
+		{"refused for the app", false, true, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			recorder := NewRequestTelemetryRecorder(RequestTelemetryConfig{Enabled: true, RingSize: 8}, nil)
@@ -209,9 +219,16 @@ func TestRequestTelemetryCleanStopHeartbeat(t *testing.T) {
 					reports = append(reports, c)
 					return nil
 				},
-			}, recorder, func(context.Context, []RequestTelemetryRow) error {
+			}, recorder, func(_ context.Context, rows []RequestTelemetryRow) error {
 				if tc.fail {
 					return errors.New("apid unavailable")
+				}
+				if tc.refuse {
+					rejected := map[uuid.UUID]bool{}
+					for _, row := range rows {
+						rejected[row.EventID] = true
+					}
+					return &RequestTelemetryDeliveryError{Rejected: rejected, Cause: errors.New("rate limited")}
 				}
 				return nil
 			}, nil)
@@ -228,7 +245,7 @@ func TestRequestTelemetryCleanStopHeartbeat(t *testing.T) {
 					t.Fatalf("clean stop before the last heartbeat: %+v", reports)
 				}
 			}
-			if last := reports[len(reports)-1]; last.CleanStop != tc.clean || last.PendingCount != 0 || (last.DroppedTotal == 0) != tc.clean {
+			if last := reports[len(reports)-1]; last.CleanStop != tc.clean || last.PendingCount != 0 || (last.DroppedTotal != 0) != tc.dropped {
 				t.Fatalf("last heartbeat %+v, want clean stop %v", last, tc.clean)
 			}
 		})

@@ -717,7 +717,6 @@ func validRequestTelemetryGuestErrorClass(value string) bool {
 	}
 }
 
-// observe is a nil-safe wrapper around the recorded counter.
 // invalid answers a row apid will never accept and names the reason in the
 // log, at most once a minute, so a rejected row is no longer silent.
 func (r *requestTelemetryReceiver) invalid(out *apidpb.IncrementRequestTelemetryResponse, reason string) *apidpb.IncrementRequestTelemetryResponse {
@@ -725,11 +724,12 @@ func (r *requestTelemetryReceiver) invalid(out *apidpb.IncrementRequestTelemetry
 	out.Outcome = rtOutcomeInvalid
 	now := time.Now().UnixNano()
 	if last := r.invalidLoggedAt.Load(); now-last >= int64(time.Minute) && r.invalidLoggedAt.CompareAndSwap(last, now) {
-		slog.Warn("request telemetry: row rejected as invalid; it is dropped and journaled as the app's loss", "reason", reason)
+		slog.Warn("request telemetry row refused", "outcome", rtOutcomeInvalid, "reason", reason, "effect", "the gateway drops it as the app's loss")
 	}
 	return out
 }
 
+// observe is a nil-safe wrapper around the recorded counter.
 func (r *requestTelemetryReceiver) observe(outcome string) {
 	if r.ops == nil {
 		return

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -108,5 +109,31 @@ func TestDrainOncePendingMergeKeepsPerTraceCap(t *testing.T) {
 	acc.drainOnce(context.Background(), cfg, pending)
 	if len(lastWrite) != 2 || lastWrite[0].SpanID != "slower" || lastWrite[1].SpanID != "slow" {
 		t.Fatalf("merged write = %+v, want the two slowest spans", lastWrite)
+	}
+}
+
+// Pending traces are capped; the oldest are dropped first and counted.
+func TestDrainOnceCapsPendingTraces(t *testing.T) {
+	acc := NewSpansAccumulator()
+	account := uuid.New()
+	var dropped int
+	cfg := FlushLoopConfig{
+		Log: slog.Default(), MaxRetries: 3, MaxPendingTraces: 2,
+		OnPendingDropped: func(n int) { dropped += n },
+		WriteFn: func(context.Context, string, []byte, string) (string, int64, error) {
+			return "no_row", 0, nil
+		},
+	}
+	pending := map[spanBucketKey]*pendingEntry{}
+	old := spanBucketKey{target: SpanTarget{AccountID: account}, traceID: "0000000000000000000000000000000d"}
+	pending[old] = &pendingEntry{traceID: old.traceID, target: old.target, spans: []summarizedSpan{noRowTestSpan("o", 1)}, queuedAt: time.Now().Add(-time.Minute)}
+	for _, tid := range []string{"0000000000000000000000000000000e", "0000000000000000000000000000000f"} {
+		if _, err := acc.Add(tid, account, []summarizedSpan{noRowTestSpan("a", 100)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	acc.drainOnce(context.Background(), cfg, pending)
+	if len(pending) != 2 || pending[old] != nil || dropped != 1 {
+		t.Fatalf("pending %d (oldest kept %v), dropped %d; want the 2 newest kept and 1 dropped", len(pending), pending[old] != nil, dropped)
 	}
 }

@@ -369,6 +369,12 @@ func (s *PgStore) RequestAnalyticsRollupGroups(ctx context.Context, arg sqlc.Req
 // bucket edge (prod 2026-11-24: analytics p50 10 ms where the gateway's
 // Prometheus histogram read 3.6 ms). It never exceeds maxMS, the largest
 // latency the histogram holds, which also stands for the overflow bucket.
+//
+// Raw-row analytics (RequestTelemetryAnalyticsSummary and friends) read each
+// row's latency_ms instead: exact for a request with its own row, the bucket
+// upper bound for requests a collapsed row stands for. The two answers for
+// one window can differ by up to one bucket width, raw reading high, when a
+// window moves between tiers (the rollups flag, the raw retention boundary).
 func RequestAnalyticsHistPercentile(hist []int64, maxMS int32, q float64) int {
 	var total int64
 	for _, c := range hist {

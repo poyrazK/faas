@@ -92,5 +92,13 @@ func TestServiceRequestRecordsRequestMetrics(t *testing.T) {
 		if got := metric.GetCounter().GetValue(); got != want {
 			t.Fatalf("gateway_requests_total{code=%q} = %v, want %v", code, got, want)
 		}
+		// The platform availability figure subtracts the service part.
+		service := &dto.Metric{}
+		if err := m.serviceRequests.WithLabelValues(app, code).Write(service); err != nil {
+			t.Fatalf("write service requests counter: %v", err)
+		}
+		if got := service.GetCounter().GetValue(); got != want {
+			t.Fatalf("gateway_service_requests_total{code=%q} = %v, want %v", code, got, want)
+		}
 	}
 }

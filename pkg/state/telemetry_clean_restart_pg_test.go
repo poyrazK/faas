@@ -1,6 +1,7 @@
 package state_test
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -134,6 +135,71 @@ func TestRequestTelemetryCoveredFromPG(t *testing.T) {
 	}
 	if _, ok, err = store.RequestTelemetryCoveredFrom(ctx, from, until); err != nil || ok {
 		t.Fatalf("disabled gateway: ok %v err %v, want no covered tail", ok, err)
+	}
+}
+
+// A loss marks the whole backlog it was lost from, and a backlog older than
+// ten minutes still holds every window it touches (code review of #7982).
+func TestTelemetryCoverageLongBacklogPG(t *testing.T) {
+	store, pool, ctx, _, app, _, _, _ := routeRemovalFixture(t)
+	var node string
+	if err := pool.QueryRow(ctx, `SELECT node_name FROM request_telemetry_coverage LIMIT 1`).Scan(&node); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "INSERT INTO request_analytics_rollup_audit(app_id,audited_since) VALUES($1,clock_timestamp()-interval '3 hours')", app.ID); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	// A backlog that began 30 minutes ago and is still pending.
+	if _, err := pool.Exec(ctx, `INSERT INTO request_telemetry_app_gaps(node_name,app_id,last_gap_at,pending_count,pending_since,dropped_total,updated_at)
+ VALUES($1,$2,clock_timestamp(),5,clock_timestamp()-interval '30 minutes',0,clock_timestamp())`, node, app.ID); err != nil {
+		t.Fatal(err)
+	}
+	from, until := now.Add(-25*time.Minute), now.Add(-20*time.Minute)
+	gaps, err := store.RequestTelemetryCompleteness(ctx, app.ID, from, until)
+	if err != nil || len(gaps) != 1 || gaps[0] != "telemetry_ingestion_pending" {
+		t.Fatalf("window inside a 30-minute backlog: %v %v, want telemetry_ingestion_pending", gaps, err)
+	}
+	// The gateway gives the backlog up: the gap reaches back to its start.
+	if _, err := pool.Exec(ctx, `UPDATE request_telemetry_app_gaps SET pending_count=0,pending_since=NULL,dropped_total=5,last_gap_at=clock_timestamp(),updated_at=clock_timestamp() WHERE node_name=$1 AND app_id=$2`, node, app.ID); err != nil {
+		t.Fatal(err)
+	}
+	gaps, err = store.RequestTelemetryCompleteness(ctx, app.ID, from, until)
+	if err != nil || len(gaps) != 1 || gaps[0] != "telemetry_window_incomplete" {
+		t.Fatalf("window inside a lost backlog: %v %v, want telemetry_window_incomplete", gaps, err)
+	}
+}
+
+// A stale pending rollup marker settles only when its own minute rolled up:
+// another minute's hour row proves nothing (code review of #7982).
+func TestRequestAnalyticsStaleMarkerNeedsOwnMinutePG(t *testing.T) {
+	store, pool, ctx, account, app, baseline, _, _ := routeRemovalFixture(t)
+	now := time.Now().UTC()
+	hour := now.Add(-2 * time.Hour).Truncate(time.Hour)
+	failed := hour.Add(5 * time.Minute)
+	if _, err := pool.Exec(ctx, "INSERT INTO request_analytics_rollup_audit(app_id,audited_since) VALUES($1,$2)", app.ID, hour.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	rollup := func(table string, bucket time.Time) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, `INSERT INTO `+table+`(app_id,bucket_start,dimension_kind,dimension,method,status,deployment_id,account_id,requests,error_requests,cold_boots,request_time_ms,latency_max_ms,latency_hist)
+ VALUES($1,$2,'route','GET /','GET',200,$3,$4,1,0,0,1,1,array_fill(0::bigint,ARRAY[45]))`, app.ID, bucket, baseline.ID, account.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rollup("request_analytics_hours", hour)
+	rollup("request_analytics_minutes", hour)
+	if _, err := pool.Exec(ctx, `INSERT INTO request_analytics_rollup_windows(id,app_id,bucket_start,state) VALUES(gen_random_uuid(),$1,$2,'pending')`, app.ID, failed); err != nil {
+		t.Fatal(err)
+	}
+	gaps, err := store.RequestAnalyticsCompleteness(ctx, app.ID, hour, hour.Add(time.Hour))
+	if err != nil || !slices.Contains(gaps, "telemetry_window_incomplete") {
+		t.Fatalf("minute never rolled up: %v %v, want telemetry_window_incomplete", gaps, err)
+	}
+	rollup("request_analytics_minutes", failed)
+	gaps, err = store.RequestAnalyticsCompleteness(ctx, app.ID, hour, hour.Add(time.Hour))
+	if err != nil || slices.Contains(gaps, "telemetry_window_incomplete") || slices.Contains(gaps, "telemetry_ingestion_pending") {
+		t.Fatalf("minute rolled up: %v %v, want the marker settled", gaps, err)
 	}
 }
 

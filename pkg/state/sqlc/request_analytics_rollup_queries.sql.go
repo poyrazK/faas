@@ -324,9 +324,9 @@ WITH participating_nodes AS (
  AND i.covered_since<=$2::timestamptz AND i.covered_until>=$1::timestamptz
  ) THEN 'analytics' ELSE 'raw' END::text AS source_kind FROM participating_nodes n
 ), pending_app_gaps AS (
- SELECT node_name,'raw'::text AS source_kind,app_id,last_gap_at FROM request_telemetry_app_gaps WHERE pending_count>0
+ SELECT node_name,'raw'::text AS source_kind,app_id,coalesce(pending_since,last_gap_at) AS pending_since FROM request_telemetry_app_gaps WHERE pending_count>0
  UNION ALL
- SELECT node_name,'analytics'::text AS source_kind,app_id,last_gap_at FROM request_analytics_app_gaps WHERE pending_count>0
+ SELECT node_name,'analytics'::text AS source_kind,app_id,coalesce(pending_since,last_gap_at) AS pending_since FROM request_analytics_app_gaps WHERE pending_count>0
 ), gaps AS (
  SELECT 'telemetry_coverage_unknown'::text AS reason WHERE NOT EXISTS(SELECT 1 FROM evidence)
  OR ($3::boolean AND EXISTS(SELECT 1 FROM evidence WHERE source_kind='raw') AND NOT EXISTS(
@@ -341,18 +341,19 @@ WITH participating_nodes AS (
  SELECT 1 FROM request_analytics_coverage_gaps g JOIN evidence e USING(node_name,source_kind)
  WHERE g.app_id=$4::uuid AND g.gap_from<$1::timestamptz AND g.gap_until>=$2::timestamptz)
  UNION
- -- A live backlog holds rows of the last few minutes (a collapsed minute, a
- -- delivery backoff), not earlier windows. Loss is a coverage gap, above.
+ -- A live backlog holds rows recorded since it began, and up to ten minutes
+ -- before (a collapsed minute, a delivery backoff), not earlier windows.
+ -- Loss is a coverage gap, above.
  SELECT 'telemetry_ingestion_pending'::text WHERE EXISTS(
  SELECT 1 FROM pending_app_gaps p JOIN evidence e USING(node_name,source_kind)
- WHERE p.app_id=$4::uuid AND $1::timestamptz>p.last_gap_at-interval '10 minutes')
+ WHERE p.app_id=$4::uuid AND $1::timestamptz>p.pending_since-interval '10 minutes')
  UNION
  -- A pending rollup marker that outlived the rollup cadence was settled by a
- -- rollup that did not clear it: the bucket counts if a rollup row exists.
+ -- rollup that did not clear it if its own minute rolled up; otherwise that
+ -- minute was never counted. An hour row proves nothing about one minute.
  SELECT CASE WHEN w.state='lost' THEN 'telemetry_window_incomplete'
  WHEN w.bucket_start>=now()-interval '15 minutes' THEN 'telemetry_ingestion_pending'
- WHEN EXISTS(SELECT 1 FROM request_analytics_minutes m WHERE m.app_id=w.app_id AND m.bucket_start=w.bucket_start)
- OR EXISTS(SELECT 1 FROM request_analytics_hours h WHERE h.app_id=w.app_id AND h.bucket_start=date_trunc('hour',w.bucket_start)) THEN NULL
+ WHEN EXISTS(SELECT 1 FROM request_analytics_minutes m WHERE m.app_id=w.app_id AND m.bucket_start=w.bucket_start) THEN NULL
  ELSE 'telemetry_window_incomplete' END
  FROM request_analytics_rollup_windows w WHERE $3::boolean AND w.app_id=$4::uuid
  AND w.bucket_start<$1::timestamptz AND w.bucket_start+interval '1 minute'>$2::timestamptz

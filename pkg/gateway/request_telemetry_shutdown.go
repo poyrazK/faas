@@ -68,7 +68,7 @@ func (p *requestTelemetryPublisher) drainFinal() bool {
 		if p.finalCtx.Err() != nil {
 			p.dropPending("request telemetry shutdown deadline; dropping interrupted batch")
 			for p.recorder.PendingCount() != 0 {
-				p.recordDroppedRows(p.recorder.DrainBatch(p.cfg.FlushBatchSize))
+				p.recordDroppedRows(p.recorder.DrainBatch(p.cfg.FlushBatchSize), false)
 			}
 			p.log.Warn("request telemetry shutdown deadline; queued evidence dropped")
 			return false
@@ -84,9 +84,9 @@ func (p *requestTelemetryPublisher) drainFinalMinutes() bool {
 	for len(p.pending) != 0 || !p.minutes.empty() || p.recorder.PendingCount() != 0 {
 		if p.finalCtx.Err() != nil {
 			p.dropPending("request telemetry shutdown deadline; dropping interrupted batch")
-			p.recordDroppedRows(p.minutes.takeAll())
+			p.recordDroppedRows(p.minutes.takeAll(), false)
 			for p.recorder.PendingCount() != 0 {
-				p.recordDroppedRows(p.recorder.DrainBatch(p.cfg.FlushBatchSize))
+				p.recordDroppedRows(p.recorder.DrainBatch(p.cfg.FlushBatchSize), false)
 			}
 			p.log.Warn("request telemetry shutdown deadline; queued evidence dropped")
 			return false
@@ -105,7 +105,7 @@ func (p *requestTelemetryPublisher) dropPending(message string) {
 	if p.receiverAnswered {
 		// The receiver took other rows of this batch and kept refusing these:
 		// the loss belongs to their apps (for example an ingest cap).
-		p.recordDroppedRows(p.pending)
+		p.recordDroppedRows(p.pending, true)
 	} else {
 		p.recordPlatformDroppedRows(p.pending)
 	}

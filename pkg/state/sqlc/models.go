@@ -15267,6 +15267,7 @@ type RequestAnalyticsAppGap struct {
 	PendingCount int32
 	UpdatedAt    pgtype.Timestamptz
 	DroppedTotal int64
+	PendingSince pgtype.Timestamptz
 }
 
 type RequestAnalyticsCoverageGap struct {
@@ -15576,6 +15577,7 @@ type RequestTelemetryAppGap struct {
 	PendingCount int32
 	DroppedTotal int64
 	UpdatedAt    pgtype.Timestamptz
+	PendingSince pgtype.Timestamptz
 }
 
 type RequestTelemetryCoverage struct {
