@@ -5541,6 +5541,22 @@
       ]
     },
     {
+      "id": "saved-insights",
+      "name": "Saved insights",
+      "category": "observability",
+      "description": "Save analytics queries per environment, run and export them as CSV or JSON, and send their value to notification channels as daily or weekly digests and threshold alerts.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261122190000-saved-insights",
+      "acceptance_test": "pkg/apid/insights/saved_test.go::TestRunSavedValues",
+      "parent": "product-analytics",
+      "routes": [
+        "/v1/projects/{}/environments/{}/insights/saved",
+        "/v1/projects/{}/environments/{}/insights/saved/{}",
+        "/v1/projects/{}/environments/{}/insights/saved/{}/run"
+      ]
+    },
+    {
       "id": "scale-to-zero",
       "name": "Scale to zero",
       "category": "runtime",

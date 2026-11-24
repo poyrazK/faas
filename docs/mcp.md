@@ -7682,6 +7682,10 @@ Five read-only tools in the `diagnose` toolset query product analytics (see
   member count, the plan's member bound and the last refresh; rules target a
   cohort with the `gregale.cohort` attribute (see
   [Target a cohort](flags.md#target-a-cohort)).
+- `gregale_list_saved_insights` lists saved insights with their query,
+  digest, alert, last scheduled value and alert state;
+  `gregale_run_saved_insight` takes `key` and runs one now (see
+  [Save, share and export an insight](flags.md#save-share-and-export-an-insight)).
 
 Each result carries guidance: a flag breakdown is observational, so causal
 claims need an experiment.
