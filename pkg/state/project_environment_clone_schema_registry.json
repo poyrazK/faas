@@ -18742,9 +18742,11 @@
     "table": "request_analytics_app_gaps",
     "columns": [
       "app_id",
+      "dropped_total",
       "last_gap_at",
       "node_name",
       "pending_count",
+      "pending_since",
       "updated_at"
     ],
     "kind": "operational"
@@ -18894,6 +18896,7 @@
       "last_gap_at",
       "node_name",
       "pending_count",
+      "pending_since",
       "updated_at"
     ],
     "kind": "operational"
@@ -18903,6 +18906,7 @@
     "columns": [
       "app_scoped",
       "boot_id",
+      "clean_stop_at",
       "dropped_total",
       "enabled",
       "healthy_since",
