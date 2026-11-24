@@ -172,6 +172,9 @@ func QuoteConsumerUsage(cards []state.APIConsumerRateCard, usage []state.APICons
 		quote.Priced = quote.UnpricedUnits == 0 && quote.Currency != ""
 		orderConsumerUsageCharges(quote.Buckets)
 	}
+	if slices.ContainsFunc(cards, func(card state.APIConsumerRateCard) bool { return !card.EffectiveUntil.IsZero() }) {
+		quote.planRateHistory = cards
+	}
 	return quote, nil
 }
 

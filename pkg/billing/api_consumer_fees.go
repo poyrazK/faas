@@ -145,15 +145,33 @@ func feeSegments(ordered []feeCard, at, stop time.Time) []feeCard {
 // or a revocation after the minimum was finalized) never reduces it and a
 // revision never goes negative (ADR-20261019180000).
 func monthlyStatementFees(cards []feeCard, usage, finalized feeUsage, billed map[state.APIConsumerStatementFee]int64) []state.APIConsumerStatementFee {
-	var fees []state.APIConsumerStatementFee
+	type monthlyCard struct {
+		feeCard
+		active time.Duration
+	}
+	var monthly []monthlyCard
+	indexByID := map[string]int{}
 	for _, card := range cards {
 		if !card.hasMonthlyCharge {
 			continue
 		}
+		duration := card.until.Sub(card.from)
+		if index, ok := indexByID[card.id]; ok {
+			monthly[index].active += duration
+			continue
+		}
+		indexByID[card.id] = len(monthly)
+		monthly = append(monthly, monthlyCard{feeCard: card, active: duration})
+	}
+
+	var fees []state.APIConsumerStatementFee
+	for _, card := range monthly {
 		base, minimum := card.base, card.minimum
 		covered, coveredBefore := usage.byStream[card.stream], finalized.byStream[card.stream]
 		if card.prorate {
-			base, minimum = ProrateMonthlyFeeBetween(base, card.from, card.until), ProrateMonthlyFeeBetween(minimum, card.from, card.until)
+			month := MonthStart(card.from)
+			base = ProrateMonthlyFeeBetween(base, month, month.Add(card.active))
+			minimum = ProrateMonthlyFeeBetween(minimum, month, month.Add(card.active))
 			covered, coveredBefore = usage.byCard[card.id], finalized.byCard[card.id]
 		}
 		baseKey := state.APIConsumerStatementFee{Kind: state.StatementFeeBase, RateCardID: card.id}

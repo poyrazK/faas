@@ -207,10 +207,16 @@ func tenantCardUnit(card state.PlatformTenantRateCard) string {
 	return card.Unit
 }
 
-// quoteTenantAppFallback validates and prices the app cards in force during
-// uncovered usage minutes. Usage must be ordered by minute.
+// quoteTenantAppFallback prices uncovered requests using the app's request
+// stream. Usage must be ordered by minute.
 func quoteTenantAppFallback(cards []state.APIConsumerRateCard, usage []state.APIConsumerUsageBucket) (APIConsumerUsageQuote, error) {
-	ordered := orderedAPIConsumerRateCards(cards)
+	var requestCards []state.APIConsumerRateCard
+	for _, card := range cards {
+		if StreamUnit(card.Unit) == state.APIConsumerRateCardUnitRequest {
+			requestCards = append(requestCards, card)
+		}
+	}
+	ordered := orderedAPIConsumerRateCards(requestCards)
 	var selected []state.APIConsumerRateCard
 	active := -1
 	for _, bucket := range usage {
@@ -245,6 +251,9 @@ type APIConsumerUsageQuote struct {
 	Buckets          []APIConsumerUsageChargeBucket
 	RouteBreakdown   []api.APIConsumerQuoteBreakdown
 	MeterBreakdown   []api.APIConsumerQuoteBreakdown
+	// Statement adjustments use the resolved history to distinguish an ended
+	// plan unit from a unit whose durable usage is unexpectedly absent.
+	planRateHistory []state.APIConsumerRateCard
 }
 
 // QuoteOptions adjust how a quote prices usage. VolumeSteps maps a volume

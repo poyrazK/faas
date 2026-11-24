@@ -158,8 +158,24 @@ func APIConsumerStatementDelta(current APIConsumerUsageQuote, revisions []state.
 			return APIConsumerUsageQuote{}, err
 		}
 	}
-	for _, remaining := range covered {
-		if remaining.units > 0 {
+	var streams map[string][]state.APIConsumerRateCard
+	for key, remaining := range covered {
+		if remaining.units <= 0 {
+			continue
+		}
+		if streams == nil {
+			_, streams = UnitStreams(current.planRateHistory)
+			for unit, history := range streams {
+				streams[unit] = orderedAPIConsumerRateCards(history)
+			}
+		}
+		// A finalized statement from before plan expiry may have billed a
+		// stream after the consumer left its plan. Keep that coverage frozen
+		// and leave these minutes out of the adjustment.
+		minute := time.Unix(key.minute, 0)
+		history := streams[StreamUnit(key.unit)]
+		next := sort.Search(len(history), func(i int) bool { return history[i].EffectiveFrom.After(minute) })
+		if next == 0 || !apiConsumerCardEnded(history[next-1], minute) {
 			return APIConsumerUsageQuote{}, ErrAPIConsumerUsageRegressed
 		}
 	}

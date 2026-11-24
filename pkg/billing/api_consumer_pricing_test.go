@@ -139,8 +139,13 @@ func TestQuotePlatformTenantUsageIgnoresModelCardOutsideFallback(t *testing.T) {
 		quote.Buckets[0].RateCardID != app.ID || quote.Buckets[1].PlatformTenantRateCardID != tenant.ID {
 		t.Fatalf("mixed tenant/fallback quote = %+v, err = %v", quote, err)
 	}
-	if _, err := QuotePlatformTenantUsage(cards, nil, []state.APIConsumerUsageBucket{current}); !errors.Is(err, ErrAPIConsumerAllowanceInTenantStatement) {
-		t.Fatalf("fallback to a model card in force: got %v, want ErrAPIConsumerAllowanceInTenantStatement", err)
+	quote, err = QuotePlatformTenantUsage(cards, nil, []state.APIConsumerUsageBucket{current})
+	if err != nil || !quote.Priced || quote.AmountMillicents != 10 || len(quote.Buckets) != 1 || quote.Buckets[0].RateCardID != app.ID {
+		t.Fatalf("request fallback alongside an active model rate = %+v, err = %v", quote, err)
+	}
+	quote, err = QuotePlatformTenantUsage([]state.APIConsumerRateCard{model}, nil, []state.APIConsumerUsageBucket{current})
+	if err != nil || quote.Priced || quote.AmountMillicents != 0 || quote.UnpricedUnits != 1 {
+		t.Fatalf("request fallback without a request card = %+v, err = %v", quote, err)
 	}
 }
 
