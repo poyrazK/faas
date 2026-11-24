@@ -467,8 +467,15 @@ PREWARM_BROWSER_SEC = 45
 
 
 def own_processes():
-    """The PIDs of this user's processes other than PID 1, this one and its
-    ancestors."""
+    """The PIDs of this user's live processes other than PID 1, this one and
+    its ancestors. A zombie runs nothing and holds no memory; it waits for
+    its parent or PID 1 to reap it, so it does not count."""
+    while True:
+        try:
+            if os.waitpid(-1, os.WNOHANG)[0] == 0:
+                break
+        except ChildProcessError:
+            break
     keep, pid = {1}, os.getpid()
     while pid > 1:
         keep.add(pid)
@@ -482,10 +489,14 @@ def own_processes():
         if not name.isdigit() or int(name) in keep:
             continue
         try:
-            if os.stat(f"/proc/{name}").st_uid == os.getuid():
-                out.append(int(name))
-        except OSError:
-            pass
+            if os.stat(f"/proc/{name}").st_uid != os.getuid():
+                continue
+            with open(f"/proc/{name}/stat", "rb") as f:
+                state = f.read().rsplit(b")", 1)[1].split()[0]
+        except (OSError, IndexError):
+            continue
+        if state not in (b"Z", b"X"):
+            out.append(int(name))
     return out
 
 

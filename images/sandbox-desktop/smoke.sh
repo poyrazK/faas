@@ -99,13 +99,14 @@ echo "processes (RSS MB):"
 docker exec "${name}" ps -eo rss=,comm= | awk '{t+=$1; printf "  %6.1f %s\n", $1/1024, $2} END {printf "  %6.1f total\n", t/1024}' | sort -n | tail -12
 
 # Prewarm, then start again in the same container, as a restored warm
-# snapshot does. PID 1 is the container's sleep.
+# snapshot does. PID 1 is the container's sleep, which reaps nothing, so the
+# zombies it is left do not count; guest-init reaps them in a VM.
 docker run -d --name "${warm}" --platform "${platform}" --network none --user 1000:1000 \
   -e HOME=/home/app --shm-size 256m --entrypoint sleep "${image_ref}" infinity >/dev/null
 started=$(date +%s%N)
 docker exec "${warm}" /usr/local/bin/gregale-desktop prewarm
 echo "prewarm in $(( ($(date +%s%N) - started) / 1000000 )) ms"
-left=$(docker exec "${warm}" ps -u 1000 -o pid=,comm= | awk '$1 != 1 && $2 != "ps"')
+left=$(docker exec "${warm}" ps -u 1000 -o pid=,stat=,comm= | awk '$1 != 1 && $2 !~ /^Z/ && $3 != "ps"')
 [[ -z "${left}" ]] || { echo "processes outlived the prewarm: ${left}" >&2; exit 1; }
 if docker exec "${warm}" sh -c 'test -e /tmp/.X11-unix/X0 || test -e /tmp/.X0-lock || test -e /home/app/.config/chromium'; then
   echo "the prewarm left the X socket, lock or Chromium's profile" >&2
