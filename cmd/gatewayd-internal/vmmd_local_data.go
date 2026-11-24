@@ -5,8 +5,11 @@ import (
 	"os"
 	"strings"
 
+	"google.golang.org/grpc"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // localVmmdEnv turns on the local data socket for this gateway's own node
@@ -51,6 +54,16 @@ func (l *localVmmd) tlsFor(target string, vmmdTLS *tls.Config) *tls.Config {
 		return nil
 	}
 	return vmmdTLS
+}
+
+// dialOptions returns the extra gRPC options for target: fixed flow-control
+// windows on the local data socket when wire.LocalStaticWindowEnv is on, and
+// none for any other target.
+func (l *localVmmd) dialOptions(target string) []grpc.DialOption {
+	if l != nil && target == "unix://"+l.socket && wire.LocalStaticWindowEnabled() {
+		return wire.LocalStaticWindowDialOptions()
+	}
+	return nil
 }
 
 func isUnixSocket(path string) bool {

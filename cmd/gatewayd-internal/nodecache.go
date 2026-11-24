@@ -228,7 +228,7 @@ func newNodeCache(store *state.PgStore, vmmdTLS *tls.Config, log *slog.Logger, m
 			// Issue #120: route through pkg/overlay so the cross-box
 			// dial primitive lives in one place. The cache above is
 			// unrelated; only the underlying wire dial is swapped.
-			return overlay.Dial(ctx, overlay.New(target), local.tlsFor(target, vmmdTLS))
+			return overlay.Dial(ctx, overlay.New(target), local.tlsFor(target, vmmdTLS), local.dialOptions(target)...)
 		},
 		log,
 	)
@@ -243,7 +243,7 @@ func newNodeCache(store *state.PgStore, vmmdTLS *tls.Config, log *slog.Logger, m
 			}
 			return n.Name, true
 		}, func(ctx context.Context, target, name string) (*grpc.ClientConn, error) {
-			return overlay.Dial(ctx, overlay.New(target), wire.ExpectPeerCN(local.tlsFor(target, vmmdTLS), name))
+			return overlay.Dial(ctx, overlay.New(target), wire.ExpectPeerCN(local.tlsFor(target, vmmdTLS), name), local.dialOptions(target)...)
 		})
 		// vmmd restart adoption ADR: forwards wait out a planned restart.
 		cache.WithRestartNotices(store)

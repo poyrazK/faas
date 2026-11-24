@@ -87,11 +87,11 @@ func (t Target) Raw() string { return t.raw }
 // context.DeadlineExceeded, a refused TCP as a connection error.
 // The caller (schedd's heartbeat goroutine) treats any non-nil as
 // "node is sick" and acts on it via state.SetComputeNodeActive.
-func Dial(ctx context.Context, t Target, tlsCfg *tls.Config) (*grpc.ClientConn, error) {
+func Dial(ctx context.Context, t Target, tlsCfg *tls.Config, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
 	if t.raw == "" {
 		return nil, ErrEmptyTarget
 	}
-	return wire.DialContext(ctx, t.raw, tlsCfg)
+	return wire.DialContext(ctx, t.raw, tlsCfg, opts...)
 }
 
 // ErrEmptyTarget is the sentinel for "Target{} constructed with no

@@ -63,7 +63,11 @@ func listenLocalDataSocket(ctx context.Context, path, ownerUser string, register
 	if err != nil {
 		return nil, err
 	}
-	srv := grpc.NewServer(append(append(vmmdgrpc.LocalDataServerOptions(uid), wire.TraceServerOptions()...), vmmdgrpc.StreamWorkers())...)
+	opts := append(append(vmmdgrpc.LocalDataServerOptions(uid), wire.TraceServerOptions()...), vmmdgrpc.StreamWorkers())
+	if wire.LocalStaticWindowEnabled() {
+		opts = append(opts, wire.LocalStaticWindowServerOptions()...)
+	}
+	srv := grpc.NewServer(opts...)
 	register(srv)
 	return &localDataSocket{srv: srv, lis: lis}, nil
 }
