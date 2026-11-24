@@ -444,6 +444,12 @@ func NodePackageJSONProblemAtRoot(path, sourceRoot string) string {
 	if !ok {
 		return ""
 	}
+	// Railpack reads package.json with hujson, which rejects a leading byte
+	// order mark; the build then plans no Node steps and exports an empty
+	// image (prod 2026-11-24), so a BOM is a problem even though npm strips it.
+	if strings.HasPrefix(raw, "\xef\xbb\xbf") {
+		return "package.json starts with a UTF-8 byte order mark (BOM), which the build cannot read; save it as UTF-8 without a BOM"
+	}
 	raw = lenientJSON(raw)
 	var v map[string]any
 	err := json.Unmarshal([]byte(raw), &v)
