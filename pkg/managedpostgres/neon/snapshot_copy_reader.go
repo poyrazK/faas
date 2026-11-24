@@ -56,7 +56,7 @@ func (p *Provider) snapshotCopyReader(ctx context.Context, d managedpostgres.Res
 			Endpoint endpoint `json:"endpoint"`
 		}
 		path := "/projects/" + url.PathEscape(capture.projectID) + "/endpoints"
-		postErr := p.doJSON(ctx, http.MethodPost, path, nil, snapshotCopyReaderPayload(name, capture.branchID, p.regionID, d.Spec), &accepted, http.StatusCreated)
+		postErr := p.doJSON(ctx, http.MethodPost, path, nil, p.snapshotCopyReaderPayload(name, capture.branchID, p.regionID, d.Spec), &accepted, http.StatusCreated)
 		if postErr == nil {
 			if _, err := p.snapshotCopyReaderObservation(d.Spec, r, capture, accepted.Endpoint); err != nil {
 				return managedpostgres.SnapshotCopyReaderObservation{}, err
@@ -89,9 +89,9 @@ func (p *Provider) snapshotCopyReader(ctx context.Context, d managedpostgres.Res
 	return observed, nil
 }
 
-func snapshotCopyReaderPayload(name, branchID, region string, spec managedpostgres.Spec) snapshotCopyReaderCreateRequest {
+func (p *Provider) snapshotCopyReaderPayload(name, branchID, region string, spec managedpostgres.Spec) snapshotCopyReaderCreateRequest {
 	return snapshotCopyReaderCreateRequest{Endpoint: snapshotCopyReaderCreateEndpoint{Name: name, BranchID: branchID, RegionID: region,
-		Type: "read_only", Disabled: false, PasswordlessAccess: false, endpointSettings: endpointSettingsForSpec(spec)}}
+		Type: "read_only", Disabled: false, PasswordlessAccess: false, endpointSettings: p.endpointSettingsForSpec(spec)}}
 }
 
 func (p *Provider) authenticateSnapshotCopyReaderCapture(ctx context.Context, d managedpostgres.RestoreSourceDefinition, r managedpostgres.SnapshotCopyReaderRequest, retained bool) (resourceRef, error) {
@@ -195,8 +195,7 @@ func (p *Provider) snapshotCopyReaderObservation(spec managedpostgres.Spec, r ma
 		r.ExpectedEndpointID != "" && (actual.ID != r.ExpectedEndpointID || !at.Equal(r.ExpectedCreatedAt)) {
 		return managedpostgres.SnapshotCopyReaderObservation{}, managedpostgres.ErrConflict
 	}
-	settings := endpointSettingsForSpec(spec)
-	if actual.MinimumCU != settings.MinimumCU || actual.MaximumCU != settings.MaximumCU || actual.SuspendTimeoutSecond != settings.SuspendTimeoutSecond {
+	if !sameEndpointSettings(actual.endpointSettings(), p.endpointSettingsForSpec(spec)) {
 		return managedpostgres.SnapshotCopyReaderObservation{}, managedpostgres.ErrConflict
 	}
 	available := actual.Disabled != nil && !*actual.Disabled && actual.PasswordlessAccess != nil && !*actual.PasswordlessAccess &&

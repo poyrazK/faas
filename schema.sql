@@ -49099,6 +49099,26 @@ CREATE TABLE public.managed_postgres_restore_verifications (
 
 
 --
+-- Name: managed_postgres_suspend_timeouts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_suspend_timeouts (
+    database_id uuid NOT NULL,
+    seconds integer NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT managed_postgres_suspend_timeouts_seconds_check CHECK (((seconds >= 60) AND (seconds <= 3600))),
+    CONSTRAINT managed_postgres_suspend_timeouts_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
+-- Name: TABLE managed_postgres_suspend_timeouts; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.managed_postgres_suspend_timeouts IS 'Customer-chosen scale-to-zero suspend timeout per managed PostgreSQL database; no row is the platform default; written only by apid.';
+
+
+--
 -- Name: managed_postgres_usage; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -72799,6 +72819,14 @@ ALTER TABLE ONLY public.managed_postgres_restore_verifications
 
 ALTER TABLE ONLY public.managed_postgres_restore_verifications
     ADD CONSTRAINT managed_postgres_restore_verifications_pkey PRIMARY KEY (database_id);
+
+
+--
+-- Name: managed_postgres_suspend_timeouts managed_postgres_suspend_timeouts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_suspend_timeouts
+    ADD CONSTRAINT managed_postgres_suspend_timeouts_pkey PRIMARY KEY (database_id);
 
 
 --
@@ -109120,6 +109148,14 @@ ALTER TABLE ONLY public.managed_postgres_restore_verifications
 
 ALTER TABLE ONLY public.managed_postgres_restore_verifications
     ADD CONSTRAINT managed_postgres_restore_verifications_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_suspend_timeouts managed_postgres_suspend_timeouts_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_suspend_timeouts
+    ADD CONSTRAINT managed_postgres_suspend_timeouts_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
 
 
 --

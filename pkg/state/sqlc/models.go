@@ -9673,6 +9673,13 @@ type ManagedPostgresRestoreVerification struct {
 	VerifiedAt         pgtype.Timestamptz
 }
 
+// Customer-chosen scale-to-zero suspend timeout per managed PostgreSQL database; no row is the platform default; written only by apid.
+type ManagedPostgresSuspendTimeout struct {
+	DatabaseID pgtype.UUID
+	Seconds    int32
+	UpdatedAt  pgtype.Timestamptz
+}
+
 type ManagedPostgresUsage struct {
 	AccountID          pgtype.UUID
 	DatabaseID         pgtype.UUID

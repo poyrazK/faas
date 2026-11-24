@@ -562,6 +562,7 @@ touch them. The tables below map each earlier name.
 | `gregale postgres overage` | `gregale postgres overage set` |
 | `gregale postgres previews` | `gregale postgres previews set` |
 | `gregale postgres resize-status` | `gregale postgres resize status` |
+| `gregale postgres suspend-timeout` | `gregale postgres suspend-timeout set` |
 | `gregale previews join` | `gregale feature join` |
 | `gregale previews leave` | `gregale feature leave` |
 | `gregale projects environments abort` | `gregale environment cancel` |

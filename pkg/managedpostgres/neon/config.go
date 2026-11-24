@@ -12,6 +12,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -77,6 +78,9 @@ type Provider struct {
 	// broker, when set, forwards every Neon call to neond, which holds the
 	// key (ADR-20261112160000); apiKey is then empty.
 	broker brokerForwarder
+	// suspendTimeout is the registry's scale-to-zero suspend timeout
+	// (managedpostgres.SuspendTimeoutSetter); 0 is the default.
+	suspendTimeout atomic.Int64
 }
 
 // New constructs the production Neon driver from a provider-neutral backend

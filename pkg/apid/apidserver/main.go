@@ -894,6 +894,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runEnvironmentBranchDataReconciler(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runProjectEnvironmentCloneCoordinator(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresUsageCollector(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresSuspendTimeouts(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresHealthCollector(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresSQLProber(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runAppHealthCollector(ctx) })

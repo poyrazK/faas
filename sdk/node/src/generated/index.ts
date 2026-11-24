@@ -1534,6 +1534,7 @@ export type { ManagedPostgresQueryRequest } from './models/ManagedPostgresQueryR
 export type { ManagedPostgresQueryResponse } from './models/ManagedPostgresQueryResponse.js';
 export type { ManagedPostgresResize } from './models/ManagedPostgresResize.js';
 export type { ManagedPostgresRestoreRange } from './models/ManagedPostgresRestoreRange.js';
+export type { ManagedPostgresSuspendTimeout } from './models/ManagedPostgresSuspendTimeout.js';
 export type { ManagedPostgresUsageImportReading } from './models/ManagedPostgresUsageImportReading.js';
 export type { ManagedPostgresUsageImportRequest } from './models/ManagedPostgresUsageImportRequest.js';
 export type { ManagedPostgresUsageImportResult } from './models/ManagedPostgresUsageImportResult.js';
@@ -3425,6 +3426,7 @@ export type { SetDeploymentAliasRequest } from './models/SetDeploymentAliasReque
 export type { SetEnvironmentRouteBudgetsRequest } from './models/SetEnvironmentRouteBudgetsRequest.js';
 export type { SetFinancialBudgetChannelsRequest } from './models/SetFinancialBudgetChannelsRequest.js';
 export type { SetGraceWindowRequest } from './models/SetGraceWindowRequest.js';
+export type { SetManagedPostgresSuspendTimeoutRequest } from './models/SetManagedPostgresSuspendTimeoutRequest.js';
 export type { SetMCPReadinessFallbackRequest } from './models/SetMCPReadinessFallbackRequest.js';
 export type { SetMCPReadinessPagerDutyAcknowledgementsRequest } from './models/SetMCPReadinessPagerDutyAcknowledgementsRequest.js';
 export type { SetMCPReadinessPagerDutyRequest } from './models/SetMCPReadinessPagerDutyRequest.js';
