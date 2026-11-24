@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/sharedruntime"
@@ -19,26 +20,32 @@ const nextStandaloneMaxPackageJSON = 1 << 20
 
 // nextStandaloneBuild reports whether a build asks for the standalone
 // rewrite: a Railpack Node container build on the shared runner base, not a
-// watch-mode developer image.
+// watch-mode developer image, for a plan whose app layer cap the builder
+// sent.
 func nextStandaloneBuild(m api.BuildManifest) bool {
-	return m.NextStandalone && m.SharedRuntime && !m.Function && m.DevWatchCommand == "" &&
+	return m.NextStandalone && m.SharedRuntime && m.AppLayerMaxMB > 0 && !m.Function && m.DevWatchCommand == "" &&
 		(m.Framework == api.FrameworkRailpackNode || m.Framework == api.FrameworkAuto)
 }
 
-// runNextStandalone rewrites the plan at args[0] for the app in args[1]. It
-// never fails the build: an app it does not apply to, or a plan it cannot
-// read, builds as Railpack planned it.
+// runNextStandalone rewrites the plan at args[0] for the app in args[1],
+// whose plan caps the app layer at args[2] MB. It never fails the build: an
+// app it does not apply to, or a plan it cannot read, builds as Railpack
+// planned it.
 func runNextStandalone(args []string) int {
-	if len(args) != 2 {
+	if len(args) != 3 {
 		return 0
 	}
-	if err := stampNextStandalonePlan(args[0], args[1]); err != nil && !errors.Is(err, sharedruntime.ErrNotNextStandalone) {
+	capMB, err := strconv.Atoi(args[2])
+	if err != nil {
+		return 0
+	}
+	if err := stampNextStandalonePlan(args[0], args[1], capMB); err != nil && !errors.Is(err, sharedruntime.ErrNotNextStandalone) {
 		fmt.Fprintf(os.Stderr, "Next.js standalone build not applied: %v\n", err)
 	}
 	return 0
 }
 
-func stampNextStandalonePlan(planPath, workdir string) error {
+func stampNextStandalonePlan(planPath, workdir string, capMB int) error {
 	pkg, err := readSmallRegularFile(filepath.Join(workdir, "package.json"), nextStandaloneMaxPackageJSON)
 	if err != nil {
 		return sharedruntime.ErrNotNextStandalone
@@ -47,7 +54,7 @@ func stampNextStandalonePlan(planPath, workdir string) error {
 	if err != nil {
 		return fmt.Errorf("read Railpack plan: %w", err)
 	}
-	stamped, err := sharedruntime.StampNextStandalone(plan, pkg)
+	stamped, err := sharedruntime.StampNextStandalone(plan, pkg, capMB)
 	if err != nil {
 		return fmt.Errorf("stamp Railpack plan: %w", err)
 	}
@@ -69,7 +76,7 @@ func stampNextStandalonePlan(planPath, workdir string) error {
 	if err := os.Rename(tmp.Name(), planPath); err != nil {
 		return fmt.Errorf("replace Railpack plan: %w", err)
 	}
-	fmt.Fprintln(os.Stderr, "Next.js: building with output \"standalone\" so the app ships only the files its server needs")
+	fmt.Fprintf(os.Stderr, "Next.js: building with output \"standalone\"; the app ships only its server's files if the whole app is over its plan's %d MB app layer\n", capMB)
 	return nil
 }
 

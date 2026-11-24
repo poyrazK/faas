@@ -11,6 +11,12 @@ dependencies, so a small app is about 95 MB. The Free plan caps the app layer
 at 256 MB, which leaves about 160 MB for `node_modules`. See
 [App layer](build.md#app-layer).
 
+This holds when the start command runs `bun` and none of the scripts it
+reaches call `npm`, `npx`, `yarn`, `pnpm`, or a script runner such as
+`npm-run-all`, `run-p` or `concurrently`. A start that breaks either rule
+keeps the whole toolchain, Node included, and does not fit Free. Use
+`bun run <script>` or `bunx <tool>` in place of those tools.
+
 ## Prepare the app
 
 Listen on the port Gregale gives you, on every interface:

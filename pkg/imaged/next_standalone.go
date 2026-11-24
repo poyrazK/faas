@@ -22,30 +22,12 @@ func nextStandaloneEntry(name string) bool {
 	return name == "app" || name == "app/.next" || name == prefix || strings.HasPrefix(name, prefix+"/")
 }
 
-// outsideNextStandalone reports whether a filtered entry is outside the
-// standalone tree: the full /app layer without the copy the builder made.
-func outsideNextStandalone(name string) bool {
-	prefix := sharedruntime.NextStandalonePrefix
-	return name != prefix && !strings.HasPrefix(name, prefix+"/")
-}
-
-// selectNextStandalone keeps only the standalone tree of layers that
-// filterAppLayers wrote; see filterNextLayers.
+// selectNextStandalone re-reads layers that filterAppLayers wrote and keeps
+// only the standalone tree, which must hold the server. On an error the
+// input layers are left where they were read to and the caller rewinds
+// them.
 func selectNextStandalone(layers []io.Reader) ([]io.Reader, func(), error) {
-	return filterNextLayers(layers, nextStandaloneEntry, true)
-}
-
-// stripNextStandalone drops the standalone tree from layers that
-// filterAppLayers wrote, for an app that ships its full /app.
-func stripNextStandalone(layers []io.Reader) ([]io.Reader, func(), error) {
-	return filterNextLayers(layers, outsideNextStandalone, false)
-}
-
-// filterNextLayers re-reads filtered layers and keeps the entries keep
-// accepts; needServer requires the standalone server among them. On an
-// error the input layers are left where they were read to and the caller
-// rewinds them.
-func filterNextLayers(layers []io.Reader, keep func(string) bool, needServer bool) ([]io.Reader, func(), error) {
+	keep := nextStandaloneEntry
 	tmpDir, err := os.MkdirTemp("", "faas-next-standalone-")
 	if err != nil {
 		return nil, func() {}, fmt.Errorf("create standalone layer tempdir: %w", err)
@@ -83,7 +65,7 @@ func filterNextLayers(layers []io.Reader, keep func(string) bool, needServer boo
 			return fail(fmt.Errorf("rewind standalone layer %d: %w", i, err))
 		}
 	}
-	if needServer && !sawServer {
+	if !sawServer {
 		return fail(errors.New("no standalone server in the app layer"))
 	}
 	readers := make([]io.Reader, len(files))

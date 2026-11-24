@@ -87,8 +87,9 @@ The build runs in a microVM with 2048 MB of memory. A large app whose
 ## Make the app smaller
 
 Gregale ships only `.next/standalone`, with `.next/static` and `public`
-copied into it, when the app's full `/app` takes more than three quarters of
-the plan's app layer and all of these hold:
+copied into it, when the app's full `/app` (without the build cache) is
+larger than the plan's app layer, as a Next.js app with its `node_modules` is
+on Free, and all of these hold:
 
 - `next` 16 or later is in `dependencies`;
 - the `build` script runs `next build`;

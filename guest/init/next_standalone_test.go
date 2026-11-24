@@ -27,7 +27,7 @@ func TestStampNextStandalonePlan(t *testing.T) {
 	}
 	write(plan, nextStandalonePlanFixture)
 	write(filepath.Join(dir, "package.json"), `{"scripts":{"build":"next build","start":"next start"},"dependencies":{"next":"16.4.6"}}`)
-	if err := stampNextStandalonePlan(plan, dir); err != nil {
+	if err := stampNextStandalonePlan(plan, dir, 256); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(plan)
@@ -40,23 +40,24 @@ func TestStampNextStandalonePlan(t *testing.T) {
 
 	write(plan, nextStandalonePlanFixture)
 	write(filepath.Join(dir, "package.json"), `{"scripts":{"start":"node index.js"}}`)
-	if err := stampNextStandalonePlan(plan, dir); !errors.Is(err, sharedruntime.ErrNotNextStandalone) {
+	if err := stampNextStandalonePlan(plan, dir, 256); !errors.Is(err, sharedruntime.ErrNotNextStandalone) {
 		t.Fatalf("err = %v, want ErrNotNextStandalone", err)
 	}
 	if got, _ := os.ReadFile(plan); string(got) != nextStandalonePlanFixture {
 		t.Fatalf("plan changed: %s", got)
 	}
-	if code := runNextStandalone([]string{plan, filepath.Join(dir, "missing")}); code != 0 {
+	if code := runNextStandalone([]string{plan, filepath.Join(dir, "missing"), "256"}); code != 0 {
 		t.Fatalf("helper exit = %d, want 0: it never fails a build", code)
 	}
 }
 
 func TestNextStandaloneBuild(t *testing.T) {
-	m := api.BuildManifest{Framework: api.FrameworkRailpackNode, SharedRuntime: true, NextStandalone: true}
+	m := api.BuildManifest{Framework: api.FrameworkRailpackNode, SharedRuntime: true, NextStandalone: true, AppLayerMaxMB: 256}
 	if !nextStandaloneBuild(m) {
 		t.Fatal("Railpack Node build on the shared runtime")
 	}
 	for name, mutate := range map[string]func(*api.BuildManifest){
+		"no plan cap":      func(m *api.BuildManifest) { m.AppLayerMaxMB = 0 },
 		"switched off":     func(m *api.BuildManifest) { m.NextStandalone = false },
 		"own runtime base": func(m *api.BuildManifest) { m.SharedRuntime = false },
 		"function":         func(m *api.BuildManifest) { m.Function = true },

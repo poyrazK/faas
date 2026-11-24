@@ -352,16 +352,6 @@ func layerEntryNames(t *testing.T, layers []io.Reader) []string {
 	return names
 }
 
-// nextSplit is a split whose plan cap the tiny fixtures' /app either fits
-// (1 GiB) or overflows (8 bytes).
-func nextSplit(release, fits bool) sharedRuntimeSplit {
-	split := sharedRuntimeSplit{keepsApp: release, layerCapBytes: 8}
-	if fits {
-		split.layerCapBytes = 1 << 30
-	}
-	return split
-}
-
 // spec: §4.6
 // ADR-20261124160000: a Next.js app started with a plain `next start` ships
 // only its standalone tree when the build wrote one, and a Bun app keeps
@@ -395,6 +385,9 @@ func TestSharedRuntimeAppLayersNextAndBun(t *testing.T) {
 	delete(withoutMarker, sharedruntime.NextStandaloneMarker)
 	standaloneNames := []string{sharedruntime.NextStandaloneMarker, "app/.next/standalone/.next/static/a.css", "app/.next/standalone/node_modules/next/x.js", "app/.next/standalone/server.js"}
 	fullAppNames := []string{"app/node_modules/next/dist/server.js", "app/package.json"}
+	allNames := append(slices.Clone(standaloneNames), fullAppNames...)
+	slices.Sort(allNames)
+	bunInstalled := map[string]string{"app/index.ts": "Bun.serve()", "mise/installs/bun/1.3.5/bin/bun": "elf", "mise/installs/node/24.1.0/bin/node": "elf"}
 	tests := []struct {
 		name       string
 		files      map[string]string
@@ -407,26 +400,38 @@ func TestSharedRuntimeAppLayersNextAndBun(t *testing.T) {
 		env        map[string]string
 		wantHost   string
 		release    bool
-		// fits gives the plan room for the full /app.
-		fits bool
 	}{
 		{
 			// A release command may read /app files the standalone tree
-			// drops; the builder's copy is removed from the full /app.
+			// drops. The builder kept the tree only because the full /app
+			// is over the plan's cap, so this layer fails that cap as it
+			// did before the standalone build.
 			name: "release command keeps all of /app", files: standalone, start: "npm run start", release: true,
 			wantArgv: []string{"/bin/sh", "-c", "next start"}, wantPath: sharedruntime.RunnerPath,
-			wantNames: fullAppNames,
-		},
-		{
-			// `gregale run` and scripts keep their /app when it fits.
-			name: "app that fits its plan keeps all of /app", files: standalone, start: "npm run start", fits: true,
-			wantArgv: []string{"/bin/sh", "-c", "next start"}, wantPath: sharedruntime.RunnerPath,
-			wantNames: fullAppNames,
+			wantNames: allNames,
 		},
 		{
 			name: "bun script calling npx keeps the toolchain", start: "bun run start",
-			files:      map[string]string{"app/package.json": `{"scripts":{"start":"npx prisma migrate deploy && bun src/index.ts"}}`, "mise/installs/bun/1.3.5/bin/bun": "elf", "mise/installs/node/24.1.0/bin/node": "elf"},
+			files:      withPkg(bunInstalled, `{"scripts":{"start":"npx prisma migrate deploy && bun src/index.ts"}}`),
 			wantReason: sharedruntime.ReasonPackageManagerStart,
+		},
+		{
+			name: "bun flags before a script calling run-p keep the toolchain", start: "bun run --bun start",
+			files:      withPkg(bunInstalled, `{"scripts":{"start":"run-p serve worker"}}`),
+			wantReason: sharedruntime.ReasonPackageManagerStart,
+		},
+		{
+			// npm is not on the runner base, and the layer would drop Bun.
+			name: "npm script running bun keeps the toolchain", start: "npm run start",
+			files:      withPkg(bunInstalled, bunPkg),
+			wantReason: sharedruntime.ReasonBunInScript,
+		},
+		{
+			name: "env-prefixed bun start keeps bun", start: "NODE_ENV=production bun run start",
+			files:     withPkg(bunInstalled, bunPkg),
+			wantArgv:  []string{"/bin/sh", "-c", "NODE_ENV=production bun run start"},
+			wantPath:  sharedruntime.BunRunnerPath("/mise/installs/bun/1.3.5/bin"),
+			wantNames: []string{"app/index.ts", "app/package.json", "mise/installs/bun/1.3.5/bin/bun"},
 		},
 		{
 			name: "next standalone", files: standalone, start: "npm run start",
@@ -453,10 +458,10 @@ func TestSharedRuntimeAppLayersNextAndBun(t *testing.T) {
 			wantNames: []string{"app/.next/standalone/.next/static/a.css", "app/.next/standalone/node_modules/next/x.js", "app/.next/standalone/server.js", "app/node_modules/next/dist/server.js", "app/package.json"},
 		},
 		{
-			name: "next start with arguments keeps node_modules", start: "npm run start",
+			name: "next start with arguments keeps all of /app", start: "npm run start",
 			files:    withPkg(standalone, `{"scripts":{"start":"next start -p 3000"}}`),
 			wantArgv: []string{"/bin/sh", "-c", "next start -p 3000"}, wantPath: sharedruntime.RunnerPath,
-			wantNames: fullAppNames,
+			wantNames: allNames,
 		},
 		{
 			name: "bun exec form keeps its words", start: "unused",
@@ -483,7 +488,7 @@ func TestSharedRuntimeAppLayersNextAndBun(t *testing.T) {
 		{
 			name: "bun start without bun installed", start: "bun run start",
 			files:      map[string]string{"app/package.json": bunPkg, "app/index.ts": "Bun.serve()", "mise/installs/node/24.1.0/bin/node": "elf"},
-			wantReason: "bun_not_installed",
+			wantReason: sharedruntime.ReasonBunNotInstalled,
 		},
 	}
 	for _, tt := range tests {
@@ -505,7 +510,7 @@ func TestSharedRuntimeAppLayersNextAndBun(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := h.sharedRuntimeAppLayersAt(t.Context(), RuntimeNode24, baseDiffIDs, archive, config, layers, &manifest, state.App{Type: state.AppTypeApp}, nextSplit(tt.release, tt.fits))
+			got, err := h.sharedRuntimeAppLayersAt(t.Context(), RuntimeNode24, baseDiffIDs, archive, config, layers, &manifest, state.App{Type: state.AppTypeApp}, sharedRuntimeSplit{keepsApp: tt.release})
 			if err != nil {
 				t.Fatal(err)
 			}

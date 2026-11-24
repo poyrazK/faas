@@ -133,6 +133,10 @@ type BuildManifest struct {
 	// standalone tree. builderd sets it on a shared-runtime build unless
 	// FAAS_NEXT_STANDALONE=0. An older guest ignores it.
 	NextStandalone bool `json:"next_standalone,omitempty"`
+	// AppLayerMaxMB is the plan's app layer cap. The Next.js standalone
+	// build keeps its standalone tree only when the full /app would not fit
+	// it; zero turns the standalone build off.
+	AppLayerMaxMB int `json:"app_layer_max_mb,omitempty"`
 	// DependencyCache enables the app-scoped BuildKit cache exporter. Import is
 	// set only when builderd successfully staged a prior cache into this
 	// otherwise-ephemeral builder VM.

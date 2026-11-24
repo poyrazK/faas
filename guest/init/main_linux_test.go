@@ -397,8 +397,9 @@ func TestBuildArgv_NextStandaloneHelper(t *testing.T) {
 		OutDir:         "/build/out",
 		SharedRuntime:  true,
 		NextStandalone: true,
+		AppLayerMaxMB:  256,
 	})
-	want := "--info-out '/build/railpack-info.json' && { GREGALE_INIT_HELPER=next-standalone /proc/1/exe '/build/railpack-plan.json' '/build/src' || true; } && exec /usr/local/bin/buildctl"
+	want := "--info-out '/build/railpack-info.json' && { GREGALE_INIT_HELPER=next-standalone /proc/1/exe '/build/railpack-plan.json' '/build/src' 256 || true; } && exec /usr/local/bin/buildctl"
 	if joined := strings.Join(got, " "); !strings.Contains(joined, want) {
 		t.Fatalf("argv = %s\nwant it to contain %s", joined, want)
 	}

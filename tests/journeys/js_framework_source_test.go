@@ -89,8 +89,8 @@ func TestJSFrameworkSourceDeploys(t *testing.T) {
 }
 
 // expectNextStandalone waits for the app at base to serve from either
-// layout imaged chooses: /app/.next/standalone when the full /app does not
-// fit the account's plan (Free), else all of /app. It logs which.
+// layout the build chooses: /app/.next/standalone when the full /app is over
+// the account's plan's app layer cap (Free), else all of /app. It logs which.
 func expectNextStandalone(t *testing.T, base string, timeout time.Duration) {
 	t.Helper()
 	cwd := ""

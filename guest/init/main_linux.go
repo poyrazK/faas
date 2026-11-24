@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -2126,7 +2127,7 @@ func buildArgv(m api.BuildManifest) []string {
 	if nextStandaloneBuild(m) {
 		// Never fails the build; see runNextStandalone.
 		prepare += " && { " + dependencyInputsHelperEnv + "=" + nextStandaloneHelperValue + " /proc/1/exe " +
-			shellQuote(planPath) + " " + shellQuote(m.Workdir) + " || true; }"
+			shellQuote(planPath) + " " + shellQuote(m.Workdir) + " " + strconv.Itoa(m.AppLayerMaxMB) + " || true; }"
 	}
 	if len(m.PublicBuildURLs) > 0 || m.BuildDependencyDigest != "" {
 		prepare += " && " + dependencyInputsHelperEnv + "=" + publicBuildURLsHelperValue + " /proc/1/exe " + shellQuote(planPath)

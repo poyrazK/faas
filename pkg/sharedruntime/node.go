@@ -75,20 +75,28 @@ func ClassifyNode(planJSON, packageJSON []byte) api.SharedRuntimeVerdict {
 	if reason := checkDeployInputs(p.Deploy.Inputs); reason != "" {
 		return ineligible(reason)
 	}
-	start, reason := resolveStart(p.Deploy.StartCommand, packageJSON)
-	if reason == ReasonPackageManagerStart && BunStart(p.Deploy.StartCommand) && !BunStartNeedsNodePackageManager(p.Deploy.StartCommand, packageJSON) {
-		// ADR-20261124160000: the layer keeps Bun's own install.
-		start, reason = []string{"/bin/sh", "-c", strings.TrimSpace(p.Deploy.StartCommand)}, ""
-	}
-	if reason != "" {
+	command := p.Deploy.StartCommand
+	bun := UsesBun(command)
+	start, reason := resolveStart(command, packageJSON)
+	switch {
+	case bun && BunStartNeedsNodePackageManager(command, packageJSON):
+		return ineligible(ReasonPackageManagerStart)
+	case bun:
+		// ADR-20261124160000: the layer keeps Bun's own install, if the
+		// artifact has one (imaged decides).
+		start = []string{"/bin/sh", "-c", strings.TrimSpace(command)}
+	case reason != "":
 		return ineligible(reason)
+	case StartReachesBun(command, packageJSON):
+		// A package manager script runs Bun; the runner base has neither.
+		return ineligible(ReasonBunInScript)
 	}
 	env := make(map[string]string, len(p.Deploy.Variables)+1)
 	for k, v := range p.Deploy.Variables {
 		env[k] = v
 	}
 	env["PATH"] = runnerPath
-	if BunStart(p.Deploy.StartCommand) {
+	if bun {
 		// Bun's bin directory is known only from the artifact; imaged sets
 		// PATH with BunRunnerPath.
 		delete(env, "PATH")

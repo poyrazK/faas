@@ -3,6 +3,7 @@ package sharedruntime
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -11,7 +12,8 @@ import (
 // app: more than the Free plan's 256 MB app layer. `output: "standalone"`
 // makes `next build` trace the files the server needs into
 // .next/standalone (about 40 MB). The builder turns it on through Next's
-// build adapter hook, and imaged then ships only that tree.
+// build adapter hook and keeps the tree only when the whole app is larger
+// than the plan's app layer cap; imaged then ships only that tree.
 
 // NextStandaloneEnv turns the standalone build of Next.js apps off on a
 // builder node when "0". On by default.
@@ -43,38 +45,56 @@ const nextAdapterPath = "/tmp/gregale-next-standalone-adapter.cjs"
 
 const nextAdapterAsset = "gregale-next-standalone-adapter"
 
+// nextAdapterSetFlag is the file the adapter writes when it set the output
+// itself. The post-build step acts only then, so an app that chose output
+// "standalone" in its own config keeps its build as it is.
+const nextAdapterSetFlag = "/tmp/gregale-next-standalone-set"
+
 // nextAdapter sets output "standalone" for `next build` unless the app's
 // config chose an output itself. NEXT_ADAPTER_PATH is read by Next 15.5 and
 // later; modifyConfig runs before the build reads the config.
 const nextAdapter = `"use strict";
-// Written by Gregale: builds with output "standalone" so the deployed app
-// holds only the files its server needs.
+// Written by Gregale: builds with output "standalone" so an app too large
+// for its plan's app layer can ship only the files its server needs.
 module.exports = {
   name: "gregale-standalone",
   modifyConfig(config, ctx) {
     if (ctx && ctx.phase === "phase-production-build" && !config.output) {
       config.output = "standalone";
+      require("fs").writeFileSync("` + nextAdapterSetFlag + `", "");
     }
     return config;
   },
 };
 `
 
-// nextStandaloneCopy puts the static assets and public files next to the
-// standalone server, as Next's deployment docs do. It changes nothing when
-// the build wrote no standalone server (the app chose another output). It
-// never fails the build: a copy that fails leaves no marker, and imaged then
-// ships the app with its node_modules.
-const nextStandaloneCopy = `sh -c 'if [ -f .next/standalone/server.js ] && ` +
-	`rm -rf .next/standalone/.next/static && mkdir -p .next/standalone/.next && ` +
+// nextStandaloneStep (a format taking the cap in KiB) keeps the standalone
+// tree only when the app needs it. After the build it measures /app without
+// the standalone tree and the build caches (cache mounts, never deployed).
+// An app that fits the plan's app layer cap ships whole, as before, and the
+// tree is removed. A larger one gets its static assets and public files
+// copied next to the standalone server, as Next's deployment docs do, and
+// the marker written last. The step acts only when the adapter set the
+// output, and never fails the build: without the marker imaged ships the
+// whole app.
+const nextStandaloneStep = `sh -c 'if [ -f ` + nextAdapterSetFlag + ` ] && [ -f .next/standalone/server.js ]; then ` +
+	`sz() { if [ -e "$1" ]; then du -sk "$1" | cut -f1; else echo 0; fi; }; keep=0; ` +
+	`k=$(( $(sz .) - $(sz .next/standalone) - $(sz .next/cache) - $(sz node_modules/.cache) )); ` +
+	`if [ "$k" -gt %d ] && rm -rf .next/standalone/.next/static && mkdir -p .next/standalone/.next && ` +
 	`{ [ ! -d .next/static ] || cp -R .next/static .next/standalone/.next/static; } && ` +
 	`{ [ ! -d public ] || { rm -rf .next/standalone/public && cp -R public .next/standalone/public; }; }; then ` +
-	`: > .next/standalone/` + nextStandaloneMarkerName + `; fi; true'`
+	`: > .next/standalone/` + nextStandaloneMarkerName + ` && keep=1; fi; ` +
+	`[ "$keep" = 1 ] || rm -rf .next/standalone; fi; true'`
 
-// nextStandaloneMarkerName is the file the copy step writes last. imaged ships
-// the standalone tree only when it is there: a standalone server built
-// without the copy (the app's own output setting, an older builder, the
-// switch off) lacks its static and public files.
+// nextStandaloneCommand is nextStandaloneStep for a cap of capMB.
+func nextStandaloneCommand(capMB int) string {
+	return fmt.Sprintf(nextStandaloneStep, capMB*1024)
+}
+
+// nextStandaloneMarkerName is the file nextStandaloneStep writes last.
+// imaged ships the standalone tree only when it is there: a standalone
+// server built without the step (the app's own output setting, an older
+// builder, the switch off) lacks its static and public files.
 const nextStandaloneMarkerName = ".gregale-standalone"
 
 // NextStandaloneMarker is the marker's tar path.
@@ -148,6 +168,11 @@ func nextMajor(spec string) int {
 	return major
 }
 
+// ReasonNextStandaloneReread: imaged could neither select a Next.js
+// standalone tree nor re-read the app layer it filtered, so the app keeps
+// every layer above the runner base.
+const ReasonNextStandaloneReread = "next_standalone_reread"
+
 // ErrNotNextStandalone reports a plan or package the standalone build does
 // not apply to.
 var ErrNotNextStandalone = errors.New("not a next start app")
@@ -156,10 +181,14 @@ var ErrNotNextStandalone = errors.New("not a next start app")
 // Next.js app with standalone output. It applies only to an app whose
 // package.json depends on Next 16 or later, builds with `next build` and
 // starts with a plain `next start` through the package manager; anything
-// else returns ErrNotNextStandalone and the plan is left as it is. Deploy
-// inputs are unchanged: imaged chooses the standalone tree when the build
-// wrote it.
-func StampNextStandalone(planJSON, packageJSON []byte) ([]byte, error) {
+// else returns ErrNotNextStandalone and the plan is left as it is. capMB is
+// the plan's app layer cap: the build keeps the standalone tree only for an
+// app larger than that. Deploy inputs are unchanged: imaged chooses the
+// standalone tree when the build marked it.
+func StampNextStandalone(planJSON, packageJSON []byte, capMB int) ([]byte, error) {
+	if capMB <= 0 {
+		return nil, ErrNotNextStandalone
+	}
 	var pkg nextPackage
 	if err := json.Unmarshal(packageJSON, &pkg); err != nil {
 		return nil, ErrNotNextStandalone
@@ -229,8 +258,8 @@ func StampNextStandalone(planJSON, packageJSON []byte) ([]byte, error) {
 	}
 	assets[nextAdapterAsset] = nextAdapter
 	stamped = append(stamped, map[string]any{
-		"customName": "copy static files into the standalone server",
-		"cmd":        nextStandaloneCopy,
+		"customName": "keep the standalone server if the app needs it",
+		"cmd":        nextStandaloneCommand(capMB),
 	})
 	build["commands"] = stamped
 	return json.Marshal(plan)

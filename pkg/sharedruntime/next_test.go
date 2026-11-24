@@ -38,13 +38,16 @@ func buildStep(t *testing.T, plan []byte) map[string]any {
 	return nil
 }
 
+// testCapMB is the Free plan's app layer cap.
+const testCapMB = 256
+
 // spec: §4.6
 // ADR-20261124160000: a Next.js 16 app started with a plain `next start` is
-// built with the standalone adapter on its build command only, then has its
-// static files copied next to the standalone server. Anything else keeps
-// Railpack's plan.
+// built with the standalone adapter on its build command only, then runs the
+// step that keeps the standalone tree only for an app over its plan's cap.
+// Anything else keeps Railpack's plan.
 func TestStampNextStandalone(t *testing.T) {
-	stamped, err := StampNextStandalone(nextPlan(t, "npm run build"), []byte(nextPkg))
+	stamped, err := StampNextStandalone(nextPlan(t, "npm run build"), []byte(nextPkg), testCapMB)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,8 +63,12 @@ func TestStampNextStandalone(t *testing.T) {
 	if got := commands[1].(map[string]any)["cmd"]; got != "env NEXT_ADAPTER_PATH="+nextAdapterPath+" npm run build" {
 		t.Fatalf("build command = %q", got)
 	}
-	if got := commands[2].(map[string]any)["cmd"]; got != nextStandaloneCopy {
-		t.Fatalf("last command = %q, want the static copy", got)
+	if got := commands[2].(map[string]any)["cmd"]; got != nextStandaloneCommand(testCapMB) ||
+		!strings.Contains(got.(string), " -gt 262144 ") {
+		t.Fatalf("last command = %q, want the standalone step at a 256 MB cap", got)
+	}
+	if _, err := StampNextStandalone(nextPlan(t, "npm run build"), []byte(nextPkg), 0); !errors.Is(err, ErrNotNextStandalone) {
+		t.Fatalf("no cap = %v, want the plan left alone", err)
 	}
 	if build["assets"].(map[string]any)[nextAdapterAsset] != nextAdapter {
 		t.Fatal("adapter asset missing")
@@ -73,7 +80,7 @@ func TestStampNextStandalone(t *testing.T) {
 	if strings.Contains(string(stamped), `"startCommand":"node`) {
 		t.Fatal("deploy start command changed; imaged chooses the standalone tree")
 	}
-	if _, err := StampNextStandalone(stamped, []byte(nextPkg)); !errors.Is(err, ErrNotNextStandalone) {
+	if _, err := StampNextStandalone(stamped, []byte(nextPkg), testCapMB); !errors.Is(err, ErrNotNextStandalone) {
 		t.Fatalf("second stamp = %v, want it left alone", err)
 	}
 
@@ -93,7 +100,7 @@ func TestStampNextStandalone(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := StampNextStandalone(tt.plan, []byte(tt.pkg)); !errors.Is(err, ErrNotNextStandalone) {
+			if _, err := StampNextStandalone(tt.plan, []byte(tt.pkg), testCapMB); !errors.Is(err, ErrNotNextStandalone) {
 				t.Fatalf("err = %v, want ErrNotNextStandalone", err)
 			}
 		})
@@ -108,7 +115,7 @@ func TestStampNextStandalone(t *testing.T) {
 			}
 		}
 		plan, _ = json.Marshal(p)
-		if _, err := StampNextStandalone(plan, []byte(nextPkg)); err != nil {
+		if _, err := StampNextStandalone(plan, []byte(nextPkg), testCapMB); err != nil {
 			t.Fatalf("%s: %v", pm, err)
 		}
 	}
@@ -169,6 +176,15 @@ func TestBunStartNeedsNodePackageManager(t *testing.T) {
 		// Scripts that run each other do not loop.
 		{"bun run start", `{"scripts":{"start":"bun run a","a":"bun run start"}}`, false},
 		{"bunx serve dist", ``, false},
+		// Flags before the script name, and flags with values.
+		{"bun run --bun start", `{"scripts":{"start":"npx tsx a.ts"}}`, true},
+		{"bun --bun run start", `{"scripts":{"start":"npx tsx a.ts"}}`, true},
+		{"bun --cwd . start", `{"scripts":{"start":"npx tsx a.ts"}}`, true},
+		{"bun run --bun start", `{"scripts":{"start":"bun a.ts"}}`, false},
+		// Script runners call npm.
+		{"bun run start", `{"scripts":{"start":"run-p api worker"}}`, true},
+		{"bun run start", `{"scripts":{"start":"concurrently \"bun a.ts\" \"bun b.ts\""}}`, true},
+		{"bun run start", `{"scripts":{"start":"npm-run-all --parallel a b"}}`, true},
 	}
 	for _, tt := range tests {
 		if got := BunStartNeedsNodePackageManager(tt.command, []byte(tt.pkg)); got != tt.want {
@@ -177,9 +193,33 @@ func TestBunStartNeedsNodePackageManager(t *testing.T) {
 	}
 }
 
+func TestStartReachesBun(t *testing.T) {
+	tests := []struct {
+		command, pkg string
+		want         bool
+	}{
+		{"npm start", `{"scripts":{"start":"bun index.ts"}}`, true},
+		{"npm run serve", `{"scripts":{"serve":"node a.js","postserve":"bunx x"}}`, true},
+		{"pnpm run start", `{"scripts":{"start":"node server.js"}}`, false},
+		{"node index.js", ``, false},
+		{"npm start", `{`, true},
+	}
+	for _, tt := range tests {
+		if got := StartReachesBun(tt.command, []byte(tt.pkg)); got != tt.want {
+			t.Errorf("%q with %s = %v, want %v", tt.command, tt.pkg, got, tt.want)
+		}
+	}
+}
+
 func TestBunHelpers(t *testing.T) {
-	if !BunStart("bun run start") || !BunStart("bun index.ts") || !BunStart("bunx serve dist") || BunStart("node index.js") || BunStart("") {
-		t.Fatal("BunStart")
+	for command, want := range map[string]bool{
+		"bun run start": true, "bun index.ts": true, "bunx serve dist": true,
+		"NODE_ENV=production bun run start": true, "/mise/shims/bun start": true,
+		"node index.js": false, "": false, "bundle exec x": false,
+	} {
+		if got := UsesBun(command); got != want {
+			t.Errorf("UsesBun(%q) = %v, want %v", command, got, want)
+		}
 	}
 	if got := BunBinDir("mise/installs/bun/1.3.5/bin/bun"); got != "/mise/installs/bun/1.3.5/bin" {
 		t.Fatalf("BunBinDir = %q", got)

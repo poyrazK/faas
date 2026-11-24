@@ -103,19 +103,6 @@ type sharedRuntimeSplit struct {
 	// scripts or node_modules a Next.js standalone tree leaves out
 	// (ADR-20261124160000).
 	keepsApp bool
-	// layerCapBytes is the plan's app layer cap. Zero never ships a Next.js
-	// standalone tree.
-	layerCapBytes int64
-}
-
-// nextStandaloneNeeded reports whether a Next.js app ships its standalone
-// tree (ADR-20261124160000): only when its full /app, without the
-// standalone copy, takes more than three quarters of the plan's app layer.
-// The rest is left for filesystem overhead, which node_modules' many small
-// files make large. An app that fits keeps all of /app, so `gregale run`,
-// workers and scripts still find its sources and node_modules.
-func (s sharedRuntimeSplit) nextStandaloneNeeded(report *appLayerReport) bool {
-	return !s.keepsApp && s.layerCapBytes > 0 && (report.AppBytes-report.StandaloneBytes) > s.layerCapBytes/4*3
 }
 
 // sharedRuntimeAppLayersAt is sharedRuntimeAppLayers at the runner base
@@ -138,7 +125,7 @@ func (h *Handler) sharedRuntimeAppLayersAt(ctx context.Context, runtime string, 
 	report := &appLayerReport{PythonInterpreter: sharedruntime.PythonInterpreter(runtime)}
 	nodeRunner := !sharedruntime.PythonRuntime(runtime)
 	command := sharedRuntimeCommand(*manifest, app)
-	report.KeepBun = nodeRunner && sharedruntime.BunStart(command)
+	report.KeepBun = nodeRunner && sharedruntime.UsesBun(command)
 	filtered, cleanup, filterErr := filterAppLayers(layers[start:], report)
 	reason := ""
 	switch {
@@ -147,41 +134,32 @@ func (h *Handler) sharedRuntimeAppLayersAt(ctx context.Context, runtime string, 
 	case len(report.Unexpected) > 0:
 		reason = "content_outside_app"
 	default:
-		if nodeRunner && report.NextStandalone {
-			// ADR-20261124160000: the builder made a standalone tree. Ship
-			// only it when the full /app would not fit the plan; otherwise
-			// drop it, so the full /app is no larger than before.
-			standalone := release.nextStandaloneNeeded(report) && sharedruntime.NextStart(command, report.PackageJSON)
-			pass := stripNextStandalone
-			if standalone {
-				pass = selectNextStandalone
-			}
-			next, nextCleanup, err := pass(filtered)
+		if nodeRunner && report.NextStandalone && !release.keepsApp && sharedruntime.NextStart(command, report.PackageJSON) {
+			// ADR-20261124160000: the builder kept a standalone tree, which
+			// it does only when the whole /app is over the plan's app layer
+			// cap. Ship only that tree.
+			next, nextCleanup, err := selectNextStandalone(filtered)
 			if err == nil {
 				cleanup()
-				filtered, cleanup = next, nextCleanup
-				if standalone {
-					setSharedRuntimeStart(manifest, sharedruntime.NextStandaloneStart, sharedruntime.RunnerPath)
-					for k, v := range sharedruntime.NextStandaloneEnvVars {
-						if _, set := manifest.Env[k]; !set {
-							manifest.Env[k] = v
-						}
+				setSharedRuntimeStart(manifest, sharedruntime.NextStandaloneStart, sharedruntime.RunnerPath)
+				for k, v := range sharedruntime.NextStandaloneEnvVars {
+					if _, set := manifest.Env[k]; !set {
+						manifest.Env[k] = v
 					}
-					return sharedRuntimeLayers{layers: filtered, cleanup: cleanup}, nil
 				}
-			} else {
-				h.log.Info("imaged: Next.js standalone pass failed; keeping the layer as built", "app", app.Slug, "standalone", standalone, "err", err)
-				if err := rewindLayers(filtered); err != nil {
-					reason = "next_standalone_reread"
-					break
-				}
+				return sharedRuntimeLayers{layers: next, cleanup: nextCleanup}, nil
+			}
+			h.log.Info("imaged: Next.js standalone selection failed; keeping the layer as built", "app", app.Slug, "err", err)
+			if err := rewindLayers(filtered); err != nil {
+				reason = sharedruntime.ReasonNextStandaloneReread
+				break
 			}
 		}
 		if report.KeepBun {
 			// ADR-20261124160000: Bun runs its own scripts; the layer keeps
 			// Bun's install and the runner base supplies Node.
 			if report.BunBinDir == "" {
-				reason = "bun_not_installed"
+				reason = sharedruntime.ReasonBunNotInstalled
 				break
 			}
 			if sharedruntime.BunStartNeedsNodePackageManager(command, report.PackageJSON) {
@@ -197,6 +175,11 @@ func (h *Handler) sharedRuntimeAppLayersAt(ctx context.Context, runtime string, 
 			}
 			setSharedRuntimeStart(manifest, argv, sharedruntime.BunRunnerPath(report.BunBinDir))
 			return sharedRuntimeLayers{layers: filtered, cleanup: cleanup}, nil
+		}
+		if nodeRunner && sharedruntime.StartReachesBun(command, report.PackageJSON) {
+			// A package manager script runs Bun; keep the toolchain.
+			reason = sharedruntime.ReasonBunInScript
+			break
 		}
 		argv, why := sharedRuntimeStart(*manifest, app, runtime, report)
 		if why != "" {
