@@ -245,6 +245,9 @@ func (s *server) createDashboardWizardApp(ctx context.Context, r *http.Request, 
 	}
 	limits := api.MustLimitsFor(acct.Plan)
 	app, problem := s.buildApp(acct, api.CreateAppRequest{Slug: slug}, limits)
+	if problem == nil {
+		problem = s.blockedAppNameProblem(acct.ID, app.Slug)
+	}
 	if problem != nil {
 		return state.App{}, problem
 	}

@@ -3,12 +3,16 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -116,7 +120,7 @@ var guidePages = []guidePage{
 		Task: "secrets-and-env", Title: "Environment variables and secrets",
 		Summary: "Set values before the first request; the dry run lists keys the code reads that will have no value.",
 		Steps: []guideStep{
-			{Do: "Set a value (stored sealed; never shown again)", Command: "gregale env set --app <app> KEY=<value>"},
+			{Do: "Set a value or secret (stored sealed; never shown again)", Command: "gregale env set --app <app> KEY=<value>"},
 			{Do: "Push a local .env file", Command: "gregale env push --app <app> -f .env"},
 			{Do: "List an app's key names", Command: "gregale env list --app <app>"},
 			{Do: "Set one value for every service of a project environment", Command: "gregale environment secrets set <project> <environment> KEY=<value>"},
@@ -266,13 +270,57 @@ func runByAgent() bool {
 	return api.CodingAgentFromEnv(os.Getenv) != ""
 }
 
-// printAgentHint writes the pointer once per process.
+// agentHintEvery is how often an agent sees the pointer. Every gregale call
+// is a new process, so once per process put it on nearly every failing
+// command an agent ran (33 times in one 2026-11-23 eval run).
+const agentHintEvery = time.Hour
+
+// printAgentHint writes the pointer at most once per process and once per
+// agentHintEvery across processes, tracked by a marker file's mtime in the
+// user cache directory. Without a cache directory it falls back to once per
+// process.
 func printAgentHint(w io.Writer) {
 	if agentHintPrinted || jsonOutput || !runByAgent() {
 		return
 	}
 	agentHintPrinted = true
+	marker := agentHintMarker()
+	if marker != "" {
+		if info, err := os.Stat(marker); err == nil && time.Since(info.ModTime()) < agentHintEvery {
+			return
+		}
+		if os.MkdirAll(filepath.Dir(marker), 0o700) == nil {
+			_ = os.WriteFile(marker, nil, 0o600)
+			now := time.Now()
+			_ = os.Chtimes(marker, now, now)
+		}
+	}
 	_, _ = fmt.Fprintln(w, agentHint)
 }
 
 var agentHintPrinted bool
+
+// agentSessionEnv names the variables that identify one agent session, so
+// a new session gets the pointer even when another one saw it this hour.
+var agentSessionEnv = []string{"CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID"}
+
+// agentHintMarker is the file whose mtime records the last pointer; empty
+// keeps no record. One file per agent session when the agent names its
+// session, else one per user. A variable so tests use their own.
+var agentHintMarker = func() string {
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(base, "gregale", agentHintMarkerName(os.Getenv))
+}
+
+func agentHintMarkerName(getenv func(string) string) string {
+	for _, name := range agentSessionEnv {
+		if id := getenv(name); id != "" {
+			sum := sha256.Sum256([]byte(name + "=" + id))
+			return "agent-hint-" + hex.EncodeToString(sum[:8])
+		}
+	}
+	return "agent-hint"
+}

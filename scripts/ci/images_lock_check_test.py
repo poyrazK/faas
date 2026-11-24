@@ -137,6 +137,52 @@ class TestImagesLockCheck(unittest.TestCase):
         r = _run("audit_dockerfile_froms.py", "--repo-root", str(self.tmp), cwd=self.tmp)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
+    def test_build_time_digest_arg_passes(self) -> None:
+        # An operator-published base whose digest is itself a build
+        # argument cannot be built unpinned, so no lock entry is needed.
+        real_digest = "9d3e2b29c1a0d4b8e7c6f1a3b5d2e8c4f7a9b1c3d5e7f9a1b3c5d7e9f1a3b5c7"
+        _write_dockerfile(self.tmp, "a.Dockerfile",
+                          f"FROM debian:12-slim@sha256:{real_digest}\n")
+        _write_dockerfile(self.tmp, "b.Dockerfile",
+                          "ARG TOOLS_IMAGE\nARG TOOLS_DIGEST\nARG BASE_SHA256\n"
+                          "FROM ${TOOLS_IMAGE}@${TOOLS_DIGEST} AS tools\n"
+                          "FROM --platform=$TARGETPLATFORM example.test/base@sha256:${BASE_SHA256}\n")
+        _write_lock(self.tmp, [{
+            "dockerfile": "images/a.Dockerfile",
+            "instruction": "FROM",
+            "alias": "debian:12-slim",
+            "resolved_repo": "docker.io/library/debian",
+            "resolved_tag": "12-slim",
+            "platform": "linux/amd64",
+            "digest": f"sha256:{real_digest}",
+            "pinned_in_dockerfile": f"FROM debian:12-slim@sha256:{real_digest}",
+        }])
+        r = _run("audit_dockerfile_froms.py", "--repo-root", str(self.tmp), cwd=self.tmp)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_arg_reference_without_digest_fails(self) -> None:
+        # A whole reference from one ARG may be a mutable tag; so may a
+        # tag that is an ARG. Both still fail.
+        real_digest = "9d3e2b29c1a0d4b8e7c6f1a3b5d2e8c4f7a9b1c3d5e7f9a1b3c5d7e9f1a3b5c7"
+        _write_dockerfile(self.tmp, "a.Dockerfile",
+                          f"FROM debian:12-slim@sha256:{real_digest}\n")
+        _write_dockerfile(self.tmp, "b.Dockerfile",
+                          "ARG BASE_REF\nARG SUITE\nFROM ${BASE_REF}\nFROM debian:${SUITE}\n")
+        _write_lock(self.tmp, [{
+            "dockerfile": "images/a.Dockerfile",
+            "instruction": "FROM",
+            "alias": "debian:12-slim",
+            "resolved_repo": "docker.io/library/debian",
+            "resolved_tag": "12-slim",
+            "platform": "linux/amd64",
+            "digest": f"sha256:{real_digest}",
+            "pinned_in_dockerfile": f"FROM debian:12-slim@sha256:{real_digest}",
+        }])
+        r = _run("audit_dockerfile_froms.py", "--repo-root", str(self.tmp), cwd=self.tmp)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("'FROM ${BASE_REF}' has an ARG substitution", r.stderr)
+        self.assertIn("'FROM debian:${SUITE}' has an ARG substitution", r.stderr)
+
     def test_drift_dockerfile_does_not_match_lock_fails(self) -> None:
         # Dockerfile line is digest-pinned, but to a DIFFERENT digest
         # than the lock.

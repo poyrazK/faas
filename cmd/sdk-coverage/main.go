@@ -253,6 +253,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/runtime/data-api/connection-observations": true,
 	"POST /v1/runtime/data-api/usage":                   true,
 	"POST /v1/runtime/data-api/budget":                  true, // Dedicated workload identity; owner API keys cannot spend credits.
+	"POST /v1/workload/object-storage/credentials":      true, // gregale:bindings workload identity; guest-init's loopback endpoint calls it, never customer code (ADR-20261122191423).
 	"POST /v1/runtime/data-api/events":                  true,
 	"POST /v1/runtime/data-api/change-status":           true,
 
@@ -390,9 +391,9 @@ var routeExclude = map[string]bool{
 	"PUT /v1/sales/inquiries/{inquiry}/close":       true,
 	"GET /v1/sales/reports":                         true, // private manager report
 	"GET /v1/sales/team":                            true, // private sales CRM
-	"GET /v1/sales/admin/team":                      true, // private sales owner admin
-	"POST /v1/sales/admin/team":                     true, // private sales owner admin
-	"PUT /v1/sales/admin/team/{member}":             true, // private sales owner admin
+	"GET /v1/sales/admin/team":                      true, // private sales manager
+	"POST /v1/sales/admin/team":                     true, // private sales manager
+	"PUT /v1/sales/admin/team/{member}":             true, // private sales manager
 	"GET /v1/sales/admin/team/{member}/agreements":  true, // private sales owner admin
 	"POST /v1/sales/admin/team/{member}/agreements": true, // private sales owner admin
 	"GET /v1/sales/customers/{account}/credit":      true, // private sales credit history
@@ -2683,6 +2684,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/admin/egress-flows":       "ListEgressFlows",
 	"GET /v1/admin/accounts/{id}/risk": "GetAccountRisk",
 	"GET /v1/admin/held-links":         "ListHeldLinks",
+	"GET /v1/admin/app-names/report":   "GetAppNameReport",
 	// ADR-361 account abuse hold. The literal hyphen in "abuse-hold" makes
 	// the auto-derived name an illegal Go identifier; the SDK follows the
 	// spec operationIds placeAccountAbuseHold / releaseAccountAbuseHold.

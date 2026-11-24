@@ -154,6 +154,14 @@ func TestPgCloneDeploymentBorrowers(t *testing.T) {
 			if err != nil || withPlan.SoftReferences[id]["managed_postgres_cutover_drain_plan_members.deployment_id"] != 1 {
 				t.Fatal("blocked retirement evidence omitted", withPlan, err)
 			}
+			// A project deploy rollback group (#7923) borrows its member deployments.
+			if _, err = pool.Exec(t.Context(), "INSERT INTO project_deploy_rollback_members(deployment_id,project_id,deploy_group_id) VALUES($1,$2,gen_random_uuid())", id, l.Operation.ProjectID); err != nil {
+				t.Fatal(err)
+			}
+			withMember, err := s.ProjectEnvironmentCloneDeploymentBorrowersForLease(t.Context(), l)
+			if err != nil || withMember.Deployments[id]["project_deploy_rollback_members_deployment_id_fkey"] != 1 {
+				t.Fatal("project deploy rollback member omitted", withMember, err)
+			}
 		})
 	}
 }

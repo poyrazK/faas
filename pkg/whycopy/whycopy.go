@@ -404,7 +404,9 @@ func Decorate(p *api.Problem, code string, observed any) *api.Problem {
 	if row.DocsURL != "" {
 		p.DocsURL = row.DocsURL
 	}
-	return p
+	// Runnable commands and retryability come with the prose; a caller that
+	// knows the app fills placeholders with Complete (ADR-20261123230000).
+	return Complete(p, Values{})
 }
 
 // Lookup returns the catalog row for code (used by tests + the

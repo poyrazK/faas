@@ -52491,6 +52491,40 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  /v1/workload/object-storage/credentials:
+    post:
+      tags: [storage]
+      operationId: workloadObjectCredentialIssue
+      summary: Trade a binding token for a one-hour S3 credential on a granted bucket.
+      description: |
+        Called by guest-init's loopback credential endpoint, not by customer
+        code. A live production instance presents its gregale:bindings
+        workload token and names a bucket its app's gregale.yaml `uses:`
+        grants (or omits the bucket when it holds exactly one bucket grant).
+        The answer is the AWS container credential shape, limited to the
+        grant's access and key prefix, and expires within the hour. Each
+        instance holds at most 8 live credentials per bucket. Gated by the
+        cross_app_bindings platform flag (off: 404).
+      security:
+        - bindingsWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ObjectWorkloadCredentialRequest' }
+      responses:
+        '200':
+          description: The credential.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectWorkloadCredentialResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/queues/send:
     post:
       tags: [queues]
@@ -61360,6 +61394,35 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403':
           description: 'code: admin_required — the held-link review needs an operator session with MFA.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/admin/app-names/report:
+    get:
+      tags: [admin]
+      operationId: getAppNameReport
+      summary: Existing apps an app name blocklist matches (operator-only).
+      description: |
+        Lists existing apps whose names the live `app_name_blocklist` runtime
+        setting matches, for review. Nothing is changed: existing apps keep
+        their names. With `blocklist` the report uses that list instead of the
+        live one, so an operator can see a list's effect before setting it.
+        Deleted apps that can still be restored are listed too (status
+        `deleted`): a restore brings their name back. When more than 5000 apps
+        match, the first 5000 by name are listed and `truncated` is true.
+      parameters:
+        - { name: blocklist, in: query, required: false, schema: { type: string }, description: "Entries separated by commas, spaces or newlines: exact names or patterns where * matches any characters." }
+      responses:
+        '200':
+          description: Matching apps, sorted by name.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppNameReportResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: 'code: admin_required — the app name report needs an operator session with MFA.'
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -76284,6 +76347,11 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Platform-issued short-lived RS256 workload JWT with audience gregale:flags.
+    bindingsWorkloadIdentity:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Platform-issued short-lived RS256 workload JWT with audience gregale:bindings, from a live production instance.
     bearerAuth:
       type: http
       scheme: bearer
@@ -98558,6 +98626,30 @@ components:
           items: { $ref: '#/components/schemas/HeldLinkReview' }
         truncated: { type: boolean }
 
+    AppNameReportResponse:
+      description: "Existing apps an app name blocklist matches. source is live (app_name_blocklist) or preview (the request's blocklist). truncated means more apps matched than were listed."
+      type: object
+      required: [source, entries, matches, truncated]
+      properties:
+        source: { type: string, enum: [live, preview] }
+        entries: { type: integer, description: "Number of blocklist entries checked." }
+        matches:
+          type: array
+          items: { $ref: '#/components/schemas/AppNameReportMatch' }
+        truncated: { type: boolean }
+
+    AppNameReportMatch:
+      description: "An existing app whose name a blocklist entry matches."
+      type: object
+      required: [slug, app_id, account_id, status, entry]
+      properties:
+        slug: { type: string }
+        app_id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid }
+        status: { type: string }
+        entry: { type: string, description: "The blocklist entry that matched." }
+
     AccountLimits:
       description: "Plan-driven quota, resource caps, and trigger capabilities returned by GET /v1/account."
       type: object
@@ -104526,6 +104618,19 @@ components:
           maxItems: 5
           items: { type: integer, format: int32, minimum: 1, maximum: 100 }
           description: "Percentages of max_units_per_month at which a consumer.usage_threshold webhook fires, once per consumer per UTC month. Requires max_units_per_month."
+        route_limits:
+          type: object
+          maxProperties: 50
+          additionalProperties: { $ref: '#/components/schemas/APIConsumerPlanRouteLimit' }
+          description: "Per-consumer caps on single billing routes, keyed by route label: an HTTP method and path template, or \"MCP /tools/<name>\" for one MCP tool. At most 50."
+          example: { "MCP /tools/generate": { max_requests_per_month: 1000 } }
+
+    APIConsumerPlanRouteLimit:
+      description: "Cap on a consumer's requests on one route. Zero is unlimited; at least one limit is positive. Each admitted request counts one, whatever the route's rate-card weight."
+      type: object
+      properties:
+        max_requests_per_minute: { type: integer, format: int64, minimum: 0, description: "Requests per consumer per UTC minute on this route; over the limit the gateway returns 429." }
+        max_requests_per_month: { type: integer, format: int64, minimum: 0, description: "Requests per consumer per UTC month on this route; over the limit the gateway returns 429 until the month ends." }
 
     UpdateAPIConsumerPlanLimitsRequest:
       description: "Replacement limits for a consumer plan. Omitting alert_thresholds_percent keeps the plan's thresholds; an empty list clears them."
@@ -104539,11 +104644,16 @@ components:
           maxItems: 5
           items: { type: integer, format: int32, minimum: 1, maximum: 100 }
           description: "Replacement alert thresholds, as percentages of max_units_per_month (at most 5). Omit to keep the current thresholds; send an empty list to remove them."
+        route_limits:
+          type: object
+          maxProperties: 50
+          additionalProperties: { $ref: '#/components/schemas/APIConsumerPlanRouteLimit' }
+          description: "Replacement route limits. Omit to keep the current ones; send an empty object to remove them."
 
     APIConsumerPlanResponse:
       description: "Named consumer plan with enforcement limits."
       type: object
-      required: [id, app_id, name, max_requests_per_minute, max_units_per_month, alert_thresholds_percent, created_at, updated_at]
+      required: [id, app_id, name, max_requests_per_minute, max_units_per_month, alert_thresholds_percent, route_limits, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
@@ -104554,6 +104664,10 @@ components:
           type: array
           items: { type: integer, format: int32, minimum: 1, maximum: 100 }
           description: "The plan's usage alert thresholds, ascending; empty means no alerts."
+        route_limits:
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/APIConsumerPlanRouteLimit' }
+          description: "The plan's per-route caps keyed by route label; empty means none."
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -125480,6 +125594,13 @@ components:
           description: Per-caller limits on tools/call, keyed by tool name.
           type: object
           additionalProperties: { $ref: '#/components/schemas/MCPToolLimit' }
+        audience:
+          description: |
+            Token audience an external OAuth issuer uses for this server when
+            it is not the resource. The rule's JWT audience must then be
+            exactly this value. Bearer-token policies only.
+          type: string
+          maxLength: 512
     MCPToolLimit:
       description: At most requests tools/call requests per caller in each window.
       type: object
@@ -133506,6 +133627,24 @@ components:
         id: { type: string, format: uuid }
         cancelled_count: { type: integer, minimum: 0 }
 
+    ObjectWorkloadCredentialRequest:
+      description: Body for POST /v1/workload/object-storage/credentials.
+      type: object
+      properties:
+        bucket: { type: string, maxLength: 128, description: "Granted bucket name. Optional when the app holds exactly one bucket grant." }
+    ObjectWorkloadCredentialResponse:
+      description: A workload S3 credential in the AWS container credential shape, plus where the workload may write.
+      type: object
+      required: [AccessKeyId, SecretAccessKey, Token, Expiration, Bucket]
+      properties:
+        AccessKeyId: { type: string, pattern: '^GRGW[A-Z2-7]{16}$' }
+        SecretAccessKey: { type: string }
+        Token: { type: string }
+        Expiration: { type: string, format: date-time }
+        Bucket: { type: string }
+        KeyPrefix: { type: string }
+        Endpoint: { type: string }
+        Region: { type: string }
     QueueSendRequest:
       description: "Body for POST /v1/apps/{slug}/queues/send. Cap-checked against MaxQueueDepth. Unkeyed messages retain legacy FIFO dispatch; keyed messages use per-key ordering."
       type: object
@@ -134227,6 +134366,21 @@ components:
             each per CLI tripwire). The CLI renders the first 5
             inline as a fenced block. Optional + omitempty.
           items: { $ref: '#/components/schemas/LogExcerpt' }
+        fix_commands:
+          type: array
+          description: |
+            The runnable commands quoted in `fix`, in order, with this
+            failure's values (app, deployment) filled in. A command that
+            still needs a value nobody knew is left out rather than shown
+            with a placeholder. Omitted when there are none.
+          items: { type: string }
+        retryable:
+          type: boolean
+          description: |
+            Whether repeating the same request can succeed without a
+            change: true for rate limits, a Retry-After and transient
+            platform errors; false when the request or the app must
+            change. Absent when unknown.
 
     LogExcerpt:
       type: object

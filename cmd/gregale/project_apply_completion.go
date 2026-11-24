@@ -34,7 +34,14 @@ func pollProjectDeployment(ctx context.Context, client rolloutStatusClient, buil
 			}
 			phase = waiting
 			progress := projectWaitProgressFrom(ctx)
-			progress.observe(build, dep, waiting, done, failure)
+			var logs []api.LogExcerpt
+			if progress != nil && projectDeploymentStage(dep, waiting, done, failure) == "failed" {
+				// Read before observe takes its lock (ADR-20261123230000).
+				if logClient, ok := client.(failureLogClient); ok {
+					logs = recentFailureLogs(ctx, logClient, build.Slug, build.DeploymentID)
+				}
+			}
+			progress.observe(build, dep, waiting, done, failure, logs)
 			if !done {
 				steps.poll(ctx, client, progress, build, dep, waiting)
 			}

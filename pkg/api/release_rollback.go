@@ -55,14 +55,14 @@ func ErrRollbackTargetDatabaseRestored(target string) *Problem {
 		"Rollback target's database changes were undone",
 		fmt.Sprintf("A database switch restored the app's database to before %s's release command ran, so %s's code would run against a schema it does not expect.", target, target)).
 		WithHint("Deploy that code again; its release command runs before it serves.").
-		WithDocs(docsBase + "/deploys#rollbacks-that-restore-the-database")
+		WithDocs(docsBase + "/releases#rollbacks-that-restore-the-database")
 }
 
 // ErrDatabaseSwitchUnavailable refuses a rollback that asked to restore the
 // database (ADR-20261023181931).
 func ErrDatabaseSwitchUnavailable(detail, hint string) *Problem {
 	p := NewProblem(http.StatusConflict, CodeDatabaseSwitchUnavailable, "Database switch unavailable", detail).
-		WithDocs(docsBase + "/deploys#rollbacks-that-restore-the-database")
+		WithDocs(docsBase + "/releases#rollbacks-that-restore-the-database")
 	if hint != "" {
 		p = p.WithHint(hint)
 	}
@@ -76,7 +76,7 @@ func ErrDatabaseSwitchesActive(limit int) *Problem {
 		fmt.Sprintf("the account already runs %d unfinished database switches, the most it may run at once", limit))
 	l := int64(limit)
 	p.Limit, p.Observed = &l, &l
-	return p.WithDocs(docsBase + "/deploys#rollbacks-that-restore-the-database").
+	return p.WithDocs(docsBase + "/releases#rollbacks-that-restore-the-database").
 		WithHint("wait for one to finish, or cancel one with gregale rollback switches")
 }
 
@@ -105,7 +105,7 @@ func ErrRollbackCrossesRelease(target string, crossed []RollbackCrossedRelease, 
 		fmt.Sprintf("Release commands ran after %s last served: %s. A rollback does not undo them, so %s would run against changes it has never run with.",
 			target, strings.Join(refs, "; "), target)).
 		WithHint("If the target is compatible with those changes, retry with acknowledge_releases (CLI: --acknowledge-releases). To undo database changes first, restore each listed database to its restore point.").
-		WithDocs(docsBase + "/deploys#releases-that-change-the-database")
+		WithDocs(docsBase + "/releases#releases-that-change-the-database")
 	p.CrossedReleases = crossed
 	p.RestorePoints = restore
 	return p
