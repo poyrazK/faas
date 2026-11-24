@@ -68,5 +68,11 @@ func cmdDeploysLogs(args []string) int {
 	if printed == 0 {
 		_, _ = fmt.Fprintf(osStderr, "deployment %s has no retained build or deploy log lines\n", id)
 	}
+	// Prod hunt r35: a failed release command's deploy error says "read its
+	// output: gregale release logs <id>", but that output lives in the
+	// release task receipt, not the build log this command streams.
+	if d, err := client.GetDeployment(ctx, id); err == nil {
+		printReleaseTaskOutput(ctx, client, osStdout, *appFlag, d)
+	}
 	return 0
 }
