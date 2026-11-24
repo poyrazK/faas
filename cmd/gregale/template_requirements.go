@@ -35,6 +35,28 @@ var templateRequiredSecrets = map[string][]string{
 	"cron-worker":              {"QSTASH_CURRENT_SIGNING_KEY", "QSTASH_NEXT_SIGNING_KEY", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"},
 }
 
+// templatesPublicOnPurpose deploy with --no-require-authn: their callers
+// (webhook, Slack and QStash senders, or a client holding the app's own
+// STORAGE_APP_TOKEN in the Authorization header) cannot present a Gregale
+// API key, so a private app answered them all 401 (prod hunts r34, r35).
+// The handler checks the caller's secret or signature itself.
+var templatesPublicOnPurpose = map[string]bool{
+	"webhook-receiver":      true,
+	"slack-bot":             true,
+	"cron-worker":           true,
+	"object-storage-python": true,
+	"object-storage-node":   true,
+}
+
+// templateRequiredBindings are the managed database bindings a template needs
+// before its first start, by the variable `postgres attach --env` sets. A
+// binding never comes from a secrets file, so it is checked only for a new
+// app, never against a redeploy's secrets: data-api-starter's release task
+// failed every first deploy without one (prod hunt r35).
+var templateRequiredBindings = map[string]string{
+	"data-api-starter": "MIGRATION_DATABASE_URL",
+}
+
 // manifestCapabilityIndex maps the catalog's manifest settings to the
 // capability that owns each, as apid's capability gate does.
 type manifestCapabilityIndex struct {

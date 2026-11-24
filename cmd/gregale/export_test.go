@@ -3128,3 +3128,12 @@ func ApplyRouteLimitSpecs(current map[string]api.APIConsumerPlanRouteLimit, rout
 	}
 	return applyRouteLimitEdits(current, edits), nil
 }
+
+// WithLinkedApp fills a missing leading <slug> from the linked app.
+var WithLinkedApp = withLinkedApp
+
+// InitDeployArgs is the deploy flag list init --deploy runs.
+var InitDeployArgs = initDeployArgs
+
+// TemplatesPublicOnPurpose lists the templates that deploy public.
+var TemplatesPublicOnPurpose = templatesPublicOnPurpose
