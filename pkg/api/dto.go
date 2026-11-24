@@ -7882,6 +7882,11 @@ type PlanWorkload struct {
 	// public edge: an existing internal app, or a new Compose service without
 	// `ports:` (ADR-20261022131852). Omitted means public.
 	Visibility AppVisibility `json:"visibility,omitempty"`
+	// Access is the service's declared public-URL access
+	// (ADR-20261124090000): "public" or "key", from gregale.yaml
+	// project.services.<name>.access or Compose x-gregale-access. Omitted
+	// when nothing is declared.
+	Access string `json:"access,omitempty"`
 
 	Class           string   `json:"class,omitempty"`
 	Schedule        string   `json:"schedule,omitempty"`
