@@ -913,6 +913,7 @@ func V1AuthPGTestHarness(t *testing.T) (*server, *recordingMailer, state.Store) 
 		"example.com", noopNotifier{}, "", mailer, nil, nil, nil, 0, "")
 	return srv, mailer, store
 }
+
 var ValidDataUpstreamHistoryRegion = validDataUpstreamHistoryRegion
 var ValidProjectBranch = validProjectBranch
 var ValidProjectRepoFullName = validProjectRepoFullName
