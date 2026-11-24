@@ -4781,8 +4781,11 @@ callback, and use authorization-code **S256 PKCE** with the exact resource URL.
 Read scope is `gregale:read`; optional write scope is `gregale:write`. API keys
 are accepted only by browser account review, never as MCP access tokens. Gregale
 API scopes remain authoritative for every tool call.
-The default challenge requests read access. To expose remote write tools, request
-both scopes in the client's OAuth settings as well as enabling bridge writes.
+The default challenge requests read access. When bridge writes are enabled and a
+client asks only for `gregale:read`, browser consent offers "Deploy and manage
+apps" (preselected) or "Inspect only" before sign-in; choosing deploy grants
+`gregale:write` too, and the token response names the granted scope. A client
+can also request both scopes in its OAuth settings.
 
 Each grant has its own SDK server, API credential, and plan store. Every remote
 request rechecks its account credential through the API. Access tokens expire
