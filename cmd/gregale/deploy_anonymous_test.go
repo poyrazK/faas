@@ -15,20 +15,26 @@ import (
 
 // A deploy with no credential falls back to an anonymous session in an
 // agent's shell, but never in CI or when switched off (ADR-20261124080000).
-// Tests run without a terminal, so the unset case is the agent case.
+// A person at a terminal gets the usual "not logged in" instead.
 func TestAnonymousDeployByDefault(t *testing.T) {
 	for _, tt := range []struct {
 		name string
+		tty  bool
 		env  map[string]string
 		want bool
 	}{
 		{name: "agent shell", want: true},
+		{name: "terminal", tty: true, want: false},
 		{name: "ci", env: map[string]string{"CI": "true"}, want: false},
 		{name: "ci false", env: map[string]string{"CI": "false"}, want: true},
 		{name: "opted out", env: map[string]string{"GREGALE_NO_ANONYMOUS_DEPLOY": "1"}, want: false},
 		{name: "opt-out zero", env: map[string]string{"GREGALE_NO_ANONYMOUS_DEPLOY": "0"}, want: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			prev := *main.TestOnlyTTY
+			tty := tt.tty
+			*main.TestOnlyTTY = &tty
+			defer func() { *main.TestOnlyTTY = prev }()
 			if got := main.AnonymousDeployByDefault(func(k string) string { return tt.env[k] }); got != tt.want {
 				t.Fatalf("AnonymousDeployByDefault = %v, want %v", got, tt.want)
 			}
