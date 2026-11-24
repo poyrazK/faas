@@ -1183,6 +1183,27 @@ func followRenameInSavedContext(dir, oldSlug, newSlug string) (string, bool) {
 // subcommand form (scale / rename / exec / security / routes / tcp) or the legacy
 // flag-form (`gregale app <slug> --ram N`, `gregale app <slug>`).
 // Pulled out of main.go so the switch stays small.
+// linkedAppBeforeSettingsFlags puts the linked app in front of a settings
+// change that names none: `gregale app --min 1` in a linked checkout took
+// --min as the slug and refused "1" as a stray argument (prod hunt r40).
+func linkedAppBeforeSettingsFlags(args []string) []string {
+	if len(args) == 0 || !strings.HasPrefix(args[0], "-") || hasHelpFlag(args) {
+		return args
+	}
+	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
+		if arg == "--app" || strings.HasPrefix(arg, "--app=") || arg == "-app" || strings.HasPrefix(arg, "-app=") {
+			return args
+		}
+	}
+	if linked := linkedAppForMissingSlug(); linked != "" {
+		return append([]string{linked}, args...)
+	}
+	return args
+}
+
 func cmdAppDispatch(args []string) int {
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale app <slug> [scale|costs [--month YYYY-MM] [--json]|rename <new>|restart|exec -- <command> [args...]|security [--posture|--require-signed=true|false|--security-policy=off|warn|enforce]|egress-allowlist {show|add <cidr>|remove <cidr>|clear}|egress-ports {show|add <port>|remove <port>|clear}|network {show|doctor|attach <network-id> --region REGION --cidrs CIDR[,CIDR...]|detach}|traffic-status|routes|tcp|streaming-cap|--ram N|--max-concurrency N|--idle SEC|--min N|--maintenance|--no-maintenance|--streaming-enabled|--no-streaming-enabled|--websocket-enabled|--no-websocket|--route-metrics|--no-route-metrics|--consumer-auth-mode optional|required|--platform-tenant-required|--no-platform-tenant-required]", "apps")
@@ -1194,6 +1215,7 @@ func cmdAppDispatch(args []string) int {
 	if isAppProjectCommand(args) {
 		return cmdAppProject(args)
 	}
+	args = linkedAppBeforeSettingsFlags(args)
 	slug := args[0]
 	if code, ok := cmdAppConditions(slug, args[1:]); ok {
 		return code

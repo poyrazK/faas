@@ -100,8 +100,10 @@ gregale deploy
 ## Try it
 
 ```sh
-# Health probe shows which provider is wired up
-curl https://<slug>.gregale.app/healthz
+# Health probe shows which provider is wired up. Gregale's edge answers a
+# public GET /healthz itself without waking the app, so read the app's own
+# answer with an owner-authorized check of the live deployment:
+gregale release verify <deployment-id> --app <slug> --path /healthz
 # → {"ok":true,"provider":"openai","model":"gpt-4o-mini"}
 
 # A single-turn chat

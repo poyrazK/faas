@@ -9154,7 +9154,13 @@ func cmdDomainsList(args []string) int {
 		if appID != "" {
 			scope = "app " + strings.TrimSpace(*appSlug)
 		}
-		_, _ = fmt.Fprintf(osStdout, "No custom domains for %s. Add one with `gregale domain setup <domain> --app <slug>`.\n", scope)
+		// Prod hunt r40: `domain setup` needs a terminal, so a script or agent
+		// following this hint was refused; name the scriptable verb there.
+		verb := "setup"
+		if !stdinIsTTY() || !stdoutIsTTY() {
+			verb = "add"
+		}
+		_, _ = fmt.Fprintf(osStdout, "No custom domains for %s. Add one with `gregale domain %s <domain> --app <slug>`.\n", scope, verb)
 		return 0
 	}
 	for _, d := range out {

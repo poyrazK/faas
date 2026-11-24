@@ -72,6 +72,48 @@ func TestAppBindingListDefaultsToLinkedApp(t *testing.T) {
 	}
 }
 
+// Prod hunt r40: the empty domain list told scripts to run `domain setup`,
+// which refuses without a terminal.
+func TestEmptyDomainListNamesScriptableVerb(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	noTTY := false
+	prev := *main.TestOnlyTTY
+	*main.TestOnlyTTY = &noTTY
+	t.Cleanup(func() { *main.TestOnlyTTY = prev })
+	code, stdout, stderr := runCLI(t, "domain", "list")
+	if code != 0 || !strings.Contains(stdout, "gregale domain add <domain>") {
+		t.Fatalf("domain list = %d %q %q, want the domain add hint", code, stdout, stderr)
+	}
+}
+
+// Prod hunt r40: `gregale app --min 1` in a linked checkout took --min as the
+// slug and refused "1".
+func TestAppSettingsFlagsDefaultToLinkedApp(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch && got == "" {
+			got = r.URL.Path
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"title":"not found","status":404,"code":"not_found"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	linkCheckout(t)
+	_, stdout, stderr := runCLI(t, "app", "--idle", "60")
+	if strings.Contains(stderr, "unexpected positional") || !strings.Contains(got, "/apps/demo") {
+		t.Fatalf("app --idle 60 patched %q, want the linked app demo\n%s%s", got, stdout, stderr)
+	}
+}
+
 // Prod hunt r38: bare `gregale env` listed only the clone and sync verbs,
 // not set/unset/list.
 func TestEnvUsageListsSecretVerbs(t *testing.T) {
