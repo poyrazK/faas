@@ -15,6 +15,18 @@ type CreateAPIConsumerPlanRequest struct {
 	// AlertThresholdsPercent are percentages of MaxUnitsPerMonth at which a
 	// consumer.usage_threshold webhook fires (ADR-849), at most 5.
 	AlertThresholdsPercent []int32 `json:"alert_thresholds_percent,omitempty"`
+	// RouteLimits cap single billing routes per consumer, keyed by route
+	// label: an HTTP method and path template, or an MCP tool's
+	// "MCP /tools/<name>" (ADR-20261123192254). At most 50.
+	RouteLimits map[string]APIConsumerPlanRouteLimit `json:"route_limits,omitempty"`
+}
+
+// APIConsumerPlanRouteLimit caps a consumer's requests on one route per UTC
+// minute and per UTC month. Zero is unlimited; at least one is set. Each
+// admitted request counts one, whatever the route's rate-card weight.
+type APIConsumerPlanRouteLimit struct {
+	MaxRequestsPerMinute int64 `json:"max_requests_per_minute,omitempty"`
+	MaxRequestsPerMonth  int64 `json:"max_requests_per_month,omitempty"`
 }
 
 // UpdateAPIConsumerPlanLimitsRequest replaces a plan's limits. Limits are
@@ -27,6 +39,9 @@ type UpdateAPIConsumerPlanLimitsRequest struct {
 	MaxRequestsPerMinute   int64    `json:"max_requests_per_minute"`
 	MaxUnitsPerMonth       int64    `json:"max_units_per_month"`
 	AlertThresholdsPercent *[]int32 `json:"alert_thresholds_percent,omitempty"`
+	// RouteLimits is optional: omitted keeps the plan's route limits, an
+	// empty object clears them.
+	RouteLimits *map[string]APIConsumerPlanRouteLimit `json:"route_limits,omitempty"`
 }
 
 // APIConsumerPlanResponse is one consumer plan.
@@ -38,9 +53,11 @@ type APIConsumerPlanResponse struct {
 	MaxUnitsPerMonth     int64  `json:"max_units_per_month"`
 	// AlertThresholdsPercent lists the plan's usage alert thresholds,
 	// ascending; empty means no alerts.
-	AlertThresholdsPercent []int32   `json:"alert_thresholds_percent"`
-	CreatedAt              time.Time `json:"created_at"`
-	UpdatedAt              time.Time `json:"updated_at"`
+	AlertThresholdsPercent []int32 `json:"alert_thresholds_percent"`
+	// RouteLimits are the plan's per-route caps; empty means none.
+	RouteLimits map[string]APIConsumerPlanRouteLimit `json:"route_limits"`
+	CreatedAt   time.Time                            `json:"created_at"`
+	UpdatedAt   time.Time                            `json:"updated_at"`
 }
 
 // APIConsumerPlanListResponse lists an app's plans by name.

@@ -168,6 +168,8 @@ from .api_consumer_plan_assignment_response import APIConsumerPlanAssignmentResp
 from .api_consumer_plan_changed_webhook_payload import APIConsumerPlanChangedWebhookPayload
 from .api_consumer_plan_list_response import APIConsumerPlanListResponse
 from .api_consumer_plan_response import APIConsumerPlanResponse
+from .api_consumer_plan_response_route_limits import APIConsumerPlanResponseRouteLimits
+from .api_consumer_plan_route_limit import APIConsumerPlanRouteLimit
 from .api_consumer_rate_card_list_response import APIConsumerRateCardListResponse
 from .api_consumer_rate_card_response import APIConsumerRateCardResponse
 from .api_consumer_rate_card_response_route_weights import APIConsumerRateCardResponseRouteWeights
@@ -856,6 +858,7 @@ from .create_alert_rule_request_metric import CreateAlertRuleRequestMetric
 from .create_alert_rule_request_window_spec import CreateAlertRuleRequestWindowSpec
 from .create_api_consumer_credit_request import CreateAPIConsumerCreditRequest
 from .create_api_consumer_plan_request import CreateAPIConsumerPlanRequest
+from .create_api_consumer_plan_request_route_limits import CreateAPIConsumerPlanRequestRouteLimits
 from .create_api_consumer_rate_card_request import CreateAPIConsumerRateCardRequest
 from .create_api_consumer_rate_card_request_route_weights import CreateAPIConsumerRateCardRequestRouteWeights
 from .create_api_consumer_rate_card_request_tier_mode import CreateAPIConsumerRateCardRequestTierMode
@@ -3512,6 +3515,8 @@ from .object_version_retention_event_hold import ObjectVersionRetentionEventHold
 from .object_version_retention_mode import ObjectVersionRetentionMode
 from .object_version_retention_request import ObjectVersionRetentionRequest
 from .object_version_retention_result import ObjectVersionRetentionResult
+from .object_workload_credential_request import ObjectWorkloadCredentialRequest
+from .object_workload_credential_response import ObjectWorkloadCredentialResponse
 from .object_write_protection import ObjectWriteProtection
 from .object_write_receipt import ObjectWriteReceipt
 from .object_write_receipt_error_code import ObjectWriteReceiptErrorCode
@@ -6841,6 +6846,7 @@ from .update_alert_rule_request_comparison import UpdateAlertRuleRequestComparis
 from .update_alert_rule_request_metric import UpdateAlertRuleRequestMetric
 from .update_alert_rule_request_window_spec import UpdateAlertRuleRequestWindowSpec
 from .update_api_consumer_plan_limits_request import UpdateAPIConsumerPlanLimitsRequest
+from .update_api_consumer_plan_limits_request_route_limits import UpdateAPIConsumerPlanLimitsRequestRouteLimits
 from .update_app_log_drain_request import UpdateAppLogDrainRequest
 from .update_app_log_drain_request_kind import UpdateAppLogDrainRequestKind
 from .update_app_request import UpdateAppRequest
@@ -7424,6 +7430,8 @@ __all__ = (
     "APIConsumerPlanChangedWebhookPayload",
     "APIConsumerPlanListResponse",
     "APIConsumerPlanResponse",
+    "APIConsumerPlanResponseRouteLimits",
+    "APIConsumerPlanRouteLimit",
     "APIConsumerRateCardListResponse",
     "APIConsumerRateCardResponse",
     "APIConsumerRateCardResponseRouteWeights",
@@ -8098,6 +8106,7 @@ __all__ = (
     "CreateAlertRuleRequestWindowSpec",
     "CreateAPIConsumerCreditRequest",
     "CreateAPIConsumerPlanRequest",
+    "CreateAPIConsumerPlanRequestRouteLimits",
     "CreateAPIConsumerRateCardRequest",
     "CreateAPIConsumerRateCardRequestRouteWeights",
     "CreateAPIConsumerRateCardRequestTierMode",
@@ -10626,6 +10635,8 @@ __all__ = (
     "ObjectVersionRetentionMode",
     "ObjectVersionRetentionRequest",
     "ObjectVersionRetentionResult",
+    "ObjectWorkloadCredentialRequest",
+    "ObjectWorkloadCredentialResponse",
     "ObjectWriteProtection",
     "ObjectWriteReceipt",
     "ObjectWriteReceiptErrorCode",
@@ -13759,6 +13770,7 @@ __all__ = (
     "UpdateAlertRuleRequestMetric",
     "UpdateAlertRuleRequestWindowSpec",
     "UpdateAPIConsumerPlanLimitsRequest",
+    "UpdateAPIConsumerPlanLimitsRequestRouteLimits",
     "UpdateAppLogDrainRequest",
     "UpdateAppLogDrainRequestKind",
     "UpdateAppRequest",

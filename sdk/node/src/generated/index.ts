@@ -105,6 +105,7 @@ export type { APIConsumerPlanAssignmentResponse } from './models/APIConsumerPlan
 export type { APIConsumerPlanChangedWebhookPayload } from './models/APIConsumerPlanChangedWebhookPayload.js';
 export type { APIConsumerPlanListResponse } from './models/APIConsumerPlanListResponse.js';
 export type { APIConsumerPlanResponse } from './models/APIConsumerPlanResponse.js';
+export type { APIConsumerPlanRouteLimit } from './models/APIConsumerPlanRouteLimit.js';
 export type { APIConsumerRateCardListResponse } from './models/APIConsumerRateCardListResponse.js';
 export type { APIConsumerRateCardResponse } from './models/APIConsumerRateCardResponse.js';
 export type { APIConsumerRateCardTier } from './models/APIConsumerRateCardTier.js';
@@ -1802,6 +1803,8 @@ export type { ObjectVersionProtection } from './models/ObjectVersionProtection.j
 export type { ObjectVersionRetention } from './models/ObjectVersionRetention.js';
 export type { ObjectVersionRetentionRequest } from './models/ObjectVersionRetentionRequest.js';
 export type { ObjectVersionRetentionResult } from './models/ObjectVersionRetentionResult.js';
+export type { ObjectWorkloadCredentialRequest } from './models/ObjectWorkloadCredentialRequest.js';
+export type { ObjectWorkloadCredentialResponse } from './models/ObjectWorkloadCredentialResponse.js';
 export type { ObjectWriteProtection } from './models/ObjectWriteProtection.js';
 export type { ObjectWriteReceipt } from './models/ObjectWriteReceipt.js';
 export type { ObjectWriteReceiptList } from './models/ObjectWriteReceiptList.js';

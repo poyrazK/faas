@@ -411,7 +411,7 @@ listed.
 Use an absolute executable path if the client cannot find `gregale` on its PATH.
 To select a named connection, place the prefix before the command, for example
 `["--profile", "staging", "mcp", "serve", "--transport", "stdio"]`.
-`FAAS_API` and `GREGALE_TOKEN` retain their normal precedence over saved settings.
+`GREGALE_API_URL` and `GREGALE_TOKEN` retain their normal precedence over saved settings.
 Use the profile's stored login or supply a scoped token through the client's
 environment; do not put tokens in command arguments or commit them to a client
 configuration. A missing credential fails startup on stderr. API authorization

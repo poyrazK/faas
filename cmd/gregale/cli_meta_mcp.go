@@ -240,10 +240,11 @@ func mcpCLICommand() cliCommand {
 				{Name: "consumer", Short: "existing API consumer ID", Value: "ID"},
 				{Name: "new-consumer", Short: "create an API consumer with this name", Value: "NAME"},
 				{Name: "scopes", Short: "comma-separated MCP scopes without the mcp: prefix", Value: "SCOPES"},
+				{Name: "tools", Short: "tools the key may call; grants their scopes from gregale-mcp.json", Value: "TOOLS"},
 				{Name: "expires", Short: "key expiry, RFC3339", Value: "TIME"},
 				{Name: "path", Short: "MCP source directory (default .)", Value: "DIR"},
 				{Name: "timeout", Short: "API deadline (default 30s)", Value: "DURATION"},
-			}, Examples: []string{"gregale mcp server keys create --app my-mcp --new-consumer acme --name prod", "gregale mcp server keys create --app my-mcp --consumer <id> --name ci --scopes tools,admin"}},
+			}, Examples: []string{"gregale mcp server keys create --app my-mcp --new-consumer acme --name prod", "gregale mcp server keys create --app my-mcp --consumer <id> --name ci --scopes tools,admin", "gregale mcp server keys create --app my-mcp --consumer <id> --name reader --tools search,fetch"}},
 			{Name: "list", Short: "List a consumer's MCP keys", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Value: "SLUG", Req: true},
 				{Name: "consumer", Short: "API consumer ID", Value: "ID", Req: true},

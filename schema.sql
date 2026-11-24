@@ -32909,6 +32909,30 @@ COMMENT ON TABLE public.api_consumer_plan_assignments IS 'Append-only, minute-ef
 
 
 --
+-- Name: api_consumer_plan_route_admissions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_plan_route_admissions (
+    consumer_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    route text NOT NULL,
+    minute_start timestamp with time zone NOT NULL,
+    minute_used bigint DEFAULT 0 NOT NULL,
+    month_start timestamp with time zone NOT NULL,
+    month_used bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT api_consumer_plan_route_admissions_route_chk CHECK (((char_length(route) >= 3) AND (char_length(route) <= 256))),
+    CONSTRAINT api_consumer_plan_route_admissions_used_chk CHECK (((minute_used >= 0) AND (month_used >= 0)))
+);
+
+
+--
+-- Name: TABLE api_consumer_plan_route_admissions; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_plan_route_admissions IS 'Cross-replica admission counters for plan route limits: requests on one route this minute and this UTC month.';
+
+
+--
 -- Name: api_consumer_plans; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -32922,6 +32946,7 @@ CREATE TABLE public.api_consumer_plans (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     alert_thresholds_percent integer[] DEFAULT '{}'::integer[] NOT NULL,
+    route_limits jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT api_consumer_plans_alert_thresholds_chk CHECK (((cardinality(alert_thresholds_percent) <= 5) AND (1 <= ALL (alert_thresholds_percent)) AND (100 >= ALL (alert_thresholds_percent)) AND ((cardinality(alert_thresholds_percent) = 0) OR (max_units_per_month > 0)))),
     CONSTRAINT api_consumer_plans_limits_chk CHECK (((max_requests_per_minute >= 0) AND (max_units_per_month >= 0))),
     CONSTRAINT api_consumer_plans_name_chk CHECK ((name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))
@@ -32940,6 +32965,13 @@ COMMENT ON TABLE public.api_consumer_plans IS 'Named consumer plans: enforcement
 --
 
 COMMENT ON COLUMN public.api_consumer_plans.alert_thresholds_percent IS 'Percentages of max_units_per_month at which a consumer.usage_threshold webhook fires, once per consumer per UTC month.';
+
+
+--
+-- Name: COLUMN api_consumer_plans.route_limits; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.api_consumer_plans.route_limits IS 'Per-route caps keyed by billing route label: {"MCP /tools/search": {"max_requests_per_minute": n, "max_requests_per_month": n}}.';
 
 
 --
@@ -52245,6 +52277,40 @@ CREATE TABLE public.object_storage_version_inventory_entries (
 
 
 --
+-- Name: object_storage_workload_credentials; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_storage_workload_credentials (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    bucket_id uuid NOT NULL,
+    caller_app_id uuid NOT NULL,
+    instance_id text NOT NULL,
+    access_key_id text NOT NULL,
+    secret_sealed bytea NOT NULL,
+    kid text NOT NULL,
+    permission text NOT NULL,
+    key_prefix text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT object_storage_workload_credentials_access_key_id_check CHECK ((access_key_id ~ '^GRGW[A-Z2-7]{16}$'::text)),
+    CONSTRAINT object_storage_workload_credentials_check CHECK (((expires_at > created_at) AND (expires_at <= (created_at + '01:05:00'::interval)))),
+    CONSTRAINT object_storage_workload_credentials_instance_id_check CHECK (((octet_length(instance_id) >= 1) AND (octet_length(instance_id) <= 128))),
+    CONSTRAINT object_storage_workload_credentials_key_prefix_check CHECK (((key_prefix IS NULL) OR (((octet_length(key_prefix) >= 1) AND (octet_length(key_prefix) <= 512)) AND ("left"(key_prefix, 1) <> '/'::text)))),
+    CONSTRAINT object_storage_workload_credentials_kid_check CHECK (((length(kid) >= 1) AND (length(kid) <= 255))),
+    CONSTRAINT object_storage_workload_credentials_permission_check CHECK ((permission = ANY (ARRAY['read'::text, 'write'::text, 'read_write'::text]))),
+    CONSTRAINT object_storage_workload_credentials_secret_sealed_check CHECK ((octet_length(secret_sealed) > 0))
+);
+
+
+--
+-- Name: TABLE object_storage_workload_credentials; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.object_storage_workload_credentials IS 'Short-lived per-instance S3 credentials for buckets granted by gregale.yaml uses:; written by apid, resolved by s3-gatewayd, swept by apid after expiry (ADR-20261122191423).';
+
+
+--
 -- Name: object_storage_write_admissions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -65249,6 +65315,14 @@ ALTER TABLE ONLY public.api_consumer_plan_assignments
 
 
 --
+-- Name: api_consumer_plan_route_admissions api_consumer_plan_route_admissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plan_route_admissions
+    ADD CONSTRAINT api_consumer_plan_route_admissions_pkey PRIMARY KEY (consumer_id, route);
+
+
+--
 -- Name: api_consumer_plans api_consumer_plans_app_id_uniq; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -65270,6 +65344,14 @@ ALTER TABLE ONLY public.api_consumer_plans
 
 ALTER TABLE ONLY public.api_consumer_plans
     ADD CONSTRAINT api_consumer_plans_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: api_consumer_plans api_consumer_plans_route_limits_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.api_consumer_plans
+    ADD CONSTRAINT api_consumer_plans_route_limits_chk CHECK ((jsonb_typeof(route_limits) = 'object'::text)) NOT VALID;
 
 
 --
@@ -73913,6 +73995,22 @@ ALTER TABLE ONLY public.object_storage_version_inventory_entries
 
 
 --
+-- Name: object_storage_workload_credentials object_storage_workload_credentials_access_key_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_workload_credentials
+    ADD CONSTRAINT object_storage_workload_credentials_access_key_id_key UNIQUE (access_key_id);
+
+
+--
+-- Name: object_storage_workload_credentials object_storage_workload_credentials_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_workload_credentials
+    ADD CONSTRAINT object_storage_workload_credentials_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: object_storage_write_admissions object_storage_write_admissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -80038,6 +80136,13 @@ CREATE INDEX api_consumer_overdue_holds_app_idx ON public.api_consumer_overdue_h
 --
 
 CREATE INDEX api_consumer_plan_assignments_lookup_idx ON public.api_consumer_plan_assignments USING btree (account_id, app_id, consumer_id, effective_from DESC);
+
+
+--
+-- Name: api_consumer_plan_route_admissions_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_plan_route_admissions_account_idx ON public.api_consumer_plan_route_admissions USING btree (account_id);
 
 
 --
@@ -87168,6 +87273,27 @@ CREATE UNIQUE INDEX object_storage_s3_credentials_rotation_parent_idx ON public.
 --
 
 CREATE INDEX object_storage_upload_grants_expiry_idx ON public.object_storage_upload_grants USING btree (expires_at, id);
+
+
+--
+-- Name: object_storage_workload_credentials_caller_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_storage_workload_credentials_caller_idx ON public.object_storage_workload_credentials USING btree (caller_app_id);
+
+
+--
+-- Name: object_storage_workload_credentials_expires_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_storage_workload_credentials_expires_idx ON public.object_storage_workload_credentials USING btree (expires_at);
+
+
+--
+-- Name: object_storage_workload_credentials_instance_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_storage_workload_credentials_instance_idx ON public.object_storage_workload_credentials USING btree (instance_id, bucket_id);
 
 
 --
@@ -100048,6 +100174,22 @@ ALTER TABLE ONLY public.api_consumer_plan_assignments
 
 ALTER TABLE ONLY public.api_consumer_plan_assignments
     ADD CONSTRAINT api_consumer_plan_assignments_plan_fkey FOREIGN KEY (app_id, plan_id) REFERENCES public.api_consumer_plans(app_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_plan_route_admissions api_consumer_plan_route_admissions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plan_route_admissions
+    ADD CONSTRAINT api_consumer_plan_route_admissions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_plan_route_admissions api_consumer_plan_route_admissions_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_plan_route_admissions
+    ADD CONSTRAINT api_consumer_plan_route_admissions_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
 
 
 --

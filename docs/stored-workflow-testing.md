@@ -3,8 +3,9 @@
 Check a stored workflow before and after you publish it: save test cases,
 run verification suites against real executions, keep baselines, simulate
 runs, and require coverage before a release. Building workflows is covered in
-[Build stored workflows](stored-workflow-authoring.md); running and recovering
-them in [Run and recover stored workflows](stored-workflow-operations.md).
+[Build stored workflows](stored-workflow-authoring.md); running them in
+[Run and monitor stored workflows](stored-workflow-operations.md); recovering
+failed runs in [Recover stored workflow runs](stored-workflow-recovery.md).
 
 ## Test cases, verification suites and baselines
 
@@ -165,7 +166,7 @@ qualification.
 ### Verify a deployed stored workflow from CI
 
 `gregale workflow stored live` exposes the same saved-case verification through the
-CLI. Authenticate the CI job with `GREGALE_TOKEN`; use `FAAS_API` when selecting a
+CLI. Authenticate the CI job with `GREGALE_TOKEN`; use `GREGALE_API_URL` when selecting a
 different control-plane endpoint.
 Use `live list --app billing --name paid-invoice --json` to read the current
 published revision, default deployment and recent verification IDs. Read the

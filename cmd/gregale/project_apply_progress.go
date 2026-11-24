@@ -12,6 +12,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/whycopy"
 )
 
 // projectWaitProgress reports what a waiting project deploy is doing. The
@@ -52,7 +53,12 @@ type projectWaitProgressEvent struct {
 	// failed deployment (DeploymentResponse.ErrorCode / ErrorFix).
 	ErrorCode string `json:"error_code,omitempty"`
 	Fix       string `json:"fix,omitempty"`
-	ElapsedS  int64  `json:"elapsed_s"`
+	// FixCommands are the runnable commands in Fix, with this service's
+	// app and deployment filled in; RelevantLogs its newest log lines
+	// (ADR-20261123230000).
+	FixCommands  []string         `json:"fix_commands,omitempty"`
+	RelevantLogs []api.LogExcerpt `json:"relevant_logs,omitempty"`
+	ElapsedS     int64            `json:"elapsed_s"`
 }
 
 // projectWaitHeartbeat is how often human mode summarises a wait with no
@@ -94,7 +100,7 @@ func projectDeploymentStage(dep api.DeploymentResponse, phase string, done bool,
 	return phase
 }
 
-func (p *projectWaitProgress) observe(build api.AppliedBuild, dep api.DeploymentResponse, phase string, done bool, failure string) {
+func (p *projectWaitProgress) observe(build api.AppliedBuild, dep api.DeploymentResponse, phase string, done bool, failure string, logs []api.LogExcerpt) {
 	if p == nil {
 		return
 	}
@@ -121,11 +127,15 @@ func (p *projectWaitProgress) observe(build api.AppliedBuild, dep api.Deployment
 		// ADR-20261029120000). The project receipt keeps only the error, so
 		// a failure printed here without it left the user guessing.
 		errCode, fix = dep.ErrorCode, strings.TrimSpace(dep.ErrorFix)
+		// The server fills what it knew; this service's app and deployment
+		// fill the rest, so no step says <slug> (ADR-20261123230000).
+		fix = whycopy.Fill(fix, whycopy.Values{App: build.Slug, Deployment: build.DeploymentID})
 	}
 	if p.json {
 		line, _ := json.Marshal(projectWaitProgressEvent{
 			Event: "service_stage_changed", Service: service, DeploymentID: build.DeploymentID,
 			Stage: stage, Status: dep.Status, Error: errText, ErrorCode: errCode, Fix: fix, ElapsedS: int64(elapsed / time.Second),
+			FixCommands: whycopy.Commands(fix), RelevantLogs: logs,
 		})
 		_, _ = fmt.Fprintf(p.w, "%s\n", line)
 		return
@@ -133,6 +143,13 @@ func (p *projectWaitProgress) observe(build api.AppliedBuild, dep api.Deployment
 	switch stage {
 	case "failed":
 		_, _ = fmt.Fprintf(p.w, "  %s: failed after %s: %s\n", service, elapsed, oneLine(errText))
+		if len(logs) > 0 {
+			shown := logs[max(0, len(logs)-failureLogShown):]
+			_, _ = fmt.Fprintf(p.w, "    last log lines:\n")
+			for _, line := range shown {
+				_, _ = fmt.Fprintf(p.w, "      | %s\n", terminalSafe(oneLine(line.Message)))
+			}
+		}
 		if fix != "" {
 			_, _ = fmt.Fprintf(p.w, "    fix:\n")
 			for _, line := range strings.Split(fix, "\n") {

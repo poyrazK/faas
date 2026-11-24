@@ -4,6 +4,10 @@ Every error Gregale returns carries a stable `code`. [Errors](errors.md) explain
 
 The list is generated from the code that builds each error, so a new code appears here when it ships. Codes for features whose docs are not published yet are left out. Each code's name is its anchor: link to `error-codes#plan_limit_apps`, for example.
 
+If you are fixing a failure rather than looking up one code, start with [the common codes](errors.md#common-codes), which group the frequent ones by what went wrong, or [Troubleshooting](troubleshooting.md), which goes by symptom.
+
+Jump to: [A](#a) · [B](#b) · [C](#c) · [D](#d) · [E](#e) · [F](#f) · [G](#g) · [H](#h) · [I](#i) · [J](#j) · [L](#l) · [M](#m) · [N](#n) · [O](#o) · [P](#p) · [Q](#q) · [R](#r) · [S](#s) · [T](#t) · [U](#u) · [V](#v) · [W](#w)
+
 ## A
 
 ### `account_abuse_hold`
@@ -190,11 +194,15 @@ HTTP 503 Service Unavailable · App in maintenance
 
 HTTP 409 Conflict or 422 Unprocessable Entity · Many operations send this code; the response's `title` and `detail` name the failure.
 
+### `app_name_unavailable`
+
+HTTP 409 Conflict · App name unavailable
+
 ### `app_not_listening`
 
 HTTP 422 Unprocessable Entity · No process listening on $PORT; App listens on a different port
 
-See [Deployment overrides](deploy-overrides.md), [Errors](errors.md), [Deploy a web framework](frameworks.md).
+See [Deployment overrides](deploy-overrides.md), [Errors](errors.md), [Deploy a web framework](frameworks.md), [Troubleshooting](troubleshooting.md).
 
 ### `app_not_purgeable`
 
@@ -337,6 +345,10 @@ See [Billing](billing.md#cancel-and-resume).
 ### `billing_unavailable`
 
 HTTP 501 Not Implemented · Billing provider not initialised; State store not initialised
+
+### `binding_not_granted`
+
+HTTP 403 Forbidden · Binding not granted
 
 ### `binding_verification_budget_full`
 
@@ -966,7 +978,7 @@ See [Errors](errors.md).
 
 HTTP 409 Conflict · Recovery plan changed
 
-See [Run and recover stored workflows](stored-workflow-operations.md).
+See [Recover stored workflow runs](stored-workflow-recovery.md).
 
 ### `event_storage_capacity_exhausted`
 
@@ -3240,7 +3252,7 @@ See [Functions and runtimes](functions.md).
 
 HTTP 503 Service Unavailable · Request budget exceeded; Request timed out
 
-See [Edge rules](edge-rules.md), [Errors](errors.md), [Host an MCP server](mcp-hosting.md).
+See [Edge rules](edge-rules.md), [Errors](errors.md), [Host an MCP server](mcp-hosting.md), [Troubleshooting](troubleshooting.md).
 
 ### `request_too_large`
 
@@ -3248,7 +3260,7 @@ HTTP 413 Request Entity Too Large · Event too large; MCP instance probe failed;
 
 For larger uploads, use a bucket signed URL (gregale storage ... signed-url).
 
-See [Event-driven workloads](event-driven.md), [Plans and pricing](plans.md), [Storage](storage.md).
+See [Event-driven workloads](event-driven.md), [Plans and pricing](plans.md), [Storage](storage.md), [Edge rules](edge-rules.md).
 
 ### `request_upload_timeout`
 
@@ -3788,7 +3800,7 @@ HTTP 401 Unauthorized · Many operations send this code; the response's `title` 
 
 Migration unavailable
 
-See [Apps](apps.md), [Billing](billing.md), [Jobs from the CLI](cli-jobs.md).
+See [Apps](apps.md), [Billing](billing.md), [Jobs from the CLI](cli-jobs.md), [Secrets and required configuration](cli-secrets.md).
 
 ### `undo_plan_changed`
 
@@ -4015,6 +4027,14 @@ See [CLI guide](cli-setup.md).
 HTTP 408 Request Timeout · Workflow wait timed out
 
 See [CLI guide](cli-setup.md).
+
+### `workload_bucket_not_found`
+
+HTTP 404 Not Found · Granted bucket not found
+
+### `workload_credential_limit`
+
+HTTP 429 Too Many Requests · Too many workload credentials
 
 ### `workload_not_production`
 

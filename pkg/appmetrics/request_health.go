@@ -111,8 +111,11 @@ func FetchRequestHealth(ctx context.Context, client *promql.Client, appID string
 	}
 	out.RequestCount = int64(SafeRoundNonNeg(count))
 	out.ServerErrors = int64(SafeRoundNonNeg(failures))
-	if count > 0 {
-		out.ErrorRatePct = failures / count * 100
+	// The rate is of the counts it is shown with: increase() extrapolates,
+	// and "24 of 28 requests returned 5xx (86.75%)" read as a miscount
+	// (prod hunt r33).
+	if out.RequestCount > 0 {
+		out.ErrorRatePct = float64(out.ServerErrors) / float64(out.RequestCount) * 100
 	}
 	out.AsOf = time.Unix(0, int64(seconds*float64(time.Second))).UTC().Format(time.RFC3339Nano)
 	out.Source, out.Reason = SourcePrometheus, ""
