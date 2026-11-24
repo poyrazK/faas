@@ -938,6 +938,7 @@ type ApiConsumerRateCard struct {
 	BaseFeeMillicentsPerMonth int64
 	MinimumMillicentsPerMonth int64
 	ProrateMonthlyFees        bool
+	ModelPrices               []byte
 }
 
 // Billable units per consumer, bounded route label, and UTC minute; per-minute totals stay in api_consumer_usage_minutes.
@@ -1082,6 +1083,7 @@ type ApiConsumerUsageStatement struct {
 	Revision                int32
 	CreditAppliedMillicents int64
 	Fees                    []byte
+	Waiver                  []byte
 }
 
 type ApiConsumerUsageStatementHandoff struct {

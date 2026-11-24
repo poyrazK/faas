@@ -21,8 +21,8 @@ var ErrAPIConsumerUsageRegressed = errors.New("API consumer usage is below a fin
 var ErrAPIConsumerChargeDecreased = errors.New("API consumer charges would fall below a finalized statement")
 
 type statementCoverage struct {
-	units, charged, amount int64
-	tierUnits              []int64
+	units, charged, amount, waived int64
+	tierUnits                      []int64
 }
 
 // MonthStart returns the start of t's UTC calendar month, where monthly
@@ -141,10 +141,10 @@ func APIConsumerStatementDelta(current APIConsumerUsageQuote, revisions []state.
 	}
 	delta := APIConsumerUsageQuote{Currency: current.Currency, Buckets: make([]APIConsumerUsageChargeBucket, 0, len(current.Buckets))}
 	for _, bucket := range current.Buckets {
-		key := coverageKey{minute: bucket.WindowStart.UTC().Unix(), unit: bucket.Unit}
+		key := coverageKey{minute: bucket.WindowStart.UTC().Unix(), unit: bucket.Unit, model: bucket.Model}
 		prior := covered[key]
 		delete(covered, key)
-		if bucket.BillableUnits < prior.units || bucket.ChargedUnits < prior.charged {
+		if bucket.BillableUnits < prior.units || bucket.ChargedUnits < prior.charged || bucket.WaivedUnits < prior.waived {
 			return APIConsumerUsageQuote{}, ErrAPIConsumerUsageRegressed
 		}
 		bucket, changed, err := subtractCoverage(bucket, prior)
@@ -158,8 +158,24 @@ func APIConsumerStatementDelta(current APIConsumerUsageQuote, revisions []state.
 			return APIConsumerUsageQuote{}, err
 		}
 	}
-	for _, remaining := range covered {
-		if remaining.units > 0 {
+	var streams map[string][]state.APIConsumerRateCard
+	for key, remaining := range covered {
+		if remaining.units <= 0 {
+			continue
+		}
+		if streams == nil {
+			_, streams = UnitStreams(current.planRateHistory)
+			for unit, history := range streams {
+				streams[unit] = orderedAPIConsumerRateCards(history)
+			}
+		}
+		// A finalized statement from before plan expiry may have billed a
+		// stream after the consumer left its plan. Keep that coverage frozen
+		// and leave these minutes out of the adjustment.
+		minute := time.Unix(key.minute, 0)
+		history := streams[StreamUnit(key.unit)]
+		next := sort.Search(len(history), func(i int) bool { return history[i].EffectiveFrom.After(minute) })
+		if next == 0 || !apiConsumerCardEnded(history[next-1], minute) {
 			return APIConsumerUsageQuote{}, ErrAPIConsumerUsageRegressed
 		}
 	}
@@ -207,6 +223,7 @@ func LockedVolumeSteps(cards []state.APIConsumerRateCard, revisions []state.APIC
 type coverageKey struct {
 	minute int64
 	unit   string
+	model  string
 }
 
 func finalizedCoverage(revisions []state.APIConsumerUsageStatement) (map[coverageKey]statementCoverage, error) {
@@ -216,13 +233,13 @@ func finalizedCoverage(revisions []state.APIConsumerUsageStatement) (map[coverag
 			continue
 		}
 		for _, bucket := range statement.Buckets {
-			minute := coverageKey{minute: bucket.WindowStart.UTC().Unix(), unit: bucket.Unit}
+			minute := coverageKey{minute: bucket.WindowStart.UTC().Unix(), unit: bucket.Unit, model: bucket.Model}
 			prior := covered[minute]
 			if prior.units > maxInt64-bucket.BillableUnits || prior.charged > maxInt64-bucket.Charged() {
 				return nil, fmt.Errorf("billing: API consumer statement coverage overflow")
 			}
 			next := statementCoverage{units: prior.units + bucket.BillableUnits, charged: prior.charged + bucket.Charged(),
-				amount: prior.amount + bucket.AmountMillicents, tierUnits: prior.tierUnits}
+				amount: prior.amount + bucket.AmountMillicents, waived: prior.waived + bucket.WaivedUnits, tierUnits: prior.tierUnits}
 			if bucket.TierUnits != nil {
 				next.tierUnits = addTierUnits(prior.tierUnits, bucket.TierUnits)
 			}
@@ -237,6 +254,7 @@ func finalizedCoverage(revisions []state.APIConsumerUsageStatement) (map[coverag
 // tiered minutes take the exact difference in step units and amount.
 func subtractCoverage(bucket APIConsumerUsageChargeBucket, prior statementCoverage) (APIConsumerUsageChargeBucket, bool, error) {
 	bucket.BillableUnits -= prior.units
+	bucket.WaivedUnits -= prior.waived
 	if bucket.RateCardID == "" {
 		return bucket, bucket.BillableUnits != 0, nil
 	}

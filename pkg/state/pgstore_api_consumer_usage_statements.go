@@ -14,25 +14,30 @@ import (
 const apiConsumerUsageStatementSelectCols = `id, account_id, app_id, consumer_id,
        period_start, period_end, revision, status, currency, billable_units,
        unpriced_units, amount_millicents, priced, buckets, as_of,
-       created_at, finalized_at, credit_applied_millicents, fees`
+       created_at, finalized_at, credit_applied_millicents, fees, waiver`
 
 type apiConsumerUsageStatementRowScanner interface{ Scan(dest ...any) error }
 
 func scanAPIConsumerUsageStatementRow(row apiConsumerUsageStatementRowScanner) (APIConsumerUsageStatement, error) {
 	var statement APIConsumerUsageStatement
 	var status string
-	var buckets, fees []byte
+	var buckets, fees, waiver []byte
 	if err := row.Scan(
 		&statement.ID, &statement.AccountID, &statement.AppID, &statement.ConsumerID,
 		&statement.PeriodStart, &statement.PeriodEnd, &statement.Revision, &status, &statement.Currency,
 		&statement.BillableUnits, &statement.UnpricedUnits, &statement.AmountMillicents,
 		&statement.Priced, &buckets, &statement.AsOf, &statement.CreatedAt, &statement.FinalizedAt, &statement.CreditAppliedMillicents,
-		&fees,
+		&fees, &waiver,
 	); err != nil {
 		return APIConsumerUsageStatement{}, err
 	}
 	if err := json.Unmarshal(fees, &statement.Fees); err != nil {
 		return APIConsumerUsageStatement{}, err
+	}
+	if len(waiver) != 0 {
+		if err := json.Unmarshal(waiver, &statement.Waiver); err != nil {
+			return APIConsumerUsageStatement{}, err
+		}
 	}
 	if len(statement.Fees) == 0 {
 		statement.Fees = nil
@@ -124,6 +129,19 @@ func (s *PgStore) CreateAPIConsumerUsageStatement(ctx context.Context, input API
 	if hasLatest && (input.Revision != latest.Revision+1 || latest.Status != input.PriorStatus) {
 		return APIConsumerUsageStatement{}, false, ErrConflict
 	}
+	var waiver []byte
+	if input.Waiver != nil {
+		if err := checkAPIConsumerWaiverPlan(latest, input); err != nil {
+			return APIConsumerUsageStatement{}, false, err
+		}
+		if err := checkPgWaiverPeriod(ctx, tx, input); err != nil {
+			return APIConsumerUsageStatement{}, false, err
+		}
+		waiver, err = json.Marshal(input.Waiver)
+		if err != nil {
+			return APIConsumerUsageStatement{}, false, err
+		}
+	}
 	if hasLatest && latest.Status == APIConsumerUsageStatementDraft {
 		if sameAPIConsumerUsageStatementSnapshot(latest, input) {
 			if err := tx.Commit(ctx); err != nil {
@@ -144,13 +162,13 @@ func (s *PgStore) CreateAPIConsumerUsageStatement(ctx context.Context, input API
 		`insert into api_consumer_usage_statements
 		       (account_id, app_id, consumer_id, period_start, period_end, revision, status,
 		        currency, billable_units, unpriced_units, amount_millicents,
-		        priced, buckets, as_of, fees)
+		        priced, buckets, as_of, fees, waiver)
 		 values ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, 'draft', $7,
-		         $8, $9, $10, $11, $12::jsonb, $13, $14::jsonb)
+		         $8, $9, $10, $11,  $12::jsonb, $13, $14::jsonb, $15::jsonb)
 		 returning `+apiConsumerUsageStatementSelectCols,
 		input.AccountID, input.AppID, input.ConsumerID, input.PeriodStart, input.PeriodEnd, input.Revision,
 		input.Currency, input.BillableUnits, input.UnpricedUnits, input.AmountMillicents,
-		input.Priced, buckets, input.AsOf, fees))
+		input.Priced, buckets, input.AsOf, fees, waiver))
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -292,4 +310,39 @@ func (s *PgStore) FinalizeAPIConsumerUsageStatement(ctx context.Context, account
 		return current, false, nil
 	}
 	return APIConsumerUsageStatement{}, false, ErrConflict
+}
+
+func checkPgWaiverPeriod(ctx context.Context, tx pgx.Tx, in APIConsumerUsageStatementInput) error {
+	w := in.Waiver
+	var overlap bool
+	err := tx.QueryRow(ctx, `select exists (
+		select 1 from api_consumer_usage_statements
+		where account_id = $1::uuid and app_id = $2::uuid and consumer_id = $3::uuid
+		  and waiver is not null and (period_start, period_end) <> ($4, $5)
+		  and waiver->>'unit' = $6 and waiver->>'model' = $7
+		  and (waiver->>'since')::timestamptz < $9 and (waiver->>'until')::timestamptz > $8
+	)`, in.AccountID, in.AppID, in.ConsumerID, in.PeriodStart, in.PeriodEnd, w.Unit, w.Model, w.Since, w.Until).Scan(&overlap)
+	if err == nil && overlap {
+		return ErrConflict
+	}
+	return err
+}
+
+func (s *PgStore) ListAPIConsumerUsageWaivers(ctx context.Context, accountID, appID, consumerID string, since, until time.Time) ([]APIConsumerUsageWaiver, error) {
+	rows, err := s.pool.Query(ctx, `select waiver from api_consumer_usage_statements
+		where account_id = $1::uuid and app_id = $2::uuid and consumer_id = $3::uuid and waiver is not null
+		  and period_start < $5 and period_end > $4`, accountID, appID, consumerID, since, until)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []APIConsumerUsageWaiver
+	for rows.Next() {
+		var waiver APIConsumerUsageWaiver
+		if err := rows.Scan(&waiver); err != nil {
+			return nil, err
+		}
+		out = append(out, waiver)
+	}
+	return out, rows.Err()
 }
