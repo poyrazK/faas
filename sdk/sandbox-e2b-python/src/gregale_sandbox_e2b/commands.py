@@ -215,16 +215,21 @@ class Commands:
         stdin: bool = False,
         timeout: Optional[float] = None,
         request_timeout: Optional[float] = None,
+        reseed_on_fork: bool = False,
     ) -> Any:
         """Runs a shell command.
 
         In the foreground it answers a CommandResult, and a non-zero exit
         raises CommandExitException; with background=True it answers a
         CommandHandle at once. timeout is how long the command may run, in
-        seconds (60 by default, within the plan's cap).
+        seconds (60 by default, within the plan's cap). reseed_on_fork, a
+        Gregale extension for background commands, sends the command SIGUSR2
+        in each fork of the session so it can reseed its own random state.
         """
         if stdin and not background:
             raise UnsupportedException("commands.run(stdin=True)", "only background commands take input; run it with background=True and use send_stdin")
+        if reseed_on_fork and not background:
+            raise UnsupportedException("commands.run(reseed_on_fork=True)", "only a background command runs on in a fork; run it with background=True")
         merged = {**self._conn.envs, **(envs or {})}
         body = {
             "cmd": ["/bin/bash", "-l", "-c", cmd],
@@ -233,6 +238,7 @@ class Commands:
             "run_as": _run_as(user),
             "timeout_ms": int(timeout * 1000) if timeout else None,
             "background": True if background else None,
+            "reseed_on_fork": True if reseed_on_fork else None,
         }
         if background:
             res = self._conn.json("POST", "/exec", json_body=body, timeout=request_timeout)

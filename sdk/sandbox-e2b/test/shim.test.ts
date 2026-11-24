@@ -22,6 +22,7 @@ type Exec = {
   tty?: boolean;
   rows?: number;
   cols?: number;
+  reseed_on_fork?: boolean;
 };
 
 const FORK = 'f0f0f0f0-0000-4000-8000-000000000001';
@@ -397,6 +398,19 @@ test('background commands take stdin and its end', async () => {
     { handle: 'c1', eof: true },
   ]);
   await assert.rejects(sbx.commands.sendStdin(42, 'x'), NotFoundError);
+});
+
+// adr: 20261122132055 §3 — a background command may ask for SIGUSR2 in forks.
+test('background commands may ask to reseed in forks', async () => {
+  const { fake, opts } = setup();
+  const sbx = await Sandbox.create(opts);
+  await sbx.commands.run('worker', { background: true, reseedOnFork: true });
+  assert.equal(fake.execs.at(-1)?.reseed_on_fork, true);
+  await sbx.commands.run('other', { background: true });
+  assert.equal(fake.execs.at(-1)?.reseed_on_fork, undefined);
+  const before = fake.execs.length;
+  await assert.rejects(sbx.commands.run('worker', { reseedOnFork: true }), UnsupportedError);
+  assert.equal(fake.execs.length, before);
 });
 
 test('a persistent session pauses, resumes on connect and forks', async () => {

@@ -216,7 +216,7 @@ Each step is one PR on the sandbox branches until the owner asks for PRs. Every 
 - **Start.** A fork is claimable only once the shared store holds its whole capture and the volume backup (`uploaded_at`, set by the agentd sweep). It restores on any node as `Resume{fork}` with the source's vCPUs, and its volume restores from the source's backup (`volume_source_sandbox_id`). An ephemeral fork's volume is still recorded, so it is deleted when the fork ends.
 - **Lifetime of what forks share.** A capture, the backup it names and the source's volume row stay while a queued or starting fork names the capture, even after the source resumed or ended. Once none does, a fork capture is consumed (after a minute's grace) and the capture sweep deletes its objects. A fork whose source ended before it was captured fails with `fork_source_ended`.
 - **Measured** (EC2 nested KVM, 512 MB guest with a 2 GB volume): live fork capture 7.6 s node-first; two forks restored in 318 ms and 279 ms with distinct host IPs, the source's memory and files, and writes isolated both ways.
-- **Not yet (fork):** ~~the reflink fast path~~ (amendment "same-node forks"); ~~the `GREGALE_FORKED_FROM` marker and `SIGUSR2` reseed hook~~ and ~~`sandbox_fork_seconds` and `sandbox_forks_total`~~ (amendment "fork marker and metrics"); clients (step 10).
+- **Not yet (fork):** ~~the reflink fast path~~ (amendment "same-node forks"); ~~the `GREGALE_FORKED_FROM` marker and `SIGUSR2` reseed hook~~ and ~~`sandbox_fork_seconds` and `sandbox_forks_total`~~ (amendment "fork marker and metrics"); ~~clients~~ (E2B shims: `reseedOnFork` / `reseed_on_fork`).
 
 ### Step 7 as built (evacuation)
 
