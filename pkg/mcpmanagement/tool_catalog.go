@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 // Some clients refuse a server that lists more than 128 tools (OpenAI's
@@ -369,7 +371,7 @@ func firstSentence(description string) string {
 		description = description[:i+1]
 	}
 	if len(description) > 240 {
-		description = description[:237] + "..."
+		description = safetext.Truncate(description, 237) + "..."
 	}
 	return description
 }

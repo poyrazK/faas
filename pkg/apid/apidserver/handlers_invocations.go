@@ -334,6 +334,10 @@ func (s *server) queueSend(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if !decodeJSONLimit(w, r, &req, int64(limits.MaxSourceBytesPerInvocation)) {
 		return
 	}
+	if problem := bindingQueueAllowed(r, req.QueueName, req.Environment); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	work, problem := s.queueGroupKeyWork(acct, req.GroupKey, req.Work)
 	if problem != nil {
 		api.WriteProblem(w, problem)
@@ -373,6 +377,10 @@ func (s *server) queueSendBatch(w http.ResponseWriter, r *http.Request, acct sta
 	}
 	var req api.QueueSendBatchRequest
 	if !decodeJSONLimit(w, r, &req, api.QueueSendBatchMaxBytes) {
+		return
+	}
+	if problem := bindingQueueAllowed(r, req.QueueName, req.Environment); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	if len(req.Messages) == 0 || len(req.Messages) > api.QueueSendBatchMaxMessages {

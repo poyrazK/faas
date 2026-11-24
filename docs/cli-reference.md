@@ -3515,6 +3515,8 @@ gregale env list --app my-api --class ephemeral
 gregale env list --app my-api --older-than 90d
 ```
 
+Delivery counts describe runtime-start delivery; runtime reload and application acknowledgement are separate evidence in each row, and delivery does not confirm that the application adopted a value.
+
 ### env rotate
 
 Rotate a secret and optionally wait for runtime application

@@ -3512,6 +3512,8 @@ from .object_version_retention_event_hold import ObjectVersionRetentionEventHold
 from .object_version_retention_mode import ObjectVersionRetentionMode
 from .object_version_retention_request import ObjectVersionRetentionRequest
 from .object_version_retention_result import ObjectVersionRetentionResult
+from .object_workload_credential_request import ObjectWorkloadCredentialRequest
+from .object_workload_credential_response import ObjectWorkloadCredentialResponse
 from .object_write_protection import ObjectWriteProtection
 from .object_write_receipt import ObjectWriteReceipt
 from .object_write_receipt_error_code import ObjectWriteReceiptErrorCode
@@ -10626,6 +10628,8 @@ __all__ = (
     "ObjectVersionRetentionMode",
     "ObjectVersionRetentionRequest",
     "ObjectVersionRetentionResult",
+    "ObjectWorkloadCredentialRequest",
+    "ObjectWorkloadCredentialResponse",
     "ObjectWriteProtection",
     "ObjectWriteReceipt",
     "ObjectWriteReceiptErrorCode",

@@ -731,6 +731,8 @@ export type { ObjectUploadRoute } from './ObjectUploadRoute.js';
 export type { ObjectUploadRouteList } from './ObjectUploadRouteList.js';
 export type { ObjectVersionLegalHold } from './ObjectVersionLegalHold.js';
 export type { ObjectVersionRetention } from './ObjectVersionRetention.js';
+export type { ObjectWorkloadCredentialRequest } from './ObjectWorkloadCredentialRequest.js';
+export type { ObjectWorkloadCredentialResponse } from './ObjectWorkloadCredentialResponse.js';
 export type { ObjectWriteProtection } from './ObjectWriteProtection.js';
 export type { ObsAlertEpisode } from './ObsAlertEpisode.js';
 export type { ObsAlertSuppression } from './ObsAlertSuppression.js';

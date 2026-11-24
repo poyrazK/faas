@@ -1,8 +1,9 @@
 package api
 
 import (
-	"regexp"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // customerCausedDeploymentFailureCodes are deployments.error_code values whose
@@ -90,7 +91,7 @@ var PlatformReleaseStartFailureCodes = []string{"command_not_found", "command_st
 // status aggregate and the stores agree.
 const PlatformToolMissingPattern = `(^|[^A-Za-z0-9_./-])'?(npm|npx|node|nodejs|corepack|yarn|pnpm|bun|python|python3|pip|pip3|uv|uvx|poetry|pipenv|mise|sh|bash)'?(: not found|: command not found|: No such file or directory|: Permission denied)`
 
-var platformToolMissing = regexp.MustCompile(PlatformToolMissingPattern)
+var platformToolMissing = lazyregexp.New(PlatformToolMissingPattern)
 
 // platformReleaseExit reports whether an exit-126/127 release task's evidence
 // points at the platform.

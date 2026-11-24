@@ -20,6 +20,21 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/capgrant"
+)
+
+// Cross-app capability bindings (ADR-20261122191423). A workload S3
+// credential lives an hour; guest-init caches it until five minutes before
+// expiry, so a well-behaved instance holds one or two per bucket and the
+// per-instance cap only bounds rows a looping workload can create.
+// CapabilityGrantsPerKindMax is pkg/capgrant's cap on each `uses:` list;
+// capgrant keeps it as its own constant because it stays stdlib-only, so
+// the manifest parser can validate `uses:` without importing this package.
+const (
+	WorkloadObjectCredentialTTL                = time.Hour
+	WorkloadObjectCredentialsPerInstanceBucket = 8
+	CapabilityGrantsPerKindMax                 = capgrant.MaxGrantsPerKind
 )
 
 // Pipeline limits bound durable orchestration independently of Run concurrency.
