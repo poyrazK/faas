@@ -1283,6 +1283,17 @@ const (
 	ManagedPostgresSuspendTimeoutMaxSeconds = 3600
 )
 
+// ManagedPostgresSuspendTimeoutDefaultSeconds is the platform default suspend
+// timeout of a scale-to-zero database: every wake bills at least this much
+// compute. Operators change it hot (managed_postgres_policy
+// suspend_timeout_seconds) within ManagedPostgresSuspendTimeoutPolicyMin/
+// MaxSeconds, Neon's own range. Docs: docs/managed-postgres.md.
+const (
+	ManagedPostgresSuspendTimeoutDefaultSeconds   = 120
+	ManagedPostgresSuspendTimeoutPolicyMinSeconds = 60
+	ManagedPostgresSuspendTimeoutPolicyMaxSeconds = 7 * 24 * 60 * 60
+)
+
 // ManagedPostgresSuspendTimeoutDocsURL is cited by the out-of-range error.
 const ManagedPostgresSuspendTimeoutDocsURL = "https://gregale.dev/docs/postgres#plans"
 

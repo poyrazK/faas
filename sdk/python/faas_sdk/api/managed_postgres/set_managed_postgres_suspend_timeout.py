@@ -68,8 +68,9 @@ def sync_detailed(
      Sets how long a scale-to-zero database stays up after its last activity, from 60 to 3600 seconds, or
     with null returns it to the platform default. Every wake bills at least this much compute. A
     suspended database takes the value at once; a running one takes it the next time it suspends,
-    without interrupting connections. Repeating the same value is harmless. An always-on database, or
-    one with a change in progress, answers a conflict.
+    without interrupting connections. Repeating the same value is harmless. seconds is required; null is
+    the default. An always-on database answers 409 suspend_timeout_always_on; one with a change in
+    progress answers a conflict. While operations are closed, only a shorter timeout is taken.
 
     Args:
         id (str):
@@ -107,8 +108,9 @@ def sync(
      Sets how long a scale-to-zero database stays up after its last activity, from 60 to 3600 seconds, or
     with null returns it to the platform default. Every wake bills at least this much compute. A
     suspended database takes the value at once; a running one takes it the next time it suspends,
-    without interrupting connections. Repeating the same value is harmless. An always-on database, or
-    one with a change in progress, answers a conflict.
+    without interrupting connections. Repeating the same value is harmless. seconds is required; null is
+    the default. An always-on database answers 409 suspend_timeout_always_on; one with a change in
+    progress answers a conflict. While operations are closed, only a shorter timeout is taken.
 
     Args:
         id (str):
@@ -141,8 +143,9 @@ async def asyncio_detailed(
      Sets how long a scale-to-zero database stays up after its last activity, from 60 to 3600 seconds, or
     with null returns it to the platform default. Every wake bills at least this much compute. A
     suspended database takes the value at once; a running one takes it the next time it suspends,
-    without interrupting connections. Repeating the same value is harmless. An always-on database, or
-    one with a change in progress, answers a conflict.
+    without interrupting connections. Repeating the same value is harmless. seconds is required; null is
+    the default. An always-on database answers 409 suspend_timeout_always_on; one with a change in
+    progress answers a conflict. While operations are closed, only a shorter timeout is taken.
 
     Args:
         id (str):
@@ -178,8 +181,9 @@ async def asyncio(
      Sets how long a scale-to-zero database stays up after its last activity, from 60 to 3600 seconds, or
     with null returns it to the platform default. Every wake bills at least this much compute. A
     suspended database takes the value at once; a running one takes it the next time it suspends,
-    without interrupting connections. Repeating the same value is harmless. An always-on database, or
-    one with a change in progress, answers a conflict.
+    without interrupting connections. Repeating the same value is harmless. seconds is required; null is
+    the default. An always-on database answers 409 suspend_timeout_always_on; one with a change in
+    progress answers a conflict. While operations are closed, only a shorter timeout is taken.
 
     Args:
         id (str):

@@ -10,10 +10,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const postgresSuspendAfterUsage = "usage: gregale postgres suspend-timeout set DATABASE DURATION|default   (DURATION 1m..1h, e.g. 2m)"
+const postgresSuspendTimeoutUsage = "usage: gregale postgres suspend-timeout set DATABASE DURATION|default   (DURATION 1m..1h, e.g. 2m)"
 
-// parsePostgresSuspendAfter reads 1m..1h in whole seconds, or default (nil).
-func parsePostgresSuspendAfter(value string) (*int64, bool) {
+// parsePostgresSuspendTimeout reads 1m..1h in whole seconds, or default (nil).
+func parsePostgresSuspendTimeout(value string) (*int64, bool) {
 	if value == "default" {
 		return nil, true
 	}
@@ -28,20 +28,20 @@ func parsePostgresSuspendAfter(value string) (*int64, bool) {
 	return &seconds, true
 }
 
-// cmdPostgresSuspendAfter sets how long a scale-to-zero database stays up
+// cmdPostgresSuspendTimeout sets how long a scale-to-zero database stays up
 // after its last activity; every wake bills at least this much compute.
-func cmdPostgresSuspendAfter(args []string) int {
+func cmdPostgresSuspendTimeout(args []string) int {
 	fs := newFlagSet("postgres suspend-timeout", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 2 {
-		PrintUsage(os.Stderr, postgresSuspendAfterUsage, "postgres")
+		PrintUsage(os.Stderr, postgresSuspendTimeoutUsage, "postgres")
 		return 1
 	}
-	seconds, ok := parsePostgresSuspendAfter(fs.Arg(1))
+	seconds, ok := parsePostgresSuspendTimeout(fs.Arg(1))
 	if !ok {
-		PrintUsage(os.Stderr, postgresSuspendAfterUsage, "postgres")
+		PrintUsage(os.Stderr, postgresSuspendTimeoutUsage, "postgres")
 		return 1
 	}
 	client, err := authedClient()
@@ -59,11 +59,11 @@ func cmdPostgresSuspendAfter(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(result))
 	}
-	_, _ = fmt.Fprintln(osStdout, renderPostgresSuspendAfter(database.Name, result))
+	_, _ = fmt.Fprintln(osStdout, renderPostgresSuspendTimeout(database.Name, result))
 	return 0
 }
 
-func renderPostgresSuspendAfter(name string, result api.ManagedPostgresSuspendTimeout) string {
+func renderPostgresSuspendTimeout(name string, result api.ManagedPostgresSuspendTimeout) string {
 	after := (time.Duration(result.Seconds) * time.Second).String()
 	source := ""
 	if !result.Custom {

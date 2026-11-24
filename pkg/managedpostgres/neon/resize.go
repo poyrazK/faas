@@ -57,6 +57,9 @@ func (p *Provider) Update(ctx context.Context, request managedpostgres.UpdateReq
 	profile := profiles[request.Spec.Class]
 	if policyChange {
 		timeout := p.endpointSettingsForSpec(request.Spec).SuspendTimeoutSecond
+		if request.Spec.ScaleToZero && request.SuspendTimeoutSeconds > 0 {
+			timeout = request.SuspendTimeoutSeconds
+		}
 		payload.Endpoint.SuspendTimeoutSecond = &timeout
 	} else {
 		payload.Endpoint.MinimumCU, payload.Endpoint.MaximumCU = &profile.minimumCU, &profile.maximumCU

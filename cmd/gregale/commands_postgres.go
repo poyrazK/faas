@@ -63,7 +63,7 @@ func cmdPostgres(args []string) int {
 	case "compute-policy-status":
 		return cmdPostgresComputePolicyStatus(args[1:])
 	case "suspend-timeout":
-		return cmdPostgresSuspendAfter(args[1:])
+		return cmdPostgresSuspendTimeout(args[1:])
 	case "resize":
 		return cmdPostgresResize(args[1:])
 	case "resize-status":

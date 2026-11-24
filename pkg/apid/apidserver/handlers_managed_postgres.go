@@ -269,7 +269,7 @@ func (s *server) listManagedPostgresDatabases(w http.ResponseWriter, r *http.Req
 			view.Labels = filter.labelsOf(database.ID)
 			view.PlanExcess = excess[database.ID]
 			s.withManagedPostgresHold(&view, database, in, holdOK)
-			withManagedPostgresSuspendTimeout(&view, timeouts)
+			managedpg.ApplySuspendTimeout(&view, timeouts)
 			items = append(items, view)
 		}
 	}
@@ -529,7 +529,7 @@ func (s *server) getManagedPostgresDatabase(w http.ResponseWriter, r *http.Reque
 	view.PlanExcess = s.managedPostgresPlanExcessOf(r.Context(), acct, database.ID)
 	in, holdOK := s.managedPostgresHoldInputsOrLog(r.Context(), acct)
 	s.withManagedPostgresHold(&view, database, in, holdOK)
-	withManagedPostgresSuspendTimeout(&view, s.managedPostgresSuspendTimeoutsOrLog(r.Context(), []managedpostgres.Database{database}))
+	managedpg.ApplySuspendTimeout(&view, s.managedPostgresSuspendTimeoutsOrLog(r.Context(), []managedpostgres.Database{database}))
 	writeJSON(w, http.StatusOK, view)
 }
 

@@ -2,7 +2,7 @@
 -- migration-compat: expand
 --
 -- A customer may choose how long a scale-to-zero managed PostgreSQL database
--- stays up after its last activity (gregale postgres suspend-after). One row
+-- stays up after its last activity (gregale postgres suspend-timeout). One row
 -- per database that has its own value; no row means the platform default
 -- (managed_postgres_policy suspend_timeout_seconds). The value is not part of
 -- the database's spec, so resize and compute-policy journals never see it;

@@ -238,6 +238,9 @@ type UpdateRequest struct {
 	Spec           Spec
 	Generation     int64
 	IdempotencyKey string
+	// SuspendTimeoutSeconds is the database's own suspend timeout for a
+	// change back to scale-to-zero; 0 is the platform default.
+	SuspendTimeoutSeconds int64
 }
 
 type ObservedDatabase struct {

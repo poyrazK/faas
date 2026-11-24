@@ -3,6 +3,8 @@ package managedpostgres
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -189,5 +191,104 @@ func TestCustomerSuspendTimeoutBounds(t *testing.T) {
 		if got := ValidCustomerSuspendTimeout(seconds); got != want {
 			t.Errorf("ValidCustomerSuspendTimeout(%d) = %v, want %v", seconds, got, want)
 		}
+	}
+}
+
+type memorySuspendTimeoutStore struct {
+	*MemoryStore
+	custom map[string]int64
+}
+
+func (s *memorySuspendTimeoutStore) SetSuspendTimeout(_ context.Context, id string, seconds *int64) error {
+	if seconds == nil {
+		delete(s.custom, id)
+	} else {
+		s.custom[id] = *seconds
+	}
+	return nil
+}
+
+func (s *memorySuspendTimeoutStore) SuspendTimeouts(_ context.Context, ids []string) (map[string]int64, error) {
+	out := map[string]int64{}
+	for _, id := range ids {
+		if v, ok := s.custom[id]; ok {
+			out[id] = v
+		}
+	}
+	return out, nil
+}
+
+func suspendTimeoutServiceFixture(t *testing.T, open *bool) (*Service, *memorySuspendTimeoutStore, *suspendTimeoutProvider) {
+	t.Helper()
+	provider := &suspendTimeoutProvider{fakeProvider: &fakeProvider{capabilities: testCapabilities(), provisionStatus: ProviderStatusReady},
+		current: map[string]int64{}, running: map[string]bool{}}
+	registry := testRegistry(t, provider, func(config *Config) { config.ProvisioningEnabled = true })
+	store := &memorySuspendTimeoutStore{MemoryStore: NewMemoryStore(), custom: map[string]int64{}}
+	ids := 0
+	service, err := NewService(registry, store, ServiceOptions{
+		LeaseDuration: time.Minute, ProviderTimeout: time.Second,
+		ProvisioningEnabled: func() bool { return true }, OperationsEnabled: func() bool { return *open },
+		NewID:         func() string { ids++; return fmt.Sprintf("database-%d", ids) },
+		NewLeaseToken: func() string { return "lease" },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return service, store, provider
+}
+
+func TestSetSuspendTimeoutRefusesAlwaysOnAndOnlyRaisesWhileOpen(t *testing.T) {
+	ctx := context.Background()
+	open := true
+	service, store, provider := suspendTimeoutServiceFixture(t, &open)
+	database, err := service.Create(ctx, CreateRequest{AccountID: "account-a", Name: "orders", Spec: testSpec()})
+	if err != nil || database.State != StateReady {
+		t.Fatalf("create: %+v %v", database, err)
+	}
+	alwaysOnSpec := testSpec()
+	alwaysOnSpec.ScaleToZero = false
+	alwaysOn, err := service.Create(ctx, CreateRequest{AccountID: "account-a", Name: "ledger", Spec: alwaysOnSpec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hour, minute := int64(3600), int64(60)
+	if _, err := service.SetSuspendTimeout(ctx, "account-a", alwaysOn.ID, &minute); !errors.Is(err, ErrSuspendTimeoutAlwaysOn) {
+		t.Fatalf("always-on = %v, want ErrSuspendTimeoutAlwaysOn", err)
+	}
+	if got, err := service.SetSuspendTimeout(ctx, "account-a", database.ID, &hour); err != nil || !got.Applied || store.custom[database.ID] != hour {
+		t.Fatalf("raise while open = %+v %v", got, err)
+	}
+	open = false
+	calls := provider.calls
+	if got, err := service.SetSuspendTimeout(ctx, "account-a", database.ID, &minute); err != nil || got.Applied || store.custom[database.ID] != minute || provider.calls != calls {
+		t.Fatalf("lower while closed = %+v %v (provider calls %d -> %d)", got, err, calls, provider.calls)
+	}
+	if _, err := service.SetSuspendTimeout(ctx, "account-a", database.ID, &hour); !errors.Is(err, ErrProvisioningClosed) || store.custom[database.ID] != minute {
+		t.Fatalf("raise while closed = %v, stored %d", err, store.custom[database.ID])
+	}
+}
+
+func TestComputePolicyBackToScaleToZeroCarriesTheDatabasesOwnTimeout(t *testing.T) {
+	open := true
+	service, store, _ := suspendTimeoutServiceFixture(t, &open)
+	store.custom["orders"] = 1800
+	alwaysOn, scaleToZero := testSpec(), testSpec()
+	alwaysOn.ScaleToZero = false
+	for _, tc := range []struct {
+		name           string
+		previous, next Spec
+		want           int64
+	}{
+		{name: "back to scale-to-zero", previous: alwaysOn, next: scaleToZero, want: 1800},
+		{name: "to always-on", previous: scaleToZero, next: alwaysOn},
+		{name: "class change", previous: scaleToZero, next: scaleToZero},
+	} {
+		if got := service.ownSuspendTimeout(context.Background(), "orders", UpdateRequest{PreviousSpec: tc.previous, Spec: tc.next}); got != tc.want {
+			t.Errorf("%s = %d, want %d", tc.name, got, tc.want)
+		}
+	}
+	delete(store.custom, "orders")
+	if got := service.ownSuspendTimeout(context.Background(), "orders", UpdateRequest{PreviousSpec: alwaysOn, Spec: scaleToZero}); got != 0 {
+		t.Fatalf("no own value = %d, want 0 (the default)", got)
 	}
 }

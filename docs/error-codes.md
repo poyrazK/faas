@@ -3652,6 +3652,10 @@ HTTP 409 Conflict · Stored workflow changed; Suite target changed; Verification
 
 HTTP 413 Request Entity Too Large · Streaming response exceeded plan cap
 
+### `suspend_timeout_always_on`
+
+HTTP 409 Conflict · Database is always-on
+
 ### `synthetic_check_invalid`
 
 HTTP 400 Bad Request or 409 Conflict · App is internal; Invalid synthetic check; Synthetic check name already exists

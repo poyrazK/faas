@@ -32,6 +32,20 @@ func TestComputePolicyAdoptsLostResponseWithoutChangingCapacity(t *testing.T) {
 	}
 }
 
+func TestComputePolicyBackToScaleToZeroSendsTheDatabasesOwnTimeout(t *testing.T) {
+	f := &resizeHTTPFixture{policy: true, suspendTimeout: -1, ownTimeout: 1800}
+	provider := resizeHTTPProvider(t, f)
+	request := resizeHTTPrequest()
+	request.PreviousSpec.ScaleToZero = false
+	request.Spec = request.PreviousSpec
+	request.Spec.ScaleToZero = true
+	request.SuspendTimeoutSeconds = 1800
+	observed, err := provider.Update(t.Context(), request)
+	if err != nil || observed.Spec != request.Spec || f.patches != 1 || f.suspendTimeout != 1800 {
+		t.Fatal("back to scale-to-zero", observed, err, f.patches, f.suspendTimeout)
+	}
+}
+
 func TestComputePolicyWaitsAndRejectsDriftBeforeMutation(t *testing.T) {
 	for _, fault := range []string{"pending", "delayed", "default", "duplicate", "storage", "mixed"} {
 		t.Run(fault, func(t *testing.T) {
