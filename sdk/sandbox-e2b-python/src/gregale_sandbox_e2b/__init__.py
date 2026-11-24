@@ -7,6 +7,7 @@ affiliated with E2B. Not published until sandbox sessions launch.
 from .api import DEFAULT_API_BASE, ApiError
 from .code import Context, Execution, ExecutionError, Logs, OutputMessage, Result
 from .commands import CommandHandle, Commands, ProcessInfo, Pty, PtySize
+from .desktop import DESKTOP_VIEW_ONLY_PORT, DESKTOP_VIEW_PORT, Desktop, DesktopStream
 from .errors import (
     AuthenticationException,
     CommandExitException,
@@ -25,6 +26,8 @@ from .sandbox import Sandbox, SandboxInfo, SandboxPaginator, SandboxQuery, Sandb
 
 __all__ = [
     "DEFAULT_API_BASE",
+    "DESKTOP_VIEW_ONLY_PORT",
+    "DESKTOP_VIEW_PORT",
     "OUTSIDE_MAX_BYTES",
     "WORKSPACE",
     "ApiError",
@@ -33,6 +36,8 @@ __all__ = [
     "CommandHandle",
     "CommandResult",
     "Commands",
+    "Desktop",
+    "DesktopStream",
     "EntryInfo",
     "FileType",
     "Filesystem",

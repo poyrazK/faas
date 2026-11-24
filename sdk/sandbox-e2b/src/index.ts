@@ -1,4 +1,6 @@
 export { Sandbox, SandboxPaginator } from './sandbox.js';
+export { Desktop, DesktopStream, DESKTOP_VIEW_ONLY_PORT, DESKTOP_VIEW_PORT } from './desktop.js';
+export type { DesktopOpts, MouseButton, ScreenshotFormat, ScrollDirection, StreamUrlOpts } from './desktop.js';
 export type { ConnectionOpts, SandboxConnectOpts, SandboxInfo, SandboxListOpts, SandboxOpts, SandboxState } from './sandbox.js';
 export { CommandHandle, Commands, Pty } from './commands.js';
 export { Execution, Result } from './code.js';

@@ -39,6 +39,8 @@ head -c 8 "${out}/screen.png" | od -An -tx1 | grep -q '89 50 4e 47' || { echo "s
 # A bare root window compresses to a few hundred bytes; the panel and icons
 # do not.
 (( $(wc -c <"${out}/screen.png") > 4096 )) || { echo "the first screenshot after ready is blank" >&2; exit 1; }
+gd screenshot --base64 | base64 -d >"${out}/screen-b64.png"
+head -c 8 "${out}/screen-b64.png" | od -An -tx1 | grep -q '89 50 4e 47' || { echo "screenshot --base64 is not a PNG" >&2; exit 1; }
 gd screenshot --format jpeg --quality 60 >"${out}/screen.jpg"
 head -c 3 "${out}/screen.jpg" | od -An -tx1 | grep -q 'ff d8 ff' || { echo "screenshot is not a JPEG" >&2; exit 1; }
 echo "screenshot png $(wc -c <"${out}/screen.png") bytes, jpeg $(wc -c <"${out}/screen.jpg") bytes"

@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 from .api import Api, ApiError, Transport, to_sandbox_error
@@ -25,7 +25,7 @@ from .errors import InvalidArgumentException, NotFoundException, SandboxNotFound
 from .filesystem import Filesystem
 
 #: The harness presets a template name may be.
-PRESETS = {"codex", "opencode", "claude-code", "code-interpreter"}
+PRESETS = {"codex", "opencode", "claude-code", "code-interpreter", "desktop"}
 #: Template names E2B code commonly passes for the stock image.
 DEFAULT_TEMPLATES = {"base", "default"}
 
@@ -173,6 +173,7 @@ class Sandbox:
         kind: Optional[str] = None,
         volume_gb: Optional[int] = None,
         vcpu: Optional[int] = None,
+        resolution: Optional[Tuple[int, int]] = None,
         ready_timeout: float = 120.0,
         transport: Optional[Transport] = None,
         _conn: Optional[Connection] = None,
@@ -203,6 +204,7 @@ class Sandbox:
                     "kind": kind,
                     "volume_gb": volume_gb,
                     "vcpu": vcpu,
+                    "resolution": f"{resolution[0]}x{resolution[1]}" if resolution else None,
                 },
             )
         except ApiError as err:

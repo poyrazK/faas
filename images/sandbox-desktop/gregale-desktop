@@ -5,7 +5,8 @@ agentd starts the desktop with `start --resolution WxH` and polls `wait`;
 agents act on it with the other subcommands, run through the sandbox exec
 operation with an argv, never shell text:
 
-  screenshot [--format png|jpeg] [--quality N]   the screen on stdout
+  screenshot [--format png|jpeg] [--quality N] [--base64]
+                                                 the screen on stdout
   click X Y [--button left|right|middle] [--double]
   move X Y
   down [--button B] / up [--button B]
@@ -24,6 +25,7 @@ Bad input exits 2 with a message on stderr; a failed X call exits 1.
 """
 
 import argparse
+import base64
 import os
 import re
 import shutil
@@ -169,7 +171,9 @@ def cmd_screenshot(args):
         argv += ["-quality", str(args.quality), "jpeg:-"]
     else:
         argv += ["png:-"]
-    sys.stdout.buffer.write(run(argv, capture=True))
+    image = run(argv, capture=True)
+    # --base64 suits callers that read stdout as text, as the SDKs do.
+    sys.stdout.buffer.write(base64.b64encode(image) + b"\n" if args.base64 else image)
     sys.stdout.buffer.flush()
 
 
@@ -325,6 +329,7 @@ def parser():
     s = sub.add_parser("screenshot")
     s.add_argument("--format", choices=["png", "jpeg"], default="png")
     s.add_argument("--quality", type=int, default=80)
+    s.add_argument("--base64", action="store_true")
     s = sub.add_parser("click")
     s.add_argument("x")
     s.add_argument("y")

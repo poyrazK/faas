@@ -21,7 +21,7 @@ Gregale sandbox sessions are Firecracker microVMs with a `/workspace`, root insi
 | Evals and RL rollouts, hundreds or thousands in parallel | Sessions fanned out from one snapshot | By contract, above the plan's concurrency |
 | Long-lived agents with memory-keeping pause and volumes | Persistent sessions: pause, resume, fork and a `/workspace` volume (ADR-20261122132055) | Built; off until switched on |
 | Docker inside the sandbox | Not designed yet | Later |
-| Desktop and computer use (VNC) | Not designed yet | Later |
+| Desktop and computer use (VNC) | Preset `desktop`: Xfce on a virtual screen, `gregale-desktop` actions, a noVNC live view (ADR-20261124075005), Pro and Scale | Built; off until the operator publishes the desktop image |
 | GPU workloads | Out of scope: no GPU passthrough | — |
 | Windows, or custom kernels | Out of scope | — |
 
@@ -59,7 +59,8 @@ Gregale sandbox sessions are Firecracker microVMs with a `/workspace`, root insi
 | `pty.create({ cols, rows, onData })`, `pty.sendInput`, `pty.resize`, `pty.kill` | The same. The terminal is a background command; `onData` receives its output, polled about every 200 ms rather than pushed. Its timeout defaults to 60 s within the plan's cap, and `timeoutMs: 0` means that default, not no limit |
 | `commands.run(cmd, { background: true, stdin: true })`, `commands.sendStdin(pid, data)`, `commands.closeStdin(pid)` | The same for background commands, which always take input. A foreground command takes none |
 | Code Interpreter: `Sandbox.create('code-interpreter')`, `runCode(code, { language, context, onStdout, onStderr, onResult, onError, timeoutMs })`, `createCodeContext`, `listCodeContexts`, `restartCodeContext`, `removeCodeContext` | The same, from the one `@gregale/sandbox-e2b` package. Python only; each context is a Jupyter kernel. `runCode`'s `envs` is refused: set the session's with `setEnvs`. Results (`text`, `html`, `png`, `json`, …) and `onResult` come when the run ends, not as each output appears |
-| `files.watchDir`, `getMcpUrl`, the Desktop SDK | Not supported yet. Each throws `UnsupportedError` naming the call and what to use instead |
+| E2B Desktop: `Sandbox.create({ resolution })`, `screenshot`, `leftClick`, `rightClick`, `middleClick`, `doubleClick`, `moveMouse`, `mousePress`, `mouseRelease`, `drag`, `scroll`, `write`, `press`, `getCursorPosition`, `getScreenSize`, `launch`, `open`, `getApplicationWindows`, `getCurrentWindowId`, `getWindowTitle`, `wait`, `stream.start`, `stream.getUrl({ viewOnly })`, `stream.stop` | `Desktop` from the same package (`Desktop.create({ resolution: [1280, 800] })`), on Pro and Scale with at least 2048 MB. `stream.getUrl()` is the noVNC page of a private preview port with its token in the URL; `viewOnly: true` is a separate port whose server takes no input, safe to share. `stream.start` and `stop` expose and unexpose both views. A screenshot is a PNG |
+| `files.watchDir`, `getMcpUrl` | Not supported yet. Each throws `UnsupportedError` naming the call and what to use instead |
 
 **Other differences:**
 

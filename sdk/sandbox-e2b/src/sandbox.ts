@@ -10,7 +10,7 @@ import { InvalidArgumentError, NotFoundError, SandboxNotFoundError, TimeoutError
 import { Filesystem } from './filesystem.js';
 
 /** The harness presets a template name may be. */
-const PRESETS = new Set(['codex', 'opencode', 'claude-code', 'code-interpreter']);
+const PRESETS = new Set(['codex', 'opencode', 'claude-code', 'code-interpreter', 'desktop']);
 /** Template names E2B code commonly passes for the stock image. */
 const DEFAULT_TEMPLATES = new Set(['base', 'default']);
 
@@ -59,6 +59,8 @@ export type SandboxOpts = ConnectionOpts & {
   volumeGb?: number;
   /** A persistent session's vCPUs, within the plan. */
   vcpu?: number;
+  /** A desktop's screen, [width, height] (template "desktop"; Desktop.create). */
+  resolution?: [number, number];
 };
 
 export type ForkOpts = ConnectionOpts & Pick<SandboxOpts, 'portVisibility' | 'readyTimeoutMs'> & {
@@ -190,6 +192,7 @@ export class Sandbox {
           kind: opts.kind,
           volume_gb: opts.volumeGb,
           vcpu: opts.vcpu,
+          resolution: opts.resolution ? `${opts.resolution[0]}x${opts.resolution[1]}` : undefined,
         },
         signal: opts.signal,
         timeoutMs: opts.requestTimeoutMs,
