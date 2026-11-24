@@ -47,8 +47,10 @@ Until someone claims it, the account:
 
 - has the Free plan's limits: one app and the Free memory size;
 - can create, deploy, roll back, restart and delete its app, set
-  environment variables and secrets, and read logs, status and usage;
-- cannot do anything else. That includes custom domains, managed databases
+  environment variables and secrets, change the app's public access,
+  protocol, size and restart settings, and read logs, status and usage;
+- cannot do anything else. That includes project deploys (`gregale deploy
+  --project`), egress allow lists, custom domains, managed databases
   or caches, buckets, cron jobs, webhooks, log drains, outbound email, API
   keys, deploy tokens and other credentials, organizations, billing and
   plans.

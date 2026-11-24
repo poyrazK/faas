@@ -51,9 +51,14 @@ func anonymousDeployByDefault(getenv func(string) string) bool {
 // deployClientOrAnonymous returns the deploy client: the saved login, or an
 // anonymous session when allowed. The error is the usual "not logged in"
 // one when no session is allowed or the server offers none.
-func deployClientOrAnonymous(ctx context.Context, timeout time.Duration, anonymous bool) (*Client, error) {
+func deployClientOrAnonymous(ctx context.Context, timeout time.Duration, anonymous, project bool) (*Client, error) {
 	if loadToken() != "" || (!anonymous && !anonymousDeployByDefault(os.Getenv)) {
 		return authedClientWithDeployTimeout(timeout)
+	}
+	if project {
+		// A project deploy creates databases and several apps, which an
+		// unclaimed account may not; refuse before starting a session.
+		return nil, errAuth(errors.New("project deploys need a Gregale account — " + authenticationHint()))
 	}
 	if key := loadAnonymousSessionToken(); key != "" {
 		// Redeploy with the open anonymous deploy rather than start another.

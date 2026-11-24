@@ -3509,7 +3509,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	var err error
 	if !*simplePlan && (localZeroConfig || explicitTarball) {
 		var authErr error
-		client, authErr = deployClientOrAnonymous(ctx, 5*time.Minute, *anonymous)
+		client, authErr = deployClientOrAnonymous(ctx, 5*time.Minute, *anonymous, projectRequested)
 		if authErr != nil {
 			return printErr("Not logged in", authErr)
 		}
@@ -4030,7 +4030,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 
 	if client == nil {
 		var authErr error
-		client, authErr = deployClientOrAnonymous(ctx, 5*time.Minute, *anonymous)
+		client, authErr = deployClientOrAnonymous(ctx, 5*time.Minute, *anonymous, projectRequested)
 		if authErr != nil {
 			return printErr("Not logged in", authErr)
 		}

@@ -62,8 +62,15 @@ func TestUnclaimedAccountLifecycle(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			due := mk("anon-a@"+api.UnclaimedEmailDomain, "a", now.Add(time.Second))
+			due := mk("anon-a@"+api.UnclaimedEmailDomain, "a", now.Add(time.Hour))
 			live := mk("anon-b@"+api.UnclaimedEmailDomain, "b", now.Add(72*time.Hour))
+			if ended, err := s.EndUnclaimedWindow(ctx, due, now.Add(-time.Second)); err != nil || !ended {
+				t.Fatalf("end window = %v %v", ended, err)
+			}
+			// The window only ever moves earlier.
+			if ended, err := s.EndUnclaimedWindow(ctx, due, now.Add(time.Hour)); err != nil || !ended {
+				t.Fatalf("end window again = %v %v", ended, err)
+			}
 
 			// A duplicate claim token never creates a second account.
 			if _, err := s.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{
@@ -83,7 +90,8 @@ func TestUnclaimedAccountLifecycle(t *testing.T) {
 			if n, _ := s.CountLiveUnclaimedAccounts(ctx, now.Add(time.Minute)); n != 1 {
 				t.Fatalf("live = %d, want 1", n)
 			}
-			ids, err := s.ListExpiredUnclaimedAccounts(ctx, now.Add(time.Minute), state.UnclaimedCursor{}, 10)
+			time.Sleep(5 * time.Millisecond) // past the clamped expiry
+			ids, err := s.ListExpiredUnclaimedAccounts(ctx, time.Now(), state.UnclaimedCursor{}, 10)
 			if err != nil || len(ids) != 1 || ids[0].AccountID != due {
 				t.Fatalf("expired = %v (err %v), want [%s]", ids, err, due)
 			}
@@ -100,6 +108,9 @@ func TestUnclaimedAccountLifecycle(t *testing.T) {
 			}
 			if ok, _ := s.MarkUnclaimedAccountExpired(ctx, live, now); ok {
 				t.Fatal("a claimed account expired")
+			}
+			if ok, _ := s.EndUnclaimedWindow(ctx, live, now); ok {
+				t.Fatal("a claimed account's window ended")
 			}
 			if err := s.RotateUnclaimedClaimToken(ctx, live, claimHash("b3")); !errors.Is(err, state.ErrNotFound) {
 				t.Fatalf("rotate after claim err = %v, want ErrNotFound", err)
@@ -172,6 +183,16 @@ func TestUnclaimedAccountCaps(t *testing.T) {
 			if got := reason(create("192.0.2.2", state.UnclaimedAccountParams{LiveMax: 100})); got != state.UnclaimedLimitAddress {
 				t.Fatalf("zero per-address cap = %s, want it to refuse", got)
 			}
+			// A cap set to 0 closes even for a request without a usable address.
+			if got := reason(create("", state.UnclaimedAccountParams{LiveMax: 100, PerNetwork: 100})); got != state.UnclaimedLimitAddress {
+				t.Fatalf("zero per-address cap, no address = %s, want it to refuse", got)
+			}
+			if got := reason(create("", state.UnclaimedAccountParams{LiveMax: 100, PerAddress: 100})); got != state.UnclaimedLimitNetwork {
+				t.Fatalf("zero per-network cap, no address = %s, want it to refuse", got)
+			}
+			if err := create("", state.UnclaimedAccountParams{LiveMax: 100, PerAddress: 100, PerNetwork: 100}); err != nil {
+				t.Fatalf("no address within caps: %v", err)
+			}
 		})
 	}
 }
@@ -185,20 +206,27 @@ func TestUnclaimedSweepPages(t *testing.T) {
 			ctx := t.Context()
 			now := time.Now().UTC()
 			for i := range 5 {
-				if _, err := s.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{
+				res, err := s.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{
 					Email: fmt.Sprintf("anon-page-%d@%s", i, api.UnclaimedEmailDomain), Plan: api.PlanFree,
 					Unclaimed: &state.UnclaimedAccountParams{
-						ClaimTokenSHA256: claimHash(fmt.Sprintf("page-%d", i)), ExpiresAt: now.Add(time.Duration(i%2+1) * time.Second),
+						ClaimTokenSHA256: claimHash(fmt.Sprintf("page-%d", i)), ExpiresAt: now.Add(time.Hour),
 						LiveMax: 100, PerAddress: 100, PerNetwork: 100,
 					},
-				}); err != nil {
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				// Clamped to just after creation, so already due.
+				if _, err := s.EndUnclaimedWindow(ctx, res.Account.ID, now.Add(-time.Duration(i%2+1)*time.Second)); err != nil {
 					t.Fatal(err)
 				}
 			}
+			time.Sleep(5 * time.Millisecond)
+			now = time.Now().UTC()
 			seen := map[string]bool{}
 			var cursor state.UnclaimedCursor
 			for page := 0; ; page++ {
-				rows, err := s.ListExpiredUnclaimedAccounts(ctx, now.Add(time.Minute), cursor, 2)
+				rows, err := s.ListExpiredUnclaimedAccounts(ctx, now, cursor, 2)
 				if err != nil {
 					t.Fatal(err)
 				}

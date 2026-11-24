@@ -45,11 +45,20 @@ UPDATE unclaimed_accounts SET claimed_at = sqlc.arg(at)
 UPDATE unclaimed_accounts SET expired_at = sqlc.arg(at)
  WHERE account_id = sqlc.arg(account_id) AND claimed_at IS NULL AND expired_at IS NULL;
 
+-- name: EndUnclaimedAccountWindow :execrows
+-- Never earlier than just after creation (the table's CHECK).
+UPDATE unclaimed_accounts
+   SET expires_at = GREATEST(LEAST(expires_at, sqlc.arg(at)::timestamptz), created_at + interval '1 millisecond')
+ WHERE account_id = sqlc.arg(account_id) AND claimed_at IS NULL AND expired_at IS NULL;
+
 -- name: ListExpiredUnclaimedAccounts :many
 -- Keyset pages by (expires_at, account_id), so rows the sweep cannot finish
--- never hide the ones after them.
+-- never hide the ones after them. Due by the caller's clock and by the
+-- database's: claim confirmations expire by the database clock no later than
+-- the row, so a listed row can no longer be claimed.
 SELECT account_id::text AS account_id, expires_at FROM unclaimed_accounts
- WHERE claimed_at IS NULL AND expired_at IS NULL AND expires_at <= sqlc.arg(now)::timestamptz
+ WHERE claimed_at IS NULL AND expired_at IS NULL
+   AND expires_at <= LEAST(sqlc.arg(now)::timestamptz, now())
    AND (expires_at, account_id) > (sqlc.arg(after_expires_at)::timestamptz, sqlc.arg(after_account_id)::uuid)
  ORDER BY expires_at, account_id
  LIMIT sqlc.arg(row_limit);

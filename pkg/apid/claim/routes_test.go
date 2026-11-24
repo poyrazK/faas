@@ -9,6 +9,26 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/claim"
 )
 
+func TestRefusedField(t *testing.T) {
+	const patch = "PATCH /v1/apps/{slug}"
+	for _, c := range []struct{ body, want string }{
+		{`{"require_authn":false}`, ""},
+		{`{"public_auth":{"mode":"open"},"resource_profile":"small"}`, ""},
+		{`{"require_authn":false,"egress_allowlist":["0.0.0.0/0"]}`, "egress_allowlist"},
+		{`{"min_instances":3}`, "min_instances"},
+		{`{"service_binding_targets":["other"]}`, "service_binding_targets"},
+		{`[]`, "body"},
+		{`not json`, "body"},
+	} {
+		if got := claim.RefusedField(patch, []byte(c.body)); got != c.want {
+			t.Errorf("RefusedField(%s) = %q, want %q", c.body, got, c.want)
+		}
+	}
+	if got := claim.RefusedField("POST /v1/apps", []byte(`{"anything":1}`)); got != "" {
+		t.Errorf("ungated route = %q", got)
+	}
+}
+
 func TestRouteAllowed(t *testing.T) {
 	for _, c := range []struct {
 		pattern string
@@ -27,7 +47,9 @@ func TestRouteAllowed(t *testing.T) {
 		{"POST /v1/apps/{slug}/log-drains", false},
 		{"POST /v1/projects/{slug}/environment-clones", false},
 		{"POST /v1/apps/{slug}/realtime/endpoints/{id}/publish-credentials", false},
-		{"PATCH /v1/apps/{slug}", false},
+		{"PATCH /v1/apps/{slug}", true}, // field-gated
+		{"POST /v1/projects/scan", false},
+		{"POST /v1/projects", false},
 		{"DELETE /v1/account", false},
 		{"POST /v1/account/keys", false},
 		{"POST /v1/apps/{slug}/domains", false},

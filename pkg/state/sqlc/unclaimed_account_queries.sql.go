@@ -50,6 +50,26 @@ func (q *Queries) CountRecentUnclaimedAccountsFromNetwork(ctx context.Context, d
 	return i, err
 }
 
+const endUnclaimedAccountWindow = `-- name: EndUnclaimedAccountWindow :execrows
+UPDATE unclaimed_accounts
+   SET expires_at = GREATEST(LEAST(expires_at, $1::timestamptz), created_at + interval '1 millisecond')
+ WHERE account_id = $2 AND claimed_at IS NULL AND expired_at IS NULL
+`
+
+type EndUnclaimedAccountWindowParams struct {
+	At        pgtype.Timestamptz
+	AccountID pgtype.UUID
+}
+
+// Never earlier than just after creation (the table's CHECK).
+func (q *Queries) EndUnclaimedAccountWindow(ctx context.Context, db DBTX, arg EndUnclaimedAccountWindowParams) (int64, error) {
+	result, err := db.Exec(ctx, endUnclaimedAccountWindow, arg.At, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertUnclaimedAccount = `-- name: InsertUnclaimedAccount :exec
 INSERT INTO unclaimed_accounts (account_id, claim_token_sha256, expires_at, created_ip, user_agent)
 VALUES ($1, $2, $3,
@@ -77,7 +97,8 @@ func (q *Queries) InsertUnclaimedAccount(ctx context.Context, db DBTX, arg Inser
 
 const listExpiredUnclaimedAccounts = `-- name: ListExpiredUnclaimedAccounts :many
 SELECT account_id::text AS account_id, expires_at FROM unclaimed_accounts
- WHERE claimed_at IS NULL AND expired_at IS NULL AND expires_at <= $1::timestamptz
+ WHERE claimed_at IS NULL AND expired_at IS NULL
+   AND expires_at <= LEAST($1::timestamptz, now())
    AND (expires_at, account_id) > ($2::timestamptz, $3::uuid)
  ORDER BY expires_at, account_id
  LIMIT $4
@@ -96,7 +117,9 @@ type ListExpiredUnclaimedAccountsRow struct {
 }
 
 // Keyset pages by (expires_at, account_id), so rows the sweep cannot finish
-// never hide the ones after them.
+// never hide the ones after them. Due by the caller's clock and by the
+// database's: claim confirmations expire by the database clock no later than
+// the row, so a listed row can no longer be claimed.
 func (q *Queries) ListExpiredUnclaimedAccounts(ctx context.Context, db DBTX, arg ListExpiredUnclaimedAccountsParams) ([]ListExpiredUnclaimedAccountsRow, error) {
 	rows, err := db.Query(ctx, listExpiredUnclaimedAccounts,
 		arg.Now,

@@ -60,8 +60,18 @@ apid keeps the route table, the middleware and a `claim.Host` adapter.
 - Allowed writes are listed route by route (`claim.RouteAllowed`): create,
   deploy (including source tarballs and staging), cancel, roll back,
   restart and delete an app; source uploads; the app's environment
-  variables and secrets; project scans; and `POST /v1/account/claim-link`.
-  A test keeps the list in step with the route table.
+  variables and secrets; and `POST /v1/account/claim-link`. A test keeps
+  the list in step with the route table.
+- `PATCH /v1/apps/{slug}` is allowed with only the settings a deploy
+  applies (`claim.RefusedField`): public access (`require_authn`,
+  `public_auth`, `platform_tenant_required`), protocol, size, timeouts,
+  replicas and restart behaviour. Any other field, such as an egress allow
+  list, service bindings or minimum instances, answers `403
+  claim_required` naming the field.
+- Project deploys (`/v1/projects` scan and apply) are refused: they create
+  databases and several apps. The CLI refuses `gregale deploy --project`
+  (and the other project flags) without a login before it starts a
+  session.
 - Every other request answers `403 claim_required`: deny by default, so a
   new route is closed to unclaimed accounts until it is added on purpose. A
   block list by path segment was rejected: it let app-scoped credentials
@@ -78,8 +88,8 @@ apid keeps the route table, the middleware and a `claim.Host` adapter.
 |---|---:|---|
 | `unclaimed_deploy_ttl_hours` | 72 | claim window; 1–168 |
 | `unclaimed_accounts_live_max` | 500 *assumed* | unclaimed accounts alive at once; 0 closes |
-| `unclaimed_accounts_per_address_per_day` | 3 *assumed* | per IP, last 24 h; 0 closes |
-| `unclaimed_accounts_per_network_per_day` | 10 *assumed* | per /24 or /48, last 24 h; 0 closes |
+| `unclaimed_accounts_per_address_per_day` | 3 *assumed* | per IP, last 24 h; 0 closes, even for a request without a usable address |
+| `unclaimed_accounts_per_network_per_day` | 10 *assumed* | per /24 or /48, last 24 h; 0 closes, even for a request without a usable address |
 
 - The caps are checked in the transaction that creates the account,
   under a transaction-scoped advisory lock, from `unclaimed_accounts`
@@ -95,12 +105,18 @@ apid keeps the route table, the middleware and a `claim.Host` adapter.
 - Every session records `account_signup_facts` (method `anonymous`). If the
   ADR-20261114174600 check links it to an abuse-held account, the new
   account is ended at once and the caller gets `429
-  anonymous_deploys_unavailable`; the sweep retries an ending that fails.
-  The sign-up itself is counted only once the session is granted. Sign-up only flags such links; an account
-  nobody has identified gets the stricter rule.
+  anonymous_deploys_unavailable`. Its claim window is ended first
+  (`EndUnclaimedWindow`), so no claim lands on it and the next sweep
+  retries a deletion that fails. The sign-up itself is counted only once
+  the session is granted. Sign-up only flags such links; an account nobody
+  has identified gets the stricter rule.
 - apid sweeps every 5 minutes, paging through due rows by
   `(expires_at, account_id)`, so rows it cannot finish never hold back the
-  ones after them. An open account past its expiry goes
+  ones after them. A row is due only once its expiry has passed by both
+  apid's clock and the database's. Claim confirmations expire by the
+  database clock no later than the claim window, so once the sweep lists a
+  row no claim can land on it. A claim that landed earlier is seen when the
+  sweep reads the account, and the sweep finishes it instead of deleting. An open account past its expiry goes
   through the usual `scheduleDeletion` (via `unclaimed_expiry`) first, and
   only then is the row marked `expired_at`: a transient failure leaves the
   row open for the next sweep. A refusal that will not change (a suspended
@@ -179,7 +195,8 @@ until the claim window ends; other commands see no login. A redeploy checks
 the key first; a refused key (the app was claimed) is deleted and the CLI
 says to run `gregale login`. `gregale logout` removes it too. The CLI prints the claim link before the upload
 and again after the deploy. `gregale claim` prints a fresh
-link; the previous link stops working. A server without the capability
+link; the previous link stops working. After the window ends it answers
+`410 claim_expired`. A server without the capability
 answers 404, and the CLI shows the usual "not logged in" error.
 
 ### 6. Rollout

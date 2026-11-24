@@ -1,7 +1,9 @@
 package apidserver
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -90,7 +92,7 @@ func (h claimHost) MagicLinkURL(r *http.Request, token string) string {
 }
 
 func (h claimHost) AppURL(slug string) string {
-	return "https://" + slug + "." + strings.TrimPrefix(strings.TrimSpace(h.s.domain), ".")
+	return appURLForDomain(slug, h.s.domain)
 }
 
 func (h claimHost) AllowSecurityMail(ctx context.Context, acct state.Account, kind string) bool {
@@ -130,6 +132,12 @@ func (s *server) unclaimedAllowed(next accountHandler) accountHandler {
 				api.WriteProblem(w, api.ErrClaimRequired())
 				return
 			}
+			if claim.FieldGated(r.Pattern) {
+				if prob := refusedUnclaimedField(r); prob != nil {
+					api.WriteProblem(w, prob)
+					return
+				}
+			}
 		case s.claim.EndedAnonymousKey(r, actor, key):
 			api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
 				"Anonymous deploy key ended", "this app was claimed; sign in as its owner with gregale login"))
@@ -137,4 +145,24 @@ func (s *server) unclaimedAllowed(next accountHandler) accountHandler {
 		}
 		next(w, r, acct)
 	}
+}
+
+// unclaimedFieldBodyMax bounds the body read to check a field-gated route.
+const unclaimedFieldBodyMax = 1 << 20
+
+// refusedUnclaimedField reads the body of a field-gated route, puts it back
+// for the handler and refuses a field an unclaimed account may not set.
+func refusedUnclaimedField(r *http.Request) *api.Problem {
+	body, err := io.ReadAll(io.LimitReader(r.Body, unclaimedFieldBodyMax+1))
+	if err != nil || len(body) > unclaimedFieldBodyMax {
+		return api.ErrValidation("request body is unreadable or too large")
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	field := claim.RefusedField(r.Pattern, body)
+	if field == "" {
+		return nil
+	}
+	prob := api.ErrClaimRequired()
+	prob.Detail = "setting " + field + " needs a claimed account. Open the claim link (gregale claim prints it) to sign up; until then a deploy may change only public access, protocol, size and restart settings."
+	return prob
 }

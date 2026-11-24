@@ -20830,7 +20830,7 @@ const HostedTaskBindingKeyIDMaxBytes = 64
 // unclaimed_accounts_live_max, unclaimed_accounts_per_address_per_day,
 // unclaimed_accounts_per_network_per_day); these are the defaults and bounds.
 const (
-	// UnclaimedDeployTTLDefault is how long an unclaimed account lives
+	// UnclaimedDeployTTLHoursDefault is how long an unclaimed account lives
 	// before the sweep schedules its deletion.
 	UnclaimedDeployTTLHoursDefault = 72
 	UnclaimedDeployTTLHoursMax     = 168
@@ -20843,8 +20843,19 @@ const (
 	UnclaimedAccountsPerAddressPerDayDefault = 3
 	UnclaimedAccountsPerNetworkPerDayDefault = 10
 	UnclaimedAccountsPerDayBound             = 1_000
-	// UnclaimedAccountExpiryBatch bounds one sweep.
-	UnclaimedAccountExpiryBatch = 200
+	// UnclaimedAccountWindow is how far back the per-address and
+	// per-network caps count anonymous accounts; a refusal by either asks
+	// the caller to retry after it.
+	UnclaimedAccountWindow = 24 * time.Hour
+	// UnclaimedLiveCapRetryAfter is the retry hint when the platform-wide
+	// cap refuses a new anonymous session.
+	UnclaimedLiveCapRetryAfter = time.Hour
+	// UnclaimedAccountExpiryBatch is one page of the expiry sweep, and
+	// UnclaimedAccountSweepMaxPages bounds one run; the next run carries on.
+	UnclaimedAccountExpiryBatch   = 200
+	UnclaimedAccountSweepMaxPages = 50
+	// UnclaimedAccountSweepInterval is how often apid runs the sweep.
+	UnclaimedAccountSweepInterval = 5 * time.Minute
 	// UnclaimedClaimEmailTTL is how long the claim confirmation mailed to
 	// the claimer stays valid.
 	UnclaimedClaimEmailTTL = time.Hour

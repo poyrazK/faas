@@ -133,6 +133,15 @@ func TestAnonymousDeployIsClaimedInPlace(t *testing.T) {
 			t.Errorf("POST %s = %d %s, want it refused", path, rec.Code, rec.Body.String())
 		}
 	}
+	// App settings a deploy applies pass; the rest of the app PATCH waits
+	// for a claim.
+	if rec := claimBearer(h, http.MethodPatch, "/v1/apps/agent-app", sess.APIKey, `{"require_authn":false}`); rec.Code == http.StatusForbidden {
+		t.Errorf("PATCH require_authn = %d %s, want it allowed", rec.Code, rec.Body.String())
+	}
+	if rec := claimBearer(h, http.MethodPatch, "/v1/apps/agent-app", sess.APIKey, `{"require_authn":false,"egress_allowlist":["198.51.100.0/24"]}`); rec.Code != http.StatusForbidden ||
+		!strings.Contains(rec.Body.String(), api.CodeClaimRequired) || !strings.Contains(rec.Body.String(), "egress_allowlist") {
+		t.Errorf("PATCH egress_allowlist = %d %s, want claim_required naming the field", rec.Code, rec.Body.String())
+	}
 	// Account-level routes behind the plain auth chain are closed too.
 	for _, route := range []struct{ method, path string }{
 		{http.MethodDelete, "/v1/account"},
@@ -361,5 +370,21 @@ func TestUnrecordedClaimIsFinishedBySweep(t *testing.T) {
 	}
 	if a, _ := store.AccountByID(t.Context(), sess.AccountID); a.Status != state.AccountActive {
 		t.Fatalf("claimed account status = %s", a.Status)
+	}
+}
+
+// After the window ends, a claim-link request answers 410 claim_expired.
+func TestClaimLinkAfterWindowIsGone(t *testing.T) {
+	srv, _, store := apidserver.V1AuthTestHarness(t)
+	h := srv.Handler()
+	_, sess := anonymousSession(t, h, "203.0.113.70:5000")
+	if _, err := store.(state.UnclaimedAccountStore).EndUnclaimedWindow(t.Context(), sess.AccountID, time.Now().Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	// The window ends no earlier than just after creation; look a moment later.
+	srv.Claim().Now = func() time.Time { return time.Now().Add(time.Second) }
+	rec := claimBearer(h, http.MethodPost, "/v1/account/claim-link", sess.APIKey, "")
+	if rec.Code != http.StatusGone || !strings.Contains(rec.Body.String(), api.CodeClaimExpired) {
+		t.Fatalf("claim-link after the window = %d %s, want 410 claim_expired", rec.Code, rec.Body.String())
 	}
 }

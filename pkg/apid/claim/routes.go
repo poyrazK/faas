@@ -1,6 +1,10 @@
 package claim
 
-import "strings"
+import (
+	"encoding/json"
+	"sort"
+	"strings"
+)
 
 // Route policy for an unclaimed account (ADR-20261124080000): it may read
 // under the deploy surfaces and make only the writes a deploy needs. The
@@ -30,7 +34,6 @@ var writeRoutes = map[string]bool{
 	"POST /v1/apps/{slug}/restart":                    true,
 	"DELETE /v1/deployments/{id}":                     true,
 	"POST /v1/deployments/{id}/retry":                 true,
-	"POST /v1/projects/scan":                          true,
 	// Source uploads.
 	"POST /v1/uploads":             true,
 	"PATCH /v1/uploads/{id}":       true,
@@ -44,6 +47,53 @@ var writeRoutes = map[string]bool{
 	"DELETE /v1/apps/{slug}/secrets/{key}": true,
 	// A fresh claim link.
 	"POST /v1/account/claim-link": true,
+}
+
+// fieldGatedRoutes are writes an unclaimed account may make with only the
+// listed top-level body fields; RefusedField names any other. App settings
+// a deploy applies (public auth, protocol, size, restart behaviour) pass;
+// egress, service bindings, minimum instances and the rest wait for a claim.
+// Project deploys are not here: they create databases and several apps, so
+// they need a claimed account.
+var fieldGatedRoutes = map[string]map[string]bool{
+	"PATCH /v1/apps/{slug}": {
+		"require_authn": true, "public_auth": true, "app_protocol": true,
+		"platform_tenant_required": true, "resource_profile": true,
+		"ram_mb": true, "cpu_millicores": true, "idle_timeout_s": true,
+		"max_concurrency": true, "execution_mode": true, "restart_policy": true,
+		"startup_deadline_s": true, "max_retries": true, "service_replicas": true,
+		"stop_grace_period_s": true, "stop_signal": true, "request_timeout_s": true,
+		"health_path": true,
+	},
+}
+
+// FieldGated reports whether the route is allowed only with some body
+// fields; the caller passes the body to RefusedField.
+func FieldGated(pattern string) bool { return fieldGatedRoutes[pattern] != nil }
+
+// RefusedField returns the first body field an unclaimed account may not
+// send to the field-gated route, "body" when the body is not a JSON object,
+// or "" when every field is allowed.
+func RefusedField(pattern string, body []byte) string {
+	allowed := fieldGatedRoutes[pattern]
+	if allowed == nil {
+		return ""
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return "body"
+	}
+	names := make([]string, 0, len(fields))
+	for name := range fields {
+		if !allowed[name] {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	sort.Strings(names)
+	return names[0]
 }
 
 // RouteAllowed reports whether an unclaimed account may call the route
@@ -62,13 +112,16 @@ func RouteAllowed(pattern string) bool {
 		}
 		return false
 	}
-	return writeRoutes[pattern]
+	return writeRoutes[pattern] || FieldGated(pattern)
 }
 
 // WriteRoutes returns the writable route patterns, for tests.
 func WriteRoutes() []string {
-	out := make([]string, 0, len(writeRoutes))
+	out := make([]string, 0, len(writeRoutes)+len(fieldGatedRoutes))
 	for p := range writeRoutes {
+		out = append(out, p)
+	}
+	for p := range fieldGatedRoutes {
 		out = append(out, p)
 	}
 	return out

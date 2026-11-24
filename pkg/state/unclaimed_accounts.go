@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -44,15 +45,12 @@ func (u UnclaimedAccount) Open() bool { return u.ClaimedAt == nil && u.ExpiredAt
 // Live reports whether the account is open and before its expiry at now.
 func (u UnclaimedAccount) Live(now time.Time) bool { return u.Open() && now.Before(u.ExpiresAt) }
 
-// UnclaimedAccountWindow is how far back the per-address and per-network
-// caps count anonymous accounts.
-const UnclaimedAccountWindow = 24 * time.Hour
-
 // UnclaimedAccountParams is what CreateAccountWithPersonalOrg records with an
 // anonymous deploy's account. The caps are checked in the same transaction
 // as the insert, serialised across writers, so concurrent requests and
 // several apids cannot exceed them. A cap of 0 or less refuses every new
-// account; the address caps apply only when CreatedIP parses.
+// account, whatever its address; above 0, the address caps count only when
+// CreatedIP parses.
 type UnclaimedAccountParams struct {
 	ClaimTokenSHA256 []byte
 	ExpiresAt        time.Time
@@ -62,7 +60,7 @@ type UnclaimedAccountParams struct {
 	// LiveMax bounds open accounts before their expiry, platform wide.
 	LiveMax int
 	// PerAddress and PerNetwork bound accounts created in the last
-	// UnclaimedAccountWindow from CreatedIP and from its /24 (IPv6 /48).
+	// api.UnclaimedAccountWindow from CreatedIP and from its /24 (IPv6 /48).
 	PerAddress int
 	PerNetwork int
 }
@@ -122,9 +120,18 @@ type UnclaimedAccountStore interface {
 	// account's pending email changes, so no claim confirmation lands after
 	// it. It reports false when the account was not open.
 	MarkUnclaimedAccountExpired(ctx context.Context, accountID string, at time.Time) (bool, error)
+	// EndUnclaimedWindow moves an open account's expiry back to at (never
+	// later than it was, nor before just after its creation) and drops its
+	// pending email changes, so the next sweep ends it. It reports false
+	// when the account was not open.
+	EndUnclaimedWindow(ctx context.Context, accountID string, at time.Time) (bool, error)
 	// ListExpiredUnclaimedAccounts returns up to limit open accounts whose
 	// expiry is at or before now, ordered by (ExpiresAt, AccountID) and
 	// strictly after the cursor; the zero cursor starts at the beginning.
+	// Postgres also requires the expiry to have passed by the database's
+	// clock: claim confirmations expire by that clock no later than the
+	// account (ConsumeEmailChange), so once a row is listed no claim can
+	// land on it, whatever apid's clock says.
 	ListExpiredUnclaimedAccounts(ctx context.Context, now time.Time, after UnclaimedCursor, limit int) ([]UnclaimedCursor, error)
 	// IssueClaimEmailChange issues the claim's email change (as
 	// IssueEmailChange) only while claimHash still names a live account,
@@ -182,6 +189,13 @@ func checkUnclaimedCaps(p UnclaimedAccountParams, live, fromAddress, fromNetwork
 		return &UnclaimedLimitError{Reason: UnclaimedLimitLive, Limit: p.LiveMax, Observed: live}
 	}
 	if !haveAddress {
+		// No address to count against, but a cap set to 0 still closes.
+		if p.PerAddress <= 0 {
+			return &UnclaimedLimitError{Reason: UnclaimedLimitAddress, Limit: p.PerAddress}
+		}
+		if p.PerNetwork <= 0 {
+			return &UnclaimedLimitError{Reason: UnclaimedLimitNetwork, Limit: p.PerNetwork}
+		}
 		return nil
 	}
 	if fromAddress >= p.PerAddress {
@@ -218,7 +232,7 @@ func (m *MemStore) insertUnclaimedLocked(accountID string, p UnclaimedAccountPar
 		if u.Live(now) {
 			live++
 		}
-		if other, err := netip.ParseAddr(u.CreatedIP); err == nil && haveAddress && u.CreatedAt.After(now.Add(-UnclaimedAccountWindow)) {
+		if other, err := netip.ParseAddr(u.CreatedIP); err == nil && haveAddress && u.CreatedAt.After(now.Add(-api.UnclaimedAccountWindow)) {
 			other = other.Unmap()
 			if network.Contains(other) {
 				fromNetwork++
@@ -338,6 +352,24 @@ func (m *MemStore) MarkUnclaimedAccountExpired(_ context.Context, accountID stri
 	return true, nil
 }
 
+func (m *MemStore) EndUnclaimedWindow(_ context.Context, accountID string, at time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.unclaimedRowLocked(accountID)
+	if !ok || !u.Open() {
+		return false, nil
+	}
+	if floor := u.CreatedAt.Add(time.Millisecond); at.Before(floor) {
+		at = floor
+	}
+	if at.Before(u.ExpiresAt) {
+		u.ExpiresAt = at.UTC()
+	}
+	m.unclaimedAccounts[accountID] = u
+	m.clearPendingEmailChangesLocked(accountID)
+	return true, nil
+}
+
 func (m *MemStore) ListExpiredUnclaimedAccounts(_ context.Context, now time.Time, after UnclaimedCursor, limit int) ([]UnclaimedCursor, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -429,7 +461,7 @@ func insertUnclaimedAccountTx(ctx context.Context, tx pgx.Tx, accountID string, 
 	var recent sqlc.CountRecentUnclaimedAccountsFromNetworkRow
 	if haveAddress {
 		recent, err = q.CountRecentUnclaimedAccountsFromNetwork(ctx, tx, sqlc.CountRecentUnclaimedAccountsFromNetworkParams{
-			Address: addr, Since: pgTime(now.Add(-UnclaimedAccountWindow)), Network: network,
+			Address: addr, Since: pgTime(now.Add(-api.UnclaimedAccountWindow)), Network: network,
 		})
 		if err != nil {
 			return fmt.Errorf("state: count recent unclaimed accounts: %w", mapErr(err))
@@ -545,6 +577,29 @@ func (s *PgStore) MarkUnclaimedAccountExpired(ctx context.Context, accountID str
 		return nil
 	})
 	return marked, err
+}
+
+func (s *PgStore) EndUnclaimedWindow(ctx context.Context, accountID string, at time.Time) (bool, error) {
+	account, err := parsePgUUID(accountID)
+	if err != nil {
+		return false, fmt.Errorf("state: unclaimed account id: %w", err)
+	}
+	var ended bool
+	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		q := sqlc.New()
+		n, err := q.EndUnclaimedAccountWindow(ctx, tx, sqlc.EndUnclaimedAccountWindowParams{At: pgTime(at), AccountID: account})
+		if err != nil {
+			return fmt.Errorf("state: end unclaimed window: %w", mapErr(err))
+		}
+		if ended = n == 1; !ended {
+			return nil
+		}
+		if err := q.ClearPendingAccountEmailChanges(ctx, tx, account); err != nil {
+			return fmt.Errorf("state: clear pending claim confirmations: %w", mapErr(err))
+		}
+		return nil
+	})
+	return ended, err
 }
 
 func (s *PgStore) ListExpiredUnclaimedAccounts(ctx context.Context, now time.Time, after UnclaimedCursor, limit int) ([]UnclaimedCursor, error) {

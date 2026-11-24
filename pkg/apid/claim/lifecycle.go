@@ -105,7 +105,7 @@ func (s *Service) expire(ctx context.Context, store state.UnclaimedAccountStore,
 
 // RunExpiry sweeps every few minutes until ctx ends.
 func (s *Service) RunExpiry(ctx context.Context) {
-	t := time.NewTicker(5 * time.Minute)
+	t := time.NewTicker(api.UnclaimedAccountSweepInterval)
 	defer t.Stop()
 	for {
 		s.ExpireOnce(ctx)
@@ -116,9 +116,6 @@ func (s *Service) RunExpiry(ctx context.Context) {
 		}
 	}
 }
-
-// sweepMaxPages bounds one sweep run; the next run carries on.
-const sweepMaxPages = 50
 
 // ExpireOnce ends the unclaimed accounts past their expiry and returns how
 // many it ended. It pages through every due row, so rows it cannot finish
@@ -136,7 +133,7 @@ func (s *Service) ExpireOnce(ctx context.Context) int {
 	now := s.now()
 	ended := 0
 	var cursor state.UnclaimedCursor
-	for range sweepMaxPages {
+	for range api.UnclaimedAccountSweepMaxPages {
 		rows, err := store.ListExpiredUnclaimedAccounts(ctx, now, cursor, api.UnclaimedAccountExpiryBatch)
 		if err != nil {
 			log.Warn("unclaimed_expiry.list", "err", err)

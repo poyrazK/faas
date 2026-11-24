@@ -33,8 +33,13 @@ func (s *Service) Session(w http.ResponseWriter, r *http.Request) {
 	defer clear(raw)
 	if links := s.Host.RecordSignupFacts(r.Context(), r, acct.ID, acct.Email); links > 0 {
 		// Kept (scheduled for deletion) rather than removed, so the link
-		// stays reviewable; the sweep retries a deletion that fails now.
-		if !s.expire(r.Context(), store, acct, "unclaimed_held_link") {
+		// stays reviewable. The window ends first, so the next sweep
+		// retries a deletion that fails now and no claim lands meanwhile.
+		ctx := context.WithoutCancel(r.Context())
+		if _, err := store.EndUnclaimedWindow(ctx, acct.ID, s.now()); err != nil {
+			s.Host.Log().Error("anonymous_session.held_link_window", "err", err, "account_id", acct.ID)
+		}
+		if !s.expire(ctx, store, acct, "unclaimed_held_link") {
 			s.Host.Log().Warn("anonymous_session.held_link_expire", "account_id", acct.ID)
 		}
 		s.Host.Observe(EventRefusedHeldLink)
@@ -75,10 +80,10 @@ func (s *Service) refusal(ctx context.Context, err error) *api.Problem {
 		s.Host.Log().Error("anonymous_session.create", "err", err)
 		return api.ErrCapacity("could not create the anonymous session; try again")
 	}
-	retry := int((24 * time.Hour).Seconds())
+	retry := int(api.UnclaimedAccountWindow.Seconds())
 	event := EventRefusedNetwork
 	if limit.Reason == state.UnclaimedLimitLive {
-		retry, event = int(time.Hour.Seconds()), EventRefusedLiveCap
+		retry, event = int(api.UnclaimedLiveCapRetryAfter.Seconds()), EventRefusedLiveCap
 	}
 	s.Host.Observe(event)
 	s.Host.Audit(ctx, "account.unclaimed_refused", nil, map[string]any{
@@ -151,8 +156,7 @@ func (s *Service) Link(w http.ResponseWriter, r *http.Request, acct state.Accoun
 	}
 	row, err := store.UnclaimedAccountByID(r.Context(), acct.ID)
 	if err != nil || !row.Live(s.now()) {
-		api.WriteProblem(w, api.NewProblem(http.StatusGone, api.CodeConflict,
-			"Claim window ended", "this anonymous deploy expired; run gregale login and deploy again"))
+		api.WriteProblem(w, api.ErrClaimExpired())
 		return
 	}
 	raw, err := newToken(TokenBytes)
@@ -162,6 +166,11 @@ func (s *Service) Link(w http.ResponseWriter, r *http.Request, acct state.Accoun
 	}
 	defer clear(raw)
 	if err := store.RotateUnclaimedClaimToken(r.Context(), acct.ID, api.HashToken(raw)); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			// Ended (or claimed) since the read above.
+			api.WriteProblem(w, api.ErrClaimExpired())
+			return
+		}
 		api.WriteProblem(w, api.ErrCapacity("could not create a claim link"))
 		return
 	}

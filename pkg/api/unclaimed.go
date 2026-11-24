@@ -33,7 +33,17 @@ const (
 	// platform cap is reached, the caller's network used its share, or the
 	// caller's network resembles an abuse-held account.
 	CodeAnonymousDeploysUnavailable = "anonymous_deploys_unavailable"
+	// CodeClaimExpired answers a claim-link request after the account's
+	// claim window ended (410).
+	CodeClaimExpired = "claim_expired"
 )
+
+// ErrClaimExpired is the refusal for a claim link after the window ended.
+func ErrClaimExpired() *Problem {
+	return NewProblem(http.StatusGone, CodeClaimExpired, "Claim window ended",
+		"this deploy without an account expired; run gregale login and deploy again").
+		WithDocs(docsBase + "/claimable-deploys")
+}
 
 // ErrClaimRequired is the refusal for a route an unclaimed account cannot
 // use yet.
