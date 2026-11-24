@@ -1490,6 +1490,12 @@ HTTP 400 Bad Request · Source must be one of: cold_boot, manual_upload; Source 
 
 HTTP 400 Bad Request · Invalid State
 
+### `invalid_suspend_timeout`
+
+HTTP 422 Unprocessable Entity · Invalid suspend timeout
+
+See [Managed PostgreSQL](postgres.md#plans).
+
 ### `invalid_traffic_percent`
 
 HTTP 422 Unprocessable Entity · Invalid traffic_percent
@@ -3458,6 +3464,10 @@ HTTP 409 Conflict · Run control changed
 
 HTTP 503 Service Unavailable · Safe release unavailable
 
+### `saved_insight_limit`
+
+HTTP 409 Conflict · Saved insight limit reached
+
 ### `scaling_request_conflict`
 
 HTTP 409 Conflict · Scaling request ID reused
@@ -3741,6 +3751,10 @@ HTTP 409 Conflict · Stored workflow changed; Suite target changed; Verification
 ### `streaming_not_available`
 
 HTTP 413 Request Entity Too Large · Streaming response exceeded plan cap
+
+### `suspend_timeout_always_on`
+
+HTTP 409 Conflict · Database is always-on
 
 ### `synthetic_check_invalid`
 

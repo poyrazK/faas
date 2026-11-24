@@ -428,6 +428,11 @@ touch them. The tables below map each earlier name.
 | `gregale insights funnel` | `gregale insight funnel get` |
 | `gregale insights requests` | `gregale insight request list` |
 | `gregale insights retention` | `gregale insight retention get` |
+| `gregale insights saved delete` | `gregale insight saved delete` |
+| `gregale insights saved get` | `gregale insight saved get` |
+| `gregale insights saved list` | `gregale insight saved list` |
+| `gregale insights saved run` | `gregale insight saved run` |
+| `gregale insights saved save` | `gregale insight saved create` |
 | `gregale invitations accept` | `gregale org invitation accept` |
 | `gregale invitations peek` | `gregale org invitation peek` |
 | `gregale issues bulk` | `gregale debug issue update --issues <ISSUES>` |
@@ -557,6 +562,7 @@ touch them. The tables below map each earlier name.
 | `gregale postgres overage` | `gregale postgres overage set` |
 | `gregale postgres previews` | `gregale postgres previews set` |
 | `gregale postgres resize-status` | `gregale postgres resize status` |
+| `gregale postgres suspend-timeout` | `gregale postgres suspend-timeout set` |
 | `gregale previews join` | `gregale feature join` |
 | `gregale previews leave` | `gregale feature leave` |
 | `gregale projects environments abort` | `gregale environment cancel` |

@@ -2092,6 +2092,8 @@ func (s *server) handler() http.Handler {
 	// frozen by the generic HTTP idempotency response cache.
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/compute-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.changeManagedPostgresComputePolicy)))))
 	mux.HandleFunc("GET /v1/postgres/databases/{id}/compute-policy-changes/{change_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresComputePolicyChange))))
+	// A database's own scale-to-zero suspend timeout; idempotent by value.
+	mux.HandleFunc("PUT /v1/postgres/databases/{id}/suspend-timeout", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.setManagedPostgresSuspendTimeout)))))
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/resize", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.managedPostgresResize(managedpg.Resizes.Post))))))
 	mux.HandleFunc("GET /v1/postgres/databases/{id}/resizes/{resize_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.managedPostgresResize(managedpg.Resizes.Get)))))
 	// ADR-1027 in-place major upgrades, served by pkg/apid/managedpg: hidden
@@ -2528,6 +2530,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/insights/funnel", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.postInsightFunnel)))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/insights/retention", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.postInsightRetention)))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/insights/requests", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getInsightRequests)))
+	// ADR-20261122190000: saved insights, run and exported by project readers.
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/insights/saved", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listSavedInsights)))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/insights/saved", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createSavedInsight))))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/insights/saved/{key}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getSavedInsight)))
+	mux.HandleFunc("PUT /v1/projects/{slug}/environments/{environment}/insights/saved/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.replaceSavedInsight))))
+	mux.HandleFunc("DELETE /v1/projects/{slug}/environments/{environment}/insights/saved/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteSavedInsight))))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/insights/saved/{key}/run", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.runSavedInsight)))
 	// ADR 20261119102741 §3: analytics cohorts, targeted with gregale.cohort.
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/cohorts", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listInsightCohorts)))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/cohorts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createInsightCohort))))
@@ -2823,6 +2832,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/trial", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.consumerControls.GetTrial)))
 	mux.HandleFunc("PUT /v1/apps/{slug}/consumers/{consumer_id}/trial", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.PutTrial))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/consumers/{consumer_id}/trial", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.EndTrial))))
+	mux.HandleFunc("GET /v1/apps/{slug}/consumer-credit-packs", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.consumerBilling.GetCreditPackSettings)))
+	mux.HandleFunc("PUT /v1/apps/{slug}/consumer-credit-packs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerBilling.PutCreditPackSettings))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumer-billing-policy", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.consumerControls.GetBillingPolicy)))
 	mux.HandleFunc("PUT /v1/apps/{slug}/consumer-billing-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.PutBillingPolicy))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/consumer-billing-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.DeleteBillingPolicy))))
@@ -6155,6 +6166,9 @@ func (s *server) handler() http.Handler {
 	// Customer self-service with a billing-scope key (ADR-20261021183000).
 	mux.Handle("GET /v1/consumer-billing/{slug}/plans", selfVerified(s.consumerBilling.Plans))
 	mux.Handle("PUT /v1/consumer-billing/{slug}/plan", selfVerified(s.consumerBilling.ChangePlan))
+	mux.Handle("GET /v1/consumer-billing/{slug}/credit-packs", selfVerified(s.consumerBilling.CreditPacks))
+	mux.Handle("POST /v1/consumer-billing/{slug}/credit-purchases", selfVerified(s.consumerBilling.CreateCreditPurchase))
+	mux.Handle("GET /v1/consumer-billing/{slug}/credit-purchases/{purchase_id}", selfVerified(s.consumerBilling.GetCreditPurchase))
 	mux.Handle("POST /v1/consumer-billing/{slug}/portal", selfVerified(s.consumerBilling.Portal))
 	mux.Handle("POST /v1/consumer-billing/{slug}/close", selfVerified(s.consumerBilling.Close))
 	// Consumer self-service sign-up (ADR-20261021143000): no credential; the

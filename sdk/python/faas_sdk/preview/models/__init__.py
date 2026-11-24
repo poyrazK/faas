@@ -825,6 +825,11 @@ from .consumer_billing_statement import ConsumerBillingStatement
 from .consumer_billing_statements_response import ConsumerBillingStatementsResponse
 from .consumer_billing_summary_response import ConsumerBillingSummaryResponse
 from .consumer_billing_usage_response import ConsumerBillingUsageResponse
+from .consumer_credit_pack import ConsumerCreditPack
+from .consumer_credit_pack_settings import ConsumerCreditPackSettings
+from .consumer_credit_packs_response import ConsumerCreditPacksResponse
+from .consumer_credit_purchase_response import ConsumerCreditPurchaseResponse
+from .consumer_credit_purchase_response_status import ConsumerCreditPurchaseResponseStatus
 from .consumer_key_list_response import ConsumerKeyListResponse
 from .consumer_key_response import ConsumerKeyResponse
 from .consumer_key_response_scopes_item import ConsumerKeyResponseScopesItem
@@ -909,6 +914,7 @@ from .create_commit_source_request import CreateCommitSourceRequest
 from .create_commit_source_request_contract_version import CreateCommitSourceRequestContractVersion
 from .create_commit_source_request_destination import CreateCommitSourceRequestDestination
 from .create_consumer_billing_portal_request import CreateConsumerBillingPortalRequest
+from .create_consumer_credit_purchase_request import CreateConsumerCreditPurchaseRequest
 from .create_consumer_key_request import CreateConsumerKeyRequest
 from .create_consumer_key_request_scopes_item import CreateConsumerKeyRequestScopesItem
 from .create_consumer_signup_request import CreateConsumerSignupRequest
@@ -2590,6 +2596,11 @@ from .insight_event_point import InsightEventPoint
 from .insight_event_series import InsightEventSeries
 from .insight_event_series_interval import InsightEventSeriesInterval
 from .insight_event_series_unit import InsightEventSeriesUnit
+from .insight_events_query import InsightEventsQuery
+from .insight_events_query_interval import InsightEventsQueryInterval
+from .insight_events_query_measure import InsightEventsQueryMeasure
+from .insight_events_query_unit import InsightEventsQueryUnit
+from .insight_events_query_where import InsightEventsQueryWhere
 from .insight_funnel import InsightFunnel
 from .insight_funnel_breakdown import InsightFunnelBreakdown
 from .insight_funnel_request import InsightFunnelRequest
@@ -3025,6 +3036,7 @@ from .managed_postgres_resize_from_class import ManagedPostgresResizeFromClass
 from .managed_postgres_resize_state import ManagedPostgresResizeState
 from .managed_postgres_resize_target_class import ManagedPostgresResizeTargetClass
 from .managed_postgres_restore_range import ManagedPostgresRestoreRange
+from .managed_postgres_suspend_timeout import ManagedPostgresSuspendTimeout
 from .managed_postgres_usage_import_reading import ManagedPostgresUsageImportReading
 from .managed_postgres_usage_import_reading_meter import ManagedPostgresUsageImportReadingMeter
 from .managed_postgres_usage_import_request import ManagedPostgresUsageImportRequest
@@ -6161,6 +6173,7 @@ from .run_history_entry_result_validation_status import RunHistoryEntryResultVal
 from .run_history_entry_runtime import RunHistoryEntryRuntime
 from .run_history_entry_status import RunHistoryEntryStatus
 from .run_history_response import RunHistoryResponse
+from .run_project_saved_insight_format import RunProjectSavedInsightFormat
 from .run_stored_workflow_tests_request import RunStoredWorkflowTestsRequest
 from .runtime_config_restart_status_response import RuntimeConfigRestartStatusResponse
 from .runtime_config_restart_status_response_failure_reason import RuntimeConfigRestartStatusResponseFailureReason
@@ -6196,6 +6209,16 @@ from .save_route_requirements_request import SaveRouteRequirementsRequest
 from .save_stored_workflow_draft_request import SaveStoredWorkflowDraftRequest
 from .save_stored_workflow_live_suite_request import SaveStoredWorkflowLiveSuiteRequest
 from .save_stored_workflow_test_suite_request import SaveStoredWorkflowTestSuiteRequest
+from .saved_insight import SavedInsight
+from .saved_insight_alert import SavedInsightAlert
+from .saved_insight_alert_comparison import SavedInsightAlertComparison
+from .saved_insight_alert_state import SavedInsightAlertState
+from .saved_insight_list import SavedInsightList
+from .saved_insight_request import SavedInsightRequest
+from .saved_insight_request_digest import SavedInsightRequestDigest
+from .saved_insight_request_kind import SavedInsightRequestKind
+from .saved_insight_result import SavedInsightResult
+from .saved_insight_result_kind import SavedInsightResultKind
 from .saved_route_requirements import SavedRouteRequirements
 from .scaling_policy import ScalingPolicy
 from .scaling_policy_concurrency_overflow import ScalingPolicyConcurrencyOverflow
@@ -6434,6 +6457,7 @@ from .set_environment_route_budgets_request import SetEnvironmentRouteBudgetsReq
 from .set_environment_route_budgets_scope import SetEnvironmentRouteBudgetsScope
 from .set_financial_budget_channels_request import SetFinancialBudgetChannelsRequest
 from .set_grace_window_request import SetGraceWindowRequest
+from .set_managed_postgres_suspend_timeout_request import SetManagedPostgresSuspendTimeoutRequest
 from .set_mcp_readiness_fallback_request import SetMCPReadinessFallbackRequest
 from .set_mcp_readiness_fallback_request_provider import SetMCPReadinessFallbackRequestProvider
 from .set_mcp_readiness_fallback_request_region import SetMCPReadinessFallbackRequestRegion
@@ -8086,6 +8110,11 @@ __all__ = (
     "ConsumerBillingStatementsResponse",
     "ConsumerBillingSummaryResponse",
     "ConsumerBillingUsageResponse",
+    "ConsumerCreditPack",
+    "ConsumerCreditPackSettings",
+    "ConsumerCreditPacksResponse",
+    "ConsumerCreditPurchaseResponse",
+    "ConsumerCreditPurchaseResponseStatus",
     "ConsumerKeyListResponse",
     "ConsumerKeyResponse",
     "ConsumerKeyResponseScopesItem",
@@ -8170,6 +8199,7 @@ __all__ = (
     "CreateCommitSourceRequestContractVersion",
     "CreateCommitSourceRequestDestination",
     "CreateConsumerBillingPortalRequest",
+    "CreateConsumerCreditPurchaseRequest",
     "CreateConsumerKeyRequest",
     "CreateConsumerKeyRequestScopesItem",
     "CreateConsumerSignupRequest",
@@ -9787,6 +9817,11 @@ __all__ = (
     "InsightEventSeries",
     "InsightEventSeriesInterval",
     "InsightEventSeriesUnit",
+    "InsightEventsQuery",
+    "InsightEventsQueryInterval",
+    "InsightEventsQueryMeasure",
+    "InsightEventsQueryUnit",
+    "InsightEventsQueryWhere",
     "InsightFunnel",
     "InsightFunnelBreakdown",
     "InsightFunnelRequest",
@@ -10182,6 +10217,7 @@ __all__ = (
     "ManagedPostgresResizeState",
     "ManagedPostgresResizeTargetClass",
     "ManagedPostgresRestoreRange",
+    "ManagedPostgresSuspendTimeout",
     "ManagedPostgresUsageImportReading",
     "ManagedPostgresUsageImportReadingMeter",
     "ManagedPostgresUsageImportRequest",
@@ -13118,6 +13154,7 @@ __all__ = (
     "RunHistoryEntryRuntime",
     "RunHistoryEntryStatus",
     "RunHistoryResponse",
+    "RunProjectSavedInsightFormat",
     "RunStoredWorkflowTestsRequest",
     "RuntimeConfigRestartStatusResponse",
     "RuntimeConfigRestartStatusResponseFailureReason",
@@ -13147,6 +13184,16 @@ __all__ = (
     "SafeApplyProjectProjectStabilization",
     "SafeApplyProjectProjectWorkerHealth",
     "SalesInquiryChallengeResponse200",
+    "SavedInsight",
+    "SavedInsightAlert",
+    "SavedInsightAlertComparison",
+    "SavedInsightAlertState",
+    "SavedInsightList",
+    "SavedInsightRequest",
+    "SavedInsightRequestDigest",
+    "SavedInsightRequestKind",
+    "SavedInsightResult",
+    "SavedInsightResultKind",
     "SavedRouteRequirements",
     "SaveProfileDeploymentPolicyRequest",
     "SaveProfileInvestigationRequest",
@@ -13387,6 +13434,7 @@ __all__ = (
     "SetEnvironmentRouteBudgetsScope",
     "SetFinancialBudgetChannelsRequest",
     "SetGraceWindowRequest",
+    "SetManagedPostgresSuspendTimeoutRequest",
     "SetMCPReadinessFallbackRequest",
     "SetMCPReadinessFallbackRequestProvider",
     "SetMCPReadinessFallbackRequestRegion",

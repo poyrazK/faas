@@ -848,6 +848,32 @@ type ApiConsumerCreditGrant struct {
 	CreatedAt           pgtype.Timestamptz
 }
 
+type ApiConsumerCreditPackSetting struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	ReturnUrl string
+	Packs     []byte
+}
+
+type ApiConsumerCreditPurchase struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	ConsumerID       pgtype.UUID
+	PackID           string
+	Label            string
+	Currency         string
+	AmountMillicents int64
+	AmountMinor      int64
+	ReturnUrl        string
+	StripeCustomer   string
+	StripeSession    pgtype.Text
+	Livemode         bool
+	Status           string
+	ExpiresAt        pgtype.Timestamptz
+	NextCheckAt      pgtype.Timestamptz
+}
+
 // Units an app reported per consumer, meter and UTC minute for billable requests (ADR-1318).
 type ApiConsumerMeterUsageMinute struct {
 	AccountID   pgtype.UUID
@@ -4993,6 +5019,15 @@ type DeploymentSubmissionReceipt struct {
 	AttemptID    string
 	DeploymentID pgtype.UUID
 	AcceptedAt   pgtype.Timestamptz
+}
+
+// Node verifying a deployment candidate; secretd opens contract-referenced app secrets only for it (ADR-20261122220000 amendment 2).
+type DeploymentVerificationLease struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	NodeName     string
+	ExpiresAt    pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
 }
 
 // Read-only SQL checks imaged hands to apid during candidate verification; result is row count and first value only (ADR-20261122220000).
@@ -9636,6 +9671,13 @@ type ManagedPostgresRestoreVerification struct {
 	PointInTime        pgtype.Timestamptz
 	Evidence           string
 	VerifiedAt         pgtype.Timestamptz
+}
+
+// Customer-chosen scale-to-zero suspend timeout per managed PostgreSQL database; no row is the platform default; written only by apid.
+type ManagedPostgresSuspendTimeout struct {
+	DatabaseID pgtype.UUID
+	Seconds    int32
+	UpdatedAt  pgtype.Timestamptz
 }
 
 type ManagedPostgresUsage struct {
@@ -16538,6 +16580,32 @@ type SandboxWorkspaceSnapshot struct {
 	DeleteRequestedAt pgtype.Timestamptz
 	CreatedAt         pgtype.Timestamptz
 	ReadyAt           pgtype.Timestamptz
+}
+
+// Named analytics queries per environment; digests and threshold alerts run by meterd (ADR-20261122190000).
+type SavedInsight struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	EnvironmentID   pgtype.UUID
+	Key             string
+	Name            string
+	Kind            string
+	Query           []byte
+	RangeDays       int32
+	Digest          string
+	AlertComparison string
+	AlertThreshold  float64
+	ChannelIds      []pgtype.UUID
+	AlertState      string
+	LastValue       pgtype.Float8
+	LastRunAt       pgtype.Timestamptz
+	LastError       string
+	NextDigestAt    pgtype.Timestamptz
+	NextCheckAt     pgtype.Timestamptz
+	LeaseUntil      pgtype.Timestamptz
+	CreatedBy       string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
 }
 
 type SavedRouteRequirement struct {
