@@ -96083,6 +96083,7 @@ components:
         history_byte_seconds: { type: integer, format: int64, minimum: 0, description: "Point-in-time restore history held this month, in byte-seconds." }
         snapshot_byte_seconds: { type: integer, format: int64, minimum: 0, description: "Snapshot storage held this month, in byte-seconds." }
         included_history_bytes: { type: integer, format: int64, minimum: 0, description: "Restore history and snapshot storage the plan includes, held for the whole month. Restore history uses it first. With overage on, history past it is billed per GB-month." }
+        history_state: { type: string, enum: [normal, limited], description: "limited while restore history and snapshots passed twice the included history this month with overage off: the databases keep a 24-hour restore window until the 1st of next month, or until overage is turned on. Absent while the history limit is not enforced." }
         egress_bytes: { type: integer, format: int64, minimum: 0 }
         compute_allowance_unit_seconds:
           description: The plan's monthly compute allowance in compute-unit seconds, pooled across the account's databases.
