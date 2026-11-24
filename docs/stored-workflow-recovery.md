@@ -194,6 +194,11 @@ downgrading; export resume history before rolling the migration back.
 
 ## Recover paused and missed work
 
+A stored workflow that paused itself after repeated failures is resumed with
+`gregale workflow stored failure resume`; the pause policy, its preview and
+resume are described in
+[Automatically pause after repeated failures](stored-workflow-operations.md#automatically-pause-after-repeated-failures).
+
 ### Recovering missed scheduled starts
 
 Schedules skip missed fires by default. For reports or reconciliation jobs that
@@ -246,6 +251,29 @@ Scope an alert to one app or the authenticated account. Age signals describe
 current state rather than a window average. Waiting age includes intentional
 timers, callbacks, conditions, and event waits, so choose thresholds suitable
 for the workflow. These metrics support webhook notifications only.
+
+### Replay a skipped scheduled occurrence
+
+Run a skipped occurrence from [schedule history](stored-workflow-operations.md#admission-history-and-reliability-alerts) with a preview followed by an explicit
+replay:
+
+```sh
+gregale workflow schedule history replay-preview --app reports \
+  --occurrence-id 00000000-0000-4000-8000-000000000001
+gregale workflow schedule replay --app reports \
+  --occurrence-id 00000000-0000-4000-8000-000000000001
+```
+
+Repeat `--occurrence-id` to select up to 20 occurrences; the service processes
+them in scheduled order. Preview reports eligibility against the current live
+deployment, definition, tenant settings, overlap state, and quota. It reserves
+nothing, so replay rechecks all conditions. A replay uses the original nominal
+`scheduled_for` time and current trigger input. It is blocked if the deployment
+or definition changed, the schedule is disabled, a tenant link is no longer
+active, overlap is active, or the app quota is full. History displays the
+resulting replay run ID, and retries of the same occurrence return that ID
+without creating another run. Legacy history without a definition fingerprint
+cannot be replayed.
 
 ### Unified recovery preview
 

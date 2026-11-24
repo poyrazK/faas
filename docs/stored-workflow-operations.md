@@ -170,26 +170,8 @@ customer and `--cursor` with the returned next cursor for another page.
 History starts when this version is deployed; earlier outcomes are not backfilled.
 An expired history cursor returns an empty page.
 
-Recover a selected skipped occurrence with a preview followed by an explicit
-replay:
-
-```sh
-gregale workflow schedule history replay-preview --app reports \
-  --occurrence-id 00000000-0000-4000-8000-000000000001
-gregale workflow schedule replay --app reports \
-  --occurrence-id 00000000-0000-4000-8000-000000000001
-```
-
-Repeat `--occurrence-id` to select up to 20 occurrences; the service processes
-them in scheduled order. Preview reports eligibility against the current live
-deployment, definition, tenant settings, overlap state, and quota. It reserves
-nothing, so replay rechecks all conditions. A replay uses the original nominal
-`scheduled_for` time and current trigger input. It is blocked if the deployment
-or definition changed, the schedule is disabled, a tenant link is no longer
-active, overlap is active, or the app quota is full. History displays the
-resulting replay run ID, and retries of the same occurrence return that ID
-without creating another run. Legacy history without a definition fingerprint
-cannot be replayed.
+To run a skipped occurrence after all, see
+[Replay a skipped scheduled occurrence](stored-workflow-recovery.md#replay-a-skipped-scheduled-occurrence).
 
 Tenant/workflow pairs share the app's active-run quota and are evaluated in
 least-recently-admitted order. Admission priority persists through scheduler
