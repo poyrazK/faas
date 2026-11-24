@@ -308,13 +308,12 @@ func publishKernels(t *testing.T, client *s3.Client) {
 		if !e.Type().IsRegular() {
 			continue
 		}
-		f, err := os.Open(filepath.Join(root, "kernel", e.Name()))
+		body, err := os.ReadFile(filepath.Join(root, "kernel", e.Name()))
 		if err != nil {
 			t.Fatal(err)
 		}
 		_, err = client.PutObject(context.Background(), &s3.PutObjectInput{Bucket: aws.String(storageGrantsBucket),
-			Key: aws.String("kernel/" + e.Name()), Body: f})
-		_ = f.Close()
+			Key: aws.String("kernel/" + e.Name()), Body: bytes.NewReader(body)})
 		if err != nil {
 			t.Fatalf("e2etest: publish kernel/%s: %v", e.Name(), err)
 		}
