@@ -145,8 +145,15 @@ func parseHeaders(s string) []headerEntry {
 // — single source of truth for the trusted inner envelope
 // sanitization (ADR-126 §Decision 1).
 func sanitizeCRLF(s string) string {
-	if s == "" {
-		return ""
+	clean := true
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c == '\r' || c == '\n' || c == 0 {
+			clean = false
+			break
+		}
+	}
+	if clean {
+		return s // the common case: nothing to strip, no copy
 	}
 	var b strings.Builder
 	b.Grow(len(s))
@@ -207,5 +214,27 @@ func bridgeRequestHeaders(r *http.Request) []headerEntry {
 }
 
 func isBridgeRequestHeader(name string) bool {
-	return strings.HasPrefix(strings.ToLower(name), "x-faas-bridge-")
+	const prefix = "x-faas-bridge-"
+	return len(name) >= len(prefix) && asciiEqualFold(name[:len(prefix)], prefix)
+}
+
+// asciiEqualFold reports whether a and b are equal under ASCII case folding
+// only (unlike strings.EqualFold, no Unicode folds such as ſ → s).
+func asciiEqualFold(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		x, y := a[i], b[i]
+		if 'A' <= x && x <= 'Z' {
+			x += 'a' - 'A'
+		}
+		if 'A' <= y && y <= 'Z' {
+			y += 'a' - 'A'
+		}
+		if x != y {
+			return false
+		}
+	}
+	return true
 }

@@ -463,6 +463,9 @@ var hopByHopHeaders = map[string]struct{}{
 }
 
 func isHopByHopHeader(k string) bool {
+	if _, ok := hopByHopHeaders[k]; ok {
+		return true // already canonical: the usual case, no rescan
+	}
 	_, ok := hopByHopHeaders[http.CanonicalHeaderKey(k)]
 	return ok
 }

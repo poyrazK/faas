@@ -122,12 +122,36 @@ func TestParseHeaders_SharedHelper(t *testing.T) {
 // envelope. The set lives in h2c_terminator.go; this test pins it
 // so a future addition (e.g. Add) that introduces a regression
 // here fires loud.
+func TestBridgeRequestHeaderPrefixIsASCIICaseInsensitive(t *testing.T) {
+	for name, want := range map[string]bool{
+		"X-Faas-Bridge-Port": true, "x-faas-bridge-host": true, "X-FAAS-BRIDGE-": true,
+		"X-Faas-Bridge": false, "X-Faas-App-Id": false, "": false,
+		"X-Faas-Bridſe-Port": false, // Unicode fold of ſ must not match s
+	} {
+		if got := isBridgeRequestHeader(name); got != want {
+			t.Errorf("isBridgeRequestHeader(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
+func TestSanitizeCRLFCleanInputIsReturnedUncopied(t *testing.T) {
+	in := "X-Faas-Request-Id: req_01JDXK8Q2M3N4P5R6S7T8V9W0X"
+	if got := sanitizeCRLF(in); got != in {
+		t.Fatalf("sanitizeCRLF(%q) = %q", in, got)
+	}
+	if n := testing.AllocsPerRun(100, func() { _ = sanitizeCRLF(in) }); n != 0 {
+		t.Fatalf("clean input allocated %v times", n)
+	}
+}
+
 func TestHopByHopHeader_TrimsFrameControl(t *testing.T) {
-	// Standard hop-by-hop + HTTP/2 frame-control headers.
+	// Standard hop-by-hop + HTTP/2 frame-control headers, in canonical and
+	// non-canonical spellings.
 	drop := []string{
 		"Connection", "Keep-Alive",
 		"Proxy-Authenticate", "Proxy-Authorization",
 		"Te", "Trailer", "Transfer-Encoding", "Upgrade",
+		"connection", "keep-alive", "TE", "transfer-encoding",
 	}
 	keep := []string{
 		"Host", "User-Agent", "Accept", "Content-Type",

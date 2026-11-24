@@ -434,16 +434,19 @@ func handleH1Stream(w http.ResponseWriter, r *http.Request, guestIP string, gues
 	ctx, cancel := context.WithDeadline(r.Context(), deadline)
 	defer cancel()
 
-	method := os.Getenv("FAAS_BRIDGE_METHOD")
-	url := os.Getenv("FAAS_BRIDGE_URL")
-	host := os.Getenv("FAAS_BRIDGE_HOST")
-	extraHeaders := parseHeaders(os.Getenv("FAAS_BRIDGE_HEADERS"))
+	var method, url, host string
+	var extraHeaders []headerEntry
 	if bridgeRequestUsesWireMetadata(r) {
 		method = r.Method
 		url = r.URL.RequestURI()
 		host = bridgeRequestHost(r, "")
 		extraHeaders = bridgeRequestHeaders(r)
 		guestPort = bridgeRequestPort(r, guestPort)
+	} else {
+		method = os.Getenv("FAAS_BRIDGE_METHOD")
+		url = os.Getenv("FAAS_BRIDGE_URL")
+		host = os.Getenv("FAAS_BRIDGE_HOST")
+		extraHeaders = parseHeaders(os.Getenv("FAAS_BRIDGE_HEADERS"))
 	}
 	if method == "" {
 		method = "GET"
@@ -508,7 +511,10 @@ func handleH1Stream(w http.ResponseWriter, r *http.Request, guestIP string, gues
 		if strings.EqualFold(h.Name, "Host") || isHopByHopHeader(h.Name) {
 			continue
 		}
-		outboundReq.Header.Add(h.Name, h.Value)
+		// Names here are keys of the inbound request's header map, which
+		// net/http already canonicalized; canonicalizing is idempotent, so
+		// appending directly is what Header.Add would do, minus the rescan.
+		outboundReq.Header[h.Name] = append(outboundReq.Header[h.Name], h.Value)
 	}
 	// The raw legacy bridge did not synthesize a User-Agent. An explicit empty
 	// value prevents net/http from adding its default while preserving a
@@ -529,10 +535,10 @@ func handleH1Stream(w http.ResponseWriter, r *http.Request, guestIP string, gues
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
+	// resp.Header keys come canonical from net/http's response parser.
+	out := w.Header()
 	for k, vs := range resp.Header {
-		for _, v := range vs {
-			w.Header().Add(k, v)
-		}
+		out[k] = append(out[k], vs...)
 	}
 	w.WriteHeader(resp.StatusCode)
 	_, _ = copyStreamingSized(w, resp.Body, resp.ContentLength)
