@@ -31,9 +31,10 @@ type APIConsumerEnvironmentStore interface {
 	ConsumerKeyForEnvironment(ctx context.Context, accountID, appID, environmentID, prefix string) (ConsumerKey, error)
 }
 
-// ErrAPIConsumerStageMonetization refuses a plan or trial for a stage's
-// consumer: plans, trials and billing are production's.
-var ErrAPIConsumerStageMonetization = fmt.Errorf("%w: plans and trials apply to production consumers; a stage's consumers are not billed", ErrConflict)
+// ErrAPIConsumerStageTrial refuses a trial for a stage's consumer: a stage's
+// consumers are not billed, so a trial means nothing there. Plan assignments
+// follow their consumer.
+var ErrAPIConsumerStageTrial = fmt.Errorf("%w: trials apply to production consumers; a stage's consumers are not billed", ErrConflict)
 
 // productionConsumerEnvironment reports whether a slug names production.
 func productionConsumerEnvironment(environment string) bool {
@@ -69,8 +70,10 @@ func (m *MemStore) CreateAPIConsumerInEnvironment(ctx context.Context, accountID
 	if err != nil {
 		return APIConsumer{}, err
 	}
+	// The app-wide identity indexes stay until the contract release, so a
+	// stage cannot reuse production's identities yet (ADR-20261104120000 Release).
 	for _, c := range m.apiConsumers {
-		if c.AppID == appID && c.ExternalRef == externalRef && c.EnvironmentID == environmentID {
+		if c.AppID == appID && c.ExternalRef == externalRef {
 			return APIConsumer{}, ErrConflict
 		}
 	}

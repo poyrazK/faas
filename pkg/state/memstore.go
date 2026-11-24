@@ -29247,12 +29247,8 @@ func (m *MemStore) CreateConsumerKey(_ context.Context, accountID, appID, name, 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// Mirror the (account_id, app_id, name) UNIQUE from 00329; a key
-	// without a consumer is production's.
+	// Mirror the (account_id, app_id, name) UNIQUE from 00329.
 	for _, k := range m.consumerKeys {
-		if k.EnvironmentID != "" {
-			continue
-		}
 		if k.AccountID == accountID && k.AppID == appID && k.Name == name {
 			return ConsumerKey{}, ErrConflict
 		}

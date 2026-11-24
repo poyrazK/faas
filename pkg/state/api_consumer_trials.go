@@ -77,7 +77,7 @@ func (m *MemStore) PutAPIConsumerTrial(_ context.Context, t APIConsumerTrial) (A
 		return APIConsumerTrial{}, ErrNotFound
 	}
 	if m.stageConsumerLocked(t.ConsumerID) {
-		return APIConsumerTrial{}, ErrAPIConsumerStageMonetization
+		return APIConsumerTrial{}, ErrAPIConsumerStageTrial
 	}
 	if m.apiConsumerTrials == nil {
 		m.apiConsumerTrials = map[string]APIConsumerTrial{}
@@ -134,7 +134,7 @@ func (s *PgStore) PutAPIConsumerTrial(ctx context.Context, t APIConsumerTrial) (
 	if err := validateAPIConsumerTrial(t); err != nil {
 		return APIConsumerTrial{}, err
 	}
-	if err := refuseStageConsumerMonetizationDB(ctx, s.pool, t.AccountID, t.ConsumerID); err != nil {
+	if err := refuseStageConsumerTrialDB(ctx, s.pool, t.AccountID, t.ConsumerID); err != nil {
 		return APIConsumerTrial{}, err
 	}
 	out, err := scanAPIConsumerTrial(s.pool.QueryRow(ctx, `insert into api_consumer_trials (account_id, app_id, consumer_id, starts_at, ends_at)

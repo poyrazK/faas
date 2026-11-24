@@ -414,7 +414,11 @@ is also app-wide; stage deployments already record their own OpenAPI snapshot.
 
 ### Release
 
-The per-environment identity indexes replace the app-wide ones. N-1 has no
-`ON CONFLICT` on them, and duplicate prefixes arise only from stage copies,
-which full clones make; full clone admission stays off until every apid and
-gateway runs N.
+The per-environment identity indexes are added beside the app-wide ones, and
+a later contract release drops the app-wide ones. They cannot go in the same
+release: platform-tenant consumer creation writes `ON CONFLICT (app_id,
+external_ref)`, which needs the app-wide index, and N-1 runs that path. Until
+the contract release a stage consumer's external reference and key names must
+differ from production's, so a full clone, which copies them, ships with the
+contract release; full clone admission stays off until every apid and gateway
+runs it.

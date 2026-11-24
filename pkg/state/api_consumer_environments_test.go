@@ -17,8 +17,8 @@ type apiConsumerEnvironmentTestStore = contractTestStore
 
 // adr: 20261104120000 — a stage's consumers and keys are its own: production
 // reads never see them, a stage host answers with production's keys until
-// the stage has consumers and with only its own after, and plans and trials
-// stay production's.
+// the stage has consumers and with only its own after, plan assignments
+// follow their consumer and trials stay production's.
 func exerciseAPIConsumerEnvironments(t *testing.T, store apiConsumerEnvironmentTestStore) {
 	t.Helper()
 	ctx := context.Background()
@@ -62,17 +62,21 @@ func exerciseAPIConsumerEnvironments(t *testing.T, store apiConsumerEnvironmentT
 		t.Fatalf("stage without consumers = %+v, %v; want production's key", k, err)
 	}
 
-	staged, err := store.CreateAPIConsumerInEnvironment(ctx, account.ID, app.ID, "staging", "customer-1", "Acme staging")
+	// The app-wide identity indexes stay until the contract release.
+	if _, err := store.CreateAPIConsumerInEnvironment(ctx, account.ID, app.ID, "staging", "customer-1", "Acme staging"); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("stage reusing production's external_ref = %v, want ErrConflict until the contract release", err)
+	}
+	staged, err := store.CreateAPIConsumerInEnvironment(ctx, account.ID, app.ID, "staging", "customer-stage", "Acme staging")
 	if err != nil || staged.EnvironmentID != stage.ID {
 		t.Fatalf("stage consumer = %+v, %v; want environment %s", staged, err, stage.ID)
 	}
-	if _, err := store.CreateAPIConsumerInEnvironment(ctx, account.ID, app.ID, "staging", "customer-1", "again"); !errors.Is(err, state.ErrConflict) {
+	if _, err := store.CreateAPIConsumerInEnvironment(ctx, account.ID, app.ID, "staging", "customer-stage", "again"); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate stage external_ref = %v, want ErrConflict", err)
 	}
 	if _, err := store.CreateAPIConsumerInEnvironment(ctx, account.ID, app.ID, "missing", "customer-2", "x"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("unknown environment = %v, want ErrNotFound", err)
 	}
-	stageKey := newKey(staged.ID, "primary")
+	stageKey := newKey(staged.ID, "stage")
 	if stageKey.EnvironmentID != stage.ID {
 		t.Fatalf("stage key environment = %q, want %s", stageKey.EnvironmentID, stage.ID)
 	}
@@ -114,12 +118,12 @@ func exerciseAPIConsumerEnvironments(t *testing.T, store apiConsumerEnvironmentT
 
 	now := time.Now().UTC().Truncate(time.Minute)
 	if _, err := store.PutAPIConsumerTrial(ctx, state.APIConsumerTrial{AccountID: account.ID, AppID: app.ID, ConsumerID: staged.ID,
-		StartsAt: now, EndsAt: now.Add(24 * time.Hour)}); !errors.Is(err, state.ErrAPIConsumerStageMonetization) {
-		t.Fatalf("stage consumer trial = %v, want ErrAPIConsumerStageMonetization", err)
+		StartsAt: now, EndsAt: now.Add(24 * time.Hour)}); !errors.Is(err, state.ErrAPIConsumerStageTrial) {
+		t.Fatalf("stage consumer trial = %v, want ErrAPIConsumerStageTrial", err)
 	}
 	if _, err := store.AssignAPIConsumerPlan(ctx, state.APIConsumerPlanAssignment{AccountID: account.ID, AppID: app.ID, ConsumerID: staged.ID,
-		EffectiveFrom: now}); !errors.Is(err, state.ErrAPIConsumerStageMonetization) {
-		t.Fatalf("stage consumer plan = %v, want ErrAPIConsumerStageMonetization", err)
+		EffectiveFrom: now}); err != nil {
+		t.Fatalf("stage consumer plan assignment = %v, want it to follow the consumer", err)
 	}
 }
 

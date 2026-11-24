@@ -106,9 +106,8 @@ func (s *PgStore) ListConsumerKeysForConsumer(ctx context.Context, accountID, co
 	return out, rows.Err()
 }
 
-// refuseStageConsumerMonetizationDB refuses a plan or trial for a stage's
-// consumer.
-func refuseStageConsumerMonetizationDB(ctx context.Context, db interface {
+// refuseStageConsumerTrialDB refuses a trial for a stage's consumer.
+func refuseStageConsumerTrialDB(ctx context.Context, db interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }, accountID, consumerID string) error {
 	var stage bool
@@ -121,7 +120,7 @@ func refuseStageConsumerMonetizationDB(ctx context.Context, db interface {
 		return err
 	}
 	if stage {
-		return ErrAPIConsumerStageMonetization
+		return ErrAPIConsumerStageTrial
 	}
 	return nil
 }
