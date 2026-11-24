@@ -395,6 +395,12 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 	// vmstate header. Snapshot memory is raw guest RAM, not device metadata.
 	t.Run("vmmd-restore-fail-fallback", func(t *testing.T) {
 		defer h.DumpLogs(t)
+		if h.StorageGrantsOn() {
+			// The fault injection rewrites the snapshot on node disk; under
+			// grants every snapshot lives in the shared store. The smoke
+			// lane covers this fallback.
+			t.Skip("restore-failure injection needs a node-local snapshot; storage grants keep none")
+		}
 
 		// Park the running instance from subtest 6 so the next wake is
 		// a real wake (not a hot forward). The reaper tick is 10s; an

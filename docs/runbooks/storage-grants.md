@@ -38,7 +38,13 @@ the node. Everything is off by default.
    - `select subject_class, access, sum(objects) from storage_grant_audit where granted_at > now() - interval '10 minutes' group by 1, 2`
      shows the node's tenants only.
 3. **The fleet.** Roll the node switch out node by node.
-4. **Take the store role away** (ADR slice 5). Once every node runs
+4. **Take the store role away** (ADR slice 5). On S3 fleets this first
+   needs the compute-node storage gates to accept a key-less
+   `storage.env` and `imaged-storage.env` under grants
+   (`compute_only_service`, `compute_admission`, `node_join.yml`,
+   `gregalectl deploy join`): they still require `FAAS_S3_ACCESS_KEY_ID`.
+   The daemons themselves start without a key under
+   `FAAS_STORAGE_ACCESS=secretd`. Once every node runs
    grants, remove the compute service account's bucket role (GCS) or delete
    its access key (S3). Check from a compute node that a direct read of a
    bucket object is refused.
@@ -53,6 +59,10 @@ the node. Everything is off by default.
   on the node means a placement row is missing. Compare the node with
   `instances`, `deployment_image_preparations`, `builds.builder_node_name`
   and `sandbox_sessions.placed_node_id`.
+- End-to-end check: the native lane `storage-grants-only`
+  (`FAAS_E2E_PHASE=storage-grants-only`, `FAAS_E2E_MINIO_BIN=<minio>`) runs
+  source and image deploy → wake with imaged, builderd and vmmd holding no
+  key; teardown logs the grants issued per class.
 - On granted nodes, imaged's superseded job artifacts and builderd's
   expired sources are no longer swept there. schedd's object GC worker
   sweeps them instead every 6 hours; schedd's journal shows
