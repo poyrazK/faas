@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "gregale": {
+      "url": "https://api.gregale.dev/mcp"
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "gregale",
+  "displayName": "Gregale",
+  "version": "1.0.0",
+  "description": "Deploy, diagnose and roll back APIs, background jobs and Postgres on Gregale from Cursor, through Gregale's hosted MCP server.",
+  "author": {
+    "name": "Gregale"
+  },
+  "homepage": "https://gregale.dev/docs/cursor",
+  "repository": "https://github.com/gregale-dev/gregale-cursor-plugin",
+  "license": "Apache-2.0",
+  "keywords": ["gregale", "deploy", "hosting", "serverless", "postgres", "mcp", "rollback", "firecracker"],
+  "logo": "assets/logo.png"
+}
