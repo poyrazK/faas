@@ -26,12 +26,40 @@ func (tg *target) createOnly(t *testing.T, token, name string) string {
 	return str(object(t, res.stdout), "slug")
 }
 
-// suffixedSlug asserts got is name with a five-character suffix.
+// suffixedSlug asserts got is name with a five-character suffix. Like
+// api.SuffixedAppSlugs, a name too long for the suffix is shortened to 34
+// characters first.
 func suffixedSlug(t *testing.T, name, got string) {
 	t.Helper()
-	suffix, ok := strings.CutPrefix(got, name+"-")
+	stem := name
+	if len(stem) > 34 {
+		stem = strings.TrimRight(stem[:34], "-")
+	}
+	suffix, ok := strings.CutPrefix(got, stem+"-")
 	if !ok || len(suffix) != 5 {
-		t.Fatalf("deploy --name %s created %q, want %s-<5 characters>", name, got, name)
+		t.Fatalf("deploy --name %s created %q, want %s-<5 characters>", name, got, stem)
+	}
+}
+
+// removeApp deletes slug from the account token belongs to and purges it, so
+// the next run can take the same name (a deleted app holds its slug for its
+// restore window). GREGALE_E2E_KEEP=1 keeps a failed journey's app.
+func (tg *target) removeApp(t *testing.T, token, slug string) {
+	t.Helper()
+	if slug == "" {
+		return
+	}
+	if tg.keep && t.Failed() {
+		t.Logf("keeping %s for debugging (GREGALE_E2E_KEEP=1)", slug)
+		return
+	}
+	res := tg.runAs(t, token, 2*time.Minute, "app", "delete", slug, "--yes")
+	if res.exit != 0 && !strings.Contains(res.problem(), "not_found") {
+		t.Logf("warning: cleanup could not delete %s (%s); the next run's sweeper deletes it", slug, tg.redact(res.problem()))
+		return
+	}
+	if res := tg.runAs(t, token, 2*time.Minute, "app", "purge", slug, "--yes"); res.exit != 0 {
+		t.Logf("warning: cleanup could not purge %s (%s); its name stays held until the restore window ends", slug, tg.redact(res.problem()))
 	}
 }
 
@@ -46,11 +74,7 @@ func TestAppNameTakenByAnotherAccount(t *testing.T) {
 	}
 	t.Parallel()
 	taken := tg.slug("taken")
-	t.Cleanup(func() {
-		if res := tg.runAs(t, tg.otherToken, 2*time.Minute, "app", "delete", taken, "--yes"); res.exit != 0 {
-			t.Logf("warning: cleanup could not delete the other account's %s (%s); the next run's sweeper removes it", taken, res.problem())
-		}
-	})
+	t.Cleanup(func() { tg.removeApp(t, tg.otherToken, taken) })
 	s := newStory(t)
 	if !s.step("other_account_takes_name", func(t *testing.T) {
 		if got := tg.createOnly(t, tg.otherToken, taken); got != taken {
@@ -63,9 +87,7 @@ func TestAppNameTakenByAnotherAccount(t *testing.T) {
 	var mine string
 	t.Cleanup(func() {
 		defer func() { <-tg.appSlots }()
-		if mine != "" {
-			tg.run(t, 2*time.Minute, "app", "delete", mine, "--yes")
-		}
+		tg.removeApp(t, tg.token, mine)
 	})
 	if !s.step("deploy_gets_suffixed_name", func(t *testing.T) {
 		mine = tg.createOnly(t, tg.token, taken)
@@ -111,9 +133,7 @@ func TestAppNameBlocked(t *testing.T) {
 	var mine string
 	t.Cleanup(func() {
 		defer func() { <-tg.appSlots }()
-		if mine != "" {
-			tg.run(t, 2*time.Minute, "app", "delete", mine, "--yes")
-		}
+		tg.removeApp(t, tg.token, mine)
 	})
 	s := newStory(t)
 	if !s.step("deploy_gets_suffixed_name", func(t *testing.T) {

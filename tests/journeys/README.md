@@ -34,7 +34,9 @@ make e2e-journeys TIER=full RUN=TestTemplateDeploys
   cookie for the same account; without it those steps skip.
 - **Second account** (optional): `TestAppNameTakenByAnotherAccount` needs
   an API key of a different account in `GREGALE_E2E_OTHER_TOKEN`. That
-  account holds a name for the journey; the journey deletes it afterwards.
+  account holds a name for the journey; the journey deletes and purges it
+  afterwards, and the sweeper also clears that account's stale journey apps.
+  It needs a CLI from a release that includes suffixed names (#7945).
   Without the key the journey skips.
 - **Blocked name** (optional): `TestAppNameBlocked` needs
   `GREGALE_E2E_BLOCKED_NAME`, an exact entry of the target's

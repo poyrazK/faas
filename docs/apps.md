@@ -293,8 +293,10 @@ Note: the name shop belongs to another account, so this app is shop-x7k2q (https
 ```
 
 The suffix depends only on your account (or organization) and the name, so
-the next deploy of the same name updates the same app. Pass `--name` to pick
-another name. A deploy whose `gregale.yaml` names the app keeps failing
+the next deploy of the same name updates the same app. If you deleted that
+app, its name stays held for the restore window and the deploy takes the
+next suffix instead; restore the app (`gregale app restore`) to keep using
+the old one. Pass `--name` to pick another name. A deploy whose `gregale.yaml` names the app keeps failing
 instead, because its routes and bindings would point at the wrong app.
 
 The API and `gregale app rename` do not add a suffix: creating or renaming

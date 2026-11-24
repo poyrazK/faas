@@ -1181,10 +1181,15 @@ func appSlotCount(limit, used, maxApps int) int {
 
 // cliJSON runs a read-only CLI command outside any test.
 func (tg *target) cliJSON(args ...string) ([]map[string]any, error) {
+	return tg.cliJSONAs(tg.token, args...)
+}
+
+// cliJSONAs is cliJSON with another account's token.
+func (tg *target) cliJSONAs(token string, args ...string) ([]map[string]any, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, tg.cli, append([]string{"--non-interactive"}, args...)...)
-	cmd.Env = tg.cliEnv(tg.token)
+	cmd.Env = tg.cliEnv(token)
 	cmd.Dir = tg.home
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -1221,19 +1226,31 @@ func (tg *target) sweep(hours string) error {
 		}
 		fmt.Fprintf(os.Stderr, "journeys: swept stale preview %s\n", preview)
 	}
-	stale := staleSlugs(docs, cutoff, tg.runID)
+	tg.sweepApps(tg.token, staleSlugs(docs, cutoff, tg.runID))
+	// The second account (GREGALE_E2E_OTHER_TOKEN) holds journey apps too.
+	if tg.otherToken != "" {
+		if others, err := tg.cliJSONAs(tg.otherToken, "app", "list"); err != nil {
+			fmt.Fprintf(os.Stderr, "journeys: sweep: list the second account's apps: %v\n", err)
+		} else {
+			tg.sweepApps(tg.otherToken, staleSlugs(others, cutoff, tg.runID))
+		}
+	}
+	tg.sweepDatabases(cutoff)
+	return nil
+}
+
+// sweepApps deletes stale journey apps of the account token belongs to.
+func (tg *target) sweepApps(token string, stale []string) {
 	for _, slug := range stale {
 		rm := exec.Command(tg.cli, "--non-interactive", "app", "delete", slug, "--yes")
-		rm.Env = tg.cliEnv(tg.token)
+		rm.Env = tg.cliEnv(token)
 		rm.Dir = tg.home
 		if out, err := rm.CombinedOutput(); err != nil {
-			fmt.Fprintf(os.Stderr, "journeys: sweep %s: %v: %s\n", slug, err, tail(string(out), 300))
+			fmt.Fprintf(os.Stderr, "journeys: sweep %s: %v: %s\n", slug, err, tg.redact(tail(string(out), 300)))
 			continue
 		}
 		fmt.Fprintf(os.Stderr, "journeys: swept stale app %s\n", slug)
 	}
-	tg.sweepDatabases(cutoff)
-	return nil
 }
 
 // sweepDatabases purges managed databases journeys created in earlier runs,
