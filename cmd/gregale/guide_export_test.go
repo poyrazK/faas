@@ -34,5 +34,27 @@ func RenderGuideIndex() string { return renderGuideIndex() }
 
 const GuidePageMaxBytes = guidePageMaxBytes
 
-// ResetAgentHint lets a test print the agent pointer again.
-func ResetAgentHint() { agentHintPrinted = false }
+// ResetAgentHint lets a test print the agent pointer again: a new process
+// with no marker of an earlier pointer.
+func ResetAgentHint(t interface{ Cleanup(func()) }) {
+	old := agentHintMarker
+	agentHintPrinted = false
+	agentHintMarker = func() string { return "" }
+	t.Cleanup(func() { agentHintMarker = old })
+}
+
+// AgentHintMarkerName names the marker file for the given environment.
+func AgentHintMarkerName(getenv func(string) string) string { return agentHintMarkerName(getenv) }
+
+// SetAgentHintMarker points the across-process record at path for this test
+// and starts a new process.
+func SetAgentHintMarker(t interface{ Cleanup(func()) }, path string) {
+	old := agentHintMarker
+	agentHintMarker = func() string { return path }
+	agentHintPrinted = false
+	t.Cleanup(func() { agentHintMarker = old })
+}
+
+// NewAgentHintProcess forgets the in-process pointer, as a new gregale
+// process would; the marker file stays.
+func NewAgentHintProcess() { agentHintPrinted = false }

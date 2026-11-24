@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/capgrant"
 	"github.com/onebox-faas/faas/pkg/dispatch"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
@@ -2188,6 +2189,10 @@ type AppManifest struct {
 	// AllowedServiceCallScopes is an optional, target-owned method/path policy.
 	// A non-nil empty map denies all callers; map keys are logical app names.
 	AllowedServiceCallScopes *api.ServiceCallerScopes `json:"allowed_service_call_scopes,omitempty"`
+	// Uses are the gregale.yaml `uses:` grants: what the app's workload
+	// identity may do on itself or a sibling app without an API key
+	// (ADR-20261122191423). Project apply replaces it on every reconcile.
+	Uses *capgrant.Uses `json:"uses,omitempty"`
 
 	WorkingDir string `json:"working_dir,omitempty"`
 	Port       int    `json:"port,omitempty"`
@@ -2286,7 +2291,7 @@ func (m AppManifest) EffectivePreviewServiceCallsPolicy() api.PreviewServiceCall
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
 	return len(m.PublicBuildURLs) == 0 && m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
-		m.BuildDockerfile == "" && m.DockerfileBuild == nil && m.BuildGoCommand == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && m.ProjectReadinessCheck == nil && m.ProjectImageProcess == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ProjectSecretFiles) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
+		m.BuildDockerfile == "" && m.DockerfileBuild == nil && m.BuildGoCommand == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && m.ProjectReadinessCheck == nil && m.ProjectImageProcess == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ProjectSecretFiles) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && (m.Uses == nil || m.Uses.IsZero()) && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Warmup == nil && m.Pause == "" && m.Profiling == nil && m.Tracing == nil &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 && m.FunctionConcurrency == 0 &&
@@ -2323,10 +2328,13 @@ func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
 	existing.PreviewServiceCallsPolicy = desired.PreviewServiceCallsPolicy
 	existing.AllowedServiceCallers = desired.AllowedServiceCallers
 	existing.AllowedServiceCallScopes = desired.AllowedServiceCallScopes
+	existing.Uses = desired.Uses.Clone()
 	if len(existing.Env) > 0 || len(desired.Env) > 0 {
 		merged := make(map[string]string, len(existing.Env)+len(desired.Env))
 		for key, value := range existing.Env {
-			if strings.HasPrefix(key, api.ServiceBindingEnvPrefix) && strings.HasSuffix(key, api.ServiceBindingEnvSuffix) {
+			if strings.HasPrefix(key, api.ServiceBindingEnvPrefix) && strings.HasSuffix(key, api.ServiceBindingEnvSuffix) ||
+				key == api.WorkloadCredentialsEnv && value == api.WorkloadObjectCredentialsEndpoint {
+				// Platform-managed values come back from desired only.
 				continue
 			}
 			merged[key] = value

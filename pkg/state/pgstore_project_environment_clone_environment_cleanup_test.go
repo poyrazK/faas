@@ -263,6 +263,9 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		t.Fatal(err)
 	}
 	expected := []string{
+		"analytics_cohorts.environment_id", // Product analytics events, property keys and cohorts cascade with the environment row.
+		"analytics_events.environment_id",
+		"analytics_property_keys.environment_id",
 		"app_binding_release_policies.scope",
 		"app_binding_release_policy_history.scope",
 		"app_config_guards.scope",      // Closed and open config guard windows are change history; app_envs already blocks while configuration remains.
@@ -323,6 +326,9 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"event_subscriptions.deployment_scope",            // Removed by environment deletion (deleteProjectEnvironmentRowsTx).
 		"event_subscriptions.environment_id",
 		"exclusive_work_keys.environment_id",
+		"execution_environment_diagnostics.environment_id", // Gregale Run execution environments (execution_environments), not a project environment.
+		"execution_task_versions.environment_id",
+		"executions.environment_id",
 		"feature_flag_versions.environment_id",
 		"financial_budget_stop_targets.environment_id",      // In-flight (requested/draining) budget stops block scope cleanup; enforced and failed ones are retained history.
 		"financial_preview_command_runtimes.environment_id", // Preparing/active preview runtimes block scope cleanup; retired rows are retained history.

@@ -253,6 +253,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/runtime/data-api/connection-observations": true,
 	"POST /v1/runtime/data-api/usage":                   true,
 	"POST /v1/runtime/data-api/budget":                  true, // Dedicated workload identity; owner API keys cannot spend credits.
+	"POST /v1/workload/object-storage/credentials":      true, // gregale:bindings workload identity; guest-init's loopback endpoint calls it, never customer code (ADR-20261122191423).
 	"POST /v1/runtime/data-api/events":                  true,
 	"POST /v1/runtime/data-api/change-status":           true,
 

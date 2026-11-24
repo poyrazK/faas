@@ -120,6 +120,10 @@ func applyProjectConfig(fsys fs.FS, workloads []Workload) ([]string, error) {
 			w.Access = service.Access
 		}
 		w.DependsOn = mergeDependsOn(w.DependsOn, service.DependsOn)
+		if service.Uses != nil {
+			uses := service.Uses.Normalized()
+			w.Uses = &uses
+		}
 	}
 	return warnings, nil
 }
