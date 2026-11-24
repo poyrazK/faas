@@ -49,13 +49,20 @@ func TestMCPNativeReleaseChecksWorkerRuntimeBeforeSideEffects(t *testing.T) {
 					t.Fatalf("%s unexpectedly succeeded", action)
 				}
 				actionError := stderr()[stderrOffset:]
-				if runtime == "node" {
+				// Every starter's run reaches the control-plane preflight: Node
+				// through its own gate, Go/Python through the CLI's built-in gate
+				// (ADR-20261123160000).
+				if action == "run" {
 					if requests != 1 || !strings.Contains(actionError, "Upgrade") {
-						t.Fatalf("Node gate did not reach control-plane preflight: requests=%d error=%s", requests, actionError)
+						t.Fatalf("%s gate did not reach control-plane preflight: requests=%d error=%s", runtime, requests, actionError)
 					}
-					break
+					if runtime == "node" {
+						break
+					}
+					continue
 				}
-				if requests != 0 || !strings.Contains(actionError, "manual rollout for Go/Python") {
+				// Recovery and retirement still need the Node gate's claim fence.
+				if requests != 1 || !strings.Contains(actionError, "needs a Node worker") || !strings.Contains(actionError, "manual rollout") {
 					t.Fatalf("%s failed too late or without runtime guidance: requests=%d error=%s", action, requests, actionError)
 				}
 				for _, path := range []string{state, state + ".lock", state + ".gate"} {
