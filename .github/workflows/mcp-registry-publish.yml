@@ -1,0 +1,110 @@
+name: MCP registry publish
+
+# Lists Gregale's hosted MCP server (https://api.gregale.dev/mcp) in the
+# official MCP registry, which Claude, Cursor, VS Code and other clients'
+# server galleries read. packaging/mcp-registry/server.json is the listing;
+# bump its "version" to publish a change, since the registry refuses a
+# version it already has. Pull requests only validate, and never receive an
+# OIDC token: the registry accepts any token from this repository's owner,
+# whatever the ref.
+
+on:
+  pull_request:
+    paths:
+      - packaging/mcp-registry/server.json
+      - .github/workflows/mcp-registry-publish.yml
+      - scripts/ci/install-mcp-publisher.sh
+  push:
+    branches: [main]
+    paths:
+      - packaging/mcp-registry/server.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-registry-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  MCP_PUBLISHER_VERSION: v1.8.9
+  SERVER_JSON: packaging/mcp-registry/server.json
+  REGISTRY_NAME: io.github.poyrazK/gregale
+
+jobs:
+  validate:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Download and verify mcp-publisher
+        run: scripts/ci/install-mcp-publisher.sh
+
+      - name: Validate server.json
+        run: ./mcp-publisher validate "$SERVER_JSON"
+
+      - name: Require a version bump when the listing changes
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet "$BASE_SHA" HEAD -- "$SERVER_JSON"; then
+            echo "server.json unchanged"
+            exit 0
+          fi
+          head_version="$(jq -r .version "$SERVER_JSON")"
+          base_version="$(git show "$BASE_SHA:$SERVER_JSON" 2>/dev/null | jq -r .version || true)"
+          if [ "$head_version" = "$base_version" ]; then
+            echo "::error file=$SERVER_JSON::server.json changed but version is still $head_version; bump it, the registry refuses a version it already has"
+            exit 1
+          fi
+
+  publish:
+    needs: validate
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write # GitHub OIDC login for the io.github.poyrazK namespace
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Download and verify mcp-publisher
+        run: scripts/ci/install-mcp-publisher.sh
+
+      - name: Skip a version the registry already has
+        id: published
+        run: |
+          set -euo pipefail
+          version="$(jq -r .version "$SERVER_JSON")"
+          if curl --fail --silent --show-error --get \
+              --data-urlencode "search=$REGISTRY_NAME" --data-urlencode "version=$version" \
+              https://registry.modelcontextprotocol.io/v0/servers \
+            | jq -e --arg n "$REGISTRY_NAME" --arg v "$version" \
+                '[.servers[] | (.server // .) | select(.name == $n and .version == $v)] | length > 0' >/dev/null; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$REGISTRY_NAME $version is already published; bump version in $SERVER_JSON to publish a change"
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to the MCP registry
+        if: steps.published.outputs.already != 'true'
+        run: |
+          set -euo pipefail
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish "$SERVER_JSON"

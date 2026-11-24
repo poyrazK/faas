@@ -67,3 +67,28 @@ func (h *Handler) billingRouteSetFor(appID string) *routeLabelSet {
 	actual, _ := h.billingRouteSets.LoadOrStore(appID, newRouteLabelSet())
 	return actual.(*routeLabelSet)
 }
+
+type planRouteKey struct{}
+
+// withPlanRoute keeps a consumer request's route label before the app's
+// bounded billing label set can fold it into the overflow label. Plan
+// route limits and plan unit weights look routes up by it, so filling the
+// set with made-up paths cannot switch a cap off (ADR-20261123192254).
+func withPlanRoute(r *http.Request, route string) *http.Request {
+	if r == nil || route == "" {
+		return r
+	}
+	return r.WithContext(context.WithValue(r.Context(), planRouteKey{}, route))
+}
+
+// planRouteFrom is the route consumer plan admission uses: the label
+// withPlanRoute kept, else the billing label.
+func planRouteFrom(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if route, _ := r.Context().Value(planRouteKey{}).(string); route != "" {
+		return route
+	}
+	return billingRouteFrom(r)
+}

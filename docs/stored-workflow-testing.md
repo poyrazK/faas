@@ -3,8 +3,9 @@
 Check a stored workflow before and after you publish it: save test cases,
 run verification suites against real executions, keep baselines, simulate
 runs, and require coverage before a release. Building workflows is covered in
-[Build stored workflows](stored-workflow-authoring.md); running and recovering
-them in [Run and recover stored workflows](stored-workflow-operations.md).
+[Build stored workflows](stored-workflow-authoring.md); running them in
+[Run and monitor stored workflows](stored-workflow-operations.md); recovering
+failed runs in [Recover stored workflow runs](stored-workflow-recovery.md).
 
 ## Test cases, verification suites and baselines
 

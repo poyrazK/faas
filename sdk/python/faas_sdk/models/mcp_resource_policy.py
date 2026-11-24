@@ -43,6 +43,11 @@ class MCPResourcePolicy:
     """
     tool_limits: MCPResourcePolicyToolLimits | Unset = UNSET
     """Per-caller limits on tools/call, keyed by tool name."""
+    audience: str | Unset = UNSET
+    """Token audience an external OAuth issuer uses for this server when
+    it is not the resource. The rule's JWT audience must then be
+    exactly this value. Bearer-token policies only.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -92,6 +97,8 @@ class MCPResourcePolicy:
         if not isinstance(self.tool_limits, Unset):
             tool_limits = self.tool_limits.to_dict()
 
+        audience = self.audience
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -113,6 +120,8 @@ class MCPResourcePolicy:
             field_dict["credential"] = credential
         if tool_limits is not UNSET:
             field_dict["tool_limits"] = tool_limits
+        if audience is not UNSET:
+            field_dict["audience"] = audience
 
         return field_dict
 
@@ -195,6 +204,8 @@ class MCPResourcePolicy:
         else:
             tool_limits = MCPResourcePolicyToolLimits.from_dict(_tool_limits)
 
+        audience = d.pop("audience", UNSET)
+
         mcp_resource_policy = cls(
             resource=resource,
             scopes=scopes,
@@ -204,6 +215,7 @@ class MCPResourcePolicy:
             prompt_scopes=prompt_scopes,
             credential=credential,
             tool_limits=tool_limits,
+            audience=audience,
         )
 
         mcp_resource_policy.additional_properties = d
