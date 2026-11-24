@@ -131,6 +131,31 @@ func TestWorkloadAdmissionReservedSlugsAndNearMisses(t *testing.T) {
 	}
 }
 
+// app_name_blocklist binds only new names: a new workload with a blocked name
+// is refused, while a project member that already has it and a standalone
+// function app the import adopts keep it.
+func TestBlockedAppNameReasons(t *testing.T) {
+	blocklist := []string{"*paypal*"}
+	if reasons := BlockedAppNameReasons([]reposcan.Workload{{Name: "paypal-shop"}, {Name: "my-shop"}}, nil, "project-1", blocklist); len(reasons) != 1 || !strings.Contains(reasons[0], `"paypal-shop"`) {
+		t.Errorf("new blocked workload reasons = %v", reasons)
+	}
+	if reasons := BlockedAppNameReasons([]reposcan.Workload{{Name: "paypal-shop"}}, nil, "", nil); len(reasons) != 0 {
+		t.Errorf("empty blocklist reasons = %v", reasons)
+	}
+	member := []state.App{{Slug: "paypal-shop", ProjectID: "project-1", WorkloadName: "paypal-shop", Status: state.AppActive}}
+	if reasons := BlockedAppNameReasons([]reposcan.Workload{{Name: "paypal-shop"}}, member, "project-1", blocklist); len(reasons) != 0 {
+		t.Errorf("existing project member reasons = %v", reasons)
+	}
+	if reasons := BlockedAppNameReasons([]reposcan.Workload{{Name: "paypal-shop"}}, member, "project-2", blocklist); len(reasons) != 1 {
+		t.Errorf("another project's app reasons = %v", reasons)
+	}
+	standalone := []state.App{{Slug: "paypal-hooks", Type: state.AppTypeFunction, Status: state.AppActive}}
+	fn := reposcan.Workload{Name: "paypal-hooks", Function: &reposcan.FunctionWorkload{}}
+	if reasons := BlockedAppNameReasons([]reposcan.Workload{fn}, standalone, "project-1", blocklist); len(reasons) != 0 {
+		t.Errorf("adoptable function app reasons = %v", reasons)
+	}
+}
+
 func TestReconcileRejectsInvalidWorkloadBeforeWrites(t *testing.T) {
 	store := newFakeStore()
 	_, project := seedProject(t, store, state.ProjectScanSourceCompose, "main")

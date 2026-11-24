@@ -75,6 +75,10 @@ type composeCandidate struct {
 	// --streaming-enabled` and `gregale app wake-ahead <slug> on` do.
 	Streaming *bool `yaml:"x-gregale-streaming"`
 	WakeAhead *bool `yaml:"x-gregale-wake-ahead"`
+	// Access opens the service's public URL to everyone ("public") or keeps
+	// the Gregale API key requirement ("key"), as `access:` under
+	// project.services in gregale.yaml does (ADR-20261124090000).
+	Access string `yaml:"x-gregale-access"`
 	// RenamedFrom names the service this one was called before, so a
 	// rename keeps its app (ADR-20261029090000).
 	RenamedFrom string `yaml:"x-gregale-renamed-from"`
@@ -350,6 +354,13 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		if !hasWorkload && s.WakeAhead != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-wake-ahead requires a deployable workload", src, name)
 		}
+		access, accessErr := NormalizeServiceAccess(s.Access)
+		if accessErr != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-access: %w", src, name, accessErr)
+		}
+		if !hasWorkload && access != "" {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-access requires a deployable workload", src, name)
+		}
 		conditions, dependencyErr := composeDependencyConditions(s.DependsOn)
 		if dependencyErr != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, dependencyErr)
@@ -519,6 +530,7 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			platformTenantRequired:    s.PlatformTenantRequired,
 			streaming:                 s.Streaming,
 			wakeAhead:                 s.WakeAhead,
+			access:                    access,
 			renamedFrom:               renamedFrom,
 
 			ports:         ports,

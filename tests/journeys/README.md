@@ -32,6 +32,18 @@ make e2e-journeys TIER=full RUN=TestTemplateDeploys
   agent's request, need a signed-in dashboard session. Set
   `GREGALE_E2E_SESSION` to the value of the browser's `__Host-faas_sid`
   cookie for the same account; without it those steps skip.
+- **Second account** (optional): `TestAppNameTakenByAnotherAccount` needs
+  an API key of a different account in `GREGALE_E2E_OTHER_TOKEN`. That
+  account holds a name for the journey; the journey deletes and purges it
+  afterwards, and the sweeper also clears that account's stale journey apps.
+  It needs a CLI from a release that includes suffixed names (#7945).
+  Without the key the journey skips.
+- **Blocked name** (optional): `TestAppNameBlocked` needs
+  `GREGALE_E2E_BLOCKED_NAME`, an exact entry of the target's
+  `app_name_blocklist` that no other entry's `*` pattern extends (so
+  `<name>-<suffix>` is allowed) and that the journey account does not own.
+  It needs a CLI from a release that includes the blocklist. Without the
+  variable the journey skips.
 - **Output**: live PASS/FAIL/SKIP lines, then a summary, every failure with
   its log, and `metric` lines (e.g. cold-wake time). The raw `go test -json`
   stream and `report.md` land in `.e2e-journeys/<timestamp>/` (gitignored).

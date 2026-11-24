@@ -1,6 +1,7 @@
 package apphealth
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -29,7 +30,7 @@ func healthEvidence() Evidence {
 func TestAppHealth_ReportsRecentBootFailures(t *testing.T) {
 	check := func(e Evidence) (string, bool) {
 		for _, c := range Evaluate(e).Checks {
-			if c.Code == "readiness" && strings.Contains(c.Detail, "failed in the last") {
+			if c.Code == "readiness" && strings.Contains(c.Detail, "failed to boot, exited or failed liveness in the last") {
 				return c.Status, true
 			}
 		}
@@ -57,6 +58,67 @@ func TestAppHealth_ReportsRecentBootFailures(t *testing.T) {
 	}
 	if got := Evaluate(e).Status; got == Healthy {
 		t.Fatalf("status = %q while new boots fail", got)
+	}
+}
+
+// Prod hunt r33: a serving app crash-looped (guest-init exhausted its
+// restarts), schedd stopped the instance with liveness_failed, and app
+// health and inspect reported nothing, because the row ends STOPPED.
+func TestAppHealth_ReportsInstancesThatExited(t *testing.T) {
+	e := healthEvidence()
+	e.RecentInstances = []state.Instance{
+		{ID: "crashed", DeploymentID: "serving", State: string(state.StateStopped), StartedAt: e.Now.Add(-time.Hour)},
+		{ID: "parked-normally", DeploymentID: "serving", State: string(state.StateStopped), StartedAt: e.Now.Add(-time.Minute)},
+	}
+	e.LivenessFailed = map[string]bool{"crashed": true}
+	found := false
+	for _, c := range Evaluate(e).Checks {
+		if c.Code == "readiness" && strings.Contains(c.Detail, "1 instance(s) of a serving release failed to boot, exited or failed liveness") {
+			found = c.Status == Warning || c.Status == Fail
+		}
+	}
+	if !found {
+		t.Fatalf("exited instance not reported: %+v", Evaluate(e).Checks)
+	}
+}
+
+type livenessEvidenceStore struct {
+	EvidenceStore
+	failed map[string]bool
+	calls  int
+	asked  []string
+}
+
+func (s *livenessEvidenceStore) ListEventSubjectsWithKind(_ context.Context, subjects []string, kind string, _ time.Time) (map[string]bool, error) {
+	s.calls++
+	s.asked = append(s.asked, subjects...)
+	out := map[string]bool{}
+	for _, subject := range subjects {
+		if kind == livenessFailedKind && s.failed[subject] {
+			out[subject] = true
+		}
+	}
+	return out, nil
+}
+
+// Recent STOPPED non-worker instances are looked up in one read, and only
+// those with a liveness_failed transition are marked.
+func TestCollectLivenessFailures(t *testing.T) {
+	now := time.Now().UTC()
+	store := &livenessEvidenceStore{failed: map[string]bool{"crashed": true}}
+	e := &Evidence{RecentInstances: []state.Instance{
+		{ID: "crashed", State: string(state.StateStopped), LastRequestAt: now.Add(-time.Minute)},
+		{ID: "parked", State: string(state.StateStopped), LastRequestAt: now.Add(-time.Minute)},
+		{ID: "old", State: string(state.StateStopped), LastRequestAt: now.Add(-BootFailureWindow - time.Minute)},
+		{ID: "worker", State: string(state.StateStopped), Mode: string(state.InstanceModeWorker), LastRequestAt: now},
+		{ID: "running", State: string(state.StateRunning), LastRequestAt: now},
+	}}
+	collectLivenessFailures(t.Context(), store, e)
+	if len(e.LivenessFailed) != 1 || !e.LivenessFailed["crashed"] {
+		t.Fatalf("liveness failed = %v", e.LivenessFailed)
+	}
+	if store.calls != 1 || strings.Join(store.asked, ",") != "crashed,parked" {
+		t.Fatalf("%d reads of %v, want one read of the recent stopped non-workers", store.calls, store.asked)
 	}
 }
 

@@ -2132,6 +2132,12 @@ type WorkerScaling struct {
 // as jsonb in Postgres; lifecycle fields are overlaid onto each deployment's
 // image manifest before it is written into the snapshot for guest-init.
 type AppManifest struct {
+	// DeclaredAccess is the public-URL access the app's project service
+	// declares in gregale.yaml or Compose ("public" or "key",
+	// ADR-20261124090000). A deploy that finds it set but no declaration
+	// in the source restores the plan's auth defaults; an app whose access
+	// was never declared keeps what its owner set by hand.
+	DeclaredAccess string `json:"declared_access,omitempty"`
 	// PublicBuildURLs are explicitly reviewed, non-secret frontend build inputs.
 	// New production source deployments capture an immutable copy at INSERT.
 	PublicBuildURLs map[string]string `json:"public_build_urls,omitempty"`

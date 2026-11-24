@@ -166,7 +166,7 @@ See [Troubleshooting](troubleshooting.md).
 
 HTTP 403 Forbidden · App too large
 
-See [Builds and framework detection](build.md#limits), [Container compatibility](container-compatibility.md), [Troubleshooting](troubleshooting.md).
+See [Builds and framework detection](build.md#limits), [Container compatibility](container-compatibility.md), [Deploy a Next.js app](deploy-nextjs.md), [Troubleshooting](troubleshooting.md).
 
 ### `app_log_drain_invalid`
 
@@ -194,6 +194,10 @@ HTTP 503 Service Unavailable · App in maintenance
 
 HTTP 409 Conflict or 422 Unprocessable Entity · Many operations send this code; the response's `title` and `detail` name the failure.
 
+### `app_name_unavailable`
+
+HTTP 409 Conflict · App name unavailable
+
 ### `app_not_listening`
 
 HTTP 422 Unprocessable Entity · No process listening on $PORT; App listens on a different port
@@ -215,6 +219,8 @@ HTTP 400 Bad Request · Invalid app_protocol; Invalid app protocol
 ### `app_rename_failed`
 
 HTTP 409 Conflict · Slug taken
+
+See [Apps](apps.md).
 
 ### `app_runtime_oom`
 
