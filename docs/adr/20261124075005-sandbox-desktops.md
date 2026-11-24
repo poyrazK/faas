@@ -83,6 +83,22 @@ A desktop is just more programs in the guest: an X server, a window manager, a V
 - Invariant 2 is unchanged: the session admits at its RAM like any other.
 - A desktop's snapshots are larger than a headless session's (its touched memory is 0.6–1.2 GB). Warm snapshots of the desktop image and pause captures are sandbox snapshots, kept apart from the apps' `snapshot_fleet_avg_mb`.
 
+### Measured (2026-11-24, `TestMetalSandboxDesktop`)
+
+On the m7i-flex test host (nested KVM, Firecracker 1.10, 2 vCPU, 2048 MB, 1280x800, network `none`):
+
+| What | Result |
+|---|---|
+| Cold boot to ready (start and ready commands) | 9.2 s |
+| VM resident memory, idle desktop | 689 MB |
+| VM resident memory, Chromium and Mousepad open | 1,400 MB |
+| `move` + `cursor` round trip through exec | 182 ms |
+| Capture of the running desktop | 7.3 s; memory file 2,048 MB (the guest's size, sparse) |
+| Restore of the capture to a working desktop (windows kept) | 2.3 s |
+| VM resident memory after the restore | 596 MB |
+
+The image is 1.75 GB (1.2 GB unpacked root). In Docker on the same host the desktop is ready in 0.8–1.6 s, so most of the VM's cold boot is reading the image drive and starting Xfce cold. That is why a desktop should resume from a pause capture or warm snapshot where it can. 2048 MB is the right default: Chromium takes the VM to about 1.4 GB.
+
 ### Limits (`pkg/api/limits.go`)
 
 | Limit | Free | Hobby | Pro | Scale |
