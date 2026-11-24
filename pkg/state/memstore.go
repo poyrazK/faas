@@ -583,6 +583,7 @@ type MemStore struct {
 	// ADR-20261122220000 verification contracts and their SQL handoff.
 	verificationContracts       map[string]VerificationContract
 	verificationQueries         map[string]VerificationQuery
+	verificationLeases          map[string]VerificationLease
 	mu                          sync.Mutex
 	outboundProbePolicies       map[string]api.OutboundBindingProbePolicy
 	outboundCredentialRevisions map[string]int64
@@ -651,7 +652,8 @@ type MemStore struct {
 	apiConsumerBillingPolicies           map[string]APIConsumerBillingPolicy       // ADR-1315, by app
 	apiConsumerOverdueHolds              map[string]APIConsumerOverdueHold         // ADR-1315, by consumer
 	platformTenants                      map[string]PlatformTenant
-	flagEvents                           *memFlagEvents // ADR 20261115163113, lazily made
+	flagEvents                           *memFlagEvents                 // ADR 20261115163113, lazily made
+	savedInsights                        map[string]*memSavedInsightRow // ADR-20261122190000, by ID, lazily made
 	platformTenantReconciliationReceipts map[string]api.PlatformTenantReconciliationReceiptResponse
 	platformTenantOffboardingReceipts    map[string]api.PlatformTenantOffboardingReceiptResponse
 	platformTenantAccessTokens           map[string]PlatformTenantAccessToken
@@ -1355,6 +1357,8 @@ type MemStore struct {
 	// apiConsumerSpendCaps (by consumer ID) back prepaid credits and spend
 	// caps (ADR-1306).
 	apiConsumerCreditGrants       map[string]APIConsumerCreditGrant
+	apiConsumerCreditPackSettings map[string]api.ConsumerCreditPackSettings
+	apiConsumerCreditPurchases    map[string]APIConsumerCreditPurchase
 	apiConsumerCreditApplications []apiConsumerCreditApplication
 	apiConsumerSpendCaps          map[string]APIConsumerSpendCap
 	// platformTenantCreditGrants (by ID), platformTenantCreditApplications

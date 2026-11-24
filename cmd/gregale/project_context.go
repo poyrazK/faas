@@ -431,10 +431,11 @@ func withLinkedApp(positional []string, n int) []string {
 	return append([]string{app}, positional...)
 }
 
-// linkedDomainTarget is the linked app a domain command binds to when --app
-// is missing, with the linked environment unless --environment names one: a
-// checkout linked to staging bound its domain to production otherwise.
-func linkedDomainTarget(environment string) (string, string) {
+// linkedAppAndEnvironment is the linked app a command (domain add/setup, cron
+// create) targets when --app is missing, with the linked environment unless
+// --environment names one: a checkout linked to staging bound its domain to
+// production otherwise.
+func linkedAppAndEnvironment(environment string) (string, string) {
 	app := linkedAppForMissingSlug()
 	if app == "" || environment != "" {
 		return app, environment

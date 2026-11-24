@@ -122,6 +122,14 @@ func (c *Client) ChangeOrgManagedPostgresComputePolicy(ctx context.Context, orga
 	return out, err
 }
 
+// SetOrgManagedPostgresSuspendTimeout is SetManagedPostgresSuspendTimeout for
+// an organization's database.
+func (c *Client) SetOrgManagedPostgresSuspendTimeout(ctx context.Context, organization string, id string, request SetManagedPostgresSuspendTimeoutRequest) (ManagedPostgresSuspendTimeout, error) {
+	var out ManagedPostgresSuspendTimeout
+	err := c.do(ctx, http.MethodPut, orgPostgresPath(organization)+"/databases/"+url.PathEscape(id)+"/suspend-timeout", request, &out)
+	return out, err
+}
+
 func (c *Client) GetOrgManagedPostgresComputePolicyChange(ctx context.Context, organization string, databaseID, changeID string) (ManagedPostgresComputePolicyChange, error) {
 	var out ManagedPostgresComputePolicyChange
 	err := c.do(ctx, http.MethodGet, orgPostgresPath(organization)+"/databases/"+url.PathEscape(databaseID)+"/compute-policy-changes/"+url.PathEscape(changeID), nil, &out)

@@ -834,6 +834,17 @@ func (s *server) runManagedPostgresUsageCollector(ctx context.Context) {
 	}
 }
 
+// runManagedPostgresSuspendTimeouts moves scale-to-zero databases onto their
+// suspend timeout on its own loop, whether or not usage metering runs.
+func (s *server) runManagedPostgresSuspendTimeouts(ctx context.Context) {
+	if s.managedPostgres == nil {
+		return
+	}
+	if err := s.managedPostgres.RunSuspendTimeoutSweeper(ctx, s.log); err != nil && !errors.Is(err, context.Canceled) {
+		s.log.Error("managed postgres suspend timeout sweeper exited", "error", err)
+	}
+}
+
 func (s *server) runManagedPostgresReconciler(ctx context.Context) {
 	if s.managedPostgresReconciler == nil {
 		return

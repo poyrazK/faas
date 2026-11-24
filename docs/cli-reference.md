@@ -4845,6 +4845,32 @@ Read compute policy change progress
 
 `gregale postgres compute-policy status <database> <request_uuid>`
 
+### postgres suspend-timeout
+
+Set how long an idle scale-to-zero database stays up (1m-1h, or default)
+
+`gregale postgres suspend-timeout <set> <database> <duration|default>`
+
+Examples:
+
+```sh
+gregale postgres suspend-timeout set orders-db 2m
+gregale postgres suspend-timeout set orders-db default
+```
+
+#### postgres suspend-timeout set
+
+Set how long an idle scale-to-zero database stays up (1m-1h, or default)
+
+`gregale postgres suspend-timeout set <database> <duration|default>`
+
+Examples:
+
+```sh
+gregale postgres suspend-timeout set orders-db 2m
+gregale postgres suspend-timeout set orders-db default
+```
+
 ### postgres resize
 
 Durably resize compute; clients may disconnect
@@ -5251,7 +5277,7 @@ Account object storage observations, safety policy and billing state
 
 List an app&#39;s object-storage buckets and their IDs
 
-`gregale bucket list <app>`
+`gregale bucket list [<app>]`
 
 ### bucket delete
 
@@ -5734,7 +5760,7 @@ Schedule a POST to an app path, or a deployment command
 | `--at <RFC3339>` | send one request at this RFC3339 time instead of on a schedule |  |
 | `--in <DURATION>` | send one request after this delay (such as 30m) instead of on a schedule |  |
 | `--interactive` | choose an HTTP path, schedule, and timezone, preview run times, and confirm creation |  |
-| `--app <slug>` | app slug (interactive mode can use linked app or picker) |  |
+| `--app <slug>` | app slug (defaults to linked context; interactive mode can also pick one) |  |
 | `--schedule <EXPR>` | five-field cron expression (required unless interactive) |  |
 | `--path <PATH>` | path the cron sends a POST to (mutually exclusive with --command) |  |
 | `--command <EXEC>` | executable for a deployment command cron (preview: needs app tasks) |  |

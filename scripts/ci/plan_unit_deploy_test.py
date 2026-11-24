@@ -116,12 +116,21 @@ class ControlPlaneLaneTest(unittest.TestCase):
         got = pud.plan(release(), full_host(), "edge", CP, ancestor)
         self.assertEqual(got["action"], "none")
 
+    def test_a_host_ahead_of_the_release_plans_nothing(self):
+        # An owner-dispatched compute-lane canary released a later commit
+        # (ADR-20261123122457); a lane-off run stalled behind it must
+        # neither downgrade the host nor fail.
+        host = overlay_host({"apid": APID["version"]}, commit=T2)
+        got = cp_plan(release(commit=T1, apid=APID), host)
+        self.assertEqual(got["action"], "none")
+        self.assertEqual((got["only"], got["ahead"]), ([], T2))
+
     def test_refusals(self):
         cases = [
             ("N±1: base is not the previous release", release(), full_host(), {"previous_release": "8" * 40},
              "N±1"),
             ("another full release", release(), full_host() | {"base_git_sha": "9" * 40}, {}, "host runs full release"),
-            ("newer unit release on host", release(commit=T1), overlay_host({"apid": APID["version"]}, commit=T2),
+            ("diverged unit release on host", release(commit=T2), overlay_host({"apid": APID["version"]}, commit="3" * 40),
              {}, "not an ancestor"),
             ("host carries a unit this release lacks", release(apid=APID),
              overlay_host({"meterd": METERD["version"]}), {}, "does not carry: meterd"),

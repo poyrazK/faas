@@ -240,6 +240,11 @@ var cliTreeAliases = []cliTreeAlias{
 	{"insight cohort get", "insights cohorts get"},
 	{"insight cohort delete", "insights cohorts delete"},
 	{"insight cohort refresh", "insights cohorts refresh"},
+	{"insight saved list", "insights saved list"},
+	{"insight saved create", "insights saved save"},
+	{"insight saved get", "insights saved get"},
+	{"insight saved run", "insights saved run"},
+	{"insight saved delete", "insights saved delete"},
 	{"insight", "insights"},
 
 	// Data.
@@ -695,6 +700,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"postgres overage set", "postgres overage"},
 	{"postgres compute-policy set", "postgres compute-policy"},
 	{"postgres compute-policy status", "postgres compute-policy-status"},
+	{"postgres suspend-timeout set", "postgres suspend-timeout"},
 	{"postgres resize status", "postgres resize-status"},
 	// ADR-20261102123523: what a database gives PR previews is a setting.
 	{"postgres previews set", "postgres previews"},

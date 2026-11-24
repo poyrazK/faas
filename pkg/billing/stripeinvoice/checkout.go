@@ -26,31 +26,37 @@ type SetupIntent struct {
 // only when the response expanded it, as GetCheckoutSession does; Stripe
 // otherwise sends its ID.
 type CheckoutSession struct {
-	ID          string
-	URL         string
-	Mode        string
-	Status      string
-	Customer    string
-	Livemode    bool
-	SetupIntent *SetupIntent
+	ID                                         string
+	URL                                        string
+	Mode                                       string
+	Status                                     string
+	Customer                                   string
+	Livemode                                   bool
+	SetupIntent                                *SetupIntent
+	PaymentStatus, Currency, ClientReferenceID string
+	AmountTotal                                int64
 }
 
 // UnmarshalJSON reads a session whose setup_intent is an ID or the expanded
 // object.
 func (s *CheckoutSession) UnmarshalJSON(raw []byte) error {
 	var wire struct {
-		ID          string          `json:"id"`
-		URL         string          `json:"url"`
-		Mode        string          `json:"mode"`
-		Status      string          `json:"status"`
-		Customer    string          `json:"customer"`
-		Livemode    bool            `json:"livemode"`
-		SetupIntent json.RawMessage `json:"setup_intent"`
+		ID                string          `json:"id"`
+		URL               string          `json:"url"`
+		Mode              string          `json:"mode"`
+		Status            string          `json:"status"`
+		Customer          string          `json:"customer"`
+		Livemode          bool            `json:"livemode"`
+		SetupIntent       json.RawMessage `json:"setup_intent"`
+		PaymentStatus     string          `json:"payment_status"`
+		Currency          string          `json:"currency"`
+		ClientReferenceID string          `json:"client_reference_id"`
+		AmountTotal       int64           `json:"amount_total"`
 	}
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		return err
 	}
-	*s = CheckoutSession{ID: wire.ID, URL: wire.URL, Mode: wire.Mode, Status: wire.Status, Customer: wire.Customer, Livemode: wire.Livemode}
+	*s = CheckoutSession{ID: wire.ID, URL: wire.URL, Mode: wire.Mode, Status: wire.Status, Customer: wire.Customer, Livemode: wire.Livemode, PaymentStatus: wire.PaymentStatus, Currency: wire.Currency, ClientReferenceID: wire.ClientReferenceID, AmountTotal: wire.AmountTotal}
 	if len(wire.SetupIntent) > 0 && wire.SetupIntent[0] == '{' {
 		var intent SetupIntent
 		if err := json.Unmarshal(wire.SetupIntent, &intent); err != nil {

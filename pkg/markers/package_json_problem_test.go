@@ -9,8 +9,9 @@ import (
 )
 
 // Prod 2026-11-23: an invalid package.json built into an image with no app
-// layer and failed later with an internal error blamed on the platform. Only
-// what no Node package manager reads is a problem.
+// layer and failed later with an internal error blamed on the platform. What
+// Railpack's hujson reader rejects is a problem (including a leading BOM,
+// prod 2026-11-24); comments and trailing commas are not.
 func TestNodePackageJSONProblemAtRoot(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -20,7 +21,7 @@ func TestNodePackageJSONProblemAtRoot(t *testing.T) {
 	}{
 		{"valid", map[string]string{"package.json": `{"name":"x"}`}, "", ""},
 		{"absent", map[string]string{"requirements.txt": "flask\n"}, "", ""},
-		{"utf-8 byte order mark", map[string]string{"package.json": "\xef\xbb\xbf{\"name\":\"x\"}\n"}, "", ""},
+		{"utf-8 byte order mark", map[string]string{"package.json": "\xef\xbb\xbf{\"name\":\"x\"}\n"}, "", "package.json starts with a UTF-8 byte order mark"},
 		{"trailing comma", map[string]string{"package.json": "{\n  \"name\": \"x\",\n}\n"}, "", ""},
 		{"comments", map[string]string{"package.json": "{\n  // the app\n  \"name\": \"x\", /* inline */\n  \"main\": \"a//b.js\"\n}\n"}, "", ""},
 		{"truncated", map[string]string{"package.json": "{\"name\": \"x\",\n\"scripts\": {\"start\": \"node s.js\"},\n"}, "", "package.json is not valid JSON: unexpected end of JSON input (line 3)"},

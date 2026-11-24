@@ -176,3 +176,13 @@ SELECT EXISTS (
 INSERT INTO storage_grant_audit (node_id, subject_class, subject_id, app_id, access, objects)
 VALUES (sqlc.arg(node_id)::uuid, sqlc.arg(subject_class)::text, sqlc.arg(subject_id)::uuid,
         sqlc.narg(app_id)::uuid, sqlc.arg(access)::text, sqlc.arg(objects)::int);
+
+-- name: VerificationLease :one
+-- The node verifying a deployment, the deployment's status and scope, and the
+-- app's stored verification contract (ADR-20261122220000 amendment 2).
+SELECT l.app_id, l.node_name, l.expires_at, d.status, d.scope,
+       c.contract::jsonb AS contract
+  FROM deployment_verification_leases l
+  JOIN deployments d ON d.id = l.deployment_id AND d.app_id = l.app_id
+  LEFT JOIN app_verification_contracts c ON c.app_id = l.app_id
+ WHERE l.deployment_id = sqlc.arg(deployment_id)::uuid;

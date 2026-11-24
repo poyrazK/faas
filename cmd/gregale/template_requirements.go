@@ -48,6 +48,15 @@ var templatesPublicOnPurpose = map[string]bool{
 	"object-storage-node":   true,
 }
 
+// templatesDeployAsMCP deploy through `mcp server deploy`, as their next steps
+// say: it opens MCP client access. A plain deploy left the app private, so
+// every MCP client got 401 (prod hunt r37).
+var templatesDeployAsMCP = map[string]bool{
+	"mcp-node": true, "mcp-node-tasks": true,
+	"mcp-go": true, "mcp-go-tasks": true,
+	"mcp-python": true, "mcp-python-tasks": true,
+}
+
 // templateRequiredBindings are the managed database bindings a template needs
 // before its first start, by the variable `postgres attach --env` sets. A
 // binding never comes from a secrets file, so it is checked only for a new

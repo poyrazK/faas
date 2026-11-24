@@ -5875,7 +5875,7 @@ func cmdDomains(args []string) int {
 		}
 		if *slug == "" {
 			// Prod hunt r35: a linked checkout printed only the usage line.
-			*slug, *environment = linkedDomainTarget(*environment)
+			*slug, *environment = linkedAppAndEnvironment(*environment)
 		}
 		if *domain == "" || *slug == "" {
 			PrintUsage(os.Stderr, "usage: gregale domain create <domain> --app <slug> [--env <environment>]", "domains")
@@ -6058,7 +6058,7 @@ func cmdCrons(args []string) int {
 		}
 		fs := newFlagSet("crons-add", flag.ContinueOnError)
 		interactive := fs.Bool("interactive", false, "choose and review a scheduled HTTP task")
-		slug := fs.String("app", "", "app slug (required)")
+		slug := fs.String("app", "", "app slug (defaults to the linked app)")
 		schedule := fs.String("schedule", "", "cron expression (required)")
 		path := fs.String("path", "", "path the cron sends a POST to (HTTP cron only; default: /)")
 		command := fs.String("command", "", "executable for a deployment-attached command cron")
@@ -6101,8 +6101,13 @@ func cmdCrons(args []string) int {
 			}
 			return cmdCronsAddInteractive(selected)
 		}
+		if *slug == "" {
+			// Prod hunt r36: a linked checkout printed only the usage line;
+			// `cron list` already reads the link (prod hunt r33).
+			*slug, *environment = linkedAppAndEnvironment(*environment)
+		}
 		if *slug == "" || *schedule == "" {
-			PrintUsage(os.Stderr, "usage: gregale cron create --app <slug> --schedule '*/5 * * * *' (--path / | --command EXEC [--arg ARG...]) [--timezone UTC] [--skip-if-running] [--retry-max N --retry-backoff-seconds N] [--environment ENV]", "crons")
+			PrintUsage(os.Stderr, "usage: gregale cron create [--app <slug>] --schedule '*/5 * * * *' (--path / | --command EXEC [--arg ARG...]) [--timezone UTC] [--skip-if-running] [--retry-max N --retry-backoff-seconds N] [--environment ENV]", "crons")
 			return 1
 		}
 		pathSet := false

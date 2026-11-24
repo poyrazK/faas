@@ -30,24 +30,31 @@ the node. Everything is off by default.
      FAAS_S3_LIVE_ACCESS_KEY_ID=… FAAS_S3_LIVE_SECRET_ACCESS_KEY=…
      go test -run LiveGrantedS3 ./pkg/storage`.
 2. **One compute node.** Set `faas_storage_grants: true` for the node and
-   converge it. Then restart `faas-imaged`, `faas-builderd` and `faas-vmmd`
-   on that node, in that order.
+   converge it. Then restart `faas-imaged`, `faas-builderd`, `faas-vmmd` and
+   `faas-schedd` on that node, in that order. A granted node's schedd does
+   not run the snapshot disk-drift scan (it lists `snap/`, which no grant
+   covers); the control plane's schedd still does.
    - Check: each journal shows `shared store reached through secretd grants`.
    - Wake an app on the node from a cold cache, and run a build there.
    - `faas_secretd_storage_grants_total{outcome="granted"}` rises.
    - `select subject_class, access, sum(objects) from storage_grant_audit where granted_at > now() - interval '10 minutes' group by 1, 2`
      shows the node's tenants only.
 3. **The fleet.** Roll the node switch out node by node.
-4. **Take the store role away** (ADR slice 5). On S3 fleets this first
-   needs the compute-node storage gates to accept a key-less
-   `storage.env` and `imaged-storage.env` under grants
-   (`compute_only_service`, `compute_admission`, `node_join.yml`,
-   `gregalectl deploy join`): they still require `FAAS_S3_ACCESS_KEY_ID`.
-   The daemons themselves start without a key under
-   `FAAS_STORAGE_ACCESS=secretd`. Once every node runs
-   grants, remove the compute service account's bucket role (GCS) or delete
-   its access key (S3). Check from a compute node that a direct read of a
-   bucket object is refused.
+4. **Take the store role away** (ADR slice 5). Once every node runs
+   grants, remove the compute service account's bucket role (GCS). On S3,
+   drop `FAAS_S3_ACCESS_KEY_ID` and `FAAS_S3_SECRET_ACCESS_KEY` from the
+   compute nodes' `storage.env`, empty their `imaged-storage.env`, converge
+   them, then delete the compute access key. The compute gates accept a
+   key-less file only with `faas_storage_grants: true` and an S3 or GCS
+   backend. `gregalectl deploy join-node`, `join-fleet` and `prepare-node`
+   read it from the Ansible vars file (`--ansible-vars-file`, or the
+   secrets dir's `ansible-vars.yml`), which is what cd-compute passes;
+   `--storage-grants` turns it on by hand. After a join, `gregalectl
+   artifact lifecycle-check` reports `skipped` for an empty
+   `imaged-storage.env`. Check from a compute node that a
+   direct read of a bucket object is refused. Execution dispatch
+   (`FAAS_EXECUTION_DISPATCH=1`, off on prod) reads runtime snapshots that
+   no grant covers yet; keep it off on granted nodes.
 
 ## Read it
 
