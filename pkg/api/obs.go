@@ -1736,3 +1736,87 @@ type ObsGatewayAppTraffic struct {
 	CapacityRefusals int64   `json:"capacity_refusals"`
 	HeldNow          int64   `json:"held_now"`
 }
+
+// ObsDiskPressureReport is the operator disk pressure report
+// (ADR-20261124150000): every host filesystem's free space, inodes and
+// growth, graded with the FaasHostDisk* alert thresholds, the jail tmpfs
+// (RAM until reboot), the systemd journal and the fullest guest disks. Source
+// is observed, partial (FailedQueries names the failed reads; their fields
+// are empty), unavailable or not_configured.
+type ObsDiskPressureReport struct {
+	AsOf                 time.Time           `json:"as_of"`
+	Source               string              `json:"source"`
+	FailedQueries        []string            `json:"failed_queries"`
+	CriticalFreePercent  int                 `json:"critical_free_percent"`
+	LowFreePercent       int                 `json:"low_free_percent"`
+	FillingFreePercent   int                 `json:"filling_free_percent"`
+	FillingHorizonHours  int                 `json:"filling_horizon_hours"`
+	InodesLowFreePercent int                 `json:"inodes_low_free_percent"`
+	GrowthWindowSeconds  int                 `json:"growth_window_seconds"`
+	Truncated            bool                `json:"truncated"`
+	Totals               ObsDiskTotals       `json:"totals"`
+	Nodes                []ObsDiskNode       `json:"nodes"`
+	Filesystems          []ObsDiskFilesystem `json:"filesystems"`
+	Guests               []ObsDiskGuest      `json:"guests"`
+}
+
+// ObsDiskTotals sums the fleet; nodes are counted by their worst
+// filesystem's state.
+type ObsDiskTotals struct {
+	Nodes              int   `json:"nodes"`
+	NodesCritical      int   `json:"nodes_critical"`
+	NodesFilling       int   `json:"nodes_filling"`
+	NodesLow           int   `json:"nodes_low"`
+	NodesInodesLow     int   `json:"nodes_inodes_low"`
+	Filesystems        int   `json:"filesystems"`
+	JailTmpfsUsedBytes int64 `json:"jail_tmpfs_used_bytes"`
+	GuestsNearFull     int   `json:"guests_near_full"`
+	GuestsFull         int   `json:"guests_full"`
+}
+
+// ObsDiskNode is one host: its worst filesystem's state and free space, the
+// jail tmpfs in use, the journal size (compute nodes, from vmmd) and guests
+// whose writable disk is near full or full.
+type ObsDiskNode struct {
+	Node               string  `json:"node"`
+	Role               string  `json:"role"`
+	State              string  `json:"state"`
+	Filesystems        int     `json:"filesystems"`
+	WorstMountpoint    string  `json:"worst_mountpoint,omitempty"`
+	WorstFreePercent   float64 `json:"worst_free_percent"`
+	JailTmpfsUsedBytes int64   `json:"jail_tmpfs_used_bytes"`
+	JournalBytes       *int64  `json:"journal_bytes,omitempty"`
+	GuestsNearFull     int     `json:"guests_near_full"`
+	GuestsFull         int     `json:"guests_full"`
+}
+
+// ObsDiskFilesystem is one host mount. State is critical, filling, low,
+// inodes_low or ok. HoursToFull is set when free space is falling and would
+// run out within ObsDiskHoursToFullMax at the growth window's rate.
+// JailTmpfs marks the jailer chroot tmpfs, which holds RAM.
+type ObsDiskFilesystem struct {
+	Node              string   `json:"node"`
+	Role              string   `json:"role"`
+	Mountpoint        string   `json:"mountpoint"`
+	Device            string   `json:"device"`
+	FSType            string   `json:"fstype"`
+	SizeBytes         int64    `json:"size_bytes"`
+	AvailBytes        int64    `json:"avail_bytes"`
+	FreePercent       float64  `json:"free_percent"`
+	InodesFreePercent *float64 `json:"inodes_free_percent,omitempty"`
+	HoursToFull       *float64 `json:"hours_to_full,omitempty"`
+	JailTmpfs         bool     `json:"jail_tmpfs,omitempty"`
+	State             string   `json:"state"`
+}
+
+// ObsDiskGuest is one of the fullest guest writable disks.
+type ObsDiskGuest struct {
+	InstanceID    string  `json:"instance_id"`
+	AppID         string  `json:"app_id,omitempty"`
+	AppSlug       string  `json:"app_slug,omitempty"`
+	AccountID     string  `json:"account_id,omitempty"`
+	Node          string  `json:"node,omitempty"`
+	UsedBytes     int64   `json:"used_bytes"`
+	CapacityBytes int64   `json:"capacity_bytes"`
+	UsedPercent   float64 `json:"used_percent"`
+}

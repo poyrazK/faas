@@ -4953,6 +4953,9 @@ func (s *server) handler() http.Handler {
 	// Gateway traffic: status codes, platform errors, wake queues (ADR-20261124093000).
 	mux.HandleFunc("GET /v1/admin/obs/gateway-traffic",
 		s.authLimited(s.requireOperatorSessionRead(s.obsGatewayTraffic)))
+	// Disk pressure: host filesystems, jail tmpfs, journals, guest disks (ADR-20261124150000).
+	mux.HandleFunc("GET /v1/admin/obs/disk-pressure",
+		s.authLimited(s.requireOperatorSessionRead(s.obsDiskPressure)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/heartbeats",
 		s.authLimited(s.requireOperatorRead(s.obsNodeHeartbeats)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/probe-notifications",
