@@ -2596,6 +2596,11 @@ from .insight_event_point import InsightEventPoint
 from .insight_event_series import InsightEventSeries
 from .insight_event_series_interval import InsightEventSeriesInterval
 from .insight_event_series_unit import InsightEventSeriesUnit
+from .insight_events_query import InsightEventsQuery
+from .insight_events_query_interval import InsightEventsQueryInterval
+from .insight_events_query_measure import InsightEventsQueryMeasure
+from .insight_events_query_unit import InsightEventsQueryUnit
+from .insight_events_query_where import InsightEventsQueryWhere
 from .insight_funnel import InsightFunnel
 from .insight_funnel_breakdown import InsightFunnelBreakdown
 from .insight_funnel_request import InsightFunnelRequest
@@ -6167,6 +6172,7 @@ from .run_history_entry_result_validation_status import RunHistoryEntryResultVal
 from .run_history_entry_runtime import RunHistoryEntryRuntime
 from .run_history_entry_status import RunHistoryEntryStatus
 from .run_history_response import RunHistoryResponse
+from .run_project_saved_insight_format import RunProjectSavedInsightFormat
 from .run_stored_workflow_tests_request import RunStoredWorkflowTestsRequest
 from .runtime_config_restart_status_response import RuntimeConfigRestartStatusResponse
 from .runtime_config_restart_status_response_failure_reason import RuntimeConfigRestartStatusResponseFailureReason
@@ -6202,6 +6208,16 @@ from .save_route_requirements_request import SaveRouteRequirementsRequest
 from .save_stored_workflow_draft_request import SaveStoredWorkflowDraftRequest
 from .save_stored_workflow_live_suite_request import SaveStoredWorkflowLiveSuiteRequest
 from .save_stored_workflow_test_suite_request import SaveStoredWorkflowTestSuiteRequest
+from .saved_insight import SavedInsight
+from .saved_insight_alert import SavedInsightAlert
+from .saved_insight_alert_comparison import SavedInsightAlertComparison
+from .saved_insight_alert_state import SavedInsightAlertState
+from .saved_insight_list import SavedInsightList
+from .saved_insight_request import SavedInsightRequest
+from .saved_insight_request_digest import SavedInsightRequestDigest
+from .saved_insight_request_kind import SavedInsightRequestKind
+from .saved_insight_result import SavedInsightResult
+from .saved_insight_result_kind import SavedInsightResultKind
 from .saved_route_requirements import SavedRouteRequirements
 from .scaling_policy import ScalingPolicy
 from .scaling_policy_concurrency_overflow import ScalingPolicyConcurrencyOverflow
@@ -9799,6 +9815,11 @@ __all__ = (
     "InsightEventSeries",
     "InsightEventSeriesInterval",
     "InsightEventSeriesUnit",
+    "InsightEventsQuery",
+    "InsightEventsQueryInterval",
+    "InsightEventsQueryMeasure",
+    "InsightEventsQueryUnit",
+    "InsightEventsQueryWhere",
     "InsightFunnel",
     "InsightFunnelBreakdown",
     "InsightFunnelRequest",
@@ -13130,6 +13151,7 @@ __all__ = (
     "RunHistoryEntryRuntime",
     "RunHistoryEntryStatus",
     "RunHistoryResponse",
+    "RunProjectSavedInsightFormat",
     "RunStoredWorkflowTestsRequest",
     "RuntimeConfigRestartStatusResponse",
     "RuntimeConfigRestartStatusResponseFailureReason",
@@ -13159,6 +13181,16 @@ __all__ = (
     "SafeApplyProjectProjectStabilization",
     "SafeApplyProjectProjectWorkerHealth",
     "SalesInquiryChallengeResponse200",
+    "SavedInsight",
+    "SavedInsightAlert",
+    "SavedInsightAlertComparison",
+    "SavedInsightAlertState",
+    "SavedInsightList",
+    "SavedInsightRequest",
+    "SavedInsightRequestDigest",
+    "SavedInsightRequestKind",
+    "SavedInsightResult",
+    "SavedInsightResultKind",
     "SavedRouteRequirements",
     "SaveProfileDeploymentPolicyRequest",
     "SaveProfileInvestigationRequest",
