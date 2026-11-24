@@ -18,6 +18,10 @@ export type CreateAPIConsumerRateCardRequest = {
    */
   tiers?: Array<APIConsumerRateCardTier>;
   /**
+   * Model price overrides for a flat app meter. Report a configured override as meter__model and use the base meter for the base price. All models share the meter allowance.
+   */
+  model_prices?: Record<string, number>;
+  /**
    * Counts each request on a listed "METHOD /template" route as that many units (1..1000, at most 50 routes); unlisted routes count 1. Weighted units feed included units, tiers, and statements. Route labels match the app's declared or discovered route templates.
    */
   route_weights?: Record<string, number>;

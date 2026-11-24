@@ -14,7 +14,8 @@ package fcvm
 // namespace with what they were when the guard allowed the pause and resumes
 // on any packet, within about two 250 ms ticks (the poll, then the pass). The
 // bridge's ARP broadcasts and the unicast it floods to every port do not
-// count (ADR-20261107122928 amendment 4). Without that reading the pass falls
+// count (ADR-20261107122928 amendment 4), nor do the host unreachable reports
+// the namespace sends its own sockets while the guest is paused (amendment 5). Without that reading the pass falls
 // back to the veth's ingress bytes, and without either it resumes: a paused
 // app it cannot watch must not stay paused.
 

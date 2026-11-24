@@ -191,14 +191,30 @@ if it fails, the instance is discarded and the request restores from the
 snapshot instead. With session affinity (`session_affinity`) on, a session
 resumes the instance it was pinned to when that one is frozen.
 
-On nodes with early freeze enabled, a `between_requests` workload (every
-function by default, and any app that sets `pause: between_requests`) is
-frozen a few seconds after its last request instead of at its idle timeout,
-so it stops accruing usage almost as soon as it finishes serving. For the app
-this is the same as a pause between requests: its timers stop, and the next
-request thaws it in a few milliseconds. `when_idle` apps keep running through
-their idle timeout as declared. Apps with `--min` instances are not frozen
-early.
+### Paused between requests
+
+An idle instance does not wait for its idle timeout to stop costing you. About
+a second after its last request, with nothing in flight, Gregale pauses its
+VM in memory, and **paused seconds are not billed**. The next request resumes
+it in about a millisecond, with its memory (caches, sessions, connections)
+intact. Any packet addressed to the instance resumes it too, such as a reply
+on a connection your app opened. If it stays idle, it parks to a snapshot
+after 10 minutes, or sooner when the node needs the memory.
+
+Which instances pause depends on what the app declares (below):
+
+- Functions, and apps that set `pause: between_requests`, pause about a second
+  after every request. Their timers stop while paused.
+- Apps that declare no `pause` pause the same way, but only when Gregale sees
+  the app is really idle: in that second it used at most 10 ms of CPU and
+  sent and received at most 512 bytes. An app whose timers, heartbeats or
+  background threads keep it busy keeps running, and is billed, while it
+  works.
+- `when_idle` and `never` apps keep running, and are billed, through their
+  idle timeout, as declared.
+
+Apps with `--min` instances still pay for their minimum. Pausing is enabled
+per node; on a node without it, an instance keeps running between requests.
 
 Functions and request-mode apps can be frozen; workers, services, jobs and
 apps in a private network are not. Your app declares what it tolerates in
@@ -211,8 +227,9 @@ lifecycle:
 
 | `pause` | Between requests | At the idle timeout | Default for |
 |---|---|---|---|
-| `between_requests` | paused after 2 s without a request; timers stop | frozen | functions |
-| `when_idle` | keeps running | frozen | apps |
+| not set | paused about 1 s after a request when the app is idle; unbilled | frozen | apps |
+| `between_requests` | paused about 1 s after a request; timers stop; unbilled | frozen | functions |
+| `when_idle` | keeps running | frozen | |
 | `never` | keeps running | parked, as before | |
 
 Pausing between requests and freezing are each enabled per node, like early
