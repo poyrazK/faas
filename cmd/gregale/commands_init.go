@@ -395,6 +395,9 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 
 func deployInitTemplate(tpl, dir, slug, secretsFile string) int {
 	args := initDeployArgs(tpl, dir, slug, secretsFile)
+	if templatesDeployAsMCP[tpl] {
+		return cmdMCPDeploy(args)
+	}
 	if tpl != templates.PrivateNode {
 		return cmdDeployTarball(args)
 	}
@@ -412,6 +415,13 @@ func deployInitTemplate(tpl, dir, slug, secretsFile string) int {
 // callers cannot present a Gregale API key deploys public, as its README and
 // next steps do (prod hunt r35: init --deploy still made them private).
 func initDeployArgs(tpl, dir, slug, secretsFile string) []string {
+	if templatesDeployAsMCP[tpl] {
+		args := []string{"--path", dir, "--name", slug}
+		if secretsFile != "" {
+			args = append(args, "--secrets-file", secretsFile)
+		}
+		return args
+	}
 	args := []string{"--template", tpl, "--name", slug}
 	if tpl == templates.PrivateNode {
 		args = privateNodeDeployArgs(dir, slug)
