@@ -194,6 +194,10 @@ HTTP 503 Service Unavailable · App in maintenance
 
 HTTP 409 Conflict or 422 Unprocessable Entity · Many operations send this code; the response's `title` and `detail` name the failure.
 
+### `app_name_unavailable`
+
+HTTP 409 Conflict · App name unavailable
+
 ### `app_not_listening`
 
 HTTP 422 Unprocessable Entity · No process listening on $PORT; App listens on a different port
@@ -974,7 +978,7 @@ See [Errors](errors.md).
 
 HTTP 409 Conflict · Recovery plan changed
 
-See [Run and recover stored workflows](stored-workflow-operations.md).
+See [Recover stored workflow runs](stored-workflow-recovery.md).
 
 ### `event_storage_capacity_exhausted`
 

@@ -31,9 +31,13 @@ func callConsumerPlans(ctx context.Context, client *Client, verb string, args []
 		if err != nil {
 			return nil, true, err
 		}
+		edits, err := parseRouteLimitEdits(f.routeLimits, f.toolLimits)
+		if err != nil {
+			return nil, true, err
+		}
 		out, err := client.CreateAPIConsumerPlan(ctx, slug, api.CreateAPIConsumerPlanRequest{
 			Name: f.name, MaxRequestsPerMinute: max(f.maxPerMinute, 0), MaxUnitsPerMonth: max(f.maxPerMonth, 0),
-			AlertThresholdsPercent: alerts})
+			AlertThresholdsPercent: alerts, RouteLimits: applyRouteLimitEdits(nil, edits)})
 		return out, true, err
 	case "plan-update":
 		out, err := updatePlanLimits(ctx, client, slug, f)
@@ -56,6 +60,10 @@ func callConsumerPlans(ctx context.Context, client *Client, verb string, args []
 func updatePlanLimits(ctx context.Context, client *Client, slug string, f consumerFlags) (any, error) {
 	if f.plan == "" || f.plan == defaultPlanName {
 		return nil, errors.New("--plan must name a consumer plan")
+	}
+	edits, err := parseRouteLimitEdits(f.routeLimits, f.toolLimits)
+	if err != nil {
+		return nil, err
 	}
 	plans, err := client.ListAPIConsumerPlans(ctx, slug)
 	if err != nil {
@@ -81,6 +89,9 @@ func updatePlanLimits(ctx context.Context, client *Client, slug string, f consum
 				alerts = []int32{}
 			}
 			req.AlertThresholdsPercent = &alerts
+		}
+		if limits := applyRouteLimitEdits(plan.RouteLimits, edits); limits != nil {
+			req.RouteLimits = &limits
 		}
 		return client.UpdateAPIConsumerPlanLimits(ctx, slug, plan.ID, req)
 	}
