@@ -40,7 +40,9 @@ gregale redis bind sessions --app web
 
 This sets `REDIS_URL` on `web` (use `--env` for another name) to
 `redis://sessions.svc.gregale:6379`. The app picks it up at its next deploy or
-wake.
+wake. A cache binds only to an app that exists, so for a new app deploy once,
+bind, and deploy again. An app that needs Redis to start fails that first
+deploy's health check; the deploy after binding fixes it.
 
 Caches have no password. A cache has no public address, and only apps in the
 same account that are allowed to call it can connect, so clients configured
@@ -83,7 +85,9 @@ gregale redis restart sessions
 All three keep your data. A resize or update starts a new VM that copies the
 cache before it takes over; writes pause for a moment at the switch. Shrinking
 below the data the cache holds needs `--evict`, which lets the cache evict keys
-by its policy. A restart saves the cache's memory and restores it.
+by its policy. A restart saves the cache's memory and restores it. A parked
+cache, or one switching to its new VM during a resize or update, has nothing
+running to restart; its next connection starts it with its data.
 
 ## Limits
 
