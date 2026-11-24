@@ -166,8 +166,9 @@ type Metrics struct {
 	// hop, while retaining scheduler, VM restore, and internal proxy overhead.
 	platformWakeLatency prometheus.Histogram
 	// platformWakeExcluded counts admitted wakes kept out of
-	// platformWakeLatency because the app, not the platform, set their
-	// latency. reason ∈ {startup_oom}.
+	// platformWakeLatency because the app or the deploy pipeline, not the
+	// platform's wake path, set their latency.
+	// reason ∈ {startup_oom, deployment_smoke}.
 	platformWakeExcluded *prometheus.CounterVec
 	// drainWaitSeconds (issue #587 / PR-A) is the per-daemon
 	// graceful-shutdown drain histogram (see ObserveDrainWait).
@@ -1373,11 +1374,11 @@ func NewMetrics() *Metrics {
 		}),
 		platformWakeExcluded: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_platform_wake_excluded_total",
-			Help: "Admitted wakes kept out of gateway_platform_wake_latency_seconds because the app set their latency. reason=startup_oom: the kernel killed an app process for memory while the wake booted it (vmmd WakeResponse.startup_oom); the app's own wake latency still records the wake.",
+			Help: "Admitted wakes kept out of gateway_platform_wake_latency_seconds because the app or the deploy pipeline set their latency. reason=startup_oom: the kernel killed an app process for memory while the wake booted it (vmmd WakeResponse.startup_oom). reason=deployment_smoke: a deployment smoke verification, which waits for its candidate's first-boot snapshot. The app's own wake latency still records the wake.",
 		}, []string{"reason"}),
 		platformWakeLatency: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:    "gateway_platform_wake_latency_seconds",
-			Help:    "Platform-only wake latency from gateway capacity-admission start to first upstream byte. Excludes pre-admission routing/auth, CDN, Internet, and client latency, and wakes whose app ran out of memory while booting (counted in gateway_platform_wake_excluded_total). Public-beta SSD gate: p95 < 0.35 seconds.",
+			Help:    "Platform-only wake latency from gateway capacity-admission start to first upstream byte. Excludes pre-admission routing/auth, CDN, Internet, and client latency, wakes whose app ran out of memory while booting, and deployment smoke verifications (both counted in gateway_platform_wake_excluded_total). Public-beta SSD gate: p95 < 0.35 seconds.",
 			Buckets: platformWakeLatencyBuckets(),
 		}),
 		// PR #4 / ADR-092 §3.5. Same bucket layout as wakeLatency
@@ -2106,6 +2107,7 @@ func NewMetrics() *Metrics {
 	}
 	// Pre-instantiated so a zero exclusion count is visible from boot.
 	m.platformWakeExcluded.WithLabelValues(platformWakeExcludedStartupOOM)
+	m.platformWakeExcluded.WithLabelValues(platformWakeExcludedDeploymentSmoke)
 	// ADR-098 C7: pre-instantiate the closed (reason) set on the
 	// leader-bootstrap-aborts counter so the §12 dashboard chip
 	// "leader bootstrap aborts" surfaces every reason from boot.
@@ -3350,6 +3352,12 @@ func (m *Metrics) ObservePlatformWakeWithTrace(latency time.Duration, traceID st
 // platformWakeExcludedStartupOOM is the gateway_platform_wake_excluded_total
 // reason for a wake whose app ran out of memory while it booted.
 const platformWakeExcludedStartupOOM = "startup_oom"
+
+// platformWakeExcludedDeploymentSmoke is the
+// gateway_platform_wake_excluded_total reason for a wake a deployment smoke
+// verification admitted: it restores a candidate whose first-boot snapshot
+// is still being captured, so its wait belongs to the deploy pipeline.
+const platformWakeExcludedDeploymentSmoke = "deployment_smoke"
 
 // ObservePlatformWakeExcluded counts one admitted wake kept out of the
 // platform wake histogram. Nil-safe.

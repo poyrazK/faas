@@ -116,7 +116,7 @@ func AppStatementInvoice(statement state.APIConsumerUsageStatement, cards []stat
 	lines := map[invoiceLineKey]*StatementInvoiceLine{}
 	for _, bucket := range statement.Buckets {
 		if bucket.RateCardID == "" {
-			if bucket.BillableUnits != 0 {
+			if bucket.BillableUnits != bucket.WaivedUnits {
 				return inv, fmt.Errorf("%w: unpriced units", ErrStatementNotInvoiceable)
 			}
 			continue

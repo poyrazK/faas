@@ -25,6 +25,10 @@ class APIConsumerUsageStatementBucketResponse:
     amount_millicents: int
     """Exact charge for this minute. Negative only on a tiered adjustment line that re-rates billed units into a
     cheaper step; a revision's total is never negative."""
+    model: str | Unset = UNSET
+    """Model priced in this statement bucket."""
+    waived_units: int | Unset = UNSET
+    """Model units recorded at zero charge by a waiver in this revision."""
     rate_card_id: UUID | Unset = UNSET
     currency: str | Unset = UNSET
     price_millicents_per_unit: int | Unset = UNSET
@@ -45,6 +49,10 @@ class APIConsumerUsageStatementBucketResponse:
         charged_units = self.charged_units
 
         amount_millicents = self.amount_millicents
+
+        model = self.model
+
+        waived_units = self.waived_units
 
         rate_card_id: str | Unset = UNSET
         if not isinstance(self.rate_card_id, Unset):
@@ -72,6 +80,10 @@ class APIConsumerUsageStatementBucketResponse:
                 "amount_millicents": amount_millicents,
             }
         )
+        if model is not UNSET:
+            field_dict["model"] = model
+        if waived_units is not UNSET:
+            field_dict["waived_units"] = waived_units
         if rate_card_id is not UNSET:
             field_dict["rate_card_id"] = rate_card_id
         if currency is not UNSET:
@@ -98,6 +110,10 @@ class APIConsumerUsageStatementBucketResponse:
 
         amount_millicents = d.pop("amount_millicents")
 
+        model = d.pop("model", UNSET)
+
+        waived_units = d.pop("waived_units", UNSET)
+
         _rate_card_id = d.pop("rate_card_id", UNSET)
         rate_card_id: UUID | Unset
         if isinstance(_rate_card_id, Unset):
@@ -120,6 +136,8 @@ class APIConsumerUsageStatementBucketResponse:
             billable_units=billable_units,
             charged_units=charged_units,
             amount_millicents=amount_millicents,
+            model=model,
+            waived_units=waived_units,
             rate_card_id=rate_card_id,
             currency=currency,
             price_millicents_per_unit=price_millicents_per_unit,

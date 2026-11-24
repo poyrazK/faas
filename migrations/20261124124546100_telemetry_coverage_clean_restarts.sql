@@ -1,4 +1,4 @@
--- filename: 20261123221437852_telemetry_coverage_clean_restarts.sql
+-- filename: 20261124124546100_telemetry_coverage_clean_restarts.sql
 -- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';

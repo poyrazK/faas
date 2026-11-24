@@ -107,6 +107,7 @@ func usageStatementFinalizedWebhookPayload(statement APIConsumerUsageStatement) 
 			WindowStart: bucket.WindowStart.UTC(), BillableUnits: bucket.BillableUnits,
 			RateCardID: bucket.RateCardID, Currency: bucket.Currency,
 			PriceMillicentsPerUnit: bucket.PriceMillicentsPerUnit, AmountMillicents: bucket.AmountMillicents,
+			WaivedUnits: bucket.WaivedUnits, ChargedUnits: bucket.Charged(), TierUnits: bucket.TierUnits, Trial: bucket.Trial, Unit: bucket.Unit, Model: bucket.Model,
 		})
 	}
 	return json.Marshal(payload)

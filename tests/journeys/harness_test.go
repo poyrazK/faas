@@ -63,6 +63,12 @@ type target struct {
 	sensitive       []string // synthetic journey credentials; never included in reports
 	// session carries the signed-in dashboard session for owner-only steps.
 	session string
+	// otherToken is an API key of a second account (GREGALE_E2E_OTHER_TOKEN),
+	// for journeys about names another owner holds.
+	otherToken string
+	// blockedName is an exact entry of the target's app_name_blocklist
+	// (GREGALE_E2E_BLOCKED_NAME) that no other entry's pattern extends.
+	blockedName string
 
 	preflightOnce sync.Once
 	preflightErr  error
@@ -129,21 +135,29 @@ func loadTarget(getenv func(string) string) (*target, error) {
 		return nil, fmt.Errorf("GREGALE_E2E_API %q is not an http(s) origin", api)
 	}
 	t := &target{
-		api:        api,
-		appsDomain: getenv("GREGALE_E2E_APPS_DOMAIN"),
-		token:      getenv("GREGALE_E2E_TOKEN"),
-		useLogin:   getenv("GREGALE_E2E_AUTH") == "cli-login",
-		session:    getenv("GREGALE_E2E_SESSION"),
-		cli:        getenv("GREGALE_E2E_CLI"),
-		runID:      getenv("GREGALE_E2E_RUN_ID"),
-		tier:       getenv("GREGALE_E2E_TIER"),
-		keep:       getenv("GREGALE_E2E_KEEP") == "1",
+		api:         api,
+		appsDomain:  getenv("GREGALE_E2E_APPS_DOMAIN"),
+		token:       getenv("GREGALE_E2E_TOKEN"),
+		useLogin:    getenv("GREGALE_E2E_AUTH") == "cli-login",
+		session:     getenv("GREGALE_E2E_SESSION"),
+		otherToken:  getenv("GREGALE_E2E_OTHER_TOKEN"),
+		blockedName: getenv("GREGALE_E2E_BLOCKED_NAME"),
+		cli:         getenv("GREGALE_E2E_CLI"),
+		runID:       getenv("GREGALE_E2E_RUN_ID"),
+		tier:        getenv("GREGALE_E2E_TIER"),
+		keep:        getenv("GREGALE_E2E_KEEP") == "1",
 	}
 	if t.appsDomain == "" {
 		t.appsDomain = strings.TrimPrefix(u.Hostname(), "api.")
 	}
 	if t.useLogin && t.token != "" {
 		return nil, fmt.Errorf("GREGALE_E2E_AUTH=cli-login and GREGALE_E2E_TOKEN are mutually exclusive")
+	}
+	if t.otherToken != "" {
+		if t.otherToken == t.token {
+			return nil, fmt.Errorf("GREGALE_E2E_OTHER_TOKEN must belong to a second account, not repeat GREGALE_E2E_TOKEN")
+		}
+		t.sensitive = append(t.sensitive, t.otherToken)
 	}
 	if t.cli == "" {
 		t.cli = "gregale"
@@ -1167,10 +1181,15 @@ func appSlotCount(limit, used, maxApps int) int {
 
 // cliJSON runs a read-only CLI command outside any test.
 func (tg *target) cliJSON(args ...string) ([]map[string]any, error) {
+	return tg.cliJSONAs(tg.token, args...)
+}
+
+// cliJSONAs is cliJSON with another account's token.
+func (tg *target) cliJSONAs(token string, args ...string) ([]map[string]any, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, tg.cli, append([]string{"--non-interactive"}, args...)...)
-	cmd.Env = tg.cliEnv(tg.token)
+	cmd.Env = tg.cliEnv(token)
 	cmd.Dir = tg.home
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -1207,19 +1226,31 @@ func (tg *target) sweep(hours string) error {
 		}
 		fmt.Fprintf(os.Stderr, "journeys: swept stale preview %s\n", preview)
 	}
-	stale := staleSlugs(docs, cutoff, tg.runID)
+	tg.sweepApps(tg.token, staleSlugs(docs, cutoff, tg.runID))
+	// The second account (GREGALE_E2E_OTHER_TOKEN) holds journey apps too.
+	if tg.otherToken != "" {
+		if others, err := tg.cliJSONAs(tg.otherToken, "app", "list"); err != nil {
+			fmt.Fprintf(os.Stderr, "journeys: sweep: list the second account's apps: %v\n", err)
+		} else {
+			tg.sweepApps(tg.otherToken, staleSlugs(others, cutoff, tg.runID))
+		}
+	}
+	tg.sweepDatabases(cutoff)
+	return nil
+}
+
+// sweepApps deletes stale journey apps of the account token belongs to.
+func (tg *target) sweepApps(token string, stale []string) {
 	for _, slug := range stale {
 		rm := exec.Command(tg.cli, "--non-interactive", "app", "delete", slug, "--yes")
-		rm.Env = tg.cliEnv(tg.token)
+		rm.Env = tg.cliEnv(token)
 		rm.Dir = tg.home
 		if out, err := rm.CombinedOutput(); err != nil {
-			fmt.Fprintf(os.Stderr, "journeys: sweep %s: %v: %s\n", slug, err, tail(string(out), 300))
+			fmt.Fprintf(os.Stderr, "journeys: sweep %s: %v: %s\n", slug, err, tg.redact(tail(string(out), 300)))
 			continue
 		}
 		fmt.Fprintf(os.Stderr, "journeys: swept stale app %s\n", slug)
 	}
-	tg.sweepDatabases(cutoff)
-	return nil
 }
 
 // sweepDatabases purges managed databases journeys created in earlier runs,
