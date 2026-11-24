@@ -135,6 +135,10 @@ gregale consumers rate-card-create my-api --currency EUR --price-millicents 25 \
   app's first 50 labels, count as one unit.
 - **No backdating.** Like free requests, weighted cards cannot take effect in
   the past.
+- **MCP servers.** Each `tools/call` is labelled `MCP /tools/<name>` when the
+  tool is listed in `gregale-mcp.json`, so `--tool-weight generate=20` prices
+  one tool. Protocol requests such as `initialize`, `ping` and list calls are
+  free and use no monthly units.
 
 `gregale consumers quote` estimates charges for a window at current prices
 without creating anything.
@@ -294,6 +298,28 @@ gregale consumers set-plan my-api CONSUMER_ID --plan free
 - **Cap versus bill.** The monthly cap counts requests when they are admitted,
   so a request that later fails on Gregale's side still uses cap but is not
   billed.
+
+### Route limits
+
+Cap one expensive route, or one MCP tool, inside a plan:
+
+```bash
+gregale consumers plan-create my-api --name free --max-units-per-month 1000 \
+  --route-limit "POST /generate=5/minute,100/month" --tool-limit search=1000/month
+gregale consumers plan-update my-api --plan free --route-limit "POST /generate=none"
+```
+
+- Limits count requests per consumer, per minute and per UTC month; `0` means
+  unlimited and `none` removes a route. Up to 50 routes per plan.
+- Over a limit, your consumer gets `429` with `Retry-After` and
+  `x-faas-rate-limit-scope: consumer-plan-route-minute` or
+  `consumer-plan-route-month`. The response names the route and the limit.
+- A request counts toward the route only when the plan admits it too.
+- On an MCP server, cap tools with `--tool-limit`, not the endpoint's own
+  route: `POST /mcp` then matches only free protocol requests, such as
+  `initialize` and list calls. A tool limit applies to any tool name, listed
+  in `gregale-mcp.json` or not; statements price a tool by name only when it
+  is listed there.
 
 ### Usage alerts
 

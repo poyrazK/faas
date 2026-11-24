@@ -48274,6 +48274,13 @@ components:
           description: Per-caller limits on tools/call, keyed by tool name.
           type: object
           additionalProperties: {$ref: '#/components/schemas/MCPToolLimit'}
+        audience:
+          description: |
+            Token audience an external OAuth issuer uses for this server when
+            it is not the resource. The rule's JWT audience must then be
+            exactly this value. Bearer-token policies only.
+          type: string
+          maxLength: 512
     MCPToolLimit:
       description: At most requests tools/call requests per caller in each window.
       type: object
