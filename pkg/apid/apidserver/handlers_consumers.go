@@ -10,6 +10,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -190,14 +191,22 @@ func (s *server) listConsumerKeys(w http.ResponseWriter, r *http.Request, acct s
 // self-service routes, so it is not offered until monetization is released
 // (ADR-20261018090210).
 func (s *server) consumerKeyScopesProblem(accountID string, scopes []string) *api.Problem {
-	billing, allowed := s.apiMonetizationFor(accountID), "scopes must contain only read, write, or admin"
+	billing := s.apiMonetizationFor(accountID)
+	// "mcp:<scope>" scopes grant only hosted MCP access (ADR-20261122194324).
+	mcp := s.platformFlagFor(platformflags.MCPGatewayAuth, platformflags.Subject{AccountID: accountID})
+	vocabulary := []string{"read", "write", "admin"}
 	if billing {
-		allowed = "scopes must contain only read, write, admin, or billing"
+		vocabulary = append(vocabulary, "billing")
 	}
+	if mcp {
+		vocabulary = append(vocabulary, "mcp:<scope>")
+	}
+	allowed := "scopes must contain only " + strings.Join(vocabulary[:len(vocabulary)-1], ", ") + ", or " + vocabulary[len(vocabulary)-1]
 	seen := make(map[string]struct{}, len(scopes))
 	for i, scope := range scopes {
 		scopes[i] = strings.TrimSpace(scope)
-		if scopes[i] != "read" && scopes[i] != "write" && scopes[i] != "admin" && (!billing || scopes[i] != api.ConsumerScopeBilling) {
+		mcpScope := mcp && api.ValidConsumerKeyMCPScope(scopes[i])
+		if !mcpScope && scopes[i] != "read" && scopes[i] != "write" && scopes[i] != "admin" && (!billing || scopes[i] != api.ConsumerScopeBilling) {
 			return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid consumer key scope", allowed)
 		}
 		if _, ok := seen[scopes[i]]; ok {
@@ -232,9 +241,10 @@ func (s *server) createConsumerKey(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
-	if strings.TrimSpace(req.Name) == "" || len(req.Name) > 64 || len(req.Scopes) == 0 {
+	if strings.TrimSpace(req.Name) == "" || len(req.Name) > api.ConsumerKeyNameMaxBytes || len(req.Scopes) == 0 {
 		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid consumer key", "name must be 1-64 characters and scopes must not be empty"))
+			"Invalid consumer key", fmt.Sprintf("name must be 1-%d bytes (got %d) and scopes must not be empty (got %d)", api.ConsumerKeyNameMaxBytes, len(req.Name), len(req.Scopes))).
+			WithDocs("https://gregale.dev/docs/api-monetization"))
 		return
 	}
 	if problem := s.consumerKeyScopesProblem(acct.ID, req.Scopes); problem != nil {

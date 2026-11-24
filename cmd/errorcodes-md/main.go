@@ -418,13 +418,28 @@ func render(entries map[string]*entry, ex *exclusions) string {
 
 	var b strings.Builder
 	b.WriteString("# Error code reference\n\n")
-	b.WriteString("<!-- GENERATED — do not edit by hand; regenerate with `make error-codes-md`. -->\n\n")
 	b.WriteString("Every error Gregale returns carries a stable `code`. [Errors](errors.md) explains how an error is shaped and what to do about the most common ones. ")
 	b.WriteString("This page lists each code with the HTTP status Gregale sends it with, the title and hint Gregale writes for it, and the docs page it points to. ")
 	b.WriteString("A real response's `detail` adds the specifics, such as the observed value, the limit or the field that failed.\n\n")
 	b.WriteString("The list is generated from the code that builds each error, so a new code appears here when it ships. ")
 	b.WriteString("Codes for features whose docs are not published yet are left out. ")
-	b.WriteString("Each code's name is its anchor: link to `error-codes#plan_limit_apps`, for example.\n")
+	b.WriteString("Each code's name is its anchor: link to `error-codes#plan_limit_apps`, for example.\n\n")
+	b.WriteString("If you are fixing a failure rather than looking up one code, start with [the common codes](errors.md#common-codes), which group the frequent ones by what went wrong, ")
+	b.WriteString("or [Troubleshooting](troubleshooting.md), which goes by symptom.\n")
+
+	var letters []string
+	for _, code := range codes {
+		if l := strings.ToUpper(code[:1]); len(letters) == 0 || letters[len(letters)-1] != l {
+			letters = append(letters, l)
+		}
+	}
+	if len(letters) > 0 {
+		jump := make([]string, len(letters))
+		for i, l := range letters {
+			jump[i] = fmt.Sprintf("[%s](#%s)", l, strings.ToLower(l))
+		}
+		fmt.Fprintf(&b, "\nJump to: %s\n", strings.Join(jump, " · "))
+	}
 
 	letter := ""
 	for _, code := range codes {

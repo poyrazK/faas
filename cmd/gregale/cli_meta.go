@@ -30,6 +30,7 @@
 package main
 
 import (
+	"context"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -114,8 +115,14 @@ type cliCommand struct {
 // hidden operator and legacy entries still need completion/man/dispatch
 // coverage, and earlier names still run.
 func customerCliCommands() []cliCommand {
+	return customerCliCommandsContext(context.Background())
+}
+
+// customerCliCommandsContext is customerCliCommands for a caller with a
+// request context, which bounds the capability read.
+func customerCliCommandsContext(ctx context.Context) []cliCommand {
 	var commands []cliCommand
-	for _, command := range customerAudience(discoverableCliCommands()) {
+	for _, command := range customerAudience(discoverableCliCommandsContext(ctx)) {
 		if !cliTreeEarlierName(command.Name) {
 			commands = append(commands, command)
 		}
@@ -2164,6 +2171,32 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    "verify",
+		DocSlug: "verification-contracts",
+		Short:   "Check new deployments against gregale.verify.yaml before traffic",
+		Examples: []string{
+			"gregale release check validate",
+			"gregale release check set --app my-api",
+			"gregale release check get --app my-api --json",
+		},
+		Subcommands: []cliSub{
+			{Name: "validate", Short: "Validate gregale.verify.yaml locally", Flags: []cliFlag{
+				{Name: "file", Short: "contract file (default gregale.verify.yaml)", Value: "PATH"},
+			}},
+			{Name: "set", Short: "Store the contract on an app; new deployments must pass it", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+				{Name: "file", Short: "contract file (default gregale.verify.yaml)", Value: "PATH"},
+				{Name: "expected-revision", Short: "refuse unless the stored revision matches (0: none stored)", Value: "N"},
+			}},
+			{Name: "get", Short: "Show an app's stored contract", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+			}},
+			{Name: "delete", Short: "Remove an app's contract", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+			}},
+		},
+	},
+	{
 		Name:    "freeze",
 		DocSlug: "freeze",
 		Short:   "Pause production releases for a window, weekly, or after rollbacks",
@@ -4190,12 +4223,12 @@ var cliCommands = []cliCommand{
 				`gregale edge rule trace --app my-api --url https://api.example.com/admin --add-rule '{"kind":"maintenance","match_host":"api.example.com","match_path":"/admin/*","action":{"maintenance":{"message":"migrating"}}}'`,
 			}},
 			{Name: subCreate, Short: "Add an edge rule", Examples: []string{
-				"gregale edge rule create --app my-api --kind throttle --match-host my-api.gregale.dev --match-path /search --throttle-requests-per-second 5 --throttle-burst 10",
-				"gregale edge rule create --app my-api --kind throttle --match-host my-api.gregale.dev --match-path /login --throttle-requests-per-second 0.1 --throttle-burst 5 --throttle-key-by composite --throttle-key-field ip --throttle-key-field header:x-username --throttle-count-status 401",
-				"gregale edge rule create --app my-api --kind redirect --match-host my-api.gregale.dev --match-path /old --redirect-status 308 --redirect-to https://my-api.gregale.dev/new",
-				"gregale edge rule create --app my-api --kind cache --match-host my-api.gregale.dev --match-path /catalog --cache-max-age-seconds 60",
+				"gregale edge rule create --app my-api --kind throttle --match-host my-api.gregale.app --match-path /search --throttle-requests-per-second 5 --throttle-burst 10",
+				"gregale edge rule create --app my-api --kind throttle --match-host my-api.gregale.app --match-path /login --throttle-requests-per-second 0.1 --throttle-burst 5 --throttle-key-by composite --throttle-key-field ip --throttle-key-field header:x-username --throttle-count-status 401",
+				"gregale edge rule create --app my-api --kind redirect --match-host my-api.gregale.app --match-path /old --redirect-status 308 --redirect-to https://my-api.gregale.app/new",
+				"gregale edge rule create --app my-api --kind cache --match-host my-api.gregale.app --match-path /catalog --cache-max-age-seconds 60",
 				`gregale edge rule create --app my-site --kind challenge --match-host @app --match-path '/*' --match '{"field":"verified_bot","op":"missing"}'`,
-				"gregale edge rule create --app my-api --kind budget --match-host my-api.gregale.dev --match-path /reports --budget-ms 20000",
+				"gregale edge rule create --app my-api --kind budget --match-host my-api.gregale.app --match-path /reports --budget-ms 20000",
 				"gregale edge rule create --app my-api --kind validate --match-host api.example.com --validate-schema @schema.json --validate-content-type application/json --validate-mode block",
 				"cat schema.json | gregale edge rule create --app my-api --kind validate --match-host api.example.com --validate-schema -",
 				`gregale edge rule create --app my-api --kind validate --match-host api.example.com --match-path '/users/?*' --match-method GET --validate-path-template '/users/{id}' --validate-path-schema '{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}' --validate-query-schema @query.json`,
@@ -5207,13 +5240,22 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "trace",
 		DocSlug: "trace",
-		Short:   "Look up a distributed trace by its trace ID",
+		Short:   "Look up a distributed trace by its trace ID or a request ID",
+		HelpNotes: []string{
+			"A trace ID is 32 hex characters and spans the account: edge and app requests, wake method and restore fallback, queue, delayed and cron invocations to dead letter, access logs and spans.",
+			"An x-faas-request-id works too: request ids have the same 32-hex shape, so when no trace has the id it is resolved as a request of the app (--app, else the linked app) to the request's trace. A request with no trace shows its own evidence.",
+		},
+		Examples: []string{
+			"gregale debug trace 4bf92f3577b34da6a3ce929d0e0e4736",
+			"gregale debug trace 019a3c5e7d1b7f2a9c4e6b8d0f1a2c3e --app my-api --json",
+		},
 		Flags: []cliFlag{
+			{Name: "app", Short: "app the request ID belongs to (default: the linked app)", Value: "SLUG"},
 			{Name: "watch", Short: "poll until linked invocations reach a terminal state"},
 			{Name: "interval", Short: "poll interval (default 1s)", Value: "DURATION"},
 			{Name: "timeout", Short: "maximum watch duration (default 5m)", Value: "DURATION"},
 		},
-		Positionals: []string{"<trace-id>"},
+		Positionals: []string{"<trace-id-or-request-id>"},
 	},
 	{
 		Name:    "invitations",
@@ -5348,7 +5390,7 @@ var cliCommands = []cliCommand{
 		DocSlug:     "logs",
 		Short:       "Search an app's runtime logs and HTTP requests, or follow them",
 		CompactHelp: true,
-		Examples:    []string{"gregale logs my-api --interactive", "gregale logs my-api --follow", "gregale logs --project shop --follow", "gregale logs my-api --since 1h --level error", "gregale logs views save runtime-errors --since 1h --level error", "gregale logs my-api --view runtime-errors"},
+		Examples:    []string{"gregale logs my-api --interactive", "gregale logs my-api --follow", "gregale logs my-api --follow --source http", "gregale logs --project shop --follow", "gregale logs my-api --since 1h --level error", "gregale logs views save runtime-errors --since 1h --level error", "gregale logs my-api --view runtime-errors"},
 		Positionals: []string{"[<slug>]"},
 		Flags: []cliFlag{
 			{Name: "dry-run", Bool: true, Short: "preview effective target, source, and filters offline; no authentication or remote reads"},
@@ -5361,7 +5403,7 @@ var cliCommands = []cliCommand{
 			{Name: "latest-failure", Short: "select latest failed deployment and read up to 500 retained build/deploy entries; accepts only an app target", Bool: true},
 			{Name: "latest-request-error", Short: "select newest retained HTTP 5xx row; default 15m window; accepts app, since, route", Bool: true},
 			{Name: "interactive", Common: true, Short: "choose source, time window, and filters and show the equivalent command", Bool: true},
-			{Name: "follow", Common: true, Short: "stream logs until interrupted"},
+			{Name: "follow", Common: true, Short: "stream new runtime lines, or new HTTP requests with --source http, until interrupted"},
 			{Name: "deployment", Short: "deployment id or vN revision (default: latest)", Value: "ID"},
 			{Name: "release", Short: "release id or revision (alias for --deployment)", Value: "ID|vN"},
 			{Name: "source", Common: true, Short: "log source", Value: "SOURCE", ClosedSet: []string{"runtime", "http"}},
@@ -6383,7 +6425,7 @@ var cliCommands = []cliCommand{
 				{Name: "region", Short: "region (defaults to configured region)", Value: "REGION"},
 			}, Examples: []string{"gregale postgres capabilities --json"}},
 			{Name: "usage", Short: "Show monthly managed PostgreSQL usage and guardrail state"},
-			{Name: "overage", Short: "Show or change compute overage past the monthly allowance", Notes: []string{"With overage on, databases keep running up to twice the allowance."}, Positionals: []string{"[on|off]"}, Examples: []string{"gregale postgres overage on"}},
+			{Name: "overage", Short: "Show or change compute overage past the monthly allowance", Notes: []string{"With overage on, databases keep running up to twice the allowance."}, Positionals: []string{"[on|off]"}, Examples: []string{"gregale postgres overage get", "gregale postgres overage set on"}},
 			{Name: "create", Short: "Create a managed PostgreSQL database", Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "region", Short: "provider-neutral region", Req: true, Value: "REGION"},
 				{Name: "postgres-major", Short: "PostgreSQL major version", Value: "N"},
@@ -6533,6 +6575,26 @@ var cliCommands = []cliCommand{
 				{Name: "proxy", Short: "keep the tunnel open for another client instead of starting psql"},
 				{Name: "wait-timeout", Short: "maximum time to wait for each task VM to start", Value: "D"},
 			}, Examples: []string{"gregale postgres connect orders", "gregale postgres connect orders --access read_only -- -c 'select count(*) from segments'", "gregale postgres connect orders --proxy --port 5433"}},
+			{Name: "query", Aliases: []string{"sql"}, Short: "Run one SQL query and print rows; read-only by default", Notes: []string{
+				"Uses the same tunnel as `postgres connect` (credentials never print) and needs no local psql.",
+				"Read-only by default: one statement in a READ ONLY transaction that is always rolled back, on a read_only binding when there is one.",
+				"--write runs the text as a script on a writable binding; it commits. To try a destructive change first, run it on a copy-on-write branch: `gregale postgres branch <database> <name> --ttl 2h`.",
+				"--json prints typed rows: numbers, booleans and json stay typed; NULL is null; other values are PostgreSQL text.",
+			}, Positionals: []string{"<database>", "[<query>]"}, Flags: []cliFlag{
+				{Name: "file", Short: "read the query from PATH, or - for stdin", Value: "PATH"},
+				{Name: "write", Short: "allow writes and several statements (commits)"},
+				{Name: "read-only", Short: "refuse writes (the default)"},
+				{Name: "max-rows", Short: "rows kept per result, 1..10000 (default 500)", Value: "N"},
+				{Name: "timeout", Short: "statement timeout (default 30s)", Value: "D"},
+				{Name: "app", Short: "bound app whose credentials to use (default: the best ready binding)", Value: "SLUG"},
+				{Name: "env", Short: "binding environment key", Value: "KEY"},
+				{Name: "access", Short: "binding access (default prefers read_only for reads, read_write for --write)", Value: "MODE", ClosedSet: []string{"read_only", "session", "read_write", "migration"}},
+				{Name: "wait-timeout", Short: "maximum time to wait for each task VM to start", Value: "D"},
+			}, Examples: []string{
+				"gregale postgres sql orders \"select status, count(*) from orders group by 1\"",
+				"gregale postgres sql orders --file audit.sql --json",
+				"gregale postgres sql orders --write \"update orders set status = 'void' where id = 42\"",
+			}},
 		},
 	},
 	{
@@ -7047,11 +7109,38 @@ var cliCommands = []cliCommand{
 				{Name: "yes", Short: "confirm project deletion"},
 				{Name: "detach-services", Short: "delete even though its services call each other by name", Bool: true},
 			}},
-			{Name: "rollback", Short: "Roll the latest project deploy back, callers first", Notes: []string{"Only services the latest deploy changed roll back unless --all; services added since and services already rolled back are left as they are.", "Stops at the first service that fails; run it again to finish."}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
+			{Name: "destroy", Short: "Delete a project's apps and then the project, keeping data", Notes: []string{
+				"Apps that still own buckets are kept, and so is the project, unless --include-data deletes their (empty) buckets first.",
+				"--include-data also deletes managed PostgreSQL databases bound only to this project's apps; deletion protection still applies.",
+				"A refusal keeps what depends on it; run it again to finish after fixing what it reports."}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
+				{Name: "dry-run", Short: "print the destroy plan", Bool: true},
+				{Name: "yes", Short: "destroy the project", Bool: true},
+				{Name: "include-data", Short: "also delete buckets and databases the project owns", Bool: true},
+			}},
+			{Name: "rollback", Short: "Roll back a recorded project deploy, callers first", Notes: []string{"By default, select the exact services and predecessors recorded for the latest serving project deploy.", "Use --targets to list recent deploy IDs. Pass --to-deploy with --dry-run or --yes to restore the recorded revisions for that deploy.", "Use --protect-deploy to retain the artifacts for a known-good deploy. --ttl defaults to 168h and accepts 1s to 168h. The --targets list shows expiry and retained layer bytes.", "Dry run reports preflight blockers for every targeted service. The server warms and checks every target before moving traffic. The receipt shows preparation progress and any blockers.", "The server continues after the CLI exits. Use --status with the operation ID to inspect progress from any authorized connection.", "Run --dry-run and pass its plan hash to --yes --plan-hash with the same options to apply the reviewed plan. If the plan changed, review a fresh preview.", "The CLI prints a request ID before submitting a rollback. To retry a start after a lost response, use --yes with the same --request-id and options.", "Use --history to find recent rollback and undo receipts. The running operation appears first, followed by the most recent receipts, up to 20 in total.", "Use --verify to check configured HTTP health probes after each cutover. A failed check pauses the operation. Fix the service and use --resume to recheck it before continuing.", "Use --verify-before-cutover with --verify to probe all configured prepared target revisions at zero traffic before the first cutover. A failed probe or missing verification by the preparation deadline holds traffic.", "Use --stabilize-for with --verify to require a 1s to 60s window of healthy probes after each cutover. The next cutover waits for the current service to pass.", "Use --verify-live-traffic with --verify to check configured production 5xx budgets on restored services. A budget breach or insufficient evidence by the deadline holds the next cutover.", "Use --undo-on-health-failure with --verify to undo switched services after a confirmed health probe 5xx. Use --status with the linked undo ID to follow it.", "Use --undo-on-live-traffic-failure with --verify-live-traffic to undo switched services when a sustained production 5xx breach is confirmed again before undo.", "Use --pause with a running operation ID to stop further cutovers. Gregale settles committed handoffs and releases unused preparations before reporting the pause.", "Use --preview-resume with a paused operation ID to see completed and pending cutovers, blockers, and which verification will run. Pass its hash to --resume --plan-hash to continue the same operation only if the reviewed plan still matches.", "Use --undo with a paused rollback ID to restore the original revisions for services that switched. Undo has its own operation ID. Use --status or --resume with that ID to follow it.", "Use --preview-undo with a paused rollback ID to see the restored revisions and crossed release runs in reverse cutover order. Pass its plan hash to --undo --plan-hash with the same release acknowledgement to apply the reviewed undo.", "Status and undo preview show the artifact hold for each revision that an undo can restore. The hold lasts while the rollback runs and for 24 hours after it pauses. An accepted undo takes over any active holds while it runs.", "The receipt shows when HTTP routing committed, when gateways applied it, and when a successful request reached the restored revision."}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "dry-run", Short: "print the rollback plan", Bool: true},
-				{Name: "yes", Short: "roll the latest deploy back", Bool: true},
-				{Name: "all", Short: "roll back every service, not only those the latest deploy changed", Bool: true},
+				{Name: "yes", Short: "start the server rollback and wait", Bool: true},
+				{Name: "history", Short: "list recent project rollbacks and undos", Bool: true},
+				{Name: "targets", Short: "list recorded deploys eligible for rollback preview", Bool: true},
+				{Name: "protect-deploy", Short: "retain a recorded deploy's rollback artifacts", Value: "UUID"},
+				{Name: "ttl", Short: "rollback artifact protection duration (default 168h)", Value: "DURATION"},
+				{Name: "status", Short: "inspect the server rollback receipt", Value: "OPERATION_ID"},
+				{Name: "preview-resume", Short: "preview the remaining steps of a paused rollback or undo", Value: "OPERATION_ID"},
+				{Name: "resume", Short: "retry a blocked rollback or follow a running one", Value: "OPERATION_ID"},
+				{Name: "pause", Short: "pause a running project rollback or undo", Value: "OPERATION_ID"},
+				{Name: "preview-undo", Short: "preview the exact undo of a paused rollback", Value: "OPERATION_ID"},
+				{Name: "undo", Short: "restore the original revisions from a paused rollback", Value: "OPERATION_ID"},
+				{Name: "all", Short: "select each serving service and its current predecessor", Bool: true},
+				{Name: "to-deploy", Short: "restore the revisions recorded for a project deploy", Value: "UUID"},
+				{Name: "verify", Short: "verify configured HTTP health probes between cutovers", Bool: true},
+				{Name: "verify-before-cutover", Short: "probe prepared revisions before moving project traffic", Bool: true},
+				{Name: "stabilize-for", Short: "require healthy post-cutover probes for this duration", Value: "DURATION"},
+				{Name: "verify-live-traffic", Short: "verify configured production 5xx budgets after cutover", Bool: true},
+				{Name: "undo-on-health-failure", Short: "undo switched services on a confirmed health probe 5xx", Bool: true},
+				{Name: "undo-on-live-traffic-failure", Short: "undo switched services on a sustained production 5xx breach", Bool: true},
 				{Name: "acknowledge-releases", Short: "accept rolling back across release commands", Bool: true},
+				{Name: "plan-hash", Short: "apply the plan printed by --dry-run, --preview-resume, or --preview-undo", Value: "SHA256"},
+				{Name: "request-id", Short: "reuse a rollback start request UUID", Value: "UUID"},
 				{Name: "timeout", Short: "wait per service (default 10m)", Value: "DURATION"},
 			}},
 			{Name: "health", Short: "Check serving health of every app in a project", Positionals: []string{"<project>"}, Notes: []string{"Same as `app health --project <project>`; takes the same flags."}},
@@ -7135,7 +7224,7 @@ var cliCommands = []cliCommand{
 				{Name: "set", Short: "Select an existing scoped secret; respects Git field ownership", Examples: []string{"gregale env ref set --app my-api --env production DATABASE_URL=secret:DATABASE_PRIMARY"}, Positionals: []string{"<KEY=secret:NAME>"}, Flags: secretReferenceCLIFlags()},
 				{Name: "unset", Short: "Suppress a secret destination and keep the sealed source", Notes: []string{"Applies to a primary workload destination."}, Examples: []string{"gregale env ref unset --app my-api --env production DATABASE_URL"}, Positionals: []string{"<KEY>"}, Flags: secretReferenceCLIFlags()},
 			}},
-			{Name: "list", Short: "List sealed secrets", Examples: []string{"gregale env list --app my-api", "gregale env list --app my-api --env __all__", "gregale env list --app my-api --class ephemeral", "gregale env list --app my-api --older-than 90d"}, Flags: []cliFlag{
+			{Name: "list", Short: "List sealed secrets", Notes: []string{"Delivery counts describe runtime-start delivery; runtime reload and application acknowledgement are separate evidence in each row, and delivery does not confirm that the application adopted a value."}, Examples: []string{"gregale env list --app my-api", "gregale env list --app my-api --env __all__", "gregale env list --app my-api --class ephemeral", "gregale env list --app my-api --older-than 90d"}, Flags: []cliFlag{
 				{Name: "key", Short: "include an exact secret key name (repeatable)", Value: "KEY", Repeatable: true},
 				{Name: "watch", Short: "follow metadata changes; JSON emits snapshot/change/unavailable events", Bool: true},
 				{Name: "interval", Short: "watch poll interval (1s to 1h; default 5s)", Value: "DURATION"},
@@ -7214,9 +7303,10 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name:    "tail",
-		DocSlug: "tail",
-		Short:   "Watch invocations finish across your account in real time",
+		Name:      "tail",
+		DocSlug:   "tail",
+		Short:     "Watch async invocations finish across your account in real time",
+		HelpNotes: []string{"This shows invocation results, not app output or HTTP requests; for those, run `gregale logs --follow`."},
 		// The stream is always followed; there is no --follow flag on
 		// cmdTail (commands5.go) and the manifest must not invent one.
 		Positionals: []string{"[<slug>]"},
@@ -7638,12 +7728,14 @@ var cliCommands = []cliCommand{
 	},
 	{
 		// ADR-20261112223000 §4: short task pages for agents and people.
+		// ADR-20261123180000: any other text searches commands and docs.
 		Name:        "guide",
 		DocSlug:     "guide",
-		Short:       "Short task pages: deploy, health checks, private services, rollouts",
-		Positionals: []string{"[<task>]"},
-		Examples:    []string{"gregale guide", "gregale guide private-services"},
-		Flags:       []cliFlag{{Name: "json", Short: "print the pages as JSON", Bool: true}},
+		Short:       "Task pages, or search commands and docs for a task in your own words",
+		Positionals: []string{"[<task>|<question>]"},
+		Examples:    []string{"gregale guide", "gregale guide private-services", `gregale guide "open an outbound tcp port"`},
+		HelpNotes:   []string{"A question lists the matching commands, then docs sections from the docs shipped with this CLI and the live site. Preview pages show only when your account has that preview feature. GREGALE_DOCS_OFFLINE=1 skips the live site."},
+		Flags:       []cliFlag{{Name: "json", Short: "print the pages or the search results as JSON", Bool: true}},
 	},
 }
 

@@ -27,8 +27,8 @@ func verifyProjectConnection(link localProjectContext, linked bool, timeout time
 	connection := effectiveConnectionContext()
 	token := loadToken()
 	source := "profile:" + connection.Profile
-	if os.Getenv("FAAS_TOKEN") != "" {
-		source = "env:FAAS_TOKEN"
+	if name := envTokenName(); name != "" {
+		source = "env:" + name
 	}
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -139,7 +139,7 @@ func renderContextVerification(report *contextVerification) {
 
 func validateContextVerifyEndpoint() error {
 	if _, err := validateConfigAPIBase(apiBase()); err != nil {
-		return errors.New("API address must be http(s) without credentials, query parameters, or fragments; FAAS_API overrides profile settings")
+		return errors.New("API address must be http(s) without credentials, query parameters, or fragments; " + envAPIName() + " overrides profile settings")
 	}
 	return checkAPIBaseTransport(apiBase())
 }

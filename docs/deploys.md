@@ -219,7 +219,7 @@ a release summary against the previous deployment, and a copy-paste rollback
 command when a previous release is available:
 
 ```
-✓ Deployed. https://my-app.gregale.dev
+✓ Deployed. https://my-app.gregale.app
 Release summary:
   Changes since d0:
     commit_sha         "old" -> "new"
@@ -376,11 +376,11 @@ debug requests, crash snapshots or forks; those answer `403` and need an API
 key. The OIDC bearer the deploy Action uses has the same limits. Browser sessions with MFA enabled need verification from the last
 five minutes when minting or rotating one. CLI requests use their scoped
 bearer credential. The token is shown once;
-store it as `FAAS_TOKEN` in the CI secret store.
+store it as `GREGALE_TOKEN` in the CI secret store.
 
 A deploy token can also manage its app's edge rules, but only for that app's
 own hosts: a rule's `match_host` must be `@app`, the app's
-`<slug>.gregale.dev` host or one of its custom domains. The same goes for
+`<slug>.gregale.app` host or one of its custom domains. The same goes for
 `routes` and `async_routes` in a `gregale.yaml` it deploys. A rule that covers
 other hosts (`*`, a wildcard, another app's host), or a route that sends
 another app's host to this app, needs an account API key, because edge rules
@@ -398,7 +398,7 @@ gregale app deploy-token rotate <token-id> --app my-api   # the old token stops 
 gregale app deploy-token delete <token-id> --app my-api
 ```
 
-With the token in `FAAS_TOKEN`, `gregale deploy --name my-api … --wait` reads
+With the token in `GREGALE_TOKEN`, `gregale deploy --name my-api … --wait` reads
 the app, deploys it and follows the deployment to the end. The token reaches
 no other app, and it cannot read build logs: the wait reports the
 deployment's status and failure reason instead. Use a key with `apps:read`
@@ -504,7 +504,8 @@ so delete one (`gregale release alias delete`) to make room.
 
 ## Where sections moved
 
-These sections now have their own pages.
+These sections now have their own pages. The headings stay here only so links
+from older CLI versions and API errors still land on a pointer.
 
 ### Adding services to an atomic project
 

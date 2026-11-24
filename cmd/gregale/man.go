@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 )
@@ -466,9 +467,22 @@ func suggestCommand(query string) (string, bool) {
 
 // Accept prefiltered manifests so offline discovery never refreshes capabilities.
 func suggestCommandFrom(query string, completion, discoverable []cliCommand) (string, bool) {
-	const maxDist = 2
+	maxDist := 2
 	if query == "" {
 		return "", false
+	}
+	if concept, ok := topLevelConcepts[strings.ToLower(query)]; ok {
+		if slices.ContainsFunc(completion, func(c cliCommand) bool { return c.Name == concept }) {
+			return concept, true
+		}
+	}
+	if nested, ok := nestedVerbSuggestion(query, completion); ok {
+		return nested, true
+	}
+	// Two edits turn a two- or three-letter word into almost any short
+	// command: `pg` suggested app and `sql` dlq (prod hunt r25).
+	if len(query) <= 3 {
+		maxDist = 1
 	}
 	bestName := ""
 	bestDist := maxDist + 1
@@ -509,6 +523,49 @@ func suggestCommandFrom(query string, completion, discoverable []cliCommand) (st
 		return "", false
 	}
 	return bestName, true
+}
+
+// topLevelConcepts maps a word for a product to the command that manages it,
+// where no typo distance finds it: `gregale db` and `database` suggested
+// nothing on prod rc.369.
+var topLevelConcepts = map[string]string{
+	"db": "postgres", "database": "postgres", "databases": "postgres",
+	"pg": "postgres", "postgresql": "postgres", "psql": "postgres", "sql": "postgres",
+}
+
+// nestedVerbSuggestion names the one tree command whose verb the query
+// names, singular or plural: `gregale budget` suggested `bucket` (distance
+// 2) while budgets live under `billing budgets` (prod hunt r25). A verb most
+// nouns share (list, get, status) names no single command and is skipped, as
+// is a query within one edit of a top-level command, which is a typo of it.
+func nestedVerbSuggestion(query string, completion []cliCommand) (string, bool) {
+	query = strings.ToLower(query)
+	if commonVerbWord(query) || cliTreeStandardVerb(query) != query {
+		return "", false
+	}
+	for _, c := range completion {
+		if editDistance(query, c.Name) <= 1 {
+			return "", false
+		}
+	}
+	found := ""
+	for _, c := range completion {
+		for _, sub := range c.Subcommands {
+			name := strings.ToLower(sub.Name)
+			if name != query && name != query+"s" && name+"s" != query {
+				continue
+			}
+			if commonVerbWord(name) || cliTreeStandardVerb(name) != name {
+				continue
+			}
+			path := c.Name + " " + sub.Name
+			if found != "" && found != path {
+				return "", false
+			}
+			found = path
+		}
+	}
+	return found, found != ""
 }
 
 // cliTreeEarlierNouns maps each earlier top-level noun that is no longer a
@@ -564,9 +621,30 @@ func suggestSubcommand(query string, c cliCommand) (string, bool) {
 		}
 	}
 	if tied || bestDist > maxDist || bestName == "" {
-		return "", false
+		return intentSubcommand(query, c)
 	}
 	return bestName, true
+}
+
+// subcommandIntents maps a verb people reach for to the verbs a command may
+// use for the same act, most likely first. `app deploy-token revoke` listed
+// the verbs and asked whether "revoke" was an app; delete is the verb that
+// revokes a token (prod hunt r29).
+var subcommandIntents = map[string][]string{
+	"revoke":  {"delete", "rm"},
+	"remove":  {"delete", "rm"},
+	"destroy": {"delete", "rm"},
+	"new":     {"create", "add"},
+}
+
+// intentSubcommand suggests the command's own verb for an intent synonym.
+func intentSubcommand(query string, c cliCommand) (string, bool) {
+	for _, candidate := range subcommandIntents[query] {
+		if _, ok := findCliSubcommand(c.Subcommands, candidate); ok {
+			return candidate, true
+		}
+	}
+	return "", false
 }
 
 // maybeSuggestSub writes a one-line "Did you mean X?" hint to

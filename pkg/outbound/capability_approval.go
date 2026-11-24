@@ -13,6 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 // Run approvals (ADR-20261027090016 amendment 2): a call to a tool in
@@ -86,19 +87,15 @@ func (m *CapabilityMetrics) approval(outcome string) {
 
 // approvalRequest describes a call for the seller: the arguments' digest and
 // as much of them as fits the summary bound, cut on a rune boundary.
+// Arguments that are not valid UTF-8 get no summary; the digest still names
+// them.
 func approvalRequest(tool string, args []byte) ToolApprovalRequest {
 	sum := sha256.Sum256(args)
-	summary := args
-	if len(summary) > api.AgentRunApprovalSummaryMaxBytes {
-		summary = summary[:api.AgentRunApprovalSummaryMaxBytes]
-		for len(summary) > 0 && !utf8.Valid(summary) {
-			summary = summary[:len(summary)-1]
-		}
+	var summary string
+	if utf8.Valid(args) {
+		summary = safetext.Truncate(string(args), api.AgentRunApprovalSummaryMaxBytes)
 	}
-	if !utf8.Valid(summary) {
-		summary = nil
-	}
-	return ToolApprovalRequest{Tool: tool, ArgumentsSHA256: hex.EncodeToString(sum[:]), ArgumentsSummary: string(summary)}
+	return ToolApprovalRequest{Tool: tool, ArgumentsSHA256: hex.EncodeToString(sum[:]), ArgumentsSummary: summary}
 }
 
 // awaitApproval holds the call until the seller decides, the request

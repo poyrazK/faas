@@ -81,6 +81,10 @@ type layerReuseInputs struct {
 	runtime            string
 	runtimeBaseDiffIDs []string
 	startCommand       string
+	// releaseKeepsToolchain is set when the deployment's release command
+	// calls a package manager the runner base lacks, which keeps the split
+	// from dropping the toolchain.
+	releaseKeepsToolchain bool
 	// manifest is the app manifest before the split.
 	manifest        api.AppManifest
 	guestInitDigest string
@@ -103,6 +107,9 @@ func layerReuseKey(in layerReuseInputs) (string, error) {
 		strings.Join(in.runtimeBaseDiffIDs, ","), in.startCommand, string(manifest), in.guestInitDigest, string(in.plan), in.imagedVersion}
 	if in.kind != "" {
 		parts = append(parts, "kind:"+in.kind)
+	}
+	if in.releaseKeepsToolchain {
+		parts = append(parts, "release-keeps-toolchain")
 	}
 	for _, part := range parts {
 		_, _ = fmt.Fprintf(h, "%d:%s\n", len(part), part)
@@ -371,9 +378,9 @@ func (h *Handler) observeLayerReuse(outcome string) {
 // "" when reuse is off or the inputs cannot be identified. manifest is the
 // app manifest before any shared runner split; baseDiffIDs are the runner
 // base's layers when runtime names one.
-func (h *Handler) appLayerReuseKey(app state.App, acct state.Account, imageDigest, runtime string, baseDiffIDs []string, manifest api.AppManifest) string {
+func (h *Handler) appLayerReuseKey(app state.App, acct state.Account, imageDigest, runtime string, baseDiffIDs []string, manifest api.AppManifest, releaseKeepsToolchain bool) string {
 	return h.layerReuseKeyFor(app, layerReuseInputs{accountID: app.AccountID, imageDigest: imageDigest, runtime: runtime,
-		runtimeBaseDiffIDs: baseDiffIDs, startCommand: app.StartCommand, manifest: manifest, plan: acct.Plan})
+		runtimeBaseDiffIDs: baseDiffIDs, startCommand: app.StartCommand, releaseKeepsToolchain: releaseKeepsToolchain, manifest: manifest, plan: acct.Plan})
 }
 
 // layerReuseKeyFor completes in with this imaged's guest-init digest and

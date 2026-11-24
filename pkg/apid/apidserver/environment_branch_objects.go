@@ -280,14 +280,8 @@ func (s *server) deleteEnvironmentBranchBucket(ctx context.Context, row state.Pr
 		return err
 	}
 	if bucket.State != "deleted" {
-		active, err := credentials.ListObjectS3Credentials(ctx, row.AccountID, bucketID)
-		if err != nil {
+		if err := revokeObjectBucketCredentials(ctx, credentials, row.AccountID, bucketID); err != nil {
 			return err
-		}
-		for _, c := range active {
-			if _, err := credentials.RevokeObjectS3ComputeBinding(ctx, row.AccountID, bucketID, c.ID); err != nil && !errors.Is(err, state.ErrNotFound) {
-				return fmt.Errorf("revoke branch bucket credential: %w", err)
-			}
 		}
 		if err := s.deleteProjectEnvironmentObjectStorageCloneBucket(ctx, row.AccountID, row.AppID, row.EnvironmentSlug, bucketID, row.SourceBucketID); err != nil {
 			return err
@@ -300,4 +294,30 @@ func (s *server) deleteEnvironmentBranchBucket(ctx context.Context, row state.Pr
 		}
 	}
 	return overlays.DeleteObjectBucketOverlay(ctx, bucketID)
+}
+
+// revokeEnvironmentBranchBucketCredentials revokes every credential on a
+// branch's bucket.
+func (s *server) revokeEnvironmentBranchBucketCredentials(ctx context.Context, accountID, bucketID string) error {
+	credentials, ok := s.store.(state.ObjectS3CredentialBindingStore)
+	if !ok {
+		return errors.New("environment branch buckets are unavailable")
+	}
+	return revokeObjectBucketCredentials(ctx, credentials, accountID, bucketID)
+}
+
+func revokeObjectBucketCredentials(ctx context.Context, credentials state.ObjectS3CredentialBindingStore, accountID, bucketID string) error {
+	active, err := credentials.ListObjectS3Credentials(ctx, accountID, bucketID)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	for _, c := range active {
+		if _, err := credentials.RevokeObjectS3ComputeBinding(ctx, accountID, bucketID, c.ID); err != nil && !errors.Is(err, state.ErrNotFound) {
+			return fmt.Errorf("revoke branch bucket credential: %w", err)
+		}
+	}
+	return nil
 }

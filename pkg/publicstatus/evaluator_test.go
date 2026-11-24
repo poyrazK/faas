@@ -78,8 +78,9 @@ func TestSummarizeDayAndThirtyDayUptimeRespectCoverage(t *testing.T) {
 		buckets = append(buckets, b)
 	}
 	obs := SummarizeDay(day, buckets, 10)
-	if obs.State != StateDegraded || obs.CoveragePct != 80 || obs.UptimePct == nil || math.Abs(*obs.UptimePct-100) > 0.001 {
-		t.Fatalf("observation = %#v, want degraded, 80%% coverage, 100%% uptime", obs)
+	// One degraded interval is below DailyDegradedMinIntervals.
+	if obs.State != StateOperational || obs.CoveragePct != 80 || obs.UptimePct == nil || math.Abs(*obs.UptimePct-100) > 0.001 {
+		t.Fatalf("observation = %#v, want operational, 80%% coverage, 100%% uptime", obs)
 	}
 
 	low := SummarizeDay(day, buckets[:7], 10)
@@ -106,6 +107,85 @@ func TestThirtyDayUptimeWeightsPartialCurrentDayByExpectedBuckets(t *testing.T) 
 	uptime, coverage, ok := ThirtyDayUptime([]DailyObservation{fullDay, currentDay})
 	if !ok || coverage != 100 || math.Abs(uptime-98) > 0.001 {
 		t.Fatalf("ThirtyDayUptime = (%v,%v,%v), want raw-bucket weighted 98%%", uptime, coverage, ok)
+	}
+}
+
+func TestSummarizeDayIgnoresBriefDegradation(t *testing.T) {
+	day := time.Date(2026, 11, 22, 0, 0, 0, 0, time.UTC)
+	full := func(degraded int, extra State) []Bucket {
+		out := make([]Bucket, 288)
+		for i := range out {
+			out[i] = Bucket{At: day.Add(time.Duration(i) * 5 * time.Minute), State: StateOperational, HasTelemetry: true}
+			if i < degraded {
+				out[i].State = StateDegraded
+			}
+		}
+		if extra != "" {
+			out[287].State = extra
+		}
+		return out
+	}
+	// 14 of 288 intervals (~4.9%, 70 min) degraded: still operational.
+	if obs := SummarizeDay(day, full(14, ""), 288); obs.State != StateOperational {
+		t.Fatalf("brief degradation state = %q, want operational", obs.State)
+	}
+	// 15 of 288 (~5.2%) degraded: degraded day.
+	if obs := SummarizeDay(day, full(15, ""), 288); obs.State != StateDegraded {
+		t.Fatalf("sustained degradation state = %q, want degraded", obs.State)
+	}
+	// One outage interval is never thresholded away.
+	if obs := SummarizeDay(day, full(0, StatePartialOutage), 288); obs.State != StatePartialOutage {
+		t.Fatalf("brief outage state = %q, want partial_outage", obs.State)
+	}
+	// The bar is an absolute count: a partial day (today) with 20%
+	// degraded so far stays operational, and once 15 intervals are degraded
+	// it stays degraded however many healthy intervals follow.
+	if obs := SummarizeDay(day, full(4, "")[:20], 20); obs.State != StateOperational {
+		t.Fatalf("early-day state = %q, want operational", obs.State)
+	}
+	if obs := SummarizeDay(day, full(15, "")[:20], 20); obs.State != StateDegraded {
+		t.Fatalf("early-day sustained state = %q, want degraded", obs.State)
+	}
+	// Launch day with 12 expected intervals, all degraded: degraded.
+	if obs := SummarizeDay(day, full(12, "")[:12], 12); obs.State != StateDegraded {
+		t.Fatalf("short fully degraded day state = %q, want degraded", obs.State)
+	}
+	// Maintenance still shows, and brief degradation does not outrank it.
+	if obs := SummarizeDay(day, full(3, StateMaintenance), 288); obs.State != StateMaintenance {
+		t.Fatalf("maintenance day state = %q, want maintenance", obs.State)
+	}
+}
+
+// A short declared incident (or the degraded phase of one later escalated)
+// must still mark its day although SummarizeDay ignores brief degradation.
+func TestApplyDeclaredIncidents(t *testing.T) {
+	day := time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
+	green := DailyObservation{Date: day, State: StateOperational}
+	start := day.Add(10 * time.Hour)
+	spans := []DeclaredSpan{{Start: start, End: start.Add(45 * time.Minute), Components: []Component{ComponentAppExecution}}}
+	if got := ApplyDeclaredIncidents(green, ComponentAppExecution, spans).State; got != StateDegraded {
+		t.Fatalf("45-minute incident day = %q, want degraded", got)
+	}
+	if got := ApplyDeclaredIncidents(green, ComponentNetworking, spans).State; got != StateOperational {
+		t.Fatalf("uncovered component = %q, want operational", got)
+	}
+	next := DailyObservation{Date: day.Add(24 * time.Hour), State: StateOperational}
+	if got := ApplyDeclaredIncidents(next, ComponentAppExecution, spans).State; got != StateOperational {
+		t.Fatalf("next day = %q, want operational", got)
+	}
+	// Resolved exactly at midnight does not touch the following day.
+	midnight := []DeclaredSpan{{Start: day.Add(22 * time.Hour), End: day.Add(24 * time.Hour), Components: []Component{ComponentAppExecution}}}
+	if got := ApplyDeclaredIncidents(next, ComponentAppExecution, midnight).State; got != StateOperational {
+		t.Fatalf("day after midnight resolution = %q, want operational", got)
+	}
+	// An outage day keeps its worse state; an unknown day stays unknown.
+	outage := DailyObservation{Date: day, State: StatePartialOutage}
+	if got := ApplyDeclaredIncidents(outage, ComponentAppExecution, spans).State; got != StatePartialOutage {
+		t.Fatalf("outage day = %q, want partial_outage", got)
+	}
+	unknown := DailyObservation{Date: day, State: StateUnknown}
+	if got := ApplyDeclaredIncidents(unknown, ComponentAppExecution, spans).State; got != StateUnknown {
+		t.Fatalf("unknown day = %q, want unknown", got)
 	}
 }
 

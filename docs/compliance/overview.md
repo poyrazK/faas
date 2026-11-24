@@ -18,7 +18,7 @@ How Gregale handles your data, and where to find the documents behind it.
   its deletion; a deletion has a grace period during which you can cancel
   it. See [Account and organizations](../account.md#export-and-deletion).
 - **Secrets.** Secret values are sealed at rest and are never returned or
-  logged. See [Delivered secrets](../secrets.md).
+  logged. See [Secrets](../secrets.md).
 - **Isolation.** Every app instance runs in its own Firecracker microVM, and
   outbound connections to private and metadata addresses are blocked. See
   [Security](../security.md) and

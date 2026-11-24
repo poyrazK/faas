@@ -246,6 +246,25 @@
     "kind": "account_identity"
   },
   {
+    "table": "app_verification_contracts",
+    "columns": [
+      "account_id",
+      "app_id",
+      "byte_size",
+      "check_count",
+      "contract",
+      "contract_sha256",
+      "created_at",
+      "revision",
+      "updated_at"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
+  },
+  {
     "table": "billing_plan_activations",
     "columns": [
       "effective_at",
@@ -279,6 +298,29 @@
       "reason"
     ],
     "kind": "account_identity"
+  },
+  {
+    "table": "deployment_verification_queries",
+    "columns": [
+      "account_id",
+      "app_id",
+      "check_name",
+      "claimed_at",
+      "completed_at",
+      "created_at",
+      "database_name",
+      "deployment_id",
+      "error",
+      "error_code",
+      "expires_at",
+      "first_value",
+      "has_first",
+      "id",
+      "query",
+      "row_count",
+      "status"
+    ],
+    "kind": "operational"
   },
   {
     "table": "financial_budget_alert_channel_deliveries",
@@ -5747,6 +5789,7 @@
       "app_id",
       "current_deployment_id",
       "id",
+      "project_rollback_id",
       "receipt",
       "scope",
       "status",
@@ -10622,6 +10665,8 @@
     "table": "managed_postgres_overage_deliveries",
     "columns": [
       "billed_egress_bytes",
+      "billed_history_byte_seconds",
+      "billed_snapshot_byte_seconds",
       "billed_storage_byte_seconds",
       "billed_unit_seconds",
       "delivered_millicents",
@@ -10639,10 +10684,13 @@
       "allowance_unit_seconds",
       "app_egress_bytes",
       "billed_egress_bytes",
+      "billed_history_byte_seconds",
+      "billed_snapshot_byte_seconds",
       "billed_storage_byte_seconds",
       "billed_unit_seconds",
       "egress_allowance_bytes",
       "from_millicents",
+      "included_history_bytes",
       "live",
       "period_start",
       "previous_live",
@@ -10653,6 +10701,8 @@
       "subject_id",
       "target_millicents",
       "used_egress_bytes",
+      "used_history_byte_seconds",
+      "used_snapshot_byte_seconds",
       "used_storage_byte_seconds",
       "used_unit_seconds"
     ],
@@ -16426,6 +16476,15 @@
     "kind": "operational"
   },
   {
+    "table": "project_deploy_rollback_members",
+    "kind": "operational",
+    "columns": [
+      "deploy_group_id",
+      "deployment_id",
+      "project_id"
+    ]
+  },
+  {
     "table": "project_environment_approvals",
     "columns": [
       "account_id",
@@ -18173,6 +18232,62 @@
     "columns": [
       "instance_id",
       "requested_at"
+    ]
+  },
+  {
+    "table": "project_rollback_deploy_protections",
+    "columns": [
+      "deploy_group_id",
+      "deployment_ids",
+      "expires_at",
+      "layer_bytes",
+      "manifest_hash",
+      "project_id",
+      "storage_keys"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_rollback_http_recovery",
+    "kind": "operational",
+    "columns": [
+      "acknowledged_gateways",
+      "app_id",
+      "expected_gateways",
+      "expires_at",
+      "first_success_at",
+      "gateways_applied_at",
+      "generation",
+      "next_notify_at",
+      "operation_id",
+      "rollback_id",
+      "routing_committed_at",
+      "service",
+      "target_id"
+    ]
+  },
+  {
+    "table": "project_rollback_operations",
+    "kind": "operational",
+    "columns": [
+      "id",
+      "next_run_at",
+      "project_id",
+      "receipt",
+      "start_request_id",
+      "start_request_options",
+      "status",
+      "version"
+    ]
+  },
+  {
+    "table": "project_rollback_undo_artifact_holds",
+    "kind": "operational",
+    "columns": [
+      "deployment_id",
+      "expires_at",
+      "operation_id",
+      "storage_keys"
     ]
   },
   {
@@ -22743,6 +22858,24 @@
       "sealed_definition",
       "status",
       "version"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "object_storage_workload_credentials",
+    "columns": [
+      "access_key_id",
+      "account_id",
+      "bucket_id",
+      "caller_app_id",
+      "created_at",
+      "expires_at",
+      "id",
+      "instance_id",
+      "key_prefix",
+      "kid",
+      "permission",
+      "secret_sealed"
     ],
     "kind": "operational"
   }

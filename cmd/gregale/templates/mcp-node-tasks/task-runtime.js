@@ -125,7 +125,7 @@ export async function startMcpTaskRuntime(config, {
     await taskRuntime?.start();
     if (metricsSettings) metricsPublisher = createMetricsPublisher({ store, ...metricsSettings, role: settings.role, observer: role === 'observer',
       keepAlive: role === 'observer',
-      onError: () => console.error(JSON.stringify({ event: 'mcp_task_metrics_publish_failed' })),
+      onError: detail => console.error(JSON.stringify({ event: 'mcp_task_metrics_publish_failed', ...detail })),
     });
   } catch {
     await metricsPublisher?.close().catch(() => {});

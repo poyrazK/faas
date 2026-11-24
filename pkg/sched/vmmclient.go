@@ -718,6 +718,9 @@ type WakeOutcome struct {
 	RequestedMethod       vmmdpb.WakeMethod
 	RestoreFallbackReason string
 	Characterization      api.CharacterizationReport
+	// StartupOOM: vmmd saw the app run out of memory before the wake
+	// returned (vmmd WakeResponse.startup_oom).
+	StartupOOM bool
 }
 
 // StopInstanceOutcome (M-2 / ADR-138 §Decision 1) is the vmmd-side
@@ -2214,6 +2217,7 @@ func outcomeFromProto(r *vmmdpb.WakeResponse) *WakeOutcome {
 		RequestedMethod:            r.GetRequestedMethod(),
 		RestoreFallbackReason:      r.GetRestoreFallbackReason(),
 		BaseScanGrace:              r.GetBaseScanGrace(),
+		StartupOOM:                 r.GetStartupOom(),
 	}
 	// ADR-051 PR-D: decode the optional characterization struct
 	// back into pkg/api.CharacterizationReport. Empty struct =

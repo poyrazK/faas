@@ -334,7 +334,7 @@ within that wait, the rest pass unchecked and are counted as
 `inline_skipped`; the WAF never slows your app down to keep up.
 
 Start in `observe`, look for false positives, then switch to `block`. Use
-`--match-host @app`: your app is always served at its own `<slug>.gregale.dev`
+`--match-host @app`: your app is always served at its own `<slug>.gregale.app`
 address (and any companion hostnames) as well as its custom domains, and a
 security rule that names one host leaves the others open. The CLI warns when a
 WAF, challenge, IP, geo, JWT or other gate names a single host.

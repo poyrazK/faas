@@ -274,9 +274,10 @@ func (s *targetSet) routableCount() int {
 // deployments but does not deadlock the request. PR-C ships
 // wake-fan-out to remove this fallback.
 type PGBackend struct {
-	trafficRevocations atomic.Pointer[trafficrevocation.Registry]
-	publicRoutingView  atomic.Pointer[publicrouting.Registry]
-	workloadAdmissions workloadAdmissionCache
+	projectRollbackWatches sync.Map // app ID -> *projectRollbackWatch
+	trafficRevocations     atomic.Pointer[trafficrevocation.Registry]
+	publicRoutingView      atomic.Pointer[publicrouting.Registry]
+	workloadAdmissions     workloadAdmissionCache
 	// flagKills caches each deployment's X-Faas-Flag-Kills value
 	// (ADR 20261114150000 §3); nil until WithFlagKillLoader.
 	flagKills *FlagKillCache
@@ -2386,9 +2387,10 @@ func (b *PGBackend) admitSynchronous(ctx context.Context, appID, deploymentID, s
 	b.recordScope(appID, scope)
 	// Cheap fast path: refuse before we spend a gRPC round-trip.
 	// Σ over all per-deployment targetSets (issue #556 acceptance #3).
+	// A deployment smoke always asks schedd (skipsAdmitFastPath).
 	b.tgtMu.Lock()
 	picker := b.appsPicker[appID]
-	if picker != nil {
+	if picker != nil && !skipsAdmitFastPath(trigger) {
 		total := 0
 		for _, set := range picker.sets {
 			total += len(set.entries)

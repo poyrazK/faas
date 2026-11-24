@@ -22,7 +22,8 @@ func TestImageRunRouteIsGatedAndRunnerJobsAreManaged(t *testing.T) {
 			strings.NewReader(`{"image":"alpine","args":["true"]}`)), acct)
 		return rec
 	}
-	if rec := post(); rec.Code != http.StatusNotFound {
+	// A switched-off feature answers 501 not_implemented, not 404 (#7685).
+	if rec := post(); rec.Code != http.StatusNotImplemented || !strings.Contains(rec.Body.String(), api.CodeNotImplemented) {
 		t.Fatalf("gate off: %d %s", rec.Code, rec.Body)
 	}
 	srv.WithImageRunsEnabled(true)

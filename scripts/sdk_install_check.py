@@ -54,7 +54,7 @@ def quickstart(package: Path) -> str:
 
 
 def example_env(base_url: str) -> dict:
-    return {"FAAS_API": base_url, "FAAS_TOKEN": "sdk-install-fixture"}
+    return {"GREGALE_API_URL": base_url, "FAAS_API": base_url, "GREGALE_TOKEN": "sdk-install-fixture", "FAAS_TOKEN": "sdk-install-fixture"}
 
 
 @contextmanager

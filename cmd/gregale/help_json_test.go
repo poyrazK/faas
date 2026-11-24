@@ -91,7 +91,7 @@ func TestJSONHelpRootUsesCanonicalManifest(t *testing.T) {
 		}
 		seen[got.Command] = true
 	}
-	if !seen["gregale invocation"] || seen["gregale invoke"] || seen["gregale apps"] || seen["gregale realtime"] {
+	if !seen["gregale invocation"] || seen["gregale invoke"] || seen["gregale apps"] || seen["gregale data-api"] || !seen["gregale realtime"] {
 		t.Fatalf("root includes an earlier or hidden name: %v", seen)
 	}
 	operator := readJSONHelp(t, "--json", "help", "--all", "--operator")
@@ -150,7 +150,7 @@ func TestJSONHelpOfflineAndInvalidTopics(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_test_help-private")
 	readJSONHelp(t, "--profile", "missing", "--debug-http", "--non-interactive", "--json", "help", "invocation", "run", "--all")
 	for _, topic := range [][]string{
-		{"not-a-command"}, {"deply"}, {"invocation", "run", "unexpected"}, {"realtime"}, {"release", "approval", "list"},
+		{"not-a-command"}, {"deply"}, {"invocation", "run", "unexpected"}, {"data-api"}, {"release", "approval", "list"},
 		{"invocation", "--bad-option"}, {"--", "--json"}, {"invocation", "--operator"},
 		{"fp_test_help-private"},
 	} {

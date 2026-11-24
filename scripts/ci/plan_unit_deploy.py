@@ -111,6 +111,28 @@ def host_services(unit, host_role):
     return [s for s in unit["services"] if s.get("host", "control-plane") == host_role]
 
 
+# Table lanes of the compute lane's units (docs/adr/20261123122457-compute-
+# unit-lane.md). They ride the lane that already reaches their host: the
+# control-plane lane for a shared daemon's control-plane service, the edge
+# lane's per-node job for compute nodes.
+COMPUTE_UNIT_LANES = ("shared", "compute")
+
+
+def in_scope(unit, lane, host_role):
+    """Whether this lane on this host role deploys the unit: its own lane's
+    units with a service here; on the control plane's control-plane lane, a
+    shared unit's control-plane service; on a compute node's edge lane, a
+    compute-lane unit's compute service, or a helper (no unit: the overlay
+    replaces it and nothing restarts)."""
+    if unit["lane"] in COMPUTE_UNIT_LANES:
+        if lane == "control-plane" and host_role == "control-plane":
+            return bool(host_services(unit, host_role))
+        if lane == "edge" and host_role == "compute-only":
+            return bool(unit.get("helper")) or bool(host_services(unit, host_role))
+        return False
+    return unit["lane"] == lane and bool(host_services(unit, host_role))
+
+
 def gate_args(name):
     """slo_gate.py arguments for one unit; a unit the gate does not know is
     judged by the platform SLOs and its own alert component."""
@@ -130,7 +152,8 @@ def activation(release, names, host_role):
             verify.append(spec)
             if not service.get("optional"):
                 only.append(service["name"])
-        gate.append(gate_args(name))
+        if not release["units"][name].get("helper"):
+            gate.append(gate_args(name))
     return only, verify, gate
 
 
@@ -178,8 +201,10 @@ def plan(release, host, lane, host_role, is_ancestor=git_is_ancestor, expect=Non
         host_lanes = previous.get("unit_lanes") or {}
         host_codes = previous.get("unit_code") or {}
 
-    scope = sorted(name for name, unit in release["units"].items()
-                   if unit["lane"] == lane and host_services(unit, host_role))
+    scope = sorted(name for name, unit in release["units"].items() if in_scope(unit, lane, host_role))
+    # A compute-lane unit the release does not carry (its lane is held
+    # by a compute role change) keeps the binary and record the host runs:
+    # the overlay is built over the active release, so nothing goes back.
     missing = sorted(name for name, unit_lane in host_lanes.items()
                      if unit_lane == lane and name in host_versions and name not in scope)
     if missing:
@@ -214,7 +239,9 @@ def plan(release, host, lane, host_role, is_ancestor=git_is_ancestor, expect=Non
         # Otherwise the host keeps the binary it runs, base's or an earlier
         # unit release's with the same code, and its record.
         if name in versions:
-            lanes[name] = lane
+            # Compute-lane units record their table lane, so a later release
+            # that does not carry them is not refused for it (above).
+            lanes[name] = unit["lane"] if unit["lane"] in COMPUTE_UNIT_LANES else lane
     only, verify, gate = activation(release, changed, host_role)
     record = {
         "format_version": 1,

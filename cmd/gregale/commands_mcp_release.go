@@ -258,7 +258,7 @@ func prepareMCPCandidate(ctx context.Context, c *Client, slug, id string, cfg mc
 	if err != nil {
 		return "", "", "", err
 	}
-	if cfg.Auth.Mode == "external-oauth" && cfg.Auth.Resource != endpoint {
+	if cfg.Auth.Mode != mcphosting.AuthOpen && cfg.Auth.Resource != endpoint {
 		return "", "", "", fmt.Errorf("auth.resource must match the canonical endpoint %s", endpoint)
 	}
 	if app.MaintenanceMode {
@@ -470,13 +470,24 @@ func finishMCPDeployWithSmoke(ctx context.Context, c *Client, slug, id string, c
 						return 1
 					}
 				}
-				if smoke != nil {
+				if smoke != nil && len(smoke.suite.Cases) > 0 {
 					smokeCtx, smokeCancel := context.WithTimeout(ctx, 30*time.Second)
 					smokeReport := runMCPSmokeGate(smokeCtx, candidate, token, smoke)
 					smokeCancel()
 					receipt["smoke_tests"] = smokeReport
 					if !smokeReport.OK {
 						receipt["promotion_error"] = "MCP smoke fixtures failed; candidate remains unpromoted"
+						if code := jsonOut(writeJSON(receipt)); code != 0 {
+							return code
+						}
+						return 1
+					}
+				}
+				if smoke != nil && smoke.replay {
+					replay, ok := runMCPReplayGate(ctx, endpoint, candidate, serving, token, smoke)
+					receipt["replay"] = replay
+					if !ok {
+						receipt["promotion_error"] = mcpReplayGateError(replay)
 						if code := jsonOut(writeJSON(receipt)); code != 0 {
 							return code
 						}

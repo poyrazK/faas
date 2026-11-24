@@ -266,6 +266,11 @@ var toolsetOf = map[string]string{
 	"gregale_plan_cron":       ToolsetProvision,
 	"gregale_check_domain":    ToolsetProvision,
 	"gregale_apply_provision": ToolsetProvision,
+
+	// ADR-20261122220000 verification contracts.
+	"gregale_validate_verification_contract":    ToolsetRelease,
+	"gregale_get_verification_contract":         ToolsetRelease,
+	"gregale_plan_verification_contract_change": ToolsetRelease,
 }
 
 func toolsetIncludes(name, selected string) bool {

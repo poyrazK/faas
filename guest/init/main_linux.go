@@ -598,7 +598,7 @@ func boot() error {
 			return BuildEnvWithSecrets(os.Environ(), manifest, currentSecrets, apiEnv)
 		},
 	}); err != nil {
-		slog.Default().Warn("healthcheck poll unavailable", "err", err)
+		logHealthcheckPollUnavailable(slog.Default(), err)
 	}
 	// M-2 / ADR-138 §Decision 1 / issue #474 — install the PID 1
 	// signal handler before invoking the supervisor. The handler
@@ -661,6 +661,7 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	// tests the exact code path the production execve uses.
 	env = StampOverridePortEnv(env, m.EffectivePort())
 	env = StampDefaultHomeEnv(env, workloadHome(credential.Uid, credential.Gid))
+	env = StampMiseCacheEnv(env)
 	env = StampWorkloadIdentityEnv(env)
 	env = StampEventPublishEnv(env)
 	env = StampOutboundRelayEnv(env)
@@ -1596,7 +1597,7 @@ func runBuildOnce(m api.BuildManifest) error {
 	var combined bytes.Buffer
 	if buf.Len() > 0 {
 		combined.WriteString("[build]\n")
-		combined.WriteString(tailOf(buf.Bytes(), m.LogTailBytes/2))
+		combined.WriteString(tailOf(withoutPlatformBuildNoise(buf.Bytes()), m.LogTailBytes/2))
 	}
 	if err != nil && buildkitLog.Len() > 0 {
 		combined.WriteString("\n[buildkitd]\n")
@@ -3095,6 +3096,7 @@ func runCharacterizationForSup(sup *Supervisor, manifest api.AppManifest) {
 		Manifest:       manifest,
 		ProvenWorker:   bootProvenWorker(),
 		FunctionRunner: bootFunctionRunner(),
+		RawTCPListener: bootRawTCPListener(),
 		AppPID:         func() int { return sup.LastAppPID() },
 		ExitStatus:     func() (int, bool) { return sup.LastExitStatus() },
 		RingBufferTail: func() string {

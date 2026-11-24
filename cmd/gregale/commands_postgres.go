@@ -85,6 +85,8 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresAttach(args[1:])
 	case "connect":
 		return cmdPostgresConnect(args[1:])
+	case "sql", "query":
+		return cmdPostgresSQL(args[1:])
 	case "live":
 		return cmdPostgresLive(args[1:])
 	default:
@@ -151,6 +153,10 @@ func cmdPostgresAttach(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "Attached %s to app %s as %s.\n", database.Name, app.Slug, binding.EnvironmentKey)
 		if bindingIsNew {
 			printPostgresBindingDelivery(osStdout, app.Slug, binding.EnvironmentKey, binding.Access)
+			// As `add postgres` does: a read_write app that ran CREATE TABLE
+			// at startup got only "permission denied for schema public"
+			// (prod hunt r25).
+			printAddPostgresMigrationHint(osStdout, database.Name, app.Slug, app.Type, binding.Scope, binding.Access)
 		}
 	}
 	return 0
@@ -200,17 +206,20 @@ func (a *stringAlias) Set(value string) error {
 // cmdPostgresOverage shows or changes the account's compute overage
 // (ADR-20261025094915): with it on, databases keep running past the monthly
 // allowance until twice it; off, the default, suspends them at the allowance.
+// postgresOverageUsage spells the tree's get/set verbs, which dispatch here.
+const postgresOverageUsage = "usage: gregale postgres overage get | gregale postgres overage set on|off"
+
 func cmdPostgresOverage(args []string) int {
 	fs := newFlagSet("postgres overage", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale postgres overage [on|off]", "postgres")
+		PrintUsage(os.Stderr, postgresOverageUsage, "postgres")
 		return 1
 	}
 	choice := ""
 	if fs.NArg() != 0 {
 		choice = fs.Arg(0)
 		if fs.NArg() != 1 || (choice != "on" && choice != "off") {
-			PrintUsage(os.Stderr, "usage: gregale postgres overage [on|off]", "postgres")
+			PrintUsage(os.Stderr, postgresOverageUsage, "postgres")
 			return 1
 		}
 	}
@@ -275,6 +284,12 @@ func cmdPostgresUsage(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "  storage_byte_seconds:         %d / %d (remaining %d)\n", result.StorageByteSeconds, result.StorageByteSecondsLimit, result.StorageByteSecondsRemaining)
 	_, _ = fmt.Fprintf(osStdout, "                                (%s of %s used)\n", formatGiBMonths(result.StorageByteSeconds), formatGiBMonths(result.StorageByteSecondsLimit))
 	_, _ = fmt.Fprintf(osStdout, "  history_byte_seconds:         %d (%s)\n", result.HistoryByteSeconds, formatGiBMonths(result.HistoryByteSeconds))
+	if result.SnapshotByteSeconds > 0 {
+		_, _ = fmt.Fprintf(osStdout, "  snapshot_byte_seconds:        %d (%s)\n", result.SnapshotByteSeconds, formatGiBMonths(result.SnapshotByteSeconds))
+	}
+	if result.IncludedHistoryBytes > 0 {
+		_, _ = fmt.Fprintf(osStdout, "  included_history:             %s per month\n", formatIECBytes(result.IncludedHistoryBytes))
+	}
 	_, _ = fmt.Fprintf(osStdout, "  egress_bytes:                 %d (%s)\n", result.EgressBytes, formatIECBytes(result.EgressBytes))
 	if result.EgressAllowanceBytes > 0 {
 		_, _ = fmt.Fprintf(osStdout, "  egress_allowance:             %.0f GB per database\n", float64(result.EgressAllowanceBytes)/1e9)

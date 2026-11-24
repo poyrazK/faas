@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	main "github.com/onebox-faas/faas/cmd/gregale"
 )
@@ -101,12 +102,14 @@ func TestGuideCommand(t *testing.T) {
 		t.Fatalf("exit=%d json=%q", code, stdout.String())
 	}
 
+	// A word that names no task is a question (ADR-20261123180000).
+	t.Setenv("GREGALE_DOCS_OFFLINE", "1")
 	main.ResetJSONOut(t)
-	_, stderr, restore := main.SwapIO(t)
-	code = main.Run([]string{"guide", "no-such-task"})
+	stdout, _, restore = main.SwapIO(t)
+	code = main.Run([]string{"guide", "egress", "ports"})
 	restore()
-	if code == 0 || !strings.Contains(stderr(), "tasks: ") {
-		t.Fatalf("exit=%d stderr=%q", code, stderr())
+	if code != 0 || !strings.Contains(stdout.String(), "egress-ports") {
+		t.Fatalf("exit=%d stdout=%q", code, stdout.String())
 	}
 }
 
@@ -118,7 +121,7 @@ func TestAgentHintOnlyOnStderr(t *testing.T) {
 	}
 	t.Setenv("CLAUDECODE", "1")
 	t.Setenv("GREGALE_NO_AGENT_HINT", "")
-	main.ResetAgentHint()
+	main.ResetAgentHint(t)
 	main.ResetJSONOut(t)
 	stdout, stderr, restore := main.SwapIO(t)
 	_ = main.Run([]string{"guide", "--help"})
@@ -128,13 +131,46 @@ func TestAgentHintOnlyOnStderr(t *testing.T) {
 	}
 
 	t.Setenv("GREGALE_NO_AGENT_HINT", "1")
-	main.ResetAgentHint()
+	main.ResetAgentHint(t)
 	main.ResetJSONOut(t)
 	_, stderr, restore = main.SwapIO(t)
 	_ = main.Run([]string{"guide", "no-such-task"})
 	restore()
 	if strings.Contains(stderr(), "Agent: run") {
 		t.Fatalf("GREGALE_NO_AGENT_HINT=1 printed the hint: %q", stderr())
+	}
+}
+
+// The pointer shows once an hour across gregale processes, not on every
+// failing command an agent runs.
+func TestAgentHintAtMostHourly(t *testing.T) {
+	for _, marker := range []string{"CLAUDECODE", "GEMINI_CLI", "CODEX_THREAD_ID", "CODEX_SANDBOX", "CURSOR_AGENT"} {
+		t.Setenv(marker, "")
+	}
+	t.Setenv("CLAUDECODE", "1")
+	t.Setenv("GREGALE_NO_AGENT_HINT", "")
+	path := filepath.Join(t.TempDir(), "gregale", "agent-hint")
+	main.SetAgentHintMarker(t, path)
+	hints := func() int {
+		main.NewAgentHintProcess()
+		main.ResetJSONOut(t)
+		_, stderr, restore := main.SwapIO(t)
+		_ = main.Run([]string{"guide", "--help"})
+		restore()
+		return strings.Count(stderr(), "Agent: run `gregale guide`")
+	}
+	if got := hints(); got != 1 {
+		t.Fatalf("first process printed the pointer %d times, want 1", got)
+	}
+	if got := hints(); got != 0 {
+		t.Fatalf("second process within the hour printed the pointer %d times, want 0", got)
+	}
+	old := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if got := hints(); got != 1 {
+		t.Fatalf("a process an hour later printed the pointer %d times, want 1", got)
 	}
 }
 
@@ -153,4 +189,22 @@ func containsString(items []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// Each agent session keeps its own hourly record, so a new session sees the
+// pointer even when another session saw it this hour.
+func TestAgentHintMarkerPerSession(t *testing.T) {
+	env := func(kv map[string]string) func(string) string {
+		return func(k string) string { return kv[k] }
+	}
+	a := main.AgentHintMarkerName(env(map[string]string{"CLAUDE_CODE_SESSION_ID": "a"}))
+	b := main.AgentHintMarkerName(env(map[string]string{"CLAUDE_CODE_SESSION_ID": "b"}))
+	codex := main.AgentHintMarkerName(env(map[string]string{"CODEX_THREAD_ID": "a"}))
+	none := main.AgentHintMarkerName(env(nil))
+	if a == b || a == codex || a == none || none != "agent-hint" {
+		t.Fatalf("markers a=%q b=%q codex=%q none=%q", a, b, codex, none)
+	}
+	if again := main.AgentHintMarkerName(env(map[string]string{"CLAUDE_CODE_SESSION_ID": "a"})); again != a {
+		t.Fatalf("same session got %q then %q", a, again)
+	}
 }

@@ -130,7 +130,15 @@ func cmdDeployTokensAdd(args []string) int {
 	}
 	PrintOK(osStdout, "New deploy token for %s (shown ONCE; store it in your CI secrets):\n  %s", slug, token.Plaintext)
 	PrintProgress(osStdout, "  id:      %s", token.ID)
-	PrintProgress(osStdout, "  expires: %s", deployTokenExpiry(token))
+	// The list's column says "expires <time>"; under an "expires:" label it
+	// read "expires: expires 2027-…" (prod hunt r26).
+	expiresAt := token.ExpiresAt
+	if expiresAt == "" {
+		expiresAt = "never"
+	}
+	PrintProgress(osStdout, "  expires: %s", expiresAt)
+	// The receipt named no variable for CI to put the token in.
+	PrintProgress(osStdout, "In CI, set it as GREGALE_TOKEN; then gregale deploy --name %s deploys this app only.", slug)
 	return 0
 }
 

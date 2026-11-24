@@ -19,7 +19,7 @@ gregale login
 
 `gregale login` opens your browser once, and Antigravity uses that login for
 every `gregale` command it runs. Where nobody can open a browser, put a
-scoped key in the environment Antigravity runs commands in as `FAAS_TOKEN`
+scoped key in the environment Antigravity runs commands in as `GREGALE_TOKEN`
 instead; see [Give the agent its own key](agents.md#give-the-agent-its-own-key).
 
 ## Tell Antigravity how the project deploys
@@ -109,7 +109,7 @@ To add it by hand, put this in either file:
 Antigravity signs in to MCP servers only through the browser. Its config
 cannot read an agent key from the environment, and Gregale never writes a key
 to a file, so `gregale mcp connect --headless` leaves Antigravity out. For an
-agent with no person at a browser, use the CLI with `FAAS_TOKEN` instead. See
+agent with no person at a browser, use the CLI with `GREGALE_TOKEN` instead. See
 [Connect an agent to Gregale](agents.md#connect-an-agent-to-gregale).
 
 ## What Gregale learns

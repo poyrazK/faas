@@ -176,6 +176,12 @@ func run(args []string) (status int) {
 	// ADR-20261026145832: a path in the new command tree runs the command
 	// that implements it today, so help, gating and dispatch see that path.
 	typed := args
+	previousTypedNoun := typedNoun
+	typedNoun = ""
+	if len(typed) > 0 {
+		typedNoun = typed[0]
+	}
+	defer func() { typedNoun = previousTypedNoun }()
 	args, err := rewriteCliTree(args)
 	if err != nil {
 		if errors.As(err, new(errFoldFlagRequired)) {
@@ -232,6 +238,11 @@ func run(args []string) (status int) {
 	defer func() { treeUsageFrom, treeUsageTo = previousUsageFrom, previousUsageTo }()
 	if len(args) > 0 {
 		if noun, ok := lookupCliTreeNoun(args[0]); ok && oldPathDepth(args[:1]) == 0 {
+			if len(args) > 1 {
+				if path := nestedVerbPath(noun, args[1]); path != "" {
+					return printErr("Unknown command", commandDiagnosticError(fmt.Sprintf("gregale: unknown command %q; did you mean 'gregale %s'? Run 'gregale %s --help' for its usage", leadingWords(args), path, path), cliUnknownCommand, strings.Fields(leadingWords(args))))
+				}
+			}
 			return printErr("Unknown command", commandDiagnosticError(fmt.Sprintf("gregale: unknown command %q; run 'gregale %s --help' for its commands", leadingWords(args), noun.Name), cliUnknownCommand, strings.Fields(leadingWords(args))))
 		}
 	}
@@ -578,6 +589,8 @@ func run(args []string) (status int) {
 		return cmdEnv(args[1:])
 	case "freeze":
 		return cmdFreeze(args[1:])
+	case "verify":
+		return cmdVerify(args[1:])
 	case "release-gates":
 		return cmdReleaseGates(args[1:])
 	case "approvals":

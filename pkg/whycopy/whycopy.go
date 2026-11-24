@@ -339,6 +339,11 @@ var catalog = map[string]Render{
 		Why:  "before taking traffic Gregale sends the new release one request on its health path; the app answered with an error or closed the connection, so the release was not promoted",
 		Fix:  "• check `gregale logs <slug> --since 30m` for the error the request hit\n• make sure the health path answers 2xx without external dependencies being slow\n• set hosting.health in gregale.yaml if your app serves health elsewhere",
 	},
+	api.CodeDeploymentVerificationContractFailed: {
+		Hint: "your new release failed a required check in gregale.verify.yaml",
+		Why:  "before taking traffic Gregale ran the app's verification contract against the new release; a required check failed or could not run, so the release was not promoted and the previous one keeps serving",
+		Fix:  "• run `gregale deployment <id> --json` and read hosting_receipt.smoke.verification_contract for the failing check\n• fix the app or the check, then deploy again\n• mark a check `advisory: true` to report it without blocking",
+	},
 	api.CodeImageNotFound: {
 		Hint: "the container image you asked for could not be pulled",
 		Why:  "the registry answered that the image or tag does not exist, or it is private and Gregale had no credentials for it",
@@ -399,7 +404,9 @@ func Decorate(p *api.Problem, code string, observed any) *api.Problem {
 	if row.DocsURL != "" {
 		p.DocsURL = row.DocsURL
 	}
-	return p
+	// Runnable commands and retryability come with the prose; a caller that
+	// knows the app fills placeholders with Complete (ADR-20261123230000).
+	return Complete(p, Values{})
 }
 
 // Lookup returns the catalog row for code (used by tests + the

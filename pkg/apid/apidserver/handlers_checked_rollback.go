@@ -30,6 +30,14 @@ func (s *server) startCheckedRollback(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, problem)
 		return
 	}
+	s.notifyCheckedRollbackPreparation(r.Context(), app, operation, target)
+	response := s.deploymentResponse(r.Context(), target, app)
+	s.warnRollbackCrons(r.Context(), w, app, target)
+	response.RollbackOperation = &operation
+	writeJSON(w, http.StatusAccepted, response)
+}
+
+func (s *server) notifyCheckedRollbackPreparation(ctx context.Context, app state.App, operation api.RollbackOperation, target state.Deployment) {
 	// Preparing targets have a transactional readiness outbox. Notify also
 	// wakes local stores and service reconciliation; duplicate deliveries are safe.
 	if s.notif != nil && (operation.Status == "preparing" || operation.Service) {
@@ -40,52 +48,69 @@ func (s *server) startCheckedRollback(w http.ResponseWriter, r *http.Request, ac
 			fields["kind"], fields["status"] = "service_rollout", "live"
 		}
 		payload, _ := json.Marshal(fields)
-		if err := s.notif.Notify(r.Context(), channel, string(payload)); err != nil {
+		if err := s.notif.Notify(ctx, channel, string(payload)); err != nil {
 			s.log.Warn("checked rollback readiness wakeup", "request_id", operation.ID, "err", err)
 		}
 	}
-	response := s.deploymentResponse(r.Context(), target, app)
-	s.warnRollbackCrons(r.Context(), w, app, target)
-	response.RollbackOperation = &operation
-	writeJSON(w, http.StatusAccepted, response)
 }
-func (s *server) prepareCheckedRollback(ctx context.Context, acct state.Account, app state.App, req api.RollbackRequest) (api.RollbackOperation, state.Deployment, *api.Problem) {
-	var empty api.RollbackOperation
+
+type checkedRollbackSelection struct {
+	target    state.Deployment
+	currentID string
+	crossed   []state.ReleaseRun
+}
+
+func (s *server) inspectCheckedRollback(ctx context.Context, app state.App, req api.RollbackRequest) (checkedRollbackSelection, *api.Problem) {
 	if req.TargetDeploymentID == nil || req.ExpectedCurrentDeploymentID == nil || strings.TrimSpace(*req.TargetDeploymentID) == "" || strings.TrimSpace(*req.ExpectedCurrentDeploymentID) == "" || req.AlertRuleID != nil || len(req.Reason) > api.BindingReleasePolicyReasonMaxBytes || !utf8.ValidString(req.Reason) || strings.IndexFunc(req.Reason, unicode.IsControl) >= 0 {
-		return empty, state.Deployment{}, bindingPromotionValidation("checked rollback requires target_deployment_id and expected_current_deployment_id; reason must be one line of at most 256 bytes")
+		return checkedRollbackSelection{}, bindingPromotionValidation("checked rollback requires target_deployment_id and expected_current_deployment_id; reason must be one line of at most 256 bytes")
 	}
 	targetID, problem := s.resolveDeploymentRef(ctx, app.ID, *req.TargetDeploymentID)
 	if problem != nil {
-		return empty, state.Deployment{}, problem
+		return checkedRollbackSelection{}, problem
 	}
 	currentID, problem := s.resolveDeploymentRef(ctx, app.ID, *req.ExpectedCurrentDeploymentID)
 	if problem != nil {
-		return empty, state.Deployment{}, problem
+		return checkedRollbackSelection{}, problem
 	}
 	if targetID == currentID {
-		return empty, state.Deployment{}, bindingPromotionValidation("rollback target must differ from the expected current deployment")
+		return checkedRollbackSelection{}, bindingPromotionValidation("rollback target must differ from the expected current deployment")
 	}
 	target, err := s.store.GetDeploymentByIDScopedToSuperseded(ctx, app.ID, targetID)
 	if err != nil {
-		return empty, target, api.ErrRollbackTargetIneligible("select a superseded or zero-traffic live deployment of this app")
+		return checkedRollbackSelection{target: target}, api.ErrRollbackTargetIneligible("select a superseded or zero-traffic live deployment of this app")
 	}
 	if problem := s.rollbackTargetApprovalProblem(ctx, app, target); problem != nil {
-		return empty, target, problem
+		return checkedRollbackSelection{target: target}, problem
 	}
 	crossed, problem := s.rollbackReleaseGuard(ctx, app, target, req.AcknowledgeReleases)
+	selection := checkedRollbackSelection{target: target, currentID: currentID, crossed: crossed}
 	if problem != nil {
-		return empty, target, problem
-	}
-	if req.AcknowledgeReleases {
-		ctx = state.WithCheckedRollbackReleaseReview(ctx, crossed)
+		return selection, problem
 	}
 	if problem := s.verifyRollbackTargetArtifact(ctx, target); problem != nil {
-		return empty, target, problem
+		return selection, problem
 	}
 	if api.ApiContractDiffEnabled() && openapidiff.IsProductionScope(target.Scope) {
-		return s.prepareCheckedRollbackWithContract(ctx, acct, app, req, target, currentID)
+		check, err := openapidiff.CheckDeploymentRollback(ctx, s.store, app.ID, target.ID, currentID, target.Scope)
+		if err != nil && !errors.Is(err, openapidiff.ErrSnapshotBaselineMissing) {
+			return selection, api.ErrCapacity("could not evaluate API contract")
+		}
+		if check.Diff.Blocking() {
+			return selection, contractGateProblem(check.Diff)
+		}
 	}
-	return s.persistCheckedRollback(ctx, acct, app, req, target, currentID)
+	return selection, nil
+}
+
+func (s *server) prepareCheckedRollback(ctx context.Context, acct state.Account, app state.App, req api.RollbackRequest) (api.RollbackOperation, state.Deployment, *api.Problem) {
+	selection, problem := s.inspectCheckedRollback(ctx, app, req)
+	if problem != nil {
+		return api.RollbackOperation{}, selection.target, problem
+	}
+	if req.AcknowledgeReleases {
+		ctx = state.WithCheckedRollbackReleaseReview(ctx, selection.crossed)
+	}
+	return s.persistCheckedRollback(ctx, acct, app, req, selection.target, selection.currentID)
 }
 func (s *server) persistCheckedRollback(ctx context.Context, acct state.Account, app state.App, req api.RollbackRequest, target state.Deployment, currentID string) (api.RollbackOperation, state.Deployment, *api.Problem) {
 	store, ok := s.store.(state.CheckedRollbackStore)
@@ -147,15 +172,4 @@ func (s *server) getCheckedRollback(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	writeJSON(w, http.StatusOK, operation)
-}
-
-func (s *server) prepareCheckedRollbackWithContract(ctx context.Context, acct state.Account, app state.App, req api.RollbackRequest, target state.Deployment, currentID string) (api.RollbackOperation, state.Deployment, *api.Problem) {
-	check, err := openapidiff.CheckDeploymentRollback(ctx, s.store, app.ID, target.ID, currentID, target.Scope)
-	if err != nil && !errors.Is(err, openapidiff.ErrSnapshotBaselineMissing) {
-		return api.RollbackOperation{}, target, api.ErrCapacity("could not evaluate API contract")
-	}
-	if check.Diff.Blocking() {
-		return api.RollbackOperation{}, target, contractGateProblem(check.Diff)
-	}
-	return s.persistCheckedRollback(ctx, acct, app, req, target, currentID)
 }

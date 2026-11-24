@@ -3304,13 +3304,19 @@ from .mcp_readiness_role_catalog_format import MCPReadinessRoleCatalogFormat
 from .mcp_readiness_role_protocol_version import MCPReadinessRoleProtocolVersion
 from .mcp_readiness_snapshot import MCPReadinessSnapshot
 from .mcp_resource_policy import MCPResourcePolicy
+from .mcp_resource_policy_credential import MCPResourcePolicyCredential
 from .mcp_resource_policy_prompt_scopes_type_0 import MCPResourcePolicyPromptScopesType0
 from .mcp_resource_policy_resource_scopes_type_0 import MCPResourcePolicyResourceScopesType0
+from .mcp_resource_policy_tool_limits import MCPResourcePolicyToolLimits
 from .mcp_resource_policy_tool_scopes_type_0 import MCPResourcePolicyToolScopesType0
 from .mcp_task_compatibility_report_request import MCPTaskCompatibilityReportRequest
 from .mcp_task_compatibility_report_response import MCPTaskCompatibilityReportResponse
 from .mcp_task_handler_compatibility import MCPTaskHandlerCompatibility
 from .mcp_task_handler_deployment_workers import MCPTaskHandlerDeploymentWorkers
+from .mcp_tool_insight import MCPToolInsight
+from .mcp_tool_insights_response import MCPToolInsightsResponse
+from .mcp_tool_insights_response_telemetry import MCPToolInsightsResponseTelemetry
+from .mcp_tool_limit import MCPToolLimit
 from .mcpo_auth_retirement import MCPOAuthRetirement
 from .mcpo_auth_retirement_action import MCPOAuthRetirementAction
 from .mcpo_auth_retirement_action_action import MCPOAuthRetirementActionAction
@@ -3506,6 +3512,8 @@ from .object_version_retention_event_hold import ObjectVersionRetentionEventHold
 from .object_version_retention_mode import ObjectVersionRetentionMode
 from .object_version_retention_request import ObjectVersionRetentionRequest
 from .object_version_retention_result import ObjectVersionRetentionResult
+from .object_workload_credential_request import ObjectWorkloadCredentialRequest
+from .object_workload_credential_response import ObjectWorkloadCredentialResponse
 from .object_write_protection import ObjectWriteProtection
 from .object_write_receipt import ObjectWriteReceipt
 from .object_write_receipt_error_code import ObjectWriteReceiptErrorCode
@@ -5398,6 +5406,28 @@ from .project_release_verification_percent import ProjectReleaseVerificationPerc
 from .project_release_worker import ProjectReleaseWorker
 from .project_release_worker_status import ProjectReleaseWorkerStatus
 from .project_response import ProjectResponse
+from .project_rollback_auto_undo import ProjectRollbackAutoUndo
+from .project_rollback_auto_undo_status import ProjectRollbackAutoUndoStatus
+from .project_rollback_batch import ProjectRollbackBatch
+from .project_rollback_health import ProjectRollbackHealth
+from .project_rollback_history import ProjectRollbackHistory
+from .project_rollback_live_traffic import ProjectRollbackLiveTraffic
+from .project_rollback_member import ProjectRollbackMember
+from .project_rollback_operation import ProjectRollbackOperation
+from .project_rollback_operation_status import ProjectRollbackOperationStatus
+from .project_rollback_pre_cutover_health import ProjectRollbackPreCutoverHealth
+from .project_rollback_protection import ProjectRollbackProtection
+from .project_rollback_request import ProjectRollbackRequest
+from .project_rollback_resume_request import ProjectRollbackResumeRequest
+from .project_rollback_step import ProjectRollbackStep
+from .project_rollback_step_status import ProjectRollbackStepStatus
+from .project_rollback_summary import ProjectRollbackSummary
+from .project_rollback_target_deploy import ProjectRollbackTargetDeploy
+from .project_rollback_targets import ProjectRollbackTargets
+from .project_rollback_traffic import ProjectRollbackTraffic
+from .project_rollback_traffic_status import ProjectRollbackTrafficStatus
+from .project_rollback_undo_artifacts import ProjectRollbackUndoArtifacts
+from .project_rollback_undo_request import ProjectRollbackUndoRequest
 from .project_safe_release import ProjectSafeRelease
 from .project_safe_release_status import ProjectSafeReleaseStatus
 from .project_scan_request import ProjectScanRequest
@@ -5415,6 +5445,7 @@ from .project_worker_job_sample import ProjectWorkerJobSample
 from .project_workload_response import ProjectWorkloadResponse
 from .promote_project_environment_request import PromoteProjectEnvironmentRequest
 from .promote_stored_workflow_live_baseline_request import PromoteStoredWorkflowLiveBaselineRequest
+from .protect_project_rollback_deploy_request import ProtectProjectRollbackDeployRequest
 from .public_auth_block import PublicAuthBlock
 from .public_auth_block_mode import PublicAuthBlockMode
 from .public_auth_status import PublicAuthStatus
@@ -5501,6 +5532,8 @@ from .put_outbound_request_policy_request import PutOutboundRequestPolicyRequest
 from .put_outbound_runs_binding_request import PutOutboundRunsBindingRequest
 from .put_postgres_changes_connection_body import PutPostgresChangesConnectionBody
 from .put_postgres_changes_request import PutPostgresChangesRequest
+from .put_verification_contract_request import PutVerificationContractRequest
+from .put_verification_contract_request_contract import PutVerificationContractRequestContract
 from .put_webhook_workflow_binding_request import PutWebhookWorkflowBindingRequest
 from .put_webhook_workflow_binding_request_filter import PutWebhookWorkflowBindingRequestFilter
 from .queue_binding_canary import QueueBindingCanary
@@ -6958,6 +6991,8 @@ from .usage_summary_response import UsageSummaryResponse
 from .usage_summary_response_egress_billing_mode import UsageSummaryResponseEgressBillingMode
 from .validate_stored_workflow_request import ValidateStoredWorkflowRequest
 from .validate_stored_workflow_response import ValidateStoredWorkflowResponse
+from .verification_contract import VerificationContract
+from .verification_contract_contract import VerificationContractContract
 from .vulnerability import Vulnerability
 from .vulnerability_severity import VulnerabilitySeverity
 from .wake_timeline_app import WakeTimelineApp
@@ -10391,13 +10426,19 @@ __all__ = (
     "MCPReadinessRoleProtocolVersion",
     "MCPReadinessSnapshot",
     "MCPResourcePolicy",
+    "MCPResourcePolicyCredential",
     "MCPResourcePolicyPromptScopesType0",
     "MCPResourcePolicyResourceScopesType0",
+    "MCPResourcePolicyToolLimits",
     "MCPResourcePolicyToolScopesType0",
     "MCPTaskCompatibilityReportRequest",
     "MCPTaskCompatibilityReportResponse",
     "MCPTaskHandlerCompatibility",
     "MCPTaskHandlerDeploymentWorkers",
+    "MCPToolInsight",
+    "MCPToolInsightsResponse",
+    "MCPToolInsightsResponseTelemetry",
+    "MCPToolLimit",
     "MemberListResponse",
     "MFAConfirmRequest",
     "MFAConfirmResponse",
@@ -10587,6 +10628,8 @@ __all__ = (
     "ObjectVersionRetentionMode",
     "ObjectVersionRetentionRequest",
     "ObjectVersionRetentionResult",
+    "ObjectWorkloadCredentialRequest",
+    "ObjectWorkloadCredentialResponse",
     "ObjectWriteProtection",
     "ObjectWriteReceipt",
     "ObjectWriteReceiptErrorCode",
@@ -12315,6 +12358,28 @@ __all__ = (
     "ProjectReleaseWorker",
     "ProjectReleaseWorkerStatus",
     "ProjectResponse",
+    "ProjectRollbackAutoUndo",
+    "ProjectRollbackAutoUndoStatus",
+    "ProjectRollbackBatch",
+    "ProjectRollbackHealth",
+    "ProjectRollbackHistory",
+    "ProjectRollbackLiveTraffic",
+    "ProjectRollbackMember",
+    "ProjectRollbackOperation",
+    "ProjectRollbackOperationStatus",
+    "ProjectRollbackPreCutoverHealth",
+    "ProjectRollbackProtection",
+    "ProjectRollbackRequest",
+    "ProjectRollbackResumeRequest",
+    "ProjectRollbackStep",
+    "ProjectRollbackStepStatus",
+    "ProjectRollbackSummary",
+    "ProjectRollbackTargetDeploy",
+    "ProjectRollbackTargets",
+    "ProjectRollbackTraffic",
+    "ProjectRollbackTrafficStatus",
+    "ProjectRollbackUndoArtifacts",
+    "ProjectRollbackUndoRequest",
     "ProjectSafeRelease",
     "ProjectSafeReleaseStatus",
     "ProjectScanRequest",
@@ -12332,6 +12397,7 @@ __all__ = (
     "ProjectWorkloadResponse",
     "PromoteProjectEnvironmentRequest",
     "PromoteStoredWorkflowLiveBaselineRequest",
+    "ProtectProjectRollbackDeployRequest",
     "PublicAuthBlock",
     "PublicAuthBlockMode",
     "PublicAuthStatus",
@@ -12418,6 +12484,8 @@ __all__ = (
     "PutOutboundRunsBindingRequest",
     "PutPostgresChangesConnectionBody",
     "PutPostgresChangesRequest",
+    "PutVerificationContractRequest",
+    "PutVerificationContractRequestContract",
     "PutWebhookWorkflowBindingRequest",
     "PutWebhookWorkflowBindingRequestFilter",
     "QueueBindingCanary",
@@ -13823,6 +13891,8 @@ __all__ = (
     "UsageSummaryResponseEgressBillingMode",
     "ValidateStoredWorkflowRequest",
     "ValidateStoredWorkflowResponse",
+    "VerificationContract",
+    "VerificationContractContract",
     "Vulnerability",
     "VulnerabilitySeverity",
     "WakeTimelineApp",

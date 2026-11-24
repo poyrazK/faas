@@ -122,7 +122,8 @@ func TestAppHealth_DefaultRequestEvidenceExcludesPreviewAndDarkReleases(t *testi
 			v = fmt.Sprint(time.Now().Unix())
 		case strings.Contains(q, "count(count by"):
 			v = "1"
-		case strings.Contains(q, "|__other__"):
+		case strings.Contains(q, `deployment="__other__"`):
+			// Unattributed traffic: label overflow plus pre-routing 5xx.
 			v = "0"
 		case strings.Contains(q, `class="5xx"`):
 			// Preview failures would dominate an app-wide read.

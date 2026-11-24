@@ -203,3 +203,82 @@ func BenchmarkHeaderClassification(b *testing.B) {
 		}
 	}
 }
+
+// TestApplyGuestHeadersMatchesHeaderSet pins that stamping from one backing
+// array leaves exactly what h.Set per header would, and that the windows do
+// not alias: an Add to one stamped header must not change another.
+func TestApplyGuestHeadersMatchesHeaderSet(t *testing.T) {
+	id := PlatformIdentity{
+		RequestID: "req-1", AppID: "app-1", DeploymentID: "dep-1", TenantID: "ten-1",
+		InstanceID: "ins-1", NodeID: "node-1", Region: "bhs", CommitSHA: "abc",
+		ClientCountry: "TR", FlagKills: "a,b",
+	}
+	got := http.Header{"User-Agent": {"k6"}}
+	id.ApplyGuestHeaders(got)
+
+	want := http.Header{"User-Agent": {"k6"}}
+	for _, s := range []struct{ name, value string }{
+		{RequestIDHeader, id.RequestID}, {AppIDHeader, id.AppID}, {DeploymentIDHeader, id.DeploymentID},
+		{TenantIDHeader, id.TenantID}, {InstanceIDHeader, id.InstanceID}, {NodeIDHeader, id.NodeID},
+		{RegionHeader, id.Region}, {CommitSHAHeader, id.CommitSHA}, {ClientCountryHeader, id.ClientCountry},
+		{FlagKillsHeader, id.FlagKills}, {"X-Faas-App", id.AppID}, {"X-Faas-Instance", id.InstanceID},
+		{"X-Faas-Node", id.NodeID},
+	} {
+		want.Set(s.name, s.value)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d headers, want %d:\n got=%v\nwant=%v", len(got), len(want), got, want)
+	}
+	for k, v := range want {
+		if g := got[k]; len(g) != 1 || g[0] != v[0] {
+			t.Errorf("%s = %q, want %q", k, g, v)
+		}
+	}
+
+	got.Add(AppIDHeader, "second")
+	if v := got.Values(DeploymentIDHeader); len(v) != 1 || v[0] != "dep-1" {
+		t.Fatalf("Add to %s changed %s: %q", AppIDHeader, DeploymentIDHeader, v)
+	}
+	if v := got.Values(AppIDHeader); len(v) != 2 || v[0] != "app-1" || v[1] != "second" {
+		t.Fatalf("%s after Add = %q", AppIDHeader, v)
+	}
+}
+
+// TestClearGuestIdentityHeadersRemovesNonCanonicalKey pins that a reserved
+// identity header stored under a non-canonical spelling (a map write that
+// bypassed Header.Set) is removed too, not only its canonical twin.
+func TestClearGuestIdentityHeadersRemovesNonCanonicalKey(t *testing.T) {
+	h := http.Header{
+		"x-faas-deployment-id": {"spoofed-lower"},
+		DeploymentIDHeader:     {"spoofed-canonical"},
+		"Accept":               {"*/*"},
+	}
+	ClearGuestIdentityHeaders(h)
+	for k := range h {
+		if IsGuestIdentityHeader(k) {
+			t.Fatalf("identity header %q survived ClearGuestIdentityHeaders: %v", k, h)
+		}
+	}
+	if h.Get("Accept") != "*/*" {
+		t.Fatalf("non-identity header removed: %v", h)
+	}
+}
+
+func TestClearGuestIdentityHeadersRemovesNonCanonicalServiceSelectors(t *testing.T) {
+	h := http.Header{
+		"x-faas-app":                            {"spoofed-app"},
+		"x-faas-instance":                       {"spoofed-instance"},
+		"X-FAAS-NODE":                           {"spoofed-node"},
+		strings.ToLower(TargetDeploymentHeader): {"spoofed-dep"},
+		"Accept":                                {"*/*"},
+	}
+	ClearGuestIdentityHeaders(h)
+	for k, v := range h {
+		if isServiceSelectorHeader(k) {
+			t.Fatalf("service selector %q survived ClearGuestIdentityHeaders: %v", k, v)
+		}
+	}
+	if h.Get("Accept") != "*/*" {
+		t.Fatalf("Accept was removed: %v", h)
+	}
+}

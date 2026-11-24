@@ -125,6 +125,9 @@ type ProjectEnvironmentBranchDataStore interface {
 	// RetryProjectEnvironmentBranchData records an error and releases the
 	// lease until next; failed ends the attempts.
 	RetryProjectEnvironmentBranchData(ctx context.Context, environmentID, leaseToken string, next time.Time, message string, failed bool) error
+	// DeferProjectEnvironmentBranchData releases the lease until next
+	// without counting an attempt: the copy is still in progress.
+	DeferProjectEnvironmentBranchData(ctx context.Context, environmentID, leaseToken string, next time.Time) error
 	// RecordProjectEnvironmentBranchDatabase records (or returns) the copy of
 	// a source database before it is restored.
 	RecordProjectEnvironmentBranchDatabase(ctx context.Context, copy ProjectEnvironmentBranchDatabase) (ProjectEnvironmentBranchDatabase, error)

@@ -1,0 +1,74 @@
+# Bootstrap the unit-release build runner (docs/adr/20261122170000-continuous-unit-lane.md).
+#
+# release-units.yml's build job compiles and signs the unit release on every
+# push to main. On GitHub-hosted runners that costs a queue, a cold checkout
+# and a cache restore each time; a persistent runner keeps the clone and the
+# Go build cache warm, which the four-minute budget needs.
+#
+# It may run on the control plane because:
+#   * it runs only main's code: the build job runs on pushes to main (and
+#     dispatches by the owner); no pull_request workflow names a self-hosted
+#     label, and fork pull requests need approval for every run
+#     (approval_policy all_external_contributors). That is the code this
+#     host runs as its daemons anyway, and `go build` executes none of it;
+#   * it is its own user (faas-builder) with its own install root and home,
+#     no production secrets, no access to the deploy runner's home
+#     (0750 faas-runner), and a build-only label the role refuses to mix
+#     with a fleet label, so it never takes a deploy job;
+#   * its unit is capped below PostgreSQL and the daemons: CPU weight 10 and
+#     at most 4 of the 12 threads, IO weight 10, memory high 6G / max 8G,
+#     GOMAXPROCS=4 (which also bounds go build's parallel compiles), and a
+#     read-only system (ProtectSystem=strict) apart from its own paths.
+#
+# After it is online, point the build job at it:
+#
+#   gh variable set UNIT_RELEASE_BUILD_RUNNER --body '["self-hosted","linux","faas-build-us"]'
+#
+# Unset the variable to return the build to GitHub-hosted runners.
+#
+#   FAAS_RUNNER_REGISTRATION_TOKEN=... ansible-playbook -i <inventory> \
+#     deploy/ansible/build_runner.yml [-e faas_build_runner_hosts=control_plane]
+
+- name: Bootstrap the Gregale unit-release build runner
+  hosts: "{{ faas_build_runner_hosts | default('control_plane') }}"
+  gather_facts: true
+  become: true
+  serial: 1
+  any_errors_fatal: true
+
+  tasks:
+    - name: Install the build runner
+      ansible.builtin.include_role:
+        name: github_actions_runner
+      vars:
+        faas_runner_kind: build
+        faas_runner_labels: ["{{ faas_build_runner_label | default('faas-build-us') }}"]
+        faas_runner_user: faas-builder
+        faas_runner_group: faas-builder
+        faas_runner_home: /var/lib/faas-builder
+        faas_runner_root: /opt/actions-runner-build
+        faas_runner_cache: /var/cache/faas-builder
+        faas_runner_name: "{{ inventory_hostname }}-build"
+        faas_runner_service: faas-build-runner
+        faas_runner_private_hosts: []
+        faas_runner_cpu_weight: 10
+        faas_runner_cpu_quota: "400%"
+        faas_runner_io_weight: 10
+        faas_runner_memory_high: 6G
+        faas_runner_memory_max: 8G
+        faas_runner_gomaxprocs: 4
+        faas_runner_protect_system: strict
+
+    # The persistent Go build cache shares the disk PostgreSQL writes to:
+    # trim it, oldest use first, well before the disk is full. Go also drops
+    # entries unused for five days on its own; this bounds the rest.
+    - name: Trim the build runner's Go build cache
+      ansible.builtin.include_role:
+        name: go_cache_retention
+      vars:
+        go_cache_trim_filesystem: /var/lib
+        go_cache_trim_high_water_percent: 70
+        go_cache_trim_low_water_percent: 60
+        go_cache_trim_lock_path: /var/lock/faas-build-runner-cache.lock
+        go_cache_trim_globs:
+          - /var/lib/faas-builder/.cache/go-build

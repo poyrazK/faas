@@ -71,13 +71,26 @@ func (w *nodeBusyWriter) WriteHeader(status int) {
 		w.held = true
 		return
 	}
-	w.copyHeader()
+	w.moveHeader()
 	w.dst.WriteHeader(status)
 }
 
 func (w *nodeBusyWriter) copyHeader() {
 	for key, values := range w.header {
 		w.dst.Header()[key] = append([]string(nil), values...)
+	}
+}
+
+// moveHeader hands the buffered value slices to dst instead of copying them
+// (a slice per header per request). Only for the final, non-held header:
+// from then on Header() returns dst's map and w.header is never read or
+// written again. The buffer came from Header.Clone, which gives each key a
+// capacity-limited window, so a later Add on dst reallocates rather than
+// writing into another key's values.
+func (w *nodeBusyWriter) moveHeader() {
+	dst := w.dst.Header()
+	for key, values := range w.header {
+		dst[key] = values
 	}
 }
 

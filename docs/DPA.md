@@ -1,9 +1,5 @@
 # Data Processing Addendum (DPA)
 
-<!--
-  Maintainer notes (not shown to customers): docs/ops/legal-documents-operator-notes.md.
--->
-
 **Parties:** Gregale ("Processor") and the customer that accepted the
 Gregale Terms of Service ("Controller").
 **Effective:** from the date the Controller accepted the Terms of
@@ -155,13 +151,16 @@ DPA is the list enumerated in this section at that time, and the
 notification URL is the channel by which Processor signals
 upcoming changes.
 
-- **OVHcloud** (infrastructure hosting, US): dedicated bare-metal servers
-  that run Gregale's control plane, compute nodes, managed Postgres and
-  storage for the public release. Gregale administers the servers;
-  customer secrets are sealed with host keys before storage.
-- **Google Cloud** (infrastructure hosting, US, us-east1): Compute Engine
-  and Cloud Storage host the current production fleet during the public
-  beta, and a standby and test environments afterwards.
+- **OVHcloud** (infrastructure hosting, Canada: Beauharnois, Quebec):
+  dedicated bare-metal servers and object storage that run Gregale's
+  control plane, compute nodes and object storage, and hold their
+  backups. Gregale administers the servers; customer secrets are sealed
+  with host keys before storage.
+- **Neon** (managed Postgres, US: AWS us-east-2, Ohio): runs the managed
+  Postgres databases Controller creates, including their contents,
+  branches, point-in-time restore history and database credentials. Each
+  database is its own Neon project, administered by Gregale. Neon runs on
+  Amazon Web Services.
 - **Cloudflare** (DNS, reverse proxy, CDN, DDoS and firewall protection):
   every request to Gregale and to customer apps passes through Cloudflare,
   which sees request metadata (IP address, headers, URL) and carries

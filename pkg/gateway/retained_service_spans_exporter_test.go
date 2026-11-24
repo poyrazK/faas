@@ -2,7 +2,10 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -63,9 +66,13 @@ func TestRetainedServiceSpansExporterKeepsOnlyAuthorizedServiceSpans(t *testing.
 	}
 }
 
+// Prod hunt r27: a call refused before authorization carries no account and
+// logged "account identity is invalid" each time; only a malformed account
+// is worth a warning.
 func TestRetainedServiceSpansExporterDropsUnattributedSpan(t *testing.T) {
+	var logs bytes.Buffer
 	acc := NewSpansAccumulator()
-	exporter := NewRetainedServiceSpansExporter(acc, nil)
+	exporter := NewRetainedServiceSpansExporter(acc, slog.New(slog.NewTextHandler(&logs, nil)))
 	provider := sdktrace.NewTracerProvider(
 		sdktrace.WithSyncer(exporter),
 		sdktrace.WithSampler(sdktrace.AlwaysSample()),
@@ -81,6 +88,21 @@ func TestRetainedServiceSpansExporterDropsUnattributedSpan(t *testing.T) {
 	span.End()
 	if acc.Len() != 0 {
 		t.Fatalf("unattributed span was retained; buckets = %d", acc.Len())
+	}
+	if logs.Len() != 0 {
+		t.Fatalf("an unauthorized call's span logged: %s", logs.String())
+	}
+
+	_, malformed := provider.Tracer("test").Start(context.Background(), "service.orders",
+		oteltrace.WithAttributes(
+			attribute.String("gregale.dependency.type", "managed_binding"),
+			attribute.String("gregale.dependency.kind", "service_proxy"),
+			attribute.String(retainedSpanAccountIDAttribute, "not-a-uuid"),
+		),
+	)
+	malformed.End()
+	if acc.Len() != 0 || !strings.Contains(logs.String(), "account identity is invalid") {
+		t.Fatalf("malformed account: buckets %d, logs %q", acc.Len(), logs.String())
 	}
 }
 

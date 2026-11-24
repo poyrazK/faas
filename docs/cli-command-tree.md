@@ -149,6 +149,7 @@ touch them. The tables below map each earlier name.
 | `gregale trusted-publishers` | `gregale registry key` |
 | `gregale upload-cache` | `gregale config upload-cache` |
 | `gregale usage` | `gregale billing usage` |
+| `gregale verify` | `gregale release check` |
 | `gregale wake` | `gregale app wake` |
 | `gregale wake-ahead` | `gregale app wake-ahead` |
 | `gregale wake-timeline` | `gregale app wake-timeline` |
@@ -487,6 +488,7 @@ touch them. The tables below map each earlier name.
 | `gregale mcp retirements acknowledge-manual` | `gregale mcp server retirements ack` |
 | `gregale mcp task-cancel` | `gregale mcp client cancel` |
 | `gregale mcp task-get` | `gregale mcp client status` |
+| `gregale mcp task-respond` | `gregale mcp client respond` |
 | `gregale mcp task-wait` | `gregale mcp client wait` |
 | `gregale mcp tasks bindings` | `gregale mcp server tasks bind` |
 | `gregale mcp tasks execution` | `gregale mcp server tasks run` |
