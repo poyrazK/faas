@@ -88,6 +88,11 @@ func ClassifyNode(planJSON, packageJSON []byte) api.SharedRuntimeVerdict {
 		env[k] = v
 	}
 	env["PATH"] = runnerPath
+	if BunStart(p.Deploy.StartCommand) {
+		// Bun's bin directory is known only from the artifact; imaged sets
+		// PATH with BunRunnerPath.
+		delete(env, "PATH")
+	}
 	return api.SharedRuntimeVerdict{Eligible: true, Start: start, Env: env}
 }
 

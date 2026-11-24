@@ -131,7 +131,9 @@ func (h *Handler) sharedRuntimeAppLayersAt(ctx context.Context, runtime string, 
 				cleanup()
 				setSharedRuntimeStart(manifest, sharedruntime.NextStandaloneStart, sharedruntime.RunnerPath)
 				for k, v := range sharedruntime.NextStandaloneEnvVars {
-					manifest.Env[k] = v
+					if _, set := manifest.Env[k]; !set {
+						manifest.Env[k] = v
+					}
 				}
 				return sharedRuntimeLayers{layers: selected, cleanup: selectedCleanup}, nil
 			}
@@ -148,7 +150,12 @@ func (h *Handler) sharedRuntimeAppLayersAt(ctx context.Context, runtime string, 
 				reason = "bun_not_installed"
 				break
 			}
-			setSharedRuntimeStart(manifest, []string{"/bin/sh", "-c", command}, sharedruntime.BunRunnerPath(report.BunBinDir))
+			argv := []string{"/bin/sh", "-c", command}
+			if strings.TrimSpace(app.StartCommand) == "" && !shellEntrypoint(manifest.Entrypoint) {
+				// Exec form keeps its words as the image gave them.
+				argv = manifest.Entrypoint
+			}
+			setSharedRuntimeStart(manifest, argv, sharedruntime.BunRunnerPath(report.BunBinDir))
 			return sharedRuntimeLayers{layers: filtered, cleanup: cleanup}, nil
 		}
 		argv, why := sharedRuntimeStart(*manifest, app, runtime, report)
@@ -196,10 +203,15 @@ func sharedRuntimeCommand(manifest api.AppManifest, app state.App) string {
 		return command
 	}
 	argv := manifest.Entrypoint
-	if len(argv) == 3 && (argv[0] == "/bin/sh" || argv[0] == "/bin/bash" || argv[0] == "sh" || argv[0] == "bash") && argv[1] == "-c" {
+	if shellEntrypoint(argv) {
 		return argv[2]
 	}
 	return strings.Join(argv, " ")
+}
+
+// shellEntrypoint reports whether argv is a shell-form `sh -c <command>`.
+func shellEntrypoint(argv []string) bool {
+	return len(argv) == 3 && (argv[0] == "/bin/sh" || argv[0] == "/bin/bash" || argv[0] == "sh" || argv[0] == "bash") && argv[1] == "-c"
 }
 
 // sharedRuntimeStart resolves the app's start command for the runner base,

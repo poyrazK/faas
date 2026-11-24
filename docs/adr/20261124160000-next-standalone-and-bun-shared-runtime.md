@@ -44,14 +44,18 @@ through its package manager. The build step:
    run build`. A step variable would reach the image's environment, where
    `next start` would look for an adapter that is not in the deployed app;
 3. copies `.next/static` and `public` into the standalone tree, as Next's
-   deployment docs do. This step changes nothing when no standalone server
-   was written.
+   deployment docs do, then writes the marker
+   `.next/standalone/.gregale-standalone`. This step changes nothing when no
+   standalone server was written.
 
 The deploy inputs are unchanged. imaged decides. When the filtered `/app`
-layer holds `.next/standalone/server.js` and the start command is the
-plain `next start`, the app layer keeps only `/app/.next/standalone`. The
+layer holds the builder's marker and the start command is the plain
+`next start`, the app layer keeps only `/app/.next/standalone`. The
 app then starts with `node /app/.next/standalone/server.js`, with
-`HOSTNAME=0.0.0.0`. Any other case, including a failed second pass, keeps
+`HOSTNAME=0.0.0.0` unless the app sets `HOSTNAME`. A standalone server
+without the marker keeps `node_modules`. This covers an app that sets
+`output: "standalone"` itself, an older builder, and the off switch. In
+those cases the static and public files were never copied. Any other case, including a failed second pass, keeps
 the layer it would have had before. The adapter only runs at build time.
 The standalone server ignores the `adapterPath` its embedded config
 records, and verified 2026-11-24 that it serves with the file absent.

@@ -371,6 +371,7 @@ func TestSharedRuntimeAppLayersNextAndBun(t *testing.T) {
 		"app/package.json":                            nextPkg,
 		"app/node_modules/next/dist/server.js":        "full",
 		"app/.next/standalone/server.js":              "server",
+		"app/.next/standalone/.gregale-standalone":    "",
 		"app/.next/standalone/node_modules/next/x.js": "traced",
 		"app/.next/standalone/.next/static/a.css":     "css",
 		"mise/installs/node/24.1.0/bin/node":          "elf",
@@ -380,6 +381,9 @@ func TestSharedRuntimeAppLayersNextAndBun(t *testing.T) {
 		out["app/package.json"] = pkg
 		return out
 	}
+	withoutMarker := maps.Clone(standalone)
+	delete(withoutMarker, sharedruntime.NextStandaloneMarker)
+	standaloneNames := []string{sharedruntime.NextStandaloneMarker, "app/.next/standalone/.next/static/a.css", "app/.next/standalone/node_modules/next/x.js", "app/.next/standalone/server.js"}
 	tests := []struct {
 		name       string
 		files      map[string]string
@@ -388,22 +392,47 @@ func TestSharedRuntimeAppLayersNextAndBun(t *testing.T) {
 		wantArgv   []string
 		wantPath   string
 		wantNames  []string
+		entry      []string
+		env        map[string]string
+		wantHost   string
 	}{
 		{
 			name: "next standalone", files: standalone, start: "npm run start",
-			wantArgv: sharedruntime.NextStandaloneStart, wantPath: sharedruntime.RunnerPath,
-			wantNames: []string{"app/.next/standalone/.next/static/a.css", "app/.next/standalone/node_modules/next/x.js", "app/.next/standalone/server.js"},
+			wantArgv: sharedruntime.NextStandaloneStart, wantPath: sharedruntime.RunnerPath, wantHost: "0.0.0.0",
+			wantNames: standaloneNames,
+		},
+		{
+			name: "customer HOSTNAME kept", files: standalone, start: "npm run start", env: map[string]string{"HOSTNAME": "::"},
+			wantArgv: sharedruntime.NextStandaloneStart, wantPath: sharedruntime.RunnerPath, wantHost: "::",
+			wantNames: standaloneNames,
 		},
 		{
 			name: "next started through bun", files: withPkg(standalone, nextPkg), start: "bun run start",
-			wantArgv: sharedruntime.NextStandaloneStart, wantPath: sharedruntime.RunnerPath,
-			wantNames: []string{"app/.next/standalone/.next/static/a.css", "app/.next/standalone/node_modules/next/x.js", "app/.next/standalone/server.js"},
+			wantArgv: sharedruntime.NextStandaloneStart, wantPath: sharedruntime.RunnerPath, wantHost: "0.0.0.0",
+			wantNames: standaloneNames,
+		},
+		{
+			// The app's own output "standalone" without the builder's copy
+			// step: its server lacks static and public files.
+			name: "standalone without the builder marker keeps node_modules", start: "npm run start",
+			files:     withoutMarker,
+			wantArgv:  []string{"/bin/sh", "-c", "next start"},
+			wantPath:  sharedruntime.RunnerPath,
+			wantNames: []string{"app/.next/standalone/.next/static/a.css", "app/.next/standalone/node_modules/next/x.js", "app/.next/standalone/server.js", "app/node_modules/next/dist/server.js", "app/package.json"},
 		},
 		{
 			name: "next start with arguments keeps node_modules", start: "npm run start",
 			files:    withPkg(standalone, `{"scripts":{"start":"next start -p 3000"}}`),
 			wantArgv: []string{"/bin/sh", "-c", "next start -p 3000"}, wantPath: sharedruntime.RunnerPath,
-			wantNames: []string{"app/.next/standalone/.next/static/a.css", "app/.next/standalone/node_modules/next/x.js", "app/.next/standalone/server.js", "app/node_modules/next/dist/server.js", "app/package.json"},
+			wantNames: append(slices.Clone(standaloneNames), "app/node_modules/next/dist/server.js", "app/package.json"),
+		},
+		{
+			name: "bun exec form keeps its words", start: "unused",
+			entry:     []string{"bun", "run", "server.ts", "--title", "my app"},
+			files:     map[string]string{"app/package.json": bunPkg, "app/server.ts": "Bun.serve()", "mise/installs/bun/1.3.5/bin/bun": "elf"},
+			wantArgv:  []string{"bun", "run", "server.ts", "--title", "my app"},
+			wantPath:  sharedruntime.BunRunnerPath("/mise/installs/bun/1.3.5/bin"),
+			wantNames: []string{"app/package.json", "app/server.ts", "mise/installs/bun/1.3.5/bin/bun"},
 		},
 		{
 			name: "next without standalone output", start: "npm run start",
@@ -434,7 +463,12 @@ func TestSharedRuntimeAppLayersNextAndBun(t *testing.T) {
 			}
 			defer cleanup()
 			entry := []string{"/bin/bash", "-c", tt.start}
-			manifest := api.AppManifest{Entrypoint: slices.Clone(entry), Env: map[string]string{"NODE_ENV": "production"}}
+			if tt.entry != nil {
+				entry = tt.entry
+			}
+			env := map[string]string{"NODE_ENV": "production"}
+			maps.Copy(env, tt.env)
+			manifest := api.AppManifest{Entrypoint: slices.Clone(entry), Env: env}
 			_, baseDiffIDs, err := h.runtimeBaseDiffIDs(t.Context(), RuntimeNode24, "")
 			if err != nil {
 				t.Fatal(err)
@@ -456,8 +490,8 @@ func TestSharedRuntimeAppLayersNextAndBun(t *testing.T) {
 			if !slices.Equal(manifest.Entrypoint, tt.wantArgv) || manifest.Env["PATH"] != tt.wantPath || manifest.Env["NODE_ENV"] != "production" {
 				t.Fatalf("manifest = %+v, want %q on %q", manifest, tt.wantArgv, tt.wantPath)
 			}
-			if standalone := slices.Equal(tt.wantArgv, sharedruntime.NextStandaloneStart); standalone != (manifest.Env["HOSTNAME"] == "0.0.0.0") {
-				t.Fatalf("HOSTNAME = %q for a standalone start %v", manifest.Env["HOSTNAME"], standalone)
+			if manifest.Env["HOSTNAME"] != tt.wantHost {
+				t.Fatalf("HOSTNAME = %q, want %q", manifest.Env["HOSTNAME"], tt.wantHost)
 			}
 			if names := layerEntryNames(t, got.layers); !slices.Equal(names, tt.wantNames) {
 				t.Fatalf("layer = %q\nwant %q", names, tt.wantNames)

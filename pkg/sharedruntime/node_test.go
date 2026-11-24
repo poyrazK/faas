@@ -85,7 +85,11 @@ func TestClassifyNode(t *testing.T) {
 			if !slices.Equal(got.Start, tt.wantStart) {
 				t.Fatalf("start = %q, want %q", got.Start, tt.wantStart)
 			}
-			if got.Eligible && (got.Env["PATH"] != runnerPath || got.Env["NODE_ENV"] != "production") {
+			wantPath := runnerPath
+			if len(tt.wantStart) > 0 && BunStart(tt.wantStart[len(tt.wantStart)-1]) {
+				wantPath = "" // imaged sets it from the artifact's Bun install
+			}
+			if got.Eligible && (got.Env["PATH"] != wantPath || got.Env["NODE_ENV"] != "production") {
 				t.Fatalf("env = %v, want the runner PATH and the plan's variables", got.Env)
 			}
 		})

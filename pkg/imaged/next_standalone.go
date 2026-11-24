@@ -77,12 +77,12 @@ func selectNextStandalone(layers []io.Reader) ([]io.Reader, func(), error) {
 func copyNextStandaloneLayer(layer io.Reader, out io.Writer) (int, bool, error) {
 	zr, err := rootfs.OpenCompressedLayer(layer)
 	if err != nil {
-		return 0, false, err
+		return 0, false, fmt.Errorf("open layer: %w", err)
 	}
 	defer func() { _ = zr.Close() }()
 	zw, err := rootfs.NewLayerWriter(out)
 	if err != nil {
-		return 0, false, err
+		return 0, false, fmt.Errorf("compress layer: %w", err)
 	}
 	tw := tar.NewWriter(zw)
 	tr := tar.NewReader(zr)
@@ -95,7 +95,7 @@ func copyNextStandaloneLayer(layer io.Reader, out io.Writer) (int, bool, error) 
 		if err != nil {
 			_ = tw.Close()
 			_ = zw.Close()
-			return 0, false, err
+			return 0, false, fmt.Errorf("read layer: %w", err)
 		}
 		name := pathpkg.Clean(hdr.Name)
 		if !nextStandaloneEntry(name) {
@@ -110,17 +110,17 @@ func copyNextStandaloneLayer(layer io.Reader, out io.Writer) (int, bool, error) 
 		if err := tw.WriteHeader(hdr); err != nil {
 			_ = tw.Close()
 			_ = zw.Close()
-			return 0, false, err
+			return 0, false, fmt.Errorf("write %s header: %w", name, err)
 		}
 		if _, err := io.CopyN(tw, tr, hdr.Size); err != nil {
 			_ = tw.Close()
 			_ = zw.Close()
-			return 0, false, err
+			return 0, false, fmt.Errorf("write %s: %w", name, err)
 		}
 		entries++
 	}
 	if err := errors.Join(tw.Close(), zw.Close()); err != nil {
-		return 0, false, err
+		return 0, false, fmt.Errorf("close layer: %w", err)
 	}
 	return entries, server, nil
 }
@@ -133,7 +133,7 @@ func rewindLayers(layers []io.Reader) error {
 			return fmt.Errorf("layer %d cannot be re-read", i)
 		}
 		if _, err := seeker.Seek(0, io.SeekStart); err != nil {
-			return err
+			return fmt.Errorf("rewind layer %d: %w", i, err)
 		}
 	}
 	return nil

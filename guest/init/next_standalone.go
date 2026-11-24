@@ -45,14 +45,25 @@ func stampNextStandalonePlan(planPath, workdir string) error {
 	}
 	plan, err := readSmallRegularFile(planPath, api.PublicBuildPlanMaxBytes)
 	if err != nil {
-		return err
+		return fmt.Errorf("read Railpack plan: %w", err)
 	}
 	stamped, err := sharedruntime.StampNextStandalone(plan, pkg)
 	if err != nil {
-		return err
+		return fmt.Errorf("stamp Railpack plan: %w", err)
 	}
-	if err := os.WriteFile(planPath, stamped, 0o644); err != nil {
-		return err
+	// A temp file renamed over the plan: a failed write (a full disk) leaves
+	// Railpack's plan whole rather than truncated.
+	tmp, err := os.CreateTemp(filepath.Dir(planPath), ".railpack-plan-*.json")
+	if err != nil {
+		return fmt.Errorf("create stamped plan: %w", err)
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }()
+	_, writeErr := tmp.Write(stamped)
+	if err := errors.Join(writeErr, tmp.Chmod(0o644), tmp.Close()); err != nil {
+		return fmt.Errorf("write stamped plan: %w", err)
+	}
+	if err := os.Rename(tmp.Name(), planPath); err != nil {
+		return fmt.Errorf("replace Railpack plan: %w", err)
 	}
 	fmt.Fprintln(os.Stderr, "Next.js: building with output \"standalone\" so the app ships only the files its server needs")
 	return nil
@@ -61,7 +72,7 @@ func stampNextStandalonePlan(planPath, workdir string) error {
 func readSmallRegularFile(path string, maxBytes int64) ([]byte, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("stat %s: %w", filepath.Base(path), err)
 	}
 	if !info.Mode().IsRegular() || info.Size() > maxBytes {
 		return nil, fmt.Errorf("%s is not a regular file of at most %d bytes", filepath.Base(path), maxBytes)

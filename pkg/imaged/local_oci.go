@@ -381,7 +381,8 @@ type appLayerReport struct {
 	// through Bun (ADR-20261124160000); BunBinDir is where its bun was.
 	KeepBun   bool
 	BunBinDir string
-	// NextStandalone records a Next.js standalone server in /app.
+	// NextStandalone records the builder's marker beside a Next.js
+	// standalone server whose static and public files it copied.
 	NextStandalone bool
 }
 
@@ -407,7 +408,7 @@ func (r *appLayerReport) noteKept(hdr *tar.Header) {
 		return
 	}
 	switch {
-	case hdr.Name == sharedruntime.NextStandaloneServer && hdr.Typeflag == tar.TypeReg:
+	case hdr.Name == sharedruntime.NextStandaloneMarker && hdr.Typeflag == tar.TypeReg:
 		r.NextStandalone = true
 	case r.KeepBun && r.BunBinDir == "" && (hdr.Typeflag == tar.TypeReg || hdr.Typeflag == tar.TypeSymlink):
 		r.BunBinDir = sharedruntime.BunBinDir(hdr.Name)

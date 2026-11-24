@@ -66,7 +66,17 @@ module.exports = {
 const nextStandaloneCopy = `sh -c 'if [ -f .next/standalone/server.js ]; then ` +
 	`rm -rf .next/standalone/.next/static && mkdir -p .next/standalone/.next && ` +
 	`{ [ ! -d .next/static ] || cp -R .next/static .next/standalone/.next/static; } && ` +
-	`{ [ ! -d public ] || { rm -rf .next/standalone/public && cp -R public .next/standalone/public; }; }; fi'`
+	`{ [ ! -d public ] || { rm -rf .next/standalone/public && cp -R public .next/standalone/public; }; } && ` +
+	`: > .next/standalone/` + nextStandaloneMarkerName + `; fi'`
+
+// nextStandaloneMarkerName is the file the copy step writes last. imaged ships
+// the standalone tree only when it is there: a standalone server built
+// without the copy (the app's own output setting, an older builder, the
+// switch off) lacks its static and public files.
+const nextStandaloneMarkerName = ".gregale-standalone"
+
+// NextStandaloneMarker is the marker's tar path.
+const NextStandaloneMarker = NextStandalonePrefix + "/" + nextStandaloneMarkerName
 
 // nextBuildCommands are the commands Railpack plans for a build script.
 var nextBuildCommands = map[string]bool{
