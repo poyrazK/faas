@@ -39,7 +39,7 @@ func WriteSavedInsightCSV(w io.Writer, res SavedInsightResult) error {
 				if i < len(r.Returned) {
 					returned = r.Returned[i]
 				}
-				_ = cw.Write([]string{cohort, r.Value, strconv.Itoa(i+1), d(eligible), d(returned), f(r.Rates[i])})
+				_ = cw.Write([]string{cohort, r.Value, strconv.Itoa(i + 1), d(eligible), d(returned), f(r.Rates[i])})
 			}
 		}
 		write("overall", res.Retention.Overall)
