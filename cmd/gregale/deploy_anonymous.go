@@ -146,7 +146,7 @@ func printAnonymousClaimNotice(w io.Writer) {
 	if sess == nil {
 		return
 	}
-	fmt.Fprintf(w, "\nThis app has no owner yet. Give this link to the person you are working for;\n"+
+	_, _ = fmt.Fprintf(w, "\nThis app has no owner yet. Give this link to the person you are working for;\n"+
 		"they claim the app by opening it and confirming their email (by %s):\n  %s\n"+
 		"Until then: Free plan limits, no custom domains, databases or API keys. Run `gregale claim` for a fresh link.\n",
 		sess.ExpiresAt.Local().Format("Mon 2 Jan 15:04 MST"), sess.ClaimURL)
@@ -186,7 +186,7 @@ func cmdClaim(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(link))
 	}
-	fmt.Fprintf(osStdout, "Claim link (valid until %s; earlier links stop working):\n  %s\n",
+	_, _ = fmt.Fprintf(osStdout, "Claim link (valid until %s; earlier links stop working):\n  %s\n",
 		link.ExpiresAt.Local().Format("Mon 2 Jan 15:04 MST"), link.ClaimURL)
 	return 0
 }

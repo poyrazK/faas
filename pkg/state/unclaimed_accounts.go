@@ -467,7 +467,7 @@ func (s *PgStore) RotateUnclaimedClaimToken(ctx context.Context, accountID strin
 func (s *PgStore) MarkUnclaimedAccountClaimed(ctx context.Context, accountID string, at time.Time) (bool, error) {
 	account, err := parsePgUUID(accountID)
 	if err != nil {
-		return false, nil
+		return false, fmt.Errorf("state: unclaimed account id: %w", err)
 	}
 	n, err := sqlc.New().MarkUnclaimedAccountClaimed(ctx, s.pool, sqlc.MarkUnclaimedAccountClaimedParams{At: pgTime(at), AccountID: account})
 	if err != nil {
@@ -479,7 +479,7 @@ func (s *PgStore) MarkUnclaimedAccountClaimed(ctx context.Context, accountID str
 func (s *PgStore) MarkUnclaimedAccountExpired(ctx context.Context, accountID string, at time.Time) (bool, error) {
 	account, err := parsePgUUID(accountID)
 	if err != nil {
-		return false, nil
+		return false, fmt.Errorf("state: unclaimed account id: %w", err)
 	}
 	var marked bool
 	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
