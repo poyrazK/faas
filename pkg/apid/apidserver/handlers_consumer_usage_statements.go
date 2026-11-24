@@ -1,14 +1,17 @@
 package apidserver
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -27,11 +30,20 @@ func apiConsumerUsageStatementResponse(statement state.APIConsumerUsageStatement
 	}
 	for _, bucket := range statement.Buckets {
 		out.Buckets = append(out.Buckets, api.APIConsumerUsageStatementBucketResponse{
+			WaivedUnits: bucket.WaivedUnits,
 			WindowStart: bucket.WindowStart.UTC(), BillableUnits: bucket.BillableUnits,
 			RateCardID: bucket.RateCardID, Currency: bucket.Currency,
 			PriceMillicentsPerUnit: bucket.PriceMillicentsPerUnit, ChargedUnits: bucket.Charged(),
-			TierUnits: bucket.TierUnits, AmountMillicents: bucket.AmountMillicents, Trial: bucket.Trial, Unit: bucket.Unit,
+			TierUnits: bucket.TierUnits, AmountMillicents: bucket.AmountMillicents, Trial: bucket.Trial, Unit: bucket.Unit, Model: bucket.Model,
 		})
+	}
+	if w := statement.Waiver; w != nil {
+		out.Waiver = &api.APIConsumerUsageWaiverResponse{
+			APIConsumerUsageWaiverRequest: api.APIConsumerUsageWaiverRequest{
+				SourceStatementID: w.SourceStatementID, Unit: w.Unit, Model: w.Model, Since: w.Since, Until: w.Until,
+				Units: w.Units, Reason: w.Reason,
+			}, ApprovedBy: w.ApprovedBy, ApprovedAt: w.ApprovedAt,
+		}
 	}
 	for _, fee := range statement.Fees {
 		out.Fees = append(out.Fees, api.APIConsumerStatementFeeResponse{Kind: fee.Kind, RateCardID: fee.RateCardID, AmountMillicents: fee.AmountMillicents})
@@ -83,20 +95,45 @@ func (s *server) createAPIConsumerUsageStatement(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
-	periodStart, periodEnd, ok := decodeAPIConsumerUsageStatementPeriod(w, r)
+	var req api.CreateAPIConsumerUsageStatementRequest
+	// Authorize waiver requests before checking for a cached response. Keep
+	// the original body when the idempotency middleware needs its fingerprint.
+	var body bytes.Buffer
+	if r.Header.Get("Idempotency-Key") != "" && r.Body != nil {
+		r.Body = struct {
+			io.Reader
+			io.Closer
+		}{io.TeeReader(r.Body, &body), r.Body}
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
+		return
+	}
+	if body.Len() > 0 {
+		r.Body = io.NopCloser(&body)
+	}
+	periodStart, periodEnd, ok := validateAPIConsumerUsageStatementPeriod(w, req)
 	if !ok {
 		return
 	}
-	statement, created, err := s.draftAPIConsumerStatement(r.Context(), acct, app.ID, consumer.ID, store, periodStart, periodEnd)
-	if err != nil {
-		api.WriteProblem(w, apiConsumerStatementDraftProblem(err))
+	if req.Waiver != nil {
+		s.requireScope(api.ScopesAdminOnly...)(s.idempotent(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+			s.approveConsumerUsageWaiver(w, r, acct, app.ID, consumer.ID, store, periodStart, periodEnd, *req.Waiver)
+		}))(w, r, acct)
 		return
 	}
-	status := http.StatusOK
-	if created {
-		status = http.StatusCreated
-	}
-	writeJSON(w, status, apiConsumerUsageStatementResponse(statement))
+	s.idempotent(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		statement, created, err := s.draftAPIConsumerStatement(r.Context(), acct, app.ID, consumer.ID, store, periodStart, periodEnd)
+		if err != nil {
+			api.WriteProblem(w, apiConsumerStatementDraftProblem(err))
+			return
+		}
+		status := http.StatusOK
+		if created {
+			status = http.StatusCreated
+		}
+		writeJSON(w, status, apiConsumerUsageStatementResponse(statement))
+	})(w, r, acct)
 }
 
 // draftAPIConsumerStatement plans the period against its existing revisions
@@ -151,12 +188,7 @@ func apiConsumerStatementDraftProblem(err error) *api.Problem {
 	}
 }
 
-func decodeAPIConsumerUsageStatementPeriod(w http.ResponseWriter, r *http.Request) (time.Time, time.Time, bool) {
-	var req api.CreateAPIConsumerUsageStatementRequest
-	if err := decodeJSON(r, &req); err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
-		return time.Time{}, time.Time{}, false
-	}
+func validateAPIConsumerUsageStatementPeriod(w http.ResponseWriter, req api.CreateAPIConsumerUsageStatementRequest) (time.Time, time.Time, bool) {
 	invalid := func(detail string) (time.Time, time.Time, bool) {
 		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid statement period", detail))
 		return time.Time{}, time.Time{}, false
@@ -205,13 +237,19 @@ func (s *server) planAPIConsumerUsageStatement(ctx context.Context, accountID, a
 	if (billing.TieredCardEffectiveIn(cards, start, end) || billing.MonthlyFeeCardEffectiveIn(cards, start, end)) && !billing.IsCalendarMonth(start, end) {
 		return state.APIConsumerUsageStatementInput{}, false, errTieredStatementPeriod
 	}
-	inputs, err := s.consumerUsageInputs(ctx, cards, accountID, appID, consumerID, billing.MonthStart(start), end)
+	inputs, err := s.consumerUsageInputs(ctx, cards, accountID, appID, consumerID, billing.MonthStart(start), end, false)
 	if err != nil {
 		return state.APIConsumerUsageStatementInput{}, false, err
 	}
 	opts, err := s.consumerQuoteOptions(ctx, accountID, appID, consumerID)
 	if err != nil {
 		return state.APIConsumerUsageStatementInput{}, false, err
+	}
+	if billing.ConsumerModelRatesBefore(cards, end) {
+		opts.ModelWaivers, err = s.consumerUsageWaivers(ctx, accountID, appID, consumerID, start, end)
+		if err != nil {
+			return state.APIConsumerUsageStatementInput{}, false, err
+		}
 	}
 	quote, err := consumerStatementDelta(cards, usage, inputs, start, revisions, opts)
 	if err != nil {
@@ -297,10 +335,11 @@ func (s *server) consumerQuoteOptions(ctx context.Context, accountID, appID, con
 // recorded only for priced buckets, where it determines the amount.
 func statementBucketFromCharge(bucket billing.APIConsumerUsageChargeBucket) state.APIConsumerUsageStatementBucket {
 	out := state.APIConsumerUsageStatementBucket{
+		WaivedUnits: bucket.WaivedUnits,
 		WindowStart: bucket.WindowStart, BillableUnits: bucket.BillableUnits,
 		RateCardID: bucket.RateCardID, Currency: bucket.Currency,
 		PriceMillicentsPerUnit: bucket.PriceMillicentsPerUnit, AmountMillicents: bucket.AmountMillicents,
-		TierUnits: bucket.TierUnits, Trial: bucket.Trial, Unit: bucket.Unit,
+		TierUnits: bucket.TierUnits, Trial: bucket.Trial, Unit: bucket.Unit, Model: bucket.Model,
 	}
 	if bucket.RateCardID != "" {
 		charged := bucket.ChargedUnits
@@ -354,6 +393,22 @@ func (s *server) finalizeAPIConsumerUsageStatement(w http.ResponseWriter, r *htt
 // again is a no-op. The handler and billing runs (ADR-1503) share it.
 func (s *server) finalizeAPIConsumerStatement(ctx context.Context, acct state.Account, appID, consumerID string,
 	store state.APIConsumerUsageStatementStore, statementID string) (state.APIConsumerUsageStatement, error) {
+	draft, err := store.GetAPIConsumerUsageStatement(ctx, acct.ID, appID, consumerID, statementID)
+	if err != nil {
+		return draft, err
+	}
+	if draft.Status == state.APIConsumerUsageStatementDraft {
+		for _, bucket := range draft.Buckets {
+			if bucket.Model != "" && bucket.RateCardID == "" && bucket.BillableUnits > bucket.WaivedUnits {
+				return draft, &unpricedConsumerModelError{unit: bucket.Unit, model: bucket.Model, minute: bucket.WindowStart}
+			}
+		}
+		if draft.UnpricedUnits == 0 {
+			if err := s.checkConsumerModelRates(ctx, draft); err != nil {
+				return draft, err
+			}
+		}
+	}
 	statement, changed, err := store.FinalizeAPIConsumerUsageStatement(ctx, acct.ID, appID, consumerID, statementID)
 	if err != nil || !changed {
 		return statement, err
@@ -371,7 +426,71 @@ func (s *server) finalizeAPIConsumerStatement(ctx context.Context, acct state.Ac
 	return statement, nil
 }
 
+type unpricedConsumerModelError struct {
+	unit, model string
+	minute      time.Time
+}
+
+func (e *unpricedConsumerModelError) Error() string {
+	return fmt.Sprintf("meter %s has no rate for model %s at %s; review the usage quote before finalization",
+		e.unit, e.model, e.minute.UTC().Format(time.RFC3339))
+}
+
+// checkConsumerModelRates rechecks the metering ledger for a priced draft so
+// a missing model rate recorded after drafting also holds the statement.
+// Usage recorded after this read can be included in the next revision.
+func (s *server) checkConsumerModelRates(ctx context.Context, statement state.APIConsumerUsageStatement) error {
+	cardsStore, ok := s.store.(state.APIConsumerRateCardStore)
+	if !ok {
+		return nil
+	}
+	cards, err := cardsStore.ListAPIConsumerRateCardsForApp(ctx, statement.AccountID, statement.AppID)
+	if err != nil {
+		return err
+	}
+	if !billing.ConsumerModelRatesBefore(cards, statement.PeriodEnd) {
+		return nil
+	}
+	cards, err = s.consumerPriceHistory(ctx, cards, statement.AccountID, statement.AppID, statement.ConsumerID)
+	if err != nil {
+		return err
+	}
+	if !billing.ConsumerModelRatesBefore(cards, statement.PeriodEnd) {
+		return nil
+	}
+	meterStore, ok := s.store.(state.ConsumerMeterUsageStore)
+	if !ok {
+		return errors.New("API consumer model usage is unavailable")
+	}
+	meters, err := consumerReportedMeters(ctx, meterStore, statement.AccountID, statement.AppID, statement.ConsumerID,
+		statement.PeriodStart, statement.PeriodEnd)
+	if err != nil {
+		return err
+	}
+	missing := billing.UnpricedConsumerModelUsage(cards, meters, statement.PeriodStart)
+	if len(missing) == 0 {
+		return nil
+	}
+	waivers, err := s.consumerUsageWaivers(ctx, statement.AccountID, statement.AppID, statement.ConsumerID,
+		statement.PeriodStart, statement.PeriodEnd)
+	if err != nil {
+		return err
+	}
+	billing.ApplyConsumerModelWaivers(missing, waivers)
+	for _, line := range missing {
+		if line.BillableUnits > line.WaivedUnits {
+			return &unpricedConsumerModelError{unit: line.Unit, model: line.Model, minute: line.WindowStart}
+		}
+	}
+	return nil
+}
+
 func apiConsumerStatementFinalizeProblem(err error) *api.Problem {
+	var missing *unpricedConsumerModelError
+	if errors.As(err, &missing) {
+		return api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Usage statement cannot be finalized", missing.Error())
+	}
 	if errors.Is(err, state.ErrConflict) {
 		return api.NewProblem(http.StatusConflict, api.CodeConflict,
 			"Usage statement cannot be finalized", "all usage must have an effective rate card before finalization")
@@ -473,4 +592,83 @@ func (s *server) getAPIConsumerUsageStatementHandoff(w http.ResponseWriter, r *h
 		return
 	}
 	writeJSON(w, http.StatusOK, apiConsumerUsageStatementHandoffResponse(handoff))
+}
+
+func (s *server) consumerUsageWaivers(ctx context.Context, accountID, appID, consumerID string, since, until time.Time) ([]state.APIConsumerUsageWaiver, error) {
+	store, ok := s.store.(state.APIConsumerUsageWaiverStore)
+	if !ok {
+		return nil, errors.New("API consumer usage waivers are unavailable")
+	}
+	return store.ListAPIConsumerUsageWaivers(ctx, accountID, appID, consumerID, since, until)
+}
+
+func (s *server) approveConsumerUsageWaiver(w http.ResponseWriter, r *http.Request, acct state.Account, appID, consumerID string,
+	store state.APIConsumerUsageStatementStore, start, end time.Time, req api.APIConsumerUsageWaiverRequest) {
+	operator, key, _, ok := middleware.PrincipalFrom(r)
+	if !ok {
+		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized, "Authentication required", "authenticate to approve usage waivers"))
+		return
+	}
+	// The account handler uses the app's resolved owner scope. The verified
+	// principal supplies the independent approver identity.
+	approval := state.APIConsumerUsageWaiver{
+		SourceStatementID: req.SourceStatementID, Unit: req.Unit, Model: req.Model,
+		Since: req.Since.UTC(), Until: req.Until.UTC(), Units: req.Units, Reason: strings.TrimSpace(req.Reason),
+		ApprovedBy: operator.ID, ApprovedAt: time.Now().UTC(),
+	}
+	if key != nil && key.ID != "" {
+		approval.ApprovedWith = "key:" + key.ID
+	}
+	conflict := func() {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Usage waiver conflict",
+			"review the latest held draft and confirm its unpriced units for the selected model and minute window"))
+	}
+	revisions, err := store.ListAPIConsumerUsageStatementRevisions(r.Context(), acct.ID, appID, consumerID, start, end)
+	if err != nil {
+		api.WriteProblem(w, api.ErrInternal("could not load usage statement revisions"))
+		return
+	}
+	for _, revision := range revisions {
+		if revision.Waiver != nil && revision.Waiver.SourceStatementID == approval.SourceStatementID {
+			if revision.Waiver.SameSelection(approval) {
+				writeJSON(w, http.StatusOK, apiConsumerUsageStatementResponse(revision))
+			} else {
+				conflict()
+			}
+			return
+		}
+	}
+	if len(revisions) == 0 {
+		conflict()
+		return
+	}
+	input, err := state.PlanAPIConsumerUsageWaiver(revisions[len(revisions)-1], approval)
+	switch {
+	case errors.Is(err, state.ErrInvalidArgument):
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid usage waiver", err.Error()))
+		return
+	case err != nil:
+		conflict()
+		return
+	}
+	statement, created, err := store.CreateAPIConsumerUsageStatement(r.Context(), input)
+	if errors.Is(err, state.ErrConflict) || (err == nil && (statement.Waiver == nil || !statement.Waiver.SameSelection(approval))) {
+		conflict()
+		return
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrInternal("could not approve the usage waiver"))
+		return
+	}
+	if created {
+		s.audit.Emit(r.Context(), "api_consumer_usage_waiver.approved", &acct.ID, map[string]any{
+			"app_id": appID, "consumer_id": consumerID, "statement_id": statement.ID,
+			"source_statement_id": approval.SourceStatementID, "unit": approval.Unit, "model": approval.Model,
+			"since": approval.Since, "until": approval.Until, "units": approval.Units, "reason": approval.Reason,
+			"approved_by": approval.ApprovedBy,
+		})
+		writeJSON(w, http.StatusCreated, apiConsumerUsageStatementResponse(statement))
+		return
+	}
+	writeJSON(w, http.StatusOK, apiConsumerUsageStatementResponse(statement))
 }
