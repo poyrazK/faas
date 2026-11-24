@@ -292,16 +292,16 @@ func cmdStatus(args []string) int {
 func cmdEnv(args []string) int {
 	if len(args) == 0 || args[0] == "clone-status" && !fullEnvironmentCloneCLI() ||
 		args[0] == "resume-automation" && !fullEnvironmentCloneCLI() && !environmentBranchCLI() {
-		usage := "usage: gregale env <create|pull|push|diff|history|rollback>"
+		usage := "usage: gregale env <set|unset|list|create|pull|push|diff|history|rollback>"
 		switch {
 		case fullEnvironmentCloneCLI():
-			usage = "usage: gregale env <create|clone-status|resume-automation|pull|push|diff|history|rollback>"
+			usage = "usage: gregale env <set|unset|list|create|clone-status|resume-automation|pull|push|diff|history|rollback>"
 		case environmentBranchCLI():
 			// Branches copy their parent's automation paused too
 			// (ADR-20261031193635 amendment 2026-11-17).
-			usage = "usage: gregale env <create|resume-automation|pull|push|diff|history|rollback>"
+			usage = "usage: gregale env <set|unset|list|create|resume-automation|pull|push|diff|history|rollback>"
 		}
-		PrintUsage(os.Stderr, usage, "env")
+		PrintUsage(osStderr, usage, "env")
 		return 1
 	}
 	switch args[0] {

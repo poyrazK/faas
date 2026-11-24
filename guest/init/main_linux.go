@@ -1919,6 +1919,13 @@ func prepareRailpackConfig(m api.BuildManifest) (func() error, error) {
 			}
 			deploy["startCommand"] = "/bin/true"
 		}
+		// imaged starts every function through its runner, never the image's
+		// start command. Without one Railpack printed its "No start command"
+		// advice, with Railway docs and RAILPACK_* variables, into every
+		// function deploy (prod hunt r38).
+		if _, configured := deploy["startCommand"]; !configured {
+			deploy["startCommand"] = "/bin/true"
+		}
 	}
 	if err := devWatchRailpackConfig(config, m); err != nil {
 		return nil, err

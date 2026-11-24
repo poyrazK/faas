@@ -5023,13 +5023,14 @@ func cmdRollback(args []string) int {
 		PrintUsage(osStdout, rollbackUsage, "rollback")
 		return 0
 	}
-	if len(args) < 1 {
-		PrintUsage(os.Stderr, rollbackUsage, "rollback")
-		return 1
-	}
 	slug, rest, slugErr := splitRollbackSlug(args)
 	if slugErr != nil {
 		return printErr("Invalid rollback", slugErr)
+	}
+	if slug == "" {
+		// Prod hunt r38: `rollback` in a linked checkout printed only usage,
+		// while `deploy` there deploys the linked app.
+		slug = linkedAppForMissingSlug()
 	}
 	if slug == "" {
 		PrintUsage(os.Stderr, rollbackUsage, "rollback")
