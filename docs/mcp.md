@@ -6126,6 +6126,26 @@ The OAuth provider doctor's signing-key check applies the same `key_ops`
 requirement and does not count encryption-only or malformed-operation keys
 as usable verification keys.
 
+The `jwks_url` must answer anonymous requests. When the starter cannot fetch
+its keys it does not call the token wrong: a network failure, timeout, 5xx or
+429 is answered with `error_description="signing keys unavailable"` and
+`Retry-After`, and a 401 or 403 with `error_description="signing keys
+refused"` and no `Retry-After`. The CLI names the cause in both cases. A 403
+can also come from a firewall in front of the provider that refuses the app's
+requests.
+
+An authorization server you deploy on Gregale answers 401 or 403 while its URL
+is private (new apps start private on some plans) or has a `--public-auth`
+mode other than `open` (see [App access control](auth.md#app-access-control)).
+Open it to anonymous callers:
+
+```bash
+gregale app update <authorization-server-app> --no-require-authn --public-auth open
+```
+
+and set `access: public` in its `gregale.yaml`, or its next deploy makes it
+private again.
+
 All three starters filter `tools/list`, `resources/list`,
 `resources/templates/list` and `prompts/list` using verified JWT scopes for each
 request. They check `tools/call`, `resources/read`, `prompts/get` and
