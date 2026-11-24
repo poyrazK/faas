@@ -69,7 +69,7 @@ func TestCapabilitiesFollowRuntimeGates(t *testing.T) {
 			// as "private TCP is off". The detail names public ports and
 			// says private TCP between apps does not depend on them.
 			if !on && (capability.Key == "tcp-listeners" || capability.Key == "udp-listeners") &&
-				(!strings.Contains(capability.UnavailableDetail, "Public ") || !strings.Contains(capability.UnavailableDetail, "does not affect")) {
+				(!strings.Contains(capability.UnavailableDetail, "Public ") || !strings.Contains(capability.UnavailableDetail, "is not about")) {
 				t.Errorf("%s detail = %q, want public ports named and private TCP ruled out", capability.Key, capability.UnavailableDetail)
 			}
 		}

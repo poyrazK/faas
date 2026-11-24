@@ -100,26 +100,36 @@ func TestProjectWorkloadReleaseCommandReadsNarrowedComposeContext(t *testing.T) 
 	vote := reposcan.Workload{Name: "vote", RootDir: "vote"}
 	worker := reposcan.Workload{Name: "worker", RootDir: "worker"}
 	composeStep := reposcan.Workload{Name: "worker", RootDir: "worker", ReleaseCommand: []string{"./migrate"}, ReleaseService: "migrate"}
-	archive := sourceArchive(t, map[string]string{"Procfile": "release: dotnet Worker.dll migrate\n", "Program.cs": "x"})
+	narrowed := sourceArchive(t, map[string]string{"Procfile": "release: dotnet Worker.dll migrate\n", "Program.cs": "x"})
+	// A Procfile that is not used must not fail the deploy either.
+	malformed := sourceArchive(t, map[string]string{"Procfile": "release: one\nrelease: two\n", "Program.cs": "x"})
+	// The --migrate prepare stages the whole repository.
+	whole := sourceArchive(t, map[string]string{"worker/Procfile": "release: dotnet Worker.dll migrate\n", "vote/app.py": "x"})
 	for _, tc := range []struct {
-		name         string
-		workloads    []reposcan.Workload
-		workload     reposcan.Workload
-		narrowedRoot string
-		want         []string
+		name        string
+		archive     string
+		workloads   []reposcan.Workload
+		workload    reposcan.Workload
+		contextRoot string
+		narrowed    bool
+		want        []string
 	}{
-		{name: "narrowed to the service's build context", workloads: []reposcan.Workload{vote, worker}, workload: worker,
-			narrowedRoot: "worker", want: []string{"dotnet Worker.dll migrate"}},
-		{name: "whole repository", workloads: []reposcan.Workload{vote, worker}, workload: worker},
-		{name: "shared build context keeps none", workloads: []reposcan.Workload{{Name: "web", RootDir: "app"}, {Name: "worker", RootDir: "app"}},
-			workload: reposcan.Workload{Name: "worker", RootDir: "app"}, narrowedRoot: "app"},
-		{name: "compose completion step kept", workloads: []reposcan.Workload{vote, composeStep}, workload: composeStep,
-			narrowedRoot: "worker", want: []string{"./migrate"}},
-		{name: "shared check uses the staged context", workloads: []reposcan.Workload{{Name: "web", RootDir: "services/worker"}, worker},
-			workload: worker, narrowedRoot: "services/worker"},
+		{name: "narrowed to the service's build context", archive: narrowed, workloads: []reposcan.Workload{vote, worker}, workload: worker,
+			contextRoot: "worker", narrowed: true, want: []string{"dotnet Worker.dll migrate"}},
+		{name: "prepare reads the same context in the whole repository", archive: whole, workloads: []reposcan.Workload{vote, worker}, workload: worker,
+			contextRoot: "worker", want: []string{"dotnet Worker.dll migrate"}},
+		{name: "no build context leaves the root Procfile to reposcan", archive: narrowed, workloads: []reposcan.Workload{vote, worker}, workload: worker},
+		{name: "shared build context keeps none", archive: narrowed, workloads: []reposcan.Workload{{Name: "web", RootDir: "app"}, {Name: "worker", RootDir: "app"}},
+			workload: reposcan.Workload{Name: "worker", RootDir: "app"}, contextRoot: "app", narrowed: true},
+		{name: "compose completion step kept", archive: narrowed, workloads: []reposcan.Workload{vote, composeStep}, workload: composeStep,
+			contextRoot: "worker", narrowed: true, want: []string{"./migrate"}},
+		{name: "compose completion step kept over a malformed Procfile", archive: malformed, workloads: []reposcan.Workload{vote, composeStep}, workload: composeStep,
+			contextRoot: "worker", narrowed: true, want: []string{"./migrate"}},
+		{name: "shared check uses the staged context", archive: narrowed, workloads: []reposcan.Workload{{Name: "web", RootDir: "services/worker"}, worker},
+			workload: worker, contextRoot: "services/worker", narrowed: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			command, _, problem := apidserver.ProjectWorkloadReleaseCommandStaged(archive, tc.workloads, tc.workload, state.App{}, tc.narrowedRoot, nil)
+			command, _, problem := apidserver.ProjectWorkloadReleaseCommandStaged(tc.archive, tc.workloads, tc.workload, state.App{}, tc.contextRoot, tc.narrowed, nil)
 			if problem != nil || !slices.Equal(command, tc.want) {
 				t.Fatalf("release = %v, %v; want %v", command, problem, tc.want)
 			}

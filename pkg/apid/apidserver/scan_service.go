@@ -1122,9 +1122,14 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// build context is staged as the archive root (H10-25).
 		sourceApp := app
 		composeContext := composeDockerBuildContext(scanDir, workload, app)
-		narrowedRoot := ""
+		// A release-phase-off installation keeps ignoring a build
+		// context's Procfile, as before it counted: honoring it there would
+		// refuse redeploys of projects that deployed fine.
+		var buildContext composeReleaseContext
 		if composeContext {
-			narrowedRoot = app.RootDir
+			if !s.releasePhaseOff {
+				buildContext = composeReleaseContext{root: app.RootDir, archiveNarrowed: true}
+			}
 			sourceApp.RootDir = ""
 		}
 		staged, bytes, stageErr := s.stageApplyTarball(ctx, scanDir, acct.ID, project.ID, app, composeContext)
@@ -1185,7 +1190,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// release: in its own directory) applies as on a single-app deploy
 		// unless another service builds from the same directory
 		// (ADR-20261019120007 amendment 1).
-		releaseCommand, releaseProblem := projectWorkloadReleaseCommand(staged, workloads, workload, sourceApp, narrowedRoot, manifest)
+		releaseCommand, releaseProblem := projectWorkloadReleaseCommand(staged, workloads, workload, sourceApp, buildContext, manifest)
 		if releaseProblem != nil {
 			_ = os.Remove(staged)
 			res.Error = "release declaration invalid (server logs carry the detail)"
