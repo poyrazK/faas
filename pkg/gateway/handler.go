@@ -8723,6 +8723,17 @@ haveApp:
 			h.metrics.ObserveColdBootWithTrace(app.ID, firstByteAt.Sub(wakeStart), target.NodeID, traceID)
 			if !platformWakeStart.IsZero() {
 				switch {
+				case startupOOM.Any():
+					// The app ran out of memory while a wake this request
+					// admitted booted it: the kernel's OOM kill, not the
+					// platform, set the latency this request waited out,
+					// whichever instance the final pick routed it to. The
+					// app's own wake latency (above) keeps it; the phase
+					// breakdown follows the SLO series it decomposes.
+					// Checked before the smoke case so a candidate that OOMs
+					// on its first boot still moves the startup_oom rate the
+					// ADR treats as a platform signal.
+					h.metrics.ObservePlatformWakeExcluded(platformWakeExcludedStartupOOM)
 				case deploymentSmoke:
 					// A deployment smoke verifies a candidate, not customer
 					// demand. It is admitted while the candidate's first-boot
@@ -8732,14 +8743,6 @@ haveApp:
 					// smokes; customer restores held p95 157 ms). The app's
 					// own wake latency (above) keeps it.
 					h.metrics.ObservePlatformWakeExcluded(platformWakeExcludedDeploymentSmoke)
-				case startupOOM.Any():
-					// The app ran out of memory while a wake this request
-					// admitted booted it: the kernel's OOM kill, not the
-					// platform, set the latency this request waited out,
-					// whichever instance the final pick routed it to. The
-					// app's own wake latency (above) keeps it; the phase
-					// breakdown follows the SLO series it decomposes.
-					h.metrics.ObservePlatformWakeExcluded(platformWakeExcludedStartupOOM)
 				default:
 					h.metrics.ObservePlatformWakeWithTrace(firstByteAt.Sub(platformWakeStart), traceID)
 					platformWakeTrace.observe(h.metrics, firstByteAt)

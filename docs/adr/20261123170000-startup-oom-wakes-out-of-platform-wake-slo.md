@@ -76,6 +76,16 @@ probes, previews, revision pins and project releases are unchanged: they are
 requests a customer or the platform's routing makes against a deployment that
 already has its snapshot.
 
+The exclusion covers every cold wake a smoke admits, including a smoke that
+re-verifies a deployment whose snapshot already exists (rollback, promote).
+The gateway cannot tell whether a smoke waited on a first-boot park, and a
+smoke is never customer demand either way.
+
+A smoke whose wake also reported a startup OOM is counted under
+`reason="startup_oom"`, not `deployment_smoke`: a release that grows guest
+overhead OOMs candidates first, and that must still move the startup-OOM rate
+the main decision treats as a platform signal.
+
 ### Consequences
 
 - Deploy bursts no longer move the platform SLO or the status page; the
@@ -85,3 +95,9 @@ already has its snapshot.
   the SLO series. It stays visible in the deployment receipt's smoke timing,
   the `wake.*` events (`trigger = deployment.smoke`) and the excluded counter.
 - `gateway_wake_latency_seconds` (§12) and the per-app series are unchanged.
+- `faas_slo_platform_wakes_within_350ms:ratio_30d` changes population at
+  rollout: for 30 days it mixes pre-rollout smoke samples with post-rollout
+  customer-only samples, so `FaasMonthlyPlatformWakeGateMissed`'s ratio
+  climbs as the smokes age out (runbook `FaasMonthlySLO.md`).
+- `scripts/ops/obs_gate.py` requires at least 20 platform wakes in its
+  window and names a shortfall, rather than failing on a non-finite p95.
