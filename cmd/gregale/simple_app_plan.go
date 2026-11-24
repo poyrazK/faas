@@ -58,6 +58,12 @@ func resolveSimpleAppPlanWithWarnings(sourceDir, slug, profile string, source si
 		HealthPath:    health,
 		ExecutionMode: executionMode,
 	})
+	if err == nil && source == simpleapp.SourceDirectory {
+		plan.Access, err = manifestAccess(sourceDir)
+		if plan.Access == "" {
+			plan.AccessHint = simpleapp.AccessHintUndeclared
+		}
+	}
 	return plan, warnings, err
 }
 
@@ -130,6 +136,15 @@ func renderSimpleAppPlanWithWarnings(w io.Writer, plan simpleapp.Plan, warnings 
 	_, _ = fmt.Fprintf(w, "  scaling:            scale to zero%s\n", mark("scale_to_zero"))
 	_, _ = fmt.Fprintf(w, "  local storage:      %s%s\n", plan.LocalStorage, mark("local_storage"))
 	_, _ = fmt.Fprintf(w, "  durable state:      %s (bind a database/object store)%s\n", plan.DurableState, mark("durable_state"))
+	switch plan.Access {
+	case api.ServiceAccessPublic:
+		_, _ = fmt.Fprintf(w, "  access:             public (gregale.yaml): anyone can call the URL without a Gregale API key\n")
+	case api.ServiceAccessKey:
+		_, _ = fmt.Fprintf(w, "  access:             key (gregale.yaml): callers need a Gregale API key\n")
+	}
+	if plan.AccessHint != "" {
+		_, _ = fmt.Fprintf(w, "  access:             %s\n", plan.AccessHint)
+	}
 	for _, applied := range plan.DefaultsApplied {
 		if key, _, _ := strings.Cut(applied, "="); !marked[key] {
 			_, _ = fmt.Fprintf(w, "  default:            %s\n", applied)

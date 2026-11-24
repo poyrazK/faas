@@ -199,6 +199,27 @@ private app starts with and opens a `bearer` URL. It leaves `basic`,
 by path, header or country while staying public, use
 [edge rules](edge-rules.md).
 
+### Declare access in gregale.yaml
+
+To keep the choice with the code, set `access` at the top of the app's
+`gregale.yaml`:
+
+```yaml
+access: public   # anyone can open the URL, no Gregale API key
+```
+
+`public` does what `--no-require-authn` does; `key` turns the API-key
+requirement on (Free has no such requirement, so `key` changes nothing
+there). Every production deploy applies the file, including deploys an agent
+makes through the Gregale MCP server, so a later `app update` is undone by
+the next deploy. Removing the key returns the app to the plan default, which
+needs a key again on Hobby and above. An app that never declared `access`
+keeps whatever was set by hand. `gregale deploy --plan` shows the declared
+access, or how to open the URL when there is none. Deploying to a named
+environment leaves access alone, and `basic`, `ip_allowlist` and
+`internal_only` are kept. Services of a multi-service project declare it per
+service instead ([public or key-protected URLs](multi-service-apps.md#public-or-key-protected-urls)).
+
 ## Email verification
 
 A password signup must verify its email address. Until it does, deploying,

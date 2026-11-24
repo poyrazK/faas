@@ -1281,6 +1281,7 @@ func (s *server) appResponseWithDomain(a state.App, plan api.Plan, domain string
 		// round-trip. The token-scope enforcement (cross-account
 		// 403) lives in gatewayd-internal, not here.
 		RequireAuthn:           a.RequireAuthn,
+		DeclaredAccess:         a.Manifest.DeclaredAccess,
 		ConsumerAuthMode:       consumerAuthMode,
 		PlatformTenantRequired: a.PlatformTenantRequired,
 		// Issue #477 / ADR-079: per-app public-URL auth.

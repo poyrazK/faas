@@ -51,7 +51,15 @@ type Plan struct {
 	LocalStorage    string     `json:"local_storage"`
 	DurableState    string     `json:"durable_state"`
 	DefaultsApplied []string   `json:"defaults_applied"`
+	// Access is the access gregale.yaml declares for the URL: "public" or
+	// "key" (ADR-20261124090000 amendment 1). AccessHint, set when it
+	// declares none, says how to open the URL to browsers.
+	Access     string `json:"access,omitempty"`
+	AccessHint string `json:"access_hint,omitempty"`
 }
+
+// AccessHintUndeclared is the plan's hint for a source without an access key.
+const AccessHintUndeclared = "The URL keeps the plan's default access: on Hobby and above callers need a Gregale API key. For a site people open in a browser, add `access: public` to gregale.yaml; every deploy keeps it public."
 
 // CreateRequest compiles the resolved intent into Gregale's existing app
 // creation DTO. The plan-default profile is intentionally omitted so the API

@@ -4637,6 +4637,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if err := deployManifestProtection(ctx, client, slug, sourceDir); err != nil {
 		return printErr("Manifest protection failed", err)
 	}
+	if *environment == "" {
+		if err := deployManifestAccess(ctx, client, slug, sourceDir, *requireAuthn, *noRequireAuthn); err != nil {
+			return printErr("Manifest access failed", err)
+		}
+	}
 
 	recordQueued := func(dep api.DeploymentResponse) int {
 		realtimeTriggers.commit()

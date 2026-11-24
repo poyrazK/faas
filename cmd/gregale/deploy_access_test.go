@@ -1,47 +1,102 @@
+// adr: 20261124090000
 package main_test
 
 import (
-	"bytes"
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/onebox-faas/faas/cmd/gregale"
+	gregale "github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/simpleapp"
 )
 
-// Issue #3362: deploy printed "verified, 200" (the verifier authenticates)
-// while an anonymous curl got 401, with no hint that the URL requires auth.
-func TestRenderDeploymentAccess(t *testing.T) {
-	cases := []struct {
-		name string
-		app  api.AppResponse
-		want []string
-	}{
-		{name: "open app prints nothing", app: api.AppResponse{}},
-		{
-			name: "bearer",
-			app:  api.AppResponse{RequireAuthn: true, PublicAuth: api.PublicAuthStatus{Mode: api.AppPublicAuthModeBearer}},
-			want: []string{"Authorization: Bearer", "gregale app my-api --no-require-authn"},
-		},
-		{
-			name: "basic",
-			app:  api.AppResponse{RequireAuthn: true, PublicAuth: api.PublicAuthStatus{Mode: api.AppPublicAuthModeBasic, HasBasicCreds: true}},
-			want: []string{"HTTP Basic", "gregale app my-api --no-require-authn"},
-		},
+type accessClient struct {
+	app     api.AppResponse
+	updates []string
+}
+
+func (c *accessClient) GetApp(context.Context, string) (api.AppResponse, error) { return c.app, nil }
+
+func (c *accessClient) UpdateApp(_ context.Context, _ string, req api.UpdateAppRequest) (api.AppResponse, error) {
+	if req.DeclaredAccess != nil {
+		c.updates = append(c.updates, *req.DeclaredAccess)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			main.RenderDeploymentAccess(&buf, tc.app, "my-api")
-			got := buf.String()
-			if len(tc.want) == 0 && got != "" {
-				t.Fatalf("output = %q, want none", got)
+	return c.app, nil
+}
+
+// TestDeployManifestAccess pins the single-app access key (ADR-20261124090000
+// amendment 1): a deploy sends the declared access, sends "" to re-lock an
+// app that used to declare it, sends nothing for an app that never used the
+// key, and refuses a flag that contradicts the file.
+func TestDeployManifestAccess(t *testing.T) {
+	dir := func(t *testing.T, yaml string) string {
+		t.Helper()
+		d := t.TempDir()
+		if yaml != "" {
+			if err := os.WriteFile(filepath.Join(d, "gregale.yaml"), []byte(yaml), 0o644); err != nil {
+				t.Fatal(err)
 			}
-			for _, w := range tc.want {
-				if !strings.Contains(got, w) {
-					t.Errorf("output %q missing %q", got, w)
+		}
+		return d
+	}
+	for _, tc := range []struct {
+		name, yaml, previous string
+		noRequireAuthn       bool
+		requireAuthn         bool
+		want                 []string
+		wantErr              string
+	}{
+		{name: "declared public", yaml: "access: public\n", want: []string{"public"}},
+		{name: "removed re-locks", previous: "public", want: []string{""}},
+		{name: "never declared sends nothing"},
+		{name: "flag contradicts file", yaml: "access: key\n", noRequireAuthn: true, wantErr: "contradicts"},
+		{name: "bad value", yaml: "access: open\n", wantErr: "not public or key"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &accessClient{app: api.AppResponse{Slug: "demo", DeclaredAccess: tc.previous}}
+			err := gregale.DeployManifestAccess(t.Context(), client, "demo", dir(t, tc.yaml), tc.requireAuthn, tc.noRequireAuthn)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want %q", err, tc.wantErr)
 				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Join(client.updates, ",") != strings.Join(tc.want, ",") || len(client.updates) != len(tc.want) {
+				t.Fatalf("declared_access sent = %q, want %q", client.updates, tc.want)
 			}
 		})
+	}
+}
+
+// TestSimpleAppPlanShowsAccess: the plan an MCP agent reviews says whether the
+// URL is public, and how to open it when the source declares nothing.
+func TestSimpleAppPlanShowsAccess(t *testing.T) {
+	for _, tc := range []struct{ yaml, access, hint string }{
+		{yaml: "access: public\n", access: "public"},
+		{yaml: "", hint: simpleapp.AccessHintUndeclared},
+	} {
+		d := t.TempDir()
+		files := map[string]string{"package.json": `{"name":"demo","scripts":{"start":"node server.js"}}`, "server.js": "require('http').createServer((q,s)=>s.end('ok')).listen(8080)\n"}
+		if tc.yaml != "" {
+			files["gregale.yaml"] = tc.yaml
+		}
+		for name, body := range files {
+			if err := os.WriteFile(filepath.Join(d, name), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		plan, err := gregale.ResolveSimpleAppPlan(d, "demo", "", simpleapp.SourceDirectory, true, false, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if plan.Access != tc.access || plan.AccessHint != tc.hint {
+			t.Fatalf("plan access = %q hint = %q; want %q %q", plan.Access, plan.AccessHint, tc.access, tc.hint)
+		}
 	}
 }

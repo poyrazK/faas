@@ -65,9 +65,10 @@ gregale --non-interactive --json app health my-api --errors
 gregale logs my-api --since 15m
 ```
 
-A new app can be private: its URL answers `401` until you open it. Ask Codex
-to run `gregale app update my-api --no-require-authn` only if the app should
-be public.
+A new app can be private: its URL answers `401` until you open it. If the app
+should be public, such as a site people open in a browser, ask Codex to add
+`access: public` to its `gregale.yaml`; every deploy, including through the
+MCP server, keeps it public ([declare access](auth.md#declare-access-in-gregaleyaml)).
 
 ## Roll back
 

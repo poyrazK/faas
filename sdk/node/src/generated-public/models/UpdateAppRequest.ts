@@ -274,6 +274,10 @@ export type UpdateAppRequest = {
    */
   require_authn?: boolean | null;
   /**
+   * The `access:` key of the app's gregale.yaml, sent by a production deploy: `public` opens the URL, `key` needs a Gregale API key where the plan has that gate, and an empty string returns an app that used to declare access to the plan default. Records the declaration. An explicit require_authn or public_auth in the same request wins for that field. Omitted → no change. Ignored on project apps.
+   */
+  declared_access?: 'public' | 'key' | '';
+  /**
    * End-customer credential policy for this app. Omit for no change; optional accepts anonymous requests, required mandates a valid consumer key.
    */
   consumer_auth_mode?: 'optional' | 'required';

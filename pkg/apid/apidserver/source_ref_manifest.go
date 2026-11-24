@@ -424,6 +424,9 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 	if problem := s.applyManifestProtection(ctx, acct, app, m.Protection); problem != nil {
 		return staged, problem
 	}
+	if problem := s.applyManifestAccess(ctx, acct, app, m.Access, deploymentScope); problem != nil {
+		return staged, problem
+	}
 	if !s.operation.OperationDefinitionsAdmission(acct.ID, app.ID, deploymentScope, sourceOperationSpecs(m)) {
 		return staged, api.ErrCapacity("new operation admission is disabled for this preview cohort")
 	}

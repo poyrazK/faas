@@ -253,6 +253,10 @@ export type AppResponse = {
    */
   require_authn?: boolean;
   /**
+   * The access the app's source declares in gregale.yaml: `public` (no Gregale API key) or `key`. Every production deploy applies it. Omitted when the source declares none.
+   */
+  declared_access?: 'public' | 'key';
+  /**
    * End-customer credential policy. optional accepts anonymous requests and attributes valid consumer keys; required mandates a valid consumer key.
    */
   consumer_auth_mode?: 'optional' | 'required';

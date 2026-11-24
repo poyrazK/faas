@@ -103215,6 +103215,10 @@ components:
           description: "Per-deployment token-gate flag. When true, the gateway demands `Authorization: Bearer <token>` on every request; cross-account tokens receive 403 insufficient_scope. Pro/Scale only — Free/Hobby PATCH-true is rejected with 403 plan_require_authn_not_allowed."
           type: boolean
           example: false
+        declared_access:
+          description: "The access the app's source declares in gregale.yaml: `public` (no Gregale API key) or `key`. Every production deploy applies it. Omitted when the source declares none."
+          type: string
+          enum: [public, key]
         consumer_auth_mode:
           description: "End-customer credential policy. optional accepts anonymous requests and attributes valid consumer keys; required mandates a valid consumer key."
           type: string
@@ -107268,6 +107272,10 @@ components:
           description: "Per-deployment token-gate flag. Omitted → no change. PATCH-true on Free/Hobby is rejected with 403 plan_require_authn_not_allowed."
           type: [boolean, "null"]
           example: false
+        declared_access:
+          description: "The `access:` key of the app's gregale.yaml, sent by a production deploy: `public` opens the URL, `key` needs a Gregale API key where the plan has that gate, and an empty string returns an app that used to declare access to the plan default. Records the declaration. An explicit require_authn or public_auth in the same request wins for that field. Omitted → no change. Ignored on project apps."
+          type: [string, "null"]
+          enum: [public, key, "", null]
 
         # ADR-120: end-customer API-key policy. Optional preserves anonymous
         # compatibility while attributing valid keys; required rejects

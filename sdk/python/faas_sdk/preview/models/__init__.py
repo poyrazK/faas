@@ -364,6 +364,7 @@ from .app_response import AppResponse
 from .app_response_app_protocol import AppResponseAppProtocol
 from .app_response_consumer_auth_mode import AppResponseConsumerAuthMode
 from .app_response_cpu_millicores import AppResponseCpuMillicores
+from .app_response_declared_access import AppResponseDeclaredAccess
 from .app_response_deployment_availability import AppResponseDeploymentAvailability
 from .app_response_eviction_priority import AppResponseEvictionPriority
 from .app_response_function_callables import AppResponseFunctionCallables
@@ -6864,6 +6865,9 @@ from .update_app_request_cpu_millicores_type_3_type_1 import UpdateAppRequestCpu
 from .update_app_request_crawler_policy_type_1 import UpdateAppRequestCrawlerPolicyType1
 from .update_app_request_crawler_policy_type_2_type_1 import UpdateAppRequestCrawlerPolicyType2Type1
 from .update_app_request_crawler_policy_type_3_type_1 import UpdateAppRequestCrawlerPolicyType3Type1
+from .update_app_request_declared_access_type_1 import UpdateAppRequestDeclaredAccessType1
+from .update_app_request_declared_access_type_2_type_1 import UpdateAppRequestDeclaredAccessType2Type1
+from .update_app_request_declared_access_type_3_type_1 import UpdateAppRequestDeclaredAccessType3Type1
 from .update_app_request_eviction_priority_type_1 import UpdateAppRequestEvictionPriorityType1
 from .update_app_request_eviction_priority_type_2_type_1 import UpdateAppRequestEvictionPriorityType2Type1
 from .update_app_request_eviction_priority_type_3_type_1 import UpdateAppRequestEvictionPriorityType3Type1
@@ -7723,6 +7727,7 @@ __all__ = (
     "AppResponseAppProtocol",
     "AppResponseConsumerAuthMode",
     "AppResponseCpuMillicores",
+    "AppResponseDeclaredAccess",
     "AppResponseDeploymentAvailability",
     "AppResponseEvictionPriority",
     "AppResponseFunctionCallables",
@@ -13792,6 +13797,9 @@ __all__ = (
     "UpdateAppRequestCrawlerPolicyType1",
     "UpdateAppRequestCrawlerPolicyType2Type1",
     "UpdateAppRequestCrawlerPolicyType3Type1",
+    "UpdateAppRequestDeclaredAccessType1",
+    "UpdateAppRequestDeclaredAccessType2Type1",
+    "UpdateAppRequestDeclaredAccessType3Type1",
     "UpdateAppRequestEvictionPriorityType1",
     "UpdateAppRequestEvictionPriorityType2Type1",
     "UpdateAppRequestEvictionPriorityType3Type1",

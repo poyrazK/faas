@@ -44,6 +44,18 @@ from ..models.update_app_request_crawler_policy_type_3_type_1 import (
     UpdateAppRequestCrawlerPolicyType3Type1,
     check_update_app_request_crawler_policy_type_3_type_1,
 )
+from ..models.update_app_request_declared_access_type_1 import (
+    UpdateAppRequestDeclaredAccessType1,
+    check_update_app_request_declared_access_type_1,
+)
+from ..models.update_app_request_declared_access_type_2_type_1 import (
+    UpdateAppRequestDeclaredAccessType2Type1,
+    check_update_app_request_declared_access_type_2_type_1,
+)
+from ..models.update_app_request_declared_access_type_3_type_1 import (
+    UpdateAppRequestDeclaredAccessType3Type1,
+    check_update_app_request_declared_access_type_3_type_1,
+)
 from ..models.update_app_request_eviction_priority_type_1 import (
     UpdateAppRequestEvictionPriorityType1,
     check_update_app_request_eviction_priority_type_1,
@@ -402,6 +414,17 @@ class UpdateAppRequest:
     require_authn: bool | None | Unset = UNSET
     """Per-deployment token-gate flag. Omitted → no change. PATCH-true on Free/Hobby is rejected with 403
     plan_require_authn_not_allowed."""
+    declared_access: (
+        None
+        | Unset
+        | UpdateAppRequestDeclaredAccessType1
+        | UpdateAppRequestDeclaredAccessType2Type1
+        | UpdateAppRequestDeclaredAccessType3Type1
+    ) = UNSET
+    """The `access:` key of the app's gregale.yaml, sent by a production deploy: `public` opens the URL, `key`
+    needs a Gregale API key where the plan has that gate, and an empty string returns an app that used to declare
+    access to the plan default. Records the declaration. An explicit require_authn or public_auth in the same
+    request wins for that field. Omitted → no change. Ignored on project apps."""
     consumer_auth_mode: (
         None
         | Unset
@@ -910,6 +933,18 @@ class UpdateAppRequest:
         else:
             require_authn = self.require_authn
 
+        declared_access: None | str | Unset
+        if isinstance(self.declared_access, Unset):
+            declared_access = UNSET
+        elif isinstance(self.declared_access, str):
+            declared_access = self.declared_access
+        elif isinstance(self.declared_access, str):
+            declared_access = self.declared_access
+        elif isinstance(self.declared_access, str):
+            declared_access = self.declared_access
+        else:
+            declared_access = self.declared_access
+
         consumer_auth_mode: None | str | Unset
         if isinstance(self.consumer_auth_mode, Unset):
             consumer_auth_mode = UNSET
@@ -1093,6 +1128,8 @@ class UpdateAppRequest:
             field_dict["eviction_priority"] = eviction_priority
         if require_authn is not UNSET:
             field_dict["require_authn"] = require_authn
+        if declared_access is not UNSET:
+            field_dict["declared_access"] = declared_access
         if consumer_auth_mode is not UNSET:
             field_dict["consumer_auth_mode"] = consumer_auth_mode
         if platform_tenant_required is not UNSET:
@@ -2172,6 +2209,54 @@ class UpdateAppRequest:
 
         require_authn = _parse_require_authn(d.pop("require_authn", UNSET))
 
+        def _parse_declared_access(
+            data: object,
+        ) -> (
+            None
+            | Unset
+            | UpdateAppRequestDeclaredAccessType1
+            | UpdateAppRequestDeclaredAccessType2Type1
+            | UpdateAppRequestDeclaredAccessType3Type1
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                declared_access_type_1 = check_update_app_request_declared_access_type_1(data)
+
+                return declared_access_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                declared_access_type_2_type_1 = check_update_app_request_declared_access_type_2_type_1(data)
+
+                return declared_access_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                declared_access_type_3_type_1 = check_update_app_request_declared_access_type_3_type_1(data)
+
+                return declared_access_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                None
+                | Unset
+                | UpdateAppRequestDeclaredAccessType1
+                | UpdateAppRequestDeclaredAccessType2Type1
+                | UpdateAppRequestDeclaredAccessType3Type1,
+                data,
+            )
+
+        declared_access = _parse_declared_access(d.pop("declared_access", UNSET))
+
         def _parse_consumer_auth_mode(
             data: object,
         ) -> (
@@ -2337,6 +2422,7 @@ class UpdateAppRequest:
             warm_pool_size=warm_pool_size,
             eviction_priority=eviction_priority,
             require_authn=require_authn,
+            declared_access=declared_access,
             consumer_auth_mode=consumer_auth_mode,
             platform_tenant_required=platform_tenant_required,
             public_auth=public_auth,

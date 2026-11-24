@@ -3126,3 +3126,5 @@ func ApplyRouteLimitSpecs(current map[string]api.APIConsumerPlanRouteLimit, rout
 	}
 	return applyRouteLimitEdits(current, edits), nil
 }
+
+var DeployManifestAccess = deployManifestAccess
