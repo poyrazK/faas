@@ -162,6 +162,13 @@ func TestBunStartNeedsNodePackageManager(t *testing.T) {
 		{"bun run serve", `{"scripts":{"preserve":"npm run build","serve":"bun x.ts"}}`, true},
 		{"bun run start", `{"scripts":{"start":"bun a.ts","poststart":"pnpm notify"}}`, true},
 		{"bun run start", `{`, true},
+		// A script that runs another script that calls npx.
+		{"bun run start", `{"scripts":{"start":"bun run serve","serve":"npx tsx server.ts"}}`, true},
+		{"bun start", `{"scripts":{"start":"bun serve","serve":"pnpm exec x"}}`, true},
+		{"bun run start", `{"scripts":{"start":"bun run serve","serve":"bun server.ts"}}`, false},
+		// Scripts that run each other do not loop.
+		{"bun run start", `{"scripts":{"start":"bun run a","a":"bun run start"}}`, false},
+		{"bunx serve dist", ``, false},
 	}
 	for _, tt := range tests {
 		if got := BunStartNeedsNodePackageManager(tt.command, []byte(tt.pkg)); got != tt.want {
@@ -171,7 +178,7 @@ func TestBunStartNeedsNodePackageManager(t *testing.T) {
 }
 
 func TestBunHelpers(t *testing.T) {
-	if !BunStart("bun run start") || !BunStart("bun index.ts") || BunStart("node index.js") || BunStart("") {
+	if !BunStart("bun run start") || !BunStart("bun index.ts") || !BunStart("bunx serve dist") || BunStart("node index.js") || BunStart("") {
 		t.Fatal("BunStart")
 	}
 	if got := BunBinDir("mise/installs/bun/1.3.5/bin/bun"); got != "/mise/installs/bun/1.3.5/bin" {

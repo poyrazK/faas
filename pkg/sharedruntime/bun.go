@@ -15,40 +15,55 @@ import (
 const bunInstallRoot = "mise/installs/bun"
 
 // BunStart reports whether command runs through Bun: `bun run start`,
-// `bun start`, `bun index.ts` and the like.
+// `bun start`, `bun index.ts`, `bunx serve` and the like.
 func BunStart(command string) bool {
 	fields := strings.Fields(command)
-	return len(fields) > 0 && fields[0] == "bun"
+	return len(fields) > 0 && (fields[0] == "bun" || fields[0] == "bunx")
 }
 
+// bunScriptDepth bounds how many package.json scripts a start command is
+// followed through.
+const bunScriptDepth = 32
+
 // BunStartNeedsNodePackageManager reports whether a Bun start command, or
-// the package.json script it runs with its pre/post hooks, calls npm, npx,
-// yarn, pnpm, corepack or mise. Those came with mise's Node, which a Bun
-// app layer drops, so such an app keeps its toolchain. A false positive
-// only keeps the toolchain.
+// any package.json script it reaches (through `bun run <name>`,
+// `bun <name>` or `<anything> run <name>`, with their pre/post hooks),
+// calls npm, npx, yarn, pnpm, corepack or mise. Those came with mise's
+// Node, which a Bun app layer drops, so such an app keeps its toolchain.
+// Unreadable package.json, or more scripts than bunScriptDepth, count as
+// needing it: a false positive only keeps the toolchain.
 func BunStartNeedsNodePackageManager(command string, packageJSON []byte) bool {
-	texts := []string{command}
-	fields := strings.Fields(command)
-	script := ""
-	switch {
-	case len(fields) == 2 && fields[1] == "start":
-		script = "start"
-	case len(fields) >= 3 && fields[1] == "run":
-		script = fields[2]
+	var pkg struct {
+		Scripts map[string]string `json:"scripts"`
 	}
-	if script != "" {
-		var pkg struct {
-			Scripts map[string]string `json:"scripts"`
-		}
-		if json.Unmarshal(packageJSON, &pkg) != nil {
-			return true
-		}
-		texts = append(texts, pkg.Scripts[script], pkg.Scripts["pre"+script], pkg.Scripts["post"+script])
+	if len(packageJSON) > 0 && json.Unmarshal(packageJSON, &pkg) != nil {
+		return true
 	}
-	for _, text := range texts {
-		for _, word := range strings.FieldsFunc(text, shellWordBreak) {
-			if name := path.Base(word); name != "bun" && name != "bunx" && nodePackageManagers[name] {
+	queue := []string{command}
+	seen := map[string]bool{}
+	for len(queue) > 0 {
+		text := queue[0]
+		queue = queue[1:]
+		words := strings.FieldsFunc(text, shellWordBreak)
+		for i, word := range words {
+			name := path.Base(word)
+			if name != "bun" && name != "bunx" && nodePackageManagers[name] {
 				return true
+			}
+			// A script name after `run`, or straight after `bun`.
+			if i == 0 || (words[i-1] != "run" && words[i-1] != "run-script" && path.Base(words[i-1]) != "bun") {
+				continue
+			}
+			for _, script := range []string{"pre" + word, word, "post" + word} {
+				body, ok := pkg.Scripts[script]
+				if !ok || seen[script] {
+					continue
+				}
+				if len(seen) >= bunScriptDepth {
+					return true
+				}
+				seen[script] = true
+				queue = append(queue, body)
 			}
 		}
 	}

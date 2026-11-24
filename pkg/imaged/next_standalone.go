@@ -22,10 +22,30 @@ func nextStandaloneEntry(name string) bool {
 	return name == "app" || name == "app/.next" || name == prefix || strings.HasPrefix(name, prefix+"/")
 }
 
-// selectNextStandalone re-reads layers that filterAppLayers wrote and keeps
-// only the standalone tree. On an error the input layers are left where
-// they were read to and the caller rewinds them.
+// outsideNextStandalone reports whether a filtered entry is outside the
+// standalone tree: the full /app layer without the copy the builder made.
+func outsideNextStandalone(name string) bool {
+	prefix := sharedruntime.NextStandalonePrefix
+	return name != prefix && !strings.HasPrefix(name, prefix+"/")
+}
+
+// selectNextStandalone keeps only the standalone tree of layers that
+// filterAppLayers wrote; see filterNextLayers.
 func selectNextStandalone(layers []io.Reader) ([]io.Reader, func(), error) {
+	return filterNextLayers(layers, nextStandaloneEntry, true)
+}
+
+// stripNextStandalone drops the standalone tree from layers that
+// filterAppLayers wrote, for an app that ships its full /app.
+func stripNextStandalone(layers []io.Reader) ([]io.Reader, func(), error) {
+	return filterNextLayers(layers, outsideNextStandalone, false)
+}
+
+// filterNextLayers re-reads filtered layers and keeps the entries keep
+// accepts; needServer requires the standalone server among them. On an
+// error the input layers are left where they were read to and the caller
+// rewinds them.
+func filterNextLayers(layers []io.Reader, keep func(string) bool, needServer bool) ([]io.Reader, func(), error) {
 	tmpDir, err := os.MkdirTemp("", "faas-next-standalone-")
 	if err != nil {
 		return nil, func() {}, fmt.Errorf("create standalone layer tempdir: %w", err)
@@ -48,7 +68,7 @@ func selectNextStandalone(layers []io.Reader) ([]io.Reader, func(), error) {
 			return fail(fmt.Errorf("create standalone layer %d: %w", i, err))
 		}
 		files = append(files, out)
-		entries, server, err := copyNextStandaloneLayer(layer, out)
+		entries, server, err := copyNextStandaloneLayer(layer, out, keep)
 		if err != nil {
 			return fail(fmt.Errorf("standalone layer %d: %w", i, err))
 		}
@@ -63,7 +83,7 @@ func selectNextStandalone(layers []io.Reader) ([]io.Reader, func(), error) {
 			return fail(fmt.Errorf("rewind standalone layer %d: %w", i, err))
 		}
 	}
-	if !sawServer {
+	if needServer && !sawServer {
 		return fail(errors.New("no standalone server in the app layer"))
 	}
 	readers := make([]io.Reader, len(files))
@@ -73,8 +93,8 @@ func selectNextStandalone(layers []io.Reader) ([]io.Reader, func(), error) {
 	return readers, cleanup, nil
 }
 
-// copyNextStandaloneLayer copies one layer's standalone entries to out.
-func copyNextStandaloneLayer(layer io.Reader, out io.Writer) (int, bool, error) {
+// copyNextStandaloneLayer copies one layer's entries that keep accepts to out.
+func copyNextStandaloneLayer(layer io.Reader, out io.Writer, keep func(string) bool) (int, bool, error) {
 	zr, err := rootfs.OpenCompressedLayer(layer)
 	if err != nil {
 		return 0, false, fmt.Errorf("open layer: %w", err)
@@ -98,13 +118,13 @@ func copyNextStandaloneLayer(layer io.Reader, out io.Writer) (int, bool, error) 
 			return 0, false, fmt.Errorf("read layer: %w", err)
 		}
 		name := pathpkg.Clean(hdr.Name)
-		if !nextStandaloneEntry(name) {
+		if !keep(name) {
 			continue
 		}
-		if hdr.Typeflag == tar.TypeLink && !nextStandaloneEntry(pathpkg.Clean(hdr.Linkname)) {
+		if hdr.Typeflag == tar.TypeLink && !keep(pathpkg.Clean(hdr.Linkname)) {
 			_ = tw.Close()
 			_ = zw.Close()
-			return 0, false, fmt.Errorf("hardlink %q leaves the standalone tree", hdr.Linkname)
+			return 0, false, fmt.Errorf("hardlink %q points at a dropped entry", hdr.Linkname)
 		}
 		server = server || (name == sharedruntime.NextStandaloneServer && hdr.Typeflag == tar.TypeReg)
 		if err := tw.WriteHeader(hdr); err != nil {

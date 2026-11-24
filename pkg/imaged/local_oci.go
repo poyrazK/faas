@@ -147,9 +147,12 @@ func (h *Handler) localOCIAppLayer(ctx context.Context, app state.App, dep state
 		}
 		baseDiffIDs = ids
 	}
-	release := sharedRuntimeRelease{
+	release := sharedRuntimeSplit{
 		keepsToolchain: runtime != "" && sharedruntime.ReleaseNeedsPackageManager(runtime, dep.ReleaseCommand, dep.ReleaseCommandShell),
 		keepsApp:       runtime != "" && len(dep.ReleaseCommand) > 0,
+	}
+	if limits, ok := api.LimitsFor(acct.Plan); ok {
+		release.layerCapBytes = int64(limits.AppLayerMaxMB) << 20
 	}
 	reuseKey := ""
 	if source == nil {
@@ -387,6 +390,9 @@ type appLayerReport struct {
 	// NextStandalone records the builder's marker beside a Next.js
 	// standalone server whose static and public files it copied.
 	NextStandalone bool
+	// AppBytes is the file content kept under /app; StandaloneBytes the
+	// part of it in the Next.js standalone tree.
+	AppBytes, StandaloneBytes int64
 }
 
 // keepName returns the name a kept entry has in the filtered layer: an /app
@@ -410,10 +416,16 @@ func (r *appLayerReport) noteKept(hdr *tar.Header) {
 	if r == nil {
 		return
 	}
+	if hdr.Typeflag == tar.TypeReg && (hdr.Name == "app" || strings.HasPrefix(hdr.Name, "app/")) {
+		r.AppBytes += hdr.Size
+		if !outsideNextStandalone(hdr.Name) {
+			r.StandaloneBytes += hdr.Size
+		}
+	}
 	switch {
 	case hdr.Name == sharedruntime.NextStandaloneMarker && hdr.Typeflag == tar.TypeReg:
 		r.NextStandalone = true
-	case r.KeepBun && r.BunBinDir == "" && (hdr.Typeflag == tar.TypeReg || hdr.Typeflag == tar.TypeSymlink):
+	case r.KeepBun && r.BunBinDir == "" && (hdr.Typeflag == tar.TypeReg || hdr.Typeflag == tar.TypeSymlink || hdr.Typeflag == tar.TypeLink):
 		r.BunBinDir = sharedruntime.BunBinDir(hdr.Name)
 	}
 }

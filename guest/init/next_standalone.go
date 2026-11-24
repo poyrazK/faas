@@ -51,6 +51,10 @@ func stampNextStandalonePlan(planPath, workdir string) error {
 	if err != nil {
 		return fmt.Errorf("stamp Railpack plan: %w", err)
 	}
+	if len(stamped) > api.PublicBuildPlanMaxBytes {
+		// The public-build-URL helper that runs next refuses a larger plan.
+		return fmt.Errorf("stamped plan is %d bytes, over %d: %w", len(stamped), api.PublicBuildPlanMaxBytes, sharedruntime.ErrNotNextStandalone)
+	}
 	// A temp file renamed over the plan: a failed write (a full disk) leaves
 	// Railpack's plan whole rather than truncated.
 	tmp, err := os.CreateTemp(filepath.Dir(planPath), ".railpack-plan-*.json")

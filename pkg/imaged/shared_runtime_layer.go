@@ -90,12 +90,12 @@ func (h *Handler) sharedRuntimeAppLayers(ctx context.Context, runtime, archivePa
 	if err != nil {
 		return sharedRuntimeLayers{}, err
 	}
-	return h.sharedRuntimeAppLayersAt(ctx, runtime, baseDiffIDs, archivePath, config, layers, manifest, app, sharedRuntimeRelease{})
+	return h.sharedRuntimeAppLayersAt(ctx, runtime, baseDiffIDs, archivePath, config, layers, manifest, app, sharedRuntimeSplit{})
 }
 
-// sharedRuntimeRelease is what a deployment's release command needs from
-// the shared-runtime split.
-type sharedRuntimeRelease struct {
+// sharedRuntimeSplit is what the deployment and its plan need from the
+// shared-runtime split.
+type sharedRuntimeSplit struct {
 	// keepsToolchain keeps every layer above the base: the release command
 	// calls a package manager the runner base lacks.
 	keepsToolchain bool
@@ -103,13 +103,26 @@ type sharedRuntimeRelease struct {
 	// scripts or node_modules a Next.js standalone tree leaves out
 	// (ADR-20261124160000).
 	keepsApp bool
+	// layerCapBytes is the plan's app layer cap. Zero never ships a Next.js
+	// standalone tree.
+	layerCapBytes int64
+}
+
+// nextStandaloneNeeded reports whether a Next.js app ships its standalone
+// tree (ADR-20261124160000): only when its full /app, without the
+// standalone copy, takes more than three quarters of the plan's app layer.
+// The rest is left for filesystem overhead, which node_modules' many small
+// files make large. An app that fits keeps all of /app, so `gregale run`,
+// workers and scripts still find its sources and node_modules.
+func (s sharedRuntimeSplit) nextStandaloneNeeded(report *appLayerReport) bool {
+	return !s.keepsApp && s.layerCapBytes > 0 && (report.AppBytes-report.StandaloneBytes) > s.layerCapBytes/4*3
 }
 
 // sharedRuntimeAppLayersAt is sharedRuntimeAppLayers at the runner base
 // layers baseDiffIDs. The result follows from the artifact, baseDiffIDs,
 // runtime, manifest, app.StartCommand and release, so the app layer reuse
 // key names those instead of the result (ADR-20261112170911 amendment 1).
-func (h *Handler) sharedRuntimeAppLayersAt(ctx context.Context, runtime string, baseDiffIDs []string, archivePath string, config oci.Config, layers []io.ReadCloser, manifest *api.AppManifest, app state.App, release sharedRuntimeRelease) (sharedRuntimeLayers, error) {
+func (h *Handler) sharedRuntimeAppLayersAt(ctx context.Context, runtime string, baseDiffIDs []string, archivePath string, config oci.Config, layers []io.ReadCloser, manifest *api.AppManifest, app state.App, release sharedRuntimeSplit) (sharedRuntimeLayers, error) {
 	releaseKeepsToolchain := release.keepsToolchain
 	above, err := oci.LayersAboveBase(baseDiffIDs, config.DiffIDs)
 	if err != nil {
@@ -134,24 +147,34 @@ func (h *Handler) sharedRuntimeAppLayersAt(ctx context.Context, runtime string, 
 	case len(report.Unexpected) > 0:
 		reason = "content_outside_app"
 	default:
-		if nodeRunner && !release.keepsApp && report.NextStandalone && sharedruntime.NextStart(command, report.PackageJSON) {
-			// ADR-20261124160000: the standalone server needs neither
-			// node_modules nor a package manager.
-			selected, selectedCleanup, err := selectNextStandalone(filtered)
+		if nodeRunner && report.NextStandalone {
+			// ADR-20261124160000: the builder made a standalone tree. Ship
+			// only it when the full /app would not fit the plan; otherwise
+			// drop it, so the full /app is no larger than before.
+			standalone := release.nextStandaloneNeeded(report) && sharedruntime.NextStart(command, report.PackageJSON)
+			pass := stripNextStandalone
+			if standalone {
+				pass = selectNextStandalone
+			}
+			next, nextCleanup, err := pass(filtered)
 			if err == nil {
 				cleanup()
-				setSharedRuntimeStart(manifest, sharedruntime.NextStandaloneStart, sharedruntime.RunnerPath)
-				for k, v := range sharedruntime.NextStandaloneEnvVars {
-					if _, set := manifest.Env[k]; !set {
-						manifest.Env[k] = v
+				filtered, cleanup = next, nextCleanup
+				if standalone {
+					setSharedRuntimeStart(manifest, sharedruntime.NextStandaloneStart, sharedruntime.RunnerPath)
+					for k, v := range sharedruntime.NextStandaloneEnvVars {
+						if _, set := manifest.Env[k]; !set {
+							manifest.Env[k] = v
+						}
 					}
+					return sharedRuntimeLayers{layers: filtered, cleanup: cleanup}, nil
 				}
-				return sharedRuntimeLayers{layers: selected, cleanup: selectedCleanup}, nil
-			}
-			h.log.Info("imaged: Next.js standalone layer not used", "app", app.Slug, "err", err)
-			if err := rewindLayers(filtered); err != nil {
-				reason = "next_standalone_reread"
-				break
+			} else {
+				h.log.Info("imaged: Next.js standalone pass failed; keeping the layer as built", "app", app.Slug, "standalone", standalone, "err", err)
+				if err := rewindLayers(filtered); err != nil {
+					reason = "next_standalone_reread"
+					break
+				}
 			}
 		}
 		if report.KeepBun {

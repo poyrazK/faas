@@ -10,10 +10,11 @@ actions and middleware all work.
 
 A Next.js 16 app runs on every plan, Free included. When the `start` script
 is a plain `next start`, Gregale builds the app with `output: "standalone"`,
-so `next build` copies only the files the server needs into
-`.next/standalone`, and the app ships only that tree. A small app is about
-40 MB this way; with its full `node_modules` it would be about 340 MB. The
-build log shows `Applying modifyConfig from gregale-standalone`. The Free plan
+so `next build` also copies the files the server needs into
+`.next/standalone`. With its full `node_modules`, a small app is about
+340 MB. If that would not fit your plan, which is the case on Free, the app
+ships only the standalone tree: about 40 MB. The build log shows
+`Applying modifyConfig from gregale-standalone`. The Free plan
 caps the app layer at 256 MB, and a larger build fails with
 `app_layer_too_large`. See [App layer](build.md#app-layer),
 [Make the app smaller](#make-the-app-smaller) and
@@ -85,8 +86,9 @@ The build runs in a microVM with 2048 MB of memory. A large app whose
 
 ## Make the app smaller
 
-Gregale builds with `output: "standalone"` and ships only `.next/standalone`,
-with `.next/static` and `public` copied into it, when all of these hold:
+Gregale ships only `.next/standalone`, with `.next/static` and `public`
+copied into it, when the app's full `/app` takes more than three quarters of
+the plan's app layer and all of these hold:
 
 - `next` 16 or later is in `dependencies`;
 - the `build` script runs `next build`;
@@ -94,7 +96,13 @@ with `.next/static` and `public` copied into it, when all of these hold:
   `poststart` script. `next start` reads `PORT`, so flags such as `-p` are
   not needed; a start with flags, or a custom server, keeps `node_modules`;
 - the app builds on Node 24, the default. An app that declares another Node
-  version carries its own Node and its full `node_modules`.
+  version carries its own Node and its full `node_modules`;
+- the deployment has no release command, which may need your sources or
+  `node_modules`.
+
+An app that ships only the standalone tree has nothing else in `/app`: a
+`gregale run` task or script sees only the standalone server's files. An
+app that fits its plan keeps all of `/app`.
 
 If your `next.config` sets `output` itself, Gregale leaves it as it is. Next
 traces which files the server reads. A file it reads at runtime by a computed

@@ -13,7 +13,7 @@ var nextStaticAsset = regexp.MustCompile(`/_next/static/[^"' ]+\.(?:css|js)`)
 
 // TestJSFrameworkSourceDeploys deploys a Next.js 16 app and a Bun app from
 // source (ADR-20261124160000). Both must fit the Free plan's 256 MB app
-// layer: the Next.js app serves from its standalone tree, with its static
+// layer: on Free the Next.js app serves from its standalone tree, with its static
 // assets and public files copied beside the server, and the Bun app runs
 // from mise's Bun on the shared Node runtime. Each then parks and wakes on a
 // request.
@@ -33,7 +33,7 @@ func TestJSFrameworkSourceDeploys(t *testing.T) {
 		}) {
 			return
 		}
-		s.check("serves_from_standalone", func(t *testing.T) {
+		s.check("serves_next_server", func(t *testing.T) {
 			expectNextStandalone(t, base, 2*time.Minute)
 		})
 		s.check("static_and_public_files", func(t *testing.T) {
@@ -88,18 +88,22 @@ func TestJSFrameworkSourceDeploys(t *testing.T) {
 	})
 }
 
-// expectNextStandalone waits for the app at base to report that its server
-// runs from /app/.next/standalone, the standalone tree imaged keeps.
+// expectNextStandalone waits for the app at base to serve from either
+// layout imaged chooses: /app/.next/standalone when the full /app does not
+// fit the account's plan (Free), else all of /app. It logs which.
 func expectNextStandalone(t *testing.T, base string, timeout time.Duration) {
 	t.Helper()
-	eventually(t, "GET /api/runtime reports the standalone server", timeout, 2*time.Second, func() (bool, string) {
+	cwd := ""
+	eventually(t, "GET /api/runtime reports the Next.js server", timeout, 2*time.Second, func() (bool, string) {
 		r := get(base + "/api/runtime")
 		if r.status != http.StatusOK {
 			return false, r.String()
 		}
 		doc := jsonBody(t, r)
-		return str(doc, "cwd") == "/app/.next/standalone", "serving " + compact(doc)
+		cwd = str(doc, "cwd")
+		return cwd == "/app/.next/standalone" || cwd == "/app", "serving " + compact(doc)
 	})
+	t.Logf("metric nextjs_standalone=%t", cwd == "/app/.next/standalone")
 }
 
 // expectMiseBun waits for the Bun app at base to report that it runs from

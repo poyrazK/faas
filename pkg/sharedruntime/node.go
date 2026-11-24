@@ -181,7 +181,7 @@ func resolveStart(command string, packageJSON []byte) ([]string, string) {
 	fields := strings.Fields(command)
 	switch fields[0] {
 	case "npm":
-	case "npx", "yarn", "pnpm", "bun", "corepack":
+	case "npx", "yarn", "pnpm", "bun", "bunx", "corepack":
 		return nil, ReasonPackageManagerStart
 	default:
 		return []string{"/bin/sh", "-c", command}, ""

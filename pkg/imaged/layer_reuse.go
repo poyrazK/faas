@@ -385,7 +385,7 @@ func (h *Handler) observeLayerReuse(outcome string) {
 // "" when reuse is off or the inputs cannot be identified. manifest is the
 // app manifest before any shared runner split; baseDiffIDs are the runner
 // base's layers when runtime names one.
-func (h *Handler) appLayerReuseKey(app state.App, acct state.Account, imageDigest, runtime string, baseDiffIDs []string, manifest api.AppManifest, release sharedRuntimeRelease) string {
+func (h *Handler) appLayerReuseKey(app state.App, acct state.Account, imageDigest, runtime string, baseDiffIDs []string, manifest api.AppManifest, release sharedRuntimeSplit) string {
 	return h.layerReuseKeyFor(app, layerReuseInputs{accountID: app.AccountID, imageDigest: imageDigest, runtime: runtime,
 		runtimeBaseDiffIDs: baseDiffIDs, startCommand: app.StartCommand, releaseKeepsToolchain: release.keepsToolchain,
 		releaseKeepsApp: release.keepsApp, manifest: manifest, plan: acct.Plan})

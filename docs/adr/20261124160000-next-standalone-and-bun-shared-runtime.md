@@ -49,17 +49,27 @@ through its package manager. The build step:
    standalone server was written, and it never fails the build: a copy
    that fails leaves no marker.
 
-The deploy inputs are unchanged. imaged decides. When the filtered `/app`
-layer holds the builder's marker and the start command is the plain
-`next start`, the app layer keeps only `/app/.next/standalone`. The
-app then starts with `node /app/.next/standalone/server.js`, with
-`HOSTNAME=0.0.0.0` unless the app sets `HOSTNAME`. A deployment with any
-release command also keeps all of `/app`, because the command may read
-sources, scripts or `node_modules` the standalone tree leaves out. A
-standalone server without the marker keeps `node_modules`. This covers an app that sets
-`output: "standalone"` itself, an older builder, and the off switch. In
-those cases the static and public files were never copied. Any other case, including a failed second pass, keeps
-the layer it would have had before. The adapter only runs at build time.
+The deploy inputs are unchanged. imaged decides from the builder's marker:
+
+- **The full `/app` does not fit.** imaged keeps only
+  `/app/.next/standalone` when three things hold: the file content of
+  `/app`, without the standalone copy, is more than three quarters of the
+  plan's app layer (the rest is left for filesystem overhead); the start
+  command is the plain `next start`; and the deployment has no release
+  command. The app then starts with `node /app/.next/standalone/server.js`,
+  with `HOSTNAME=0.0.0.0` unless the app sets `HOSTNAME`. Commands other
+  than the server, such as `gregale run` tasks, see only the standalone
+  tree. Such a deployment failed with `app_layer_too_large` before, so
+  nothing that worked loses its files.
+- **The full `/app` fits, or a release command needs it.** imaged ships
+  `/app` without `.next/standalone`, so the layer is the size it was
+  before. A release command may read sources, scripts or `node_modules`.
+- **No marker.** This covers an app that sets `output: "standalone"`
+  itself, an older builder, the off switch, and a failed copy. The static
+  and public files were never copied, so imaged keeps the layer exactly as
+  it was built.
+
+A failed second pass also keeps the layer as it was built. The adapter only runs at build time.
 The standalone server ignores the `adapterPath` its embedded config
 records, and verified 2026-11-24 that it serves with the file absent.
 
@@ -79,10 +89,11 @@ with the rest of the shared runtime.
 
 ## Consequences
 
-- A small Next.js 16 app's layer drops from ~340 MB to ~40–45 MB and a
-  small Bun app's from ~420 MB to ~95 MB, so both fit the Free plan with
-  room for dependencies. Paid plans get the same smaller layers: faster
-  image conversion, and smaller snapshots and replication.
+- A small Next.js 16 app's layer drops from ~340 MB to ~40–45 MB on Free,
+  where its full `/app` does not fit. On a paid plan the same app fits and
+  ships all of `/app` as before. A small Bun app's layer drops from
+  ~420 MB to ~95 MB on every plan. Both fit the Free plan with room for
+  dependencies.
 - A Next.js app that customizes its start (`next start -p 3000`, a custom
   server, `prestart` hooks) or pins Next 15 or older keeps its
   `node_modules` layer. `next start` reads `PORT`, so most apps can drop
