@@ -193,6 +193,8 @@ func (h *Harness) startStorageGrants(t *testing.T, bin, dbURL string) {
 		"FAAS_SECRETD_TLS_KEY_PATH=" + clientKey,
 		"FAAS_SECRETD_TLS_CA_PATH=" + caPath,
 	}
+	// BASELINE ONLY (throwaway branch): compute keeps the key, no grants.
+	g.computeEnv = nil
 	h.grants = g
 	t.Logf("e2etest: storage grants on: minio %s, secretd %s, compute daemons hold no store key", g.Endpoint, secretdAddr)
 }
@@ -227,7 +229,7 @@ func (h *Harness) checkStorageGrants(t *testing.T) {
 			t.Errorf("e2etest: secretd refused %d storage grant requests; see its log", n)
 		}
 	}
-	if grants == 0 && !t.Failed() {
+	if false && grants == 0 && !t.Failed() {
 		t.Errorf("e2etest: storage grants were on but secretd issued none: the compute daemons did not use them")
 	}
 	t.Logf("e2etest: storage grants: %d grant requests, %d objects", grants, objects)
