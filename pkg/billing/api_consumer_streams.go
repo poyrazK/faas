@@ -1,7 +1,9 @@
 package billing
 
 import (
+	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
@@ -62,7 +64,7 @@ type ConsumerUsageInputs struct {
 // the app's reported units.
 func streamUsage(unit string, cards []state.APIConsumerRateCard, usage []state.APIConsumerUsageBucket, in ConsumerUsageInputs) ([]state.APIConsumerUsageBucket, error) {
 	if meter, ok := state.AppMeterOfUnit(unit); ok {
-		return meterUsage(usage, in.Meters[meter]), nil
+		return modelMeterUsage(meter, cards, usage, in.Meters), nil
 	}
 	weighted := false
 	for _, card := range cards {
@@ -92,12 +94,91 @@ func meterUsage(usage []state.APIConsumerUsageBucket, rows []state.APIConsumerMe
 	return out
 }
 
+// modelMeterUsage keeps the logical meter's timeline and shared allowance
+// while ordering reports within a minute by their model. A model-qualified
+// report is interpreted only under a card that specifies its alias.
+func modelMeterUsage(meter string, cards []state.APIConsumerRateCard, usage []state.APIConsumerUsageBucket, meters map[string][]state.APIConsumerMeterUsageBucket) []state.APIConsumerUsageBucket {
+	out := meterUsage(usage, meters[meter])
+	prefix := state.ModelMeterName(meter, "")
+	type modelMinute struct {
+		minute int64
+		model  string
+	}
+	counts := map[modelMinute]int64{}
+	for name, rows := range meters {
+		model, ok := strings.CutPrefix(name, prefix)
+		if !ok {
+			continue
+		}
+		for _, row := range rows {
+			counts[modelMinute{row.WindowStart.Unix(), model}] = row.Units
+		}
+	}
+	if len(counts) == 0 {
+		return out
+	}
+
+	ordered := slices.Clone(cards)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].EffectiveFrom.Before(ordered[j].EffectiveFrom) })
+	rated := make([]state.APIConsumerUsageBucket, 0, len(out))
+	nextCard := 0
+	var models []string
+	for _, bucket := range out {
+		for nextCard < len(ordered) && !ordered[nextCard].EffectiveFrom.After(bucket.WindowStart) {
+			models = models[:0]
+			for model := range ordered[nextCard].ModelPrices {
+				models = append(models, model)
+			}
+			slices.Sort(models)
+			nextCard++
+		}
+		start := len(rated)
+		if bucket.BillableUnits > 0 {
+			rated = append(rated, bucket)
+		}
+		for _, model := range models {
+			if units := counts[modelMinute{bucket.WindowStart.Unix(), model}]; units > 0 {
+				line := bucket
+				line.Model, line.BillableUnits = model, units
+				rated = append(rated, line)
+			}
+		}
+		if start == len(rated) {
+			rated = append(rated, bucket)
+		}
+	}
+	return rated
+}
+
 // QuoteConsumerUsage prices a consumer's usage minutes with every unit its
 // cards price. usage must start at from's month and be ascending by minute,
 // as for QuoteAPIConsumerUsageFrom. Cards of one unit keep single-timeline
 // pricing exactly; with several units each stream is quoted on its own and
 // a minute no stream prices yet is one unpriced request bucket.
 func QuoteConsumerUsage(cards []state.APIConsumerRateCard, usage []state.APIConsumerUsageBucket, in ConsumerUsageInputs,
+	from time.Time, opts QuoteOptions) (APIConsumerUsageQuote, error) {
+	quote, err := quoteConsumerUsageStreams(cards, usage, in, from, opts)
+	if err != nil {
+		return APIConsumerUsageQuote{}, err
+	}
+	missing := UnpricedConsumerModelUsage(cards, in.Meters, from)
+	ApplyConsumerModelWaivers(missing, opts.ModelWaivers)
+	for _, bucket := range missing {
+		if err := quote.add(bucket); err != nil {
+			return APIConsumerUsageQuote{}, err
+		}
+	}
+	if len(missing) > 0 {
+		quote.Priced = quote.UnpricedUnits == 0 && quote.Currency != ""
+		orderConsumerUsageCharges(quote.Buckets)
+	}
+	if slices.ContainsFunc(cards, func(card state.APIConsumerRateCard) bool { return !card.EffectiveUntil.IsZero() }) {
+		quote.planRateHistory = cards
+	}
+	return quote, nil
+}
+
+func quoteConsumerUsageStreams(cards []state.APIConsumerRateCard, usage []state.APIConsumerUsageBucket, in ConsumerUsageInputs,
 	from time.Time, opts QuoteOptions) (APIConsumerUsageQuote, error) {
 	units, streams := UnitStreams(cards)
 	if len(units) <= 1 {
@@ -110,8 +191,9 @@ func QuoteConsumerUsage(cards []state.APIConsumerRateCard, usage []state.APICons
 			return APIConsumerUsageQuote{}, err
 		}
 		quote, err := QuoteAPIConsumerUsageWith(cards, metered, from, opts)
+		_, appMeter := state.AppMeterOfUnit(unit)
 		for i := range quote.Buckets {
-			if quote.Buckets[i].RateCardID != "" {
+			if quote.Buckets[i].RateCardID != "" || appMeter {
 				quote.Buckets[i].Unit = bucketUnit(unit)
 			}
 		}
@@ -119,22 +201,18 @@ func QuoteConsumerUsage(cards []state.APIConsumerRateCard, usage []state.APICons
 	}
 	var buckets []APIConsumerUsageChargeBucket
 	currency := ""
-	firstPriced := time.Time{}
+	pricedMinutes := make([]bool, len(usage))
 	for _, unit := range units {
-		stream := streams[unit]
-		start := stream[0].EffectiveFrom
-		for _, card := range stream {
-			if card.EffectiveFrom.Before(start) {
-				start = card.EffectiveFrom
-			}
-		}
-		if firstPriced.IsZero() || start.Before(firstPriced) {
-			firstPriced = start
-		}
+		stream := orderedAPIConsumerRateCards(streams[unit])
 		var sub []state.APIConsumerUsageBucket
-		for _, bucket := range usage {
-			if !bucket.WindowStart.Before(start) {
+		active := -1
+		for i, bucket := range usage {
+			for active+1 < len(stream) && !stream[active+1].EffectiveFrom.After(bucket.WindowStart) {
+				active++
+			}
+			if active >= 0 && !apiConsumerCardEnded(stream[active], bucket.WindowStart) {
 				sub = append(sub, bucket)
+				pricedMinutes[i] = true
 			}
 		}
 		metered, err := streamUsage(unit, stream, sub, in)
@@ -154,17 +232,12 @@ func QuoteConsumerUsage(cards []state.APIConsumerRateCard, usage []state.APICons
 			buckets = append(buckets, bucket)
 		}
 	}
-	for _, bucket := range usage {
-		if minute := bucket.WindowStart.UTC(); minute.Before(firstPriced) && !minute.Before(from) {
+	for i, bucket := range usage {
+		if minute := bucket.WindowStart.UTC(); !pricedMinutes[i] && !minute.Before(from) {
 			buckets = append(buckets, APIConsumerUsageChargeBucket{WindowStart: minute, BillableUnits: bucket.BillableUnits})
 		}
 	}
-	sort.SliceStable(buckets, func(i, j int) bool {
-		if !buckets[i].WindowStart.Equal(buckets[j].WindowStart) {
-			return buckets[i].WindowStart.Before(buckets[j].WindowStart)
-		}
-		return buckets[i].Unit < buckets[j].Unit
-	})
+	orderConsumerUsageCharges(buckets)
 	quote := APIConsumerUsageQuote{Currency: currency, Buckets: make([]APIConsumerUsageChargeBucket, 0, len(buckets))}
 	for _, bucket := range buckets {
 		if err := quote.add(bucket); err != nil {
@@ -173,4 +246,97 @@ func QuoteConsumerUsage(cards []state.APIConsumerRateCard, usage []state.APICons
 	}
 	quote.Priced = quote.UnpricedUnits == 0
 	return quote, nil
+}
+
+func orderConsumerUsageCharges(buckets []APIConsumerUsageChargeBucket) {
+	sort.SliceStable(buckets, func(i, j int) bool {
+		a, b := buckets[i], buckets[j]
+		if !a.WindowStart.Equal(b.WindowStart) {
+			return a.WindowStart.Before(b.WindowStart)
+		}
+		if a.Unit != b.Unit {
+			return a.Unit < b.Unit
+		}
+		return a.Model < b.Model
+	})
+}
+
+// ConsumerModelRatesBefore reports whether a consumer's effective price history
+// includes any model-rated meter before the end of a usage window.
+func ConsumerModelRatesBefore(cards []state.APIConsumerRateCard, until time.Time) bool {
+	return slices.ContainsFunc(cards, func(card state.APIConsumerRateCard) bool {
+		return len(card.ModelPrices) > 0 && card.EffectiveFrom.Before(until)
+	})
+}
+
+// UnpricedConsumerModelUsage finds reported models missing from a meter's rate
+// card at the time of use. A card with model prices reserves the meter's alias
+// family from its effective minute. A separately priced exact meter keeps its
+// own stream. Missing model units stay out of rated usage and allowances.
+func UnpricedConsumerModelUsage(cards []state.APIConsumerRateCard, meters map[string][]state.APIConsumerMeterUsageBucket,
+	from time.Time) []APIConsumerUsageChargeBucket {
+	if len(meters) == 0 {
+		return nil
+	}
+	_, streams := UnitStreams(cards)
+	for _, history := range streams {
+		sort.Slice(history, func(i, j int) bool { return history[i].EffectiveFrom.Before(history[j].EffectiveFrom) })
+	}
+	var missing []APIConsumerUsageChargeBucket
+	for unit, history := range streams {
+		meter, ok := state.AppMeterOfUnit(unit)
+		firstModelCard := slices.IndexFunc(history, func(card state.APIConsumerRateCard) bool { return len(card.ModelPrices) > 0 })
+		if !ok || firstModelCard < 0 {
+			continue
+		}
+		prefix := state.ModelMeterName(meter, "")
+		for reported, rows := range meters {
+			model, ok := strings.CutPrefix(reported, prefix)
+			if !ok || !state.ValidAppMeter(model) || strings.Contains(model, "__") {
+				continue
+			}
+			standalone := streams[state.AppUnitPrefix+reported]
+			for _, row := range rows {
+				minute := row.WindowStart.UTC()
+				if row.Units == 0 || minute.Before(from) || minute.Before(history[firstModelCard].EffectiveFrom) {
+					continue
+				}
+				next := sort.Search(len(history), func(i int) bool { return history[i].EffectiveFrom.After(minute) })
+				if apiConsumerCardEnded(history[next-1], minute) {
+					continue
+				}
+				exact := sort.Search(len(standalone), func(i int) bool { return standalone[i].EffectiveFrom.After(minute) })
+				if exact > 0 && !apiConsumerCardEnded(standalone[exact-1], minute) {
+					continue
+				}
+				if _, priced := history[next-1].ModelPrices[model]; !priced {
+					missing = append(missing, APIConsumerUsageChargeBucket{
+						WindowStart: minute, Unit: unit, Model: model, BillableUnits: row.Units,
+					})
+				}
+			}
+		}
+	}
+	orderConsumerUsageCharges(missing)
+	return missing
+}
+
+// ApplyConsumerModelWaivers matches approved quantities to their original
+// model minutes. A later report can increase the remaining unpriced units.
+func ApplyConsumerModelWaivers(missing []APIConsumerUsageChargeBucket, approvals []state.APIConsumerUsageWaiver) {
+	if len(missing) == 0 || len(approvals) == 0 {
+		return
+	}
+	covered := make(map[coverageKey]int64)
+	for _, approval := range approvals {
+		for _, minute := range approval.Minutes {
+			key := coverageKey{minute: minute.WindowStart.Unix(), unit: approval.Unit, model: approval.Model}
+			covered[key] += minute.Units
+		}
+	}
+	for i := range missing {
+		bucket := &missing[i]
+		key := coverageKey{minute: bucket.WindowStart.Unix(), unit: bucket.Unit, model: bucket.Model}
+		bucket.WaivedUnits = min(bucket.BillableUnits, covered[key])
+	}
 }

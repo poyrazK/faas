@@ -59,9 +59,11 @@ type ConsumerBillingDay struct {
 
 // ConsumerBillingUsageResponse lists a consumer's daily usage.
 type ConsumerBillingUsageResponse struct {
-	Since time.Time            `json:"since"`
-	Until time.Time            `json:"until"`
-	Days  []ConsumerBillingDay `json:"days"`
+	RouteBreakdown []APIConsumerRouteUsage `json:"route_breakdown,omitempty"`
+	MeterBreakdown []APIConsumerMeterUsage `json:"meter_breakdown,omitempty"`
+	Since          time.Time               `json:"since"`
+	Until          time.Time               `json:"until"`
+	Days           []ConsumerBillingDay    `json:"days"`
 }
 
 // ConsumerBillingInvoice is the customer-facing view of a statement's
