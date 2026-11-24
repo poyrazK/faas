@@ -2816,6 +2816,7 @@ type Querier interface {
 	// them, so a recreated repository under a freed owner name does not pass.
 	// Zero when no binding of the name records them.
 	GitHubRepositoryIDsBoundToAccount(ctx context.Context, db DBTX, arg GitHubRepositoryIDsBoundToAccountParams) (GitHubRepositoryIDsBoundToAccountRow, error)
+	GrantManagedValkeyCache(ctx context.Context, db DBTX, arg GrantManagedValkeyCacheParams) error
 	// Repeatable-read callers only: a workflow admission committed after the
 	// snapshot raises a serialization failure. Read-committed callers return.
 	GuardWorkflowAdmissionSnapshot(ctx context.Context, db DBTX, appID string) error
@@ -7244,6 +7245,9 @@ type Querier interface {
 	// org_id is the tenant boundary SameAppResourceOwner checks (Hunt 23 H23-1).
 	ReadServicePolicyAppByID(ctx context.Context, db DBTX, id pgtype.UUID) (ReadServicePolicyAppByIDRow, error)
 	ReadServicePolicyAppBySlug(ctx context.Context, db DBTX, slug string) (ReadServicePolicyAppBySlugRow, error)
+	// A grant counts only while its target is still a managed cache
+	// (ADR-20261124174500).
+	ReadServicePolicyCacheGrant(ctx context.Context, db DBTX, arg ReadServicePolicyCacheGrantParams) (bool, error)
 	ReadServicePolicyCallerScope(ctx context.Context, db DBTX, arg ReadServicePolicyCallerScopeParams) (string, error)
 	ReadServicePolicyDeploymentOverride(ctx context.Context, db DBTX, arg ReadServicePolicyDeploymentOverrideParams) (bool, error)
 	ReadServicePolicyDeploymentWeights(ctx context.Context, db DBTX, arg ReadServicePolicyDeploymentWeightsParams) ([]ReadServicePolicyDeploymentWeightsRow, error)
@@ -8093,6 +8097,7 @@ type Querier interface {
 	RevokeDevBridge(ctx context.Context, db DBTX, arg RevokeDevBridgeParams) (int64, error)
 	RevokeMFATrustedBrowser(ctx context.Context, db DBTX, arg RevokeMFATrustedBrowserParams) (int64, error)
 	RevokeManagedPostgresCutoverCredential(ctx context.Context, db DBTX, arg RevokeManagedPostgresCutoverCredentialParams) (int64, error)
+	RevokeManagedValkeyCacheGrant(ctx context.Context, db DBTX, arg RevokeManagedValkeyCacheGrantParams) (int64, error)
 	RevokeRuntimeReleaseQualification(ctx context.Context, db DBTX, arg RevokeRuntimeReleaseQualificationParams) (RuntimeReleaseQualification, error)
 	RevokeRuntimeUpgradeExternalFenceAuthority(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	RevokeScenarioCommandNetworksForNode(ctx context.Context, db DBTX, arg RevokeScenarioCommandNetworksForNodeParams) error
