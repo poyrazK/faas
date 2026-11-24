@@ -63,6 +63,13 @@ func cmdSLO(args []string) int {
 		PrintUsage(os.Stderr, sloCmdUsage, sloCmdDocsTopic)
 		return 1
 	}
+	if len(pos) == 1 {
+		// Prod hunt r36: `slo list` answered "no app named list"; the SLO
+		// verbs live under `alert slo`.
+		if verb, ok := map[string]string{"list": "list", "ls": "list", "create": "create", "status": "status", "rm": "rm", "delete": "rm"}[pos[0]]; ok {
+			return printErr("Unknown slo verb", fmt.Errorf("`gregale slo` shows one app's SLO panel; SLO definitions live under `gregale alert slo`: run gregale alert slo %s --help", verb))
+		}
+	}
 	slug := ""
 	if merged, mergeErr := mergeAppFlag(pos, *app, 1); mergeErr != nil {
 		PrintUsage(os.Stderr, "usage: gregale slo [<slug>|--app SLUG] [--window 24h]\nerror: "+mergeErr.Error(), "slo")

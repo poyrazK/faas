@@ -27,6 +27,8 @@ const (
 )
 
 func cmdBucketList(args []string) int {
+	// Prod hunt r36: a linked checkout printed only the usage line.
+	args = withLinkedApp(args, 1)
 	if len(args) != 1 || !api.ValidAppSlug(args[0]) {
 		PrintUsage(osStderr, bucketListUsage, "bucket")
 		return 1
