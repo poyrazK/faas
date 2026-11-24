@@ -58,6 +58,35 @@ func processCPU() time.Duration {
 	return time.Duration(usage.Utime.Nano() + usage.Stime.Nano())
 }
 
+// prodGuestHeaders is the header set a production gateway forward carried to
+// the guest (captured on a compute node, 2026-11-24; values are stand-ins of
+// the same shape and length).
+var prodGuestHeaders = [][2]string{
+	{"User-Agent", "Mozilla/5.0 (X11; Linux x86_64) k6/0.54.0 (https://k6.io/)"},
+	{"Accept", "*/*"},
+	{"Accept-Encoding", "gzip, deflate, br"},
+	{"Traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"},
+	{"True-Client-Ip", "203.0.113.47"},
+	{"X-Faas-App-Id", "dc001401-baa6-4ae8-8817-8c45906a47a3"},
+	{"X-Faas-Client-Country", "US"},
+	{"X-Faas-Client-Ip", "203.0.113.47"},
+	{"X-Faas-Client-Ua-Family", "other"},
+	{"X-Faas-Deadline-Ms", "1764000000000"},
+	{"X-Faas-Deployment-Created-At", "2026-11-21T12:00:00Z"},
+	{"X-Faas-Deployment-Id", "5b8e2a0c-7d1f-4c3e-9a6b-2f4d8e1c0a97"},
+	{"X-Faas-Image-Digest", "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
+	{"X-Faas-Instance-Id", "0c9a7e5d-3b2f-4a1e-8d6c-5f4e3d2c1b0a"},
+	{"X-Faas-Invocation-Id", "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918"},
+	{"X-Faas-Node-Id", "62946968-dbff-44fe-a7fd-6e02489826ad"},
+	{"X-Faas-Request-Id", "req_01JDXK8Q2M3N4P5R6S7T8V9W0X"},
+	{"X-Faas-Tenant-Id", "a1b2c3d4-e5f6-4789-8abc-def012345678"},
+	{"X-Forwarded-For", "203.0.113.47"},
+	{"X-Forwarded-Host", "loadtest-hello-20261121.gregale.dev"},
+	{"X-Forwarded-Proto", "https"},
+	{"X-Gregale-Trace-Id", "4bf92f3577b34da6a3ce929d0e0e4736"},
+	{"X-Real-Ip", "203.0.113.47"},
+}
+
 // BenchmarkBridgeExchange drives vmmd's side of a persistent-bridge exchange
 // (an H2C request, then the completion wait when one is needed) through the
 // real bridge server to an in-process H1 guest. "wait" is every exchange
@@ -99,8 +128,13 @@ func BenchmarkBridgeExchange(b *testing.B) {
 		StrictMaxConcurrentStreams: true,
 	}}
 
-	exchange := func(b *testing.B, retain bool) {
+	exchange := func(b *testing.B, retain, prodHeaders bool) {
 		req, _ := http.NewRequest(http.MethodGet, "http://unix/", http.NoBody)
+		if prodHeaders {
+			for _, h := range prodGuestHeaders {
+				req.Header.Set(h[0], h[1])
+			}
+		}
 		req.Header.Set(bridgeRequestMarkerHeader, "1")
 		req.Header.Set(bridgeRequestProtocolHeader, "h1")
 		req.Header.Set(bridgeRequestPortHeader, guestPort)
@@ -131,12 +165,13 @@ func BenchmarkBridgeExchange(b *testing.B) {
 		}
 	}
 	for _, mode := range []struct {
-		name   string
-		retain bool
-	}{{"wait", false}, {"retained", true}} {
+		name        string
+		retain      bool
+		prodHeaders bool
+	}{{"wait", false, false}, {"retained", true, false}, {"retained-prod-headers", true, true}} {
 		b.Run(mode.name, func(b *testing.B) {
 			for range 100 {
-				exchange(b, mode.retain)
+				exchange(b, mode.retain, mode.prodHeaders)
 			}
 			for _, counter := range []*atomic.Int64{&vmmdReads, &vmmdWrites, &bridgeReads, &bridgeWrites} {
 				counter.Store(0)
@@ -145,7 +180,7 @@ func BenchmarkBridgeExchange(b *testing.B) {
 			start := processCPU()
 			b.RunParallel(func(pb *testing.PB) {
 				for pb.Next() {
-					exchange(b, mode.retain)
+					exchange(b, mode.retain, mode.prodHeaders)
 				}
 			})
 			n := float64(b.N)
