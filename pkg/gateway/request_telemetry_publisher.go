@@ -73,6 +73,10 @@ type RequestTelemetryPublisherConfig struct {
 	// They are optional hooks for daemon metrics.
 	OnDropped func(int64)
 	OnShipped func(int64)
+	// OnPlatformDropped receives the part of OnDropped the platform lost
+	// (delivery gave up, backlog or deadline), excluding rows apid refused
+	// for the app (an ingest quota, a row it will never accept).
+	OnPlatformDropped func(int64)
 
 	// OnCoverage runs even when idle, after every delivery attempt.
 	OnCoverage func(context.Context, RequestTelemetryCoverage) error
@@ -128,6 +132,8 @@ type requestTelemetryPublisher struct {
 	// atomic.Int64 — read from /metrics goroutine + write from
 	// publisher goroutine.
 	droppedTotal atomic.Int64
+	// platformDroppedTotal is the part of droppedTotal apid did not refuse.
+	platformDroppedTotal atomic.Int64
 
 	// shippedTotal counts rows successfully shipped. Surfaced
 	// via /metrics + tests.
@@ -209,7 +215,15 @@ func (p *requestTelemetryPublisher) ShippedTotal() int64 {
 // accounts for loss before every Stop caller returns.
 func (p *requestTelemetryPublisher) run(ctx context.Context) {
 	defer func() {
-		p.drainFinal()
+		// A stop is clean only if the final drain delivered every row: a
+		// batch given up on during it is a loss the next boot cannot carry.
+		// Either way the last heartbeat reports what the drain lost.
+		// Rows apid refused for their app (an ingest quota) are that app's
+		// gap, which the next boot's coverage already tolerates.
+		lost := func() int64 { return p.platformDroppedTotal.Load() + p.recorder.OverwrittenTotal() }
+		before := lost()
+		delivered := p.drainFinal()
+		p.reportFinalCoverage(ctx, delivered && lost() == before)
 		p.finalCancel()
 		close(p.doneCh)
 	}()
@@ -391,7 +405,7 @@ func (p *requestTelemetryPublisher) acceptPartialDelivery(partial *RequestTeleme
 	}
 	p.recordShipped(shipped)
 	if len(rejected) != 0 {
-		p.recordDroppedRows(rejected)
+		p.recordDroppedRows(rejected, true)
 	}
 	p.pending = remaining
 }
@@ -408,13 +422,16 @@ type RequestTelemetryDeliveryError struct {
 func (e *RequestTelemetryDeliveryError) Error() string { return e.Cause.Error() }
 func (e *RequestTelemetryDeliveryError) Unwrap() error { return e.Cause }
 
-func (p *requestTelemetryPublisher) recordDroppedRows(rows []RequestTelemetryRow) {
+// recordDroppedRows journals rows lost to their apps. refused says apid
+// refused them for the app (an ingest quota, a row it will never accept);
+// otherwise the platform gave them up (the shutdown deadline).
+func (p *requestTelemetryPublisher) recordDroppedRows(rows []RequestTelemetryRow, refused bool) {
 	p.recorder.ringMu.Lock()
 	for _, row := range rows {
 		p.recorder.recordAppLossLocked(row)
 	}
 	p.recorder.ringMu.Unlock()
-	p.recordDropped(requestTelemetryCount(rows))
+	p.recordDropped(requestTelemetryCount(rows), refused)
 }
 
 // recordPlatformDroppedRows records rows lost because the gateway could not
@@ -432,7 +449,7 @@ func (p *requestTelemetryPublisher) recordPlatformDroppedRows(rows []RequestTele
 	p.recorder.ringMu.Lock()
 	p.recorder.unattributedLosses += count
 	p.recorder.ringMu.Unlock()
-	p.recordDropped(count)
+	p.recordDropped(count, false)
 }
 
 // requestTelemetryCount returns the number of original requests represented
@@ -453,13 +470,20 @@ func normalizedRequestTelemetryCount(count int) int {
 	return count
 }
 
-func (p *requestTelemetryPublisher) recordDropped(n int64) {
+func (p *requestTelemetryPublisher) recordDropped(n int64, refused bool) {
 	if n <= 0 {
 		return
 	}
 	p.droppedTotal.Add(n)
 	if p.cfg.OnDropped != nil {
 		p.cfg.OnDropped(n)
+	}
+	if refused {
+		return
+	}
+	p.platformDroppedTotal.Add(n)
+	if p.cfg.OnPlatformDropped != nil {
+		p.cfg.OnPlatformDropped(n)
 	}
 }
 
@@ -823,16 +847,37 @@ type RequestTelemetryCoverage struct {
 	UnattributedDroppedTotal int64
 	AppGaps                  []RequestTelemetryAppGap
 	Analytics                *RequestTelemetryAnalyticsCoverage
+	// CleanStop marks the last heartbeat of a publisher that delivered every
+	// row before stopping: the node's next boot continues its coverage.
+	CleanStop bool
+}
+
+// requestTelemetryCleanStopTimeout bounds the final heartbeat. The node's
+// next boot must heartbeat within the receiver's silence grace of it.
+const requestTelemetryCleanStopTimeout = 2 * time.Second
+
+// reportFinalCoverage sends the stopping publisher's last heartbeat: the
+// rows its final drain gave up on would otherwise never be reported. It runs
+// after the drain, whose budget may be spent, so it has its own.
+// ctx is the actor's, already cancelled when it stops; only its values carry.
+func (p *requestTelemetryPublisher) reportFinalCoverage(ctx context.Context, clean bool) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), requestTelemetryCleanStopTimeout)
+	defer cancel()
+	p.reportCoverageWith(ctx, clean)
 }
 
 func (p *requestTelemetryPublisher) reportCoverage(ctx context.Context) {
+	p.reportCoverageWith(ctx, false)
+}
+
+func (p *requestTelemetryPublisher) reportCoverageWith(ctx context.Context, cleanStop bool) {
 	if p.cfg.OnCoverage == nil {
 		return
 	}
 	p.recorder.ringMu.Lock()
 	coverage := RequestTelemetryCoverage{Enabled: p.recorder.cfg.Enabled, SamplingBasisPoints: 10000,
 		DroppedTotal: p.DroppedTotal() + p.recorder.OverwrittenTotal(), PendingCount: p.recorder.len, SourceAt: p.cfg.Now().UTC(),
-		AppScoped: true, UnattributedDroppedTotal: p.recorder.unattributedLosses}
+		AppScoped: true, UnattributedDroppedTotal: p.recorder.unattributedLosses, CleanStop: cleanStop}
 	gaps := make(map[uuid.UUID]RequestTelemetryAppGap)
 	for app, n := range p.recorder.appLosses {
 		gaps[app] = RequestTelemetryAppGap{AppID: app, DroppedCount: n}

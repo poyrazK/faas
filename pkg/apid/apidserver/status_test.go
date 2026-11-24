@@ -168,7 +168,7 @@ func TestStatusQueriesDefineIdleValues(t *testing.T) {
 			name:     "api availability",
 			query:    statusAPIAvailabilityQuery,
 			fallback: "or vector(100)",
-			guard:    "sum(rate(gateway_requests_total{app!=\"-\",code=~\"2..|5..\"}[5m])) > 0",
+			guard:    "(sum(rate(gateway_requests_total{app!=\"-\",code=~\"2..|5..\"}[5m])) - (sum(rate(gateway_service_requests_total{app!=\"-\",code=~\"2..|5..\"}[5m])) or vector(0))) > 0",
 		},
 		{
 			name:     "wake p95",

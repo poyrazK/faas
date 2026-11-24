@@ -24,6 +24,10 @@ type TelemetryCoverage struct {
 	AppScoped                bool
 	UnattributedDroppedTotal int64
 	AppGaps                  []TelemetryAppGap
+	// CleanStop marks a gateway's last heartbeat before it exits, sent only
+	// after every row was delivered or journaled. The node's next boot
+	// continues its coverage instead of starting a new one.
+	CleanStop bool
 	// Analytics is set by a gateway that counts its own requests into
 	// analytics rollups (ADR-20261103113952 amendments 5 and 6); nil from
 	// any other.
@@ -99,6 +103,7 @@ func (s *PgStore) RecordTelemetryCoverage(ctx context.Context, c TelemetryCovera
 		SamplingBasisPoints: c.SamplingBasisPoints, DroppedTotal: c.DroppedTotal, PendingCount: c.PendingCount,
 		SourceAt:  pgtype.Timestamptz{Time: c.SourceAt, Valid: true},
 		AppScoped: c.AppScoped, UnattributedDroppedTotal: c.UnattributedDroppedTotal, AppGaps: body,
+		CleanStop: c.CleanStop,
 	}
 	if c.Analytics == nil {
 		return sqlc.New().RecordTelemetryCoverage(ctx, s.pool, raw)

@@ -183,7 +183,8 @@ func TestAnalyticsHistoricalCoverageSurvivesLaterLossAndNodeOutage(t *testing.T)
 	}
 	assertComplete()
 	// Keep each real loss even after the latest app-gap row advances again.
-	if _, err := pool.Exec(ctx, "UPDATE request_telemetry_app_gaps SET last_gap_at=$3,updated_at=$4 WHERE node_name=$1 AND app_id=$2", node, app, from.Add(time.Minute), from.Add(2*time.Minute)); err != nil {
+	// A loss is a growing dropped total; rows in flight are not one.
+	if _, err := pool.Exec(ctx, "UPDATE request_telemetry_app_gaps SET last_gap_at=$3,updated_at=$4,dropped_total=dropped_total+1 WHERE node_name=$1 AND app_id=$2", node, app, from.Add(time.Minute), from.Add(2*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, "UPDATE request_telemetry_app_gaps SET last_gap_at=$3,updated_at=$3 WHERE node_name=$1 AND app_id=$2", node, app, now); err != nil {
@@ -253,7 +254,7 @@ func TestAnalyticsCountingHistoryIgnoresLaterRawLoss(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertComplete()
-	if _, err := pool.Exec(ctx, `UPDATE request_analytics_app_gaps SET last_gap_at=$3,updated_at=$4 WHERE node_name=$1 AND app_id=$2`, node, app, from.Add(time.Minute), from.Add(2*time.Minute)); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE request_analytics_app_gaps SET last_gap_at=$3,updated_at=$4,dropped_total=dropped_total+1 WHERE node_name=$1 AND app_id=$2`, node, app, from.Add(time.Minute), from.Add(2*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	if gaps, err := store.RequestAnalyticsCompleteness(ctx, app, from, until); err != nil || !slices.Contains(gaps, "telemetry_window_incomplete") {
