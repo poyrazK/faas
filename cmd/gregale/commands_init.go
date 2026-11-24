@@ -45,6 +45,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
@@ -520,6 +521,10 @@ func requireTemplateSecretsBeforeFirstStart(ctx context.Context, apps interface 
 	var ae *APIError
 	if _, err := apps.GetApp(ctx, slug); !errors.As(err, &ae) || ae.Problem.Status != http.StatusNotFound {
 		return nil
+	}
+	if slices.Contains(templateRequiredSecrets[tpl], "MIGRATION_DATABASE_URL") {
+		// A migration binding comes from `postgres attach`, not a secrets file.
+		return fmt.Errorf("%w; template %s cannot start without them. Reserve the app with `gregale deploy --create-only --template %s --name %s`, attach a managed database with `gregale postgres attach <database> %s --access migration --env MIGRATION_DATABASE_URL`, then deploy", missing, tpl, tpl, slug, slug)
 	}
 	return fmt.Errorf("%w; template %s cannot start without them. Pass --secrets-file <file> on the first deploy, or reserve the app with --create-only, set them with `gregale env set --app %s ...`, then deploy", missing, tpl, slug)
 }

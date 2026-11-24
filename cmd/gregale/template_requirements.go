@@ -32,7 +32,11 @@ var templateRequiredSecrets = map[string][]string{
 	"rest-api-postgres-python": {"DATABASE_URL"},
 	"secret-reload-node":       {"DATABASE_URL"},
 	"customer-platform":        {"DATABASE_URL"},
-	"cron-worker":              {"QSTASH_CURRENT_SIGNING_KEY", "QSTASH_NEXT_SIGNING_KEY", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"},
+	// The migration app's release task applies its SQL through a migration
+	// binding; without one every first deploy failed in the release task
+	// (prod hunt r35).
+	"data-api-starter": {"MIGRATION_DATABASE_URL"},
+	"cron-worker":      {"QSTASH_CURRENT_SIGNING_KEY", "QSTASH_NEXT_SIGNING_KEY", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"},
 }
 
 // manifestCapabilityIndex maps the catalog's manifest settings to the

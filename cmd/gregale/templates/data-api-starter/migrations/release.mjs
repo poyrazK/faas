@@ -12,7 +12,11 @@ export async function release(connectionString, { role } = {}) {
   return report
 }
 
-if (process.argv[1] && await realpath(process.argv[1]) === fileURLToPath(import.meta.url)) {
+const isMain = process.argv[1] && await realpath(process.argv[1]) === fileURLToPath(import.meta.url)
+if (isMain && !process.env.MIGRATION_DATABASE_URL) {
+  console.error('Migration release failed: MIGRATION_DATABASE_URL is not set. Attach the managed database first: gregale postgres attach <database> <app> --access migration --env MIGRATION_DATABASE_URL')
+  process.exitCode = 1
+} else if (isMain) {
   try {
     const report = await release(process.env.MIGRATION_DATABASE_URL, options(process.argv.slice(2)))
     console.log(JSON.stringify(report))
