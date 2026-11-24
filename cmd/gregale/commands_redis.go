@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 
@@ -100,7 +101,7 @@ func cmdRedisCreate(args []string) int {
 		return jsonOut(writeJSON(cache))
 	}
 	_, _ = fmt.Fprintf(osStdout, "Created Redis cache %s (%d MB, %s) at %s:%d\n", cache.Name, cache.MemoryMB, cache.EvictionPolicy, cache.Host, cache.Port)
-	_, _ = fmt.Fprintf(osStdout, "Connect an app: gregale redis bind %s --app APP\n", cache.Name)
+	_, _ = fmt.Fprintf(osStdout, "Connect an app: gregale redis bind %s --app APP (before the app's first deploy works too)\n", cache.Name)
 	return 0
 }
 
@@ -143,15 +144,46 @@ func cmdRedisBind(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	binding, err := client.BindRedisCache(context.Background(), fs.Arg(0), api.BindRedisCacheRequest{App: *app, EnvKey: *envKey})
+	ctx := context.Background()
+	created, err := ensureRedisBindTarget(ctx, client, fs.Arg(0), *app)
+	if err != nil {
+		return printErr("Could not bind Redis cache", err)
+	}
+	binding, err := client.BindRedisCache(ctx, fs.Arg(0), api.BindRedisCacheRequest{App: *app, EnvKey: *envKey})
 	if err != nil {
 		return printErr("Could not bind Redis cache", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(binding))
 	}
+	if created {
+		_, _ = fmt.Fprintf(osStdout, "Created app %s and set %s on it; its first deploy starts with the cache connected.\n", binding.App, binding.EnvKey)
+		return 0
+	}
 	_, _ = fmt.Fprintf(osStdout, "Set %s on %s; it takes effect at the app's next deploy or wake.\n", binding.EnvKey, binding.App)
 	return 0
+}
+
+// ensureRedisBindTarget creates the app a cache is bound to when it does not
+// exist yet, so an app that needs REDIS_URL at startup has it on its first
+// deploy instead of failing that deploy's health check. It checks the cache
+// first, so a mistyped cache name never leaves an empty app behind.
+func ensureRedisBindTarget(ctx context.Context, client *api.Client, cache, app string) (bool, error) {
+	if _, err := client.GetRedisCache(ctx, cache); err != nil {
+		return false, err
+	}
+	if _, err := client.GetApp(ctx, app); err == nil || !isNotFound(err) {
+		return false, err
+	}
+	if _, err := client.CreateApp(ctx, buildCreateRequest(app, shapeApp, "", nil, nil)); err != nil {
+		var ae *api.APIError
+		if errors.As(err, &ae) && ae.Problem.Status == http.StatusConflict {
+			// Created by a concurrent deploy; bind to it.
+			return false, nil
+		}
+		return false, fmt.Errorf("create app %s: %w", app, err)
+	}
+	return true, nil
 }
 
 func cmdRedisResize(args []string) int {
