@@ -97,7 +97,7 @@
           test -x /usr/local/bin/gregalectl
           test -s /etc/faas/manifest.yaml
           test -s /etc/faas/storage.env
-          test -s /etc/faas/imaged-storage.env
+          test -f /etc/faas/imaged-storage.env
           test -s /etc/faas/runtime-bases.env
           for service in faas-vmmd faas-schedd faas-gatewayd-internal faas-builderd faas-imaged; do
             systemctl is-enabled --quiet "$service.service"
@@ -264,10 +264,13 @@
             regex_search('(?m)^FAAS_S3_ENDPOINT=https://\S+$')) is not none) and
             ((lookup('ansible.builtin.file', faas_join_storage_env_source) |
             regex_search('(?m)^FAAS_S3_REGION=\S+$')) is not none) and
-            ((lookup('ansible.builtin.file', faas_join_storage_env_source) |
+            ((((lookup('ansible.builtin.file', faas_join_storage_env_source) |
             regex_search('(?m)^FAAS_S3_ACCESS_KEY_ID=\S+$')) is not none) and
             ((lookup('ansible.builtin.file', faas_join_storage_env_source) |
-            regex_search('(?m)^FAAS_S3_SECRET_ACCESS_KEY=\S+$')) is not none))
+            regex_search('(?m)^FAAS_S3_SECRET_ACCESS_KEY=\S+$')) is not none)) or
+            ((faas_storage_grants | default(false) | bool) and
+            ((lookup('ansible.builtin.file', faas_join_storage_env_source) |
+            regex_search('(?m)^FAAS_S3_(ACCESS_KEY_ID|SECRET_ACCESS_KEY)=')) is none))))
           - >-
             (((lookup('ansible.builtin.file', faas_join_storage_env_source) |
             regex_search('(?m)^FAAS_STORAGE_BACKEND=oci\s*$')) is none) and
@@ -289,7 +292,8 @@
             regex_search('(?m)^FAAS_STORAGE_LOCAL_PREFIXES=.*snap/')) is none
         fail_msg: >-
           storage.env must select OCI, GCS or S3 remote storage and configure its
-          endpoint, set FAAS_STORAGE_LOCAL_PREFIXES=none,
+          endpoint (for S3 a key pair, or none with faas_storage_grants),
+          set FAAS_STORAGE_LOCAL_PREFIXES=none,
           FAAS_REQUIRE_SHARED_ARTIFACTS=1, and set
           FAAS_STORAGE_CACHE_SERVE_STALE=0. It must not route snap/ through
           FAAS_STORAGE_LOCAL_PREFIXES for a multi-box compute node.
@@ -310,12 +314,19 @@
             ((lookup('ansible.builtin.file', faas_join_imaged_storage_env_source) |
             regex_search('(?m)^FAAS_S3_SECRET_ACCESS_KEY=.+$')) is not none) and
             ((lookup('ansible.builtin.file', faas_join_imaged_storage_env_source) |
-            regex_search('(?m)^FAAS_(?!S3_(ACCESS_KEY_ID|SECRET_ACCESS_KEY)=)')) is none))
+            regex_search('(?m)^FAAS_(?!S3_(ACCESS_KEY_ID|SECRET_ACCESS_KEY)=)')) is none)) or
+            ((faas_storage_grants | default(false) | bool) and
+            ((lookup('ansible.builtin.file', faas_join_storage_env_source) |
+            regex_search('(?m)^FAAS_STORAGE_BACKEND=(gcs|s3)$')) is not none) and
+            ((lookup('ansible.builtin.file', faas_join_imaged_storage_env_source) |
+            regex_search('(?m)^[ \t]*(export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*=')) is none))
         fail_msg: >-
           imaged-storage.env must contain only one non-empty credential pair:
           FAAS_OCI_USERNAME and FAAS_OCI_PASSWORD, or FAAS_S3_ACCESS_KEY_ID and
-          FAAS_S3_SECRET_ACCESS_KEY. Storage topology remains owned by the
-          shared storage.env contract.
+          FAAS_S3_SECRET_ACCESS_KEY; on an S3 or GCS node with
+          faas_storage_grants it may hold no
+          assignment at all (ADR-20261117190000 slice 5). Storage topology
+          remains owned by the shared storage.env contract.
       no_log: true
 
     - name: Create the shared daemon group before staging group-readable keys
