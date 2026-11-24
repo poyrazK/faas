@@ -615,7 +615,7 @@
       },
       "targets": [
         {
-          "expr": "(1 - ((sum(rate(gateway_platform_errors_total{app!=\"-\"}[5m])) or vector(0)) / sum(rate(gateway_requests_total{app!=\"-\",code=~\"2..|5..\"}[5m])))) * 100",
+          "expr": "(1 - ((sum(rate(gateway_platform_errors_total{app!=\"-\"}[5m])) or vector(0)) / (sum(rate(gateway_requests_total{app!=\"-\",code=~\"2..|5..\"}[5m])) - (sum(rate(gateway_service_requests_total{app!=\"-\",code=~\"2..|5..\"}[5m])) or vector(0))))) * 100",
           "refId": "A"
         }
       ],

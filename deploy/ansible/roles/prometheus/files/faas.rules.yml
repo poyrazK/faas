@@ -3247,7 +3247,7 @@ groups:
     interval: 5m
     rules:
       - record: faas_slo_api_eligible_requests:rate5m
-        expr: sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m]))
+        expr: (sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])) - (sum(rate(gateway_service_requests_total{app!="-",code=~"2..|5.."}[5m])) or vector(0)))
       - record: faas_slo_api_platform_errors:rate5m
         expr: sum(rate(gateway_platform_errors_total{app!="-"}[5m])) or vector(0)
       - record: faas_slo_wakes:rate5m
@@ -3678,7 +3678,10 @@ groups:
       #
       # Eligible platform outcomes are 2xx and 5xx. Client/application 4xx
       # responses do not consume the fleet availability budget, and neither
-      # does a 5xx the customer's app returned itself: the error numerator is
+      # does a service-to-service call (gateway_service_requests_total is
+      # subtracted: a public request fanning out to N internal calls diluted
+      # the figure, and a service call's platform failure is never counted)
+      # or a 5xx the customer's app returned itself: the error numerator is
       # gateway_platform_errors_total (5xx produced before any guest response
       # byte). Counting app-authored 5xx let one tenant's failing handler
       # page on-call (production-us hunt #9: 554 deliberate 500s from a test
@@ -3692,9 +3695,9 @@ groups:
         expr: |
           (1 - ((sum(rate(gateway_platform_errors_total{app!="-"}[5m])) or vector(0))
             /
-          sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m]))))
+          (sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])) - (sum(rate(gateway_service_requests_total{app!="-",code=~"2..|5.."}[5m])) or vector(0)))))
             < 0.995
-          and sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])) > 0
+          and (sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])) - (sum(rate(gateway_service_requests_total{app!="-",code=~"2..|5.."}[5m])) or vector(0))) > 0
         for: 10m
         labels:
           severity: warn
@@ -3710,17 +3713,17 @@ groups:
           (
             (
               (sum(rate(gateway_platform_errors_total{app!="-"}[1h])) or vector(0))
-              / sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[1h]))
+              / (sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[1h])) - (sum(rate(gateway_service_requests_total{app!="-",code=~"2..|5.."}[1h])) or vector(0)))
             ) > 0.072
-            and sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[1h])) > 0
+            and (sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[1h])) - (sum(rate(gateway_service_requests_total{app!="-",code=~"2..|5.."}[1h])) or vector(0))) > 0
           )
           and
           (
             (
               (sum(rate(gateway_platform_errors_total{app!="-"}[6h])) or vector(0))
-              / sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[6h]))
+              / (sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[6h])) - (sum(rate(gateway_service_requests_total{app!="-",code=~"2..|5.."}[6h])) or vector(0)))
             ) > 0.03
-            and sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[6h])) > 0
+            and (sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[6h])) - (sum(rate(gateway_service_requests_total{app!="-",code=~"2..|5.."}[6h])) or vector(0))) > 0
           )
         for: 10m
         labels:
@@ -5571,6 +5574,30 @@ groups:
           summary: "gatewayd-public OTel spans writer ingest stalled >15m"
           description: "gatewayd-public POST /v1/otel/v1/traces is receiving spans but every write fails (db_error) and none has been inserted for 15m. The OTLP writer ships customer spans into request_telemetry.spans_summary (ADR-127 PR-D); a stall means the debugger's per-request span view is going dark. Check gatewayd-public logs for `otel_spans: apid RPC failed` (auth.sock unreachable), `otel_spans: rate_limited` (customer's per-account token bucket exhausted), or `otel_spans: shape_invalid` (malformed OTLP body). Drill-down: `rate(gatewayd_public_otel_spans_ingested_total[5m]) by (outcome)` distinguishes the four outcomes (inserted/rate_limited/db_error/shape_invalid)."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDebugTelemetryIngestStalled.md"
+
+      - alert: FaasRequestTelemetryLoss
+        # Request telemetry rows lost on their way to apid: given up by the
+        # gateway publisher (retries, a full backlog, the shutdown deadline),
+        # evicted from a full ring, or refused by apid as malformed or failed
+        # to insert. Lost rows lower analytics totals and hold release guards
+        # (canary, 5xx rollback) until coverage returns, and none of it
+        # alerted (2026-11-24 telemetry audit). A customer's ingest quota
+        # stays out: apid's rate_limited outcome is not read, and the gateway
+        # counts rows apid refused apart from platform drops.
+        expr: |
+          (sum(increase(gateway_request_telemetry_platform_dropped_total[15m])) or vector(0))
+          + (sum(increase(gateway_request_telemetry_overwritten_total[15m])) or vector(0))
+          + (sum(increase(apid_request_telemetry_recorded_total{outcome=~"db_error|invalid"}[15m])) or vector(0))
+          > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: request_telemetry
+        annotations:
+          summary: "Request telemetry rows are being lost"
+          description: "Gateways or apid lost request telemetry rows in the last 15m. Analytics for the affected apps read incomplete, and canaries and 5xx rollbacks hold over windows that lost rows. Drill-down: `sum by (instance) (increase(gateway_request_telemetry_platform_dropped_total[15m]))` (publisher gave up: apid unreachable or slow), `increase(gateway_request_telemetry_overwritten_total[15m])` (ring full: publisher behind), `sum by (outcome) (increase(apid_request_telemetry_recorded_total[15m]))` (db_error: insert failures; invalid: rows apid will never take, logged as `request telemetry row refused`)."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRequestTelemetryLoss.md"
 
       # request_telemetry is range-partitioned by received_at. meterd
       # reconciles the current month and two future months at startup and
