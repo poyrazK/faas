@@ -1,6 +1,9 @@
 package managedpostgres
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // IdleTail estimates the compute a scale-to-zero database spent idle before
 // suspending in one usage window: each idle suspend follows a full suspend
@@ -12,11 +15,16 @@ type IdleTail struct {
 	// ComputeUnitSeconds is Σ suspend timeout × minimum CU over those
 	// suspends.
 	ComputeUnitSeconds int64
+	// Requests is how many provider requests the read sent.
+	Requests int
 }
 
-// IdleTailReporter is the optional provider surface behind IdleTail.
+// IdleTailReporter is the optional provider surface behind IdleTail. A read
+// sends at most maxRequests requests and reports the number it sent, also
+// with an error. ErrUnsupported means this database or window cannot be
+// priced; any other error means the provider could not be read.
 type IdleTailReporter interface {
-	IdleTail(ctx context.Context, providerResourceID string, window UsageWindow) (IdleTail, error)
+	IdleTail(ctx context.Context, providerResourceID string, window UsageWindow, maxRequests int) (IdleTail, error)
 }
 
 // Idle tail read outcomes. Only read and no_compute windows count toward the
@@ -26,15 +34,21 @@ const (
 	IdleTailNoCompute   = "no_compute"
 	IdleTailUnsupported = "unsupported"
 	IdleTailUnavailable = "unavailable"
-	// IdleTailSkipped is a window the pass had no budget for, or that came
-	// after a failed read ended the pass.
+	// IdleTailSkipped is a queued window that a newer window replaced before
+	// the pass reached it.
 	IdleTailSkipped = "skipped"
 )
 
-// maximumIdleTailReadsPerSweep bounds the provider reads one pass makes, so
-// the telemetry never competes with billing and lifecycle requests for the
-// provider's rate limit.
-const maximumIdleTailReadsPerSweep = 60
+const (
+	// idleTailRequestsPerSweep bounds one pass's provider requests. The
+	// requests are paced as background work, and windows the pass does not
+	// reach wait for the next sweep, so at the default five-minute interval
+	// the telemetry sends at most 12 requests a minute.
+	idleTailRequestsPerSweep = 60
+	// idleTailRequestsPerRead is one read's ceiling: the compute list and at
+	// most three pages of operations.
+	idleTailRequestsPerRead = 4
+)
 
 // IdleTailObservation is one scale-to-zero database's latest window,
 // collected for the first time: the compute it used and the idle tail inside
@@ -52,52 +66,80 @@ type pendingIdleTail struct {
 	usage    Usage
 }
 
-// queueIdleTails keeps the sweep's newly collected latest windows of
-// scale-to-zero databases for readIdleTails.
+// queueIdleTails adds the sweep's newly collected latest windows of
+// scale-to-zero databases to the windows earlier passes did not reach. A
+// database's newer window replaces its older one, which is skipped.
 func (c *UsageCollector) queueIdleTails(work []*usageCollectionWork) {
-	c.pendingIdleTails = nil
 	if c.idleTailObserver == nil {
 		return
 	}
+	queued := make(map[string]int, len(c.pendingIdleTails))
+	for i, item := range c.pendingIdleTails {
+		queued[item.database.ID] = i
+	}
 	for _, item := range work {
-		if item.latest != nil && item.database.Spec.ScaleToZero {
-			c.pendingIdleTails = append(c.pendingIdleTails, pendingIdleTail{item.database, item.backend, *item.latest})
+		if item.latest == nil || !item.database.Spec.ScaleToZero {
+			continue
 		}
+		next := pendingIdleTail{item.database, item.backend, *item.latest}
+		if i, ok := queued[item.database.ID]; ok {
+			c.idleTailObserver(idleTailObservation(c.pendingIdleTails[i], IdleTailSkipped))
+			c.pendingIdleTails[i] = next
+			continue
+		}
+		queued[item.database.ID] = len(c.pendingIdleTails)
+		c.pendingIdleTails = append(c.pendingIdleTails, next)
 	}
 }
 
-// readIdleTails observes the queued windows after billing collection and
-// AfterSweep are done. It reads at most maximumIdleTailReadsPerSweep windows,
-// only those with compute, and stops at the first failed read: a rate-limited
-// provider gets no more telemetry requests this sweep.
-func (c *UsageCollector) readIdleTails(ctx context.Context) {
-	pending := c.pendingIdleTails
-	c.pendingIdleTails = nil
-	reads, stopped := 0, false
-	for _, item := range pending {
-		observation := IdleTailObservation{Class: item.database.Spec.Class, Outcome: IdleTailNoCompute}
-		for _, reading := range item.usage.Readings {
-			if reading.Meter == MeterComputeUnitSeconds {
-				observation.ComputeUnitSeconds = reading.Quantity
-			}
+func idleTailObservation(item pendingIdleTail, outcome string) IdleTailObservation {
+	observation := IdleTailObservation{Class: item.database.Spec.Class, Outcome: outcome}
+	for _, reading := range item.usage.Readings {
+		if reading.Meter == MeterComputeUnitSeconds {
+			observation.ComputeUnitSeconds = reading.Quantity
 		}
+	}
+	return observation
+}
+
+// readIdleTails observes queued windows after billing collection and
+// AfterSweep are done, within idleTailRequestsPerSweep paced background
+// requests. Windows it does not reach stay queued. A provider that could not
+// be read ends the pass.
+func (c *UsageCollector) readIdleTails(ctx context.Context) {
+	ctx = WithBackgroundRequests(ctx)
+	budget := idleTailRequestsPerSweep
+	done := 0
+	for _, item := range c.pendingIdleTails {
+		if ctx.Err() != nil {
+			break
+		}
+		observation := idleTailObservation(item, IdleTailNoCompute)
 		reporter, ok := item.backend.Provider.(IdleTailReporter)
-		switch {
-		case observation.ComputeUnitSeconds <= 0:
-		case !ok:
+		if observation.ComputeUnitSeconds > 0 && !ok {
 			observation.Outcome = IdleTailUnsupported
-		case stopped || reads >= maximumIdleTailReadsPerSweep || ctx.Err() != nil:
-			observation.Outcome = IdleTailSkipped
-		default:
-			reads++
-			tail, err := reporter.IdleTail(ctx, item.database.ProviderResourceID, item.usage.Window)
-			if err != nil {
-				observation.Outcome, stopped = IdleTailUnavailable, true
-				c.logger.Debug("managed postgres idle tail unavailable", "database_id", item.database.ID, "error", err)
+		}
+		if observation.ComputeUnitSeconds > 0 && ok {
+			if budget < idleTailRequestsPerRead {
 				break
 			}
-			observation.Outcome, observation.Tail = IdleTailRead, tail
+			tail, err := reporter.IdleTail(ctx, item.database.ProviderResourceID, item.usage.Window, idleTailRequestsPerRead)
+			budget -= max(tail.Requests, 1)
+			switch {
+			case err == nil:
+				observation.Outcome, observation.Tail = IdleTailRead, tail
+			case errors.Is(err, ErrUnsupported) || errors.Is(err, ErrInvalid) || errors.Is(err, ErrNotFound):
+				observation.Outcome = IdleTailUnsupported
+			default:
+				c.logger.Debug("managed postgres idle tail unavailable", "database_id", item.database.ID, "error", err)
+				c.idleTailObserver(idleTailObservation(item, IdleTailUnavailable))
+				done++
+				c.pendingIdleTails = c.pendingIdleTails[done:]
+				return
+			}
 		}
 		c.idleTailObserver(observation)
+		done++
 	}
+	c.pendingIdleTails = c.pendingIdleTails[done:]
 }

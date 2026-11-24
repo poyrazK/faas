@@ -31,52 +31,73 @@ func TestIdleTailCountsTheWindowsIdleSuspends(t *testing.T) {
 		want      managedpostgres.IdleTail
 		err       error
 		noOps     bool
+		// maxRequests defaults to 4.
+		maxRequests int
 	}{
 		{
 			name:      "idle suspends over two pages; restarts, other computes and other windows are not",
 			endpoints: []map[string]any{compute("ep-primary", 0.25, 120), reader},
 			pages: [][]map[string]any{
-				{op("o12", "suspend_compute", "finished", "ep-primary", 3630), op("o11", "start_compute", "finished", "ep-primary", 3010),
-					// A restart: suspend, then start within a minute.
-					op("o10", "suspend_compute", "finished", "ep-primary", 3000), op("o9", "suspend_compute", "finished", "ep-primary", 2400)},
-				{op("o8", "start_compute", "finished", "ep-primary", 1900), op("o7", "suspend_compute", "running", "ep-primary", 1800),
-					// A config apply just before the suspend.
-					op("o6", "suspend_compute", "finished", "ep-primary", 1230), op("o5", "apply_config", "finished", "ep-primary", 1200),
+				{op("o12", "suspend_compute", "finished", "ep-primary", 3630), op("o11", "start_compute", "finished", "ep-primary", 3003),
+					// A restart: suspend, then start within seconds.
+					op("o10", "suspend_compute", "finished", "ep-primary", 3000), op("o9", "start_compute", "finished", "ep-primary", 2430)},
+				// A client waking the compute 30 s after an idle suspend.
+				{op("o8", "suspend_compute", "finished", "ep-primary", 2400), op("o7", "suspend_compute", "running", "ep-primary", 1800),
 					op("o4", "suspend_compute", "finished", "ep-reader", 900), op("o3", "suspend_compute", "finished", "ep-primary", 600),
-					// Before the window, but within the restart gap: read, not counted.
-					op("o2", "suspend_compute", "finished", "ep-primary", -30), op("o1", "suspend_compute", "finished", "ep-primary", -600)},
+					op("o1", "suspend_compute", "finished", "ep-primary", -600)},
 			},
-			// o9 and o3 at 120 s × 0.25 CU.
-			want: managedpostgres.IdleTail{Suspends: 2, ComputeUnitSeconds: 60},
+			// o8 and o3 at 120 s × 0.25 CU, read with the endpoints and two pages.
+			want: managedpostgres.IdleTail{Suspends: 2, ComputeUnitSeconds: 60, Requests: 3},
+		},
+		{
+			name:      "a config apply since the window started leaves it unpriced",
+			endpoints: []map[string]any{compute("ep-primary", 0.25, 120)},
+			pages:     [][]map[string]any{{op("o2", "apply_config", "finished", "ep-primary", 5400), op("o1", "suspend_compute", "finished", "ep-primary", 600)}},
+			want:      managedpostgres.IdleTail{Requests: 2},
+			err:       managedpostgres.ErrUnsupported,
+		},
+		{
+			name:      "more operations than the request ceiling is unsupported",
+			endpoints: []map[string]any{compute("ep-primary", 0.25, 120)},
+			pages: [][]map[string]any{
+				{op("o8", "start_compute", "finished", "ep-primary", 3000), op("o7", "suspend_compute", "finished", "ep-primary", 2900), op("o6", "start_compute", "finished", "ep-primary", 2800), op("o5", "suspend_compute", "finished", "ep-primary", 2700)},
+				{op("o4", "start_compute", "finished", "ep-primary", 2600), op("o3", "suspend_compute", "finished", "ep-primary", 2500), op("o2", "start_compute", "finished", "ep-primary", 2400), op("o1", "suspend_compute", "finished", "ep-primary", 2300)},
+			},
+			maxRequests: 2,
+			want:        managedpostgres.IdleTail{Requests: 2},
+			err:         managedpostgres.ErrUnsupported,
 		},
 		{
 			name:      "a timeout of 0 is the plan's 300 s",
 			endpoints: []map[string]any{compute("ep-primary", 0.5, 0)},
 			pages:     [][]map[string]any{{op("o1", "suspend_compute", "finished", "ep-primary", 600)}},
-			want:      managedpostgres.IdleTail{Suspends: 1, ComputeUnitSeconds: 150},
+			want:      managedpostgres.IdleTail{Suspends: 1, ComputeUnitSeconds: 150, Requests: 2},
 		},
 		{
 			name:      "a full last page reads one empty page past Neon's cursor",
 			endpoints: []map[string]any{compute("ep-primary", 0.25, 120)},
 			pages: [][]map[string]any{{op("o4", "suspend_compute", "finished", "ep-primary", 2400), op("o3", "start_compute", "finished", "ep-primary", 1800),
 				op("o2", "suspend_compute", "finished", "ep-primary", 1200), op("o1", "start_compute", "finished", "ep-primary", 600)}, nil},
-			want: managedpostgres.IdleTail{Suspends: 2, ComputeUnitSeconds: 60},
+			want: managedpostgres.IdleTail{Suspends: 2, ComputeUnitSeconds: 60, Requests: 3},
 		},
 		{
 			name:      "always-on has no tail and no operation read",
 			endpoints: []map[string]any{compute("ep-primary", 1, -1)},
 			noOps:     true,
+			want:      managedpostgres.IdleTail{Requests: 1},
 		},
 		{
 			name:      "a restore's second read-write compute is unsupported",
 			endpoints: []map[string]any{compute("ep-primary", 0.25, 120), compute("ep-restore", 0.25, 120)},
 			noOps:     true,
+			want:      managedpostgres.IdleTail{Requests: 1},
 			err:       managedpostgres.ErrUnsupported,
 		},
 		{
 			name:      "out of order is unavailable",
 			endpoints: []map[string]any{compute("ep-primary", 0.25, 120)},
 			pages:     [][]map[string]any{{op("o1", "suspend_compute", "finished", "ep-primary", 600), op("o2", "suspend_compute", "finished", "ep-primary", 1200)}},
+			want:      managedpostgres.IdleTail{Requests: 2},
 			err:       managedpostgres.ErrUnavailable,
 		},
 	}
@@ -107,7 +128,11 @@ func TestIdleTailCountsTheWindowsIdleSuspends(t *testing.T) {
 				}
 			}))
 			provider.idleTailPageSize = 4
-			got, err := provider.IdleTail(context.Background(), "quiet-river-12345678", window)
+			maxRequests := tt.maxRequests
+			if maxRequests == 0 {
+				maxRequests = 4
+			}
+			got, err := provider.IdleTail(context.Background(), "quiet-river-12345678", window, maxRequests)
 			if !errors.Is(err, tt.err) || got != tt.want {
 				t.Fatalf("IdleTail = %+v, %v; want %+v, %v", got, err, tt.want, tt.err)
 			}
@@ -120,10 +145,10 @@ func TestIdleTailRefusesBranchesAndBadWindows(t *testing.T) {
 		t.Errorf("unexpected request %s", r.URL)
 	}))
 	from := time.Date(2026, 11, 24, 10, 0, 0, 0, time.UTC)
-	if _, err := provider.IdleTail(context.Background(), "quiet-river-12345678/br-restore-1234", managedpostgres.UsageWindow{From: from, To: from.Add(time.Hour)}); !errors.Is(err, managedpostgres.ErrUnsupported) {
+	if _, err := provider.IdleTail(context.Background(), "quiet-river-12345678/br-restore-1234", managedpostgres.UsageWindow{From: from, To: from.Add(time.Hour)}, 4); !errors.Is(err, managedpostgres.ErrUnsupported) {
 		t.Fatalf("branch: %v", err)
 	}
-	if _, err := provider.IdleTail(context.Background(), "quiet-river-12345678", managedpostgres.UsageWindow{From: from, To: from}); !errors.Is(err, managedpostgres.ErrInvalid) {
+	if _, err := provider.IdleTail(context.Background(), "quiet-river-12345678", managedpostgres.UsageWindow{From: from, To: from}, 4); !errors.Is(err, managedpostgres.ErrInvalid) {
 		t.Fatalf("empty window: %v", err)
 	}
 }

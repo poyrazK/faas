@@ -184,7 +184,7 @@
       "type": "timeseries",
       "title": "Idle tail reads",
       "id": 4,
-      "description": "Only read and no_compute windows count toward the share. unavailable: Neon's operation list could not be read, which ends that sweep's pass; skipped: over the pass's 60-read budget or after a failure; unsupported: a project with a restore's second compute.",
+      "description": "Only read and no_compute windows count toward the share. unavailable: Neon could not be read, which ends that sweep's pass (the rest wait for the next one); unsupported: a project with a restore's second compute, a config change on the compute since the window began, or more operations than one read's 4-request ceiling; skipped: a newer window replaced one still queued. Reads are paced as background work, at most 60 Neon requests a sweep.",
       "gridPos": {
         "h": 8,
         "w": 12,
