@@ -30,8 +30,12 @@ SLACK_SIGNING_SECRET=<your-signing-secret>
 # SLACK_BOT_TOKEN=xoxb-...
 EOF
 chmod 600 ../slack-bot.secrets
-gregale deploy --secrets-file ../slack-bot.secrets
+gregale deploy --secrets-file ../slack-bot.secrets --no-require-authn
 ```
+
+`--no-require-authn` makes the app public on purpose: the sender cannot
+present a Gregale API key, so the handler checks the sender's own secret or
+signature instead. It stays public on later deploys.
 
 ## Reserve then configure separately
 
@@ -40,7 +44,7 @@ If you prefer to set secrets through the app API, reserve the app first:
 ```sh
 gregale deploy --create-only --template slack-bot --name <slug>
 gregale env set --app <slug> SLACK_SIGNING_SECRET=<your-signing-secret> SLACK_BOT_TOKEN=xoxb-...
-cd <this-directory> && gregale deploy
+cd <this-directory> && gregale deploy --no-require-authn
 ```
 
 ## Rotate or update secrets
@@ -59,7 +63,7 @@ the exact `gregale env set` command.
 From this directory:
 
 ```sh
-gregale deploy
+gregale deploy --no-require-authn
 ```
 
 ## Wire Slack to the app
