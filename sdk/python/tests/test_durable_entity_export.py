@@ -13,9 +13,7 @@ def test_application_validation_preserves_deployment_pin():
     from uuid import UUID
 
     from faas_sdk.preview.api.invocations import validate_durable_entity_restore
-    from faas_sdk.preview.models.durable_entity_restore_validation_response import (
-        DurableEntityRestoreValidationResponse,
-    )
+    from faas_sdk.preview.models.durable_entity_restore_validation_response import DurableEntityRestoreValidationResponse
 
     deployment = UUID("11111111-1111-4111-8111-111111111111")
     exported = DurableEntityStateExport.from_dict(

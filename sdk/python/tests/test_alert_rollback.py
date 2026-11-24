@@ -2,10 +2,10 @@ import datetime
 from uuid import UUID
 
 import httpx
-from faas_sdk.preview.api.alert_rules import get_alert_rollback, list_alert_rollbacks
-from faas_sdk.preview.models import AlertRollback
 
+from faas_sdk.preview.api.alert_rules import get_alert_rollback, list_alert_rollbacks
 from faas_sdk.client import Client
+from faas_sdk.preview.models import AlertRollback
 
 
 def test_alert_rollback_gets_preserve_exact_pair_and_blocked_state():

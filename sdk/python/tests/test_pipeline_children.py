@@ -7,6 +7,8 @@ from uuid import uuid4
 
 import httpx
 import pytest
+
+from faas_sdk import JobContract, JobInput
 from faas_sdk.job_runtime import job_value_hash
 from faas_sdk.preview import (
     PIPELINE_CHILDREN_SCHEMA,
@@ -25,8 +27,6 @@ from faas_sdk.preview import (
     pipeline_children_live_snapshot,
 )
 from faas_sdk.workflows import WORKFLOW_CODE_PROTOCOL, run_workflow_invocation
-
-from faas_sdk import JobContract, JobInput
 
 ROOT = Path(__file__).resolve().parents[1] / "request-contracts"
 if not ROOT.exists():

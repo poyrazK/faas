@@ -13,7 +13,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-from faas_sdk.preview import FaaSClient as PreviewClient
 
 from faas_sdk import (
     FaaSClient,
@@ -24,6 +23,7 @@ from faas_sdk import (
     load_project_application_state,
     project_verification_target,
 )
+from faas_sdk.preview import FaaSClient as PreviewClient
 
 CONTRACT = Path(__file__).resolve().parents[1] / "request-contracts/project-workflows.json"
 if not CONTRACT.exists():

@@ -11,7 +11,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-from faas_sdk.preview import FaaSClient as PreviewClient
 
 from faas_sdk import (
     FaaSClient,
@@ -22,6 +21,7 @@ from faas_sdk import (
     load_source_deployment_state,
 )
 from faas_sdk.models.upload_deploy_options import UploadDeployOptions
+from faas_sdk.preview import FaaSClient as PreviewClient
 
 SDK = Path(__file__).resolve().parents[1]
 CONTRACT = SDK / "request-contracts/source-deployments.json"

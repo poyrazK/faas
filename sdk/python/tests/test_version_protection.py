@@ -4,6 +4,7 @@ import json
 from uuid import UUID
 
 import httpx
+
 from faas_sdk.preview.api.storage import (
     get_object_version_legal_hold,
     get_object_version_protection,
@@ -11,6 +12,7 @@ from faas_sdk.preview.api.storage import (
     put_object_version_legal_hold,
     put_object_version_retention,
 )
+from faas_sdk.client import AuthenticatedClient
 from faas_sdk.preview.models import (
     ObjectVersionLegalHold,
     ObjectVersionLegalHoldRequest,
@@ -18,8 +20,6 @@ from faas_sdk.preview.models import (
     ObjectVersionRetention,
     ObjectVersionRetentionRequest,
 )
-
-from faas_sdk.client import AuthenticatedClient
 
 
 def test_version_protection_roundtrip() -> None:

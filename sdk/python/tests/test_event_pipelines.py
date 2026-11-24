@@ -6,6 +6,8 @@ from uuid import uuid4
 
 import httpx
 import pytest
+
+from faas_sdk import JobContract, JobError
 from faas_sdk.preview import (
     EVENT_PIPELINE_SCHEMA,
     EventContract,
@@ -19,8 +21,6 @@ from faas_sdk.preview import (
 )
 from faas_sdk.preview.event_consumer_transactions import event_consumer_request_from_headers
 from faas_sdk.preview.event_types import generate_event_types
-
-from faas_sdk import JobContract, JobError
 
 ROOT = Path(__file__).resolve().parents[1] / "request-contracts"
 if not ROOT.exists():

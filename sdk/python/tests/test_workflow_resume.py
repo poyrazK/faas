@@ -1,13 +1,13 @@
 import json
 
 import httpx
+
+from faas_sdk import AuthenticatedClient
 from faas_sdk.preview.api.workflows import list_workflow_resumes, resume_workflow_run
 from faas_sdk.preview.models.list_workflow_resumes_response import ListWorkflowResumesResponse
 from faas_sdk.preview.models.resume_workflow_run_request import ResumeWorkflowRunRequest
 from faas_sdk.preview.models.workflow_run_response import WorkflowRunResponse
 from faas_sdk.preview.models.workflow_step_response import WorkflowStepResponse
-
-from faas_sdk import AuthenticatedClient
 
 
 def test_resume_routes_and_zero_revision():

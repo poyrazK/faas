@@ -1,12 +1,12 @@
 import json
 
 import httpx
+
 from faas_sdk.preview.api.workflows import delete_stored_workflow, publish_stored_workflow, save_stored_workflow_draft
+from faas_sdk.client import AuthenticatedClient
 from faas_sdk.preview.models.publish_stored_workflow_request import PublishStoredWorkflowRequest
 from faas_sdk.preview.models.save_stored_workflow_draft_request import SaveStoredWorkflowDraftRequest
 from faas_sdk.preview.models.workflow_spec import WorkflowSpec
-
-from faas_sdk.client import AuthenticatedClient
 
 
 def test_authoring_requests_preserve_revision_ownership_and_draft():

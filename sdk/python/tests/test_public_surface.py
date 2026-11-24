@@ -3,9 +3,8 @@ capabilities; `faas_sdk.preview` adds the preview ones."""
 
 import importlib.util
 
-import faas_sdk.preview as preview
-
 import faas_sdk
+import faas_sdk.preview as preview
 
 
 def test_default_package_leaves_preview_helpers_out() -> None:
@@ -33,10 +32,9 @@ def test_generated_trees_split_by_maturity() -> None:
 
 
 def test_preview_shares_the_generator_types_and_clients() -> None:
+    from faas_sdk.client import Client
     from faas_sdk.preview.client import Client as PreviewClient
     from faas_sdk.preview.types import UNSET as preview_unset
-
-    from faas_sdk.client import Client
     from faas_sdk.types import UNSET
 
     assert preview_unset is UNSET

@@ -1,10 +1,10 @@
 from uuid import UUID
 
 import httpx
-from faas_sdk.preview.api.apps import get_route_health_history_entry, list_route_health_history
-from faas_sdk.preview.models import RouteHealthHistoryEntry, RouteHealthHistoryPage
 
 from faas_sdk import FaaSClient
+from faas_sdk.preview.api.apps import get_route_health_history_entry, list_route_health_history
+from faas_sdk.preview.models import RouteHealthHistoryEntry, RouteHealthHistoryPage
 from faas_sdk.types import Unset
 
 

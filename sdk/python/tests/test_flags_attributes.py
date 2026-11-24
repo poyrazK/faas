@@ -5,6 +5,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+
 from faas_sdk.preview import (
     GREGALE_CLIENT_COUNTRY_HEADER,
     GREGALE_CLIENT_UA_FAMILY_HEADER,

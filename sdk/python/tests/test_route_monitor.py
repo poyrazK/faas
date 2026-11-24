@@ -3,6 +3,8 @@ from pathlib import Path
 from uuid import UUID
 
 import httpx
+
+from faas_sdk import FaaSClient
 from faas_sdk.preview.api.apps import (
     get_route_monitor,
     get_route_monitor_incident,
@@ -19,8 +21,6 @@ from faas_sdk.preview.models import (
     RouteMonitorWebhookPayload,
     SetRouteMonitorRequest,
 )
-
-from faas_sdk import FaaSClient
 
 
 def test_route_monitor_escalation_webhook_payload_round_trip():

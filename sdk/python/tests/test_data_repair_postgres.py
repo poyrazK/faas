@@ -207,9 +207,7 @@ class DataRepairPostgresTest(unittest.TestCase):
         role = "writer_python_" + uuid4().hex
         name = self.sql.Identifier(role)
         self.connection.execute(self.sql.SQL("CREATE ROLE {} NOLOGIN").format(name))
-        writer = self.psycopg.connect(
-            os.environ["DATABASE_URL"], dbname=self.database, autocommit=True, options="-c timezone=Europe/Istanbul"
-        )
+        writer = self.psycopg.connect(os.environ["DATABASE_URL"], dbname=self.database, autocommit=True, options="-c timezone=Europe/Istanbul")
         try:
             grants = (Path(__file__).resolve().parents[2] / "data-repair-tests/writer-grants.sql").read_text()
             self.connection.execute(grants.replace("__WRITER_ROLE__", name.as_string(self.connection)))

@@ -4,11 +4,13 @@ import json
 from uuid import UUID
 
 import httpx
+
 from faas_sdk.preview.api.storage import (
     get_object_bucket_object_lock,
     get_object_bucket_object_lock_capabilities,
     put_object_bucket_object_lock,
 )
+from faas_sdk.client import AuthenticatedClient
 from faas_sdk.preview.models import (
     ObjectBucketObjectLock,
     ObjectBucketObjectLockConfiguration,
@@ -17,8 +19,6 @@ from faas_sdk.preview.models import (
     ObjectLockDefaultRetention,
     ObjectRetentionPeriod,
 )
-
-from faas_sdk.client import AuthenticatedClient
 
 
 def test_object_lock_nested_configuration() -> None:

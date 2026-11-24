@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 import pytest
+
 from faas_sdk.preview import LiveJob, LiveJobError, LiveJobSnapshot, realtime_live_job_source
 from faas_sdk.preview.realtime_recovery import RealtimeRecoveryEvent, RealtimeRecoveryTarget
 from faas_sdk.preview.realtime_websocket import RealtimeWebSocketMessage

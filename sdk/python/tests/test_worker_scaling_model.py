@@ -1,5 +1,4 @@
 from faas_sdk.preview.models import WorkerScaling
-
 from faas_sdk.types import Unset
 
 

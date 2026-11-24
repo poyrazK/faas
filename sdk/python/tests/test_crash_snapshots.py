@@ -6,12 +6,8 @@ import asyncio
 import json
 
 import httpx
-from faas_sdk.preview import (
-    CRASH_SNAPSHOT_ENDPOINT,
-    CrashSnapshotResult,
-    acapture_crash_snapshot,
-    capture_crash_snapshot,
-)
+
+from faas_sdk.preview import CRASH_SNAPSHOT_ENDPOINT, CrashSnapshotResult, acapture_crash_snapshot, capture_crash_snapshot
 
 
 def test_capture_posts_reason_route_and_wait() -> None:
