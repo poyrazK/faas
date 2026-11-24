@@ -784,7 +784,7 @@ var cliCommands = []cliCommand{
 	{
 		Name: "bucket", DocSlug: "object-storage", Short: "Manage object storage buckets, objects, signed URLs and uploads",
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List an app's object-storage buckets and their IDs", Positionals: []string{"<app>"}},
+			{Name: "list", Short: "List an app's object-storage buckets and their IDs", Positionals: []string{"[<app>]"}},
 			{Name: "delete", Short: "Delete an empty bucket (including retained versions)", Positionals: []string{"<app>", "<bucket-id>"}, Flags: []cliFlag{{Name: "yes", Short: "skip the typed confirmation (alias: --quiet)"}}},
 			{Name: "uploads", Short: "Inspect owned multipart upload sessions and parts", Subcommands: []cliSub{
 				{Name: "list", Short: "List multipart sessions", Positionals: []string{"<app>", "<bucket-id>"}, Flags: []cliFlag{{Name: "limit", Value: "N", Short: "page size (1..1000)"}, {Name: "cursor", Value: "ID", Short: "next page cursor"}}},
@@ -2407,7 +2407,7 @@ var cliCommands = []cliCommand{
 				{Name: "lock", Short: "run one at a time per --lock-key under this managed operation policy", Value: "POLICY", Capability: "operations"},
 				{Name: "lock-key", Short: "JSON value that must run one at a time (requires --lock)", Value: "JSON", Capability: "operations"},
 				{Name: "interactive", Short: "choose an HTTP path, schedule, and timezone, preview run times, and confirm creation", Bool: true},
-				{Name: "app", Short: "app slug (interactive mode can use linked app or picker)", Value: "slug"},
+				{Name: "app", Short: "app slug (defaults to linked context; interactive mode can also pick one)", Value: "slug"},
 				{Name: "schedule", Short: "five-field cron expression (required unless interactive)", Value: "EXPR"},
 				{Name: "path", Short: "path the cron sends a POST to (mutually exclusive with --command)", Value: "PATH"},
 				{Name: "command", Short: "executable for a deployment command cron (preview: needs app tasks)", Value: "EXEC"},
