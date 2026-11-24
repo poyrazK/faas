@@ -61398,6 +61398,35 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/admin/app-names/report:
+    get:
+      tags: [admin]
+      operationId: getAppNameReport
+      summary: Existing apps an app name blocklist matches (operator-only).
+      description: |
+        Lists existing apps whose names the live `app_name_blocklist` runtime
+        setting matches, for review. Nothing is changed: existing apps keep
+        their names. With `blocklist` the report uses that list instead of the
+        live one, so an operator can see a list's effect before setting it.
+        Deleted apps that can still be restored are listed too (status
+        `deleted`): a restore brings their name back. When more than 5000 apps
+        match, the first 5000 by name are listed and `truncated` is true.
+      parameters:
+        - { name: blocklist, in: query, required: false, schema: { type: string }, description: "Entries separated by commas, spaces or newlines: exact names or patterns where * matches any characters." }
+      responses:
+        '200':
+          description: Matching apps, sorted by name.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppNameReportResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: 'code: admin_required — the app name report needs an operator session with MFA.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   # ─── Operator Polar refunds (issue #279) ───────────────────────────────
   # Money-moving route. MFA is enforced for session principals, while the
   # admin scope + FAAS_ADMIN_EMAILS allowlist protect operator API keys.
@@ -98596,6 +98625,30 @@ components:
           type: array
           items: { $ref: '#/components/schemas/HeldLinkReview' }
         truncated: { type: boolean }
+
+    AppNameReportResponse:
+      description: "Existing apps an app name blocklist matches. source is live (app_name_blocklist) or preview (the request's blocklist). truncated means more apps matched than were listed."
+      type: object
+      required: [source, entries, matches, truncated]
+      properties:
+        source: { type: string, enum: [live, preview] }
+        entries: { type: integer, description: "Number of blocklist entries checked." }
+        matches:
+          type: array
+          items: { $ref: '#/components/schemas/AppNameReportMatch' }
+        truncated: { type: boolean }
+
+    AppNameReportMatch:
+      description: "An existing app whose name a blocklist entry matches."
+      type: object
+      required: [slug, app_id, account_id, status, entry]
+      properties:
+        slug: { type: string }
+        app_id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid }
+        status: { type: string }
+        entry: { type: string, description: "The blocklist entry that matched." }
 
     AccountLimits:
       description: "Plan-driven quota, resource caps, and trigger capabilities returned by GET /v1/account."
