@@ -418,6 +418,15 @@ func TestS3ConfigValidation(t *testing.T) {
 			t.Errorf("%s: Validate accepted %+v", name, c)
 		}
 	}
+	granted := good
+	granted.Granted, granted.AccessKeyID, granted.SecretAccessKey = true, "", ""
+	if err := granted.Validate(); err != nil {
+		t.Fatalf("granted without a key rejected: %v", err)
+	}
+	granted.AccessKeyID = "a"
+	if err := granted.Validate(); err == nil {
+		t.Fatal("accepted half a key pair")
+	}
 	loopback := good
 	loopback.Endpoint = "http://127.0.0.1:9000"
 	if err := loopback.Validate(); err != nil {

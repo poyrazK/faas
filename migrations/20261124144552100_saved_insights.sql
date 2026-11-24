@@ -1,4 +1,4 @@
--- filename: 20261124134623100_saved_insights.sql
+-- filename: 20261124144552100_saved_insights.sql
 -- migration-compat: expand
 -- ADR-20261122190000: saved insights. saved_insights keeps an environment's
 -- named analytics queries (events, funnel or retention) with a relative
