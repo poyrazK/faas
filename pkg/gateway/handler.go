@@ -1075,6 +1075,9 @@ type Handler struct {
 	// (ADR-20261124094745); nil leaves it out.
 	upgradeLinks     ConsumerUpgradeLinker
 	upgradeLinkCache *upgradeLinkCache
+	// mcpSessions remembers MCP sessions whose client declared URL
+	// elicitation (ADR-20261125230541).
+	mcpSessions mcpSessionCapabilities
 	// mcpAccountTools answers the MCP account tools of OAuth consumers
 	// (ADR-20261125194510); nil leaves tool lists and calls to the app.
 	mcpAccountTools            MCPAccountToolAnswerer
@@ -8399,6 +8402,9 @@ haveApp:
 	// early returns and is a no-op after it.
 	w, finishAccountTools := wrapMCPAccountToolsList(w, r)
 	defer finishAccountTools()
+	// ADR-20261125230541: remember a session whose client takes URL
+	// elicitation, for plan refusals later in it.
+	w = h.wrapMCPInitialize(w, r)
 
 	// Streaming-Status header stamp (ADR-102 D2). UNCONDITIONAL —
 	// the header must land on EVERY response (streaming AND
