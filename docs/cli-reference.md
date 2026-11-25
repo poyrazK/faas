@@ -105,7 +105,7 @@ Scaffold a project from a built-in template
 
 | Flag | Meaning | |
 |---|---|---|
-| `--template <NAME>` | template name (required unless --agents) | one of `hello-node` · `hello-python` · `hello-go` · `hello-node-private` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `object-storage-python` · `slack-bot` · `rest-api-postgres` · `rest-api-postgres-python` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-node-tasks` · `mcp-go` · `mcp-go-tasks` · `mcp-python` · `mcp-python-tasks` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `data-api-teams` · `data-api-support-console` |
+| `--template <NAME>` | template name (required unless --agents) | one of `hello-node` · `hello-python` · `hello-go` · `hello-node-private` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `object-storage-python` · `slack-bot` · `rest-api-postgres` · `rest-api-postgres-python` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-node-tasks` · `mcp-go` · `mcp-go-tasks` · `mcp-python` · `mcp-python-tasks` · `data-api` · `data-api-starter` · `data-api-teams` · `data-api-support-console` |
 | `--path <DIR>` | target directory (required unless --agents, which defaults to .) |  |
 | `--deploy` | deploy after scaffolding |  |
 | `--name <SLUG>` | app slug used with --deploy, or the app --agents deploys (default: the linked app, else the directory name) |  |
@@ -134,9 +134,9 @@ Source defaults to committed HEAD when origin exists; otherwise local files. Use
 
 RAM/CPU: use --size SIZE (--profile SIZE after the command is deprecated). Connection: use --profile NAME before the command.
 
-Projects: --project (every workload), --only SLUGS. Traffic: --rollout MODE.
+Projects: --project, --only SLUGS; Compose keys/RAM: gregale guide compose-keys
 
-Retry a project&#39;s failed workloads: gregale release attempt retry SESSION_ID
+Traffic: --rollout MODE. Retry failed: gregale release attempt retry SESSION_ID
 
 | Flag | Meaning | |
 |---|---|---|
@@ -166,7 +166,7 @@ Retry a project&#39;s failed workloads: gregale release attempt retry SESSION_ID
 | `--github` | emit a GitHub Actions workflow snippet for the Gregale deploy action |  |
 | `--pinned-sha <SHA>` | with --github only, pin the generated Action to this full 40-character commit SHA |  |
 | `--pin-action` | with --github only, resolve the current v0 Action tag to its commit SHA |  |
-| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `hello-node-private` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `object-storage-python` · `slack-bot` · `rest-api-postgres` · `rest-api-postgres-python` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-node-tasks` · `mcp-go` · `mcp-go-tasks` · `mcp-python` · `mcp-python-tasks` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `data-api-teams` · `data-api-support-console` |
+| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `hello-node-private` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `object-storage-python` · `slack-bot` · `rest-api-postgres` · `rest-api-postgres-python` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-node-tasks` · `mcp-go` · `mcp-go-tasks` · `mcp-python` · `mcp-python-tasks` · `data-api` · `data-api-starter` · `data-api-teams` · `data-api-support-console` |
 | `--dockerfile` | build with the supplied Dockerfile inside --tarball |  |
 | `--issue-source-maps <PATH>` | publish a portable manifest from the selected source; requires zero production traffic |  |
 | `--issue-source-map-directory <PATH>` | deployed bundle directory corresponding to the manifest directory |  |
@@ -2178,7 +2178,7 @@ gregale project export shop --out compose.yaml
 
 Env values stay sealed: each variable is referenced by name, as ${NAME}.
 
-Gregale settings are written as x-gregale-* keys; other Compose tools ignore them, and gregale deploy reads them back.
+Gregale settings are written as x-gregale-* keys; other Compose tools ignore them, and gregale deploy reads them back. Every key: gregale guide compose-keys.
 
 ### project import
 
@@ -4848,7 +4848,7 @@ Read compute policy change progress
 
 ### postgres suspend-timeout
 
-Set how long an idle scale-to-zero database stays up (1m-1h, or default)
+Set how long an idle scale-to-zero database stays up (1m-1h)
 
 `gregale postgres suspend-timeout <set> <database> <duration|default>`
 
@@ -4861,7 +4861,7 @@ gregale postgres suspend-timeout set orders-db default
 
 #### postgres suspend-timeout set
 
-Set how long an idle scale-to-zero database stays up (1m-1h, or default)
+Set how long an idle scale-to-zero database stays up (1m-1h)
 
 `gregale postgres suspend-timeout set <database> <duration|default>`
 
@@ -8286,14 +8286,14 @@ Search your account&#39;s audit log
 
 List audit events
 
-`gregale audit list [--kind-prefix <PREFIX>] [--app <SLUG>] [--app-id <UUID>] [--since <RFC3339>] [--limit <N>] [--include-anonymous] [--verbose]`
+`gregale audit list [--kind-prefix <PREFIX>] [--app <SLUG>] [--app-id <UUID>] [--since <DURATION|RFC3339>] [--limit <N>] [--include-anonymous] [--verbose]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--kind-prefix <PREFIX>` | filter by kind prefix |  |
 | `--app <SLUG>` | filter by app slug |  |
 | `--app-id <UUID>` | filter by app UUID |  |
-| `--since <RFC3339>` | RFC3339 lower bound |  |
+| `--since <DURATION|RFC3339>` | lower bound: a duration such as 1h, or RFC3339 |  |
 | `--limit <N>` | maximum rows (1..100; default 50) |  |
 | `--include-anonymous` | include rows without a subject |  |
 | `--verbose` | expand stateless advisory rows |  |

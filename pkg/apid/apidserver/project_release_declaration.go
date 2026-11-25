@@ -51,21 +51,45 @@ func projectWorkloadReleaseCommand(staged string, workloads []reposcan.Workload,
 		}
 		return resolved, nil
 	}
-	declared, origin, dir, problem := serviceOwnReleaseDeclaration(staged, workloads, workload, buildContext, manifest)
+	declared, origin, dir, problem := serviceOwnReleaseDeclaration(archiveProcfileReader(staged), workloads, workload, buildContext, manifest)
 	if problem != nil || declared == "" {
 		return assigned, problem
 	}
-	for _, other := range workloads {
-		if other.Name != workload.Name && cleanWorkloadDir(other.RootDir) == dir {
-			return deploymentReleaseCommand{}, projectReleaseDeclarationProblem(fmt.Sprintf(
-				"%s declares a release command, but services %q and %q both build from that directory, so it would run once per service. "+
-					"Move it into one service's own directory, or declare it once as a Compose service the others wait for with condition: service_completed_successfully.",
-				origin, workload.Name, other.Name))
-		}
+	if detail := sharedReleaseDirDetail(workloads, workload, dir, origin); detail != "" {
+		return deploymentReleaseCommand{}, projectReleaseDeclarationProblem(detail)
 	}
 	// The service's own declaration wins over a Compose completion step, as
 	// on every other deploy path (ADR-20261102192943).
 	return validateDeploymentReleaseCommand(declared)
+}
+
+// sharedReleaseDirDetail explains why a release command declared in dir is
+// refused when another service builds from dir too; empty when none does.
+func sharedReleaseDirDetail(workloads []reposcan.Workload, workload reposcan.Workload, dir, origin string) string {
+	for _, other := range workloads {
+		if other.Name != workload.Name && cleanWorkloadDir(other.RootDir) == dir {
+			// The same text from either service, so the plan lists it once.
+			first, second := workload.Name, other.Name
+			if second < first {
+				first, second = second, first
+			}
+			return fmt.Sprintf(
+				"%s declares a release command, but services %q and %q both build from that directory, so it would run once per service. "+
+					"Move it into one service's own directory, or declare it once as a Compose service the others wait for with condition: service_completed_successfully.",
+				origin, first, second)
+		}
+	}
+	return ""
+}
+
+// releaseProcfileReader reads a service's own Procfile in dir; narrowed says
+// the source holds only that directory, as its root.
+type releaseProcfileReader func(dir string, narrowed bool) ([]byte, bool, error)
+
+func archiveProcfileReader(staged string) releaseProcfileReader {
+	return func(dir string, narrowed bool) ([]byte, bool, error) {
+		return readServiceOwnProcfile(staged, dir, narrowed)
+	}
 }
 
 // composeReleaseContext is a Compose service's own build context: root is its
@@ -81,7 +105,7 @@ type composeReleaseContext struct {
 // in its own directory, where it came from, and that directory. The
 // repository root Procfile is reposcan's (it assigns that release: process to
 // exactly one workload).
-func serviceOwnReleaseDeclaration(staged string, workloads []reposcan.Workload, workload reposcan.Workload, buildContext composeReleaseContext, manifest *gregalemanifest.Manifest) (string, string, string, *api.Problem) {
+func serviceOwnReleaseDeclaration(readProcfile releaseProcfileReader, workloads []reposcan.Workload, workload reposcan.Workload, buildContext composeReleaseContext, manifest *gregalemanifest.Manifest) (string, string, string, *api.Problem) {
 	dir := cleanWorkloadDir(workload.RootDir)
 	if manifest != nil && manifest.Release != nil && manifest.Release.Command != "" {
 		return manifest.Release.Command, path.Join(dir, "gregale.yaml") + " release.command", dir, nil
@@ -100,7 +124,7 @@ func serviceOwnReleaseDeclaration(staged string, workloads []reposcan.Workload, 
 	// Outside a narrowed archive only the service's own directory counts: the
 	// reader falls back to the archive root, whose Procfile reposcan already
 	// assigned.
-	body, found, err := readServiceOwnProcfile(staged, dir, narrowed)
+	body, found, err := readProcfile(dir, narrowed)
 	if err != nil {
 		return "", "", "", api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", err.Error())
 	}

@@ -354,16 +354,16 @@ func waitForDeploymentRollout(ctx context.Context, c *Client, dep api.Deployment
 
 func renderDeploymentReleaseSummary(w io.Writer, summary api.DeploymentSummaryResponse, appSlug string) {
 	_, _ = fmt.Fprintln(w, "Release summary:")
+	changes := releaseChangeLines(summary.Changes)
 	switch {
 	case summary.Previous == nil:
 		_, _ = fmt.Fprintln(w, "  Changes: initial release")
-	case len(summary.Changes) == 0:
+	case len(changes) == 0:
 		_, _ = fmt.Fprintf(w, "  Changes since %s: none\n", deploymentLabel(*summary.Previous))
 	default:
 		_, _ = fmt.Fprintf(w, "  Changes since %s:\n", deploymentLabel(*summary.Previous))
-		for _, change := range summary.Changes {
-			_, _ = fmt.Fprintf(w, "    %-18s %s -> %s\n", change.Field,
-				formatSummaryValue(change.Before), formatSummaryValue(change.After))
+		for _, line := range changes {
+			_, _ = fmt.Fprintf(w, "    %s\n", line)
 		}
 	}
 	// production-us hunt #8: during a canary the previous release still

@@ -1,4 +1,4 @@
--- filename: 20261125105038100_managed_postgres_wake_with_app.sql
+-- filename: 20261125155404100_managed_postgres_wake_with_app.sql
 -- migration-compat: expand
 --
 -- A customer may have a scale-to-zero managed PostgreSQL database start when

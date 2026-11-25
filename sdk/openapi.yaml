@@ -5840,6 +5840,38 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/apps/{slug}/consumer-identities:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [consumers]
+      operationId: listConsumerIdentities
+      summary: List the OAuth sign-ins of the app's MCP server and the consumers they bill to, newest first.
+      responses:
+        '200':
+          description: The app's consumer identities.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ConsumerIdentityListResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /v1/apps/{slug}/consumer-identities/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: The identity to unlink, as listed by the consumer identities endpoint.
+        schema: {type: string, format: uuid}
+    delete:
+      tags: [consumers]
+      operationId: deleteConsumerIdentity
+      summary: Unlink an OAuth sign-in from its consumer; the next sign-in enrolls again or links by key.
+      responses:
+        '204':
+          description: Unlinked.
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
   /v1/deleted-apps:
     get:
       tags: [apps]
@@ -46242,6 +46274,12 @@ components:
             type: string
             enum: [service_started, service_healthy]
           description: "Explicit Compose dependency conditions. service_started retains admission ordering; service_healthy gates release on the captured same-project, same-environment dependency deployment."
+        release_command:
+          type: string
+          description: "Command the service runs once before each of its releases goes live (shell string, or exec-form argv joined by spaces). Omitted when it declares none."
+        release_command_source:
+          type: string
+          description: "Where release_command is declared: a Compose service the workload waits for with service_completed_successfully, a Procfile release: process, or gregale.yaml release.command."
         service_binding_policy:
           $ref: '#/components/schemas/ServiceBindingPolicy'
           description: "Effective policy selected by Compose `x-gregale-service-policy` (`project`, `declared` or `account`). New project workloads default to `project`; existing workloads retain their persisted policy when the extension is omitted."
@@ -53549,6 +53587,12 @@ components:
           description: |
             Provider-neutral hosted checkout URL on a `payment_required`
             402 when a paid plan upgrade requires a new subscription.
+        upgrade_url:
+          type: string
+          format: uri
+          description: |
+            On a `consumer_plan_limit_exceeded` 429, the API's hosted page
+            where the consumer moves to another plan.
         billing_portal_url: {type: string, format: uri}
         paddle_checkout_url:
           type: string
@@ -54433,6 +54477,26 @@ components:
         current_count: {type: integer, format: int64, minimum: 0, description: Calls the current value was taken over.}
         baseline_count: {type: integer, format: int64, minimum: 0}
         detected_at: {type: string, format: date-time}
+    ConsumerIdentity:
+      description: "An OAuth sign-in of an app's MCP server and the consumer it bills to."
+      type: object
+      required: [id, consumer_id, issuer, subject, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        consumer_id: {type: string, format: uuid}
+        issuer: {type: string}
+        subject: {type: string}
+        email: {type: string, description: "The token's email claim; display only."}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    ConsumerIdentityListResponse:
+      description: "An app's OAuth identities, newest first."
+      type: object
+      required: [identities]
+      properties:
+        identities:
+          type: array
+          items: {$ref: '#/components/schemas/ConsumerIdentity'}
     PlatformTenantHostnameVerifiedWebhookPayload:
       type: object
       description: DNS ownership verification for a hostname on a surface explicitly linked to this tenant. It does not imply certificate issuance or routing, and never contains the DNS challenge token.

@@ -32867,6 +32867,33 @@ CREATE TABLE public.api_consumer_credit_purchases (
 
 
 --
+-- Name: api_consumer_identities; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_identities (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    consumer_id uuid NOT NULL,
+    issuer text NOT NULL,
+    subject text NOT NULL,
+    email text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_consumer_identities_email_chk CHECK ((char_length(email) <= 254)),
+    CONSTRAINT api_consumer_identities_issuer_chk CHECK (((char_length(issuer) >= 1) AND (char_length(issuer) <= 2048))),
+    CONSTRAINT api_consumer_identities_subject_chk CHECK (((char_length(subject) >= 1) AND (char_length(subject) <= 255)))
+);
+
+
+--
+-- Name: TABLE api_consumer_identities; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_identities IS 'OAuth identities (issuer + subject) of an app''s API consumers: MCP oauth-proxy sign-ins enroll as consumers (ADR-20261124094745).';
+
+
+--
 -- Name: api_consumer_meter_usage_minutes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -33132,6 +33159,8 @@ CREATE TABLE public.api_consumer_signup_settings (
     customer_closing boolean DEFAULT false NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    oauth_consumers boolean DEFAULT false NOT NULL,
+    free_plan_id uuid,
     CONSTRAINT api_consumer_signup_settings_limit_chk CHECK (((daily_limit >= 1) AND (daily_limit <= 1000))),
     CONSTRAINT api_consumer_signup_settings_name_chk CHECK (((char_length(display_name) >= 1) AND (char_length(display_name) <= 80))),
     CONSTRAINT api_consumer_signup_settings_plans_chk CHECK ((cardinality(plan_ids) <= 20)),
@@ -33147,6 +33176,20 @@ CREATE TABLE public.api_consumer_signup_settings (
 --
 
 COMMENT ON TABLE public.api_consumer_signup_settings IS 'Self-service sign-up for an app''s API customers (ADR-20261021143000).';
+
+
+--
+-- Name: COLUMN api_consumer_signup_settings.oauth_consumers; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.api_consumer_signup_settings.oauth_consumers IS 'Callers signed in through the app''s MCP oauth-proxy issuer become consumers on free_plan_id (ADR-20261124094745).';
+
+
+--
+-- Name: COLUMN api_consumer_signup_settings.free_plan_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.api_consumer_signup_settings.free_plan_id IS 'Offered plan that charges nothing: joining it skips Checkout (ADR-20261124094745).';
 
 
 --
@@ -44341,8 +44384,82 @@ CREATE TABLE public.flag_experiments (
     bandit_weighted_at timestamp with time zone,
     denominator_event text DEFAULT ''::text NOT NULL,
     percentile integer DEFAULT 0 NOT NULL,
+    notify_channel_ids uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    CONSTRAINT flag_experiments_notify_chk CHECK ((cardinality(notify_channel_ids) <= 5)),
     CONSTRAINT flag_experiments_v4_chk CHECK (((key ~ '^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$'::text) AND (metric_event ~ '^[a-z][a-z0-9_.-]{0,63}$'::text) AND (metric_kind = ANY (ARRAY['conversion'::text, 'mean'::text, 'funnel'::text, 'retention'::text, 'ratio'::text, 'percentile'::text])) AND (status = ANY (ARRAY['draft'::text, 'running'::text, 'stopped'::text])) AND (mixing_lift > (0)::double precision) AND (mixing_lift <= (1)::double precision) AND (jsonb_typeof(weights) = 'object'::text) AND (jsonb_typeof(min_p_values) = 'object'::text) AND (jsonb_typeof(min_cuped_p_values) = 'object'::text) AND (jsonb_typeof(metric_definition) = 'object'::text) AND (jsonb_typeof(guardrails) = 'object'::text) AND ((breach IS NULL) OR (jsonb_typeof(breach) = 'object'::text)) AND ((latency_threshold_ms IS NULL) OR (latency_threshold_ms >= 0)) AND (stop_reason = ANY (ARRAY[''::text, 'manual'::text, 'guardrail_breach'::text, 'shipped'::text])) AND ((status = 'stopped'::text) OR (stop_reason = ''::text)) AND ((length(flag_key) >= 1) AND (length(flag_key) <= 128)) AND ((length(rule_id) >= 1) AND (length(rule_id) <= 128)) AND ((length(control) >= 1) AND (length(control) <= 128)) AND ((length(created_by) >= 1) AND (length(created_by) <= 256)) AND ((status = 'draft'::text) OR (started_at IS NOT NULL)) AND ((status <> 'stopped'::text) OR (stopped_at IS NOT NULL)) AND (unit = ANY (ARRAY['customer'::text, 'subject'::text])) AND (allocation = ANY (ARRAY['fixed'::text, 'bandit'::text])) AND ((layer = ''::text) OR (layer ~ '^[a-z][a-z0-9_-]{0,63}$'::text)) AND ((traffic >= 0) AND (traffic <= 10000)) AND ((layer_from >= 0) AND (layer_from <= 10000)) AND ((layer_to >= 0) AND (layer_to <= 10000)) AND (layer_from <= layer_to) AND (jsonb_typeof(bandit) = 'array'::text) AND ((denominator_event = ''::text) OR (denominator_event ~ '^[a-z][a-z0-9_.-]{0,63}$'::text)) AND ((percentile >= 0) AND (percentile <= 99))))
 );
+
+
+--
+-- Name: flag_notification_keys; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.flag_notification_keys (
+    key text NOT NULL,
+    environment_id uuid NOT NULL,
+    kind text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT flag_notification_keys_chk CHECK (((kind = ANY (ARRAY['experiment_decision'::text, 'experiment_problem'::text, 'lifecycle_digest'::text, 'flag_expired'::text])) AND ((length(key) >= 1) AND (length(key) <= 256))))
+);
+
+
+--
+-- Name: TABLE flag_notification_keys; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.flag_notification_keys IS 'Every flag notification key queued, so a swept notification is never queued again (ADR-20261125085913).';
+
+
+--
+-- Name: flag_notification_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.flag_notification_settings (
+    environment_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    channel_ids uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    updated_by text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT flag_notification_settings_chk CHECK (((cardinality(channel_ids) <= 5) AND ((length(updated_by) >= 1) AND (length(updated_by) <= 256))))
+);
+
+
+--
+-- Name: TABLE flag_notification_settings; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.flag_notification_settings IS 'Notification channels for an environment''s experiments and flag lifecycle (ADR-20261125085913).';
+
+
+--
+-- Name: flag_notifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.flag_notifications (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    org_id uuid,
+    environment_id uuid NOT NULL,
+    kind text NOT NULL,
+    key text NOT NULL,
+    subject text NOT NULL,
+    summary text NOT NULL,
+    channel_ids uuid[] NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_error text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    settled_at timestamp with time zone,
+    CONSTRAINT flag_notifications_chk CHECK (((kind = ANY (ARRAY['experiment_decision'::text, 'experiment_problem'::text, 'lifecycle_digest'::text, 'flag_expired'::text])) AND ((length(key) >= 1) AND (length(key) <= 256)) AND ((length(subject) >= 1) AND (length(subject) <= 256)) AND ((length(summary) >= 1) AND (length(summary) <= 8192)) AND ((cardinality(channel_ids) >= 1) AND (cardinality(channel_ids) <= 5)) AND (status = ANY (ARRAY['pending'::text, 'delivered'::text, 'abandoned'::text])) AND (attempts >= 0) AND (length(last_error) <= 512) AND ((status = 'pending'::text) = (settled_at IS NULL))))
+);
+
+
+--
+-- Name: TABLE flag_notifications; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.flag_notifications IS 'Outbox of flag notifications queued by apid and delivered by meterd (ADR-20261125085913).';
 
 
 --
@@ -65490,6 +65607,14 @@ ALTER TABLE ONLY public.api_consumer_credit_purchases
 
 
 --
+-- Name: api_consumer_identities api_consumer_identities_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_identities
+    ADD CONSTRAINT api_consumer_identities_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: api_consumer_meter_usage_minutes api_consumer_meter_usage_minutes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -65583,6 +65708,14 @@ ALTER TABLE ONLY public.api_consumer_rate_cards
 
 ALTER TABLE ONLY public.api_consumer_route_usage_minutes
     ADD CONSTRAINT api_consumer_route_usage_minutes_pkey PRIMARY KEY (account_id, app_id, consumer_key, window_start, route);
+
+
+--
+-- Name: api_consumer_signup_settings api_consumer_signup_settings_oauth_free_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.api_consumer_signup_settings
+    ADD CONSTRAINT api_consumer_signup_settings_oauth_free_chk CHECK (((NOT oauth_consumers) OR (free_plan_id IS NOT NULL))) NOT VALID;
 
 
 --
@@ -70687,6 +70820,38 @@ ALTER TABLE ONLY public.flag_experiments
 
 ALTER TABLE ONLY public.flag_experiments
     ADD CONSTRAINT flag_experiments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: flag_notification_keys flag_notification_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_notification_keys
+    ADD CONSTRAINT flag_notification_keys_pkey PRIMARY KEY (key);
+
+
+--
+-- Name: flag_notification_settings flag_notification_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_notification_settings
+    ADD CONSTRAINT flag_notification_settings_pkey PRIMARY KEY (environment_id);
+
+
+--
+-- Name: flag_notifications flag_notifications_key_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_notifications
+    ADD CONSTRAINT flag_notifications_key_uniq UNIQUE (key);
+
+
+--
+-- Name: flag_notifications flag_notifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_notifications
+    ADD CONSTRAINT flag_notifications_pkey PRIMARY KEY (id);
 
 
 --
@@ -80425,6 +80590,27 @@ CREATE INDEX api_consumer_credit_purchases_pending_live_account ON public.api_co
 
 
 --
+-- Name: api_consumer_identities_app_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_identities_app_created_idx ON public.api_consumer_identities USING btree (app_id, created_at);
+
+
+--
+-- Name: api_consumer_identities_app_subject_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX api_consumer_identities_app_subject_uniq ON public.api_consumer_identities USING btree (app_id, issuer, subject);
+
+
+--
+-- Name: api_consumer_identities_consumer_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_identities_consumer_idx ON public.api_consumer_identities USING btree (consumer_id);
+
+
+--
 -- Name: api_consumer_overdue_holds_app_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -84801,6 +84987,34 @@ CREATE UNIQUE INDEX flag_experiments_one_running_per_rule ON public.flag_experim
 --
 
 CREATE INDEX flag_experiments_running_idx ON public.flag_experiments USING btree (id) WHERE (status = 'running'::text);
+
+
+--
+-- Name: flag_notification_keys_digest_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX flag_notification_keys_digest_idx ON public.flag_notification_keys USING btree (created_at) WHERE (kind = 'lifecycle_digest'::text);
+
+
+--
+-- Name: flag_notification_keys_environment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX flag_notification_keys_environment_idx ON public.flag_notification_keys USING btree (environment_id);
+
+
+--
+-- Name: flag_notifications_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX flag_notifications_due_idx ON public.flag_notifications USING btree (next_attempt_at) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: flag_notifications_settled_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX flag_notifications_settled_idx ON public.flag_notifications USING btree (settled_at) WHERE (status <> 'pending'::text);
 
 
 --
@@ -100465,6 +100679,30 @@ ALTER TABLE ONLY public.api_consumer_credit_purchases
 
 
 --
+-- Name: api_consumer_identities api_consumer_identities_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_identities
+    ADD CONSTRAINT api_consumer_identities_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_identities api_consumer_identities_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_identities
+    ADD CONSTRAINT api_consumer_identities_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_identities api_consumer_identities_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_identities
+    ADD CONSTRAINT api_consumer_identities_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
+
+
+--
 -- Name: api_consumer_meter_usage_minutes api_consumer_meter_usage_minutes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -107006,6 +107244,46 @@ ALTER TABLE ONLY public.flag_experiments
 
 ALTER TABLE ONLY public.flag_experiments
     ADD CONSTRAINT flag_experiments_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: flag_notification_keys flag_notification_keys_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_notification_keys
+    ADD CONSTRAINT flag_notification_keys_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: flag_notification_settings flag_notification_settings_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_notification_settings
+    ADD CONSTRAINT flag_notification_settings_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: flag_notification_settings flag_notification_settings_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_notification_settings
+    ADD CONSTRAINT flag_notification_settings_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: flag_notifications flag_notifications_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_notifications
+    ADD CONSTRAINT flag_notifications_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: flag_notifications flag_notifications_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_notifications
+    ADD CONSTRAINT flag_notifications_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
 
 
 --

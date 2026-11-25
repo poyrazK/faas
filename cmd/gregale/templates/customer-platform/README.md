@@ -21,8 +21,7 @@ attach separate runtime and migration bindings:
 gregale deploy --create-only --template customer-platform --name <slug>
 gregale postgres attach customer-db <slug> --access read_write --env DATABASE_URL
 gregale postgres attach customer-db <slug> --access migration --env MIGRATION_DATABASE_URL
-# Pro/Scale: permit PostgreSQL on TCP 5432 when required by your egress policy.
-gregale app <slug> egress-ports add 5432
+# postgres attach opened outbound TCP 5432 for the app; nothing else to do.
 gregale deploy --name <slug> --platform-tenant-required --no-require-authn
 ```
 

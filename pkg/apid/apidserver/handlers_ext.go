@@ -6978,7 +6978,7 @@ func (s *server) decoratedDeploymentResponse(parent context.Context, d state.Dep
 		if profileLoaded {
 			bp.Framework = buildPlanFramework(profile.Framework)
 			bp.Version = profile.FrameworkVer
-			bp.Entrypoint = profile.StartCommand
+			bp.Entrypoint = frameworkprofile.DeployedStartCommand(profile)
 			bp.Port = profile.Port
 			bp.HealthPath = profile.HealthPath
 			bp.ConfigFile = profile.ConfigFile

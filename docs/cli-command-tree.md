@@ -225,6 +225,8 @@ touch them. The tables below map each earlier name.
 | `gregale consumers billing-policy` | `gregale api consumer billing-policy get` |
 | `gregale consumers credit-grant` | `gregale api consumer credit grant` |
 | `gregale consumers credit-void` | `gregale api consumer credit void` |
+| `gregale consumers identities` | `gregale api consumer identity list` |
+| `gregale consumers identity-delete` | `gregale api consumer identity delete` |
 | `gregale consumers key-create` | `gregale api consumer key create` |
 | `gregale consumers key-revoke` | `gregale api consumer key revoke` |
 | `gregale consumers overdue-holds` | `gregale api consumer overdue-hold list` |
@@ -414,6 +416,9 @@ touch them. The tables below map each earlier name.
 | `gregale flags experiments start` | `gregale flag experiment start` |
 | `gregale flags experiments stop` | `gregale flag experiment stop` |
 | `gregale flags kill` | `gregale flag kill set` |
+| `gregale flags notifications clear` | `gregale flag notify clear` |
+| `gregale flags notifications get` | `gregale flag notify get` |
+| `gregale flags notifications set` | `gregale flag notify set` |
 | `gregale flags off` | `gregale flag disable` |
 | `gregale flags on` | `gregale flag enable` |
 | `gregale flags percent` | `gregale flag rollout set` |

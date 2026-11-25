@@ -25,6 +25,8 @@ class ConsumerSignupPlan:
     id: UUID | Unset = UNSET
     max_requests_per_minute: int | Unset = UNSET
     max_units_per_month: int | Unset = UNSET
+    free: bool | Unset = UNSET
+    """Joining this plan needs no card."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -43,6 +45,8 @@ class ConsumerSignupPlan:
 
         max_units_per_month = self.max_units_per_month
 
+        free = self.free
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -57,6 +61,8 @@ class ConsumerSignupPlan:
             field_dict["max_requests_per_minute"] = max_requests_per_minute
         if max_units_per_month is not UNSET:
             field_dict["max_units_per_month"] = max_units_per_month
+        if free is not UNSET:
+            field_dict["free"] = free
 
         return field_dict
 
@@ -85,12 +91,15 @@ class ConsumerSignupPlan:
 
         max_units_per_month = d.pop("max_units_per_month", UNSET)
 
+        free = d.pop("free", UNSET)
+
         consumer_signup_plan = cls(
             name=name,
             prices=prices,
             id=id,
             max_requests_per_minute=max_requests_per_minute,
             max_units_per_month=max_units_per_month,
+            free=free,
         )
 
         consumer_signup_plan.additional_properties = d

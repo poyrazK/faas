@@ -11,6 +11,10 @@ export type ConsumerSignupPlan = {
   name: string;
   max_requests_per_minute?: number;
   max_units_per_month?: number;
+  /**
+   * Joining this plan needs no card.
+   */
+  free?: boolean;
   prices: Array<ConsumerSignupPrice>;
 };
 

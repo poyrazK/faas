@@ -203,6 +203,8 @@ export type { ConnectionBudgetCapacity } from './models/ConnectionBudgetCapacity
 export type { ConnectionBudgetDemand } from './models/ConnectionBudgetDemand.js';
 export type { ConnectionBudgetInventory } from './models/ConnectionBudgetInventory.js';
 export type { ConnectionBudgetRuntimeObservations } from './models/ConnectionBudgetRuntimeObservations.js';
+export type { ConsumerIdentity } from './models/ConsumerIdentity.js';
+export type { ConsumerIdentityListResponse } from './models/ConsumerIdentityListResponse.js';
 export type { ControlWorkflowRecoveryPolicyRequest } from './models/ControlWorkflowRecoveryPolicyRequest.js';
 export type { CookieSession } from './models/CookieSession.js';
 export type { CorsPresetListResponse } from './models/CorsPresetListResponse.js';
@@ -1630,6 +1632,7 @@ export { AppsService } from './services/AppsService.js';
 export { AuditService } from './services/AuditService.js';
 export { AuthService } from './services/AuthService.js';
 export { BillingService } from './services/BillingService.js';
+export { ConsumersService } from './services/ConsumersService.js';
 export { CorsPresetsService } from './services/CorsPresetsService.js';
 export { CronsService } from './services/CronsService.js';
 export { DefaultService } from './services/DefaultService.js';

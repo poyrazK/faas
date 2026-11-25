@@ -253,3 +253,22 @@ func (c *Client) RuntimeFlagEvents(ctx context.Context, req FlagEventsRequest) (
 	err := c.do(ctx, http.MethodPost, "/v1/runtime/flags/events", req, &out)
 	return out, err
 }
+
+// ProjectFlagNotifications reads an environment's flag notification
+// channels (ADR-20261125085913).
+func (c *Client) ProjectFlagNotifications(ctx context.Context, project, environment string) (FlagNotificationSettings, error) {
+	var out FlagNotificationSettings
+	err := c.do(ctx, http.MethodGet, flagsPath(project, environment)+"/notifications", nil, &out)
+	return out, err
+}
+
+// SetProjectFlagNotifications replaces an environment's flag notification
+// channels; none turns them off.
+func (c *Client) SetProjectFlagNotifications(ctx context.Context, project, environment string, channelIDs []string) (FlagNotificationSettings, error) {
+	if channelIDs == nil {
+		channelIDs = []string{}
+	}
+	var out FlagNotificationSettings
+	err := c.do(ctx, http.MethodPut, flagsPath(project, environment)+"/notifications", FlagNotificationSettingsRequest{ChannelIDs: channelIDs}, &out)
+	return out, err
+}

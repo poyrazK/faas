@@ -10318,6 +10318,164 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/consumer-signup/{slug}/upgrade/plans:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app whose plan the customer changes.
+        schema: { type: string }
+    get:
+      tags: [consumers]
+      operationId: getConsumerUpgrade
+      summary: Read the plans an upgrade link's customer can move to.
+      description: |
+        Needs no credential: the upgrade link's token
+        names the customer. A plan-limit `429` carries the link in
+        `upgrade_url`.
+      security: []
+      parameters:
+        - name: token
+          in: query
+          required: true
+          description: The upgrade link's token.
+          schema: { type: string }
+      responses:
+        '200':
+          description: The customer's plan, the offered plans and whether it has a saved card.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerUpgradeResponse' }
+        '404':
+          description: The app takes no sign-ups, or the link is invalid or expired.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: The app does not let customers change plans (`consumer_self_service_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Too many upgrade-page requests from this address (`consumer_signup_rate_limited`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/consumer-signup/{slug}/upgrade:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app of the upgrade being started.
+        schema: { type: string }
+    post:
+      tags: [consumers]
+      operationId: startConsumerUpgrade
+      summary: Move an upgrade link's customer to another offered plan.
+      description: |
+        Needs no credential. A free plan, or any plan for a customer with a
+        saved card, changes from the next minute. A paid plan for a customer
+        without a card returns a Stripe Checkout URL to save one; Checkout
+        returns to the upgrade page, which completes the upgrade.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StartConsumerUpgradeRequest' }
+      responses:
+        '200':
+          description: The changed plan, or the Checkout to save a card first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerUpgradeResult' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404':
+          description: The app takes no sign-ups, or the upgrade link is invalid or expired.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Plan changes are off (`consumer_self_service_unavailable`) or one starts at the next minute already.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: The plan is not offered.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Too many upgrade starts from this address (`consumer_signup_rate_limited`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '502':
+          description: Stripe could not be reached to start Checkout (`billing_provider_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: The app's billing setup cannot take cards (`consumer_signup_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/consumer-signup/{slug}/upgrade/complete:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app of the upgrade being completed.
+        schema: { type: string }
+    post:
+      tags: [consumers]
+      operationId: completeConsumerUpgrade
+      summary: Finish an upgrade once Checkout saved the card.
+      description: |
+        Needs no credential: the upgrade link's token and the complete token
+        from the started upgrade prove it. Makes the new Stripe customer the
+        consumer's external_ref and changes the plan from the next minute.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CompleteConsumerUpgradeRequest' }
+      responses:
+        '200':
+          description: The changed plan.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerUpgradeResult' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404':
+          description: The app takes no sign-ups, or a token is invalid or expired.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: The card is not saved yet (`consumer_signup_checkout_incomplete`), the consumer already has another payment account, or a plan change starts at the next minute already.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Too many upgrade completions from this address (`consumer_signup_rate_limited`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '502':
+          description: Stripe could not be reached to finish the upgrade (`billing_provider_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: The app's billing setup cannot save the card (`consumer_signup_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/preflight:
     get:
       tags: [status]
@@ -24153,6 +24311,40 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ConsumerSignupListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/consumer-identities:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [consumers]
+      operationId: listConsumerIdentities
+      summary: List the OAuth sign-ins of the app's MCP server and the consumers they bill to, newest first.
+      responses:
+        '200':
+          description: The app's consumer identities.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerIdentityListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/consumer-identities/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: The identity to unlink, as listed by the consumer identities endpoint.
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [consumers]
+      operationId: deleteConsumerIdentity
+      summary: Unlink an OAuth sign-in from its consumer; the next sign-in enrolls again or links by key.
+      responses:
+        '204':
+          description: Unlinked.
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
@@ -65136,6 +65328,47 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/flags/notifications:
+    parameters:
+      - { $ref: '#/components/parameters/FlagsProjectSlug' }
+      - { $ref: '#/components/parameters/FlagsEnvironment' }
+    get:
+      tags: [flags]
+      operationId: getProjectFlagNotifications
+      summary: Read the channels an environment's flag notifications go to.
+      description: "Experiment decisions (ship a variant, keep control) and problems (guardrail rollback, sample ratio mismatch) of experiments without their own channels, a weekly digest of flags that need a decision and flag expiries go to these notification channels. Needs the flag_notifications release."
+      responses:
+        '200':
+          description: The environment's flag notification channels; empty when off.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagNotificationSettings' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [flags]
+      operationId: setProjectFlagNotifications
+      summary: Replace the channels an environment's flag notifications go to.
+      description: "Up to 5 of the account's notification channels; an empty list turns the environment's flag notifications off. Queued notifications keep the channels they were queued with."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FlagNotificationSettingsRequest' }
+      responses:
+        '200':
+          description: The environment's new flag notification channels.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagNotificationSettings' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments/{environment}/flags/rollback:
     parameters:
       - { $ref: '#/components/parameters/FlagsProjectSlug' }
@@ -93429,6 +93662,7 @@ components:
         allocation: { type: string, enum: [fixed, bandit], description: "fixed (default) or bandit: Thompson sampling re-weights the flag's variants hourly, keeping 10% per arm; needs a binary metric and the flag's only weighted rule." }
         denominator_event: { type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$', description: "A ratio metric's denominator event." }
         percentile: { type: integer, minimum: 50, maximum: 99, description: "A percentile metric's percentile." }
+        notify_channel_ids: { type: array, maxItems: 5, items: { type: string, format: uuid }, description: "Notification channels for the experiment's decisions and problems; omitted uses the environment's. Needs the flag_notifications release." }
     FlagExperimentFunnel:
       description: "A funnel metric: a customer converts when it completes the steps in order within the window after its first exposure."
       type: object
@@ -93542,6 +93776,22 @@ components:
         latency_threshold_ms: { type: integer, description: "Control's p95 latency, fixed once control has enough requests." }
         stop_reason: { type: string, enum: [manual, guardrail_breach, shipped] }
         breach: { type: object, additionalProperties: true, description: The guardrail breach that stopped the experiment. }
+        notify_channel_ids: { type: array, items: { type: string, format: uuid }, description: "The experiment's own notification channels for its decisions and problems; absent uses the environment's." }
+    FlagNotificationSettings:
+      description: An environment's flag notification channels.
+      type: object
+      required: [channel_ids]
+      properties:
+        channel_ids: { type: array, maxItems: 5, items: { type: string, format: uuid }, description: "Notification channel IDs; empty when the environment's flag notifications are off." }
+        updated_by: { type: string, description: The account that last changed them. }
+        updated_at: { type: string, format: date-time }
+    FlagNotificationSettingsRequest:
+      description: New flag notification channels for an environment.
+      type: object
+      additionalProperties: false
+      required: [channel_ids]
+      properties:
+        channel_ids: { type: array, maxItems: 5, items: { type: string, format: uuid }, description: "Up to 5 of the account's notification channels; empty turns notifications off." }
     FlagExperimentList:
       description: An environment's flag experiments.
       type: object
@@ -124007,6 +124257,12 @@ components:
             type: string
             enum: [service_started, service_healthy]
           description: "Explicit Compose dependency conditions. service_started retains admission ordering; service_healthy gates release on the captured same-project, same-environment dependency deployment."
+        release_command:
+          type: string
+          description: "Command the service runs once before each of its releases goes live (shell string, or exec-form argv joined by spaces). Omitted when it declares none."
+        release_command_source:
+          type: string
+          description: "Where release_command is declared: a Compose service the workload waits for with service_completed_successfully, a Procfile release: process, or gregale.yaml release.command."
         service_binding_policy:
           $ref: '#/components/schemas/ServiceBindingPolicy'
           description: "Effective policy selected by Compose `x-gregale-service-policy` (`project`, `declared` or `account`). New project workloads default to `project`; existing workloads retain their persisted policy when the extension is omitted."
@@ -134999,6 +135255,12 @@ components:
           description: |
             Provider-neutral hosted checkout URL on a `payment_required`
             402 when a paid plan upgrade requires a new subscription.
+        upgrade_url:
+          type: string
+          format: uri
+          description: |
+            On a `consumer_plan_limit_exceeded` 429, the API's hosted page
+            where the consumer moves to another plan.
         billing_portal_url: { type: string, format: uri }
         paddle_checkout_url:
           type: string
@@ -137590,6 +137852,8 @@ components:
         daily_limit: { type: integer, minimum: 1, maximum: 1000, description: "Sign-ups per UTC day (default 100)." }
         customer_plan_changes: { type: boolean, description: "Let customers switch between plan_ids with their own key." }
         customer_closing: { type: boolean, description: "Let customers close their account with their own key." }
+        free_plan_id: { type: string, format: uuid, description: "One of plan_ids whose rate cards charge nothing; joining it needs no card." }
+        oauth_consumers: { type: boolean, description: "People signed in through the app's MCP oauth-proxy issuer become consumers on free_plan_id; needs free_plan_id." }
 
     ConsumerSignupSettingsResponse:
       description: "An app's sign-up settings."
@@ -137613,6 +137877,8 @@ components:
         page_url: { type: string, format: uri, description: "The hosted sign-up page to link customers to." }
         customer_plan_changes: { type: boolean }
         customer_closing: { type: boolean }
+        free_plan_id: { type: string, format: uuid }
+        oauth_consumers: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -137642,6 +137908,28 @@ components:
           type: array
           items: { $ref: '#/components/schemas/ConsumerSignupResponse' }
 
+    ConsumerIdentity:
+      description: "An OAuth sign-in of an app's MCP server and the consumer it bills to."
+      type: object
+      required: [id, consumer_id, issuer, subject, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        issuer: { type: string }
+        subject: { type: string }
+        email: { type: string, description: "The token's email claim; display only." }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ConsumerIdentityListResponse:
+      description: "An app's OAuth identities, newest first."
+      type: object
+      required: [identities]
+      properties:
+        identities:
+          type: array
+          items: { $ref: '#/components/schemas/ConsumerIdentity' }
+
     ConsumerSignupPrice:
       description: "One unit's current price on a plan."
       type: object
@@ -137664,6 +137952,7 @@ components:
         name: { type: string }
         max_requests_per_minute: { type: integer, format: int64 }
         max_units_per_month: { type: integer, format: int64 }
+        free: { type: boolean, description: "Joining this plan needs no card." }
         prices:
           type: array
           items: { $ref: '#/components/schemas/ConsumerSignupPrice' }
@@ -137697,9 +137986,50 @@ components:
       required: [id, checkout_url, claim_token, expires_at]
       properties:
         id: { type: string, format: uuid }
-        checkout_url: { type: string, format: uri }
+        checkout_url: { type: string, description: "Stripe Checkout URL; empty for the free plan, which completes at once." }
         claim_token: { type: string }
         expires_at: { type: string, format: date-time }
+
+    ConsumerUpgradeResponse:
+      description: "What the upgrade page shows an upgrade link's customer."
+      type: object
+      required: [app, display_name, livemode, plans, has_card]
+      properties:
+        app: { type: string }
+        display_name: { type: string }
+        current_plan_id: { type: string, format: uuid }
+        livemode: { type: boolean }
+        plans:
+          type: array
+          items: { $ref: '#/components/schemas/ConsumerSignupPlan' }
+        has_card: { type: boolean, description: "A card is saved: a paid plan needs no checkout." }
+
+    StartConsumerUpgradeRequest:
+      description: "Moves an upgrade link's customer to an offered plan."
+      type: object
+      required: [token, plan_id]
+      properties:
+        token: { type: string }
+        plan_id: { type: string, format: uuid }
+
+    ConsumerUpgradeResult:
+      description: "A changed plan, or the Stripe Checkout to save a card first."
+      type: object
+      required: [plan_id]
+      properties:
+        plan_id: { type: string, format: uuid }
+        effective_from: { type: string, format: date-time }
+        checkout_url: { type: string, format: uri }
+        complete_token: { type: string, description: "Completes the upgrade after Checkout." }
+
+    CompleteConsumerUpgradeRequest:
+      description: "Finishes an upgrade after Checkout saved the card."
+      type: object
+      required: [token, complete_token, checkout_session_id]
+      properties:
+        token: { type: string }
+        complete_token: { type: string }
+        checkout_session_id: { type: string }
 
     CompleteConsumerSignupRequest:
       description: "Completes a sign-up."
