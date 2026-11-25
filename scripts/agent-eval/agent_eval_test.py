@@ -346,6 +346,14 @@ class CheckTests(unittest.TestCase):
         self.assertIn("not a count per option", malformed["detail"])
         self.assertFalse(grade(VotingApps(), created={"apps": ["vote", "vote-worker"]})["ok"])
 
+        class SuffixedUrls(Urls):
+            def get(self, path):
+                return {"/v1/apps/vote-k3x7q": {"canonical_url": "https://vote.example"},
+                        "/v1/apps/result-a2b4c": {"canonical_url": "https://result.example"}}[path]
+        (suffixed,) = ev.run_checks(task, None, Path("."), "", SuffixedUrls(), created={"apps": ["result-a2b4c", "vote-k3x7q"]},
+                                    http=VotingApps(), http_deadline_s=0)
+        self.assertTrue(suffixed["ok"], "a name another account holds gets a 5-character suffix")
+
     def test_live_worker_counts_as_serving(self):
         # Health reads "unsupported" for a worker pool unless app_health_workers
         # is on; a live worker serves its queue (2026-11-24 voting-app rerun).
@@ -692,6 +700,20 @@ class CliLoginTests(unittest.TestCase):
             ("app", "delete", "--yes", "--delete-bindings", "stuck"),
         ])
         self.assertEqual(left, ["name:held", "app:stuck"])
+
+    def test_project_members_belong_to_the_run(self):
+        # rc.381 retail-store: Compose named retail-catalog and retail-carts
+        # from its services; the agent never typed them, so they went
+        # unattributed, failed apps_created and were left behind.
+        g = ev.CliGregale("/bin/gregale")
+        lists = {"/v1/projects": {"items": [{"id": "p1", "slug": "retail-store"}, {"id": "p2", "slug": "other"}]},
+                 "/v1/apps": {"items": [{"slug": "retail-catalog", "project_id": "p1"}, {"slug": "retail-carts", "project_id": "p1"},
+                                        {"slug": "bh57-py", "project_id": ""}, {"slug": "side", "project_id": "p2"}]}}
+        touched = {"apps": ["bh57-py", "retail-carts", "retail-catalog", "retail-ui", "side"], "projects": ["retail-store"], "databases": []}
+        with mock.patch.object(g, "get", side_effect=lambda path: lists[path]):
+            mine, others = ev.attribute(g, touched, "gregale deploy --project retail-store\ncurl https://retail-ui.gregale.app")
+        self.assertEqual(mine["apps"], ["retail-carts", "retail-catalog", "retail-ui"])
+        self.assertEqual(others["apps"], ["bh57-py", "side"])
 
     def test_cleanup_deletes_the_runs_databases_only(self):
         # The 2026-11-24 voting-app rerun found the account at its database
