@@ -8,14 +8,14 @@
   The owner chose the four design decisions on 2026-11-25 (role converge
   in the lane, deferred handlers with an adoption-guarded restart, heavy
   roles + `node_join.yml` + unit files stay full-release-only,
-  re-converge the base on a failed gate).
+  re-converge the recorded config on a failed gate).
 - **Date:** 2026-11-25
 - **Amends:** ADR 20261123122457 (compute unit lane, step 3 of its build
   order), ADR 20261018133100 (host-configuration lane: `compute_deploy`)
 - **Related:** ADR-20261115120000 (compute converges the roles that changed;
   the role record), ADR 20261030150000 (control plane converges changed
   roles), ADR 20261122170000 (continuous unit lane), ADR 20261027151755
-  (deploy path classes), ADR 20261017 (vmmd restart adoption)
+  (deploy path classes), `20261017-vmmd-restart-adoption.md`
 
 ## Context
 
@@ -57,8 +57,11 @@ exist:
   report, stands down on a refused guest and rolls back on a failed gate
   (ADR 20261123122457).
 
-The risk this ADR has to close: a converged `vmmd_service` drop-in notifies
-`systemctl try-restart faas-vmmd`, which bypasses the adoption check.
+The risks this ADR has to close: with handlers deferred, a converged
+`vmmd_service` drop-in never reaches vmmd unless the lane restarts vmmd
+itself (behind the adoption check); without deferral, its `try-restart
+faas-vmmd` handler would bypass that check. And a rollback must leave the
+node on exactly the config its role record names.
 
 ## Decision
 
@@ -71,22 +74,30 @@ roles** (§3) becomes deployable by the compute lane. In the per-node job
 1. **Plan.** Fetch the node's role record (`compute_role_record.sh fetch`)
    and run `host_roles.py changed --group compute_nodes --to <release sha>
    --record`. A missing or unreadable record, `all: true` (globals changed),
-   or a changed role outside the lane roles stands the node down: plan
-   `refused`, nothing touched, freeze issue as for any refusal.
-2. **Converge.** Run bootstrap.yml's compute play against that node only,
+   or a role outside the lane roles *whose own content changed* stands the
+   node down: plan `refused`, nothing touched, freeze issue as for any
+   refusal. `changed` also lists roles pulled in only because a changed
+   role notifies their handlers; those do not refuse on their own, and
+   `affected_units_test.py` fails if a lane role notifies a handler of a
+   full-release-only role (§3).
+2. **Adoption check first.** When the restart set (step 4) will include
+   vmmd, run the candidate's adoption check before anything converges. A
+   refused guest stands the node down here, with nothing on disk changed.
+3. **Converge.** Run bootstrap.yml's compute play against that node only,
    from the release commit's checkout, with
    `faas_join_converge_roles=<changed roles>`,
    `faas_join_defer_service_handlers=true` and the same manifest-rendered
    inventory and operator vars the full release uses. Neither the role
    record nor `bootstrap-contract.sha256` is written yet.
-3. **Activate.** deployctl deploys the overlay as today. The restart set is
+4. **Activate.** deployctl deploys the overlay as today. The restart set is
    the union of the units whose binary changed and the units the converged
    roles restart (`host_roles.py restart_roles` for those roles, mapped to
    units), so a config-only change still reaches its daemon. vmmd always
-   goes through the adoption check → restart → adoption report path; a
-   refused guest stands the node down before anything restarts (step 4).
-4. **Gate.** The node's adoption report and SLO gates as today.
-5. **Record.** After the gate passes, write the new hashes to
+   goes through the adoption check → restart → adoption report path. A
+   guest refused at this second check (the node changed since step 2)
+   rolls the node back (§4) before anything restarts.
+5. **Gate.** The node's adoption report and SLO gates as today.
+6. **Record.** After the gate passes, write the new hashes to
    `compute-roles.json` (the same file and format node_join writes). The
    ADR-580 bootstrap contract is left alone: the next full release still
    sees it stale and converges what changed since the record, which is
@@ -97,7 +108,7 @@ The canary node's gate must pass before any other node converges.
 ### 2. Handlers are deferred; the lane owns every restart
 
 The play never restarts a daemon in lane mode. The units its roles would
-have restarted are added to the deployctl restart set (§1.3), so:
+have restarted are added to the deployctl restart set (§1.4), so:
 
 - `faas-vmmd` restarts only behind the adoption guard. The lane stands
   down on a guest the new vmmd would refuse, exactly as for a vmmd binary
@@ -106,12 +117,18 @@ have restarted are added to the deployctl restart set (§1.3), so:
   with their readiness checks.
 - A task that applies state directly rather than through a handler (the
   nftables role's atomic `nft -f` reload) applies during step 2. The
-  rollback (§4) reapplies the base ruleset the same way.
+  rollback (§4) reapplies the recorded ruleset the same way.
 
-A lane-role handler that restarts a unit without honouring
+A lane-role handler that restarts any unit without honouring
 `faas_join_defer_service_handlers` is a test failure, extending
-`vmmd_restart_deferral_test.go` from faas-vmmd to every unit the lane
-restarts.
+`vmmd_restart_deferral_test.go` from faas-vmmd to every restart handler of
+every lane role. Today that catches `vmmd_service`'s `restart
+networkd-dispatcher` handler (`systemctl try-restart
+networkd-dispatcher.service`, unguarded): building this lane guards it and
+adds networkd-dispatcher to the role-derived restart set. `daemon-reload`
+handlers are exempt (they restart nothing), and an exception list in the
+test names any other handler allowed to act directly, as the nftables
+reload does.
 
 ### 3. What stays full-release-only
 
@@ -139,29 +156,43 @@ compute role is full-release-only until someone adds it:
 `affected_units_test.py` fails while a compute play role is in neither
 list or in both. Adding a role to the lane is an explicit review.
 
-### 4. A failed gate re-converges the base
+### 4. A failed gate re-converges the recorded config
 
-On a failed gate (or a failed converge, adoption report or verify), the
-node rolls back in this order:
+On a failed converge, a guest refused at the activation-time adoption
+check (§1.4), a failed adoption report, verify or gate, the node rolls back
+in this order:
 
-1. Re-run the same roles from the **base** commit's checkout (the node's
-   current unit release), handlers deferred.
-2. Roll the binaries back through deployctl (vmmd adoption-guarded), and
+1. Re-run the same roles from the **recorded** commit's checkout: the
+   commit `compute-roles.json` names, the node's last converged lane or
+   full release. That is not necessarily the full release the build
+   started from (§5), because an earlier lane run may have converged and
+   recorded newer roles. Handlers deferred.
+2. Remove the files the release added that the recorded commit's roles do
+   not manage: the lane computes, per converged role, the paths the role
+   templates or copies at the release commit but not at the recorded one
+   (from the role's tasks, as `host_roles.py` already reads them), and
+   deletes them. A lane role that retires a file must also mark it
+   `state: absent`, so the forward converge removes it too. The metal step
+   of the build order covers both, with a role that adds a drop-in.
+3. Roll the binaries back through deployctl (vmmd adoption-guarded), and
    restart the same unit set.
-3. Leave `compute-roles.json` at its previous content, which was never
-   overwritten (§1.5).
-4. Open the freeze issue. No other node is touched; on the canary, the
+4. Leave `compute-roles.json` at its previous content, which was never
+   overwritten (§1.6).
+5. Open the freeze issue. No other node is touched; on the canary, the
    lane stops there.
 
-If the base re-converge itself fails, the node is left as is and the freeze
+If the re-converge itself fails, the node is left as is and the freeze
 issue says so. The repair is a full release (cd-compute converges every
-role whose hash differs from the record, which still names the base).
+role whose hash differs from the record, which still names the recorded
+commit).
 
 ### 5. Ordering with full releases
 
 The lane's per-node compute job already serialises with cd-compute through
 the preflight's `base` check (it stands down while prod runs a full release
-other than the build's base). The converge step adds nothing new to race:
+other than the build's base: the newest full-release tag). In this ADR
+"base" means only that tag; the rollback source is the recorded commit
+(§4). The converge step adds nothing new to race:
 it runs inside that job, on one node at a time.
 
 ### 6. `node_join.yml` alone holding no lane: rejected
@@ -212,10 +243,10 @@ changes only lane roles, which this window never did. Per-variable
    `release_units.json`; tests over the seven commits above.
 2. Per-node converge + role-derived restart set + record write in the
    compute job; deferral test extended to every lane-restarted unit.
-3. Rollback: base re-converge before the binary rollback.
+3. Rollback: re-converge the recorded commit, remove release-added files, then the binary rollback.
 4. Metal run on a native KVM host: converge a `vmmd_service` drop-in change
    with a live guest; prove adoption, then a forced gate failure that
-   re-converges the base.
+   re-converges the recorded commit and removes the added drop-in.
 5. Prod canary on the next lane-role commit, owner watching.
 
 ## Consequences
