@@ -2385,8 +2385,11 @@ from instances where app_id = $1 order by started_at desc;
 -- Accounts created at or after since that have verified their email
 -- (ADR-20261104145353 amendment 1: the platform-wide daily sign-up cap counts
 -- the accounts that can use a Free allowance). Read only on a sign-up attempt.
-select count(*)::bigint from accounts
- where created_at >= sqlc.arg(since)::timestamptz and email_verified_at is not null;
+-- Unclaimed anonymous-deploy accounts have their own cap (ADR-20261124080000)
+-- and count here only once a human claims them.
+select count(*)::bigint from accounts a
+ where a.created_at >= sqlc.arg(since)::timestamptz and a.email_verified_at is not null
+   and not exists (select 1 from unclaimed_accounts u where u.account_id = a.id and u.claimed_at is null);
 
 -- name: ListFirstSuccessfulRequestsForAccountsCreatedSince :many
 -- Operator beta funnel: one bounded aggregate read replaces an N+1

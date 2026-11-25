@@ -331,6 +331,8 @@ func loadTokenWithDiagnostics(diagnostics io.Writer) string {
 	if _, v := envTokenVar(); v != "" {
 		return strings.TrimSpace(v)
 	}
+	// An agent's anonymous deploy key (ADR-20261124080000) is not a login:
+	// only deploy and claim use it (deploy_anonymous.go).
 	return loadStoredToken(diagnostics)
 }
 
