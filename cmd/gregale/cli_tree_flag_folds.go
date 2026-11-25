@@ -152,6 +152,26 @@ func onlyFoldPath(args []string) (string, []string, bool) {
 	return path, flags, path != ""
 }
 
+// foldValueAsFlag reads a fold-only path's value given as the next word:
+// `edge cache set GET /c for 60s` runs as `edge cache set --method GET /c for
+// 60s`. It was refused as missing --method although the usage reads as that
+// sentence (prod hunt r46).
+func foldValueAsFlag(args []string, path string) ([]string, bool) {
+	at := len(strings.Fields(path))
+	if at >= len(args) {
+		return nil, false
+	}
+	for _, fold := range cliTreeFlagFolds {
+		name, value, valued := strings.Cut(fold.Flag, "=")
+		if !fold.Only || fold.New != path || !valued || !strings.EqualFold(args[at], value) {
+			continue
+		}
+		withFlag := append(append(append([]string{}, args[:at]...), "--"+name, value), args[at+1:]...)
+		return rewriteFlagFold(withFlag)
+	}
+	return nil, false
+}
+
 // errFoldFlagRequired is a fold-only path run without the flag it needs.
 type errFoldFlagRequired struct{ error }
 

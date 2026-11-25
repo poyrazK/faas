@@ -4421,7 +4421,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			createReq.VCPU = *vcpu
 		}
 		if err := requireTemplateSecretsBeforeFirstStart(ctx, client, *templateName, *secretsFile, *createOnly, slug); err != nil {
-			return printErr("Template needs secrets", err)
+			return printErr("Template needs setup before its first deploy", err)
 		}
 		if execution.resolveApp != nil {
 			resolvedApp, err = execution.resolveApp(ctx, client, createReq)
@@ -5030,13 +5030,14 @@ func cmdRollback(args []string) int {
 		PrintUsage(osStdout, rollbackUsage, "rollback")
 		return 0
 	}
-	if len(args) < 1 {
-		PrintUsage(os.Stderr, rollbackUsage, "rollback")
-		return 1
-	}
 	slug, rest, slugErr := splitRollbackSlug(args)
 	if slugErr != nil {
 		return printErr("Invalid rollback", slugErr)
+	}
+	if slug == "" {
+		// Prod hunt r38: `rollback` in a linked checkout printed only usage,
+		// while `deploy` there deploys the linked app.
+		slug = linkedAppForMissingSlug()
 	}
 	if slug == "" {
 		PrintUsage(os.Stderr, rollbackUsage, "rollback")
@@ -6536,8 +6537,11 @@ func cmdKeys(args []string) int {
 				return printErr("Invalid scopes", err)
 			}
 		}
-		if agent := api.CodingAgentFromEnv(os.Getenv); agent != "" && !slices.Contains(scopes, api.ScopeAgent) {
-			fmt.Fprintf(os.Stderr, "Warning: %s is creating a key without the agent scope: Gregale will not ask a person before it deletes, deploys to production or changes billing, and will not hold its always-on cost to an agent budget. Add --agent for a key the agent uses.\n", agent)
+		// A read-only key cannot delete, deploy or bill, so the warning
+		// below misstated what it could do (prod hunt r45).
+		readOnly := len(scopes) > 0 && !slices.ContainsFunc(scopes, func(s string) bool { return !strings.HasSuffix(s, ":read") })
+		if agent := api.CodingAgentFromEnv(os.Getenv); agent != "" && !readOnly && !slices.Contains(scopes, api.ScopeAgent) {
+			_, _ = fmt.Fprintf(osStderr, "Warning: %s is creating a key without the agent scope: Gregale will not ask a person before it deletes, deploys to production or changes billing, and will not hold its always-on cost to an agent budget. Add --agent for a key the agent uses.\n", agent)
 		}
 		client, err := authedClient()
 		if err != nil {
@@ -9174,7 +9178,13 @@ func cmdDomainsList(args []string) int {
 		if appID != "" {
 			scope = "app " + strings.TrimSpace(*appSlug)
 		}
-		_, _ = fmt.Fprintf(osStdout, "No custom domains for %s. Add one with `gregale domain setup <domain> --app <slug>`.\n", scope)
+		// Prod hunt r40: `domain setup` needs a terminal, so a script or agent
+		// following this hint was refused; name the scriptable verb there.
+		verb := "setup"
+		if !stdinIsTTY() || !stdoutIsTTY() {
+			verb = "add"
+		}
+		_, _ = fmt.Fprintf(osStdout, "No custom domains for %s. Add one with `gregale domain %s <domain> --app <slug>`.\n", scope, verb)
 		return 0
 	}
 	for _, d := range out {
