@@ -21,6 +21,11 @@ other starters. Each one comes with sample tools (`greet`, `add` and
 `stream_demo`), a resource, a resource template and a prompt, so it works
 before you change anything.
 
+The Node starter is also on GitHub as
+[gregale-dev/mcp-server-node](https://github.com/gregale-dev/mcp-server-node),
+and runs as-is at `https://mcp-server-node.gregale.app/mcp`. Connect a client
+to that endpoint to try the sample tools before you create your own.
+
 The files that matter:
 
 | File | What it is |
