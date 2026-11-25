@@ -4,6 +4,7 @@ import { link, open, realpath, rename, unlink } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { jobValueHash } from './job-runtime.js';
 import { isMcpTaskId } from './mcp-task-inbox.js';
+import { taskWatchTransport } from './mcp-task-watch-transport.js';
 import { getMcpTask, type McpTaskConnection, type McpTaskSnapshot } from './mcp-task-result.js';
 import {
   createGuardedMcpTaskSubmissionFetch, isSubmissionKey, localReceiptMeta, lookupMcpTaskBySubmissionKey,
@@ -74,8 +75,8 @@ type Fetch = typeof globalThis.fetch;
 type TransportOptions = { fetch?: Fetch };
 type TransportConstructor = new (url: URL, options?: TransportOptions) => object;
 
-/** Create an endpoint-bound official StreamableHTTPClientTransport for Task receipts. */
-export function createMcpTaskReceiptTransport<Transport extends TransportConstructor>(
+/** Create an endpoint-bound official StreamableHTTPClientTransport for Gregale Tasks. */
+export function createMcpTaskTransport<Transport extends TransportConstructor>(
   TransportClass: Transport, endpoint: string | URL, options?: ConstructorParameters<Transport>[1],
 ): InstanceType<Transport> {
   const href = endpointURL(endpoint).href;
@@ -99,10 +100,15 @@ export function createMcpTaskReceiptTransport<Transport extends TransportConstru
     }
     return response;
   };
-  const transport = new TransportClass(new URL(href), { ...options, fetch }) as InstanceType<Transport>;
+  const watch = taskWatchTransport(href, fetch);
+  const transport = new TransportClass(new URL(href), { ...options, fetch: watch.fetch }) as InstanceType<Transport>;
   transports.set(transport, binding);
+  watch.bind(transport);
   return transport;
 }
+
+/** Create an endpoint-bound official StreamableHTTPClientTransport for Task receipts. */
+export const createMcpTaskReceiptTransport = createMcpTaskTransport;
 
 function transportBinding(connection: McpTaskReceiptConnection): TransportBinding {
   const binding = connection.transport && transports.get(connection.transport);

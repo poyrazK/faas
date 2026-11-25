@@ -9,8 +9,8 @@ import { pathToFileURL } from 'node:url';
 
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import {
-  cancelMcpTask, createMcpTaskSubmissionFetch, getMcpTask, listTaskInbox,
-  lookupMcpTaskBySubmissionKey, submitMcpTask, watchTaskInbox,
+  cancelMcpTask, createMcpTaskTransport, getMcpTask, listTaskInbox,
+  lookupMcpTaskBySubmissionKey, submitMcpTask, watchMcpTask, watchTaskInbox,
 } from '../../../sdk/node/dist/preview.js';
 
 test('the official SDK watches the authenticated PostgreSQL Task inbox', { timeout: 25_000 }, async t => {
@@ -88,8 +88,19 @@ test('the official SDK watches the authenticated PostgreSQL Task inbox', { timeo
     }
     return inbox(query, ...args);
   };
+  let taskWatch;
   const server = createServer((req, res) => {
-    if (req.headers['mcp-method'] === 'gregale/tasks/inbox') response = res;
+    const method = req.headers['mcp-method'];
+    if (method === 'gregale/tasks/inbox') response = res;
+    if (taskWatch && method === 'subscriptions/listen') {
+      taskWatch.stream = res;
+      taskWatch.opens++;
+    }
+    if (taskWatch?.stream && method === 'tasks/get') {
+      taskWatch.reconciling.resolve();
+      void taskWatch.release.promise.then(() => app(req, res));
+      return;
+    }
     app(req, res);
   });
   const stop = new AbortController();
@@ -116,9 +127,8 @@ test('the official SDK watches the authenticated PostgreSQL Task inbox', { timeo
       versionNegotiation: { mode: { pin: '2026-07-28' } }, enforceStrictCapabilities: true,
     });
     clients.push(client);
-    await client.connect(new StreamableHTTPClientTransport(endpoint, {
+    await client.connect(createMcpTaskTransport(StreamableHTTPClientTransport, endpoint, {
       requestInit: { headers: { Authorization: `Bearer ${token}` } }, onInsufficientScope: 'throw',
-      fetch: createMcpTaskSubmissionFetch(),
     }));
     return client;
   }
@@ -182,4 +192,41 @@ test('the official SDK watches the authenticated PostgreSQL Task inbox', { timeo
   await assert.rejects(lookupMcpTaskBySubmissionKey(reduced, submissionKey), { name: 'McpTaskSubmissionError' });
   assert.deepEqual(await cancelMcpTask(owner, found.taskId), { outcome: 'requested', taskId: found.taskId });
   assert.equal((await getMcpTask(owner, found.taskId)).status, 'cancelled');
+
+  const running = await store.create({
+    toolName: 'build_report', handlerVersion: mcpTaskHandlers.build_report.version,
+    args: { report: 'watch fixture', steps: 1 }, authInfo: authInfo('alice'), authMode: 'external-oauth',
+  });
+  const lease = await store.claim(3, 30_000);
+  assert.equal(lease.task_id, running.task_id);
+  taskWatch = { opens: 0, reconciling: Promise.withResolvers(), release: Promise.withResolvers() };
+  const live = watchMcpTask(owner, running.task_id, { timeoutMs: 8_000 });
+  try {
+    const initial = await live.next();
+    assert.equal(initial.value.status, 'working');
+    const next = live.next();
+    const completion = await Promise.race([next, taskWatch.reconciling.promise]);
+    assert.equal(completion, undefined, 'watch advanced before reconciling its subscription');
+    assert.equal(taskWatch.opens, 1);
+    assert.equal(taskWatch.stream.headersSent, true);
+    assert.equal(taskWatch.stream.destroyed, false);
+    const closed = once(taskWatch.stream, 'close');
+    taskWatch.stream.destroy();
+    await closed;
+    const result = { content: [{ type: 'text', text: 'completed while disconnected' }] };
+    assert.equal(await store.complete(running.task_id, lease.lease_token, result), 'completed');
+    taskWatch.release.resolve();
+    const terminal = await next;
+    assert.equal(terminal.done, false);
+    assert.equal(terminal.value.taskId, running.task_id);
+    assert.equal(terminal.value.status, 'completed');
+    assert.equal(Object.hasOwn(terminal.value, 'result'), false);
+    assert.deepEqual(await live.next(), { done: true, value: undefined });
+    assert.equal(taskWatch.opens, 1);
+    assert.deepEqual((await getMcpTask(owner, running.task_id)).result, result);
+  } finally {
+    taskWatch.release.resolve();
+    await live.return();
+    taskWatch = undefined;
+  }
 });

@@ -6212,6 +6212,30 @@ wait. Aborting or timing out stops observation while the Task follows
 its existing lifecycle. Expired Tasks and Tasks the caller cannot access
 may report the same `not_found` read error.
 
+#### Watch live Task status from TypeScript
+
+Use `watchMcpTask` from `@gregale/sdk-node/preview` to follow one known
+Task. Create the official Streamable HTTP transport with `createMcpTaskTransport`
+to enable live subscriptions on the authenticated connection.
+
+```ts
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import { createMcpTaskTransport, watchMcpTask } from '@gregale/sdk-node/preview';
+
+await mcp.connect(createMcpTaskTransport(StreamableHTTPClientTransport, endpoint, transportOptions));
+for await (const state of watchMcpTask(mcp, taskId, { timeoutMs: 120_000, signal })) {
+  console.log(state.status, state.nextAction);
+}
+```
+
+The watch yields the current metadata and changed snapshots until the Task
+finishes or needs input. It confirms subscription updates with authenticated
+status reads and reconciles after a disconnect and periodically on quiet
+streams. The default reconciliation interval is 30 seconds. Connections
+without Task subscriptions poll at the Task's server-directed interval.
+Closing the iterator or aborting its signal stops the watch. Use `getMcpTask`
+to retrieve the completed Task's result.
+
 #### Cancel a Task from TypeScript
 
 Use `cancelMcpTask(mcp, taskId)` from `@gregale/sdk-node/preview` on the

@@ -185,6 +185,22 @@ async function withTaskScope<Result>(
   }
 }
 
+export function readMcpTaskMetadata(
+  connection: McpTaskConnection, taskId: string, options: McpTaskReadOptions,
+): Promise<McpTaskInboxEntry> {
+  return withTaskScope(connection, taskId, options, readTimeoutMs, async request =>
+    (await readTaskResponse(connection, taskId, request)).task);
+}
+
+export function mcpTaskPollDelay(task: McpTaskInboxEntry): number {
+  return Math.max(minPollMs, task.pollIntervalMs ?? initialPollMs);
+}
+
+export function isRetryableMcpTaskRead(error: unknown): boolean {
+  return (error instanceof McpTaskRequestFailure && error.retryable) ||
+    (error instanceof McpTaskReadError && error.code === 'timeout');
+}
+
 /** Read an existing Task and its retained result or execution error, when available. */
 export function getMcpTask(
   connection: McpTaskConnection, taskId: string, options: McpTaskReadOptions = {},
@@ -204,7 +220,7 @@ export function waitForMcpTask(
       try {
         const task = await readTask(connection, taskId, request);
         if (task.status !== 'working') return task;
-        pollMs = Math.max(minPollMs, task.pollIntervalMs ?? initialPollMs);
+        pollMs = mcpTaskPollDelay(task);
         backoffMs = pollMs;
         intervalMs = pollMs;
       } catch (error) {
