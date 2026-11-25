@@ -18,7 +18,7 @@ func TestNextStandaloneStepRuns(t *testing.T) {
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("no sh")
 	}
-	const capMB = 1
+	const capMB = 48 // above the 24 MiB reserve and 16 MiB headroom
 	write := func(t *testing.T, path string, size int) {
 		t.Helper()
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -35,10 +35,10 @@ func TestNextStandaloneStepRuns(t *testing.T) {
 		wantTree   bool
 		wantMarker bool
 	}{
-		{name: "over the cap", adapterSet: true, files: map[string]int{"node_modules/next/dist.js": 2 << 20}, wantTree: true, wantMarker: true},
+		{name: "over the cap", adapterSet: true, files: map[string]int{"node_modules/next/dist.js": 16 << 20}, wantTree: true, wantMarker: true},
 		{name: "fits the cap", adapterSet: true, files: map[string]int{"node_modules/next/dist.js": 100 << 10}},
-		{name: "build caches do not count", adapterSet: true, files: map[string]int{".next/cache/webpack.pack": 2 << 20, "node_modules/.cache/x": 2 << 20}},
-		{name: "app's own standalone output", files: map[string]int{"node_modules/next/dist.js": 2 << 20}, wantTree: true},
+		{name: "build caches do not count", adapterSet: true, files: map[string]int{".next/cache/webpack.pack": 16 << 20, "node_modules/.cache/x": 16 << 20}},
+		{name: "app's own standalone output", files: map[string]int{"node_modules/next/dist.js": 16 << 20}, wantTree: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

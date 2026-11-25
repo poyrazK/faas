@@ -64,7 +64,7 @@ func TestStampNextStandalone(t *testing.T) {
 		t.Fatalf("build command = %q", got)
 	}
 	if got := commands[2].(map[string]any)["cmd"]; got != nextStandaloneCommand(testCapMB) ||
-		!strings.Contains(got.(string), " -gt 262144 ") {
+		!strings.Contains(got.(string), " -gt 268435456 ") {
 		t.Fatalf("last command = %q, want the standalone step at a 256 MB cap", got)
 	}
 	if _, err := StampNextStandalone(nextPlan(t, "npm run build"), []byte(nextPkg), 0); !errors.Is(err, ErrNotNextStandalone) {

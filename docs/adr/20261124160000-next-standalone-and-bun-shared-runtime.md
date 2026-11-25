@@ -46,10 +46,14 @@ through its package manager. The build step:
    `next start` would look for an adapter that is not in the deployed app;
 3. decides whether the app needs the standalone tree. This step runs only
    when the adapter's flag is set and a standalone server was written. It
-   measures `/app` with `du -sk`, leaving out the standalone tree and the
-   build caches (`.next/cache` and `node_modules/.cache`, which are cache
-   mounts and never deployed), and compares the result with the plan's
-   app-layer cap. The builder sends that cap in the build manifest
+   estimates the ext4 image the full `/app` needs the way imaged sizes an
+   app layer (`rootfs.CheckCapForStaging`, amendment 1): the files'
+   apparent bytes plus 10 % slack and 60 % more for the share of files under
+   4 KiB, at least 16 MiB of headroom, and 24 MiB for guest-init and the
+   directories above `/app`. The standalone tree and the build caches
+   (`.next/cache` and `node_modules/.cache`, which are cache mounts and
+   never deployed) are left out. The estimate is compared with the plan's
+   app-layer cap, which the builder sends in the build manifest
    (`app_layer_max_mb`).
    - **Over the cap.** The step copies `.next/static` and `public` into the
      standalone tree, as Next's deployment docs do, and writes the marker
@@ -111,9 +115,7 @@ with the rest of the shared runtime.
 
 - A small Next.js 16 app's layer drops from ~340 MB to ~40–45 MB on Free,
   where its full `/app` does not fit. On a paid plan the same app fits and
-  ships all of `/app` as before. `du` counts disk blocks, not the tar
-  bytes imaged caps. An app within a few MB of its cap can therefore still
-  ship whole and fail the cap, as it did before this ADR. A small Bun app's layer drops from
+  ships all of `/app` as before. A small Bun app's layer drops from
   ~420 MB to ~95 MB on every plan. Both fit the Free plan with room for
   dependencies.
 - A Next.js app that customizes its start (`next start -p 3000`, a custom
@@ -129,3 +131,22 @@ with the rest of the shared runtime.
 - A Bun app that starts a Next.js server with `bun run start` still gets
   the standalone tree. A Bun app without it carries Bun (88 MB) plus its
   `node_modules`.
+
+## Amendment 1 (2026-11-25): size checks found by the metal acceptance
+
+`TestJSFrameworksFitFreeMetal` built both apps in real builder microVMs and
+found two checks that made the decision above unreachable:
+
+- **builderd's artifact check.** builderd rejected any build artifact larger
+  than the plan's app-layer cap. A shared-runtime artifact still holds the
+  mise toolchain, which imaged drops, and a Next.js artifact holds the full
+  `/app` beside the standalone tree. The Free Next.js build failed there at
+  298 MB, before imaged chose the tree. builderd now skips that check for
+  builds on a shared runner base. imaged checks the layer that ships against
+  the same cap, with filesystem overhead, before anything boots. Builds on
+  an app's own base keep builderd's check.
+- **Filesystem overhead.** The build step first compared `du -sk` of `/app`
+  with the cap. On Hobby a Next.js 16 app measured under 512 MB, so the
+  build dropped the tree. imaged then sized the image of its many small
+  `node_modules` files at 545 MB and refused it. The step now uses imaged's
+  own estimate, as decision 3 describes.
