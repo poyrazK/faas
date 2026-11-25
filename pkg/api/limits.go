@@ -3096,6 +3096,20 @@ const (
 	FlagsMaxConfigVersion      = int64(9007199254740991)
 )
 
+// Edge flag routing bounds (ADR-20261124212701): variant flags the gateway
+// evaluates without an SDK and the paths they rewrite.
+const (
+	// FlagsMaxEdgeFlags is how many flags of an environment may route at the edge.
+	FlagsMaxEdgeFlags = 16
+	// FlagsMaxEdgeRoutesPerFlag bounds the paths one flag routes.
+	FlagsMaxEdgeRoutesPerFlag = 8
+	// FlagsMaxEdgePathBytes bounds a route's path and a rewrite target.
+	FlagsMaxEdgePathBytes = 256
+	// FlagsEdgeVisitorCookieMaxAge is how long an anonymous visitor keeps its
+	// edge bucket (the first-party visitor cookie's Max-Age).
+	FlagsEdgeVisitorCookieMaxAge = 365 * 24 * time.Hour
+)
+
 // Flag attribute targeting bounds (ADR 20261114150000 §2).
 const (
 	FlagsMaxConditionsPerRule   = 8
