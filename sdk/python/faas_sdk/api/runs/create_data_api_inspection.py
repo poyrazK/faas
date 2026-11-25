@@ -108,7 +108,8 @@ def sync_detailed(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (CreateDataAPIInspectionRequest):
+        body (CreateDataAPIInspectionRequest): Identifies the database binding and table to
+            inspect.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -147,7 +148,8 @@ def sync(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (CreateDataAPIInspectionRequest):
+        body (CreateDataAPIInspectionRequest): Identifies the database binding and table to
+            inspect.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -181,7 +183,8 @@ async def asyncio_detailed(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (CreateDataAPIInspectionRequest):
+        body (CreateDataAPIInspectionRequest): Identifies the database binding and table to
+            inspect.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -218,7 +221,8 @@ async def asyncio(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (CreateDataAPIInspectionRequest):
+        body (CreateDataAPIInspectionRequest): Identifies the database binding and table to
+            inspect.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

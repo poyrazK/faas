@@ -23,6 +23,8 @@ T = TypeVar("T", bound="DataAPIInspectionResponse")
 
 @_attrs_define
 class DataAPIInspectionResponse:
+    """Reports the status and verified identity of a Data API inspection."""
+
     task_id: UUID
     app_id: UUID
     deployment_id: UUID

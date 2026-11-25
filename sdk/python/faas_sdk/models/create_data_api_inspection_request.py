@@ -11,6 +11,8 @@ T = TypeVar("T", bound="CreateDataAPIInspectionRequest")
 
 @_attrs_define
 class CreateDataAPIInspectionRequest:
+    """Identifies the database binding and table to inspect."""
+
     database_id: UUID
     binding_id: UUID
     table: str

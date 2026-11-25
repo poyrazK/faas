@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Reports the status and verified identity of a Data API inspection.
+ */
 export type DataAPIInspectionResponse = {
   task_id: string;
   app_id: string;
