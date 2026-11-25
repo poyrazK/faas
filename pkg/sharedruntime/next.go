@@ -68,16 +68,17 @@ module.exports = {
 };
 `
 
-// nextStandaloneStep (a format taking the reserve, the cap in bytes and
-// the cap in MB) keeps the standalone
+// nextStandaloneStep (a format taking the reserve, the cap in bytes, the
+// cap in MB and guest-init's size) keeps the standalone
 // tree only when the app needs it. After the build it estimates the ext4
 // image the full /app would need, the way imaged sizes an app layer
 // (rootfs.CheckCapForStaging): the files' apparent bytes, plus 10 % slack
 // and 60 % more for the share of files under 4 KiB, and at least 16 MiB of
 // headroom. node_modules is mostly small files, so its image is far larger
-// than its bytes. The standalone tree and the build caches (cache mounts,
-// never deployed) are left out, and nextLayerReserveBytes is added for
-// what else the layer carries. An app that fits ships whole, as before, and
+// than its bytes. guest-init, which every app layer carries, counts as one
+// more file. The standalone tree and the build caches (cache mounts, never
+// deployed) are left out, and nextLayerReserveBytes is added for the
+// directories and small files above /app. An app that fits ships whole, as before, and
 // the tree is removed. A larger one gets its static assets and public
 // files copied next to the standalone server, as Next's deployment docs do,
 // and the marker written last. The step acts only when the adapter set the
@@ -85,8 +86,8 @@ module.exports = {
 // the build: without the marker imaged ships the whole app.
 const nextStandaloneStep = `sh -c 'if [ -f ` + nextAdapterSetFlag + ` ] && [ -f .next/standalone/server.js ]; then ` +
 	`f() { find . \( -path ./.next/standalone -o -path ./.next/cache -o -path ./node_modules/.cache \) -prune -o -type f "$@"; }; keep=0; ` +
-	`n=$(( $(f -print | wc -l) )); s=$(( $(f -size -4096c -print | wc -l) )); b=$(( $(f -exec cat {} + | wc -c) )); ` +
-	`[ "$n" -gt 0 ] || n=1; e=$(( b * (110 * n + 60 * s) / (100 * n) )); m=$(( b + 16777216 )); [ "$m" -le "$e" ] || e=$m; ` +
+	`n=$(( $(f -print | wc -l) + 1 )); s=$(( $(f -size -4096c -print | wc -l) )); b=$(( $(f -exec cat {} + | wc -c) + %[4]d )); ` +
+	`e=$(( b * (110 * n + 60 * s) / (100 * n) )); m=$(( b + 16777216 )); [ "$m" -le "$e" ] || e=$m; ` +
 	`c=$(( $(find .next/cache node_modules/.cache -type f -exec cat {} + 2>/dev/null | wc -c) )); ` +
 	`echo "Next.js: the full app needs about $(( (e + %[1]d) >> 20 )) MB of the plan cap of %[3]d MB ($n files, build caches of $(( c >> 20 )) MB not counted)"; ` +
 	`if [ $(( e + %[1]d )) -gt %[2]d ] && rm -rf .next/standalone/.next/static && mkdir -p .next/standalone/.next && ` +
@@ -95,13 +96,21 @@ const nextStandaloneStep = `sh -c 'if [ -f ` + nextAdapterSetFlag + ` ] && [ -f 
 	`: > .next/standalone/` + nextStandaloneMarkerName + ` && keep=1; fi; ` +
 	`if [ "$keep" = 1 ]; then echo "Next.js: shipping the standalone server"; else rm -rf .next/standalone; echo "Next.js: shipping the full app"; fi; fi; true'`
 
-// nextLayerReserveBytes is what an app layer holds beyond /app: guest-init
-// and the directories above /app.
-const nextLayerReserveBytes = 24 << 20
+// nextLayerReserveBytes is what an app layer holds beyond /app and
+// guest-init: the directories and small files above /app.
+const nextLayerReserveBytes = 4 << 20
 
-// nextStandaloneCommand is nextStandaloneStep for a cap of capMB.
-func nextStandaloneCommand(capMB int) string {
-	return fmt.Sprintf(nextStandaloneStep, nextLayerReserveBytes, int64(capMB)<<20, capMB)
+// NextInitBytesDefault stands in for guest-init's size when the builder
+// cannot read its own. guest-init was 41.8 MB on 2026-11-25.
+const NextInitBytesDefault = 48 << 20
+
+// nextStandaloneCommand is nextStandaloneStep for a cap of capMB and a
+// guest-init of initBytes.
+func nextStandaloneCommand(capMB int, initBytes int64) string {
+	if initBytes <= 0 {
+		initBytes = NextInitBytesDefault
+	}
+	return fmt.Sprintf(nextStandaloneStep, nextLayerReserveBytes, int64(capMB)<<20, capMB, initBytes)
 }
 
 // nextStandaloneMarkerName is the file nextStandaloneStep writes last.
@@ -196,9 +205,10 @@ var ErrNotNextStandalone = errors.New("not a next start app")
 // starts with a plain `next start` through the package manager; anything
 // else returns ErrNotNextStandalone and the plan is left as it is. capMB is
 // the plan's app layer cap: the build keeps the standalone tree only for an
-// app larger than that. Deploy inputs are unchanged: imaged chooses the
+// app larger than that. initBytes is guest-init's size, which the app
+// layer carries beside /app (NextInitBytesDefault when 0). Deploy inputs are unchanged: imaged chooses the
 // standalone tree when the build marked it.
-func StampNextStandalone(planJSON, packageJSON []byte, capMB int) ([]byte, error) {
+func StampNextStandalone(planJSON, packageJSON []byte, capMB int, initBytes int64) ([]byte, error) {
 	if capMB <= 0 {
 		return nil, ErrNotNextStandalone
 	}
@@ -272,7 +282,7 @@ func StampNextStandalone(planJSON, packageJSON []byte, capMB int) ([]byte, error
 	assets[nextAdapterAsset] = nextAdapter
 	stamped = append(stamped, map[string]any{
 		"customName": "keep the standalone server if the app needs it",
-		"cmd":        nextStandaloneCommand(capMB),
+		"cmd":        nextStandaloneCommand(capMB, initBytes),
 	})
 	build["commands"] = stamped
 	return json.Marshal(plan)

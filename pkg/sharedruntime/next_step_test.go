@@ -11,14 +11,17 @@ import (
 
 // ADR-20261124160000: the post-build step keeps the standalone tree, with
 // static and public files beside the server and the marker last, only for
-// an app whose /app (without the tree and the build caches) is over the
-// cap; otherwise it removes the tree. It leaves a standalone build the
+// an app whose /app (without the tree and the build caches) and guest-init
+// are over the cap; otherwise it removes the tree. It leaves a standalone build the
 // adapter did not ask for alone, and it never fails.
 func TestNextStandaloneStepRuns(t *testing.T) {
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("no sh")
 	}
-	const capMB = 48 // above the 24 MiB reserve and 16 MiB headroom
+	// The over-cap app (16 MiB in /app) is over 40 MiB only with guest-init
+	// counted: 24 MiB of content plus 16 MiB headroom and the 4 MiB reserve.
+	const capMB = 40
+	const initBytes = 8 << 20
 	write := func(t *testing.T, path string, size int) {
 		t.Helper()
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -55,7 +58,7 @@ func TestNextStandaloneStepRuns(t *testing.T) {
 			if tt.adapterSet {
 				write(t, flag, 0)
 			}
-			command := strings.ReplaceAll(nextStandaloneCommand(capMB), nextAdapterSetFlag, flag)
+			command := strings.ReplaceAll(nextStandaloneCommand(capMB, initBytes), nextAdapterSetFlag, flag)
 			script := strings.TrimSuffix(strings.TrimPrefix(command, "sh -c '"), "'")
 			cmd := exec.Command("sh", "-c", script)
 			cmd.Dir = app

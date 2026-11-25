@@ -47,7 +47,7 @@ const testCapMB = 256
 // step that keeps the standalone tree only for an app over its plan's cap.
 // Anything else keeps Railpack's plan.
 func TestStampNextStandalone(t *testing.T) {
-	stamped, err := StampNextStandalone(nextPlan(t, "npm run build"), []byte(nextPkg), testCapMB)
+	stamped, err := StampNextStandalone(nextPlan(t, "npm run build"), []byte(nextPkg), testCapMB, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,11 +63,11 @@ func TestStampNextStandalone(t *testing.T) {
 	if got := commands[1].(map[string]any)["cmd"]; got != "env NEXT_ADAPTER_PATH="+nextAdapterPath+" npm run build" {
 		t.Fatalf("build command = %q", got)
 	}
-	if got := commands[2].(map[string]any)["cmd"]; got != nextStandaloneCommand(testCapMB) ||
+	if got := commands[2].(map[string]any)["cmd"]; got != nextStandaloneCommand(testCapMB, 0) ||
 		!strings.Contains(got.(string), " -gt 268435456 ") {
 		t.Fatalf("last command = %q, want the standalone step at a 256 MB cap", got)
 	}
-	if _, err := StampNextStandalone(nextPlan(t, "npm run build"), []byte(nextPkg), 0); !errors.Is(err, ErrNotNextStandalone) {
+	if _, err := StampNextStandalone(nextPlan(t, "npm run build"), []byte(nextPkg), 0, 0); !errors.Is(err, ErrNotNextStandalone) {
 		t.Fatalf("no cap = %v, want the plan left alone", err)
 	}
 	if build["assets"].(map[string]any)[nextAdapterAsset] != nextAdapter {
@@ -80,7 +80,7 @@ func TestStampNextStandalone(t *testing.T) {
 	if strings.Contains(string(stamped), `"startCommand":"node`) {
 		t.Fatal("deploy start command changed; imaged chooses the standalone tree")
 	}
-	if _, err := StampNextStandalone(stamped, []byte(nextPkg), testCapMB); !errors.Is(err, ErrNotNextStandalone) {
+	if _, err := StampNextStandalone(stamped, []byte(nextPkg), testCapMB, 0); !errors.Is(err, ErrNotNextStandalone) {
 		t.Fatalf("second stamp = %v, want it left alone", err)
 	}
 
@@ -100,7 +100,7 @@ func TestStampNextStandalone(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := StampNextStandalone(tt.plan, []byte(tt.pkg), testCapMB); !errors.Is(err, ErrNotNextStandalone) {
+			if _, err := StampNextStandalone(tt.plan, []byte(tt.pkg), testCapMB, 0); !errors.Is(err, ErrNotNextStandalone) {
 				t.Fatalf("err = %v, want ErrNotNextStandalone", err)
 			}
 		})
@@ -115,7 +115,7 @@ func TestStampNextStandalone(t *testing.T) {
 			}
 		}
 		plan, _ = json.Marshal(p)
-		if _, err := StampNextStandalone(plan, []byte(nextPkg), testCapMB); err != nil {
+		if _, err := StampNextStandalone(plan, []byte(nextPkg), testCapMB, 0); err != nil {
 			t.Fatalf("%s: %v", pm, err)
 		}
 	}

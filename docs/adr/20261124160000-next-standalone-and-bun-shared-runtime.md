@@ -49,8 +49,10 @@ through its package manager. The build step:
    estimates the ext4 image the full `/app` needs the way imaged sizes an
    app layer (`rootfs.CheckCapForStaging`, amendment 1): the files'
    apparent bytes plus 10 % slack and 60 % more for the share of files under
-   4 KiB, at least 16 MiB of headroom, and 24 MiB for guest-init and the
-   directories above `/app`. The standalone tree and the build caches
+   4 KiB, and at least 16 MiB of headroom. guest-init, which every app
+   layer carries, counts as one more file of its real size (the helper
+   reads its own executable). 4 MiB more covers the directories and small
+   files above `/app`. The standalone tree and the build caches
    (`.next/cache` and `node_modules/.cache`, which are cache mounts and
    never deployed) are left out. The estimate is compared with the plan's
    app-layer cap, which the builder sends in the build manifest
@@ -136,7 +138,7 @@ with the rest of the shared runtime.
 ## Amendment 1 (2026-11-25): size checks found by the metal acceptance
 
 `TestJSFrameworksFitFreeMetal` built both apps in real builder microVMs and
-found two checks that made the decision above unreachable:
+found three size checks that made the decision above unreachable:
 
 - **builderd's artifact check.** builderd rejected any build artifact larger
   than the plan's app-layer cap. A shared-runtime artifact still holds the
@@ -151,3 +153,7 @@ found two checks that made the decision above unreachable:
   build dropped the tree. imaged then sized the image of its many small
   `node_modules` files at 545 MB and refused it. The step now uses imaged's
   own estimate, as decision 3 describes.
+- **guest-init.** The first estimate added a flat 24 MiB for guest-init
+  after the padding. guest-init is 41.8 MB, and imaged pads it with the rest
+  of the layer, so the step put a Hobby app at 506 MB where imaged needed
+  545 MB. The step now counts guest-init's own size inside the estimate.
