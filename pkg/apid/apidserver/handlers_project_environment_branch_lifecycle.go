@@ -322,8 +322,10 @@ func (s *server) resetProjectEnvironmentBranch(w http.ResponseWriter, r *http.Re
 		api.WriteProblem(w, problem)
 		return
 	}
+	// A pull request's branch stays its pull request's: githubd only uses a
+	// branch with the PR's number, and its data follows the previews setting.
 	spec := environmentBranchSpec{parent: branch.ParentSlug, slug: branch.Slug, egress: branch.EgressMode,
-		privateNetworks: branch.PrivateNetworks, ttl: environmentBranchResetTTL(branch)}
+		privateNetworks: branch.PrivateNetworks, ttl: environmentBranchResetTTL(branch), pullRequest: branch.PullRequestNumber}
 	if problem := s.environmentBranchEgressProblem(spec.egress, spec.privateNetworks); problem != nil {
 		api.WriteProblem(w, problem)
 		return

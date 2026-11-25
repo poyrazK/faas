@@ -11,16 +11,73 @@ import (
 	"testing"
 	"time"
 
+	"filippo.io/age"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// restorableProvider offers the point-in-time restore window a branch's
+// parent database needs.
+type restorableProvider struct {
+	apidserver.SourceRefManagedPostgresProvider
+}
+
+func (p restorableProvider) Capabilities() managedpostgres.Capabilities {
+	c := p.SourceRefManagedPostgresProvider.Capabilities()
+	c.PointInTimeRestore = true
+	c.MaxRestoreWindowSeconds = 3600
+	return c
+}
+
+// branchPreviewDatabases wires managed PostgreSQL into e with the credential
+// sink that writes app secrets, which is how a branch finds its parent's
+// databases, and creates orders with a restore window, which a branch needs.
+func branchPreviewDatabases(t *testing.T, e apidserver.TestEnv) (*managedpostgres.Service, *managedpostgres.BindingService, managedpostgres.Database) {
+	t.Helper()
+	registry, err := managedpostgres.NewRegistry(managedpostgres.Config{
+		DefaultRegion: "eu", Defaults: map[string]string{"eu": "test"}, MaxDatabasesPerAccount: 3, ProvisioningEnabled: true,
+		Backends: []managedpostgres.BackendConfig{{ID: "test", Driver: "test", Region: "eu", Namespace: "branch-previews"}},
+	}, func(string) string { return "" }, map[string]managedpostgres.Factory{
+		"test": func(managedpostgres.BackendConfig, func(string) string) (managedpostgres.Provider, error) {
+			return restorableProvider{}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	databases := managedpostgres.NewMemoryStore()
+	service, err := managedpostgres.NewService(registry, databases, managedpostgres.ServiceOptions{ProvisioningEnabled: func() bool { return true }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink, err := apidserver.NewAppSecretCredentialSink(*e.Store(), func() *age.X25519Recipient { return identity.Recipient() }, func() []byte { return []byte("0123456789abcdef0123456789abcdef") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings, err := managedpostgres.NewBindingService(registry, databases, databases, sink, managedpostgres.BindingServiceOptions{ProvisioningEnabled: func() bool { return true }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	(*e.S()).WithManagedPostgres(service, nil, bindings, nil, nil, nil)
+	orders, err := service.Create(t.Context(), managedpostgres.CreateRequest{AccountID: e.Acct().ID, Name: "orders", Spec: managedpostgres.Spec{
+		Region: "eu", PostgresMajor: 17, Class: managedpostgres.ClassDevelopment, Availability: managedpostgres.AvailabilitySingleZone,
+		ScaleToZero: true, StorageLimitBytes: 1 << 30, RestoreWindowSeconds: 3600}})
+	if err != nil || orders.State != managedpostgres.StateReady {
+		t.Fatalf("create orders = %+v, %v", orders, err)
+	}
+	return service, bindings, orders
+}
+
 func TestEnvironmentBranchPRDataFollowsPreviews(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
 	ctx := t.Context()
-	service, bindings, _, orders := previewDatabaseFixture(t, e)
+	service, bindings, orders := branchPreviewDatabases(t, e)
 	srv, store, acct := *e.S(), *e.Store(), *e.Acct()
 	project, err := store.CreateProject(ctx, state.Project{AccountID: acct.ID, Slug: "shop", ProductionBranch: "main"})
 	if err != nil {
@@ -60,8 +117,8 @@ func TestEnvironmentBranchPRDataFollowsPreviews(t *testing.T) {
 		}
 		// Past the restore lag, as the reconciler runs; a few passes let a
 		// database and its binding finish provisioning.
-		for range 3 {
-			if err := srv.ReconcileEnvironmentBranchData(ctx, time.Now().UTC().Add(time.Minute)); err != nil {
+		for pass := range 3 {
+			if err := srv.ReconcileEnvironmentBranchData(ctx, time.Now().UTC().Add(time.Duration(pass+1)*time.Minute)); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -116,8 +173,8 @@ func TestEnvironmentBranchPRDataFollowsPreviews(t *testing.T) {
 	if rec := e.Do(t, http.MethodPost, "/v1/projects/shop/environments/pr-8/branch/reset", nil, nil); rec.Code >= 300 {
 		t.Fatalf("reset pr-8 = %d %s", rec.Code, rec.Body)
 	}
-	for range 3 {
-		if err := srv.ReconcileEnvironmentBranchData(ctx, time.Now().UTC().Add(time.Minute)); err != nil {
+	for pass := range 3 {
+		if err := srv.ReconcileEnvironmentBranchData(ctx, time.Now().UTC().Add(time.Duration(pass+1)*time.Minute)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -127,5 +184,9 @@ func TestEnvironmentBranchPRDataFollowsPreviews(t *testing.T) {
 	}
 	if got := scoped(t, again[0].ID, "pr-8"); len(got) != 1 {
 		t.Fatalf("reset pr-8 bindings to its new empty database = %+v", got)
+	}
+	// The reset branch is still the pull request's, so githubd keeps using it.
+	if reset, err := store.ProjectEnvironmentBranchBySlug(ctx, acct.ID, project.ID, "pr-8"); err != nil || reset.PullRequestNumber != 8 {
+		t.Fatalf("pr-8 after reset = %+v, %v; want pull request 8", reset, err)
 	}
 }
