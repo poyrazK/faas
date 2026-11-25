@@ -759,5 +759,8 @@ func workerNoInstancesLine(slug, appStatus string, backlog int64) string {
 		}
 		return fmt.Sprintf("Active Instances: 0 (parked; autoscaling resumes after `gregale app wake %s`)", slug)
 	}
-	return "Active Instances: 0 (scaled to zero; it starts replicas when the backlog reaches its target)"
+	// The first waiting message starts a replica; the target sizes the pool
+	// above one. It said "when the backlog reaches its target", but on prod
+	// one message woke a pool with target 50 (prod hunt r57; docs/workers.md).
+	return "Active Instances: 0 (scaled to zero; the next waiting message starts a replica)"
 }

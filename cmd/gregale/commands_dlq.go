@@ -16,11 +16,11 @@ import (
 func cmdDLQ(args []string) int {
 	parent, _ := lookupCliCommand("dlq")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale dlq <list|inspect|replay|purge>", "dlq")
+		PrintUsage(os.Stderr, "usage: gregale dlq <list|get|replay|purge>", "dlq")
 		return 1
 	}
 	if args[0] == "--help" || args[0] == "-h" {
-		PrintUsage(os.Stdout, "usage: gregale dlq <list|inspect|replay|purge>", "dlq")
+		PrintUsage(os.Stdout, "usage: gregale dlq <list|get|replay|purge>", "dlq")
 		return 0
 	}
 	switch args[0] {
