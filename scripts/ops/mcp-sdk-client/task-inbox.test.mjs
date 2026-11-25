@@ -1,19 +1,23 @@
 import assert from 'node:assert/strict';
+import { fork } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
-import { resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import {
-  cancelMcpTask, createMcpTaskTransport, getMcpTask, listTaskInbox,
-  lookupMcpTaskBySubmissionKey, submitMcpTask, watchMcpTask, watchMcpTasks, watchTaskInbox,
+  cancelMcpTask, createMcpTaskGroup, createMcpTaskTransport, getMcpTask, listTaskInbox,
+  lookupMcpTaskBySubmissionKey, submitMcpTask, submitMcpTaskWithReceipt, watchMcpTask,
+  watchMcpTaskGroup, watchMcpTasks, watchTaskInbox,
 } from '../../../sdk/node/dist/preview.js';
 
-test('the official SDK watches the authenticated PostgreSQL Task inbox', { timeout: 25_000 }, async t => {
+test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { timeout: 40_000 }, async t => {
   const starterDir = process.env.MCP_TASKS_TEST_NODE_STARTER;
   const connectionString = process.env.MCP_TASKS_TEST_DATABASE_URL;
   assert.ok(starterDir && connectionString, 'set MCP_TASKS_TEST_NODE_STARTER and MCP_TASKS_TEST_DATABASE_URL');
@@ -88,9 +92,12 @@ test('the official SDK watches the authenticated PostgreSQL Task inbox', { timeo
     }
     return inbox(query, ...args);
   };
-  let taskWatch;
+  let taskWatch, groupRequests;
   const server = createServer((req, res) => {
     const method = req.headers['mcp-method'];
+    if (groupRequests && (method === 'gregale/tasks/submit' || method === 'tools/call')) {
+      groupRequests.submissions++;
+    }
     if (method === 'gregale/tasks/inbox') response = res;
     if (taskWatch && method === 'subscriptions/listen') {
       taskWatch.stream = res;
@@ -286,5 +293,100 @@ test('the official SDK watches the authenticated PostgreSQL Task inbox', { timeo
     taskWatch.release.resolve();
     await batch.return();
     taskWatch = undefined;
+  }
+
+  const groupRoot = await mkdtemp(join(tmpdir(), 'gregale-sdk-task-group-'));
+  const group = join(groupRoot, 'saved');
+  const agents = [];
+  async function startAgent() {
+    const token = await mint('alice', 'mcp:tools reports:read');
+    const child = fork(new URL('./task-group-agent.mjs', import.meta.url), [], {
+      execArgv: [], stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
+    });
+    const exit = once(child, 'exit');
+    const events = [];
+    let progress = Promise.withResolvers();
+    child.on('message', event => {
+      events.push(event);
+      progress.resolve();
+      progress = Promise.withResolvers();
+    });
+    const agent = {
+      child, exit, events,
+      async running(promise) {
+        return Promise.race([promise, exit.then(() => assert.fail('Task group agent exited before the expected update'))]);
+      },
+      async waitForEvents(count) {
+        while (events.length < count) await this.running(progress.promise);
+        return events.slice(0, count);
+      },
+    };
+    agents.push(agent);
+    child.send({ endpoint: endpoint.href, token, group });
+    return agent;
+  }
+  function monitorGroup() {
+    taskWatch = { opens: 0, reconciling: Promise.withResolvers(), release: Promise.withResolvers() };
+    taskWatch.release.resolve();
+  }
+
+  groupRequests = { submissions: 0 };
+  try {
+    const paths = ['completed', 'paused', 'remaining'].map(name => join(groupRoot, name));
+    const leases = [];
+    for (const path of paths) {
+      const submitted = await submitMcpTaskWithReceipt(owner, path, {
+        toolName: 'build_report', arguments: { report: 'Task group restart', steps: 1 }, deferFormInput: true,
+      });
+      assert.equal(submitted.outcome, 'accepted');
+      assert.equal(submitted.taskIdRecorded, true);
+      const claim = await store.claim(3, 30_000);
+      assert.equal(claim.task_id, submitted.task.taskId);
+      leases.push(claim);
+    }
+    assert.equal(groupRequests.submissions, 3);
+    await createMcpTaskGroup(group, paths);
+
+    monitorGroup();
+    const original = await startAgent();
+    assert.deepEqual((await original.waitForEvents(3)).map(event => [event.taskId, event.status]),
+      leases.map(claim => [claim.task_id, 'working']));
+    await original.running(taskWatch.reconciling.promise);
+    assert.equal(taskWatch.opens, 1);
+    original.child.kill('SIGKILL');
+    assert.deepEqual(await original.exit, [null, 'SIGKILL']);
+
+    const result = { content: [{ type: 'text', text: 'finished during the agent restart' }] };
+    assert.equal(await store.complete(leases[0].task_id, leases[0].lease_token, result), 'completed');
+    await requestInput(leases[1]);
+
+    monitorGroup();
+    const resumed = await startAgent();
+    assert.deepEqual((await resumed.waitForEvents(2)).map(event => [event.receiptIndex, event.taskId, event.status]), [
+      [0, leases[0].task_id, 'completed'], [1, leases[1].task_id, 'input_required'],
+    ]);
+    await resumed.running(taskWatch.reconciling.promise);
+    assert.equal(taskWatch.opens, 1);
+    assert.equal(await store.complete(leases[2].task_id, leases[2].lease_token, result), 'completed');
+    assert.deepEqual(await resumed.exit, [0, null]);
+    assert.deepEqual(resumed.events.map(event => [event.taskId, event.status]), [
+      [leases[0].task_id, 'completed'], [leases[1].task_id, 'input_required'], [leases[2].task_id, 'completed'],
+    ]);
+    assert.equal((await watchMcpTaskGroup(owner, group).next()).done, true);
+
+    const other = await connect('bob', 'mcp:tools reports:read');
+    const inaccessible = [];
+    for await (const event of watchMcpTaskGroup(other, group)) {
+      assert.equal(event.outcome, 'unavailable');
+      assert.deepEqual(Object.keys(event).sort(), ['error', 'outcome', 'receiptIndex']);
+      inaccessible.push(event.receiptIndex);
+    }
+    assert.deepEqual(inaccessible, [0, 1, 2]);
+    assert.equal(groupRequests.submissions, 3);
+  } finally {
+    for (const agent of agents) agent.child.kill();
+    await Promise.allSettled(agents.map(agent => agent.exit));
+    taskWatch = undefined;
+    await rm(groupRoot, { recursive: true, force: true });
   }
 });

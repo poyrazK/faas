@@ -116,6 +116,10 @@ function transportBinding(connection: McpTaskReceiptConnection): TransportBindin
   return binding;
 }
 
+export function mcpTaskReceiptEndpoint(connection: McpTaskReceiptConnection): string {
+  return transportBinding(connection).endpointSha256;
+}
+
 function checkEndpoint(connection: McpTaskReceiptConnection, expected: string): TransportBinding {
   const binding = transportBinding(connection);
   if (binding.endpointSha256 !== expected) throw new McpTaskReceiptError('endpoint_mismatch');
@@ -210,6 +214,11 @@ async function loadReceipt(path: string): Promise<Receipt> {
     if (error instanceof McpTaskReceiptError) throw error;
     throw new McpTaskReceiptError(hasFsCode(error, 'ELOOP') ? 'invalid_receipt' : 'receipt_io');
   }
+}
+
+export async function loadMcpTaskReceiptReference(path: string): Promise<ReceiptFields> {
+  const { endpointSha256, submissionKey, taskId } = await loadReceipt(await receiptPath(path));
+  return { endpointSha256, submissionKey, ...(taskId === undefined ? {} : { taskId }) };
 }
 
 async function writeReceipt(path: string, receipt: Receipt): Promise<void> {

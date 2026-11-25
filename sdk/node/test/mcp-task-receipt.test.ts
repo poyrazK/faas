@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
-  createMcpTaskReceiptTransport, resumeMcpTaskFromReceipt, retryMcpTaskFromReceipt, submitMcpTaskWithReceipt,
+  createMcpTaskGroup, createMcpTaskReceiptTransport, resumeMcpTaskFromReceipt, retryMcpTaskFromReceipt,
+  submitMcpTaskWithReceipt, watchMcpTaskGroup,
   type McpTaskConnection, type McpTaskReceiptConnection, type McpTaskSubmissionConnection,
 } from '../src/preview.js';
 
@@ -280,4 +281,118 @@ test('an auth refresh cannot send a receipt-backed mutation with a different bea
   assert.equal((await retryMcpTaskFromReceipt(
     connection(async () => ({ resultType: 'task', ...task })), path, submission,
   )).outcome, 'accepted');
+});
+
+test('Task groups recover lost replies and remember only the exact acknowledged update', async t => {
+  const directory = await folder(t);
+  const path = join(directory, 'receipt');
+  const group = join(directory, 'group');
+  assert.deepEqual(await submitMcpTaskWithReceipt(connection(async () => { throw new Error('lost reply'); }),
+    path, submission), { outcome: 'unconfirmed' });
+  const before = await readFile(path, 'utf8');
+  const { submissionKey } = JSON.parse(before);
+  const creations = await Promise.allSettled([
+    createMcpTaskGroup(group, [path]), createMcpTaskGroup(group, [path]),
+  ]);
+  assert.equal(creations.filter(result => result.status === 'fulfilled').length, 1);
+  assert.ok(creations.some(result => result.status === 'rejected' && result.reason.code === 'group_exists'));
+  assert.equal((await stat(group)).mode & 0o777, 0o700);
+  const manifest = join(group, 'group.json');
+  assert.equal((await stat(manifest)).mode & 0o777, 0o600);
+  const saved = await readFile(manifest, 'utf8');
+  assert.deepEqual(JSON.parse(saved).members, [{ submissionKey }]);
+  for (const privateValue of [endpoint, 'private-fixture-credential', 'private fixture arguments', 'credentialProof', path]) {
+    assert.equal(saved.includes(privateValue), false);
+  }
+
+  const requests: string[] = [];
+  let current: Record<string, unknown> = { ...task };
+  const connect = () => connection(async ({ method, params }) => {
+    requests.push(method);
+    if (method === lookup) {
+      assert.equal(params.submissionKey, submissionKey);
+      return task;
+    }
+    assert.equal(method, 'tasks/get');
+    assert.equal(params.taskId, task.taskId);
+    return current;
+  }, endpoint, 'refreshed-credential');
+
+  const first = watchMcpTaskGroup(connect(), group);
+  const working = (await first.next()).value;
+  assert.equal(working?.outcome, 'available');
+  assert.equal(working.task.status, 'working');
+  await first.return();
+
+  const replay = watchMcpTaskGroup(connect(), group);
+  const repeated = (await replay.next()).value;
+  assert.equal(repeated?.outcome, 'available');
+  assert.equal(repeated.updateId, working.updateId);
+  await Promise.all([working.acknowledge(), repeated.acknowledge()]);
+  await replay.return();
+
+  current = { ...task, status: 'input_required', lastUpdatedAt: '2026-11-24T00:01:00Z', inputRequests: { private: true } };
+  const afterPause = watchMcpTaskGroup(connect(), group);
+  const paused = (await afterPause.next()).value;
+  assert.equal(paused?.outcome, 'available');
+  assert.equal(paused.task.status, 'input_required');
+  assert.equal(Object.hasOwn(paused.task, 'inputRequests'), false);
+  assert.notEqual(paused.updateId, working.updateId);
+  await afterPause.return();
+
+  await working.acknowledge();
+  const pausedAgain = watchMcpTaskGroup(connect(), group);
+  const unacknowledged = (await pausedAgain.next()).value;
+  assert.equal(unacknowledged?.outcome, 'available');
+  assert.equal(unacknowledged.updateId, paused.updateId);
+  await unacknowledged.acknowledge();
+  assert.equal((await pausedAgain.next()).done, true);
+
+  current.pollIntervalMs = 1_000;
+  assert.equal((await watchMcpTaskGroup(connect(), group).next()).done, true);
+  assert.deepEqual(requests, Array.from({ length: 5 }, () => [lookup, 'tasks/get']).flat());
+  assert.equal(await readFile(path, 'utf8'), before);
+});
+
+test('Task groups pin the endpoint and isolate inaccessible receipts without readable metadata', async t => {
+  const directory = await folder(t);
+  const first = join(directory, 'first');
+  const other = join(directory, 'other');
+  const group = join(directory, 'group');
+  const confirm = async () => ({ resultType: 'task', ...task });
+  await submitMcpTaskWithReceipt(connection(confirm), first, submission);
+  await submitMcpTaskWithReceipt(connection(confirm, endpoint + '/second'), other, submission);
+  await assert.rejects(createMcpTaskGroup(group, [first, other]), { code: 'invalid_group' });
+  await assert.rejects(createMcpTaskGroup(group, [first, first]), { code: 'invalid_group' });
+  await createMcpTaskGroup(group, [first]);
+
+  let requested = 0;
+  const wrong = connection(async () => { requested++; return task; }, endpoint + '/wrong');
+  await assert.rejects(watchMcpTaskGroup(wrong, group).next(), { code: 'endpoint_mismatch' });
+  assert.equal(requested, 0);
+  const link = join(directory, 'linked');
+  await symlink(group, link);
+  await assert.rejects(watchMcpTaskGroup(wrong, link).next(), { code: 'invalid_group' });
+  await chmod(join(group, 'group.json'), 0o644);
+  await assert.rejects(watchMcpTaskGroup(wrong, group).next(), { code: 'invalid_group' });
+  await chmod(join(group, 'group.json'), 0o600);
+
+  const denied = connection(async () => { throw { code: -32002 }; });
+  const watch = watchMcpTaskGroup(denied, group);
+  const refused = (await watch.next()).value;
+  assert.equal(refused?.outcome, 'unavailable');
+  assert.equal(refused.receiptIndex, 0);
+  assert.deepEqual(Object.keys(refused).sort(), ['error', 'outcome', 'receiptIndex']);
+  assert.equal((await watch.next()).done, true);
+  assert.deepEqual(await readdir(group), ['group.json']);
+
+  const owner = connection(async () => task);
+  const original = watchMcpTaskGroup(owner, group);
+  const event = (await original.next()).value;
+  assert.equal(event?.outcome, 'available');
+  await original.return();
+  await rm(group, { recursive: true });
+  await createMcpTaskGroup(group, [first]);
+  await assert.rejects(event.acknowledge(), { code: 'group_changed' });
+  assert.deepEqual(await readdir(group), ['group.json']);
 });

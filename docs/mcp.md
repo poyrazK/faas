@@ -6258,6 +6258,44 @@ batches until they fit, and also polls IDs omitted from the subscription
 acknowledgement. It uses at most four concurrent status reads, and checks
 all remaining Tasks after a disconnect before subscribing again.
 
+#### Resume a Task group after an agent restart
+
+Save a group from one to 64 existing Node Task receipts for the same MCP
+endpoint. The group uses a private subdirectory of an existing
+application-owned directory on a POSIX file system. It stores the read-only
+references from the receipts and the acknowledgement of each handled update.
+
+```ts
+import { createMcpTaskGroup, watchMcpTaskGroup } from '@gregale/sdk-node/preview';
+
+// Create the group once from receipts produced by submitMcpTaskWithReceipt.
+await createMcpTaskGroup('./receipts/weekly-group', receiptPaths);
+
+// Use the same group path after reconnecting with createMcpTaskTransport.
+for await (const event of watchMcpTaskGroup(mcp, './receipts/weekly-group', { signal })) {
+  if (event.outcome === 'unavailable') {
+    console.log(event.receiptIndex, event.error.code);
+    continue;
+  }
+  await handleTaskUpdate(event.task, event.updateId);
+  await event.acknowledge();
+}
+```
+
+The watcher uses the current credential and recovers lost submission replies
+by key. It reads each retained Task's latest metadata and shares a stream
+for Tasks still working. Use `receiptIndex` to match the original order of
+the receipts. The group stores no credentials, tool arguments, forms, or
+results, and recovery never submits a Task.
+
+Acknowledge an update after handling it. A restart skips the same
+acknowledged snapshot, while a current unacknowledged snapshot can be
+delivered again with the same `updateId`. Use that ID if handling the update
+needs an idempotency key. An acknowledgement applies to that snapshot alone.
+Tasks that need input leave the current watch and are checked again the next
+time the group is opened. Keep the group directory for as long as you need
+its acknowledgements.
+
 #### Cancel a Task from TypeScript
 
 Use `cancelMcpTask(mcp, taskId)` from `@gregale/sdk-node/preview` on the
