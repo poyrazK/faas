@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -124,6 +125,9 @@ func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state
 	planToken := r.URL.Query().Get("plan_token")
 	resp, insertedProject, added, changed, removedSlugs, builds, prob := s.scanService(r, acct, planToken, true)
 	if prob != nil {
+		// A step after reconcile failed; the apps it inserted exist and
+		// still need schedd to claim a node for them.
+		s.notifyProjectAppsApplied(r.Context(), insertedProject.ID, added, nil)
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -213,33 +217,7 @@ func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state
 
 	}
 
-	// Notify every touched app. PostgreSQL delivers the
-	// notification only on Tx commit; reconcile's CreateAppIfUnderQuota
-	// + UpdateApp have already committed per-row (each call wraps
-	// its own Tx), so the post-reconcile emit is safe — schedd
-	// sees the rows.
-	//
-	// kind=created fires for Added; kind=updated fires for Changed.
-	// The latter keeps schedd in sync if a workload's RootDir /
-	// WorkloadName / StartCommand drifted across two applies.
-	//
-	// ctx is captured explicitly so the closure doesn't extend
-	// the lifetime of r (contextcheck linter).
-	notifyCtx := r.Context()
-	notifyApp := func(a state.App, kind string) {
-		_ = s.notif.Notify(notifyCtx, db.NotifyAppChanged,
-			string(safetext.JSONObject(struct {
-				Kind      string `json:"kind"`
-				AppID     string `json:"app_id"`
-				ProjectID string `json:"project_id"`
-			}{Kind: kind, AppID: a.ID, ProjectID: insertedProject.ID})))
-	}
-	for _, a := range added {
-		notifyApp(a, "created")
-	}
-	for _, a := range changed {
-		notifyApp(a, "updated")
-	}
+	s.notifyProjectAppsApplied(r.Context(), insertedProject.ID, added, changed)
 
 	// Audit + response. Response body mirrors the scan output but
 	// carries the inserted/updated IDs so the CLI's --yes flow
@@ -376,6 +354,40 @@ func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state
 		out.SubmissionAttemptID = tracker.Receipt.AttemptID
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// projectAppsNotifyTimeout bounds the app_changed notifications a project
+// apply sends after its own request context may be gone.
+const projectAppsNotifyTimeout = 5 * time.Second
+
+// notifyProjectAppsApplied emits one NotifyAppChanged per app a project
+// apply touched: kind=created for inserted apps (schedd claims their node
+// on it, Engine.ClaimUnplaced) and kind=updated for changed ones (keeps
+// schedd in sync when a workload's RootDir / WorkloadName / StartCommand
+// drifted). Reconcile commits its rows before returning, so schedd sees
+// them. A failed apply passes only added: the rows exist even though a
+// later step failed. The apply may have failed because its context
+// expired or the client went away, so the events do not ride on it.
+func (s *server) notifyProjectAppsApplied(ctx context.Context, projectID string, added, changed []state.App) {
+	if len(added) == 0 && len(changed) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), projectAppsNotifyTimeout)
+	defer cancel()
+	notify := func(a state.App, kind string) {
+		_ = s.notif.Notify(ctx, db.NotifyAppChanged,
+			string(safetext.JSONObject(struct {
+				Kind      string `json:"kind"`
+				AppID     string `json:"app_id"`
+				ProjectID string `json:"project_id"`
+			}{Kind: kind, AppID: a.ID, ProjectID: projectID})))
+	}
+	for _, a := range added {
+		notify(a, "created")
+	}
+	for _, a := range changed {
+		notify(a, "updated")
+	}
 }
 
 // emitProjectApplyExclusionAudits records the exclusion decisions made by a
