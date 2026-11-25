@@ -346,6 +346,14 @@ class CheckTests(unittest.TestCase):
         self.assertIn("not a count per option", malformed["detail"])
         self.assertFalse(grade(VotingApps(), created={"apps": ["vote", "vote-worker"]})["ok"])
 
+        class SuffixedUrls(Urls):
+            def get(self, path):
+                return {"/v1/apps/vote-k3x7q": {"canonical_url": "https://vote.example"},
+                        "/v1/apps/result-a2b4c": {"canonical_url": "https://result.example"}}[path]
+        (suffixed,) = ev.run_checks(task, None, Path("."), "", SuffixedUrls(), created={"apps": ["result-a2b4c", "vote-k3x7q"]},
+                                    http=VotingApps(), http_deadline_s=0)
+        self.assertTrue(suffixed["ok"], "a name another account holds gets a 5-character suffix")
+
     def test_live_worker_counts_as_serving(self):
         # Health reads "unsupported" for a worker pool unless app_health_workers
         # is on; a live worker serves its queue (2026-11-24 voting-app rerun).

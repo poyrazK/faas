@@ -56,7 +56,7 @@ measure what a cold agent does with a repository Gregale did not create:
   `vote_counted` grades the voting app end to end: it votes, as a new voter,
   for the option with fewer votes on the created `vote` app and waits for the
   `result` app's Socket.IO `scores` to count it (slugs match `(^|-)vote$` and
-  `(^|-)result$`; both must be public). Page GETs alone passed a deployment
+  `(^|-)result$`, each optionally with the 5-character suffix a taken name gets; both must be public). Page GETs alone passed a deployment
   whose votes all failed (rc.380).
 - `features` lists the Gregale features that apply to the repository. Each is
   a regex over the agent's shell commands (`command`), over files in the

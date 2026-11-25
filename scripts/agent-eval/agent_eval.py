@@ -850,8 +850,10 @@ def vote_counted_check(gregale, created_apps: list[str], check: dict, http=_http
     vote is the likeliest change; a total that grows still cannot prove which
     vote was counted. Both apps must be public: the grader has no session to
     vote or read scores as the owner."""
-    result_app, result_url = _created_public_app(gregale, created_apps, check.get("result_match", r"(^|-)result$"))
-    vote_app, vote_url = _created_public_app(gregale, created_apps, check.get("vote_match", r"(^|-)vote$"), exclude=result_app)
+    # A taken name gets the project's prefix (<project>-vote) or, when another
+    # account holds it, a 5-character suffix (vote-k3x7q, pkg/api SuffixedAppSlugs).
+    result_app, result_url = _created_public_app(gregale, created_apps, check.get("result_match", r"(^|-)result(-[a-z0-9]{5})?$"))
+    vote_app, vote_url = _created_public_app(gregale, created_apps, check.get("vote_match", r"(^|-)vote(-[a-z0-9]{5})?$"), exclude=result_app)
     if not vote_url or not result_url:
         return False, f"no public vote ({vote_app or '-'}) or result ({result_app or '-'}) app among {','.join(created_apps)}"
     deadline = time.monotonic() + max(deadline_s, 0)
