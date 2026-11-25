@@ -43,7 +43,7 @@ The owner chose before this record:
   `{ "channel_ids": [...] }` (at most `FlagsMaxNotificationChannels`, the
   account's channels) sets an environment's channels; an empty list turns
   them off. `GET` reads them. CLI: `gregale flag notify set --channel ID...`,
-  `flag notify clear`, `flag notify show`.
+  `flag notify clear`, `flag notify get`.
 - `POST .../experiments` takes `notify_channel_ids`; CLI
   `flag experiment create --notify ID`.
 
