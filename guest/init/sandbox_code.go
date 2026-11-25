@@ -9,9 +9,13 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/sandboxproto"
 )
 
@@ -26,8 +30,13 @@ const (
 	// sandboxCodeStartTimeout is how long the driver has to listen.
 	sandboxCodeStartTimeout = 30 * time.Second
 	// sandboxCodeRunGrace is how long past its timeout a run may take to
-	// answer: the driver interrupts the kernel, then restarts it.
-	sandboxCodeRunGrace = 30 * time.Second
+	// answer: starting the default kernel on first use (up to 60 s), then
+	// past the timeout an interrupt (5 s) and a restart (up to 60 s).
+	sandboxCodeRunGrace = 150 * time.Second
+	// sandboxCodeResultMaxBytes bounds a run's rich results as this guest
+	// encodes them, so the result always fits one control frame beside a
+	// traceback; results past it are dropped and the run says so.
+	sandboxCodeResultMaxBytes = 3 << 20
 	// sandboxCodeEventMaxBytes bounds one event line from the driver.
 	sandboxCodeEventMaxBytes = sandboxproto.MaxOutputBytes + 64<<10
 )
@@ -35,8 +44,10 @@ const (
 // codeDriver is the session's driver process, started on first use and
 // again if it exits.
 type codeDriver struct {
-	mu         sync.Mutex
-	path       string
+	mu   sync.Mutex
+	path string
+	// python, when set, runs the driver instead of its shebang (tests).
+	python     string
 	runtimeDir string
 	proc       sandboxProcess
 	exited     chan struct{}
@@ -104,8 +115,13 @@ func (s *sandboxServer) startCodeDriver() error {
 			return sandboxError(sandboxproto.CodeInternal, "own the code interpreter's directory: %v", err)
 		}
 	}
-	spec := sandboxCommandSpec{argv: []string{d.path, "--socket", d.socket(), "--workspace", s.workspace},
-		env: sandboxEnv(s.home, "app", false, s.commandEnv(nil)), dir: s.workspace}
+	// The driver runs with the base environment only: the session's
+	// environment comes with every request, so its kernels follow changes.
+	argv := []string{d.path, "--socket", d.socket(), "--workspace", s.workspace}
+	if d.python != "" {
+		argv = append([]string{d.python}, argv...)
+	}
+	spec := sandboxCommandSpec{argv: argv, env: sandboxEnv(s.home, "app", false, nil), dir: s.workspace}
 	proc, err := s.runner.start(spec)
 	if err != nil {
 		return sandboxError(sandboxproto.CodeStartFailed, "start the code interpreter: %s", err.Error())
@@ -133,6 +149,9 @@ func (s *sandboxServer) startCodeDriver() error {
 	exited := make(chan struct{})
 	go func() {
 		_ = proc.wait()
+		// Kernels run in sessions of their own: a dead driver's kernels
+		// would keep their memory beside the next driver's.
+		stopCodeKernels(d.runtimeDir)
 		pumps.Wait()
 		proc.closeOutput()
 		if logFile != nil {
@@ -142,6 +161,30 @@ func (s *sandboxServer) startCodeDriver() error {
 	}()
 	d.proc, d.exited = proc, exited
 	return nil
+}
+
+// stopCodeKernels kills the kernels a driver recorded in kernel-<id>.pid,
+// each with its process group, and removes the records. A pid is killed
+// only while its command line is still an ipykernel's.
+func stopCodeKernels(runtimeDir string) {
+	files, _ := filepath.Glob(filepath.Join(runtimeDir, "kernel-*.pid"))
+	for _, file := range files {
+		raw, err := os.ReadFile(file) //nolint:forbidigo // the driver's own record in its runtime directory
+		_ = os.Remove(file)           //nolint:forbidigo // the driver's own record in its runtime directory
+		if err != nil {
+			continue
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+		if err != nil || pid <= 1 {
+			continue
+		}
+		cmdline, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline")) //nolint:forbidigo // procfs
+		if err != nil || !strings.Contains(string(cmdline), "ipykernel") {
+			continue
+		}
+		_ = syscall.Kill(-pid, syscall.SIGKILL)
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+	}
 }
 
 // codeEvent is one line the driver answers with.
@@ -246,19 +289,28 @@ func (s *sandboxServer) codeRun(ctx context.Context, req sandboxproto.Request, c
 	res := sandboxproto.CodeRunResult{Results: []sandboxproto.CodeOutput{}}
 	done := false
 	timeout := time.Duration(req.TimeoutMillis)*time.Millisecond + sandboxCodeRunGrace
-	err := s.codeCall(ctx, map[string]any{"op": "run", "context": req.Context, "code": req.Code,
-		"timeout_ms": req.TimeoutMillis, "max_output_bytes": req.MaxOutputBytes}, timeout, func(ev codeEvent) error {
+	resultBytes := 0
+	err := s.codeCall(ctx, s.codeRequest(map[string]any{"op": "run", "context": req.Context, "code": req.Code,
+		"timeout_ms": req.TimeoutMillis, "max_output_bytes": req.MaxOutputBytes}), timeout, func(ev codeEvent) error {
 		switch ev.Type {
 		case "stdout":
 			_, _ = call.Stdout().Write([]byte(ev.Text))
 		case "stderr":
 			_, _ = call.Stderr().Write([]byte(ev.Text))
 		case "result":
-			res.Results = append(res.Results, sandboxproto.CodeOutput{Data: ev.Data, IsMainResult: ev.IsMainResult})
+			out := sandboxproto.CodeOutput{Data: ev.Data, IsMainResult: ev.IsMainResult}
+			encoded, err := json.Marshal(out)
+			if err != nil || resultBytes+len(encoded) > sandboxCodeResultMaxBytes {
+				res.OutputTruncated = true
+				return nil
+			}
+			resultBytes += len(encoded)
+			res.Results = append(res.Results, out)
 		case "error":
 			res.Error = &sandboxproto.CodeError{Name: ev.Name, Value: ev.Value, Traceback: ev.Traceback}
 		case "done":
-			res.ExecutionCount, res.TimedOut, res.OutputTruncated, done = ev.ExecutionCount, ev.TimedOut, ev.Truncated, true
+			res.ExecutionCount, res.TimedOut, done = ev.ExecutionCount, ev.TimedOut, true
+			res.OutputTruncated = res.OutputTruncated || ev.Truncated
 		}
 		return nil
 	})
@@ -273,7 +325,7 @@ func (s *sandboxServer) codeRun(ctx context.Context, req sandboxproto.Request, c
 
 // codeContext creates, lists, restarts or removes a code context.
 func (s *sandboxServer) codeContext(ctx context.Context, req sandboxproto.Request) (any, error) {
-	body := map[string]any{"op": req.Action, "context": req.Context}
+	body := s.codeRequest(map[string]any{"op": req.Action, "context": req.Context})
 	if req.Action == sandboxproto.CodeActionCreate {
 		cwd := req.Workdir
 		if cwd != "" && !filepath.IsAbs(cwd) {
@@ -298,4 +350,15 @@ func (s *sandboxServer) codeContext(ctx context.Context, req sandboxproto.Reques
 		return nil, err
 	}
 	return res, nil
+}
+
+// codeRequest adds what every driver request carries: the session's
+// environment as it is now, and the session's cap on code contexts.
+func (s *sandboxServer) codeRequest(body map[string]any) map[string]any {
+	env := s.commandEnv(nil)
+	if env == nil {
+		env = map[string]string{}
+	}
+	body["env"], body["max_contexts"] = env, api.SandboxCodeContextsMax
+	return body
 }

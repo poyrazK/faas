@@ -103,5 +103,75 @@ class DriverTest(unittest.TestCase):
         self.assertEqual(self.call({"op": "create", "language": "cobol"})[0]["code"], "unsupported")
 
 
+    def test_an_error_after_the_budget_is_still_reported(self) -> None:
+        events = self.run_code("print('x' * 5000)\nraise ValueError('bad')", max_output_bytes=100)
+        self.assertTrue(events[-1]["output_truncated"])
+        errors = [e for e in events if e["type"] == "error"]
+        self.assertEqual(errors[0]["name"], "ValueError", events)
+
+    def test_a_dead_kernel_ends_the_run_and_starts_again(self) -> None:
+        cid = self.call({"op": "create", "language": "python", "cwd": self.dir})[0]["id"]
+        started = time.monotonic()
+        events = self.run_code("import os, signal\nos.kill(os.getpid(), signal.SIGKILL)", context=cid, timeout_ms=60_000)
+        self.assertLess(time.monotonic() - started, 30)
+        self.assertEqual([e["name"] for e in events if e["type"] == "error"], ["KernelDied"], events)
+        again = self.run_code("1 + 1", context=cid)
+        self.assertEqual([e for e in again if e["type"] == "result"][0]["data"]["text/plain"], "2")
+        self.call({"op": "remove", "context": cid})
+
+    def test_restart_cancels_a_run_in_progress(self) -> None:
+        cid = self.call({"op": "create", "language": "python", "cwd": self.dir})[0]["id"]
+        box: Dict[str, Any] = {}
+        runner = threading.Thread(target=lambda: box.update(events=self.run_code("import time\ntime.sleep(300)", context=cid, timeout_ms=300_000)))
+        runner.start()
+        time.sleep(2)
+        started = time.monotonic()
+        self.assertEqual(self.call({"op": "restart", "context": cid}), [{"type": "ok"}])
+        self.assertLess(time.monotonic() - started, 30)
+        runner.join(30)
+        self.assertIn("ContextRestarted", [e.get("name") for e in box["events"]])
+        self.call({"op": "remove", "context": cid})
+
+    def test_a_queued_run_keeps_its_timeout(self) -> None:
+        cid = self.call({"op": "create", "language": "python", "cwd": self.dir})[0]["id"]
+        runner = threading.Thread(target=lambda: self.run_code("import time\ntime.sleep(8)", context=cid, timeout_ms=30_000))
+        runner.start()
+        time.sleep(1)
+        started = time.monotonic()
+        events = self.run_code("print('late')", context=cid, timeout_ms=1_000)
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertEqual(events, [{"type": "done", "execution_count": None, "timed_out": True, "output_truncated": False}])
+        runner.join(30)
+        self.call({"op": "remove", "context": cid})
+
+    def test_a_run_whose_caller_left_is_interrupted(self) -> None:
+        cid = self.call({"op": "create", "language": "python", "cwd": self.dir})[0]["id"]
+        with socket.socket(socket.AF_UNIX) as s:
+            s.connect(self.sock)
+            s.sendall(json.dumps({"op": "run", "context": cid, "code": "while True: print(1)", "timeout_ms": 300_000}).encode() + b"\n")
+            s.recv(1024)
+        started = time.monotonic()
+        events = self.run_code("2 + 2", context=cid, timeout_ms=30_000)
+        self.assertLess(time.monotonic() - started, 20)
+        self.assertEqual([e for e in events if e["type"] == "result"][0]["data"]["text/plain"], "4")
+        self.call({"op": "remove", "context": cid})
+
+    def test_session_env_follows_the_request(self) -> None:
+        cid = self.call({"op": "create", "language": "python", "cwd": self.dir})[0]["id"]
+        get = "import os\nos.environ.get('GREGALE_DRIVER_TEST')"
+        first = self.run_code(get, context=cid, env={"GREGALE_DRIVER_TEST": "one"})
+        self.assertEqual([e for e in first if e["type"] == "result"][0]["data"]["text/plain"], "'one'")
+        cleared = self.run_code(get, context=cid, env={})
+        self.assertFalse([e for e in cleared if e["type"] == "result"])
+        self.call({"op": "remove", "context": cid})
+
+    def test_the_context_cap_names_the_limit(self) -> None:
+        events = self.call({"op": "create", "language": "python", "cwd": self.dir, "max_contexts": 1})
+        self.assertEqual(events[0]["code"], "limit")
+        self.assertIn("at most 1", events[0]["message"])
+        pids = [f for f in os.listdir(os.path.dirname(self.sock)) if f.endswith(".pid")]
+        self.assertIn("kernel-default.pid", pids)
+
+
 if __name__ == "__main__":
     unittest.main()

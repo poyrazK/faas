@@ -7,7 +7,6 @@ package main
 
 import (
 	"encoding/json"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -38,10 +37,8 @@ func TestSandboxCodeRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := newSandboxFixture(t)
-	f.srv.code.path = driver
+	f.srv.code.path, f.srv.code.python = driver, python
 	f.srv.code.runtimeDir = filepath.Join(t.TempDir(), "run")
-	// The driver's shebang finds this python3 on the session's PATH.
-	f.srv.setSessionEnv(map[string]string{"PATH": filepath.Dir(python) + ":" + os.Getenv("PATH")})
 	t.Cleanup(func() {
 		if f.srv.code.proc != nil {
 			_ = f.srv.code.proc.signal(9)
@@ -78,6 +75,29 @@ func TestSandboxCodeRuns(t *testing.T) {
 	if !strings.Contains(string(raw), created.Context.ID) || !strings.Contains(string(raw), `"default"`) {
 		t.Fatalf("listed %s", raw)
 	}
+
+	// The session's environment set after the first run reaches the running
+	// kernel, and clearing it takes the variable away again.
+	f.srv.setSessionEnv(map[string]string{"GREGALE_TEST_TOKEN": "t0k"})
+	f.call(t, codeRunReq("import os\nos.environ.get('GREGALE_TEST_TOKEN')"), nil, nil).decode(t, &res)
+	if string(res.Results[0].Data["text/plain"]) != `"'t0k'"` {
+		t.Fatalf("the kernel did not see the session env set after its start: %+v", res)
+	}
+	f.srv.setSessionEnv(map[string]string{})
+	f.call(t, codeRunReq("import os\nos.environ.get('GREGALE_TEST_TOKEN')"), nil, nil).decode(t, &res)
+	if len(res.Results) != 0 {
+		t.Fatalf("a cleared variable stayed in the kernel: %+v", res)
+	}
+
+	// Rich results past one control frame, as this guest encodes them (HTML
+	// escapes grow), are dropped and reported rather than failing the run.
+	big := codeRunReq("from IPython.display import display, HTML\nfor _ in range(6): display(HTML('<b>' * 120_000))")
+	big.MaxOutputBytes = sandboxproto.MaxOutputBytes
+	f.call(t, big, nil, nil).decode(t, &res)
+	if !res.OutputTruncated || len(res.Results) == 0 || len(res.Results) >= 6 {
+		t.Fatalf("big results: %d kept, truncated %v", len(res.Results), res.OutputTruncated)
+	}
+
 	gone := sandboxproto.Request{Op: sandboxproto.OpCodeContext, Action: sandboxproto.CodeActionRemove, Context: created.Context.ID}
 	f.call(t, gone, nil, nil).decode(t, &sandboxproto.CodeContextResult{})
 	if r := f.call(t, other, nil, nil); r.code() != sandboxproto.CodeNotFound {
