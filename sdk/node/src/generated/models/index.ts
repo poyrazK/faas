@@ -1261,6 +1261,8 @@ export type { FlagHoldout } from './FlagHoldout.js';
 export type { FlagLayer } from './FlagLayer.js';
 export type { FlagLifecycle } from './FlagLifecycle.js';
 export type { FlagLifecycleReport } from './FlagLifecycleReport.js';
+export type { FlagNotificationSettings } from './FlagNotificationSettings.js';
+export type { FlagNotificationSettingsRequest } from './FlagNotificationSettingsRequest.js';
 export type { FlagOutcome } from './FlagOutcome.js';
 export type { FlagOutcomesResponse } from './FlagOutcomesResponse.js';
 export type { FlagRequestEvidence } from './FlagRequestEvidence.js';
