@@ -112,6 +112,16 @@ type wakeTargetKey struct{}
 // rather than waiting for the leader's budget.
 var ErrBootstrapAborted = errors.New("gateway: leader bootstrap aborted")
 
+// ErrAppNotPlaced: the app has no compute node yet. apid inserts an app
+// with node_id NULL and a schedd claims it later
+// (pkg/sched/placement_claim.go), so an app created and never deployed, or
+// whose claim has not landed, has nothing to wake. The gateway answers 409
+// no_live_deployment: the app has nothing to serve, which is not platform
+// unavailability. On 2026-11-25 two such apps answered every request with a
+// wake-failed 503 counted in gateway_platform_errors_total for an hour, and
+// FaasApiAvailabilityLow failed an unrelated unit deploy's SLO gate (#8076).
+var ErrAppNotPlaced = errors.New("gateway: app has no compute node yet")
+
 // NewWakeGate returns a gate with the given per-app waiter cap and wake TTL
 // (spec §4.1: 512 / 30 s).
 func NewWakeGate(capacity int, ttl time.Duration) *WakeGate {

@@ -10411,6 +10411,11 @@ func writeWakeError(w http.ResponseWriter, err error) {
 		w.Header().Set("Retry-After", "1")
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 			"App instance starting", "this app's instances are starting or stopping and none can take the request yet; retry shortly"))
+	case errors.Is(err, ErrAppNotPlaced):
+		w.Header().Set("Retry-After", "5")
+		w.Header().Set("Cache-Control", "no-store")
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeNoLiveDeployment,
+			"App has no live deployment", "this app has nothing deployed to serve yet; deploy it, or retry once its deployment finishes"))
 	case errors.Is(err, ErrBootstrapAborted):
 		// ADR-098 C7: the leader aborted under the bootstrap cap
 		// (queue empty AND no live instance). The customer should
@@ -10493,7 +10498,7 @@ func (h *Handler) logWakeFailure(appID string, err error) {
 func unclassifiedWakeError(err error) bool {
 	for _, known := range []error{ErrConcurrencyQueueFull, ErrConcurrencyQueueWaitTimeout,
 		ErrConcurrencyQueueAdmissionUnavailable, ErrWakeQueueWaitTimeout, ErrQueueFull,
-		ErrWakeAdmissionQueueFull, ErrBootstrapAborted} {
+		ErrWakeAdmissionQueueFull, ErrBootstrapAborted, ErrAppNotPlaced} {
 		if errors.Is(err, known) {
 			return false
 		}

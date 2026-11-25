@@ -3551,7 +3551,7 @@ func (b *PGBackend) resolveSched(ctx context.Context, appID string) (Scheduler, 
 			b.putApp(app)
 		}
 		if app.NodeID == "" {
-			return nil, fmt.Errorf("gatewayd-internal: app %s has empty NodeID (pre-migration row; legacy single-box fallback removed in PR-7)", appID)
+			return nil, fmt.Errorf("gatewayd-internal: app %s: %w", appID, ErrAppNotPlaced)
 		}
 		cli, ok, err := b.clientForApp(ctx, app)
 		if err != nil {

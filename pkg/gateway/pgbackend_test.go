@@ -1166,8 +1166,9 @@ func TestPGBackend_ResolveSched_MultiBox_RejectsEmptyNodeID(t *testing.T) {
 			return nil, false, nil
 		})
 
-	if _, _, _, err := b.Admit(context.Background(), "app-y", "", "", "", 5); err == nil {
-		t.Fatal("expected Admit to error on empty NodeID in multi-box posture, got nil")
+	_, _, _, err := b.Admit(context.Background(), "app-y", "", "", "", 5)
+	if !errors.Is(err, gateway.ErrAppNotPlaced) {
+		t.Fatalf("Admit on empty NodeID = %v, want ErrAppNotPlaced", err)
 	}
 	if legacySched.Calls() != 0 {
 		t.Errorf("legacy b.sched received %d Admits, want 0", legacySched.Calls())
