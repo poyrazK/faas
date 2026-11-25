@@ -7920,6 +7920,14 @@ type PlanWorkload struct {
 	Command             []string          `json:"command"`
 	DependsOn           []string          `json:"depends_on,omitempty"`
 	DependsOnConditions map[string]string `json:"depends_on_conditions,omitempty"`
+	// ReleaseCommand is the command the service runs once before each of
+	// its releases goes live, as one shell string or exec-form argv joined
+	// by spaces; empty when it declares none. ReleaseCommandSource names the
+	// declaration: a Compose service it waits for with
+	// service_completed_successfully, a Procfile release: process or a
+	// gregale.yaml release.command.
+	ReleaseCommand       string `json:"release_command,omitempty"`
+	ReleaseCommandSource string `json:"release_command_source,omitempty"`
 
 	ServiceBindingPolicy ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
 	// ServiceBindingTransport opts a Compose workload into the HTTPS-first

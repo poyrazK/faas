@@ -123939,6 +123939,12 @@ components:
             type: string
             enum: [service_started, service_healthy]
           description: "Explicit Compose dependency conditions. service_started retains admission ordering; service_healthy gates release on the captured same-project, same-environment dependency deployment."
+        release_command:
+          type: string
+          description: "Command the service runs once before each of its releases goes live (shell string, or exec-form argv joined by spaces). Omitted when it declares none."
+        release_command_source:
+          type: string
+          description: "Where release_command is declared: a Compose service the workload waits for with service_completed_successfully, a Procfile release: process, or gregale.yaml release.command."
         service_binding_policy:
           $ref: '#/components/schemas/ServiceBindingPolicy'
           description: "Effective policy selected by Compose `x-gregale-service-policy` (`project`, `declared` or `account`). New project workloads default to `project`; existing workloads retain their persisted policy when the extension is omitted."
