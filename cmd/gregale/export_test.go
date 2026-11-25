@@ -3181,3 +3181,16 @@ var InitDeployArgs = initDeployArgs
 
 // TemplatesPublicOnPurpose lists the templates that deploy public.
 var TemplatesPublicOnPurpose = templatesPublicOnPurpose
+
+// NewIdleWatchdogReader wraps rc in the deploy log stream's idle watchdog.
+func NewIdleWatchdogReader(rc io.ReadCloser, idle time.Duration) io.ReadCloser {
+	return newIdleWatchdogReader(rc, idle)
+}
+
+var ErrDeployStreamIdle = errDeployStreamIdle
+
+// StreamDeployLogsWait follows a deployment's log stream with --wait
+// semantics and the given stream idle bound.
+func StreamDeployLogsWait(ctx context.Context, c *Client, dep api.DeploymentResponse, slug string, wait, idle time.Duration) int {
+	return streamDeployLogsContextWithOptions(ctx, c, dep, slug, streamDeployOptions{waitTimeout: wait, streamIdleTimeout: idle})
+}

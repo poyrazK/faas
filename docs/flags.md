@@ -476,6 +476,54 @@ environment under `inherited_from`; its configuration version and rule ID refer
 to the original decision. The envelope carries behavior context, not permission
 or entitlement.
 
+## Serve variants at the edge
+
+A variant flag can route requests at Gregale's gateway, so a page serves its
+variants without an SDK: a static site, a marketing page, or a route your code
+does not branch on (ADR-20261124212701). For each GET or HEAD request to a
+routed path, the gateway decides the flag and rewrites the path for the decided
+variant before the response cache and your app see it:
+
+```sh
+gregale flag create pricing --variants a,b --project site
+gregale flag rollout set pricing 100 --project site
+gregale flag edge set pricing --path /pricing --variant b --rewrite /pricing-b --project site
+gregale flag edge set pricing --path '/docs/*' --variant b --rewrite /docs-b --project site
+gregale flag edge list --project site
+```
+
+`/pricing` matches exactly; `/docs/*` matches `/docs` and everything under it
+and replaces the prefix (`/docs/start` serves `/docs-b/start`). Variants
+without a rewrite serve the path unchanged. Deploy both pages: the rewrite
+target is an ordinary path of your app.
+
+- A **verified customer** (consumer key, platform tenant) gets the variant an
+  SDK would give it, and its exposure counts in experiments like an SDK
+  decision, so `gregale flag experiment` works on routed pages.
+- An **anonymous visitor** gets a random first-party cookie
+  (`__Host-gregale_vid`, one year) and keeps its variant across visits.
+  Percentage and weighted rules split visitors; customer, group and cohort
+  targeting never match them. Anonymous visitors are served but not counted
+  in experiments.
+  The cookie is the platform's: your app never receives it.
+- A kill (`gregale flag kill set pricing`) serves the unrouted path on the
+  next request, even if the default variant has a rewrite.
+  `gregale flag edge delete pricing [--path /pricing]` removes routes.
+- Each environment routes with its own flags. PR preview links are never
+  routed.
+- A rewrite is served only when the target path passes the same gates as the
+  requested one (declared routes, IP, geo, JWT, rate limit, WAF and
+  challenge rules); otherwise the requested path is served and no exposure is
+  recorded.
+- Each variant is cached separately, and routed responses are kept out of
+  shared caches such as Cloudflare. Request logs and analytics show the path
+  served (`/pricing-b`), not the one requested.
+
+Limits: 16 routed flags per environment, 8 paths per flag, paths up to 256
+bytes without query, fragment or dot segments. Edge routing is released by
+the `edge_flags` platform flag; without it, adding or changing routes answers
+403 and the gateway serves requests unchanged.
+
 ## Carry decisions into queued work
 
 For work created while handling a customer request, include the SDK's bounded
