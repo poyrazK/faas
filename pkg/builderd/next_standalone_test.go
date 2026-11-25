@@ -32,3 +32,21 @@ func TestNextStandaloneBuildInputs(t *testing.T) {
 		t.Fatal("switched off")
 	}
 }
+
+// ADR-20261124160000: builderd's artifact check applies to builds on the
+// app's own base. A shared-runtime artifact still holds the toolchain (and
+// a Next.js app's full /app beside its standalone tree); imaged checks the
+// layer that ships.
+func TestArtifactOverPlanCap(t *testing.T) {
+	free := api.MustLimitsFor(api.PlanFree)
+	over := int64(free.AppLayerMaxMB+42) << 20
+	if msg := artifactOverPlanCap(free, over, ""); msg != "app layer 298 MB exceeds plan cap 256 MB" {
+		t.Fatalf("own base = %q", msg)
+	}
+	if msg := artifactOverPlanCap(free, over, "node24"); msg != "" {
+		t.Fatalf("shared runtime = %q, want imaged to check the shipped layer", msg)
+	}
+	if msg := artifactOverPlanCap(free, int64(free.AppLayerMaxMB)<<20, ""); msg != "" {
+		t.Fatalf("at the cap = %q", msg)
+	}
+}

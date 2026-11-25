@@ -519,6 +519,9 @@ if [[ -n "${phase}" ]]; then
     app-task-interactive-only) phase_timeout=45m ;;
     # Two builder-VM builds per test (the watch test coalesces a third).
     dev-loop-only) phase_timeout=60m ;;
+    # Three builder-VM builds; the two Next.js builds install ~470 MB of
+    # node_modules each.
+    js-frameworks-free-only) phase_timeout=75m ;;
     twonode) phase_timeout=25m ;;
     *) phase_timeout=15m ;;
   esac
