@@ -11,8 +11,30 @@ import (
 	"testing"
 	"time"
 
+	main "github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+// Prod hunt r52: a Compose redis service the deploy provides as a managed
+// Redis cache was listed under "Managed PostgreSQL (provided by this deploy)".
+func TestDryRunListsAProvidedRedisCacheAsRedis(t *testing.T) {
+	plan := api.PlanResponse{Managed: []api.PlanManaged{
+		{Name: "cache", Kind: "redis", Provision: &api.PlanManagedProvision{Database: "compose-cache",
+			Bindings: []api.PlanManagedBinding{{Workload: "api", EnvKey: "REDIS_URL"}}}},
+		{Name: "db", Kind: "postgres", Provision: &api.PlanManagedProvision{Database: "compose-db", PostgresMajor: 17,
+			Bindings: []api.PlanManagedBinding{{Workload: "api", EnvKey: "DATABASE_URL"}}}},
+	}}
+	var out strings.Builder
+	main.PrintPlanText(&out, plan, nil, false)
+	got := out.String()
+	pg, redis, _ := strings.Cut(got, "Managed Redis (provided by this deploy):")
+	if !strings.Contains(redis, "cache") || !strings.Contains(redis, "creates cache compose-cache, bound to api.REDIS_URL") {
+		t.Fatalf("redis cache not listed as managed Redis:\n%s", got)
+	}
+	if strings.Contains(pg, "compose-cache") || !strings.Contains(pg, "creates compose-db (PostgreSQL 17)") {
+		t.Fatalf("PostgreSQL section wrong:\n%s", got)
+	}
+}
 
 // Prod hunt r52: `postgres suspend-timeout set db 30s` printed only usage.
 func TestPostgresSuspendTimeoutSaysWhyAValueIsRefused(t *testing.T) {
