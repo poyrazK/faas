@@ -217,8 +217,12 @@ func renderSecretsByScope(w io.Writer, app string, resp *api.AppSecretListRespon
 		}
 	}
 	sort.Strings(scopes)
-	_, _ = fmt.Fprintf(w, "%s: %d/%d secrets (across %d scopes)\n",
-		app, resp.Count, resp.Quota, len(scopes))
+	listed := 0
+	for _, s := range scopes {
+		listed += len(resp.SecretsByScope[s])
+	}
+	_, _ = fmt.Fprintf(w, "%s: %d/%d secrets (across %d scopes)%s\n",
+		app, resp.Count, resp.Quota, len(scopes), uncountedSecretsNote(listed, resp.Count))
 	for _, s := range scopes {
 		for _, row := range resp.SecretsByScope[s] {
 			_, _ = fmt.Fprintf(w, "  %-48s %-10s · %s · %s%s\n", s+"/"+row.Key, secretClassLabel(row.SecretClass),
@@ -227,6 +231,18 @@ func renderSecretsByScope(w io.Writer, app string, resp *api.AppSecretListRespon
 					row.RuntimeReloadObservations, row.RuntimeReloadTargetsComplete), secretUpdatedAtSuffix(row.UpdatedAt))
 		}
 	}
+}
+
+// uncountedSecretsNote explains rows the plan quota does not count: keys a
+// bucket or database binding manages. `env list` printed "0/100 secrets"
+// above six GREGALE_S3_* rows (prod hunt r53). More listed rows than the
+// cross-scope count can only come from such keys; the count is cross-scope
+// and a flat list one scope, so the note names no number.
+func uncountedSecretsNote(listed, counted int) string {
+	if listed > counted {
+		return " (keys set by bucket and database bindings do not count toward the quota)"
+	}
+	return ""
 }
 
 // renderFlatSecrets emits the per-scope arm of the secrets-list
@@ -239,7 +255,7 @@ func renderSecretsByScope(w io.Writer, app string, resp *api.AppSecretListRespon
 // Extracted from secretsList (commands3.go:85) so the routing
 // function stays under the 50-line cap (CLAUDE.md).
 func renderFlatSecrets(w io.Writer, app string, resp *api.AppSecretListResponse) {
-	_, _ = fmt.Fprintf(w, "%s: %d/%d secrets\n", app, resp.Count, resp.Quota)
+	_, _ = fmt.Fprintf(w, "%s: %d/%d secrets%s\n", app, resp.Count, resp.Quota, uncountedSecretsNote(len(resp.Secrets), resp.Count))
 	for _, s := range resp.Secrets {
 		_, _ = fmt.Fprintf(w, "  %-48s %-10s · %s · %s%s\n", scopeOrDefault(s.Scope)+"/"+s.Key, secretClassLabel(s.SecretClass),
 			secretDeliveryRowLabel(s.DeliveryStatus, s.RuntimeReloadTargetsComplete, s.RuntimeReloadObservations), secretRuntimeReloadLabel(s.DeliveryVersion,
@@ -905,6 +921,34 @@ func parseSecretsPair(s string) (secretsPair, error) {
 // --secrets-file flag. The file is deliberately parsed before any network
 // mutation so a typo cannot create an app and leave the first deploy without
 // its configuration. Values never appear in returned errors or diagnostics.
+// joinDotenvQuotedLines reads the rest of a quoted value that spans lines, as
+// dotenv allows: a PEM key pasted as KEY="-----BEGIN ...\n...\n-----END ..."
+// was refused at its second line, so RSA keys had to be set one by one (boa
+// multi-service deploy, 2026-11-21); `env push -f` still refused it (prod
+// hunt r53). lineNo advances past the lines read; errors name the first.
+func joinDotenvQuotedLines(scanner *bufio.Scanner, line string, lineNo *int) (string, error) {
+	quote, open := dotenvOpenQuote(line)
+	if !open {
+		return line, nil
+	}
+	startLine := *lineNo
+	var value strings.Builder
+	value.WriteString(line)
+	for scanner.Scan() {
+		*lineNo++
+		next := strings.TrimRight(scanner.Text(), "\r")
+		value.WriteByte('\n')
+		value.WriteString(next)
+		if dotenvContinuationCloses(next, quote) {
+			return strings.TrimRight(value.String(), " \t"), nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", keyValueScanErr(err)
+	}
+	return "", fmt.Errorf("line %d: quoted value has no closing %c", startLine, quote)
+}
+
 func readSecretsFile(path string) ([]secretsPair, error) {
 	f, err := openCustomerFile(path)
 	if err != nil {
@@ -922,32 +966,10 @@ func readSecretsFile(path string) ([]secretsPair, error) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		// A quoted value may span lines, as dotenv allows: a PEM key pasted
-		// as KEY="-----BEGIN ...\n...\n-----END ..." was refused at its
-		// second line, so RSA keys had to be set one by one (boa
-		// multi-service deploy, 2026-11-21).
 		startLine := lineNo
-		if quote, open := dotenvOpenQuote(line); open {
-			var value strings.Builder
-			value.WriteString(line)
-			closed := false
-			for scanner.Scan() {
-				lineNo++
-				next := strings.TrimRight(scanner.Text(), "\r")
-				value.WriteByte('\n')
-				value.WriteString(next)
-				if dotenvContinuationCloses(next, quote) {
-					closed = true
-					break
-				}
-			}
-			if err := scanner.Err(); err != nil {
-				return nil, keyValueScanErr(err)
-			}
-			if !closed {
-				return nil, fmt.Errorf("line %d: quoted value has no closing %c", startLine, quote)
-			}
-			line = strings.TrimRight(value.String(), " \t")
+		line, err := joinDotenvQuotedLines(scanner, line, &lineNo)
+		if err != nil {
+			return nil, err
 		}
 		pair, parseErr := parseDotenvLine(line)
 		if parseErr != nil {

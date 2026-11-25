@@ -461,9 +461,14 @@ func envPush(args []string) int {
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
+			startLine := lineNo
+			line, err := joinDotenvQuotedLines(scanner, line, &lineNo)
+			if err != nil {
+				return printErr("Bad stdin line", err)
+			}
 			p, err := parseDotenvLine(line)
 			if err != nil {
-				return printErr("Bad stdin line", fmt.Errorf("line %d: %w", lineNo, err))
+				return printErr("Bad stdin line", fmt.Errorf("line %d: %w", startLine, err))
 			}
 			pairs = append(pairs, pair{k: p.Key, v: p.Value})
 		}
@@ -487,9 +492,14 @@ func envPush(args []string) int {
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
+			startLine := lineNo
+			line, err := joinDotenvQuotedLines(scanner, line, &lineNo)
+			if err != nil {
+				return printErr("Bad .env line", err)
+			}
 			p, err := parseDotenvLine(line)
 			if err != nil {
-				return printErr("Bad .env line", fmt.Errorf("line %d: %w", lineNo, err))
+				return printErr("Bad .env line", fmt.Errorf("line %d: %w", startLine, err))
 			}
 			pairs = append(pairs, pair{k: p.Key, v: p.Value})
 		}
