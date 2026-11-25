@@ -93,6 +93,10 @@ type PutConsumerSignupRequest struct {
 	// MCP oauth-proxy issuer as consumers on it (ADR-20261124094745).
 	FreePlanID     string `json:"free_plan_id,omitempty"`
 	OAuthConsumers bool   `json:"oauth_consumers,omitempty"`
+	// AccountTools adds the account_usage and account_plans tools to the
+	// app's MCP server for OAuth consumers; it needs OAuthConsumers
+	// (ADR-20261125194510).
+	AccountTools bool `json:"account_tools,omitempty"`
 }
 
 // ConsumerSignupSettingsResponse is an app's sign-up settings. PageURL is
@@ -115,6 +119,7 @@ type ConsumerSignupSettingsResponse struct {
 	CustomerClosing     bool      `json:"customer_closing"`
 	FreePlanID          string    `json:"free_plan_id,omitempty"`
 	OAuthConsumers      bool      `json:"oauth_consumers"`
+	AccountTools        bool      `json:"account_tools"`
 	CreatedAt           time.Time `json:"created_at"`
 	UpdatedAt           time.Time `json:"updated_at"`
 }

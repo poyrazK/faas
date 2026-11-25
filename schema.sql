@@ -33200,6 +33200,7 @@ CREATE TABLE public.api_consumer_signup_settings (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     oauth_consumers boolean DEFAULT false NOT NULL,
     free_plan_id uuid,
+    account_tools boolean DEFAULT false NOT NULL,
     CONSTRAINT api_consumer_signup_settings_limit_chk CHECK (((daily_limit >= 1) AND (daily_limit <= 1000))),
     CONSTRAINT api_consumer_signup_settings_name_chk CHECK (((char_length(display_name) >= 1) AND (char_length(display_name) <= 80))),
     CONSTRAINT api_consumer_signup_settings_plans_chk CHECK ((cardinality(plan_ids) <= 20)),
@@ -33229,6 +33230,13 @@ COMMENT ON COLUMN public.api_consumer_signup_settings.oauth_consumers IS 'Caller
 --
 
 COMMENT ON COLUMN public.api_consumer_signup_settings.free_plan_id IS 'Offered plan that charges nothing: joining it skips Checkout (ADR-20261124094745).';
+
+
+--
+-- Name: COLUMN api_consumer_signup_settings.account_tools; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.api_consumer_signup_settings.account_tools IS 'The gateway adds account_usage and account_plans tools to the app''s MCP server for OAuth consumers (ADR-20261125194510).';
 
 
 --
@@ -65749,6 +65757,14 @@ ALTER TABLE ONLY public.api_consumer_rate_cards
 
 ALTER TABLE ONLY public.api_consumer_route_usage_minutes
     ADD CONSTRAINT api_consumer_route_usage_minutes_pkey PRIMARY KEY (account_id, app_id, consumer_key, window_start, route);
+
+
+--
+-- Name: api_consumer_signup_settings api_consumer_signup_settings_account_tools_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.api_consumer_signup_settings
+    ADD CONSTRAINT api_consumer_signup_settings_account_tools_chk CHECK (((NOT account_tools) OR oauth_consumers)) NOT VALID;
 
 
 --

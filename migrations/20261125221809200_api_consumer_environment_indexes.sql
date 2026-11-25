@@ -1,4 +1,4 @@
--- filename: 20261125193742200_api_consumer_environment_indexes.sql
+-- filename: 20261125221809200_api_consumer_environment_indexes.sql
 -- migration-compat: expand
 -- ADR-20261104120000 amendment 2026-11-22: a key prefix, a key name and a
 -- consumer's external reference are unique within one environment of an app,

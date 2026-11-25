@@ -21,7 +21,7 @@ import (
 // apidgrpc.OAuthConsumers. Refusals are apidgrpc.ErrOAuthConsumersOff and
 // apidgrpc.ErrOAuthConsumerSignupLimit.
 type OAuthConsumerEnroller interface {
-	EnrollOAuthConsumer(ctx context.Context, accountID, appID, issuer, subject, email string) (consumerID string, active bool, err error)
+	EnrollOAuthConsumer(ctx context.Context, accountID, appID, issuer, subject, email string) (apidgrpc.OAuthConsumer, error)
 }
 
 const (
@@ -45,10 +45,13 @@ const (
 )
 
 type oauthConsumerEntry struct {
-	id      string
-	active  bool
-	err     error
-	expires time.Time
+	id     string
+	active bool
+	// accountTools is the app's opt-in to MCP account tools
+	// (ADR-20261125194510).
+	accountTools bool
+	err          error
+	expires      time.Time
 }
 
 type oauthConsumerCache struct {
@@ -105,7 +108,7 @@ func (h *Handler) oauthConsumer(ctx context.Context, app App, issuer, subject, e
 	}
 	ctx, cancel := context.WithTimeout(ctx, oauthConsumerEnrollTimeout)
 	defer cancel()
-	id, active, err := h.oauthConsumers.EnrollOAuthConsumer(ctx, app.AccountID, app.ID, issuer, subject, email)
+	enrolled, err := h.oauthConsumers.EnrollOAuthConsumer(ctx, app.AccountID, app.ID, issuer, subject, email)
 	onKey := "on\x00" + app.ID
 	switch {
 	case errors.Is(err, apidgrpc.ErrOAuthConsumersOff):
@@ -127,7 +130,7 @@ func (h *Handler) oauthConsumer(ctx context.Context, app App, issuer, subject, e
 		}
 		return oauthConsumerEntry{}, nil
 	}
-	e := oauthConsumerEntry{id: id, active: active, expires: now.Add(oauthConsumerTTL)}
+	e := oauthConsumerEntry{id: enrolled.ID, active: enrolled.Active, accountTools: enrolled.AccountTools, expires: now.Add(oauthConsumerTTL)}
 	h.oauthConsumerCache.put(key, e)
 	h.oauthConsumerCache.put(onKey, oauthConsumerEntry{expires: now.Add(oauthConsumersOnTTL)})
 	return e, nil
@@ -184,6 +187,10 @@ func (h *Handler) attachOAuthConsumer(w http.ResponseWriter, r *http.Request, ap
 		return mcpPolicyReject(w, http.StatusForbidden, rule.MCP, "This account was closed by the MCP server's owner")
 	}
 	authenticated.ConsumerID = e.id
-	*r = *r.WithContext(withAuthenticated(r.Context(), authenticated))
+	ctx := withAuthenticated(r.Context(), authenticated)
+	if e.accountTools {
+		ctx = context.WithValue(ctx, mcpAccountToolsKey{}, true)
+	}
+	*r = *r.WithContext(ctx)
 	return false
 }

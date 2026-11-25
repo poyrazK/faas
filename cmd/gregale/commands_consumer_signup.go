@@ -27,9 +27,12 @@ func buildConsumerSignupRequest(verb string, f consumerFlags) (any, bool, error)
 	enabled := !f.disabled
 	req := api.PutConsumerSignupRequest{Enabled: &enabled, DisplayName: strings.TrimSpace(f.displayName), TermsURL: f.termsURL,
 		ReturnURL: f.returnURL, TrialDays: f.trialDays, DailyLimit: f.dailyLimit, CustomerPlanChanges: f.customerPlanChanges,
-		CustomerClosing: f.customerClosing, OAuthConsumers: f.oauthConsumers}
+		CustomerClosing: f.customerClosing, OAuthConsumers: f.oauthConsumers, AccountTools: f.accountTools}
 	if f.oauthConsumers && strings.TrimSpace(f.freePlan) == "" {
 		return nil, true, errors.New("--oauth-consumers needs --free-plan: OAuth callers join the free plan")
+	}
+	if f.accountTools && !f.oauthConsumers {
+		return nil, true, errors.New("--account-tools needs --oauth-consumers: the tools answer people signed in through the MCP server")
 	}
 	if f.keyScopes != "" {
 		req.KeyScopes = splitList(f.keyScopes)

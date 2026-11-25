@@ -20,14 +20,14 @@ type fakeOAuthEnroller struct {
 	calls                  int
 	issuer, subject, email string
 	id                     string
-	active                 bool
+	active, accountTools   bool
 	err                    error
 }
 
-func (f *fakeOAuthEnroller) EnrollOAuthConsumer(_ context.Context, _, _, issuer, subject, email string) (string, bool, error) {
+func (f *fakeOAuthEnroller) EnrollOAuthConsumer(_ context.Context, _, _, issuer, subject, email string) (apidgrpc.OAuthConsumer, error) {
 	f.calls++
 	f.issuer, f.subject, f.email = issuer, subject, email
-	return f.id, f.active, f.err
+	return apidgrpc.OAuthConsumer{ID: f.id, Active: f.active, AccountTools: f.accountTools}, f.err
 }
 
 func TestMCPOAuthConsumerEnrollment(t *testing.T) {

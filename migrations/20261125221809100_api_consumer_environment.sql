@@ -1,4 +1,4 @@
--- filename: 20261125193742100_api_consumer_environment.sql
+-- filename: 20261125221809100_api_consumer_environment.sql
 -- migration-compat: expand
 
 -- +goose Up
@@ -58,7 +58,7 @@ DROP TRIGGER IF EXISTS consumer_key_environment ON consumer_keys;
 CREATE TRIGGER consumer_key_environment BEFORE INSERT OR UPDATE OF consumer_id, environment_id ON consumer_keys
   FOR EACH ROW EXECUTE FUNCTION assign_consumer_key_environment();
 -- The per-environment identities are built concurrently by
--- 20261125193742200_api_consumer_environment_indexes; the app-wide ones are
+-- 20261125221809200_api_consumer_environment_indexes; the app-wide ones are
 -- dropped by a contract migration one release later (N-1 inserts platform
 -- tenant consumers ON CONFLICT (app_id, external_ref), and its gateway relies
 -- on the app-wide key prefix).
