@@ -864,11 +864,11 @@ Writes functions/&lt;name&gt;/ with a handler whose config `gregale deploy` read
 
 Provision or attach PostgreSQL and inject DATABASE_URL
 
-`gregale add postgres --app <APP> [--env <SCOPE>] [--scope <SCOPE>] [--database <REF>] [--region <REGION>] [--postgres-major <N>] [--class <CLASS>] [--availability <MODE>] [--scale-to-zero] [--environment-key <KEY>] [--access <MODE>] [--wait-timeout <DURATION>]`
+`gregale add postgres [--app <APP>] [--env <SCOPE>] [--scope <SCOPE>] [--database <REF>] [--region <REGION>] [--postgres-major <N>] [--class <CLASS>] [--availability <MODE>] [--scale-to-zero] [--environment-key <KEY>] [--access <MODE>] [--wait-timeout <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <APP>` | app slug | required |
+| `--app <APP>` | app slug (defaults to the linked app) |  |
 | `--env <SCOPE>` | environment scope (defaults to linked project environment) |  |
 | `--scope <SCOPE>` | environment scope (alias for --env) |  |
 | `--database <REF>` | existing database ID or name |  |
@@ -885,11 +885,11 @@ Provision or attach PostgreSQL and inject DATABASE_URL
 
 Provision or attach object storage and inject sealed S3 settings
 
-`gregale add bucket --app <APP> [--env <SCOPE>] [--scope <SCOPE>] [--region <REGION>] [--public] [--serve-at <PATH>] [--permission <MODE>] [--label <LABEL>] [--prefix <PREFIX>] [--key-prefix <KEYS/>] [--wait-timeout <DURATION>] <name>`
+`gregale add bucket [--app <APP>] [--env <SCOPE>] [--scope <SCOPE>] [--region <REGION>] [--public] [--serve-at <PATH>] [--permission <MODE>] [--label <LABEL>] [--prefix <PREFIX>] [--key-prefix <KEYS/>] [--wait-timeout <DURATION>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <APP>` | app slug | required |
+| `--app <APP>` | app slug (defaults to the linked app) |  |
 | `--env <SCOPE>` | environment scope (defaults to linked project environment) |  |
 | `--scope <SCOPE>` | environment scope (alias for --env) |  |
 | `--region <REGION>` | object-storage region |  |
@@ -905,11 +905,11 @@ Provision or attach object storage and inject sealed S3 settings
 
 Set up the AI gateway for an app in one step
 
-`gregale add ai --app <APP> --provider <PROVIDER> [--integration <ID>] [--name <NAME>] [--origin <URL>] [--region <REGION>] [--key-env <NAME>] [--key-stdin] [--key-file <PATH>] [--no-env] [--env <SCOPE>]`
+`gregale add ai [--app <APP>] --provider <PROVIDER> [--integration <ID>] [--name <NAME>] [--origin <URL>] [--region <REGION>] [--key-env <NAME>] [--key-stdin] [--key-file <PATH>] [--no-env] [--env <SCOPE>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <APP>` | app slug | required |
+| `--app <APP>` | app slug (defaults to the linked app) |  |
 | `--provider <PROVIDER>` | AI provider | required; one of `openai` · `anthropic` · `gemini` · `azure_openai` · `bedrock` · `vertex` |
 | `--integration <ID>` | existing AI integration to bind instead of creating one |  |
 | `--name <NAME>` | integration name (default the provider) |  |

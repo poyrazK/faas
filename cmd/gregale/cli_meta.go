@@ -718,7 +718,7 @@ var cliCommands = []cliCommand{
 				{Name: "dry-run", Short: "show the files without writing them"},
 			}},
 			{Name: "postgres", Short: "Provision or attach PostgreSQL and inject DATABASE_URL", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "APP"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "APP"},
 				{Name: "env", Short: "environment scope (defaults to linked project environment)", Value: "SCOPE"},
 				{Name: "scope", Short: "environment scope (alias for --env)", Value: "SCOPE"},
 				{Name: "database", Short: "existing database ID or name", Value: "REF"},
@@ -732,7 +732,7 @@ var cliCommands = []cliCommand{
 				{Name: "wait-timeout", Short: "readiness timeout", Value: "DURATION"},
 			}},
 			{Name: "bucket", Short: "Provision or attach object storage and inject sealed S3 settings", Positionals: []string{"<name>"}, Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "APP"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "APP"},
 				{Name: "env", Short: "environment scope (defaults to linked project environment)", Value: "SCOPE"},
 				{Name: "scope", Short: "environment scope (alias for --env)", Value: "SCOPE"},
 				{Name: "region", Short: "object-storage region", Value: "REGION"},
@@ -749,7 +749,7 @@ var cliCommands = []cliCommand{
 				"gregale add datadog --app my-api --dry-run",
 				"gregale add datadog --app my-api --remove",
 			}, Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "APP"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "APP"},
 				{Name: "site", Short: "Datadog site (default us1)", Value: "SITE", ClosedSet: []string{"ap1", "eu1", "us1", "us3", "us5"}},
 				{Name: "api-key-env", Short: "environment variable holding the API key (default DD_API_KEY)", Value: "NAME"},
 				{Name: "api-key-stdin", Short: "read the API key from stdin"},
@@ -764,7 +764,7 @@ var cliCommands = []cliCommand{
 				"gregale add ai --app my-api --provider vertex --region us-central1 --key-file key.json",
 				"gregale add ai --app my-api --provider azure_openai --origin https://my-resource.openai.azure.com --key-stdin",
 			}, Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "APP"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "APP"},
 				{Name: "provider", Short: "AI provider", Req: true, Value: "PROVIDER", ClosedSet: []string{"openai", "anthropic", "gemini", "azure_openai", "bedrock", "vertex"}},
 				{Name: "integration", Short: "existing AI integration to bind instead of creating one", Value: "ID"},
 				{Name: "name", Short: "integration name (default the provider)", Value: "NAME"},

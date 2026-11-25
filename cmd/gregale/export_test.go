@@ -3198,5 +3198,5 @@ func StreamDeployLogsWait(ctx context.Context, c *Client, dep api.DeploymentResp
 	return streamDeployLogsContextWithOptions(ctx, c, dep, slug, streamDeployOptions{waitTimeout: wait, streamIdleTimeout: idle})
 }
 
-// RealtimeArgsWithLinkedApp exposes realtimeArgsWithLinkedApp.
-var RealtimeArgsWithLinkedApp = realtimeArgsWithLinkedApp
+// LinkedAppAsArgument exposes linkedAppAsArgument.
+var LinkedAppAsArgument = linkedAppAsArgument
