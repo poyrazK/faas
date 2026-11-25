@@ -224,6 +224,39 @@ func TestFlagsRuleAddAttributeConditions(t *testing.T) {
 	}
 }
 
+// ADR-20261124212701: edge routes are added per path and variant, listed,
+// and removed one path or all at once.
+func TestFlagsEdgeSetListDelete(t *testing.T) {
+	api := &fakeFlagsAPI{}
+	if code, _ := runFlagsCLI(t, api, "create", "pricing", "--variants", "a,b"); code != 0 {
+		t.Fatal("create")
+	}
+	if code, out := runFlagsCLI(t, api, "edge-set", "pricing", "--path", "/pricing", "--variant", "b", "--rewrite", "/pricing-b"); code != 0 || !strings.Contains(out, "variant b serves /pricing-b") {
+		t.Fatalf("edge-set: %d %q", code, out)
+	}
+	if code, _ := runFlagsCLI(t, api, "edge-set", "pricing", "--path", "/docs/*", "--variant", "b", "--rewrite", "/docs-b"); code != 0 {
+		t.Fatal("edge-set docs")
+	}
+	if edge := api.flag(t, "pricing").Edge; edge == nil || len(edge.Routes) != 2 || edge.Routes[0].Variants["b"].Rewrite != "/pricing-b" {
+		t.Fatalf("edge routes = %+v", edge)
+	}
+	if code, out := runFlagsCLI(t, api, "edge-list"); code != 0 || !strings.Contains(out, "/docs/*") || !strings.Contains(out, "/pricing-b") {
+		t.Fatalf("edge-list: %d %q", code, out)
+	}
+	if code, _ := runFlagsCLI(t, api, "edge-set", "pricing", "--path", "/x", "--variant", "c", "--rewrite", "/y"); code == 0 {
+		t.Fatal("routed an unknown variant")
+	}
+	if code, _ := runFlagsCLI(t, api, "edge-set", "pricing", "--path", "/x", "--variant", "b"); code == 0 {
+		t.Fatal("edge-set without --rewrite")
+	}
+	if code, _ := runFlagsCLI(t, api, "edge-rm", "pricing", "--path", "/pricing"); code != 0 || len(api.flag(t, "pricing").Edge.Routes) != 1 {
+		t.Fatal("edge-rm one path")
+	}
+	if code, _ := runFlagsCLI(t, api, "edge-rm", "pricing"); code != 0 || api.flag(t, "pricing").Edge != nil {
+		t.Fatal("edge-rm every path")
+	}
+}
+
 func TestFlagsKillAndUnkill(t *testing.T) {
 	api := &fakeFlagsAPI{}
 	if code, _ := runFlagsCLI(t, api, "create", "risky", "--default", "true"); code != 0 {

@@ -1884,6 +1884,8 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		WithDeploymentSmokeTargetLoader(newDeploymentSmokeTargetLoader(pgStore)).
 		// ADR 20261114150000 §3: stamp each deployment's killed flags.
 		WithFlagKillLoader(pgStore.FeatureFlagKillsForDeployment).
+		// ADR-20261124212701: each app environment's edge-routed flags.
+		WithEdgeFlagLoader(pgStore.FeatureFlagEdgeForApp).
 		// ADR 20261119102741 §4: stamp each verified customer's cohorts.
 		WithFlagCohortLoader(pgStore.AnalyticsCohortsForDeploymentCustomer).
 		// ADR-733: a 5xx asks for a crash capture; the store applies opt-in,
@@ -3161,6 +3163,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	handler.WithAPIMonetization(deps.apiMonetization)
 	handler.WithAPIMonetizationFlags(deps.platformFlags)
 	handler.WithEdgeFeatureFlags(deps.platformFlags)
+	handler.WithEdgeFlags(deps.platformFlags)
 	handler.WithTrafficRevocationFenceFlags(deps.platformFlags)
 	handler.WithCapabilities(deps.capabilityAllowed)
 	// ADR-978: order the warm-capacity queue by route priority. Rules are

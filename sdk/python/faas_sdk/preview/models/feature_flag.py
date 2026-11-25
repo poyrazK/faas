@@ -10,6 +10,7 @@ from ..models.feature_flag_type import FeatureFlagType, check_feature_flag_type
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.flag_edge import FlagEdge
     from ..models.flag_rule import FlagRule
     from ..models.flag_variant import FlagVariant
 
@@ -43,6 +44,11 @@ class FeatureFlag:
     """Server-supplied stable allocation seed; omit for a new flag."""
     variants: list[FlagVariant] | Unset = UNSET
     """Required for variant flags; weights must total 10000 basis points."""
+    edge: FlagEdge | Unset = UNSET
+    """Edge routing of a variant flag: the gateway evaluates the flag for GET and HEAD requests to a routed path
+    and rewrites the path for the decided variant, so apps without an SDK serve it. Verified customers bucket as in
+    an SDK; anonymous visitors by a first-party cookie. Needs the edge_flags platform flag to add or change; runtime
+    bundles leave it out."""
 
     def to_dict(self) -> dict[str, Any]:
         key = self.key
@@ -80,6 +86,10 @@ class FeatureFlag:
                 variants_item = variants_item_data.to_dict()
                 variants.append(variants_item)
 
+        edge: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.edge, Unset):
+            edge = self.edge.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -104,11 +114,14 @@ class FeatureFlag:
             field_dict["seed"] = seed
         if variants is not UNSET:
             field_dict["variants"] = variants
+        if edge is not UNSET:
+            field_dict["edge"] = edge
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.flag_edge import FlagEdge
         from ..models.flag_rule import FlagRule
         from ..models.flag_variant import FlagVariant
 
@@ -160,6 +173,13 @@ class FeatureFlag:
 
                 variants.append(variants_item)
 
+        _edge = d.pop("edge", UNSET)
+        edge: FlagEdge | Unset
+        if isinstance(_edge, Unset):
+            edge = UNSET
+        else:
+            edge = FlagEdge.from_dict(_edge)
+
         feature_flag = cls(
             key=key,
             enabled=enabled,
@@ -172,6 +192,7 @@ class FeatureFlag:
             killed=killed,
             seed=seed,
             variants=variants,
+            edge=edge,
         )
 
         return feature_flag

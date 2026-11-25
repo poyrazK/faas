@@ -58,7 +58,7 @@ HTTP 403 Forbidden · Admin access required
 
 HTTP 402 Payment Required · Spend cap reached
 
-See [Billing](billing.md#spend-cap).
+See [Billing](billing.md#spend-cap), [Cost controls](cost-controls.md).
 
 ### `alert_preset_disabled`
 

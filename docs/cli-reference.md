@@ -134,9 +134,9 @@ Source defaults to committed HEAD when origin exists; otherwise local files. Use
 
 RAM/CPU: use --size SIZE (--profile SIZE after the command is deprecated). Connection: use --profile NAME before the command.
 
-Projects: --project (every workload), --only SLUGS. Traffic: --rollout MODE.
+Projects: --project, --only SLUGS; Compose keys/RAM: gregale guide compose-keys
 
-Retry a project&#39;s failed workloads: gregale release attempt retry SESSION_ID
+Traffic: --rollout MODE. Retry failed: gregale release attempt retry SESSION_ID
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2178,7 +2178,7 @@ gregale project export shop --out compose.yaml
 
 Env values stay sealed: each variable is referenced by name, as ${NAME}.
 
-Gregale settings are written as x-gregale-* keys; other Compose tools ignore them, and gregale deploy reads them back.
+Gregale settings are written as x-gregale-* keys; other Compose tools ignore them, and gregale deploy reads them back. Every key: gregale guide compose-keys.
 
 ### project import
 

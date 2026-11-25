@@ -93312,6 +93312,33 @@ components:
         seed: { type: string, maxLength: 128, description: Server-supplied stable allocation seed; omit for a new flag. }
         rules: { type: array, maxItems: 32, items: { $ref: '#/components/schemas/FlagRule' } }
         variants: { type: array, minItems: 2, maxItems: 16, items: { $ref: '#/components/schemas/FlagVariant' }, description: Required for variant flags; weights must total 10000 basis points. }
+        edge: { $ref: '#/components/schemas/FlagEdge' }
+    FlagEdge:
+      description: "Edge routing of a variant flag: the gateway evaluates the flag for GET and HEAD requests to a routed path and rewrites the path for the decided variant, so apps without an SDK serve it. Verified customers bucket as in an SDK; anonymous visitors by a first-party cookie. Needs the edge_flags platform flag to add or change; runtime bundles leave it out."
+      type: object
+      additionalProperties: false
+      required: [routes]
+      properties:
+        routes: { type: array, minItems: 1, maxItems: 8, items: { $ref: '#/components/schemas/FlagEdgeRoute' } }
+    FlagEdgeRoute:
+      description: "One routed path: /page matches exactly, /prefix/* matches the prefix and everything under it. Variants without an action serve the request unchanged."
+      type: object
+      additionalProperties: false
+      required: [path, variants]
+      properties:
+        path: { type: string, maxLength: 256, pattern: '^/' }
+        variants:
+          type: object
+          minProperties: 1
+          description: Variant key to the action requests decided as that variant get.
+          additionalProperties: { $ref: '#/components/schemas/FlagEdgeAction' }
+    FlagEdgeAction:
+      description: What a variant does to a routed request.
+      type: object
+      additionalProperties: false
+      required: [rewrite]
+      properties:
+        rewrite: { type: string, maxLength: 256, pattern: '^/', description: "The path served instead: the whole path for an exact route, the prefix for a /prefix/* route." }
     FlagsConfig:
       description: Complete atomic environment configuration; omitted flags are removed from current evaluation.
       type: object
@@ -123912,6 +123939,12 @@ components:
             type: string
             enum: [service_started, service_healthy]
           description: "Explicit Compose dependency conditions. service_started retains admission ordering; service_healthy gates release on the captured same-project, same-environment dependency deployment."
+        release_command:
+          type: string
+          description: "Command the service runs once before each of its releases goes live (shell string, or exec-form argv joined by spaces). Omitted when it declares none."
+        release_command_source:
+          type: string
+          description: "Where release_command is declared: a Compose service the workload waits for with service_completed_successfully, a Procfile release: process, or gregale.yaml release.command."
         service_binding_policy:
           $ref: '#/components/schemas/ServiceBindingPolicy'
           description: "Effective policy selected by Compose `x-gregale-service-policy` (`project`, `declared` or `account`). New project workloads default to `project`; existing workloads retain their persisted policy when the extension is omitted."

@@ -86,6 +86,14 @@ export type PlanWorkload = {
    */
   depends_on_conditions?: Record<string, 'service_started' | 'service_healthy'>;
   /**
+   * Command the service runs once before each of its releases goes live (shell string, or exec-form argv joined by spaces). Omitted when it declares none.
+   */
+  release_command?: string;
+  /**
+   * Where release_command is declared: a Compose service the workload waits for with service_completed_successfully, a Procfile release: process, or gregale.yaml release.command.
+   */
+  release_command_source?: string;
+  /**
    * Effective policy selected by Compose `x-gregale-service-policy` (`project`, `declared` or `account`). New project workloads default to `project`; existing workloads retain their persisted policy when the extension is omitted.
    */
   service_binding_policy?: ServiceBindingPolicy;
