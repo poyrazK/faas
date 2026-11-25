@@ -49318,6 +49318,26 @@ CREATE TABLE public.managed_postgres_usage_waivers (
 
 
 --
+-- Name: managed_postgres_wake_with_app; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_wake_with_app (
+    database_id uuid NOT NULL,
+    enabled_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_started_at timestamp with time zone,
+    CONSTRAINT managed_postgres_wake_with_app_enabled_at_check CHECK (isfinite(enabled_at)),
+    CONSTRAINT managed_postgres_wake_with_app_last_started_at_check CHECK (((last_started_at IS NULL) OR isfinite(last_started_at)))
+);
+
+
+--
+-- Name: TABLE managed_postgres_wake_with_app; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.managed_postgres_wake_with_app IS 'Managed PostgreSQL databases that start when a bound app wakes (opt-in); no row is off; written only by apid.';
+
+
+--
 -- Name: managed_realtime_channel_batches; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -73064,6 +73084,14 @@ ALTER TABLE ONLY public.managed_postgres_usage
 
 ALTER TABLE ONLY public.managed_postgres_usage_waivers
     ADD CONSTRAINT managed_postgres_usage_waivers_pkey PRIMARY KEY (database_id, waived_from);
+
+
+--
+-- Name: managed_postgres_wake_with_app managed_postgres_wake_with_app_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_wake_with_app
+    ADD CONSTRAINT managed_postgres_wake_with_app_pkey PRIMARY KEY (database_id);
 
 
 --
@@ -109568,6 +109596,14 @@ ALTER TABLE ONLY public.managed_postgres_usage_imports
 
 ALTER TABLE ONLY public.managed_postgres_usage_waivers
     ADD CONSTRAINT managed_postgres_usage_waivers_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_wake_with_app managed_postgres_wake_with_app_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_wake_with_app
+    ADD CONSTRAINT managed_postgres_wake_with_app_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
 
 
 --

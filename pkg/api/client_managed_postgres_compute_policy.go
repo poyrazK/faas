@@ -25,3 +25,11 @@ func (c *Client) GetManagedPostgresComputePolicyChange(ctx context.Context, data
 	err := c.do(ctx, http.MethodGet, "/v1/postgres/databases/"+url.PathEscape(databaseID)+"/compute-policy-changes/"+url.PathEscape(changeID), nil, &out)
 	return out, err
 }
+
+// SetManagedPostgresWakeWithApp turns starting a scale-to-zero database when
+// a bound app wakes on or off (ADR-20261125105038).
+func (c *Client) SetManagedPostgresWakeWithApp(ctx context.Context, id string, request SetManagedPostgresWakeWithAppRequest) (ManagedPostgresWakeWithApp, error) {
+	var out ManagedPostgresWakeWithApp
+	err := c.do(ctx, http.MethodPut, "/v1/postgres/databases/"+url.PathEscape(id)+"/wake-with-app", request, &out)
+	return out, err
+}
