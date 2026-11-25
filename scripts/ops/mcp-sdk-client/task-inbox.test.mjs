@@ -8,6 +8,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
@@ -100,6 +101,7 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
       admissionProbe.committed.resolve(result.taskId);
       await admissionProbe.release.promise;
     }
+    if (admissionProbe && args[1]?.report === 'group submission three') admissionProbe.thirdKeys.add(args[6]);
     return result;
   };
   let taskWatch, groupRequests;
@@ -437,8 +439,8 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
     }));
     const token = await mint('carol', 'mcp:tools reports:read');
     groupRequests.submissions = 0;
-    admissionProbe = { committed: Promise.withResolvers(), release: Promise.withResolvers() };
-    const submitter = await startAgent({ token, groupPath: planned, submissions });
+    admissionProbe = { committed: Promise.withResolvers(), release: Promise.withResolvers(), thirdKeys: new Set() };
+    const submitter = await startAgent({ token, groupPath: planned, submissions, keyAgeMs: 50_000 });
     const secondId = await submitter.running(admissionProbe.committed.promise);
     assert.equal(groupRequests.submissions, 2);
     submitter.child.kill('SIGKILL');
@@ -450,25 +452,40 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
     assert.equal(second.taskId, undefined);
     await assert.rejects(stat(join(planned, 'member-2.json')), { code: 'ENOENT' });
 
-    const recovering = await startAgent({
+    const plan = JSON.parse(await readFile(join(planned, 'group.json'), 'utf8'));
+    const originalThird = plan.members[2].submissionKey;
+    const keyTime = Number.parseInt(originalThird.replaceAll('-', '').slice(0, 12), 16);
+    await delay(Math.max(0, keyTime + 60_010 - Date.now()));
+
+    const configuration = {
       token, groupPath: planned, continuation: { receiptIndex: 2, submission: submissions[2] },
-    });
-    const [{ recovered }] = await recovering.waitForEvents(1);
-    assert.deepEqual(recovered.map(entry => [entry.receiptIndex, entry.outcome, entry.task?.taskId]), [
-      [0, 'accepted', first.taskId], [1, 'accepted', secondId], [2, 'prepared', undefined],
-    ]);
+    };
+    const recovering = await Promise.all([startAgent(configuration), startAgent(configuration)]);
+    const evidence = await Promise.all(recovering.map(agent => agent.waitForEvents(1)));
+    for (const [{ recovered }] of evidence) {
+      assert.deepEqual(recovered.map(entry => [entry.receiptIndex, entry.outcome, entry.task?.taskId]), [
+        [0, 'accepted', first.taskId], [1, 'accepted', secondId], [2, 'prepared', undefined],
+      ]);
+    }
     assert.equal(groupRequests.submissions, 2);
-    recovering.child.send('continue');
-    const [, { continued }] = await recovering.waitForEvents(2);
-    assert.equal(continued.outcome, 'accepted');
-    assert.equal(continued.receiptIndex, 2);
-    assert.deepEqual(await recovering.exit, [0, null]);
+    for (const agent of recovering) agent.child.send('continue');
+    const continuations = await Promise.all(recovering.map(agent => agent.waitForEvents(2)));
+    assert.deepEqual(await Promise.all(recovering.map(agent => agent.exit)), [[0, null], [0, null]]);
+    const third = JSON.parse(await readFile(join(planned, 'member-2.json'), 'utf8'));
+    assert.notEqual(third.submissionKey, originalThird);
+    assert.equal(third.plannedSubmissionKey, originalThird);
+    assert.deepEqual(admissionProbe.thirdKeys, new Set([third.submissionKey]));
+    assert.ok(continuations.some(([, { continued }]) => continued.outcome === 'accepted'));
+    for (const [, { continued }] of continuations) {
+      assert.equal(continued.receiptIndex, 2);
+      if (continued.outcome === 'accepted') assert.equal(continued.task.taskId, third.taskId);
+      else assert.equal(continued.outcome, 'unconfirmed');
+    }
 
     const creator = await connect('carol', 'mcp:tools reports:read');
     const created = (await listTaskInbox(creator)).tasks.map(task => task.taskId);
     assert.equal(created.length, 3);
-    assert.deepEqual(new Set(created), new Set([first.taskId, secondId, continued.task.taskId]));
-    assert.equal(groupRequests.submissions, 3);
+    assert.deepEqual(new Set(created), new Set([first.taskId, secondId, third.taskId]));
   } finally {
     admissionProbe?.release.resolve();
     for (const agent of agents) agent.child.kill();

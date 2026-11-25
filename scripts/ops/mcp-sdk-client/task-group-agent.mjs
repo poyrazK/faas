@@ -6,7 +6,7 @@ import {
 } from '../../../sdk/node/dist/preview.js';
 
 const [configuration] = await once(process, 'message');
-const { endpoint, token, group, followInput, submissions, continuation } = configuration;
+const { endpoint, token, group, followInput, submissions, continuation, keyAgeMs = 0 } = configuration;
 const client = new Client({ name: 'gregale-task-group-restart', version: '1.0.0' }, {
   versionNegotiation: { mode: { pin: '2026-07-28' } }, enforceStrictCapabilities: true,
 });
@@ -16,7 +16,15 @@ try {
     requestInit: { headers: { Authorization: `Bearer ${token}` } }, onInsufficientScope: 'throw',
   }));
   if (submissions) {
-    process.send({ submitted: await submitMcpTaskGroup(client, group, submissions) });
+    const realNow = Date.now;
+    // Start near the end of the server's real admission window so the
+    // integration test can cross it without waiting a whole minute.
+    Date.now = () => realNow() - keyAgeMs;
+    try {
+      process.send({ submitted: await submitMcpTaskGroup(client, group, submissions) });
+    } finally {
+      Date.now = realNow;
+    }
   } else if (continuation) {
     process.send({ recovered: await resumeMcpTaskGroupSubmission(client, group) });
     const [action] = await once(process, 'message');

@@ -6335,8 +6335,12 @@ after a lost reply. It reports `prepared` for a member with no send attempt,
 caller, and `unavailable` when the status could not be read. Continue one
 member explicitly with its original tool, arguments, and deferred-input
 setting. If admission is already confirmed, continuation returns that Task.
-Otherwise the saved key and original bearer guard the send, within one
-minute of key issuance when the plan was created.
+A recorded attempt keeps its key and can be retried within one minute of
+that key's issuance. If a prepared member's unused key has expired,
+continuation records a fresh key in the member receipt before sending.
+Concurrent callers use the key recorded by the first attempt. A caller can
+receive `unconfirmed` while another caller's send is still in progress.
+Sends use the original group bearer.
 
 The private group stores fingerprints and receipts. Keep the original
 requests in your application for explicit continuation. Use

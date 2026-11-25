@@ -492,28 +492,66 @@ test('group submission publishes every key and resumes after an admission reply 
   assert.equal(keys.length, 3);
 });
 
-test('explicit continuation reuses an unconfirmed key and honors the saved plan window', async t => {
+test('late continuation refreshes only a member without a recorded attempt', async t => {
   const group = join(await folder(t), 'group');
   const submissions = [submission, { ...submission, deferFormInput: true }];
   let now = Date.now();
   t.mock.method(Date, 'now', () => now);
   const writes: string[] = [];
-  const client = connection(async ({ method, params }) => {
-    if (method === lookup) throw { code: -32002 };
+  let admittedKey: string | undefined;
+  let missingCode = -32002;
+  const completed = { ...task, status: 'completed' };
+  const connect = (credential?: string) => connection(async ({ method, params }) => {
+    if (method === lookup) {
+      if (params.submissionKey === admittedKey) return completed;
+      throw { code: missingCode };
+    }
+    if (method === 'tasks/get') {
+      assert.equal(params.taskId, task.taskId);
+      return completed;
+    }
     assert.equal(method, 'tools/call');
-    writes.push((params._meta as Record<string, string>)['io.gregale/task-submission-key']!);
-    if (writes.length === 1) throw new Error('reply lost before admission');
-    return { resultType: 'task', ...task };
-  });
-  assert.deepEqual((await submitMcpTaskGroup(client, group, submissions)).map(entry => entry.outcome),
+    const key = (params._meta as Record<string, string>)['io.gregale/task-submission-key']!;
+    writes.push(key);
+    if (writes.length === 4) admittedKey = key;
+    throw new Error('reply lost');
+  }, endpoint, credential);
+  assert.deepEqual((await submitMcpTaskGroup(connect(), group, submissions)).map(entry => entry.outcome),
     ['unconfirmed', 'prepared']);
-  assert.deepEqual((await resumeMcpTaskGroupSubmission(client, group)).map(entry => entry.outcome),
-    ['unconfirmed', 'prepared']);
-  assert.equal((await continueMcpTaskGroupSubmission(client, group, 0, submissions[0]!)).outcome, 'accepted');
+  assert.equal((await continueMcpTaskGroupSubmission(connect(), group, 0, submissions[0]!)).outcome, 'unconfirmed');
   assert.deepEqual(writes, [writes[0], writes[0]]);
+  const plan = JSON.parse(await readFile(join(group, 'group.json'), 'utf8'));
+
   now += 60_000;
-  await assert.rejects(continueMcpTaskGroupSubmission(client, group, 1, submissions[1]!), { code: 'retry_window_closed' });
+  await assert.rejects(continueMcpTaskGroupSubmission(connect(), group, 0, submissions[0]!), { code: 'retry_window_closed' });
+  await assert.rejects(continueMcpTaskGroupSubmission(connect('wrong-credential'), group, 1, submissions[1]!),
+    { code: 'credential_mismatch' });
   assert.equal(writes.length, 2);
+  await assert.rejects(stat(join(group, 'member-1.json')), { code: 'ENOENT' });
+
+  assert.equal((await continueMcpTaskGroupSubmission(connect(), group, 1, submissions[1]!)).outcome, 'unconfirmed');
+  const refreshed = JSON.parse(await readFile(join(group, 'member-1.json'), 'utf8'));
+  assert.notEqual(refreshed.submissionKey, plan.members[1].submissionKey);
+  assert.equal(refreshed.plannedSubmissionKey, plan.members[1].submissionKey);
+  assert.equal(refreshed.submissionKey, writes[2]);
+  missingCode = -32603;
+  assert.equal((await continueMcpTaskGroupSubmission(connect(), group, 1, submissions[1]!)).outcome, 'unconfirmed');
+  assert.equal(writes.length, 3);
+  missingCode = -32002;
+  assert.equal((await continueMcpTaskGroupSubmission(connect(), group, 1, submissions[1]!)).outcome, 'unconfirmed');
+  assert.equal(writes[3], refreshed.submissionKey);
+
+  now += 60_000;
+  const recovered = await resumeMcpTaskGroupSubmission(connect(), group);
+  assert.equal(recovered[1]?.outcome, 'accepted');
+  assert.equal(recovered[1].task.taskId, task.taskId);
+  const watched = [];
+  for await (const event of watchMcpTaskGroup(connect(), group)) {
+    if (event.outcome === 'available') watched.push(event.task.taskId);
+  }
+  assert.deepEqual(watched, [task.taskId]);
+  assert.equal(writes.length, 4);
+  assert.deepEqual(JSON.parse(await readFile(join(group, 'group.json'), 'utf8')), plan);
 });
 
 test('an invalid group member stops the whole plan before publication or requests', async t => {

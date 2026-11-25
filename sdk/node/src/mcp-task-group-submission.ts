@@ -48,7 +48,7 @@ async function inspectMember(
   if (!receipt) return { entry: { receiptIndex, outcome: 'prepared' } };
   try {
     const task = receipt.taskId === undefined
-      ? await lookupMcpTaskBySubmissionKey(clients.lookup, plan.submissionKey, operation)
+      ? await lookupMcpTaskBySubmissionKey(clients.lookup, receipt.submissionKey, operation)
       : await readMcpTaskMetadata(clients.tasks, receipt.taskId, operation);
     clients.check();
     return { entry: { receiptIndex, outcome: 'accepted', task }, receipt };
@@ -65,11 +65,13 @@ async function inspectMember(
 
 async function sendMember(
   connection: McpTaskReceiptConnection, group: SubmissionGroup, receiptIndex: number,
-  prepared: PreparedMcpTaskReceipt, operation: Required<McpTaskSubmissionOptions>, receipt?: Receipt,
+  prepared: PreparedMcpTaskReceipt, operation: Required<McpTaskSubmissionOptions>, receipt?: Receipt, refreshExpired = false,
 ): Promise<SentMember> {
   const { path, plan } = plannedMember(group, receiptIndex);
-  const result = await sendPlannedMcpTaskReceipt(connection, path, plan, prepared, operation,
-    credential => bindTaskGroupCredential(group.path, group.manifest, credential), receipt);
+  const result = await sendPlannedMcpTaskReceipt(connection, path, plan, prepared, operation, {
+    authorize: credential => bindTaskGroupCredential(group.path, group.manifest, credential),
+    receipt, refreshExpired,
+  });
   return result.outcome === 'accepted' ? { receiptIndex, outcome: 'accepted', task: result.task }
     : { receiptIndex, outcome: 'unconfirmed' };
 }
@@ -119,7 +121,7 @@ export async function resumeMcpTaskGroupSubmission(
   return entries;
 }
 
-/** Explicitly continue one saved member with its original request and key. */
+/** Continue one saved member, refreshing an expired key only before its first recorded attempt. */
 export async function continueMcpTaskGroupSubmission(
   connection: McpTaskReceiptConnection, path: string, receiptIndex: number, submission: McpTaskReceiptSubmission,
   options: McpTaskSubmissionOptions = {},
@@ -134,7 +136,24 @@ export async function continueMcpTaskGroupSubmission(
   if (prepared.requestSha256 !== member.requestSha256) throw new McpTaskReceiptError('request_mismatch');
   const { entry, receipt } = await inspectMember(group, receiptIndex, clients, operation);
   if (entry.outcome === 'accepted') return entry;
-  if (entry.outcome === 'unavailable') throw entry.error;
+  if (entry.outcome === 'unavailable') {
+    // A lookup can fail while an existing attempt is in flight. Only a
+    // definite not-found response permits an explicit same-key retry.
+    if (entry.error instanceof McpTaskSubmissionError && entry.error.code === 'request_failed' &&
+        entry.error.status === undefined) return { receiptIndex, outcome: 'unconfirmed' };
+    throw entry.error;
+  }
   clients.check();
-  return sendMember(connection, group, receiptIndex, prepared, operation, receipt);
+  try {
+    return await sendMember(connection, group, receiptIndex, prepared, operation, receipt, true);
+  } catch (error) {
+    if (!receipt && error instanceof McpTaskReceiptError && error.code === 'receipt_exists') {
+      // Another caller recorded the first attempt. Leave its key in place and
+      // observe the winner without sending a replacement or automatic retry.
+      const current = await inspectMember(group, receiptIndex, clients, operation);
+      if (current.entry.outcome === 'accepted') return current.entry;
+      if (current.receipt) return { receiptIndex, outcome: 'unconfirmed' };
+    }
+    throw error;
+  }
 }

@@ -38,7 +38,12 @@ type ReceiptFields = {
   taskId?: string;
 };
 type ReadOnlyReceipt = ReceiptFields & { version: 1 };
-type RetryReceipt = ReceiptFields & { version: 2; requestSha256: string; credentialProof: string };
+type RetryReceipt = ReceiptFields & {
+  version: 2 | 3;
+  requestSha256: string;
+  credentialProof: string;
+  plannedSubmissionKey?: string;
+};
 type Receipt = ReadOnlyReceipt | RetryReceipt;
 
 const messages = {
@@ -167,9 +172,11 @@ function decodeReceipt(bytes: Uint8Array): Receipt {
         (!Object.hasOwn(receipt, 'taskId') || isMcpTaskId(receipt.taskId))) {
       const keys = ['version', 'endpointSha256', 'submissionKey', 'taskId'];
       if (receipt.version === 1 && Object.keys(receipt).every(key => keys.includes(key))) return receipt as ReadOnlyReceipt;
-      if (receipt.version === 2 && isDigest(receipt.requestSha256) && isDigest(receipt.credentialProof) &&
-          Object.keys(receipt).every(key => keys.includes(key) || key === 'requestSha256' || key === 'credentialProof')) {
-        return receipt as RetryReceipt;
+      const refreshed = receipt.version === 3 && isSubmissionKey(receipt.plannedSubmissionKey) &&
+        receipt.plannedSubmissionKey !== receipt.submissionKey;
+      if ((receipt.version === 2 || refreshed) && isDigest(receipt.requestSha256) && isDigest(receipt.credentialProof)) {
+        const retryKeys = [...keys, 'requestSha256', 'credentialProof', ...(refreshed ? ['plannedSubmissionKey'] : [])];
+        if (Object.keys(receipt).every(key => retryKeys.includes(key))) return receipt as RetryReceipt;
       }
     }
   } catch {
@@ -181,8 +188,8 @@ function decodeReceipt(bytes: Uint8Array): Receipt {
 function sameSubmission(saved: Receipt, receipt: Receipt): boolean {
   return saved.version === receipt.version && saved.endpointSha256 === receipt.endpointSha256 &&
     saved.submissionKey === receipt.submissionKey &&
-    (saved.version !== 2 || (receipt.version === 2 && saved.requestSha256 === receipt.requestSha256 &&
-      saved.credentialProof === receipt.credentialProof));
+    (saved.version === 1 || (receipt.version !== 1 && saved.requestSha256 === receipt.requestSha256 &&
+      saved.credentialProof === receipt.credentialProof && saved.plannedSubmissionKey === receipt.plannedSubmissionKey));
 }
 
 function hasFsCode(error: unknown, code: string): boolean {
@@ -292,8 +299,9 @@ type PlannedMcpTaskReceipt = Omit<ReceiptFields, 'taskId'> & { requestSha256: st
 
 export async function loadPlannedMcpTaskReceipt(path: string, plan: PlannedMcpTaskReceipt): Promise<RetryReceipt | undefined> {
   const receipt = await loadReceipt(path, true);
-  if (receipt && (receipt.version !== 2 || receipt.endpointSha256 !== plan.endpointSha256 ||
-      receipt.submissionKey !== plan.submissionKey || receipt.requestSha256 !== plan.requestSha256)) {
+  if (receipt && (receipt.version === 1 || receipt.endpointSha256 !== plan.endpointSha256 ||
+      (receipt.plannedSubmissionKey ?? receipt.submissionKey) !== plan.submissionKey ||
+      receipt.requestSha256 !== plan.requestSha256)) {
     throw new McpTaskReceiptError('invalid_receipt');
   }
   return receipt;
@@ -304,10 +312,10 @@ function bearerCredential(headers: Headers): string | undefined {
 }
 
 function credentialProof(receipt: Omit<RetryReceipt, 'credentialProof'>, credential: string): string {
-  return createHmac('sha256', credential)
-    .update('gregale/node-sdk/mcp-task-receipt/v2:')
-    .update(receipt.endpointSha256).update(receipt.submissionKey).update(receipt.requestSha256)
-    .digest('hex');
+  const proof = createHmac('sha256', credential).update(`gregale/node-sdk/mcp-task-receipt/v${receipt.version}:`)
+    .update(receipt.endpointSha256).update(receipt.submissionKey).update(receipt.requestSha256);
+  if (receipt.plannedSubmissionKey !== undefined) proof.update(receipt.plannedSubmissionKey);
+  return proof.digest('hex');
 }
 
 function verifyCredential(receipt: RetryReceipt, credential: string | undefined): void {
@@ -317,21 +325,30 @@ function verifyCredential(receipt: RetryReceipt, credential: string | undefined)
   }
 }
 
-function requireRetryWindow(receipt: Receipt): void {
-  const issued = Number.parseInt(receipt.submissionKey.slice(0, 8) + receipt.submissionKey.slice(9, 13), 16);
-  const now = Date.now();
-  if (now < issued || now - issued >= submissionWindowMs) throw new McpTaskReceiptError('retry_window_closed');
+function submissionKeyIssuedAt(key: string): number {
+  return Number.parseInt(key.slice(0, 8) + key.slice(9, 13), 16);
 }
+
+function requireRetryWindow(key: string): void {
+  const age = Date.now() - submissionKeyIssuedAt(key);
+  if (age < 0 || age >= submissionWindowMs) throw new McpTaskReceiptError('retry_window_closed');
+}
+
+type GroupAdmission = {
+  authorize(credential: string | undefined): Promise<void>;
+  plannedSubmissionKey?: string;
+};
 
 async function runReceiptSubmission(
   connection: McpTaskReceiptConnection, path: string, seed: Receipt, prepared: PreparedMcpTaskReceipt,
   operation: Required<McpTaskSubmissionOptions>, retry: boolean,
-  authorize?: (credential: string | undefined) => Promise<void>,
+  group?: GroupAdmission,
 ): Promise<McpTaskReceiptSubmissionOutcome> {
   operation.signal.throwIfAborted();
   const binding = checkEndpoint(connection, seed.endpointSha256);
   const { request, requestSha256 } = prepared;
-  if (seed.version === 2 && seed.requestSha256 !== requestSha256) throw new McpTaskReceiptError('request_mismatch');
+  if (seed.version !== 1 && seed.requestSha256 !== requestSha256) throw new McpTaskReceiptError('request_mismatch');
+  request.params._meta[submissionKeyMeta] = seed.submissionKey;
 
   let receipt = retry ? seed : undefined;
   let guardError: unknown;
@@ -343,23 +360,27 @@ async function runReceiptSubmission(
       if (metadata[submissionKeyMeta] !== seed.submissionKey || submissionDigest(params, metadata) !== requestSha256) {
         throw new McpTaskReceiptError('request_mismatch');
       }
-      if (retry || authorize) requireRetryWindow(seed);
+      if (retry || group) requireRetryWindow(seed.submissionKey);
       const credential = bearerCredential(headers);
-      if (authorize) await authorize(credential);
+      if (group) await group.authorize(credential);
       if (!receipt) {
         // Capture the bearer on the prepared HTTP request before allowing it to leave.
         let initial = seed;
         if (credential) {
-          const bound = { ...seed, version: 2 as const, requestSha256 };
+          const plannedSubmissionKey = group?.plannedSubmissionKey;
+          const bound = {
+            ...seed, requestSha256,
+            ...(plannedSubmissionKey === undefined ? { version: 2 as const } : { version: 3 as const, plannedSubmissionKey }),
+          };
           initial = { ...bound, credentialProof: credentialProof(bound, credential) };
         }
         await writeReceipt(path, initial);
         receipt = initial;
       }
-      if (receipt.version === 2) verifyCredential(receipt, credential);
+      if (receipt.version !== 1) verifyCredential(receipt, credential);
       else if (credential) throw new McpTaskReceiptError('credential_mismatch');
       operation.signal.throwIfAborted();
-      if (authorize) requireRetryWindow(seed);
+      if (group) requireRetryWindow(seed.submissionKey);
     } catch (error) {
       guardError = error;
       throw error;
@@ -412,24 +433,35 @@ export async function retryMcpTaskFromReceipt(
   const receipt = await loadReceipt(file);
   checkEndpoint(connection, receipt.endpointSha256);
   if (receipt.version !== 2) throw new McpTaskReceiptError('retry_unavailable');
-  requireRetryWindow(receipt);
+  requireRetryWindow(receipt.submissionKey);
   const prepared = prepareMcpTaskReceiptSubmission(connection, submission, receipt.submissionKey);
   return runReceiptSubmission(connection, file, receipt, prepared, operation, true);
 }
 
 export function sendPlannedMcpTaskReceipt(
   connection: McpTaskReceiptConnection, path: string, plan: PlannedMcpTaskReceipt, prepared: PreparedMcpTaskReceipt,
-  operation: Required<McpTaskSubmissionOptions>, authorize: (credential: string | undefined) => Promise<void>,
-  receipt?: RetryReceipt,
+  operation: Required<McpTaskSubmissionOptions>,
+  { authorize, receipt, refreshExpired = false }: {
+    authorize: GroupAdmission['authorize'];
+    receipt?: RetryReceipt | undefined;
+    refreshExpired?: boolean;
+  },
 ): Promise<McpTaskReceiptSubmissionOutcome> {
   operation.signal.throwIfAborted();
   if (receipt?.taskId !== undefined) throw new McpTaskReceiptError('receipt_exists');
   if (prepared.submissionKey !== plan.submissionKey || prepared.requestSha256 !== plan.requestSha256) {
     throw new McpTaskReceiptError('request_mismatch');
   }
-  const seed: Receipt = receipt ?? { version: 1, endpointSha256: plan.endpointSha256, submissionKey: plan.submissionKey };
-  requireRetryWindow(seed);
-  return runReceiptSubmission(connection, path, seed, prepared, operation, receipt !== undefined, authorize);
+  const expired = Date.now() - submissionKeyIssuedAt(plan.submissionKey) >= submissionWindowMs;
+  const renew = receipt === undefined && refreshExpired && expired;
+  const seed: Receipt = receipt ?? {
+    version: 1, endpointSha256: plan.endpointSha256, submissionKey: renew ? newSubmissionKey() : plan.submissionKey,
+  };
+  requireRetryWindow(seed.submissionKey);
+  // The member receipt links the new key to the immutable plan. Its exclusive
+  // creation also fences competing first sends before either can reach the wire.
+  const group = { authorize, ...(renew ? { plannedSubmissionKey: plan.submissionKey } : {}) };
+  return runReceiptSubmission(connection, path, seed, prepared, operation, receipt !== undefined, group);
 }
 
 /** Recover a retained Task with the current credential using read-only requests. */
