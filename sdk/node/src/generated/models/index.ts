@@ -1641,6 +1641,7 @@ export type { ManagedPostgresUsageImportWindow } from './ManagedPostgresUsageImp
 export type { ManagedPostgresUsageLineItem } from './ManagedPostgresUsageLineItem.js';
 export type { ManagedPostgresUsageOperatorResponse } from './ManagedPostgresUsageOperatorResponse.js';
 export type { ManagedPostgresUsageResponse } from './ManagedPostgresUsageResponse.js';
+export type { ManagedPostgresWakeWithApp } from './ManagedPostgresWakeWithApp.js';
 export type { ManagedRealtimeAccessRequest } from './ManagedRealtimeAccessRequest.js';
 export type { ManagedRealtimeAccessResponse } from './ManagedRealtimeAccessResponse.js';
 export type { ManagedRealtimeActivityScopePath } from './ManagedRealtimeActivityScopePath.js';
@@ -3435,6 +3436,7 @@ export type { SetMCPReadinessPagerDutyRequest } from './SetMCPReadinessPagerDuty
 export type { SetMCPReadinessPolicyRequest } from './SetMCPReadinessPolicyRequest.js';
 export type { SetMCPReadinessReminderDefaultsRequest } from './SetMCPReadinessReminderDefaultsRequest.js';
 export type { SetManagedPostgresSuspendTimeoutRequest } from './SetManagedPostgresSuspendTimeoutRequest.js';
+export type { SetManagedPostgresWakeWithAppRequest } from './SetManagedPostgresWakeWithAppRequest.js';
 export type { SetObjectBucketAccessGrantRequest } from './SetObjectBucketAccessGrantRequest.js';
 export type { SetObjectS3CopySourceRequest } from './SetObjectS3CopySourceRequest.js';
 export type { SetObjectStorageBindingReleasePolicyRequest } from './SetObjectStorageBindingReleasePolicyRequest.js';

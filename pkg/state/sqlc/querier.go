@@ -592,6 +592,10 @@ type Querier interface {
 	// the same transaction, after LockManagedPostgresLifecycleDatabase.
 	ClaimManagedPostgresScheduledDelete(ctx context.Context, db DBTX, arg ClaimManagedPostgresScheduledDeleteParams) (ManagedPostgresDatabase, error)
 	ClaimManagedPostgresUndelete(ctx context.Context, db DBTX, arg ClaimManagedPostgresUndeleteParams) (ManagedPostgresDatabase, error)
+	// Claims the opted-in, ready, scale-to-zero databases bound to the app that
+	// were not started in the last gap, and stamps them, so only the claiming
+	// apid replica starts each one.
+	ClaimManagedPostgresWakeStarts(ctx context.Context, db DBTX, arg ClaimManagedPostgresWakeStartsParams) ([]ClaimManagedPostgresWakeStartsRow, error)
 	// ADR-732 scheduler side. schedd holds a lease on every restoring or running
 	// fork; terminal transitions clear it (app_forks_lease_status_chk).
 	ClaimNextAppFork(ctx context.Context, db DBTX, arg ClaimNextAppForkParams) (AppFork, error)
@@ -1420,6 +1424,7 @@ type Querier interface {
 	DevBridgeByID(ctx context.Context, db DBTX, arg DevBridgeByIDParams) (DevBridgeByIDRow, error)
 	DevBridgeWebhookReplayByID(ctx context.Context, db DBTX, arg DevBridgeWebhookReplayByIDParams) (DevBridgeWebhookReplay, error)
 	DevBridgeWebhookReplayByKey(ctx context.Context, db DBTX, arg DevBridgeWebhookReplayByKeyParams) (DevBridgeWebhookReplay, error)
+	DisableManagedPostgresWakeWithApp(ctx context.Context, db DBTX, databaseID pgtype.UUID) error
 	DisconnectGitHubConnection(ctx context.Context, db DBTX, arg DisconnectGitHubConnectionParams) error
 	DisconnectGitHubConnectionApps(ctx context.Context, db DBTX, arg DisconnectGitHubConnectionAppsParams) error
 	DisconnectGitHubConnectionProjects(ctx context.Context, db DBTX, arg DisconnectGitHubConnectionProjectsParams) error
@@ -1448,6 +1453,10 @@ type Querier interface {
 	// the link verifies only from a browser signed in to that account
 	// (ADR 20261109120000).
 	EmailVerificationTokenAccount(ctx context.Context, db DBTX, tokenHash []byte) (pgtype.UUID, error)
+	// Managed PostgreSQL databases that start when a bound app wakes (gregale
+	// postgres wake-with-app, ADR-20261125105038). No row is off. apid checks the
+	// caller owns the database before writing.
+	EnableManagedPostgresWakeWithApp(ctx context.Context, db DBTX, databaseID pgtype.UUID) error
 	EnableReleaseSecretRekey(ctx context.Context, db DBTX) error
 	EndAccountApprovedCliCodes(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	// Grants an account started that a recovery must end (ADR 20261109120000):
@@ -5337,6 +5346,10 @@ type Querier interface {
 	// waived. The fleet spend breaker (ManagedPostgresFleetTotals) still counts it.
 	ManagedPostgresUsageForSubject(ctx context.Context, db DBTX, arg ManagedPostgresUsageForSubjectParams) (ManagedPostgresUsageForSubjectRow, error)
 	ManagedPostgresUsageSubjects(ctx context.Context, db DBTX, databaseIds []pgtype.UUID) ([]ManagedPostgresUsageSubjectsRow, error)
+	ManagedPostgresWakeWithApp(ctx context.Context, db DBTX, databaseIds []pgtype.UUID) ([]pgtype.UUID, error)
+	// The apps with a live binding to an opted-in database: the only apps whose
+	// wakes can start one.
+	ManagedPostgresWakeWithAppApps(ctx context.Context, db DBTX) ([]pgtype.UUID, error)
 	ManagedWorkflowEffectAppScope(ctx context.Context, db DBTX, appID string) (ManagedWorkflowEffectAppScopeRow, error)
 	MarkAgentApprovalChannelsNotified(ctx context.Context, db DBTX, approvalID pgtype.UUID) error
 	// Only once: a record already undone is left as it is.

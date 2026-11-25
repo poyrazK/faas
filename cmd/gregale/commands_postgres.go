@@ -21,7 +21,7 @@ import (
 
 func cmdPostgres(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|create|get|status|wait|delete|recover|resize|resize-status|compute-policy|compute-policy-status|suspend-timeout|restore|branch|bindings|attach|connect|cutover|live>", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|create|get|status|wait|delete|recover|resize|resize-status|compute-policy|compute-policy-status|suspend-timeout|wake-with-app|restore|branch|bindings|attach|connect|cutover|live>", "postgres")
 		return 1
 	}
 	switch args[0] {
@@ -62,6 +62,8 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresComputePolicy(args[1:])
 	case "compute-policy-status":
 		return cmdPostgresComputePolicyStatus(args[1:])
+	case "wake-with-app":
+		return cmdPostgresWakeWithApp(args[1:])
 	case "suspend-timeout":
 		return cmdPostgresSuspendTimeout(args[1:])
 	case "resize":
@@ -898,6 +900,7 @@ func renderPostgresDatabase(w io.Writer, database api.ManagedPostgresDatabase) {
 			source = "set with suspend-timeout"
 		}
 		_, _ = fmt.Fprintf(w, "  suspend_timeout:  %s (%s)\n", time.Duration(database.SuspendTimeoutSeconds)*time.Second, source)
+		_, _ = fmt.Fprintf(w, "  wake_with_app:    %t\n", database.WakeWithApp)
 	}
 	_, _ = fmt.Fprintf(w, "  storage_limit:    %s\n", formatPostgresStorage(database.StorageLimitBytes))
 	_, _ = fmt.Fprintf(w, "  restore_window:   %s\n", formatPostgresDuration(database.RestoreWindowSeconds))

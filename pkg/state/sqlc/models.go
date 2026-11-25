@@ -9727,6 +9727,13 @@ type ManagedPostgresUsageWaiver struct {
 	WaivedUntil pgtype.Timestamptz
 }
 
+// Managed PostgreSQL databases that start when a bound app wakes (opt-in); no row is off; written only by apid.
+type ManagedPostgresWakeWithApp struct {
+	DatabaseID    pgtype.UUID
+	EnabledAt     pgtype.Timestamptz
+	LastStartedAt pgtype.Timestamptz
+}
+
 type ManagedRealtimeChannelBatch struct {
 	EndpointID    pgtype.UUID
 	Channel       string
