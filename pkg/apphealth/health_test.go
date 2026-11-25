@@ -61,6 +61,45 @@ func TestAppHealth_ReportsRecentBootFailures(t *testing.T) {
 	}
 }
 
+// Prod hunt r52: after the config that crashed fresh boots was fixed, a new
+// boot came up and served, yet health stayed unhealthy for the rest of the
+// window and `app restart --wait` waited out its timeout. Failures older than
+// a later good boot are history; failures after it still count.
+func TestAppHealth_BootFailuresBeforeALaterGoodBootAreHistory(t *testing.T) {
+	e := healthEvidence()
+	at := func(ago time.Duration) time.Time { return e.Now.Add(-ago) }
+	e.RecentInstances = []state.Instance{
+		{ID: "fixed", DeploymentID: "serving", State: string(state.StateRunning), StartedAt: at(2 * time.Minute)},
+		{ID: "crash-1", DeploymentID: "serving", State: string(state.StateFailed), StartedAt: at(5 * time.Minute)},
+		{ID: "crash-2", DeploymentID: "serving", State: string(state.StateFailed), StartedAt: at(4 * time.Minute)},
+	}
+	for _, c := range Evaluate(e).Checks {
+		if c.Code == "readiness" && (c.Status != Pass || strings.Contains(c.Detail, "failed to boot")) {
+			t.Fatalf("readiness = %s %q after a later good boot", c.Status, c.Detail)
+		}
+	}
+	// A crash after the good boot, or a liveness-killed "good" boot, counts.
+	e.RecentInstances = append(e.RecentInstances, state.Instance{ID: "crash-3", DeploymentID: "serving", State: string(state.StateFailed), StartedAt: at(time.Minute)})
+	if !bootFailureReported(e, "1 instance(s)") {
+		t.Fatalf("crash after the good boot not reported: %+v", Evaluate(e).Checks)
+	}
+	e.RecentInstances = e.RecentInstances[:3]
+	e.RecentInstances[0].State = string(state.StateStopped)
+	e.LivenessFailed = map[string]bool{"fixed": true}
+	if !bootFailureReported(e, "3 instance(s)") {
+		t.Fatalf("liveness-killed boot hid the earlier failures: %+v", Evaluate(e).Checks)
+	}
+}
+
+func bootFailureReported(e Evidence, count string) bool {
+	for _, c := range Evaluate(e).Checks {
+		if c.Code == "readiness" && strings.Contains(c.Detail, count+" of a serving release failed to boot") {
+			return c.Status == Warning || c.Status == Fail
+		}
+	}
+	return false
+}
+
 // Prod hunt r33: a serving app crash-looped (guest-init exhausted its
 // restarts), schedd stopped the instance with liveness_failed, and app
 // health and inspect reported nothing, because the row ends STOPPED.
