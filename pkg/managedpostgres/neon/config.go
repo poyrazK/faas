@@ -53,6 +53,13 @@ var profiles = map[managedpostgres.ServiceClass]classProfile{
 	managedpostgres.ClassProduction: {minimumCU: 0.5, maximumCU: 4},
 }
 
+// legacyProfiles are ranges earlier releases provisioned. An endpoint at one
+// still reads as its class (a neond on release N-1 can create one while N
+// runs) and keeps its range until the database changes class.
+var legacyProfiles = map[managedpostgres.ServiceClass]classProfile{
+	managedpostgres.ClassProduction: {minimumCU: 1, maximumCU: 4},
+}
+
 // Provider is a Neon-backed implementation of managedpostgres.Provider.
 // Project IDs and endpoint hosts are treated as opaque/sensitive outside the
 // adapter and are never included in returned errors.

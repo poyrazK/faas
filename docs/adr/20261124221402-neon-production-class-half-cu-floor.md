@@ -43,17 +43,26 @@ The Neon `production` class is 0.5–4 CU. `development` (0.25–1 CU) and
 - Production stays distinct from burstable by its higher floor and its
   4 CU ceiling.
 
-An existing production endpoint, of which there are none, would move to the
-new floor the next time its compute settings converge, like any profile
-change.
+Nothing converges endpoint sizes, so an endpoint already at 1–4 CU stays
+there. The adapter keeps 1–4 CU as a legacy production range: such an
+endpoint still reads as `production` (not `spec_mismatch`, not a
+snapshot-copy conflict) and moves to the current range only when the
+database changes class. Prod has none; one can appear only on another
+deployment or from a neond still on release N-1 while N rolls out.
+
+Always-on compute is in no plan, so an agent's budget prices every customer
+production database at zero standing cost and the release order of apid and
+neond does not change any charge.
 
 ## Consequences
 
 - The operator guide's class table says 0.5–4 CU.
 - An agent's budget (ADR-20261111114059) prices an always-on production
   database at 0.5 CU: `api.ManagedPostgresMinimumQuarterComputeUnits`
-  mirrors the Neon profiles, and a test keeps them equal. An unknown class,
-  priced at the largest minimum, drops from 1 CU to 0.5 CU with it.
+  mirrors the Neon profiles, and a test keeps them equal. An unknown class
+  is priced at the largest current minimum, so it drops from 1 CU to 0.5 CU
+  with it; that rule is kept, since an unknown class can only be one this
+  table has not learned yet, and the test fails until it does.
 - `faas_managed_postgres_idle_tail_share:ratio24h{class="production"}`
   (the idle-tail telemetry from PR #8039) is the check once production
   databases exist; if warm-up latency hurts them, the floor can go back to 1 CU with

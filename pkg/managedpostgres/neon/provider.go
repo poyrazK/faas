@@ -650,11 +650,13 @@ func (p *Provider) endpointSettingsForSpec(spec managedpostgres.Spec) endpointSe
 	return endpointSettings{MinimumCU: profile.minimumCU, MaximumCU: profile.maximumCU, SuspendTimeoutSecond: suspendTimeout}
 }
 
-// sameEndpointSettings compares sizes exactly and the suspend timeout only as
-// scale-to-zero or always-on (-1): the timeout of a scale-to-zero endpoint
-// moves with the operator setting and is not drift.
+// sameEndpointSettings compares sizes by the class they map to (a legacy
+// range is its class's) and the suspend timeout only as scale-to-zero or
+// always-on (-1): the timeout of a scale-to-zero endpoint moves with the
+// operator setting and is not drift.
 func sameEndpointSettings(actual, want endpointSettings) bool {
-	return actual.MinimumCU == want.MinimumCU && actual.MaximumCU == want.MaximumCU &&
+	class := classForSize(want.MinimumCU, want.MaximumCU)
+	return class != "" && classForSize(actual.MinimumCU, actual.MaximumCU) == class &&
 		sameSuspendPolicy(actual.SuspendTimeoutSecond, want.SuspendTimeoutSecond)
 }
 
@@ -781,13 +783,23 @@ func (p *Provider) observedSpec(project project, primary endpoint) managedpostgr
 	if project.RegionID != p.regionID {
 		observed.Region = ""
 	}
-	for class, profile := range profiles {
-		if closeFloat(primary.MinimumCU, profile.minimumCU) && closeFloat(primary.MaximumCU, profile.maximumCU) {
-			observed.Class = class
-			break
+	observed.Class = classForSize(primary.MinimumCU, primary.MaximumCU)
+	return observed
+}
+
+// classForSize maps an endpoint's autoscaling range to its service class:
+// the current profiles, then the ranges older releases provisioned, so an
+// endpoint made before a profile change keeps its class instead of reading
+// as drift.
+func classForSize(minimumCU, maximumCU float64) managedpostgres.ServiceClass {
+	for _, table := range []map[managedpostgres.ServiceClass]classProfile{profiles, legacyProfiles} {
+		for class, profile := range table {
+			if closeFloat(minimumCU, profile.minimumCU) && closeFloat(maximumCU, profile.maximumCU) {
+				return class
+			}
 		}
 	}
-	return observed
+	return ""
 }
 
 func closeFloat(left, right float64) bool {
