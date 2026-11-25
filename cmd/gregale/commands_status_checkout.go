@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -21,6 +22,12 @@ type checkoutStatus struct {
 	App         *api.AppResponse     `json:"app,omitempty"`
 	Account     *api.AccountResponse `json:"account,omitempty"`
 	Platform    string               `json:"platform_status_command"`
+	// FailedDeployment is the app's newest deployment when it failed:
+	// `status` right after a failed deploy said only "State active" (prod
+	// hunt r44).
+	FailedDeployment *api.DeploymentResponse `json:"failed_deployment,omitempty"`
+	// LiveReleaseServing reports whether an earlier release is still live.
+	LiveReleaseServing bool `json:"live_release_serving,omitempty"`
 }
 
 // statusTarget resolves the app and project `status` reports on: --app, or
@@ -56,6 +63,10 @@ func cmdStatusCheckout(target localProjectContext) int {
 			return printErr("Could not load app", err)
 		}
 		out.App = &app
+		if page, listErr := client.ListAppDeployments(ctx, target.App, "", 10); listErr == nil && len(page.Items) > 0 && page.Items[0].Status == "failed" {
+			out.FailedDeployment = &page.Items[0]
+			out.LiveReleaseServing = slices.ContainsFunc(page.Items, func(d api.DeploymentResponse) bool { return d.Status == "live" })
+		}
 	}
 	if account, err := client.Whoami(ctx); err == nil {
 		out.Account = &account
@@ -95,6 +106,17 @@ func renderCheckoutStatus(out checkoutStatus) {
 	}
 	if out.App != nil {
 		writeParkedNotice(osStdout, *out.App)
+	}
+	if d := out.FailedDeployment; d != nil && out.App != nil {
+		label := d.ID
+		if d.Revision > 0 {
+			label = fmt.Sprintf("v%d (%s)", d.Revision, d.ID)
+		}
+		serving := "no release is live"
+		if out.LiveReleaseServing {
+			serving = "the previous release keeps serving"
+		}
+		_, _ = fmt.Fprintf(osStdout, "%-12s failed: %s; %s. Why: gregale release get %s\n", "Last deploy", label, serving, d.ID)
 	}
 	if out.Account != nil {
 		_, _ = fmt.Fprintf(osStdout, "%-12s %s (%s plan)\n", "Account", out.Account.Email, out.Account.Plan)

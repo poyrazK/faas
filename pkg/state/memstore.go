@@ -653,8 +653,11 @@ type MemStore struct {
 	apiConsumerBillingPolicies           map[string]APIConsumerBillingPolicy       // ADR-1315, by app
 	apiConsumerOverdueHolds              map[string]APIConsumerOverdueHold         // ADR-1315, by consumer
 	platformTenants                      map[string]PlatformTenant
-	flagEvents                           *memFlagEvents                 // ADR 20261115163113, lazily made
-	savedInsights                        map[string]*memSavedInsightRow // ADR-20261122190000, by ID, lazily made
+	flagEvents                           *memFlagEvents                      // ADR 20261115163113, lazily made
+	savedInsights                        map[string]*memSavedInsightRow      // ADR-20261122190000, by ID, lazily made
+	flagNotificationSettings             map[string]FlagNotificationSettings // ADR-20261125085913, by environment ID, lazily made
+	flagNotifications                    []FlagNotification                  // ADR-20261125085913
+	flagNotificationKeys                 map[string]flagNotificationKey      // ADR-20261125085913
 	platformTenantReconciliationReceipts map[string]api.PlatformTenantReconciliationReceiptResponse
 	platformTenantOffboardingReceipts    map[string]api.PlatformTenantOffboardingReceiptResponse
 	platformTenantAccessTokens           map[string]PlatformTenantAccessToken
@@ -1216,6 +1219,9 @@ type MemStore struct {
 	// signal that an OAuth-only flow is required to mint a session.
 	accountPasswords map[string]AccountPassword
 	legalAcceptances map[string][]LegalAcceptance
+	// unclaimedAccounts marks accounts created by an anonymous deploy
+	// (ADR-20261124080000), keyed by account_id. Lazily initialised.
+	unclaimedAccounts map[string]UnclaimedAccount
 	// oauthLinks is keyed by (provider + "\x00" + provider_subject)
 	// so the §11 anti-takeover invariant (one OAuth subject per
 	// account) is enforceable in-memory the same way the composite
@@ -2348,6 +2354,11 @@ func (m *MemStore) CreateAccountWithPersonalOrg(ctx context.Context, params Crea
 	if params.InitialPasswordHash != "" {
 		if err := m.setAccountPasswordLocked(acct.ID, params.InitialPasswordHash); err != nil {
 			delete(m.accountPasswords, acct.ID)
+			return CreateAccountWithPersonalOrgResult{}, err
+		}
+	}
+	if u := params.Unclaimed; u != nil {
+		if err := m.insertUnclaimedLocked(acct.ID, *u, now); err != nil {
 			return CreateAccountWithPersonalOrgResult{}, err
 		}
 	}
@@ -23162,7 +23173,9 @@ func (m *MemStore) PeekCliAuthCode(_ context.Context, tokenHash []byte) (api.Cli
 	if !row.ExpiresAt.After(time.Now()) {
 		return api.CliAuthStatusExpired, "", ErrNotFound
 	}
-	if row.ConsumedAt != nil {
+	// PgStore's claim sets status = 'consumed' before the CLI exchanges the
+	// code, so a claimed row is consumed here too.
+	if row.ConsumedAt != nil || row.AccountID != "" {
 		return api.CliAuthStatusConsumed, row.AccountID, nil
 	}
 	return api.CliAuthStatusPending, row.AccountID, nil

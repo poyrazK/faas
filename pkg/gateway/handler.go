@@ -1082,6 +1082,9 @@ type Handler struct {
 	// apiMonetizationFlags is the api_monetization platform flag: it
 	// releases monetization to the accounts it admits (ADR-20261020170649).
 	apiMonetizationFlags *platformflags.Set
+	// edgeFlagsRelease is the edge_flags platform flag (ADR-20261124212701):
+	// nil routes no request at the edge.
+	edgeFlagsRelease *platformflags.Set
 	// capabilityAllowed decides a product capability flag for an app's
 	// account (ADR-20261023115741); nil releases every capability.
 	capabilityAllowed func(capability, accountID string) bool
@@ -7236,6 +7239,10 @@ haveApp:
 	if h.serveGatedEdgeAnswer(w, r, app, declaredPath) {
 		return
 	}
+	// ADR-20261124212701: edge flag routing, after every identity and access
+	// gate (a verified customer buckets as the SDK would) and before the
+	// response cache, whose key then carries the rewritten path.
+	r, edgeVisitorSetCookie := h.applyEdgeFlags(w, r, app)
 	managedVersionSetCookie := ""
 	managedReleaseContextSetCookie := ""
 	if app.VersionAffinityManagedCookie && app.VersionAffinityCookie == "" {
@@ -7479,6 +7486,7 @@ haveApp:
 		cw := newCacheWriter(w, rec, rule, ResponseCachePerEntryMaxBytes, responseCacheFillFrom(r.Context(), h.responseCache))
 		cw.excludeManagedVersionCookie(managedVersionSetCookie)
 		cw.excludeManagedCookie(managedReleaseContextSetCookie)
+		cw.excludeManagedCookie(edgeVisitorSetCookie)
 		w = cw
 		if h.contentObserver != nil && contentObservable(r) {
 			// Compare the body this miss stores with the previous one for the
@@ -9016,7 +9024,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				GuestRuntime:                         guestEvidence.Runtime,
 				GuestOutcome:                         guestEvidence.Outcome,
 				GuestErrorClass:                      guestEvidence.ErrorClass,
-				FlagEvidenceJSON:                     guestEvidence.FlagEvidenceJSON,
+				FlagEvidenceJSON:                     flagEvidenceWithEdge(r.Context(), guestEvidence.FlagEvidenceJSON),
 				GuestCPUTimeMS:                       guestEvidence.CPUTimeMS,
 				GuestPeakRSSMB:                       guestEvidence.PeakRSSMB,
 				GuestResourceUsageAvailable:          guestEvidence.ResourceUsageAvailable,

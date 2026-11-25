@@ -16,6 +16,8 @@ import type { AccountRateLimitsResponse } from '../models/AccountRateLimitsRespo
 import type { AccountResponse } from '../models/AccountResponse.js';
 import type { AccountSLOResponse } from '../models/AccountSLOResponse.js';
 import type { AccountTraceLookupResponse } from '../models/AccountTraceLookupResponse.js';
+import type { AnonymousSessionRequest } from '../models/AnonymousSessionRequest.js';
+import type { AnonymousSessionResponse } from '../models/AnonymousSessionResponse.js';
 import type { BillingConnectionResponse } from '../models/BillingConnectionResponse.js';
 import type { BillingProvider } from '../models/BillingProvider.js';
 import type { BillingRunItemListResponse } from '../models/BillingRunItemListResponse.js';
@@ -24,6 +26,7 @@ import type { BillingRunResponse } from '../models/BillingRunResponse.js';
 import type { BillingRunScheduleResponse } from '../models/BillingRunScheduleResponse.js';
 import type { CapabilitiesResponse } from '../models/CapabilitiesResponse.js';
 import type { ChangePlanRequest } from '../models/ChangePlanRequest.js';
+import type { ClaimLinkResponse } from '../models/ClaimLinkResponse.js';
 import type { CreateBillingRunRequest } from '../models/CreateBillingRunRequest.js';
 import type { DeadLetterEvent } from '../models/DeadLetterEvent.js';
 import type { EgressOverageRequest } from '../models/EgressOverageRequest.js';
@@ -195,6 +198,58 @@ export class AccountService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+      },
+    });
+  }
+  /**
+   * Deploy without an account; a person claims the app later.
+   * For agents working for someone without a Gregale account. Needs no
+   * credential. Creates a Free account limited to deploying and reading
+   * its apps, and returns its deploy key and a claim link. A person who
+   * opens the link and confirms an email address owns the account and
+   * its apps; the key then stops working. Unclaimed accounts are deleted
+   * after the claim window (72 hours by default). Custom domains,
+   * databases, buckets, cron, API keys, organizations and billing answer
+   * `claim_required` until the claim. New sessions are limited per
+   * network and across the platform (`anonymous_deploys_unavailable`).
+   * Answers 404 while the feature is not offered.
+   *
+   * @returns AnonymousSessionResponse Session created. The key is returned once.
+   * @throws ApiError
+   */
+  public static createAnonymousSession({
+    requestBody,
+  }: {
+    requestBody: AnonymousSessionRequest,
+  }): CancelablePromise<AnonymousSessionResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/anonymous/sessions',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        404: `code: not_found`,
+        429: `Anonymous deploys are not available from this network now, or the platform limit is reached (\`anonymous_deploys_unavailable\`). Sign up and deploy again.`,
+      },
+    });
+  }
+  /**
+   * Get a fresh claim link for an account deployed without one.
+   * Only for the key of an anonymous deploy's account. Returns a new
+   * claim link; earlier links stop working.
+   *
+   * @returns ClaimLinkResponse The new claim link.
+   * @throws ApiError
+   */
+  public static createClaimLink(): CancelablePromise<ClaimLinkResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/claim-link',
+      errors: {
+        401: `code: unauthorized`,
+        409: `The account is a regular account with nothing to claim.`,
+        410: `The claim window ended.`,
       },
     });
   }

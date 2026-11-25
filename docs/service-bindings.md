@@ -104,12 +104,16 @@ activation; runtime probes, application ACKs and refresh requirements do not
 validate migration credentials. `bindings verify --all` skips these bindings and
 creates no migration probes.
 
+### Wait for pending probes
+
 Use `--wait --timeout 5m --poll-interval 1s` to observe already pending probes,
 credential refreshes, runtime replacement or application acknowledgements. Waiting
 pins the first selected deployment and scope and prints one final report. It
 creates no tasks or refreshes. Terminal failures and missing probe evidence stop
 immediately; timeout returns the last blocked report and exit status 1. Ctrl-C
 returns 130. Failed reads stop the wait with a nonzero result.
+
+### Check a staged rollout before promotion
 
 For a staged rollout, verify and check the same deployment before promotion:
 
@@ -142,6 +146,8 @@ selection first resolves the app's deployment ladder. Probes use the selected
 artifact with current scoped configuration. A check does not lock configuration
 or traffic promotion against subsequent changes.
 
+### What the default policy requires
+
 The default policy requires a complete inventory, ready managed bindings and
 passed service, PostgreSQL and object-storage evidence matching the selected
 deployment and scope. Evidence must have a completion timestamp no more than
@@ -158,6 +164,8 @@ credential retirement or an unfinished, failed or unknown refresh handoff also
 blocks; a completed handoff does not override pending retirement or runtime
 freshness. Inventory read issues block even when their severity is `warning`.
 
+### Bindings without a connectivity probe
+
 Active queue bindings and outbound bindings without a supported configured probe have unsupported connectivity coverage and
 block by default. `--allow-unsupported` explicitly waives only this coverage gap;
 the report retains `coverage: partial`, `status: unsupported` and a warning when
@@ -165,6 +173,8 @@ consumer readiness has no blockers.
 Disabled queue and outbound bindings are skipped. Unknown binding types always
 block and require a CLI update. A selected scope with no active bindings reports
 `coverage: none` with a warning rather than claiming connectivity coverage.
+
+### Push queue consumers
 
 Enabled push queue bindings also require an active, healthy scheduler consumer
 with a nonzero poll timestamp at most thirty seconds old and no later than the
@@ -179,6 +189,8 @@ healthy poll. A healthy idle queue needs no delivered message. External pull
 consumers retain partial coverage because their liveness is not observed by the
 scheduler. Polling health establishes control-plane readiness; it does not
 prove guest queue access or message delivery.
+
+### Require consumer readiness per queue
 
 A stored release policy can explicitly require scheduler readiness for individual
 push queue bindings while retaining strict verification for other dependencies:

@@ -1,5 +1,5 @@
 -- migration-compat: expand
--- filename: 20261124213833200_mcp_oauth_consumer_identities.sql
+-- filename: 20261125135852200_mcp_oauth_consumer_identities.sql
 
 -- ADR-20261124094745: a caller signed in through an MCP server's
 -- oauth-proxy issuer becomes an API consumer of that app, identified by the

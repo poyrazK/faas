@@ -2762,6 +2762,12 @@ func StatusForCode(code string) int {
 		return http.StatusUnauthorized
 	case CodeEmailVerificationRequired:
 		return http.StatusForbidden
+	case CodeClaimRequired:
+		return http.StatusForbidden
+	case CodeAnonymousDeploysUnavailable:
+		return http.StatusTooManyRequests
+	case CodeClaimExpired:
+		return http.StatusGone
 	case CodePasswordTooWeak, CodeAccountExists:
 		return http.StatusBadRequest
 	case CodeResetTokenInvalid, CodeResetTokenExpired, CodeVerificationLinkInvalid:

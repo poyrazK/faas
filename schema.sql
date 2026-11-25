@@ -44384,8 +44384,82 @@ CREATE TABLE public.flag_experiments (
     bandit_weighted_at timestamp with time zone,
     denominator_event text DEFAULT ''::text NOT NULL,
     percentile integer DEFAULT 0 NOT NULL,
+    notify_channel_ids uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    CONSTRAINT flag_experiments_notify_chk CHECK ((cardinality(notify_channel_ids) <= 5)),
     CONSTRAINT flag_experiments_v4_chk CHECK (((key ~ '^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$'::text) AND (metric_event ~ '^[a-z][a-z0-9_.-]{0,63}$'::text) AND (metric_kind = ANY (ARRAY['conversion'::text, 'mean'::text, 'funnel'::text, 'retention'::text, 'ratio'::text, 'percentile'::text])) AND (status = ANY (ARRAY['draft'::text, 'running'::text, 'stopped'::text])) AND (mixing_lift > (0)::double precision) AND (mixing_lift <= (1)::double precision) AND (jsonb_typeof(weights) = 'object'::text) AND (jsonb_typeof(min_p_values) = 'object'::text) AND (jsonb_typeof(min_cuped_p_values) = 'object'::text) AND (jsonb_typeof(metric_definition) = 'object'::text) AND (jsonb_typeof(guardrails) = 'object'::text) AND ((breach IS NULL) OR (jsonb_typeof(breach) = 'object'::text)) AND ((latency_threshold_ms IS NULL) OR (latency_threshold_ms >= 0)) AND (stop_reason = ANY (ARRAY[''::text, 'manual'::text, 'guardrail_breach'::text, 'shipped'::text])) AND ((status = 'stopped'::text) OR (stop_reason = ''::text)) AND ((length(flag_key) >= 1) AND (length(flag_key) <= 128)) AND ((length(rule_id) >= 1) AND (length(rule_id) <= 128)) AND ((length(control) >= 1) AND (length(control) <= 128)) AND ((length(created_by) >= 1) AND (length(created_by) <= 256)) AND ((status = 'draft'::text) OR (started_at IS NOT NULL)) AND ((status <> 'stopped'::text) OR (stopped_at IS NOT NULL)) AND (unit = ANY (ARRAY['customer'::text, 'subject'::text])) AND (allocation = ANY (ARRAY['fixed'::text, 'bandit'::text])) AND ((layer = ''::text) OR (layer ~ '^[a-z][a-z0-9_-]{0,63}$'::text)) AND ((traffic >= 0) AND (traffic <= 10000)) AND ((layer_from >= 0) AND (layer_from <= 10000)) AND ((layer_to >= 0) AND (layer_to <= 10000)) AND (layer_from <= layer_to) AND (jsonb_typeof(bandit) = 'array'::text) AND ((denominator_event = ''::text) OR (denominator_event ~ '^[a-z][a-z0-9_.-]{0,63}$'::text)) AND ((percentile >= 0) AND (percentile <= 99))))
 );
+
+
+--
+-- Name: flag_notification_keys; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.flag_notification_keys (
+    key text NOT NULL,
+    environment_id uuid NOT NULL,
+    kind text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT flag_notification_keys_chk CHECK (((kind = ANY (ARRAY['experiment_decision'::text, 'experiment_problem'::text, 'lifecycle_digest'::text, 'flag_expired'::text])) AND ((length(key) >= 1) AND (length(key) <= 256))))
+);
+
+
+--
+-- Name: TABLE flag_notification_keys; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.flag_notification_keys IS 'Every flag notification key queued, so a swept notification is never queued again (ADR-20261125085913).';
+
+
+--
+-- Name: flag_notification_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.flag_notification_settings (
+    environment_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    channel_ids uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    updated_by text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT flag_notification_settings_chk CHECK (((cardinality(channel_ids) <= 5) AND ((length(updated_by) >= 1) AND (length(updated_by) <= 256))))
+);
+
+
+--
+-- Name: TABLE flag_notification_settings; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.flag_notification_settings IS 'Notification channels for an environment''s experiments and flag lifecycle (ADR-20261125085913).';
+
+
+--
+-- Name: flag_notifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.flag_notifications (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    org_id uuid,
+    environment_id uuid NOT NULL,
+    kind text NOT NULL,
+    key text NOT NULL,
+    subject text NOT NULL,
+    summary text NOT NULL,
+    channel_ids uuid[] NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_error text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    settled_at timestamp with time zone,
+    CONSTRAINT flag_notifications_chk CHECK (((kind = ANY (ARRAY['experiment_decision'::text, 'experiment_problem'::text, 'lifecycle_digest'::text, 'flag_expired'::text])) AND ((length(key) >= 1) AND (length(key) <= 256)) AND ((length(subject) >= 1) AND (length(subject) <= 256)) AND ((length(summary) >= 1) AND (length(summary) <= 8192)) AND ((cardinality(channel_ids) >= 1) AND (cardinality(channel_ids) <= 5)) AND (status = ANY (ARRAY['pending'::text, 'delivered'::text, 'abandoned'::text])) AND (attempts >= 0) AND (length(last_error) <= 512) AND ((status = 'pending'::text) = (settled_at IS NULL))))
+);
+
+
+--
+-- Name: TABLE flag_notifications; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.flag_notifications IS 'Outbox of flag notifications queued by apid and delivered by meterd (ADR-20261125085913).';
 
 
 --
@@ -63801,6 +63875,33 @@ CREATE TABLE public.triggers (
 
 
 --
+-- Name: unclaimed_accounts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.unclaimed_accounts (
+    account_id uuid NOT NULL,
+    claim_token_sha256 bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    claimed_at timestamp with time zone,
+    expired_at timestamp with time zone,
+    created_ip inet,
+    user_agent text DEFAULT ''::text NOT NULL,
+    CONSTRAINT unclaimed_accounts_check CHECK ((expires_at > created_at)),
+    CONSTRAINT unclaimed_accounts_check1 CHECK (((claimed_at IS NULL) OR (expired_at IS NULL))),
+    CONSTRAINT unclaimed_accounts_claim_token_sha256_check CHECK ((octet_length(claim_token_sha256) = 32)),
+    CONSTRAINT unclaimed_accounts_user_agent_check CHECK ((char_length(user_agent) <= 512))
+);
+
+
+--
+-- Name: TABLE unclaimed_accounts; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.unclaimed_accounts IS 'Accounts created by an anonymous agent deploy, until a human claims them or they expire; written by apid (ADR-20261124080000).';
+
+
+--
 -- Name: upload_commit_outcomes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -70699,6 +70800,38 @@ ALTER TABLE ONLY public.flag_experiments
 
 ALTER TABLE ONLY public.flag_experiments
     ADD CONSTRAINT flag_experiments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: flag_notification_keys flag_notification_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_notification_keys
+    ADD CONSTRAINT flag_notification_keys_pkey PRIMARY KEY (key);
+
+
+--
+-- Name: flag_notification_settings flag_notification_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_notification_settings
+    ADD CONSTRAINT flag_notification_settings_pkey PRIMARY KEY (environment_id);
+
+
+--
+-- Name: flag_notifications flag_notifications_key_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_notifications
+    ADD CONSTRAINT flag_notifications_key_uniq UNIQUE (key);
+
+
+--
+-- Name: flag_notifications flag_notifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_notifications
+    ADD CONSTRAINT flag_notifications_pkey PRIMARY KEY (id);
 
 
 --
@@ -79366,6 +79499,22 @@ ALTER TABLE ONLY public.triggers
 
 
 --
+-- Name: unclaimed_accounts unclaimed_accounts_claim_token_sha256_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.unclaimed_accounts
+    ADD CONSTRAINT unclaimed_accounts_claim_token_sha256_key UNIQUE (claim_token_sha256);
+
+
+--
+-- Name: unclaimed_accounts unclaimed_accounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.unclaimed_accounts
+    ADD CONSTRAINT unclaimed_accounts_pkey PRIMARY KEY (account_id);
+
+
+--
 -- Name: upload_commit_outcomes upload_commit_outcomes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -84810,6 +84959,34 @@ CREATE UNIQUE INDEX flag_experiments_one_running_per_rule ON public.flag_experim
 --
 
 CREATE INDEX flag_experiments_running_idx ON public.flag_experiments USING btree (id) WHERE (status = 'running'::text);
+
+
+--
+-- Name: flag_notification_keys_digest_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX flag_notification_keys_digest_idx ON public.flag_notification_keys USING btree (created_at) WHERE (kind = 'lifecycle_digest'::text);
+
+
+--
+-- Name: flag_notification_keys_environment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX flag_notification_keys_environment_idx ON public.flag_notification_keys USING btree (environment_id);
+
+
+--
+-- Name: flag_notifications_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX flag_notifications_due_idx ON public.flag_notifications USING btree (next_attempt_at) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: flag_notifications_settled_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX flag_notifications_settled_idx ON public.flag_notifications USING btree (settled_at) WHERE (status <> 'pending'::text);
 
 
 --
@@ -91296,6 +91473,13 @@ CREATE UNIQUE INDEX triggers_one_enabled_queue_source ON public.triggers USING b
 --
 
 CREATE UNIQUE INDEX triggers_queue_binding_identity_unique ON public.triggers USING btree (queue_binding_id) WHERE (queue_binding_id IS NOT NULL);
+
+
+--
+-- Name: unclaimed_accounts_open_expires_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX unclaimed_accounts_open_expires_idx ON public.unclaimed_accounts USING btree (expires_at) WHERE ((claimed_at IS NULL) AND (expired_at IS NULL));
 
 
 --
@@ -107035,6 +107219,46 @@ ALTER TABLE ONLY public.flag_experiments
 
 
 --
+-- Name: flag_notification_keys flag_notification_keys_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_notification_keys
+    ADD CONSTRAINT flag_notification_keys_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: flag_notification_settings flag_notification_settings_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_notification_settings
+    ADD CONSTRAINT flag_notification_settings_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: flag_notification_settings flag_notification_settings_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_notification_settings
+    ADD CONSTRAINT flag_notification_settings_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: flag_notifications flag_notifications_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_notifications
+    ADD CONSTRAINT flag_notifications_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: flag_notifications flag_notifications_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_notifications
+    ADD CONSTRAINT flag_notifications_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
 -- Name: function_migration_destinations function_migration_destinations_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -117008,6 +117232,14 @@ ALTER TABLE ONLY public.triggers
 
 ALTER TABLE ONLY public.triggers
     ADD CONSTRAINT triggers_queue_binding_identity_fk FOREIGN KEY (queue_binding_id, app_id, account_id) REFERENCES public.queue_bindings(id, app_id, account_id) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: unclaimed_accounts unclaimed_accounts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.unclaimed_accounts
+    ADD CONSTRAINT unclaimed_accounts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

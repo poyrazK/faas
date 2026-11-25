@@ -149,16 +149,16 @@ func cmdSyntheticsSetEnabled(args []string, enabled bool) int {
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	fillLinkedApp(slug)
-	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alert check "+verb+" [--app <slug>] <check-id|name>", "synthetics")
+	ref, ok := syntheticCheckArgs(slug, fs.Args())
+	if !ok {
+		PrintUsage(os.Stderr, "usage: gregale alert check "+verb+" [<slug>|--app <slug>] <check-id|name>", "synthetics")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	id, err := resolveSyntheticCheckRef(context.Background(), client, *slug, fs.Arg(0))
+	id, err := resolveSyntheticCheckRef(context.Background(), client, *slug, ref)
 	if err != nil {
 		return printErr("Could not "+verb+" synthetic check", err)
 	}
@@ -181,16 +181,16 @@ func cmdSyntheticsRm(args []string) int {
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	fillLinkedApp(slug)
-	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alert check delete [--app <slug>] <check-id|name> [--yes]", "synthetics")
+	ref, ok := syntheticCheckArgs(slug, fs.Args())
+	if !ok {
+		PrintUsage(os.Stderr, "usage: gregale alert check delete [<slug>|--app <slug>] <check-id|name> [--yes]", "synthetics")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	id, err := resolveSyntheticCheckRef(context.Background(), client, *slug, fs.Arg(0))
+	id, err := resolveSyntheticCheckRef(context.Background(), client, *slug, ref)
 	if err != nil {
 		return printErr("Could not delete synthetic check", err)
 	}

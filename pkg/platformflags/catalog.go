@@ -94,6 +94,16 @@ const (
 	// experiments and no raw event is stored.
 	ProductAnalytics = "product_analytics"
 
+	// EdgeFlags releases gateway-evaluated variant routing of customer flags
+	// (ADR-20261124212701): apid accepts edge routes, the gateway applies
+	// them. Off, the gateway serves requests unchanged.
+	EdgeFlags = "edge_flags"
+
+	// FlagNotifications sends experiment decisions and problems, weekly flag
+	// lifecycle digests and flag expiries to notification channels
+	// (ADR-20261125085913).
+	FlagNotifications = "flag_notifications"
+
 	// SavedInsights releases saved insights, their CSV/JSON export,
 	// scheduled digests and threshold alerts (ADR-20261122190000). It
 	// needs ProductAnalytics as well.
@@ -462,6 +472,29 @@ var catalog = []Spec{
 		Consumers:    []string{"apid"},
 		Attributes:   []Attribute{AttributePlan, AttributeOrg},
 		HealthRoutes: []string{"GET /v1/projects/{slug}/environments/{environment}/insights/events"},
+		RetireBy:     "2027-06-30",
+	},
+	{
+		Key:   EdgeFlags,
+		Label: "Edge flag routing",
+		Description: "Let a variant flag rewrite request paths at the gateway, so apps without an SDK serve its variants; anonymous visitors " +
+			"keep their bucket in a first-party cookie. Off, apid refuses edge routes and the gateway serves every request unchanged.",
+		ADR:        "ADR-20261124212701",
+		Consumers:  []string{"apid", "gatewayd-internal"},
+		Attributes: []Attribute{AttributePlan},
+		RetireBy:   "2027-06-30",
+	},
+	{
+		Key:        FlagNotifications,
+		Capability: "flag-notifications",
+		Label:      "Flag notifications",
+		Description: "Send experiment decisions (ship a variant, keep control) and problems (guardrail rollback, sample ratio mismatch), " +
+			"a weekly digest of flags that need a decision and flag expiries to notification channels. Off, the settings routes refuse, " +
+			"apid queues nothing and meterd sends nothing; queued notifications wait.",
+		ADR:          "ADR-20261125085913",
+		Consumers:    []string{"apid", "meterd"},
+		Attributes:   []Attribute{AttributePlan, AttributeOrg},
+		HealthRoutes: []string{"GET /v1/projects/{slug}/environments/{environment}/flags/notifications"},
 		RetireBy:     "2027-06-30",
 	},
 	{

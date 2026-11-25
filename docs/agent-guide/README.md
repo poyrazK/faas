@@ -4,6 +4,7 @@ Run `gregale guide <task>` for one page.
 
   deploy                Deploy an app
   compose-project       Deploy a Compose project
+  compose-keys          Gregale keys in a Compose file
   health-checks         Health checks and readiness
   private-services      Private services and TCP ports
   secrets-and-env       Environment variables and secrets

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -145,16 +146,18 @@ func TestCustomerOperationJobExportExampleMatchesEmbeddedStarter(t *testing.T) {
 	}
 }
 
+// The starter needs @gregale/sdk-node, which is not on npm yet, so it stays
+// out of the catalog and completions but scaffolds by name (prod hunt r47).
+// When the SDK is published, list it again and restore the catalog check.
 func TestCustomerOperationJobExportDiscovery(t *testing.T) {
 	var stdout bytes.Buffer
-	if code := runCmdInitList(&stdout); code != 0 || !strings.Contains(stdout.String(), customerJobStarter) {
-		t.Fatalf("starter missing from init catalog: %s", stdout.String())
+	if code := runCmdInitList(&stdout); code != 0 || strings.Contains(stdout.String(), customerJobStarter) {
+		t.Fatalf("unpublished-SDK starter listed in init catalog: %s", stdout.String())
 	}
-	found := false
-	for _, name := range templateNames13 {
-		found = found || name == customerJobStarter
+	if slices.Contains(templateNames13, customerJobStarter) {
+		t.Fatal("unpublished-SDK starter offered in CLI completions")
 	}
-	if !found || docsURLForTemplate(customerJobStarter) != "https://gregale.dev/docs/operations" {
-		t.Fatal("starter missing from CLI metadata or docs")
+	if !templates.Exists(customerJobStarter) || docsURLForTemplate(customerJobStarter) != "https://gregale.dev/docs/operations" {
+		t.Fatal("starter no longer scaffolds by name or lost its docs")
 	}
 }

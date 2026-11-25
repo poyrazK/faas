@@ -62,6 +62,10 @@ type FlagExperiment struct {
 	BanditWeightedAt   *time.Time
 	DenominatorEvent   string
 	Percentile         int
+	// NotifyChannelIDs are the notification channels the experiment's
+	// decisions and problems go to; empty uses the environment's
+	// (ADR-20261125085913).
+	NotifyChannelIDs []string
 }
 
 // SubjectUnits reports whether the experiment counts subjects; its units
@@ -167,6 +171,7 @@ func flagExperimentFromRow(r sqlc.FlagExperiment) FlagExperiment {
 	x.StopReason = r.StopReason
 	x.Unit, x.Layer, x.Traffic, x.LayerFrom, x.LayerTo = r.Unit, r.Layer, int(r.Traffic), int(r.LayerFrom), int(r.LayerTo)
 	x.Allocation, x.DenominatorEvent, x.Percentile = r.Allocation, r.DenominatorEvent, int(r.Percentile)
+	x.NotifyChannelIDs = pgUUIDStrings(r.NotifyChannelIds)
 	_ = json.Unmarshal(r.Bandit, &x.Bandit)
 	if r.BanditWeightedAt.Valid {
 		t := r.BanditWeightedAt.Time
@@ -231,6 +236,7 @@ func (s *PgStore) CreateFlagExperiment(ctx context.Context, x FlagExperiment, ma
 		CreatedBy: x.CreatedBy, MaxExperiments: int64(maxExperiments), MetricDefinition: definition, Cuped: x.Cuped,
 		Unit: orDefault(x.Unit, flags.ExperimentUnitCustomer), Layer: x.Layer, Traffic: int32(x.Traffic),
 		Allocation: orDefault(x.Allocation, flags.ExperimentAllocationFixed), DenominatorEvent: x.DenominatorEvent, Percentile: int32(x.Percentile),
+		NotifyChannelIds: pgUUIDList(x.NotifyChannelIDs),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return FlagExperiment{}, ErrFlagExperimentLimit
@@ -463,6 +469,7 @@ func (s *PgStore) ListRunningFlagExperiments(ctx context.Context, afterID string
 			ValueThroughDay: r.ValueThroughDay, MetricDefinition: r.MetricDefinition, Cuped: r.Cuped, MinCupedPValues: r.MinCupedPValues,
 			Unit: r.Unit, Layer: r.Layer, Traffic: r.Traffic, LayerFrom: r.LayerFrom, LayerTo: r.LayerTo, Allocation: r.Allocation,
 			Bandit: r.Bandit, BanditWeightedAt: r.BanditWeightedAt, DenominatorEvent: r.DenominatorEvent, Percentile: r.Percentile,
+			NotifyChannelIds: r.NotifyChannelIds,
 		})
 		x.EnvironmentSlug, x.Plan = r.EnvironmentSlug, r.Plan
 		out = append(out, x)

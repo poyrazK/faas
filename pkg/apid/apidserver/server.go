@@ -32,6 +32,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/billingsync"
 	"github.com/onebox-faas/faas/pkg/apid/capgate"
 	"github.com/onebox-faas/faas/pkg/apid/ciapi"
+	"github.com/onebox-faas/faas/pkg/apid/claim"
 	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
 	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
 	"github.com/onebox-faas/faas/pkg/apid/consumercredits"
@@ -540,6 +541,9 @@ type server struct {
 	// signups caps self-service accounts per address and network a day
 	// (signup_network_limit.go).
 	signups *signupNetworkLimiter
+	// claim serves claimable deploys (ADR-20261124080000); Host wired in
+	// newServer.
+	claim claim.Service
 	// signupGeo resolves a sign-up address to its country and network owner
 	// for the sign-up record (signup_facts.go). nil leaves both empty.
 	signupGeo *signupGeo
@@ -1849,6 +1853,7 @@ func newServerWithDeps(
 			s.consumerSignup.UpgradeKey = key
 		}
 	}
+	s.claim.Host = claimHost{s}
 	s.tenantPlans.Host = tenantPlansHost{s}
 	s.serviceMap.Host = serviceMapHost{s}
 	s.serviceMap.Released = func(r *http.Request, acct state.Account) bool {
@@ -2526,6 +2531,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/flags/versions", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listFeatureFlagVersions)))
 	// ADR 20261114150000 §4: owner, expiry, staleness and evaluation per flag.
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/flags/lifecycle", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getFeatureFlagLifecycle)))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/flags/notifications", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getFlagNotifications)))
+	mux.HandleFunc("PUT /v1/projects/{slug}/environments/{environment}/flags/notifications", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setFlagNotifications))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/experiments", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listFlagExperiments)))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/experiments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createFlagExperiment))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/experiments/{key}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getFlagExperiment)))
@@ -5688,6 +5695,28 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /v1/auth/signup", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
 	}, s.fromTrustedOrigin(s.sales.WithSignupCode(http.HandlerFunc(s.postV1AuthSignup)))))
+	// Claimable deploys (ADR-20261124080000): an agent's anonymous
+	// session, an unclaimed account's fresh claim link, and the claim
+	// pages. Anonymous sessions count every attempt against the same
+	// per-IP auth bucket as sign-up.
+	mux.Handle("POST /v1/anonymous/sessions", s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{middleware.CountEveryAttempt},
+	}, http.HandlerFunc(s.claim.Session)))
+	mux.HandleFunc("POST /v1/account/claim-link", s.authLimited(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		s.claim.Link(w, r, actorAccount(r, acct))
+	}))
+	mux.Handle("GET "+claim.PagePath+"/{token}", s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{http.StatusGone},
+	}, http.HandlerFunc(s.claim.Page)))
+	mux.Handle("POST "+claim.PagePath+"/{token}", s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{middleware.CountEveryAttempt},
+	}, s.fromTrustedOrigin(http.HandlerFunc(s.claim.Request))))
+	mux.Handle("GET "+claim.ConfirmPath, s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{middleware.CountEveryAttempt, http.StatusGone},
+	}, http.HandlerFunc(s.claim.ConfirmPage)))
+	mux.Handle("POST "+claim.ConfirmPath, s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{middleware.CountEveryAttempt, http.StatusGone},
+	}, s.fromTrustedOrigin(http.HandlerFunc(s.claim.Confirm))))
 	mux.Handle("POST /v1/auth/login", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
 	}, s.fromTrustedOrigin(http.HandlerFunc(s.postV1AuthLogin))))

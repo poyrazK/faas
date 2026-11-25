@@ -271,6 +271,7 @@ func cmdLogout() int {
 	// Best-effort: a stuck keychain must not block logout, and a
 	// missing file is not an error. Issue #293.
 	deleteToken()
+	deleteAnonymousSession()
 	clearManagedSession()
 	if revokeErr != nil {
 		return printErr("Logged out locally, but server revocation failed", revokeErr)
@@ -868,6 +869,11 @@ func exitCodeForStatus(status int) int {
 		return 4
 	case status == 409 || status == 412:
 		return 5
+	case status == 501:
+		// A feature this installation does not run answers 501; retrying
+		// cannot help, but exit 3 (temporary_failure) told scripts and agents
+		// to retry (prod hunt r43: `run --image` on prod).
+		return 1
 	case status == 408 || status == 429 || status >= 500:
 		return 3
 	default:

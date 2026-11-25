@@ -1005,6 +1005,29 @@
       ]
     },
     {
+      "id": "claimable-deploys",
+      "name": "Claimable deploys",
+      "category": "account",
+      "description": "An agent deploys with no account and gets a live URL plus a claim link; a person who opens the link and confirms an email address owns the app on the Free plan. Unclaimed deploys are limited and expire.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/claimable-deploys",
+      "acceptance_test": "pkg/apid/apidserver/claimable_deploys_test.go::TestAnonymousDeployIsClaimedInPlace",
+      "routes": [
+        "/claim",
+        "/v1/account/claim-link",
+        "/v1/anonymous"
+      ],
+      "cli": [
+        "claim"
+      ]
+    },
+    {
       "id": "cli",
       "name": "CLI",
       "category": "developer",
@@ -2651,6 +2674,20 @@
       "docs_url": "https://gregale.dev/docs/security",
       "acceptance_test": "cmd/e2e/source_deploy_wake_metal_test.go::TestSourceDeployWakeMetal",
       "always_on": true
+    },
+    {
+      "id": "flag-notifications",
+      "name": "Flag notifications",
+      "category": "delivery",
+      "description": "Send experiment decisions and problems, a weekly digest of flags that need a decision and flag expiries to notification channels.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261125085913-flag-notifications",
+      "acceptance_test": "pkg/flagnotify/flagnotify_test.go::TestRunner",
+      "parent": "feature-flags",
+      "routes": [
+        "/v1/projects/{}/environments/{}/flags/notifications"
+      ]
     },
     {
       "id": "framework-profiles",

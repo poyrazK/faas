@@ -653,6 +653,9 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	// Claimable deploys (ADR-20261124080000).
+	"POST /v1/anonymous/sessions": "CreateAnonymousSession",
+	"POST /v1/account/claim-link": "CreateClaimLink",
 	// Reviewed agent-tool publication, grants, invocation and execution credentials.
 	"DELETE /v1/tool-grants/{id}":                              "RevokeToolGrant",
 	"DELETE /v1/tool-oauth-connections/{id}":                   "RevokeToolOAuthConnection",
@@ -1180,6 +1183,9 @@ var methodRouteMap = map[string]string{
 	"GET /v1/projects/{slug}/environments/{environment}/cohorts/{key}":              "GetProjectInsightCohort",
 	"DELETE /v1/projects/{slug}/environments/{environment}/cohorts/{key}":           "DeleteProjectInsightCohort",
 	"POST /v1/projects/{slug}/environments/{environment}/cohorts/{key}/refresh":     "RefreshProjectInsightCohort",
+	// Flag notifications (ADR-20261125085913).
+	"GET /v1/projects/{slug}/environments/{environment}/flags/notifications": "ProjectFlagNotifications",
+	"PUT /v1/projects/{slug}/environments/{environment}/flags/notifications": "SetProjectFlagNotifications",
 	// Saved insights (ADR-20261122190000); PUT is SaveProjectInsight with replace.
 	"GET /v1/projects/{slug}/environments/{environment}/insights/saved":               "ListProjectSavedInsights",
 	"POST /v1/projects/{slug}/environments/{environment}/insights/saved":              "SaveProjectInsight",

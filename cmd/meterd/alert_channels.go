@@ -8,8 +8,10 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/agentapprovalnotify"
 	"github.com/onebox-faas/faas/pkg/alertchannels"
+	"github.com/onebox-faas/faas/pkg/flagnotify"
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/savedinsightnotify"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // meterdChannelMailer adapts meterd's mail transport to alertchannels.
@@ -112,6 +114,31 @@ func startSavedInsights(ctx context.Context, store any, channels savedinsightnot
 	r := &savedinsightnotify.Runner{
 		Store: runStore, Channels: channels, Log: log,
 		Released: release.savedInsights, Outcome: func(outcome string) { c.WithLabelValues(outcome).Inc() },
+	}
+	go r.Run(ctx)
+}
+
+// startFlagNotifications delivers queued experiment decisions and problems,
+// lifecycle digests and flag expiries (ADR-20261125085913).
+func startFlagNotifications(ctx context.Context, store any, channels flagnotify.ChannelSender, release *observeRelease, reg prometheus.Registerer, log *slog.Logger) {
+	notifyStore, ok := store.(state.FlagNotificationStore)
+	if !ok {
+		log.Info("meterd: flag notifications off", "store", ok)
+		return
+	}
+	c := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "meterd_flag_notifications_total",
+		Help: "Flag notification delivery attempts by outcome: delivered, retry (no channel accepted it; tried again with backoff), abandoned (out of attempts, channels deleted or past retention) or not_released (the account no longer has flag notifications). ADR-20261125085913.",
+	}, []string{"outcome"})
+	for _, o := range []string{flagnotify.OutcomeDelivered, flagnotify.OutcomeRetry, flagnotify.OutcomeAbandoned, flagnotify.OutcomeNotReleased} {
+		c.WithLabelValues(o).Add(0)
+	}
+	if reg != nil {
+		reg.MustRegister(c)
+	}
+	r := &flagnotify.Runner{
+		Store: notifyStore, Channels: channels, Log: log,
+		Released: release.flagNotifications, Outcome: func(outcome string) { c.WithLabelValues(outcome).Inc() },
 	}
 	go r.Run(ctx)
 }

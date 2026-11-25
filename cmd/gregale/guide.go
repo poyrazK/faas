@@ -78,6 +78,26 @@ var guidePages = []guidePage{
 			"A postgres service becomes a managed database bound as DATABASE_URL, and a redis service a managed Redis cache bound as REDIS_URL where managed Redis is on for the account (`gregale feature list`). Gregale does not run other datastores (mysql, mongo): an app parks to a snapshot and keeps no data. Point the code at a hosted one (PlanetScale, Atlas) with an env URL.",
 			"A build target or command for development (target: dev, nodemon, --reload) is deployed as written.",
 			"A gRPC address (PRODUCT_SERVICE_ADDR: products:3550) is rewritten to products.svc.gregale:10081. Set x-gregale-streaming and x-gregale-wake-ahead on a service instead of later app commands.",
+			"Every x-gregale-* key, RAM and migrations in Compose: see `gregale guide compose-keys`.",
+		},
+	},
+	{
+		Task: "compose-keys", Title: "Gregale keys in a Compose file",
+		Summary: "Settings a Compose file carries for Gregale. Standard keys set RAM, CPU, instances and migrations; x-gregale-* keys set the rest. Other Compose tools ignore them.",
+		Steps: []guideStep{
+			{Do: "Preview what each service gets (memory=, release:, visibility)", Command: "gregale deploy --project --dry-run"},
+			{Do: "See which file sets a project setting", Command: "gregale config explain services.<service>.visibility"},
+			{Do: "Write a deployed project back as Compose with its x-gregale-* keys", Command: "gregale project export <project> --out compose.yaml"},
+			{Do: "Change RAM after a deploy (the file's memory wins on the next deploy)", Command: "gregale app <app> --ram <MB>"},
+		},
+		Notes: []string{
+			"RAM: deploy.resources.limits.memory: 512M (or mem_limit: 512m) on the service. Without it a new service starts with 128 MB. CPU: deploy.resources.limits.cpus (0.25, 0.5 or 1). Instances: deploy.replicas.",
+			"Migration: a service the others wait for with depends_on: {migrate: {condition: service_completed_successfully}} runs as the release command of a waiting web service built from the same build:/image: (a worker when only workers wait). Or put release: in a Procfile (or release.command in gregale.yaml) in the service's directory. There is no x-gregale release key.",
+			"Top level: x-gregale-slug-prefix: <prefix> (new apps <prefix><service>); x-gregale-env-import: true (import plain environment: values); x-gregale-public-auth and x-gregale-service-policy (defaults for every service).",
+			"Per service, access: x-gregale-access: public|key; x-gregale-public-auth: open|bearer; x-gregale-allow-callers: [svc]; x-gregale-allow-call-scopes: {svc: {methods, path_prefixes}}; x-gregale-preview-calls: allow|deny; x-gregale-platform-tenant-required: true.",
+			"Per service, calls: x-gregale-service-policy: project|declared|account; x-gregale-service-transport: http|https; x-gregale-service-reliability: {dep: {timeout_ms, max_attempts}}.",
+			"Per service, runtime: x-gregale-app-protocol: http1|http2|grpc; x-gregale-startup-deadline: 90s (max 120 s); x-gregale-streaming: true; x-gregale-wake-ahead: true; x-gregale-renamed-from: <old service name>.",
+			"Full table: https://gregale.dev/docs/container-compatibility#compose-key-reference",
 		},
 	},
 	{

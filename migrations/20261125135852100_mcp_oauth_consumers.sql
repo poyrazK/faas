@@ -1,10 +1,10 @@
 -- migration-compat: expand
--- filename: 20261124213833100_mcp_oauth_consumers.sql
+-- filename: 20261125135852100_mcp_oauth_consumers.sql
 
 -- ADR-20261124094745: self-serve consumers for MCP servers. Sign-up can
 -- offer a free plan that needs no card, and can enroll callers signed in
 -- through an MCP server's oauth-proxy issuer as consumers on it (their
--- identities are in 20261124213833200). Older apid builds ignore the columns.
+-- identities are in 20261125135852200). Older apid builds ignore the columns.
 
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
