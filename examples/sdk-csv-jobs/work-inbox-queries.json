@@ -1,0 +1,5 @@
+{
+  "cleanup": "SELECT r.import_id::text AS business_ref FROM gregale_compensation_attempts a JOIN gregale_compensation_plans p ON p.identity=a.plan_id JOIN sdk_csv_recovery_owners r ON r.source_run_id=(p.plan->'source'->>'run_id')::uuid WHERE a.namespace=$1 AND a.request_id=$2::uuid AND p.plan->>'owner_id'=$3 AND r.owner_id=$3 AND r.enabled",
+  "refund_workflow": "SELECT p.import_id::text AS business_ref FROM gregale_outbound_action_attempts a JOIN gregale_outbound_actions j ON j.identity=a.action_id JOIN sdk_csv_refund_requests r ON r.id=(j.intent->>'request_id')::uuid JOIN sdk_csv_payments p USING(payment_id) WHERE a.namespace=$1 AND a.request_id=$2::uuid AND r.owner_id=$3 AND p.owner_id=$3 AND r.enabled AND p.enabled",
+  "refund": "SELECT p.import_id::text AS business_ref FROM sdk_csv_refund_requests r JOIN sdk_csv_payments p USING(payment_id) WHERE r.id=$1::uuid AND r.owner_id=$2 AND p.owner_id=$2 AND r.enabled AND p.enabled"
+}

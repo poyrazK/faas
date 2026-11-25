@@ -47,8 +47,10 @@ class PipelineToolReceipt:
             if not isinstance(raw, dict) or set(raw) != {"intent", "checkpoint"}:
                 raise ValueError
             i = raw["intent"]
+            if not isinstance(i, dict):
+                raise ValueError
             if (
-                set(i)
+                (set(i) - {"request_sha256"})
                 != {
                     "version",
                     "identity",
@@ -66,6 +68,7 @@ class PipelineToolReceipt:
                 or not pipeline_name(i["owner_id"])
                 or not _hash(i["contract_sha256"])
                 or not _hash(i["input_sha256"])
+                or ("request_sha256" in i and not _hash(i["request_sha256"]))
             ):
                 raise ValueError
             scope = event_pipeline_scope(PipelineScope.from_dict(i["scope"]))
@@ -113,6 +116,15 @@ def match_checkpoint(intent: dict[str, Any], c: PipelineCheckpoint) -> PipelineC
     return checked
 
 
+def same_pipeline_tool_request(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    def binding(intent: dict[str, Any]) -> dict[str, Any]:
+        value = dict(intent)
+        value["input_sha256"] = value.pop("request_sha256", value["input_sha256"])
+        return value
+
+    return job_value_hash(binding(a)) == job_value_hash(binding(b))
+
+
 class PipelineToolStore(Protocol):
     async def load(self, identity: str) -> PipelineToolReceipt | None: ...
     async def reserve(self, intent: dict[str, Any]) -> tuple[bool, PipelineToolReceipt]: ...
@@ -140,7 +152,12 @@ class PostgresPipelineToolStore:
         retained = (
             PipelineToolReceipt.from_dict(rows[0]["receipt"]) if len(rows) == 1 else await self.load(intent["identity"])
         )
-        if len(rows) > 1 or retained is None or job_value_hash(retained.intent) != job_value_hash(intent):
+        if len(rows) > 1 or retained is None:
+            raise PipelineToolError("receipt_conflict")
+        matches = (
+            job_value_hash(retained.intent) == job_value_hash(intent) if rows else same_pipeline_tool_request(retained.intent, intent)
+        )
+        if not matches:
             raise PipelineToolError("receipt_conflict")
         return len(rows) == 1, retained
 

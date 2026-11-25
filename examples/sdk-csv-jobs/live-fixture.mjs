@@ -29,7 +29,7 @@ export function liveFixture(server){
   return {
     config:()=>({endpointId,url:`ws://127.0.0.1:${server.address().port}/fixture-realtime`,pollDelayMs:30}),
     counts:()=>({issued,published,connections:clients.size}),
-    expire(){for(const [socket,{ticket}]of clients){tickets.delete(ticket.token);socket.close(1001);}},
+    expire(principal){for(const [socket,{ticket}]of clients){if(principal!==undefined&&ticket.principal!==principal)continue;tickets.delete(ticket.token);socket.close(1001);}},
     revoke(principal){for(const [key,ticket]of tickets)if(ticket.principal===principal)tickets.delete(key);for(const [socket,state]of clients)if(state.ticket.principal===principal){send(socket,{type:'error',channel:state.channel,code:'access_revoked'});}},
     async handle(request,response){
       if(!request.url.startsWith('/v1/apps/imports/realtime/endpoints/'+endpointId))return false;

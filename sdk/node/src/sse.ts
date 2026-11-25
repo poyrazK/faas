@@ -71,10 +71,8 @@ export function parseFrame(buffer: string): { event: SseEvent; consumed: number 
   let id: string | undefined;
   let retry: number | undefined;
 
-  // Split on LF; tolerate CRLF by trimming \r.
-  const lines = raw.split('\n');
-  for (const line of lines) {
-    const stripped = line.endsWith('\r') ? line.slice(0, -1) : line;
+  const lines = raw.split(/\r\n|\n|\r/);
+  for (const stripped of lines) {
     if (stripped === '' || stripped.startsWith(':')) continue;
     const colon = stripped.indexOf(':');
     let field: string;
@@ -129,6 +127,7 @@ export function parseFrame(buffer: string): { event: SseEvent; consumed: number 
 export async function* streamSse(
   resp: Response,
   signal?: AbortSignal,
+  maxFrameBytes?: number,
 ): AsyncGenerator<SseEvent, void, void> {
   if (!resp.body) {
     throw new Error('streamSse: response has no body');
@@ -139,7 +138,15 @@ export async function* streamSse(
   const onAbort = () => { void reader.cancel(signal?.reason).catch(() => undefined); };
   signal?.addEventListener('abort', onAbort, { once: true });
   if (signal?.aborted) onAbort();
-  const decoder = new TextDecoder('utf-8');
+  const decoder = new TextDecoder('utf-8', { fatal: maxFrameBytes !== undefined });
+  function decode(value?: Uint8Array, stream = false) {
+    try { return decoder.decode(value, { stream }); }
+    catch { throw new RangeError('Invalid SSE encoding'); }
+  }
+  function checkSize(value: string) {
+    if (maxFrameBytes !== undefined && Buffer.byteLength(value) > maxFrameBytes)
+      throw new RangeError('SSE frame exceeds the byte limit');
+  }
   let buffer = '';
   try {
     while (true) {
@@ -148,16 +155,18 @@ export async function* streamSse(
       }
       const { value, done } = await reader.read();
       if (done) return;
-      buffer += decoder.decode(value, { stream: true });
+      buffer += decode(value, true);
       // Drain complete frames from the buffer. A chunk boundary can
       // split a frame, so we carry the trailing partial frame across
       // reads (same role as Go's bufio.Scanner in pkg/api/sse.go).
       let frame: { event: SseEvent; consumed: number } | null;
       // eslint-disable-next-line no-cond-assign
       while ((frame = parseFrame(buffer)) !== null) {
+        checkSize(buffer.slice(0, frame.consumed));
         buffer = buffer.slice(frame.consumed);
         yield frame.event;
       }
+      checkSize(buffer);
     }
   } finally {
     signal?.removeEventListener('abort', onAbort);
