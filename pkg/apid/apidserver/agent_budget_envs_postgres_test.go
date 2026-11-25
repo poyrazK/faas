@@ -114,7 +114,7 @@ func TestHandlers_AgentBudgetPostgres(t *testing.T) {
 	headers := map[string]string{"Authorization": "Bearer " + agent}
 	path := "/v1/postgres/databases/" + d.ID + "/resize"
 
-	// development → production: 0.25 → 0.5 compute unit always on.
+	// development → production: 0.25 → 1 compute unit always on.
 	wantBudgetApproval(t, e.Do(t, http.MethodPost, path, map[string]any{"request_id": uuid.NewString(), "service_class": "production"}, headers))
 	// development → burstable keeps the same minimum: nothing added.
 	if rec := e.Do(t, http.MethodPost, path, map[string]any{"request_id": uuid.NewString(), "service_class": "burstable"}, headers); rec.Code != http.StatusAccepted {
@@ -133,9 +133,8 @@ func TestAgentPostgresStandingMillicents(t *testing.T) {
 		{"production", true, 0},
 		{"development", false, quarter},
 		{"burstable", false, quarter},
-		{"production", false, 2 * quarter},
-		// An unknown class pays the largest minimum.
-		{"unknown", false, 2 * quarter},
+		{"production", false, 4 * quarter},
+		{"unknown", false, 4 * quarter},
 	} {
 		if got := api.AgentPostgresStandingMillicents(tc.class, tc.scaleToZero); got != tc.want {
 			t.Errorf("%s scale_to_zero=%v = %d, want %d", tc.class, tc.scaleToZero, got, tc.want)

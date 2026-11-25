@@ -529,10 +529,12 @@ The service-class mapping is:
 | --- | ---: |
 | `development` | 0.25–1 CU |
 | `burstable` | 0.25–2 CU |
-| `production` | 0.5–4 CU |
+| `production` | 1–4 CU (0.5–4 CU accepted) |
 
-Production started at 1 CU until
-[ADR-20261124221402](adr/20261124221402-neon-production-class-half-cu-floor.md).
+Production moves to 0.5–4 CU over two releases
+([ADR-20261124221402](adr/20261124221402-neon-production-class-half-cu-floor.md)):
+every neond now reads a database at either range as `production`, and a later
+release starts provisioning at 0.5 CU.
 
 Only `single_zone` is advertised. Gregale does not claim a portable
 high-availability promise merely because Neon storage has internal redundancy.

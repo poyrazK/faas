@@ -650,14 +650,17 @@ func (p *Provider) endpointSettingsForSpec(spec managedpostgres.Spec) endpointSe
 	return endpointSettings{MinimumCU: profile.minimumCU, MaximumCU: profile.maximumCU, SuspendTimeoutSecond: suspendTimeout}
 }
 
-// sameEndpointSettings compares sizes by the class they map to (a legacy
-// range is its class's) and the suspend timeout only as scale-to-zero or
+// sameEndpointSettings compares sizes by the class they map to (an accepted
+// range is its class's; sizes of no class must be equal) and the suspend timeout only as scale-to-zero or
 // always-on (-1): the timeout of a scale-to-zero endpoint moves with the
 // operator setting and is not drift.
 func sameEndpointSettings(actual, want endpointSettings) bool {
 	class := classForSize(want.MinimumCU, want.MaximumCU)
-	return class != "" && classForSize(actual.MinimumCU, actual.MaximumCU) == class &&
-		sameSuspendPolicy(actual.SuspendTimeoutSecond, want.SuspendTimeoutSecond)
+	sameSize := classForSize(actual.MinimumCU, actual.MaximumCU) == class
+	if class == "" {
+		sameSize = actual.MinimumCU == want.MinimumCU && actual.MaximumCU == want.MaximumCU
+	}
+	return sameSize && sameSuspendPolicy(actual.SuspendTimeoutSecond, want.SuspendTimeoutSecond)
 }
 
 func sameSuspendPolicy(actual, want int64) bool {
@@ -788,11 +791,10 @@ func (p *Provider) observedSpec(project project, primary endpoint) managedpostgr
 }
 
 // classForSize maps an endpoint's autoscaling range to its service class:
-// the current profiles, then the ranges older releases provisioned, so an
-// endpoint made before a profile change keeps its class instead of reading
-// as drift.
+// the provisioned profiles, then the accepted ones, so an endpoint at a range
+// another release provisions keeps its class instead of reading as drift.
 func classForSize(minimumCU, maximumCU float64) managedpostgres.ServiceClass {
-	for _, table := range []map[managedpostgres.ServiceClass]classProfile{profiles, legacyProfiles} {
+	for _, table := range []map[managedpostgres.ServiceClass]classProfile{profiles, acceptedProfiles} {
 		for class, profile := range table {
 			if closeFloat(minimumCU, profile.minimumCU) && closeFloat(maximumCU, profile.maximumCU) {
 				return class

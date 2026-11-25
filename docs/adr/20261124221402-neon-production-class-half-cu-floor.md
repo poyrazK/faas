@@ -2,8 +2,9 @@
 
 Status: Accepted
 
-Amends ADR-155 (service class mapping). Related: ADR-20261025094915
-(compute caps), the customer suspend timeout (PR #7930) and the idle-tail
+Amends ADR-155 (service class mapping), ADR-20261031165104 (overage
+billing) and ADR-20261031091607 (GA, PG-02), which assume a 1 CU production
+floor. Related: the customer suspend timeout (PR #7930) and the idle-tail
 telemetry (PR #8039).
 
 ## Context
@@ -21,8 +22,8 @@ its floor is what each wake costs:
 
 On 2026-11-24 prod had never had a production-class database (85
 development and 13 burstable ever created), so no customer has relied on
-the 1 CU floor and nothing has to be migrated. Customer docs do not state
-class CU ranges; only the operator guide and ADR-155 do.
+the 1 CU floor. Customer docs do not state class CU ranges; only the operator
+guide and ADR-155 do.
 
 What the floor buys is warm-start headroom: Neon sizes RAM (4 GB per CU), the
 local file cache and direct `max_connections` (RAM ÷ ~9.5 MB) from the
@@ -43,30 +44,39 @@ The Neon `production` class is 0.5–4 CU. `development` (0.25–1 CU) and
 - Production stays distinct from burstable by its higher floor and its
   4 CU ceiling.
 
-Nothing converges endpoint sizes, so an endpoint already at 1–4 CU stays
-there. The adapter keeps 1–4 CU as a legacy production range: such an
-endpoint still reads as `production` (not `spec_mismatch`, not a
-snapshot-copy conflict) and moves to the current range only when the
-database changes class. Prod has none; one can appear only on another
-deployment or from a neond still on release N-1 while N rolls out.
+### Rollout: two releases
 
-Always-on compute is in no plan, so an agent's budget prices every customer
-production database at zero standing cost and the release order of apid and
-neond does not change any charge.
+The adapter reads a database's class from its endpoint's exact range, and
+release N runs beside N-1, so a neond that does not know a range reports a
+database at it as `spec_mismatch` and refuses its resizes and snapshot copies.
+The change is therefore expand/contract:
+
+1. **Accept** (this ADR's first change). Every neond reads both 1–4 and
+   0.5–4 CU as `production` (`acceptedProfiles`); production is still
+   provisioned at 1–4 CU and the agent budget still prices it at 1 CU.
+2. **Provision**, in a later release, once every neond runs step 1:
+   production is provisioned at 0.5–4 CU, 1–4 CU moves to the accepted
+   ranges, and `api.ManagedPostgresMinimumQuarterComputeUnits["production"]`
+   becomes 2.
+
+Nothing converges endpoint sizes. An endpoint at 1–4 CU stays there, still
+reading as `production`, until the database changes class.
 
 ## Consequences
 
-- The operator guide's class table says 0.5–4 CU.
-- An agent's budget (ADR-20261111114059) prices an always-on production
-  database at 0.5 CU: `api.ManagedPostgresMinimumQuarterComputeUnits`
-  mirrors the Neon profiles, and a test keeps them equal. An unknown class
-  is priced at the largest current minimum, so it drops from 1 CU to 0.5 CU
-  with it; that rule is kept, since an unknown class can only be one this
-  table has not learned yet, and the test fails until it does.
+- The operator guide's class table states the provisioned range and the
+  accepted one.
+- After step 2 an always-on production endpoint left at 1–4 CU would be
+  priced by an agent's budget at 0.5 CU, half its cost. Always-on compute is
+  in no plan, so no customer database can be one; this is accepted.
+- The compute-cap qualification probe measures against the class profile;
+  it runs on a database the same release just provisioned, so it is never
+  at an accepted range.
 - `faas_managed_postgres_idle_tail_share:ratio24h{class="production"}`
   (the idle-tail telemetry from PR #8039) is the check once production
-  databases exist; if warm-up latency hurts them, the floor can go back to 1 CU with
-  another amendment, or become a per-database setting.
+  databases exist; if warm-up latency hurts them, the floor can go back to
+  1 CU with another amendment, or become a per-database setting.
 - The financial model's managed PostgreSQL line prices CU-hours, not floors;
   this lowers COGS per production wake and does not change any plan's
-  included compute or price.
+  included compute or price. ADR-20261031165104's month at a 1 CU floor (800
+  CU-hours, $104 of overage) becomes 360 CU-hours and $32 at 0.5 CU.
