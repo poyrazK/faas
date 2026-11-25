@@ -2798,7 +2798,7 @@ func rollbackDuringTrafficSplitProblem(appSlug string, split trafficSplit) *api.
 	}
 	return api.NewProblem(http.StatusConflict, api.CodeNoRollbackTarget,
 		"Traffic is split between deployments",
-		fmt.Sprintf("more than one deployment serves traffic, so there is no single previous release to roll back to. Return all traffic to the earlier release: gregale traffic promote --app %s --deployment %s", appSlug, split.earlier)).
+		fmt.Sprintf("more than one deployment serves traffic, so there is no single previous release to roll back to. Return all traffic to the earlier release: gregale release traffic rollback %s --to %s", appSlug, split.earlier)).
 		WithDocs("https://gregale.dev/docs/deploys#revisions")
 }
 
