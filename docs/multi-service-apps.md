@@ -210,9 +210,11 @@ the next push deploys them.
   step must use the same `build:` (context, Dockerfile, args) or `image:` as a
   waiting service, must have a `command:` and must not publish ports; chained
   steps and two steps for one service fail the plan. A waiting web service
-  that shares the build owns the step first; otherwise a waiting worker (a
-  service without `ports:`, such as a queue consumer) owns it, and the
-  command runs before each worker release starts consuming. The dry run
+  that shares the build owns the step. When only workers (services without
+  `ports:`, such as queue consumers) wait for it, a worker that shares the
+  build owns it, and the command runs before each worker release starts
+  consuming. A web service that waits but builds elsewhere fails the plan,
+  since it would serve before the worker ran the step. The dry run
   prints the command under its owner as `release: <command>` with where it
   is declared.
 

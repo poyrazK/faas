@@ -68,10 +68,15 @@ func projectWorkloadReleaseCommand(staged string, workloads []reposcan.Workload,
 func sharedReleaseDirDetail(workloads []reposcan.Workload, workload reposcan.Workload, dir, origin string) string {
 	for _, other := range workloads {
 		if other.Name != workload.Name && cleanWorkloadDir(other.RootDir) == dir {
+			// The same text from either service, so the plan lists it once.
+			first, second := workload.Name, other.Name
+			if second < first {
+				first, second = second, first
+			}
 			return fmt.Sprintf(
 				"%s declares a release command, but services %q and %q both build from that directory, so it would run once per service. "+
 					"Move it into one service's own directory, or declare it once as a Compose service the others wait for with condition: service_completed_successfully.",
-				origin, workload.Name, other.Name)
+				origin, first, second)
 		}
 	}
 	return ""

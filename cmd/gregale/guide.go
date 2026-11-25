@@ -92,7 +92,7 @@ var guidePages = []guidePage{
 		},
 		Notes: []string{
 			"RAM: deploy.resources.limits.memory: 512M (or mem_limit: 512m) on the service. Without it a new service starts with 128 MB. CPU: deploy.resources.limits.cpus (0.25, 0.5 or 1). Instances: deploy.replicas.",
-			"Migration: a service the others wait for with depends_on: {migrate: {condition: service_completed_successfully}} runs as the release command of a waiting web service or worker built from the same build:/image:. Or put release: in a Procfile (or release.command in gregale.yaml) in the service's directory. There is no x-gregale release key.",
+			"Migration: a service the others wait for with depends_on: {migrate: {condition: service_completed_successfully}} runs as the release command of a waiting web service built from the same build:/image: (a worker when only workers wait). Or put release: in a Procfile (or release.command in gregale.yaml) in the service's directory. There is no x-gregale release key.",
 			"Top level: x-gregale-slug-prefix: <prefix> (new apps <prefix><service>); x-gregale-env-import: true (import plain environment: values); x-gregale-public-auth and x-gregale-service-policy (defaults for every service).",
 			"Per service, access: x-gregale-access: public|key; x-gregale-public-auth: open|bearer; x-gregale-allow-callers: [svc]; x-gregale-allow-call-scopes: {svc: {methods, path_prefixes}}; x-gregale-preview-calls: allow|deny; x-gregale-platform-tenant-required: true.",
 			"Per service, calls: x-gregale-service-policy: project|declared|account; x-gregale-service-transport: http|https; x-gregale-service-reliability: {dep: {timeout_ms, max_attempts}}.",

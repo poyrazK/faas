@@ -223,7 +223,7 @@ waiting. Declarations allow at most 100 dependency conditions per workload.
 Optional healthy dependencies and healthy job targets are rejected. A healthy
 gate on a Compose datastore such as `postgres` is accepted as a plain
 dependency, and a `service_completed_successfully` dependency runs as the
-release command of the waiting web service or worker that shares its build
+release command of the waiting web service (or, when only workers wait, the worker) that shares its build
 ([multi-service apps](multi-service-apps.md#start-order-and-migrations)).
 
 Compose `healthcheck:` overrides are also retained for prebuilt image workloads:

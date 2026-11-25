@@ -24,7 +24,7 @@ import (
 // from other source than every service waiting for it, one that publishes
 // ports, one without a command, chained completion dependencies, a waiting
 // set with only scheduled jobs, and two release commands for one service. A
-// waiting worker owns the step when no waiting web service shares its build.
+// waiting worker owns the step when only workers wait for it.
 func foldComposeReleaseServices(workloads []Workload) ([]Workload, []string, error) {
 	index := make(map[string]int, len(workloads))
 	for i, w := range workloads {
@@ -74,10 +74,10 @@ func foldComposeReleaseServices(workloads []Workload) ([]Workload, []string, err
 			return nil, nil, fmt.Errorf("reposcan: %s command cannot run as a release command: %s", release.Name, problem.Detail)
 		}
 		// A waiting service that serves requests owns the step first, as
-		// before; a waiting worker owns it when no serving waiter shares the
-		// step's build. A worker's release passes the same release fence
-		// before its first instance starts (schedd's Prime), so its consumers
-		// never run before the step does.
+		// before; a waiting worker owns it when only workers wait for it. A
+		// worker's release passes the same release fence before its first
+		// instance starts (schedd's Prime), so its consumers never run
+		// before the step does.
 		owner := -1
 		var runtimeMismatch string
 		for _, serving := range []bool{true, false} {
@@ -105,6 +105,16 @@ func foldComposeReleaseServices(workloads []Workload) ([]Workload, []string, err
 				names[n] = workloads[i].Name
 			}
 			return nil, nil, fmt.Errorf("reposcan: %s waits for %s with service_completed_successfully; Gregale runs %s as the release command of a waiting web service or worker, in that service's image, so build %s from the same build: or image: as one of them", strings.Join(names, ", "), release.Name, release.Name, release.Name)
+		}
+		// A worker owns the step only when no web service waits for it: a
+		// waiting web service on another build would lose its wait and serve
+		// before the worker's release ran the step.
+		if !workloadServes(workloads[owner]) {
+			for _, i := range waiting {
+				if workloadServes(workloads[i]) {
+					return nil, nil, fmt.Errorf("reposcan: %s waits for %s with service_completed_successfully but does not share its build, and only the worker %s does; %s would serve before %s ran, so build %s from the same build: or image: as %s", workloads[i].Name, release.Name, workloads[owner].Name, workloads[i].Name, release.Name, release.Name, workloads[i].Name)
+				}
+			}
 		}
 		if len(workloads[owner].ReleaseCommand) > 0 {
 			return nil, nil, fmt.Errorf("reposcan: %s already runs %s as its release command and also waits for %s; Gregale runs one release command per service, so merge them into one command", workloads[owner].Name, workloads[owner].ReleaseService, release.Name)

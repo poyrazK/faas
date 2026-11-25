@@ -63,6 +63,21 @@ func TestPlanWorkloadReleaseCommand(t *testing.T) {
 			phaseOff:  true,
 		},
 		{
+			name:      "release phase off warns about a service's own command",
+			files:     map[string]string{"worker/gregale.yaml": "release:\n  command: ./migrate\n"},
+			workloads: []reposcan.Workload{{Name: "vote", RootDir: "vote"}, {Name: "worker", RootDir: "worker"}},
+			workload:  reposcan.Workload{Name: "worker", RootDir: "worker"},
+			phaseOff:  true,
+			want:      "./migrate", wantSrc: "worker/gregale.yaml release.command", wantIn: "not available on this Gregale installation",
+		},
+		{
+			name:      "manifest label names the file read",
+			files:     map[string]string{"gregale.yaml": "release:\n  command: ./migrate\n"},
+			workloads: []reposcan.Workload{{Name: "vote", RootDir: "vote"}, {Name: "worker", RootDir: "worker"}},
+			workload:  reposcan.Workload{Name: "worker", RootDir: "worker"},
+			want:      "./migrate", wantSrc: "gregale.yaml release.command",
+		},
+		{
 			name:      "single workload root procfile",
 			files:     map[string]string{"Procfile": "release: bin/migrate\nweb: bin/web\n"},
 			workloads: []reposcan.Workload{{Name: "web"}},

@@ -1039,7 +1039,9 @@ func printPreparedPlanText(w io.Writer, plan api.PlanResponse, excludeSet []stri
 				if wl.ReleaseCommandSource != "" {
 					source = "   (" + wl.ReleaseCommandSource + ")"
 				}
-				fmt.Fprintf(w, "      release: %s%s\n", wl.ReleaseCommand, source)
+				// A multi-line shell command (command: |) stays on one line.
+				lines := strings.FieldsFunc(wl.ReleaseCommand, func(r rune) bool { return r == '\n' || r == '\r' })
+				fmt.Fprintf(w, "      release: %s%s\n", strings.Join(lines, "; "), source)
 			}
 			if explain {
 				printWorkloadDetectionTrace(w, wl)

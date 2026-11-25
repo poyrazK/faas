@@ -2315,7 +2315,8 @@ func (s *server) scanService(
 		// declares in its own directory.
 		var releaseNote string
 		pw.ReleaseCommand, pw.ReleaseCommandSource, releaseNote = s.planWorkloadReleaseCommand(req.ScanDir, filteredW, w)
-		if releaseNote != "" {
+		// Two services sharing a directory each report the same refusal.
+		if releaseNote != "" && !slices.Contains(warnings, releaseNote) {
 			warnings = append(warnings, releaseNote)
 		}
 		respWorkloads[i] = pw

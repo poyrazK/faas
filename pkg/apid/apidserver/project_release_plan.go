@@ -21,21 +21,36 @@ import (
 // apply ran it (agent eval 2026-11-24, voting app). note is non-empty when
 // the apply will refuse the service's declaration.
 func (s *server) planWorkloadReleaseCommand(scanDir string, workloads []reposcan.Workload, workload reposcan.Workload) (command, source, note string) {
+	command, source, note = s.resolvePlanWorkloadReleaseCommand(scanDir, workloads, workload)
+	// The apply refuses any release command while this installation cannot
+	// run them; say so in the plan rather than after the build.
+	if s.releasePhaseOff && command != "" && note == "" {
+		note = workload.Name + ": " + releasePhaseOffProblem().Detail
+	}
+	return command, source, note
+}
+
+func (s *server) resolvePlanWorkloadReleaseCommand(scanDir string, workloads []reposcan.Workload, workload reposcan.Workload) (command, source, note string) {
 	command, source = reposcan.PlanReleaseCommand(workload)
-	if s.releasePhaseOff || scanDir == "" {
+	if scanDir == "" {
 		return command, source, ""
 	}
 	fsys := os.DirFS(scanDir)
 	// The apply stages a Compose build context on its own; its manifest and
-	// Procfile are then read from that directory only.
+	// Procfile are then read from that directory only. A release-phase-off
+	// installation ignores the context's Procfile, as the apply does.
 	var buildContext composeReleaseContext
+	narrowed := false
 	roots := []string{cleanWorkloadDir(workload.RootDir), "."}
 	app := state.App{RootDir: workload.RootDir}
 	app.Manifest.BuildDockerfile = workload.Dockerfile
 	app.Manifest.ProjectImage = workload.Image
 	if composeDockerBuildContext(scanDir, workload, app) {
-		buildContext = composeReleaseContext{root: workload.RootDir}
 		roots = []string{cleanWorkloadDir(workload.RootDir)}
+		narrowed = true
+		if !s.releasePhaseOff {
+			buildContext = composeReleaseContext{root: workload.RootDir}
+		}
 	}
 	manifestCommand, manifestName := planReleaseManifestCommand(fsys, roots)
 	if len(workloads) == 1 {
@@ -53,12 +68,23 @@ func (s *server) planWorkloadReleaseCommand(scanDir string, workloads []reposcan
 	if manifestCommand != "" {
 		manifest = &gregalemanifest.Manifest{Release: &gregalemanifest.ReleaseConfig{Command: manifestCommand}}
 	}
-	declared, origin, dir, problem := serviceOwnReleaseDeclaration(dirProcfileReader(fsys), workloads, workload, buildContext, manifest)
+	readProcfile := dirProcfileReader(fsys)
+	if narrowed && s.releasePhaseOff {
+		// The apply stages the context alone and looks for dir/Procfile
+		// inside it, which finds none.
+		readProcfile = func(string, bool) ([]byte, bool, error) { return nil, false, nil }
+	}
+	declared, origin, dir, problem := serviceOwnReleaseDeclaration(readProcfile, workloads, workload, buildContext, manifest)
 	if problem != nil {
 		return command, source, workload.Name + ": " + problem.Detail
 	}
 	if declared == "" {
 		return command, source, ""
+	}
+	if manifest != nil && declared == manifestCommand {
+		// Name the file actually read (gregale.toml, or a manifest the
+		// lookup found above the service's directory).
+		origin = manifestName + " release.command"
 	}
 	if detail := sharedReleaseDirDetail(workloads, workload, dir, origin); detail != "" {
 		return command, source, detail
