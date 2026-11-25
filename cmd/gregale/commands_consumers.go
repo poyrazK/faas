@@ -102,6 +102,7 @@ type consumerFlags struct {
 	customerPlanChanges, customerClosing bool
 	freePlan                             string
 	oauthConsumers                       bool
+	accountTools                         bool
 }
 
 var consumerVerbFlags = map[string][]string{
@@ -121,7 +122,7 @@ var consumerVerbFlags = map[string][]string{
 	"statement-export":   {"customer", "provider"},
 	"credit-grant":       {"currency", "amount-millicents", "expires", "note"},
 	"spend-cap-set":      {"currency", "monthly-cap-millicents"},
-	"signup-set":         {"display-name", "plans", "key-scopes", "terms-url", "return-url", "trial-days", "daily-limit", "disabled", "customer-plan-changes", "customer-closing", "free-plan", "oauth-consumers"},
+	"signup-set":         {"display-name", "plans", "key-scopes", "terms-url", "return-url", "trial-days", "daily-limit", "disabled", "customer-plan-changes", "customer-closing", "free-plan", "oauth-consumers", "account-tools"},
 }
 
 // cmdConsumers manages an app's API consumers and their monetization:
@@ -209,6 +210,7 @@ func registerConsumerMonetizationFlags(fs *flag.FlagSet, f *consumerFlags) {
 	fs.BoolVar(&f.customerClosing, "customer-closing", false, "let customers close their account with their own key (signup-set)")
 	fs.StringVar(&f.freePlan, "free-plan", "", "offered plan that charges nothing; joining it needs no card (signup-set)")
 	fs.BoolVar(&f.oauthConsumers, "oauth-consumers", false, "people signed in through the app's MCP oauth-proxy issuer become consumers on --free-plan (signup-set)")
+	fs.BoolVar(&f.accountTools, "account-tools", false, "add account_usage and account_plans tools to the MCP server for --oauth-consumers callers (signup-set)")
 }
 
 func consumerVerbUsage(verb string, positionals []string) string {

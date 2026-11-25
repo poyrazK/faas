@@ -1988,6 +1988,12 @@ const (
 	ConsumerUpgradeLinkCacheTTL = 10 * time.Minute
 	// The owner's sign-up list shows at most this many.
 	ConsumerSignupListMax = 100
+	// A consumer may call the gateway's MCP account tools this many times a
+	// minute (ADR-20261125194510); the calls are not metered or billed.
+	MCPAccountToolCallsPerMinute = 30
+	// The gateway edits a tools/list answer for account tools only up to
+	// this size; a larger answer passes through unchanged.
+	MCPAccountToolsListMaxBytes = 1 << 20
 )
 
 // Consumer and platform tenant controls (ADR-1314, ADR-1315, ADR-1322,
@@ -11997,6 +12003,9 @@ var (
 	// AgentRunConcurrentPerAccount and AgentRunQueuedPerAccount together with
 	// runs. SandboxMaxLifetimeSec is a session's longest life.
 	SandboxMaxLifetimeSec = [4]int{0, 3600, 14_400, 86_400}
+	// SandboxCodeContextsMax bounds a session's code contexts, each its own
+	// Jupyter kernel, the default one included (ADR-20261027090013 step 14).
+	SandboxCodeContextsMax = 8
 	// SandboxBrowserRAMMBMin is the least RAM a session created with
 	// browser: true may have (ADR-20261116182615 §1): Chromium needs about
 	// 1 GB for ordinary pages.
