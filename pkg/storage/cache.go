@@ -391,11 +391,11 @@ func (c *LocalCacheBackend) LocalPathWithSource(key string) (string, LocalPathSo
 		}
 	}
 	if resolver, ok := c.parent.(LocalPathSourceResolver); ok {
-		if p, source, local, err := resolver.LocalPathWithSource(key); err == nil && local {
+		if p, source, local, err := resolver.LocalPathWithSource(key); err == nil && local && !isDriveDeltaPayload(key, p) {
 			return p, source, true, nil
 		}
 	} else if resolver, ok := c.parent.(LocalPathResolver); ok {
-		if p, local, err := resolver.LocalPath(key); err == nil && local {
+		if p, local, err := resolver.LocalPath(key); err == nil && local && !isDriveDeltaPayload(key, p) {
 			return p, LocalPathSourceBackend, true, nil
 		}
 	}

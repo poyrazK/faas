@@ -26,6 +26,27 @@ func (c *LocalCacheBackend) SetDriveDeltas(enabled bool) {
 // DriveDeltas reports whether Put writes drive deltas.
 func (c *LocalCacheBackend) DriveDeltas() bool { return c.driveDeltas.Load() }
 
+// isDriveDeltaPayload reports whether path, a local parent's file for key,
+// holds a drive delta rather than the drive. The cache must not hand that
+// file out as the drive: a VM restored from it boots the encoded payload
+// (a 1.6 MB "disk"). Only the cache's own entry or a fetch that rebuilds the
+// delta is the drive. It reads the delta's magic, whether or not deltas are
+// on now, since deltas written earlier stay in the parent.
+func isDriveDeltaPayload(key, path string) bool {
+	if !isSnapshotDriveKey(key) {
+		return false
+	}
+	// nolint:forbidigo // path is the local parent's own file for key.
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	magic := make([]byte, len(driveDeltaMagic))
+	n, _ := io.ReadFull(f, magic)
+	return n == len(magic) && string(magic) == driveDeltaMagic
+}
+
 // putParent uploads the spooled artifact for key. A snapshot drive with a
 // layer goes up as a delta when deltas are on and the layer is on this node;
 // anything else, or any failure to build the delta, uploads the whole file.

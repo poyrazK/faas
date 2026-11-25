@@ -116,9 +116,9 @@ On the m7i-flex test host (nested KVM, Firecracker 1.10, 2 vCPU, 2048 MB, 1280x8
 | Restore of the capture to a working desktop (windows kept) | 2.3–2.6 s |
 | VM resident memory after the restore | 465 MB |
 
-Capture and restore are from runs with the work directory on the host's NVMe drive; on its EBS root disk they took 31 s and 6 s.
+Capture and restore are from runs with the work directory on the host's second EBS volume (`/srv/fc`, XFS with reflink, 165 MB/s measured writes); on its EBS root disk they took 31 s and 6 s. Neither is local NVMe, so disk-bound phases run several times faster on a production node.
 
-The warm desktop snapshot (§3b), with the work directory on the EBS root disk (the NVMe drive was full) and a 4 GB test drive holding the 1.2 GB root:
+The warm desktop snapshot (§3b), with the work directory on the EBS root disk (`/srv/fc` was full) and a 4 GB test drive holding the 1.2 GB root:
 
 | What | Result |
 |---|---|
@@ -128,9 +128,9 @@ The warm desktop snapshot (§3b), with the work directory on the EBS root disk (
 | First Chromium window after the warm restore | 1.2–1.3 s |
 | VM resident memory after the warm restore | 412–421 MB |
 
-On that disk the warm restore is slower than the 5.1 s cold boot: the host copies the drive the capture couples (a capture keeps the drive it was taken with, since the guest's page cache describes it). Rerun with the work directory on the host's NVMe drive:
+On that disk the warm restore is slower than the 5.1 s cold boot: the host copies the drive the capture couples (a capture keeps the drive it was taken with, since the guest's page cache describes it). Rerun with the work directory on `/srv/fc`:
 
-| What | EBS | NVMe |
+| What | EBS root | `/srv/fc` |
 |---|---|---|
 | Cold boot to ready | 5.1 s | 4.1 s |
 | Warm capture | 42–50 s | 33 s (publishing the drive 19 s) |
@@ -138,7 +138,7 @@ On that disk the warm restore is slower than the 5.1 s cold boot: the host copie
 | Warm restore to a ready desktop | 10.4–10.7 s | 4.5 s |
 | VM resident memory after the warm restore | 412–421 MB | 1,183 MB |
 
-On NVMe the warm desktop is no faster than a cold boot. The host restore is fast; the remaining 4 s is the guest starting the desktop after it (0.5 s in Docker after a prewarm). The page cache the prewarm leaves in the snapshot does not save the reads, because a restored guest faults those pages in from the memory file at about the cost of reading them from the drive, and it then holds them, hence the higher resident memory. So warm desktop snapshots stay off (`FAAS_SCHEDD_SANDBOX_SNAPSHOTS` is not set where desktops run) until something changes this. Prefetching the snapshot's memory or a read-only drive (see Not yet) are candidates; capturing the running desktop is not (§3b).
+On `/srv/fc` the warm desktop is no faster than a cold boot. The host restore is fast; the remaining 4 s is the guest starting the desktop after it (0.5 s in Docker after a prewarm). The page cache the prewarm leaves in the snapshot does not save the reads, because a restored guest faults those pages in from the memory file at about the cost of reading them from the drive, and it then holds them, hence the higher resident memory. So warm desktop snapshots stay off (`FAAS_SCHEDD_SANDBOX_SNAPSHOTS` is not set where desktops run) until something changes this. Prefetching the snapshot's memory or a read-only drive (see Not yet) are candidates; capturing the running desktop is not (§3b).
 
 The image is 1.75 GB (1.2 GB unpacked root). In Docker on the same host the desktop is ready in 0.9–1.6 s.
 
@@ -174,7 +174,7 @@ The image is 1.75 GB (1.2 GB unpacked root). In Docker on the same host the desk
 
 ## Not yet
 
-- A warm desktop restore that does not copy the drive: boot the platform drive read-only with the session's writes in an overlay on a per-session layer, so a capture couples only that small layer. That changes the image session's drive layout and needs its own decision. Until warm restores beat the cold boot on the reference node, `FAAS_SCHEDD_SANDBOX_SNAPSHOTS` stays off where desktops run; on NVMe they tie it (4.5 s against 4.1 s).
+- A warm desktop restore that does not copy the drive: boot the platform drive read-only with the session's writes in an overlay on a per-session layer, so a capture couples only that small layer. That changes the image session's drive layout and needs its own decision. Until warm restores beat the cold boot on the reference node, `FAAS_SCHEDD_SANDBOX_SNAPSHOTS` stays off where desktops run; on the test host's `/srv/fc` they tie it (4.5 s against 4.1 s).
 
 - Audio, clipboard sync with the viewer, file drag and drop into the view.
 - Several displays per session, GPU rendering.

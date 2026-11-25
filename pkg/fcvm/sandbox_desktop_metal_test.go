@@ -11,6 +11,10 @@
 // and the warm snapshot's capture and restore to ready.
 //
 //	FAAS_TEST_SANDBOX_DESKTOP_ROOT  an unpacked sandbox-desktop image
+//	FAAS_TEST_DRIVE_DELTA=1         the node cache publishes drives as deltas
+//	                                (FAAS_STORAGE_DRIVE_DELTA)
+//	FAAS_TEST_DESKTOP_DROP_CACHES=1 drop the guest's clean page cache
+//	                                before the fork capture
 package fcvm
 
 import (
@@ -22,6 +26,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -83,6 +88,25 @@ func desktopScreenshot(t *testing.T, m *Manager, instance, sandboxID string) int
 	return len(png)
 }
 
+// logStoredObjects logs every object of at least 1 MB the shared store
+// holds under prefix, with its logical and allocated size: what a capture
+// sends to the parent store.
+func logStoredObjects(t *testing.T, root, prefix, label string) {
+	t.Helper()
+	_ = filepath.Walk(filepath.Join(root, prefix), func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || info.Size() < 1<<20 {
+			return nil
+		}
+		var allocated int64
+		if st, ok := info.Sys().(*syscall.Stat_t); ok {
+			allocated = st.Blocks * 512
+		}
+		rel, _ := filepath.Rel(root, path)
+		t.Logf("%s stored %s: %d MB logical, %d MB allocated", label, rel, info.Size()>>20, allocated>>20)
+		return nil
+	})
+}
+
 func vmResidentMB(inst *Instance) int64 {
 	cur, err := readCgroupInt(vmCgroupScope(inst.Lease), "memory.current")
 	if err != nil {
@@ -115,6 +139,7 @@ func TestMetalSandboxDesktop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cache.SetDriveDeltas(os.Getenv("FAAS_TEST_DRIVE_DELTA") == "1")
 	m := NewManager(wire.ExecRunner{}, newMetalVMM(t, 180*time.Second).WithStorage(cache), Paths{Kernel: kernel}, os.Getenv("FAAS_TEST_FC_VERSION"), slog.Default(), nil)
 	m.WithStorage(cache)
 	image := desktopImageDrive(t, root, snapRoot)
@@ -183,12 +208,22 @@ echo "uptime at check ${up}s"`)
 	time.Sleep(5 * time.Second)
 	t.Logf("with Chromium and Mousepad open: VM resident %d MB", vmResidentMB(inst))
 
+	if os.Getenv("FAAS_TEST_DESKTOP_DROP_CACHES") == "1" {
+		dropped := time.Now()
+		out, code := rootExec(t, m, req.Instance, source, "sync; echo 1 > /proc/sys/vm/drop_caches; grep -E '^(MemFree|Cached):' /proc/meminfo")
+		if code != 0 {
+			t.Fatalf("drop caches: exit %d %s", code, out)
+		}
+		t.Logf("dropped the guest's page cache in %d ms:\n%s", time.Since(dropped).Milliseconds(), out)
+		time.Sleep(2 * time.Second) // free page reporting hands the pages back
+	}
 	captured := time.Now()
 	forked, err := m.ForkSandbox(ctx, SandboxFork{Instance: req.Instance, SandboxID: source, AccountID: account, CaptureID: uuid.NewString()})
 	if err != nil {
 		t.Fatalf("capture: %v", err)
 	}
 	t.Logf("capture: %d ms, %d MB memory", time.Since(captured).Milliseconds(), forked.Info.MemBytes>>20)
+	logStoredObjects(t, snapRoot, "snap", "fork capture")
 
 	fork := req
 	fork.Instance, fork.SandboxID = "sbx-desktop-fork", "sbx-desktop-2"
