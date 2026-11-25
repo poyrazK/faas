@@ -1203,7 +1203,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	limits := api.MustLimitsFor(acct.Plan)
 	ram, mc := app.RAMMB, app.MaxConcurrency
 	if req.RAMMB != nil {
-		if *req.RAMMB <= 0 {
+		if *req.RAMMB < api.AppMinRAMMB {
 			api.WriteProblem(w, api.ErrInvalidAppRAM(*req.RAMMB))
 			return
 		}

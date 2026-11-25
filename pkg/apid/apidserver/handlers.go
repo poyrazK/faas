@@ -453,6 +453,9 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 			ram = limits.RAMMB
 		}
 	}
+	if ram < api.AppMinRAMMB {
+		return state.App{}, api.ErrInvalidAppRAM(ram)
+	}
 	if cpuMillicores == 0 {
 		cpuMillicores = api.DefaultAppCPUMillicores
 	}

@@ -3021,7 +3021,8 @@ func ErrBillingContactMember() *Problem {
 // to select the plan default; an update pointer is always explicit.
 func ErrInvalidAppRAM(requestedMB int) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidAppRAM,
-		"Invalid RAM", fmt.Sprintf("ram_mb must be greater than zero; requested %d MB.", requestedMB)).WithDocs(docsBase + "/plans#what-each-limit-means")
+		"Invalid RAM", fmt.Sprintf("ram_mb must be at least %d MB, the smallest guest that boots; requested %d MB.", AppMinRAMMB, requestedMB)).
+		WithLimit(int64(AppMinRAMMB), int64(requestedMB)).WithDocs(docsBase + "/plans#what-each-limit-means")
 }
 
 // ErrInvalidCPURAMPair rejects an explicit guest vCPU count that is not its
