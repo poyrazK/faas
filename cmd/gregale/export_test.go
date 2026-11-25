@@ -3200,3 +3200,6 @@ func StreamDeployLogsWait(ctx context.Context, c *Client, dep api.DeploymentResp
 
 // LinkedAppAsArgument exposes linkedAppAsArgument.
 var LinkedAppAsArgument = linkedAppAsArgument
+
+// JobReplayCommandNote exposes jobReplayCommandNote.
+var JobReplayCommandNote = jobReplayCommandNote

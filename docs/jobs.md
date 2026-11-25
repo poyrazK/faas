@@ -344,7 +344,10 @@ outcome of each completed attempt; its output follows the
 inputs from a terminal run, call
 `POST /v1/jobs/{name}/runs/{id}/replay-failed`. This creates a linked standard
 run with a fresh attempt budget. Each replay task includes `source_task_index`
-so its original input can be traced. Replay requires the current ready job
+so its original input can be traced. Replay runs the source run's captured command and settings, not
+the job's current ones: after `gregale job update --command` fixes a failing
+command, start a new run with `gregale job run`. `gregale job replay --dry-run`
+shows the command a replay runs. Replay requires the current ready job
 image to match the source image reference and resolved digest. A legacy run
 without a captured digest cannot be replayed. Cancel a run
 when its work is no longer useful.
