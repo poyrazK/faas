@@ -3408,9 +3408,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// origin. Only an explicitly selected workload can expand the upload
 		// scope; a plain deploy from a repository root remains unchanged.
 		if repoRoot, rootErr := gitRootFromCwd(sourceDir); rootErr == nil {
-			contextRoot, selectedRoot, workspace, contextErr := resolveWorkspaceContext(repoRoot, sourceDir)
+			tree := deployContextTree(repoRoot, sourceDir, *worktree, selectedSourceMode == deploySourceHEAD)
+			contextRoot, selectedRoot, workspace, contextReason, contextErr := resolveWorkspaceContextReason(repoRoot, sourceDir, tree)
 			if contextErr != nil {
 				return printErr("Could not resolve workspace build context", contextErr)
+			}
+			if contextReason != "" {
+				_, _ = fmt.Fprintf(osStderr, "Build context: %s.\n", contextReason)
 			}
 			if workspace {
 				workspaceContextRoot = contextRoot
