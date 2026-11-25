@@ -463,35 +463,40 @@ def deploy_class(path, config, host, comment_only=frozenset()):
     return cls, [DEPLOY_CLASSES.get(cls) or "deploy"]
 
 
-def rollout_promotions(found_flags, commits, host):
+def rollout_promotions(found_flags, commits, host, on_compute=lambda path: False):
     """Settle the compute rollout playbooks (deploy_classes compute_only:
     node_join.yml and the plays it runs) in place. They only drive the next
     full rollout, which runs them, so they wait for it without holding a
     lane (compute_rollout), unless a commit changes one together with a path
-    a compute host role reads: that role change may depend on the playbook
-    change, so both wait for the full release (compute_deploy;
-    docs/adr/20261125083502-compute-host-config-lane.md)."""
+    a compute host role reads or an input of a binary that runs on compute
+    hosts (on_compute): that change may depend on the playbook step, so
+    the playbook waits for the full release and holds what compute_deploy
+    holds (docs/adr/20261125083502-compute-host-config-lane.md §6).
+    Returns the promoted paths."""
     rollout = set(found_flags.get("compute_rollout") or [])
     if not rollout:
-        return
+        return set()
     owned = set((host.get("compute_nodes") or {}).get("owners") or {})
-    paired = {p for _, ps in commits if any(q in owned for q in ps) for p in ps if p in rollout}
+    paired = {p for _, ps in commits if any(q in owned or on_compute(q) for q in ps if q not in rollout)
+              for p in ps if p in rollout}
     if not paired:
-        return
+        return paired
     found_flags["compute_deploy"] = sorted(set(found_flags.get("compute_deploy") or []) | paired)
     left = sorted(rollout - paired)
     if left:
         found_flags["compute_rollout"] = left
     else:
         del found_flags["compute_rollout"]
+    return paired
 
 
 def classify_deploy(paths, config, host, comment_only=frozenset()):
     """({flag: [paths]}, {class: [paths]}) for changed deploy/ paths
     (deploy_class): release_units and deploy block both lanes,
     host_config rides the control-plane lane, compute_deploy is pending
-    and holds the edge lane on compute hosts. Inert and comment-only paths
-    map to no flag."""
+    and holds the edge lane on compute hosts, compute_rollout (rollout
+    playbooks; rollout_promotions may make it compute_deploy) holds
+    nothing. Inert and comment-only paths map to no flag."""
     flags, classes = {}, {}
     for path in sorted(paths):
         cls, names = deploy_class(path, config, host, comment_only)
@@ -585,14 +590,28 @@ def analyze(commits, closures, config, exists, recipe_shas=frozenset(), data=Non
             if found:
                 flags[flag] = {"blocking": kind == "blocking_paths", "count": len(found), "paths": found[:FLAG_PATH_LIMIT]}
     # deploy/ by its class (deploy_class): a role a lane converges
-    # (host_config), a compute role or compute playbook (compute_deploy,
-    # which waits for the full release and holds the edge lane), the
-    # release's own units, nothing at activation (inert), or anything else
-    # (deploy, blocking).
+    # (host_config), a compute role (compute_deploy, which waits for the
+    # full release and holds the edge lane), a compute rollout playbook
+    # (compute_rollout, which holds nothing unless its commit also changes a
+    # compute role or compute-side code: rollout_promotions), the release's
+    # own units, nothing at activation (inert), or anything else (deploy,
+    # blocking).
     deploy_paths = {p for p in changed_paths if matches(p, deploy_prefixes)
                     or (matches(p, bundle_prefixes) and p in converged_owned)}
     found_flags, deploy_classes = classify_deploy(deploy_paths, config, host, comment_only)
-    rollout_promotions(found_flags, commits, host)
+    # Binaries a commit could land on compute hosts with: shared and compute
+    # daemons, and gateways with a compute-only service.
+    compute_side = [closures[n] for n, e in config["binaries"].items() if n in closures and (
+        e["lane"] in ("shared", "compute") or any(
+            svc.get("host") == "compute-only" for svc in e.get("services") or []))]
+    paired = rollout_promotions(found_flags, commits, host, lambda path: path not in global_inputs and any(
+        hits(path, dirs, files, exists) for dirs, files in compute_side))
+    if paired:
+        # Report promoted playbooks apart from the ones that hold nothing.
+        left = [p for p in deploy_classes.pop("compute_only", []) if p not in paired]
+        if left:
+            deploy_classes["compute_only"] = left
+        deploy_classes["compute_only_paired"] = sorted(paired)
     for flag, found in found_flags.items():
         flags[flag] = {"blocking": flag in ("deploy", "release_units"), "count": len(found),
                        "paths": found[:FLAG_PATH_LIMIT]}

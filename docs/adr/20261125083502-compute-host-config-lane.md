@@ -167,9 +167,13 @@ The `compute_only` playbooks (`node_join.yml`, `node_join_accept_release.yml`,
 a change to one affects the next full rollout and nothing a unit release
 does. A commit that changes one and no path a compute host role reads maps
 it to `compute_rollout`: reported, holds no lane. A commit that changes one
-together with a compute role path (a group global included) keeps both
-`compute_deploy`, because the role change may depend on the playbook step
-(`affected_units.rollout_promotions`).
+together with a compute role path (a group global included), or with an
+input of a binary that runs on compute hosts (shared and compute daemons,
+gateways with a compute-only service; not `go.mod`/`go.sum`), keeps the
+playbook `compute_deploy`: that change may depend on the playbook step, so
+the compute and edge lanes must not ship it first
+(`affected_units.rollout_promotions`; the report lists such playbooks
+under `compute_only_paired`).
 
 ## What it frees
 
@@ -179,14 +183,14 @@ judged per commit by the planner of this ADR's step 1:
 | commit | still blocked by | freed |
 | --- | --- | --- |
 | 14eb61e7fb | — (`node_join.yml` alone) | **yes, §6** |
-| de9bcafc47 | — (`node_join.yml` alone) | **yes, §6** |
+| de9bcafc47 | `node_join.yml` paired with `pkg/manifest` (vmmd, schedd and gateways import it) | no, §6 pairs it |
 | 18289035dc | `deploy/manifest/production/ovh-live.template.yaml` (deploy, blocking) | no; its roles (`nftables`, `vmmd_service` drop-in) are lane roles |
 | 0f872e67ae | `group_vars/compute_nodes` (global) | no |
 | 361b9afe87 | `group_vars/compute_nodes`; `node_join.yml` paired with it | no |
 | f21c87d48c | unit file; control-plane `release_units` | no |
 | 902041da04 | `node_join.yml` paired with `compute_admission`/`compute_only_service` | no |
 
-§6 frees 2 of 7 on its own, with no executor. The converge executor (§1–§4)
+§6 frees 1 of 7 on its own, with no executor. The converge executor (§1–§4)
 frees none of these seven: the one commit whose roles it could converge
 also changed the production manifest. Its value depends on how often a
 commit changes only lane roles, which this window never did; per-variable

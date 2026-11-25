@@ -670,10 +670,31 @@ class DeployClassTest(unittest.TestCase):
         rep = au.analyze(commits, CLOSURES, CONFIG, EXISTS, host=HOST)
         self.assertEqual(rep["flags"]["compute_deploy"]["paths"], [role])
         self.assertEqual(rep["flags"]["compute_rollout"]["paths"], ["deploy/ansible/node_join.yml"])
+        self.assertEqual(rep["deploy_classes"]["compute_only"]["paths"], ["deploy/ansible/node_join.yml"])
         # A group global (bootstrap.yml) is a compute role path too.
         commits = [("c1", ["deploy/ansible/node_join.yml", "deploy/ansible/bootstrap.yml"])]
         rep = au.analyze(commits, CLOSURES, CONFIG, EXISTS, host=HOST)
         self.assertIn("deploy/ansible/node_join.yml", rep["flags"]["compute_deploy"]["paths"])
+
+    def test_rollout_playbook_with_compute_side_code_in_one_commit_waits_for_the_full_release(self):
+        # The new vmmd (or a gateway on compute hosts) may need the
+        # playbook's step: the compute and edge lanes must not ship it first.
+        playbook = "deploy/ansible/node_join.yml"
+        for code, lane in (("cmd/vmmd/main.go", "compute"), ("pkg/gateway/proxy.go", "edge")):
+            with self.subTest(code):
+                rep = au.analyze([("c1", [code, playbook])], CLOSURES, CONFIG, EXISTS, host=HOST)
+                self.assertEqual(rep["flags"]["compute_deploy"]["paths"], [playbook])
+                self.assertNotIn("compute_rollout", rep["flags"])
+                self.assertIn("compute_deploy", rep["lanes"][lane]["blocked_by"])
+                self.assertFalse(rep["lanes"][lane]["eligible"])
+                self.assertEqual(rep["deploy_classes"]["compute_only_paired"]["paths"], [playbook])
+                self.assertNotIn("compute_only", rep["deploy_classes"])
+        # Control-plane code and shared inputs (go.mod) do not pair.
+        for code in ("pkg/apid/server.go", "go.mod"):
+            with self.subTest(code):
+                rep = au.analyze([("c1", [code, playbook])], CLOSURES, CONFIG, EXISTS, host=HOST)
+                self.assertEqual(rep["flags"]["compute_rollout"]["paths"], [playbook])
+                self.assertNotIn("compute_deploy", rep["flags"])
 
     def test_unknown_class_is_rejected(self):
         path = os.path.join(tempfile.mkdtemp(), "lanes.json")
