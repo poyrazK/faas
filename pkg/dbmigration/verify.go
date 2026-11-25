@@ -58,7 +58,7 @@ func (m Marker) stateSQL(acl string) string {
  AND c.relowner=(SELECT oid FROM pg_catalog.pg_roles WHERE rolname=current_user)
  AND coalesce(obj_description(c.oid,'pg_class'),'')=` + Literal(m.Tag) + `
  AND NOT c.relrowsecurity AND NOT c.relforcerowsecurity AND c.relreplident='d'
- AND NOT c.relhassubclass`+acl+`
+ AND NOT c.relhassubclass` + acl + `
  AND NOT EXISTS (SELECT FROM pg_catalog.pg_inherits WHERE inhrelid=c.oid)
  AND NOT EXISTS (SELECT FROM pg_catalog.pg_trigger WHERE tgrelid=c.oid)
  AND NOT EXISTS (SELECT FROM pg_catalog.pg_rewrite WHERE ev_class=c.oid)
