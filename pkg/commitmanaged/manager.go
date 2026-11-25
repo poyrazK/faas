@@ -303,7 +303,9 @@ func (m *Manager) tickSource(ctx context.Context, src state.CommitRelaySource, c
 		realtimeBacklog = observed
 		err = errors.Join(err, realtimeErr)
 		if realtimeErr != nil && observed == nil {
-			return relayPollResult{accepted: count, status: "status_unavailable"}
+			result := qualificationPollFailure(realtimeErr, "status_unavailable")
+			result.accepted = count
+			return result
 		}
 	}
 	rows, blockedErr := pool.Query(ctx, `SELECT event_id::text,left(event_type,256),

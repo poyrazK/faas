@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/commit"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -18,6 +20,56 @@ type realtimeDispatchFixture struct {
 
 func (f *realtimeDispatchFixture) PublishManagedRealtimeCommit(ctx context.Context, e state.ManagedRealtimeCommit) (state.ManagedRealtimeChannelMessage, error) {
 	return f.publish(ctx, e)
+}
+
+type realtimeQualificationDisconnect struct{}
+
+func (realtimeQualificationDisconnect) TraceQueryStart(ctx context.Context, conn *pgx.Conn, query pgx.TraceQueryStartData) context.Context {
+	// Qualification is the only query that passes this relation as a parameter.
+	if len(query.Args) == 1 && query.Args[0] == "public.gregale_realtime_outbox" {
+		_ = conn.PgConn().Conn().Close()
+	}
+	return ctx
+}
+
+func (realtimeQualificationDisconnect) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {
+}
+
+func TestCommitRelayRetriesRealtimeQualificationTransportFailure(t *testing.T) {
+	t.Setenv(pgtest.UseTemplateDatabase, "1")
+	e := newChangesEnv(t, true)
+	ctx := t.Context()
+	if _, err := e.customer.Exec(ctx, commit.RealtimeSchema+`INSERT INTO public.orders VALUES (1, 'new', NULL);`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.control.Exec(ctx, `UPDATE commit_sources SET relay_poll_backoff_ms=$2 WHERE id=$1::uuid`,
+		e.source.ID, relayMaxBackoff.Milliseconds()); err != nil {
+		t.Fatal(err)
+	}
+	e.manager.RealtimeEnabled = true
+	e.manager.Open = func(ctx context.Context, _ string, _ commit.NetworkPolicy) (*pgxpool.Pool, error) {
+		cfg := e.customer.Config().Copy()
+		cfg.ConnConfig.Tracer = realtimeQualificationDisconnect{}
+		return pgxpool.NewWithConfig(ctx, cfg)
+	}
+	var accepted int
+	e.manager.Report = func(_, _ string, count int) { accepted = count }
+	if err := e.manager.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	var backoffMS int64
+	if err := e.control.QueryRow(ctx, `SELECT relay_status,relay_poll_backoff_ms FROM commit_sources WHERE id=$1::uuid`,
+		e.source.ID).Scan(&status, &backoffMS); err != nil {
+		t.Fatal(err)
+	}
+	backoff := time.Duration(backoffMS) * time.Millisecond
+	if status != "database_unavailable" || backoff < relayTransportCeiling-relayTransportSpread || backoff > relayTransportCeiling {
+		t.Fatalf("status=%s backoff=%s", status, backoff)
+	}
+	if pending := e.pending(t); accepted != 1 || pending != 0 {
+		t.Fatalf("accepted=%d pending=%d", accepted, pending)
+	}
 }
 
 func TestRealtimeDispatcherSeesOnlyCommittedEventsAndFencesCheckpoint(t *testing.T) {
