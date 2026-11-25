@@ -49,7 +49,7 @@ AGENT_BINARIES = {"claude": "claude", "codex": "codex", "gemini": "gemini", "cur
 TOOLSETS = ("core", "release", "diagnose", "all", "none")
 SETUP_KINDS = ("deploy", "replace")
 CHECK_KINDS = ("http", "serving", "file_contains", "answer", "apps_created", "apps_serving", "app_http", "no_traps", "owner_response",
-               "vote_counted")
+               "vote_counted", "app_field", "cli_output")
 FEATURE_KINDS = ("command", "file", "state")
 FEATURE_STATES = ("project_created",)
 DEFAULT_API = "https://api.gregale.dev"
@@ -502,6 +502,11 @@ def _rows(value) -> list:
     return []
 
 
+def _retryable(done: subprocess.CompletedProcess) -> bool:
+    """The CLI's error envelope says the failure is temporary."""
+    return bool(re.search(r'"retryable"\s*:\s*true', (done.stderr or "") + (done.stdout or "")))
+
+
 class CliGregale(Gregale):
     """The caller's own logged-in CLI profile (`--cli-login`).
 
@@ -531,7 +536,13 @@ class CliGregale(Gregale):
         for pattern, args in self.ROUTES:
             match = pattern.match(path)
             if match:
-                done = self.cli(*args(match), timeout=120)
+                # A read the CLI marks retryable (an API timeout) is retried:
+                # one 503 on `app get` failed a working voting-app run (Codex, rc.381).
+                for wait in (2, 5, None):
+                    done = self.cli(*args(match), timeout=120)
+                    if done.returncode == 0 or wait is None or not _retryable(done):
+                        break
+                    time.sleep(wait)
                 if done.returncode != 0:
                     raise ValueError(f"gregale {' '.join(args(match))}: {done.stderr.strip()[-300:] or done.stdout.strip()[-300:]}")
                 return _json_output(done.stdout)
@@ -996,6 +1007,10 @@ def run_checks(task: dict, slug: str, project: Path, answer: str, gregale, fetch
                 else:
                     app, url = pairs[0]
                     ok, detail = _http_or_private(gregale, app, url + check.get("path", "/"), check, http_deadline_s, fetch)
+            elif kind == "app_field":
+                ok, detail = app_field_check(gregale.get(f"/v1/apps/{slug}"), check)
+            elif kind == "cli_output":
+                ok, detail = cli_output_check(gregale, slug, check)
             elif kind == "vote_counted":
                 ok, detail = vote_counted_check(gregale, created_apps, check, http=http or _http, deadline_s=http_deadline_s)
             elif kind == "no_traps":
@@ -1006,6 +1021,29 @@ def run_checks(task: dict, slug: str, project: Path, answer: str, gregale, fetch
             detail = f"check error: {error}"
         results.append({"kind": kind, "ok": ok, "detail": detail})
     return results
+
+
+def app_field_check(app: dict, check: dict) -> tuple[bool, str]:
+    """One field of the app record: `equals` a value, or at least `min`."""
+    value = app.get(check["field"])
+    if "equals" in check:
+        return value == check["equals"], f"{check['field']}={value!r}"
+    try:
+        return value is not None and value >= check["min"], f"{check['field']}={value!r}"
+    except TypeError:
+        return False, f"{check['field']}={value!r} is not comparable"
+
+
+def cli_output_check(gregale, slug: str, check: dict) -> tuple[bool, str]:
+    """Run a read-only gregale command (`{app}` names the task's app) and
+    require every `patterns` regex in its JSON output."""
+    args = [arg.replace("{app}", slug or "") for arg in check["args"]]
+    done = gregale.cli(*args, timeout=90)
+    out = (done.stdout or "") + (done.stderr or "")
+    if done.returncode != 0:
+        return False, f"gregale {' '.join(args)} exited {done.returncode}: {out.strip()[-160:]!r}"
+    missing = [p for p in check["patterns"] if not re.search(p, out, re.IGNORECASE)]
+    return not missing, f"missing {missing} in {out.strip()[:160]!r}" if missing else "all patterns present"
 
 
 def owner_response_check(gregale, slug: str, check: dict, expected_app_id: str | None = None) -> tuple[bool, str]:
