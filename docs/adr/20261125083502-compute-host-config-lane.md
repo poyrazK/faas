@@ -1,9 +1,14 @@
 # ADR 20261125083502 · Compute host-config lane: the unit lane converges changed compute roles
 
-- **Status:** proposed. The owner chose the four design decisions on
-  2026-11-25 (role converge in the lane, deferred handlers with an
-  adoption-guarded restart, heavy roles + `node_join.yml` + unit files stay
-  full-release-only, re-converge the base on a failed gate).
+- **Status:** deferred (owner decision 2026-11-25). Measured against the
+  last seven compute-role commits, neither this design nor the
+  `node_join.yml` narrowing (§6) would have freed one (see "What it
+  frees"). Nothing is built; revisit only with new evidence: a window
+  where commits change lane roles alone, or a narrower pairing rule.
+  The owner chose the four design decisions on 2026-11-25 (role converge
+  in the lane, deferred handlers with an adoption-guarded restart, heavy
+  roles + `node_join.yml` + unit files stay full-release-only,
+  re-converge the base on a failed gate).
 - **Date:** 2026-11-25
 - **Amends:** ADR 20261123122457 (compute unit lane, step 3 of its build
   order), ADR 20261018133100 (host-configuration lane: `compute_deploy`)
@@ -121,10 +126,9 @@ next to `held`):
 - **Globals:** `group_vars/compute_nodes/*`, the compute play bodies,
   `ansible.cfg` and the collection pins. `host_roles.py changed` already
   reports these as `all: true`, so the lane refuses them (§1.1).
-- **`node_join.yml` in a range that also changes a compute role or
-  compute-side code:** it drives full rollouts only, but that change can
-  depend on the node_join step, and the lane does not run node_join.
-  Otherwise it holds no lane (§6).
+- **`node_join.yml`:** it drives full rollouts only, but a compute role or
+  compute daemon change can depend on its step, and the lane does not run
+  node_join. §6 records why narrowing this did not pay.
 - **Unit files** under `compute_only_service/files/` and the other compute
   roles' `files/*.service|*.socket|*.slice`: listed in
   `host_config.release_units` for compute too, as on the control plane,
@@ -160,47 +164,48 @@ the preflight's `base` check (it stands down while prod runs a full release
 other than the build's base). The converge step adds nothing new to race:
 it runs inside that job, on one node at a time.
 
-### 6. `node_join.yml` alone holds no lane (owner decision 2026-11-25)
+### 6. `node_join.yml` alone holding no lane: rejected
 
-The `compute_only` playbooks (`node_join.yml`, `node_join_accept_release.yml`,
-`node_join_contract_probe.yml`) run only inside `gregalectl deploy join`, so
-a change to one affects the next full rollout and nothing a unit release
-does, so it maps to `compute_rollout`: reported, holds no lane. When any
-commit of the range (the lanes ship it whole) also changes a compute role
-path (a group global included), an input of a binary a lane runs on
-compute hosts (the compute lane's daemons, not the held database-node
-ones, and gateways with a compute-only service; not `go.mod`/`go.sum`) or
-the build recipe, the playbooks stay `compute_deploy`: that change may
-depend on the playbook step, in its commit or a later one, so the compute
-and edge lanes must not ship it first (`affected_units.rollout_promotions`;
-the report lists such playbooks under `compute_only_paired`). The
-control-plane lane never waited for them.
+Considered and built on the PR (owner chose it 2026-11-25), then dropped
+before merge. The `compute_only` playbooks (`node_join.yml`,
+`node_join_accept_release.yml`, `node_join_contract_probe.yml`) run only
+inside `gregalectl deploy join`, so a change to one alone affects only the
+next full rollout. But a vmmd or gateway change can depend on the playbook
+step, in the same commit or any later one, and the compute and edge lanes
+ship the whole range since the last full release. The safe rule therefore
+holds the playbook whenever the range also changes a compute role path, an
+input of a binary a lane runs on compute hosts (not `go.mod`/`go.sum`, not
+held database-node binaries) or the build recipe. Three code reviews
+converged on that rule.
+
+Under it, nothing is freed in practice: those binaries import most of the
+shared packages (`pkg/api`, `pkg/manifest`, the vmmd and schedd protos;
+409 package directories). In 14eb61e7fb's window (rc.375 → rc.376), 41
+such non-test Go files changed before it and 92 after it.
+`node_join.yml` stays `compute_deploy`.
 
 ## What it frees
 
-The same seven commits, under §3 and the `node_join.yml` narrowing (§6),
-judged per commit by the planner of this ADR's step 1:
+The seven commits:
 
-| commit | still blocked by | freed |
-| --- | --- | --- |
-| 14eb61e7fb | — (`node_join.yml` alone; gregalectl is a tool) | **yes, §6**, while its range to the next full release changes no compute role or compute-side code |
-| de9bcafc47 | `node_join.yml` paired with `pkg/manifest` (vmmd, schedd and gateways import it) | no, §6 pairs it |
-| 18289035dc | `deploy/manifest/production/ovh-live.template.yaml` (deploy, blocking) | no; its roles (`nftables`, `vmmd_service` drop-in) are lane roles |
-| 0f872e67ae | `group_vars/compute_nodes` (global) | no |
-| 361b9afe87 | `group_vars/compute_nodes`; `node_join.yml` paired with it | no |
-| f21c87d48c | unit file; control-plane `release_units` | no |
-| 902041da04 | `node_join.yml` paired with `compute_admission`/`compute_only_service` | no |
+| commit | blocked by, under §1–§4 and §6 |
+| --- | --- |
+| 14eb61e7fb | `node_join.yml`, paired range-wide with compute-side code (§6) |
+| de9bcafc47 | `node_join.yml` paired with `pkg/manifest` in the same commit |
+| 18289035dc | `deploy/manifest/production/ovh-live.template.yaml` (deploy, blocking); its roles (`nftables`, `vmmd_service` drop-in) would be lane roles |
+| 0f872e67ae | `group_vars/compute_nodes` (global) |
+| 361b9afe87 | `group_vars/compute_nodes`; `node_join.yml` |
+| f21c87d48c | unit file; control-plane `release_units` |
+| 902041da04 | `node_join.yml` with `compute_admission`/`compute_only_service` |
 
-§6 frees 1 of 7 on its own, with no executor. The converge executor (§1–§4)
-frees none of these seven: the one commit whose roles it could converge
-also changed the production manifest. Its value depends on how often a
-commit changes only lane roles, which this window never did; per-variable
+0 of 7. The one commit whose roles the executor could converge also
+changed the production manifest. Its value depends on how often a commit
+changes only lane roles, which this window never did. Per-variable
 `group_vars` ownership (the follow-up ADR-20261115120000 names) would add
-0f872e67ae.
+0f872e67ae only once the executor exists.
 
-## Build order
+## Build order (if revived)
 
-0. §6 (`compute_rollout`), live without an executor.
 1. `affected_units.py`: `compute_deploy` splits into lane-role changes
    (deployable by the compute lane) and full-release-only changes (still
    `compute_deploy`); `full_release_roles` and compute `release_units` in

@@ -608,7 +608,7 @@ class DeployClassTest(unittest.TestCase):
             ("deploy/ansible/roles/seal_domains/README.md", "inert", []),
             ("deploy/manifest/README.md", "inert", []),
             ("deploy/claims/compute-node.example.yaml", "inert", []),
-            ("deploy/ansible/node_join.yml", "compute_only", ["compute_rollout"]),
+            ("deploy/ansible/node_join.yml", "compute_only", ["compute_deploy"]),
             ("deploy/manifest/production/gcp-live.template.yaml", "blocking", ["deploy"]),
             ("deploy/unknown/thing.yml", "unclassified", ["deploy"]),
         ]
@@ -632,7 +632,7 @@ class DeployClassTest(unittest.TestCase):
         self.assertEqual(rep["deploy_classes"], {"comments": {"count": 1, "paths": [template]}})
 
     def test_compute_path_holds_the_edge_lane_only_while_it_restarts_a_compute_gateway(self):
-        commits = [("c1", ["pkg/gateway/proxy.go", "deploy/ansible/roles/vmmd_service/tasks/main.yml"])]
+        commits = [("c1", ["pkg/gateway/proxy.go", "deploy/ansible/node_join.yml"])]
         rep = au.analyze(commits, CLOSURES, CONFIG, EXISTS, host=HOST)
         self.assertEqual(rep["lanes"]["edge"]["blocked_by"], ["compute_deploy"])
         self.assertEqual(rep["pending"]["edge"], ["gatewayd-internal"])
@@ -644,67 +644,6 @@ class DeployClassTest(unittest.TestCase):
         self.assertEqual(rep["lanes"]["edge"]["blocked_by"], [])
         self.assertTrue(rep["lanes"]["edge"]["eligible"])
         self.assertIn("compute_deploy", rep["flags"])
-
-    def test_rollout_playbook_alone_holds_no_lane(self):
-        # node_join.yml drives only the next full rollout, which runs it
-        # (docs/adr/20261125083502-compute-host-config-lane.md).
-        commits = [("c2", ["pkg/apid/server.go"]), ("c1", ["deploy/ansible/node_join.yml"])]
-        rep = au.analyze(commits, CLOSURES, CONFIG, EXISTS, host=HOST)
-        self.assertEqual(rep["flags"]["compute_rollout"]["paths"], ["deploy/ansible/node_join.yml"])
-        self.assertFalse(rep["flags"]["compute_rollout"]["blocking"])
-        self.assertNotIn("compute_deploy", rep["flags"])
-        self.assertTrue(rep["lanes"]["control-plane"]["eligible"])
-        self.assertEqual(rep["lanes"]["edge"]["blocked_by"], [])
-        self.assertEqual(rep["lanes"]["compute"]["blocked_by"], [])
-        self.assertEqual(rep["deploy_classes"]["compute_only"]["paths"], ["deploy/ansible/node_join.yml"])
-
-    def test_rollout_playbook_with_a_compute_role_in_one_commit_waits_for_the_full_release(self):
-        role = "deploy/ansible/roles/vmmd_service/tasks/main.yml"
-        commits = [("c2", ["pkg/gateway/proxy.go"]), ("c1", ["deploy/ansible/node_join.yml", role])]
-        rep = au.analyze(commits, CLOSURES, CONFIG, EXISTS, host=HOST)
-        self.assertEqual(rep["flags"]["compute_deploy"]["paths"], ["deploy/ansible/node_join.yml", role])
-        self.assertNotIn("compute_rollout", rep["flags"])
-        self.assertEqual(rep["lanes"]["edge"]["blocked_by"], ["compute_deploy"])
-        # In separate commits of one range too: the lanes ship the range
-        # whole, and the later change may depend on the earlier playbook.
-        commits = [("c3", ["pkg/gateway/proxy.go"]), ("c2", [role]), ("c1", ["deploy/ansible/node_join.yml"])]
-        rep = au.analyze(commits, CLOSURES, CONFIG, EXISTS, host=HOST)
-        self.assertEqual(rep["flags"]["compute_deploy"]["paths"], ["deploy/ansible/node_join.yml", role])
-        self.assertNotIn("compute_rollout", rep["flags"])
-        # A group global (bootstrap.yml) is a compute role path too.
-        commits = [("c1", ["deploy/ansible/node_join.yml", "deploy/ansible/bootstrap.yml"])]
-        rep = au.analyze(commits, CLOSURES, CONFIG, EXISTS, host=HOST)
-        self.assertIn("deploy/ansible/node_join.yml", rep["flags"]["compute_deploy"]["paths"])
-
-    def test_rollout_playbook_with_compute_side_code_in_one_commit_waits_for_the_full_release(self):
-        # The new vmmd (or a gateway on compute hosts) may need the
-        # playbook's step: the compute and edge lanes must not ship it first.
-        playbook = "deploy/ansible/node_join.yml"
-        for code, lane in (("cmd/vmmd/main.go", "compute"), ("pkg/gateway/proxy.go", "edge")):
-            with self.subTest(code):
-                # A later commit of the range pairs as well as the same one.
-                rep = au.analyze([("c2", [code]), ("c1", [playbook])], CLOSURES, CONFIG, EXISTS, host=HOST)
-                self.assertEqual(rep["flags"]["compute_deploy"]["paths"], [playbook])
-                self.assertNotIn("compute_rollout", rep["flags"])
-                self.assertIn("compute_deploy", rep["lanes"][lane]["blocked_by"])
-                self.assertFalse(rep["lanes"][lane]["eligible"])
-                self.assertEqual(rep["deploy_classes"]["compute_only_paired"]["paths"], [playbook])
-                self.assertNotIn("compute_only", rep["deploy_classes"])
-        # A build recipe change rebuilds every binary, compute ones too.
-        rep = au.analyze([("c2", ["pkg/apid/server.go"]), ("c1", [playbook])], CLOSURES, CONFIG, EXISTS,
-                         recipe_shas={"c1"}, host=HOST)
-        self.assertEqual(rep["flags"]["compute_deploy"]["paths"], [playbook])
-        # Control-plane code and shared inputs (go.mod) do not pair.
-        for code in ("pkg/apid/server.go", "go.mod"):
-            with self.subTest(code):
-                rep = au.analyze([("c1", [code, playbook])], CLOSURES, CONFIG, EXISTS, host=HOST)
-                self.assertEqual(rep["flags"]["compute_rollout"]["paths"], [playbook])
-                self.assertNotIn("compute_deploy", rep["flags"])
-        # Neither does a held binary, which runs where no lane reaches.
-        config = dict(CONFIG, compute_lane=dict(CONFIG["compute_lane"], held=["vmmd"]),
-                      binaries=dict(CONFIG["binaries"], vmmd={"lane": "compute"}))
-        rep = au.analyze([("c1", ["cmd/vmmd/main.go", playbook])], CLOSURES, config, EXISTS, host=HOST)
-        self.assertEqual(rep["flags"]["compute_rollout"]["paths"], [playbook])
 
     def test_unknown_class_is_rejected(self):
         path = os.path.join(tempfile.mkdtemp(), "lanes.json")
@@ -1021,7 +960,7 @@ class RepositoryContractTest(unittest.TestCase):
             "deploy/ansible/roles/vmmd_service/files/vmmd.toml.example": ("host_roles", ["compute_deploy"]),
             "deploy/ansible/group_vars/compute_nodes/vmmd_adoption.yml": ("host_roles", ["compute_deploy"]),
             "deploy/ansible/roles/gatewayd_internal_service/files/faas-realtimed.service": ("host_roles", ["compute_deploy"]),
-            "deploy/ansible/node_join.yml": ("compute_only", ["compute_rollout"]),
+            "deploy/ansible/node_join.yml": ("compute_only", ["compute_deploy"]),
             "deploy/ansible/roles/seal_domains/README.md": ("inert", []),
             "deploy/grafana/frozen-tier.json": ("inert", []),
             "deploy/manifest/README.md": ("inert", []),
