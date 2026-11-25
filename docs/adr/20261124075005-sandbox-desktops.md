@@ -172,6 +172,13 @@ The image is 1.75 GB (1.2 GB unpacked root). In Docker on the same host the desk
 - **A VNC password.** The preview token already authenticates every request and is per port; a second secret adds nothing.
 - **GNOME or KDE.** Each idles at 600 MB or more and starts slower; Xfce does what an agent needs.
 
+### Capture size (2026-11-25, Firecracker 1.17, kernel 6.18, free page reporting, `/srv/fc`)
+
+A fork or pause capture of a running desktop with Chromium open takes 6.6–7.4 s. Of that, 5.7–6.4 s is writing out the 864 MB of non-zero memory out of the guest's 2,048 MB (anonymous 326 MB, page cache 480 MB); the private drive changes by 2–5 MB and publishes in milliseconds. The write runs at the volume's 165 MB/s, so on a production node's NVMe it should take well under 2 s. Two ways to shrink it were measured and dropped:
+
+- Dropping the guest's page cache before the capture removed 15 MB (2%): the guest's free page reporting hands back only large contiguous free blocks, so most freed pages stay in the memory file. The restored desktop then had to read its files again (2.8 s to a working screen, against 2.2 s).
+- Drive deltas (`FAAS_STORAGE_DRIVE_DELTA`, ADR-20261115213230) do not change a fork capture, whose drive is tiny; they halve a warm capture's drive publish (18.9 s to 9.4 s). The test found a defect with a local parent store: the cache handed the parent's delta file out as the drive, and the restored desktop never became ready. Fixed in `pkg/storage` (the parent's file is never used when it holds a delta); production's remote store was not affected.
+
 ## Not yet
 
 - A warm desktop restore that does not copy the drive: boot the platform drive read-only with the session's writes in an overlay on a per-session layer, so a capture couples only that small layer. That changes the image session's drive layout and needs its own decision. Until warm restores beat the cold boot on the reference node, `FAAS_SCHEDD_SANDBOX_SNAPSHOTS` stays off where desktops run; on the test host's `/srv/fc` they tie it (4.5 s against 4.1 s).
