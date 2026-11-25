@@ -65,7 +65,7 @@
       "lane": "shared",
       "services": [
         {"name": "schedd", "host": "control-plane", "readyz": "http://127.0.0.1:9103/readyz"},
-        {"name": "schedd", "host": "compute-only", "readyz": "http://127.0.0.1:9103/readyz"}
+        {"name": "schedd", "host": "compute-only"}
       ]
     },
     "gatewayd-public": {
@@ -85,7 +85,7 @@
     },
     "vmmd": {
       "lane": "compute",
-      "services": [{"name": "vmmd", "host": "compute-only", "readyz": "http://127.0.0.1:9104/readyz"}]
+      "services": [{"name": "vmmd", "host": "compute-only"}]
     },
     "pgproxyd": {"lane": "compute"},
     "agentproxyd": {"lane": "compute"},
@@ -98,11 +98,11 @@
     "vmmd-stream-bridge": {"lane": "compute"},
     "builderd": {
       "lane": "compute",
-      "services": [{"name": "builderd", "host": "compute-only", "readyz": "http://127.0.0.1:9105/readyz"}]
+      "services": [{"name": "builderd", "host": "compute-only"}]
     },
     "imaged": {
       "lane": "compute",
-      "services": [{"name": "imaged", "host": "compute-only", "readyz": "http://127.0.0.1:9102/readyz"}]
+      "services": [{"name": "imaged", "host": "compute-only"}]
     },
     "profiled": {
       "lane": "compute",

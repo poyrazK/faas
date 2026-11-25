@@ -3175,6 +3175,7 @@ var cliCommands = []cliCommand{
 			{Name: "path", Group: "Source and build", Common: true, Short: "source directory (default: current directory)", Value: "DIR"},
 			{Name: "source", Group: "Source and build", Common: true, Short: "local source policy (default: auto)", Value: "auto|head|worktree", ClosedSet: []string{"auto", "head", "worktree"}},
 			{Name: "worktree", Group: "Source and build", Short: "deploy the selected source directory from the working tree, including local changes"},
+			{Name: "anonymous", Group: "Source and build", Short: "deploy without an account when not logged in; prints a link a person opens to claim the app", Bool: true},
 			{Name: "repo", Group: "GitHub", Short: "deploy a GitHub repository (requires --ref)", Value: "OWNER/NAME"},
 			{Name: "repository", Group: "GitHub", Short: "bind a project to GitHub (requires --install-id)", Value: "OWNER/NAME"},
 			{Name: "install-id", Group: "GitHub", Short: "GitHub installation ID (requires --repository)", Value: "N"},
@@ -7709,6 +7710,16 @@ var cliCommands = []cliCommand{
 		Name:    "whoami",
 		DocSlug: "auth",
 		Short:   "Show the authenticated account",
+	},
+	{
+		Name:     "claim",
+		DocSlug:  "claimable-deploys",
+		Short:    "Print a fresh claim link for an app deployed without an account",
+		Examples: []string{"gregale account claim create", "gregale --json account claim create"},
+		HelpNotes: []string{
+			"Works only with the key an anonymous deploy saved; earlier claim links stop working.",
+			"The person who opens the link and confirms an email address owns the app on the Free plan; the anonymous key then stops working.",
+		},
 	},
 
 	{

@@ -5,6 +5,7 @@
     {"path": "", "source": "docs/quickstart.md"},
     {"path": "account", "source": "docs/account.md"},
     {"path": "agents", "source": "docs/agents.md"},
+    {"path": "claimable-deploys", "source": "docs/claimable-deploys.md", "unpublished": "preview capability; published when it reaches beta"},
     {"path": "claude-code", "source": "docs/claude-code.md"},
     {"path": "codex", "source": "docs/codex.md"},
     {"path": "cursor", "source": "docs/cursor.md"},

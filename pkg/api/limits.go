@@ -20931,3 +20931,43 @@ const (
 )
 
 const HostedTaskBindingKeyIDMaxBytes = 64
+
+// Claimable deploys (ADR-20261124080000).
+// Defaults for the operator-tunable claimable-deploy limits. apid reads the
+// live values from its runtime config (unclaimed_deploy_ttl_hours,
+// unclaimed_accounts_live_max, unclaimed_accounts_per_address_per_day,
+// unclaimed_accounts_per_network_per_day); these are the defaults and bounds.
+const (
+	// UnclaimedDeployTTLHoursDefault is how long an unclaimed account lives
+	// before the sweep schedules its deletion.
+	UnclaimedDeployTTLHoursDefault = 72
+	UnclaimedDeployTTLHoursMax     = 168
+	// UnclaimedAccountsLiveMaxDefault caps unclaimed accounts alive at once
+	// on the platform. 0 closes anonymous deploys without the kill switch.
+	UnclaimedAccountsLiveMaxDefault = 500
+	UnclaimedAccountsLiveMaxBound   = 100_000
+	// Per address and per /24 (/48) a day. Separate from the sign-up caps,
+	// so anonymous deploys never use up a network's human sign-ups.
+	UnclaimedAccountsPerAddressPerDayDefault = 3
+	UnclaimedAccountsPerNetworkPerDayDefault = 10
+	UnclaimedAccountsPerDayBound             = 1_000
+	// UnclaimedAccountWindow is how far back the per-address and
+	// per-network caps count anonymous accounts; a refusal by either asks
+	// the caller to retry after it.
+	UnclaimedAccountWindow = 24 * time.Hour
+	// UnclaimedLiveCapRetryAfter is the retry hint when the platform-wide
+	// cap refuses a new anonymous session.
+	UnclaimedLiveCapRetryAfter = time.Hour
+	// UnclaimedAccountExpiryBatch is one page of the expiry sweep, and
+	// UnclaimedAccountSweepMaxPages bounds one run; the next run carries on.
+	UnclaimedAccountExpiryBatch   = 200
+	UnclaimedAccountSweepMaxPages = 50
+	// UnclaimedAccountSweepInterval is how often apid runs the sweep.
+	UnclaimedAccountSweepInterval = 5 * time.Minute
+	// UnclaimedClaimEmailTTL is how long the claim confirmation mailed to
+	// the claimer stays valid.
+	UnclaimedClaimEmailTTL = time.Hour
+)
+
+// UnclaimedDeployTTLDefault is UnclaimedDeployTTLHoursDefault as a duration.
+const UnclaimedDeployTTLDefault = UnclaimedDeployTTLHoursDefault * time.Hour

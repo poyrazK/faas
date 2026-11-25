@@ -81,6 +81,7 @@ touch them. The tables below map each earlier name.
 | `gregale capabilities` | `gregale feature list` |
 | `gregale channels` | `gregale alert channel` |
 | `gregale chaos` | `gregale test` |
+| `gregale claim` | `gregale account claim create` |
 | `gregale connect` | `gregale github` |
 | `gregale consumers` | `gregale api consumer` |
 | `gregale context` | `gregale config context get` |

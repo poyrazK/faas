@@ -16157,6 +16157,62 @@ paths:
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/anonymous/sessions:
+    post:
+      tags: [account]
+      operationId: createAnonymousSession
+      summary: Deploy without an account; a person claims the app later.
+      description: |
+        For agents working for someone without a Gregale account. Needs no
+        credential. Creates a Free account limited to deploying and reading
+        its apps, and returns its deploy key and a claim link. A person who
+        opens the link and confirms an email address owns the account and
+        its apps; the key then stops working. Unclaimed accounts are deleted
+        after the claim window (72 hours by default). Custom domains,
+        databases, buckets, cron, API keys, organizations and billing answer
+        `claim_required` until the claim. New sessions are limited per
+        network and across the platform (`anonymous_deploys_unavailable`).
+        Answers 404 while the feature is not offered.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AnonymousSessionRequest' }
+      responses:
+        '201':
+          description: Session created. The key is returned once.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AnonymousSessionResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429':
+          description: 'Anonymous deploys are not available from this network now, or the platform limit is reached (`anonymous_deploys_unavailable`). Sign up and deploy again.'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
+  /v1/account/claim-link:
+    post:
+      tags: [account]
+      operationId: createClaimLink
+      summary: Get a fresh claim link for an account deployed without one.
+      description: |
+        Only for the key of an anonymous deploy's account. Returns a new
+        claim link; earlier links stop working.
+      responses:
+        '200':
+          description: The new claim link.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClaimLinkResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: The account is a regular account with nothing to claim.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '410':
+          description: The claim window ended.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
   /v1/account/sign-in-methods:
     get:
       tags: [account]
@@ -134484,6 +134540,39 @@ components:
       required: [display_name]
       properties:
         display_name: { type: string, maxLength: 80, description: "Empty clears the display name." }
+    AnonymousSessionRequest:
+      description: "Body for `POST /v1/anonymous/sessions`."
+      type: object
+      required: [accept_terms]
+      properties:
+        client: { type: string, maxLength: 80, description: "The tool creating the session, such as gregale-cli." }
+        accept_terms: { type: boolean, description: "Must be true: deploying without an account accepts the Terms of Service." }
+    AnonymousSessionResponse:
+      description: "An anonymous deploy session."
+      type: object
+      required: [account_id, api_key, claim_url, expires_at, limits]
+      properties:
+        account_id: { type: string, format: uuid }
+        api_key: { type: string, description: "Deploy key, returned once. Use it as a bearer token." }
+        claim_url: { type: string, format: uri, description: "Give this link to the person the agent works for." }
+        expires_at: { type: string, format: date-time, description: "The account and its apps are deleted after this unless claimed." }
+        limits: { $ref: '#/components/schemas/UnclaimedLimits' }
+    UnclaimedLimits:
+      description: "What an account deployed without an owner may use until it is claimed."
+      type: object
+      required: [plan, max_apps, max_ram_mb, blocked]
+      properties:
+        plan: { type: string }
+        max_apps: { type: integer }
+        max_ram_mb: { type: integer }
+        blocked: { type: array, items: { type: string } }
+    ClaimLinkResponse:
+      description: "A fresh claim link."
+      type: object
+      required: [claim_url, expires_at]
+      properties:
+        claim_url: { type: string, format: uri }
+        expires_at: { type: string, format: date-time }
     AccountEmailChangeRequest:
       description: "Body for `POST /v1/account/email`."
       type: object
