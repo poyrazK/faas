@@ -25,10 +25,17 @@ copied the directory elsewhere and ended up deploying the upstream image.
 ## Decision
 
 When the selected member has its own `Dockerfile`, the CLI reads that
-Dockerfile's `COPY`/`ADD` sources. It skips stage copies (`--from`), URLs,
-heredocs, `.`, parent paths and paths that use build variables. For each
-remaining source it checks whether the path exists in the member directory,
-at the repository root, or in both.
+Dockerfile's `COPY`/`ADD` sources. It follows Docker's parsing: continuation
+lines are joined, comment and blank lines inside them are dropped, and
+heredoc bodies are skipped. It skips stage copies (`--from`), URLs, `.`,
+parent paths and paths that use build variables. For each remaining source it
+checks whether the path exists in the member directory, at the repository
+root, or in both.
+
+The check reads the tree the deploy uploads: committed HEAD by default, and
+the working tree only with `--worktree` (or when the repository has no
+committed source to ship). An uncommitted Dockerfile edit, or an untracked
+file, therefore cannot pick a context the uploaded files do not support.
 
 - If at least one source exists only in the member and none exists only at
   the root, the member directory is the build context. The CLI uploads it
@@ -37,7 +44,8 @@ at the repository root, or in both.
   without a Dockerfile, one whose sources exist in both places, and one with
   no resolvable sources.
 
-`deploy` prints the reason on stderr. `--explain-files` shows it as
+For every workspace member, `deploy` prints the chosen context and the
+deciding sources on stderr. `--explain-files` shows the same line as
 `Build context: …` and in JSON as `context_reason`.
 
 ## Consequences

@@ -225,7 +225,8 @@ func prepareDeploySourceFiles(ctx context.Context, o deploySourceFilesOptions, e
 	workspace := ""
 	if o.path != "" {
 		if gitRoot, rootErr := gitRootFromCwd(root); rootErr == nil {
-			contextRoot, sourceRoot, member, reason, err := resolveWorkspaceContextReason(gitRoot, root)
+			tree := deployContextTree(gitRoot, root, mode == deploySourceWorktree, mode == deploySourceHEAD)
+			contextRoot, sourceRoot, member, reason, err := resolveWorkspaceContextReason(gitRoot, root, tree)
 			if err != nil {
 				return nil, "", nil, err
 			}

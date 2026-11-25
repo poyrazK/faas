@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -19,7 +20,8 @@ import (
 // resolveWorkspaceContext returns the repository root and the selected
 // member's path when sourceDir is an explicitly selected workspace workload.
 // The caller can then upload the repository as the build context while keeping
-// the selected member as the build working directory.
+// the selected member as the build working directory. It reads the working
+// tree; deploy uses resolveWorkspaceContextReason with the tree it ships.
 //
 // Workspace detection intentionally reuses reposcan's graph parser instead of
 // maintaining a second list of package.json/pnpm/go.work conventions in the
@@ -27,14 +29,15 @@ import (
 // and carry a build marker; unmarked workspace directories do not cause the
 // upload scope to expand.
 func resolveWorkspaceContext(repoRoot, sourceDir string) (contextRoot, sourceRoot string, ok bool, err error) {
-	contextRoot, sourceRoot, ok, _, err = resolveWorkspaceContextReason(repoRoot, sourceDir)
+	contextRoot, sourceRoot, ok, _, err = resolveWorkspaceContextReason(repoRoot, sourceDir, worktreeContextTree{os.DirFS(repoRoot)})
 	return contextRoot, sourceRoot, ok, err
 }
 
-// resolveWorkspaceContextReason is resolveWorkspaceContext plus, when a
-// member keeps its own directory as the build context, the reason to show the
-// user (ADR-20261126090000).
-func resolveWorkspaceContextReason(repoRoot, sourceDir string) (contextRoot, sourceRoot string, ok bool, reason string, err error) {
+// resolveWorkspaceContextReason is resolveWorkspaceContext plus the reason to
+// show the user when sourceDir is a workspace member, deciding the member's
+// Dockerfile context from tree: the files the deploy will upload
+// (ADR-20261126090000).
+func resolveWorkspaceContextReason(repoRoot, sourceDir string, tree contextTree) (contextRoot, sourceRoot string, ok bool, reason string, err error) {
 	rel, err := gitRelativePath(repoRoot, sourceDir)
 	if err != nil {
 		return "", "", false, "", err
@@ -57,17 +60,117 @@ func resolveWorkspaceContextReason(repoRoot, sourceDir string) (contextRoot, sou
 			continue
 		}
 		if memberRoot == root {
-			if own, why := memberDockerfileOwnsContext(os.DirFS(repoRoot), root); own {
+			own, why := memberDockerfileOwnsContext(tree, root)
+			if own {
 				return "", "", false, why, nil
 			}
 			abs, absErr := filepath.Abs(repoRoot)
 			if absErr != nil {
 				return "", "", false, "", absErr
 			}
-			return filepath.Clean(abs), root, true, "", nil
+			return filepath.Clean(abs), root, true, why, nil
 		}
 	}
 	return "", "", false, "", nil
+}
+
+// deployContextTree is the tree a deploy of sourceDir uploads: the working
+// tree with --worktree or when the repository has no committed source to ship,
+// otherwise committed HEAD.
+func deployContextTree(repoRoot, sourceDir string, worktree, explicitHead bool) contextTree {
+	if !worktree {
+		var prov zeroConfigProvenance
+		var ok bool
+		if explicitHead {
+			var err error
+			prov, err = resolveExplicitHeadProvenance(sourceDir)
+			ok = err == nil
+		} else {
+			prov, ok, _ = resolveZeroConfigProvenance(sourceDir)
+		}
+		if ok && prov.SHA != "" {
+			return &headContextTree{root: prov.Root, rev: prov.SHA}
+		}
+	}
+	return worktreeContextTree{os.DirFS(repoRoot)}
+}
+
+// contextTree answers the questions the context decision asks of the files a
+// deploy uploads. Names are slash-separated and relative to the repository.
+type contextTree interface {
+	readFile(name string) ([]byte, error)
+	exists(name string) bool
+	// glob reports whether pattern, relative to dir, matches any entry.
+	glob(dir, pattern string) bool
+}
+
+type worktreeContextTree struct{ fsys fs.FS }
+
+func (t worktreeContextTree) readFile(name string) ([]byte, error) { return fs.ReadFile(t.fsys, name) }
+
+func (t worktreeContextTree) exists(name string) bool {
+	_, err := fs.Stat(t.fsys, name)
+	return err == nil
+}
+
+func (t worktreeContextTree) glob(dir, pattern string) bool {
+	sub, err := fs.Sub(t.fsys, dir)
+	if err != nil {
+		return false
+	}
+	matches, err := fs.Glob(sub, pattern)
+	return err == nil && len(matches) > 0
+}
+
+// headContextTree reads a committed revision. Its path index is loaded on
+// first use, so a member without a Dockerfile costs one `git show`.
+type headContextTree struct {
+	root, rev string
+	paths     map[string]bool
+	loadErr   error
+}
+
+func (t *headContextTree) readFile(name string) ([]byte, error) {
+	out, err := runGitCmd(t.root, "show", t.rev+":"+name)
+	return []byte(out), err
+}
+
+func (t *headContextTree) index() map[string]bool {
+	if t.paths != nil || t.loadErr != nil {
+		return t.paths
+	}
+	out, err := runGitCmd(t.root, "ls-tree", "-r", "-z", "--name-only", t.rev)
+	if err != nil {
+		t.loadErr = err
+		return nil
+	}
+	t.paths = map[string]bool{}
+	for _, name := range strings.Split(out, "\x00") {
+		for name != "" && name != "." && !t.paths[name] {
+			t.paths[name] = true
+			name = path.Dir(name)
+		}
+	}
+	return t.paths
+}
+
+func (t *headContextTree) exists(name string) bool { return t.index()[name] }
+
+func (t *headContextTree) glob(dir, pattern string) bool {
+	prefix := dir + "/"
+	if dir == "." {
+		prefix = ""
+	}
+	for name := range t.index() {
+		rel, ok := strings.CutPrefix(name, prefix)
+		if !ok {
+			continue
+		}
+		if matched, err := path.Match(pattern, rel); err == nil && matched {
+			return true
+		}
+	}
+	return false
 }
 
 // memberDockerfileOwnsContext reports whether a workspace member's own
@@ -77,15 +180,15 @@ func resolveWorkspaceContextReason(repoRoot, sourceDir string) (contextRoot, sou
 // exists only at the repository root. Anything else, including a Dockerfile
 // whose sources exist in both places or cannot be resolved, keeps the
 // repository context of ADR-144, which Dockerfiles that copy a root lockfile
-// or sibling packages need.
-func memberDockerfileOwnsContext(repo fs.FS, member string) (bool, string) {
-	body, err := fs.ReadFile(repo, path.Join(member, "Dockerfile"))
+// or sibling packages need. The reason names the deciding sources either way.
+func memberDockerfileOwnsContext(tree contextTree, member string) (bool, string) {
+	body, err := tree.readFile(path.Join(member, "Dockerfile"))
 	if err != nil {
-		return false, ""
+		return false, fmt.Sprintf("building %s from the repository root, as a workspace member", member)
 	}
 	var memberOnly, rootOnly []string
 	for _, source := range dockerfileContextSources(body) {
-		inMember, inRoot := contextSourceExists(repo, member, source), contextSourceExists(repo, ".", source)
+		inMember, inRoot := contextSourceExists(tree, member, source), contextSourceExists(tree, ".", source)
 		switch {
 		case inMember && !inRoot:
 			memberOnly = append(memberOnly, source)
@@ -93,31 +196,37 @@ func memberDockerfileOwnsContext(repo fs.FS, member string) (bool, string) {
 			rootOnly = append(rootOnly, source)
 		}
 	}
-	if len(memberOnly) == 0 || len(rootOnly) > 0 {
-		return false, ""
+	switch {
+	case len(rootOnly) > 0:
+		return false, fmt.Sprintf("building %s from the repository root: its Dockerfile copies %s, %s only there", member, sourceList(rootOnly), existVerb(rootOnly))
+	case len(memberOnly) > 0:
+		return true, fmt.Sprintf("building %s from its own directory: its Dockerfile copies %s, %s there and not at the repository root", member, sourceList(memberOnly), existVerb(memberOnly))
+	default:
+		return false, fmt.Sprintf("building %s from the repository root, as a workspace member: its Dockerfile copies nothing that exists only in %s", member, member)
 	}
-	sort.Strings(memberOnly)
-	memberOnly = compactStrings(memberOnly)
-	shown := memberOnly
-	if len(shown) > 3 {
-		shown = shown[:3]
-	}
-	verb := "exist"
-	if len(memberOnly) == 1 {
-		verb = "exists"
-	}
-	return true, fmt.Sprintf("building %s from its own directory: its Dockerfile copies %s, which %s there and not at the repository root",
-		member, strings.Join(shown, ", "), verb)
 }
 
-func compactStrings(in []string) []string {
-	out := in[:0]
-	for i, s := range in {
-		if i == 0 || s != in[i-1] {
-			out = append(out, s)
+// sourceList names up to three sources and counts the rest.
+func sourceList(sources []string) string {
+	sources = append([]string(nil), sources...)
+	sort.Strings(sources)
+	unique := sources[:0]
+	for i, s := range sources {
+		if i == 0 || s != sources[i-1] {
+			unique = append(unique, s)
 		}
 	}
-	return out
+	if len(unique) <= 3 {
+		return strings.Join(unique, ", ")
+	}
+	return fmt.Sprintf("%s and %d more", strings.Join(unique[:3], ", "), len(unique)-3)
+}
+
+func existVerb(sources []string) string {
+	if len(sources) == 1 {
+		return "which exists"
+	}
+	return "which exist"
 }
 
 // dockerfileContextSources lists the build-context paths a Dockerfile's
@@ -164,15 +273,27 @@ func dockerfileContextSources(dockerfile []byte) []string {
 	return out
 }
 
-// dockerfileInstructions joins continuation lines and drops comments.
+var dockerfileHeredoc = regexp.MustCompile(`<<(-?)["']?([A-Za-z_][A-Za-z0-9_]*)["']?`)
+
+// dockerfileInstructions returns one string per instruction, as Docker's
+// parser sees them: continuation lines joined, comment and blank lines inside
+// a continuation dropped, and heredoc bodies skipped.
 func dockerfileInstructions(dockerfile []byte) []string {
 	var out []string
 	var current strings.Builder
+	var heredocs []string
 	scanner := bufio.NewScanner(bytes.NewReader(dockerfile))
 	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if current.Len() == 0 && strings.HasPrefix(line, "#") {
+		raw := scanner.Text()
+		line := strings.TrimSpace(raw)
+		if len(heredocs) > 0 {
+			if line == heredocs[0] {
+				heredocs = heredocs[1:]
+			}
+			continue
+		}
+		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		if cont, ok := strings.CutSuffix(line, "\\"); ok {
@@ -181,10 +302,12 @@ func dockerfileInstructions(dockerfile []byte) []string {
 			continue
 		}
 		current.WriteString(line)
-		if s := strings.TrimSpace(current.String()); s != "" {
-			out = append(out, s)
-		}
+		instruction := strings.TrimSpace(current.String())
 		current.Reset()
+		out = append(out, instruction)
+		for _, m := range dockerfileHeredoc.FindAllStringSubmatch(instruction, -1) {
+			heredocs = append(heredocs, m[2])
+		}
 	}
 	if s := strings.TrimSpace(current.String()); s != "" {
 		out = append(out, s)
@@ -193,13 +316,10 @@ func dockerfileInstructions(dockerfile []byte) []string {
 }
 
 // contextSourceExists reports whether a COPY source names something below
-// base. A glob matches when any entry matches it.
-func contextSourceExists(repo fs.FS, base, source string) bool {
-	name := path.Join(base, source)
+// base. A glob matches when any entry matches it; base is never a pattern.
+func contextSourceExists(tree contextTree, base, source string) bool {
 	if strings.ContainsAny(source, "*?[") {
-		matches, err := fs.Glob(repo, name)
-		return err == nil && len(matches) > 0
+		return tree.glob(base, source)
 	}
-	_, err := fs.Stat(repo, name)
-	return err == nil
+	return tree.exists(path.Join(base, source))
 }
