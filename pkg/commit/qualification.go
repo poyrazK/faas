@@ -41,8 +41,19 @@ func QualifySchemaVersion(ctx context.Context, pool *pgxpool.Pool, version int) 
 	return qualifyOutboxTable(ctx, pool, "public.gregale_outbox", required)
 }
 
+const realtimeOutboxTable = "public.gregale_realtime_outbox"
+
+// RealtimeOutboxInstalled checks for the optional sidecar before qualification.
+func RealtimeOutboxInstalled(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
+	var installed bool
+	if err := pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, realtimeOutboxTable).Scan(&installed); err != nil {
+		return false, qualificationQueryError(err, "commit: realtime outbox availability unknown")
+	}
+	return installed, nil
+}
+
 func QualifyRealtimeSchema(ctx context.Context, pool *pgxpool.Pool) error {
-	return qualifyOutboxTable(ctx, pool, "public.gregale_realtime_outbox", map[string]string{
+	return qualifyOutboxTable(ctx, pool, realtimeOutboxTable, map[string]string{
 		"event_id": "uuid", "endpoint_id": "text", "channel": "text", "data": "bytea", "metadata": "jsonb",
 		"created_at": "timestamptz", "published_at": "timestamptz", "sequence": "int8",
 		"lease_token": "uuid", "lease_until": "timestamptz", "next_attempt_at": "timestamptz",
@@ -58,13 +69,13 @@ func qualifyOutboxTable(ctx context.Context, pool *pgxpool.Pool, table string, r
  JOIN pg_class c ON c.oid=a.attrelid JOIN pg_type t ON t.oid=a.atttypid
  WHERE c.oid=to_regclass($1) AND c.relkind='r' AND a.attnum>0 AND NOT a.attisdropped`, table)
 	if err != nil {
-		return errors.New("commit: outbox schema unavailable")
+		return qualificationQueryError(err, "commit: outbox schema unavailable")
 	}
 	for rows.Next() {
 		var name, kind string
 		if err := rows.Scan(&name, &kind); err != nil {
 			rows.Close()
-			return errors.New("commit: outbox schema unavailable")
+			return qualificationQueryError(err, "commit: outbox schema unavailable")
 		}
 		if expected, ok := required[name]; ok {
 			if expected != kind {
@@ -77,13 +88,13 @@ func qualifyOutboxTable(ctx context.Context, pool *pgxpool.Pool, table string, r
 	err = rows.Err()
 	rows.Close()
 	if err != nil || len(required) > 0 {
-		return errors.New("commit: outbox schema incomplete")
+		return qualificationQueryError(err, "commit: outbox schema incomplete")
 	}
 	var unique bool
 	err = pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_constraint c JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attname='event_id'
  WHERE c.conrelid=to_regclass($1) AND c.contype='p' AND c.conkey=ARRAY[a.attnum]::smallint[])`, table).Scan(&unique)
 	if err != nil || !unique {
-		return errors.New("commit: event ID primary key is required")
+		return qualificationQueryError(err, "commit: event ID primary key is required")
 	}
 	return nil
 }
@@ -96,7 +107,14 @@ func QualifySource(ctx context.Context, pool *pgxpool.Pool, sourceID string) err
 	err := pool.QueryRow(ctx, `SELECT count(*)=1 AND COALESCE(bool_and(singleton AND source_id=$1::uuid),false)
  FROM public.gregale_commit_binding`, sourceID).Scan(&matches)
 	if err != nil || !matches {
-		return errors.New("commit: database source binding is not qualified")
+		return qualificationQueryError(err, "commit: database source binding is not qualified")
 	}
 	return nil
+}
+
+func qualificationQueryError(err error, message string) error {
+	if err != nil && errors.Is(connectionFailure(err), ErrConnectionTransport) {
+		return ErrConnectionTransport
+	}
+	return errors.New(message)
 }

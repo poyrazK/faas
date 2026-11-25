@@ -3355,37 +3355,60 @@ type CommitReceipt struct {
 	SchemaVersion           string
 }
 
+type CommitReceiptUsage struct {
+	Shard                int16
+	ReceiptCount         int64
+	PayloadJsonBytes     int64
+	Initialized          bool
+	ReconciledAt         pgtype.Timestamptz
+	ScanInProgress       bool
+	ScanCursor           pgtype.UUID
+	ScanCount            int64
+	ScanPayloadJsonBytes int64
+	ReconcileToken       pgtype.UUID
+	RetryAt              pgtype.Timestamptz
+}
+
 type CommitReplayRequest struct {
-	AccountID   pgtype.UUID
-	SourceID    pgtype.UUID
-	EventID     pgtype.UUID
-	State       string
-	Generation  int64
-	RequestedAt pgtype.Timestamptz
+	AccountID     pgtype.UUID
+	SourceID      pgtype.UUID
+	EventID       pgtype.UUID
+	State         string
+	Generation    int64
+	RequestedAt   pgtype.Timestamptz
+	NextAttemptAt pgtype.Timestamptz
 }
 
 type CommitSource struct {
-	ID                   pgtype.UUID
-	AccountID            pgtype.UUID
-	AppID                pgtype.UUID
-	Name                 string
-	Enabled              bool
-	SealedConnection     []byte
-	CredentialRevision   int64
-	RelayStatus          string
-	LastCheckedAt        pgtype.Timestamptz
-	PendingEvents        pgtype.Int8
-	BlockedEvents        pgtype.Int8
-	OldestPendingAt      pgtype.Timestamptz
-	CreatedAt            pgtype.Timestamptz
-	OperationPolicy      pgtype.Text
-	ContractVersion      int32
-	AllowTenantSelection bool
-	Destination          string
-	QueueName            pgtype.Text
-	ChangesFeeds         []byte
-	ManagedDatabaseID    pgtype.UUID
-	PollIntervalMs       int32
+	ID                           pgtype.UUID
+	AccountID                    pgtype.UUID
+	AppID                        pgtype.UUID
+	Name                         string
+	Enabled                      bool
+	SealedConnection             []byte
+	CredentialRevision           int64
+	RelayStatus                  string
+	LastCheckedAt                pgtype.Timestamptz
+	PendingEvents                pgtype.Int8
+	BlockedEvents                pgtype.Int8
+	OldestPendingAt              pgtype.Timestamptz
+	CreatedAt                    pgtype.Timestamptz
+	OperationPolicy              pgtype.Text
+	ContractVersion              int32
+	AllowTenantSelection         bool
+	Destination                  string
+	QueueName                    pgtype.Text
+	ChangesFeeds                 []byte
+	ManagedDatabaseID            pgtype.UUID
+	PollIntervalMs               int32
+	RelayNextPollAt              pgtype.Timestamptz
+	RelayPollToken               pgtype.UUID
+	RelayPollBackoffMs           int32
+	CleanupEligibleEvents        pgtype.Int8
+	CleanupObservedAt            pgtype.Timestamptz
+	RelayReservedDeferredCheckAt pgtype.Timestamptz
+	RelayConnectMs               pgtype.Int4
+	RelayConnectObservedAt       pgtype.Timestamptz
 }
 
 // Accounts given a paid plan without a subscription; not billed, held to the plan allowance; written only by apid (ADR-20261111140000).
