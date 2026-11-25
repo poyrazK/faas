@@ -13,9 +13,9 @@ import { pathToFileURL } from 'node:url';
 
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import {
-  cancelMcpTask, createMcpTaskGroup, createMcpTaskReviewFetch, createMcpTaskTransport, getMcpTask,
-  getTaskInputReview, listTaskInbox, lookupMcpTaskBySubmissionKey, respondToReviewedTaskInput,
-  submitMcpTask, submitMcpTaskWithReceipt, watchMcpTask, watchMcpTaskGroup, watchMcpTasks, watchTaskInbox,
+  cancelMcpTask, continueMcpTaskGroupSubmission, createMcpTaskGroup, createMcpTaskReviewFetch, createMcpTaskTransport,
+  getMcpTask, getTaskInputReview, listTaskInbox, lookupMcpTaskBySubmissionKey, respondToReviewedTaskInput,
+  stopMcpTaskGroup, submitMcpTask, submitMcpTaskWithReceipt, watchMcpTask, watchMcpTaskGroup, watchMcpTasks, watchTaskInbox,
 } from '../../../sdk/node/dist/preview.js';
 
 test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { timeout: 40_000 }, async t => {
@@ -93,15 +93,27 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
     }
     return inbox(query, ...args);
   };
-  let admissionProbe;
+  let admissionProbe, stopProbe;
   const create = runtime.create.bind(runtime);
   runtime.create = async (...args) => {
     const result = await create(...args);
-    if (admissionProbe && args[1]?.report === 'group submission two') {
+    if (admissionProbe && args[1]?.report === `${admissionProbe.report} two`) {
       admissionProbe.committed.resolve(result.taskId);
       await admissionProbe.release.promise;
     }
-    if (admissionProbe && args[1]?.report === 'group submission three') admissionProbe.thirdKeys.add(args[6]);
+    if (admissionProbe && args[1]?.report === `${admissionProbe.report} three`) admissionProbe.thirdKeys.add(args[6]);
+    return result;
+  };
+  const cancel = runtime.cancel.bind(runtime);
+  runtime.cancel = async (id, ...args) => {
+    const result = await cancel(id, ...args);
+    if (stopProbe?.ids.has(id)) {
+      stopProbe.cancellations.push(id);
+      if (stopProbe.hold && id === stopProbe.firstId) {
+        stopProbe.committed.resolve();
+        await stopProbe.release.promise;
+      }
+    }
     return result;
   };
   let taskWatch, groupRequests;
@@ -111,6 +123,10 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
       if (method === 'gregale/tasks/submit' || method === 'tools/call') groupRequests.submissions++;
       if (method === 'gregale/tasks/input-review') groupRequests.reviews++;
       if (method === 'gregale/tasks/respond-reviewed') groupRequests.responses++;
+    }
+    if (stopProbe?.hold && method === 'gregale/tasks/lookup') {
+      void stopProbe.release.promise.then(() => { if (!res.destroyed) app(req, res); });
+      return;
     }
     if (method === 'gregale/tasks/inbox') response = res;
     if (taskWatch && method === 'subscriptions/listen') {
@@ -439,7 +455,9 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
     }));
     const token = await mint('carol', 'mcp:tools reports:read');
     groupRequests.submissions = 0;
-    admissionProbe = { committed: Promise.withResolvers(), release: Promise.withResolvers(), thirdKeys: new Set() };
+    admissionProbe = {
+      report: 'group submission', committed: Promise.withResolvers(), release: Promise.withResolvers(), thirdKeys: new Set(),
+    };
     const submitter = await startAgent({ token, groupPath: planned, submissions, keyAgeMs: 50_000 });
     const secondId = await submitter.running(admissionProbe.committed.promise);
     assert.equal(groupRequests.submissions, 2);
@@ -486,8 +504,65 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
     const created = (await listTaskInbox(creator)).tasks.map(task => task.taskId);
     assert.equal(created.length, 3);
     assert.deepEqual(new Set(created), new Set([first.taskId, secondId, third.taskId]));
+
+    // Empty the prior fixture's queued work before claiming a worker lease.
+    for (const id of created) await cancelMcpTask(creator, id);
+    const stoppedGroup = join(groupRoot, 'stopped-group');
+    const stoppable = ['one', 'two', 'three'].map(name => ({
+      toolName: 'build_report', arguments: { report: `group stop ${name}`, steps: 1 },
+    }));
+    const stopToken = await mint('dana', 'mcp:tools reports:read');
+    groupRequests.submissions = 0;
+    admissionProbe = {
+      report: 'group stop', committed: Promise.withResolvers(), release: Promise.withResolvers(), thirdKeys: new Set(),
+    };
+    const sending = await startAgent({ token: stopToken, groupPath: stoppedGroup, submissions: stoppable });
+    const lostId = await sending.running(admissionProbe.committed.promise);
+    sending.child.kill('SIGKILL');
+    assert.deepEqual(await sending.exit, [null, 'SIGKILL']);
+    admissionProbe.release.resolve();
+    const { taskId: runningId } = JSON.parse(await readFile(join(stoppedGroup, 'member-0.json'), 'utf8'));
+    const { taskId: lostReceiptId } = JSON.parse(await readFile(join(stoppedGroup, 'member-1.json'), 'utf8'));
+    assert.equal(lostReceiptId, undefined);
+    const running = await store.claim(3, 30_000);
+    assert.equal(running.task_id, runningId);
+
+    stopProbe = {
+      ids: new Set([runningId, lostId]), firstId: runningId, hold: true, cancellations: [],
+      committed: Promise.withResolvers(), release: Promise.withResolvers(),
+    };
+    const stopping = await startAgent({ token: stopToken, groupPath: stoppedGroup, stopGroup: true });
+    await stopping.running(stopProbe.committed.promise);
+    assert.deepEqual(stopProbe.cancellations, [runningId]);
+    const stoppedManifest = JSON.parse(await readFile(join(stoppedGroup, 'group.json'), 'utf8'));
+    assert.equal(await readFile(join(stoppedGroup, 'stopped'), 'utf8'), stoppedManifest.id);
+    const stoppedOwner = await connect('dana', 'mcp:tools reports:read');
+    await assert.rejects(continueMcpTaskGroupSubmission(stoppedOwner, stoppedGroup, 2, stoppable[2]), { code: 'group_stopped' });
+
+    stopping.child.kill('SIGKILL');
+    assert.deepEqual(await stopping.exit, [null, 'SIGKILL']);
+    stopProbe.hold = false;
+    stopProbe.release.resolve();
+    assert.equal(await store.complete(runningId, running.lease_token, result), 'cancelled');
+
+    const retryStop = await startAgent({ token: stopToken, groupPath: stoppedGroup, stopGroup: true });
+    const [{ stopped }] = await retryStop.waitForEvents(1);
+    assert.deepEqual(await retryStop.exit, [0, null]);
+    assert.deepEqual(stopped.map(entry => entry.outcome), ['terminal', 'requested', 'not_submitted']);
+    assert.equal(stopped[0].task.taskId, runningId);
+    assert.equal(stopped[0].task.status, 'cancelled');
+    assert.equal(stopped[1].taskId, lostId);
+    assert.deepEqual((await stopMcpTaskGroup(stoppedOwner, stoppedGroup)).map(entry => entry.outcome),
+      ['terminal', 'terminal', 'not_submitted']);
+    assert.deepEqual(stopProbe.cancellations, [runningId, lostId]);
+    await assert.rejects(stat(join(stoppedGroup, 'member-2.json')), { code: 'ENOENT' });
+    assert.equal(groupRequests.submissions, 2);
+    const cancelledGroup = (await listTaskInbox(stoppedOwner)).tasks;
+    assert.deepEqual(new Set(cancelledGroup.map(task => task.taskId)), new Set([runningId, lostId]));
+    assert.ok(cancelledGroup.every(task => task.status === 'cancelled'));
   } finally {
     admissionProbe?.release.resolve();
+    stopProbe?.release.resolve();
     for (const agent of agents) agent.child.kill();
     await Promise.allSettled(agents.map(agent => agent.exit));
     taskWatch = undefined;

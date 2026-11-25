@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { chmod, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
   continueMcpTaskGroupSubmission, createMcpTaskGroup, createMcpTaskReceiptTransport,
   resumeMcpTaskFromReceipt, resumeMcpTaskGroupSubmission, retryMcpTaskFromReceipt,
-  submitMcpTaskGroup, submitMcpTaskWithReceipt, watchMcpTaskGroup,
-  type McpTaskConnection, type McpTaskReceiptConnection, type McpTaskSubmissionConnection,
+  stopMcpTaskGroup, submitMcpTaskGroup, submitMcpTaskWithReceipt, watchMcpTaskGroup,
+  type McpTaskCancellationConnection, type McpTaskGroupStopConnection, type McpTaskSubmissionConnection,
 } from '../src/preview.js';
 
 const endpoint = 'https://mcp.example/mcp';
@@ -25,13 +27,13 @@ class FixtureTransport {
   }) {}
 }
 
-type Request = Parameters<McpTaskConnection['request']>[0] | Parameters<McpTaskSubmissionConnection['request']>[0];
+type Request = Parameters<McpTaskCancellationConnection['request']>[0] | Parameters<McpTaskSubmissionConnection['request']>[0];
 type Wire = { id: number; method: string; params: Record<string, unknown> };
 
 function connection(
   reply: (request: Wire) => Promise<object>, url = endpoint,
   credential: string | (() => string) = 'private-fixture-credential',
-): McpTaskReceiptConnection {
+): McpTaskGroupStopConnection {
   let id = 0;
   const transport = createMcpTaskReceiptTransport(FixtureTransport, url, {
     onInsufficientScope: 'throw',
@@ -560,4 +562,119 @@ test('an invalid group member stops the whole plan before publication or request
   const client = connection(async () => assert.fail('invalid group reached transport'));
   await assert.rejects(submitMcpTaskGroup(client, group, [submission, { ...submission, toolName: '' }]), TypeError);
   assert.deepEqual(await readdir(directory), []);
+});
+
+test('a stopped group can reconcile an admission that was already in flight', async t => {
+  const group = join(await folder(t), 'group');
+  const submissions = ['first', 'second', 'third'].map(report => ({ ...submission, arguments: { report } }));
+  let entered!: () => void;
+  let release!: () => void;
+  const inFlight = new Promise<void>(resolve => { entered = resolve; });
+  const released = new Promise<void>(resolve => { release = resolve; });
+  const cancelled: string[] = [];
+  let attempts = 0, secondAdmitted = false;
+  const connect = () => connection(async ({ method, params }) => {
+    if (method === 'tools/call') {
+      attempts++;
+      const report = (params.arguments as { report: string }).report;
+      if (report === 'first') return { resultType: 'task', ...task, taskId: 'first' };
+      assert.equal(report, 'second');
+      if (attempts === 3) {
+        entered();
+        await released;
+        secondAdmitted = true;
+      }
+      throw new Error('reply lost');
+    }
+    if (method === lookup) {
+      if (secondAdmitted) return { ...task, taskId: 'second' };
+      throw { code: -32002 };
+    }
+    const id = params.taskId as string;
+    if (method === 'tasks/cancel') {
+      assert.equal((await stat(join(group, 'stopped'))).mode & 0o777, 0o600);
+      cancelled.push(id);
+      return {};
+    }
+    assert.equal(method, 'tasks/get');
+    return { ...task, taskId: id, status: cancelled.includes(id) ? 'cancelled' : 'working' };
+  });
+  assert.deepEqual((await submitMcpTaskGroup(connect(), group, submissions)).map(entry => entry.outcome),
+    ['accepted', 'unconfirmed', 'prepared']);
+
+  const sending = continueMcpTaskGroupSubmission(connect(), group, 1, submissions[1]!);
+  try {
+    await Promise.race([inFlight, sending.then(() => assert.fail('continuation did not send a request'))]);
+    const first = await stopMcpTaskGroup(connect(), group);
+    assert.deepEqual(first, [
+      { receiptIndex: 0, outcome: 'requested', taskId: 'first' },
+      { receiptIndex: 1, outcome: 'admission_unconfirmed' },
+      { receiptIndex: 2, outcome: 'not_submitted' },
+    ]);
+    await assert.rejects(continueMcpTaskGroupSubmission(connect(), group, 2, submissions[2]!), { code: 'group_stopped' });
+    await assert.rejects(stat(join(group, 'member-2.json')), { code: 'ENOENT' });
+  } finally {
+    release();
+  }
+  assert.equal((await sending).outcome, 'unconfirmed');
+
+  const restarted = await stopMcpTaskGroup(connect(), group);
+  assert.deepEqual(restarted.map(entry => entry.outcome), ['terminal', 'requested', 'not_submitted']);
+  assert.deepEqual(cancelled, ['first', 'second']);
+  assert.deepEqual((await stopMcpTaskGroup(connect(), group)).map(entry => entry.outcome),
+    ['terminal', 'terminal', 'not_submitted']);
+  assert.equal(attempts, 3);
+});
+
+test('the guarded send rechecks stop after publishing the member receipt', async t => {
+  const group = join(await folder(t), 'group');
+  const receipt = join(group, 'member-1.json');
+  await submitMcpTaskGroup(connection(async () => { throw new Error('reply lost'); }), group, [submission, submission]);
+  let entered!: () => void;
+  let release!: () => void;
+  const recording = new Promise<void>(resolve => { entered = resolve; });
+  const released = new Promise<void>(resolve => { release = resolve; });
+  const realLink = fs.promises.link;
+  const link = t.mock.method(fs.promises, 'link', async (...args: Parameters<typeof realLink>) => {
+    await realLink(...args);
+    if (args[1] === receipt) {
+      entered();
+      await released;
+    }
+  });
+  syncBuiltinESMExports();
+
+  const sender = connection(async () => assert.fail('stopped group reached the wire'));
+  const denied = assert.rejects(continueMcpTaskGroupSubmission(sender, group, 1, submission), { code: 'group_stopped' });
+  try {
+    await Promise.race([recording, denied.then(() => assert.fail('continuation ended before recording its receipt'))]);
+    const stop = await stopMcpTaskGroup(connection(async () => { throw { code: -32002 }; }), group);
+    assert.deepEqual(stop.map(entry => entry.outcome), ['admission_unconfirmed', 'admission_unconfirmed']);
+  } finally {
+    release();
+    try {
+      await denied;
+    } finally {
+      link.mock.restore();
+      syncBuiltinESMExports();
+    }
+  }
+  assert.equal(JSON.parse(await readFile(receipt, 'utf8')).taskId, undefined);
+});
+
+test('stop can cancel a saved group and checks endpoint identity before recording intent', async t => {
+  const directory = await folder(t);
+  const path = join(directory, 'receipt');
+  const group = join(directory, 'group');
+  await submitMcpTaskWithReceipt(connection(async () => ({ resultType: 'task', ...task })), path, submission);
+  await createMcpTaskGroup(group, [path]);
+  const other = connection(async () => assert.fail('sent to a different endpoint'), endpoint + '/other');
+  await assert.rejects(stopMcpTaskGroup(other, group), { code: 'endpoint_mismatch' });
+  await assert.rejects(stat(join(group, 'stopped')), { code: 'ENOENT' });
+  const current = connection(async ({ method }) => {
+    if (method === 'tasks/get') return task;
+    assert.equal(method, 'tasks/cancel');
+    return {};
+  });
+  assert.deepEqual(await stopMcpTaskGroup(current, group), [{ receiptIndex: 0, outcome: 'requested', taskId: task.taskId }]);
 });

@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
 import {
-  acknowledgeTaskGroupUpdate, loadTaskGroup, taskGroupReceiptPath, taskGroupUpdateAcknowledged,
+  acknowledgeTaskGroupUpdate, loadTaskGroup, readTaskGroupMemberReference, taskGroupUpdateAcknowledged,
 } from './mcp-task-group-file.js';
 import type { McpTaskInboxEntry } from './mcp-task-inbox.js';
 import {
-  loadPlannedMcpTaskReceipt, mcpTaskReceiptEndpoint, McpTaskReceiptError, type McpTaskReceiptConnection,
+  mcpTaskReceiptEndpoint, McpTaskReceiptError, type McpTaskReceiptConnection,
 } from './mcp-task-receipt.js';
 import { McpTaskReadError } from './mcp-task-result.js';
 import {
@@ -91,12 +91,10 @@ export function watchMcpTaskGroup(
 
       // Resolve receipts with lost replies independently and with bounded concurrency.
       for (let start = 0; start < manifest.members.length; start += 4) {
-        const references = await Promise.all(manifest.members.slice(start, start + 4).map(async (member, offset) => {
+        const references = await Promise.all(manifest.members.slice(start, start + 4).map(async (_, offset) => {
           const receiptIndex = start + offset;
           try {
-            const planned = manifest.version === 2 ? manifest.members[receiptIndex] : undefined;
-            const receipt = planned ? await loadPlannedMcpTaskReceipt(taskGroupReceiptPath(directory, receiptIndex),
-              { endpointSha256: manifest.endpointSha256, ...planned }) : member;
+            const receipt = await readTaskGroupMemberReference(directory, manifest, receiptIndex);
             if (!receipt) return { receiptIndex };
             clients.check();
             const taskId = receipt.taskId ?? (await lookupMcpTaskBySubmissionKey(clients.lookup, receipt.submissionKey, lookupOptions)).taskId;

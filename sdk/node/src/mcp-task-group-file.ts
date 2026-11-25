@@ -3,11 +3,12 @@ import { constants } from 'node:fs';
 import { link, mkdir, open, realpath, unlink, type FileHandle } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { isMcpTaskId } from './mcp-task-inbox.js';
-import { loadMcpTaskReceiptReference } from './mcp-task-receipt.js';
+import { loadMcpTaskReceiptReference, loadPlannedMcpTaskReceipt } from './mcp-task-receipt.js';
 import { isSubmissionKey } from './mcp-task-submission.js';
 
 const manifestName = 'group.json';
 const credentialName = 'credential';
+const stoppedName = 'stopped';
 export const maxTaskGroupMembers = 64;
 const maxManifestBytes = 128 * 1024;
 const directoryFlags = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
@@ -19,6 +20,7 @@ const messages = {
   group_exists: 'MCP Task group already exists',
   group_changed: 'MCP Task group changed since this update was delivered',
   group_io: 'Could not read or write the MCP Task group',
+  group_stopped: 'MCP Task group was stopped',
   submission_unavailable: 'MCP Task group was not created for submission',
   credential_mismatch: 'MCP Task group submission requires its original bearer credential',
 } as const;
@@ -221,8 +223,17 @@ export function taskGroupReceiptPath(path: string, receiptIndex: number): string
   return join(path, `member-${receiptIndex}.json`);
 }
 
-async function readGroupCredential(path: string): Promise<string | undefined> {
-  const bytes = await readGroupFile(path, credentialName, 64).catch((error: unknown) => {
+export async function readTaskGroupMemberReference(
+  path: string, manifest: TaskGroupManifest, receiptIndex: number,
+): Promise<Member | undefined> {
+  if (manifest.version === 1) return manifest.members[receiptIndex]!;
+  return loadPlannedMcpTaskReceipt(taskGroupReceiptPath(path, receiptIndex), {
+    endpointSha256: manifest.endpointSha256, ...manifest.members[receiptIndex]!,
+  });
+}
+
+async function readGroupDigest(path: string, name: string): Promise<string | undefined> {
+  const bytes = await readGroupFile(path, name, 64).catch((error: unknown) => {
     if (fsCode(error, 'ENOENT')) return undefined;
     throw error;
   });
@@ -230,6 +241,33 @@ async function readGroupCredential(path: string): Promise<string | undefined> {
   const proof = bytes.toString('latin1');
   if (!validDigest(proof)) invalid();
   return proof;
+}
+
+async function requireGroupIdentity(path: string, groupId: string): Promise<void> {
+  if ((await readManifest(path)).id !== groupId) throw new McpTaskGroupError('group_changed');
+}
+
+async function checkGroupOpen(path: string, groupId: string): Promise<void> {
+  await requireGroupIdentity(path, groupId);
+  const stopped = await readGroupDigest(path, stoppedName);
+  if (stopped === groupId) throw new McpTaskGroupError('group_stopped');
+  if (stopped !== undefined) throw new McpTaskGroupError('group_changed');
+}
+
+export function requireTaskGroupOpen(path: string, groupId: string): Promise<void> {
+  return groupIo(() => inGroupDirectory(path, () => checkGroupOpen(path, groupId)));
+}
+
+export function recordTaskGroupStop(path: string, groupId: string): Promise<void> {
+  return groupIo(() => inGroupDirectory(path, async directory => {
+    await requireGroupIdentity(path, groupId);
+    let stopped = await readGroupDigest(path, stoppedName);
+    if (stopped === undefined) {
+      stopped = await publishGroupFile(path, stoppedName, groupId) ? groupId : await readGroupDigest(path, stoppedName);
+    }
+    if (stopped !== groupId) throw new McpTaskGroupError('group_changed');
+    await directory.sync();
+  }));
 }
 
 // The first outgoing request fixes the group bearer for every member. Reuse
@@ -241,10 +279,10 @@ export async function bindTaskGroupCredential(
   const proof = createHmac('sha256', credential).update('gregale/node-sdk/mcp-task-group/v2:')
     .update(manifest.id).update(manifest.endpointSha256).digest('hex');
   await groupIo(() => inGroupDirectory(path, async directory => {
-    if ((await readManifest(path)).id !== manifest.id) throw new McpTaskGroupError('group_changed');
-    let saved = await readGroupCredential(path);
+    await checkGroupOpen(path, manifest.id);
+    let saved = await readGroupDigest(path, credentialName);
     if (saved === undefined) {
-      saved = await publishGroupFile(path, credentialName, proof) ? proof : await readGroupCredential(path);
+      saved = await publishGroupFile(path, credentialName, proof) ? proof : await readGroupDigest(path, credentialName);
     }
     if (saved === undefined || !timingSafeEqual(Buffer.from(saved, 'hex'), Buffer.from(proof, 'hex'))) {
       throw new McpTaskGroupError('credential_mismatch');
@@ -284,7 +322,7 @@ export function taskGroupUpdateAcknowledged(path: string, update: string): Promi
 
 export function acknowledgeTaskGroupUpdate(path: string, groupId: string, update: string): Promise<void> {
   return groupIo(() => inGroupDirectory(path, async directory => {
-    if ((await readManifest(path)).id !== groupId) throw new McpTaskGroupError('group_changed');
+    await requireGroupIdentity(path, groupId);
     const file = ackPath(path, update);
     const marker = await open(file, 'wx', 0o600).catch(async (error: unknown) => {
       if (!fsCode(error, 'EEXIST')) throw error;

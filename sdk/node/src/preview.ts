@@ -65,6 +65,7 @@ export {
 export {
   submitMcpTaskGroup, resumeMcpTaskGroupSubmission, continueMcpTaskGroupSubmission, type McpTaskGroupSubmissionEntry,
 } from './mcp-task-group-submission.js';
+export { stopMcpTaskGroup, type McpTaskGroupStopConnection, type McpTaskGroupStopEntry } from './mcp-task-group-stop.js';
 export { PaginationError, type PaginationOptions, type DeploymentPagination } from './deployment-pagination.js';
 export { WaiterError, type WaiterFailureCode, type WaiterOptions, type WaiterSnapshot, type WaiterProgress, type BuildWaitOptions, type DeploymentWaitOptions, type DeploymentWaiters } from './deployment-waiters.js';
 

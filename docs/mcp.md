@@ -6346,6 +6346,34 @@ The private group stores fingerprints and receipts. Keep the original
 requests in your application for explicit continuation. Use
 `watchMcpTaskGroup` on the same path to observe the Tasks already submitted.
 
+#### Stop a Task group from TypeScript
+
+Call `stopMcpTaskGroup` with the saved group path and the current authorized
+connection. The SDK records the stop in the private group directory before
+requesting cooperative cancellation. Attempts to continue admission through
+the stopped group return `group_stopped`.
+
+```ts
+import { stopMcpTaskGroup } from '@gregale/sdk-node/preview';
+
+const members = await stopMcpTaskGroup(mcp, './receipts/weekly-batch', { signal });
+for (const member of members) {
+  console.log(member.receiptIndex, member.outcome);
+}
+```
+
+The result is ordered by receipt index. A `not_submitted` member has no
+recorded admission attempt. An `admission_unconfirmed` member has a receipt
+whose Task could not yet be confirmed. A Task found by ID or submission key
+returns the same `terminal`, `requested`, or `unconfirmed` outcome as
+`cancelMcpTask`, or `unavailable` if its access or status could not be
+verified. A terminal Task includes its observed status.
+
+Repeat the call to resume cleanup after an interruption or to reconcile
+pending admissions and cancellations. An admission already in flight can
+commit during the stop. Its receipt stays available for the next pass.
+Use the same group directory to keep the stop in effect across restarts.
+
 #### Cancel a Task from TypeScript
 
 Use `cancelMcpTask(mcp, taskId)` from `@gregale/sdk-node/preview` on the

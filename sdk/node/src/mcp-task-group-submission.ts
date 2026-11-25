@@ -1,6 +1,6 @@
 import {
   bindTaskGroupCredential, createTaskGroupFile, loadTaskGroupSubmission, maxTaskGroupMembers,
-  McpTaskGroupError, taskGroupReceiptPath, type TaskGroupSubmissionManifest,
+  McpTaskGroupError, requireTaskGroupOpen, taskGroupReceiptPath, type TaskGroupSubmissionManifest,
 } from './mcp-task-group-file.js';
 import { groupConnections } from './mcp-task-group.js';
 import type { McpTaskInboxEntry } from './mcp-task-inbox.js';
@@ -70,6 +70,7 @@ async function sendMember(
   const { path, plan } = plannedMember(group, receiptIndex);
   const result = await sendPlannedMcpTaskReceipt(connection, path, plan, prepared, operation, {
     authorize: credential => bindTaskGroupCredential(group.path, group.manifest, credential),
+    ensureOpen: () => requireTaskGroupOpen(group.path, group.manifest.id),
     receipt, refreshExpired,
   });
   return result.outcome === 'accepted' ? { receiptIndex, outcome: 'accepted', task: result.task }
@@ -132,6 +133,8 @@ export async function continueMcpTaskGroupSubmission(
   const member = group.manifest.members[receiptIndex];
   if (!Number.isInteger(receiptIndex) || receiptIndex < 0 || !member) throw new RangeError('Invalid MCP Task group receipt index');
   const clients = groupConnections(connection, group.manifest.endpointSha256);
+  await requireTaskGroupOpen(group.path, group.manifest.id);
+  clients.check();
   const prepared = prepareMcpTaskReceiptSubmission(connection, submission, member.submissionKey);
   if (prepared.requestSha256 !== member.requestSha256) throw new McpTaskReceiptError('request_mismatch');
   const { entry, receipt } = await inspectMember(group, receiptIndex, clients, operation);

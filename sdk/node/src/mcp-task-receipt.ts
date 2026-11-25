@@ -21,7 +21,7 @@ type TransportBinding = {
 
 const transports = new WeakMap<object, TransportBinding>();
 const submissionWindowMs = 60_000;
-const receiptMethods = new Set(['gregale/tasks/submit', 'gregale/tasks/lookup', 'tasks/get']);
+const receiptMethods = new Set(['gregale/tasks/submit', 'gregale/tasks/lookup', 'tasks/get', 'tasks/cancel']);
 const sha256Pattern = /^[0-9a-f]{64}(?![\s\S])/u;
 
 export type McpTaskReceiptConnection = McpTaskConnection & McpTaskSubmissionConnection & {
@@ -336,6 +336,7 @@ function requireRetryWindow(key: string): void {
 
 type GroupAdmission = {
   authorize(credential: string | undefined): Promise<void>;
+  ensureOpen(): Promise<void>;
   plannedSubmissionKey?: string;
 };
 
@@ -379,8 +380,13 @@ async function runReceiptSubmission(
       }
       if (receipt.version !== 1) verifyCredential(receipt, credential);
       else if (credential) throw new McpTaskReceiptError('credential_mismatch');
+      if (group) {
+        // Stop scans receipts only after publishing its marker. An attempt
+        // that passes this check already has a durable receipt to reconcile.
+        await group.ensureOpen();
+        requireRetryWindow(seed.submissionKey);
+      }
       operation.signal.throwIfAborted();
-      if (group) requireRetryWindow(seed.submissionKey);
     } catch (error) {
       guardError = error;
       throw error;
@@ -441,8 +447,9 @@ export async function retryMcpTaskFromReceipt(
 export function sendPlannedMcpTaskReceipt(
   connection: McpTaskReceiptConnection, path: string, plan: PlannedMcpTaskReceipt, prepared: PreparedMcpTaskReceipt,
   operation: Required<McpTaskSubmissionOptions>,
-  { authorize, receipt, refreshExpired = false }: {
+  { authorize, ensureOpen, receipt, refreshExpired = false }: {
     authorize: GroupAdmission['authorize'];
+    ensureOpen: GroupAdmission['ensureOpen'];
     receipt?: RetryReceipt | undefined;
     refreshExpired?: boolean;
   },
@@ -460,7 +467,7 @@ export function sendPlannedMcpTaskReceipt(
   requireRetryWindow(seed.submissionKey);
   // The member receipt links the new key to the immutable plan. Its exclusive
   // creation also fences competing first sends before either can reach the wire.
-  const group = { authorize, ...(renew ? { plannedSubmissionKey: plan.submissionKey } : {}) };
+  const group = { authorize, ensureOpen, ...(renew ? { plannedSubmissionKey: plan.submissionKey } : {}) };
   return runReceiptSubmission(connection, path, seed, prepared, operation, receipt !== undefined, group);
 }
 
