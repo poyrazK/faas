@@ -17658,6 +17658,18 @@ type TriggerWorkBinding struct {
 	FairnessKeySelector string
 }
 
+// Accounts created by an anonymous agent deploy, until a human claims them or they expire; written by apid (ADR-20261124080000).
+type UnclaimedAccount struct {
+	AccountID        pgtype.UUID
+	ClaimTokenSha256 []byte
+	CreatedAt        pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+	ClaimedAt        pgtype.Timestamptz
+	ExpiredAt        pgtype.Timestamptz
+	CreatedIp        *netip.Addr
+	UserAgent        string
+}
+
 type UploadCommitOutcome struct {
 	UploadID     string
 	DeploymentID string

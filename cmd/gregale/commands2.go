@@ -2205,7 +2205,7 @@ func (e deployExecution) notifyQueued(dep api.DeploymentResponse) {
 // dev` has already reserved its preview app, so it skips the create-or-fetch
 // probe; this also avoids incorrectly tripping the app-count quota while
 // redeploying an existing developer environment.
-func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp bool, executions ...deployExecution) int {
+func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp bool, executions ...deployExecution) (exitCode int) {
 	// The preflight flag is package-global because the packer lives in a
 	// separate file. Reset it per invocation so a previous strict deploy
 	// cannot suppress scans in the next CLI command or test.
@@ -2221,12 +2221,19 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
 	developerSync := execution.developerSource
+	anonymousDeploySession = nil
+	defer func() {
+		if exitCode == 0 {
+			printAnonymousClaimNotice(osStderr)
+		}
+	}()
 	fs := newFlagSet("deploy", flag.ContinueOnError)
 	image := fs.String("image", "", "digest-pinned image reference")
 	tarball := fs.String("tarball", "", "path to source archive (tar.gz)")
 	sourcePath := fs.String("path", "", "deploy this source directory (relative to the current directory)")
 	sourceMode := fs.String("source", "auto", "local source to deploy: auto, head, or worktree")
 	worktree := fs.Bool("worktree", false, "deploy the selected source directory from the working tree, including local changes")
+	anonymous := fs.Bool("anonymous", false, "deploy without an account when not logged in; prints a link a person opens to claim the app")
 	// Issue #739 / ADR-092: --repo pairs with --ref to drive the
 	// headless source-ref deploy (server-side foundation lives in
 	// cmd/apid/handlers_source_ref.go). The previous M7.5 dashboard
@@ -3514,7 +3521,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	var err error
 	if !*simplePlan && (localZeroConfig || explicitTarball) {
 		var authErr error
-		client, authErr = authedClientWithDeployTimeout(5 * time.Minute)
+		client, authErr = deployClientOrAnonymous(ctx, 5*time.Minute, *anonymous, projectRequested)
 		if authErr != nil {
 			return printErr("Not logged in", authErr)
 		}
@@ -4035,7 +4042,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 
 	if client == nil {
 		var authErr error
-		client, authErr = authedClientWithDeployTimeout(5 * time.Minute)
+		client, authErr = deployClientOrAnonymous(ctx, 5*time.Minute, *anonymous, projectRequested)
 		if authErr != nil {
 			return printErr("Not logged in", authErr)
 		}
@@ -4414,7 +4421,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			createReq.VCPU = *vcpu
 		}
 		if err := requireTemplateSecretsBeforeFirstStart(ctx, client, *templateName, *secretsFile, *createOnly, slug); err != nil {
-			return printErr("Template needs secrets", err)
+			return printErr("Template needs setup before its first deploy", err)
 		}
 		if execution.resolveApp != nil {
 			resolvedApp, err = execution.resolveApp(ctx, client, createReq)
@@ -5023,13 +5030,14 @@ func cmdRollback(args []string) int {
 		PrintUsage(osStdout, rollbackUsage, "rollback")
 		return 0
 	}
-	if len(args) < 1 {
-		PrintUsage(os.Stderr, rollbackUsage, "rollback")
-		return 1
-	}
 	slug, rest, slugErr := splitRollbackSlug(args)
 	if slugErr != nil {
 		return printErr("Invalid rollback", slugErr)
+	}
+	if slug == "" {
+		// Prod hunt r38: `rollback` in a linked checkout printed only usage,
+		// while `deploy` there deploys the linked app.
+		slug = linkedAppForMissingSlug()
 	}
 	if slug == "" {
 		PrintUsage(os.Stderr, rollbackUsage, "rollback")
@@ -6529,8 +6537,11 @@ func cmdKeys(args []string) int {
 				return printErr("Invalid scopes", err)
 			}
 		}
-		if agent := api.CodingAgentFromEnv(os.Getenv); agent != "" && !slices.Contains(scopes, api.ScopeAgent) {
-			fmt.Fprintf(os.Stderr, "Warning: %s is creating a key without the agent scope: Gregale will not ask a person before it deletes, deploys to production or changes billing, and will not hold its always-on cost to an agent budget. Add --agent for a key the agent uses.\n", agent)
+		// A read-only key cannot delete, deploy or bill, so the warning
+		// below misstated what it could do (prod hunt r45).
+		readOnly := len(scopes) > 0 && !slices.ContainsFunc(scopes, func(s string) bool { return !strings.HasSuffix(s, ":read") })
+		if agent := api.CodingAgentFromEnv(os.Getenv); agent != "" && !readOnly && !slices.Contains(scopes, api.ScopeAgent) {
+			_, _ = fmt.Fprintf(osStderr, "Warning: %s is creating a key without the agent scope: Gregale will not ask a person before it deletes, deploys to production or changes billing, and will not hold its always-on cost to an agent budget. Add --agent for a key the agent uses.\n", agent)
 		}
 		client, err := authedClient()
 		if err != nil {
@@ -8096,12 +8107,18 @@ type streamDeployOptions struct {
 	// detaches with exit 0 because the rollout runs on Gregale.
 	followRollout bool
 	darkDeploy    bool
+	// streamIdleTimeout overrides defaultDeployStreamIdleTimeout (tests).
+	streamIdleTimeout time.Duration
 }
 
 func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.DeploymentResponse, appSlug string, opts streamDeployOptions) (exit int) {
 	waitTimeout := opts.waitTimeout
 	if waitTimeout <= 0 {
 		waitTimeout = defaultDeployWaitTimeout
+	}
+	streamIdleTimeout := opts.streamIdleTimeout
+	if streamIdleTimeout <= 0 {
+		streamIdleTimeout = defaultDeployStreamIdleTimeout
 	}
 	recoveryStage := "deployment"
 	defer func() {
@@ -8250,6 +8267,7 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 		warnWaitStopped("stream unreachable; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
 		return 3
 	}
+	body = newIdleWatchdogReader(body, streamIdleTimeout)
 	defer func() { _ = body.Close() }()
 	dec := api.NewDecoder(body)
 	dec.SetCloseFn(body.Close)
@@ -8281,7 +8299,7 @@ streamLoop:
 					streamErr = <-streamErrors
 				}
 				if waitCtx.Err() == nil && streamErr != nil && !errors.Is(streamErr, io.EOF) {
-					warnDeployStreamInterrupted(opts.quiet)
+					warnDeployStreamInterrupted(opts.quiet, streamErr)
 				}
 				break streamLoop
 			}
@@ -8361,7 +8379,7 @@ streamLoop:
 				}
 				break streamLoop
 			case streamEventError:
-				warnDeployStreamInterrupted(opts.quiet)
+				warnDeployStreamInterrupted(opts.quiet, nil)
 				break streamLoop
 			default:
 				// Unknown frame shape — print raw so the customer can see it.
@@ -9089,10 +9107,17 @@ func renderSecretScanWarnings(findings []secretscan.Finding, w io.Writer) {
 // closed; follow manually") although the deployment went live. The caller now
 // falls through to the build/deployment status poll, so the exit code is the
 // deployment's own outcome.
-func warnDeployStreamInterrupted(quiet bool) {
-	if !quiet {
-		PrintWarn(os.Stderr, "build log stream interrupted; following deployment status…")
+func warnDeployStreamInterrupted(quiet bool, err error) {
+	if quiet {
+		return
 	}
+	if errors.Is(err, errDeployStreamIdle) {
+		// The idle watchdog closed it: say so, so a silent connection is
+		// not mistaken for a server error.
+		PrintWarn(os.Stderr, "build log stream interrupted (%v); following deployment status…", err)
+		return
+	}
+	PrintWarn(os.Stderr, "build log stream interrupted; following deployment status…")
 }
 
 // cmdDomainsList lists the account's custom domains, or one app's with --app.
@@ -9153,7 +9178,13 @@ func cmdDomainsList(args []string) int {
 		if appID != "" {
 			scope = "app " + strings.TrimSpace(*appSlug)
 		}
-		_, _ = fmt.Fprintf(osStdout, "No custom domains for %s. Add one with `gregale domain setup <domain> --app <slug>`.\n", scope)
+		// Prod hunt r40: `domain setup` needs a terminal, so a script or agent
+		// following this hint was refused; name the scriptable verb there.
+		verb := "setup"
+		if !stdinIsTTY() || !stdoutIsTTY() {
+			verb = "add"
+		}
+		_, _ = fmt.Fprintf(osStdout, "No custom domains for %s. Add one with `gregale domain %s <domain> --app <slug>`.\n", scope, verb)
 		return 0
 	}
 	for _, d := range out {

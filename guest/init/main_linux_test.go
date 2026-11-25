@@ -815,6 +815,40 @@ func TestPrepareRailpackConfig_MarkerlessFunctionUsesCopyOnlyPlan(t *testing.T) 
 	}
 }
 
+// Prod hunt r38: a Node function with a package.json and no start script made
+// Railpack print its "No start command" advice and Railway docs into the deploy.
+func TestPrepareRailpackConfig_FunctionGetsPlaceholderStart(t *testing.T) {
+	workdir := t.TempDir()
+	for name, body := range map[string]string{"package.json": `{"name":"fn","type":"module"}`, "handler.js": "export const handler = async () => ({})"} {
+		if err := os.WriteFile(filepath.Join(workdir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	restore, err := prepareRailpackConfig(api.BuildManifest{
+		Framework: api.FrameworkRailpackNode, Runtime: "node22",
+		RuntimeBaseRef: "ghcr.io/poyrazk/runner-node22@sha256:" + strings.Repeat("e", 64),
+		Workdir:        workdir, Function: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = restore() }()
+	data, err := os.ReadFile(filepath.Join(workdir, "railpack.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if got := config["deploy"].(map[string]any)["startCommand"]; got != "/bin/true" {
+		t.Fatalf("function startCommand = %v, want the /bin/true placeholder", got)
+	}
+	if _, ok := config["provider"]; ok {
+		t.Fatalf("a package.json function kept the Node provider, got provider %v", config["provider"])
+	}
+}
+
 func TestFunctionSourceNeedsCopyOnlyPlan_PreservesDetectedProjects(t *testing.T) {
 	workdir := t.TempDir()
 	m := api.BuildManifest{Framework: api.FrameworkRailpackNode, Workdir: workdir, Function: true}

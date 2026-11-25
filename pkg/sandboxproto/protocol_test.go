@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"strings"
 	"testing"
@@ -38,12 +39,18 @@ func TestRequestValidate(t *testing.T) {
 			t.Errorf("%s: %v", r.Op, err)
 		}
 	}
-	tty := exec("sh")
-	tty.TTY, tty.Background = true, true
+	noHandle := sandboxproto.Request{Op: sandboxproto.OpExecInput, Input: []byte("x")}
 	rows := exec("sh")
 	rows.Rows = 24
+	halfSize := exec("sh")
+	halfSize.TTY, halfSize.Background, halfSize.Rows = true, true, 30
 	badEnv := exec("sh")
 	badEnv.Env = map[string]string{"1BAD": "x"}
+	bigEnv := exec("sh")
+	bigEnv.Env = map[string]string{}
+	for i := range sandboxproto.MaxEnvBytes/sandboxproto.MaxEnvValueBytes + 1 {
+		bigEnv.Env[fmt.Sprintf("V%d", i)] = strings.Repeat("x", sandboxproto.MaxEnvValueBytes)
+	}
 	root := exec("sh")
 	root.RunAs = "admin"
 	noTimeout := exec("sh")
@@ -53,9 +60,11 @@ func TestRequestValidate(t *testing.T) {
 		"no argv":                 exec(),
 		"an empty command":        exec(""),
 		"NUL in argv":             exec("sh", "a\x00b"),
-		"a background terminal":   tty,
+		"input without a handle":  noHandle,
 		"rows without a terminal": rows,
+		"rows without cols":       halfSize,
 		"a bad env name":          badEnv,
+		"too large an env":        bigEnv,
 		"an unknown user":         root,
 		"no timeout":              noTimeout,
 		"a bad handle":            {Op: sandboxproto.OpExecOutput, Handle: "cmd-1"},

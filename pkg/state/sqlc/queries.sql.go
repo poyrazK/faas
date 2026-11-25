@@ -12190,13 +12190,16 @@ func (q *Queries) CountUnfinishedProjectEnvironmentCloneOperationsForProject(ctx
 }
 
 const countVerifiedAccountsCreatedSince = `-- name: CountVerifiedAccountsCreatedSince :one
-select count(*)::bigint from accounts
- where created_at >= $1::timestamptz and email_verified_at is not null
+select count(*)::bigint from accounts a
+ where a.created_at >= $1::timestamptz and a.email_verified_at is not null
+   and not exists (select 1 from unclaimed_accounts u where u.account_id = a.id and u.claimed_at is null)
 `
 
 // Accounts created at or after since that have verified their email
 // (ADR-20261104145353 amendment 1: the platform-wide daily sign-up cap counts
 // the accounts that can use a Free allowance). Read only on a sign-up attempt.
+// Unclaimed anonymous-deploy accounts have their own cap (ADR-20261124080000)
+// and count here only once a human claims them.
 func (q *Queries) CountVerifiedAccountsCreatedSince(ctx context.Context, db DBTX, since pgtype.Timestamptz) (int64, error) {
 	row := db.QueryRow(ctx, countVerifiedAccountsCreatedSince, since)
 	var column_1 int64

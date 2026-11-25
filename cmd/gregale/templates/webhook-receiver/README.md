@@ -77,8 +77,10 @@ gregale deploy --no-require-authn
 
 ```sh
 # Health probe — shows whether the secret is configured and what
-# paths are allowed.
-curl https://<slug>.gregale.app/healthz
+# paths are allowed. Gregale's edge answers a public GET /healthz itself
+# ({"status":"ok","source":"edge"}) without waking the app, so read the
+# app's own answer with an owner-authorized check of the live deployment:
+gregale release verify <deployment-id> --app <slug> --path /healthz
 
 # Unauthenticated POST when WEBHOOK_SECRET is unset:
 curl -X POST -H 'content-type: application/json' \

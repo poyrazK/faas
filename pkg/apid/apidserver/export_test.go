@@ -41,6 +41,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/billingruns"
 	"github.com/onebox-faas/faas/pkg/apid/billingsync"
+	"github.com/onebox-faas/faas/pkg/apid/claim"
 	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
 	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
 	"github.com/onebox-faas/faas/pkg/apid/consumercredits"
@@ -60,6 +61,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/tenantplans"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/environmentgitops"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/flags"
@@ -897,6 +899,21 @@ var UsageDailyRowsForMonth = usageDailyRowsForMonth
 var UuidFromPgtype = uuidFromPgtype
 var V1AuthJSONRequest = v1AuthJSONRequest
 var V1AuthTestHarness = v1AuthTestHarness
+
+// V1AuthPGTestHarness is V1AuthTestHarness on a migrated Postgres store.
+func V1AuthPGTestHarness(t *testing.T) (*server, *recordingMailer, state.Store) {
+	t.Helper()
+	pool := pgtest.OpenMigrated(t)
+	if err := db.MigrateUp(context.Background(), pool); err != nil {
+		t.Fatalf("MigrateUp: %v", err)
+	}
+	store := state.NewPgStore(pool)
+	mailer := &recordingMailer{}
+	srv := newServerWithDeps(store, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		"example.com", noopNotifier{}, "", mailer, nil, nil, nil, 0, "")
+	return srv, mailer, store
+}
+
 var ValidDataUpstreamHistoryRegion = validDataUpstreamHistoryRegion
 var ValidProjectBranch = validProjectBranch
 var ValidProjectRepoFullName = validProjectRepoFullName
@@ -2729,6 +2746,9 @@ func AvailabilityQueryExcluding(appIDs []string) string { return availabilityQue
 // StatusAPIAvailabilityQuery exposes statusAPIAvailabilityQuery.
 const StatusAPIAvailabilityQuery = statusAPIAvailabilityQuery
 
+// Claim exposes the claimable-deploys service (ADR-20261124080000).
+func (r *server) Claim() *claim.Service { return &r.claim }
+
 // StageSourceDeploymentManifest exposes the source deploy manifest staging
 // (ADR-20261124090000 amendment 1 applies access there).
 func (r *server) StageSourceDeploymentManifest(p0 *http.Request, p1 state.Account, p2 state.App, p3 *gregalemanifest.Manifest, p4 state.Deployment, p5 bool) (sourceRefManifestStaged, *api.Problem) {
@@ -2737,3 +2757,10 @@ func (r *server) StageSourceDeploymentManifest(p0 *http.Request, p1 state.Accoun
 
 // SourceRefManifestStaged is the staged manifest a rollback undoes.
 type SourceRefManifestStaged = sourceRefManifestStaged
+
+// PlanWorkloadReleaseCommand exposes the dry-run's release command for a
+// project workload, read from the scan directory.
+func PlanWorkloadReleaseCommand(scanDir string, workloads []reposcan.Workload, workload reposcan.Workload, releasePhaseOff bool) (string, string, string) {
+	s := &server{releasePhaseOff: releasePhaseOff}
+	return s.planWorkloadReleaseCommand(scanDir, workloads, workload)
+}

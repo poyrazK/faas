@@ -66,6 +66,14 @@ var templateRequiredBindings = map[string]string{
 	"data-api-starter": "MIGRATION_DATABASE_URL",
 }
 
+// templateRequiredBuckets are the managed bucket a template needs before its
+// first start, as the command that attaches it. Without the bucket the app
+// exits on startup_unavailable (prod hunt r41).
+var templateRequiredBuckets = map[string]string{
+	"object-storage-node":   "gregale add bucket assets --app <slug> --permission read_write --prefix GREGALE_S3_ASSETS",
+	"object-storage-python": "gregale add bucket assets --app <slug> --permission read_write --prefix GREGALE_S3_ASSETS",
+}
+
 // manifestCapabilityIndex maps the catalog's manifest settings to the
 // capability that owns each, as apid's capability gate does.
 type manifestCapabilityIndex struct {

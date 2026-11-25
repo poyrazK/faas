@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/claim"
 	"github.com/onebox-faas/faas/pkg/auth/middleware"
 )
 
@@ -55,6 +56,11 @@ func reservedKeyLabelProblem(label string) *api.Problem {
 	case signInKeyLabel, cliLoginKeyLabel, api.MCPLoginKeyLabel:
 		return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Reserved key label",
 			"the labels "+signInKeyLabel+", "+cliLoginKeyLabel+" and "+api.MCPLoginKeyLabel+" are reserved for keys an interactive sign-in creates; choose another label")
+	case claim.KeyLabel:
+		// The claim revokes keys with this label and refuses them on a
+		// claimed account (ADR-20261124080000), so no customer key may take it.
+		return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Reserved key label",
+			"the label "+claim.KeyLabel+" is reserved for the key an anonymous deploy creates; choose another label")
 	}
 	return nil
 }

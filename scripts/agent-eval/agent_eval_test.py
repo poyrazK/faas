@@ -282,6 +282,70 @@ class CheckTests(unittest.TestCase):
         self.assertTrue(results[0]["ok"], results)
         self.assertEqual(g.verified, ["d1"])
 
+    def test_vote_counted_casts_a_vote_and_reads_it_back(self):
+        # rc.380: both pages answered 200 while every vote POST returned 500
+        # and the votes table never existed; the grader passed it.
+        class VotingApps:
+            def __init__(self, post_status=200, counts=True, scores=None, moved=0, result_status=200):
+                self.scores = scores if scores is not None else {"a": 3, "b": 1}
+                self.post_status, self.counts, self.moved, self.result_status = post_status, counts, moved, result_status
+                self.calls, self.sessions = [], 0
+
+            def __call__(self, method, url, data=None, headers=None, timeout=30):
+                self.calls.append((method, url, data, (headers or {}).get("Cookie", "")))
+                if url.startswith("https://vote.example/"):
+                    if method == "POST" and self.post_status == 200 and self.counts:
+                        option = data.decode().split("=")[1]
+                        self.scores[option] = self.scores.get(option, 0) + 1
+                    return self.post_status, "<html>" if self.post_status == 200 else "Internal Server Error"
+                if self.result_status != 200:
+                    return self.result_status, "Unauthorized"
+                if url == "https://result.example/socket.io/?EIO=4&transport=polling":
+                    self.sessions += 1
+                    return 200, '0{"sid":"s/%d","pingInterval":25000}' % self.sessions
+                if self.moved:
+                    self.moved -= 1
+                    return 400, '{"code":1,"message":"Session ID unknown"}'
+                if method == "POST":
+                    return 200, "ok"
+                payload = json.dumps(json.dumps(self.scores)) if isinstance(self.scores, dict) else json.dumps(self.scores)
+                return 200, '40{"sid":"x"}\x1e2\x1e42["message",{"text":"Welcome!"}]\x1e42["scores",' + payload + "]"
+
+        class Urls:
+            def get(self, path):
+                return {"/v1/apps/vote": {"canonical_url": "https://vote.example"},
+                        "/v1/apps/vote-result": {"canonical_url": "https://result.example/"},
+                        "/v1/apps/vote-worker": {}}[path]
+
+        task = {"checks": [{"kind": "vote_counted"}]}
+        # Every slug carries the project's "vote" prefix: names are anchored,
+        # so the result app is never taken for the vote app.
+        created = {"apps": ["vote-result", "vote-worker", "vote"]}
+
+        def grade(apps, created=created):
+            (result,) = ev.run_checks(task, None, Path("."), "", Urls(), created=created, http=apps, http_deadline_s=0)
+            return result
+
+        apps = VotingApps()
+        self.assertEqual(grade(apps), {"kind": "vote_counted", "ok": True, "detail": "b: 1 -> 2"})
+        post = [c for c in apps.calls if c[0] == "POST" and c[1].startswith("https://vote.example")]
+        self.assertEqual(post[0][2], b"vote=b", "votes for the option with fewer votes")
+        self.assertRegex(post[0][3], r"^voter_id=agent-eval-[0-9a-f]{16}$")
+        closes = [c for c in apps.calls if c[2] == b"41\x1e1"]
+        self.assertEqual(len(closes), apps.sessions, "every Socket.IO session is closed")
+        self.assertIn(("POST", "https://result.example/socket.io/?EIO=4&transport=polling&sid=s/1", b"3", ""), apps.calls)
+
+        moved = VotingApps(moved=1)
+        self.assertTrue(grade(moved)["ok"], "a session that lands on another instance starts again")
+        self.assertEqual(grade(VotingApps(post_status=500))["detail"][:22], "vote vote POST 500: 'I")
+        self.assertIn("requires sign-in", grade(VotingApps(post_status=401))["detail"])
+        self.assertIn("requires sign-in", grade(VotingApps(result_status=401))["detail"])
+        self.assertEqual(grade(VotingApps(counts=False))["detail"], "vote accepted but not counted: b stayed 1")
+        malformed = grade(VotingApps(scores=[1, 2]))
+        self.assertFalse(malformed["ok"])
+        self.assertIn("not a count per option", malformed["detail"])
+        self.assertFalse(grade(VotingApps(), created={"apps": ["vote", "vote-worker"]})["ok"])
+
     def test_live_worker_counts_as_serving(self):
         # Health reads "unsupported" for a worker pool unless app_health_workers
         # is on; a live worker serves its queue (2026-11-24 voting-app rerun).

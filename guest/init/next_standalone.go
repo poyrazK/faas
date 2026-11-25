@@ -54,7 +54,7 @@ func stampNextStandalonePlan(planPath, workdir string, capMB int) error {
 	if err != nil {
 		return fmt.Errorf("read Railpack plan: %w", err)
 	}
-	stamped, err := sharedruntime.StampNextStandalone(plan, pkg, capMB)
+	stamped, err := sharedruntime.StampNextStandalone(plan, pkg, capMB, ownSize())
 	if err != nil {
 		return fmt.Errorf("stamp Railpack plan: %w", err)
 	}
@@ -78,6 +78,16 @@ func stampNextStandalonePlan(planPath, workdir string, capMB int) error {
 	}
 	fmt.Fprintf(os.Stderr, "Next.js: building with output \"standalone\"; the app ships only its server's files if the whole app is over its plan's %d MB app layer\n", capMB)
 	return nil
+}
+
+// ownSize is this guest-init's size, which every app layer carries beside
+// /app; 0 when it cannot be read.
+func ownSize() int64 {
+	info, err := os.Stat("/proc/self/exe")
+	if err != nil || !info.Mode().IsRegular() {
+		return 0
+	}
+	return info.Size()
 }
 
 func readSmallRegularFile(path string, maxBytes int64) ([]byte, error) {

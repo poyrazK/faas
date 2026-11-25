@@ -24,11 +24,15 @@ A production release is one to the default scope or to the project's
 production traffic, so the policy gates both. Other environments and scopes
 are not gated.
 
+### How a release waits
+
 The release starts its canary as usual. At the stage the policy names
 (`--after-stage`, default 1), it waits. `gregale deploy` shows the wait. The
 canary still judges the waiting stage, so a regression aborts the release
 even while it waits. Once enough people approve, the rollout continues on its
 next step.
+
+### Releases that run a migration
 
 A release with a release command (a migration) waits earlier: after its
 build, before the command runs, because a migration changes production data
@@ -54,6 +58,8 @@ waits; only a newer release that can still ship does.
 The app's first production release has no canary to wait in, so its command
 runs at once.
 
+### Approve or reject a release
+
 A person approves on the release's approval page in the dashboard
 (`/dashboard/releases/<deployment>/approval`, linked from the notification),
 signed in (with MFA when the account uses it). An API key, the CLI's login token or a CI job cannot
@@ -61,12 +67,16 @@ approve: `gregale release approve` answers `403
 release_approval_session_required` with the page's link. Rejecting works
 from anywhere, because stopping a release needs no second person.
 
+### Keep the policy in force
+
 The policy stays in force until an owner or admin removes it. Changing or
 removing it needs the admin scope (signed in, the CLI's login or an admin
 key), so a CI key with `deploy:write` cannot switch it off; the same holds for
 deleting a release gate. An app with a policy cannot leave request mode
 (`409`): a service, worker or job has no canary stage to wait in, so its
 releases would ship unapproved. Remove the policy first.
+
+### How waiting ends
 
 Waiting ends in one of three ways:
 - **Enough approvals:** the rollout continues.
@@ -80,7 +90,8 @@ While a release waits, nothing gives it more traffic: not `canary advance`,
 `rollouts recover --action promote`, `traffic set`, or
 `POST /v1/deployments/{id}/promote`. Rollbacks and aborts are never held.
 
-Who may approve:
+### Who may approve
+
 - **Approvers:** with `--approvers admin` (the default), organization owners
   and admins; `developer` adds developers.
 - **The deployer:** their own approval does not count unless you pass
@@ -92,6 +103,8 @@ Who may approve:
 - **Once approved:** a release that has its approvals is decided. Further
   approvals and rejections are refused; to stop it, abort its rollout.
 - **Changing the policy:** only owners and admins can change or remove it.
+
+### Notify approvers
 
 Tell people when a release waits, is approved or rejected, or times out:
 
@@ -112,6 +125,8 @@ in, Gregale asks you to sign in first. The decision is made on that page,
 under your own Gregale account, so your organization role, MFA and the
 self-approval rule apply exactly as in the CLI. The buttons grant nothing by
 themselves.
+
+### Releases with no canary to wait in
 
 Releases need a canary to wait in. While the policy is on, a production
 release with `--rollout immediate` or `--traffic-percent` is refused with

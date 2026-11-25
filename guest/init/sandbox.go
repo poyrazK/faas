@@ -24,6 +24,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -108,6 +109,9 @@ type sandboxServer struct {
 	templateStarted atomic.Bool
 	// startLog is where the start command's output goes.
 	startLog string
+	// env is the session's environment (session_env), in memory only.
+	envMu sync.Mutex
+	env   map[string]string
 }
 
 func newSandboxServer(workspace, home string, owner int, runner sandboxRunner, log *slog.Logger) *sandboxServer {
@@ -147,6 +151,10 @@ func (s *sandboxServer) handle(ctx context.Context, req sandboxproto.Request, ca
 		return s.commands.output(req)
 	case sandboxproto.OpExecKill:
 		return s.commands.kill(req)
+	case sandboxproto.OpExecInput:
+		return s.commands.input(req)
+	case sandboxproto.OpSessionEnv:
+		return s.setSessionEnv(req.Env), nil
 	case sandboxproto.OpArchiveCreate:
 		return s.archiveCreate(req, call)
 	case sandboxproto.OpArchiveExtract:

@@ -1,6 +1,7 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/flagedge"
 	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -196,8 +198,47 @@ func (s *server) updateFeatureFlags(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrValidation("expected_version is required"))
 		return
 	}
+	if !s.edgeRoutesAllowed(r, acct, store, scope, req.Config) {
+		writeEdgeFlagsUnavailable(w)
+		return
+	}
 	s.publishFeatureFlags(w, r, store, state.FeatureFlagUpdate{Scope: scope, ExpectedVersion: *req.ExpectedVersion, Config: req.Config, Actor: acct.ID})
 }
+
+// edgeRoutesAllowed refuses a publish that adds or changes edge routes while
+// the edge_flags platform flag is off (ADR-20261124212701). The flag is
+// decided for the project's owner, the subject the gateway routes for, not
+// the member who publishes. An edit that leaves existing routes as they are
+// publishes, so turning the flag off never blocks kills or rollouts.
+func (s *server) edgeRoutesAllowed(r *http.Request, acct state.Account, store state.FeatureFlagStore, scope state.FeatureFlagScope, next flags.Config) bool {
+	released := flags.HasEdge(next) && s.platformFlagFor(platformflags.EdgeFlags, s.edgeFlagsSubject(r, acct, scope))
+	return flagedge.PublishAllowed(r.Context(), released, next, func(ctx context.Context) (flags.Config, error) {
+		current, err := store.GetFeatureFlags(ctx, scope, 0)
+		return current.Config, err
+	})
+}
+
+// edgeFlagsSubject is the project owner's account and plan, as gatewayd
+// sees them on the app; the acting account when the owner cannot be read.
+func (s *server) edgeFlagsSubject(r *http.Request, acct state.Account, scope state.FeatureFlagScope) platformflags.Subject {
+	owner := acct
+	if !sameAccountID(acct.ID, scope.AccountID) {
+		if loaded, err := s.store.AccountByID(r.Context(), scope.AccountID); err == nil {
+			owner = loaded
+		}
+	}
+	return platformflags.Subject{AccountID: owner.ID, Plan: string(owner.Plan)}
+}
+
+func writeEdgeFlagsUnavailable(w http.ResponseWriter) {
+	api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Edge flags unavailable", "edge flag routing is not enabled for this account").
+		WithHint("An operator releases edge flag routing account by account. Your credentials are not the cause."))
+}
+
+func sameAccountID(a, b string) bool {
+	return strings.ReplaceAll(a, "-", "") == strings.ReplaceAll(b, "-", "")
+}
+
 func (s *server) rollbackFeatureFlags(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	scope, store, ok := s.featureFlagWriteScope(w, r, acct)
 	if !ok {
@@ -210,6 +251,11 @@ func (s *server) rollbackFeatureFlags(w http.ResponseWriter, r *http.Request, ac
 	}
 	if req.ExpectedVersion == nil || req.Version < 1 {
 		api.WriteProblem(w, api.ErrValidation("expected_version and positive version are required"))
+		return
+	}
+	// Restoring a version republishes its edge routes: the same gate applies.
+	if restored, err := store.GetFeatureFlags(r.Context(), scope, req.Version); err == nil && !s.edgeRoutesAllowed(r, acct, store, scope, restored.Config) {
+		writeEdgeFlagsUnavailable(w)
 		return
 	}
 	s.publishFeatureFlags(w, r, store, state.FeatureFlagUpdate{Scope: scope, ExpectedVersion: *req.ExpectedVersion, RestoreVersion: req.Version, Actor: acct.ID})
@@ -353,7 +399,10 @@ func (s *server) runtimeFeatureFlags(w http.ResponseWriter, r *http.Request) {
 // without kill-v1: it would ignore "killed" and serve the configured default,
 // while a missing flag makes it serve the application fallback, which is
 // what a kill means (ADR 20261114150000 §3).
+//
+// Edge routes are the gateway's (ADR-20261124212701): no SDK reads them.
 func runtimeBundleForSDK(b flags.Bundle, capabilities string) flags.Bundle {
+	b.Config = flags.WithoutEdge(b.Config)
 	if supportsFlagCapability(capabilities, api.FlagSDKKillCapability) || len(flags.KilledKeys(b.Config)) == 0 {
 		return b
 	}

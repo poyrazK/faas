@@ -94,6 +94,11 @@ const (
 	// experiments and no raw event is stored.
 	ProductAnalytics = "product_analytics"
 
+	// EdgeFlags releases gateway-evaluated variant routing of customer flags
+	// (ADR-20261124212701): apid accepts edge routes, the gateway applies
+	// them. Off, the gateway serves requests unchanged.
+	EdgeFlags = "edge_flags"
+
 	// SavedInsights releases saved insights, their CSV/JSON export,
 	// scheduled digests and threshold alerts (ADR-20261122190000). It
 	// needs ProductAnalytics as well.
@@ -463,6 +468,16 @@ var catalog = []Spec{
 		Attributes:   []Attribute{AttributePlan, AttributeOrg},
 		HealthRoutes: []string{"GET /v1/projects/{slug}/environments/{environment}/insights/events"},
 		RetireBy:     "2027-06-30",
+	},
+	{
+		Key:   EdgeFlags,
+		Label: "Edge flag routing",
+		Description: "Let a variant flag rewrite request paths at the gateway, so apps without an SDK serve its variants; anonymous visitors " +
+			"keep their bucket in a first-party cookie. Off, apid refuses edge routes and the gateway serves every request unchanged.",
+		ADR:        "ADR-20261124212701",
+		Consumers:  []string{"apid", "gatewayd-internal"},
+		Attributes: []Attribute{AttributePlan},
+		RetireBy:   "2027-06-30",
 	},
 	{
 		Key:        SavedInsights,

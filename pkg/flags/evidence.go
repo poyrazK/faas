@@ -69,3 +69,35 @@ func CanonicalEvidence(raw []byte) (string, error) {
 	out, err := json.Marshal(rows)
 	return string(out), err
 }
+
+// MergeEvidence adds the gateway's own decisions (edge routing,
+// ADR-20261124212701) to the canonical evidence the application reported. The
+// application's evidence for a flag wins: it reports what the code did. The
+// result is canonical; decisions past the evidence bound are dropped.
+func MergeEvidence(canonical string, extra []Evidence) (string, error) {
+	var rows []Evidence
+	if canonical != "" {
+		if err := json.Unmarshal([]byte(canonical), &rows); err != nil {
+			return "", fmt.Errorf("merge flag evidence: %w", err)
+		}
+	}
+	seen := map[string]bool{}
+	for _, r := range rows {
+		seen[r.Flag] = true
+	}
+	for _, e := range extra {
+		if seen[e.Flag] || len(rows) >= api.FlagsMaxEvidencePerRequest {
+			continue
+		}
+		seen[e.Flag] = true
+		rows = append(rows, e)
+	}
+	if rows == nil {
+		return "[]", nil
+	}
+	raw, err := json.Marshal(rows)
+	if err != nil {
+		return "", err
+	}
+	return CanonicalEvidence(raw)
+}

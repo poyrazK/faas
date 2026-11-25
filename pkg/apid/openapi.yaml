@@ -16157,6 +16157,62 @@ paths:
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/anonymous/sessions:
+    post:
+      tags: [account]
+      operationId: createAnonymousSession
+      summary: Deploy without an account; a person claims the app later.
+      description: |
+        For agents working for someone without a Gregale account. Needs no
+        credential. Creates a Free account limited to deploying and reading
+        its apps, and returns its deploy key and a claim link. A person who
+        opens the link and confirms an email address owns the account and
+        its apps; the key then stops working. Unclaimed accounts are deleted
+        after the claim window (72 hours by default). Custom domains,
+        databases, buckets, cron, API keys, organizations and billing answer
+        `claim_required` until the claim. New sessions are limited per
+        network and across the platform (`anonymous_deploys_unavailable`).
+        Answers 404 while the feature is not offered.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AnonymousSessionRequest' }
+      responses:
+        '201':
+          description: Session created. The key is returned once.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AnonymousSessionResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429':
+          description: 'Anonymous deploys are not available from this network now, or the platform limit is reached (`anonymous_deploys_unavailable`). Sign up and deploy again.'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
+  /v1/account/claim-link:
+    post:
+      tags: [account]
+      operationId: createClaimLink
+      summary: Get a fresh claim link for an account deployed without one.
+      description: |
+        Only for the key of an anonymous deploy's account. Returns a new
+        claim link; earlier links stop working.
+      responses:
+        '200':
+          description: The new claim link.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClaimLinkResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: The account is a regular account with nothing to claim.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '410':
+          description: The claim window ended.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
   /v1/account/sign-in-methods:
     get:
       tags: [account]
@@ -93256,6 +93312,33 @@ components:
         seed: { type: string, maxLength: 128, description: Server-supplied stable allocation seed; omit for a new flag. }
         rules: { type: array, maxItems: 32, items: { $ref: '#/components/schemas/FlagRule' } }
         variants: { type: array, minItems: 2, maxItems: 16, items: { $ref: '#/components/schemas/FlagVariant' }, description: Required for variant flags; weights must total 10000 basis points. }
+        edge: { $ref: '#/components/schemas/FlagEdge' }
+    FlagEdge:
+      description: "Edge routing of a variant flag: the gateway evaluates the flag for GET and HEAD requests to a routed path and rewrites the path for the decided variant, so apps without an SDK serve it. Verified customers bucket as in an SDK; anonymous visitors by a first-party cookie. Needs the edge_flags platform flag to add or change; runtime bundles leave it out."
+      type: object
+      additionalProperties: false
+      required: [routes]
+      properties:
+        routes: { type: array, minItems: 1, maxItems: 8, items: { $ref: '#/components/schemas/FlagEdgeRoute' } }
+    FlagEdgeRoute:
+      description: "One routed path: /page matches exactly, /prefix/* matches the prefix and everything under it. Variants without an action serve the request unchanged."
+      type: object
+      additionalProperties: false
+      required: [path, variants]
+      properties:
+        path: { type: string, maxLength: 256, pattern: '^/' }
+        variants:
+          type: object
+          minProperties: 1
+          description: Variant key to the action requests decided as that variant get.
+          additionalProperties: { $ref: '#/components/schemas/FlagEdgeAction' }
+    FlagEdgeAction:
+      description: What a variant does to a routed request.
+      type: object
+      additionalProperties: false
+      required: [rewrite]
+      properties:
+        rewrite: { type: string, maxLength: 256, pattern: '^/', description: "The path served instead: the whole path for an exact route, the prefix for a /prefix/* route." }
     FlagsConfig:
       description: Complete atomic environment configuration; omitted flags are removed from current evaluation.
       type: object
@@ -123856,6 +123939,12 @@ components:
             type: string
             enum: [service_started, service_healthy]
           description: "Explicit Compose dependency conditions. service_started retains admission ordering; service_healthy gates release on the captured same-project, same-environment dependency deployment."
+        release_command:
+          type: string
+          description: "Command the service runs once before each of its releases goes live (shell string, or exec-form argv joined by spaces). Omitted when it declares none."
+        release_command_source:
+          type: string
+          description: "Where release_command is declared: a Compose service the workload waits for with service_completed_successfully, a Procfile release: process, or gregale.yaml release.command."
         service_binding_policy:
           $ref: '#/components/schemas/ServiceBindingPolicy'
           description: "Effective policy selected by Compose `x-gregale-service-policy` (`project`, `declared` or `account`). New project workloads default to `project`; existing workloads retain their persisted policy when the extension is omitted."
@@ -134457,6 +134546,39 @@ components:
       required: [display_name]
       properties:
         display_name: { type: string, maxLength: 80, description: "Empty clears the display name." }
+    AnonymousSessionRequest:
+      description: "Body for `POST /v1/anonymous/sessions`."
+      type: object
+      required: [accept_terms]
+      properties:
+        client: { type: string, maxLength: 80, description: "The tool creating the session, such as gregale-cli." }
+        accept_terms: { type: boolean, description: "Must be true: deploying without an account accepts the Terms of Service." }
+    AnonymousSessionResponse:
+      description: "An anonymous deploy session."
+      type: object
+      required: [account_id, api_key, claim_url, expires_at, limits]
+      properties:
+        account_id: { type: string, format: uuid }
+        api_key: { type: string, description: "Deploy key, returned once. Use it as a bearer token." }
+        claim_url: { type: string, format: uri, description: "Give this link to the person the agent works for." }
+        expires_at: { type: string, format: date-time, description: "The account and its apps are deleted after this unless claimed." }
+        limits: { $ref: '#/components/schemas/UnclaimedLimits' }
+    UnclaimedLimits:
+      description: "What an account deployed without an owner may use until it is claimed."
+      type: object
+      required: [plan, max_apps, max_ram_mb, blocked]
+      properties:
+        plan: { type: string }
+        max_apps: { type: integer }
+        max_ram_mb: { type: integer }
+        blocked: { type: array, items: { type: string } }
+    ClaimLinkResponse:
+      description: "A fresh claim link."
+      type: object
+      required: [claim_url, expires_at]
+      properties:
+        claim_url: { type: string, format: uri }
+        expires_at: { type: string, format: date-time }
     AccountEmailChangeRequest:
       description: "Body for `POST /v1/account/email`."
       type: object

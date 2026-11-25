@@ -2,6 +2,8 @@
 
 Gregale bills the account that owns an app. Plan prices and included capacity are generated from the platform limits table in [Plans and pricing](plans.md).
 
+For a step-by-step guide to the spend cap, budgets, alerts and cost reports, see [Cost controls](cost-controls.md).
+
 ```bash
 gregale billing usage --month 2026-09
 gregale billing status
