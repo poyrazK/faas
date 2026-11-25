@@ -106,6 +106,10 @@ class Problem:
     """Provider-neutral hosted checkout URL on a `payment_required`
     402 when a paid plan upgrade requires a new subscription.
     """
+    upgrade_url: str | Unset = UNSET
+    """On a `consumer_plan_limit_exceeded` 429, the API's hosted page
+    where the consumer moves to another plan.
+    """
     billing_portal_url: str | Unset = UNSET
     paddle_checkout_url: str | Unset = UNSET
     """Legacy Paddle-hosted checkout URL on a `payment_required`
@@ -293,6 +297,8 @@ class Problem:
 
         checkout_url = self.checkout_url
 
+        upgrade_url = self.upgrade_url
+
         billing_portal_url = self.billing_portal_url
 
         paddle_checkout_url = self.paddle_checkout_url
@@ -399,6 +405,8 @@ class Problem:
             field_dict["retry_after_seconds"] = retry_after_seconds
         if checkout_url is not UNSET:
             field_dict["checkout_url"] = checkout_url
+        if upgrade_url is not UNSET:
+            field_dict["upgrade_url"] = upgrade_url
         if billing_portal_url is not UNSET:
             field_dict["billing_portal_url"] = billing_portal_url
         if paddle_checkout_url is not UNSET:
@@ -576,6 +584,8 @@ class Problem:
 
         checkout_url = d.pop("checkout_url", UNSET)
 
+        upgrade_url = d.pop("upgrade_url", UNSET)
+
         billing_portal_url = d.pop("billing_portal_url", UNSET)
 
         paddle_checkout_url = d.pop("paddle_checkout_url", UNSET)
@@ -653,6 +663,7 @@ class Problem:
             docs_url=docs_url,
             retry_after_seconds=retry_after_seconds,
             checkout_url=checkout_url,
+            upgrade_url=upgrade_url,
             billing_portal_url=billing_portal_url,
             paddle_checkout_url=paddle_checkout_url,
             tx_id=tx_id,

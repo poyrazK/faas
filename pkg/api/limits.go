@@ -1957,6 +1957,10 @@ const (
 	ConsumerSignupCheckoutTTL = 23 * time.Hour
 	// Pending sign-ups are deleted this long after they expire.
 	ConsumerSignupRetention = 7 * 24 * time.Hour
+	// An upgrade link opens the upgrade page this long (ADR-20261124094745);
+	// the gateway reuses one for a consumer for ConsumerUpgradeLinkCacheTTL.
+	ConsumerUpgradeLinkTTL      = 24 * time.Hour
+	ConsumerUpgradeLinkCacheTTL = 10 * time.Minute
 	// The owner's sign-up list shows at most this many.
 	ConsumerSignupListMax = 100
 )
@@ -3094,6 +3098,21 @@ const (
 	FlagsMaxOutcomeGroups      = 100
 	FlagsMaxCursorBytes        = 2048
 	FlagsMaxConfigVersion      = int64(9007199254740991)
+)
+
+// Flag notification bounds (ADR-20261125085913): experiment decisions and
+// problems, weekly lifecycle digests and flag expiries sent to notification
+// channels.
+const (
+	// FlagsMaxNotificationChannels bounds the channels an environment or an
+	// experiment notifies.
+	FlagsMaxNotificationChannels = 5
+	// FlagsNotificationMaxAttempts is how many times meterd tries to deliver
+	// a notification before giving up.
+	FlagsNotificationMaxAttempts = 6
+	// FlagsNotificationRetentionDays is how long settled notifications are
+	// kept, and how long an undelivered one may wait to be sent.
+	FlagsNotificationRetentionDays = 30
 )
 
 // Edge flag routing bounds (ADR-20261124212701): variant flags the gateway

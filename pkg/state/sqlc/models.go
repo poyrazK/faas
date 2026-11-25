@@ -874,6 +874,19 @@ type ApiConsumerCreditPurchase struct {
 	NextCheckAt      pgtype.Timestamptz
 }
 
+// OAuth identities (issuer + subject) of an app's API consumers: MCP oauth-proxy sign-ins enroll as consumers (ADR-20261124094745).
+type ApiConsumerIdentity struct {
+	ID         pgtype.UUID
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+	ConsumerID pgtype.UUID
+	Issuer     string
+	Subject    string
+	Email      string
+	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+}
+
 // Units an app reported per consumer, meter and UTC minute for billable requests (ADR-1318).
 type ApiConsumerMeterUsageMinute struct {
 	AccountID   pgtype.UUID
@@ -1016,6 +1029,10 @@ type ApiConsumerSignupSetting struct {
 	CustomerClosing     bool
 	CreatedAt           pgtype.Timestamptz
 	UpdatedAt           pgtype.Timestamptz
+	// Callers signed in through the app's MCP oauth-proxy issuer become consumers on free_plan_id (ADR-20261124094745).
+	OauthConsumers bool
+	// Offered plan that charges nothing: joining it skips Checkout (ADR-20261124094745).
+	FreePlanID pgtype.UUID
 }
 
 // Monthly spend cap per API consumer; apid checks the month to date and the gateway denies capped consumers (ADR-1306).
@@ -7092,6 +7109,7 @@ type FlagExperiment struct {
 	BanditWeightedAt   pgtype.Timestamptz
 	DenominatorEvent   string
 	Percentile         int32
+	NotifyChannelIds   []pgtype.UUID
 }
 
 type FlagExperimentLatency struct {
@@ -7117,6 +7135,42 @@ type FlagExperimentUnit struct {
 	UnitCustomerID  pgtype.UUID
 	SubjectHash     []byte
 	DenSum          int64
+}
+
+// Outbox of flag notifications queued by apid and delivered by meterd (ADR-20261125085913).
+type FlagNotification struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	OrgID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+	Kind          string
+	Key           string
+	Subject       string
+	Summary       string
+	ChannelIds    []pgtype.UUID
+	Status        string
+	Attempts      int32
+	NextAttemptAt pgtype.Timestamptz
+	LastError     string
+	CreatedAt     pgtype.Timestamptz
+	SettledAt     pgtype.Timestamptz
+}
+
+// Every flag notification key queued, so a swept notification is never queued again (ADR-20261125085913).
+type FlagNotificationKey struct {
+	Key           string
+	EnvironmentID pgtype.UUID
+	Kind          string
+	CreatedAt     pgtype.Timestamptz
+}
+
+// Notification channels for an environment's experiments and flag lifecycle (ADR-20261125085913).
+type FlagNotificationSetting struct {
+	EnvironmentID pgtype.UUID
+	AccountID     pgtype.UUID
+	ChannelIds    []pgtype.UUID
+	UpdatedBy     string
+	UpdatedAt     pgtype.Timestamptz
 }
 
 // Singleton non-secret secretbox probe proving every admitted node shares the fleet.age unseal domain.

@@ -2678,6 +2678,20 @@
       "always_on": true
     },
     {
+      "id": "flag-notifications",
+      "name": "Flag notifications",
+      "category": "delivery",
+      "description": "Send experiment decisions and problems, a weekly digest of flags that need a decision and flag expiries to notification channels.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261125085913-flag-notifications",
+      "acceptance_test": "pkg/flagnotify/flagnotify_test.go::TestRunner",
+      "parent": "feature-flags",
+      "routes": [
+        "/v1/projects/{}/environments/{}/flags/notifications"
+      ]
+    },
+    {
       "id": "framework-profiles",
       "name": "Framework profiles",
       "category": "delivery",

@@ -547,6 +547,9 @@ type Querier interface {
 	// lapsed (held NULL). The lease is the database clock's, so replicas'
 	// clocks do not matter.
 	ClaimDatabaseVMUpgrade(ctx context.Context, db DBTX, arg ClaimDatabaseVMUpgradeParams) (pgtype.Timestamptz, error)
+	// Leases pending notifications whose next attempt is due, oldest first,
+	// counting the attempt, with the account's plan.
+	ClaimDueFlagNotifications(ctx context.Context, db DBTX, arg ClaimDueFlagNotificationsParams) ([]ClaimDueFlagNotificationsRow, error)
 	ClaimDueLegacyWorkflowRun(ctx context.Context, db DBTX, arg ClaimDueLegacyWorkflowRunParams) (WorkflowRun, error)
 	// Claim due schedules for one firer. A held lease is skipped until it lapses,
 	// so a firer that dies mid-fire hands the row to the next tick.
@@ -1464,6 +1467,9 @@ type Querier interface {
 	EnqueueEnvironmentGitNotification(ctx context.Context, db DBTX, arg EnqueueEnvironmentGitNotificationParams) error
 	EnqueueEnvironmentGitOps(ctx context.Context, db DBTX, arg EnqueueEnvironmentGitOpsParams) error
 	EnqueueExclusiveWebhookEffect(ctx context.Context, db DBTX, arg EnqueueExclusiveWebhookEffectParams) error
+	// Queues a notification unless its key was ever queued: the key outlives
+	// the outbox row, so a swept notification is not sent again.
+	EnqueueFlagNotification(ctx context.Context, db DBTX, arg EnqueueFlagNotificationParams) (int64, error)
 	// Managed-work capture takes this action-run lock in its trigger; acquire it before replay-parent row locks.
 	EnqueueInvocationRow(ctx context.Context, db DBTX, arg EnqueueInvocationRowParams) (Invocation, error)
 	EnqueueOperatorColdBootOutcome(ctx context.Context, db DBTX, arg EnqueueOperatorColdBootOutcomeParams) (int64, error)
@@ -2474,6 +2480,9 @@ type Querier interface {
 	// metric, at most max_rows per variant.
 	FlagExperimentUnitValues(ctx context.Context, db DBTX, arg FlagExperimentUnitValuesParams) ([]FlagExperimentUnitValuesRow, error)
 	FlagExperimentUnitsWithoutPreValue(ctx context.Context, db DBTX, arg FlagExperimentUnitsWithoutPreValueParams) ([]FlagExperimentUnitsWithoutPreValueRow, error)
+	// The account's notification channels among ids; a deleted channel is
+	// skipped.
+	FlagNotificationChannels(ctx context.Context, db DBTX, arg FlagNotificationChannelsParams) ([]NotificationChannel, error)
 	// A ratio metric's denominator: like FoldFlagExperimentValues into den_sum.
 	FoldFlagExperimentDenominators(ctx context.Context, db DBTX, arg FoldFlagExperimentDenominatorsParams) (int64, error)
 	// Adds the metric event's values of closed days (from_day..through_day) to
@@ -2626,6 +2635,8 @@ type Querier interface {
 	GetFeatureFlagVersion(ctx context.Context, db DBTX, arg GetFeatureFlagVersionParams) (FeatureFlagVersion, error)
 	GetFirstBuildExportPublicationForClaim(ctx context.Context, db DBTX, arg GetFirstBuildExportPublicationForClaimParams) (BuildExportPublication, error)
 	GetFlagExperiment(ctx context.Context, db DBTX, arg GetFlagExperimentParams) (FlagExperiment, error)
+	// Flag notifications (ADR-20261125085913).
+	GetFlagNotificationSettings(ctx context.Context, db DBTX, environmentID pgtype.UUID) (FlagNotificationSetting, error)
 	GetFreshBaseImageScan(ctx context.Context, db DBTX, arg GetFreshBaseImageScanParams) (BaseImageScan, error)
 	GetFunctionMigrationDestination(ctx context.Context, db DBTX, arg GetFunctionMigrationDestinationParams) (FunctionMigrationDestination, error)
 	GetFunctionMigrationDestinationIdentity(ctx context.Context, db DBTX, arg GetFunctionMigrationDestinationIdentityParams) (GetFunctionMigrationDestinationIdentityRow, error)
@@ -8645,6 +8656,11 @@ type Querier interface {
 	SetWorkflowScheduleOccurrenceReplay(ctx context.Context, db DBTX, arg SetWorkflowScheduleOccurrenceReplayParams) (int64, error)
 	SettleCustomerOperationWorkflow(ctx context.Context, db DBTX, arg SettleCustomerOperationWorkflowParams) (int64, error)
 	SettleEventSubscriptionIntent(ctx context.Context, db DBTX, arg SettleEventSubscriptionIntentParams) error
+	// Records an attempt: delivered, abandoned, or retried at next_attempt_at
+	// to the channels still owed it. Only the claim that counted
+	// claimed_attempts settles: a row reclaimed after its lease ran out is not
+	// settled by the older claim.
+	SettleFlagNotification(ctx context.Context, db DBTX, arg SettleFlagNotificationParams) (int64, error)
 	// Records a run's outcome and releases the lease. A definition changed
 	// since the claim (updated_at) keeps its new schedule.
 	SettleSavedInsight(ctx context.Context, db DBTX, arg SettleSavedInsightParams) (int64, error)
@@ -8769,6 +8785,11 @@ type Querier interface {
 	SupersedeTriggerRecordItems(ctx context.Context, db DBTX, arg SupersedeTriggerRecordItemsParams) (int64, error)
 	SuppressMCPReminder(ctx context.Context, db DBTX, arg SuppressMCPReminderParams) error
 	SweepCountedMirrorResults(ctx context.Context, db DBTX, cutoff pgtype.Timestamptz) (int64, error)
+	// Deletes weekly digest keys queued before cutoff, at most max_rows: a past
+	// week's key is never queued again.
+	SweepFlagNotificationDigestKeys(ctx context.Context, db DBTX, arg SweepFlagNotificationDigestKeysParams) (int64, error)
+	// Deletes settled notifications settled before cutoff, at most max_rows.
+	SweepFlagNotifications(ctx context.Context, db DBTX, arg SweepFlagNotificationsParams) (int64, error)
 	// Bounded sweep of windows that ended; run after each recorded failure.
 	SweepLoginFailures(ctx context.Context, db DBTX, windowSeconds float64) (int64, error)
 	SweepUnboundNativeWorkflowRuns(ctx context.Context, db DBTX, ageMs int64) (int64, error)
@@ -9076,6 +9097,7 @@ type Querier interface {
 	// The identity is unique within one environment of the app
 	// (ADR-20261104120000); production is the empty scope.
 	UpsertEventSubscription(ctx context.Context, db DBTX, arg UpsertEventSubscriptionParams) (UpsertEventSubscriptionRow, error)
+	UpsertFlagNotificationSettings(ctx context.Context, db DBTX, arg UpsertFlagNotificationSettingsParams) (FlagNotificationSetting, error)
 	// ---------------------------------------------------------------------------
 	// PR-D / ADR-012 §7 amendment — per-tenant GitHub App webhook secret.
 	//

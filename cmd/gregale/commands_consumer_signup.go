@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -26,7 +27,10 @@ func buildConsumerSignupRequest(verb string, f consumerFlags) (any, bool, error)
 	enabled := !f.disabled
 	req := api.PutConsumerSignupRequest{Enabled: &enabled, DisplayName: strings.TrimSpace(f.displayName), TermsURL: f.termsURL,
 		ReturnURL: f.returnURL, TrialDays: f.trialDays, DailyLimit: f.dailyLimit, CustomerPlanChanges: f.customerPlanChanges,
-		CustomerClosing: f.customerClosing}
+		CustomerClosing: f.customerClosing, OAuthConsumers: f.oauthConsumers}
+	if f.oauthConsumers && strings.TrimSpace(f.freePlan) == "" {
+		return nil, true, errors.New("--oauth-consumers needs --free-plan: OAuth callers join the free plan")
+	}
 	if f.keyScopes != "" {
 		req.KeyScopes = splitList(f.keyScopes)
 	}
@@ -62,6 +66,17 @@ func callConsumerSignup(ctx context.Context, client *Client, verb string, args [
 			}
 			req.PlanIDs = append(req.PlanIDs, id)
 		}
+		if name := strings.TrimSpace(f.freePlan); name != "" {
+			id, err := resolvePlanID(ctx, client, slug, name)
+			if err != nil {
+				return nil, true, err
+			}
+			// The free plan is always offered.
+			if !slices.Contains(req.PlanIDs, id) {
+				req.PlanIDs = append(req.PlanIDs, id)
+			}
+			req.FreePlanID = id
+		}
 		out, err := client.PutConsumerSignup(ctx, slug, req)
 		return out, true, err
 	case "signup-delete":
@@ -73,6 +88,14 @@ func callConsumerSignup(ctx context.Context, client *Client, verb string, args [
 	case "signups":
 		out, err := client.ListConsumerSignups(ctx, slug)
 		return out, true, err
+	case "identities":
+		out, err := client.ListConsumerIdentities(ctx, slug)
+		return out, true, err
+	case "identity-delete":
+		if err := client.DeleteConsumerIdentity(ctx, slug, args[1]); err != nil {
+			return nil, true, err
+		}
+		return map[string]string{"status": "unlinked; the next sign-in enrolls again or links by key"}, true, nil
 	}
 	return nil, false, nil
 }
@@ -109,6 +132,12 @@ func printConsumerSignupResult(tw *tabwriter.Writer, out any) bool {
 			}
 			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", s.ID, status, s.Email, s.Name, dashIfEmpty(s.ConsumerID),
 				s.CreatedAt.Format(time.RFC3339))
+		}
+	case api.ConsumerIdentityListResponse:
+		_, _ = fmt.Fprintln(tw, "ID\tCONSUMER\tISSUER\tSUBJECT\tEMAIL\tLINKED")
+		for _, id := range v.Identities {
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", id.ID, id.ConsumerID, id.Issuer, id.Subject, dashIfEmpty(id.Email),
+				id.UpdatedAt.Format(time.RFC3339))
 		}
 	default:
 		return false

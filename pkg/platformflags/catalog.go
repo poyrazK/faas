@@ -99,6 +99,11 @@ const (
 	// them. Off, the gateway serves requests unchanged.
 	EdgeFlags = "edge_flags"
 
+	// FlagNotifications sends experiment decisions and problems, weekly flag
+	// lifecycle digests and flag expiries to notification channels
+	// (ADR-20261125085913).
+	FlagNotifications = "flag_notifications"
+
 	// SavedInsights releases saved insights, their CSV/JSON export,
 	// scheduled digests and threshold alerts (ADR-20261122190000). It
 	// needs ProductAnalytics as well.
@@ -478,6 +483,19 @@ var catalog = []Spec{
 		Consumers:  []string{"apid", "gatewayd-internal"},
 		Attributes: []Attribute{AttributePlan},
 		RetireBy:   "2027-06-30",
+	},
+	{
+		Key:        FlagNotifications,
+		Capability: "flag-notifications",
+		Label:      "Flag notifications",
+		Description: "Send experiment decisions (ship a variant, keep control) and problems (guardrail rollback, sample ratio mismatch), " +
+			"a weekly digest of flags that need a decision and flag expiries to notification channels. Off, the settings routes refuse, " +
+			"apid queues nothing and meterd sends nothing; queued notifications wait.",
+		ADR:          "ADR-20261125085913",
+		Consumers:    []string{"apid", "meterd"},
+		Attributes:   []Attribute{AttributePlan, AttributeOrg},
+		HealthRoutes: []string{"GET /v1/projects/{slug}/environments/{environment}/flags/notifications"},
+		RetireBy:     "2027-06-30",
 	},
 	{
 		Key:        SavedInsights,

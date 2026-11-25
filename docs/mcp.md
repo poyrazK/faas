@@ -4639,11 +4639,17 @@ The server is the `mcp-bridged` daemon:
 - **Failover:** after a control-plane takeover, the standby's bootstrap and
   deploy start the server again. Connected agents keep their grants; open
   streams reconnect.
-- **Clients:** the unit allows Claude's, ChatGPT's and Google Antigravity's published OAuth
-  callbacks plus loopback clients. Antigravity publishes its client at
-  `https://antigravity.google/oauth/client-metadata.json` and uses the exact
-  callback `https://antigravity.google/oauth-callback`. Override `ExecStart` in a drop-in to
-  change the list.
+- **Clients:** the unit allows Claude's, ChatGPT's, Google Antigravity's and
+  Glama's published OAuth callbacks plus loopback clients. Antigravity
+  publishes its client at `https://antigravity.google/oauth/client-metadata.json`
+  and uses the exact callback `https://antigravity.google/oauth-callback`.
+  Glama publishes two clients: its connector at
+  `https://glama.ai/api/app/mcp/oauth/client-metadata.json` (callback
+  `https://glama.ai/api/app/mcp/oauth/callback`), which runs Glama's health
+  checks and users' connections, and its MCP Inspector at
+  `https://glama.ai/mcp/inspector/oauth/client-metadata.json` (callback
+  `https://glama.ai/mcp/inspector/oauth/callback`). Override `ExecStart` in a
+  drop-in to change the list.
 - **Client identity:** a client either registers (Dynamic Client
   Registration) or names a Client ID Metadata Document URL as its
   `client_id` (ADR-20261030065746). The server fetches the document over

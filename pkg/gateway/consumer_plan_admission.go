@@ -162,6 +162,7 @@ func (h *Handler) enforceConsumerPlan(w http.ResponseWriter, r *http.Request, re
 	if strings.HasPrefix(decision.Scope, "route_") {
 		problem = problem.WithLimit(decision.Limit, decision.Observed).WithDocs("https://gregale.dev/docs/api-monetization#route-limits")
 	}
+	problem.UpgradeURL = h.consumerUpgradeURL(r.Context(), app, consumerID)
 	api.WriteProblem(w, problem)
 	h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 	return false
