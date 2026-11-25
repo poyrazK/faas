@@ -1,4 +1,4 @@
--- filename: 20261125124037800_commit_reserved_poll_handoff.sql
+-- filename: 20261125150005800_commit_reserved_poll_handoff.sql
 -- migration-compat: expand
 
 -- +goose Up

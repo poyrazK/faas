@@ -1,4 +1,4 @@
--- filename: 20261125124037700_commit_receipt_reconcile_batches.sql
+-- filename: 20261125150005700_commit_receipt_reconcile_batches.sql
 -- migration-compat: expand
 
 -- +goose Up

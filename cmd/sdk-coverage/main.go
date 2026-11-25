@@ -1183,6 +1183,9 @@ var methodRouteMap = map[string]string{
 	"GET /v1/projects/{slug}/environments/{environment}/cohorts/{key}":              "GetProjectInsightCohort",
 	"DELETE /v1/projects/{slug}/environments/{environment}/cohorts/{key}":           "DeleteProjectInsightCohort",
 	"POST /v1/projects/{slug}/environments/{environment}/cohorts/{key}/refresh":     "RefreshProjectInsightCohort",
+	// Flag notifications (ADR-20261125085913).
+	"GET /v1/projects/{slug}/environments/{environment}/flags/notifications": "ProjectFlagNotifications",
+	"PUT /v1/projects/{slug}/environments/{environment}/flags/notifications": "SetProjectFlagNotifications",
 	// Saved insights (ADR-20261122190000); PUT is SaveProjectInsight with replace.
 	"GET /v1/projects/{slug}/environments/{environment}/insights/saved":               "ListProjectSavedInsights",
 	"POST /v1/projects/{slug}/environments/{environment}/insights/saved":              "SaveProjectInsight",
@@ -2304,6 +2307,11 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/apps/{slug}/consumer-signup":                                                 "PutConsumerSignup",
 	"DELETE /v1/apps/{slug}/consumer-signup":                                              "DeleteConsumerSignup",
 	"GET /v1/apps/{slug}/consumer-signups":                                                "ListConsumerSignups",
+	"GET /v1/apps/{slug}/consumer-identities":                                             "ListConsumerIdentities",
+	"DELETE /v1/apps/{slug}/consumer-identities/{id}":                                     "DeleteConsumerIdentity",
+	"GET /v1/consumer-signup/{slug}/upgrade/plans":                                        "GetConsumerUpgrade",
+	"POST /v1/consumer-signup/{slug}/upgrade":                                             "StartConsumerUpgrade",
+	"POST /v1/consumer-signup/{slug}/upgrade/complete":                                    "CompleteConsumerUpgrade",
 	"GET /v1/consumer-signup/{slug}":                                                      "GetConsumerSignupForm",
 	"POST /v1/consumer-signup/{slug}":                                                     "CreateConsumerSignup",
 	"POST /v1/consumer-signup/{slug}/signups/{signup}/complete":                           "CompleteConsumerSignup",

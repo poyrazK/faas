@@ -1,4 +1,4 @@
--- filename: 20261125124037600_commit_receipt_usage.sql
+-- filename: 20261125150005600_commit_receipt_usage.sql
 -- migration-compat: expand
 
 -- +goose Up

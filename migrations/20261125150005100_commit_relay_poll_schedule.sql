@@ -1,4 +1,4 @@
--- filename: 20261125124037100_commit_relay_poll_schedule.sql
+-- filename: 20261125150005100_commit_relay_poll_schedule.sql
 -- migration-compat: expand
 
 -- +goose Up

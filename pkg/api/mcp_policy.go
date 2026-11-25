@@ -190,6 +190,12 @@ func (p *MCPResourcePolicy) EndpointPath() string { u, _ := url.Parse(p.Resource
 func (p *MCPResourcePolicy) MetadataPath() string {
 	return "/.well-known/oauth-protected-resource" + p.EndpointPath()
 }
+
+// ConsumerLinkPath is where a signed-in caller links its OAuth identity to
+// a consumer key it holds (ADR-20261124094745).
+func (p *MCPResourcePolicy) ConsumerLinkPath() string {
+	return "/.well-known/gregale-consumer-link" + p.EndpointPath()
+}
 func (p *MCPResourcePolicy) MetadataURL() string {
 	u, _ := url.Parse(p.Resource)
 	u.Path = p.MetadataPath()

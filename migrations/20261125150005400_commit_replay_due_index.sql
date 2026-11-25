@@ -1,4 +1,4 @@
--- filename: 20261125124037400_commit_replay_due_index.sql
+-- filename: 20261125150005400_commit_replay_due_index.sql
 -- migration-compat: expand
 -- +goose NO TRANSACTION
 

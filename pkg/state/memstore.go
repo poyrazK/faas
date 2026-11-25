@@ -643,6 +643,7 @@ type MemStore struct {
 	apiConsumers                         map[string]APIConsumer
 	apiConsumerTrials                    map[string]APIConsumerTrial               // ADR-1314
 	apiConsumerSignupSettings            map[string]APIConsumerSignupSettings      // ADR-20261021143000, by app ID
+	apiConsumerIdentities                map[string]APIConsumerIdentity            // ADR-20261124094745, by identity ID
 	apiConsumerSignups                   map[string]APIConsumerSignup              // ADR-20261021143000
 	apiConsumerMeterUsage                map[string]APIConsumerMeterUsageBucket    // ADR-1318
 	platformTenantMeterUsage             map[string]PlatformTenantMeterUsageBucket // ADR-1319
@@ -652,8 +653,11 @@ type MemStore struct {
 	apiConsumerBillingPolicies           map[string]APIConsumerBillingPolicy       // ADR-1315, by app
 	apiConsumerOverdueHolds              map[string]APIConsumerOverdueHold         // ADR-1315, by consumer
 	platformTenants                      map[string]PlatformTenant
-	flagEvents                           *memFlagEvents                 // ADR 20261115163113, lazily made
-	savedInsights                        map[string]*memSavedInsightRow // ADR-20261122190000, by ID, lazily made
+	flagEvents                           *memFlagEvents                      // ADR 20261115163113, lazily made
+	savedInsights                        map[string]*memSavedInsightRow      // ADR-20261122190000, by ID, lazily made
+	flagNotificationSettings             map[string]FlagNotificationSettings // ADR-20261125085913, by environment ID, lazily made
+	flagNotifications                    []FlagNotification                  // ADR-20261125085913
+	flagNotificationKeys                 map[string]flagNotificationKey      // ADR-20261125085913
 	platformTenantReconciliationReceipts map[string]api.PlatformTenantReconciliationReceiptResponse
 	platformTenantOffboardingReceipts    map[string]api.PlatformTenantOffboardingReceiptResponse
 	platformTenantAccessTokens           map[string]PlatformTenantAccessToken
@@ -23169,7 +23173,9 @@ func (m *MemStore) PeekCliAuthCode(_ context.Context, tokenHash []byte) (api.Cli
 	if !row.ExpiresAt.After(time.Now()) {
 		return api.CliAuthStatusExpired, "", ErrNotFound
 	}
-	if row.ConsumedAt != nil {
+	// PgStore's claim sets status = 'consumed' before the CLI exchanges the
+	// code, so a claimed row is consumed here too.
+	if row.ConsumedAt != nil || row.AccountID != "" {
 		return api.CliAuthStatusConsumed, row.AccountID, nil
 	}
 	return api.CliAuthStatusPending, row.AccountID, nil

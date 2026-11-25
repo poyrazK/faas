@@ -26,7 +26,48 @@ const (
 	// CodeConsumerSignupUnavailable reports that the app's billing setup
 	// cannot take sign-ups right now; the owner gets an audit event.
 	CodeConsumerSignupUnavailable = "consumer_signup_unavailable"
+	// CodeConsumerEnrollmentUnavailable reports that the gateway could not
+	// turn a verified OAuth caller into the app's consumer
+	// (ADR-20261124094745), so the call is refused rather than served
+	// unbilled.
+	CodeConsumerEnrollmentUnavailable = "consumer_enrollment_unavailable"
+	// CodeConsumerLinkKeyRejected reports a key that is not a live key of
+	// one of the app's consumers (ADR-20261124094745).
+	CodeConsumerLinkKeyRejected = "consumer_link_key_rejected"
+	// CodeConsumerLinkConflict reports an OAuth identity already linked to
+	// another key's consumer; the app owner unlinks it first.
+	CodeConsumerLinkConflict = "consumer_link_conflict"
 )
+
+// LinkConsumerRequest is the body of a signed-in MCP caller's
+// POST /.well-known/gregale-consumer-link<endpoint path>: the consumer key
+// it already holds for the app (ADR-20261124094745).
+type LinkConsumerRequest struct {
+	Key string `json:"key"`
+}
+
+// LinkConsumerResponse names the consumer the caller now bills to.
+type LinkConsumerResponse struct {
+	ConsumerID string `json:"consumer_id"`
+}
+
+// ConsumerIdentity is one OAuth sign-in of an app's MCP server and the
+// consumer it bills to (ADR-20261124094745).
+type ConsumerIdentity struct {
+	ID         string    `json:"id"`
+	ConsumerID string    `json:"consumer_id"`
+	Issuer     string    `json:"issuer"`
+	Subject    string    `json:"subject"`
+	Email      string    `json:"email,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// ConsumerIdentityListResponse lists an app's OAuth identities, newest
+// first.
+type ConsumerIdentityListResponse struct {
+	Identities []ConsumerIdentity `json:"identities"`
+}
 
 // PutConsumerSignupRequest turns sign-up on for an app. Omitted fields
 // take their defaults: enabled, Stripe, the app's default plan, keys with
@@ -47,6 +88,11 @@ type PutConsumerSignupRequest struct {
 	// (ADR-20261021183000).
 	CustomerPlanChanges bool `json:"customer_plan_changes,omitempty"`
 	CustomerClosing     bool `json:"customer_closing,omitempty"`
+	// FreePlanID is an offered plan that charges nothing: joining it needs
+	// no card. OAuthConsumers enrolls callers signed in through the app's
+	// MCP oauth-proxy issuer as consumers on it (ADR-20261124094745).
+	FreePlanID     string `json:"free_plan_id,omitempty"`
+	OAuthConsumers bool   `json:"oauth_consumers,omitempty"`
 }
 
 // ConsumerSignupSettingsResponse is an app's sign-up settings. PageURL is
@@ -67,6 +113,8 @@ type ConsumerSignupSettingsResponse struct {
 	// with their own key (ADR-20261021183000).
 	CustomerPlanChanges bool      `json:"customer_plan_changes"`
 	CustomerClosing     bool      `json:"customer_closing"`
+	FreePlanID          string    `json:"free_plan_id,omitempty"`
+	OAuthConsumers      bool      `json:"oauth_consumers"`
 	CreatedAt           time.Time `json:"created_at"`
 	UpdatedAt           time.Time `json:"updated_at"`
 }
@@ -110,6 +158,8 @@ type ConsumerSignupPlan struct {
 	MaxRequestsPerMinute int64                 `json:"max_requests_per_minute,omitempty"`
 	MaxUnitsPerMonth     int64                 `json:"max_units_per_month,omitempty"`
 	Prices               []ConsumerSignupPrice `json:"prices"`
+	// Free marks the plan joining which needs no card (ADR-20261124094745).
+	Free bool `json:"free,omitempty"`
 }
 
 // ConsumerSignupFormResponse is what the sign-up page shows.
@@ -145,7 +195,9 @@ func (r *CreateConsumerSignupRequest) Validate() error {
 // CreateConsumerSignupResponse sends the customer to CheckoutURL. The
 // claim token completes the sign-up and is shown only here.
 type CreateConsumerSignupResponse struct {
-	ID          string    `json:"id"`
+	ID string `json:"id"`
+	// CheckoutURL is empty for the free plan: complete the sign-up at once
+	// (ADR-20261124094745).
 	CheckoutURL string    `json:"checkout_url"`
 	ClaimToken  string    `json:"claim_token"`
 	ExpiresAt   time.Time `json:"expires_at"`
@@ -201,6 +253,38 @@ func (c *Client) DeleteConsumerSignup(ctx context.Context, app string) error {
 func (c *Client) ListConsumerSignups(ctx context.Context, app string) (ConsumerSignupListResponse, error) {
 	var out ConsumerSignupListResponse
 	return out, c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(app)+"/consumer-signups", nil, &out)
+}
+
+// ListConsumerIdentities lists the OAuth sign-ins of an app's MCP server
+// and the consumers they bill to (ADR-20261124094745).
+func (c *Client) ListConsumerIdentities(ctx context.Context, app string) (ConsumerIdentityListResponse, error) {
+	var out ConsumerIdentityListResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(app)+"/consumer-identities", nil, &out)
+}
+
+// DeleteConsumerIdentity unlinks an OAuth sign-in from its consumer.
+func (c *Client) DeleteConsumerIdentity(ctx context.Context, app, id string) error {
+	return c.do(ctx, "DELETE", "/v1/apps/"+url.PathEscape(app)+"/consumer-identities/"+url.PathEscape(id), nil, nil)
+}
+
+// GetConsumerUpgrade reads the plans a customer's upgrade link offers. It
+// needs no credential: token is the link's token.
+func (c *Client) GetConsumerUpgrade(ctx context.Context, app, token string) (ConsumerUpgradeResponse, error) {
+	var out ConsumerUpgradeResponse
+	return out, c.do(ctx, "GET", "/v1/consumer-signup/"+url.PathEscape(app)+"/upgrade/plans?token="+url.QueryEscape(token), nil, &out)
+}
+
+// StartConsumerUpgrade moves the link's customer to req.PlanID, or returns
+// the Stripe Checkout that saves their card first.
+func (c *Client) StartConsumerUpgrade(ctx context.Context, app string, req StartConsumerUpgradeRequest) (ConsumerUpgradeResult, error) {
+	var out ConsumerUpgradeResult
+	return out, c.do(ctx, "POST", "/v1/consumer-signup/"+url.PathEscape(app)+"/upgrade", req, &out)
+}
+
+// CompleteConsumerUpgrade finishes an upgrade after Checkout saved the card.
+func (c *Client) CompleteConsumerUpgrade(ctx context.Context, app string, req CompleteConsumerUpgradeRequest) (ConsumerUpgradeResult, error) {
+	var out ConsumerUpgradeResult
+	return out, c.do(ctx, "POST", "/v1/consumer-signup/"+url.PathEscape(app)+"/upgrade/complete", req, &out)
 }
 
 // GetConsumerSignupForm reads an app's public sign-up form. It needs no
@@ -260,6 +344,43 @@ type APIConsumerPlanChangedWebhookPayload struct {
 	ToPlanID      string    `json:"to_plan_id,omitempty"`
 	EffectiveFrom time.Time `json:"effective_from"`
 	ChangedAt     time.Time `json:"changed_at"`
+}
+
+// ConsumerUpgradeResponse is what the upgrade page shows a customer who
+// opened an upgrade link (ADR-20261124094745).
+type ConsumerUpgradeResponse struct {
+	App           string               `json:"app"`
+	DisplayName   string               `json:"display_name"`
+	CurrentPlanID string               `json:"current_plan_id,omitempty"`
+	Livemode      bool                 `json:"livemode"`
+	Plans         []ConsumerSignupPlan `json:"plans"`
+	// HasCard reports a saved card: moving to a paid plan needs no checkout.
+	HasCard bool `json:"has_card"`
+}
+
+// StartConsumerUpgradeRequest moves the upgrade link's customer to PlanID.
+type StartConsumerUpgradeRequest struct {
+	Token  string `json:"token"`
+	PlanID string `json:"plan_id"`
+}
+
+// ConsumerUpgradeResult is a started or finished upgrade. A paid plan for a
+// customer without a card returns CheckoutURL: Stripe Checkout returns to
+// the upgrade page, which completes the upgrade with CompleteToken.
+// Otherwise the plan changes from EffectiveFrom.
+type ConsumerUpgradeResult struct {
+	PlanID        string     `json:"plan_id"`
+	EffectiveFrom *time.Time `json:"effective_from,omitempty"`
+	CheckoutURL   string     `json:"checkout_url,omitempty"`
+	CompleteToken string     `json:"complete_token,omitempty"`
+}
+
+// CompleteConsumerUpgradeRequest finishes an upgrade after Checkout saved
+// the card.
+type CompleteConsumerUpgradeRequest struct {
+	Token             string `json:"token"`
+	CompleteToken     string `json:"complete_token"`
+	CheckoutSessionID string `json:"checkout_session_id"`
 }
 
 // APIConsumerClosedWebhookPayload is delivered with consumer.closed when a

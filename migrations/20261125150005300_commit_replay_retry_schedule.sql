@@ -1,4 +1,4 @@
--- filename: 20261125124037300_commit_replay_retry_schedule.sql
+-- filename: 20261125150005300_commit_replay_retry_schedule.sql
 -- migration-compat: expand
 
 -- +goose Up

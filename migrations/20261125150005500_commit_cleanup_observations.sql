@@ -1,4 +1,4 @@
--- filename: 20261125124037500_commit_cleanup_observations.sql
+-- filename: 20261125150005500_commit_cleanup_observations.sql
 -- migration-compat: expand
 
 -- +goose Up

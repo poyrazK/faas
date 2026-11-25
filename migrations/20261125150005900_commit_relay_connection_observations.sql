@@ -1,4 +1,4 @@
--- filename: 20261125124037900_commit_relay_connection_observations.sql
+-- filename: 20261125150005900_commit_relay_connection_observations.sql
 -- migration-compat: expand
 
 -- +goose Up
