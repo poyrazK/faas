@@ -394,8 +394,8 @@ func runMCPNativeReleaseContext(ctx context.Context, p mcpNativeReleasePlan, s m
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(p.TimeoutSeconds*5+120)*time.Second)
 	defer cancel()
 	if runtime != mcpWorkerRuntimeNode {
-		return finishMCPNativeRelease(ctx, s, state, quiet, runMCPBuiltinTaskGate(ctx, runtime, p.WorkerPath, s.Fingerprint, state+".gate",
-			time.Duration(p.TimeoutSeconds)*time.Second, gatePlan["start"].([]string), gatePlan["drain"].([]string)), nil)
+		return finishMCPNativeRelease(ctx, s, state, quiet, runMCPBuiltinTaskGate(ctx, runtime, p, state, s.Fingerprint,
+			gatePlan["start"].([]string), gatePlan["drain"].([]string)), nil)
 	}
 	command := exec.CommandContext(ctx, "node", "tasks-release.js", f.Name())
 	command.Dir = p.WorkerPath
@@ -928,19 +928,34 @@ func startMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 			return err
 		}
 	}
-	s.Stage = "deploying_worker"
-	if err := saveMCPNativeStateContext(ctx, state, s); err != nil {
-		return err
+	// The gate already required a starter worker; an unknown one keeps the
+	// Node order.
+	runtime, _ := mcpNativeWorkerRuntime(p.WorkerPath)
+	worker := func() error {
+		s.Stage = "deploying_worker"
+		if err := saveMCPNativeStateContext(ctx, state, s); err != nil {
+			return err
+		}
+		return mcpNativeDeploy(ctx, c, p.WorkerPath, p.WorkerApp, false, s, state)
 	}
-	if err := mcpNativeDeploy(ctx, c, p.WorkerPath, p.WorkerApp, false, s, state); err != nil {
-		return err
+	web := func() error {
+		s.Stage = "deploying_web"
+		if err := saveMCPNativeStateContext(ctx, state, s); err != nil {
+			return err
+		}
+		return mcpNativeDeploy(ctx, c, p.WebPath, p.WebApp, true, s, state)
 	}
-	s.Stage = "deploying_web"
-	if err := saveMCPNativeStateContext(ctx, state, s); err != nil {
-		return err
+	// The Node gate migrates before it starts replacements. A Go or Python
+	// release migrates in the web release command, so the staged web deployment
+	// goes first and the candidate worker starts against the migrated schema.
+	steps := []func() error{worker, web}
+	if runtime == mcpWorkerRuntimeGo || runtime == mcpWorkerRuntimePython {
+		steps = []func() error{web, worker}
 	}
-	if err := mcpNativeDeploy(ctx, c, p.WebPath, p.WebApp, true, s, state); err != nil {
-		return err
+	for _, step := range steps {
+		if err := step(); err != nil {
+			return err
+		}
 	}
 	if err := mcpNativeVerifyEndpoint(ctx, c, p, s); err != nil {
 		return err
@@ -987,7 +1002,7 @@ func checkMCPNativeWorkers(ctx context.Context, c *Client, p mcpNativeReleasePla
 	if runtime, err := mcpNativeWorkerRuntime(p.WorkerPath); err != nil {
 		return err
 	} else if runtime != mcpWorkerRuntimeNode {
-		return mcpBuiltinReplacementsReady(probeCtx, p.WorkerPath, s.WorkerIDs)
+		return mcpBuiltinReplacementsReady(probeCtx, c, p, s)
 	}
 	command := exec.CommandContext(probeCtx, "node", "tasks-release-readiness.js")
 	command.Dir = p.WorkerPath
