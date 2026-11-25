@@ -120,6 +120,9 @@ var featureRouteActions = map[string]authz.OrgAction{
 	"GET /v1/apps/{slug}/consumer-plans":           authz.OrgActionManageAppSecurity,
 	"POST /v1/apps/{slug}/consumer-plans":          authz.OrgActionManageAppSecurity,
 	"PUT /v1/apps/{slug}/consumer-plans/{plan_id}": authz.OrgActionManageAppSecurity,
+	// consumer-identities
+	"DELETE /v1/apps/{slug}/consumer-identities/{id}": authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/consumer-identities":         authz.OrgActionManageAppSecurity,
 	// consumer-signup
 	"DELETE /v1/apps/{slug}/consumer-signup": authz.OrgActionManageAppSecurity,
 	"GET /v1/apps/{slug}/consumer-signup":    authz.OrgActionManageAppSecurity,
