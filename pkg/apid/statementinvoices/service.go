@@ -377,6 +377,7 @@ func (s *Service) callProblem(name string, err error) *api.Problem {
 // externalRef when it is one of the provider's customer IDs.
 type statementInvoiceSource struct {
 	kind              string
+	consumerID        string
 	statementID       string
 	revision          int
 	start, end        time.Time
@@ -436,6 +437,9 @@ func (s *Service) exportStatementInvoice(ctx context.Context, acct state.Account
 		return state.StatementInvoiceExport{}, providerProblem(http.StatusUnprocessableEntity, "Unknown billing provider", "provider must be stripe, paddle or lago")
 	}
 	prior, err := store.GetStatementInvoiceExport(ctx, acct.ID, src.kind, src.statementID)
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		return state.StatementInvoiceExport{}, api.ErrInternal("could not load the statement invoice export")
+	}
 	if err == nil && prior.Provider != providerName && !prior.Retargetable() {
 		return state.StatementInvoiceExport{}, exportConflict("the statement was already exported to " + prior.Provider)
 	}
@@ -456,11 +460,14 @@ func (s *Service) exportStatementInvoice(ctx context.Context, acct state.Account
 	if src.existingHandoff != "" && (err != nil || prior.ProviderInvoiceID != src.existingHandoff) {
 		return state.StatementInvoiceExport{}, exportConflict("the statement was already handed off to another invoice")
 	}
-	customer, problem := p.customer(src.requestedCustomer, src.externalRef)
-	if problem != nil {
-		return state.StatementInvoiceExport{}, problem
+	resolveDraftCustomer := src.draftLivemode != nil && src.requestedCustomer == ""
+	if !resolveDraftCustomer {
+		customer, problem := p.customer(src.requestedCustomer, src.externalRef)
+		if problem != nil {
+			return state.StatementInvoiceExport{}, problem
+		}
+		src.customer = customer
 	}
-	src.customer = customer
 	if problem := p.currencyProblem(src.invoice.Currency); problem != nil {
 		return state.StatementInvoiceExport{}, problem
 	}
@@ -483,6 +490,20 @@ func (s *Service) exportStatementInvoice(ctx context.Context, acct state.Account
 	}
 	if !src.draftConnectionAt.IsZero() && !conn.updatedAt.Equal(src.draftConnectionAt) {
 		return state.StatementInvoiceExport{}, exportConflict("the Stripe connection changed; review the draft again")
+	}
+	if resolveDraftCustomer {
+		if prior.Provider == providerName && !prior.Retargetable() {
+			src.customer = prior.Customer
+		} else {
+			linked, problem := s.linkedStripeCustomer(ctx, acct.ID, src.consumerID, conn.stripeAccountID, conn.livemode)
+			if problem != nil {
+				return state.StatementInvoiceExport{}, problem
+			}
+			src.customer, problem = p.customer(linked, src.externalRef)
+			if problem != nil {
+				return state.StatementInvoiceExport{}, problem
+			}
+		}
 	}
 	export, resumed, err := store.BeginStatementInvoiceExport(ctx, state.StatementInvoiceExport{AccountID: acct.ID, SourceKind: src.kind,
 		StatementID: src.statementID, Provider: providerName, Customer: src.customer,
@@ -507,8 +528,13 @@ func (s *Service) exportStatementInvoice(ctx context.Context, acct state.Account
 	export = claimed
 	// A concurrent export can pin a different collection mode before the
 	// claim. Guard the pinned mode before any operation on the provider.
-	if src.draftLivemode != nil && export.Collection != "none" {
-		return state.StatementInvoiceExport{}, draftCollectionConflict()
+	if src.draftLivemode != nil {
+		if export.Collection != state.CollectionNone {
+			return state.StatementInvoiceExport{}, draftCollectionConflict()
+		}
+		if export.Livemode != *src.draftLivemode {
+			return state.StatementInvoiceExport{}, draftModeConflict()
+		}
 	}
 	if !src.draftConnectionAt.IsZero() {
 		if export.Provider != providerName || export.Customer != src.customer || export.Livemode != conn.livemode {
@@ -592,7 +618,8 @@ func (s *Service) openConnection(ctx context.Context, store state.StatementInvoi
 	if !ok {
 		return connection{}, api.ErrInternal("could not open the stored " + p.title() + " key; reconnect " + p.title())
 	}
-	return connection{key: key, apiURL: stored.APIURL, livemode: stored.Livemode, updatedAt: stored.UpdatedAt, collection: stored.Collection,
+	return connection{key: key, apiURL: stored.APIURL, stripeAccountID: stored.StripeAccountID, livemode: stored.Livemode,
+		updatedAt: stored.UpdatedAt, collection: stored.Collection,
 		daysUntilDue: stored.DaysUntilDue, automaticTax: stored.AutomaticTax}, nil
 }
 

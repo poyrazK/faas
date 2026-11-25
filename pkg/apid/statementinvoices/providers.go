@@ -28,10 +28,11 @@ const providerMaxItems = 100
 
 // connection is an opened billing connection.
 type connection struct {
-	key       string
-	apiURL    string
-	livemode  bool
-	updatedAt time.Time
+	key             string
+	apiURL          string
+	stripeAccountID string
+	livemode        bool
+	updatedAt       time.Time
 	// collection and daysUntilDue are the connection's collection mode
 	// (ADR-1311).
 	collection   string

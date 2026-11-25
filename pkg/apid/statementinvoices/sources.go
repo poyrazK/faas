@@ -137,7 +137,7 @@ func (s *Service) appConsumerInvoiceSource(ctx context.Context, acct state.Accou
 	if err != nil {
 		return statementInvoiceSource{}, statementInvoiceProblem(err)
 	}
-	src := statementInvoiceSource{kind: state.StatementSourceAppConsumer, statementID: statement.ID, revision: statement.Revision,
+	src := statementInvoiceSource{kind: state.StatementSourceAppConsumer, consumerID: consumer.ID, statementID: statement.ID, revision: statement.Revision,
 		start: statement.PeriodStart, end: statement.PeriodEnd, requestedCustomer: requestedCustomer, externalRef: consumer.ExternalRef, invoice: invoice}
 	if handoff, err := handoffs.GetAPIConsumerUsageStatementHandoff(ctx, acct.ID, statement.AppID, statement.ConsumerID, statement.ID); err == nil {
 		src.existingHandoff = handoff.ExternalInvoiceID

@@ -24152,8 +24152,11 @@ paths:
         Requires a Stripe connection set to draft collection. Refuses an
         unfinished export configured to send or charge, including when that
         export started concurrently. Requires the same Stripe test or live
-        mode as the reviewed draft. Repeating the request returns the same
-        draft. Requires a verified admin session with fresh MFA step-up.
+        mode as the reviewed draft. Uses the verified customer link for that
+        Stripe account and mode, falling back to a Stripe customer ID in the
+        consumer's external reference. The export pins the customer for retries.
+        Repeating the request returns the same draft. Requires a verified
+        admin session with fresh MFA step-up.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:

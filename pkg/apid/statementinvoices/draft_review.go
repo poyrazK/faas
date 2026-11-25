@@ -39,19 +39,11 @@ func (s *Service) ReviewAppConsumerDraft(ctx context.Context, acct state.Account
 	if _, ok := s.openKey(acct.ID, conn); !ok {
 		return "", nil, exportConflict("the Stripe key could not be opened; reconnect Stripe")
 	}
-	p := stripeProvider{}
-	var linked string
-	if conn.StripeAccountID != "" {
-		links, ok := s.Host.Store().(state.StripeConsumerLinkStore)
-		if !ok {
-			return "", nil, api.ErrInternal("Stripe customer links are unavailable")
-		}
-		linked, err = links.GetStripeConsumerCustomer(ctx, acct.ID, consumer.ID, conn.StripeAccountID, conn.Livemode)
-		if err != nil && !errors.Is(err, state.ErrNotFound) {
-			return "", nil, api.ErrInternal("could not read the Stripe customer link")
-		}
+	linked, problem := s.linkedStripeCustomer(ctx, acct.ID, consumer.ID, conn.StripeAccountID, conn.Livemode)
+	if problem != nil {
+		return "", nil, problem
 	}
-	customer, problem := p.customer(linked, consumer.ExternalRef)
+	customer, problem := (stripeProvider{}).customer(linked, consumer.ExternalRef)
 	if problem != nil {
 		return "", nil, api.NewProblem(http.StatusConflict, api.CodeStripeCustomerMissing, "Stripe customer required",
 			"link this app customer to a Stripe customer before exporting")
@@ -84,6 +76,21 @@ func (s *Service) ReviewAppConsumerDraft(ctx context.Context, acct state.Account
 		return "", nil, problem
 	}
 	return customer, nil, nil
+}
+
+func (s *Service) linkedStripeCustomer(ctx context.Context, accountID, consumerID, stripeAccountID string, livemode bool) (string, *api.Problem) {
+	if stripeAccountID == "" {
+		return "", nil
+	}
+	links, ok := s.Host.Store().(state.StripeConsumerLinkStore)
+	if !ok {
+		return "", api.ErrInternal("Stripe customer links are unavailable")
+	}
+	customer, err := links.GetStripeConsumerCustomer(ctx, accountID, consumerID, stripeAccountID, livemode)
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		return "", api.ErrInternal("could not read the Stripe customer link")
+	}
+	return customer, nil
 }
 
 // LinkAppConsumerStripeCustomer verifies and saves the customer without
