@@ -19,24 +19,9 @@ func (p *Provider) StartCompute(ctx context.Context, providerResourceID string) 
 	if err != nil {
 		return false, managedpostgres.ErrInvalid
 	}
-	var endpoints endpointsResponse
-	if err := p.doJSON(ctx, http.MethodGet, "/projects/"+url.PathEscape(ref.projectID)+"/endpoints", nil, nil, &endpoints, http.StatusOK); err != nil {
+	compute, err := p.readWriteEndpoint(ctx, ref)
+	if err != nil {
 		return false, err
-	}
-	var compute endpoint
-	for _, candidate := range endpoints.Endpoints {
-		if candidate.Type != "read_write" || ref.branchID != "" && candidate.BranchID != ref.branchID {
-			continue
-		}
-		if compute.ID != "" {
-			// A restore's second compute: which one the app uses is not
-			// known here.
-			return false, managedpostgres.ErrUnsupported
-		}
-		compute = candidate
-	}
-	if !validProviderID.MatchString(compute.ID) {
-		return false, managedpostgres.ErrUnavailable
 	}
 	if endpointDisabled(compute) || compute.CurrentState != "idle" {
 		return false, nil
@@ -46,4 +31,28 @@ func (p *Provider) StartCompute(ctx context.Context, providerResourceID string) 
 		return false, err
 	}
 	return true, nil
+}
+
+// readWriteEndpoint reads the database's single read-write endpoint.
+func (p *Provider) readWriteEndpoint(ctx context.Context, ref resourceRef) (endpoint, error) {
+	var endpoints endpointsResponse
+	if err := p.doJSON(ctx, http.MethodGet, "/projects/"+url.PathEscape(ref.projectID)+"/endpoints", nil, nil, &endpoints, http.StatusOK); err != nil {
+		return endpoint{}, err
+	}
+	var compute endpoint
+	for _, candidate := range endpoints.Endpoints {
+		if candidate.Type != "read_write" || ref.branchID != "" && candidate.BranchID != ref.branchID {
+			continue
+		}
+		if compute.ID != "" {
+			// A restore's second compute: which one the app uses is not
+			// known here.
+			return endpoint{}, managedpostgres.ErrUnsupported
+		}
+		compute = candidate
+	}
+	if !validProviderID.MatchString(compute.ID) {
+		return endpoint{}, managedpostgres.ErrUnavailable
+	}
+	return compute, nil
 }

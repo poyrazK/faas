@@ -60,9 +60,9 @@ func NewPlacementClaimSubscriber(engine *Engine, log *slog.Logger) *PlacementCla
 //
 // Each "keep going" decision is deliberate: pg_notify is
 // best-effort; the apps table is the source of truth for "the app
-// exists and needs an owner", and the cold-start sweep (cmd/schedd
-// main runs ListUnplacedApps once at boot) will eventually
-// reconcile any notify that was lost to a schedd restart.
+// exists and needs an owner", and the unplaced sweep
+// (Engine.RunUnplacedSweep: at boot, then about once a minute)
+// reconciles any notify that was lost.
 func (s *PlacementClaimSubscriber) Run(ctx context.Context, ch <-chan db.Notification) error {
 	for {
 		select {

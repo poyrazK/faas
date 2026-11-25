@@ -127,6 +127,19 @@ func (f *fakeVmmd) guest(_ context.Context, req sandboxproto.Request, call *sand
 		return sandboxproto.Command{Handle: req.Handle, Running: true, TTY: true}, nil
 	case sandboxproto.OpSessionEnv:
 		return sandboxproto.SessionEnvResult{Names: []string{"TOKEN"}}, nil
+	case sandboxproto.OpCodeRun:
+		_, _ = call.Stdout().Write([]byte("hi\n"))
+		count := 3
+		return sandboxproto.CodeRunResult{Results: []sandboxproto.CodeOutput{{Data: map[string]json.RawMessage{"text/plain": json.RawMessage(`"42"`)},
+			IsMainResult: true}}, ExecutionCount: &count}, nil
+	case sandboxproto.OpCodeContext:
+		switch req.Action {
+		case sandboxproto.CodeActionCreate:
+			return sandboxproto.CodeContextResult{Context: &sandboxproto.CodeContext{ID: "abc123", Language: "python", Cwd: "/workspace"}}, nil
+		case sandboxproto.CodeActionList:
+			return sandboxproto.CodeContextResult{Contexts: []sandboxproto.CodeContext{{ID: "default", Language: "python", Cwd: "/workspace"}}}, nil
+		}
+		return sandboxproto.CodeContextResult{}, nil
 	case sandboxproto.OpArchiveExtract:
 		n, err := call.ReadUpload(io.Discard, 1<<20)
 		if err != nil {
@@ -346,6 +359,60 @@ func TestSessionEnv(t *testing.T) {
 	}
 	if !api.IsSandboxDataPath("/v1/sandboxes/sbx-1/env") {
 		t.Fatal("the env route is not a data-plane path")
+	}
+}
+
+// adr: 20261027090013 step 14 — a run answers its results, logs and
+// execution count within the plan's caps, contexts are created, listed,
+// restarted and removed, and a language other than python is refused.
+func TestCodeRoutes(t *testing.T) {
+	f := newFixture(t)
+	tok := f.token(t, placed())
+	rec := f.do(t, http.MethodPost, "/v1/sandboxes/sbx-1/code", tok, strings.NewReader(`{"code":"x + 2","context":"abc123"}`))
+	want := `{"results":[{"data":{"text/plain":"42"},"is_main_result":true}],"logs":{"stdout":["hi\n"],"stderr":[]},"execution_count":3}`
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != want {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
+	}
+	if req := f.vmmd.requests()[0]; req.Op != sandboxproto.OpCodeRun || req.Context != "abc123" || req.TimeoutMillis != 60_000 || req.MaxOutputBytes != 1<<20 {
+		t.Fatalf("guest request = %+v", req)
+	}
+	rec = f.do(t, http.MethodPost, "/v1/sandboxes/sbx-1/code", tok, strings.NewReader(`{"code":"1"}`), "Accept", "text/event-stream")
+	if body := rec.Body.String(); !strings.Contains(body, "event: stdout\ndata: \"hi\\n\"") || !strings.Contains(body, `"execution_count":3`) {
+		t.Fatalf("stream %q", body)
+	}
+	for _, tc := range []struct {
+		method, path, body string
+		status             int
+	}{
+		{http.MethodPost, "/v1/sandboxes/sbx-1/code/contexts", `{"cwd":"app"}`, http.StatusCreated},
+		{http.MethodGet, "/v1/sandboxes/sbx-1/code/contexts", "", http.StatusOK},
+		{http.MethodPost, "/v1/sandboxes/sbx-1/code/contexts/abc123/restart", "", http.StatusOK},
+		{http.MethodDelete, "/v1/sandboxes/sbx-1/code/contexts/abc123", "", http.StatusOK},
+	} {
+		if rec := f.do(t, tc.method, tc.path, tok, strings.NewReader(tc.body)); rec.Code != tc.status {
+			t.Fatalf("%s %s: status = %d, body %s", tc.method, tc.path, rec.Code, rec.Body)
+		}
+	}
+	seen := f.vmmd.requests()
+	if create := seen[2]; create.Action != sandboxproto.CodeActionCreate || create.Workdir != "app" {
+		t.Fatalf("create = %+v", create)
+	}
+	if remove := seen[5]; remove.Action != sandboxproto.CodeActionRemove || remove.Context != "abc123" {
+		t.Fatalf("remove = %+v", remove)
+	}
+	for name, body := range map[string]string{
+		"another language":        `{"code":"1","language":"r"}`,
+		"a timeout over the plan": `{"code":"1","timeout_ms":300001}`,
+	} {
+		if rec := f.do(t, http.MethodPost, "/v1/sandboxes/sbx-1/code", tok, strings.NewReader(body)); rec.Code < 400 {
+			t.Fatalf("%s: status = %d", name, rec.Code)
+		}
+	}
+	if len(f.vmmd.requests()) != 6 {
+		t.Fatal("a refused run reached the node")
+	}
+	if !api.IsSandboxDataPath("/v1/sandboxes/sbx-1/code/contexts") {
+		t.Fatal("the code routes are not data-plane paths")
 	}
 }
 

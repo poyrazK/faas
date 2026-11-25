@@ -52,5 +52,9 @@ export type PutConsumerSignupRequest = {
    * People signed in through the app's MCP oauth-proxy issuer become consumers on free_plan_id; needs free_plan_id.
    */
   oauth_consumers?: boolean;
+  /**
+   * Add the account_usage and account_plans tools to the app's MCP server for people signed in through it; needs oauth_consumers.
+   */
+  account_tools?: boolean;
 };
 

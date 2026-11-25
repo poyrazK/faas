@@ -2,6 +2,7 @@ package neon
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -49,9 +50,9 @@ func (p *Provider) ProbeComputeCap(ctx context.Context, providerResourceID strin
 	if err != nil {
 		return evidence, err
 	}
-	profile, ok := profiles[observed.Spec.Class]
-	if !ok {
-		return evidence, managedpostgres.ErrUnsupported
+	profile, err := p.probeProfile(ctx, ref, observed.Spec.Class)
+	if err != nil {
+		return evidence, err
 	}
 	before, err := p.readComputeCapProject(ctx, ref.projectID)
 	if err != nil {
@@ -155,4 +156,29 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+// probeProfile is the range the probe measures against: the class profile,
+// or the accepted one the database's read-write endpoint runs at, since an
+// endpoint created before its class's floor moved stays there
+// (ADR-20261124221402). When the endpoint cannot be told apart (a restore's
+// second compute) or reports no range of the class, the class profile
+// stands, as before.
+func (p *Provider) probeProfile(ctx context.Context, ref resourceRef, class managedpostgres.ServiceClass) (classProfile, error) {
+	profile, ok := profiles[class]
+	if !ok {
+		return classProfile{}, managedpostgres.ErrUnsupported
+	}
+	compute, err := p.readWriteEndpoint(ctx, ref)
+	if errors.Is(err, managedpostgres.ErrUnsupported) {
+		return profile, nil
+	}
+	if err != nil {
+		return classProfile{}, err
+	}
+	if accepted, ok := acceptedProfiles[class]; ok &&
+		closeFloat(compute.MinimumCU, accepted.minimumCU) && closeFloat(compute.MaximumCU, accepted.maximumCU) {
+		return accepted, nil
+	}
+	return profile, nil
 }

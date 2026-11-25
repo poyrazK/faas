@@ -24,6 +24,7 @@ export type ConsumerSignupSettingsResponse = {
   customer_closing: boolean;
   free_plan_id?: string;
   oauth_consumers?: boolean;
+  account_tools?: boolean;
   created_at: string;
   updated_at: string;
 };
