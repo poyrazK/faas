@@ -153,6 +153,7 @@ func TestRuntimeProcessUptimeComparisonAndClocks(t *testing.T) {
 }
 
 func TestRuntimeProcessComparisonBeyondPreviewAndMembership(t *testing.T) {
+	lengthenRuntimeCollectionBudget(t)
 	now := time.Now().UTC().Truncate(time.Second)
 	at := now.Add(-90 * time.Second)
 	current, selected, registry := runtimeFixture("control-plane-v2", now, 40)
@@ -227,6 +228,7 @@ func TestRuntimeProcessBaselineSourcesAndSelection(t *testing.T) {
 }
 
 func TestRuntimeProcessMaximumPreviewFitsResponse(t *testing.T) {
+	lengthenRuntimeCollectionBudget(t)
 	now := time.Now().UTC().Truncate(time.Second)
 	at := now.Add(-30 * time.Second)
 	current, selected, registry := runtimeFixture("control-plane-v2", now, 40)

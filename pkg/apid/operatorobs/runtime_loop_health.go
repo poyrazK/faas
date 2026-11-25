@@ -12,13 +12,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/promql"
 )
 
-// runtimeLoopHealthBudget bounds one collection. Only tests that check
-// coverage rather than timing lengthen it, so a loaded CI runner does not
-// read as an exhausted budget.
-var runtimeLoopHealthBudget = api.ObsRuntimeBuildBudget
+// runtimeCollectionBudget bounds one runtime collection. Only tests that
+// check full-set coverage rather than timing lengthen it, so a loaded CI
+// runner does not read as an exhausted budget.
+var runtimeCollectionBudget = api.ObsRuntimeBuildBudget
 
 func RuntimeBuildsWithLoopHealth(ctx context.Context, client *promql.Client, registry RuntimeBuildRegistry, selected RuntimeBuildSelection, now time.Time) (out RuntimeBuildsLoopResponse) {
-	ctx, cancel := context.WithTimeoutCause(ctx, runtimeLoopHealthBudget, errRuntimeCollectionBudget)
+	ctx, cancel := context.WithTimeoutCause(ctx, runtimeCollectionBudget, errRuntimeCollectionBudget)
 	defer cancel()
 	observation := runtimeObservation(ctx)
 	if observation.metrics != nil {
