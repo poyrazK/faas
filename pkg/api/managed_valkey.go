@@ -20,9 +20,11 @@ const (
 	// that releases the /v1/redis surface.
 	ManagedValkeyCapability = "managed-redis"
 
-	// ManagedValkeyImage is the only image a managed cache app runs. It is
-	// digest-pinned (valkey/valkey:8.1.4-alpine); a new Valkey release is a
-	// reviewed change here. Deploy references carry a digest and no tag.
+	// ManagedValkeyImage is the image apid deploys for a new cache, resize or
+	// upgrade. It is digest-pinned (valkey/valkey:8.1.4-alpine); a new Valkey
+	// release is a reviewed change here. Deploy references carry a digest and
+	// no tag. A cache may run any image in managedValkeyImages: one becomes
+	// ManagedValkeyImage only a release after it joined that list.
 	ManagedValkeyImage = "docker.io/valkey/valkey@sha256:e706d1213aaba6896c162bb6a3a9e1894e1a435f28f8f856d14fab2e10aa098b"
 
 	// managedValkeyImage8112 is valkey/valkey:8.1.12-alpine. imaged and
@@ -62,15 +64,30 @@ const (
 	ManagedValkeyDefaultEvictionPolicy = "allkeys-lru"
 )
 
-// ManagedValkeyImages are the images a cache deployment may run: the one
+// managedValkeyImages are the images a cache deployment may run: the one
 // apid deploys and the others still running in existing caches, which keep
 // their image until `gregale redis update` moves them. Remove an image only
-// once no cache deployment runs it.
-var ManagedValkeyImages = []string{ManagedValkeyImage, managedValkeyImage8112}
+// once no cache deployment runs it (the query is in ADR-20261116192126).
+var managedValkeyImages = []string{ManagedValkeyImage, managedValkeyImage8112}
+
+// ManagedValkeyImages returns a copy of the images a cache may run.
+func ManagedValkeyImages() []string {
+	return slices.Clone(managedValkeyImages)
+}
 
 // IsManagedValkeyImage reports whether ref is an image a cache may run.
 func IsManagedValkeyImage(ref string) bool {
-	return slices.Contains(ManagedValkeyImages, ref)
+	return slices.Contains(managedValkeyImages, ref)
+}
+
+// IsManagedValkeyCommand reports whether entrypoint is one apid gives a cache
+// deployment: ManagedValkeyServerCommand or ManagedValkeyHandoffCommand. A
+// customer app that deploys the official Valkey image with its own command
+// is not a managed cache.
+func IsManagedValkeyCommand(entrypoint []string) bool {
+	return len(entrypoint) == 3 && entrypoint[0] == "/bin/sh" && entrypoint[1] == "-c" &&
+		strings.Contains(entrypoint[2], "valkey-server --port ") &&
+		strings.Contains(entrypoint[2], " --maxmemory-policy ")
 }
 
 // ManagedValkeyEvictionPolicies are the maxmemory policies a cache may use.

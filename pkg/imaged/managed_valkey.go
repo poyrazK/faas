@@ -9,12 +9,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// errManagedValkeyImage refuses any image but the pinned Valkey image on a
-// managed cache app (ADR-20261116192126).
-var errManagedValkeyImage = errors.New("managed Redis caches run only the platform Valkey image")
+// errManagedValkeyImage refuses any image but the platform Valkey images
+// (api.ManagedValkeyImages()) on a managed cache app (ADR-20261116192126).
+var errManagedValkeyImage = errors.New("managed Redis caches run only the platform Valkey images")
 
 // managedValkeyImageCheck fails a deployment of a managed cache app whose
-// image is not one of api.ManagedValkeyImages. Apps that are not caches, and stores
+// image is not one of api.ManagedValkeyImages(). Apps that are not caches, and stores
 // without the managed-cache surface, pass.
 func (h *Handler) managedValkeyImageCheck(ctx context.Context, app state.App, ref string) error {
 	store, ok := h.store.(state.ManagedValkeyStore)

@@ -128,7 +128,7 @@ func TestManagedValkeyImagesAreDeployableAndIncludeTheDeployedOne(t *testing.T) 
 		t.Fatalf("%s is not an accepted cache image", ManagedValkeyImage)
 	}
 	seen := map[string]bool{}
-	for _, image := range ManagedValkeyImages {
+	for _, image := range ManagedValkeyImages() {
 		if seen[image] {
 			t.Errorf("duplicate cache image %s", image)
 		}
@@ -140,6 +140,26 @@ func TestManagedValkeyImagesAreDeployableAndIncludeTheDeployedOne(t *testing.T) 
 	for _, other := range []string{"", "docker.io/valkey/valkey:8.1.12-alpine", "docker.io/library/redis@sha256:9971099af41c36e887aabdfe22b80c0fe45df949163dfc9cb434febc57cfc3fc"} {
 		if IsManagedValkeyImage(other) {
 			t.Errorf("%q accepted as a cache image", other)
+		}
+	}
+}
+
+// apid's cache commands identify a cache deployment; a customer's own Valkey
+// command on the same image does not.
+func TestIsManagedValkeyCommand(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		entrypoint []string
+		want       bool
+	}{
+		{"server", ManagedValkeyServerCommand(128, "allkeys-lru"), true},
+		{"handoff", ManagedValkeyHandoffCommand("10.200.0.7", 256, "noeviction", 1<<40), true},
+		{"customer argv", []string{"valkey-server", "--port", "6379"}, false},
+		{"customer shell", []string{"/bin/sh", "-c", "exec valkey-server /etc/valkey.conf"}, false},
+		{"image default", nil, false},
+	} {
+		if got := IsManagedValkeyCommand(tc.entrypoint); got != tc.want {
+			t.Errorf("%s: IsManagedValkeyCommand = %v, want %v", tc.name, got, tc.want)
 		}
 	}
 }

@@ -85,30 +85,40 @@ func TestRawTCPRoutedPortHonoursTheReceiptHealthDeclaration(t *testing.T) {
 
 // adr: 20261116192126 — a managed cache's private RESP port gets TCP
 // readiness and no plan-default HTTP liveness, which killed a woken cache
-// about 50 s in; the same internal port on any other image keeps HTTP.
+// about 50 s in. A cache is any accepted Valkey image running the command apid
+// gives it (server or handoff); the same internal port on any other image, or
+// a customer's own app on the official Valkey image, keeps HTTP.
 func TestManagedValkeyDeploymentUsesRawTCPProbes(t *testing.T) {
 	ports := []api.WorkloadPort{{Name: "redis", Port: api.ManagedValkeyPort, Protocol: api.WorkloadPortTCP, Internal: true}}
 	app := state.App{AppProtocol: api.AppProtocolHTTP1, Manifest: state.AppManifest{Port: api.ManagedValkeyPort, Ports: ports}}
+	server := api.ManagedValkeyServerCommand(128, "allkeys-lru")
+	handoff := api.ManagedValkeyHandoffCommand("10.200.0.7", 128, "allkeys-lru", 1<<40)
+	own := []string{"valkey-server", "--port", "6379"}
 	type probeCase struct {
-		image    string
-		wantPath string // informational; only the cache case is asserted
+		name       string
+		image      string
+		entrypoint []string
+		cache      bool
 	}
 	// Every image a cache may run: a cache that keeps an older Valkey until
 	// `gregale redis update`, or a newer one apid deploys, is still a cache.
 	var cases []probeCase
-	for _, image := range api.ManagedValkeyImages {
-		cases = append(cases, probeCase{image, ""})
+	for _, image := range api.ManagedValkeyImages() {
+		cases = append(cases,
+			probeCase{"server " + image, image, server, true},
+			probeCase{"handoff " + image, image, handoff, true},
+			probeCase{"customer command " + image, image, own, false},
+			probeCase{"image default " + image, image, nil, false})
 	}
-	cases = append(cases, probeCase{"docker.io/library/redis@sha256:" + strings.Repeat("a", 64), "/healthz"})
+	cases = append(cases, probeCase{"other image", "docker.io/library/redis@sha256:" + strings.Repeat("a", 64), server, false})
 	for _, tc := range cases {
-		dep := state.Deployment{ID: "dep-1", Kind: state.DeploymentKindImage, ImageDigest: tc.image}
+		dep := state.Deployment{ID: "dep-1", Kind: state.DeploymentKindImage, ImageDigest: tc.image, OverrideEntrypoint: tc.entrypoint}
 		path, grpc, _ := sched.StartupProbeForApp(dep, app)
-		cache := api.IsManagedValkeyImage(tc.image)
-		if cache && (path != "" || grpc) {
-			t.Fatalf("%s: probe = (%q, grpc=%v), want TCP accept", tc.image, path, grpc)
+		if tc.cache && (path != "" || grpc) {
+			t.Fatalf("%s: probe = (%q, grpc=%v), want TCP accept", tc.name, path, grpc)
 		}
-		if got, want := sched.RoutedPortRawTCPForApp(dep, app, path, grpc), cache; got != want {
-			t.Fatalf("%s: routed port raw TCP = %v, want %v", tc.image, got, want)
+		if got := sched.RoutedPortRawTCPForApp(dep, app, path, grpc); got != tc.cache {
+			t.Fatalf("%s: routed port raw TCP = %v, want %v", tc.name, got, tc.cache)
 		}
 	}
 }

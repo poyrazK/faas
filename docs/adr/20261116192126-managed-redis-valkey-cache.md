@@ -424,15 +424,22 @@ closed by a later slice:
   decision 2026-11-25: it stays off the list; managed Redis is the easy path,
   not the only one.
 - **Valkey upgrades (2026-11-25):** a cache deployment may run any image in
-  `api.ManagedValkeyImages`; imaged refuses any other image on a cache app,
-  and schedd gives every one of them the raw TCP probes. A new Valkey image
+  `api.ManagedValkeyImages()`; imaged refuses any other image on a cache app.
+  schedd gives the raw TCP probes to a deployment that runs one of them with
+  the command apid gives a cache (`api.IsManagedValkeyCommand`). A customer's
+  own app on the official Valkey image keeps its own probes. A new Valkey image
   ships in two releases. The first adds it to the list. The second makes it
   `api.ManagedValkeyImage`, which apid deploys. A schedd that did not know
   the image would give the cache the HTTP liveness probe, which kills a cache
   about 50 s after it starts, so apid must never deploy an image the previous
   release does not accept. Existing caches keep their image until
   `gregale redis update` moves them over a handoff; an image leaves the list
-  only once no cache deployment runs it. First use: 8.1.4 → 8.1.12.
+  only once no cache deployment runs it. A cache whose image left the list
+  would get the HTTP liveness probe on its next wake and be killed. Before
+  removing an image, this query on the control-plane database must return no
+  row for it:
+  `SELECT d.image_digest, count(*) FROM managed_valkey_caches c JOIN deployments d ON d.app_id = c.app_id WHERE d.status IN ('imaging', 'live') GROUP BY 1;`
+  First use: 8.1.4 → 8.1.12 (9 live caches on 8.1.4 on 2026-11-25).
 - **Cross-account isolation verified on prod (2026-11-25):** an app in
   another account cannot reach a cache. Service addresses are indexes within
   each account, so the proxy resolves a foreign cache's address in the

@@ -160,10 +160,12 @@ func routedPortRawTCPForApp(dep state.Deployment, app state.App, path string, gr
 // its listener is Valkey's RESP port, private, and cannot answer the
 // plan-default HTTP liveness probe, which killed a woken cache about 50 s
 // in (native run redis-20261118T095202). Every cache deployment runs one of
-// api.ManagedValkeyImages, which imaged enforces, so the deployment row
-// identifies it without a lookup on the wake path.
+// api.ManagedValkeyImages(), which imaged enforces, with the command apid gives
+// it, so the deployment row identifies it without a lookup on the wake path.
+// A customer app on the official Valkey image with its own command keeps its
+// own probes.
 func runsManagedValkey(dep state.Deployment) bool {
-	return api.IsManagedValkeyImage(dep.ImageDigest)
+	return api.IsManagedValkeyImage(dep.ImageDigest) && api.IsManagedValkeyCommand(dep.OverrideEntrypoint)
 }
 
 // routesRawTCPListener reports that the deployment's routed port is declared
