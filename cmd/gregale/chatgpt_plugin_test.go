@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"image/png"
 	"os"
@@ -242,23 +243,18 @@ func checkChatGPTPluginIcon(t *testing.T, path string) {
 		t.Errorf("icon %q must be a PNG under ./assets/", path)
 		return
 	}
-	f, err := os.Open(filepath.Join(chatgptPluginDir, path))
+	content, err := os.ReadFile(filepath.Join(chatgptPluginDir, path))
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := png.DecodeConfig(f)
+	cfg, err := png.DecodeConfig(bytes.NewReader(content))
 	if err != nil {
 		t.Errorf("%s: %v", path, err)
 		return
 	}
-	if cfg.Width != cfg.Height || cfg.Width < 48 || info.Size() > 5<<20 {
-		t.Errorf("%s must be square, at least 48 px and at most 5 MiB: %dx%d, %d bytes", path, cfg.Width, cfg.Height, info.Size())
+	if cfg.Width != cfg.Height || cfg.Width < 48 || len(content) > 5<<20 {
+		t.Errorf("%s must be square, at least 48 px and at most 5 MiB: %dx%d, %d bytes", path, cfg.Width, cfg.Height, len(content))
 	}
 }
 
