@@ -5791,6 +5791,48 @@ the original handle if the first call succeeded. If the window has closed,
 continue with lookup and reconcile the original request before issuing a new
 key. Set `deferFormInput: true` to let the Task pause for reviewed forms.
 
+#### Save a durable Task receipt from TypeScript
+
+Use a receipt when recovery must survive a process restart. Connect the
+official client with `createMcpTaskReceiptTransport` from the Node SDK preview.
+Supply the caller's OAuth credential through the transport options.
+
+```ts
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import {
+  createMcpTaskReceiptTransport, submitMcpTaskWithReceipt,
+} from '@gregale/sdk-node/preview';
+
+await mcp.connect(createMcpTaskReceiptTransport(StreamableHTTPClientTransport, endpoint, transportOptions));
+const submitted = await submitMcpTaskWithReceipt(mcp, './receipts/weekly.json', {
+  toolName: 'build_report',
+  arguments: { report: 'weekly', steps: 8 },
+});
+```
+
+Use a new path in an existing application-owned directory on a POSIX file
+system that supports hard links and directory sync. The SDK generates the
+UUIDv7 key, syncs the private receipt, and then sends the submission. The
+file stores an endpoint fingerprint and the key. If the server returns the
+Task ID, the SDK atomically adds it and reports whether it durably recorded
+the ID in `taskIdRecorded`. Credentials and tool arguments stay out of
+the receipt.
+
+After restart, reconnect using the same endpoint and the current credential.
+Recover the Task using the receipt path alone.
+
+```ts
+import { resumeMcpTaskFromReceipt } from '@gregale/sdk-node/preview';
+
+const task = await resumeMcpTaskFromReceipt(mcp, './receipts/weekly.json');
+```
+
+The SDK checks the receipt against the connected transport's endpoint before
+sending requests. Recovery uses the recorded Task ID when present and otherwise
+does a read-only lookup by submission key. It returns the current Task snapshot
+and any retained result. Use `waitForMcpTask` if it is still working. This
+workflow uses the Node SDK's receipt format.
+
 #### Find retained Tasks on the server
 
 Use the Task inbox when a new CLI profile has no local receipts or Task IDs.

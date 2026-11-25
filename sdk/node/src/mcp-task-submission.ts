@@ -71,7 +71,7 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isSubmissionKey(value: unknown): value is string {
+export function isSubmissionKey(value: unknown): value is string {
   return typeof value === 'string' && keyPattern.test(value);
 }
 
@@ -121,10 +121,9 @@ class AcceptedHandle {
   constructor(readonly task: McpTaskInboxEntry) {}
 }
 
-/** Send one keyed submission. An uncertain response leaves the saved key available for lookup or explicit replay. */
-export async function submitMcpTask(
-  connection: McpTaskSubmissionConnection, submission: McpTaskSubmission, options: McpTaskSubmissionOptions = {},
-): Promise<McpTaskSubmissionOutcome> {
+export function prepareMcpTaskSubmission(
+  connection: McpTaskSubmissionConnection, submission: McpTaskSubmission,
+): Extract<TaskRequest, { method: typeof submitMethod }> {
   requireSubmissionKey(submission.submissionKey);
   if (typeof submission.toolName !== 'string' || !submission.toolName.trim() ||
       (submission.arguments !== undefined && !record(submission.arguments)) ||
@@ -133,22 +132,36 @@ export async function submitMcpTask(
   }
   requireCapability(connection, 'io.gregale/task-submission');
   const args = snapshotArguments(submission.arguments ?? {}) as McpTaskArguments;
+  // Use the header marker as the SDK method. Without the fetch adapter this
+  // is an unknown RPC method and cannot execute the tool as an ordinary call.
+  return { method: submitMethod, params: {
+    name: submission.toolName, arguments: args, _meta: {
+      [submissionKeyMeta]: submission.submissionKey,
+      'io.modelcontextprotocol/clientCapabilities': {
+        extensions: { [tasksExtension]: {} },
+        ...(submission.deferFormInput ? { elicitation: { form: {} } } : {}),
+      },
+    },
+  } };
+}
+
+/** Send one keyed submission. An uncertain response leaves the saved key available for lookup or explicit replay. */
+export async function submitMcpTask(
+  connection: McpTaskSubmissionConnection, submission: McpTaskSubmission, options: McpTaskSubmissionOptions = {},
+): Promise<McpTaskSubmissionOutcome> {
+  return sendMcpTaskSubmission(connection, prepareMcpTaskSubmission(connection, submission), options);
+}
+
+export async function sendMcpTaskSubmission(
+  connection: McpTaskSubmissionConnection, request: ReturnType<typeof prepareMcpTaskSubmission>,
+  options: McpTaskSubmissionOptions,
+): Promise<McpTaskSubmissionOutcome> {
   const scope = requestOptions(options);
   scope.signal.throwIfAborted();
 
   let value: unknown;
   try {
-    // Use the header marker as the SDK method. Without the fetch adapter this
-    // is an unknown RPC method and cannot execute the tool as an ordinary call.
-    value = await connection.request({ method: submitMethod, params: {
-      name: submission.toolName, arguments: args, _meta: {
-        [submissionKeyMeta]: submission.submissionKey,
-        'io.modelcontextprotocol/clientCapabilities': {
-          extensions: { [tasksExtension]: {} },
-          ...(submission.deferFormInput ? { elicitation: { form: {} } } : {}),
-        },
-      },
-    } }, resultSchema, scope);
+    value = await connection.request(request, resultSchema, scope);
   } catch (error) {
     const { status, code } = requestFailure(error);
     if (!scope.signal.aborted && ((status !== undefined && status >= 400 && status < 500 && status !== 408) ||

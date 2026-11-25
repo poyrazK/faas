@@ -122,6 +122,10 @@ function taskInboxQuery(options: McpTaskInboxListOptions): Query {
   };
 }
 
+export function isMcpTaskId(value: unknown): value is string {
+  return typeof value === 'string' && value !== '' && Buffer.byteLength(value) <= 256 && !/[\r\n\0]/u.test(value);
+}
+
 const payloadFields = new Set(['result', 'error', 'inputrequests', 'statusmessage', 'arguments']);
 
 export function parseMcpTaskMetadata(value: unknown): McpTaskInboxEntry {
@@ -135,7 +139,7 @@ export function parseMcpTaskMetadata(value: unknown): McpTaskInboxEntry {
 /** Project the shared metadata fields from an already checked Task response. */
 export function parseMcpTaskFields(value: Record<string, unknown>): McpTaskInboxEntry {
   const { taskId, status, createdAt, lastUpdatedAt, ttlMs, pollIntervalMs } = value;
-  if (typeof taskId !== 'string' || taskId === '' || Buffer.byteLength(taskId, 'utf8') > 256 || /[\r\n\0]/u.test(taskId) ||
+  if (!isMcpTaskId(taskId) ||
       !isStatus(status) ||
       !isTimestamp(createdAt) || !isTimestamp(lastUpdatedAt) ||
       (ttlMs !== null && !isInteger(ttlMs, 0, Number.MAX_SAFE_INTEGER)) ||

@@ -1,12 +1,16 @@
 """Exercise the Node SDK preview with the materialized Python Task starter."""
 
 from decimal import Decimal
+import json
 import os
 from pathlib import Path
-from queue import Queue
+from queue import Empty, Queue
+import signal
 import socket
+import stat
 import subprocess
-from threading import Thread
+from tempfile import TemporaryDirectory
+from threading import Event, Thread
 import time
 import unittest
 from unittest.mock import patch
@@ -43,9 +47,13 @@ class TaskInputReviewJourney(unittest.TestCase):
         self.enterContext(patch.object(auth.jwks_client, "fetch_data", return_value={"keys": [key]}))
         scope = "mcp:tools reports:read"
         identity = AuthContext(subject="alice", resource=config["auth"]["resource"], scopes=scope.split())
-        token = jwt.encode({"iss": config["auth"]["issuer"], "aud": identity.resource,
-                            "sub": identity.subject, "scope": scope, "exp": time.time() + 300},
-                           private, algorithm="RS256", headers={"kid": "sdk-review"})
+        claims = {"iss": config["auth"]["issuer"], "aud": identity.resource, "sub": identity.subject,
+                  "scope": scope, "exp": time.time() + 300}
+
+        def mint(**overrides):
+            return jwt.encode({**claims, **overrides}, private, algorithm="RS256", headers={"kid": "sdk-review"})
+
+        token = mint()
 
         amount = 900719925474099312345
         exact = Decimal("0.1000000000000000001")
@@ -90,10 +98,15 @@ class TaskInputReviewJourney(unittest.TestCase):
         for fault in ("before", "after", "acknowledged", "race"):
             cancel_faults.put(fault)
         observed, submissions, lookups, committed, cancellations = [], [], [], [], []
+        receipt_phase, release_receipt_reply = Event(), Event()
+        receipt_commits = Queue()
+        receipt_methods = []
 
         class ReviewJourneyHandler(MCPHandler):
             def do_POST(self):
                 method = self.headers.get("Mcp-Method")
+                if receipt_phase.is_set() and method != "server/discover":
+                    receipt_methods.append(method)
                 if method == "tasks/cancel":
                     self.cancel_fault = cancel_faults.get_nowait()
                     cancellations.append(self.cancel_fault)
@@ -131,6 +144,10 @@ class TaskInputReviewJourney(unittest.TestCase):
                 ) in {"after", "race"}:
                     return self.drop_reply()
                 if self.headers.get("Mcp-Method") == TASK_SUBMISSION_METHOD and result.get("resultType") == "task":
+                    if receipt_phase.is_set():
+                        receipt_commits.put(result["taskId"])
+                        release_receipt_reply.wait(10)
+                        return self.drop_reply()
                     committed.append(result["taskId"])
                     if len(committed) == 1:
                         return self.drop_reply()
@@ -185,6 +202,53 @@ class TaskInputReviewJourney(unittest.TestCase):
 
         self.assertEqual(confirm(exact), "applied")
         self.assertEqual(confirm(Decimal("0.1000000000000000002")), "unconfirmed")
+
+        receipt_phase.set()
+        with TemporaryDirectory() as directory:
+            receipt_path = Path(directory, "task.json")
+            receipt_script = str(Path(__file__).with_name("task-receipt.mjs"))
+            command = ["node", receipt_script, "submit", endpoint, str(receipt_path)]
+            with subprocess.Popen(command, env={**os.environ, "MCP_TASKS_TEST_TOKEN": token},
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as submitter:
+                try:
+                    try:
+                        receipt_task = receipt_commits.get(timeout=8)
+                    except Empty:
+                        self.fail("SDK submission never reached the committed reply")
+                    submitter.kill()
+                    stdout, stderr = submitter.communicate(timeout=5)
+                    self.assertEqual(submitter.returncode, -signal.SIGKILL, stderr)
+                    self.assertNotIn(token, stdout + stderr)
+                finally:
+                    if submitter.poll() is None:
+                        submitter.kill()
+                        submitter.wait(timeout=5)
+                    release_receipt_reply.set()
+            initial = receipt_path.read_text()
+            self.assertEqual(stat.S_IMODE(receipt_path.stat().st_mode), 0o600)
+            receipt = json.loads(initial)
+            self.assertEqual(set(receipt), {"version", "endpointSha256", "submissionKey"})
+            self.assertNotIn(token, initial)
+            self.assertNotIn(endpoint, initial)
+
+            renewed = mint(jti="fresh-receipt-recovery")
+            result = subprocess.run(["node", receipt_script, "resume", endpoint, str(receipt_path)],
+                                    env={**os.environ, "MCP_TASKS_TEST_TOKEN": renewed}, capture_output=True,
+                                    text=True, timeout=16)
+            self.assertNotIn(renewed, result.stdout + result.stderr)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout), {"taskId": receipt_task, "status": "completed"})
+            self.assertEqual(receipt_path.read_text(), initial)
+            self.assertEqual(receipt_methods[:3], [TASK_SUBMISSION_METHOD, TASK_SUBMISSION_LOOKUP_METHOD, "tasks/get"])
+            self.assertTrue(all(method == "tasks/get" for method in receipt_methods[3:]))
+            with runtime.pool.connection() as connection:
+                tasks = connection.execute(
+                    """SELECT task_id::text AS task_id,status,attempt_count
+                       FROM gregale_mcp_tasks WHERE namespace=%s AND submission_key=%s""",
+                    (runtime.namespace, receipt["submissionKey"]),
+                ).fetchall()
+            self.assertEqual(tasks, [{"task_id": receipt_task, "status": "completed", "attempt_count": 1}])
+
 
 
 if __name__ == "__main__":

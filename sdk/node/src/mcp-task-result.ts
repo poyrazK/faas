@@ -1,5 +1,5 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import { parseMcpTaskFields, type McpTaskInboxEntry, type McpTaskInboxStatus } from './mcp-task-inbox.js';
+import { isMcpTaskId, parseMcpTaskFields, type McpTaskInboxEntry, type McpTaskInboxStatus } from './mcp-task-inbox.js';
 
 const readMethod = 'tasks/get';
 const cancelMethod = 'tasks/cancel';
@@ -160,7 +160,7 @@ async function withTaskScope<Result>(
   connection: McpTaskConnection, taskId: string, options: McpTaskReadOptions, defaultTimeoutMs: number,
   run: (request: RequestOptions) => Promise<Result>,
 ): Promise<Result> {
-  if (typeof taskId !== 'string' || taskId === '' || Buffer.byteLength(taskId) > 256 || /[\r\n\0]/u.test(taskId)) {
+  if (!isMcpTaskId(taskId)) {
     throw new TypeError('Invalid MCP Task ID');
   }
   options.signal?.throwIfAborted();
