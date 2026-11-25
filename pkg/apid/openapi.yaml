@@ -118793,6 +118793,7 @@ components:
           format: date-time
 
     WorkflowRunStartLookupResponse:
+      description: The retained run ID for a previously accepted pipeline-tool start.
       type: object
       additionalProperties: false
       required: [run_id]

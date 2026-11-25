@@ -11,6 +11,8 @@ T = TypeVar("T", bound="WorkflowRunStartLookupResponse")
 
 @_attrs_define
 class WorkflowRunStartLookupResponse:
+    """The retained run ID for a previously accepted pipeline-tool start."""
+
     run_id: UUID
 
     def to_dict(self) -> dict[str, Any]:
