@@ -86,6 +86,12 @@ func cmdLink(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	project, err := client.GetProject(context.Background(), positional[0])
+	if isNotFound(err) {
+		// Prod hunt r55: `gregale link status` read "status" as a project
+		// and answered only "no such project resource".
+		// Not wrapped: printErr would show the API problem instead.
+		return printErr("Project not found", fmt.Errorf("no project %q in this account; gregale context shows this checkout's link, gregale link --app APP links an app", positional[0]))
+	}
 	if err != nil {
 		return printErr("Could not validate project", err)
 	}

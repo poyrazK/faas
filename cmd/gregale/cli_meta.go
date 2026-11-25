@@ -3350,6 +3350,7 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: subRm, Aliases: []string{"remove"}, Short: "Remove a custom domain binding", Positionals: []string{"<domain>"}, Flags: []cliFlag{
 				{Name: "yes", Bool: true, Short: "confirm removal without prompting"},
+				{Name: "app", Short: "refuse unless the domain is bound to this app", Value: "SLUG"},
 			}},
 			{Name: subDomainsSetDefault, Short: "Set a verified domain as the app default", Positionals: []string{"<domain>"}},
 			{Name: subDomainsVerify, Short: "Check DNS and certificate verification status", Notes: []string{"Exits nonzero while pending.", "Checks ownership and routing immediately; --wait waits for HTTPS readiness."}, Positionals: []string{"<domain>"}, Flags: []cliFlag{
@@ -3878,14 +3879,14 @@ var cliCommands = []cliCommand{
 				{Name: "trial-days", Short: "free trial from the next minute: usage is priced at zero for this many days", Value: "N"},
 			}},
 			{Name: "info", Short: "Show one API consumer", Positionals: []string{"<slug>", "<consumer-id>"}},
-			{Name: "revoke", Short: "Revoke an API consumer; its keys stop authenticating", Positionals: []string{"<slug>", "<consumer-id>"}},
+			{Name: "revoke", Short: "Revoke an API consumer; its keys stop authenticating", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{{Name: "yes", Bool: true, Short: "accepted for scripts; revoke does not prompt"}}},
 			{Name: "keys", Short: "List a consumer's API keys", Positionals: []string{"<slug>", "<consumer-id>"}},
 			{Name: "key-create", Short: "Issue a consumer API key (secret shown once)", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
 				{Name: "name", Short: "key display name", Value: "TEXT", Req: true},
 				{Name: "scopes", Short: "comma-separated scopes: read, write, admin, billing (default write); billing lets the customer read its own usage and invoices", Value: "LIST"},
 				{Name: "expires", Short: "key expiry", Value: "RFC3339"},
 			}},
-			{Name: "key-revoke", Short: "Revoke one consumer API key", Positionals: []string{"<slug>", "<consumer-id>", "<key-id>"}},
+			{Name: "key-revoke", Short: "Revoke one consumer API key", Positionals: []string{"<slug>", "<consumer-id>", "<key-id>"}, Flags: []cliFlag{{Name: "yes", Bool: true, Short: "accepted for scripts; revoke does not prompt"}}},
 			{Name: "usage", Short: "Show a consumer's metered requests", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
 				{Name: "since", Short: "window start", Value: "RFC3339"},
 				{Name: "until", Short: "window end", Value: "RFC3339"},
@@ -7273,6 +7274,7 @@ var cliCommands = []cliCommand{
 				{Name: "wait-for-ack", Short: "wait until every active authorized runtime confirms it removed the secret"},
 				{Name: "timeout", Short: "maximum time to wait for runtime acknowledgements (requires --wait-for-ack)", Value: "DURATION"},
 				{Name: "no-guard", Short: "do not open a config guard for this change", Bool: true},
+				{Name: "yes", Short: "accepted for scripts; removing named keys does not prompt", Bool: true},
 			}},
 			{Name: "list-all", Short: "List every secret across apps", Examples: []string{"gregale secrets list-all --class ephemeral", "gregale secrets list-all --older-than 90d"}, Flags: []cliFlag{
 				{Name: "before", Short: "pagination cursor from a previous call's next_before", Value: "slug|key"},

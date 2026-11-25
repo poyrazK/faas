@@ -1171,6 +1171,10 @@ func secretsUnset(args []string) int {
 	timeout := fs.Duration("timeout", 2*time.Minute, "maximum time to wait for runtime acknowledgements")
 	restart := fs.Bool("restart", false, "restart the app so running instances drop the removed secret now")
 	noGuard := fs.Bool("no-guard", false, "do not open a config guard for this change (ADR-1451)")
+	// Unset names its keys and does not prompt; --yes, which scripts and
+	// agents pass to every removal, used to fail as an unknown flag (prod
+	// hunt r54/r55).
+	_ = fs.Bool("yes", false, "accepted for scripts; removing named keys does not prompt")
 	orderedArgs, err := reorderSecretsSetArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "secret unset:", err)

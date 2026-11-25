@@ -5916,18 +5916,28 @@ func cmdDomains(args []string) int {
 		// --yes / -y may come before or after the domain, like the other
 		// deletes; without it the CLI asks. It rejected a trailing --yes and
 		// deleted with no prompt (Hunt 32 H32-14).
+		// --app, which `domain create` requires, is accepted too and checked
+		// against the binding (prod hunt r55: it printed usage).
 		var positional []string
 		yes := false
-		for _, arg := range args[1:] {
-			switch arg {
-			case "--yes", "-y", "--yes=true":
+		app := ""
+		rest := args[1:]
+		for i := 0; i < len(rest); i++ {
+			arg := rest[i]
+			switch {
+			case arg == "--yes" || arg == "-y" || arg == "--yes=true":
 				yes = true
+			case (arg == "--app" || arg == "-app") && i+1 < len(rest):
+				i++
+				app = rest[i]
+			case strings.HasPrefix(arg, "--app=") || strings.HasPrefix(arg, "-app="):
+				app = arg[strings.Index(arg, "=")+1:]
 			default:
 				positional = append(positional, arg)
 			}
 		}
 		if len(positional) != 1 || strings.HasPrefix(positional[0], "-") {
-			PrintUsage(os.Stderr, "usage: gregale domain delete <domain> [--yes]", "domains")
+			PrintUsage(os.Stderr, "usage: gregale domain delete <domain> [--app <slug>] [--yes]", "domains")
 			return 1
 		}
 		domain := positional[0]
@@ -5939,6 +5949,11 @@ func cmdDomains(args []string) int {
 		client, err := authedClient()
 		if err != nil {
 			return printErr("Not logged in", err)
+		}
+		if app != "" {
+			if err := domainBoundToApp(context.Background(), client, domain, app); err != nil {
+				return printErr("Could not remove domain", err)
+			}
 		}
 		if err := client.DeleteDomain(context.Background(), domain); err != nil {
 			return printErr("Could not remove domain", err)

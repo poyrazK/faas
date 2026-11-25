@@ -341,17 +341,20 @@ func cmdInvocationsGet(args []string) int {
 	fs := newFlagSet("invocations get", flag.ContinueOnError)
 	replay := fs.Bool("replay", false, "re-issue a failed invocation (returns the new async invocation)")
 	replayKeyed := fs.Bool("replay-keyed", false, "recover failed keyed work in its captured policy lane")
-	if err := fs.Parse(args); err != nil {
+	// Flags may follow the ID (prod hunt r55: `invocation get ID --replay`
+	// printed usage).
+	flags, positional := splitArgsForFlags(args, "replay", "replay-keyed")
+	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if rejectArgumentCount(fs.Name(), invocationGetCmdUsage, invocationCmdDocsTopic, fs.NArg(), 1, 1, "ID") {
+	if rejectArgumentCount(fs.Name(), invocationGetCmdUsage, invocationCmdDocsTopic, len(positional), 1, 1, "ID") {
 		return 1
 	}
 	if *replay && *replayKeyed {
 		PrintUsage(os.Stderr, invocationGetCmdUsage, invocationCmdDocsTopic)
 		return 1
 	}
-	id := fs.Arg(0)
+	id := positional[0]
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)

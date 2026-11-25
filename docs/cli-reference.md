@@ -3465,7 +3465,7 @@ gregale env set --app my-api SESSION_TOKEN="$SESSION_TOKEN" --class ephemeral
 
 Remove named sealed secrets (alias: rm)
 
-`gregale env unset [--dry-run] [--interactive] [--app <slug>] [--env <SCOPE>] [--restart] [--wait-for-ack] [--timeout <DURATION>] [--no-guard] [<KEY>...]`
+`gregale env unset [--dry-run] [--interactive] [--app <slug>] [--env <SCOPE>] [--restart] [--wait-for-ack] [--timeout <DURATION>] [--no-guard] [--yes] [<KEY>...]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -3477,6 +3477,7 @@ Remove named sealed secrets (alias: rm)
 | `--wait-for-ack` | wait until every active authorized runtime confirms it removed the secret |  |
 | `--timeout <DURATION>` | maximum time to wait for runtime acknowledgements (requires --wait-for-ack) |  |
 | `--no-guard` | do not open a config guard for this change |  |
+| `--yes` | accepted for scripts; removing named keys does not prompt |  |
 
 Examples:
 
@@ -3942,11 +3943,12 @@ Bind a custom domain to an app or project environment
 
 Remove a custom domain binding
 
-`gregale domain delete [--yes] <domain>`
+`gregale domain delete [--yes] [--app <SLUG>] <domain>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--yes` | confirm removal without prompting |  |
+| `--app <SLUG>` | refuse unless the domain is bound to this app |  |
 
 ### domain verify
 

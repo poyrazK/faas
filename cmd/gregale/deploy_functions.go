@@ -213,6 +213,7 @@ func (d functionSetDeploy) run(ctx context.Context, client functionSetClient) in
 	}
 	_, _ = fmt.Fprintf(d.out, "Deploying %d functions from %s\n", len(planned), displayPath(d.cwd, d.projectDir))
 	d.printConfigFromCode()
+	d.printRootAppLeftOut()
 	if !d.planOnly {
 		// Before any build: a Python function imports its gregale_functions.py.
 		if resolved, err := d.manifest.PlanFunctions(d.projectDir, d.projectSlug); err == nil {
@@ -306,9 +307,18 @@ func (d functionSetDeploy) printPlan() int {
 		_, _ = fmt.Fprintf(d.out, "  %-20s %-28s %-10s %s\n", fn.Name, fn.App, fn.Runtime, fn.Root)
 	}
 	d.printConfigFromCode()
+	d.printRootAppLeftOut()
 	printSnapshotHooks(d.out, planned)
 	_, _ = fmt.Fprintf(d.out, "\nDeploy them: %s\nCompare with remote state: gregale deploy --dry-run\n", plan.DeployCommand)
 	return 0
+}
+
+// printRootAppLeftOut says when the project's root app is not deployed with
+// its functions.
+func (d functionSetDeploy) printRootAppLeftOut() {
+	if rootAppLeftOut(d.projectDir) {
+		_, _ = fmt.Fprintf(d.out, "\n%s.\n", rootAppLeftOutNote)
+	}
 }
 
 // printSnapshotHooks lists the snapshot hooks each function declares in code

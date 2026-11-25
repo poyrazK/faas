@@ -1929,6 +1929,9 @@ func cmdQueueDeadLetter(args []string) int {
 	if next != "" {
 		_, _ = fmt.Fprintf(osStdout, "... more — pass --cursor %s\n", next)
 	}
+	if len(resp.Messages) > 0 {
+		_, _ = fmt.Fprintf(osStdout, "Replay one: gregale dlq replay %s ID (all: gregale dlq replay %s --all)\n", slug, slug)
+	}
 	return 0
 }
 
