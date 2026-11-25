@@ -6236,6 +6236,28 @@ without Task subscriptions poll at the Task's server-directed interval.
 Closing the iterator or aborting its signal stops the watch. Use `getMcpTask`
 to retrieve the completed Task's result.
 
+Use `watchMcpTasks` on that same connection to follow several known Task
+IDs. The watcher deduplicates IDs and yields metadata or a read error for
+each Task independently.
+
+```ts
+import { watchMcpTasks } from '@gregale/sdk-node/preview';
+
+for await (const event of watchMcpTasks(mcp, taskIds, { signal })) {
+  if (event.outcome === 'unavailable') {
+    console.log(event.taskId, event.error.code);
+    continue;
+  }
+  console.log(event.taskId, event.task.status, event.task.nextAction);
+}
+```
+
+Tasks leave the watch when they finish, need input, or can no longer be
+read. One subscription covers up to 64 active IDs. The watch polls larger
+batches until they fit, and also polls IDs omitted from the subscription
+acknowledgement. It uses at most four concurrent status reads, and checks
+all remaining Tasks after a disconnect before subscribing again.
+
 #### Cancel a Task from TypeScript
 
 Use `cancelMcpTask(mcp, taskId)` from `@gregale/sdk-node/preview` on the

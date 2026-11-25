@@ -55,7 +55,9 @@ export {
   type McpTaskReceiptConnection, type McpTaskReceiptFailureCode, type McpTaskReceiptSubmission,
   type McpTaskReceiptSubmissionOutcome,
 } from './mcp-task-receipt.js';
-export { watchMcpTask, type McpTaskWatchConnection, type McpTaskWatchOptions } from './mcp-task-watch.js';
+export {
+  watchMcpTask, watchMcpTasks, type McpTaskWatchConnection, type McpTaskWatchEvent, type McpTaskWatchOptions,
+} from './mcp-task-watch.js';
 export { PaginationError, type PaginationOptions, type DeploymentPagination } from './deployment-pagination.js';
 export { WaiterError, type WaiterFailureCode, type WaiterOptions, type WaiterSnapshot, type WaiterProgress, type BuildWaitOptions, type DeploymentWaitOptions, type DeploymentWaiters } from './deployment-waiters.js';
 

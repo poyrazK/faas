@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createMcpTaskTransport, watchMcpTask, type McpTaskWatchConnection } from '../src/preview.js';
+import { createMcpTaskTransport, watchMcpTask, watchMcpTasks, type McpTaskWatchConnection } from '../src/preview.js';
 
 const taskId = 'known task';
 const endpoint = 'https://mcp.example/mcp';
@@ -19,14 +19,14 @@ class FixtureTransport {
   constructor(readonly url: URL, readonly options?: { fetch?: typeof fetch }) {}
 }
 
-function polling(read: () => Promise<Record<string, unknown>>): McpTaskWatchConnection {
+function polling(read: (id: string) => Promise<Record<string, unknown>>): McpTaskWatchConnection {
   return {
     getNegotiatedProtocolVersion: () => '2026-07-28',
     getServerCapabilities: () => ({ extensions: { 'io.modelcontextprotocol/tasks': {} } }),
     async request(request, _, { signal }) {
-      assert.deepEqual(request, { method: 'tasks/get', params: { taskId } });
+      assert.equal(request.method, 'tasks/get');
       signal.throwIfAborted();
-      return read();
+      return read(request.params.taskId);
     },
   };
 }
@@ -37,14 +37,16 @@ type FixtureStream = {
 };
 
 function streaming(
-  read: () => Promise<Record<string, unknown>>,
-  onStart: (stream: FixtureStream) => void,
-  honored = true,
+  read: (id: string) => Promise<Record<string, unknown>>,
+  onStart: (stream: FixtureStream, ids: string[]) => void,
+  honored: boolean | string[] = true,
 ): McpTaskWatchConnection {
   const transport = createMcpTaskTransport(FixtureTransport, endpoint, {
     fetch: async (_, init) => {
       const request = JSON.parse(String(init?.body));
-      assert.deepEqual(request.params.notifications, { taskIds: [taskId] });
+      const ids: string[] = request.params.notifications.taskIds;
+      assert.ok(Array.isArray(ids) && ids.length > 0 && ids.length <= 64);
+      assert.deepEqual(request.params.notifications, { taskIds: ids });
       assert.deepEqual(request.params._meta['io.modelcontextprotocol/clientCapabilities'].extensions, {
         'io.modelcontextprotocol/tasks': {},
       });
@@ -56,12 +58,12 @@ function streaming(
             controller.enqueue(encoder.encode(`event: message\r\ndata: ${JSON.stringify({ jsonrpc: '2.0', method, params })}\r\n\r\n`));
           };
           frame('notifications/subscriptions/acknowledged', {
-            _meta: metadata, notifications: honored ? { taskIds: [taskId] } : {},
+            _meta: metadata, notifications: honored ? { taskIds: honored === true ? ids : honored } : {},
           });
           onStart({
             send(task, id = request.id) { frame('notifications/tasks', { ...task, _meta: { [subscriptionId]: id } }); },
             drop() { controller.close(); },
-          });
+          }, ids);
         },
       });
       return new Response(stream, { headers: { 'Content-Type': 'text/event-stream' } });
@@ -205,4 +207,123 @@ test('a quiet subscription still reconciles the Task', async () => {
   assert.deepEqual(states, ['working', 'completed']);
   assert.equal(reads, 3);
   assert.equal(subscriptions, 1);
+});
+
+test('a dropped shared stream reconciles all Tasks and reconnects only the remaining Task', async () => {
+  const paused = 'paused task';
+  const remaining = 'remaining task';
+  const ids = [taskId, paused, remaining];
+  const states = new Map(ids.map(id => [id, { ...initial, taskId: id }]));
+  const firstStream = deferred<FixtureStream>();
+  const secondStream = deferred<FixtureStream>();
+  const initialReconciliation = deferred<void>();
+  const trace: string[] = [];
+  let subscriptions = 0;
+  const client = streaming(async id => {
+    trace.push(id);
+    if (trace.length === 7) initialReconciliation.resolve();
+    return states.get(id)!;
+  }, (stream, requested) => {
+    trace.push('subscribe');
+    if (++subscriptions === 1) {
+      assert.deepEqual(requested, ids);
+      firstStream.resolve(stream);
+    } else {
+      assert.deepEqual(requested, [remaining]);
+      secondStream.resolve(stream);
+    }
+  });
+  const watch = watchMcpTasks(client, [...ids, taskId], { timeoutMs: 3_000 });
+  async function status() {
+    const { value } = await watch.next();
+    assert.equal(value?.outcome, 'available');
+    return [value.taskId, value.task.status];
+  }
+
+  try {
+    for (const id of ids) assert.deepEqual(await status(), [id, 'working']);
+    const completed = status();
+    const live = await Promise.race([
+      firstStream.promise, completed.then(() => assert.fail('Task changed before opening the shared stream')),
+    ]);
+    await initialReconciliation.promise;
+    live.drop();
+    states.set(taskId, { ...initial, status: 'completed' });
+    states.set(paused, { ...initial, taskId: paused, status: 'input_required' });
+    assert.deepEqual(await completed, [taskId, 'completed']);
+    assert.deepEqual(await status(), [paused, 'input_required']);
+
+    const finished = status();
+    const reconnected = await Promise.race([
+      secondStream.promise, finished.then(() => assert.fail('Task finished before reconnecting')),
+    ]);
+    const beforeReconnect = [...trace];
+    states.set(remaining, { ...initial, taskId: remaining, status: 'cancelled' });
+    reconnected.send({ taskId: remaining });
+    assert.deepEqual(await finished, [remaining, 'cancelled']);
+    assert.deepEqual(beforeReconnect, [...ids, 'subscribe', ...ids, ...ids, 'subscribe']);
+    assert.deepEqual(await watch.next(), { done: true, value: undefined });
+  } finally {
+    await watch.return();
+  }
+});
+
+test('partially honored filters use polling for the remaining IDs and isolate inaccessible Tasks', async () => {
+  const inaccessible = 'inaccessible task';
+  const polled = 'polled task';
+  const ids = [taskId, inaccessible, polled];
+  const reads = new Map<string, number>();
+  let subscriptions = 0;
+  const client = streaming(async id => {
+    const count = (reads.get(id) ?? 0) + 1;
+    reads.set(id, count);
+    if (id === inaccessible && count === 2) throw { code: -32002, message: 'private server detail' };
+    return { ...initial, taskId: id, status: count === 1 ? 'working' : 'completed' };
+  }, (_, requested) => {
+    assert.deepEqual(requested, ids);
+    subscriptions++;
+  }, [taskId, inaccessible, 'not requested']);
+  const events = [];
+  for await (const event of watchMcpTasks(client, ids, { timeoutMs: 3_000 })) events.push(event);
+  assert.deepEqual(events.map(event => [event.taskId, event.outcome === 'available' ? event.task.status : event.error.code]), [
+    [taskId, 'working'], [inaccessible, 'working'], [polled, 'working'],
+    [taskId, 'completed'], [inaccessible, 'not_found'], [polled, 'completed'],
+  ]);
+  const denied = events[4]!;
+  assert.equal(denied.outcome, 'unavailable');
+  assert.equal(denied.error.message, 'MCP Task is unavailable to this caller');
+  assert.equal(subscriptions, 1);
+  assert.deepEqual([...reads.values()], [2, 2, 2]);
+});
+
+test('batches above the subscription limit poll with bounded concurrency before subscribing', async () => {
+  const ids = Array.from({ length: 65 }, (_, i) => `task ${i}`);
+  const reads = new Map<string, number>();
+  let concurrent = 0;
+  let maximum = 0;
+  const filters: string[][] = [];
+  const client = streaming(async id => {
+    const count = (reads.get(id) ?? 0) + 1;
+    reads.set(id, count);
+    maximum = Math.max(maximum, ++concurrent);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    concurrent--;
+    const finished = count > 1 && (id === ids[0] || filters.length > 0);
+    return { ...initial, taskId: id, status: finished ? 'completed' : 'working' };
+  }, (_, requested) => { filters.push(requested); });
+  const states = new Map<string, string[]>();
+  for await (const event of watchMcpTasks(client, ids, { timeoutMs: 3_000 })) {
+    assert.equal(event.outcome, 'available');
+    states.set(event.taskId, [...(states.get(event.taskId) ?? []), event.task.status]);
+  }
+  assert.equal(maximum, 4);
+  assert.deepEqual(filters, [ids.slice(1)]);
+  assert.deepEqual([...states.keys()], ids);
+  for (const id of ids) assert.deepEqual(states.get(id), ['working', 'completed']);
+});
+
+test('an empty batch makes no requests and invalid IDs fail before the batch starts', async () => {
+  const client = polling(async () => assert.fail('unexpected Task read'));
+  assert.deepEqual(await watchMcpTasks(client, []).next(), { done: true, value: undefined });
+  assert.throws(() => watchMcpTasks(client, [taskId, '']), { name: 'TypeError' });
 });

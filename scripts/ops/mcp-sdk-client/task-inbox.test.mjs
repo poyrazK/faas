@@ -10,7 +10,7 @@ import { pathToFileURL } from 'node:url';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import {
   cancelMcpTask, createMcpTaskTransport, getMcpTask, listTaskInbox,
-  lookupMcpTaskBySubmissionKey, submitMcpTask, watchMcpTask, watchTaskInbox,
+  lookupMcpTaskBySubmissionKey, submitMcpTask, watchMcpTask, watchMcpTasks, watchTaskInbox,
 } from '../../../sdk/node/dist/preview.js';
 
 test('the official SDK watches the authenticated PostgreSQL Task inbox', { timeout: 25_000 }, async t => {
@@ -97,6 +97,7 @@ test('the official SDK watches the authenticated PostgreSQL Task inbox', { timeo
       taskWatch.opens++;
     }
     if (taskWatch?.stream && method === 'tasks/get') {
+      if (taskWatch.opens === 2) taskWatch.reconnected?.resolve();
       taskWatch.reconciling.resolve();
       void taskWatch.release.promise.then(() => app(req, res));
       return;
@@ -134,7 +135,7 @@ test('the official SDK watches the authenticated PostgreSQL Task inbox', { timeo
   }
 
   const owner = await connect('alice', 'mcp:tools reports:read');
-  async function pause(subject) {
+  async function claimTask(subject) {
     const principal = authInfo(subject);
     const created = await store.create({
       toolName: 'build_report', handlerVersion: mcpTaskHandlers.build_report.version, args: { report: 'private SDK fixture', steps: 1 },
@@ -142,12 +143,21 @@ test('the official SDK watches the authenticated PostgreSQL Task inbox', { timeo
     });
     const claim = await store.claim(3, 30_000);
     assert.equal(claim.task_id, created.task_id);
+    return claim;
+  }
+
+  async function requestInput(claim) {
     assert.equal((await store.requestInputs({
       taskID: claim.task_id, leaseToken: claim.lease_token,
       requests: { approval: { method: 'elicitation/create', params: {
         mode: 'form', message: 'Private SDK fixture prompt', requestedSchema: { type: 'object', properties: {} },
       } } },
     })).ready, false);
+  }
+
+  async function pause(subject) {
+    const claim = await claimTask(subject);
+    await requestInput(claim);
     return claim.task_id;
   }
 
@@ -193,14 +203,9 @@ test('the official SDK watches the authenticated PostgreSQL Task inbox', { timeo
   assert.deepEqual(await cancelMcpTask(owner, found.taskId), { outcome: 'requested', taskId: found.taskId });
   assert.equal((await getMcpTask(owner, found.taskId)).status, 'cancelled');
 
-  const running = await store.create({
-    toolName: 'build_report', handlerVersion: mcpTaskHandlers.build_report.version,
-    args: { report: 'watch fixture', steps: 1 }, authInfo: authInfo('alice'), authMode: 'external-oauth',
-  });
-  const lease = await store.claim(3, 30_000);
-  assert.equal(lease.task_id, running.task_id);
+  const lease = await claimTask('alice');
   taskWatch = { opens: 0, reconciling: Promise.withResolvers(), release: Promise.withResolvers() };
-  const live = watchMcpTask(owner, running.task_id, { timeoutMs: 8_000 });
+  const live = watchMcpTask(owner, lease.task_id, { timeoutMs: 8_000 });
   try {
     const initial = await live.next();
     assert.equal(initial.value.status, 'working');
@@ -214,19 +219,72 @@ test('the official SDK watches the authenticated PostgreSQL Task inbox', { timeo
     taskWatch.stream.destroy();
     await closed;
     const result = { content: [{ type: 'text', text: 'completed while disconnected' }] };
-    assert.equal(await store.complete(running.task_id, lease.lease_token, result), 'completed');
+    assert.equal(await store.complete(lease.task_id, lease.lease_token, result), 'completed');
     taskWatch.release.resolve();
     const terminal = await next;
     assert.equal(terminal.done, false);
-    assert.equal(terminal.value.taskId, running.task_id);
+    assert.equal(terminal.value.taskId, lease.task_id);
     assert.equal(terminal.value.status, 'completed');
     assert.equal(Object.hasOwn(terminal.value, 'result'), false);
     assert.deepEqual(await live.next(), { done: true, value: undefined });
     assert.equal(taskWatch.opens, 1);
-    assert.deepEqual((await getMcpTask(owner, running.task_id)).result, result);
+    assert.deepEqual((await getMcpTask(owner, lease.task_id)).result, result);
   } finally {
     taskWatch.release.resolve();
     await live.return();
+    taskWatch = undefined;
+  }
+
+  const completed = await claimTask('alice');
+  const paused = await claimTask('alice');
+  const remaining = await claimTask('alice');
+  const batchIds = [completed.task_id, paused.task_id, remaining.task_id];
+  taskWatch = {
+    opens: 0, reconciling: Promise.withResolvers(), reconnected: Promise.withResolvers(), release: Promise.withResolvers(),
+  };
+  const batch = watchMcpTasks(owner, batchIds, { timeoutMs: 8_000 });
+  async function nextStatus(taskId, status) {
+    const event = await batch.next();
+    assert.equal(event.done, false);
+    assert.equal(event.value.outcome, 'available');
+    assert.equal(event.value.taskId, taskId);
+    assert.equal(event.value.task.status, status);
+    assert.equal(Object.hasOwn(event.value.task, 'result'), false);
+    assert.equal(Object.hasOwn(event.value.task, 'inputRequests'), false);
+  }
+  try {
+    for (const id of batchIds) await nextStatus(id, 'working');
+    const recovered = nextStatus(completed.task_id, 'completed');
+    await Promise.race([
+      taskWatch.reconciling.promise, recovered.then(() => assert.fail('batch advanced before opening its shared stream')),
+    ]);
+    assert.equal(taskWatch.opens, 1);
+    assert.equal(taskWatch.stream.headersSent, true);
+    const closed = once(taskWatch.stream, 'close');
+    taskWatch.stream.destroy();
+    await closed;
+
+    const result = { content: [{ type: 'text', text: 'completed during the batch disconnect' }] };
+    assert.equal(await store.complete(completed.task_id, completed.lease_token, result), 'completed');
+    await requestInput(paused);
+    taskWatch.release.resolve();
+    await recovered;
+    await nextStatus(paused.task_id, 'input_required');
+
+    const finished = nextStatus(remaining.task_id, 'completed');
+    await Promise.race([
+      taskWatch.reconnected.promise, finished.then(() => assert.fail('batch finished before it reconnected')),
+    ]);
+    assert.equal(taskWatch.opens, 2);
+    assert.equal((await getMcpTask(owner, remaining.task_id)).status, 'working');
+    assert.equal(await store.complete(remaining.task_id, remaining.lease_token, result), 'completed');
+    await finished;
+    assert.deepEqual(await batch.next(), { done: true, value: undefined });
+    assert.equal(taskWatch.opens, 2);
+    assert.deepEqual((await getMcpTask(owner, completed.task_id)).result, result);
+  } finally {
+    taskWatch.release.resolve();
+    await batch.return();
     taskWatch = undefined;
   }
 });

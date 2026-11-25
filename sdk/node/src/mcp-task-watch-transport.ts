@@ -8,7 +8,7 @@ const subscriptionIdKey = 'io.modelcontextprotocol/subscriptionId';
 const tasksExtension = 'io.modelcontextprotocol/tasks';
 
 type RecordValue = Record<string, unknown>;
-type Registration = { taskId: string; acknowledged: boolean; notify(): void };
+type Registration = { requested: ReadonlySet<string>; honored?: ReadonlySet<string>; notify(taskId: string): void };
 type Registrations = Map<string, Registration>;
 const transports = new WeakMap<object, Registrations>();
 
@@ -21,12 +21,14 @@ function observeEvent(data: string, requestId: unknown, registration: Registrati
   try { message = record(JSON.parse(data)); } catch { return; }
   const params = record(message?.params);
   if (message?.jsonrpc !== '2.0' || !params || record(params._meta)?.[subscriptionIdKey] !== requestId) return;
-  if (message.method === 'notifications/subscriptions/acknowledged') {
+  if (message.method === 'notifications/subscriptions/acknowledged' && !registration.honored) {
     const ids = record(params.notifications)?.taskIds;
-    registration.acknowledged = Array.isArray(ids) && ids.length === 1 && ids[0] === registration.taskId;
+    registration.honored = new Set(Array.isArray(ids) ? ids.filter(
+      (id): id is string => typeof id === 'string' && registration.requested.has(id),
+    ) : []);
   }
-  if (message.method === 'notifications/tasks' && registration.acknowledged && params.taskId === registration.taskId) {
-    registration.notify();
+  if (message.method === 'notifications/tasks' && typeof params.taskId === 'string' && registration.honored?.has(params.taskId)) {
+    registration.notify(params.taskId);
   }
 }
 
@@ -86,7 +88,7 @@ export function taskWatchTransport(endpoint: string, fetcher: typeof globalThis.
         ...capabilities, extensions: { ...record(capabilities?.extensions), [tasksExtension]: {} },
       };
       delete filter[watchIdKey];
-      filter.taskIds = [registration.taskId];
+      filter.taskIds = [...registration.requested];
       headers.delete('content-length');
       const response = await fetcher(input, { ...init, headers, redirect: 'manual', body: JSON.stringify(message) });
       if ((response.status >= 300 && response.status < 400) || (response.url && new URL(response.url).href !== endpoint)) {
@@ -103,15 +105,17 @@ export type TaskListenFilter = {
   [watchIdKey]: string;
 };
 
-export function registerTaskWatch(transport: object | undefined, taskId: string, notify: () => void) {
+export function registerTaskWatch(
+  transport: object | undefined, taskIds: readonly string[], notify: (taskId: string) => void,
+) {
   const watches = transport && transports.get(transport);
   if (!watches) return undefined;
   const id = randomUUID();
-  const registration: Registration = { taskId, acknowledged: false, notify };
+  const registration: Registration = { requested: new Set(taskIds), notify };
   watches.set(id, registration);
   return {
     filter: { [watchIdKey]: id } satisfies TaskListenFilter,
-    get acknowledged() { return registration.acknowledged; },
+    get honored() { return registration.honored; },
     close() { watches.delete(id); },
   };
 }
