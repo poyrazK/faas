@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Wake with app (ADR-20261125105038): an opted-in scale-to-zero database
@@ -15,11 +17,21 @@ import (
 
 // WakeStartGap is the shortest time between two starts of one database for
 // wakes: the shortest suspend timeout a customer can choose.
-const WakeStartGap = time.Minute
+const WakeStartGap = time.Duration(api.ManagedPostgresSuspendTimeoutMinSeconds) * time.Second
+
+// wakeStartRetry is how soon a wake may try again after a claim that started
+// nothing (the compute was already running) or failed: a running compute
+// can suspend before the gap ends, and the next wake must still start it.
+const wakeStartRetry = 10 * time.Second
 
 // wakeAppsRefresh is how often a starter re-reads which apps have an
-// opted-in database; a change made through this apid is seen at once.
+// opted-in database; a change made through this apid is seen at once. A
+// failed read waits for the same interval.
 const wakeAppsRefresh = 30 * time.Second
+
+// wakeStoreTimeout bounds each catalog read and claim, so a slow catalog
+// never holds up the notification loop.
+const wakeStoreTimeout = 5 * time.Second
 
 // ErrWakeWithAppUnsupported: the database cannot start with its app: it is
 // always-on, or its backend cannot start a compute.
@@ -27,9 +39,9 @@ var ErrWakeWithAppUnsupported = errors.New("managedpostgres: wake with app unsup
 
 // ComputeStarter is a provider that can start a database's suspended
 // compute. Starting a compute that runs, or one the platform holds, does
-// nothing.
+// nothing and reports false.
 type ComputeStarter interface {
-	StartCompute(ctx context.Context, providerResourceID string) error
+	StartCompute(ctx context.Context, providerResourceID string) (started bool, err error)
 }
 
 // WakeStartClaim is one database a wake claimed to start.
@@ -38,6 +50,8 @@ type WakeStartClaim struct {
 	BackendID          string
 	BackendFingerprint string
 	ProviderResourceID string
+	// ClaimedAt is the stamp the claim wrote.
+	ClaimedAt time.Time
 }
 
 // WakeWithAppStore keeps which databases start with their apps.
@@ -51,6 +65,10 @@ type WakeWithAppStore interface {
 	// ClaimWakeStarts claims, and stamps, the opted-in ready scale-to-zero
 	// databases bound to the app that were not started within gap.
 	ClaimWakeStarts(ctx context.Context, appID string, gap time.Duration) ([]WakeStartClaim, error)
+	// DeferWakeStart moves a claim's stamp back so the database can be
+	// claimed again retry after the claim instead of gap after; it does
+	// nothing when a later claim replaced the stamp.
+	DeferWakeStart(ctx context.Context, claim WakeStartClaim, gap, retry time.Duration) error
 }
 
 // WakeWithApp reports which of the databases start with their apps.
@@ -119,6 +137,7 @@ type WakeStartOutcome string
 
 const (
 	WakeStartStarted     WakeStartOutcome = "started"
+	WakeStartRunning     WakeStartOutcome = "running"
 	WakeStartFailed      WakeStartOutcome = "failed"
 	WakeStartUnsupported WakeStartOutcome = "unsupported"
 )
@@ -131,6 +150,9 @@ type WakeStarter struct {
 	logger   *slog.Logger
 	observe  func(WakeStartOutcome)
 	now      func() time.Time
+	// operationsEnabled is the service's kill switch: while operations are
+	// closed no wake starts a database.
+	operationsEnabled func() bool
 
 	mu       sync.Mutex
 	apps     map[string]bool
@@ -150,7 +172,12 @@ func (s *Service) NewWakeStarter(logger *slog.Logger, observe func(WakeStartOutc
 	if observe == nil {
 		observe = func(WakeStartOutcome) {}
 	}
-	starter := &WakeStarter{registry: s.registry, store: store, logger: logger, observe: observe, now: time.Now}
+	operationsEnabled := s.operationsEnabled
+	if operationsEnabled == nil {
+		operationsEnabled = func() bool { return true }
+	}
+	starter := &WakeStarter{registry: s.registry, store: store, logger: logger, observe: observe, now: time.Now,
+		operationsEnabled: operationsEnabled}
 	s.wakeStarter = starter
 	return starter
 }
@@ -185,20 +212,25 @@ type instanceChanged struct {
 }
 
 // Handle starts the app's opted-in databases when the payload is a wake.
+// Only an instance entering waking or cold_booting is a wake: schedd enters
+// one of them for every wake (a request, a prewarm, a cron); a later
+// running, or one after a live migration, is not.
 func (w *WakeStarter) Handle(ctx context.Context, payload string) {
 	var event instanceChanged
 	if json.Unmarshal([]byte(payload), &event) != nil || event.AppID == "" || event.Kind == "job" {
 		return
 	}
 	switch event.State {
-	case "waking", "cold_booting", "running":
+	case "waking", "cold_booting":
 	default:
 		return
 	}
-	if !w.appOptedIn(ctx, event.AppID) {
+	if !w.operationsEnabled() || !w.appOptedIn(ctx, event.AppID) {
 		return
 	}
-	claims, err := w.store.ClaimWakeStarts(ctx, event.AppID, WakeStartGap)
+	claimCtx, cancel := context.WithTimeout(ctx, wakeStoreTimeout)
+	defer cancel()
+	claims, err := w.store.ClaimWakeStarts(claimCtx, event.AppID, WakeStartGap)
 	if err != nil {
 		w.logger.Debug("managed postgres wake start claim failed", "app_id", event.AppID, "error", err)
 		return
@@ -209,17 +241,22 @@ func (w *WakeStarter) Handle(ctx context.Context, payload string) {
 }
 
 // appOptedIn reports whether the app has an opted-in database, from a list
-// re-read every wakeAppsRefresh. A failed read keeps the last list.
+// re-read every wakeAppsRefresh.
 func (w *WakeStarter) appOptedIn(ctx context.Context, appID string) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.apps == nil || w.now().Sub(w.loadedAt) >= wakeAppsRefresh {
-		apps, err := w.store.WakeWithAppApps(ctx)
+	if w.loadedAt.IsZero() || w.now().Sub(w.loadedAt) >= wakeAppsRefresh {
+		readCtx, cancel := context.WithTimeout(ctx, wakeStoreTimeout)
+		apps, err := w.store.WakeWithAppApps(readCtx)
+		cancel()
 		if err == nil {
-			w.apps, w.loadedAt = apps, w.now()
+			w.apps = apps
 		} else {
 			w.logger.Debug("managed postgres wake apps read failed", "error", err)
 		}
+		// A failed read keeps the last list and waits a refresh before the
+		// next, so a struggling catalog is not read once per transition.
+		w.loadedAt = w.now()
 	}
 	return w.apps[appID]
 }
@@ -237,13 +274,25 @@ func (w *WakeStarter) start(ctx context.Context, claim WakeStartClaim) {
 		w.observe(WakeStartUnsupported)
 		return
 	}
-	if err := starter.StartCompute(ctx, claim.ProviderResourceID); err != nil {
+	started, err := starter.StartCompute(ctx, claim.ProviderResourceID)
+	switch {
+	case err != nil:
 		w.logger.Debug("managed postgres wake start failed", "database_id", claim.DatabaseID, "error", err)
 		w.observe(WakeStartFailed)
+	case started:
+		w.observe(WakeStartStarted)
 		return
+	default:
+		w.observe(WakeStartRunning)
 	}
-	w.observe(WakeStartStarted)
+	// Nothing started: a wake soon after must be able to try again.
+	if err := w.store.DeferWakeStart(ctx, claim, WakeStartGap, wakeStartRetry); err != nil {
+		w.logger.Debug("managed postgres wake start defer failed", "database_id", claim.DatabaseID, "error", err)
+	}
 }
+
+// HasWakeStarter reports whether the service runs a wake starter.
+func (s *Service) HasWakeStarter() bool { return s.wakeStarter != nil }
 
 // RunWakeStarter feeds instance_changed payloads to the service's starter
 // until ctx ends; it returns at once when the service has none.

@@ -44,7 +44,9 @@ func (h WakeWithApp) Put(w http.ResponseWriter, r *http.Request, acct state.Acco
 			"the body must be {\"enabled\": true} or {\"enabled\": false}").WithDocs(api.ManagedPostgresWakeWithAppDocsURL))
 		return
 	}
-	if limits, ok := api.ManagedPostgresLimitsFor(acct.Plan); !ok || limits.DatabasesMax == 0 {
+	// Turning it off is always allowed, so a downgraded account can stop
+	// the starts.
+	if limits, ok := api.ManagedPostgresLimitsFor(acct.Plan); *body.Enabled && (!ok || limits.DatabasesMax == 0) {
 		h.Problem(w, managedpostgres.ErrNotInPlan)
 		return
 	}
@@ -67,7 +69,8 @@ func (h WakeWithApp) Put(w http.ResponseWriter, r *http.Request, acct state.Acco
 	httpkit.WriteJSON(w, http.StatusOK, api.ManagedPostgresWakeWithApp{DatabaseID: databaseID, Enabled: *body.Enabled})
 }
 
-// ApplyWakeWithApp adds the setting to a database's view.
+// ApplyWakeWithApp adds the setting to a database's view. An always-on
+// database never starts for a wake, so its view never shows the setting.
 func ApplyWakeWithApp(view *api.ManagedPostgresDatabase, enabled map[string]bool) {
-	view.WakeWithApp = enabled[view.ID]
+	view.WakeWithApp = view.ScaleToZero && enabled[view.ID]
 }

@@ -42,12 +42,18 @@ gregale postgres app-wake set orders-db off
   otherwise); an always-on database is always awake.
 - **Trigger.** schedd already announces every instance transition on
   `instance_changed` (`{"instance_id","app_id","state"}`), committed with the
-  transition. Each apid listens; on a `waking`, `cold_booting` or `running`
-  instance of an app, it claims, in one statement, each opted-in, ready,
-  scale-to-zero database bound to the app (live binding) that it has not
-  started in the last 60 seconds, and stamps it. Only the replica whose claim
-  wins calls the provider, so replicas never repeat a start. schedd and the
-  gateway are unchanged and never call the provider.
+  transition. Each apid listens; on an app instance entering `waking` or
+  `cold_booting` (every wake enters one; a later `running`, including one
+  after a live migration, is not a wake), it claims, in one statement, each
+  opted-in, ready, scale-to-zero database bound to the app (live binding)
+  that it has not claimed in the last 60 seconds, and stamps it. Only the
+  replica whose claim wins calls the provider, so replicas never repeat a
+  start. A claim that started nothing (the compute was running) or failed
+  moves its stamp back so the database can be claimed again after 10
+  seconds: a running compute can suspend within the minute, and the next
+  wake must still start it. No start is made while managed PostgreSQL
+  operations are closed. schedd and the gateway are unchanged and never call
+  the provider.
 - **Provider.** An optional `ComputeStarter` provider interface. The Neon
   adapter reads the project's read-write endpoint and calls
   `POST /projects/{project}/endpoints/{endpoint}/start` through neond, which
@@ -57,11 +63,17 @@ gregale postgres app-wake set orders-db off
   does not offer the setting.
 - **Failure.** A start is best effort: a failure, a refusal or a lost
   notification only means the database starts on the app's first query, as
-  it does today. Starts are counted in
-  `apid_managed_postgres_wake_starts_total{outcome}`.
+  it does today. Claims are counted in
+  `apid_managed_postgres_wake_starts_total{outcome}` (`started`, `running`,
+  `failed`, `unsupported`).
+- **Plan.** Turning the setting off is allowed on any plan, so an account
+  that lost managed PostgreSQL can still stop the starts. An always-on
+  database never starts for a wake and its view never shows the setting.
 
-The 60-second gap equals the shortest suspend timeout a customer can choose,
-so a busy app sends Neon at most one start a minute per database. Neon's API
+The 60-second gap equals the shortest suspend timeout a customer can choose
+(`api.ManagedPostgresSuspendTimeoutMinSeconds`), so a busy app sends Neon at
+most one start a minute per database, and at most six endpoint reads a
+minute while the compute runs. Neon's API
 limit is shared with lifecycle calls; this bounds the extra load by the
 number of opted-in databases, not by the request rate.
 

@@ -547,13 +547,16 @@ retains the provider-neutral field for a future always-on entitlement.
 A customer can opt a scale-to-zero database into starting when an app bound
 to it wakes (`gregale postgres app-wake set DB on`,
 [ADR-20261125105038](adr/20261125105038-managed-postgres-wake-with-app.md)).
-Every apid listens to schedd's `instance_changed`; on a waking instance it
-claims the app's opted-in databases (at most once a minute each, one replica
-per start) and calls Neon's endpoint start through neond, unpaced. Roll out
-neond, which allows the `start endpoint` route, before apid; an older neond
-refuses the call and the database starts on the app's first query as
-before. `apid_managed_postgres_wake_starts_total{outcome}` counts starts
-(`started`, `failed`, `unsupported`).
+Every apid listens to schedd's `instance_changed`; on an instance entering
+`waking` or `cold_booting` it claims the app's opted-in databases (one
+replica per start, at most once a minute each; 10 seconds when the claim
+found the compute running or the start failed) and calls Neon's endpoint
+start through neond, unpaced. Closing managed PostgreSQL operations stops
+these starts too. Roll out neond, which allows the `start endpoint` route,
+before apid; an older neond refuses the call and the database starts on the
+app's first query as before.
+`apid_managed_postgres_wake_starts_total{outcome}` counts claims (`started`,
+`running`, `failed`, `unsupported`).
 
 PostgreSQL majors 15 through 18 are enabled. PostgreSQL 14 reached upstream
 end of life in November 2026 and is not supported (owner, 2026-11-12); Neon

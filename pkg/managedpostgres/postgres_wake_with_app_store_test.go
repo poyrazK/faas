@@ -28,6 +28,7 @@ func TestWakeWithAppPGClaimsOncePerGap(t *testing.T) {
 	if _, _, err = s.ReserveBinding(ctx, binding); err != nil {
 		t.Fatal(err)
 	}
+	var last []WakeStartClaim
 	claim := func() int {
 		t.Helper()
 		claims, err := s.ClaimWakeStarts(ctx, app.ID, WakeStartGap)
@@ -35,10 +36,11 @@ func TestWakeWithAppPGClaimsOncePerGap(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, c := range claims {
-			if c.DatabaseID != database.ID || c.ProviderResourceID == "" || c.BackendID == "" {
+			if c.DatabaseID != database.ID || c.ProviderResourceID == "" || c.BackendID == "" || c.ClaimedAt.IsZero() {
 				t.Fatalf("claim = %+v", c)
 			}
 		}
+		last = claims
 		return len(claims)
 	}
 
@@ -76,6 +78,22 @@ func TestWakeWithAppPGClaimsOncePerGap(t *testing.T) {
 	}
 	if n := claim(); n != 1 {
 		t.Fatalf("claim after the gap = %d", n)
+	}
+	// A claim that started nothing is deferred: claimable again after retry
+	// (zero here), not after the gap.
+	stale := last[0]
+	if err := s.DeferWakeStart(ctx, stale, WakeStartGap, 0); err != nil {
+		t.Fatal(err)
+	}
+	if n := claim(); n != 1 {
+		t.Fatalf("claim after a deferred claim = %d", n)
+	}
+	// Deferring an older claim leaves the newer claim's stamp alone.
+	if err := s.DeferWakeStart(ctx, stale, WakeStartGap, 0); err != nil {
+		t.Fatal(err)
+	}
+	if n := claim(); n != 0 {
+		t.Fatalf("an old claim's defer released the new claim: %d", n)
 	}
 	// Another app's wake claims nothing.
 	if claims, err := s.ClaimWakeStarts(ctx, uuid.NewString(), WakeStartGap); err != nil || len(claims) != 0 {

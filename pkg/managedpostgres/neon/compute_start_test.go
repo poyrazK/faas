@@ -43,12 +43,12 @@ func TestStartComputeStartsOnlyAnIdleUnheldCompute(t *testing.T) {
 					w.WriteHeader(http.StatusNotFound)
 				}
 			}))
-			err := provider.StartCompute(context.Background(), "quiet-river-12345678")
+			started, err := provider.StartCompute(context.Background(), "quiet-river-12345678")
 			if !errors.Is(err, tc.wantErr) || tc.wantErr == nil && err != nil {
 				t.Fatalf("StartCompute = %v, want %v", err, tc.wantErr)
 			}
-			if got := starts.Load() == 1; got != tc.wantStart {
-				t.Fatalf("started = %v, want %v", got, tc.wantStart)
+			if got := starts.Load() == 1; got != tc.wantStart || started != tc.wantStart {
+				t.Fatalf("start calls = %v, reported %v, want %v", got, started, tc.wantStart)
 			}
 		})
 	}

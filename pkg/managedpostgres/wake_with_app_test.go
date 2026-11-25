@@ -11,15 +11,17 @@ type wakeStartProvider struct {
 	*fakeProvider
 	mu      sync.Mutex
 	started []string
+	running bool // the compute already runs: nothing starts
 	done    chan struct{}
 }
 
-func (p *wakeStartProvider) StartCompute(_ context.Context, id string) error {
+func (p *wakeStartProvider) StartCompute(_ context.Context, id string) (bool, error) {
 	p.mu.Lock()
 	p.started = append(p.started, id)
+	running := p.running
 	p.mu.Unlock()
 	p.done <- struct{}{}
-	return nil
+	return !running, nil
 }
 
 // wakeStartStore claims like the SQL: an opted-in database of the app not
@@ -33,6 +35,19 @@ type wakeStartStore struct {
 	now      time.Time
 	appReads int
 	claims   WakeStartClaim
+	deferred chan string
+}
+
+func (s *wakeStartStore) DeferWakeStart(_ context.Context, claim WakeStartClaim, gap, retry time.Duration) error {
+	s.mu.Lock()
+	if s.started[claim.DatabaseID].Equal(claim.ClaimedAt) {
+		s.started[claim.DatabaseID] = claim.ClaimedAt.Add(-(gap - retry))
+	}
+	s.mu.Unlock()
+	if s.deferred != nil {
+		s.deferred <- claim.DatabaseID
+	}
+	return nil
 }
 
 func (s *wakeStartStore) SetWakeWithApp(_ context.Context, id string, enabled bool) error {
@@ -78,7 +93,7 @@ func (s *wakeStartStore) ClaimWakeStarts(_ context.Context, appID string, gap ti
 		}
 		s.started[id] = s.now
 		claim := s.claims
-		claim.DatabaseID, claim.ProviderResourceID = id, "provider-"+id
+		claim.DatabaseID, claim.ProviderResourceID, claim.ClaimedAt = id, "provider-"+id, s.now
 		out = append(out, claim)
 	}
 	return out, nil
@@ -111,10 +126,11 @@ func TestWakeStarterStartsOptedInDatabasesOncePerGap(t *testing.T) {
 		}
 	}
 
-	// Not a wake, a job, another app, an app without an opted-in database:
-	// nothing starts.
+	// Not a wake (running, including after a live migration), a job, an app
+	// without an opted-in database: nothing starts.
 	for _, payload := range []string{
 		`{"app_id":"app-1","state":"parked"}`,
+		`{"app_id":"app-1","state":"running"}`,
 		`{"instance_id":"i","state":"waking","kind":"job"}`,
 		`{"app_id":"app-2","state":"waking"}`,
 		`not json`,
@@ -123,8 +139,7 @@ func TestWakeStarterStartsOptedInDatabasesOncePerGap(t *testing.T) {
 	}
 	starter.Handle(ctx, `{"app_id":"app-1","state":"waking"}`)
 	wait()
-	// The same wake's later transitions, inside the gap, start nothing more.
-	starter.Handle(ctx, `{"app_id":"app-1","state":"running"}`)
+	// Another wake inside the gap starts nothing more.
 	store.now = now.Add(30 * time.Second)
 	starter.Handle(ctx, `{"app_id":"app-1","state":"cold_booting"}`)
 	// After the gap the next wake starts it again.
@@ -168,5 +183,67 @@ func TestWakeStarterRereadsAppsAfterOptIn(t *testing.T) {
 	starter.invalidate()
 	if !starter.appOptedIn(ctx, "app-1") {
 		t.Fatal("opt-in not seen after invalidate")
+	}
+}
+
+func wakeStartFixture(t *testing.T, provider *wakeStartProvider, operationsOpen *bool) (*WakeStarter, *wakeStartStore) {
+	t.Helper()
+	registry := testRegistry(t, provider, nil)
+	backend := registry.backends["primary-a"]
+	store := &wakeStartStore{MemoryStore: NewMemoryStore(), enabled: map[string]bool{"db-1": true},
+		bindings: map[string]string{"db-1": "app-1"}, started: map[string]time.Time{},
+		now:    time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC),
+		claims: WakeStartClaim{BackendID: backend.ID, BackendFingerprint: backend.Fingerprint}, deferred: make(chan string, 4)}
+	service := &Service{registry: registry, store: store, operationsEnabled: func() bool { return *operationsOpen }}
+	return service.NewWakeStarter(nil, nil), store
+}
+
+func TestWakeStarterStartsNothingWhileOperationsAreClosed(t *testing.T) {
+	provider := &wakeStartProvider{fakeProvider: &fakeProvider{capabilities: testCapabilities()}, done: make(chan struct{}, 4)}
+	open := false
+	starter, store := wakeStartFixture(t, provider, &open)
+	starter.Handle(context.Background(), `{"app_id":"app-1","state":"waking"}`)
+	select {
+	case <-provider.done:
+		t.Fatal("started while operations are closed")
+	case <-time.After(50 * time.Millisecond):
+	}
+	if len(store.started) != 0 {
+		t.Fatalf("claimed while operations are closed: %v", store.started)
+	}
+	open = true
+	starter.Handle(context.Background(), `{"app_id":"app-1","state":"waking"}`)
+	select {
+	case <-provider.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no start after operations reopened")
+	}
+}
+
+// A claim that found the compute running must not hold the next wake off
+// for the whole gap: the compute can suspend within it.
+func TestWakeStarterRetriesSoonAfterAClaimThatStartedNothing(t *testing.T) {
+	provider := &wakeStartProvider{fakeProvider: &fakeProvider{capabilities: testCapabilities()}, running: true, done: make(chan struct{}, 4)}
+	open := true
+	starter, store := wakeStartFixture(t, provider, &open)
+	ctx := context.Background()
+	starter.Handle(ctx, `{"app_id":"app-1","state":"waking"}`)
+	<-provider.done
+	select {
+	case <-store.deferred:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a claim that started nothing was not deferred")
+	}
+	provider.mu.Lock()
+	provider.running = false
+	provider.mu.Unlock()
+	store.mu.Lock()
+	store.now = store.now.Add(wakeStartRetry + time.Second)
+	store.mu.Unlock()
+	starter.Handle(ctx, `{"app_id":"app-1","state":"cold_booting"}`)
+	select {
+	case <-provider.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the next wake after the retry did not start the database")
 	}
 }

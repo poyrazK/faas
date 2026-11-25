@@ -70,7 +70,20 @@ func (s *PostgresStore) ClaimWakeStarts(ctx context.Context, appID string, gap t
 	out := make([]WakeStartClaim, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, WakeStartClaim{DatabaseID: postgresUUIDString(row.ID), BackendID: row.BackendID,
-			BackendFingerprint: row.BackendFingerprint, ProviderResourceID: row.ProviderResourceID})
+			BackendFingerprint: row.BackendFingerprint, ProviderResourceID: row.ProviderResourceID,
+			ClaimedAt: row.ClaimedAt.Time})
 	}
 	return out, nil
+}
+
+func (s *PostgresStore) DeferWakeStart(ctx context.Context, claim WakeStartClaim, gap, retry time.Duration) error {
+	id, err := postgresUUID(claim.DatabaseID)
+	if err != nil {
+		return err
+	}
+	return mapPostgresError(sqlc.New().DeferManagedPostgresWakeStart(ctx, s.catalog, sqlc.DeferManagedPostgresWakeStartParams{
+		ShiftSeconds: (gap - retry).Seconds(),
+		DatabaseID:   id,
+		ClaimedAt:    pgtype.Timestamptz{Time: claim.ClaimedAt, Valid: true},
+	}))
 }

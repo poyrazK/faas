@@ -12,10 +12,10 @@ import (
 // runManagedPostgresWakeStarter hands schedd's instance_changed notifications
 // to the managed PostgreSQL wake starter (ADR-20261125105038). A lost
 // notification only means the database starts on the app's first query, so
-// a plain reconnecting LISTEN is enough. Without managed PostgreSQL it does
-// nothing.
+// a plain reconnecting LISTEN is enough. Without managed PostgreSQL, or a
+// store that keeps the setting, it does nothing.
 func runManagedPostgresWakeStarter(ctx context.Context, pool *pgxpool.Pool, srv *server, log *slog.Logger) error {
-	if srv.managedPostgres == nil {
+	if srv.managedPostgres == nil || !srv.managedPostgres.HasWakeStarter() {
 		return nil
 	}
 	ch, err := db.SubscribeWithReconnect(ctx, pool, []string{db.NotifyInstanceChanged}, log)

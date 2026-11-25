@@ -1,5 +1,5 @@
 -- Managed PostgreSQL databases that start when a bound app wakes (gregale
--- postgres wake-with-app, ADR-20261125105038). No row is off. apid checks the
+-- postgres app-wake, ADR-20261125105038). No row is off. apid checks the
 -- caller owns the database before writing.
 
 -- name: EnableManagedPostgresWakeWithApp :exec
@@ -35,4 +35,13 @@ WHERE w.database_id = d.id
         AND b.deleted_at IS NULL AND b.state = 'ready')
   AND (w.last_started_at IS NULL
        OR w.last_started_at < now() - make_interval(secs => sqlc.arg(gap_seconds)::double precision))
-RETURNING d.id, d.backend_id, d.backend_fingerprint, d.provider_resource_id::text AS provider_resource_id;
+RETURNING d.id, d.backend_id, d.backend_fingerprint, d.provider_resource_id::text AS provider_resource_id,
+  w.last_started_at::timestamptz AS claimed_at;
+
+-- name: DeferManagedPostgresWakeStart :exec
+-- Moves back the stamp of a claim that started nothing, by shift seconds, so
+-- the next wake may claim it sooner; a later claim's stamp is left alone.
+UPDATE managed_postgres_wake_with_app
+SET last_started_at = last_started_at - make_interval(secs => sqlc.arg(shift_seconds)::double precision)
+WHERE database_id = sqlc.arg(database_id)::uuid
+  AND last_started_at = sqlc.arg(claimed_at)::timestamptz;

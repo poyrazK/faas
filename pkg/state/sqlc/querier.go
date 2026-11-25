@@ -1212,6 +1212,9 @@ type Querier interface {
 	// RequeueBuildIfClaim: a stale worker cannot defer a newer claim.
 	DeferBuildBehind(ctx context.Context, db DBTX, arg DeferBuildBehindParams) (int64, error)
 	DeferBuildDependencyClaim(ctx context.Context, db DBTX, id pgtype.UUID) error
+	// Moves back the stamp of a claim that started nothing, by shift seconds, so
+	// the next wake may claim it sooner; a later claim's stamp is left alone.
+	DeferManagedPostgresWakeStart(ctx context.Context, db DBTX, arg DeferManagedPostgresWakeStartParams) error
 	DeferNotificationClaim(ctx context.Context, db DBTX, arg DeferNotificationClaimParams) (int64, error)
 	// Fence a failed attempt against a configuration edit or another worker's success.
 	DeferRouteMonitor(ctx context.Context, db DBTX, arg DeferRouteMonitorParams) error
@@ -1454,7 +1457,7 @@ type Querier interface {
 	// (ADR 20261109120000).
 	EmailVerificationTokenAccount(ctx context.Context, db DBTX, tokenHash []byte) (pgtype.UUID, error)
 	// Managed PostgreSQL databases that start when a bound app wakes (gregale
-	// postgres wake-with-app, ADR-20261125105038). No row is off. apid checks the
+	// postgres app-wake, ADR-20261125105038). No row is off. apid checks the
 	// caller owns the database before writing.
 	EnableManagedPostgresWakeWithApp(ctx context.Context, db DBTX, databaseID pgtype.UUID) error
 	EnableReleaseSecretRekey(ctx context.Context, db DBTX) error

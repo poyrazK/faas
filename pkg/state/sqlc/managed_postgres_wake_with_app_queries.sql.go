@@ -22,7 +22,8 @@ WHERE w.database_id = d.id
         AND b.deleted_at IS NULL AND b.state = 'ready')
   AND (w.last_started_at IS NULL
        OR w.last_started_at < now() - make_interval(secs => $2::double precision))
-RETURNING d.id, d.backend_id, d.backend_fingerprint, d.provider_resource_id::text AS provider_resource_id
+RETURNING d.id, d.backend_id, d.backend_fingerprint, d.provider_resource_id::text AS provider_resource_id,
+  w.last_started_at::timestamptz AS claimed_at
 `
 
 type ClaimManagedPostgresWakeStartsParams struct {
@@ -35,6 +36,7 @@ type ClaimManagedPostgresWakeStartsRow struct {
 	BackendID          string
 	BackendFingerprint string
 	ProviderResourceID string
+	ClaimedAt          pgtype.Timestamptz
 }
 
 // Claims the opted-in, ready, scale-to-zero databases bound to the app that
@@ -54,6 +56,7 @@ func (q *Queries) ClaimManagedPostgresWakeStarts(ctx context.Context, db DBTX, a
 			&i.BackendID,
 			&i.BackendFingerprint,
 			&i.ProviderResourceID,
+			&i.ClaimedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -63,6 +66,26 @@ func (q *Queries) ClaimManagedPostgresWakeStarts(ctx context.Context, db DBTX, a
 		return nil, err
 	}
 	return items, nil
+}
+
+const deferManagedPostgresWakeStart = `-- name: DeferManagedPostgresWakeStart :exec
+UPDATE managed_postgres_wake_with_app
+SET last_started_at = last_started_at - make_interval(secs => $1::double precision)
+WHERE database_id = $2::uuid
+  AND last_started_at = $3::timestamptz
+`
+
+type DeferManagedPostgresWakeStartParams struct {
+	ShiftSeconds float64
+	DatabaseID   pgtype.UUID
+	ClaimedAt    pgtype.Timestamptz
+}
+
+// Moves back the stamp of a claim that started nothing, by shift seconds, so
+// the next wake may claim it sooner; a later claim's stamp is left alone.
+func (q *Queries) DeferManagedPostgresWakeStart(ctx context.Context, db DBTX, arg DeferManagedPostgresWakeStartParams) error {
+	_, err := db.Exec(ctx, deferManagedPostgresWakeStart, arg.ShiftSeconds, arg.DatabaseID, arg.ClaimedAt)
+	return err
 }
 
 const disableManagedPostgresWakeWithApp = `-- name: DisableManagedPostgresWakeWithApp :exec
@@ -82,7 +105,7 @@ ON CONFLICT (database_id) DO NOTHING
 `
 
 // Managed PostgreSQL databases that start when a bound app wakes (gregale
-// postgres wake-with-app, ADR-20261125105038). No row is off. apid checks the
+// postgres app-wake, ADR-20261125105038). No row is off. apid checks the
 // caller owns the database before writing.
 func (q *Queries) EnableManagedPostgresWakeWithApp(ctx context.Context, db DBTX, databaseID pgtype.UUID) error {
 	_, err := db.Exec(ctx, enableManagedPostgresWakeWithApp, databaseID)

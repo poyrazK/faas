@@ -203,7 +203,7 @@ func NewMetrics(reg prometheus.Registerer, prefix string, usageEnabled bool) (*M
 	for _, reason := range []string{metricsDenialInvalid, metricsDenialUnavailable, metricsDenialQuota, metricsDenialStale, metricsDenialUnsupported, metricsDenialConflict} {
 		m.admissionDeniedTotal.WithLabelValues(reason).Add(0)
 	}
-	for _, outcome := range []WakeStartOutcome{WakeStartStarted, WakeStartFailed, WakeStartUnsupported} {
+	for _, outcome := range []WakeStartOutcome{WakeStartStarted, WakeStartRunning, WakeStartFailed, WakeStartUnsupported} {
 		m.wakeStartsTotal.WithLabelValues(string(outcome)).Add(0)
 	}
 	for _, outcome := range []string{IdleTailRead, IdleTailNoCompute, IdleTailUnsupported, IdleTailUnavailable, IdleTailSkipped} {
