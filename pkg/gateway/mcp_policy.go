@@ -55,7 +55,8 @@ func (h *Handler) applyMCPResourcePolicy(w http.ResponseWriter, r *http.Request,
 		h.rejectUnavailableEdgeRule(w, r, "jwt", rule.ID, "invalid_mcp_policy")
 		return true
 	}
-	if r.URL.Path != p.EndpointPath() && r.URL.Path != p.MetadataPath() {
+	link := !p.ConsumerKey() && r.URL.Path == p.ConsumerLinkPath()
+	if r.URL.Path != p.EndpointPath() && r.URL.Path != p.MetadataPath() && !link {
 		return false
 	}
 	if origins := r.Header.Values("Origin"); len(origins) > 1 || (len(origins) == 1 && !slices.Contains(p.AllowedOrigins, origins[0])) {
@@ -75,6 +76,11 @@ func (h *Handler) applyMCPResourcePolicy(w http.ResponseWriter, r *http.Request,
 	if p.ConsumerKey() {
 		return h.applyMCPConsumerKeyPolicy(w, r, app, rule)
 	}
+	if link && r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST, OPTIONS")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return true
+	}
 	claims, handled := h.authenticateMCPResource(w, r, app, rule)
 	if handled {
 		return true
@@ -83,9 +89,16 @@ func (h *Handler) applyMCPResourcePolicy(w http.ResponseWriter, r *http.Request,
 	if !api.MCPHasScopes(p.Scopes, granted) {
 		return mcpPolicyReject(w, http.StatusForbidden, p, "Required endpoint scope is missing")
 	}
+	if link {
+		h.linkOAuthConsumer(w, r, app, rule, claims)
+		return true
+	}
 	status, reason, call := mcpPolicyRequest(r, p, granted)
 	if status != 0 {
 		return mcpPolicyReject(w, status, p, reason)
+	}
+	if h.attachOAuthConsumer(w, r, app, rule, claims) {
+		return true
 	}
 	if h.mcpToolLimited(w, r, app, rule, call.tool(), "sub\x00"+claims.Subject) {
 		return true
@@ -169,7 +182,8 @@ func (h *Handler) authenticateMCPResource(w http.ResponseWriter, r *http.Request
 		return nil, mcpPolicyReject(w, http.StatusUnauthorized, rule.MCP, "Bearer token required")
 	}
 	verifyRule := *rule
-	verifyRule.ExtractClaims = append(append([]string{}, rule.ExtractClaims...), "scope")
+	// email names an enrolled OAuth consumer (ADR-20261124094745).
+	verifyRule.ExtractClaims = append(append([]string{}, rule.ExtractClaims...), "scope", "email")
 	if rule.PlatformTenantExternalRefClaim != "" {
 		verifyRule.ExtractClaims = append(verifyRule.ExtractClaims, rule.PlatformTenantExternalRefClaim)
 	}

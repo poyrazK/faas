@@ -138,24 +138,29 @@
       return;
     }
     const store = storage();
+    if (!res.data.checkout_url) {
+      // The free plan needs no card: finish at once.
+      await complete(res.data.id, res.data.claim_token);
+      return;
+    }
     if (store) store.setItem(claimKey(res.data.id), res.data.claim_token);
     window.location.assign(res.data.checkout_url);
   }
 
-  async function complete(id) {
+  async function complete(id, claimToken) {
     const store = storage();
-    const token = store && store.getItem(claimKey(id));
+    const token = claimToken || (store && store.getItem(claimKey(id)));
     if (!token) {
       message("This sign-up was started in another browser tab or window. Finish it there, or start again.", true);
       return;
     }
     $("title").textContent = "Finishing your sign-up…";
     show("message-view");
-    $("message").textContent = "Checking your card with Stripe…";
+    $("message").textContent = claimToken ? "Creating your key…" : "Checking your card with Stripe…";
     for (let attempt = 0; attempt < 5; attempt++) {
       const res = await call("POST", "/signups/" + encodeURIComponent(id) + "/complete", { claim_token: token });
       if (res.status === 200) {
-        store.removeItem(claimKey(id));
+        if (store) store.removeItem(claimKey(id));
         window.history.replaceState(null, "", window.location.pathname);
         showKey(res.data);
         return;

@@ -1957,6 +1957,10 @@ const (
 	ConsumerSignupCheckoutTTL = 23 * time.Hour
 	// Pending sign-ups are deleted this long after they expire.
 	ConsumerSignupRetention = 7 * 24 * time.Hour
+	// An upgrade link opens the upgrade page this long (ADR-20261124094745);
+	// the gateway reuses one for a consumer for ConsumerUpgradeLinkCacheTTL.
+	ConsumerUpgradeLinkTTL      = 24 * time.Hour
+	ConsumerUpgradeLinkCacheTTL = 10 * time.Minute
 	// The owner's sign-up list shows at most this many.
 	ConsumerSignupListMax = 100
 )

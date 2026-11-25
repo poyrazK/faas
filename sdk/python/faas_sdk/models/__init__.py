@@ -418,6 +418,8 @@ from .connection_budget_inventory import ConnectionBudgetInventory
 from .connection_budget_runtime_observations import ConnectionBudgetRuntimeObservations
 from .connection_budget_runtime_observations_source import ConnectionBudgetRuntimeObservationsSource
 from .connection_budget_runtime_observations_state import ConnectionBudgetRuntimeObservationsState
+from .consumer_identity import ConsumerIdentity
+from .consumer_identity_list_response import ConsumerIdentityListResponse
 from .control_project_release_action import ControlProjectReleaseAction
 from .control_workflow_recovery_policy_request import ControlWorkflowRecoveryPolicyRequest
 from .control_workflow_recovery_policy_request_operation import ControlWorkflowRecoveryPolicyRequestOperation
@@ -3631,6 +3633,8 @@ __all__ = (
     "ConnectionBudgetRuntimeObservations",
     "ConnectionBudgetRuntimeObservationsSource",
     "ConnectionBudgetRuntimeObservationsState",
+    "ConsumerIdentity",
+    "ConsumerIdentityListResponse",
     "ControlProjectReleaseAction",
     "ControlWorkflowRecoveryPolicyRequest",
     "ControlWorkflowRecoveryPolicyRequestOperation",

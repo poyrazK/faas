@@ -32918,6 +32918,33 @@ CREATE TABLE public.api_consumer_credit_purchases (
 
 
 --
+-- Name: api_consumer_identities; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_identities (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    consumer_id uuid NOT NULL,
+    issuer text NOT NULL,
+    subject text NOT NULL,
+    email text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_consumer_identities_email_chk CHECK ((char_length(email) <= 254)),
+    CONSTRAINT api_consumer_identities_issuer_chk CHECK (((char_length(issuer) >= 1) AND (char_length(issuer) <= 2048))),
+    CONSTRAINT api_consumer_identities_subject_chk CHECK (((char_length(subject) >= 1) AND (char_length(subject) <= 255)))
+);
+
+
+--
+-- Name: TABLE api_consumer_identities; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_identities IS 'OAuth identities (issuer + subject) of an app''s API consumers: MCP oauth-proxy sign-ins enroll as consumers (ADR-20261124094745).';
+
+
+--
 -- Name: api_consumer_meter_usage_minutes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -33183,6 +33210,8 @@ CREATE TABLE public.api_consumer_signup_settings (
     customer_closing boolean DEFAULT false NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    oauth_consumers boolean DEFAULT false NOT NULL,
+    free_plan_id uuid,
     CONSTRAINT api_consumer_signup_settings_limit_chk CHECK (((daily_limit >= 1) AND (daily_limit <= 1000))),
     CONSTRAINT api_consumer_signup_settings_name_chk CHECK (((char_length(display_name) >= 1) AND (char_length(display_name) <= 80))),
     CONSTRAINT api_consumer_signup_settings_plans_chk CHECK ((cardinality(plan_ids) <= 20)),
@@ -33198,6 +33227,20 @@ CREATE TABLE public.api_consumer_signup_settings (
 --
 
 COMMENT ON TABLE public.api_consumer_signup_settings IS 'Self-service sign-up for an app''s API customers (ADR-20261021143000).';
+
+
+--
+-- Name: COLUMN api_consumer_signup_settings.oauth_consumers; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.api_consumer_signup_settings.oauth_consumers IS 'Callers signed in through the app''s MCP oauth-proxy issuer become consumers on free_plan_id (ADR-20261124094745).';
+
+
+--
+-- Name: COLUMN api_consumer_signup_settings.free_plan_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.api_consumer_signup_settings.free_plan_id IS 'Offered plan that charges nothing: joining it skips Checkout (ADR-20261124094745).';
 
 
 --
@@ -65643,6 +65686,14 @@ ALTER TABLE ONLY public.api_consumer_credit_purchases
 
 
 --
+-- Name: api_consumer_identities api_consumer_identities_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_identities
+    ADD CONSTRAINT api_consumer_identities_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: api_consumer_meter_usage_minutes api_consumer_meter_usage_minutes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -65736,6 +65787,14 @@ ALTER TABLE ONLY public.api_consumer_rate_cards
 
 ALTER TABLE ONLY public.api_consumer_route_usage_minutes
     ADD CONSTRAINT api_consumer_route_usage_minutes_pkey PRIMARY KEY (account_id, app_id, consumer_key, window_start, route);
+
+
+--
+-- Name: api_consumer_signup_settings api_consumer_signup_settings_oauth_free_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.api_consumer_signup_settings
+    ADD CONSTRAINT api_consumer_signup_settings_oauth_free_chk CHECK (((NOT oauth_consumers) OR (free_plan_id IS NOT NULL))) NOT VALID;
 
 
 --
@@ -80615,6 +80674,27 @@ CREATE UNIQUE INDEX api_consumer_credit_purchases_pending_consumer ON public.api
 --
 
 CREATE INDEX api_consumer_credit_purchases_pending_live_account ON public.api_consumer_credit_purchases USING btree (account_id) WHERE ((status = 'pending'::text) AND livemode);
+
+
+--
+-- Name: api_consumer_identities_app_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_identities_app_created_idx ON public.api_consumer_identities USING btree (app_id, created_at);
+
+
+--
+-- Name: api_consumer_identities_app_subject_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX api_consumer_identities_app_subject_uniq ON public.api_consumer_identities USING btree (app_id, issuer, subject);
+
+
+--
+-- Name: api_consumer_identities_consumer_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_identities_consumer_idx ON public.api_consumer_identities USING btree (consumer_id);
 
 
 --
@@ -100711,6 +100791,30 @@ ALTER TABLE ONLY public.api_consumer_credit_purchases
 
 ALTER TABLE ONLY public.api_consumer_credit_purchases
     ADD CONSTRAINT api_consumer_credit_purchases_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_identities api_consumer_identities_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_identities
+    ADD CONSTRAINT api_consumer_identities_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_identities api_consumer_identities_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_identities
+    ADD CONSTRAINT api_consumer_identities_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_identities api_consumer_identities_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_identities
+    ADD CONSTRAINT api_consumer_identities_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
 
 
 --

@@ -43,6 +43,9 @@ const (
 	Auth_SandboxTokenKeys_FullMethodName       = "/onebox.faas.apid.v1.Auth/SandboxTokenKeys"
 	Auth_DecideAgentRequest_FullMethodName     = "/onebox.faas.apid.v1.Auth/DecideAgentRequest"
 	Auth_RecordAgentActivity_FullMethodName    = "/onebox.faas.apid.v1.Auth/RecordAgentActivity"
+	Auth_EnrollOAuthConsumer_FullMethodName    = "/onebox.faas.apid.v1.Auth/EnrollOAuthConsumer"
+	Auth_ConsumerUpgradeLink_FullMethodName    = "/onebox.faas.apid.v1.Auth/ConsumerUpgradeLink"
+	Auth_LinkOAuthConsumer_FullMethodName      = "/onebox.faas.apid.v1.Auth/LinkOAuthConsumer"
 )
 
 // AuthClient is the client API for Auth service.
@@ -112,6 +115,29 @@ type AuthClient interface {
 	// (ADR-20261111150000); apid is the only writer of the activity log.
 	// Errors are InvalidArgument, NotFound and Unavailable.
 	RecordAgentActivity(ctx context.Context, in *RecordAgentActivityRequest, opts ...grpc.CallOption) (*RecordAgentActivityResponse, error)
+	// EnrollOAuthConsumer returns the API consumer a verified OAuth caller of
+	// an app's MCP server is, creating it on the app's free plan the first
+	// time (ADR-20261124094745): apid is the only writer of consumers, so a
+	// gateway that verified the caller's token asks apid. Errors are
+	// InvalidArgument, NotFound (no such app or free plan), FailedPrecondition
+	// (the app does not enroll OAuth callers), ResourceExhausted (the app took
+	// its sign-ups for the day) and Unavailable.
+	EnrollOAuthConsumer(ctx context.Context, in *EnrollOAuthConsumerRequest, opts ...grpc.CallOption) (*EnrollOAuthConsumerResponse, error)
+	// ConsumerUpgradeLink returns the hosted upgrade page link for a consumer
+	// that reached its plan's limit (ADR-20261124094745), or an empty url when
+	// the app does not let customers change plans. The link expires; it opens
+	// only the consumer's plan change. Errors are InvalidArgument, NotFound
+	// (no such app on the account) and Unavailable.
+	ConsumerUpgradeLink(ctx context.Context, in *ConsumerUpgradeLinkRequest, opts ...grpc.CallOption) (*ConsumerUpgradeLinkResponse, error)
+	// LinkOAuthConsumer points a verified OAuth caller of an app's MCP server
+	// at the consumer whose key the caller proved (ADR-20261124094745), and
+	// revokes the consumer the caller's first sign-in enrolled. The gateway
+	// verifies the token; apid verifies the key. Errors are InvalidArgument,
+	// PermissionDenied (the key is not a live key of this app's consumer),
+	// FailedPrecondition (the app does not enroll OAuth callers),
+	// AlreadyExists (the identity is linked to another key's consumer; the
+	// owner unlinks it first) and Unavailable.
+	LinkOAuthConsumer(ctx context.Context, in *LinkOAuthConsumerRequest, opts ...grpc.CallOption) (*LinkOAuthConsumerResponse, error)
 }
 
 type authClient struct {
@@ -192,6 +218,36 @@ func (c *authClient) RecordAgentActivity(ctx context.Context, in *RecordAgentAct
 	return out, nil
 }
 
+func (c *authClient) EnrollOAuthConsumer(ctx context.Context, in *EnrollOAuthConsumerRequest, opts ...grpc.CallOption) (*EnrollOAuthConsumerResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(EnrollOAuthConsumerResponse)
+	err := c.cc.Invoke(ctx, Auth_EnrollOAuthConsumer_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *authClient) ConsumerUpgradeLink(ctx context.Context, in *ConsumerUpgradeLinkRequest, opts ...grpc.CallOption) (*ConsumerUpgradeLinkResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ConsumerUpgradeLinkResponse)
+	err := c.cc.Invoke(ctx, Auth_ConsumerUpgradeLink_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *authClient) LinkOAuthConsumer(ctx context.Context, in *LinkOAuthConsumerRequest, opts ...grpc.CallOption) (*LinkOAuthConsumerResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LinkOAuthConsumerResponse)
+	err := c.cc.Invoke(ctx, Auth_LinkOAuthConsumer_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AuthServer is the server API for Auth service.
 // All implementations must embed UnimplementedAuthServer
 // for forward compatibility.
@@ -259,6 +315,29 @@ type AuthServer interface {
 	// (ADR-20261111150000); apid is the only writer of the activity log.
 	// Errors are InvalidArgument, NotFound and Unavailable.
 	RecordAgentActivity(context.Context, *RecordAgentActivityRequest) (*RecordAgentActivityResponse, error)
+	// EnrollOAuthConsumer returns the API consumer a verified OAuth caller of
+	// an app's MCP server is, creating it on the app's free plan the first
+	// time (ADR-20261124094745): apid is the only writer of consumers, so a
+	// gateway that verified the caller's token asks apid. Errors are
+	// InvalidArgument, NotFound (no such app or free plan), FailedPrecondition
+	// (the app does not enroll OAuth callers), ResourceExhausted (the app took
+	// its sign-ups for the day) and Unavailable.
+	EnrollOAuthConsumer(context.Context, *EnrollOAuthConsumerRequest) (*EnrollOAuthConsumerResponse, error)
+	// ConsumerUpgradeLink returns the hosted upgrade page link for a consumer
+	// that reached its plan's limit (ADR-20261124094745), or an empty url when
+	// the app does not let customers change plans. The link expires; it opens
+	// only the consumer's plan change. Errors are InvalidArgument, NotFound
+	// (no such app on the account) and Unavailable.
+	ConsumerUpgradeLink(context.Context, *ConsumerUpgradeLinkRequest) (*ConsumerUpgradeLinkResponse, error)
+	// LinkOAuthConsumer points a verified OAuth caller of an app's MCP server
+	// at the consumer whose key the caller proved (ADR-20261124094745), and
+	// revokes the consumer the caller's first sign-in enrolled. The gateway
+	// verifies the token; apid verifies the key. Errors are InvalidArgument,
+	// PermissionDenied (the key is not a live key of this app's consumer),
+	// FailedPrecondition (the app does not enroll OAuth callers),
+	// AlreadyExists (the identity is linked to another key's consumer; the
+	// owner unlinks it first) and Unavailable.
+	LinkOAuthConsumer(context.Context, *LinkOAuthConsumerRequest) (*LinkOAuthConsumerResponse, error)
 	mustEmbedUnimplementedAuthServer()
 }
 
@@ -289,6 +368,15 @@ func (UnimplementedAuthServer) DecideAgentRequest(context.Context, *DecideAgentR
 }
 func (UnimplementedAuthServer) RecordAgentActivity(context.Context, *RecordAgentActivityRequest) (*RecordAgentActivityResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RecordAgentActivity not implemented")
+}
+func (UnimplementedAuthServer) EnrollOAuthConsumer(context.Context, *EnrollOAuthConsumerRequest) (*EnrollOAuthConsumerResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method EnrollOAuthConsumer not implemented")
+}
+func (UnimplementedAuthServer) ConsumerUpgradeLink(context.Context, *ConsumerUpgradeLinkRequest) (*ConsumerUpgradeLinkResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ConsumerUpgradeLink not implemented")
+}
+func (UnimplementedAuthServer) LinkOAuthConsumer(context.Context, *LinkOAuthConsumerRequest) (*LinkOAuthConsumerResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method LinkOAuthConsumer not implemented")
 }
 func (UnimplementedAuthServer) mustEmbedUnimplementedAuthServer() {}
 func (UnimplementedAuthServer) testEmbeddedByValue()              {}
@@ -437,6 +525,60 @@ func _Auth_RecordAgentActivity_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Auth_EnrollOAuthConsumer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EnrollOAuthConsumerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AuthServer).EnrollOAuthConsumer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Auth_EnrollOAuthConsumer_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AuthServer).EnrollOAuthConsumer(ctx, req.(*EnrollOAuthConsumerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Auth_ConsumerUpgradeLink_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ConsumerUpgradeLinkRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AuthServer).ConsumerUpgradeLink(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Auth_ConsumerUpgradeLink_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AuthServer).ConsumerUpgradeLink(ctx, req.(*ConsumerUpgradeLinkRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Auth_LinkOAuthConsumer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LinkOAuthConsumerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AuthServer).LinkOAuthConsumer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Auth_LinkOAuthConsumer_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AuthServer).LinkOAuthConsumer(ctx, req.(*LinkOAuthConsumerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Auth_ServiceDesc is the grpc.ServiceDesc for Auth service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -471,6 +613,18 @@ var Auth_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RecordAgentActivity",
 			Handler:    _Auth_RecordAgentActivity_Handler,
+		},
+		{
+			MethodName: "EnrollOAuthConsumer",
+			Handler:    _Auth_EnrollOAuthConsumer_Handler,
+		},
+		{
+			MethodName: "ConsumerUpgradeLink",
+			Handler:    _Auth_ConsumerUpgradeLink_Handler,
+		},
+		{
+			MethodName: "LinkOAuthConsumer",
+			Handler:    _Auth_LinkOAuthConsumer_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
