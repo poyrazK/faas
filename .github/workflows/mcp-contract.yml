@@ -512,7 +512,10 @@ jobs:
   apid-contract:
     if: ${{ github.event.pull_request.draft != true && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'run-mcp-contract')) && !(github.event.action == 'labeled' && github.event.label.name != 'run-mcp-contract') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The race build of cmd/apid on 2 procs plus both steps took 27-29.5 min on
+    # the green 11-24/25 nightlies and 30+ min on a slower runner, which
+    # cancelled the native upload acceptance step.
+    timeout-minutes: 45
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
