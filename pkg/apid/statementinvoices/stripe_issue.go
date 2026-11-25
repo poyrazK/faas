@@ -313,45 +313,54 @@ func (s *Service) issueReviewedStripeInvoice(ctx context.Context, store state.St
 
 // reconcileStripeInvoiceSend records Stripe's receipt under the export
 // claim. A payment can arrive via a hosted link without any email.
-func (s *Service) reconcileStripeInvoiceSend(ctx context.Context, export state.StatementInvoiceExport, claim, key string) (bool, error) {
-	issue := export.StripeIssue
-	if issue == nil || issue.IssuedAt == nil || issue.SentAt != nil {
-		return false, nil
+func (s *Service) reconcileStripeInvoiceSend(ctx context.Context, export state.StatementInvoiceExport, claim, key string) (state.StatementInvoiceExport, error) {
+	issue := pendingStripeInvoiceDelivery(export)
+	if issue == nil {
+		return export, nil
 	}
 	issues, ok := s.Host.Store().(state.StripeInvoiceIssueStore)
 	if !ok {
-		return false, errors.New("Stripe invoice delivery is unavailable")
+		return export, errors.New("stripe invoice delivery is unavailable")
 	}
 	lookupCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	sentAt, err := s.stripeInvoiceClient().FindInvoiceSentAt(lookupCtx, key, export.ProviderInvoiceID,
 		stripeIdempotencyKey(&export, "manual-send"), export.Livemode, *issue.IssuedAt, issue.ApprovedAt.Add(stripeIssueRetryWindow))
 	if err != nil || sentAt == nil {
-		return false, err
+		return export, err
 	}
 	checkpoint := *issue
 	checkpoint.SentAt = sentAt
 	if err := issues.SaveStripeInvoiceIssue(ctx, export.AccountID, export.ID, claim, checkpoint); err != nil {
-		return false, err
+		return export, err
 	}
+	export.StripeIssue = &checkpoint
 	s.Host.Audit(ctx, "statement_invoice.stripe_sent", export.AccountID, map[string]any{
 		"statement_id": export.StatementID, "invoice_id": export.ProviderInvoiceID, "livemode": export.Livemode,
 		"currency": export.Currency, "due_at": issue.DueAt, "exported_at": export.CompletedAt,
 		"issued_at": issue.IssuedAt, "sent_at": sentAt, "reconciled": true,
 	})
-	return true, nil
+	return export, nil
+}
+
+func pendingStripeInvoiceDelivery(export state.StatementInvoiceExport) *state.StripeInvoiceIssue {
+	issue := export.StripeIssue
+	if export.Provider == state.BillingProviderStripe && issue != nil && issue.IssuedAt != nil && issue.SentAt == nil {
+		return issue
+	}
+	return nil
 }
 
 func (s *Service) recoverPaidStripeInvoiceSend(ctx context.Context, store state.StatementInvoiceExportStore, payments state.StatementInvoicePaymentStore,
 	current state.StatementInvoiceExport, claim, key string, invoice stripeinvoice.InvoiceState) (state.StatementInvoiceExport, *api.Problem) {
-	recovered, err := s.reconcileStripeInvoiceSend(ctx, current, claim, key)
+	current, err := s.reconcileStripeInvoiceSend(ctx, current, claim, key)
 	switch {
 	case errors.Is(err, stripeinvoice.ErrKeyRejected):
 		return current, providerProblem(http.StatusUnprocessableEntity, "Stripe delivery confirmation needs Events read access",
 			"grant the connected Stripe key Events read access, then check the invoice again")
 	case err != nil:
 		return current, providerProblem(http.StatusBadGateway, "Could not confirm Stripe invoice delivery", "try checking the invoice again")
-	case !recovered:
+	case pendingStripeInvoiceDelivery(current) != nil:
 		return current, exportConflict("Stripe shows a payment but has no matching send receipt; check delivery in Stripe")
 	}
 	if payment, known, _ := stripeInvoicePayment(invoice); known {

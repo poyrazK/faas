@@ -46,6 +46,7 @@ type issueStripeFixture struct {
 	finalizeKey, sendKey   string
 	now                    time.Time
 	sendEvents             []map[string]any
+	eventStatus            int
 }
 
 func (f *issueStripeFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -61,6 +62,10 @@ func (f *issueStripeFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == path:
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/events" && r.URL.Query().Get("type") == "invoice.sent":
+		if f.eventStatus != 0 {
+			w.WriteHeader(f.eventStatus)
+			return
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": f.sendEvents, "has_more": false})
 		return
 	case r.Method == http.MethodPost && r.URL.Path == path && key != "" &&
@@ -328,6 +333,80 @@ func TestReviewedStripeInvoiceRecoversDeliveryAfterPayment(t *testing.T) {
 			defer f.stripe.mu.Unlock()
 			if f.stripe.sends != 1 || f.stripe.writes != 3 {
 				t.Fatalf("recovery caused another provider write: %d sends, %d writes", f.stripe.sends, f.stripe.writes)
+			}
+		})
+	}
+}
+
+func TestPaidStripeInvoiceKeepsCheckingForItsDeliveryReceipt(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		elapsed  time.Duration
+		recovers bool
+	}{
+		{name: "late receipt", elapsed: api.StatementInvoiceSyncRetry, recovers: true},
+		{name: "retry window expires", elapsed: stripePaidDeliveryRetryWindow},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			f := newIssueFixture(t)
+			f.stripe.loseSend = true
+			review := f.review(t)
+			if w := f.request(http.MethodPost, review.ReviewToken, f.account); w.Code != http.StatusBadGateway {
+				t.Fatalf("lost send response: %d %s", w.Code, w.Body)
+			}
+			sentAt := f.now.Add(time.Minute)
+			f.now = f.now.Add(time.Hour)
+			f.stripe.mu.Lock()
+			f.stripe.doc["status"], f.stripe.doc["amount_paid"], f.stripe.doc["amount_remaining"] = "paid", 1500, 0
+			f.stripe.doc["status_transitions"] = map[string]int64{"finalized_at": f.stripe.now.Unix(), "paid_at": f.now.Unix()}
+			f.stripe.eventStatus = http.StatusServiceUnavailable
+			f.stripe.mu.Unlock()
+			load := func() state.StatementInvoiceExport {
+				t.Helper()
+				export, err := f.store.GetStatementInvoiceExport(ctx, f.account.ID, state.StatementSourceAppConsumer, f.statement)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return export
+			}
+			if err := f.store.SetStatementInvoiceNextSync(ctx, load().ID, &f.now); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.service.SyncOnce(ctx); err != nil {
+				t.Fatal(err)
+			}
+			paid := load()
+			if paid.PaymentStatus != state.InvoicePaymentPaid || paid.StatusSyncedAt == nil ||
+				paid.NextStatusSyncAt == nil || !paid.NextStatusSyncAt.Equal(f.now.Add(api.StatementInvoiceSyncRetry)) ||
+				paid.StripeIssue == nil || paid.StripeIssue.SentAt != nil {
+				t.Fatalf("paid sync did not retain a delivery retry: %+v", paid)
+			}
+			f.stripe.mu.Lock()
+			f.stripe.eventStatus = 0
+			f.stripe.sendEvents = []map[string]any{{
+				"id": "evt_Reviewed", "type": "invoice.sent", "created": sentAt.Unix(), "livemode": false,
+				"data":    map[string]any{"object": map[string]string{"id": issueInvoiceID}},
+				"request": map[string]string{"idempotency_key": f.stripe.sendKey},
+			}}
+			f.stripe.mu.Unlock()
+			f.now = f.now.Add(tc.elapsed)
+			if err := f.service.SyncOnce(ctx); err != nil {
+				t.Fatal(err)
+			}
+			finished := load()
+			if finished.NextStatusSyncAt != nil || finished.StatusSyncedAt == nil ||
+				!finished.StatusSyncedAt.Equal(*paid.StatusSyncedAt) || finished.PaymentStatus != state.InvoicePaymentPaid ||
+				finished.StripeIssue == nil || (finished.StripeIssue.SentAt != nil) != tc.recovers {
+				t.Fatalf("unexpected final delivery check: %+v", finished)
+			}
+			if tc.recovers && !finished.StripeIssue.SentAt.Equal(sentAt) {
+				t.Fatalf("receipt time = %v, want %v", finished.StripeIssue.SentAt, sentAt)
+			}
+			f.stripe.mu.Lock()
+			defer f.stripe.mu.Unlock()
+			if f.stripe.sends != 1 || f.stripe.writes != 3 {
+				t.Fatalf("receipt check caused another provider write: %d sends, %d writes", f.stripe.sends, f.stripe.writes)
 			}
 		})
 	}

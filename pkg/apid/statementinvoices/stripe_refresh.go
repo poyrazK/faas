@@ -94,7 +94,7 @@ func (s *Service) refreshStripePayment(ctx context.Context, exports state.Statem
 		return current, providerProblem(http.StatusBadGateway, "Could not read the Stripe balance", "try again to check the current balance")
 	}
 	if stripeIssueInvoiceMatches(current, invoice) && (payment.Status == state.InvoicePaymentPaid || payment.AmountPaidMinor > 0) {
-		_, _ = s.reconcileStripeInvoiceSend(ctx, current, token, conn.key)
+		current, _ = s.reconcileStripeInvoiceSend(ctx, current, token, conn.key)
 	}
 	if err := s.recordInvoicePayment(ctx, payments, current, payment, s.now()); err != nil {
 		return current, api.ErrInternal("could not save the Stripe payment status")

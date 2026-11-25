@@ -15,6 +15,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+const stripePaidDeliveryRetryWindow = 24 * time.Hour
+const stripeDeliveryEventRetention = 30 * 24 * time.Hour
+
 func (s *Service) now() time.Time {
 	if s.Now != nil {
 		return s.Now().UTC()
@@ -72,8 +75,15 @@ func (s *Service) SyncOnce(ctx context.Context) error {
 // marks one that is missing or rejected.
 func (s *Service) syncInvoice(ctx context.Context, payments state.StatementInvoicePaymentStore, exports state.StatementInvoiceExportStore,
 	conns map[string]*connection, export state.StatementInvoiceExport, now time.Time) error {
+	deferSync := func(delay time.Duration) error {
+		next := now.Add(delay)
+		if export.Provider == state.BillingProviderStripe && export.PaymentStatus == state.InvoicePaymentPaid {
+			return payments.SetStatementInvoiceNextSync(ctx, export.ID, stripeDeliveryRetryAt(export, export.PaidAt, now, next))
+		}
+		return payments.SetStatementInvoiceNextSync(ctx, export.ID, &next)
+	}
 	if !s.released(export.AccountID) {
-		return payments.DeferStatementInvoiceSync(ctx, export.ID, now.Add(api.APIMonetizationUnreleasedRetry))
+		return deferSync(api.APIMonetizationUnreleasedRetry)
 	}
 	var stripeClaim string
 	if export.Provider == state.BillingProviderStripe {
@@ -94,6 +104,10 @@ func (s *Service) syncInvoice(ctx context.Context, payments state.StatementInvoi
 		}
 		export = current
 	}
+	paidStripe := stripeClaim != "" && export.PaymentStatus == state.InvoicePaymentPaid
+	if paidStripe && stripeDeliveryRetryAt(export, export.PaidAt, now, now) == nil {
+		return payments.SetStatementInvoiceNextSync(ctx, export.ID, nil)
+	}
 	p := s.provider(export.Provider)
 	cacheKey := export.AccountID + "/" + export.Provider
 	conn, ok := conns[cacheKey]
@@ -109,26 +123,38 @@ func (s *Service) syncInvoice(ctx context.Context, payments state.StatementInvoi
 		}
 	}
 	if conn == nil {
-		return payments.DeferStatementInvoiceSync(ctx, export.ID, now.Add(api.StatementInvoiceSyncKeyRetry))
+		return deferSync(api.StatementInvoiceSyncKeyRetry)
+	}
+	if paidStripe {
+		// Keep the known paid balance and last balance-check time. Only the
+		// unresolved delivery receipt needs another provider lookup.
+		if conn.livemode == export.Livemode {
+			export, _ = s.reconcileStripeInvoiceSend(ctx, export, stripeClaim, conn.key)
+		}
+		return deferSync(api.StatementInvoiceSyncRetry)
 	}
 	payment, known, err := p.payment(ctx, *conn, export.ProviderInvoiceID)
 	if errors.Is(err, errKeyRejected) {
 		conns[cacheKey] = nil
 		s.notifySyncBlocked(ctx, export.AccountID, export.Provider, now)
-		return payments.DeferStatementInvoiceSync(ctx, export.ID, now.Add(api.StatementInvoiceSyncKeyRetry))
+		return deferSync(api.StatementInvoiceSyncKeyRetry)
 	}
 	if err != nil || !known {
-		return payments.DeferStatementInvoiceSync(ctx, export.ID, now.Add(api.StatementInvoiceSyncRetry))
+		return deferSync(api.StatementInvoiceSyncRetry)
 	}
 	if stripeClaim != "" && conn.livemode == export.Livemode && (payment.Status == state.InvoicePaymentPaid || payment.AmountPaidMinor > 0) {
-		_, _ = s.reconcileStripeInvoiceSend(ctx, export, stripeClaim, conn.key)
+		export, _ = s.reconcileStripeInvoiceSend(ctx, export, stripeClaim, conn.key)
 	}
 	return s.recordInvoicePayment(ctx, payments, export, payment, s.now())
 }
 
 func (s *Service) recordInvoicePayment(ctx context.Context, payments state.StatementInvoicePaymentStore,
 	export state.StatementInvoiceExport, payment state.StatementInvoicePayment, now time.Time) error {
-	prev, err := payments.RecordStatementInvoicePayment(ctx, export.ID, payment, now, nextInvoiceSync(payment, now))
+	next := nextInvoiceSync(payment, now)
+	if payment.Status == state.InvoicePaymentPaid {
+		next = stripeDeliveryRetryAt(export, payment.PaidAt, now, now.Add(api.StatementInvoiceSyncRetry))
+	}
+	prev, err := payments.RecordStatementInvoicePayment(ctx, export.ID, payment, now, next)
 	if err != nil {
 		return fmt.Errorf("record statement invoice payment: %w", err)
 	}
@@ -138,6 +164,23 @@ func (s *Service) recordInvoicePayment(ctx context.Context, payments state.State
 			"from": prev, "to": payment.Status})
 	}
 	return nil
+}
+
+func stripeDeliveryRetryAt(export state.StatementInvoiceExport, paidAt *time.Time, now, next time.Time) *time.Time {
+	issue := pendingStripeInvoiceDelivery(export)
+	if issue == nil {
+		return nil
+	}
+	paid := now
+	if paidAt != nil {
+		paid = *paidAt
+	} else if export.PaymentStatus == state.InvoicePaymentPaid && export.StatusSyncedAt != nil {
+		paid = *export.StatusSyncedAt
+	}
+	if !next.Before(paid.Add(stripePaidDeliveryRetryWindow)) || !next.Before(issue.IssuedAt.Add(stripeDeliveryEventRetention)) {
+		return nil
+	}
+	return &next
 }
 
 // notifySyncBlocked emails the account, at most once a day per provider,

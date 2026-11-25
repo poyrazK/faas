@@ -60,5 +60,5 @@ func (c *Client) FindInvoiceSentAt(ctx context.Context, key, invoiceID, sendKey 
 		}
 		q.Set("starting_after", after)
 	}
-	return nil, errors.New("Stripe invoice delivery search did not finish")
+	return nil, errors.New("stripe invoice delivery search did not finish")
 }

@@ -87,7 +87,8 @@ func (s *server) consumerBillingProgressUsage(ctx context.Context, accountID, ap
 		return out, nil, nil
 	}
 	quote, ledger, err := s.quoteConsumerUsageWithLedger(ctx, accountID, appID, consumerID, since, until, false)
-	if err != nil && !errors.Is(err, billing.ErrMixedAPIConsumerRateCardCurrency) {
+	mixedCurrency := errors.Is(err, billing.ErrMixedAPIConsumerRateCardCurrency)
+	if err != nil && !mixedCurrency {
 		return out, nil, err
 	}
 	for _, bucket := range ledger {
@@ -95,7 +96,7 @@ func (s *server) consumerBillingProgressUsage(ctx context.Context, accountID, ap
 			out.RequestCount += bucket.RequestCount
 		}
 	}
-	if err != nil {
+	if mixedCurrency {
 		out.Status = "mixed_currency"
 		return out, nil, nil
 	}

@@ -76,7 +76,7 @@ The console exposes batch send from a completed draft run when `VITE_FEATURE_BIL
 
 Enable `VITE_FEATURE_BILLING_RUN_COLLECTIONS=1` with draft export review to show the recorded Stripe balances across a completed draft run. The totals group currency and Stripe mode. The on-time payment rate uses live invoices with a positive recorded balance or payment whose due date has passed. **Check Stripe now** reads the selected invoice and updates its last check time after Stripe confirms the balance. On a provider error, Gregale keeps the previous balance and check time.
 
-If a send response was lost and the invoice has since received payment, Gregale can recover the send receipt from Stripe's invoice events. Grant the connected restricted key Events read access for this recovery. Stripe retains events for up to 30 days. [Stripe Events API](https://docs.stripe.com/api/events/list)
+If a send response was lost and the invoice has since received payment, Gregale can recover the send receipt from Stripe's invoice events. Grant the connected restricted key Events read access for this recovery. The worker retries for up to 24 hours after payment, within Stripe's event retention window. **Check Stripe now** stays available in billing run collections while the receipt is pending. Stripe retains events for up to 30 days. [Stripe Events API](https://docs.stripe.com/api/events/list)
 
 For a usage hold created before the run captured hourly gap counts, reconcile usage and start a new draft run for that month. The original hold lacks the recorded counts needed for recheck.
 
