@@ -2482,15 +2482,50 @@ func openCustomerDirectoryForSync(path string) (*os.File, error) {
 // value wrapped in double quotes loses them and has \n, \" and \\ unescaped;
 // one in single quotes loses them and stays literal. prod 2026-11-20:
 // API_URL="https://…" reached the app with the quotes, so every quoted URL
-// or token in a pushed .env was wrong. Other values are unchanged.
+// or token in a pushed .env was wrong. A ` # comment` after a quoted value,
+// or after an unquoted one, is dropped as those tools drop it:
+// `PORT=3000 # web` reached the app as "3000 # web" and `URL="x" # c` kept
+// its quotes (prod hunt r48). A # with no space before it is part of the
+// value. Other values are unchanged.
 func dotenvValue(v string) string {
+	unescape := strings.NewReplacer(`\n`, "\n", `\"`, `"`, `\\`, `\`)
 	if len(v) >= 2 && v[0] == '\'' && v[len(v)-1] == '\'' {
 		return v[1 : len(v)-1]
 	}
 	if len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' {
-		return strings.NewReplacer(`\n`, "\n", `\"`, `"`, `\\`, `\`).Replace(v[1 : len(v)-1])
+		return unescape.Replace(v[1 : len(v)-1])
+	}
+	if len(v) > 0 && (v[0] == '\'' || v[0] == '"') {
+		if end := dotenvClosingQuote(v); end > 0 {
+			if rest := strings.TrimSpace(v[end+1:]); strings.HasPrefix(rest, "#") {
+				if v[0] == '"' {
+					return unescape.Replace(v[1:end])
+				}
+				return v[1:end]
+			}
+		}
+		return v
+	}
+	for i := 1; i < len(v); i++ {
+		if v[i] == '#' && (v[i-1] == ' ' || v[i-1] == '\t') {
+			return strings.TrimRight(v[:i], " \t")
+		}
 	}
 	return v
+}
+
+// dotenvClosingQuote returns the index of the quote that closes v's opening
+// quote, or -1. Inside double quotes a backslash escapes the next byte.
+func dotenvClosingQuote(v string) int {
+	for i := 1; i < len(v); i++ {
+		switch {
+		case v[0] == '"' && v[i] == '\\':
+			i++
+		case v[i] == v[0]:
+			return i
+		}
+	}
+	return -1
 }
 
 // parseDotenvLine parses one line of a .env file or KEY=VALUE stdin: an

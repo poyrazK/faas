@@ -652,6 +652,14 @@ func secretsSet(args []string) int {
 			// JSON consumers route on the same code (#6662).
 			return printErr(problem.Title, &APIError{Problem: *problem})
 		}
+		// An empty value failed only at its own PUT, after the keys before it
+		// were saved: `env set A=1 B= C=2` saved A, never C, and reported an
+		// unconfirmed partial write (prod hunt r48). The size cap stays with
+		// the server, which knows the plan.
+		if problem := (api.PutAppSecretRequest{Value: p.Value}).Validate(0); problem != nil {
+			problem.Detail = p.Key + ": " + problem.Detail
+			return printErr(problem.Title, &APIError{Problem: *problem})
+		}
 	}
 
 	if *dryRun {
@@ -974,8 +982,10 @@ func dotenvOpenQuote(line string) (byte, bool) {
 	if value == "" || value[0] != '"' && value[0] != '\'' {
 		return 0, false
 	}
-	quote := value[0]
-	return quote, !dotenvClosesQuote(value[1:], quote)
+	// A quote closed before a trailing ` # comment` closes the value on this
+	// line: `URL="x" # note` was read as an unterminated multi-line value
+	// (prod hunt r48).
+	return value[0], dotenvClosingQuote(value) < 0
 }
 
 // dotenvClosesQuote reports whether s ends with an unescaped closing quote.

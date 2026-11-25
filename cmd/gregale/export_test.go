@@ -3159,3 +3159,6 @@ var InitDeployArgs = initDeployArgs
 
 // TemplatesPublicOnPurpose lists the templates that deploy public.
 var TemplatesPublicOnPurpose = templatesPublicOnPurpose
+
+// DotenvValue reads one .env value (prod hunt r48).
+var DotenvValue = dotenvValue
