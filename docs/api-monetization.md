@@ -955,6 +955,32 @@ gregale consumers signup-set my-mcp --display-name "Search tools" --plans free,p
   ID` frees one
   (its next call starts on the free plan again, or it links again).
 
+### Let customers ask about their account from the MCP client
+
+Add `--account-tools` and every signed-in customer sees two more tools in
+your server's tool list, answered by Gregale instead of your code:
+
+```bash
+gregale consumers signup-set my-mcp --display-name "Search tools" --plans free,pro --free-plan free \
+  --oauth-consumers --customer-plan-changes --account-tools
+```
+
+- `account_usage`: their plan and its limits (requests per minute, units
+  per month, per-tool caps), this UTC month's requests and units, units
+  left, and units per tool. It trails live calls by about a minute.
+- `account_plans`: the plans you offer with their prices, the one they are
+  on and, with `--customer-plan-changes`, an `upgrade_url` to the hosted
+  page where a person saves a card. The tool never charges or changes a
+  plan.
+
+Calls to these tools are free, do not count against the customer's plan
+and work after the plan's limit refuses other calls, so an agent can always
+find the way to upgrade. Each customer may call them 30 times a minute.
+While the option is on, the names `account_usage` and `account_plans` are
+Gregale's: a tool of yours with either name is hidden from these customers.
+Only the first page of a paginated tool list gets them. Customers who use a
+consumer key keep the key's [self-service API](#customers-manage-their-own-account).
+
 ### Know when customers sign up or change
 
 Subscribe an app webhook to these events to provision accounts, send

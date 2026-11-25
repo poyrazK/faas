@@ -1966,6 +1966,12 @@ const (
 	ConsumerUpgradeLinkCacheTTL = 10 * time.Minute
 	// The owner's sign-up list shows at most this many.
 	ConsumerSignupListMax = 100
+	// A consumer may call the gateway's MCP account tools this many times a
+	// minute (ADR-20261125194510); the calls are not metered or billed.
+	MCPAccountToolCallsPerMinute = 30
+	// The gateway edits a tools/list answer for account tools only up to
+	// this size; a larger answer passes through unchanged.
+	MCPAccountToolsListMaxBytes = 1 << 20
 )
 
 // Consumer and platform tenant controls (ADR-1314, ADR-1315, ADR-1322,

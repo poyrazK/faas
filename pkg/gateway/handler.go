@@ -1073,8 +1073,12 @@ type Handler struct {
 	oauthLinks OAuthConsumerLinker
 	// upgradeLinks adds upgrade_url to plan-limit refusals
 	// (ADR-20261124094745); nil leaves it out.
-	upgradeLinks               ConsumerUpgradeLinker
-	upgradeLinkCache           *upgradeLinkCache
+	upgradeLinks     ConsumerUpgradeLinker
+	upgradeLinkCache *upgradeLinkCache
+	// mcpAccountTools answers the MCP account tools of OAuth consumers
+	// (ADR-20261125194510); nil leaves tool lists and calls to the app.
+	mcpAccountTools            MCPAccountToolAnswerer
+	mcpAccountToolLimiter      *mcpAccountToolLimiter
 	tenantRequestBudgetEnabled bool
 	// apiMonetization is the API monetization release gate
 	// (ADR-20261018090210); nil keeps monetization off.
@@ -8378,6 +8382,12 @@ haveApp:
 	//     legacy streamingFor helper, used to gate the writer
 	//     wrap below.
 	decision, isStreaming := decideStreaming(h, r, app)
+
+	// ADR-20261125194510: an opted-in OAuth consumer's tools/list answer
+	// gets the MCP account tools. The wrapper sits under the streaming and
+	// cap writers, so it sees the app's bytes as they reach the client.
+	w, finishAccountTools := wrapMCPAccountToolsList(w, r)
+	defer finishAccountTools()
 
 	// Streaming-Status header stamp (ADR-102 D2). UNCONDITIONAL —
 	// the header must land on EVERY response (streaming AND
