@@ -47,7 +47,7 @@ const journeyFixtureUsage = "usage: gregalectl journey-fixture mint-token --plan
 
 func cmdJourneyFixtureDispatch(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(osStderr, journeyFixtureUsage)
+		_, _ = fmt.Fprintln(osStderr, journeyFixtureUsage)
 		return 2
 	}
 	switch args[0] {
@@ -56,7 +56,7 @@ func cmdJourneyFixtureDispatch(args []string) int {
 	case "revoke-token":
 		return cmdJourneyFixtureRevokeToken(args[1:])
 	default:
-		fmt.Fprintln(osStderr, journeyFixtureUsage)
+		_, _ = fmt.Fprintln(osStderr, journeyFixtureUsage)
 		return 2
 	}
 }
@@ -78,16 +78,16 @@ func journeyFixtureFlags(name string, args []string, extra func(*flag.FlagSet)) 
 		extra(fs)
 	}
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
-		fmt.Fprintln(osStderr, journeyFixtureUsage)
+		_, _ = fmt.Fprintln(osStderr, journeyFixtureUsage)
 		return "", false
 	}
 	plan, ok := journeyFixturePlans[*planName]
 	if !ok {
-		fmt.Fprintf(osStderr, "gregalectl journey-fixture %s: --plan must be free or hobby\n", name)
+		_, _ = fmt.Fprintf(osStderr, "gregalectl journey-fixture %s: --plan must be free or hobby\n", name)
 		return "", false
 	}
 	if !*yes || strings.TrimSpace(*reason) != journeyFixtureReason {
-		fmt.Fprintf(osStderr, "gregalectl journey-fixture %s: --yes and --reason=%s are required\n", name, journeyFixtureReason)
+		_, _ = fmt.Fprintf(osStderr, "gregalectl journey-fixture %s: --yes and --reason=%s are required\n", name, journeyFixtureReason)
 		return "", false
 	}
 	return plan, true
@@ -104,43 +104,43 @@ func cmdJourneyFixtureMintToken(args []string) int {
 		return 2
 	}
 	if *ttl < 15*time.Minute || *ttl > 6*time.Hour {
-		fmt.Fprintln(osStderr, "gregalectl journey-fixture mint-token: --ttl must be between 15m and 6h")
+		_, _ = fmt.Fprintln(osStderr, "gregalectl journey-fixture mint-token: --ttl must be between 15m and 6h")
 		return 2
 	}
 	// Written as apid would write it, under apid's credential configuration
 	// when the environment carries it (ADR 20261029202403).
 	policy, err := credhash.LoadAccountPolicy(os.Getenv)
 	if err != nil {
-		fmt.Fprintf(osStderr, "gregalectl journey-fixture mint-token: %v\n", err)
+		_, _ = fmt.Fprintf(osStderr, "gregalectl journey-fixture mint-token: %v\n", err)
 		return 1
 	}
 	credhash.SetAccount(policy)
 	st, closeFn, err := journeyFixtureStoreOpener()
 	if err != nil {
-		fmt.Fprintf(osStderr, "gregalectl journey-fixture mint-token: %v\n", err)
+		_, _ = fmt.Fprintf(osStderr, "gregalectl journey-fixture mint-token: %v\n", err)
 		return 1
 	}
 	defer closeFn()
 	ctx := context.Background()
 	account, err := ensureJourneyFixtureAccount(ctx, st, plan)
 	if err != nil {
-		fmt.Fprintf(osStderr, "gregalectl journey-fixture mint-token: account: %v\n", err)
+		_, _ = fmt.Fprintf(osStderr, "gregalectl journey-fixture mint-token: account: %v\n", err)
 		return 1
 	}
 	plaintext, hash, err := api.GenerateAPIKey()
 	if err != nil {
-		fmt.Fprintf(osStderr, "gregalectl journey-fixture mint-token: generate key: %v\n", err)
+		_, _ = fmt.Fprintf(osStderr, "gregalectl journey-fixture mint-token: generate key: %v\n", err)
 		return 1
 	}
 	expiresAt := time.Now().UTC().Add(*ttl)
 	key, err := st.CreateAPIKeyWithExpiry(ctx, account.ID, hash, journeyFixtureKeyLabel, []string{api.ScopeAdmin}, &expiresAt)
 	if err != nil {
-		fmt.Fprintf(osStderr, "gregalectl journey-fixture mint-token: persist key: %v\n", err)
+		_, _ = fmt.Fprintf(osStderr, "gregalectl journey-fixture mint-token: persist key: %v\n", err)
 		return 1
 	}
 	credential := journeyFixtureCredential{AccountID: account.ID, Email: account.Email, Plan: account.Plan, KeyID: key.ID, Token: plaintext, ExpiresAt: expiresAt}
 	if err := json.NewEncoder(osStdout).Encode(credential); err != nil {
-		fmt.Fprintf(osStderr, "gregalectl journey-fixture mint-token: encode: %v\n", err)
+		_, _ = fmt.Fprintf(osStderr, "gregalectl journey-fixture mint-token: encode: %v\n", err)
 		return 1
 	}
 	return 0
@@ -176,23 +176,23 @@ func cmdJourneyFixtureRevokeToken(args []string) int {
 		return 2
 	}
 	if strings.TrimSpace(*keyID) == "" {
-		fmt.Fprintln(osStderr, "gregalectl journey-fixture revoke-token: --key-id is required")
+		_, _ = fmt.Fprintln(osStderr, "gregalectl journey-fixture revoke-token: --key-id is required")
 		return 2
 	}
 	st, closeFn, err := journeyFixtureStoreOpener()
 	if err != nil {
-		fmt.Fprintf(osStderr, "gregalectl journey-fixture revoke-token: %v\n", err)
+		_, _ = fmt.Fprintf(osStderr, "gregalectl journey-fixture revoke-token: %v\n", err)
 		return 1
 	}
 	defer closeFn()
 	ctx := context.Background()
 	account, err := st.AccountByEmail(ctx, journeyFixtureEmail(plan))
 	if err != nil {
-		fmt.Fprintf(osStderr, "gregalectl journey-fixture revoke-token: account: %v\n", err)
+		_, _ = fmt.Fprintf(osStderr, "gregalectl journey-fixture revoke-token: account: %v\n", err)
 		return 1
 	}
 	if _, err := st.MarkAPIKeyRevoked(ctx, account.ID, *keyID); err != nil {
-		fmt.Fprintf(osStderr, "gregalectl journey-fixture revoke-token: %v\n", err)
+		_, _ = fmt.Fprintf(osStderr, "gregalectl journey-fixture revoke-token: %v\n", err)
 		return 1
 	}
 	if _, err := fmt.Fprintf(osStdout, "revoked journey fixture key %s\n", *keyID); err != nil {
