@@ -546,7 +546,8 @@ jobs:
 
   tests:
     name: "light: tests (shard ${{ matrix.shard }})"
-    runs-on: ubuntu-latest
+    # Ubuntu 24.04 ships the PostgreSQL 16 clients used by the fixtures.
+    runs-on: ubuntu-24.04
     # Changed packages run in full with -race. Each shard also runs related
     # tests of its large packages (cmd/gregale; pkg/sched and pkg/state;
     # pkg/apid/apidserver; see SELECTIVE_SHARD in affected_packages.py),

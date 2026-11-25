@@ -25,20 +25,38 @@ func (s *Scheduler) CheckRecoveryTarget(ctx context.Context, source, region stri
 	if latest && target.After(s.now()) {
 		target = s.now()
 	}
-	nodes, err := s.store.Nodes(ctx)
+	nodes, err := s.recoveryNodes(ctx, region, major)
 	if err != nil {
 		return unverified, err
 	}
+	fallback := unverified
 	for _, node := range nodes {
-		if node.RecoveryRegion != region || node.Lifecycle != NodeActive || !node.offers(major) {
+		check, err := s.probeRecoveryArchive(ctx, node, source, target, major, latest, 0)
+		if err != nil || check.Reason == "recovery_archive_unconfigured" {
 			continue
 		}
-		check, err := s.probeRecoveryArchive(ctx, node, source, target, major, latest, 0)
-		if err == nil && check.Reason != "recovery_archive_unconfigured" {
+		if check.Outcome == dbarchive.RestoreCovered {
 			return check, nil
 		}
+		if fallback == unverified || fallback.Outcome == dbarchive.RestoreUnverified && check.Outcome != dbarchive.RestoreUnverified {
+			fallback = check
+		}
 	}
-	return unverified, nil
+	return fallback, ctx.Err()
+}
+
+func (s *Scheduler) recoveryNodes(ctx context.Context, region string, major int) ([]Node, error) {
+	nodes, err := s.store.Nodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	eligible := make([]Node, 0, len(nodes))
+	for _, node := range nodes {
+		if node.RecoveryRegion == region && node.Lifecycle == NodeActive && node.offers(major) {
+			eligible = append(eligible, node)
+		}
+	}
+	return eligible, nil
 }
 
 func (s *Scheduler) probeRecoveryArchive(ctx context.Context, node Node, source string, target time.Time, major int, latest bool, timeline uint32) (dbarchive.RestoreCheck, error) {
@@ -101,21 +119,39 @@ func (s *Scheduler) restoreFromRecovery(ctx context.Context, req RestoreRequest)
 		}
 		return match(vm)
 	}
-	check, err := s.CheckRecoveryTarget(ctx, req.Source, req.RecoveryRegion, req.Target, req.Major, false)
+	if !dbarchive.ValidDatabaseID(req.Source) {
+		return VM{}, ErrInvalid
+	}
+	nodes, err := s.recoveryNodes(ctx, req.RecoveryRegion, req.Major)
 	if err != nil {
 		return VM{}, err
 	}
-	if check.Outcome != dbarchive.RestoreCovered || check.Timeline == 0 {
-		return VM{}, fmt.Errorf("%w: recovery archive cannot reach the requested point", ErrConflict)
+	covered := false
+	for _, node := range nodes {
+		check, err := s.probeRecoveryArchive(ctx, node, req.Source, req.Target, req.Major, false, 0)
+		if err != nil || check.Outcome != dbarchive.RestoreCovered || check.Timeline == 0 {
+			continue
+		}
+		covered = true
+		vm, err := s.store.Place(ctx, VM{
+			DatabaseID: req.DatabaseID, NodeID: node.ID, RecoveryRegion: req.RecoveryRegion, RestoreFromRecovery: true,
+			Major: req.Major, VcpuCount: req.VcpuCount, MemMiB: req.MemMiB, VolumeBytes: req.VolumeBytes,
+			AlwaysOn: req.AlwaysOn, RestoreWindowSeconds: req.RestoreWindowSeconds, Replicated: req.Replicated,
+			RestoreSource: req.Source, RestoreTarget: req.Target, RestoreTimeline: check.Timeline,
+		})
+		if errors.Is(err, ErrNoCapacity) {
+			continue
+		}
+		if err != nil {
+			return vm, err
+		}
+		return match(vm)
 	}
-	vm, err := s.store.Place(ctx, VM{
-		DatabaseID: req.DatabaseID, RecoveryRegion: req.RecoveryRegion, RestoreFromRecovery: true,
-		Major: req.Major, VcpuCount: req.VcpuCount, MemMiB: req.MemMiB, VolumeBytes: req.VolumeBytes,
-		AlwaysOn: req.AlwaysOn, RestoreWindowSeconds: req.RestoreWindowSeconds, Replicated: req.Replicated,
-		RestoreSource: req.Source, RestoreTarget: req.Target, RestoreTimeline: check.Timeline,
-	})
-	if err != nil {
-		return vm, err
+	if err := ctx.Err(); err != nil {
+		return VM{}, err
 	}
-	return match(vm)
+	if covered {
+		return VM{}, ErrNoCapacity
+	}
+	return VM{}, fmt.Errorf("%w: recovery archive cannot reach the requested point", ErrConflict)
 }

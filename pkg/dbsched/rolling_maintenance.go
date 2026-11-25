@@ -239,10 +239,11 @@ func (s *Scheduler) advanceRollingRefresh(ctx context.Context, store *PgStore, i
 		r.DatabaseID = id
 		err = tx.QueryRow(ctx, `
 			SELECT node_id, rolling_standby_node, source_running_at, window_start, window_end,
-				recover_after, phase, standby_restarted, handoff_started, handoff_reserved_mb, COALESCE(rolling_image, '')
+				recover_after, phase, standby_restarted, handoff_started, promotion_started, handoff_reserved_mb, COALESCE(rolling_image, '')
 			FROM native_postgres_base_refreshes WHERE database_id = $1
 				AND rolling_standby_node IS NOT NULL AND finished_at IS NULL`, mustUUID(id)).
-			Scan(&r.NodeID, &r.StandbyNode, &r.SourceAt, &r.Window.Start, &r.Window.End, &r.RecoverAt, &r.Phase, &r.StandbyRestarted, &r.HandoffStarted, &r.HandoffReservedMB, &r.Image)
+			Scan(&r.NodeID, &r.StandbyNode, &r.SourceAt, &r.Window.Start, &r.Window.End, &r.RecoverAt, &r.Phase, &r.StandbyRestarted,
+				&r.HandoffStarted, &r.PromotionStarted, &r.HandoffReservedMB, &r.Image)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return VM{}, nil
 		}
@@ -256,7 +257,7 @@ func (s *Scheduler) advanceRollingRefresh(ctx context.Context, store *PgStore, i
 			progressed, attach, err = s.refreshRollingStandby(ctx, store, tx, r, vm, currentPrimary, currentStandby)
 		case switchingOver:
 			if r.HandoffStarted {
-				attach, err = s.handoffRollingRefresh(ctx, store, tx, r, vm, currentPrimary, currentStandby)
+				progressed, attach, err = s.handoffRollingRefresh(ctx, store, tx, r, vm, currentPrimary, currentStandby)
 			} else {
 				progressed, err = s.prepareRollingHandoff(ctx, store, tx, r, vm, currentPrimary, currentStandby)
 			}
@@ -389,7 +390,7 @@ func (s *Scheduler) prepareRollingHandoff(ctx context.Context, store *PgStore, t
 	if st.RunningImage != r.Image || st.Stale {
 		return abort("still_stale", "standby_image_changed_during_handoff")
 	}
-	tag, err := tx.Exec(ctx, `UPDATE native_postgres_base_refreshes SET handoff_started = true
+	tag, err := tx.Exec(ctx, `UPDATE native_postgres_base_refreshes SET handoff_started = true, promotion_started = false
 		WHERE database_id = $1 AND window_start = $2 AND clock_timestamp() < window_end`, mustUUID(id), r.Window.Start)
 	if err != nil {
 		return false, err
@@ -400,16 +401,36 @@ func (s *Scheduler) prepareRollingHandoff(ctx context.Context, store *PgStore, t
 	return true, nil
 }
 
-func (s *Scheduler) handoffRollingRefresh(ctx context.Context, store *PgStore, tx pgx.Tx, r baseRefresh, vm VM, primary, standby Node) (bool, error) {
+func (s *Scheduler) handoffRollingRefresh(ctx context.Context, store *PgStore, tx pgx.Tx, r baseRefresh, vm VM, primary, standby Node) (progressed, attach bool, err error) {
 	id := vm.DatabaseID
 	if vm.NodeID != r.NodeID || vm.State != stateMaintenanceHandoff {
-		return false, finishRollingRefresh(ctx, tx, r, "interrupted", "database_placement_changed")
+		return false, false, finishRollingRefresh(ctx, tx, r, "interrupted", "database_placement_changed")
+	}
+	waitOrRecover := func(outcome, reason string) (bool, bool, error) {
+		if r.PromotionStarted || primary.ID == "" || primary.Lifecycle == NodeUnavailable {
+			return false, false, saveRollingPhase(ctx, tx, r, r.Phase, reason)
+		}
+		p, err := s.rollingStatus(ctx, primary, id, dbguest.OpStatus)
+		var to State
+		switch {
+		case err == nil && refreshReady(p) && p.Major == vm.Major:
+			to = StateRunning
+		case errors.Is(err, ErrVMNotRunning):
+			// A previous stop can succeed while its journal transaction fails.
+			to = StateParked
+		default:
+			return false, false, saveRollingPhase(ctx, tx, r, r.Phase, reason)
+		}
+		if err := store.transition(ctx, tx, id, []State{stateMaintenanceHandoff}, to, TransitionOptions{}); err != nil {
+			return false, false, err
+		}
+		return false, false, finishRollingRefresh(ctx, tx, r, outcome, reason)
 	}
 	if vm.StandbyNode != r.StandbyNode || !canFailover(vm) {
-		return false, saveRollingPhase(ctx, tx, r, r.Phase, "synchronized_standby_unconfirmed")
+		return waitOrRecover("interrupted", "synchronized_standby_unconfirmed")
 	}
 	if primary.ID == "" || standby.Lifecycle != NodeActive {
-		return false, saveRollingPhase(ctx, tx, r, r.Phase, "database_node_unavailable")
+		return waitOrRecover("interrupted", "database_node_unavailable")
 	}
 	st, stErr := s.rollingStatus(ctx, standby, id, dbguest.OpStatus)
 	missing := errors.Is(stErr, ErrVMNotRunning)
@@ -417,7 +438,21 @@ func (s *Scheduler) handoffRollingRefresh(ctx context.Context, store *PgStore, t
 	// whose catalog transaction could not be committed.
 	if !missing && (stErr != nil || st.Error != "" || st.Major != vm.Major ||
 		(st.State != dbguest.StateStandby && st.State != dbguest.StateReady)) {
-		return false, saveRollingPhase(ctx, tx, r, r.Phase, "standby_health_unverified_during_handoff")
+		return waitOrRecover("interrupted", "standby_health_unverified_during_handoff")
+	}
+	recordPromotionIntent := func() (bool, bool, error) {
+		_, err := tx.Exec(ctx, `UPDATE native_postgres_base_refreshes SET promotion_started = true
+			WHERE database_id = $1 AND window_start = $2`, mustUUID(id), r.Window.Start)
+		return err == nil, false, err
+	}
+	if !r.PromotionStarted && !missing {
+		if st.State == dbguest.StateReady {
+			// Treat evidence of promotion like an uncertain promotion reply.
+			return recordPromotionIntent()
+		}
+		if st.RunningImage != r.Image || st.Stale {
+			return waitOrRecover("still_stale", "standby_image_changed_during_handoff")
+		}
 	}
 	if err := s.stopRollingVM(ctx, primary, id); err != nil {
 		// The operator's unavailable declaration is the same fence used by
@@ -425,33 +460,38 @@ func (s *Scheduler) handoffRollingRefresh(ctx context.Context, store *PgStore, t
 		// concurrent re-registration cannot authorize promotion by mistake.
 		current, readErr := store.q.LockDatabaseNode(ctx, tx, primary.ID)
 		if readErr != nil {
-			return false, readErr
+			return false, false, readErr
 		}
 		if current.Lifecycle != NodeUnavailable {
-			return false, saveRollingPhase(ctx, tx, r, r.Phase, "primary_stop_unconfirmed")
+			return false, false, saveRollingPhase(ctx, tx, r, r.Phase, "primary_stop_unconfirmed")
 		}
+	}
+	if !missing && !r.PromotionStarted {
+		// Commit before the first promotion RPC. If its reply is lost, the
+		// original primary must stay fenced even if the standby disappears.
+		return recordPromotionIntent()
 	}
 	if missing {
 		// A stopped synchronous volume can take over through the existing
 		// parked promotion path once the old primary has been fenced.
 		if err := store.releaseStandbyTx(ctx, tx, id, true); err != nil {
-			return false, err
+			return false, false, err
 		}
 	} else if st.State == dbguest.StateStandby {
 		op, cancel := context.WithTimeout(ctx, maintenanceStopTimeout)
 		err := s.promoteRunningStandby(op, standby, id)
 		cancel()
 		if err != nil {
-			return false, saveRollingPhase(ctx, tx, r, r.Phase, "standby_promotion_unconfirmed")
+			return false, false, saveRollingPhase(ctx, tx, r, r.Phase, "standby_promotion_unconfirmed")
 		}
 	}
 	after, err := store.failoverTx(ctx, tx, id)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	if r.HandoffReservedMB != 0 {
 		if err := setRollingHandoffReservation(ctx, tx, r, 0); err != nil {
-			return false, err
+			return false, false, err
 		}
 	}
 	s.attachTried.Delete(id)
@@ -459,7 +499,7 @@ func (s *Scheduler) handoffRollingRefresh(ctx context.Context, store *PgStore, t
 	_, err = tx.Exec(ctx, `UPDATE native_postgres_base_refreshes SET phase = $3,
 		reason = 'awaiting_replacement_standby', recover_after = clock_timestamp() + interval '30 minutes'
 		WHERE database_id = $1 AND window_start = $2`, mustUUID(id), r.Window.Start, restoringRedundancy)
-	return after.State == StateRunning, err
+	return false, after.State == StateRunning, err
 }
 
 func (s *Scheduler) finishRollingRedundancy(ctx context.Context, tx pgx.Tx, r baseRefresh, vm VM, primary, standby Node) error {
@@ -508,7 +548,7 @@ func (s *Scheduler) stopRollingVM(ctx context.Context, node Node, id string) err
 // A verified standby can be fenced, prepared and promoted in one sweep.
 // Each step commits before the next step can change guest state.
 func (s *Scheduler) runRollingRefresh(ctx context.Context, store *PgStore, id string) {
-	for range 3 {
+	for range 4 {
 		progressed, err := s.advanceRollingRefresh(ctx, store, id)
 		if err != nil {
 			s.log.Warn("dbsched: could not advance rolling maintenance", "database_id", id, "err", err)

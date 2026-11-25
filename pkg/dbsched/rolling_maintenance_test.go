@@ -178,6 +178,16 @@ func TestRollingMaintenanceResumesUnconfirmedHandoff(t *testing.T) {
 	if parked, err := store.Get(ctx, vm.DatabaseID); err != nil || parked.State != stateMaintenanceHandoff || parked.NodeID != vm.NodeID {
 		t.Fatalf("old routing fence lost: %+v, %v", parked, err)
 	}
+	vmm.mu.Lock()
+	vmm.down[vm.StandbyNode] = true
+	vmm.mu.Unlock()
+	s.resumeRollingRefreshes(ctx, store)
+	if _, err := s.Wake(ctx, vm.DatabaseID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("standby loss reopened the old primary after an uncertain promotion: %v", err)
+	}
+	vmm.mu.Lock()
+	vmm.down[vm.StandbyNode] = false
+	vmm.mu.Unlock()
 
 	// Losing catalog evidence after an ambiguous promotion must not
 	// retire the durable fence or make the old primary eligible to wake.
@@ -328,4 +338,37 @@ func TestRollingHandoffFailsOverDeclaredLostPrimary(t *testing.T) {
 		t.Fatalf("fail over fenced primary: %+v, %v, events %s", after, err, vmm.nodeCalls())
 	}
 	checkCeiling(2048, 2048)
+}
+
+func TestRollingHandoffRecoversPrimaryIfPreparedStandbyIsLost(t *testing.T) {
+	store, s, vmm, vm := rollingMaintenanceFixture(t)
+	ctx := t.Context()
+	vmm.stale[vm.NodeID+"/"+vm.DatabaseID] = true
+	setRollingFixtureWindow(t, store, vm, -5*time.Minute)
+	if admitted, err := store.beginRollingRefresh(ctx, vm); err != nil || !admitted {
+		t.Fatalf("admit handoff: %v, %v", admitted, err)
+	}
+	for range 2 {
+		if progressed, err := s.advanceRollingRefresh(ctx, store, vm.DatabaseID); err != nil || !progressed {
+			t.Fatalf("prepare handoff: %v, %v", progressed, err)
+		}
+	}
+	standby, err := s.node(ctx, vm.StandbyNode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	standby.Lifecycle = NodeUnavailable
+	if err := store.UpsertNode(ctx, standby); err != nil {
+		t.Fatal(err)
+	}
+	restarted := New(store, vmm, s.cfg, nil)
+	t.Cleanup(restarted.standbyWG.Wait)
+	restarted.resumeRollingRefreshes(ctx, store)
+	phase, outcome, reason := rollingFixtureOutcome(t, store, vm)
+	got, err := restarted.Wake(ctx, vm.DatabaseID)
+	if err != nil || got.State != StateRunning || got.NodeID != vm.NodeID ||
+		phase != switchingOver || outcome != "interrupted" || reason != "database_node_unavailable" ||
+		vmm.callCount("stop") != 0 || vmm.callCount("promote") != 0 {
+		t.Fatalf("reopen original primary: %+v, %v, %s, %s, %s, events %s", got, err, phase, outcome, reason, vmm.nodeCalls())
+	}
 }

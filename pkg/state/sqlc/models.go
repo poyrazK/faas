@@ -10944,6 +10944,7 @@ type NativePostgresBaseRefresh struct {
 	StandbyRestarted   bool
 	HandoffStarted     bool
 	HandoffReservedMb  int64
+	PromotionStarted   bool
 }
 
 type NativePostgresBindingTimeout struct {
@@ -15560,6 +15561,8 @@ type ReleaseDatabaseSwitch struct {
 	CreatedAt            pgtype.Timestamptz
 	UpdatedAt            pgtype.Timestamptz
 	MigrationOperationID pgtype.UUID
+	MigrationLeaseToken  pgtype.Text
+	MigrationLeaseUntil  pgtype.Timestamptz
 }
 
 type ReleaseFreeze struct {

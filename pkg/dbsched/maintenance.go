@@ -27,6 +27,7 @@ type baseRefresh struct {
 	Phase             string
 	StandbyRestarted  bool
 	HandoffStarted    bool
+	PromotionStarted  bool
 	HandoffReservedMB int64
 	Image             string
 }

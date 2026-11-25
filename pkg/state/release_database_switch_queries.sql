@@ -6,7 +6,7 @@
 INSERT INTO release_database_switches (
   id, account_id, app_id, scope, from_deployment_id, target_deployment_id, undone_deployment_ids,
   source_database_id, target_database_id, target_name, restore_point, migration_operation_id, phase, requested_by,
-  phase_started_at, retry_at, created_at, updated_at
+  phase_started_at, retry_at, created_at, updated_at, lease_token, lease_until
 )
 SELECT
   sqlc.arg(id)::uuid, sqlc.arg(account_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(scope)::text,
@@ -14,7 +14,9 @@ SELECT
   sqlc.arg(source_database_id)::uuid, sqlc.narg(target_database_id)::uuid, sqlc.arg(target_name)::text, sqlc.narg(restore_point)::timestamptz,
   sqlc.narg(migration_operation_id)::uuid,
   CASE WHEN sqlc.narg(migration_operation_id)::uuid IS NULL THEN 'restoring' ELSE 'staging' END, sqlc.arg(requested_by)::text,
-  sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz
+  sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz,
+  CASE WHEN sqlc.narg(migration_operation_id)::uuid IS NOT NULL THEN 'migration-worker' END,
+  CASE WHEN sqlc.narg(migration_operation_id)::uuid IS NOT NULL THEN 'infinity'::timestamptz END
  WHERE (SELECT count(*) FROM release_database_switches active
          WHERE active.account_id = sqlc.arg(account_id)::uuid
            AND active.phase NOT IN ('completed', 'failed', 'cancelled')) < sqlc.arg(max_active)::integer
@@ -34,14 +36,17 @@ SELECT * FROM release_database_switches
 -- Leases due active switches. SKIP LOCKED keeps two apid workers from
 -- waiting on each other's claim.
 UPDATE release_database_switches sw
-   SET lease_token = sqlc.arg(token)::text,
-       lease_until = sqlc.arg(lease_until)::timestamptz,
+   SET lease_token = CASE WHEN sw.migration_operation_id IS NULL THEN sqlc.arg(token)::text ELSE sw.lease_token END,
+       lease_until = CASE WHEN sw.migration_operation_id IS NULL THEN sqlc.arg(lease_until)::timestamptz ELSE sw.lease_until END,
+       migration_lease_token = CASE WHEN sw.migration_operation_id IS NOT NULL THEN sqlc.arg(token)::text END,
+       migration_lease_until = CASE WHEN sw.migration_operation_id IS NOT NULL THEN sqlc.arg(lease_until)::timestamptz END,
        updated_at = sqlc.arg(now)::timestamptz
   FROM (
     SELECT id FROM release_database_switches
      WHERE phase NOT IN ('completed', 'failed', 'cancelled')
        AND retry_at <= sqlc.arg(now)::timestamptz
-       AND (lease_until IS NULL OR lease_until <= sqlc.arg(now)::timestamptz)
+       AND coalesce(CASE WHEN migration_operation_id IS NULL THEN lease_until ELSE migration_lease_until END
+                    <= sqlc.arg(now)::timestamptz, true)
      ORDER BY retry_at, id
      LIMIT sqlc.arg(max_rows)::integer
      FOR UPDATE SKIP LOCKED
@@ -75,12 +80,14 @@ UPDATE release_database_switches
        attempt_count = sqlc.arg(attempt_count)::integer,
        retry_at = CASE WHEN cancel_requested_at IS NOT NULL AND phase IN ('restoring', 'staging', 'verifying', 'fencing', 'settling', 'draining') AND sqlc.arg(phase)::text = 'switching'
                        THEN sqlc.arg(now)::timestamptz ELSE sqlc.arg(retry_at)::timestamptz END,
-       lease_token = NULL,
-       lease_until = NULL,
+       lease_token = CASE WHEN migration_operation_id IS NOT NULL THEN lease_token END,
+       lease_until = CASE WHEN migration_operation_id IS NOT NULL THEN lease_until END,
+       migration_lease_token = NULL,
+       migration_lease_until = NULL,
        updated_at = sqlc.arg(now)::timestamptz
  WHERE id = sqlc.arg(id)::uuid
-   AND lease_token = sqlc.arg(token)::text
-   AND lease_until > sqlc.arg(now)::timestamptz
+   AND CASE WHEN migration_operation_id IS NULL THEN lease_token ELSE migration_lease_token END = sqlc.arg(token)::text
+   AND CASE WHEN migration_operation_id IS NULL THEN lease_until ELSE migration_lease_until END > sqlc.arg(now)::timestamptz
 RETURNING *;
 
 -- name: RequestReleaseDatabaseSwitchCancel :one

@@ -27,12 +27,14 @@ func databaseSwitchFromRow(r sqlc.ReleaseDatabaseSwitch) DatabaseSwitch {
 		DrainRequestedAt: dbSwitchTime(r.DrainRequestedAt), ReleaseSwitchedAt: dbSwitchTime(r.ReleaseSwitchedAt),
 		ActivatedAt: dbSwitchTime(r.ActivatedAt), FinishedAt: dbSwitchTime(r.FinishedAt), PhaseStartedAt: r.PhaseStartedAt.Time.UTC(),
 		Drain:        DatabaseSwitchDrain{Retired: int(r.DrainRetired), Parked: int(r.DrainParked), Pending: int(r.DrainPending), Blocked: int(r.DrainBlocked)},
-		AttemptCount: int(r.AttemptCount), LastErrorCode: r.LastErrorCode, LeaseUntil: dbSwitchTime(r.LeaseUntil),
+		AttemptCount: int(r.AttemptCount), LastErrorCode: r.LastErrorCode,
 		RetryAt: r.RetryAt.Time.UTC(), CreatedAt: r.CreatedAt.Time.UTC(), UpdatedAt: r.UpdatedAt.Time.UTC(),
 	}
-	if r.LeaseToken.Valid {
-		sw.LeaseToken = r.LeaseToken.String
+	token, until := r.LeaseToken, r.LeaseUntil
+	if r.MigrationOperationID.Valid {
+		token, until = r.MigrationLeaseToken, r.MigrationLeaseUntil
 	}
+	sw.LeaseToken, sw.LeaseUntil = token.String, dbSwitchTime(until)
 	return sw
 }
 

@@ -17,6 +17,7 @@ type recoveryFixtureVMM struct {
 	archiveTimeline  uint32
 	checkedTimelines []uint32
 	busyOnCheck      int
+	unconfiguredNode string
 }
 
 func (v *recoveryFixtureVMM) CheckRecoveryArchive(_ context.Context, n Node, _ string, _ time.Time, _ int, _ bool, timeline uint32) (dbarchive.RestoreCheck, error) {
@@ -24,6 +25,9 @@ func (v *recoveryFixtureVMM) CheckRecoveryArchive(_ context.Context, n Node, _ s
 		return dbarchive.RestoreCheck{}, errors.New("recovery used a node outside the destination fleet")
 	}
 	v.checkedTimelines = append(v.checkedTimelines, timeline)
+	if n.ID == v.unconfiguredNode {
+		return dbarchive.RestoreCheck{Outcome: dbarchive.RestoreUnverified, Reason: "recovery_archive_unconfigured"}, nil
+	}
 	if len(v.checkedTimelines) == v.busyOnCheck {
 		return dbarchive.RestoreCheck{Outcome: dbarchive.RestoreUnverified, Reason: "archive_busy"}, nil
 	}
@@ -34,6 +38,32 @@ func (v *recoveryFixtureVMM) CheckRecoveryArchive(_ context.Context, n Node, _ s
 		v.archiveTimeline++
 	}
 	return dbarchive.RestoreCheck{Outcome: v.answer, Reason: "fixture", Timeline: timeline}, nil
+}
+
+func TestRegionalRestoreReservesAnArchiveVerifiedNodeWithCapacity(t *testing.T) {
+	ctx := t.Context()
+	store := NewMemStore()
+	vmm := &recoveryFixtureVMM{fakeVMM: newFakeVMM(), answer: dbarchive.RestoreCovered, unconfiguredNode: "spacious"}
+	vmm.archive = true
+	seedNodes(t, store,
+		Node{ID: "full", TargetURL: "unix:///full", Lifecycle: NodeActive, RecoveryRegion: "eu-west-1",
+			AdmissionCeilingMB: 4096, VolumeCapacityBytes: 512 << 20},
+		Node{ID: "spacious", TargetURL: "unix:///spacious", Lifecycle: NodeActive, RecoveryRegion: "eu-west-1",
+			AdmissionCeilingMB: 4096, VolumeCapacityBytes: 30 << 30},
+		Node{ID: "verified", TargetURL: "unix:///verified", Lifecycle: NodeActive, RecoveryRegion: "eu-west-1",
+			AdmissionCeilingMB: 4096, VolumeCapacityBytes: 10 << 30})
+	s := New(store, vmm, Config{SharedArchive: true}, nil)
+	t.Cleanup(s.restoreWG.Wait)
+	req := restoreRequest(VM{DatabaseID: uuid.NewString(), Major: 17, VolumeBytes: 1 << 30}, time.Now().Add(-time.Minute))
+	req.RecoveryRegion = "eu-west-1"
+	reserved, err := s.Restore(ctx, req)
+	if err != nil || reserved.NodeID != "verified" || reserved.RestoreTimeline == 0 {
+		t.Fatalf("restore placement: %+v, %v", reserved, err)
+	}
+	s.restoreWG.Wait()
+	if got, err := store.Get(ctx, req.DatabaseID); err != nil || got.NodeID != "verified" || got.State != StateParked {
+		t.Fatalf("restore outcome: %+v, %v", got, err)
+	}
 }
 
 func TestRegionalRestoreDoesNotContactTheSource(t *testing.T) {

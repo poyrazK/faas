@@ -51615,6 +51615,7 @@ CREATE TABLE public.native_postgres_base_refreshes (
     standby_restarted boolean DEFAULT false NOT NULL,
     handoff_started boolean DEFAULT false NOT NULL,
     handoff_reserved_mb bigint DEFAULT 0 NOT NULL,
+    promotion_started boolean DEFAULT false NOT NULL,
     CONSTRAINT native_postgres_base_refreshes_check CHECK (((finished_at IS NULL) = (outcome = ''::text))),
     CONSTRAINT native_postgres_base_refreshes_outcome_check CHECK ((outcome = ANY (ARRAY[''::text, 'succeeded'::text, 'still_stale'::text, 'interrupted'::text, 'window_closed'::text, 'runtime_failed'::text]))),
     CONSTRAINT native_postgres_base_refreshes_rolling_check CHECK ((((rolling_standby_node IS NULL) AND (rolling_image IS NULL) AND (phase = ''::text) AND (NOT standby_restarted)) OR ((rolling_standby_node IS NOT NULL) AND (rolling_standby_node <> node_id) AND refresh_base AND (resize_id IS NULL) AND ((phase = 'refreshing_standby'::text) OR ((phase = ANY (ARRAY['switching_over'::text, 'restoring_redundancy'::text])) AND (COALESCE(rolling_image, ''::text) <> ''::text))))))
@@ -59840,6 +59841,8 @@ CREATE TABLE public.release_database_switches (
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     migration_operation_id uuid,
+    migration_lease_token text,
+    migration_lease_until timestamp with time zone,
     CONSTRAINT release_database_switches_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 1000000))),
     CONSTRAINT release_database_switches_check CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
     CONSTRAINT release_database_switches_check1 CHECK (((phase = ANY (ARRAY['completed'::text, 'failed'::text, 'cancelled'::text])) = (finished_at IS NOT NULL))),
@@ -78224,6 +78227,14 @@ ALTER TABLE ONLY public.release_approval_events
 
 ALTER TABLE ONLY public.release_bundles
     ADD CONSTRAINT release_bundles_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: release_database_switches release_database_switches_migration_lease_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.release_database_switches
+    ADD CONSTRAINT release_database_switches_migration_lease_check CHECK ((((migration_operation_id IS NULL) AND (migration_lease_token IS NULL) AND (migration_lease_until IS NULL)) OR ((migration_operation_id IS NOT NULL) AND (NOT (lease_token IS DISTINCT FROM 'migration-worker'::text)) AND (NOT (lease_until IS DISTINCT FROM 'infinity'::timestamp with time zone)) AND ((migration_lease_token IS NULL) = (migration_lease_until IS NULL))))) NOT VALID;
 
 
 --
