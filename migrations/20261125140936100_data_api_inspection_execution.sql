@@ -1,4 +1,6 @@
+-- migration-compat: expand
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 CREATE TABLE data_api_inspection_executions (
  task_id uuid PRIMARY KEY REFERENCES app_tasks(id) ON DELETE CASCADE,
  protocol_version smallint NOT NULL CHECK (protocol_version = 5),
