@@ -1284,11 +1284,11 @@ gregale release wait 00000000000000000000000000000001 --rollout --progress
 
 Verify an application response from an exact live deployment
 
-`gregale release verify --app <SLUG> [--path <PATH>] [--project-id <UUID>] [--environment-id <UUID>] <deployment-uuid>`
+`gregale release verify [--app <SLUG>] [--path <PATH>] [--project-id <UUID>] [--environment-id <UUID>] <deployment-uuid>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <SLUG>` |  | required |
+| `--app <SLUG>` | app slug (defaults to the linked app) |  |
 | `--path <PATH>` | app-relative GET path (default /) |  |
 | `--project-id <UUID>` | project identity for a named environment (looked up when omitted) |  |
 | `--environment-id <UUID>` | environment identity for a named environment (looked up when omitted) |  |
@@ -5754,7 +5754,7 @@ List cron rules
 
 Schedule a POST to an app path, or a deployment command
 
-`gregale cron create [--at <RFC3339>] [--in <DURATION>] [--interactive] [--app <slug>] [--schedule <EXPR>] [--path <PATH>] [--command <EXEC>] [--arg <ARG>] [--shell] [--timeout-seconds <N>] [--max-output-bytes <N>] [--timezone <TZ>] [--skip-if-running] [--retry-max] [--retry-backoff-seconds] [--schedule-policy <JSON>] [--failure-rules <JSON>]`
+`gregale cron create [--at <RFC3339>] [--in <DURATION>] [--interactive] [--app <slug>] [--schedule <EXPR>] [--path <PATH>] [--command <EXEC>] [--arg <ARG>] [--shell] [--timeout-seconds <N>] [--max-output-bytes <N>] [--timezone <TZ>] [--skip-if-running] [--retry-max <N>] [--retry-backoff-seconds <N>] [--schedule-policy <JSON>] [--failure-rules <JSON>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5771,8 +5771,8 @@ Schedule a POST to an app path, or a deployment command
 | `--max-output-bytes <N>` | captured output limit (default 1048576 bytes) |  |
 | `--timezone <TZ>` | IANA timezone (default UTC) |  |
 | `--skip-if-running` | skip fires while the previous run is active |  |
-| `--retry-max` | additional command attempts after failure or timeout |  |
-| `--retry-backoff-seconds` | base retry delay; doubles per attempt |  |
+| `--retry-max <N>` | additional command attempts after failure or timeout |  |
+| `--retry-backoff-seconds <N>` | base retry delay; doubles per attempt |  |
 | `--schedule-policy <JSON>` | versioned schedule policy JSON |  |
 | `--failure-rules <JSON>` | versioned failure and outcome-code rules JSON |  |
 
@@ -5802,7 +5802,7 @@ Show one cron rule
 
 Update one cron rule
 
-`gregale cron update [--interactive] [--app <SLUG>] [--schedule <EXPR>] [--path <PATH>] [--timezone <TZ>] [--enable] [--disable] [--skip-if-running] [--allow-overlap] [--retry-max] [--retry-backoff-seconds <N>] [--schedule-policy <JSON>] [--failure-rules <JSON>] [--clear-schedule-policy] [--clear-failure-rules] [<id>]`
+`gregale cron update [--interactive] [--app <SLUG>] [--schedule <EXPR>] [--path <PATH>] [--timezone <TZ>] [--enable] [--disable] [--skip-if-running] [--allow-overlap] [--retry-max <N>] [--retry-backoff-seconds <N>] [--schedule-policy <JSON>] [--failure-rules <JSON>] [--clear-schedule-policy] [--clear-failure-rules] [<id>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5815,7 +5815,7 @@ Update one cron rule
 | `--disable` | disable the cron |  |
 | `--skip-if-running` | skip fires while a previous run is active |  |
 | `--allow-overlap` | allow scheduled fires to overlap |  |
-| `--retry-max` | additional command attempts after failure or timeout |  |
+| `--retry-max <N>` | additional command attempts after failure or timeout |  |
 | `--retry-backoff-seconds <N>` | base retry delay; doubles per attempt |  |
 | `--schedule-policy <JSON>` | replace versioned schedule policy JSON |  |
 | `--failure-rules <JSON>` | replace versioned failure and outcome-code rules JSON |  |
