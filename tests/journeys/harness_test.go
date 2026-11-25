@@ -69,6 +69,10 @@ type target struct {
 	// blockedName is an exact entry of the target's app_name_blocklist
 	// (GREGALE_E2E_BLOCKED_NAME) that no other entry's pattern extends.
 	blockedName string
+	// stripeTestKey is an sk_test_ Stripe key (GREGALE_E2E_STRIPE_TEST_KEY)
+	// a journey connects for the run when the account has no Stripe
+	// connection.
+	stripeTestKey string
 
 	preflightOnce sync.Once
 	preflightErr  error
@@ -135,17 +139,18 @@ func loadTarget(getenv func(string) string) (*target, error) {
 		return nil, fmt.Errorf("GREGALE_E2E_API %q is not an http(s) origin", api)
 	}
 	t := &target{
-		api:         api,
-		appsDomain:  getenv("GREGALE_E2E_APPS_DOMAIN"),
-		token:       getenv("GREGALE_E2E_TOKEN"),
-		useLogin:    getenv("GREGALE_E2E_AUTH") == "cli-login",
-		session:     getenv("GREGALE_E2E_SESSION"),
-		otherToken:  getenv("GREGALE_E2E_OTHER_TOKEN"),
-		blockedName: getenv("GREGALE_E2E_BLOCKED_NAME"),
-		cli:         getenv("GREGALE_E2E_CLI"),
-		runID:       getenv("GREGALE_E2E_RUN_ID"),
-		tier:        getenv("GREGALE_E2E_TIER"),
-		keep:        getenv("GREGALE_E2E_KEEP") == "1",
+		api:           api,
+		appsDomain:    getenv("GREGALE_E2E_APPS_DOMAIN"),
+		token:         getenv("GREGALE_E2E_TOKEN"),
+		useLogin:      getenv("GREGALE_E2E_AUTH") == "cli-login",
+		session:       getenv("GREGALE_E2E_SESSION"),
+		otherToken:    getenv("GREGALE_E2E_OTHER_TOKEN"),
+		blockedName:   getenv("GREGALE_E2E_BLOCKED_NAME"),
+		stripeTestKey: getenv("GREGALE_E2E_STRIPE_TEST_KEY"),
+		cli:           getenv("GREGALE_E2E_CLI"),
+		runID:         getenv("GREGALE_E2E_RUN_ID"),
+		tier:          getenv("GREGALE_E2E_TIER"),
+		keep:          getenv("GREGALE_E2E_KEEP") == "1",
 	}
 	if t.appsDomain == "" {
 		t.appsDomain = strings.TrimPrefix(u.Hostname(), "api.")
@@ -158,6 +163,12 @@ func loadTarget(getenv func(string) string) (*target, error) {
 			return nil, fmt.Errorf("GREGALE_E2E_OTHER_TOKEN must belong to a second account, not repeat GREGALE_E2E_TOKEN")
 		}
 		t.sensitive = append(t.sensitive, t.otherToken)
+	}
+	if t.stripeTestKey != "" {
+		if !strings.HasPrefix(t.stripeTestKey, "sk_test_") {
+			return nil, fmt.Errorf("GREGALE_E2E_STRIPE_TEST_KEY must be a Stripe test-mode secret key (sk_test_)")
+		}
+		t.sensitive = append(t.sensitive, t.stripeTestKey)
 	}
 	if t.cli == "" {
 		t.cli = "gregale"

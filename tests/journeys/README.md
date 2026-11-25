@@ -44,6 +44,11 @@ make e2e-journeys TIER=full RUN=TestTemplateDeploys
   `<name>-<suffix>` is allowed) and that the journey account does not own.
   It needs a CLI from a release that includes the blocklist. Without the
   variable the journey skips.
+- **Stripe test key** (optional): `TestMCPSellerSelfServe` sets up consumer
+  sign-up, which needs a Stripe connection. When the account has none, set
+  `GREGALE_E2E_STRIPE_TEST_KEY` to an `sk_test_` key; the journey connects it
+  for the run and disconnects it afterwards. With neither, the journey skips.
+  It also skips while `api-monetization` is off for the account.
 - **Output**: live PASS/FAIL/SKIP lines, then a summary, every failure with
   its log, and `metric` lines (e.g. cold-wake time). The raw `go test -json`
   stream and `report.md` land in `.e2e-journeys/<timestamp>/` (gitignored).

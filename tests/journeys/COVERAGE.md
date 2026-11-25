@@ -19,6 +19,20 @@ expiry, rotation, catalog drift and revocation. See the
 It does not certify external OAuth provider login/refresh or API/bridge restart
 recovery; local preparation checks do not establish deployed acceptance.
 
+Selling an MCP server to strangers (ADR-20261124094745) is preview too.
+`TestMCPSellerSelfServe` deploys a Node MCP starter behind external OAuth
+from a probe app acting as the provider, offers a card-less free plan beside
+a paid one with `--oauth-consumers`, and checks: `unsigned_call_challenged`,
+`sign_in_enrolls_consumer` (an `oauth:` consumer on the free plan),
+`same_sign_in_same_consumer`, `plan_limit_offers_upgrade` (the 429 carries an
+`upgrade_url`), `upgrade_page_lists_plans`, `paid_plan_starts_checkout` (a
+Stripe Checkout; test-mode connections only), `unknown_key_rejected`,
+`link_by_key` (the sign-in bills to a key's consumer and the free one
+closes), `second_key_conflicts`, `identity_delete_reenrolls` and
+`revoked_consumer_refused`. Not covered: finishing Checkout with a card
+(needs a person), the plan change after it, the MCP JSON-RPC error data, and
+the Gregale Auth `oauth-proxy` mode (the journey uses `external-oauth`).
+
 Flags, experiments and product analytics are not GA rows either: no
 capability registry entry lists them. `TestFlagsAndExperiments` skips when
 Flags answer anything but 404 for a missing project. It deploys a one-service

@@ -308,8 +308,8 @@ const server = http.createServer((req, res) => {
       return;
     }
     case "/.well-known/jwks.json": {
-      // The realtime journey signs its clients' tokens and publishes the
-      // public key here, so this app is the endpoint's OIDC issuer.
+      // The realtime and MCP seller journeys sign their clients' tokens and
+      // publish the public key here, so this app is their OIDC issuer.
       // The fallback keeps `gregale deploy check` (TestCLITools/doctor_source)
       // from reporting these realtime-only variables as required (Hunt 31).
       const jwks = process.env.E2E_REALTIME_JWKS_B64 || "";
