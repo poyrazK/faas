@@ -119,3 +119,27 @@ func TestManagedValkeyImageIsADeployableReference(t *testing.T) {
 		t.Fatalf("deploy admission rejects %s", ManagedValkeyImage)
 	}
 }
+
+// Every image a cache may run is a digest-pinned, deployable Valkey
+// reference, and the one apid deploys is among them, so imaged and schedd
+// recognize every cache apid creates.
+func TestManagedValkeyImagesAreDeployableAndIncludeTheDeployedOne(t *testing.T) {
+	if !IsManagedValkeyImage(ManagedValkeyImage) {
+		t.Fatalf("%s is not an accepted cache image", ManagedValkeyImage)
+	}
+	seen := map[string]bool{}
+	for _, image := range ManagedValkeyImages {
+		if seen[image] {
+			t.Errorf("duplicate cache image %s", image)
+		}
+		seen[image] = true
+		if !strings.HasPrefix(image, "docker.io/valkey/valkey@sha256:") || !ValidDeploymentImage(image) {
+			t.Errorf("cache image %s is not a digest-pinned deployable Valkey reference", image)
+		}
+	}
+	for _, other := range []string{"", "docker.io/valkey/valkey:8.1.12-alpine", "docker.io/library/redis@sha256:9971099af41c36e887aabdfe22b80c0fe45df949163dfc9cb434febc57cfc3fc"} {
+		if IsManagedValkeyImage(other) {
+			t.Errorf("%q accepted as a cache image", other)
+		}
+	}
+}

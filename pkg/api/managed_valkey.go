@@ -25,6 +25,12 @@ const (
 	// reviewed change here. Deploy references carry a digest and no tag.
 	ManagedValkeyImage = "docker.io/valkey/valkey@sha256:e706d1213aaba6896c162bb6a3a9e1894e1a435f28f8f856d14fab2e10aa098b"
 
+	// managedValkeyImage8112 is valkey/valkey:8.1.12-alpine. imaged and
+	// schedd accept it one release before apid deploys it: a schedd that did
+	// not know it would give the cache the plan-default HTTP liveness probe,
+	// which kills a cache about 50 s after it starts (docs/release-compatibility.md).
+	managedValkeyImage8112 = "docker.io/valkey/valkey@sha256:9971099af41c36e887aabdfe22b80c0fe45df949163dfc9cb434febc57cfc3fc"
+
 	// ManagedValkeyPort is the port a cache listens on at its service address.
 	ManagedValkeyPort = 6379
 
@@ -55,6 +61,17 @@ const (
 	// ManagedValkeyDefaultEvictionPolicy evicts least recently used keys.
 	ManagedValkeyDefaultEvictionPolicy = "allkeys-lru"
 )
+
+// ManagedValkeyImages are the images a cache deployment may run: the one
+// apid deploys and the others still running in existing caches, which keep
+// their image until `gregale redis update` moves them. Remove an image only
+// once no cache deployment runs it.
+var ManagedValkeyImages = []string{ManagedValkeyImage, managedValkeyImage8112}
+
+// IsManagedValkeyImage reports whether ref is an image a cache may run.
+func IsManagedValkeyImage(ref string) bool {
+	return slices.Contains(ManagedValkeyImages, ref)
+}
 
 // ManagedValkeyEvictionPolicies are the maxmemory policies a cache may use.
 var ManagedValkeyEvictionPolicies = []string{

@@ -89,16 +89,21 @@ func TestRawTCPRoutedPortHonoursTheReceiptHealthDeclaration(t *testing.T) {
 func TestManagedValkeyDeploymentUsesRawTCPProbes(t *testing.T) {
 	ports := []api.WorkloadPort{{Name: "redis", Port: api.ManagedValkeyPort, Protocol: api.WorkloadPortTCP, Internal: true}}
 	app := state.App{AppProtocol: api.AppProtocolHTTP1, Manifest: state.AppManifest{Port: api.ManagedValkeyPort, Ports: ports}}
-	for _, tc := range []struct {
+	type probeCase struct {
 		image    string
 		wantPath string // informational; only the cache case is asserted
-	}{
-		{api.ManagedValkeyImage, ""},
-		{"docker.io/library/redis@sha256:" + strings.Repeat("a", 64), "/healthz"},
-	} {
+	}
+	// Every image a cache may run: a cache that keeps an older Valkey until
+	// `gregale redis update`, or a newer one apid deploys, is still a cache.
+	var cases []probeCase
+	for _, image := range api.ManagedValkeyImages {
+		cases = append(cases, probeCase{image, ""})
+	}
+	cases = append(cases, probeCase{"docker.io/library/redis@sha256:" + strings.Repeat("a", 64), "/healthz"})
+	for _, tc := range cases {
 		dep := state.Deployment{ID: "dep-1", Kind: state.DeploymentKindImage, ImageDigest: tc.image}
 		path, grpc, _ := sched.StartupProbeForApp(dep, app)
-		cache := tc.image == api.ManagedValkeyImage
+		cache := api.IsManagedValkeyImage(tc.image)
 		if cache && (path != "" || grpc) {
 			t.Fatalf("%s: probe = (%q, grpc=%v), want TCP accept", tc.image, path, grpc)
 		}
