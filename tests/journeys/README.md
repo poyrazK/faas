@@ -34,6 +34,9 @@ make e2e-journeys TIER=full RUN=TestTemplateDeploys
   of the internal Free or Hobby fixture account on the control plane with
   `gregalectl journey-fixture mint-token --plan free --yes
   --reason=journey_fixture` and revokes it afterwards with `revoke-token`.
+  The `free-plan-journeys` workflow does this daily for
+  `TestJSFrameworkSourceDeploys` and also requires
+  `nextjs_standalone=true`.
 - **Session** (optional): steps only a person may take, such as approving an
   agent's request, need a signed-in dashboard session. Set
   `GREGALE_E2E_SESSION` to the value of the browser's `__Host-faas_sid`
