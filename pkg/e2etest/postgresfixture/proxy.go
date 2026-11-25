@@ -102,6 +102,11 @@ func OpenProxy(t *testing.T, cluster *pgxpool.Pool, listenIP string, port uint16
 }
 
 func OpenProxyWithDeadline(t *testing.T, cluster *pgxpool.Pool, listenIP string, port uint16, deadline time.Duration) Proxy {
+	return OpenProxyContext(t, context.Background(), cluster, listenIP, port)
+}
+
+// OpenProxyContext ties pending upstream connections to the caller's context.
+func OpenProxyContext(t *testing.T, ctx context.Context, cluster *pgxpool.Pool, listenIP string, port uint16) Proxy {
 	t.Helper()
 	listener, err := net.Listen("tcp4", net.JoinHostPort(listenIP, strconv.Itoa(int(port))))
 	if err != nil {
@@ -113,7 +118,7 @@ func OpenProxyWithDeadline(t *testing.T, cluster *pgxpool.Pool, listenIP string,
 		host = "127.0.0.1"
 	}
 	target := net.JoinHostPort(host, strconv.Itoa(int(cluster.Config().ConnConfig.Port)))
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ctx)
 	state := &proxyState{connections: make(map[net.Conn]struct{})}
 	var wg sync.WaitGroup
 	wg.Add(1)

@@ -70,7 +70,7 @@ func runCommitConsumerLiveOutage(t *testing.T, f *normalPathFixture, consumer *p
 	t.Log("Commit live relay outage started")
 	waitCommitPrometheus(t, ctx, prometheus, 6*time.Minute, "firing", unknown)
 	firedAt := time.Now()
-	health := waitCommitSourceHealth(t, f.h, f.key, fixture.source.ID, "database_unavailable", outageStartedAt)
+	health := waitCommitSourceHealth(t, ctx, f.h, f.key, fixture.source.ID, "database_unavailable", outageStartedAt)
 	if health.PendingEvents != nil || health.BlockedEvents != nil || health.OldestPendingAt != nil {
 		t.Fatal("unavailable source reported a known backlog")
 	}

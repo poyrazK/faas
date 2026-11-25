@@ -139,7 +139,7 @@ func runCommitConsumerSustainedLoad(t *testing.T, f *normalPathFixture, consumer
 	if _, err := fixture.customer.Exec(ctx, `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename='relay' AND pid<>pg_backend_pid()`); err != nil {
 		t.Fatal(err)
 	}
-	unknown := waitCommitSourceHealth(t, f.h, f.key, fixture.source.ID, "database_unavailable", time.Time{})
+	unknown := waitCommitSourceHealth(t, ctx, f.h, f.key, fixture.source.ID, "database_unavailable", time.Time{})
 	if unknown.PendingEvents != nil || unknown.BlockedEvents != nil {
 		t.Fatalf("unavailable source exposed a known backlog: %+v", unknown)
 	}
@@ -305,7 +305,11 @@ func commitConsumerOrder(ctx context.Context, pool *pgxpool.Pool) (string, error
 	if err != nil {
 		return "", err
 	}
-	defer tx.Rollback(context.Background())
+	defer func(parent context.Context) {
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
+		defer cancel()
+		_ = tx.Rollback(cleanup)
+	}(ctx)
 	if _, err := tx.Exec(ctx, `INSERT INTO public.orders(id) VALUES($1::uuid)`, id); err != nil {
 		return "", err
 	}

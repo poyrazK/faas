@@ -2155,6 +2155,11 @@ func childName(cmd *exec.Cmd) string {
 // The method is a small, test-only fault-injection seam; production code
 // continues to supervise schedd through its service manager.
 func (h *Harness) RestartSchedd() error {
+	return h.RestartScheddContext(context.Background())
+}
+
+// RestartScheddContext propagates the caller's context to the database update.
+func (h *Harness) RestartScheddContext(ctx context.Context) error {
 	if h == nil || h.T == nil {
 		return fmt.Errorf("e2etest: nil harness")
 	}
@@ -2179,7 +2184,7 @@ func (h *Harness) RestartSchedd() error {
 	proc := startProc(h.T, h.BinDir, "schedd", append([]string(nil), h.scheddEnv...))
 	h.procs = append(h.procs, proc)
 	waitUnix(h.T, h.ScheddSock, 30*time.Second)
-	setDefaultLocalScheddTarget(h.T, h.Pool, h.ScheddSock, h.VMMDSock)
+	setDefaultLocalScheddTargetContext(h.T, ctx, h.Pool, h.ScheddSock, h.VMMDSock)
 	h.requireDaemonsAlive(h.T)
 	return nil
 }
@@ -3071,8 +3076,13 @@ func waitTCP(t *testing.T, addr string, d time.Duration) {
 // subtests) both converge on the active socket.
 func setDefaultLocalScheddTarget(t *testing.T, pool *pgxpool.Pool, sockPath, vmmdSockPath string) {
 	t.Helper()
+	setDefaultLocalScheddTargetContext(t, context.Background(), pool, sockPath, vmmdSockPath)
+}
+
+func setDefaultLocalScheddTargetContext(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sockPath, vmmdSockPath string) {
+	t.Helper()
 	target := "unix://" + sockPath
-	if _, err := pool.Exec(context.Background(),
+	if _, err := pool.Exec(ctx,
 		`update compute_nodes set schedd_target_url = $1 where name = 'default-local'`,
 		target); err != nil {
 		t.Fatalf("e2etest: set default-local schedd_target_url: %v", err)
@@ -3080,7 +3090,7 @@ func setDefaultLocalScheddTarget(t *testing.T, pool *pgxpool.Pool, sockPath, vmm
 	if strings.TrimSpace(vmmdSockPath) == "" {
 		return
 	}
-	if _, err := pool.Exec(context.Background(),
+	if _, err := pool.Exec(ctx,
 		`update compute_nodes set target_url = $1 where name = 'default-local'`,
 		"unix://"+vmmdSockPath); err != nil {
 		t.Fatalf("e2etest: set default-local target_url: %v", err)

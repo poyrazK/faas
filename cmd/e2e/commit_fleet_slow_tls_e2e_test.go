@@ -144,7 +144,7 @@ func verifyCommitSlowTLSRestart(t *testing.T, ctx context.Context, f *normalPath
 		DROP FUNCTION IF EXISTS commit_hold_slow_general_claim();
 		DROP TABLE IF EXISTS commit_restart_slow_source`
 	t.Cleanup(func() {
-		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		if _, err := catalog.Exec(cleanup, dropGate); err != nil {
 			t.Error(err)
@@ -170,7 +170,7 @@ func verifyCommitSlowTLSRestart(t *testing.T, ctx context.Context, f *normalPath
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.h.RestartSchedd(); err != nil {
+	if err := f.h.RestartScheddContext(ctx); err != nil {
 		t.Fatal(err)
 	}
 	restarted := time.Now()

@@ -292,8 +292,8 @@ func runCommitProducerHandoff(t *testing.T, h *e2etest.Harness, store *state.PgS
 		t.Fatalf("resume source: %d %s", status, body)
 	}
 	if recoverSource {
-		first := waitCommitSourceHealth(t, h, key, src.ID, "database_unavailable", time.Time{})
-		second := waitCommitSourceHealth(t, h, key, src.ID, "database_unavailable", *first.LastCheckedAt)
+		first := waitCommitSourceHealth(t, ctx, h, key, src.ID, "database_unavailable", time.Time{})
+		second := waitCommitSourceHealth(t, ctx, h, key, src.ID, "database_unavailable", *first.LastCheckedAt)
 		if second.PendingEvents != nil || second.BlockedEvents != nil || second.OldestPendingAt != nil {
 			t.Fatalf("source outage reported a known backlog: %+v", second)
 		}
@@ -304,7 +304,7 @@ func runCommitProducerHandoff(t *testing.T, h *e2etest.Harness, store *state.PgS
 		customer.Reset()
 		// The old sealed password remains configured. A fresh source pass must
 		// still fail after the database recovers, rather than skipping TLS/auth.
-		waitCommitSourceHealth(t, h, key, src.ID, "database_unavailable", *second.LastCheckedAt)
+		waitCommitSourceHealth(t, ctx, h, key, src.ID, "database_unavailable", *second.LastCheckedAt)
 		if _, err := store.CommitReceiptByEvent(ctx, src.AccountID, src.ID, eventID); !errors.Is(err, state.ErrNotFound) {
 			t.Fatalf("retired source credential accepted work: %v", err)
 		}
@@ -528,11 +528,11 @@ func commitOperationInstance(t *testing.T, operation state.ExclusiveOperation) s
 	return parts[0]
 }
 
-func waitCommitSourceHealth(t *testing.T, h *e2etest.Harness, key, source, want string, after time.Time) api.CommitSourceResponse {
+func waitCommitSourceHealth(t *testing.T, ctx context.Context, h *e2etest.Harness, key, source, want string, after time.Time) api.CommitSourceResponse {
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
 	for {
-		body, code := doReq(t, h, key, http.MethodGet, "/v1/commit-sources/"+source, nil)
+		body, code := doReqContext(t, ctx, h, key, http.MethodGet, "/v1/commit-sources/"+source, nil)
 		var health api.CommitSourceResponse
 		if code != http.StatusOK || json.Unmarshal(body, &health) != nil {
 			t.Fatalf("source health API: %d %s", code, body)

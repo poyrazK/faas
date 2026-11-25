@@ -95,7 +95,7 @@ func runCommitRecoveryProfile(t *testing.T, f *normalPathFixture, consumer *pgxp
 		waitCommitRelayTraceUntil(t, ctx, outageStartedAt.Add(6*time.Minute+15*time.Second))
 	}
 	for _, source := range sources {
-		health := waitCommitSourceHealth(t, f.h, f.key, source.source.ID, "database_unavailable", outageStartedAt)
+		health := waitCommitSourceHealth(t, ctx, f.h, f.key, source.source.ID, "database_unavailable", outageStartedAt)
 		if health.PendingEvents != nil || health.BlockedEvents != nil || health.OldestPendingAt != nil {
 			t.Fatal("unavailable source reported a known backlog")
 		}
@@ -196,7 +196,7 @@ func addCommitProfileSource(t *testing.T, ctx context.Context, store *state.PgSt
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		if _, err := store.SetCommitSourceEnabled(cleanupCtx, source.AccountID, source.ID, false); err != nil {
 			t.Error(err)

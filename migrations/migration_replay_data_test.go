@@ -10,6 +10,28 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 )
 
+func TestCommitReceiptUsageReplayPreservesReconciliation(t *testing.T) {
+	// Replaying the entire tail can mask an earlier migration replacing newer
+	// triggers, because the later migration reinstalls them in that same run.
+	const receiptUsageVersion = 20261125150005600
+	ctx := t.Context()
+	pool := newMigrationReplayPool(t, []int64{receiptUsageVersion})
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	before := replayFenceFingerprint(t, pool)
+	deleted, err := pool.Exec(ctx, `DELETE FROM goose_db_version WHERE version_id=$1`, int64(receiptUsageVersion))
+	if err != nil || deleted.RowsAffected() != 1 {
+		t.Fatalf("remove receipt usage migration ledger row: rows=%d err=%v", deleted.RowsAffected(), err)
+	}
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	if replayFenceFingerprint(t, pool) != before {
+		t.Fatal("replaying receipt usage replaced the current reconciliation functions or triggers")
+	}
+}
+
 func TestMigrationReplayPreservesSavedProgress(t *testing.T) {
 	// adr:1660,1662,1665,1666 — ledger recovery preserves accepted work and fixed deadlines.
 	versions := []int64{

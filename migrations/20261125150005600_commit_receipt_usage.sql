@@ -14,8 +14,13 @@ INSERT INTO commit_receipt_usage(shard) SELECT n FROM generate_series(0,255) n O
 
 -- A shard is locked even before its initial scan. The scanner takes the same
 -- lock before reading receipts, so its snapshot and later deltas cannot overlap.
+-- A missing ledger row can replay this migration after batched reconciliation
+-- has replaced these functions. Keep the installed implementations in that case.
 -- +goose StatementBegin
-CREATE OR REPLACE FUNCTION commit_receipt_usage_insert() RETURNS trigger LANGUAGE plpgsql
+DO $guard$
+BEGIN
+ IF to_regprocedure(format('%I.commit_receipt_usage_insert()', current_schema())) IS NULL THEN
+CREATE FUNCTION commit_receipt_usage_insert() RETURNS trigger LANGUAGE plpgsql
 SET search_path = pg_catalog, public AS $$
 DECLARE r record;
 BEGIN
@@ -28,10 +33,15 @@ BEGIN
  END LOOP;
  RETURN NULL;
 END $$;
+ END IF;
+END $guard$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE OR REPLACE FUNCTION commit_receipt_usage_delete() RETURNS trigger LANGUAGE plpgsql
+DO $guard$
+BEGIN
+ IF to_regprocedure(format('%I.commit_receipt_usage_delete()', current_schema())) IS NULL THEN
+CREATE FUNCTION commit_receipt_usage_delete() RETURNS trigger LANGUAGE plpgsql
 SET search_path = pg_catalog, public AS $$
 DECLARE r record;
 BEGIN
@@ -44,10 +54,15 @@ BEGIN
  END LOOP;
  RETURN NULL;
 END $$;
+ END IF;
+END $guard$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE OR REPLACE FUNCTION commit_receipt_usage_update() RETURNS trigger LANGUAGE plpgsql
+DO $guard$
+BEGIN
+ IF to_regprocedure(format('%I.commit_receipt_usage_update()', current_schema())) IS NULL THEN
+CREATE FUNCTION commit_receipt_usage_update() RETURNS trigger LANGUAGE plpgsql
 SET search_path = pg_catalog, public AS $$
 DECLARE r record;
 BEGIN
@@ -64,6 +79,8 @@ BEGIN
  END LOOP;
  RETURN NULL;
 END $$;
+ END IF;
+END $guard$;
 -- +goose StatementEnd
 
 DROP TRIGGER IF EXISTS commit_receipt_usage_insert ON commit_receipts;

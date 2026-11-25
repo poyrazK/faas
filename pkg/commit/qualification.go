@@ -41,8 +41,19 @@ func QualifySchemaVersion(ctx context.Context, pool *pgxpool.Pool, version int) 
 	return qualifyOutboxTable(ctx, pool, "public.gregale_outbox", required)
 }
 
+const realtimeOutboxTable = "public.gregale_realtime_outbox"
+
+// RealtimeOutboxInstalled checks for the optional sidecar before qualification.
+func RealtimeOutboxInstalled(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
+	var installed bool
+	if err := pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, realtimeOutboxTable).Scan(&installed); err != nil {
+		return false, qualificationQueryError(err, "commit: realtime outbox availability unknown")
+	}
+	return installed, nil
+}
+
 func QualifyRealtimeSchema(ctx context.Context, pool *pgxpool.Pool) error {
-	return qualifyOutboxTable(ctx, pool, "public.gregale_realtime_outbox", map[string]string{
+	return qualifyOutboxTable(ctx, pool, realtimeOutboxTable, map[string]string{
 		"event_id": "uuid", "endpoint_id": "text", "channel": "text", "data": "bytea", "metadata": "jsonb",
 		"created_at": "timestamptz", "published_at": "timestamptz", "sequence": "int8",
 		"lease_token": "uuid", "lease_until": "timestamptz", "next_attempt_at": "timestamptz",

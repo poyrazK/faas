@@ -368,7 +368,9 @@ func produceLoad(ctx context.Context, pool *pgxpool.Pool, phase string, rate int
 			if err == nil {
 				err = tx.Commit(ctx)
 			} else {
-				_ = tx.Rollback(context.Background())
+				cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				_ = tx.Rollback(cleanup)
+				cancel()
 			}
 			if err != nil {
 				return count, err
@@ -457,7 +459,11 @@ func interruptLoadReconciler(ctx context.Context, platform *pgxpool.Pool, cfg *p
 	if err != nil {
 		return 0, err
 	}
-	defer func() { _ = tx.Rollback(context.Background()) }()
+	defer func(parent context.Context) {
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
+		defer cancel()
+		_ = tx.Rollback(cleanup)
+	}(ctx)
 	lockCtx, cancelLock := context.WithTimeout(ctx, 10*time.Second)
 	_, err = tx.Exec(lockCtx, `LOCK TABLE commit_receipts IN ACCESS EXCLUSIVE MODE`)
 	cancelLock()
@@ -485,7 +491,10 @@ func interruptLoadReconciler(ctx context.Context, platform *pgxpool.Pool, cfg *p
 		}
 		select {
 		case err := <-done:
-			return 0, fmt.Errorf("reconciliation exited before connection interruption: %v", err)
+			if err != nil {
+				return 0, fmt.Errorf("reconciliation exited before connection interruption: %w", err)
+			}
+			return 0, errors.New("reconciliation exited before connection interruption")
 		case <-deadline.C:
 			return 0, errors.New("reconciliation did not reach the controlled lock")
 		case <-ctx.Done():
@@ -494,8 +503,11 @@ func interruptLoadReconciler(ctx context.Context, platform *pgxpool.Pool, cfg *p
 		}
 	}
 	var terminated bool
-	if err := platform.QueryRow(ctx, `SELECT pg_terminate_backend($1)`, pid).Scan(&terminated); err != nil || !terminated {
-		return 0, fmt.Errorf("terminate the test-owned backend: terminated=%t: %v", terminated, err)
+	if err := platform.QueryRow(ctx, `SELECT pg_terminate_backend($1)`, pid).Scan(&terminated); err != nil {
+		return 0, fmt.Errorf("terminate the test-owned backend: %w", err)
+	}
+	if !terminated {
+		return 0, errors.New("test-owned backend was not terminated")
 	}
 	select {
 	case err := <-done:
@@ -703,8 +715,11 @@ func verifyLoadIdentities(ctx context.Context, platform, customer *pgxpool.Pool,
 	}
 	err = rows.Err()
 	rows.Close()
-	if err != nil || len(accepted) != expected {
-		return fmt.Errorf("platform acceptance count=%d expected=%d: %v", len(accepted), expected, err)
+	if err != nil {
+		return fmt.Errorf("read platform acceptances: %w", err)
+	}
+	if len(accepted) != expected {
+		return fmt.Errorf("platform acceptance count=%d expected=%d", len(accepted), expected)
 	}
 	customerRows, err := customer.Query(ctx, `SELECT event_id::text,receipt_id::text,operation_id::text
  FROM public.gregale_outbox WHERE event_type='qualification.load' AND accepted_at IS NOT NULL`)
@@ -726,20 +741,29 @@ func verifyLoadIdentities(ctx context.Context, platform, customer *pgxpool.Pool,
 	}
 	err = customerRows.Err()
 	customerRows.Close()
-	if err != nil || matched != expected {
-		return fmt.Errorf("customer checkpoint count=%d expected=%d: %v", matched, expected, err)
+	if err != nil {
+		return fmt.Errorf("read customer checkpoints: %w", err)
+	}
+	if matched != expected {
+		return fmt.Errorf("customer checkpoint count=%d expected=%d", matched, expected)
 	}
 	if accepted[interrupted.eventID] != (identity{interrupted.receiptID, interrupted.operationID}) {
 		return errors.New("relay interruption did not preserve the original receipt and operation")
 	}
 	var operationCount int
 	if err := platform.QueryRow(ctx, `SELECT count(*) FROM exclusive_work_operations WHERE account_id=$1::uuid`, source.AccountID).
-		Scan(&operationCount); err != nil || operationCount != expected {
-		return fmt.Errorf("managed operation count=%d expected=%d: %v", operationCount, expected, err)
+		Scan(&operationCount); err != nil {
+		return fmt.Errorf("count managed operations: %w", err)
+	}
+	if operationCount != expected {
+		return fmt.Errorf("managed operation count=%d expected=%d", operationCount, expected)
 	}
 	var business int
-	if err := customer.QueryRow(ctx, `SELECT count(*) FROM public.qualification_business`).Scan(&business); err != nil || business != expected {
-		return fmt.Errorf("business transaction count=%d expected=%d: %v", business, expected, err)
+	if err := customer.QueryRow(ctx, `SELECT count(*) FROM public.qualification_business`).Scan(&business); err != nil {
+		return fmt.Errorf("count business transactions: %w", err)
+	}
+	if business != expected {
+		return fmt.Errorf("business transaction count=%d expected=%d", business, expected)
 	}
 	return nil
 }

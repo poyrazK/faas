@@ -4,12 +4,12 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 ALTER TABLE commit_receipt_usage
- ADD COLUMN scan_in_progress boolean NOT NULL DEFAULT false,
- ADD COLUMN scan_cursor uuid,
- ADD COLUMN scan_count bigint NOT NULL DEFAULT 0,
- ADD COLUMN scan_payload_json_bytes bigint NOT NULL DEFAULT 0,
- ADD COLUMN reconcile_token uuid,
- ADD COLUMN retry_at timestamptz NOT NULL DEFAULT '-infinity';
+ ADD COLUMN IF NOT EXISTS scan_in_progress boolean NOT NULL DEFAULT false,
+ ADD COLUMN IF NOT EXISTS scan_cursor uuid,
+ ADD COLUMN IF NOT EXISTS scan_count bigint NOT NULL DEFAULT 0,
+ ADD COLUMN IF NOT EXISTS scan_payload_json_bytes bigint NOT NULL DEFAULT 0,
+ ADD COLUMN IF NOT EXISTS reconcile_token uuid,
+ ADD COLUMN IF NOT EXISTS retry_at timestamptz NOT NULL DEFAULT '-infinity';
 
 -- Writers acquire the same shard lock as a scanner. Only changes at or below
 -- its committed cursor affect the partial scan; later rows remain for a batch.

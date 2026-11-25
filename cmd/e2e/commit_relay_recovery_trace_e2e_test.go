@@ -22,7 +22,7 @@ func startCommitRelayTrace(t *testing.T, ctx context.Context, f *normalPathFixtu
 	primary := sources[0]
 	recordCommitRelayPolls(t, ctx, f.h.Pool, primary.customer)
 	trace := &commitRelayTrace{
-		proxy:   postgresfixture.OpenProxy(t, primary.customer, "127.0.0.1", 0),
+		proxy:   postgresfixture.OpenProxyContext(t, ctx, primary.customer, "127.0.0.1", 0),
 		readLog: primary.relayLog,
 	}
 	for _, source := range sources {
@@ -90,7 +90,7 @@ func (r *commitRelayTrace) shortOutages(t *testing.T, ctx context.Context, f *no
 		if err != nil {
 			t.Fatal(err)
 		}
-		waitCommitSourceHealth(t, f.h, f.key, primary.source.ID, "database_unavailable", outageStartedAt)
+		waitCommitSourceHealth(t, ctx, f.h, f.key, primary.source.ID, "database_unavailable", outageStartedAt)
 		var failedAt, nextPoll time.Time
 		if err := f.h.Pool.QueryRow(ctx, `SELECT last_checked_at, relay_next_poll_at FROM commit_sources WHERE id=$1::uuid`,
 			primary.source.ID).Scan(&failedAt, &nextPoll); err != nil {
@@ -104,7 +104,7 @@ func (r *commitRelayTrace) shortOutages(t *testing.T, ctx context.Context, f *no
 		restoredAt := time.Now()
 		r.proxy.SetAvailable(true)
 		waitCommitProfileDrain(t, ctx, f, consumer, sources, i+3)
-		waitCommitSourceHealth(t, f.h, f.key, primary.source.ID, "healthy", restoredAt)
+		waitCommitSourceHealth(t, ctx, f.h, f.key, primary.source.ID, "healthy", restoredAt)
 		r.report(t, ctx, f, phase, sources, []commitProfileEvent{{id: id, source: 0}}, outageStartedAt, restoredAt, attemptsBefore)
 	}
 	return 2
