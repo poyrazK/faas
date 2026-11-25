@@ -6035,6 +6035,41 @@ endpoints. Upgrade and restart the Task server to use the version 2 template. Ex
 review if the server changes runtimes or owner keys. Receipt workflows continue
 to use their version 1 template.
 
+#### Review and submit Task input from TypeScript
+
+Connect the same authenticated MCP client with the preview
+`createMcpTaskReviewFetch()` as the `fetch` option on
+`StreamableHTTPClientTransport`. It preserves exact numbers in form schemas.
+Use a Tasks endpoint that advertises `io.gregale/task-input-review`.
+
+```ts
+import {
+  getTaskInputReview, respondToReviewedTaskInput,
+} from '@gregale/sdk-node/preview';
+
+const review = await getTaskInputReview(mcp, taskId);
+if (review.reviewRevision && review.forms.approval) {
+  // Show the form and collect the user's reviewed answer before submitting.
+  const answer = await reviewApprovalWithUser(review.forms.approval);
+  const result = await respondToReviewedTaskInput(mcp, review, { approval: answer });
+  console.log(result.outcome);
+}
+```
+
+Use the original review object with the same client and include an answer for
+every form ID. Accepted forms take an `accept` action and an object
+`content`. They also support `decline` and `cancel` without content. For
+exact numeric answers, pass the `McpTaskReviewNumber` from a form or construct
+one from the original number text, such as
+`new McpTaskReviewNumber('0.1000000000000000001')`.
+
+An `applied` outcome means the answer is recorded for the original Task.
+For `stale`, read the current forms and review them again. If the submission
+reply is lost, the SDK checks the retained answer once within the
+operation's time budget. It returns `unconfirmed` if it cannot establish
+that the answer was recorded. The response includes Task metadata when
+available. Retrieve the original result with the same Task ID.
+
 ## MCP catalog snapshots
 
 Capture caller-visible definitions before changing a server:

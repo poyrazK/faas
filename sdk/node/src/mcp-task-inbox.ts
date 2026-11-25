@@ -124,14 +124,14 @@ function taskInboxQuery(options: McpTaskInboxListOptions): Query {
 
 const payloadFields = new Set(['result', 'error', 'inputrequests', 'statusmessage', 'arguments']);
 
-function parseEntry(value: unknown, query: Query): McpTaskInboxEntry {
+export function parseMcpTaskMetadata(value: unknown): McpTaskInboxEntry {
   if (!isRecord(value) || value.resultType !== 'complete' ||
       Object.keys(value).some(key => payloadFields.has(key.toLowerCase()))) {
     throw new McpTaskInboxError('invalid_page');
   }
   const { taskId, status, createdAt, lastUpdatedAt, ttlMs, pollIntervalMs } = value;
   if (typeof taskId !== 'string' || taskId === '' || Buffer.byteLength(taskId, 'utf8') > 256 || /[\r\n\0]/u.test(taskId) ||
-      !isStatus(status) || (query.status !== undefined && status !== query.status) ||
+      !isStatus(status) ||
       !isTimestamp(createdAt) || !isTimestamp(lastUpdatedAt) ||
       (ttlMs !== null && !isInteger(ttlMs, 0, Number.MAX_SAFE_INTEGER)) ||
       (pollIntervalMs !== undefined && !isInteger(pollIntervalMs, 0, 86_400_000))) {
@@ -150,7 +150,10 @@ function parsePage(value: unknown, query: Query): McpTaskInboxPage {
       !Array.isArray(value.tasks) || value.tasks.length > query.limit) {
     throw new McpTaskInboxError('invalid_page');
   }
-  const tasks = value.tasks.map((entry: unknown) => parseEntry(entry, query));
+  const tasks = value.tasks.map(parseMcpTaskMetadata);
+  if (query.status !== undefined && tasks.some(task => task.status !== query.status)) {
+    throw new McpTaskInboxError('invalid_page');
+  }
   if (new Set(tasks.map(task => task.taskId)).size !== tasks.length) throw new McpTaskInboxError('invalid_page');
   const cursor = value.nextCursor;
   if (cursor === undefined || cursor === '') return { tasks };

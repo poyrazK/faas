@@ -27,3 +27,8 @@ Agents also need to submit an explicitly reviewed answer from that new profile.
   execution until normal retention expires. These records supply the
   evidence without adding a schema migration or a second response journal.
   Receipt-based version 1 reviews use their original protocol.
+- The Node SDK preview uses the same authenticated MCP connection for the
+  reviewed form snapshot and its submission. Its Streamable HTTP fetch adapter
+  preserves the original JSON numeric literals from the form, and the SDK
+  supports exact numeric values in submitted answers. An uncertain write
+  leads to one read-only confirmation within the caller's time budget.

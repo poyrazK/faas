@@ -33,6 +33,13 @@ export {
   type McpTaskInboxEntry, type McpTaskInboxPage, type McpTaskInboxStatus,
   type McpTaskInboxListOptions, type McpTaskInboxWatchOptions, type McpTaskInboxFailureCode,
 } from './mcp-task-inbox.js';
+export {
+  getTaskInputReview, respondToReviewedTaskInput, McpTaskInputReviewError,
+  type McpTaskInputReviewConnection, type McpTaskInputReview, type McpTaskInputReviewOptions,
+  type McpTaskInputReviewFailureCode, type McpTaskReviewForm, type McpTaskReviewJSON, type McpTaskReviewJSONObject,
+  type McpTaskReviewAnswer, type McpTaskReviewAnswers, type McpTaskReviewOutcome,
+} from './mcp-task-input-review.js';
+export { createMcpTaskReviewFetch, McpTaskReviewNumber } from './mcp-task-review-json.js';
 export { PaginationError, type PaginationOptions, type DeploymentPagination } from './deployment-pagination.js';
 export { WaiterError, type WaiterFailureCode, type WaiterOptions, type WaiterSnapshot, type WaiterProgress, type BuildWaitOptions, type DeploymentWaitOptions, type DeploymentWaiters } from './deployment-waiters.js';
 
