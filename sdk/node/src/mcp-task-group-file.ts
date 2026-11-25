@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { constants } from 'node:fs';
 import { link, mkdir, open, realpath, unlink, type FileHandle } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -7,7 +7,8 @@ import { loadMcpTaskReceiptReference } from './mcp-task-receipt.js';
 import { isSubmissionKey } from './mcp-task-submission.js';
 
 const manifestName = 'group.json';
-const maxMembers = 64;
+const credentialName = 'credential';
+export const maxTaskGroupMembers = 64;
 const maxManifestBytes = 128 * 1024;
 const directoryFlags = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
 const fileFlags = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
@@ -18,6 +19,8 @@ const messages = {
   group_exists: 'MCP Task group already exists',
   group_changed: 'MCP Task group changed since this update was delivered',
   group_io: 'Could not read or write the MCP Task group',
+  submission_unavailable: 'MCP Task group was not created for submission',
+  credential_mismatch: 'MCP Task group submission requires its original bearer credential',
 } as const;
 
 export type McpTaskGroupFailureCode = keyof typeof messages;
@@ -28,7 +31,12 @@ export class McpTaskGroupError extends Error {
 }
 
 type Member = { submissionKey: string; taskId?: string };
-export type TaskGroupManifest = { version: 1; id: string; endpointSha256: string; members: Member[] };
+type ManifestBase = { id: string; endpointSha256: string };
+type SavedGroupManifest = ManifestBase & { version: 1; members: Member[] };
+export type TaskGroupSubmissionMember = { submissionKey: string; requestSha256: string; taskId?: never };
+export type TaskGroupSubmissionManifest = ManifestBase & { version: 2; members: TaskGroupSubmissionMember[] };
+export type TaskGroupManifest = SavedGroupManifest | TaskGroupSubmissionManifest;
+type TaskGroupInput = Omit<SavedGroupManifest, 'id'> | Omit<TaskGroupSubmissionManifest, 'id'>;
 
 function validDigest(value: unknown): value is string {
   return typeof value === 'string' && digestPattern.test(value);
@@ -53,9 +61,19 @@ function decodeManifest(bytes: Uint8Array): TaskGroupManifest {
   } catch {
     return invalid();
   }
-  if (!record(value) || Object.keys(value).length !== 4 || value.version !== 1 ||
+  if (!record(value) || Object.keys(value).length !== 4 || (value.version !== 1 && value.version !== 2) ||
       !validDigest(value.id) || !validDigest(value.endpointSha256) ||
-      !Array.isArray(value.members) || value.members.length === 0 || value.members.length > maxMembers) invalid();
+      !Array.isArray(value.members) || value.members.length === 0 || value.members.length > maxTaskGroupMembers) invalid();
+  const { id, endpointSha256 } = value;
+  if (value.version === 2) {
+    const members = value.members.map((member): TaskGroupSubmissionMember => {
+      if (!record(member) || Object.keys(member).length !== 2 ||
+          !isSubmissionKey(member.submissionKey) || !validDigest(member.requestSha256)) return invalid();
+      return { submissionKey: member.submissionKey, requestSha256: member.requestSha256 };
+    });
+    if (!uniqueMembers(members)) invalid();
+    return { version: 2, id, endpointSha256, members };
+  }
   const members: Member[] = value.members.map(member => {
     if (!record(member) || !isSubmissionKey(member.submissionKey) ||
         !Object.keys(member).every(key => key === 'submissionKey' || key === 'taskId')) return invalid();
@@ -64,7 +82,7 @@ function decodeManifest(bytes: Uint8Array): TaskGroupManifest {
     return { submissionKey: member.submissionKey, taskId: member.taskId };
   });
   if (!uniqueMembers(members)) invalid();
-  return { version: 1, id: value.id, endpointSha256: value.endpointSha256, members };
+  return { version: 1, id, endpointSha256, members };
 }
 
 function fsCode(error: unknown, code: string): boolean {
@@ -95,23 +113,27 @@ async function inGroupDirectory<Result>(path: string, run: (directory: FileHandl
   }
 }
 
-async function readManifest(path: string): Promise<TaskGroupManifest> {
-  const file = await open(join(path, manifestName), fileFlags);
+async function readGroupFile(path: string, name: string, maxBytes: number): Promise<Buffer> {
+  const file = await open(join(path, name), fileFlags);
   try {
     const info = await file.stat();
-    if (!info.isFile() || !privateMode(info) || info.size > maxManifestBytes) invalid();
-    const buffer = Buffer.alloc(maxManifestBytes + 1);
+    if (!info.isFile() || !privateMode(info) || info.size > maxBytes) invalid();
+    const buffer = Buffer.alloc(maxBytes + 1);
     let count = 0;
     while (count < buffer.length) {
       const { bytesRead } = await file.read(buffer, count, buffer.length - count, count);
       if (bytesRead === 0) break;
       count += bytesRead;
     }
-    if (count > maxManifestBytes) invalid();
-    return decodeManifest(buffer.subarray(0, count));
+    if (count > maxBytes) invalid();
+    return buffer.subarray(0, count);
   } finally {
     await file.close();
   }
+}
+
+async function readManifest(path: string): Promise<TaskGroupManifest> {
+  return decodeManifest(await readGroupFile(path, manifestName, maxManifestBytes));
 }
 
 async function canonicalGroupPath(path: string): Promise<string> {
@@ -121,21 +143,22 @@ async function canonicalGroupPath(path: string): Promise<string> {
   return join(await realpath(dirname(absolute)), basename(absolute));
 }
 
-async function publishManifest(path: string, manifest: TaskGroupManifest): Promise<void> {
+async function publishGroupFile(path: string, name: string, content: string): Promise<boolean> {
   const temporary = join(path, `.group-${randomUUID()}`);
   const file = await open(temporary, 'wx', 0o600);
   try {
     try {
       await file.chmod(0o600);
-      await file.writeFile(JSON.stringify(manifest) + '\n');
+      await file.writeFile(content);
       await file.sync();
     } finally {
       await file.close();
     }
     try {
-      await link(temporary, join(path, manifestName));
+      await link(temporary, join(path, name));
+      return true;
     } catch (error) {
-      if (fsCode(error, 'EEXIST')) throw new McpTaskGroupError('group_exists');
+      if (fsCode(error, 'EEXIST')) return false;
       throw error;
     }
   } finally {
@@ -145,7 +168,7 @@ async function publishManifest(path: string, manifest: TaskGroupManifest): Promi
 
 /** Save the read-only references from existing receipts as an immutable group. */
 export async function createMcpTaskGroup(path: string, receiptPaths: readonly string[]): Promise<void> {
-  if (!Array.isArray(receiptPaths) || receiptPaths.length === 0 || receiptPaths.length > maxMembers) invalid();
+  if (!Array.isArray(receiptPaths) || receiptPaths.length === 0 || receiptPaths.length > maxTaskGroupMembers) invalid();
   const receipts = [];
   for (const receiptPath of [...receiptPaths]) receipts.push(await loadMcpTaskReceiptReference(receiptPath));
   const endpointSha256 = receipts[0]!.endpointSha256;
@@ -153,8 +176,14 @@ export async function createMcpTaskGroup(path: string, receiptPaths: readonly st
     submissionKey, ...(taskId === undefined ? {} : { taskId }),
   }));
   if (receipts.some(receipt => receipt.endpointSha256 !== endpointSha256) || !uniqueMembers(members)) invalid();
-  const manifest: TaskGroupManifest = { version: 1, id: randomBytes(32).toString('hex'), endpointSha256, members };
-  await groupIo(async () => {
+  await createTaskGroupFile(path, { version: 1, endpointSha256, members });
+}
+
+export function createTaskGroupFile<Input extends TaskGroupInput>(
+  path: string, input: Input,
+): Promise<{ path: string; manifest: Input & { id: string } }> {
+  const manifest = { ...input, id: randomBytes(32).toString('hex') };
+  return groupIo(async () => {
     const file = await canonicalGroupPath(path);
     const parent = await open(dirname(file), directoryFlags);
     try {
@@ -162,10 +191,13 @@ export async function createMcpTaskGroup(path: string, receiptPaths: readonly st
       if ((mode & 0o022) !== 0 && (mode & 0o1000) === 0) invalid();
       await mkdir(file, { mode: 0o700 }).catch((error: unknown) => { if (!fsCode(error, 'EEXIST')) throw error; });
       await inGroupDirectory(file, async directory => {
-        await publishManifest(file, manifest);
+        if (!await publishGroupFile(file, manifestName, JSON.stringify(manifest) + '\n')) {
+          throw new McpTaskGroupError('group_exists');
+        }
         await directory.sync();
         await parent.sync();
       });
+      return { path: file, manifest };
     } finally {
       await parent.close();
     }
@@ -177,6 +209,48 @@ export function loadTaskGroup(path: string): Promise<{ path: string; manifest: T
     const file = await canonicalGroupPath(path);
     return { path: file, manifest: await inGroupDirectory(file, () => readManifest(file)) };
   });
+}
+
+export async function loadTaskGroupSubmission(path: string): Promise<{ path: string; manifest: TaskGroupSubmissionManifest }> {
+  const group = await loadTaskGroup(path);
+  if (group.manifest.version !== 2) throw new McpTaskGroupError('submission_unavailable');
+  return { path: group.path, manifest: group.manifest };
+}
+
+export function taskGroupReceiptPath(path: string, receiptIndex: number): string {
+  return join(path, `member-${receiptIndex}.json`);
+}
+
+async function readGroupCredential(path: string): Promise<string | undefined> {
+  const bytes = await readGroupFile(path, credentialName, 64).catch((error: unknown) => {
+    if (fsCode(error, 'ENOENT')) return undefined;
+    throw error;
+  });
+  if (!bytes) return undefined;
+  const proof = bytes.toString('latin1');
+  if (!validDigest(proof)) invalid();
+  return proof;
+}
+
+// The first outgoing request fixes the group bearer for every member. Reuse
+// the private, exclusive publication path so competing processes agree.
+export async function bindTaskGroupCredential(
+  path: string, manifest: TaskGroupSubmissionManifest, credential: string | undefined,
+): Promise<void> {
+  if (credential === undefined) throw new McpTaskGroupError('credential_mismatch');
+  const proof = createHmac('sha256', credential).update('gregale/node-sdk/mcp-task-group/v2:')
+    .update(manifest.id).update(manifest.endpointSha256).digest('hex');
+  await groupIo(() => inGroupDirectory(path, async directory => {
+    if ((await readManifest(path)).id !== manifest.id) throw new McpTaskGroupError('group_changed');
+    let saved = await readGroupCredential(path);
+    if (saved === undefined) {
+      saved = await publishGroupFile(path, credentialName, proof) ? proof : await readGroupCredential(path);
+    }
+    if (saved === undefined || !timingSafeEqual(Buffer.from(saved, 'hex'), Buffer.from(proof, 'hex'))) {
+      throw new McpTaskGroupError('credential_mismatch');
+    }
+    await directory.sync();
+  }));
 }
 
 function ackPath(path: string, update: string): string {

@@ -6304,6 +6304,44 @@ The watch deadline also applies while Tasks are paused. Use the same option
 and group directory after a restart to follow acknowledged pauses without
 repeating their notices.
 
+#### Submit a Task group with restart recovery
+
+Use `submitMcpTaskGroup` with a receipt-capable transport and a new group path.
+It saves the full plan for up to 64 Tasks before sending the first request.
+Each member has one submission key and a fingerprint of its original
+request. The SDK sends members in order and stops at the first uncertain or
+rejected submission.
+
+```ts
+import {
+  continueMcpTaskGroupSubmission, resumeMcpTaskGroupSubmission, submitMcpTaskGroup,
+} from '@gregale/sdk-node/preview';
+
+await submitMcpTaskGroup(mcp, './receipts/weekly-batch', submissions);
+
+// After reconnecting, inspect admission evidence before choosing a member.
+const entries = await resumeMcpTaskGroupSubmission(mcp, './receipts/weekly-batch');
+const pending = entries.find(entry => entry.outcome === 'prepared');
+if (pending) {
+  await continueMcpTaskGroupSubmission(
+    mcp, './receipts/weekly-batch', pending.receiptIndex, submissions[pending.receiptIndex],
+  );
+}
+```
+
+Recovery reads the Task ID from a confirmed receipt or looks up the saved key
+after a lost reply. It reports `prepared` for a member with no send attempt,
+`unconfirmed` when an attempted submission has no retained Task visible to the
+caller, and `unavailable` when the status could not be read. Continue one
+member explicitly with its original tool, arguments, and deferred-input
+setting. If admission is already confirmed, continuation returns that Task.
+Otherwise the saved key and original bearer guard the send, within one
+minute of key issuance when the plan was created.
+
+The private group stores fingerprints and receipts. Keep the original
+requests in your application for explicit continuation. Use
+`watchMcpTaskGroup` on the same path to observe the Tasks already submitted.
+
 #### Cancel a Task from TypeScript
 
 Use `cancelMcpTask(mcp, taskId)` from `@gregale/sdk-node/preview` on the

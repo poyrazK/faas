@@ -4,8 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
-  createMcpTaskGroup, createMcpTaskReceiptTransport, resumeMcpTaskFromReceipt, retryMcpTaskFromReceipt,
-  submitMcpTaskWithReceipt, watchMcpTaskGroup,
+  continueMcpTaskGroupSubmission, createMcpTaskGroup, createMcpTaskReceiptTransport,
+  resumeMcpTaskFromReceipt, resumeMcpTaskGroupSubmission, retryMcpTaskFromReceipt,
+  submitMcpTaskGroup, submitMcpTaskWithReceipt, watchMcpTaskGroup,
   type McpTaskConnection, type McpTaskReceiptConnection, type McpTaskSubmissionConnection,
 } from '../src/preview.js';
 
@@ -433,4 +434,92 @@ test('Task groups pin the endpoint and isolate inaccessible receipts without rea
   await createMcpTaskGroup(group, [first]);
   await assert.rejects(event.acknowledge(), { code: 'group_changed' });
   assert.deepEqual(await readdir(group), ['group.json']);
+});
+
+test('group submission publishes every key and resumes after an admission reply is lost', async t => {
+  const group = join(await folder(t), 'group');
+  const submissions = ['first private report', 'second private report', 'third private report']
+    .map(report => ({ ...submission, arguments: { report } }));
+  const admitted = new Map<string, typeof task>();
+  const keys: string[] = [];
+  const connect = (credential?: string) => connection(async ({ method, params }) => {
+    if (method === 'tools/call') {
+      const key = (params._meta as Record<string, string>)['io.gregale/task-submission-key']!;
+      const planText = await readFile(join(group, 'group.json'), 'utf8');
+      const plan = JSON.parse(planText);
+      assert.equal(plan.version, 2);
+      assert.equal(plan.members.length, 3);
+      assert.equal(plan.members[keys.length].submissionKey, key);
+      assert.equal(new Set(plan.members.map((member: { submissionKey: string }) => member.submissionKey)).size, 3);
+      assert.equal(planText.includes('private report'), false);
+      assert.equal(planText.includes('private-fixture-credential'), false);
+      assert.equal((await stat(join(group, 'credential'))).mode & 0o777, 0o600);
+      const stored = JSON.parse(await readFile(join(group, `member-${keys.length}.json`), 'utf8'));
+      assert.equal(stored.submissionKey, key);
+      assert.equal(stored.requestSha256, plan.members[keys.length].requestSha256);
+
+      keys.push(key);
+      const created = { ...task, taskId: `task ${keys.length}`, status: 'completed' };
+      admitted.set(key, created);
+      if (keys.length === 2) throw new Error('reply lost after admission');
+      return { resultType: 'task', ...created };
+    }
+    if (method === lookup) return admitted.get(params.submissionKey as string) ?? assert.fail('unexpected lookup');
+    assert.equal(method, 'tasks/get');
+    return [...admitted.values()].find(value => value.taskId === params.taskId) ?? assert.fail('unexpected read');
+  }, endpoint, credential);
+  const started = await submitMcpTaskGroup(connect(), group, submissions);
+  assert.deepEqual(started.map(entry => entry.outcome), ['accepted', 'unconfirmed', 'prepared']);
+  assert.equal(keys.length, 2);
+  await assert.rejects(submitMcpTaskGroup(connect(), group, submissions), { code: 'group_exists' });
+
+  const recovered = await resumeMcpTaskGroupSubmission(connect('refreshed-credential'), group);
+  assert.deepEqual(recovered.map(entry => entry.outcome === 'accepted' ? entry.task.taskId : entry.outcome),
+    ['task 1', 'task 2', 'prepared']);
+  const watched = [];
+  for await (const event of watchMcpTaskGroup(connect('refreshed-credential'), group)) {
+    assert.equal(event.outcome, 'available');
+    watched.push(event.task.taskId);
+  }
+  assert.deepEqual(watched, ['task 1', 'task 2']);
+  await assert.rejects(continueMcpTaskGroupSubmission(connect(), group, 2, submissions[0]!), { code: 'request_mismatch' });
+  await assert.rejects(continueMcpTaskGroupSubmission(connect('refreshed-credential'), group, 2, submissions[2]!),
+    { code: 'credential_mismatch' });
+  assert.equal(keys.length, 2);
+  assert.equal((await continueMcpTaskGroupSubmission(connect(), group, 2, submissions[2]!)).outcome, 'accepted');
+  assert.equal((await continueMcpTaskGroupSubmission(connect(), group, 1, submissions[1]!)).outcome, 'accepted');
+  assert.equal(admitted.size, 3);
+  assert.equal(keys.length, 3);
+});
+
+test('explicit continuation reuses an unconfirmed key and honors the saved plan window', async t => {
+  const group = join(await folder(t), 'group');
+  const submissions = [submission, { ...submission, deferFormInput: true }];
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const writes: string[] = [];
+  const client = connection(async ({ method, params }) => {
+    if (method === lookup) throw { code: -32002 };
+    assert.equal(method, 'tools/call');
+    writes.push((params._meta as Record<string, string>)['io.gregale/task-submission-key']!);
+    if (writes.length === 1) throw new Error('reply lost before admission');
+    return { resultType: 'task', ...task };
+  });
+  assert.deepEqual((await submitMcpTaskGroup(client, group, submissions)).map(entry => entry.outcome),
+    ['unconfirmed', 'prepared']);
+  assert.deepEqual((await resumeMcpTaskGroupSubmission(client, group)).map(entry => entry.outcome),
+    ['unconfirmed', 'prepared']);
+  assert.equal((await continueMcpTaskGroupSubmission(client, group, 0, submissions[0]!)).outcome, 'accepted');
+  assert.deepEqual(writes, [writes[0], writes[0]]);
+  now += 60_000;
+  await assert.rejects(continueMcpTaskGroupSubmission(client, group, 1, submissions[1]!), { code: 'retry_window_closed' });
+  assert.equal(writes.length, 2);
+});
+
+test('an invalid group member stops the whole plan before publication or requests', async t => {
+  const directory = await folder(t);
+  const group = join(directory, 'group');
+  const client = connection(async () => assert.fail('invalid group reached transport'));
+  await assert.rejects(submitMcpTaskGroup(client, group, [submission, { ...submission, toolName: '' }]), TypeError);
+  assert.deepEqual(await readdir(directory), []);
 });

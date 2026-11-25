@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
-import { acknowledgeTaskGroupUpdate, loadTaskGroup, taskGroupUpdateAcknowledged } from './mcp-task-group-file.js';
+import {
+  acknowledgeTaskGroupUpdate, loadTaskGroup, taskGroupReceiptPath, taskGroupUpdateAcknowledged,
+} from './mcp-task-group-file.js';
 import type { McpTaskInboxEntry } from './mcp-task-inbox.js';
 import {
-  mcpTaskReceiptEndpoint, McpTaskReceiptError, type McpTaskReceiptConnection,
+  loadPlannedMcpTaskReceipt, mcpTaskReceiptEndpoint, McpTaskReceiptError, type McpTaskReceiptConnection,
 } from './mcp-task-receipt.js';
 import { McpTaskReadError } from './mcp-task-result.js';
 import {
@@ -34,7 +36,7 @@ export type McpTaskGroupEvent = UnavailableTask | {
   acknowledge(): Promise<void>;
 };
 
-function groupConnections(connection: McpTaskGroupConnection, endpoint: string) {
+export function groupConnections(connection: McpTaskGroupConnection, endpoint: string) {
   const transport = connection.transport;
   if (mcpTaskReceiptEndpoint(connection) !== endpoint) throw new McpTaskReceiptError('endpoint_mismatch');
   const check = () => {
@@ -92,7 +94,12 @@ export function watchMcpTaskGroup(
         const references = await Promise.all(manifest.members.slice(start, start + 4).map(async (member, offset) => {
           const receiptIndex = start + offset;
           try {
-            const taskId = member.taskId ?? (await lookupMcpTaskBySubmissionKey(clients.lookup, member.submissionKey, lookupOptions)).taskId;
+            const planned = manifest.version === 2 ? manifest.members[receiptIndex] : undefined;
+            const receipt = planned ? await loadPlannedMcpTaskReceipt(taskGroupReceiptPath(directory, receiptIndex),
+              { endpointSha256: manifest.endpointSha256, ...planned }) : member;
+            if (!receipt) return { receiptIndex };
+            clients.check();
+            const taskId = receipt.taskId ?? (await lookupMcpTaskBySubmissionKey(clients.lookup, receipt.submissionKey, lookupOptions)).taskId;
             return { taskId, receiptIndex };
           } catch (error) {
             signal.throwIfAborted();
@@ -109,7 +116,7 @@ export function watchMcpTaskGroup(
         for (const reference of references) {
           const { receiptIndex } = reference;
           if (reference.error) yield { receiptIndex, outcome: 'unavailable', error: reference.error };
-          else {
+          else if (reference.taskId !== undefined) {
             const indexes = entries.get(reference.taskId);
             if (indexes) indexes.push(receiptIndex);
             else entries.set(reference.taskId, [receiptIndex]);

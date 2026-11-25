@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { fork } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -91,6 +91,16 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
       failedPage.resolve();
     }
     return inbox(query, ...args);
+  };
+  let admissionProbe;
+  const create = runtime.create.bind(runtime);
+  runtime.create = async (...args) => {
+    const result = await create(...args);
+    if (admissionProbe && args[1]?.report === 'group submission two') {
+      admissionProbe.committed.resolve(result.taskId);
+      await admissionProbe.release.promise;
+    }
+    return result;
   };
   let taskWatch, groupRequests;
   const server = createServer((req, res) => {
@@ -300,8 +310,8 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
   const groupRoot = await mkdtemp(join(tmpdir(), 'gregale-sdk-task-group-'));
   const group = join(groupRoot, 'saved');
   const agents = [];
-  async function startAgent({ followInput = false } = {}) {
-    const token = await mint('alice', 'mcp:tools reports:read');
+  async function startAgent({ token, groupPath = group, ...configuration } = {}) {
+    token ??= await mint('alice', 'mcp:tools reports:read');
     const child = fork(new URL('./task-group-agent.mjs', import.meta.url), [], {
       execArgv: [], stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
     });
@@ -324,7 +334,7 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
       },
     };
     agents.push(agent);
-    child.send({ endpoint: endpoint.href, token, group, followInput });
+    child.send({ endpoint: endpoint.href, token, group: groupPath, ...configuration });
     return agent;
   }
   function monitorGroup() {
@@ -420,7 +430,47 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
     }
     assert.deepEqual(inaccessible, [0, 1, 2]);
     assert.deepEqual(groupRequests, { submissions: 3, reviews: 1, responses: 1 });
+
+    const planned = join(groupRoot, 'submission');
+    const submissions = ['one', 'two', 'three'].map(name => ({
+      toolName: 'build_report', arguments: { report: `group submission ${name}`, steps: 1 },
+    }));
+    const token = await mint('carol', 'mcp:tools reports:read');
+    groupRequests.submissions = 0;
+    admissionProbe = { committed: Promise.withResolvers(), release: Promise.withResolvers() };
+    const submitter = await startAgent({ token, groupPath: planned, submissions });
+    const secondId = await submitter.running(admissionProbe.committed.promise);
+    assert.equal(groupRequests.submissions, 2);
+    submitter.child.kill('SIGKILL');
+    assert.deepEqual(await submitter.exit, [null, 'SIGKILL']);
+    admissionProbe.release.resolve();
+    const first = JSON.parse(await readFile(join(planned, 'member-0.json'), 'utf8'));
+    const second = JSON.parse(await readFile(join(planned, 'member-1.json'), 'utf8'));
+    assert.ok(first.taskId);
+    assert.equal(second.taskId, undefined);
+    await assert.rejects(stat(join(planned, 'member-2.json')), { code: 'ENOENT' });
+
+    const recovering = await startAgent({
+      token, groupPath: planned, continuation: { receiptIndex: 2, submission: submissions[2] },
+    });
+    const [{ recovered }] = await recovering.waitForEvents(1);
+    assert.deepEqual(recovered.map(entry => [entry.receiptIndex, entry.outcome, entry.task?.taskId]), [
+      [0, 'accepted', first.taskId], [1, 'accepted', secondId], [2, 'prepared', undefined],
+    ]);
+    assert.equal(groupRequests.submissions, 2);
+    recovering.child.send('continue');
+    const [, { continued }] = await recovering.waitForEvents(2);
+    assert.equal(continued.outcome, 'accepted');
+    assert.equal(continued.receiptIndex, 2);
+    assert.deepEqual(await recovering.exit, [0, null]);
+
+    const creator = await connect('carol', 'mcp:tools reports:read');
+    const created = (await listTaskInbox(creator)).tasks.map(task => task.taskId);
+    assert.equal(created.length, 3);
+    assert.deepEqual(new Set(created), new Set([first.taskId, secondId, continued.task.taskId]));
+    assert.equal(groupRequests.submissions, 3);
   } finally {
+    admissionProbe?.release.resolve();
     for (const agent of agents) agent.child.kill();
     await Promise.allSettled(agents.map(agent => agent.exit));
     taskWatch = undefined;
