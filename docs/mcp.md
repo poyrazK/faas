@@ -6292,9 +6292,17 @@ Acknowledge an update after handling it. A restart skips the same
 acknowledged snapshot, while a current unacknowledged snapshot can be
 delivered again with the same `updateId`. Use that ID if handling the update
 needs an idempotency key. An acknowledgement applies to that snapshot alone.
-Tasks that need input leave the current watch and are checked again the next
-time the group is opened. Keep the group directory for as long as you need
-its acknowledgements.
+
+By default, Tasks that need input leave the current watch and are checked
+the next time the group is opened. Pass `{ followInput: true, signal }` as the
+third argument to `watchMcpTaskGroup` to keep following them on the shared
+stream, with polling fallback. Acknowledge the `input_required` update after
+showing it to the user. The acknowledgement records delivery of the notice.
+The user's answer goes through `getTaskInputReview` and
+`respondToReviewedTaskInput`, and the watcher reports later Task updates.
+The watch deadline also applies while Tasks are paused. Use the same option
+and group directory after a restart to follow acknowledged pauses without
+repeating their notices.
 
 #### Cancel a Task from TypeScript
 

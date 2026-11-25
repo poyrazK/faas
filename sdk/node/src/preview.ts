@@ -60,7 +60,7 @@ export {
 } from './mcp-task-watch.js';
 export {
   createMcpTaskGroup, watchMcpTaskGroup, McpTaskGroupError,
-  type McpTaskGroupConnection, type McpTaskGroupEvent, type McpTaskGroupFailureCode,
+  type McpTaskGroupConnection, type McpTaskGroupEvent, type McpTaskGroupFailureCode, type McpTaskGroupWatchOptions,
 } from './mcp-task-group.js';
 export { PaginationError, type PaginationOptions, type DeploymentPagination } from './deployment-pagination.js';
 export { WaiterError, type WaiterFailureCode, type WaiterOptions, type WaiterSnapshot, type WaiterProgress, type BuildWaitOptions, type DeploymentWaitOptions, type DeploymentWaiters } from './deployment-waiters.js';

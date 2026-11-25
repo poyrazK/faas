@@ -8,11 +8,16 @@ import { McpTaskReadError } from './mcp-task-result.js';
 import {
   lookupMcpTaskBySubmissionKey, McpTaskSubmissionError, type McpTaskSubmissionConnection,
 } from './mcp-task-submission.js';
-import { watchMcpTasks, type McpTaskWatchConnection, type McpTaskWatchOptions } from './mcp-task-watch.js';
+import { watchTaskEvents, type McpTaskWatchConnection, type McpTaskWatchOptions } from './mcp-task-watch.js';
 
 export { createMcpTaskGroup, McpTaskGroupError, type McpTaskGroupFailureCode } from './mcp-task-group-file.js';
 
 export type McpTaskGroupConnection = McpTaskReceiptConnection & McpTaskWatchConnection;
+
+export interface McpTaskGroupWatchOptions extends McpTaskWatchOptions {
+  /** Keep observing Tasks while they are waiting for input. Defaults to false. */
+  readonly followInput?: boolean;
+}
 
 type UnavailableTask = {
   readonly receiptIndex: number;
@@ -63,7 +68,7 @@ function updateId(group: string, index: number, task: McpTaskInboxEntry): string
 
 /** Resume an existing group with authenticated status reads and a shared live watch. */
 export function watchMcpTaskGroup(
-  connection: McpTaskGroupConnection, path: string, options: McpTaskWatchOptions = {},
+  connection: McpTaskGroupConnection, path: string, { followInput = false, ...options }: McpTaskGroupWatchOptions = {},
 ): AsyncGenerator<McpTaskGroupEvent, void, unknown> {
   const timeout = options.timeoutMs ?? 120_000;
   if (!Number.isInteger(timeout) || timeout < 1 || timeout > 2 ** 31 - 1) {
@@ -112,7 +117,8 @@ export function watchMcpTaskGroup(
         }
       }
 
-      for await (const event of watchMcpTasks(clients.tasks, [...entries.keys()], { ...options, signal, timeoutMs: timeout })) {
+      const events = watchTaskEvents(clients.tasks, [...entries.keys()], { ...options, signal, timeoutMs: timeout }, followInput);
+      for await (const event of events) {
         clients.check();
         for (const receiptIndex of entries.get(event.taskId)!) {
           signal.throwIfAborted();

@@ -111,7 +111,7 @@ type ActiveSubscription = Awaited<ReturnType<typeof openWatch>>;
 
 function watchTasks<Value>(
   connection: McpTaskWatchConnection, taskIds: readonly string[], options: McpTaskWatchOptions,
-  project: (event: McpTaskWatchEvent) => Value,
+  project: (event: McpTaskWatchEvent) => Value, followInput = false,
 ): AsyncGenerator<Value, void, unknown> {
   if (!taskIds.every(isMcpTaskId)) throw new TypeError('Invalid MCP Task ID');
   const active = new Map<string, TaskObservation>(taskIds.map(taskId => [taskId, {
@@ -148,7 +148,8 @@ function watchTasks<Value>(
 
       state.pollMs = mcpTaskPollDelay(task);
       state.retryMs = state.pollMs;
-      if (task.status !== 'working') active.delete(state.taskId);
+      const keepWatching = task.status === 'working' || (followInput && task.status === 'input_required');
+      if (!keepWatching) active.delete(state.taskId);
       state.dueAt = performance.now() + (watch?.honored.has(state.taskId) ? Math.max(reconcile, state.pollMs) : state.pollMs);
       const fingerprint = JSON.stringify(task);
       if (fingerprint === state.previous) return undefined;
@@ -237,10 +238,16 @@ export function watchMcpTask(
   });
 }
 
+export function watchTaskEvents(
+  connection: McpTaskWatchConnection, taskIds: readonly string[], options: McpTaskWatchOptions, followInput: boolean,
+): AsyncGenerator<McpTaskWatchEvent, void, unknown> {
+  if (!Array.isArray(taskIds)) throw new TypeError('Invalid MCP Task IDs');
+  return watchTasks(connection, [...new Set(taskIds)], options, event => event, followInput);
+}
+
 /** Watch known Tasks on a shared subscription with per-Task snapshots and failures. */
 export function watchMcpTasks(
   connection: McpTaskWatchConnection, taskIds: readonly string[], options: McpTaskWatchOptions = {},
 ): AsyncGenerator<McpTaskWatchEvent, void, unknown> {
-  if (!Array.isArray(taskIds)) throw new TypeError('Invalid MCP Task IDs');
-  return watchTasks(connection, [...new Set(taskIds)], options, event => event);
+  return watchTaskEvents(connection, taskIds, options, false);
 }

@@ -3,7 +3,7 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { createMcpTaskTransport, watchMcpTaskGroup } from '../../../sdk/node/dist/preview.js';
 
 const [configuration] = await once(process, 'message');
-const { endpoint, token, group } = configuration;
+const { endpoint, token, group, followInput } = configuration;
 const client = new Client({ name: 'gregale-task-group-restart', version: '1.0.0' }, {
   versionNegotiation: { mode: { pin: '2026-07-28' } }, enforceStrictCapabilities: true,
 });
@@ -12,7 +12,7 @@ try {
   await client.connect(createMcpTaskTransport(StreamableHTTPClientTransport, endpoint, {
     requestInit: { headers: { Authorization: `Bearer ${token}` } }, onInsufficientScope: 'throw',
   }));
-  for await (const event of watchMcpTaskGroup(client, group, { timeoutMs: 8_000 })) {
+  for await (const event of watchMcpTaskGroup(client, group, { timeoutMs: 8_000, followInput })) {
     if (event.outcome === 'unavailable') throw event.error;
     await event.acknowledge();
     process.send({

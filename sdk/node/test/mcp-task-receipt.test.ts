@@ -354,6 +354,44 @@ test('Task groups recover lost replies and remember only the exact acknowledged 
   assert.equal(await readFile(path, 'utf8'), before);
 });
 
+test('Task groups can poll through pauses and deliver a later input notice', async t => {
+  const directory = await folder(t);
+  const receipt = join(directory, 'receipt');
+  const group = join(directory, 'group');
+  await submitMcpTaskWithReceipt(connection(async () => ({ resultType: 'task', ...task })), receipt, submission);
+  await createMcpTaskGroup(group, [receipt]);
+
+  const paused = { ...task, status: 'input_required', pollIntervalMs: 0, inputRequests: { private: true } };
+  const snapshots = [
+    paused,
+    paused,
+    { ...paused, status: 'working', lastUpdatedAt: '2026-11-24T00:01:00Z' },
+    { ...paused, lastUpdatedAt: '2026-11-24T00:02:00Z' },
+    { ...paused, status: 'completed', lastUpdatedAt: '2026-11-24T00:03:00Z', result: { private: true } },
+  ];
+  let reads = 0;
+  const client = connection(async ({ method, params }) => {
+    assert.equal(method, 'tasks/get');
+    assert.equal(params.taskId, task.taskId);
+    const snapshot = snapshots[reads++];
+    assert.ok(snapshot);
+    return snapshot;
+  });
+  const statuses = [];
+  const ids = new Set<string>();
+  for await (const event of watchMcpTaskGroup(client, group, { followInput: true, timeoutMs: 5_000 })) {
+    assert.equal(event.outcome, 'available');
+    assert.equal(Object.hasOwn(event.task, 'inputRequests'), false);
+    assert.equal(Object.hasOwn(event.task, 'result'), false);
+    statuses.push(event.task.status);
+    ids.add(event.updateId);
+    await event.acknowledge();
+  }
+  assert.deepEqual(statuses, ['input_required', 'working', 'input_required', 'completed']);
+  assert.equal(ids.size, statuses.length);
+  assert.equal(reads, snapshots.length);
+});
+
 test('Task groups pin the endpoint and isolate inaccessible receipts without readable metadata', async t => {
   const directory = await folder(t);
   const first = join(directory, 'first');

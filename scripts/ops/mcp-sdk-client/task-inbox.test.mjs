@@ -12,9 +12,9 @@ import { pathToFileURL } from 'node:url';
 
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import {
-  cancelMcpTask, createMcpTaskGroup, createMcpTaskTransport, getMcpTask, listTaskInbox,
-  lookupMcpTaskBySubmissionKey, submitMcpTask, submitMcpTaskWithReceipt, watchMcpTask,
-  watchMcpTaskGroup, watchMcpTasks, watchTaskInbox,
+  cancelMcpTask, createMcpTaskGroup, createMcpTaskReviewFetch, createMcpTaskTransport, getMcpTask,
+  getTaskInputReview, listTaskInbox, lookupMcpTaskBySubmissionKey, respondToReviewedTaskInput,
+  submitMcpTask, submitMcpTaskWithReceipt, watchMcpTask, watchMcpTaskGroup, watchMcpTasks, watchTaskInbox,
 } from '../../../sdk/node/dist/preview.js';
 
 test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { timeout: 40_000 }, async t => {
@@ -95,8 +95,10 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
   let taskWatch, groupRequests;
   const server = createServer((req, res) => {
     const method = req.headers['mcp-method'];
-    if (groupRequests && (method === 'gregale/tasks/submit' || method === 'tools/call')) {
-      groupRequests.submissions++;
+    if (groupRequests) {
+      if (method === 'gregale/tasks/submit' || method === 'tools/call') groupRequests.submissions++;
+      if (method === 'gregale/tasks/input-review') groupRequests.reviews++;
+      if (method === 'gregale/tasks/respond-reviewed') groupRequests.responses++;
     }
     if (method === 'gregale/tasks/inbox') response = res;
     if (taskWatch && method === 'subscriptions/listen') {
@@ -129,14 +131,14 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const endpoint = new URL(`http://127.0.0.1:${server.address().port}/mcp`);
-  async function connect(subject, scope) {
+  async function connect(subject, scope, fetch) {
     const token = await mint(subject, scope);
     const client = new Client({ name: 'gregale-inbox-sdk-interop', version: '1.0.0' }, {
       versionNegotiation: { mode: { pin: '2026-07-28' } }, enforceStrictCapabilities: true,
     });
     clients.push(client);
     await client.connect(createMcpTaskTransport(StreamableHTTPClientTransport, endpoint, {
-      requestInit: { headers: { Authorization: `Bearer ${token}` } }, onInsufficientScope: 'throw',
+      requestInit: { headers: { Authorization: `Bearer ${token}` } }, onInsufficientScope: 'throw', fetch,
     }));
     return client;
   }
@@ -298,7 +300,7 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
   const groupRoot = await mkdtemp(join(tmpdir(), 'gregale-sdk-task-group-'));
   const group = join(groupRoot, 'saved');
   const agents = [];
-  async function startAgent() {
+  async function startAgent({ followInput = false } = {}) {
     const token = await mint('alice', 'mcp:tools reports:read');
     const child = fork(new URL('./task-group-agent.mjs', import.meta.url), [], {
       execArgv: [], stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
@@ -322,7 +324,7 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
       },
     };
     agents.push(agent);
-    child.send({ endpoint: endpoint.href, token, group });
+    child.send({ endpoint: endpoint.href, token, group, followInput });
     return agent;
   }
   function monitorGroup() {
@@ -330,7 +332,7 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
     taskWatch.release.resolve();
   }
 
-  groupRequests = { submissions: 0 };
+  groupRequests = { submissions: 0, reviews: 0, responses: 0 };
   try {
     const paths = ['completed', 'paused', 'remaining'].map(name => join(groupRoot, name));
     const leases = [];
@@ -361,18 +363,53 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
     await requestInput(leases[1]);
 
     monitorGroup();
-    const resumed = await startAgent();
+    const resumed = await startAgent({ followInput: true });
     assert.deepEqual((await resumed.waitForEvents(2)).map(event => [event.receiptIndex, event.taskId, event.status]), [
       [0, leases[0].task_id, 'completed'], [1, leases[1].task_id, 'input_required'],
     ]);
     await resumed.running(taskWatch.reconciling.promise);
     assert.equal(taskWatch.opens, 1);
+    resumed.child.kill('SIGKILL');
+    assert.deepEqual(await resumed.exit, [null, 'SIGKILL']);
+
+    // The previous agent acknowledged the pause. A fresh agent must follow
+    // both outstanding Tasks and leave the review to the separate caller.
+    monitorGroup();
+    const following = await startAgent({ followInput: true });
+    await following.running(taskWatch.reconciling.promise);
+    assert.equal(taskWatch.opens, 1);
+    assert.deepEqual(following.events, []);
+    assert.equal(groupRequests.reviews, 0);
+    assert.equal(groupRequests.responses, 0);
+
     assert.equal(await store.complete(leases[2].task_id, leases[2].lease_token, result), 'completed');
-    assert.deepEqual(await resumed.exit, [0, null]);
-    assert.deepEqual(resumed.events.map(event => [event.taskId, event.status]), [
-      [leases[0].task_id, 'completed'], [leases[1].task_id, 'input_required'], [leases[2].task_id, 'completed'],
-    ]);
+    const [parallelCompletion] = await following.waitForEvents(1);
+    assert.equal(parallelCompletion.taskId, leases[2].task_id);
+    assert.equal(parallelCompletion.status, 'completed');
     assert.equal((await watchMcpTaskGroup(owner, group).next()).done, true);
+
+    const reviewer = await connect('alice', 'mcp:tools reports:read', createMcpTaskReviewFetch());
+    const pausedId = leases[1].task_id;
+    const review = await getTaskInputReview(reviewer, pausedId);
+    assert.equal(review.task.status, 'input_required');
+    assert.equal(review.forms.approval.message, 'Private SDK fixture prompt');
+    const answer = await respondToReviewedTaskInput(reviewer, review, { approval: { action: 'accept', content: {} } });
+    assert.equal(answer.outcome, 'applied');
+    assert.equal(answer.task.status, 'working');
+
+    const [, working] = await following.waitForEvents(2);
+    assert.equal(working.taskId, pausedId);
+    assert.equal(working.status, 'working');
+    const claim = await store.claim(3, 30_000);
+    assert.equal(claim.task_id, pausedId);
+    assert.equal(await store.complete(pausedId, claim.lease_token, result), 'completed');
+    assert.deepEqual(await following.exit, [0, null]);
+    const reviewEvents = following.events.slice(1);
+    assert.ok(reviewEvents.every(event => event.taskId === pausedId && event.receiptIndex === 1));
+    assert.equal(reviewEvents.some(event => event.status === 'input_required'), false);
+    assert.equal(reviewEvents.at(-1).status, 'completed');
+    assert.equal(taskWatch.opens, 1);
+    assert.deepEqual((await getMcpTask(owner, pausedId)).result, result);
 
     const other = await connect('bob', 'mcp:tools reports:read');
     const inaccessible = [];
@@ -382,7 +419,7 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
       inaccessible.push(event.receiptIndex);
     }
     assert.deepEqual(inaccessible, [0, 1, 2]);
-    assert.equal(groupRequests.submissions, 3);
+    assert.deepEqual(groupRequests, { submissions: 3, reviews: 1, responses: 1 });
   } finally {
     for (const agent of agents) agent.child.kill();
     await Promise.allSettled(agents.map(agent => agent.exit));
