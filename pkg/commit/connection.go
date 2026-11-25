@@ -28,14 +28,15 @@ func connectionFailure(err error) error {
 		switch serverError.Code {
 		case "28P01", "28000":
 			return ErrConnectionAuthentication
-		case "57P03": // PostgreSQL is starting up or recovering.
+		case "08006", "57P01", "57P02", "57P03": // Connection failure, shutdown, or startup.
 			return ErrConnectionTransport
 		default:
 			return errors.New("commit: database connection unavailable")
 		}
 	}
 	if errors.Is(err, ErrConnectionTransport) || errors.Is(err, io.EOF) ||
-		errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.ErrClosedPipe) ||
+		errors.Is(err, net.ErrClosed) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) ||
 		errors.Is(err, context.DeadlineExceeded) {
 		return ErrConnectionTransport
 	}

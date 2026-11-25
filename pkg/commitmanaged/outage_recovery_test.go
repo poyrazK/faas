@@ -4,18 +4,78 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	commitwork "github.com/onebox-faas/faas/pkg/commit"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/prometheus/client_golang/prometheus"
 )
+
+func TestCommitRelayRetriesQualificationTransportFailure(t *testing.T) {
+	t.Setenv(pgtest.UseTemplateDatabase, "1")
+	e := newChangesEnv(t, true)
+	for _, tc := range []struct {
+		name        string
+		acquisition int32
+		fault       error
+	}{
+		{"schema columns", 2, io.ErrUnexpectedEOF},
+		{"schema primary key", 3, io.ErrClosedPipe},
+		{"source binding", 4, &pgconn.PgError{Code: "57P01", Message: "private fixture details"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			e.makeDue(t)
+			if _, err := e.control.Exec(ctx, `UPDATE commit_sources SET relay_poll_backoff_ms=$2 WHERE id=$1::uuid`,
+				e.source.ID, relayMaxBackoff.Milliseconds()); err != nil {
+				t.Fatal(err)
+			}
+			var acquired atomic.Int32
+			e.manager.Open = func(openCtx context.Context, _ string, _ commitwork.NetworkPolicy) (*pgxpool.Pool, error) {
+				cfg := e.customer.Config().Copy()
+				cfg.PrepareConn = func(context.Context, *pgx.Conn) (bool, error) {
+					// Ping uses the first acquisition. Fail the targeted qualification query.
+					if acquired.Add(1) == tc.acquisition {
+						return false, tc.fault
+					}
+					return true, nil
+				}
+				pool, err := pgxpool.NewWithConfig(openCtx, cfg)
+				if err != nil {
+					return nil, err
+				}
+				if err := pool.Ping(openCtx); err != nil {
+					pool.Close()
+					return nil, err
+				}
+				return pool, nil
+			}
+			if err := e.manager.Tick(ctx); err != nil {
+				t.Fatal(err)
+			}
+			var status string
+			var backoffMS int64
+			if err := e.control.QueryRow(ctx, `SELECT relay_status,relay_poll_backoff_ms FROM commit_sources WHERE id=$1::uuid`,
+				e.source.ID).Scan(&status, &backoffMS); err != nil {
+				t.Fatal(err)
+			}
+			backoff := time.Duration(backoffMS) * time.Millisecond
+			if acquired.Load() != tc.acquisition || status != "database_unavailable" ||
+				backoff < relayTransportCeiling-relayTransportSpread || backoff > relayTransportCeiling {
+				t.Fatalf("acquisitions=%d status=%s backoff=%s", acquired.Load(), status, backoff)
+			}
+		})
+	}
+}
 
 // A relay connection failure affects only its source. The producer databases
 // remain available to this test, so committed rows can accumulate while the

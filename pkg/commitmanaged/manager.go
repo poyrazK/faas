@@ -217,6 +217,13 @@ type relayPollResult struct {
 	connectDuration      time.Duration
 }
 
+func qualificationPollFailure(err error, status string) relayPollResult {
+	if errors.Is(err, commitwork.ErrConnectionTransport) {
+		return relayPollResult{status: "database_unavailable", transportUnavailable: true}
+	}
+	return relayPollResult{status: status}
+}
+
 func (m *Manager) tickSource(ctx context.Context, src state.CommitRelaySource, connectBudget time.Duration) relayPollResult {
 	raw, err := commitwork.OpenConnection(m.Identities, src.ID, src.SealedConnection)
 	if err != nil {
@@ -246,10 +253,10 @@ func (m *Manager) tickSource(ctx context.Context, src state.CommitRelaySource, c
 	}
 	defer pool.Close()
 	if err := commitwork.QualifySchemaVersion(ctx, pool, src.ContractVersion); err != nil {
-		return relayPollResult{status: "schema_unqualified"}
+		return qualificationPollFailure(err, "schema_unqualified")
 	}
 	if err := commitwork.QualifySource(ctx, pool, src.ID); err != nil {
-		return relayPollResult{status: "source_binding_unqualified"}
+		return qualificationPollFailure(err, "source_binding_unqualified")
 	}
 	relay := commitwork.Relay{ContractVersion: src.ContractVersion, SourceID: src.ID, Pool: pool, Acceptor: &acceptor{store: m.Store, source: src}}
 	replayPending := m.processReplays(ctx, &relay, src)

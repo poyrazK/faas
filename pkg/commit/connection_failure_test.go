@@ -32,8 +32,10 @@ func TestConnectionFailureClassifiesAuthenticationWithoutRawErrors(t *testing.T)
 
 func TestConnectionFailureClassifiesRetryableTransport(t *testing.T) {
 	for _, fault := range []error{
-		ErrConnectionTransport, io.EOF, io.ErrUnexpectedEOF, syscall.ECONNRESET,
-		context.DeadlineExceeded, &pgconn.PgError{Code: "57P03"},
+		ErrConnectionTransport, io.EOF, io.ErrUnexpectedEOF, io.ErrClosedPipe, net.ErrClosed,
+		syscall.ECONNRESET, syscall.EPIPE, context.DeadlineExceeded,
+		&pgconn.PgError{Code: "08006"}, &pgconn.PgError{Code: "57P01"},
+		&pgconn.PgError{Code: "57P02"}, &pgconn.PgError{Code: "57P03"},
 		&net.DNSError{Err: "private resolver details", IsTemporary: true},
 		&net.DNSError{Err: "private resolver details", IsTimeout: true},
 	} {
@@ -44,6 +46,7 @@ func TestConnectionFailureClassifiesRetryableTransport(t *testing.T) {
 	}
 	for _, fault := range []error{
 		&pgconn.PgError{Code: "28P01"}, &pgconn.PgError{Code: "53300"},
+		&pgconn.PgError{Code: "42P01"}, &pgconn.PgError{Code: "42501"},
 		&net.DNSError{Err: "host not found", IsNotFound: true},
 		errors.New("certificate rejected"), errors.New("database destination not qualified"),
 	} {
