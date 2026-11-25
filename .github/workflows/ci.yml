@@ -1100,7 +1100,9 @@ jobs:
             gitops_acceptance: true
             state_coverage: true
             test_timeout: 30m
-            job_timeout_minutes: 45
+            # Tests plus the operation-policy and UDP contract steps took
+            # 31-39 min on the 11-24/25 nightlies and 45 min on a slow runner.
+            job_timeout_minutes: 60
           - id: b
             label: gregalectl/daemons
             # Packages with pgtest-backed tests must run in a Postgres shard:
