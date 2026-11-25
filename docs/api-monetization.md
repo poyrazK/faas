@@ -975,7 +975,8 @@ gregale consumers signup-set my-mcp --display-name "Search tools" --plans free,p
 
 Calls to these tools are free, do not count against the customer's plan
 and work after the plan's limit refuses other calls, so an agent can always
-find the way to upgrade. Each customer may call them 30 times a minute.
+find the way to upgrade. Each customer may call them 30 times a minute on
+each gateway node.
 While the option is on, the names `account_usage` and `account_plans` are
 Gregale's: a tool of yours with either name is hidden from these customers.
 Only the first page of a paginated tool list gets them. Customers who use a

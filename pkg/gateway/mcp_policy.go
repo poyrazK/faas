@@ -103,8 +103,17 @@ func (h *Handler) applyMCPResourcePolicy(w http.ResponseWriter, r *http.Request,
 	if h.attachOAuthConsumer(w, r, app, rule, claims) {
 		return true
 	}
-	if h.answerMCPAccountTool(w, r, app, account) {
-		return true
+	if mcpAccountToolCall(r, account) {
+		// The rule's identity checks still apply; the gateway answers once
+		// every matching jwt rule admitted the caller (applyEdgeRuleJWT).
+		authenticated := authenticatedFrom(r.Context())
+		authenticated.JWTSubject, authenticated.JWTClaims = claims.Subject, claims.Custom
+		if h.applyPlatformTenantJWTClaim(w, r, app, rule, claims, &authenticated) {
+			return true
+		}
+		*r = *r.WithContext(context.WithValue(withAuthenticated(r.Context(), authenticated), mcpAccountToolCallKey{}, account))
+		h.jwtEmit(r.Context(), "jwt", "match", rule.ID, r.Host, nil, nil)
+		return false
 	}
 	if status != 0 {
 		return mcpPolicyReject(w, status, p, reason)

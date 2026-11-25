@@ -52,12 +52,14 @@ the owner opts in.
    while the opt-in is on: an app tool with the same name is dropped from
    the list and its calls reach the gateway's tool.
 5. **Calls.** A `tools/call` of either name is answered by the gateway
-   right after it attaches the caller's consumer, before tool scopes, tool
-   limits and plan admission: a caller past its plan's limit can still ask
+   once every matching jwt rule admitted the caller (including its
+   customer-claim check), before tool scopes, tool limits and plan
+   admission: a caller past its plan's limit can still ask
    for the upgrade link. The call never reaches the app and is not metered
    or billed. A per-consumer limit of 30 account-tool calls a minute
-   (`api.MCPAccountToolCallsPerMinute`) bounds the apid work; past it the
-   answer is a JSON-RPC error. The gateway reads the answer from apid's new
+   (`api.MCPAccountToolCallsPerMinute`), counted on each gateway node,
+   bounds the apid work; past it the answer is a tool result with
+   `isError: true` (HTTP 200), which the model can read. The gateway reads the answer from apid's new
    `Auth.ConsumerAccountTool` RPC (InvalidArgument, NotFound,
    FailedPrecondition when the opt-in is off, Unavailable); the RPC returns
    the tool's JSON.
@@ -70,7 +72,7 @@ the owner opts in.
 - `account_tools` is a new proto field: an older apid never sets it, so
   newer gateways add nothing; an older gateway ignores it.
 - A newer gateway calling an older apid gets Unimplemented and answers the
-  tool call with a JSON-RPC error.
+  tool call with a tool result with `isError: true`.
 - Deploy order: migration, apid, then gatewayd-internal.
 
 ## Consequences

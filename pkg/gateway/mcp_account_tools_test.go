@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -108,6 +109,7 @@ func TestMCPAccountToolsWriter(t *testing.T) {
 			w.(http.Flusher).Flush()
 		}
 		finish()
+		finish() // the handler's defer after the explicit call
 		return rec
 	}
 
@@ -127,6 +129,23 @@ func TestMCPAccountToolsWriter(t *testing.T) {
 		t.Fatalf("sse tools = %v", got)
 	}
 
+	// Lines may end in a bare CR.
+	rec = write("text/event-stream", "", http.StatusOK, "event: message\rdata: "+answer+"\r\r")
+	if body := rec.Body.String(); !strings.HasPrefix(body, "event: message\ndata: ") || !strings.HasSuffix(body, "\r\r") {
+		t.Fatalf("cr sse: %q", body)
+	} else if got := toolNames(t, []byte(strings.TrimSuffix(strings.TrimPrefix(body, "event: message\ndata: "), "\r\r"))); len(got) != 3 {
+		t.Fatalf("cr sse tools = %v", got)
+	}
+
+	// An informational answer leaves the real one to decide.
+	early := &mcpAccountToolsWriter{ResponseWriter: httptest.NewRecorder(), id: json.RawMessage(`1`)}
+	early.WriteHeader(http.StatusEarlyHints)
+	early.Header().Set("Content-Type", "application/json")
+	early.WriteHeader(http.StatusOK)
+	if early.mode != accountToolsJSON {
+		t.Fatalf("mode after 103 then 200 = %d", early.mode)
+	}
+
 	for name, rec := range map[string]*httptest.ResponseRecorder{
 		"error status": write("application/json", "", http.StatusBadRequest, answer),
 		"gzip":         write("application/json", "gzip", http.StatusOK, answer),
@@ -142,6 +161,30 @@ func TestMCPAccountToolsWriter(t *testing.T) {
 	plain := httptest.NewRecorder()
 	if w, _ := wrapMCPAccountToolsList(plain, httptest.NewRequest(http.MethodPost, "/mcp", nil)); w != http.ResponseWriter(plain) {
 		t.Fatal("unmarked request wrapped")
+	}
+}
+
+// A full limiter refuses new consumers instead of forgetting the counts of
+// those it tracks.
+func TestMCPAccountToolLimiter(t *testing.T) {
+	l := &mcpAccountToolLimiter{}
+	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+	for range api.MCPAccountToolCallsPerMinute {
+		l.allow("busy", now)
+	}
+	for i := len(l.counts); i < oauthConsumerCacheMax; i++ {
+		if !l.allow(fmt.Sprint("c", i), now) {
+			t.Fatalf("consumer %d refused before the limiter was full", i)
+		}
+	}
+	if l.allow("new", now) || l.allow("busy", now) {
+		t.Fatal("full limiter admitted a new consumer or reset a spent one")
+	}
+	if !l.allow("c1", now) {
+		t.Fatal("full limiter refused a tracked consumer under its limit")
+	}
+	if !l.allow("new", now.Add(time.Minute)) || !l.allow("busy", now.Add(time.Minute)) {
+		t.Fatal("next minute still refused")
 	}
 }
 
@@ -163,7 +206,7 @@ func TestMCPAccountToolCalls(t *testing.T) {
 		r.Header.Set("Authorization", "Bearer jwt")
 		r.Header.Set("Accept-Encoding", "gzip")
 		w := httptest.NewRecorder()
-		return w, r, h.applyMCPResourcePolicy(w, r, app, rule)
+		return w, r, h.applyMCPResourcePolicy(w, r, app, rule) || h.answerMCPAccountTool(w, r, app)
 	}
 	usage := `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"account_usage","arguments":{}}}`
 
@@ -219,6 +262,17 @@ func TestMCPAccountToolCalls(t *testing.T) {
 		if w, _, handled := call(h, usage); !handled || !strings.Contains(w.Body.String(), `"isError":true`) || !strings.Contains(w.Body.String(), tc.text) {
 			t.Errorf("%s: handled=%v %s", name, handled, w.Body)
 		}
+	}
+
+	// A rule's customer-claim check still applies to account tools.
+	tenantRule := &EdgeRuleJWTResolved{Issuer: "https://issuer.example", MCP: p, PlatformTenantExternalRefClaim: "customer"}
+	tenant := &fakeAccountTools{out: []byte(`{}`)}
+	h = handler(&fakeOAuthEnroller{id: "consumer-1", active: true, accountTools: true}, tenant)
+	tr := httptest.NewRequest("POST", "https://app.example/mcp", strings.NewReader(usage))
+	tr.Header.Set("Authorization", "Bearer jwt")
+	tw := httptest.NewRecorder()
+	if handled := h.applyMCPResourcePolicy(tw, tr, app, tenantRule) || h.answerMCPAccountTool(tw, tr, app); !handled || tw.Code != http.StatusForbidden || tenant.calls != 0 {
+		t.Fatalf("customer claim missing: handled=%v %d %s (apid calls %d)", handled, tw.Code, tw.Body, tenant.calls)
 	}
 
 	// Without the app's opt-in the name is an ordinary tool: here the

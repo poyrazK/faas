@@ -35,6 +35,10 @@ const mcpAccountToolTimeout = 3 * time.Second
 // tools on; attachOAuthConsumer sets it from the enrollment answer.
 type mcpAccountToolsKey struct{}
 
+// mcpAccountToolCallKey carries the mcpAccountRequest of an account tool
+// call every matching jwt rule admitted; answerMCPAccountTool answers it.
+type mcpAccountToolCallKey struct{}
+
 // mcpAccountToolsListKey carries the JSON-RPC id of a tools/list request
 // whose answer gets the account tools.
 type mcpAccountToolsListKey struct{}
@@ -87,13 +91,20 @@ func (h *Handler) mcpAccountRequestOf(r *http.Request) mcpAccountRequest {
 	return out
 }
 
-// answerMCPAccountTool answers an account tool call for a caller whose app
-// has account tools on. False leaves the request to the usual path.
-func (h *Handler) answerMCPAccountTool(w http.ResponseWriter, r *http.Request, app App, req mcpAccountRequest) bool {
-	consumerID := authenticatedFrom(r.Context()).ConsumerID
-	if req.tool == "" || consumerID == "" || !mcpAccountToolsOn(r) {
+// mcpAccountToolCall reports whether req calls an account tool for a
+// consumer whose app has account tools on.
+func mcpAccountToolCall(r *http.Request, req mcpAccountRequest) bool {
+	return req.tool != "" && authenticatedFrom(r.Context()).ConsumerID != "" && mcpAccountToolsOn(r)
+}
+
+// answerMCPAccountTool answers the account tool call the MCP policy
+// admitted. False leaves the request to the usual path.
+func (h *Handler) answerMCPAccountTool(w http.ResponseWriter, r *http.Request, app App) bool {
+	req, ok := r.Context().Value(mcpAccountToolCallKey{}).(mcpAccountRequest)
+	if !ok || h.mcpAccountTools == nil {
 		return false
 	}
+	consumerID := authenticatedFrom(r.Context()).ConsumerID
 	suppressFinancialUsage(r)
 	if !h.mcpAccountToolLimiter.allow(consumerID, time.Now()) {
 		writeMCPToolResult(w, req.id, nil, "Too many account tool calls; try again in a minute.")
@@ -156,7 +167,9 @@ func wrapMCPAccountToolsList(w http.ResponseWriter, r *http.Request) (http.Respo
 }
 
 // mcpAccountToolsLimiter counts each consumer's account tool calls per UTC
-// minute in this process.
+// minute in this process. Once it tracks oauthConsumerCacheMax consumers in
+// a minute it refuses new ones until the next, rather than forgetting the
+// counts it has.
 type mcpAccountToolLimiter struct {
 	mu     sync.Mutex
 	minute time.Time
@@ -167,10 +180,11 @@ func (l *mcpAccountToolLimiter) allow(consumerID string, now time.Time) bool {
 	minute := now.UTC().Truncate(time.Minute)
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if !minute.Equal(l.minute) || len(l.counts) >= oauthConsumerCacheMax {
+	if !minute.Equal(l.minute) || l.counts == nil {
 		l.minute, l.counts = minute, map[string]int{}
 	}
-	if l.counts[consumerID] >= api.MCPAccountToolCallsPerMinute {
+	n, seen := l.counts[consumerID]
+	if n >= api.MCPAccountToolCallsPerMinute || (!seen && len(l.counts) >= oauthConsumerCacheMax) {
 		return false
 	}
 	l.counts[consumerID]++
@@ -198,7 +212,9 @@ type mcpAccountToolsWriter struct {
 func (a *mcpAccountToolsWriter) Unwrap() http.ResponseWriter { return a.ResponseWriter }
 
 func (a *mcpAccountToolsWriter) WriteHeader(code int) {
-	if a.mode != accountToolsUndecided {
+	if a.mode != accountToolsUndecided || code < http.StatusOK {
+		// An informational answer (103 Early Hints) leaves the real one
+		// to decide.
 		a.ResponseWriter.WriteHeader(code)
 		return
 	}
@@ -288,21 +304,22 @@ func (a *mcpAccountToolsWriter) writeEvents() error {
 }
 
 // sseEventEnd returns where the first complete event in b ends and the
-// length of the blank line that ends it, or -1.
+// length of the blank line that ends it, or -1. Lines end in LF, CRLF or a
+// bare CR.
 func sseEventEnd(b []byte) (int, int) {
-	lf, crlf := bytes.Index(b, []byte("\n\n")), bytes.Index(b, []byte("\r\n\r\n"))
-	switch {
-	case crlf >= 0 && (lf < 0 || crlf < lf):
-		return crlf, 4
-	case lf >= 0:
-		return lf, 2
+	end, sep := -1, 0
+	for _, blank := range []string{"\r\n\r\n", "\n\n", "\r\r"} {
+		if i := bytes.Index(b, []byte(blank)); i >= 0 && (end < 0 || i < end) {
+			end, sep = i, len(blank)
+		}
 	}
-	return -1, 0
+	return end, sep
 }
 
 // rewriteEvent adds the account tools to an event whose data is the answer.
 func (a *mcpAccountToolsWriter) rewriteEvent(event []byte) ([]byte, bool) {
-	lines := bytes.Split(bytes.ReplaceAll(event, []byte("\r\n"), []byte("\n")), []byte("\n"))
+	event = bytes.ReplaceAll(bytes.ReplaceAll(event, []byte("\r\n"), []byte("\n")), []byte("\r"), []byte("\n"))
+	lines := bytes.Split(event, []byte("\n"))
 	var data [][]byte
 	var other [][]byte
 	for _, line := range lines {
@@ -333,7 +350,8 @@ func (a *mcpAccountToolsWriter) Flush() {
 }
 
 // finish writes a held-back JSON answer, with the account tools when it is
-// the tools/list result, and an unfinished event as it came.
+// the tools/list result, and an unfinished event as it came. It is a no-op
+// once it ran.
 func (a *mcpAccountToolsWriter) finish() {
 	switch a.mode {
 	case accountToolsJSON:
