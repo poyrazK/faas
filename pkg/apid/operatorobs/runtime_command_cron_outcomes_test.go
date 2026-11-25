@@ -237,6 +237,12 @@ func TestRuntimeCommandCronOutcomesComparisons(t *testing.T) {
 }
 
 func TestRuntimeCommandCronOutcomesProfilesPreviewAndPartialRecovery(t *testing.T) {
+	// The 41-instance read checks coverage, not the 3 s budget: on a loaded
+	// runner the counter reads, which wait for the loop reads, lost 40 of 41
+	// instances to the shared deadline (nightly 2026-11-25).
+	budget := runtimeLoopHealthBudget
+	runtimeLoopHealthBudget = time.Minute
+	t.Cleanup(func() { runtimeLoopHealthBudget = budget })
 	now := time.Now().UTC().Truncate(time.Second)
 	for _, role := range RuntimeBuildRoles() {
 		f, selected, registry := runtimeFixture(role, now, 1)

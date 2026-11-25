@@ -114,6 +114,9 @@ var featureRouteActions = map[string]authz.OrgAction{
 	"DELETE /v1/apps/{slug}/consumer-billing-policy": authz.OrgActionManageAppSecurity,
 	"GET /v1/apps/{slug}/consumer-billing-policy":    authz.OrgActionManageAppSecurity,
 	"PUT /v1/apps/{slug}/consumer-billing-policy":    authz.OrgActionManageAppSecurity,
+	// consumer-credit-packs
+	"GET /v1/apps/{slug}/consumer-credit-packs": authz.OrgActionManageAppSecurity,
+	"PUT /v1/apps/{slug}/consumer-credit-packs": authz.OrgActionManageAppSecurity,
 	// consumer-overdue-holds
 	"GET /v1/apps/{slug}/consumer-overdue-holds": authz.OrgActionReadApp,
 	// consumer-plans

@@ -5634,7 +5634,7 @@ var cliCommands = []cliCommand{
 					cliFlag{Name: "channel", Short: "notification channel ID for digests and alerts (repeatable)", Value: "ID", Repeatable: true},
 					cliFlag{Name: "replace", Short: "replace the saved insight with this key"})},
 				{Name: "get", Short: "Show a saved insight, its schedule and last scheduled run", Positionals: []string{"<key>"}, Flags: insightCohortMetaScope()},
-				{Name: "run", Short: "Run a saved insight now; --format csv exports it", Positionals: []string{"<key>"}, Flags: append(insightCohortMetaScope(),
+				{Name: "run", Short: "Run a saved insight now", Notes: []string{"--format csv exports the result."}, Positionals: []string{"<key>"}, Flags: append(insightCohortMetaScope(),
 					cliFlag{Name: "format", Short: "table (default), json or csv", Value: "FORMAT"})},
 				{Name: "delete", Short: "Delete a saved insight; its digests and alert stop", Positionals: []string{"<key>"}, Flags: insightCohortMetaScope()},
 			}},
@@ -6496,7 +6496,7 @@ var cliCommands = []cliCommand{
 				{Name: "request-id", Short: "stable request UUID; reuse after uncertain responses", Req: true, Value: "UUID"},
 			}},
 			{Name: "compute-policy-status", Short: "Read compute policy change progress", Positionals: []string{"<database>", "<request_uuid>"}},
-			{Name: "suspend-timeout", Short: "Set how long an idle scale-to-zero database stays up (1m-1h, or default)", Positionals: []string{"<database>", "<duration|default>"},
+			{Name: "suspend-timeout", Short: "Set how long an idle scale-to-zero database stays up", Notes: []string{"Takes a duration from 1m to 1h, or default."}, Positionals: []string{"<database>", "<duration|default>"},
 				Examples: []string{"gregale postgres suspend-timeout set orders-db 2m", "gregale postgres suspend-timeout set orders-db default"}},
 			{Name: "resize", Short: "Durably resize compute; clients may disconnect", Positionals: []string{"<database>"}, Flags: []cliFlag{
 				{Name: "class", Short: "target service class", Req: true, Value: "CLASS", ClosedSet: []string{"development", "burstable", "production"}},

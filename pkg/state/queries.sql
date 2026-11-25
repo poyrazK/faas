@@ -24106,7 +24106,10 @@ SELECT (jsonb_build_object(
     'project_environment_branch_deployments_deployment_id_fkey', (SELECT count(*) FROM project_environment_branch_deployments WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'environment_branch_captures_deployment_id_fkey', (SELECT count(*) FROM environment_branch_captures WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     -- Project deploy rollbacks (#7923) record each deployment's deploy group.
-    'project_deploy_rollback_members_deployment_id_fkey', (SELECT count(*) FROM project_deploy_rollback_members WHERE deployment_id = sqlc.arg(deployment_id)::uuid)
+    'project_deploy_rollback_members_deployment_id_fkey', (SELECT count(*) FROM project_deploy_rollback_members WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    -- Verification leases (ADR-20261122220000 amendment 2) hold a deployment
+    -- only while unexpired; an expired one opens no secrets.
+    'deployment_verification_leases_deployment_id_fkey', (SELECT count(*) FROM deployment_verification_leases WHERE deployment_id = sqlc.arg(deployment_id)::uuid AND expires_at > now())
 ))::jsonb AS borrowers;
 
 -- name: ReadCloneDeploymentCleanup :one

@@ -4847,7 +4847,7 @@ Read compute policy change progress
 
 ### postgres suspend-timeout
 
-Set how long an idle scale-to-zero database stays up (1m-1h, or default)
+Set how long an idle scale-to-zero database stays up
 
 `gregale postgres suspend-timeout <set> <database> <duration|default>`
 
@@ -4858,9 +4858,11 @@ gregale postgres suspend-timeout set orders-db 2m
 gregale postgres suspend-timeout set orders-db default
 ```
 
+Takes a duration from 1m to 1h, or default.
+
 #### postgres suspend-timeout set
 
-Set how long an idle scale-to-zero database stays up (1m-1h, or default)
+Set how long an idle scale-to-zero database stays up
 
 `gregale postgres suspend-timeout set <database> <duration|default>`
 
@@ -4870,6 +4872,8 @@ Examples:
 gregale postgres suspend-timeout set orders-db 2m
 gregale postgres suspend-timeout set orders-db default
 ```
+
+Takes a duration from 1m to 1h, or default.
 
 ### postgres resize
 

@@ -406,6 +406,7 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"runtime_environment_scaling_states.scope",
 		"runtime_instance_config_proofs.environment_id",
 		"runtime_instance_config_proofs.scope",
+		"saved_insights.environment_id", // Saved insights cascade with the environment row, like analytics cohorts.
 		"snapshot_runtime_config_receipts.scope",
 		"triggers.queue_binding_environment_id",
 		"triggers.queue_binding_scope",
