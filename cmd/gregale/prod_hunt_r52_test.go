@@ -45,7 +45,7 @@ func TestRestartWaitStopsOnStartupCrash(t *testing.T) {
 	if statusReads != 1 {
 		t.Fatalf("status read %d times, want the wait to stop at the first startup crash", statusReads)
 	}
-	for _, want := range []string{"Restart is not taking effect", "crashed during startup", "gregale logs", "gregale env rollback"} {
+	for _, want := range []string{"Restart is not taking effect", "crashed during startup", "gregale logs", "gregale env rollback", "gregale env unset"} {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("stderr missing %q:\n%s", want, stderr)
 		}
