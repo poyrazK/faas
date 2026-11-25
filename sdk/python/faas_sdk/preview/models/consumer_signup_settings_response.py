@@ -37,6 +37,8 @@ class ConsumerSignupSettingsResponse:
     terms_url: str | Unset = UNSET
     return_url: str | Unset = UNSET
     trial_days: int | Unset = UNSET
+    free_plan_id: UUID | Unset = UNSET
+    oauth_consumers: bool | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -73,6 +75,12 @@ class ConsumerSignupSettingsResponse:
 
         trial_days = self.trial_days
 
+        free_plan_id: str | Unset = UNSET
+        if not isinstance(self.free_plan_id, Unset):
+            free_plan_id = str(self.free_plan_id)
+
+        oauth_consumers = self.oauth_consumers
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -97,6 +105,10 @@ class ConsumerSignupSettingsResponse:
             field_dict["return_url"] = return_url
         if trial_days is not UNSET:
             field_dict["trial_days"] = trial_days
+        if free_plan_id is not UNSET:
+            field_dict["free_plan_id"] = free_plan_id
+        if oauth_consumers is not UNSET:
+            field_dict["oauth_consumers"] = oauth_consumers
 
         return field_dict
 
@@ -138,6 +150,15 @@ class ConsumerSignupSettingsResponse:
 
         trial_days = d.pop("trial_days", UNSET)
 
+        _free_plan_id = d.pop("free_plan_id", UNSET)
+        free_plan_id: UUID | Unset
+        if isinstance(_free_plan_id, Unset):
+            free_plan_id = UNSET
+        else:
+            free_plan_id = UUID(_free_plan_id)
+
+        oauth_consumers = d.pop("oauth_consumers", UNSET)
+
         consumer_signup_settings_response = cls(
             app=app,
             enabled=enabled,
@@ -154,6 +175,8 @@ class ConsumerSignupSettingsResponse:
             terms_url=terms_url,
             return_url=return_url,
             trial_days=trial_days,
+            free_plan_id=free_plan_id,
+            oauth_consumers=oauth_consumers,
         )
 
         consumer_signup_settings_response.additional_properties = d

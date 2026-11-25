@@ -17,6 +17,7 @@ class CreateConsumerSignupResponse:
 
     id: UUID
     checkout_url: str
+    """Stripe Checkout URL; empty for the free plan, which completes at once."""
     claim_token: str
     expires_at: datetime.datetime
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

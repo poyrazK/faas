@@ -1049,6 +1049,21 @@
     "kind": "operational"
   },
   {
+    "table": "api_consumer_identities",
+    "columns": [
+      "account_id",
+      "app_id",
+      "consumer_id",
+      "created_at",
+      "email",
+      "id",
+      "issuer",
+      "subject",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "api_consumer_meter_usage_minutes",
     "columns": [
       "account_id",
@@ -1228,7 +1243,9 @@
       "daily_limit",
       "display_name",
       "enabled",
+      "free_plan_id",
       "key_scopes",
+      "oauth_consumers",
       "plan_ids",
       "provider",
       "return_url",

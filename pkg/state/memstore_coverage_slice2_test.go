@@ -242,7 +242,8 @@ func TestMemStoreCoverageCliCronAndInventory(t *testing.T) {
 	if err := m.ClaimCliAuthCode(ctx, hash, account.ID); err != nil {
 		t.Fatal(err)
 	}
-	if status, got, err := m.PeekCliAuthCode(ctx, hash); err != nil || status != api.CliAuthStatusPending || got != account.ID {
+	// Same as PgStore: the claim itself makes the code consumed.
+	if status, got, err := m.PeekCliAuthCode(ctx, hash); err != nil || status != api.CliAuthStatusConsumed || got != account.ID {
 		t.Fatalf("peek after claim = %v, %q, %v", status, got, err)
 	}
 	if _, _, err := m.PeekCliAuthCode(ctx, []byte("missing")); !errors.Is(err, state.ErrNotFound) {

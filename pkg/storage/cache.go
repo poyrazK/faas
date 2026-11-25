@@ -382,11 +382,11 @@ func (c *LocalCacheBackend) LocalPath(key string) (string, bool, error) {
 // cache hit cannot fall through to a remote existence check or blob copy.
 func (c *LocalCacheBackend) LocalPathWithSource(key string) (string, LocalPathSource, bool, error) {
 	if resolver, ok := c.parent.(LocalPathSourceResolver); ok {
-		if p, source, local, err := resolver.LocalPathWithSource(key); err == nil && local {
+		if p, source, local, err := resolver.LocalPathWithSource(key); err == nil && local && !isDriveDeltaPayload(key, p) {
 			return p, source, true, nil
 		}
 	} else if resolver, ok := c.parent.(LocalPathResolver); ok {
-		if p, local, err := resolver.LocalPath(key); err == nil && local {
+		if p, local, err := resolver.LocalPath(key); err == nil && local && !isDriveDeltaPayload(key, p) {
 			return p, LocalPathSourceBackend, true, nil
 		}
 	}
@@ -793,14 +793,16 @@ func regularFileExists(path string) bool {
 
 // parentLocalArtifactExists reports whether the wrapped backend already owns
 // a canonical local copy. Generation markers for those keys describe that
-// parent artifact, so they do not need a duplicate blob in this cache.
+// parent artifact, so they do not need a duplicate blob in this cache. A
+// parent's drive delta is not a copy of the drive: the cache entry is, and
+// stays pinned while its generation is marked.
 func (c *LocalCacheBackend) parentLocalArtifactExists(key string) bool {
 	resolver, ok := c.parent.(LocalPathResolver)
 	if !ok {
 		return false
 	}
 	path, local, err := resolver.LocalPath(key)
-	return err == nil && local && path != "" && regularFileExists(path)
+	return err == nil && local && path != "" && regularFileExists(path) && !isDriveDeltaPayload(key, path)
 }
 
 // refresh reports whether the next Get must read the parent and replace the

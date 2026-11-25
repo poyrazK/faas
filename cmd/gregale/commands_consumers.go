@@ -62,9 +62,11 @@ var consumerVerbPositionals = map[string][]string{
 	"signup-set":            {"slug"},
 	"signup-delete":         {"slug"},
 	"signups":               {"slug"},
+	"identities":            {"slug"},
+	"identity-delete":       {"slug", "identity-id"},
 }
 
-const consumersUsage = "usage: gregale api consumer <list|create|info|revoke|keys|key-create|key-revoke|usage|quote|completeness|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff|statement-export|plans|plan-create|plan-update|set-plan|plan-history|usage-alerts|credits|credit-grant|credit-void|spend-cap|spend-cap-set|spend-cap-delete|trial|trial-set|trial-end|billing-policy|billing-policy-set|billing-policy-delete|overdue-holds|signup|signup-set|signup-delete|signups> <slug> [consumer-id] [id] [flags]"
+const consumersUsage = "usage: gregale api consumer <list|create|info|revoke|keys|key-create|key-revoke|usage|quote|completeness|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff|statement-export|plans|plan-create|plan-update|set-plan|plan-history|usage-alerts|credits|credit-grant|credit-void|spend-cap|spend-cap-set|spend-cap-delete|trial|trial-set|trial-end|billing-policy|billing-policy-set|billing-policy-delete|overdue-holds|signup|signup-set|signup-delete|signups|identities|identity-delete> <slug> [consumer-id] [id] [flags]"
 
 // consumerFlags holds every leaf flag; consumerVerbFlags decides which
 // verb may set which, so a misplaced flag is a usage error, not ignored.
@@ -98,6 +100,8 @@ type consumerFlags struct {
 	dailyLimit                           int
 	disabled                             bool
 	customerPlanChanges, customerClosing bool
+	freePlan                             string
+	oauthConsumers                       bool
 }
 
 var consumerVerbFlags = map[string][]string{
@@ -117,7 +121,7 @@ var consumerVerbFlags = map[string][]string{
 	"statement-export":   {"customer", "provider"},
 	"credit-grant":       {"currency", "amount-millicents", "expires", "note"},
 	"spend-cap-set":      {"currency", "monthly-cap-millicents"},
-	"signup-set":         {"display-name", "plans", "key-scopes", "terms-url", "return-url", "trial-days", "daily-limit", "disabled", "customer-plan-changes", "customer-closing"},
+	"signup-set":         {"display-name", "plans", "key-scopes", "terms-url", "return-url", "trial-days", "daily-limit", "disabled", "customer-plan-changes", "customer-closing", "free-plan", "oauth-consumers"},
 }
 
 // cmdConsumers manages an app's API consumers and their monetization:
@@ -203,6 +207,8 @@ func registerConsumerMonetizationFlags(fs *flag.FlagSet, f *consumerFlags) {
 	fs.BoolVar(&f.disabled, "disabled", false, "keep the settings but stop taking sign-ups (signup-set)")
 	fs.BoolVar(&f.customerPlanChanges, "customer-plan-changes", false, "let customers switch between the offered plans with their own key (signup-set)")
 	fs.BoolVar(&f.customerClosing, "customer-closing", false, "let customers close their account with their own key (signup-set)")
+	fs.StringVar(&f.freePlan, "free-plan", "", "offered plan that charges nothing; joining it needs no card (signup-set)")
+	fs.BoolVar(&f.oauthConsumers, "oauth-consumers", false, "people signed in through the app's MCP oauth-proxy issuer become consumers on --free-plan (signup-set)")
 }
 
 func consumerVerbUsage(verb string, positionals []string) string {
