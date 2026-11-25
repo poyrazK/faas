@@ -19,6 +19,8 @@ T = TypeVar("T", bound="ManagedPostgresRestoreDrill")
 
 @_attrs_define
 class ManagedPostgresRestoreDrill:
+    """Progress and outcome of a temporary point-in-time restore exercise."""
+
     outcome: ManagedPostgresRestoreDrillStatusOutcome
     started_at: datetime.datetime
     drill_id: UUID

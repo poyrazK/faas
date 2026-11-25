@@ -30,6 +30,7 @@ class ManagedPostgresStorageStatus:
     standby: ManagedPostgresVolumeStatus | Unset = UNSET
     """Last observed filesystem capacity and pressure for a native database volume."""
     auto_grow: ManagedPostgresAutoGrowStatus | Unset = UNSET
+    """Automatic growth policy and the latest storage eligibility check."""
     alerts: list[ManagedPostgresStorageAlert] | Unset = UNSET
     """Latest 10 recorded primary storage alert transitions, newest first."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

@@ -15,6 +15,8 @@ T = TypeVar("T", bound="ManagedPostgresAutoGrowStatus")
 
 @_attrs_define
 class ManagedPostgresAutoGrowStatus:
+    """Automatic growth policy and the latest storage eligibility check."""
+
     max_bytes: int
     reason: str
     """Current policy or resize outcome code."""

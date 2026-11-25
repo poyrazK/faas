@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Retained PostgreSQL error metadata without statement text.
+ */
 export type ManagedPostgresQueryError = {
   observed_at: string;
   severity: 'ERROR' | 'FATAL' | 'PANIC';

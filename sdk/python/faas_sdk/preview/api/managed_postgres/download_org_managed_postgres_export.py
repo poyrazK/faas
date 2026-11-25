@@ -56,10 +56,10 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[File | Problem]:
-    """Download a completed native PostgreSQL export
+    """Download a completed native PostgreSQL export for the organization.
 
-     Streams the private PostgreSQL custom archive before its expiry. Authenticate with PostgreSQL
-    management access.
+     On the organization's database, streams the private PostgreSQL custom archive before its expiry.
+    Authenticate with PostgreSQL management access.
 
     Args:
         organization (str):
@@ -94,10 +94,10 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> File | Problem | None:
-    """Download a completed native PostgreSQL export
+    """Download a completed native PostgreSQL export for the organization.
 
-     Streams the private PostgreSQL custom archive before its expiry. Authenticate with PostgreSQL
-    management access.
+     On the organization's database, streams the private PostgreSQL custom archive before its expiry.
+    Authenticate with PostgreSQL management access.
 
     Args:
         organization (str):
@@ -127,10 +127,10 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[File | Problem]:
-    """Download a completed native PostgreSQL export
+    """Download a completed native PostgreSQL export for the organization.
 
-     Streams the private PostgreSQL custom archive before its expiry. Authenticate with PostgreSQL
-    management access.
+     On the organization's database, streams the private PostgreSQL custom archive before its expiry.
+    Authenticate with PostgreSQL management access.
 
     Args:
         organization (str):
@@ -163,10 +163,10 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> File | Problem | None:
-    """Download a completed native PostgreSQL export
+    """Download a completed native PostgreSQL export for the organization.
 
-     Streams the private PostgreSQL custom archive before its expiry. Authenticate with PostgreSQL
-    management access.
+     On the organization's database, streams the private PostgreSQL custom archive before its expiry.
+    Authenticate with PostgreSQL management access.
 
     Args:
         organization (str):

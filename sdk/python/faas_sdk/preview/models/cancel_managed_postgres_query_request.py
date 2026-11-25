@@ -12,6 +12,8 @@ T = TypeVar("T", bound="CancelManagedPostgresQueryRequest")
 
 @_attrs_define
 class CancelManagedPostgresQueryRequest:
+    """Target from a recent session sample identifying the query to cancel."""
+
     target_id: UUID
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

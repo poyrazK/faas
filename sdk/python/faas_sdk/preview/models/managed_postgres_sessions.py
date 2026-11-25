@@ -19,9 +19,12 @@ T = TypeVar("T", bound="ManagedPostgresSessions")
 
 @_attrs_define
 class ManagedPostgresSessions:
+    """Current session sample availability and tracked pooled queries."""
+
     database_id: UUID
     state: ManagedPostgresSessionsState
     sample: ManagedPostgresSessionSample | Unset = UNSET
+    """Timestamped snapshot of sessions observed on the running primary."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

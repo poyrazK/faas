@@ -43,10 +43,10 @@ class ManagedPostgresUpgradeRehearsal:
     recovery_point: datetime.datetime | Unset = UNSET
     """The archive-verified recovery target."""
     recovered_to: datetime.datetime | Unset = UNSET
-    """The last replayed commit reported by PostgreSQL."""
+    """Last replayed commit observed on the private copy before the rehearsal upgrade."""
     finished_at: datetime.datetime | Unset = UNSET
     duration_seconds: int | Unset = UNSET
-    """Total time from admission through cleanup."""
+    """Elapsed seconds from admission through cleanup of the rehearsal copy."""
     error_code: str | Unset = UNSET
     """A stable reason for a failed rehearsal."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

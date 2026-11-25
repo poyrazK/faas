@@ -12,6 +12,8 @@ T = TypeVar("T", bound="ManagedPostgresQueryInsight")
 
 @_attrs_define
 class ManagedPostgresQueryInsight:
+    """Aggregate execution statistics for one normalized statement."""
+
     query_id: str
     """PostgreSQL query ID within the indicated boot."""
     boot_at: datetime.datetime

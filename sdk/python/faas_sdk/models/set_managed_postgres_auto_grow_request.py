@@ -11,6 +11,8 @@ T = TypeVar("T", bound="SetManagedPostgresAutoGrowRequest")
 
 @_attrs_define
 class SetManagedPostgresAutoGrowRequest:
+    """Bounds for automatic increases to the database volume."""
+
     max_bytes: int
     """Per-volume ceiling in bytes. Zero disables automatic growth."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

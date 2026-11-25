@@ -12,6 +12,8 @@ T = TypeVar("T", bound="SetManagedPostgresBackupScheduleRequest")
 
 @_attrs_define
 class SetManagedPostgresBackupScheduleRequest:
+    """UTC execution time and private bucket for scheduled database exports."""
+
     daily_at_utc: str
     bucket_app: str
     """App slug that owns the destination bucket."""

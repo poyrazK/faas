@@ -18,6 +18,8 @@ T = TypeVar("T", bound="ManagedPostgresBaseRefresh")
 
 @_attrs_define
 class ManagedPostgresBaseRefresh:
+    """Progress and outcome of replacing the database VM base image."""
+
     started_at: datetime.datetime
     outcome: ManagedPostgresBaseRefreshOutcome
     finished_at: datetime.datetime | Unset = UNSET

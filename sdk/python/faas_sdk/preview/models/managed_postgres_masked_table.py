@@ -14,6 +14,8 @@ T = TypeVar("T", bound="ManagedPostgresMaskedTable")
 
 @_attrs_define
 class ManagedPostgresMaskedTable:
+    """Policy governing which rows and columns are copied from a source table."""
+
     name: str
     columns: list[ManagedPostgresMaskedColumn]
 

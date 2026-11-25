@@ -66,16 +66,17 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: SetManagedPostgresBackupScheduleRequest,
 ) -> Response[ManagedPostgresBackupSchedule | Problem]:
-    """Schedule a daily portable backup to a private Object Storage bucket.
+    """Schedule a daily portable backup to a private Object Storage bucket for the organization.
 
-     Upsert one daily UTC schedule. The database and the ready, private destination bucket belong to the
-    same owner scope. Requires PostgreSQL management and destination write authority. Transfers use the
-    destination's single-upload limit.
+     On the organization's database, upsert one daily UTC schedule. The database and the ready, private
+    destination bucket belong to the same owner scope. Requires PostgreSQL management and destination
+    write authority. Transfers use the destination's single-upload limit.
 
     Args:
         organization (str):
         id (str):
-        body (SetManagedPostgresBackupScheduleRequest):
+        body (SetManagedPostgresBackupScheduleRequest): UTC execution time and private bucket for
+            scheduled database exports.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -105,16 +106,17 @@ def sync(
     client: AuthenticatedClient | Client,
     body: SetManagedPostgresBackupScheduleRequest,
 ) -> ManagedPostgresBackupSchedule | Problem | None:
-    """Schedule a daily portable backup to a private Object Storage bucket.
+    """Schedule a daily portable backup to a private Object Storage bucket for the organization.
 
-     Upsert one daily UTC schedule. The database and the ready, private destination bucket belong to the
-    same owner scope. Requires PostgreSQL management and destination write authority. Transfers use the
-    destination's single-upload limit.
+     On the organization's database, upsert one daily UTC schedule. The database and the ready, private
+    destination bucket belong to the same owner scope. Requires PostgreSQL management and destination
+    write authority. Transfers use the destination's single-upload limit.
 
     Args:
         organization (str):
         id (str):
-        body (SetManagedPostgresBackupScheduleRequest):
+        body (SetManagedPostgresBackupScheduleRequest): UTC execution time and private bucket for
+            scheduled database exports.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -139,16 +141,17 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: SetManagedPostgresBackupScheduleRequest,
 ) -> Response[ManagedPostgresBackupSchedule | Problem]:
-    """Schedule a daily portable backup to a private Object Storage bucket.
+    """Schedule a daily portable backup to a private Object Storage bucket for the organization.
 
-     Upsert one daily UTC schedule. The database and the ready, private destination bucket belong to the
-    same owner scope. Requires PostgreSQL management and destination write authority. Transfers use the
-    destination's single-upload limit.
+     On the organization's database, upsert one daily UTC schedule. The database and the ready, private
+    destination bucket belong to the same owner scope. Requires PostgreSQL management and destination
+    write authority. Transfers use the destination's single-upload limit.
 
     Args:
         organization (str):
         id (str):
-        body (SetManagedPostgresBackupScheduleRequest):
+        body (SetManagedPostgresBackupScheduleRequest): UTC execution time and private bucket for
+            scheduled database exports.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -176,16 +179,17 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: SetManagedPostgresBackupScheduleRequest,
 ) -> ManagedPostgresBackupSchedule | Problem | None:
-    """Schedule a daily portable backup to a private Object Storage bucket.
+    """Schedule a daily portable backup to a private Object Storage bucket for the organization.
 
-     Upsert one daily UTC schedule. The database and the ready, private destination bucket belong to the
-    same owner scope. Requires PostgreSQL management and destination write authority. Transfers use the
-    destination's single-upload limit.
+     On the organization's database, upsert one daily UTC schedule. The database and the ready, private
+    destination bucket belong to the same owner scope. Requires PostgreSQL management and destination
+    write authority. Transfers use the destination's single-upload limit.
 
     Args:
         organization (str):
         id (str):
-        body (SetManagedPostgresBackupScheduleRequest):
+        body (SetManagedPostgresBackupScheduleRequest): UTC execution time and private bucket for
+            scheduled database exports.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

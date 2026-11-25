@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Connection and execution state for a sampled database session.
+ */
 export type ManagedPostgresSession = {
   pid: number;
   state: string;

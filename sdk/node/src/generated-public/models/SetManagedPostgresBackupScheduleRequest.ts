@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * UTC execution time and private bucket for scheduled database exports.
+ */
 export type SetManagedPostgresBackupScheduleRequest = {
   daily_at_utc: string;
   /**

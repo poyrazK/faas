@@ -60,12 +60,13 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: SetManagedPostgresRecoveryRegionRequest,
 ) -> Response[Any | Problem]:
-    """Set the recovery region for a native PostgreSQL database
+    """Set the recovery region for a native PostgreSQL database for the organization.
 
     Args:
         organization (str):
         id (str):
-        body (SetManagedPostgresRecoveryRegionRequest):
+        body (SetManagedPostgresRecoveryRegionRequest): Destination region for the database's
+            recovery archive.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -95,12 +96,13 @@ def sync(
     client: AuthenticatedClient | Client,
     body: SetManagedPostgresRecoveryRegionRequest,
 ) -> Any | Problem | None:
-    """Set the recovery region for a native PostgreSQL database
+    """Set the recovery region for a native PostgreSQL database for the organization.
 
     Args:
         organization (str):
         id (str):
-        body (SetManagedPostgresRecoveryRegionRequest):
+        body (SetManagedPostgresRecoveryRegionRequest): Destination region for the database's
+            recovery archive.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -125,12 +127,13 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: SetManagedPostgresRecoveryRegionRequest,
 ) -> Response[Any | Problem]:
-    """Set the recovery region for a native PostgreSQL database
+    """Set the recovery region for a native PostgreSQL database for the organization.
 
     Args:
         organization (str):
         id (str):
-        body (SetManagedPostgresRecoveryRegionRequest):
+        body (SetManagedPostgresRecoveryRegionRequest): Destination region for the database's
+            recovery archive.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -158,12 +161,13 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: SetManagedPostgresRecoveryRegionRequest,
 ) -> Any | Problem | None:
-    """Set the recovery region for a native PostgreSQL database
+    """Set the recovery region for a native PostgreSQL database for the organization.
 
     Args:
         organization (str):
         id (str):
-        body (SetManagedPostgresRecoveryRegionRequest):
+        body (SetManagedPostgresRecoveryRegionRequest): Destination region for the database's
+            recovery archive.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

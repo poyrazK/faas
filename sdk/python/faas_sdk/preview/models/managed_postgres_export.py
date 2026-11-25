@@ -20,10 +20,13 @@ T = TypeVar("T", bound="ManagedPostgresExport")
 
 @_attrs_define
 class ManagedPostgresExport:
+    """Status of a portable PostgreSQL dump and its manifest when ready."""
+
     id: UUID
     state: ManagedPostgresExportState
     expires_at: datetime.datetime
     manifest: ManagedPostgresExportManifest | Unset = UNSET
+    """Signed snapshot metadata and integrity checks for a portable export."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

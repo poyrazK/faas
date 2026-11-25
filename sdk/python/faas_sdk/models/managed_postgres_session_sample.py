@@ -16,6 +16,8 @@ T = TypeVar("T", bound="ManagedPostgresSessionSample")
 
 @_attrs_define
 class ManagedPostgresSessionSample:
+    """Timestamped snapshot of sessions observed on the running primary."""
+
     sampled_at: datetime.datetime
     has_more: bool
     sessions: list[ManagedPostgresSession]

@@ -14,6 +14,8 @@ T = TypeVar("T", bound="ManagedPostgresTableHealthRow")
 
 @_attrs_define
 class ManagedPostgresTableHealthRow:
+    """Storage, dead-row estimates, and vacuum observations for one relation."""
+
     schema: str
     name: str
     table_bytes: int

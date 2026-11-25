@@ -70,7 +70,8 @@ def sync_detailed(
 
     Args:
         id (str):
-        body (SetManagedPostgresErrorHistoryRequest):
+        body (SetManagedPostgresErrorHistoryRequest): Enables or disables recording error metadata
+            for pooled connections.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -105,7 +106,8 @@ def sync(
 
     Args:
         id (str):
-        body (SetManagedPostgresErrorHistoryRequest):
+        body (SetManagedPostgresErrorHistoryRequest): Enables or disables recording error metadata
+            for pooled connections.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -135,7 +137,8 @@ async def asyncio_detailed(
 
     Args:
         id (str):
-        body (SetManagedPostgresErrorHistoryRequest):
+        body (SetManagedPostgresErrorHistoryRequest): Enables or disables recording error metadata
+            for pooled connections.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -168,7 +171,8 @@ async def asyncio(
 
     Args:
         id (str):
-        body (SetManagedPostgresErrorHistoryRequest):
+        body (SetManagedPostgresErrorHistoryRequest): Enables or disables recording error metadata
+            for pooled connections.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

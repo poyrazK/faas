@@ -66,15 +66,17 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: ManagedPostgresImportRequest,
 ) -> Response[ManagedPostgresMigrationProgress | Problem]:
-    """Start or resume a native PostgreSQL live migration
+    """Start or resume a native PostgreSQL live migration for the organization.
 
-     Copies tables into an empty single-zone native target and starts continuous logical replication with
-    application connections fenced. Resume with the same operation ID and source credentials.
+     On the organization's database, copies tables into an empty single-zone native target and starts
+    continuous logical replication with application connections fenced. Resume with the same operation
+    ID and source credentials.
 
     Args:
         organization (str):
         id (str):
-        body (ManagedPostgresImportRequest):
+        body (ManagedPostgresImportRequest): Source connection and operation identifier for
+            importing a database.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -104,15 +106,17 @@ def sync(
     client: AuthenticatedClient | Client,
     body: ManagedPostgresImportRequest,
 ) -> ManagedPostgresMigrationProgress | Problem | None:
-    """Start or resume a native PostgreSQL live migration
+    """Start or resume a native PostgreSQL live migration for the organization.
 
-     Copies tables into an empty single-zone native target and starts continuous logical replication with
-    application connections fenced. Resume with the same operation ID and source credentials.
+     On the organization's database, copies tables into an empty single-zone native target and starts
+    continuous logical replication with application connections fenced. Resume with the same operation
+    ID and source credentials.
 
     Args:
         organization (str):
         id (str):
-        body (ManagedPostgresImportRequest):
+        body (ManagedPostgresImportRequest): Source connection and operation identifier for
+            importing a database.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -137,15 +141,17 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: ManagedPostgresImportRequest,
 ) -> Response[ManagedPostgresMigrationProgress | Problem]:
-    """Start or resume a native PostgreSQL live migration
+    """Start or resume a native PostgreSQL live migration for the organization.
 
-     Copies tables into an empty single-zone native target and starts continuous logical replication with
-    application connections fenced. Resume with the same operation ID and source credentials.
+     On the organization's database, copies tables into an empty single-zone native target and starts
+    continuous logical replication with application connections fenced. Resume with the same operation
+    ID and source credentials.
 
     Args:
         organization (str):
         id (str):
-        body (ManagedPostgresImportRequest):
+        body (ManagedPostgresImportRequest): Source connection and operation identifier for
+            importing a database.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -173,15 +179,17 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: ManagedPostgresImportRequest,
 ) -> ManagedPostgresMigrationProgress | Problem | None:
-    """Start or resume a native PostgreSQL live migration
+    """Start or resume a native PostgreSQL live migration for the organization.
 
-     Copies tables into an empty single-zone native target and starts continuous logical replication with
-    application connections fenced. Resume with the same operation ID and source credentials.
+     On the organization's database, copies tables into an empty single-zone native target and starts
+    continuous logical replication with application connections fenced. Resume with the same operation
+    ID and source credentials.
 
     Args:
         organization (str):
         id (str):
-        body (ManagedPostgresImportRequest):
+        body (ManagedPostgresImportRequest): Source connection and operation identifier for
+            importing a database.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Latest archive evidence and recovery point for a configured destination region.
+ */
 export type ManagedPostgresRecoveryStatus = {
   region: string;
   outcome: 'covered' | 'unverified' | 'no_base_backup' | 'wal_gap';
@@ -10,11 +13,11 @@ export type ManagedPostgresRecoveryStatus = {
   recovery_lag_seconds?: number;
   missing_wal_segment?: string;
   /**
-   * PostgreSQL timeline selected from the archive.
+   * PostgreSQL timeline supporting the verified point in the recovery region.
    */
   recovery_timeline?: number;
   /**
-   * Timeline history file needed to select the recovery WAL.
+   * History file the destination archive needs to verify the promoted lineage.
    */
   missing_timeline_history?: string;
 };

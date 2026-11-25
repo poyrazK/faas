@@ -13,6 +13,8 @@ T = TypeVar("T", bound="ManagedPostgresExtensionVersion")
 
 @_attrs_define
 class ManagedPostgresExtensionVersion:
+    """Managed extension version available on one PostgreSQL major."""
+
     name: str
     version: str
     default: bool | Unset = UNSET

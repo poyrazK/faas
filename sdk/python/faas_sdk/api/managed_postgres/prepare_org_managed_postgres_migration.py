@@ -66,16 +66,17 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: ManagedPostgresImportRequest,
 ) -> Response[ManagedPostgresMigrationProgress | Problem]:
-    """Prepare the target of a native PostgreSQL live migration
+    """Prepare the target of a native PostgreSQL live migration for the organization.
 
-     Queues schema preparation after initial table copy. Builds supported indexes while the subscriber
-    continues to apply changes and reports source schema blockers. Read progress from the migration
-    status endpoint.
+     On the organization's database, queues schema preparation after initial table copy. Builds supported
+    indexes while the subscriber continues to apply changes and reports source schema blockers. Read
+    progress from the migration status endpoint.
 
     Args:
         organization (str):
         id (str):
-        body (ManagedPostgresImportRequest):
+        body (ManagedPostgresImportRequest): Source connection and operation identifier for
+            importing a database.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -105,16 +106,17 @@ def sync(
     client: AuthenticatedClient | Client,
     body: ManagedPostgresImportRequest,
 ) -> ManagedPostgresMigrationProgress | Problem | None:
-    """Prepare the target of a native PostgreSQL live migration
+    """Prepare the target of a native PostgreSQL live migration for the organization.
 
-     Queues schema preparation after initial table copy. Builds supported indexes while the subscriber
-    continues to apply changes and reports source schema blockers. Read progress from the migration
-    status endpoint.
+     On the organization's database, queues schema preparation after initial table copy. Builds supported
+    indexes while the subscriber continues to apply changes and reports source schema blockers. Read
+    progress from the migration status endpoint.
 
     Args:
         organization (str):
         id (str):
-        body (ManagedPostgresImportRequest):
+        body (ManagedPostgresImportRequest): Source connection and operation identifier for
+            importing a database.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -139,16 +141,17 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: ManagedPostgresImportRequest,
 ) -> Response[ManagedPostgresMigrationProgress | Problem]:
-    """Prepare the target of a native PostgreSQL live migration
+    """Prepare the target of a native PostgreSQL live migration for the organization.
 
-     Queues schema preparation after initial table copy. Builds supported indexes while the subscriber
-    continues to apply changes and reports source schema blockers. Read progress from the migration
-    status endpoint.
+     On the organization's database, queues schema preparation after initial table copy. Builds supported
+    indexes while the subscriber continues to apply changes and reports source schema blockers. Read
+    progress from the migration status endpoint.
 
     Args:
         organization (str):
         id (str):
-        body (ManagedPostgresImportRequest):
+        body (ManagedPostgresImportRequest): Source connection and operation identifier for
+            importing a database.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -176,16 +179,17 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: ManagedPostgresImportRequest,
 ) -> ManagedPostgresMigrationProgress | Problem | None:
-    """Prepare the target of a native PostgreSQL live migration
+    """Prepare the target of a native PostgreSQL live migration for the organization.
 
-     Queues schema preparation after initial table copy. Builds supported indexes while the subscriber
-    continues to apply changes and reports source schema blockers. Read progress from the migration
-    status endpoint.
+     On the organization's database, queues schema preparation after initial table copy. Builds supported
+    indexes while the subscriber continues to apply changes and reports source schema blockers. Read
+    progress from the migration status endpoint.
 
     Args:
         organization (str):
         id (str):
-        body (ManagedPostgresImportRequest):
+        body (ManagedPostgresImportRequest): Source connection and operation identifier for
+            importing a database.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

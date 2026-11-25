@@ -66,15 +66,16 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: RequestManagedPostgresUpgradeRehearsal,
 ) -> Response[ManagedPostgresUpgradeRehearsal | Problem]:
-    """Queue a native PostgreSQL upgrade rehearsal
+    """Queue a native PostgreSQL upgrade rehearsal for the organization.
 
-     Queues a rehearsal of the target major on a private restore from verified archive evidence. The
-    source keeps its current version and runtime state.
+     On the organization's database, queues a rehearsal of the target major on a private restore from
+    verified archive evidence. The source keeps its current version and runtime state.
 
     Args:
         organization (str):
         id (str):
-        body (RequestManagedPostgresUpgradeRehearsal):
+        body (RequestManagedPostgresUpgradeRehearsal): Target PostgreSQL major and request
+            identifier for a private upgrade rehearsal.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -104,15 +105,16 @@ def sync(
     client: AuthenticatedClient | Client,
     body: RequestManagedPostgresUpgradeRehearsal,
 ) -> ManagedPostgresUpgradeRehearsal | Problem | None:
-    """Queue a native PostgreSQL upgrade rehearsal
+    """Queue a native PostgreSQL upgrade rehearsal for the organization.
 
-     Queues a rehearsal of the target major on a private restore from verified archive evidence. The
-    source keeps its current version and runtime state.
+     On the organization's database, queues a rehearsal of the target major on a private restore from
+    verified archive evidence. The source keeps its current version and runtime state.
 
     Args:
         organization (str):
         id (str):
-        body (RequestManagedPostgresUpgradeRehearsal):
+        body (RequestManagedPostgresUpgradeRehearsal): Target PostgreSQL major and request
+            identifier for a private upgrade rehearsal.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -137,15 +139,16 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: RequestManagedPostgresUpgradeRehearsal,
 ) -> Response[ManagedPostgresUpgradeRehearsal | Problem]:
-    """Queue a native PostgreSQL upgrade rehearsal
+    """Queue a native PostgreSQL upgrade rehearsal for the organization.
 
-     Queues a rehearsal of the target major on a private restore from verified archive evidence. The
-    source keeps its current version and runtime state.
+     On the organization's database, queues a rehearsal of the target major on a private restore from
+    verified archive evidence. The source keeps its current version and runtime state.
 
     Args:
         organization (str):
         id (str):
-        body (RequestManagedPostgresUpgradeRehearsal):
+        body (RequestManagedPostgresUpgradeRehearsal): Target PostgreSQL major and request
+            identifier for a private upgrade rehearsal.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -173,15 +176,16 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: RequestManagedPostgresUpgradeRehearsal,
 ) -> ManagedPostgresUpgradeRehearsal | Problem | None:
-    """Queue a native PostgreSQL upgrade rehearsal
+    """Queue a native PostgreSQL upgrade rehearsal for the organization.
 
-     Queues a rehearsal of the target major on a private restore from verified archive evidence. The
-    source keeps its current version and runtime state.
+     On the organization's database, queues a rehearsal of the target major on a private restore from
+    verified archive evidence. The source keeps its current version and runtime state.
 
     Args:
         organization (str):
         id (str):
-        body (RequestManagedPostgresUpgradeRehearsal):
+        body (RequestManagedPostgresUpgradeRehearsal): Target PostgreSQL major and request
+            identifier for a private upgrade rehearsal.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

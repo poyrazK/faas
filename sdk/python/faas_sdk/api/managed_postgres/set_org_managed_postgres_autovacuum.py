@@ -66,15 +66,16 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: SetManagedPostgresAutovacuumRequest,
 ) -> Response[ManagedPostgresAutovacuum | Problem]:
-    """Set a native PostgreSQL autovacuum profile
+    """Set a native PostgreSQL autovacuum profile for the organization.
 
-     Saves the requested profile. Gregale reloads running instances and applies the saved profile at the
-    next wake on parked databases.
+     On the organization's database, saves the requested profile. Gregale reloads running instances and
+    applies the saved profile at the next wake on parked databases.
 
     Args:
         organization (str):
         id (str):
-        body (SetManagedPostgresAutovacuumRequest):
+        body (SetManagedPostgresAutovacuumRequest): Requested autovacuum profile for a native
+            PostgreSQL database.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -104,15 +105,16 @@ def sync(
     client: AuthenticatedClient | Client,
     body: SetManagedPostgresAutovacuumRequest,
 ) -> ManagedPostgresAutovacuum | Problem | None:
-    """Set a native PostgreSQL autovacuum profile
+    """Set a native PostgreSQL autovacuum profile for the organization.
 
-     Saves the requested profile. Gregale reloads running instances and applies the saved profile at the
-    next wake on parked databases.
+     On the organization's database, saves the requested profile. Gregale reloads running instances and
+    applies the saved profile at the next wake on parked databases.
 
     Args:
         organization (str):
         id (str):
-        body (SetManagedPostgresAutovacuumRequest):
+        body (SetManagedPostgresAutovacuumRequest): Requested autovacuum profile for a native
+            PostgreSQL database.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -137,15 +139,16 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: SetManagedPostgresAutovacuumRequest,
 ) -> Response[ManagedPostgresAutovacuum | Problem]:
-    """Set a native PostgreSQL autovacuum profile
+    """Set a native PostgreSQL autovacuum profile for the organization.
 
-     Saves the requested profile. Gregale reloads running instances and applies the saved profile at the
-    next wake on parked databases.
+     On the organization's database, saves the requested profile. Gregale reloads running instances and
+    applies the saved profile at the next wake on parked databases.
 
     Args:
         organization (str):
         id (str):
-        body (SetManagedPostgresAutovacuumRequest):
+        body (SetManagedPostgresAutovacuumRequest): Requested autovacuum profile for a native
+            PostgreSQL database.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -173,15 +176,16 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: SetManagedPostgresAutovacuumRequest,
 ) -> ManagedPostgresAutovacuum | Problem | None:
-    """Set a native PostgreSQL autovacuum profile
+    """Set a native PostgreSQL autovacuum profile for the organization.
 
-     Saves the requested profile. Gregale reloads running instances and applies the saved profile at the
-    next wake on parked databases.
+     On the organization's database, saves the requested profile. Gregale reloads running instances and
+    applies the saved profile at the next wake on parked databases.
 
     Args:
         organization (str):
         id (str):
-        body (SetManagedPostgresAutovacuumRequest):
+        body (SetManagedPostgresAutovacuumRequest): Requested autovacuum profile for a native
+            PostgreSQL database.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

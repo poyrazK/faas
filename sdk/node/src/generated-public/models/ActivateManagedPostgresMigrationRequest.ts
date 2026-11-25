@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Verified migration operation to activate for an application environment.
+ */
 export type ActivateManagedPostgresMigrationRequest = {
   source_database_id: string;
   target_database_id: string;

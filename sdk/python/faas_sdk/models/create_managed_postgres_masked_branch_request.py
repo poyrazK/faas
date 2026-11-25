@@ -16,6 +16,8 @@ T = TypeVar("T", bound="CreateManagedPostgresMaskedBranchRequest")
 
 @_attrs_define
 class CreateManagedPostgresMaskedBranchRequest:
+    """Source table policies and configuration for creating a masked database copy."""
+
     name: str
     tables: list[ManagedPostgresMaskedTable]
     ttl_seconds: int | Unset = 7200

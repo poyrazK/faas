@@ -70,17 +70,18 @@ def sync_detailed(
     body: CreateManagedPostgresMaskedBranchRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[ManagedPostgresDatabase | Problem]:
-    """Create a masked branch of a native PostgreSQL database.
+    """Create a masked branch of a native PostgreSQL database for the organization.
 
-     Copies selected data into a fresh database using the supplied masking policy. The target remains in
-    provisioning until the copy and its constraints are validated. Requires managed PostgreSQL manage
-    scope, MFA, and verified email.
+     On the organization's database, copies selected data into a fresh database using the supplied
+    masking policy. The target remains in provisioning until the copy and its constraints are validated.
+    Requires managed PostgreSQL manage scope, MFA, and verified email.
 
     Args:
         organization (str):
         id (str):
         idempotency_key (str | Unset):
-        body (CreateManagedPostgresMaskedBranchRequest):
+        body (CreateManagedPostgresMaskedBranchRequest): Source table policies and configuration
+            for creating a masked database copy.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -112,17 +113,18 @@ def sync(
     body: CreateManagedPostgresMaskedBranchRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> ManagedPostgresDatabase | Problem | None:
-    """Create a masked branch of a native PostgreSQL database.
+    """Create a masked branch of a native PostgreSQL database for the organization.
 
-     Copies selected data into a fresh database using the supplied masking policy. The target remains in
-    provisioning until the copy and its constraints are validated. Requires managed PostgreSQL manage
-    scope, MFA, and verified email.
+     On the organization's database, copies selected data into a fresh database using the supplied
+    masking policy. The target remains in provisioning until the copy and its constraints are validated.
+    Requires managed PostgreSQL manage scope, MFA, and verified email.
 
     Args:
         organization (str):
         id (str):
         idempotency_key (str | Unset):
-        body (CreateManagedPostgresMaskedBranchRequest):
+        body (CreateManagedPostgresMaskedBranchRequest): Source table policies and configuration
+            for creating a masked database copy.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -149,17 +151,18 @@ async def asyncio_detailed(
     body: CreateManagedPostgresMaskedBranchRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[ManagedPostgresDatabase | Problem]:
-    """Create a masked branch of a native PostgreSQL database.
+    """Create a masked branch of a native PostgreSQL database for the organization.
 
-     Copies selected data into a fresh database using the supplied masking policy. The target remains in
-    provisioning until the copy and its constraints are validated. Requires managed PostgreSQL manage
-    scope, MFA, and verified email.
+     On the organization's database, copies selected data into a fresh database using the supplied
+    masking policy. The target remains in provisioning until the copy and its constraints are validated.
+    Requires managed PostgreSQL manage scope, MFA, and verified email.
 
     Args:
         organization (str):
         id (str):
         idempotency_key (str | Unset):
-        body (CreateManagedPostgresMaskedBranchRequest):
+        body (CreateManagedPostgresMaskedBranchRequest): Source table policies and configuration
+            for creating a masked database copy.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -189,17 +192,18 @@ async def asyncio(
     body: CreateManagedPostgresMaskedBranchRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> ManagedPostgresDatabase | Problem | None:
-    """Create a masked branch of a native PostgreSQL database.
+    """Create a masked branch of a native PostgreSQL database for the organization.
 
-     Copies selected data into a fresh database using the supplied masking policy. The target remains in
-    provisioning until the copy and its constraints are validated. Requires managed PostgreSQL manage
-    scope, MFA, and verified email.
+     On the organization's database, copies selected data into a fresh database using the supplied
+    masking policy. The target remains in provisioning until the copy and its constraints are validated.
+    Requires managed PostgreSQL manage scope, MFA, and verified email.
 
     Args:
         organization (str):
         id (str):
         idempotency_key (str | Unset):
-        body (CreateManagedPostgresMaskedBranchRequest):
+        body (CreateManagedPostgresMaskedBranchRequest): Source table policies and configuration
+            for creating a masked database copy.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

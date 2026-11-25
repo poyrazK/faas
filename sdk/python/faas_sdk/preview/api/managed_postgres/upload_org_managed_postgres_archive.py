@@ -75,10 +75,11 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: UploadOrgManagedPostgresArchiveBody,
 ) -> Response[ManagedPostgresImportStatus | Problem]:
-    """Restore a Gregale-exported PostgreSQL archive to an empty native database
+    """Restore a Gregale-exported PostgreSQL archive to an empty native database for the organization.
 
-     Uploads a PostgreSQL custom archive and its signed export manifest. Send the manifest part first.
-    The target must be empty and compatible. Inspect the existing import status endpoint after upload.
+     On the organization's database, uploads a PostgreSQL custom archive and its signed export manifest.
+    Send the manifest part first. The target must be empty and compatible. Inspect the existing import
+    status endpoint after upload.
 
     Args:
         organization (str):
@@ -116,10 +117,11 @@ def sync(
     client: AuthenticatedClient | Client,
     body: UploadOrgManagedPostgresArchiveBody,
 ) -> ManagedPostgresImportStatus | Problem | None:
-    """Restore a Gregale-exported PostgreSQL archive to an empty native database
+    """Restore a Gregale-exported PostgreSQL archive to an empty native database for the organization.
 
-     Uploads a PostgreSQL custom archive and its signed export manifest. Send the manifest part first.
-    The target must be empty and compatible. Inspect the existing import status endpoint after upload.
+     On the organization's database, uploads a PostgreSQL custom archive and its signed export manifest.
+    Send the manifest part first. The target must be empty and compatible. Inspect the existing import
+    status endpoint after upload.
 
     Args:
         organization (str):
@@ -152,10 +154,11 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: UploadOrgManagedPostgresArchiveBody,
 ) -> Response[ManagedPostgresImportStatus | Problem]:
-    """Restore a Gregale-exported PostgreSQL archive to an empty native database
+    """Restore a Gregale-exported PostgreSQL archive to an empty native database for the organization.
 
-     Uploads a PostgreSQL custom archive and its signed export manifest. Send the manifest part first.
-    The target must be empty and compatible. Inspect the existing import status endpoint after upload.
+     On the organization's database, uploads a PostgreSQL custom archive and its signed export manifest.
+    Send the manifest part first. The target must be empty and compatible. Inspect the existing import
+    status endpoint after upload.
 
     Args:
         organization (str):
@@ -191,10 +194,11 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: UploadOrgManagedPostgresArchiveBody,
 ) -> ManagedPostgresImportStatus | Problem | None:
-    """Restore a Gregale-exported PostgreSQL archive to an empty native database
+    """Restore a Gregale-exported PostgreSQL archive to an empty native database for the organization.
 
-     Uploads a PostgreSQL custom archive and its signed export manifest. Send the manifest part first.
-    The target must be empty and compatible. Inspect the existing import status endpoint after upload.
+     On the organization's database, uploads a PostgreSQL custom archive and its signed export manifest.
+    Send the manifest part first. The target must be empty and compatible. Inspect the existing import
+    status endpoint after upload.
 
     Args:
         organization (str):

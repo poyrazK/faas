@@ -66,16 +66,17 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: ManagedPostgresMigrationVerifyRequest,
 ) -> Response[ManagedPostgresMigrationProgress | Problem]:
-    """Verify durable replay after a PostgreSQL migration source write pause
+    """Verify durable replay after a PostgreSQL migration source write pause for the organization.
 
-     Queues a replicated marker and sequence synchronization after an operator confirms a source write
-    pause. Read the receipt from migration status. Keep source writes paused throughout verification and
-    until activation.
+     On the organization's database, queues a replicated marker and sequence synchronization after an
+    operator confirms a source write pause. Read the receipt from migration status. Keep source writes
+    paused throughout verification and until activation.
 
     Args:
         organization (str):
         id (str):
-        body (ManagedPostgresMigrationVerifyRequest):
+        body (ManagedPostgresMigrationVerifyRequest): Request to verify migration replay after
+            source writes have paused.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -105,16 +106,17 @@ def sync(
     client: AuthenticatedClient | Client,
     body: ManagedPostgresMigrationVerifyRequest,
 ) -> ManagedPostgresMigrationProgress | Problem | None:
-    """Verify durable replay after a PostgreSQL migration source write pause
+    """Verify durable replay after a PostgreSQL migration source write pause for the organization.
 
-     Queues a replicated marker and sequence synchronization after an operator confirms a source write
-    pause. Read the receipt from migration status. Keep source writes paused throughout verification and
-    until activation.
+     On the organization's database, queues a replicated marker and sequence synchronization after an
+    operator confirms a source write pause. Read the receipt from migration status. Keep source writes
+    paused throughout verification and until activation.
 
     Args:
         organization (str):
         id (str):
-        body (ManagedPostgresMigrationVerifyRequest):
+        body (ManagedPostgresMigrationVerifyRequest): Request to verify migration replay after
+            source writes have paused.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -139,16 +141,17 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: ManagedPostgresMigrationVerifyRequest,
 ) -> Response[ManagedPostgresMigrationProgress | Problem]:
-    """Verify durable replay after a PostgreSQL migration source write pause
+    """Verify durable replay after a PostgreSQL migration source write pause for the organization.
 
-     Queues a replicated marker and sequence synchronization after an operator confirms a source write
-    pause. Read the receipt from migration status. Keep source writes paused throughout verification and
-    until activation.
+     On the organization's database, queues a replicated marker and sequence synchronization after an
+    operator confirms a source write pause. Read the receipt from migration status. Keep source writes
+    paused throughout verification and until activation.
 
     Args:
         organization (str):
         id (str):
-        body (ManagedPostgresMigrationVerifyRequest):
+        body (ManagedPostgresMigrationVerifyRequest): Request to verify migration replay after
+            source writes have paused.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -176,16 +179,17 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: ManagedPostgresMigrationVerifyRequest,
 ) -> ManagedPostgresMigrationProgress | Problem | None:
-    """Verify durable replay after a PostgreSQL migration source write pause
+    """Verify durable replay after a PostgreSQL migration source write pause for the organization.
 
-     Queues a replicated marker and sequence synchronization after an operator confirms a source write
-    pause. Read the receipt from migration status. Keep source writes paused throughout verification and
-    until activation.
+     On the organization's database, queues a replicated marker and sequence synchronization after an
+    operator confirms a source write pause. Read the receipt from migration status. Keep source writes
+    paused throughout verification and until activation.
 
     Args:
         organization (str):
         id (str):
-        body (ManagedPostgresMigrationVerifyRequest):
+        body (ManagedPostgresMigrationVerifyRequest): Request to verify migration replay after
+            source writes have paused.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

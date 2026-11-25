@@ -56,10 +56,10 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ManagedPostgresSessions | Problem]:
-    """Inspect native PostgreSQL client sessions
+    """Inspect native PostgreSQL client sessions for the organization.
 
-     Samples a running primary without waking a parked database. A cancel target identifies one currently
-    tracked pooled query.
+     On the organization's database, samples a running primary without waking a parked database. A cancel
+    target identifies one currently tracked pooled query.
 
     Args:
         organization (str):
@@ -91,10 +91,10 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> ManagedPostgresSessions | Problem | None:
-    """Inspect native PostgreSQL client sessions
+    """Inspect native PostgreSQL client sessions for the organization.
 
-     Samples a running primary without waking a parked database. A cancel target identifies one currently
-    tracked pooled query.
+     On the organization's database, samples a running primary without waking a parked database. A cancel
+    target identifies one currently tracked pooled query.
 
     Args:
         organization (str):
@@ -121,10 +121,10 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ManagedPostgresSessions | Problem]:
-    """Inspect native PostgreSQL client sessions
+    """Inspect native PostgreSQL client sessions for the organization.
 
-     Samples a running primary without waking a parked database. A cancel target identifies one currently
-    tracked pooled query.
+     On the organization's database, samples a running primary without waking a parked database. A cancel
+    target identifies one currently tracked pooled query.
 
     Args:
         organization (str):
@@ -154,10 +154,10 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> ManagedPostgresSessions | Problem | None:
-    """Inspect native PostgreSQL client sessions
+    """Inspect native PostgreSQL client sessions for the organization.
 
-     Samples a running primary without waking a parked database. A cancel target identifies one currently
-    tracked pooled query.
+     On the organization's database, samples a running primary without waking a parked database. A cancel
+    target identifies one currently tracked pooled query.
 
     Args:
         organization (str):

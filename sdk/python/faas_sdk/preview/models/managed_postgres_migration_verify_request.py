@@ -15,8 +15,11 @@ T = TypeVar("T", bound="ManagedPostgresMigrationVerifyRequest")
 
 @_attrs_define
 class ManagedPostgresMigrationVerifyRequest:
+    """Request to verify migration replay after source writes have paused."""
+
     operation_id: UUID
     source: ManagedPostgresImportSource
+    """Connection details for a PostgreSQL source to inspect or import."""
     verification_id: UUID
     """Reuse the UUID during the same continuous source write pause."""
     source_writes_paused: bool

@@ -378,7 +378,7 @@ func (f *fakeVMM) Control(ctx context.Context, node Node, id string, req dbguest
 		}
 		at := f.markAt
 		if at.IsZero() {
-			at = time.Now()
+			at = time.Now().Truncate(time.Microsecond)
 		}
 		f.marks[id] = fakeMark{drill: req.Drill, at: at}
 		return dbguest.Response{State: dbguest.StateReady, MarkedAt: at}, nil

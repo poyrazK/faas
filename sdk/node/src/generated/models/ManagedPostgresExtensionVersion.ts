@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Managed extension version available on one PostgreSQL major.
+ */
 export type ManagedPostgresExtensionVersion = {
   name: string;
   version: string;

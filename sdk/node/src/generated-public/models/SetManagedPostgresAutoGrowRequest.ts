@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Bounds for automatic increases to the database volume.
+ */
 export type SetManagedPostgresAutoGrowRequest = {
   /**
    * Per-volume ceiling in bytes. Zero disables automatic growth.

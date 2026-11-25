@@ -66,15 +66,16 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: ManagedPostgresImportRequest,
 ) -> Response[ManagedPostgresMigrationProgress | Problem]:
-    """Stop a native PostgreSQL live migration
+    """Stop a native PostgreSQL live migration for the organization.
 
-     Stops applying changes and attempts to clean up verified source replication resources. The target
-    remains fenced.
+     On the organization's database, stops applying changes and attempts to clean up verified source
+    replication resources. The target remains fenced.
 
     Args:
         organization (str):
         id (str):
-        body (ManagedPostgresImportRequest):
+        body (ManagedPostgresImportRequest): Source connection and operation identifier for
+            importing a database.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -104,15 +105,16 @@ def sync(
     client: AuthenticatedClient | Client,
     body: ManagedPostgresImportRequest,
 ) -> ManagedPostgresMigrationProgress | Problem | None:
-    """Stop a native PostgreSQL live migration
+    """Stop a native PostgreSQL live migration for the organization.
 
-     Stops applying changes and attempts to clean up verified source replication resources. The target
-    remains fenced.
+     On the organization's database, stops applying changes and attempts to clean up verified source
+    replication resources. The target remains fenced.
 
     Args:
         organization (str):
         id (str):
-        body (ManagedPostgresImportRequest):
+        body (ManagedPostgresImportRequest): Source connection and operation identifier for
+            importing a database.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -137,15 +139,16 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: ManagedPostgresImportRequest,
 ) -> Response[ManagedPostgresMigrationProgress | Problem]:
-    """Stop a native PostgreSQL live migration
+    """Stop a native PostgreSQL live migration for the organization.
 
-     Stops applying changes and attempts to clean up verified source replication resources. The target
-    remains fenced.
+     On the organization's database, stops applying changes and attempts to clean up verified source
+    replication resources. The target remains fenced.
 
     Args:
         organization (str):
         id (str):
-        body (ManagedPostgresImportRequest):
+        body (ManagedPostgresImportRequest): Source connection and operation identifier for
+            importing a database.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -173,15 +176,16 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: ManagedPostgresImportRequest,
 ) -> ManagedPostgresMigrationProgress | Problem | None:
-    """Stop a native PostgreSQL live migration
+    """Stop a native PostgreSQL live migration for the organization.
 
-     Stops applying changes and attempts to clean up verified source replication resources. The target
-    remains fenced.
+     On the organization's database, stops applying changes and attempts to clean up verified source
+    replication resources. The target remains fenced.
 
     Args:
         organization (str):
         id (str):
-        body (ManagedPostgresImportRequest):
+        body (ManagedPostgresImportRequest): Source connection and operation identifier for
+            importing a database.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

@@ -56,10 +56,10 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ManagedPostgresDiagnostics | Problem]:
-    """Diagnose a native PostgreSQL primary
+    """Diagnose a native PostgreSQL primary for the organization.
 
-     Reads one bounded activity sample from the running primary. A parked database stays asleep and
-    reports its state.
+     On the organization's database, reads one bounded activity sample from the running primary. A parked
+    database stays asleep and reports its state.
 
     Args:
         organization (str):
@@ -91,10 +91,10 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> ManagedPostgresDiagnostics | Problem | None:
-    """Diagnose a native PostgreSQL primary
+    """Diagnose a native PostgreSQL primary for the organization.
 
-     Reads one bounded activity sample from the running primary. A parked database stays asleep and
-    reports its state.
+     On the organization's database, reads one bounded activity sample from the running primary. A parked
+    database stays asleep and reports its state.
 
     Args:
         organization (str):
@@ -121,10 +121,10 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ManagedPostgresDiagnostics | Problem]:
-    """Diagnose a native PostgreSQL primary
+    """Diagnose a native PostgreSQL primary for the organization.
 
-     Reads one bounded activity sample from the running primary. A parked database stays asleep and
-    reports its state.
+     On the organization's database, reads one bounded activity sample from the running primary. A parked
+    database stays asleep and reports its state.
 
     Args:
         organization (str):
@@ -154,10 +154,10 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> ManagedPostgresDiagnostics | Problem | None:
-    """Diagnose a native PostgreSQL primary
+    """Diagnose a native PostgreSQL primary for the organization.
 
-     Reads one bounded activity sample from the running primary. A parked database stays asleep and
-    reports its state.
+     On the organization's database, reads one bounded activity sample from the running primary. A parked
+    database stays asleep and reports its state.
 
     Args:
         organization (str):

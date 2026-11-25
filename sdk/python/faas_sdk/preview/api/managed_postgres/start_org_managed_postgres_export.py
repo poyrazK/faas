@@ -71,15 +71,17 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: ManagedPostgresExportRequest,
 ) -> Response[ManagedPostgresExport | Problem]:
-    """Start a portable export of a native PostgreSQL database
+    """Start a portable export of a native PostgreSQL database for the organization.
 
-     Produces a consistent custom-format PostgreSQL dump in the background. Requires verified PostgreSQL
-    management access. The caller-supplied request ID identifies the same export on retry.
+     On the organization's database, produces a consistent custom-format PostgreSQL dump in the
+    background. Requires verified PostgreSQL management access. The caller-supplied request ID
+    identifies the same export on retry.
 
     Args:
         organization (str):
         id (str):
-        body (ManagedPostgresExportRequest):
+        body (ManagedPostgresExportRequest): Idempotency identifier for creating a portable
+            PostgreSQL export.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -109,15 +111,17 @@ def sync(
     client: AuthenticatedClient | Client,
     body: ManagedPostgresExportRequest,
 ) -> ManagedPostgresExport | Problem | None:
-    """Start a portable export of a native PostgreSQL database
+    """Start a portable export of a native PostgreSQL database for the organization.
 
-     Produces a consistent custom-format PostgreSQL dump in the background. Requires verified PostgreSQL
-    management access. The caller-supplied request ID identifies the same export on retry.
+     On the organization's database, produces a consistent custom-format PostgreSQL dump in the
+    background. Requires verified PostgreSQL management access. The caller-supplied request ID
+    identifies the same export on retry.
 
     Args:
         organization (str):
         id (str):
-        body (ManagedPostgresExportRequest):
+        body (ManagedPostgresExportRequest): Idempotency identifier for creating a portable
+            PostgreSQL export.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -142,15 +146,17 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: ManagedPostgresExportRequest,
 ) -> Response[ManagedPostgresExport | Problem]:
-    """Start a portable export of a native PostgreSQL database
+    """Start a portable export of a native PostgreSQL database for the organization.
 
-     Produces a consistent custom-format PostgreSQL dump in the background. Requires verified PostgreSQL
-    management access. The caller-supplied request ID identifies the same export on retry.
+     On the organization's database, produces a consistent custom-format PostgreSQL dump in the
+    background. Requires verified PostgreSQL management access. The caller-supplied request ID
+    identifies the same export on retry.
 
     Args:
         organization (str):
         id (str):
-        body (ManagedPostgresExportRequest):
+        body (ManagedPostgresExportRequest): Idempotency identifier for creating a portable
+            PostgreSQL export.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -178,15 +184,17 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: ManagedPostgresExportRequest,
 ) -> ManagedPostgresExport | Problem | None:
-    """Start a portable export of a native PostgreSQL database
+    """Start a portable export of a native PostgreSQL database for the organization.
 
-     Produces a consistent custom-format PostgreSQL dump in the background. Requires verified PostgreSQL
-    management access. The caller-supplied request ID identifies the same export on retry.
+     On the organization's database, produces a consistent custom-format PostgreSQL dump in the
+    background. Requires verified PostgreSQL management access. The caller-supplied request ID
+    identifies the same export on retry.
 
     Args:
         organization (str):
         id (str):
-        body (ManagedPostgresExportRequest):
+        body (ManagedPostgresExportRequest): Idempotency identifier for creating a portable
+            PostgreSQL export.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

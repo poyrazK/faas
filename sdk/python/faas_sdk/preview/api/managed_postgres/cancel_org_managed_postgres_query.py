@@ -66,16 +66,17 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: CancelManagedPostgresQueryRequest,
 ) -> Response[ManagedPostgresQueryCancellation | Problem]:
-    """Send a cancel request for a live PostgreSQL query target
+    """Send a cancel request for a live PostgreSQL query target for the organization.
 
-     Sends a PostgreSQL cancel request through the proxy that owns the execution. The target must come
-    from a recent session sample. Replaying the same target returns its recorded outcome while the
-    receipt is retained.
+     On the organization's database, sends a PostgreSQL cancel request through the proxy that owns the
+    execution. The target must come from a recent session sample. Replaying the same target returns its
+    recorded outcome while the receipt is retained.
 
     Args:
         organization (str):
         id (str):
-        body (CancelManagedPostgresQueryRequest):
+        body (CancelManagedPostgresQueryRequest): Target from a recent session sample identifying
+            the query to cancel.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -105,16 +106,17 @@ def sync(
     client: AuthenticatedClient | Client,
     body: CancelManagedPostgresQueryRequest,
 ) -> ManagedPostgresQueryCancellation | Problem | None:
-    """Send a cancel request for a live PostgreSQL query target
+    """Send a cancel request for a live PostgreSQL query target for the organization.
 
-     Sends a PostgreSQL cancel request through the proxy that owns the execution. The target must come
-    from a recent session sample. Replaying the same target returns its recorded outcome while the
-    receipt is retained.
+     On the organization's database, sends a PostgreSQL cancel request through the proxy that owns the
+    execution. The target must come from a recent session sample. Replaying the same target returns its
+    recorded outcome while the receipt is retained.
 
     Args:
         organization (str):
         id (str):
-        body (CancelManagedPostgresQueryRequest):
+        body (CancelManagedPostgresQueryRequest): Target from a recent session sample identifying
+            the query to cancel.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -139,16 +141,17 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: CancelManagedPostgresQueryRequest,
 ) -> Response[ManagedPostgresQueryCancellation | Problem]:
-    """Send a cancel request for a live PostgreSQL query target
+    """Send a cancel request for a live PostgreSQL query target for the organization.
 
-     Sends a PostgreSQL cancel request through the proxy that owns the execution. The target must come
-    from a recent session sample. Replaying the same target returns its recorded outcome while the
-    receipt is retained.
+     On the organization's database, sends a PostgreSQL cancel request through the proxy that owns the
+    execution. The target must come from a recent session sample. Replaying the same target returns its
+    recorded outcome while the receipt is retained.
 
     Args:
         organization (str):
         id (str):
-        body (CancelManagedPostgresQueryRequest):
+        body (CancelManagedPostgresQueryRequest): Target from a recent session sample identifying
+            the query to cancel.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -176,16 +179,17 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: CancelManagedPostgresQueryRequest,
 ) -> ManagedPostgresQueryCancellation | Problem | None:
-    """Send a cancel request for a live PostgreSQL query target
+    """Send a cancel request for a live PostgreSQL query target for the organization.
 
-     Sends a PostgreSQL cancel request through the proxy that owns the execution. The target must come
-    from a recent session sample. Replaying the same target returns its recorded outcome while the
-    receipt is retained.
+     On the organization's database, sends a PostgreSQL cancel request through the proxy that owns the
+    execution. The target must come from a recent session sample. Replaying the same target returns its
+    recorded outcome while the receipt is retained.
 
     Args:
         organization (str):
         id (str):
-        body (CancelManagedPostgresQueryRequest):
+        body (CancelManagedPostgresQueryRequest): Target from a recent session sample identifying
+            the query to cancel.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

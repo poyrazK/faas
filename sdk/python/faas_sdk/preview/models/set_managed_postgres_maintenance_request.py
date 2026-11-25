@@ -15,6 +15,8 @@ T = TypeVar("T", bound="SetManagedPostgresMaintenanceRequest")
 
 @_attrs_define
 class SetManagedPostgresMaintenanceRequest:
+    """Changes to the database's weekly maintenance schedule."""
+
     window: ManagedPostgresMaintenanceWindow | None
     """Use null to remove the schedule."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

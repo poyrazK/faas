@@ -66,15 +66,17 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: SetManagedPostgresBindingTimeoutsRequest,
 ) -> Response[ManagedPostgresBindingTimeouts | Problem]:
-    """Save timeout defaults for a native pooled app binding.
+    """Save timeout defaults for a native pooled app binding for the organization.
 
-     Changes the supplied settings on a ready read_write or read_only binding. Zero disables a setting.
-    Application happens asynchronously and existing transactions keep their current defaults.
+     On the organization's database, changes the supplied settings on a ready read_write or read_only
+    binding. Zero disables a setting. Application happens asynchronously and existing transactions keep
+    their current defaults.
 
     Args:
         organization (str):
         id (str):
-        body (SetManagedPostgresBindingTimeoutsRequest):
+        body (SetManagedPostgresBindingTimeoutsRequest): Timeout settings to change on a ready
+            pooled application binding.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -104,15 +106,17 @@ def sync(
     client: AuthenticatedClient | Client,
     body: SetManagedPostgresBindingTimeoutsRequest,
 ) -> ManagedPostgresBindingTimeouts | Problem | None:
-    """Save timeout defaults for a native pooled app binding.
+    """Save timeout defaults for a native pooled app binding for the organization.
 
-     Changes the supplied settings on a ready read_write or read_only binding. Zero disables a setting.
-    Application happens asynchronously and existing transactions keep their current defaults.
+     On the organization's database, changes the supplied settings on a ready read_write or read_only
+    binding. Zero disables a setting. Application happens asynchronously and existing transactions keep
+    their current defaults.
 
     Args:
         organization (str):
         id (str):
-        body (SetManagedPostgresBindingTimeoutsRequest):
+        body (SetManagedPostgresBindingTimeoutsRequest): Timeout settings to change on a ready
+            pooled application binding.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -137,15 +141,17 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: SetManagedPostgresBindingTimeoutsRequest,
 ) -> Response[ManagedPostgresBindingTimeouts | Problem]:
-    """Save timeout defaults for a native pooled app binding.
+    """Save timeout defaults for a native pooled app binding for the organization.
 
-     Changes the supplied settings on a ready read_write or read_only binding. Zero disables a setting.
-    Application happens asynchronously and existing transactions keep their current defaults.
+     On the organization's database, changes the supplied settings on a ready read_write or read_only
+    binding. Zero disables a setting. Application happens asynchronously and existing transactions keep
+    their current defaults.
 
     Args:
         organization (str):
         id (str):
-        body (SetManagedPostgresBindingTimeoutsRequest):
+        body (SetManagedPostgresBindingTimeoutsRequest): Timeout settings to change on a ready
+            pooled application binding.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -173,15 +179,17 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: SetManagedPostgresBindingTimeoutsRequest,
 ) -> ManagedPostgresBindingTimeouts | Problem | None:
-    """Save timeout defaults for a native pooled app binding.
+    """Save timeout defaults for a native pooled app binding for the organization.
 
-     Changes the supplied settings on a ready read_write or read_only binding. Zero disables a setting.
-    Application happens asynchronously and existing transactions keep their current defaults.
+     On the organization's database, changes the supplied settings on a ready read_write or read_only
+    binding. Zero disables a setting. Application happens asynchronously and existing transactions keep
+    their current defaults.
 
     Args:
         organization (str):
         id (str):
-        body (SetManagedPostgresBindingTimeoutsRequest):
+        body (SetManagedPostgresBindingTimeoutsRequest): Timeout settings to change on a ready
+            pooled application binding.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

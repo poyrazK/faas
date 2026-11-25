@@ -13,6 +13,8 @@ T = TypeVar("T", bound="ActivateManagedPostgresMigrationRequest")
 
 @_attrs_define
 class ActivateManagedPostgresMigrationRequest:
+    """Verified migration operation to activate for an application environment."""
+
     source_database_id: UUID
     target_database_id: UUID
     operation_id: UUID

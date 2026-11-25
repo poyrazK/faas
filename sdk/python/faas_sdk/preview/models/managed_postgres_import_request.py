@@ -15,9 +15,12 @@ T = TypeVar("T", bound="ManagedPostgresImportRequest")
 
 @_attrs_define
 class ManagedPostgresImportRequest:
+    """Source connection and operation identifier for importing a database."""
+
     operation_id: UUID
     """Caller-generated lowercase UUID reused to recover or retry an import."""
     source: ManagedPostgresImportSource
+    """Connection details for a PostgreSQL source to inspect or import."""
 
     def to_dict(self) -> dict[str, Any]:
         operation_id = str(self.operation_id)

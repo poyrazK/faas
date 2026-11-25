@@ -50,9 +50,10 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Any | Problem]:
-    """Disable future portable backup runs.
+    """Disable future portable backup runs for the organization.
 
-     Leaves the objects already delivered to the bucket. An active delivery lease can return conflict.
+     On the organization's database, leaves the objects already delivered to the bucket. An active
+    delivery lease can return conflict.
 
     Args:
         organization (str):
@@ -84,9 +85,10 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> Any | Problem | None:
-    """Disable future portable backup runs.
+    """Disable future portable backup runs for the organization.
 
-     Leaves the objects already delivered to the bucket. An active delivery lease can return conflict.
+     On the organization's database, leaves the objects already delivered to the bucket. An active
+    delivery lease can return conflict.
 
     Args:
         organization (str):
@@ -113,9 +115,10 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Any | Problem]:
-    """Disable future portable backup runs.
+    """Disable future portable backup runs for the organization.
 
-     Leaves the objects already delivered to the bucket. An active delivery lease can return conflict.
+     On the organization's database, leaves the objects already delivered to the bucket. An active
+    delivery lease can return conflict.
 
     Args:
         organization (str):
@@ -145,9 +148,10 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> Any | Problem | None:
-    """Disable future portable backup runs.
+    """Disable future portable backup runs for the organization.
 
-     Leaves the objects already delivered to the bucket. An active delivery lease can return conflict.
+     On the organization's database, leaves the objects already delivered to the bucket. An active
+    delivery lease can return conflict.
 
     Args:
         organization (str):

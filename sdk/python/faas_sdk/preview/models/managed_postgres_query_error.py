@@ -19,6 +19,8 @@ T = TypeVar("T", bound="ManagedPostgresQueryError")
 
 @_attrs_define
 class ManagedPostgresQueryError:
+    """Retained PostgreSQL error metadata without statement text."""
+
     observed_at: datetime.datetime
     severity: ManagedPostgresQueryErrorSeverity
     sqlstate: str

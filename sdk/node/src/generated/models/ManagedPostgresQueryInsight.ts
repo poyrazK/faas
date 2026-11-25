@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Aggregate execution statistics for one normalized statement.
+ */
 export type ManagedPostgresQueryInsight = {
   /**
    * PostgreSQL query ID within the indicated boot.

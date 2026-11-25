@@ -17,6 +17,8 @@ T = TypeVar("T", bound="ManagedPostgresExtensions")
 
 @_attrs_define
 class ManagedPostgresExtensions:
+    """Installed PostgreSQL extensions and versions available to the database."""
+
     installed: list[ManagedPostgresExtensionVersion]
     available: list[ManagedPostgresExtensionVersion]
     incompatible_extensions: list[ManagedPostgresExtensionVersion] | Unset = UNSET

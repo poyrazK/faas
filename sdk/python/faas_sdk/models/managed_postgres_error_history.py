@@ -17,6 +17,8 @@ T = TypeVar("T", bound="ManagedPostgresErrorHistory")
 
 @_attrs_define
 class ManagedPostgresErrorHistory:
+    """Pooled error collection settings and retained events matching the filter."""
+
     database_id: UUID
     enabled: bool
     since: datetime.datetime

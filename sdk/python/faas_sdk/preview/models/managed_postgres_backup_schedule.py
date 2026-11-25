@@ -19,6 +19,8 @@ T = TypeVar("T", bound="ManagedPostgresBackupSchedule")
 
 @_attrs_define
 class ManagedPostgresBackupSchedule:
+    """Daily export schedule, destination, and recorded delivery outcome."""
+
     database_id: UUID
     bucket_app_id: UUID
     bucket_id: UUID

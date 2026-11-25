@@ -15,6 +15,8 @@ T = TypeVar("T", bound="ManagedPostgresMaskedColumn")
 
 @_attrs_define
 class ManagedPostgresMaskedColumn:
+    """Masking rule for a column in the copied database."""
+
     name: str
     action: ManagedPostgresMaskedColumnAction
     """How values in this selected column are copied."""

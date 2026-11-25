@@ -68,10 +68,10 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     point_in_time: datetime.datetime,
 ) -> Response[ManagedPostgresRestoreCheck | Problem]:
-    """Check native PostgreSQL archive evidence for a restore target.
+    """Check native PostgreSQL archive evidence for a restore target for the organization.
 
-     Reads the selected base backup and bounded WAL evidence for this target. A covered result describes
-    the archive at check time.
+     On the organization's database, reads the selected base backup and bounded WAL evidence for this
+    target. A covered result describes the archive at check time.
 
     Args:
         organization (str):
@@ -106,10 +106,10 @@ def sync(
     client: AuthenticatedClient | Client,
     point_in_time: datetime.datetime,
 ) -> ManagedPostgresRestoreCheck | Problem | None:
-    """Check native PostgreSQL archive evidence for a restore target.
+    """Check native PostgreSQL archive evidence for a restore target for the organization.
 
-     Reads the selected base backup and bounded WAL evidence for this target. A covered result describes
-    the archive at check time.
+     On the organization's database, reads the selected base backup and bounded WAL evidence for this
+    target. A covered result describes the archive at check time.
 
     Args:
         organization (str):
@@ -139,10 +139,10 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     point_in_time: datetime.datetime,
 ) -> Response[ManagedPostgresRestoreCheck | Problem]:
-    """Check native PostgreSQL archive evidence for a restore target.
+    """Check native PostgreSQL archive evidence for a restore target for the organization.
 
-     Reads the selected base backup and bounded WAL evidence for this target. A covered result describes
-    the archive at check time.
+     On the organization's database, reads the selected base backup and bounded WAL evidence for this
+    target. A covered result describes the archive at check time.
 
     Args:
         organization (str):
@@ -175,10 +175,10 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     point_in_time: datetime.datetime,
 ) -> ManagedPostgresRestoreCheck | Problem | None:
-    """Check native PostgreSQL archive evidence for a restore target.
+    """Check native PostgreSQL archive evidence for a restore target for the organization.
 
-     Reads the selected base backup and bounded WAL evidence for this target. A covered result describes
-    the archive at check time.
+     On the organization's database, reads the selected base backup and bounded WAL evidence for this
+    target. A covered result describes the archive at check time.
 
     Args:
         organization (str):

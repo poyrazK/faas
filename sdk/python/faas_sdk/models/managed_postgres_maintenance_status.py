@@ -19,6 +19,8 @@ T = TypeVar("T", bound="ManagedPostgresMaintenanceStatus")
 
 @_attrs_define
 class ManagedPostgresMaintenanceStatus:
+    """Configured maintenance window and the current database refresh status."""
+
     window: ManagedPostgresMaintenanceWindow | None
     window_open: bool
     window_start: datetime.datetime | Unset = UNSET
@@ -28,6 +30,7 @@ class ManagedPostgresMaintenanceStatus:
     stale_since: datetime.datetime | Unset = UNSET
     """First stale observation for the pending base refresh."""
     last_refresh: ManagedPostgresBaseRefresh | Unset = UNSET
+    """Progress and outcome of replacing the database VM base image."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

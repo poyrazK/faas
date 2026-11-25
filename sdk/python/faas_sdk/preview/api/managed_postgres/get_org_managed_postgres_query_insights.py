@@ -66,10 +66,10 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     since_seconds: int | Unset = 3600,
 ) -> Response[ManagedPostgresQueryInsights | Problem]:
-    """Rank statements by execution time over an observed window
+    """Rank statements by execution time over an observed window for the organization.
 
-     Reads stored numeric statement statistics for a single-zone native PostgreSQL database without
-    waking it.
+     On the organization's database, reads stored numeric statement statistics for a single-zone native
+    PostgreSQL database without waking it.
 
     Args:
         organization (str):
@@ -104,10 +104,10 @@ def sync(
     client: AuthenticatedClient | Client,
     since_seconds: int | Unset = 3600,
 ) -> ManagedPostgresQueryInsights | Problem | None:
-    """Rank statements by execution time over an observed window
+    """Rank statements by execution time over an observed window for the organization.
 
-     Reads stored numeric statement statistics for a single-zone native PostgreSQL database without
-    waking it.
+     On the organization's database, reads stored numeric statement statistics for a single-zone native
+    PostgreSQL database without waking it.
 
     Args:
         organization (str):
@@ -137,10 +137,10 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     since_seconds: int | Unset = 3600,
 ) -> Response[ManagedPostgresQueryInsights | Problem]:
-    """Rank statements by execution time over an observed window
+    """Rank statements by execution time over an observed window for the organization.
 
-     Reads stored numeric statement statistics for a single-zone native PostgreSQL database without
-    waking it.
+     On the organization's database, reads stored numeric statement statistics for a single-zone native
+    PostgreSQL database without waking it.
 
     Args:
         organization (str):
@@ -173,10 +173,10 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     since_seconds: int | Unset = 3600,
 ) -> ManagedPostgresQueryInsights | Problem | None:
-    """Rank statements by execution time over an observed window
+    """Rank statements by execution time over an observed window for the organization.
 
-     Reads stored numeric statement statistics for a single-zone native PostgreSQL database without
-    waking it.
+     On the organization's database, reads stored numeric statement statistics for a single-zone native
+    PostgreSQL database without waking it.
 
     Args:
         organization (str):

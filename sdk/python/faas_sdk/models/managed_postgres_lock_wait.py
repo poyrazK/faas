@@ -11,6 +11,8 @@ T = TypeVar("T", bound="ManagedPostgresLockWait")
 
 @_attrs_define
 class ManagedPostgresLockWait:
+    """Session waiting for a PostgreSQL lock and its observed blockers."""
+
     pid: int
     blocking_pids: list[int]
     """Blocking session process IDs. Zero indicates a prepared transaction."""

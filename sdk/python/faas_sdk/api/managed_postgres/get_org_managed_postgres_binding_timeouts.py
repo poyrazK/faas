@@ -56,7 +56,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ManagedPostgresBindingTimeouts | Problem]:
-    """Get timeout defaults for a native pooled app binding.
+    """Get timeout defaults for a native pooled app binding for the organization.
 
     Args:
         organization (str):
@@ -88,7 +88,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> ManagedPostgresBindingTimeouts | Problem | None:
-    """Get timeout defaults for a native pooled app binding.
+    """Get timeout defaults for a native pooled app binding for the organization.
 
     Args:
         organization (str):
@@ -115,7 +115,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ManagedPostgresBindingTimeouts | Problem]:
-    """Get timeout defaults for a native pooled app binding.
+    """Get timeout defaults for a native pooled app binding for the organization.
 
     Args:
         organization (str):
@@ -145,7 +145,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> ManagedPostgresBindingTimeouts | Problem | None:
-    """Get timeout defaults for a native pooled app binding.
+    """Get timeout defaults for a native pooled app binding for the organization.
 
     Args:
         organization (str):

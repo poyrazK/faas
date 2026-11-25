@@ -66,15 +66,16 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: ManagedPostgresImportSource,
 ) -> Response[ManagedPostgresMigrationCheck | Problem]:
-    """Check prerequisites for a native PostgreSQL live migration
+    """Check prerequisites for a native PostgreSQL live migration for the organization.
 
-     Inspects source replication settings, capacity, supported table structures and an empty target. It
-    may wake the target. The check creates no replication resources.
+     On the organization's database, inspects source replication settings, capacity, supported table
+    structures and an empty target. It may wake the target. The check creates no replication resources.
 
     Args:
         organization (str):
         id (str):
-        body (ManagedPostgresImportSource):
+        body (ManagedPostgresImportSource): Connection details for a PostgreSQL source to inspect
+            or import.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -104,15 +105,16 @@ def sync(
     client: AuthenticatedClient | Client,
     body: ManagedPostgresImportSource,
 ) -> ManagedPostgresMigrationCheck | Problem | None:
-    """Check prerequisites for a native PostgreSQL live migration
+    """Check prerequisites for a native PostgreSQL live migration for the organization.
 
-     Inspects source replication settings, capacity, supported table structures and an empty target. It
-    may wake the target. The check creates no replication resources.
+     On the organization's database, inspects source replication settings, capacity, supported table
+    structures and an empty target. It may wake the target. The check creates no replication resources.
 
     Args:
         organization (str):
         id (str):
-        body (ManagedPostgresImportSource):
+        body (ManagedPostgresImportSource): Connection details for a PostgreSQL source to inspect
+            or import.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -137,15 +139,16 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: ManagedPostgresImportSource,
 ) -> Response[ManagedPostgresMigrationCheck | Problem]:
-    """Check prerequisites for a native PostgreSQL live migration
+    """Check prerequisites for a native PostgreSQL live migration for the organization.
 
-     Inspects source replication settings, capacity, supported table structures and an empty target. It
-    may wake the target. The check creates no replication resources.
+     On the organization's database, inspects source replication settings, capacity, supported table
+    structures and an empty target. It may wake the target. The check creates no replication resources.
 
     Args:
         organization (str):
         id (str):
-        body (ManagedPostgresImportSource):
+        body (ManagedPostgresImportSource): Connection details for a PostgreSQL source to inspect
+            or import.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -173,15 +176,16 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: ManagedPostgresImportSource,
 ) -> ManagedPostgresMigrationCheck | Problem | None:
-    """Check prerequisites for a native PostgreSQL live migration
+    """Check prerequisites for a native PostgreSQL live migration for the organization.
 
-     Inspects source replication settings, capacity, supported table structures and an empty target. It
-    may wake the target. The check creates no replication resources.
+     On the organization's database, inspects source replication settings, capacity, supported table
+    structures and an empty target. It may wake the target. The check creates no replication resources.
 
     Args:
         organization (str):
         id (str):
-        body (ManagedPostgresImportSource):
+        body (ManagedPostgresImportSource): Connection details for a PostgreSQL source to inspect
+            or import.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

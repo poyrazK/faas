@@ -27,6 +27,7 @@ class ManagedPostgresBackupStatus:
     restore_window_seconds: int
     """Configured retention in seconds. Zero disables the restore window."""
     recovery: ManagedPostgresRecoveryStatus | Unset = UNSET
+    """Latest archive evidence and recovery point for a configured destination region."""
     last_base_backup_at: datetime.datetime | Unset = UNSET
     """When the scheduler last recorded a successful base backup."""
     latest_restore_drill: ManagedPostgresRestoreDrillStatus | Unset = UNSET

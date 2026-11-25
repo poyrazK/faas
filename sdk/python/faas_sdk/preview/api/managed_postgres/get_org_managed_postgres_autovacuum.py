@@ -56,9 +56,10 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ManagedPostgresAutovacuum | Problem]:
-    """Read a native PostgreSQL autovacuum profile and effective settings
+    """Read a native PostgreSQL autovacuum profile and effective settings for the organization.
 
-     Reads the selected profile and live settings where available. A parked database stays asleep.
+     On the organization's database, reads the selected profile and live settings where available. A
+    parked database stays asleep.
 
     Args:
         organization (str):
@@ -90,9 +91,10 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> ManagedPostgresAutovacuum | Problem | None:
-    """Read a native PostgreSQL autovacuum profile and effective settings
+    """Read a native PostgreSQL autovacuum profile and effective settings for the organization.
 
-     Reads the selected profile and live settings where available. A parked database stays asleep.
+     On the organization's database, reads the selected profile and live settings where available. A
+    parked database stays asleep.
 
     Args:
         organization (str):
@@ -119,9 +121,10 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ManagedPostgresAutovacuum | Problem]:
-    """Read a native PostgreSQL autovacuum profile and effective settings
+    """Read a native PostgreSQL autovacuum profile and effective settings for the organization.
 
-     Reads the selected profile and live settings where available. A parked database stays asleep.
+     On the organization's database, reads the selected profile and live settings where available. A
+    parked database stays asleep.
 
     Args:
         organization (str):
@@ -151,9 +154,10 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> ManagedPostgresAutovacuum | Problem | None:
-    """Read a native PostgreSQL autovacuum profile and effective settings
+    """Read a native PostgreSQL autovacuum profile and effective settings for the organization.
 
-     Reads the selected profile and live settings where available. A parked database stays asleep.
+     On the organization's database, reads the selected profile and live settings where available. A
+    parked database stays asleep.
 
     Args:
         organization (str):

@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ManagedPostgresQueryError } from './ManagedPostgresQueryError.js';
+/**
+ * Pooled error collection settings and retained events matching the filter.
+ */
 export type ManagedPostgresErrorHistory = {
   database_id: string;
   enabled: boolean;

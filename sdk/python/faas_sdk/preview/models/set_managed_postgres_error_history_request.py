@@ -11,6 +11,8 @@ T = TypeVar("T", bound="SetManagedPostgresErrorHistoryRequest")
 
 @_attrs_define
 class SetManagedPostgresErrorHistoryRequest:
+    """Enables or disables recording error metadata for pooled connections."""
+
     enabled: bool
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

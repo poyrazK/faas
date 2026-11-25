@@ -25,13 +25,13 @@ export type ManagedPostgresUpgradeRehearsal = {
    */
   recovery_point?: string;
   /**
-   * The last replayed commit reported by PostgreSQL.
+   * Last replayed commit observed on the private copy before the rehearsal upgrade.
    */
   recovered_to?: string;
   started_at: string;
   finished_at?: string;
   /**
-   * Total time from admission through cleanup.
+   * Elapsed seconds from admission through cleanup of the rehearsal copy.
    */
   duration_seconds?: number;
   /**

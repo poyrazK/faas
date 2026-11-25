@@ -10,6 +10,8 @@ T = TypeVar("T", bound="SetManagedPostgresRecoveryRegionRequest")
 
 @_attrs_define
 class SetManagedPostgresRecoveryRegionRequest:
+    """Destination region for the database's recovery archive."""
+
     region: str
     """The configured recovery destination. Send an empty string to disable regional recovery."""
 

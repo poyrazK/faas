@@ -11,6 +11,8 @@ T = TypeVar("T", bound="ManagedPostgresMigrationPreparationBlocker")
 
 @_attrs_define
 class ManagedPostgresMigrationPreparationBlocker:
+    """Source schema object that prevents preparing a migration target."""
+
     code: str
     count: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

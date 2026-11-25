@@ -16,6 +16,8 @@ T = TypeVar("T", bound="ManagedPostgresTableHealthSample")
 
 @_attrs_define
 class ManagedPostgresTableHealthSample:
+    """Ranked table and leaf-partition measurements observed on the primary."""
+
     sampled_at: datetime.datetime
     has_more: bool
     tables: list[ManagedPostgresTableHealthRow]

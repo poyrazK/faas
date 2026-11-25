@@ -18,6 +18,8 @@ T = TypeVar("T", bound="ManagedPostgresBindingTimeouts")
 
 @_attrs_define
 class ManagedPostgresBindingTimeouts:
+    """Saved pooled binding timeouts and the current proxy refresh state."""
+
     binding_id: str
     statement_timeout_ms: int
     lock_timeout_ms: int

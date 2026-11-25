@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Masking rule for a column in the copied database.
+ */
 export type ManagedPostgresMaskedColumn = {
   name: string;
   /**

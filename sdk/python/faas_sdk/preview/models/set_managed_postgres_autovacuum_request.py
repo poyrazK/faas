@@ -16,6 +16,8 @@ T = TypeVar("T", bound="SetManagedPostgresAutovacuumRequest")
 
 @_attrs_define
 class SetManagedPostgresAutovacuumRequest:
+    """Requested autovacuum profile for a native PostgreSQL database."""
+
     profile: SetManagedPostgresAutovacuumRequestProfile
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

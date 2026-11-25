@@ -12,6 +12,8 @@ T = TypeVar("T", bound="RequestManagedPostgresUpgradeRehearsal")
 
 @_attrs_define
 class RequestManagedPostgresUpgradeRehearsal:
+    """Target PostgreSQL major and request identifier for a private upgrade rehearsal."""
+
     request_id: UUID
     """Reuse when retrying a request with the same source and target major."""
     postgres_major: int

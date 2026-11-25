@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ManagedPostgresImportSource } from './ManagedPostgresImportSource.js';
+/**
+ * Request to verify migration replay after source writes have paused.
+ */
 export type ManagedPostgresMigrationVerifyRequest = {
   operation_id: string;
   source: ManagedPostgresImportSource;

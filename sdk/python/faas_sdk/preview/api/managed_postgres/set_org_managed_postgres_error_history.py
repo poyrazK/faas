@@ -66,15 +66,16 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: SetManagedPostgresErrorHistoryRequest,
 ) -> Response[ManagedPostgresErrorHistory | Problem]:
-    """Enable or disable collection of pooled PostgreSQL errors.
+    """Enable or disable collection of pooled PostgreSQL errors for the organization.
 
-     Collection defaults to disabled. Disabling collection keeps events already retained until they
-    expire.
+     On the organization's database, collection defaults to disabled. Disabling collection keeps events
+    already retained until they expire.
 
     Args:
         organization (str):
         id (str):
-        body (SetManagedPostgresErrorHistoryRequest):
+        body (SetManagedPostgresErrorHistoryRequest): Enables or disables recording error metadata
+            for pooled connections.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -104,15 +105,16 @@ def sync(
     client: AuthenticatedClient | Client,
     body: SetManagedPostgresErrorHistoryRequest,
 ) -> ManagedPostgresErrorHistory | Problem | None:
-    """Enable or disable collection of pooled PostgreSQL errors.
+    """Enable or disable collection of pooled PostgreSQL errors for the organization.
 
-     Collection defaults to disabled. Disabling collection keeps events already retained until they
-    expire.
+     On the organization's database, collection defaults to disabled. Disabling collection keeps events
+    already retained until they expire.
 
     Args:
         organization (str):
         id (str):
-        body (SetManagedPostgresErrorHistoryRequest):
+        body (SetManagedPostgresErrorHistoryRequest): Enables or disables recording error metadata
+            for pooled connections.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -137,15 +139,16 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: SetManagedPostgresErrorHistoryRequest,
 ) -> Response[ManagedPostgresErrorHistory | Problem]:
-    """Enable or disable collection of pooled PostgreSQL errors.
+    """Enable or disable collection of pooled PostgreSQL errors for the organization.
 
-     Collection defaults to disabled. Disabling collection keeps events already retained until they
-    expire.
+     On the organization's database, collection defaults to disabled. Disabling collection keeps events
+    already retained until they expire.
 
     Args:
         organization (str):
         id (str):
-        body (SetManagedPostgresErrorHistoryRequest):
+        body (SetManagedPostgresErrorHistoryRequest): Enables or disables recording error metadata
+            for pooled connections.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -173,15 +176,16 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: SetManagedPostgresErrorHistoryRequest,
 ) -> ManagedPostgresErrorHistory | Problem | None:
-    """Enable or disable collection of pooled PostgreSQL errors.
+    """Enable or disable collection of pooled PostgreSQL errors for the organization.
 
-     Collection defaults to disabled. Disabling collection keeps events already retained until they
-    expire.
+     On the organization's database, collection defaults to disabled. Disabling collection keeps events
+    already retained until they expire.
 
     Args:
         organization (str):
         id (str):
-        body (SetManagedPostgresErrorHistoryRequest):
+        body (SetManagedPostgresErrorHistoryRequest): Enables or disables recording error metadata
+            for pooled connections.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

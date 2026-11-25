@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ManagedPostgresExtensionVersion } from './ManagedPostgresExtensionVersion.js';
+/**
+ * Installed PostgreSQL extensions and versions available to the database.
+ */
 export type ManagedPostgresExtensions = {
   installed: Array<ManagedPostgresExtensionVersion>;
   available: Array<ManagedPostgresExtensionVersion>;

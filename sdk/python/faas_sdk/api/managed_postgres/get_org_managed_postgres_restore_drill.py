@@ -60,10 +60,10 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ManagedPostgresRestoreDrill | Problem]:
-    """Read a native PostgreSQL restore drill
+    """Read a native PostgreSQL restore drill for the organization.
 
-     Reads a requested drill for the selected database. Reading the receipt leaves a parked source
-    asleep.
+     On the organization's database, reads a requested drill for the selected database. Reading the
+    receipt leaves a parked source asleep.
 
     Args:
         organization (str):
@@ -98,10 +98,10 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> ManagedPostgresRestoreDrill | Problem | None:
-    """Read a native PostgreSQL restore drill
+    """Read a native PostgreSQL restore drill for the organization.
 
-     Reads a requested drill for the selected database. Reading the receipt leaves a parked source
-    asleep.
+     On the organization's database, reads a requested drill for the selected database. Reading the
+    receipt leaves a parked source asleep.
 
     Args:
         organization (str):
@@ -131,10 +131,10 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ManagedPostgresRestoreDrill | Problem]:
-    """Read a native PostgreSQL restore drill
+    """Read a native PostgreSQL restore drill for the organization.
 
-     Reads a requested drill for the selected database. Reading the receipt leaves a parked source
-    asleep.
+     On the organization's database, reads a requested drill for the selected database. Reading the
+    receipt leaves a parked source asleep.
 
     Args:
         organization (str):
@@ -167,10 +167,10 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> ManagedPostgresRestoreDrill | Problem | None:
-    """Read a native PostgreSQL restore drill
+    """Read a native PostgreSQL restore drill for the organization.
 
-     Reads a requested drill for the selected database. Reading the receipt leaves a parked source
-    asleep.
+     On the organization's database, reads a requested drill for the selected database. Reading the
+    receipt leaves a parked source asleep.
 
     Args:
         organization (str):

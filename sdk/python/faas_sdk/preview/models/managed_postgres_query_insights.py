@@ -19,6 +19,8 @@ T = TypeVar("T", bound="ManagedPostgresQueryInsights")
 
 @_attrs_define
 class ManagedPostgresQueryInsights:
+    """Ranked statement statistics and the coverage of the observation window."""
+
     database_id: UUID
     enabled: bool
     since: datetime.datetime

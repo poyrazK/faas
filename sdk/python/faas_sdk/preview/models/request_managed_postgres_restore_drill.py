@@ -12,6 +12,8 @@ T = TypeVar("T", bound="RequestManagedPostgresRestoreDrill")
 
 @_attrs_define
 class RequestManagedPostgresRestoreDrill:
+    """Idempotency identifier for a requested restore drill."""
+
     request_id: UUID
     """Reuse on retries for this source database."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

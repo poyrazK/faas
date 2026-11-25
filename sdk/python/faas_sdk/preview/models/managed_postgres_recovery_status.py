@@ -18,6 +18,8 @@ T = TypeVar("T", bound="ManagedPostgresRecoveryStatus")
 
 @_attrs_define
 class ManagedPostgresRecoveryStatus:
+    """Latest archive evidence and recovery point for a configured destination region."""
+
     region: str
     outcome: ManagedPostgresRecoveryStatusOutcome
     reason: str
@@ -25,9 +27,9 @@ class ManagedPostgresRecoveryStatus:
     recovery_lag_seconds: int | Unset = UNSET
     missing_wal_segment: str | Unset = UNSET
     recovery_timeline: int | Unset = UNSET
-    """PostgreSQL timeline selected from the archive."""
+    """PostgreSQL timeline supporting the verified point in the recovery region."""
     missing_timeline_history: str | Unset = UNSET
-    """Timeline history file needed to select the recovery WAL."""
+    """History file the destination archive needs to verify the promoted lineage."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

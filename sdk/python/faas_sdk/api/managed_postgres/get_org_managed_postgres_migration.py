@@ -56,9 +56,10 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ManagedPostgresMigrationProgress | Problem]:
-    """Get native PostgreSQL live migration progress
+    """Get native PostgreSQL live migration progress for the organization.
 
-     Reports initial table copy and source WAL progress without waking a parked target.
+     On the organization's database, reports initial table copy and source WAL progress without waking a
+    parked target.
 
     Args:
         organization (str):
@@ -90,9 +91,10 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> ManagedPostgresMigrationProgress | Problem | None:
-    """Get native PostgreSQL live migration progress
+    """Get native PostgreSQL live migration progress for the organization.
 
-     Reports initial table copy and source WAL progress without waking a parked target.
+     On the organization's database, reports initial table copy and source WAL progress without waking a
+    parked target.
 
     Args:
         organization (str):
@@ -119,9 +121,10 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ManagedPostgresMigrationProgress | Problem]:
-    """Get native PostgreSQL live migration progress
+    """Get native PostgreSQL live migration progress for the organization.
 
-     Reports initial table copy and source WAL progress without waking a parked target.
+     On the organization's database, reports initial table copy and source WAL progress without waking a
+    parked target.
 
     Args:
         organization (str):
@@ -151,9 +154,10 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> ManagedPostgresMigrationProgress | Problem | None:
-    """Get native PostgreSQL live migration progress
+    """Get native PostgreSQL live migration progress for the organization.
 
-     Reports initial table copy and source WAL progress without waking a parked target.
+     On the organization's database, reports initial table copy and source WAL progress without waking a
+    parked target.
 
     Args:
         organization (str):

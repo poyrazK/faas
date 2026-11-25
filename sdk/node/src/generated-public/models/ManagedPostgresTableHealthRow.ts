@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Storage, dead-row estimates, and vacuum observations for one relation.
+ */
 export type ManagedPostgresTableHealthRow = {
   schema: string;
   name: string;

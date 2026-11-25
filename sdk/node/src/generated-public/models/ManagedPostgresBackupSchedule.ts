@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Daily export schedule, destination, and recorded delivery outcome.
+ */
 export type ManagedPostgresBackupSchedule = {
   database_id: string;
   bucket_app_id: string;

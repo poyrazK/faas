@@ -639,6 +639,15 @@ jobs:
           base="$(scripts/ci/light_diff_base.sh)"
           git diff --name-only "$base" HEAD > "$RUNNER_TEMP/changed-paths.txt"
           echo "LIGHT_DIFF_BASE=$base" >> "$GITHUB_ENV"
+      # The backup round trip uses clients from the server's major, as the
+      # database guest does. Newer pg_restore emits settings PG16 cannot read.
+      - name: use PostgreSQL 16 fixture clients
+        run: |
+          if [[ ! -x /usr/lib/postgresql/16/bin/pg_restore ]]; then
+            sudo apt-get update
+            sudo apt-get install -y postgresql-client-16
+          fi
+          echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
       # pkg/managedpostgres durable credential qualification delivers
       # credentials over native TLS (mega pg shard 2b does the same). Enabling
       # it only turns ssl on; non-TLS clients are unaffected.

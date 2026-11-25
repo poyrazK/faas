@@ -26,6 +26,8 @@ T = TypeVar("T", bound="ManagedPostgresAutovacuum")
 
 @_attrs_define
 class ManagedPostgresAutovacuum:
+    """Selected autovacuum profile and effective settings when observed."""
+
     database_id: UUID
     profile: ManagedPostgresAutovacuumProfile
     state: ManagedPostgresAutovacuumState

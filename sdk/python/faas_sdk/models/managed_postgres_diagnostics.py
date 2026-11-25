@@ -22,6 +22,8 @@ T = TypeVar("T", bound="ManagedPostgresDiagnostics")
 
 @_attrs_define
 class ManagedPostgresDiagnostics:
+    """Bounded activity and replication observations from the current primary."""
+
     database_id: UUID
     state: ManagedPostgresDiagnosticsState
     sample: ManagedPostgresActivitySample | Unset = UNSET

@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Saved pooled binding timeouts and the current proxy refresh state.
+ */
 export type ManagedPostgresBindingTimeouts = {
   binding_id: string;
   statement_timeout_ms: number;

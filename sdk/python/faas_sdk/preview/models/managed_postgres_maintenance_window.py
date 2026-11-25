@@ -11,6 +11,8 @@ T = TypeVar("T", bound="ManagedPostgresMaintenanceWindow")
 
 @_attrs_define
 class ManagedPostgresMaintenanceWindow:
+    """Recurring UTC time range when database maintenance can begin."""
+
     weekday: int
     """UTC weekday (Sunday = 0, Saturday = 6)."""
     start_minute: int

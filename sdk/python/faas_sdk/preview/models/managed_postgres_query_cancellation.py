@@ -17,6 +17,8 @@ T = TypeVar("T", bound="ManagedPostgresQueryCancellation")
 
 @_attrs_define
 class ManagedPostgresQueryCancellation:
+    """Recorded delivery outcome for a request to cancel a pooled query."""
+
     database_id: UUID
     target_id: UUID
     outcome: ManagedPostgresQueryCancellationOutcome

@@ -18,6 +18,8 @@ T = TypeVar("T", bound="ManagedPostgresExportManifest")
 
 @_attrs_define
 class ManagedPostgresExportManifest:
+    """Signed snapshot metadata and integrity checks for a portable export."""
+
     postgres_major: int
     captured_at: datetime.datetime
     extensions: list[ManagedPostgresExtensionVersion]

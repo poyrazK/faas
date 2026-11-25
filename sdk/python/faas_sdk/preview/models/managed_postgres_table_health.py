@@ -22,9 +22,12 @@ T = TypeVar("T", bound="ManagedPostgresTableHealth")
 
 @_attrs_define
 class ManagedPostgresTableHealth:
+    """Table health sample or the reason a sample could not be collected."""
+
     database_id: UUID
     state: ManagedPostgresTableHealthState
     sample: ManagedPostgresTableHealthSample | Unset = UNSET
+    """Ranked table and leaf-partition measurements observed on the primary."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

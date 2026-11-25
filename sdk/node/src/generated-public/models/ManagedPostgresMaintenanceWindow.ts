@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Recurring UTC time range when database maintenance can begin.
+ */
 export type ManagedPostgresMaintenanceWindow = {
   /**
    * UTC weekday (Sunday = 0, Saturday = 6).

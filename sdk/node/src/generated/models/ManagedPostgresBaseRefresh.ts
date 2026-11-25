@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Progress and outcome of replacing the database VM base image.
+ */
 export type ManagedPostgresBaseRefresh = {
   started_at: string;
   finished_at?: string;

@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ManagedPostgresExtensionVersion } from './ManagedPostgresExtensionVersion.js';
+/**
+ * Signed snapshot metadata and integrity checks for a portable export.
+ */
 export type ManagedPostgresExportManifest = {
   postgres_major: number;
   captured_at: string;

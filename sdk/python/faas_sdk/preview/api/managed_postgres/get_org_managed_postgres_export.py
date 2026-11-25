@@ -60,10 +60,10 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ManagedPostgresExport | Problem]:
-    """Read a native PostgreSQL export and its manifest
+    """Read a native PostgreSQL export and its manifest for the organization.
 
-     The ready manifest carries the snapshot time, PostgreSQL major, extension versions, size and SHA-256
-    checksum.
+     On the organization's database, the ready manifest carries the snapshot time, PostgreSQL major,
+    extension versions, size and SHA-256 checksum.
 
     Args:
         organization (str):
@@ -98,10 +98,10 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> ManagedPostgresExport | Problem | None:
-    """Read a native PostgreSQL export and its manifest
+    """Read a native PostgreSQL export and its manifest for the organization.
 
-     The ready manifest carries the snapshot time, PostgreSQL major, extension versions, size and SHA-256
-    checksum.
+     On the organization's database, the ready manifest carries the snapshot time, PostgreSQL major,
+    extension versions, size and SHA-256 checksum.
 
     Args:
         organization (str):
@@ -131,10 +131,10 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ManagedPostgresExport | Problem]:
-    """Read a native PostgreSQL export and its manifest
+    """Read a native PostgreSQL export and its manifest for the organization.
 
-     The ready manifest carries the snapshot time, PostgreSQL major, extension versions, size and SHA-256
-    checksum.
+     On the organization's database, the ready manifest carries the snapshot time, PostgreSQL major,
+    extension versions, size and SHA-256 checksum.
 
     Args:
         organization (str):
@@ -167,10 +167,10 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> ManagedPostgresExport | Problem | None:
-    """Read a native PostgreSQL export and its manifest
+    """Read a native PostgreSQL export and its manifest for the organization.
 
-     The ready manifest carries the snapshot time, PostgreSQL major, extension versions, size and SHA-256
-    checksum.
+     On the organization's database, the ready manifest carries the snapshot time, PostgreSQL major,
+    extension versions, size and SHA-256 checksum.
 
     Args:
         organization (str):

@@ -2434,16 +2434,8 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/ManagedPostgresImportSource'}
       responses:
-        '200':
-          description: Compatibility evidence or explicit blockers.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresMigrationCheck'}
-        default:
-          description: Invalid request, access denied, conflicting operation, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/CheckPostgresMigrationSuccess'}
+        default: {$ref: '#/components/responses/CheckPostgresMigrationProblem'}
   /v1/postgres/databases/{id}/migration:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -2458,32 +2450,16 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/ManagedPostgresImportRequest'}
       responses:
-        '200':
-          description: Latest observed migration progress.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresMigrationProgress'}
-        default:
-          description: Invalid request, access denied, conflicting operation, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/StartPostgresMigrationSuccess'}
+        default: {$ref: '#/components/responses/CheckPostgresMigrationProblem'}
     get:
       tags: [managed_postgres]
       operationId: getManagedPostgresMigration
       summary: Get native PostgreSQL live migration progress
       description: Reports initial table copy and source WAL progress without waking a parked target.
       responses:
-        '200':
-          description: Latest observed migration progress.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresMigrationProgress'}
-        default:
-          description: Invalid request, access denied, conflicting operation, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/StartPostgresMigrationSuccess'}
+        default: {$ref: '#/components/responses/CheckPostgresMigrationProblem'}
   /v1/postgres/databases/{id}/migration/stop:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -2498,16 +2474,8 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/ManagedPostgresImportRequest'}
       responses:
-        '200':
-          description: Latest observed migration progress.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresMigrationProgress'}
-        default:
-          description: Invalid request, access denied, conflicting operation, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/StartPostgresMigrationSuccess'}
+        default: {$ref: '#/components/responses/CheckPostgresMigrationProblem'}
   /v1/postgres/databases/{id}/migration/prepare:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -2522,16 +2490,8 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/ManagedPostgresImportRequest'}
       responses:
-        '200':
-          description: Latest observed migration progress.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresMigrationProgress'}
-        default:
-          description: Invalid request, access denied, conflicting operation, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/StartPostgresMigrationSuccess'}
+        default: {$ref: '#/components/responses/CheckPostgresMigrationProblem'}
   /v1/postgres/databases/{id}/migration/verify:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -2546,16 +2506,8 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/ManagedPostgresMigrationVerifyRequest'}
       responses:
-        '200':
-          description: Latest observed migration progress.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresMigrationProgress'}
-        default:
-          description: Invalid request, access denied, conflicting operation, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/StartPostgresMigrationSuccess'}
+        default: {$ref: '#/components/responses/CheckPostgresMigrationProblem'}
   /v1/postgres/databases/{id}/backup-schedule:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -2564,16 +2516,8 @@ paths:
       summary: Read a daily portable backup schedule and its last outcome.
       tags: [managed_postgres]
       responses:
-        '200':
-          description: The destination, next scheduled run and most recent outcome.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresBackupSchedule'}
-        default:
-          description: The schedule is absent or the caller cannot access it.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/GetPostgresBackupScheduleSuccess'}
+        default: {$ref: '#/components/responses/GetPostgresBackupScheduleProblem'}
     put:
       operationId: setManagedPostgresBackupSchedule
       summary: Schedule a daily portable backup to a private Object Storage bucket.
@@ -2585,29 +2529,16 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/SetManagedPostgresBackupScheduleRequest'}
       responses:
-        '200':
-          description: The saved backup schedule.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresBackupSchedule'}
-        default:
-          description: Validation, permission, or active execution conflict.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/SetPostgresBackupScheduleSuccess'}
+        default: {$ref: '#/components/responses/SetPostgresBackupScheduleProblem'}
     delete:
       operationId: deleteManagedPostgresBackupSchedule
       summary: Disable future portable backup runs.
       description: Leaves the objects already delivered to the bucket. An active delivery lease can return conflict.
       tags: [managed_postgres]
       responses:
-        '204':
-          description: The schedule is disabled.
-        default:
-          description: Permission or active execution conflict.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '204': {$ref: '#/components/responses/DeletePostgresBackupScheduleNoContent'}
+        default: {$ref: '#/components/responses/DeletePostgresBackupScheduleProblem'}
   /v1/postgres/databases/{id}/exports:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -2622,70 +2553,33 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/ManagedPostgresExportRequest'}
       responses:
-        '200':
-          description: The export already reached its terminal state.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresExport'}
-        '202':
-          description: The export is queued or running.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresExport'}
-        default:
-          description: Invalid request, access denied, unavailable export, or expired export.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/StartPostgresExportSuccess'}
+        '202': {$ref: '#/components/responses/StartPostgresExportAccepted'}
+        default: {$ref: '#/components/responses/StartPostgresExportProblem'}
   /v1/postgres/databases/{id}/exports/{export_id}:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
-      - name: export_id
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/ManagedPostgresExportID'
     get:
       tags: [managed_postgres]
       operationId: getManagedPostgresExport
       summary: Read a native PostgreSQL export and its manifest
       description: The ready manifest carries the snapshot time, PostgreSQL major, extension versions, size and SHA-256 checksum.
       responses:
-        '200':
-          description: Export status.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresExport'}
-        default:
-          description: Invalid request, access denied, unavailable export, or expired export.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/GetPostgresExportSuccess'}
+        default: {$ref: '#/components/responses/StartPostgresExportProblem'}
   /v1/postgres/databases/{id}/exports/{export_id}/download:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
-      - name: export_id
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/ManagedPostgresExportID'
     get:
       tags: [managed_postgres]
       operationId: downloadManagedPostgresExport
       summary: Download a completed native PostgreSQL export
       description: Streams the private PostgreSQL custom archive before its expiry. Authenticate with PostgreSQL management access.
       responses:
-        '200':
-          description: Standard PostgreSQL custom archive.
-          headers:
-            X-Content-SHA256:
-              schema: {type: string, pattern: '^[0-9a-f]{64}$'}
-          content:
-            application/octet-stream:
-              schema: {type: string, format: binary}
-        default:
-          description: Invalid request, access denied, unavailable export, or expired export.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/DownloadPostgresExportSuccess'}
+        default: {$ref: '#/components/responses/StartPostgresExportProblem'}
   /v1/postgres/databases/{id}/imports/check:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -2700,16 +2594,8 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/ManagedPostgresImportSource'}
       responses:
-        '200':
-          description: Import evidence.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresImportStatus'}
-        default:
-          description: Invalid request, access denied, conflicting operation, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/CheckPostgresImportSuccess'}
+        default: {$ref: '#/components/responses/CheckPostgresMigrationProblem'}
   /v1/postgres/databases/{id}/imports:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -2724,28 +2610,13 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/ManagedPostgresImportRequest'}
       responses:
-        '200':
-          description: Import evidence.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresImportStatus'}
-        '202':
-          description: The import is running.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresImportStatus'}
-        default:
-          description: Invalid request, access denied, conflicting operation, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/CheckPostgresImportSuccess'}
+        '202': {$ref: '#/components/responses/StartPostgresImportAccepted'}
+        default: {$ref: '#/components/responses/CheckPostgresMigrationProblem'}
   /v1/postgres/databases/{id}/imports/{operation_id}/archive:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
-      - name: operation_id
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/ManagedPostgresImportOperationID'
     post:
       tags: [managed_postgres]
       operationId: uploadManagedPostgresArchive
@@ -2770,44 +2641,21 @@ paths:
               archive:
                 contentType: application/octet-stream
       responses:
-        '200':
-          description: Import progress or preflight failure.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresImportStatus'}
-        '202':
-          description: The verified archive is restoring.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresImportStatus'}
-        default:
-          description: Invalid receipt, invalid archive, access denied, conflicting operation, or unsupported target.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/UploadPostgresArchiveSuccess'}
+        '202': {$ref: '#/components/responses/UploadPostgresArchiveAccepted'}
+        default: {$ref: '#/components/responses/UploadPostgresArchiveProblem'}
   /v1/postgres/databases/{id}/imports/{operation_id}:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
-      - name: operation_id
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/ManagedPostgresImportOperationID'
     get:
       tags: [managed_postgres]
       operationId: getManagedPostgresImport
       summary: Read the progress of a native PostgreSQL import
       description: Reads the import without waking the target. An unverified result means the current guest cannot report the requested operation.
       responses:
-        '200':
-          description: Import evidence.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresImportStatus'}
-        default:
-          description: Invalid request, access denied, conflicting operation, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/CheckPostgresImportSuccess'}
+        default: {$ref: '#/components/responses/CheckPostgresMigrationProblem'}
   /v1/postgres/databases/{id}/extensions:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -2817,43 +2665,22 @@ paths:
       summary: List native PostgreSQL extension versions
       description: Reads the current primary and may wake it. An optional later major compares installed versions with the configured upgrade image.
       parameters:
-        - name: target_major
-          in: query
-          schema: {type: integer, minimum: 15, maximum: 18}
+        - $ref: '#/components/parameters/ManagedPostgresExtensionTargetMajor'
       responses:
-        '200':
-          description: Available managed versions and observed installed extensions.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresExtensions'}
-        default:
-          description: Invalid request, access denied, or unsupported or unavailable database.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/ListPostgresExtensionsSuccess'}
+        default: {$ref: '#/components/responses/ListPostgresExtensionsProblem'}
   /v1/postgres/databases/{id}/extensions/{extension}:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
-      - name: extension
-        in: path
-        required: true
-        schema: {type: string, enum: [btree_gist, pg_trgm, vector]}
+      - $ref: '#/components/parameters/ManagedPostgresExtensionName'
     put:
       tags: [managed_postgres]
       operationId: enableManagedPostgresExtension
       summary: Enable a managed PostgreSQL extension
       description: Installs the default version of the extension on the native primary. Repeating the operation preserves an installed version.
       responses:
-        '200':
-          description: Available managed versions and observed installed extensions.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresExtensions'}
-        default:
-          description: Invalid request, access denied, or unsupported or unavailable database.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/ListPostgresExtensionsSuccess'}
+        default: {$ref: '#/components/responses/ListPostgresExtensionsProblem'}
   /v1/postgres/databases/{id}/sessions:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -2863,16 +2690,8 @@ paths:
       summary: Inspect native PostgreSQL client sessions
       description: Samples a running primary without waking a parked database. A cancel target identifies one currently tracked pooled query.
       responses:
-        '200':
-          description: Session metadata and available cancel targets.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresSessions'}
-        default:
-          description: Access denied, database not found, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/ListPostgresSessionsSuccess'}
+        default: {$ref: '#/components/responses/ListPostgresSessionsProblem'}
   /v1/postgres/databases/{id}/cancel-query:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -2887,16 +2706,8 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/CancelManagedPostgresQueryRequest'}
       responses:
-        '200':
-          description: Cancel delivery outcome. Signal sent confirms sending the request to PostgreSQL.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresQueryCancellation'}
-        default:
-          description: Invalid target, access denied, database not found, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/CancelPostgresQuerySuccess'}
+        default: {$ref: '#/components/responses/CancelPostgresQueryProblem'}
   /v1/postgres/databases/{id}/autovacuum:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -2906,16 +2717,8 @@ paths:
       summary: Read a native PostgreSQL autovacuum profile and effective settings
       description: Reads the selected profile and live settings where available. A parked database stays asleep.
       responses:
-        '200':
-          description: Autovacuum profile status.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresAutovacuum'}
-        default:
-          description: Access denied, database not found, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/GetPostgresAutovacuumSuccess'}
+        default: {$ref: '#/components/responses/ListPostgresSessionsProblem'}
     put:
       tags: [managed_postgres]
       operationId: setManagedPostgresAutovacuum
@@ -2927,16 +2730,8 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/SetManagedPostgresAutovacuumRequest'}
       responses:
-        '200':
-          description: The saved profile and its current application status.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresAutovacuum'}
-        default:
-          description: Invalid profile, access denied, database not found, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/SetPostgresAutovacuumSuccess'}
+        default: {$ref: '#/components/responses/SetPostgresAutovacuumProblem'}
   /v1/postgres/databases/{id}/errors:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -2946,26 +2741,12 @@ paths:
       description: Returns newest first. The history keeps up to 1000 events per database for up to 24 hours. Reading history does not wake a parked database.
       tags: [managed_postgres]
       parameters:
-        - name: since_seconds
-          in: query
-          schema: {type: integer, minimum: 1, maximum: 86400, default: 3600}
-        - name: sqlstate
-          in: query
-          schema: {type: string, pattern: '^[A-Z0-9]{5}$'}
-        - name: limit
-          in: query
-          schema: {type: integer, minimum: 1, maximum: 100, default: 40}
+        - $ref: '#/components/parameters/ManagedPostgresErrorHistoryWindow'
+        - $ref: '#/components/parameters/ManagedPostgresErrorSQLSTATE'
+        - $ref: '#/components/parameters/ManagedPostgresErrorHistoryLimit'
       responses:
-        '200':
-          description: Collection state and matching error metadata.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresErrorHistory'}
-        default:
-          description: Invalid filter, permission, or database problem.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/GetPostgresErrorHistorySuccess'}
+        default: {$ref: '#/components/responses/GetPostgresErrorHistoryProblem'}
     put:
       operationId: setManagedPostgresErrorHistory
       summary: Enable or disable collection of pooled PostgreSQL errors.
@@ -2977,16 +2758,8 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/SetManagedPostgresErrorHistoryRequest'}
       responses:
-        '200':
-          description: The saved collection state and recent events.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresErrorHistory'}
-        default:
-          description: Invalid settings, permission, or database problem.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/SetPostgresErrorHistorySuccess'}
+        default: {$ref: '#/components/responses/SetPostgresErrorHistoryProblem'}
   /v1/postgres/databases/{id}/query-insights:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -2996,20 +2769,10 @@ paths:
       summary: Rank statements by execution time over an observed window
       description: Reads stored numeric statement statistics for a single-zone native PostgreSQL database without waking it.
       parameters:
-        - name: since_seconds
-          in: query
-          schema: {type: integer, minimum: 1, maximum: 86400, default: 3600}
+        - $ref: '#/components/parameters/ManagedPostgresQueryInsightsWindow'
       responses:
-        '200':
-          description: Query statistics and observation coverage.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresQueryInsights'}
-        default:
-          description: Invalid request, access denied, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/GetPostgresQueryInsightsSuccess'}
+        default: {$ref: '#/components/responses/GetPostgresQueryInsightsProblem'}
     put:
       tags: [managed_postgres]
       operationId: setManagedPostgresQueryInsights
@@ -3021,16 +2784,8 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/SetManagedPostgresQueryInsightsRequest'}
       responses:
-        '200':
-          description: Query statistics and observation coverage.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresQueryInsights'}
-        default:
-          description: Invalid request, access denied, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/GetPostgresQueryInsightsSuccess'}
+        default: {$ref: '#/components/responses/GetPostgresQueryInsightsProblem'}
   /v1/postgres/databases/{id}/diagnostics:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -3040,16 +2795,8 @@ paths:
       summary: Diagnose a native PostgreSQL primary
       description: Reads one bounded activity sample from the running primary. A parked database stays asleep and reports its state.
       responses:
-        '200':
-          description: Primary activity or its current sample availability.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresDiagnostics'}
-        default:
-          description: Access denied, database not found, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/GetPostgresDiagnosticsSuccess'}
+        default: {$ref: '#/components/responses/ListPostgresSessionsProblem'}
   /v1/postgres/databases/{id}/tables:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -3063,20 +2810,10 @@ paths:
           in: query
           schema: {type: string, enum: [size, dead-rows, xid-age], default: size}
           description: Rank descending by total table and index size, estimated dead rows, or transaction ID age.
-        - name: limit
-          in: query
-          schema: {type: integer, minimum: 1, maximum: 50, default: 20}
+        - $ref: '#/components/parameters/ManagedPostgresTableHealthLimit'
       responses:
-        '200':
-          description: Table health or its current sample availability.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresTableHealth'}
-        default:
-          description: Invalid options, access denied, database not found, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/GetPostgresTableHealthSuccess'}
+        default: {$ref: '#/components/responses/GetPostgresTableHealthProblem'}
   /v1/postgres/databases/{id}/restore-drills:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -3091,39 +2828,20 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/RequestManagedPostgresRestoreDrill'}
       responses:
-        '202':
-          description: The recorded drill. Reusing the same request ID returns its current outcome.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresRestoreDrill'}
-        default:
-          description: Invalid request, access denied, busy, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '202': {$ref: '#/components/responses/StartPostgresRestoreDrillAccepted'}
+        default: {$ref: '#/components/responses/StartPostgresRestoreDrillProblem'}
   /v1/postgres/databases/{id}/restore-drills/{drill_id}:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
-      - name: drill_id
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/ManagedPostgresRestoreDrillID'
     get:
       tags: [managed_postgres]
       operationId: getManagedPostgresRestoreDrill
       summary: Read a native PostgreSQL restore drill
       description: Reads a requested drill for the selected database. Reading the receipt leaves a parked source asleep.
       responses:
-        '200':
-          description: The recorded drill and its progress.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresRestoreDrill'}
-        default:
-          description: Access denied, drill not found, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/GetPostgresRestoreDrillSuccess'}
+        default: {$ref: '#/components/responses/GetPostgresRestoreDrillProblem'}
   /v1/postgres/databases/{id}/upgrade-rehearsals:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -3138,39 +2856,20 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/RequestManagedPostgresUpgradeRehearsal'}
       responses:
-        '202':
-          description: The recorded rehearsal. Reuse the request ID with the same target major to read its current outcome.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresUpgradeRehearsal'}
-        default:
-          description: Invalid request, access denied, busy, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '202': {$ref: '#/components/responses/StartPostgresUpgradeRehearsalAccepted'}
+        default: {$ref: '#/components/responses/StartPostgresRestoreDrillProblem'}
   /v1/postgres/databases/{id}/upgrade-rehearsals/{rehearsal_id}:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
-      - name: rehearsal_id
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/ManagedPostgresUpgradeRehearsalID'
     get:
       tags: [managed_postgres]
       operationId: getManagedPostgresUpgradeRehearsal
       summary: Read a native PostgreSQL upgrade rehearsal
       description: Reads the rehearsal progress or outcome for the selected source database.
       responses:
-        '200':
-          description: The recorded rehearsal and its progress.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresUpgradeRehearsal'}
-        default:
-          description: Access denied, rehearsal not found, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/GetPostgresUpgradeRehearsalSuccess'}
+        default: {$ref: '#/components/responses/GetPostgresUpgradeRehearsalProblem'}
   /v1/postgres/databases/{id}/restore-check:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -3180,21 +2879,10 @@ paths:
       summary: Check native PostgreSQL archive evidence for a restore target.
       description: Reads the selected base backup and bounded WAL evidence for this target. A covered result describes the archive at check time.
       parameters:
-        - name: point_in_time
-          in: query
-          required: true
-          schema: {type: string, format: date-time}
+        - $ref: '#/components/parameters/ManagedPostgresRestoreCheckTime'
       responses:
-        '200':
-          description: Archive evidence for the requested recovery point.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresRestoreCheck'}
-        default:
-          description: Invalid restore point, access denied, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/CheckPostgresRestoreSuccess'}
+        default: {$ref: '#/components/responses/CheckPostgresRestoreProblem'}
   /v1/postgres/databases/{id}/masked-branches:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -3218,11 +2906,7 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ManagedPostgresDatabase'}
-        default:
-          description: Request refused or service unavailable.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        default: {$ref: '#/components/responses/CreatePostgresMaskedBranchProblem'}
   /v1/postgres/databases/{id}/recovery-region:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -3236,13 +2920,8 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/SetManagedPostgresRecoveryRegionRequest'}
       responses:
-        '204':
-          description: Recovery preference updated.
-        default:
-          description: Invalid region, insufficient access, or recovery unavailable.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '204': {$ref: '#/components/responses/SetPostgresRecoveryRegionNoContent'}
+        default: {$ref: '#/components/responses/SetPostgresRecoveryRegionProblem'}
   /v1/postgres/databases/{id}/restore:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -3281,7 +2960,7 @@ paths:
         '200':
           description: Bounded credential-free planning and explicit unknown coverage
           headers:
-            Cache-Control: {schema: {type: string}, description: Always no-store}
+            Cache-Control: {schema: {type: string}, description: Connection budget metadata is served with Cache-Control no-store.}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ManagedPostgresConnectionBudget'}
@@ -3419,16 +3098,8 @@ paths:
       summary: Get timeout defaults for a native pooled app binding.
       tags: [managed_postgres]
       responses:
-        '200':
-          description: Saved values and the pool refresh state.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresBindingTimeouts'}
-        default:
-          description: Problem reading binding timeout defaults.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/GetPostgresBindingTimeoutsSuccess'}
+        default: {$ref: '#/components/responses/GetPostgresBindingTimeoutsProblem'}
     put:
       operationId: setManagedPostgresBindingTimeouts
       summary: Save timeout defaults for a native pooled app binding.
@@ -3440,16 +3111,8 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/SetManagedPostgresBindingTimeoutsRequest'}
       responses:
-        '200':
-          description: Saved values and the pool refresh state.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresBindingTimeouts'}
-        default:
-          description: Invalid settings, conflict, or provider problem.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/GetPostgresBindingTimeoutsSuccess'}
+        default: {$ref: '#/components/responses/SetPostgresBindingTimeoutsProblem'}
   /v1/apps/{slug}/buckets:
     parameters:
       - {name: slug, description: App whose bucket catalog is being managed., in: path, required: true, schema: {type: string}}
@@ -9484,7 +9147,7 @@ paths:
             schema: {$ref: '#/components/schemas/ActivateManagedPostgresMigrationRequest'}
       responses:
         '202':
-          description: The switch was recorded and runs in the background.
+          description: "The migration activation is queued for the application environment."
           content:
             application/json:
               schema: {$ref: '#/components/schemas/DatabaseSwitch'}
@@ -27551,186 +27214,112 @@ paths:
         '409': {$ref: '#/components/responses/Conflict'}
   /v1/orgs/{organization}/postgres/databases/{id}/migration-check:
     parameters:
-      - name: organization
-        in: path
-        required: true
-        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresOrganization'
       - $ref: '#/components/parameters/ManagedPostgresID'
     post:
       tags: [managed_postgres]
       operationId: checkOrgManagedPostgresMigration
-      summary: Check prerequisites for a native PostgreSQL live migration
-      description: Inspects source replication settings, capacity, supported table structures and an empty target. It may wake the target. The check creates no replication resources.
+      summary: Check prerequisites for a native PostgreSQL live migration for the organization.
+      description: On the organization's database, inspects source replication settings, capacity, supported table structures and an empty target. It may wake the target. The check creates no replication resources.
       requestBody:
         required: true
         content:
           application/json:
             schema: {$ref: '#/components/schemas/ManagedPostgresImportSource'}
       responses:
-        '200':
-          description: Compatibility evidence or explicit blockers.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresMigrationCheck'}
-        default:
-          description: Invalid request, access denied, conflicting operation, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/CheckPostgresMigrationSuccess'}
+        default: {$ref: '#/components/responses/CheckPostgresMigrationProblem'}
   /v1/orgs/{organization}/postgres/databases/{id}/migration:
     parameters:
-      - name: organization
-        in: path
-        required: true
-        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresOrganization'
       - $ref: '#/components/parameters/ManagedPostgresID'
     post:
       tags: [managed_postgres]
       operationId: startOrgManagedPostgresMigration
-      summary: Start or resume a native PostgreSQL live migration
-      description: Copies tables into an empty single-zone native target and starts continuous logical replication with application connections fenced. Resume with the same operation ID and source credentials.
+      summary: Start or resume a native PostgreSQL live migration for the organization.
+      description: On the organization's database, copies tables into an empty single-zone native target and starts continuous logical replication with application connections fenced. Resume with the same operation ID and source credentials.
       requestBody:
         required: true
         content:
           application/json:
             schema: {$ref: '#/components/schemas/ManagedPostgresImportRequest'}
       responses:
-        '200':
-          description: Latest observed migration progress.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresMigrationProgress'}
-        default:
-          description: Invalid request, access denied, conflicting operation, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/StartPostgresMigrationSuccess'}
+        default: {$ref: '#/components/responses/CheckPostgresMigrationProblem'}
     get:
       tags: [managed_postgres]
       operationId: getOrgManagedPostgresMigration
-      summary: Get native PostgreSQL live migration progress
-      description: Reports initial table copy and source WAL progress without waking a parked target.
+      summary: Get native PostgreSQL live migration progress for the organization.
+      description: On the organization's database, reports initial table copy and source WAL progress without waking a parked target.
       responses:
-        '200':
-          description: Latest observed migration progress.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresMigrationProgress'}
-        default:
-          description: Invalid request, access denied, conflicting operation, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/StartPostgresMigrationSuccess'}
+        default: {$ref: '#/components/responses/CheckPostgresMigrationProblem'}
   /v1/orgs/{organization}/postgres/databases/{id}/migration/stop:
     parameters:
-      - name: organization
-        in: path
-        required: true
-        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresOrganization'
       - $ref: '#/components/parameters/ManagedPostgresID'
     post:
       tags: [managed_postgres]
       operationId: stopOrgManagedPostgresMigration
-      summary: Stop a native PostgreSQL live migration
-      description: Stops applying changes and attempts to clean up verified source replication resources. The target remains fenced.
+      summary: Stop a native PostgreSQL live migration for the organization.
+      description: On the organization's database, stops applying changes and attempts to clean up verified source replication resources. The target remains fenced.
       requestBody:
         required: true
         content:
           application/json:
             schema: {$ref: '#/components/schemas/ManagedPostgresImportRequest'}
       responses:
-        '200':
-          description: Latest observed migration progress.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresMigrationProgress'}
-        default:
-          description: Invalid request, access denied, conflicting operation, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/StartPostgresMigrationSuccess'}
+        default: {$ref: '#/components/responses/CheckPostgresMigrationProblem'}
   /v1/orgs/{organization}/postgres/databases/{id}/migration/prepare:
     parameters:
-      - name: organization
-        in: path
-        required: true
-        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresOrganization'
       - $ref: '#/components/parameters/ManagedPostgresID'
     post:
       tags: [managed_postgres]
       operationId: prepareOrgManagedPostgresMigration
-      summary: Prepare the target of a native PostgreSQL live migration
-      description: Queues schema preparation after initial table copy. Builds supported indexes while the subscriber continues to apply changes and reports source schema blockers. Read progress from the migration status endpoint.
+      summary: Prepare the target of a native PostgreSQL live migration for the organization.
+      description: On the organization's database, queues schema preparation after initial table copy. Builds supported indexes while the subscriber continues to apply changes and reports source schema blockers. Read progress from the migration status endpoint.
       requestBody:
         required: true
         content:
           application/json:
             schema: {$ref: '#/components/schemas/ManagedPostgresImportRequest'}
       responses:
-        '200':
-          description: Latest observed migration progress.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresMigrationProgress'}
-        default:
-          description: Invalid request, access denied, conflicting operation, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/StartPostgresMigrationSuccess'}
+        default: {$ref: '#/components/responses/CheckPostgresMigrationProblem'}
   /v1/orgs/{organization}/postgres/databases/{id}/migration/verify:
     parameters:
-      - name: organization
-        in: path
-        required: true
-        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresOrganization'
       - $ref: '#/components/parameters/ManagedPostgresID'
     post:
       tags: [managed_postgres]
       operationId: verifyOrgManagedPostgresMigration
-      summary: Verify durable replay after a PostgreSQL migration source write pause
-      description: Queues a replicated marker and sequence synchronization after an operator confirms a source write pause. Read the receipt from migration status. Keep source writes paused throughout verification and until activation.
+      summary: Verify durable replay after a PostgreSQL migration source write pause for the organization.
+      description: On the organization's database, queues a replicated marker and sequence synchronization after an operator confirms a source write pause. Read the receipt from migration status. Keep source writes paused throughout verification and until activation.
       requestBody:
         required: true
         content:
           application/json:
             schema: {$ref: '#/components/schemas/ManagedPostgresMigrationVerifyRequest'}
       responses:
-        '200':
-          description: Latest observed migration progress.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresMigrationProgress'}
-        default:
-          description: Invalid request, access denied, conflicting operation, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/StartPostgresMigrationSuccess'}
+        default: {$ref: '#/components/responses/CheckPostgresMigrationProblem'}
   /v1/orgs/{organization}/postgres/databases/{id}/backup-schedule:
     parameters:
-      - name: organization
-        in: path
-        required: true
-        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresOrganization'
       - $ref: '#/components/parameters/ManagedPostgresID'
     get:
       operationId: getOrgManagedPostgresBackupSchedule
-      summary: Read a daily portable backup schedule and its last outcome.
+      summary: Read a daily portable backup schedule and its last outcome for the organization.
       tags: [managed_postgres]
       responses:
-        '200':
-          description: The destination, next scheduled run and most recent outcome.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresBackupSchedule'}
-        default:
-          description: The schedule is absent or the caller cannot access it.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/GetPostgresBackupScheduleSuccess'}
+        default: {$ref: '#/components/responses/GetPostgresBackupScheduleProblem'}
     put:
       operationId: setOrgManagedPostgresBackupSchedule
-      summary: Schedule a daily portable backup to a private Object Storage bucket.
-      description: Upsert one daily UTC schedule. The database and the ready, private destination bucket belong to the same owner scope. Requires PostgreSQL management and destination write authority. Transfers use the destination's single-upload limit.
+      summary: Schedule a daily portable backup to a private Object Storage bucket for the organization.
+      description: On the organization's database, upsert one daily UTC schedule. The database and the ready, private destination bucket belong to the same owner scope. Requires PostgreSQL management and destination write authority. Transfers use the destination's single-upload limit.
       tags: [managed_postgres]
       requestBody:
         required: true
@@ -27738,196 +27327,105 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/SetManagedPostgresBackupScheduleRequest'}
       responses:
-        '200':
-          description: The saved backup schedule.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresBackupSchedule'}
-        default:
-          description: Validation, permission, or active execution conflict.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/SetPostgresBackupScheduleSuccess'}
+        default: {$ref: '#/components/responses/SetPostgresBackupScheduleProblem'}
     delete:
       operationId: deleteOrgManagedPostgresBackupSchedule
-      summary: Disable future portable backup runs.
-      description: Leaves the objects already delivered to the bucket. An active delivery lease can return conflict.
+      summary: Disable future portable backup runs for the organization.
+      description: On the organization's database, leaves the objects already delivered to the bucket. An active delivery lease can return conflict.
       tags: [managed_postgres]
       responses:
-        '204':
-          description: The schedule is disabled.
-        default:
-          description: Permission or active execution conflict.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '204': {$ref: '#/components/responses/DeletePostgresBackupScheduleNoContent'}
+        default: {$ref: '#/components/responses/DeletePostgresBackupScheduleProblem'}
   /v1/orgs/{organization}/postgres/databases/{id}/exports:
     parameters:
-      - name: organization
-        in: path
-        required: true
-        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresOrganization'
       - $ref: '#/components/parameters/ManagedPostgresID'
     post:
       tags: [managed_postgres]
       operationId: startOrgManagedPostgresExport
-      summary: Start a portable export of a native PostgreSQL database
-      description: Produces a consistent custom-format PostgreSQL dump in the background. Requires verified PostgreSQL management access. The caller-supplied request ID identifies the same export on retry.
+      summary: Start a portable export of a native PostgreSQL database for the organization.
+      description: On the organization's database, produces a consistent custom-format PostgreSQL dump in the background. Requires verified PostgreSQL management access. The caller-supplied request ID identifies the same export on retry.
       requestBody:
         required: true
         content:
           application/json:
             schema: {$ref: '#/components/schemas/ManagedPostgresExportRequest'}
       responses:
-        '200':
-          description: The export already reached its terminal state.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresExport'}
-        '202':
-          description: The export is queued or running.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresExport'}
-        default:
-          description: Invalid request, access denied, unavailable export, or expired export.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/StartPostgresExportSuccess'}
+        '202': {$ref: '#/components/responses/StartPostgresExportAccepted'}
+        default: {$ref: '#/components/responses/StartPostgresExportProblem'}
   /v1/orgs/{organization}/postgres/databases/{id}/exports/{export_id}:
     parameters:
-      - name: organization
-        in: path
-        required: true
-        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresOrganization'
       - $ref: '#/components/parameters/ManagedPostgresID'
-      - name: export_id
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/ManagedPostgresExportID'
     get:
       tags: [managed_postgres]
       operationId: getOrgManagedPostgresExport
-      summary: Read a native PostgreSQL export and its manifest
-      description: The ready manifest carries the snapshot time, PostgreSQL major, extension versions, size and SHA-256 checksum.
+      summary: Read a native PostgreSQL export and its manifest for the organization.
+      description: On the organization's database, the ready manifest carries the snapshot time, PostgreSQL major, extension versions, size and SHA-256 checksum.
       responses:
-        '200':
-          description: Export status.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresExport'}
-        default:
-          description: Invalid request, access denied, unavailable export, or expired export.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/GetPostgresExportSuccess'}
+        default: {$ref: '#/components/responses/StartPostgresExportProblem'}
   /v1/orgs/{organization}/postgres/databases/{id}/exports/{export_id}/download:
     parameters:
-      - name: organization
-        in: path
-        required: true
-        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresOrganization'
       - $ref: '#/components/parameters/ManagedPostgresID'
-      - name: export_id
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/ManagedPostgresExportID'
     get:
       tags: [managed_postgres]
       operationId: downloadOrgManagedPostgresExport
-      summary: Download a completed native PostgreSQL export
-      description: Streams the private PostgreSQL custom archive before its expiry. Authenticate with PostgreSQL management access.
+      summary: Download a completed native PostgreSQL export for the organization.
+      description: On the organization's database, streams the private PostgreSQL custom archive before its expiry. Authenticate with PostgreSQL management access.
       responses:
-        '200':
-          description: Standard PostgreSQL custom archive.
-          headers:
-            X-Content-SHA256:
-              schema: {type: string, pattern: '^[0-9a-f]{64}$'}
-          content:
-            application/octet-stream:
-              schema: {type: string, format: binary}
-        default:
-          description: Invalid request, access denied, unavailable export, or expired export.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/DownloadPostgresExportSuccess'}
+        default: {$ref: '#/components/responses/StartPostgresExportProblem'}
   /v1/orgs/{organization}/postgres/databases/{id}/imports/check:
     parameters:
-      - name: organization
-        in: path
-        required: true
-        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresOrganization'
       - $ref: '#/components/parameters/ManagedPostgresID'
     post:
       tags: [managed_postgres]
       operationId: checkOrgManagedPostgresImport
-      summary: Check a PostgreSQL source and an empty native import target
-      description: Checks the source connection, major version, extensions, target emptiness and estimated storage. May wake the target to inspect it. Requires PostgreSQL management access.
+      summary: Check a PostgreSQL source and an empty native import target for the organization.
+      description: On the organization's database, checks the source connection, major version, extensions, target emptiness and estimated storage. May wake the target to inspect it. Requires PostgreSQL management access.
       requestBody:
         required: true
         content:
           application/json:
             schema: {$ref: '#/components/schemas/ManagedPostgresImportSource'}
       responses:
-        '200':
-          description: Import evidence.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresImportStatus'}
-        default:
-          description: Invalid request, access denied, conflicting operation, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/CheckPostgresImportSuccess'}
+        default: {$ref: '#/components/responses/CheckPostgresMigrationProblem'}
   /v1/orgs/{organization}/postgres/databases/{id}/imports:
     parameters:
-      - name: organization
-        in: path
-        required: true
-        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresOrganization'
       - $ref: '#/components/parameters/ManagedPostgresID'
     post:
       tags: [managed_postgres]
       operationId: startOrgManagedPostgresImport
-      summary: Start a snapshot import into an empty native PostgreSQL database
-      description: Copies a consistent source snapshot. Reuse the operation ID to recover or retry the same import. The copy leaves application bindings in place.
+      summary: Start a snapshot import into an empty native PostgreSQL database for the organization.
+      description: On the organization's database, copies a consistent source snapshot. Reuse the operation ID to recover or retry the same import. The copy leaves application bindings in place.
       requestBody:
         required: true
         content:
           application/json:
             schema: {$ref: '#/components/schemas/ManagedPostgresImportRequest'}
       responses:
-        '200':
-          description: Import evidence.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresImportStatus'}
-        '202':
-          description: The import is running.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresImportStatus'}
-        default:
-          description: Invalid request, access denied, conflicting operation, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/CheckPostgresImportSuccess'}
+        '202': {$ref: '#/components/responses/StartPostgresImportAccepted'}
+        default: {$ref: '#/components/responses/CheckPostgresMigrationProblem'}
   /v1/orgs/{organization}/postgres/databases/{id}/imports/{operation_id}/archive:
     parameters:
-      - name: organization
-        in: path
-        required: true
-        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresOrganization'
       - $ref: '#/components/parameters/ManagedPostgresID'
-      - name: operation_id
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/ManagedPostgresImportOperationID'
     post:
       tags: [managed_postgres]
       operationId: uploadOrgManagedPostgresArchive
-      summary: Restore a Gregale-exported PostgreSQL archive to an empty native database
-      description: Uploads a PostgreSQL custom archive and its signed export manifest. Send the manifest part first. The target must be empty and compatible. Inspect the existing import status endpoint after upload.
+      summary: Restore a Gregale-exported PostgreSQL archive to an empty native database for the organization.
+      description: On the organization's database, uploads a PostgreSQL custom archive and its signed export manifest. Send the manifest part first. The target must be empty and compatible. Inspect the existing import status endpoint after upload.
       requestBody:
         required: true
         content:
@@ -27947,197 +27445,103 @@ paths:
               archive:
                 contentType: application/octet-stream
       responses:
-        '200':
-          description: Import progress or preflight failure.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresImportStatus'}
-        '202':
-          description: The verified archive is restoring.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresImportStatus'}
-        default:
-          description: Invalid receipt, invalid archive, access denied, conflicting operation, or unsupported target.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/UploadPostgresArchiveSuccess'}
+        '202': {$ref: '#/components/responses/UploadPostgresArchiveAccepted'}
+        default: {$ref: '#/components/responses/UploadPostgresArchiveProblem'}
   /v1/orgs/{organization}/postgres/databases/{id}/imports/{operation_id}:
     parameters:
-      - name: organization
-        in: path
-        required: true
-        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresOrganization'
       - $ref: '#/components/parameters/ManagedPostgresID'
-      - name: operation_id
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/ManagedPostgresImportOperationID'
     get:
       tags: [managed_postgres]
       operationId: getOrgManagedPostgresImport
-      summary: Read the progress of a native PostgreSQL import
-      description: Reads the import without waking the target. An unverified result means the current guest cannot report the requested operation.
+      summary: Read the progress of a native PostgreSQL import for the organization.
+      description: On the organization's database, reads the import without waking the target. An unverified result means the current guest cannot report the requested operation.
       responses:
-        '200':
-          description: Import evidence.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresImportStatus'}
-        default:
-          description: Invalid request, access denied, conflicting operation, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/CheckPostgresImportSuccess'}
+        default: {$ref: '#/components/responses/CheckPostgresMigrationProblem'}
   /v1/orgs/{organization}/postgres/databases/{id}/extensions:
     parameters:
-      - name: organization
-        in: path
-        required: true
-        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresOrganization'
       - $ref: '#/components/parameters/ManagedPostgresID'
     get:
       tags: [managed_postgres]
       operationId: listOrgManagedPostgresExtensions
-      summary: List native PostgreSQL extension versions
-      description: Reads the current primary and may wake it. An optional later major compares installed versions with the configured upgrade image.
+      summary: List native PostgreSQL extension versions for the organization.
+      description: On the organization's database, reads the current primary and may wake it. An optional later major compares installed versions with the configured upgrade image.
       parameters:
-        - name: target_major
-          in: query
-          schema: {type: integer, minimum: 15, maximum: 18}
+        - $ref: '#/components/parameters/ManagedPostgresExtensionTargetMajor'
       responses:
-        '200':
-          description: Available managed versions and observed installed extensions.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresExtensions'}
-        default:
-          description: Invalid request, access denied, or unsupported or unavailable database.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/ListPostgresExtensionsSuccess'}
+        default: {$ref: '#/components/responses/ListPostgresExtensionsProblem'}
   /v1/orgs/{organization}/postgres/databases/{id}/extensions/{extension}:
     parameters:
-      - name: organization
-        in: path
-        required: true
-        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresOrganization'
       - $ref: '#/components/parameters/ManagedPostgresID'
-      - name: extension
-        in: path
-        required: true
-        schema: {type: string, enum: [btree_gist, pg_trgm, vector]}
+      - $ref: '#/components/parameters/ManagedPostgresExtensionName'
     put:
       tags: [managed_postgres]
       operationId: enableOrgManagedPostgresExtension
-      summary: Enable a managed PostgreSQL extension
-      description: Installs the default version of the extension on the native primary. Repeating the operation preserves an installed version.
+      summary: Enable a managed PostgreSQL extension for the organization.
+      description: On the organization's database, installs the default version of the extension on the native primary. Repeating the operation preserves an installed version.
       responses:
-        '200':
-          description: Available managed versions and observed installed extensions.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresExtensions'}
-        default:
-          description: Invalid request, access denied, or unsupported or unavailable database.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/ListPostgresExtensionsSuccess'}
+        default: {$ref: '#/components/responses/ListPostgresExtensionsProblem'}
   /v1/orgs/{organization}/postgres/databases/{id}/sessions:
     parameters:
-      - name: organization
-        in: path
-        required: true
-        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresOrganization'
       - $ref: '#/components/parameters/ManagedPostgresID'
     get:
       tags: [managed_postgres]
       operationId: listOrgManagedPostgresSessions
-      summary: Inspect native PostgreSQL client sessions
-      description: Samples a running primary without waking a parked database. A cancel target identifies one currently tracked pooled query.
+      summary: Inspect native PostgreSQL client sessions for the organization.
+      description: On the organization's database, samples a running primary without waking a parked database. A cancel target identifies one currently tracked pooled query.
       responses:
-        '200':
-          description: Session metadata and available cancel targets.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresSessions'}
-        default:
-          description: Access denied, database not found, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/ListPostgresSessionsSuccess'}
+        default: {$ref: '#/components/responses/ListPostgresSessionsProblem'}
   /v1/orgs/{organization}/postgres/databases/{id}/cancel-query:
     parameters:
-      - name: organization
-        in: path
-        required: true
-        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresOrganization'
       - $ref: '#/components/parameters/ManagedPostgresID'
     post:
       tags: [managed_postgres]
       operationId: cancelOrgManagedPostgresQuery
-      summary: Send a cancel request for a live PostgreSQL query target
-      description: Sends a PostgreSQL cancel request through the proxy that owns the execution. The target must come from a recent session sample. Replaying the same target returns its recorded outcome while the receipt is retained.
+      summary: Send a cancel request for a live PostgreSQL query target for the organization.
+      description: On the organization's database, sends a PostgreSQL cancel request through the proxy that owns the execution. The target must come from a recent session sample. Replaying the same target returns its recorded outcome while the receipt is retained.
       requestBody:
         required: true
         content:
           application/json:
             schema: {$ref: '#/components/schemas/CancelManagedPostgresQueryRequest'}
       responses:
-        '200':
-          description: Cancel delivery outcome. Signal sent confirms sending the request to PostgreSQL.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresQueryCancellation'}
-        default:
-          description: Invalid target, access denied, database not found, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/CancelPostgresQuerySuccess'}
+        default: {$ref: '#/components/responses/CancelPostgresQueryProblem'}
   /v1/orgs/{organization}/postgres/databases/{id}/autovacuum:
     parameters:
-      - name: organization
-        in: path
-        required: true
-        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresOrganization'
       - $ref: '#/components/parameters/ManagedPostgresID'
     get:
       tags: [managed_postgres]
       operationId: getOrgManagedPostgresAutovacuum
-      summary: Read a native PostgreSQL autovacuum profile and effective settings
-      description: Reads the selected profile and live settings where available. A parked database stays asleep.
+      summary: Read a native PostgreSQL autovacuum profile and effective settings for the organization.
+      description: On the organization's database, reads the selected profile and live settings where available. A parked database stays asleep.
       responses:
-        '200':
-          description: Autovacuum profile status.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresAutovacuum'}
-        default:
-          description: Access denied, database not found, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/GetPostgresAutovacuumSuccess'}
+        default: {$ref: '#/components/responses/ListPostgresSessionsProblem'}
     put:
       tags: [managed_postgres]
       operationId: setOrgManagedPostgresAutovacuum
-      summary: Set a native PostgreSQL autovacuum profile
-      description: Saves the requested profile. Gregale reloads running instances and applies the saved profile at the next wake on parked databases.
+      summary: Set a native PostgreSQL autovacuum profile for the organization.
+      description: On the organization's database, saves the requested profile. Gregale reloads running instances and applies the saved profile at the next wake on parked databases.
       requestBody:
         required: true
         content:
           application/json:
             schema: {$ref: '#/components/schemas/SetManagedPostgresAutovacuumRequest'}
       responses:
-        '200':
-          description: The saved profile and its current application status.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresAutovacuum'}
-        default:
-          description: Invalid profile, access denied, database not found, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/SetPostgresAutovacuumSuccess'}
+        default: {$ref: '#/components/responses/SetPostgresAutovacuumProblem'}
   /v1/orgs/{organization}/postgres/databases/{id}/errors:
     parameters:
       - name: organization
@@ -28148,34 +27552,20 @@ paths:
       - $ref: '#/components/parameters/ManagedPostgresID'
     get:
       operationId: getOrgManagedPostgresErrorHistory
-      summary: Read recent errors from native PostgreSQL pooled connections.
-      description: Returns newest first. The history keeps up to 1000 events per database for up to 24 hours. Reading history does not wake a parked database.
+      summary: Read recent errors from native PostgreSQL pooled connections for the organization.
+      description: On the organization's database, returns newest first. The history keeps up to 1000 events per database for up to 24 hours. Reading history does not wake a parked database.
       tags: [managed_postgres]
       parameters:
-        - name: since_seconds
-          in: query
-          schema: {type: integer, minimum: 1, maximum: 86400, default: 3600}
-        - name: sqlstate
-          in: query
-          schema: {type: string, pattern: '^[A-Z0-9]{5}$'}
-        - name: limit
-          in: query
-          schema: {type: integer, minimum: 1, maximum: 100, default: 40}
+        - $ref: '#/components/parameters/ManagedPostgresErrorHistoryWindow'
+        - $ref: '#/components/parameters/ManagedPostgresErrorSQLSTATE'
+        - $ref: '#/components/parameters/ManagedPostgresErrorHistoryLimit'
       responses:
-        '200':
-          description: Collection state and matching error metadata.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresErrorHistory'}
-        default:
-          description: Invalid filter, permission, or database problem.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/GetPostgresErrorHistorySuccess'}
+        default: {$ref: '#/components/responses/GetPostgresErrorHistoryProblem'}
     put:
       operationId: setOrgManagedPostgresErrorHistory
-      summary: Enable or disable collection of pooled PostgreSQL errors.
-      description: Collection defaults to disabled. Disabling collection keeps events already retained until they expire.
+      summary: Enable or disable collection of pooled PostgreSQL errors for the organization.
+      description: On the organization's database, collection defaults to disabled. Disabling collection keeps events already retained until they expire.
       tags: [managed_postgres]
       requestBody:
         required: true
@@ -28183,267 +27573,147 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/SetManagedPostgresErrorHistoryRequest'}
       responses:
-        '200':
-          description: The saved collection state and recent events.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresErrorHistory'}
-        default:
-          description: Invalid settings, permission, or database problem.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/SetPostgresErrorHistorySuccess'}
+        default: {$ref: '#/components/responses/SetPostgresErrorHistoryProblem'}
   /v1/orgs/{organization}/postgres/databases/{id}/query-insights:
     parameters:
-      - name: organization
-        in: path
-        required: true
-        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresOrganization'
       - $ref: '#/components/parameters/ManagedPostgresID'
     get:
       tags: [managed_postgres]
       operationId: getOrgManagedPostgresQueryInsights
-      summary: Rank statements by execution time over an observed window
-      description: Reads stored numeric statement statistics for a single-zone native PostgreSQL database without waking it.
+      summary: Rank statements by execution time over an observed window for the organization.
+      description: On the organization's database, reads stored numeric statement statistics for a single-zone native PostgreSQL database without waking it.
       parameters:
-        - name: since_seconds
-          in: query
-          schema: {type: integer, minimum: 1, maximum: 86400, default: 3600}
+        - $ref: '#/components/parameters/ManagedPostgresQueryInsightsWindow'
       responses:
-        '200':
-          description: Query statistics and observation coverage.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresQueryInsights'}
-        default:
-          description: Invalid request, access denied, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/GetPostgresQueryInsightsSuccess'}
+        default: {$ref: '#/components/responses/GetPostgresQueryInsightsProblem'}
     put:
       tags: [managed_postgres]
       operationId: setOrgManagedPostgresQueryInsights
-      summary: Set native PostgreSQL query statistics collection
-      description: Applies the collection setting at an eligible primary restart. Historical observations remain available until they expire.
+      summary: Set native PostgreSQL query statistics collection for the organization.
+      description: On the organization's database, applies the collection setting at an eligible primary restart. Historical observations remain available until they expire.
       requestBody:
         required: true
         content:
           application/json:
             schema: {$ref: '#/components/schemas/SetManagedPostgresQueryInsightsRequest'}
       responses:
-        '200':
-          description: Query statistics and observation coverage.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresQueryInsights'}
-        default:
-          description: Invalid request, access denied, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/GetPostgresQueryInsightsSuccess'}
+        default: {$ref: '#/components/responses/GetPostgresQueryInsightsProblem'}
   /v1/orgs/{organization}/postgres/databases/{id}/diagnostics:
     parameters:
-      - name: organization
-        in: path
-        required: true
-        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresOrganization'
       - $ref: '#/components/parameters/ManagedPostgresID'
     get:
       tags: [managed_postgres]
       operationId: getOrgManagedPostgresDiagnostics
-      summary: Diagnose a native PostgreSQL primary
-      description: Reads one bounded activity sample from the running primary. A parked database stays asleep and reports its state.
+      summary: Diagnose a native PostgreSQL primary for the organization.
+      description: On the organization's database, reads one bounded activity sample from the running primary. A parked database stays asleep and reports its state.
       responses:
-        '200':
-          description: Primary activity or its current sample availability.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresDiagnostics'}
-        default:
-          description: Access denied, database not found, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/GetPostgresDiagnosticsSuccess'}
+        default: {$ref: '#/components/responses/ListPostgresSessionsProblem'}
   /v1/orgs/{organization}/postgres/databases/{id}/tables:
     parameters:
-      - name: organization
-        in: path
-        required: true
-        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresOrganization'
       - $ref: '#/components/parameters/ManagedPostgresID'
     get:
       tags: [managed_postgres]
       operationId: getOrgManagedPostgresTableHealth
-      summary: Inspect native PostgreSQL table health
-      description: Reads a bounded sample of stored tables and leaf partitions from the running primary. Parked databases stay asleep.
+      summary: Inspect native PostgreSQL table health for the organization.
+      description: On the organization's database, reads a bounded sample of stored tables and leaf partitions from the running primary. Parked databases stay asleep.
       parameters:
         - name: sort
           in: query
           schema: {type: string, enum: [size, dead-rows, xid-age], default: size}
-          description: Rank descending by total table and index size, estimated dead rows, or transaction ID age.
-        - name: limit
-          in: query
-          schema: {type: integer, minimum: 1, maximum: 50, default: 20}
+          description: Sort the organization's table sample in descending order by total table and index size, estimated dead rows, or transaction ID age.
+        - $ref: '#/components/parameters/ManagedPostgresTableHealthLimit'
       responses:
-        '200':
-          description: Table health or its current sample availability.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresTableHealth'}
-        default:
-          description: Invalid options, access denied, database not found, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/GetPostgresTableHealthSuccess'}
+        default: {$ref: '#/components/responses/GetPostgresTableHealthProblem'}
   /v1/orgs/{organization}/postgres/databases/{id}/restore-drills:
     parameters:
-      - name: organization
-        in: path
-        required: true
-        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresOrganization'
       - $ref: '#/components/parameters/ManagedPostgresID'
     post:
       tags: [managed_postgres]
       operationId: startOrgManagedPostgresRestoreDrill
-      summary: Queue a native PostgreSQL restore drill
-      description: Saves an idempotent request for a temporary restore and may wake the source to write a verification marker.
+      summary: Queue a native PostgreSQL restore drill for the organization.
+      description: On the organization's database, saves an idempotent request for a temporary restore and may wake the source to write a verification marker.
       requestBody:
         required: true
         content:
           application/json:
             schema: {$ref: '#/components/schemas/RequestManagedPostgresRestoreDrill'}
       responses:
-        '202':
-          description: The recorded drill. Reusing the same request ID returns its current outcome.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresRestoreDrill'}
-        default:
-          description: Invalid request, access denied, busy, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '202': {$ref: '#/components/responses/StartPostgresRestoreDrillAccepted'}
+        default: {$ref: '#/components/responses/StartPostgresRestoreDrillProblem'}
   /v1/orgs/{organization}/postgres/databases/{id}/restore-drills/{drill_id}:
     parameters:
-      - name: organization
-        in: path
-        required: true
-        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresOrganization'
       - $ref: '#/components/parameters/ManagedPostgresID'
-      - name: drill_id
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/ManagedPostgresRestoreDrillID'
     get:
       tags: [managed_postgres]
       operationId: getOrgManagedPostgresRestoreDrill
-      summary: Read a native PostgreSQL restore drill
-      description: Reads a requested drill for the selected database. Reading the receipt leaves a parked source asleep.
+      summary: Read a native PostgreSQL restore drill for the organization.
+      description: On the organization's database, reads a requested drill for the selected database. Reading the receipt leaves a parked source asleep.
       responses:
-        '200':
-          description: The recorded drill and its progress.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresRestoreDrill'}
-        default:
-          description: Access denied, drill not found, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/GetPostgresRestoreDrillSuccess'}
+        default: {$ref: '#/components/responses/GetPostgresRestoreDrillProblem'}
   /v1/orgs/{organization}/postgres/databases/{id}/upgrade-rehearsals:
     parameters:
-      - name: organization
-        in: path
-        required: true
-        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresOrganization'
       - $ref: '#/components/parameters/ManagedPostgresID'
     post:
       tags: [managed_postgres]
       operationId: startOrgManagedPostgresUpgradeRehearsal
-      summary: Queue a native PostgreSQL upgrade rehearsal
-      description: Queues a rehearsal of the target major on a private restore from verified archive evidence. The source keeps its current version and runtime state.
+      summary: Queue a native PostgreSQL upgrade rehearsal for the organization.
+      description: On the organization's database, queues a rehearsal of the target major on a private restore from verified archive evidence. The source keeps its current version and runtime state.
       requestBody:
         required: true
         content:
           application/json:
             schema: {$ref: '#/components/schemas/RequestManagedPostgresUpgradeRehearsal'}
       responses:
-        '202':
-          description: The recorded rehearsal. Reuse the request ID with the same target major to read its current outcome.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresUpgradeRehearsal'}
-        default:
-          description: Invalid request, access denied, busy, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '202': {$ref: '#/components/responses/StartPostgresUpgradeRehearsalAccepted'}
+        default: {$ref: '#/components/responses/StartPostgresRestoreDrillProblem'}
   /v1/orgs/{organization}/postgres/databases/{id}/upgrade-rehearsals/{rehearsal_id}:
     parameters:
-      - name: organization
-        in: path
-        required: true
-        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresOrganization'
       - $ref: '#/components/parameters/ManagedPostgresID'
-      - name: rehearsal_id
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/ManagedPostgresUpgradeRehearsalID'
     get:
       tags: [managed_postgres]
       operationId: getOrgManagedPostgresUpgradeRehearsal
-      summary: Read a native PostgreSQL upgrade rehearsal
-      description: Reads the rehearsal progress or outcome for the selected source database.
+      summary: Read a native PostgreSQL upgrade rehearsal for the organization.
+      description: On the organization's database, reads the rehearsal progress or outcome for the selected source database.
       responses:
-        '200':
-          description: The recorded rehearsal and its progress.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresUpgradeRehearsal'}
-        default:
-          description: Access denied, rehearsal not found, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/GetPostgresUpgradeRehearsalSuccess'}
+        default: {$ref: '#/components/responses/GetPostgresUpgradeRehearsalProblem'}
   /v1/orgs/{organization}/postgres/databases/{id}/restore-check:
     parameters:
-      - name: organization
-        in: path
-        required: true
-        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresOrganization'
       - $ref: '#/components/parameters/ManagedPostgresID'
     get:
       tags: [managed_postgres]
       operationId: checkOrgManagedPostgresRestore
-      summary: Check native PostgreSQL archive evidence for a restore target.
-      description: Reads the selected base backup and bounded WAL evidence for this target. A covered result describes the archive at check time.
+      summary: Check native PostgreSQL archive evidence for a restore target for the organization.
+      description: On the organization's database, reads the selected base backup and bounded WAL evidence for this target. A covered result describes the archive at check time.
       parameters:
-        - name: point_in_time
-          in: query
-          required: true
-          schema: {type: string, format: date-time}
+        - $ref: '#/components/parameters/ManagedPostgresRestoreCheckTime'
       responses:
-        '200':
-          description: Archive evidence for the requested recovery point.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresRestoreCheck'}
-        default:
-          description: Invalid restore point, access denied, or unsupported backend.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/CheckPostgresRestoreSuccess'}
+        default: {$ref: '#/components/responses/CheckPostgresRestoreProblem'}
   /v1/orgs/{organization}/postgres/databases/{id}/masked-branches:
     parameters:
-      - name: organization
-        in: path
-        required: true
-        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresOrganization'
       - $ref: '#/components/parameters/ManagedPostgresID'
     post:
       operationId: createOrgManagedPostgresMaskedBranch
-      summary: Create a masked branch of a native PostgreSQL database.
-      description: Copies selected data into a fresh database using the supplied masking policy. The target remains in provisioning until the copy and its constraints are validated. Requires managed PostgreSQL manage scope, MFA, and verified email.
+      summary: Create a masked branch of a native PostgreSQL database for the organization.
+      description: On the organization's database, copies selected data into a fresh database using the supplied masking policy. The target remains in provisioning until the copy and its constraints are validated. Requires managed PostgreSQL manage scope, MFA, and verified email.
       tags: [managed_postgres]
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -28454,27 +27724,20 @@ paths:
             schema: {$ref: '#/components/schemas/CreateManagedPostgresMaskedBranchRequest'}
       responses:
         '202':
-          description: Masked branch accepted.
+          description: "Masked branch accepted for create a masked branch of a native PostgreSQL database for the organization."
           headers:
-            Cache-Control: {schema: {type: string}, description: Always no-store}
+            Cache-Control: {schema: {type: string}, description: The accepted masked branch receipt is served with Cache-Control no-store.}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ManagedPostgresDatabase'}
-        default:
-          description: Request refused or service unavailable.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        default: {$ref: '#/components/responses/CreatePostgresMaskedBranchProblem'}
   /v1/orgs/{organization}/postgres/databases/{id}/recovery-region:
     parameters:
-      - name: organization
-        in: path
-        required: true
-        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresOrganization'
       - $ref: '#/components/parameters/ManagedPostgresID'
     put:
       operationId: setOrgManagedPostgresRecoveryRegion
-      summary: Set the recovery region for a native PostgreSQL database
+      summary: Set the recovery region for a native PostgreSQL database for the organization.
       tags: [managed_postgres]
       requestBody:
         required: true
@@ -28482,13 +27745,8 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/SetManagedPostgresRecoveryRegionRequest'}
       responses:
-        '204':
-          description: Recovery preference updated.
-        default:
-          description: Invalid region, insufficient access, or recovery unavailable.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '204': {$ref: '#/components/responses/SetPostgresRecoveryRegionNoContent'}
+        default: {$ref: '#/components/responses/SetPostgresRecoveryRegionProblem'}
   /v1/orgs/{organization}/postgres/databases/{id}/restore:
     parameters:
       - name: organization
@@ -28663,23 +27921,15 @@ paths:
       - $ref: '#/components/parameters/ManagedPostgresID'
     get:
       operationId: getOrgManagedPostgresBindingTimeouts
-      summary: Get timeout defaults for a native pooled app binding.
+      summary: Get timeout defaults for a native pooled app binding for the organization.
       tags: [managed_postgres]
       responses:
-        '200':
-          description: Saved values and the pool refresh state.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresBindingTimeouts'}
-        default:
-          description: Problem reading binding timeout defaults.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/GetPostgresBindingTimeoutsSuccess'}
+        default: {$ref: '#/components/responses/GetPostgresBindingTimeoutsProblem'}
     put:
       operationId: setOrgManagedPostgresBindingTimeouts
-      summary: Save timeout defaults for a native pooled app binding.
-      description: Changes the supplied settings on a ready read_write or read_only binding. Zero disables a setting. Application happens asynchronously and existing transactions keep their current defaults.
+      summary: Save timeout defaults for a native pooled app binding for the organization.
+      description: On the organization's database, changes the supplied settings on a ready read_write or read_only binding. Zero disables a setting. Application happens asynchronously and existing transactions keep their current defaults.
       tags: [managed_postgres]
       requestBody:
         required: true
@@ -28687,16 +27937,8 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/SetManagedPostgresBindingTimeoutsRequest'}
       responses:
-        '200':
-          description: Saved values and the pool refresh state.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ManagedPostgresBindingTimeouts'}
-        default:
-          description: Invalid settings, conflict, or provider problem.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '200': {$ref: '#/components/responses/GetPostgresBindingTimeoutsSuccess'}
+        default: {$ref: '#/components/responses/SetPostgresBindingTimeoutsProblem'}
   /v1/orgs/{organization}/postgres/usage:
     parameters:
       - name: organization
@@ -29319,6 +28561,118 @@ components:
         type: string
         example: '</v1/uploads>; rel="successor-version", <https://github.com/poyrazK/faas/blob/main/docs/adr/115-local-tarball-deploy-trust-root.md>; rel="deprecation"'
   parameters:
+    ManagedPostgresExportID:
+      name: export_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Identifier of the portable export returned when it was requested.
+    ManagedPostgresImportOperationID:
+      name: operation_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Identifier used to start or resume the import operation.
+    ManagedPostgresExtensionTargetMajor:
+      name: target_major
+      in: query
+      schema:
+        type: integer
+        minimum: 15
+        maximum: 18
+      description: PostgreSQL major to use for comparing managed extension versions.
+    ManagedPostgresExtensionName:
+      name: extension
+      in: path
+      required: true
+      schema:
+        type: string
+        enum:
+          - btree_gist
+          - pg_trgm
+          - vector
+      description: Managed PostgreSQL extension name from the extension catalog.
+    ManagedPostgresErrorHistoryWindow:
+      name: since_seconds
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 86400
+        default: 3600
+      description: Time range in seconds to include in the pooled error history.
+    ManagedPostgresErrorSQLSTATE:
+      name: sqlstate
+      in: query
+      schema:
+        type: string
+        pattern: ^[A-Z0-9]{5}$
+      description: Filter by the five-character SQLSTATE reported by PostgreSQL.
+    ManagedPostgresErrorHistoryLimit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 40
+      description: Maximum number of matching pooled errors.
+    ManagedPostgresQueryInsightsWindow:
+      name: since_seconds
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 86400
+        default: 3600
+      description: Time range in seconds to include in the statement statistics.
+    ManagedPostgresTableHealthLimit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 50
+        default: 20
+      description: Maximum number of observed relations to return.
+    ManagedPostgresRestoreDrillID:
+      name: drill_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Identifier returned when the database restore drill was queued.
+    ManagedPostgresUpgradeRehearsalID:
+      name: rehearsal_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Identifier returned when the upgrade rehearsal was queued.
+    ManagedPostgresRestoreCheckTime:
+      name: point_in_time
+      in: query
+      required: true
+      schema:
+        type: string
+        format: date-time
+      description: UTC timestamp to verify against the database's recoverable archive.
+    ManagedPostgresOrganization:
+      name: organization
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 63
+        pattern: ^[a-z0-9][a-z0-9-]*$
+      description: Slug of the organization that owns the native PostgreSQL resource.
     AgentActivityBefore:
       name: before
       in: query
@@ -34683,6 +34037,7 @@ components:
         request_id: {type: string, format: uuid, description: "Canonical nonzero UUID; reuse with the same database and target after uncertain responses."}
         service_class: {type: string, enum: [development, burstable, production]}
     ManagedPostgresMaintenanceWindow:
+      description: "Recurring UTC time range when database maintenance can begin."
       type: object
       required: [weekday, start_minute, duration_minutes]
       properties:
@@ -34690,6 +34045,7 @@ components:
         start_minute: {type: integer, minimum: 0, maximum: 1439, description: Minutes after midnight UTC.}
         duration_minutes: {type: integer, minimum: 1, maximum: 1440, description: Length of the maintenance window.}
     SetManagedPostgresMaintenanceRequest:
+      description: "Changes to the database's weekly maintenance schedule."
       type: object
       required: [window]
       properties:
@@ -34697,6 +34053,7 @@ components:
           anyOf: [{$ref: '#/components/schemas/ManagedPostgresMaintenanceWindow'}, {type: 'null'}]
           description: Use null to remove the schedule.
     ManagedPostgresMaintenanceStatus:
+      description: "Configured maintenance window and the current database refresh status."
       type: object
       required: [window, window_open]
       properties:
@@ -34708,6 +34065,7 @@ components:
         stale_since: {type: string, format: date-time, description: First stale observation for the pending base refresh.}
         last_refresh: {$ref: '#/components/schemas/ManagedPostgresBaseRefresh'}
     ManagedPostgresBaseRefresh:
+      description: "Progress and outcome of replacing the database VM base image."
       type: object
       required: [started_at, outcome]
       properties:
@@ -34717,11 +34075,13 @@ components:
         phase: {type: string, description: Rolling refresh phase when applicable.}
         reason: {type: string, description: Reason the refresh is waiting or did not succeed.}
     SetManagedPostgresAutoGrowRequest:
+      description: "Bounds for automatic increases to the database volume."
       type: object
       required: [max_bytes]
       properties:
         max_bytes: {type: integer, format: int64, minimum: 0, description: Per-volume ceiling in bytes. Zero disables automatic growth.}
     ManagedPostgresAutoGrowStatus:
+      description: "Automatic growth policy and the latest storage eligibility check."
       type: object
       required: [max_bytes, reason]
       properties:
@@ -34972,6 +34332,7 @@ components:
         preparation: {$ref: '#/components/schemas/ManagedPostgresMigrationPreparation'}
         verification: {$ref: '#/components/schemas/ManagedPostgresMigrationVerification'}
     ManagedPostgresMigrationVerifyRequest:
+      description: "Request to verify migration replay after source writes have paused."
       type: object
       additionalProperties: false
       required: [operation_id, source, verification_id, source_writes_paused]
@@ -35005,6 +34366,7 @@ components:
           type: array
           items: {$ref: '#/components/schemas/ManagedPostgresMigrationPreparationBlocker'}
     ManagedPostgresMigrationPreparationBlocker:
+      description: "Source schema object that prevents preparing a migration target."
       type: object
       required: [code, count]
       properties:
@@ -35034,6 +34396,7 @@ components:
         free_source_slots: {type: integer, format: int64}
         free_source_senders: {type: integer, format: int64}
     ManagedPostgresImportSource:
+      description: "Connection details for a PostgreSQL source to inspect or import."
       type: object
       additionalProperties: false
       required: [host, port, database, user, password]
@@ -35048,12 +34411,14 @@ components:
           maxItems: 32
           items: {type: string, pattern: '^[a-z_][a-z0-9_]{0,62}$'}
     ManagedPostgresExportRequest:
+      description: "Idempotency identifier for creating a portable PostgreSQL export."
       type: object
       additionalProperties: false
       required: [request_id]
       properties:
         request_id: {type: string, format: uuid}
     ManagedPostgresExportManifest:
+      description: "Signed snapshot metadata and integrity checks for a portable export."
       type: object
       required: [postgres_major, captured_at, extensions, size_bytes, sha256]
       properties:
@@ -35069,6 +34434,7 @@ components:
         vector_schema: {type: string, maxLength: 63, description: The schema containing an installed vector extension.}
         restore_receipt: {type: string, pattern: '^[A-Za-z0-9_-]{43}$', description: Gregale's authentication of this archive and manifest for managed restore.}
     ManagedPostgresBackupSchedule:
+      description: "Daily export schedule, destination, and recorded delivery outcome."
       type: object
       required: [database_id, bucket_app_id, bucket_id, daily_at_utc, next_run_at, state]
       properties:
@@ -35083,6 +34449,7 @@ components:
         last_archive_key: {type: string, description: Object key of the most recent complete backup.}
         last_error_code: {type: string, description: Stable code for the latest backup attempt failure.}
     SetManagedPostgresBackupScheduleRequest:
+      description: "UTC execution time and private bucket for scheduled database exports."
       type: object
       required: [daily_at_utc, bucket_app, bucket_id]
       properties:
@@ -35090,6 +34457,7 @@ components:
         bucket_app: {type: string, description: App slug that owns the destination bucket.}
         bucket_id: {type: string, format: uuid}
     ManagedPostgresExport:
+      description: "Status of a portable PostgreSQL dump and its manifest when ready."
       type: object
       required: [id, state, expires_at]
       properties:
@@ -35098,6 +34466,7 @@ components:
         expires_at: {type: string, format: date-time}
         manifest: {$ref: '#/components/schemas/ManagedPostgresExportManifest'}
     ManagedPostgresImportRequest:
+      description: "Source connection and operation identifier for importing a database."
       type: object
       additionalProperties: false
       required: [operation_id, source]
@@ -35124,6 +34493,7 @@ components:
           maxItems: 128
           items: {$ref: '#/components/schemas/ManagedPostgresExtensionVersion'}
     ManagedPostgresExtensionVersion:
+      description: "Managed extension version available on one PostgreSQL major."
       type: object
       required: [name, version]
       properties:
@@ -35131,6 +34501,7 @@ components:
         version: {type: string, minLength: 1, maxLength: 63}
         default: {type: boolean}
     ManagedPostgresExtensions:
+      description: "Installed PostgreSQL extensions and versions available to the database."
       type: object
       required: [installed, available]
       properties:
@@ -35147,12 +34518,14 @@ components:
           maxItems: 128
           items: {$ref: '#/components/schemas/ManagedPostgresExtensionVersion'}
     SetManagedPostgresQueryInsightsRequest:
+      description: "Controls collection of aggregate statement statistics at eligible restarts."
       type: object
       additionalProperties: false
       required: [enabled]
       properties:
         enabled: {type: boolean}
     ManagedPostgresErrorHistory:
+      description: "Pooled error collection settings and retained events matching the filter."
       type: object
       required: [database_id, enabled, since, events, has_more]
       properties:
@@ -35165,6 +34538,7 @@ components:
           items: {$ref: '#/components/schemas/ManagedPostgresQueryError'}
         has_more: {type: boolean, description: More retained events match the filter than the requested limit.}
     ManagedPostgresQueryError:
+      description: "Retained PostgreSQL error metadata without statement text."
       type: object
       required: [observed_at, severity, sqlstate]
       properties:
@@ -35173,11 +34547,13 @@ components:
         sqlstate: {type: string, pattern: '^[A-Z0-9]{5}$'}
         binding_id: {type: string, format: uuid, description: App binding when available.}
     SetManagedPostgresErrorHistoryRequest:
+      description: "Enables or disables recording error metadata for pooled connections."
       type: object
       required: [enabled]
       properties:
         enabled: {type: boolean}
     ManagedPostgresQueryInsights:
+      description: "Ranked statement statistics and the coverage of the observation window."
       type: object
       required: [database_id, enabled, since, observed_seconds, queries]
       properties:
@@ -35192,6 +34568,7 @@ components:
           maxItems: 20
           items: {$ref: '#/components/schemas/ManagedPostgresQueryInsight'}
     ManagedPostgresQueryInsight:
+      description: "Aggregate execution statistics for one normalized statement."
       type: object
       required: [query_id, boot_at, calls, total_execution_ms, mean_execution_ms]
       properties:
@@ -35201,6 +34578,7 @@ components:
         total_execution_ms: {type: number, format: double, minimum: 0}
         mean_execution_ms: {type: number, format: double, minimum: 0}
     ManagedPostgresDiagnostics:
+      description: "Bounded activity and replication observations from the current primary."
       type: object
       required: [database_id, state]
       properties:
@@ -35208,6 +34586,7 @@ components:
         state: {type: string, enum: [available, parked, unavailable]}
         sample: {$ref: '#/components/schemas/ManagedPostgresActivitySample'}
     ManagedPostgresSessions:
+      description: "Current session sample availability and tracked pooled queries."
       type: object
       required: [database_id, state]
       properties:
@@ -35215,6 +34594,7 @@ components:
         state: {type: string, enum: [available, parked, unavailable]}
         sample: {$ref: '#/components/schemas/ManagedPostgresSessionSample'}
     ManagedPostgresSessionSample:
+      description: "Timestamped snapshot of sessions observed on the running primary."
       type: object
       required: [sampled_at, has_more, sessions]
       properties:
@@ -35225,6 +34605,7 @@ components:
           maxItems: 50
           items: {$ref: '#/components/schemas/ManagedPostgresSession'}
     ManagedPostgresSession:
+      description: "Connection and execution state for a sampled database session."
       type: object
       required: [pid, state, transaction_age_ms]
       properties:
@@ -35236,11 +34617,13 @@ components:
         application_name: {type: string}
         target_id: {type: string, format: uuid, description: Short-lived cancel target for this execution when available.}
     CancelManagedPostgresQueryRequest:
+      description: "Target from a recent session sample identifying the query to cancel."
       type: object
       required: [target_id]
       properties:
         target_id: {type: string, format: uuid}
     ManagedPostgresQueryCancellation:
+      description: "Recorded delivery outcome for a request to cancel a pooled query."
       type: object
       required: [database_id, target_id, outcome]
       properties:
@@ -35248,6 +34631,7 @@ components:
         target_id: {type: string, format: uuid}
         outcome: {type: string, enum: [signal_sent, stale_target, unconfirmed]}
     ManagedPostgresAutovacuum:
+      description: "Selected autovacuum profile and effective settings when observed."
       type: object
       required: [database_id, profile, state]
       properties:
@@ -35264,11 +34648,13 @@ components:
         vacuum_scale_factor: {type: number, format: double, minimum: 0, maximum: 100}
         analyze_scale_factor: {type: number, format: double, minimum: 0, maximum: 100}
     SetManagedPostgresAutovacuumRequest:
+      description: "Requested autovacuum profile for a native PostgreSQL database."
       type: object
       required: [profile]
       properties:
         profile: {type: string, enum: [default, high-churn]}
     ManagedPostgresTableHealth:
+      description: "Table health sample or the reason a sample could not be collected."
       type: object
       required: [database_id, state]
       properties:
@@ -35276,6 +34662,7 @@ components:
         state: {type: string, enum: [available, parked, unavailable]}
         sample: {$ref: '#/components/schemas/ManagedPostgresTableHealthSample'}
     ManagedPostgresTableHealthSample:
+      description: "Ranked table and leaf-partition measurements observed on the primary."
       type: object
       required: [sampled_at, has_more, tables]
       properties:
@@ -35286,6 +34673,7 @@ components:
           maxItems: 50
           items: {$ref: '#/components/schemas/ManagedPostgresTableHealthRow'}
     ManagedPostgresTableHealthRow:
+      description: "Storage, dead-row estimates, and vacuum observations for one relation."
       type: object
       required: [schema, name, table_bytes, index_bytes, estimated_dead_rows, changes_since_analyze, xid_age]
       properties:
@@ -35316,6 +34704,7 @@ components:
           maxItems: 20
           items: {$ref: '#/components/schemas/ManagedPostgresLockWait'}
     ManagedPostgresLockWait:
+      description: "Session waiting for a PostgreSQL lock and its observed blockers."
       type: object
       required: [pid, blocking_pids]
       properties:
@@ -35339,6 +34728,7 @@ components:
         recovery_timeline: {type: integer, format: int64, minimum: 1, maximum: 4294967295, description: PostgreSQL timeline selected from the archive.}
         missing_timeline_history: {type: string, description: Timeline history file needed to select the recovery WAL.}
     CreateManagedPostgresMaskedBranchRequest:
+      description: "Source table policies and configuration for creating a masked database copy."
       type: object
       additionalProperties: false
       required: [name, tables]
@@ -35351,6 +34741,7 @@ components:
           maxItems: 32
           items: {$ref: '#/components/schemas/ManagedPostgresMaskedTable'}
     ManagedPostgresMaskedTable:
+      description: "Policy governing which rows and columns are copied from a source table."
       type: object
       additionalProperties: false
       required: [name, columns]
@@ -35362,6 +34753,7 @@ components:
           maxItems: 256
           items: {$ref: '#/components/schemas/ManagedPostgresMaskedColumn'}
     ManagedPostgresMaskedColumn:
+      description: "Masking rule for a column in the copied database."
       type: object
       additionalProperties: false
       required: [name, action]
@@ -35369,6 +34761,7 @@ components:
         name: {type: string, pattern: '^[a-z_][a-z0-9_]{0,62}$'}
         action: {type: string, enum: [keep, email, token, 'null'], description: How values in this selected column are copied.}
     SetManagedPostgresRecoveryRegionRequest:
+      description: "Destination region for the database's recovery archive."
       type: object
       additionalProperties: false
       required: [region]
@@ -35399,6 +34792,7 @@ components:
           maximum: 2592000
           description: Purge the new database this many seconds after it is created. Its bindings are revoked first; the source is never touched. The database shows expires_at.
     ManagedPostgresBindingTimeouts:
+      description: "Saved pooled binding timeouts and the current proxy refresh state."
       type: object
       required: [binding_id, statement_timeout_ms, lock_timeout_ms, idle_in_transaction_session_timeout_ms, revision, state]
       properties:
@@ -35413,6 +34807,7 @@ components:
           description: Default means no policy was saved. Pending means the defaults are saved and awaiting application. Refreshing means PostgreSQL accepted the settings and the pool's cache may still expire. Applied means the refresh window elapsed and new transactions use fresh backends.
         applied_at: {type: string, format: date-time}
     SetManagedPostgresBindingTimeoutsRequest:
+      description: "Timeout settings to change on a ready pooled application binding."
       type: object
       minProperties: 1
       properties:
@@ -52799,6 +52194,7 @@ components:
         note: {type: string, description: "What the person recorded about the database."}
         checked_at: {type: string, format: date-time}
     ActivateManagedPostgresMigrationRequest:
+      description: "Verified migration operation to activate for an application environment."
       type: object
       additionalProperties: false
       required: [source_database_id, target_database_id, operation_id, verification_id, source_writes_paused]
@@ -53295,6 +52691,7 @@ components:
         error_code: {type: string, description: Stable reason when a drill could not verify recovery.}
         duration_seconds: {type: integer, format: int64, minimum: 0, description: Total time from admission through cleanup.}
     ManagedPostgresRestoreDrill:
+      description: "Progress and outcome of a temporary point-in-time restore exercise."
       allOf:
         - $ref: '#/components/schemas/ManagedPostgresRestoreDrillStatus'
         - type: object
@@ -53304,11 +52701,13 @@ components:
             request_id: {type: string, format: uuid}
             drill_id: {type: string, format: uuid}
     RequestManagedPostgresRestoreDrill:
+      description: "Idempotency identifier for a requested restore drill."
       type: object
       required: [request_id]
       properties:
         request_id: {type: string, format: uuid, description: Reuse on retries for this source database.}
     RequestManagedPostgresUpgradeRehearsal:
+      description: "Target PostgreSQL major and request identifier for a private upgrade rehearsal."
       type: object
       required: [request_id, postgres_major]
       properties:
@@ -53328,10 +52727,10 @@ components:
         phase: {type: string, enum: [restore, mark, upgrade, verify, cleanup], description: The active phase.}
         failed_phase: {type: string, enum: [restore, mark, upgrade, verify], description: The phase that failed.}
         recovery_point: {type: string, format: date-time, description: The archive-verified recovery target.}
-        recovered_to: {type: string, format: date-time, description: The last replayed commit reported by PostgreSQL.}
+        recovered_to: {type: string, format: date-time, description: Last replayed commit observed on the private copy before the rehearsal upgrade.}
         started_at: {type: string, format: date-time}
         finished_at: {type: string, format: date-time}
-        duration_seconds: {type: integer, format: int64, minimum: 0, description: Total time from admission through cleanup.}
+        duration_seconds: {type: integer, format: int64, minimum: 0, description: Elapsed seconds from admission through cleanup of the rehearsal copy.}
         error_code: {type: string, description: A stable reason for a failed rehearsal.}
     AppHealthResponse:
       description: Read-only observed health of selected-scope HTTP serving workloads.
@@ -65783,6 +65182,316 @@ components:
         grant_token: {type: string, writeOnly: true}
         path: {type: string, minLength: 1, maxLength: 256}
   responses:
+    CheckPostgresMigrationSuccess:
+      description: Compatibility evidence or explicit blockers.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ManagedPostgresMigrationCheck'
+    CheckPostgresMigrationProblem:
+      description: Invalid request, access denied, conflicting operation, or unsupported backend.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    StartPostgresMigrationSuccess:
+      description: Latest observed migration progress.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ManagedPostgresMigrationProgress'
+    GetPostgresBackupScheduleSuccess:
+      description: The destination, next scheduled run and most recent outcome.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ManagedPostgresBackupSchedule'
+    GetPostgresBackupScheduleProblem:
+      description: The schedule is absent or the caller cannot access it.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    SetPostgresBackupScheduleSuccess:
+      description: The saved backup schedule.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ManagedPostgresBackupSchedule'
+    SetPostgresBackupScheduleProblem:
+      description: Validation, permission, or active execution conflict.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    DeletePostgresBackupScheduleNoContent:
+      description: The schedule is disabled.
+    DeletePostgresBackupScheduleProblem:
+      description: Permission or active execution conflict.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    StartPostgresExportSuccess:
+      description: The export already reached its terminal state.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ManagedPostgresExport'
+    StartPostgresExportAccepted:
+      description: The export is queued or running.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ManagedPostgresExport'
+    StartPostgresExportProblem:
+      description: Invalid request, access denied, unavailable export, or expired export.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    GetPostgresExportSuccess:
+      description: Export status.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ManagedPostgresExport'
+    DownloadPostgresExportSuccess:
+      description: Standard PostgreSQL custom archive.
+      headers:
+        X-Content-SHA256:
+          schema:
+            type: string
+            pattern: ^[0-9a-f]{64}$
+      content:
+        application/octet-stream:
+          schema:
+            type: string
+            format: binary
+    CheckPostgresImportSuccess:
+      description: Import evidence.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ManagedPostgresImportStatus'
+    StartPostgresImportAccepted:
+      description: The import is running.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ManagedPostgresImportStatus'
+    UploadPostgresArchiveSuccess:
+      description: Import progress or preflight failure.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ManagedPostgresImportStatus'
+    UploadPostgresArchiveAccepted:
+      description: The verified archive is restoring.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ManagedPostgresImportStatus'
+    UploadPostgresArchiveProblem:
+      description: Invalid receipt, invalid archive, access denied, conflicting operation, or unsupported target.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    ListPostgresExtensionsSuccess:
+      description: Available managed versions and observed installed extensions.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ManagedPostgresExtensions'
+    ListPostgresExtensionsProblem:
+      description: Invalid request, access denied, or unsupported or unavailable database.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    ListPostgresSessionsSuccess:
+      description: Session metadata and available cancel targets.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ManagedPostgresSessions'
+    ListPostgresSessionsProblem:
+      description: Access denied, database not found, or unsupported backend.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    CancelPostgresQuerySuccess:
+      description: Cancel delivery outcome. Signal sent confirms sending the request to PostgreSQL.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ManagedPostgresQueryCancellation'
+    CancelPostgresQueryProblem:
+      description: Invalid target, access denied, database not found, or unsupported backend.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    GetPostgresAutovacuumSuccess:
+      description: Autovacuum profile status.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ManagedPostgresAutovacuum'
+    SetPostgresAutovacuumSuccess:
+      description: The saved profile and its current application status.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ManagedPostgresAutovacuum'
+    SetPostgresAutovacuumProblem:
+      description: Invalid profile, access denied, database not found, or unsupported backend.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    GetPostgresErrorHistorySuccess:
+      description: Collection state and matching error metadata.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ManagedPostgresErrorHistory'
+    GetPostgresErrorHistoryProblem:
+      description: Invalid filter, permission, or database problem.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    SetPostgresErrorHistorySuccess:
+      description: The saved collection state and recent events.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ManagedPostgresErrorHistory'
+    SetPostgresErrorHistoryProblem:
+      description: Invalid settings, permission, or database problem.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    GetPostgresQueryInsightsSuccess:
+      description: Query statistics and observation coverage.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ManagedPostgresQueryInsights'
+    GetPostgresQueryInsightsProblem:
+      description: Invalid request, access denied, or unsupported backend.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    GetPostgresDiagnosticsSuccess:
+      description: Primary activity or its current sample availability.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ManagedPostgresDiagnostics'
+    GetPostgresTableHealthSuccess:
+      description: Table health or its current sample availability.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ManagedPostgresTableHealth'
+    GetPostgresTableHealthProblem:
+      description: Invalid options, access denied, database not found, or unsupported backend.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    StartPostgresRestoreDrillAccepted:
+      description: The recorded drill. Reusing the same request ID returns its current outcome.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ManagedPostgresRestoreDrill'
+    StartPostgresRestoreDrillProblem:
+      description: Invalid request, access denied, busy, or unsupported backend.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    GetPostgresRestoreDrillSuccess:
+      description: The recorded drill and its progress.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ManagedPostgresRestoreDrill'
+    GetPostgresRestoreDrillProblem:
+      description: Access denied, drill not found, or unsupported backend.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    StartPostgresUpgradeRehearsalAccepted:
+      description: The recorded rehearsal. Reuse the request ID with the same target major to read its current outcome.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ManagedPostgresUpgradeRehearsal'
+    GetPostgresUpgradeRehearsalSuccess:
+      description: The recorded rehearsal and its progress.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ManagedPostgresUpgradeRehearsal'
+    GetPostgresUpgradeRehearsalProblem:
+      description: Access denied, rehearsal not found, or unsupported backend.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    CheckPostgresRestoreSuccess:
+      description: Archive evidence for the requested recovery point.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ManagedPostgresRestoreCheck'
+    CheckPostgresRestoreProblem:
+      description: Invalid restore point, access denied, or unsupported backend.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    CreatePostgresMaskedBranchProblem:
+      description: Request refused or service unavailable.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    SetPostgresRecoveryRegionNoContent:
+      description: Recovery preference updated.
+    SetPostgresRecoveryRegionProblem:
+      description: Invalid region, insufficient access, or recovery unavailable.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    GetPostgresBindingTimeoutsSuccess:
+      description: Saved values and the pool refresh state.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ManagedPostgresBindingTimeouts'
+    GetPostgresBindingTimeoutsProblem:
+      description: Problem reading binding timeout defaults.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    SetPostgresBindingTimeoutsProblem:
+      description: Invalid settings, conflict, or provider problem.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
     EdgeRulesVersionMismatch:
       description: If-Match no longer names the app's latest edge-rule set version (edge_rules_version_mismatch). The response ETag carries the current version.
       content:

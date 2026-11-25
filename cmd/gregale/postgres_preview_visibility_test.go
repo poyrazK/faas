@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -16,7 +17,7 @@ func TestPostgresUpgradeHiddenFromCustomerDiscovery(t *testing.T) {
 			continue
 		}
 		for _, sub := range command.Subcommands {
-			if strings.HasPrefix(sub.Name, "upgrade") {
+			if sub.Name == "upgrade" {
 				t.Fatalf("help and completions list `postgres %s`", sub.Name)
 			}
 		}
@@ -25,7 +26,8 @@ func TestPostgresUpgradeHiddenFromCustomerDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(reference), "postgres upgrade") {
+	inPlaceUpgrade := regexp.MustCompile("(?m)(^|[ \t`])postgres upgrade([ \t`]|$)")
+	if inPlaceUpgrade.Match(reference) {
 		t.Error("the published CLI reference documents `postgres upgrade`")
 	}
 	source, err := os.ReadFile("commands_postgres.go")

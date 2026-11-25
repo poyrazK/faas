@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Automatic growth policy and the latest storage eligibility check.
+ */
 export type ManagedPostgresAutoGrowStatus = {
   max_bytes: number;
   proposed_bytes?: number;

@@ -60,9 +60,10 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ManagedPostgresUpgradeRehearsal | Problem]:
-    """Read a native PostgreSQL upgrade rehearsal
+    """Read a native PostgreSQL upgrade rehearsal for the organization.
 
-     Reads the rehearsal progress or outcome for the selected source database.
+     On the organization's database, reads the rehearsal progress or outcome for the selected source
+    database.
 
     Args:
         organization (str):
@@ -97,9 +98,10 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> ManagedPostgresUpgradeRehearsal | Problem | None:
-    """Read a native PostgreSQL upgrade rehearsal
+    """Read a native PostgreSQL upgrade rehearsal for the organization.
 
-     Reads the rehearsal progress or outcome for the selected source database.
+     On the organization's database, reads the rehearsal progress or outcome for the selected source
+    database.
 
     Args:
         organization (str):
@@ -129,9 +131,10 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ManagedPostgresUpgradeRehearsal | Problem]:
-    """Read a native PostgreSQL upgrade rehearsal
+    """Read a native PostgreSQL upgrade rehearsal for the organization.
 
-     Reads the rehearsal progress or outcome for the selected source database.
+     On the organization's database, reads the rehearsal progress or outcome for the selected source
+    database.
 
     Args:
         organization (str):
@@ -164,9 +167,10 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> ManagedPostgresUpgradeRehearsal | Problem | None:
-    """Read a native PostgreSQL upgrade rehearsal
+    """Read a native PostgreSQL upgrade rehearsal for the organization.
 
-     Reads the rehearsal progress or outcome for the selected source database.
+     On the organization's database, reads the rehearsal progress or outcome for the selected source
+    database.
 
     Args:
         organization (str):

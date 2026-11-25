@@ -62,10 +62,10 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ManagedPostgresExtensions | Problem]:
-    """Enable a managed PostgreSQL extension
+    """Enable a managed PostgreSQL extension for the organization.
 
-     Installs the default version of the extension on the native primary. Repeating the operation
-    preserves an installed version.
+     On the organization's database, installs the default version of the extension on the native primary.
+    Repeating the operation preserves an installed version.
 
     Args:
         organization (str):
@@ -100,10 +100,10 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> ManagedPostgresExtensions | Problem | None:
-    """Enable a managed PostgreSQL extension
+    """Enable a managed PostgreSQL extension for the organization.
 
-     Installs the default version of the extension on the native primary. Repeating the operation
-    preserves an installed version.
+     On the organization's database, installs the default version of the extension on the native primary.
+    Repeating the operation preserves an installed version.
 
     Args:
         organization (str):
@@ -133,10 +133,10 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ManagedPostgresExtensions | Problem]:
-    """Enable a managed PostgreSQL extension
+    """Enable a managed PostgreSQL extension for the organization.
 
-     Installs the default version of the extension on the native primary. Repeating the operation
-    preserves an installed version.
+     On the organization's database, installs the default version of the extension on the native primary.
+    Repeating the operation preserves an installed version.
 
     Args:
         organization (str):
@@ -169,10 +169,10 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> ManagedPostgresExtensions | Problem | None:
-    """Enable a managed PostgreSQL extension
+    """Enable a managed PostgreSQL extension for the organization.
 
-     Installs the default version of the extension on the native primary. Repeating the operation
-    preserves an installed version.
+     On the organization's database, installs the default version of the extension on the native primary.
+    Repeating the operation preserves an installed version.
 
     Args:
         organization (str):

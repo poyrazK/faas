@@ -13,6 +13,8 @@ T = TypeVar("T", bound="SetManagedPostgresBindingTimeoutsRequest")
 
 @_attrs_define
 class SetManagedPostgresBindingTimeoutsRequest:
+    """Timeout settings to change on a ready pooled application binding."""
+
     statement_timeout_ms: int | Unset = UNSET
     lock_timeout_ms: int | Unset = UNSET
     idle_in_transaction_session_timeout_ms: int | Unset = UNSET

@@ -74,10 +74,10 @@ def sync_detailed(
     sqlstate: str | Unset = UNSET,
     limit: int | Unset = 40,
 ) -> Response[ManagedPostgresErrorHistory | Problem]:
-    """Read recent errors from native PostgreSQL pooled connections.
+    """Read recent errors from native PostgreSQL pooled connections for the organization.
 
-     Returns newest first. The history keeps up to 1000 events per database for up to 24 hours. Reading
-    history does not wake a parked database.
+     On the organization's database, returns newest first. The history keeps up to 1000 events per
+    database for up to 24 hours. Reading history does not wake a parked database.
 
     Args:
         organization (str):
@@ -118,10 +118,10 @@ def sync(
     sqlstate: str | Unset = UNSET,
     limit: int | Unset = 40,
 ) -> ManagedPostgresErrorHistory | Problem | None:
-    """Read recent errors from native PostgreSQL pooled connections.
+    """Read recent errors from native PostgreSQL pooled connections for the organization.
 
-     Returns newest first. The history keeps up to 1000 events per database for up to 24 hours. Reading
-    history does not wake a parked database.
+     On the organization's database, returns newest first. The history keeps up to 1000 events per
+    database for up to 24 hours. Reading history does not wake a parked database.
 
     Args:
         organization (str):
@@ -157,10 +157,10 @@ async def asyncio_detailed(
     sqlstate: str | Unset = UNSET,
     limit: int | Unset = 40,
 ) -> Response[ManagedPostgresErrorHistory | Problem]:
-    """Read recent errors from native PostgreSQL pooled connections.
+    """Read recent errors from native PostgreSQL pooled connections for the organization.
 
-     Returns newest first. The history keeps up to 1000 events per database for up to 24 hours. Reading
-    history does not wake a parked database.
+     On the organization's database, returns newest first. The history keeps up to 1000 events per
+    database for up to 24 hours. Reading history does not wake a parked database.
 
     Args:
         organization (str):
@@ -199,10 +199,10 @@ async def asyncio(
     sqlstate: str | Unset = UNSET,
     limit: int | Unset = 40,
 ) -> ManagedPostgresErrorHistory | Problem | None:
-    """Read recent errors from native PostgreSQL pooled connections.
+    """Read recent errors from native PostgreSQL pooled connections for the organization.
 
-     Returns newest first. The history keeps up to 1000 events per database for up to 24 hours. Reading
-    history does not wake a parked database.
+     On the organization's database, returns newest first. The history keeps up to 1000 events per
+    database for up to 24 hours. Reading history does not wake a parked database.
 
     Args:
         organization (str):

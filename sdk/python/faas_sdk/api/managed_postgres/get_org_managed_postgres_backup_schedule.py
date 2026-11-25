@@ -56,7 +56,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ManagedPostgresBackupSchedule | Problem]:
-    """Read a daily portable backup schedule and its last outcome.
+    """Read a daily portable backup schedule and its last outcome for the organization.
 
     Args:
         organization (str):
@@ -88,7 +88,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> ManagedPostgresBackupSchedule | Problem | None:
-    """Read a daily portable backup schedule and its last outcome.
+    """Read a daily portable backup schedule and its last outcome for the organization.
 
     Args:
         organization (str):
@@ -115,7 +115,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ManagedPostgresBackupSchedule | Problem]:
-    """Read a daily portable backup schedule and its last outcome.
+    """Read a daily portable backup schedule and its last outcome for the organization.
 
     Args:
         organization (str):
@@ -145,7 +145,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> ManagedPostgresBackupSchedule | Problem | None:
-    """Read a daily portable backup schedule and its last outcome.
+    """Read a daily portable backup schedule and its last outcome for the organization.
 
     Args:
         organization (str):

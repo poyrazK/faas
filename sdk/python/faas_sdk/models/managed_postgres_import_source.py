@@ -12,6 +12,8 @@ T = TypeVar("T", bound="ManagedPostgresImportSource")
 
 @_attrs_define
 class ManagedPostgresImportSource:
+    """Connection details for a PostgreSQL source to inspect or import."""
+
     host: str
     """Public PostgreSQL endpoint with a certificate valid for this name."""
     port: int

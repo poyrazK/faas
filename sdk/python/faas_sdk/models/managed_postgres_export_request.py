@@ -11,6 +11,8 @@ T = TypeVar("T", bound="ManagedPostgresExportRequest")
 
 @_attrs_define
 class ManagedPostgresExportRequest:
+    """Idempotency identifier for creating a portable PostgreSQL export."""
+
     request_id: UUID
 
     def to_dict(self) -> dict[str, Any]:

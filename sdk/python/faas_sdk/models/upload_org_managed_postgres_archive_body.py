@@ -21,6 +21,7 @@ T = TypeVar("T", bound="UploadOrgManagedPostgresArchiveBody")
 @_attrs_define
 class UploadOrgManagedPostgresArchiveBody:
     manifest: ManagedPostgresExportManifest
+    """Signed snapshot metadata and integrity checks for a portable export."""
     archive: File
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

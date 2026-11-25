@@ -34,6 +34,7 @@ class ResourceStatus:
     storage: ManagedPostgresStorageStatus | Unset = UNSET
     """Storage allocation and latest filesystem observations for a native PostgreSQL database."""
     maintenance: ManagedPostgresMaintenanceStatus | Unset = UNSET
+    """Configured maintenance window and the current database refresh status."""
     backup: ManagedPostgresBackupStatus | Unset = UNSET
     """Configured point-in-time restore retention and recorded backup and restore evidence for a native PostgreSQL
     database."""

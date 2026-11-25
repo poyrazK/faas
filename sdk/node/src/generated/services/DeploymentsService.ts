@@ -1391,7 +1391,7 @@ export class DeploymentsService {
   /**
    * Activate a verified native PostgreSQL migration for one app environment
    * Starts a durable binding switch for a managed source and a single-zone native target. The operator keeps source writers paused through activation. Follow progress using the returned database switch.
-   * @returns DatabaseSwitch The switch was recorded and runs in the background.
+   * @returns DatabaseSwitch The migration activation is queued for the application environment.
    * @throws ApiError
    */
   public static activateManagedPostgresMigration({

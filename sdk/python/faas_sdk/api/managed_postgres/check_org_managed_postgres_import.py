@@ -66,15 +66,17 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: ManagedPostgresImportSource,
 ) -> Response[ManagedPostgresImportStatus | Problem]:
-    """Check a PostgreSQL source and an empty native import target
+    """Check a PostgreSQL source and an empty native import target for the organization.
 
-     Checks the source connection, major version, extensions, target emptiness and estimated storage. May
-    wake the target to inspect it. Requires PostgreSQL management access.
+     On the organization's database, checks the source connection, major version, extensions, target
+    emptiness and estimated storage. May wake the target to inspect it. Requires PostgreSQL management
+    access.
 
     Args:
         organization (str):
         id (str):
-        body (ManagedPostgresImportSource):
+        body (ManagedPostgresImportSource): Connection details for a PostgreSQL source to inspect
+            or import.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -104,15 +106,17 @@ def sync(
     client: AuthenticatedClient | Client,
     body: ManagedPostgresImportSource,
 ) -> ManagedPostgresImportStatus | Problem | None:
-    """Check a PostgreSQL source and an empty native import target
+    """Check a PostgreSQL source and an empty native import target for the organization.
 
-     Checks the source connection, major version, extensions, target emptiness and estimated storage. May
-    wake the target to inspect it. Requires PostgreSQL management access.
+     On the organization's database, checks the source connection, major version, extensions, target
+    emptiness and estimated storage. May wake the target to inspect it. Requires PostgreSQL management
+    access.
 
     Args:
         organization (str):
         id (str):
-        body (ManagedPostgresImportSource):
+        body (ManagedPostgresImportSource): Connection details for a PostgreSQL source to inspect
+            or import.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -137,15 +141,17 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: ManagedPostgresImportSource,
 ) -> Response[ManagedPostgresImportStatus | Problem]:
-    """Check a PostgreSQL source and an empty native import target
+    """Check a PostgreSQL source and an empty native import target for the organization.
 
-     Checks the source connection, major version, extensions, target emptiness and estimated storage. May
-    wake the target to inspect it. Requires PostgreSQL management access.
+     On the organization's database, checks the source connection, major version, extensions, target
+    emptiness and estimated storage. May wake the target to inspect it. Requires PostgreSQL management
+    access.
 
     Args:
         organization (str):
         id (str):
-        body (ManagedPostgresImportSource):
+        body (ManagedPostgresImportSource): Connection details for a PostgreSQL source to inspect
+            or import.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -173,15 +179,17 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: ManagedPostgresImportSource,
 ) -> ManagedPostgresImportStatus | Problem | None:
-    """Check a PostgreSQL source and an empty native import target
+    """Check a PostgreSQL source and an empty native import target for the organization.
 
-     Checks the source connection, major version, extensions, target emptiness and estimated storage. May
-    wake the target to inspect it. Requires PostgreSQL management access.
+     On the organization's database, checks the source connection, major version, extensions, target
+    emptiness and estimated storage. May wake the target to inspect it. Requires PostgreSQL management
+    access.
 
     Args:
         organization (str):
         id (str):
-        body (ManagedPostgresImportSource):
+        body (ManagedPostgresImportSource): Connection details for a PostgreSQL source to inspect
+            or import.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

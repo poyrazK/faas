@@ -4,6 +4,9 @@
 /* eslint-disable */
 import type { ManagedPostgresBaseRefresh } from './ManagedPostgresBaseRefresh.js';
 import type { ManagedPostgresMaintenanceWindow } from './ManagedPostgresMaintenanceWindow.js';
+/**
+ * Configured maintenance window and the current database refresh status.
+ */
 export type ManagedPostgresMaintenanceStatus = {
   window: (ManagedPostgresMaintenanceWindow | null);
   /**

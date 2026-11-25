@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ManagedPostgresQueryInsight } from './ManagedPostgresQueryInsight.js';
+/**
+ * Ranked statement statistics and the coverage of the observation window.
+ */
 export type ManagedPostgresQueryInsights = {
   database_id: string;
   enabled: boolean;

@@ -14,6 +14,8 @@ T = TypeVar("T", bound="ManagedPostgresSession")
 
 @_attrs_define
 class ManagedPostgresSession:
+    """Connection and execution state for a sampled database session."""
+
     pid: int
     state: str
     transaction_age_ms: int

@@ -66,15 +66,16 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: SetManagedPostgresQueryInsightsRequest,
 ) -> Response[ManagedPostgresQueryInsights | Problem]:
-    """Set native PostgreSQL query statistics collection
+    """Set native PostgreSQL query statistics collection for the organization.
 
-     Applies the collection setting at an eligible primary restart. Historical observations remain
-    available until they expire.
+     On the organization's database, applies the collection setting at an eligible primary restart.
+    Historical observations remain available until they expire.
 
     Args:
         organization (str):
         id (str):
-        body (SetManagedPostgresQueryInsightsRequest):
+        body (SetManagedPostgresQueryInsightsRequest): Controls collection of aggregate statement
+            statistics at eligible restarts.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -104,15 +105,16 @@ def sync(
     client: AuthenticatedClient | Client,
     body: SetManagedPostgresQueryInsightsRequest,
 ) -> ManagedPostgresQueryInsights | Problem | None:
-    """Set native PostgreSQL query statistics collection
+    """Set native PostgreSQL query statistics collection for the organization.
 
-     Applies the collection setting at an eligible primary restart. Historical observations remain
-    available until they expire.
+     On the organization's database, applies the collection setting at an eligible primary restart.
+    Historical observations remain available until they expire.
 
     Args:
         organization (str):
         id (str):
-        body (SetManagedPostgresQueryInsightsRequest):
+        body (SetManagedPostgresQueryInsightsRequest): Controls collection of aggregate statement
+            statistics at eligible restarts.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -137,15 +139,16 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: SetManagedPostgresQueryInsightsRequest,
 ) -> Response[ManagedPostgresQueryInsights | Problem]:
-    """Set native PostgreSQL query statistics collection
+    """Set native PostgreSQL query statistics collection for the organization.
 
-     Applies the collection setting at an eligible primary restart. Historical observations remain
-    available until they expire.
+     On the organization's database, applies the collection setting at an eligible primary restart.
+    Historical observations remain available until they expire.
 
     Args:
         organization (str):
         id (str):
-        body (SetManagedPostgresQueryInsightsRequest):
+        body (SetManagedPostgresQueryInsightsRequest): Controls collection of aggregate statement
+            statistics at eligible restarts.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -173,15 +176,16 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: SetManagedPostgresQueryInsightsRequest,
 ) -> ManagedPostgresQueryInsights | Problem | None:
-    """Set native PostgreSQL query statistics collection
+    """Set native PostgreSQL query statistics collection for the organization.
 
-     Applies the collection setting at an eligible primary restart. Historical observations remain
-    available until they expire.
+     On the organization's database, applies the collection setting at an eligible primary restart.
+    Historical observations remain available until they expire.
 
     Args:
         organization (str):
         id (str):
-        body (SetManagedPostgresQueryInsightsRequest):
+        body (SetManagedPostgresQueryInsightsRequest): Controls collection of aggregate statement
+            statistics at eligible restarts.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

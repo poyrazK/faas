@@ -77,10 +77,10 @@ def sync_detailed(
     sort: GetOrgManagedPostgresTableHealthSort | Unset = "size",
     limit: int | Unset = 20,
 ) -> Response[ManagedPostgresTableHealth | Problem]:
-    """Inspect native PostgreSQL table health
+    """Inspect native PostgreSQL table health for the organization.
 
-     Reads a bounded sample of stored tables and leaf partitions from the running primary. Parked
-    databases stay asleep.
+     On the organization's database, reads a bounded sample of stored tables and leaf partitions from the
+    running primary. Parked databases stay asleep.
 
     Args:
         organization (str):
@@ -118,10 +118,10 @@ def sync(
     sort: GetOrgManagedPostgresTableHealthSort | Unset = "size",
     limit: int | Unset = 20,
 ) -> ManagedPostgresTableHealth | Problem | None:
-    """Inspect native PostgreSQL table health
+    """Inspect native PostgreSQL table health for the organization.
 
-     Reads a bounded sample of stored tables and leaf partitions from the running primary. Parked
-    databases stay asleep.
+     On the organization's database, reads a bounded sample of stored tables and leaf partitions from the
+    running primary. Parked databases stay asleep.
 
     Args:
         organization (str):
@@ -154,10 +154,10 @@ async def asyncio_detailed(
     sort: GetOrgManagedPostgresTableHealthSort | Unset = "size",
     limit: int | Unset = 20,
 ) -> Response[ManagedPostgresTableHealth | Problem]:
-    """Inspect native PostgreSQL table health
+    """Inspect native PostgreSQL table health for the organization.
 
-     Reads a bounded sample of stored tables and leaf partitions from the running primary. Parked
-    databases stay asleep.
+     On the organization's database, reads a bounded sample of stored tables and leaf partitions from the
+    running primary. Parked databases stay asleep.
 
     Args:
         organization (str):
@@ -193,10 +193,10 @@ async def asyncio(
     sort: GetOrgManagedPostgresTableHealthSort | Unset = "size",
     limit: int | Unset = 20,
 ) -> ManagedPostgresTableHealth | Problem | None:
-    """Inspect native PostgreSQL table health
+    """Inspect native PostgreSQL table health for the organization.
 
-     Reads a bounded sample of stored tables and leaf partitions from the running primary. Parked
-    databases stay asleep.
+     On the organization's database, reads a bounded sample of stored tables and leaf partitions from the
+    running primary. Parked databases stay asleep.
 
     Args:
         organization (str):

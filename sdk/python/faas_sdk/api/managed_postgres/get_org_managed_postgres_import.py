@@ -60,10 +60,10 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ManagedPostgresImportStatus | Problem]:
-    """Read the progress of a native PostgreSQL import
+    """Read the progress of a native PostgreSQL import for the organization.
 
-     Reads the import without waking the target. An unverified result means the current guest cannot
-    report the requested operation.
+     On the organization's database, reads the import without waking the target. An unverified result
+    means the current guest cannot report the requested operation.
 
     Args:
         organization (str):
@@ -98,10 +98,10 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> ManagedPostgresImportStatus | Problem | None:
-    """Read the progress of a native PostgreSQL import
+    """Read the progress of a native PostgreSQL import for the organization.
 
-     Reads the import without waking the target. An unverified result means the current guest cannot
-    report the requested operation.
+     On the organization's database, reads the import without waking the target. An unverified result
+    means the current guest cannot report the requested operation.
 
     Args:
         organization (str):
@@ -131,10 +131,10 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ManagedPostgresImportStatus | Problem]:
-    """Read the progress of a native PostgreSQL import
+    """Read the progress of a native PostgreSQL import for the organization.
 
-     Reads the import without waking the target. An unverified result means the current guest cannot
-    report the requested operation.
+     On the organization's database, reads the import without waking the target. An unverified result
+    means the current guest cannot report the requested operation.
 
     Args:
         organization (str):
@@ -167,10 +167,10 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> ManagedPostgresImportStatus | Problem | None:
-    """Read the progress of a native PostgreSQL import
+    """Read the progress of a native PostgreSQL import for the organization.
 
-     Reads the import without waking the target. An unverified result means the current guest cannot
-    report the requested operation.
+     On the organization's database, reads the import without waking the target. An unverified result
+    means the current guest cannot report the requested operation.
 
     Args:
         organization (str):

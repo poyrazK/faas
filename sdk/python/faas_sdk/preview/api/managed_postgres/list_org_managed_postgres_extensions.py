@@ -66,10 +66,10 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     target_major: int | Unset = UNSET,
 ) -> Response[ManagedPostgresExtensions | Problem]:
-    """List native PostgreSQL extension versions
+    """List native PostgreSQL extension versions for the organization.
 
-     Reads the current primary and may wake it. An optional later major compares installed versions with
-    the configured upgrade image.
+     On the organization's database, reads the current primary and may wake it. An optional later major
+    compares installed versions with the configured upgrade image.
 
     Args:
         organization (str):
@@ -104,10 +104,10 @@ def sync(
     client: AuthenticatedClient | Client,
     target_major: int | Unset = UNSET,
 ) -> ManagedPostgresExtensions | Problem | None:
-    """List native PostgreSQL extension versions
+    """List native PostgreSQL extension versions for the organization.
 
-     Reads the current primary and may wake it. An optional later major compares installed versions with
-    the configured upgrade image.
+     On the organization's database, reads the current primary and may wake it. An optional later major
+    compares installed versions with the configured upgrade image.
 
     Args:
         organization (str):
@@ -137,10 +137,10 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     target_major: int | Unset = UNSET,
 ) -> Response[ManagedPostgresExtensions | Problem]:
-    """List native PostgreSQL extension versions
+    """List native PostgreSQL extension versions for the organization.
 
-     Reads the current primary and may wake it. An optional later major compares installed versions with
-    the configured upgrade image.
+     On the organization's database, reads the current primary and may wake it. An optional later major
+    compares installed versions with the configured upgrade image.
 
     Args:
         organization (str):
@@ -173,10 +173,10 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     target_major: int | Unset = UNSET,
 ) -> ManagedPostgresExtensions | Problem | None:
-    """List native PostgreSQL extension versions
+    """List native PostgreSQL extension versions for the organization.
 
-     Reads the current primary and may wake it. An optional later major compares installed versions with
-    the configured upgrade image.
+     On the organization's database, reads the current primary and may wake it. An optional later major
+    compares installed versions with the configured upgrade image.
 
     Args:
         organization (str):

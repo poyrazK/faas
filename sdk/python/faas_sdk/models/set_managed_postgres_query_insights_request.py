@@ -10,6 +10,8 @@ T = TypeVar("T", bound="SetManagedPostgresQueryInsightsRequest")
 
 @_attrs_define
 class SetManagedPostgresQueryInsightsRequest:
+    """Controls collection of aggregate statement statistics at eligible restarts."""
+
     enabled: bool
 
     def to_dict(self) -> dict[str, Any]:
