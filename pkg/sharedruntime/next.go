@@ -68,7 +68,8 @@ module.exports = {
 };
 `
 
-// nextStandaloneStep (a format taking the cap in bytes) keeps the standalone
+// nextStandaloneStep (a format taking the reserve, the cap in bytes and
+// the cap in MB) keeps the standalone
 // tree only when the app needs it. After the build it estimates the ext4
 // image the full /app would need, the way imaged sizes an app layer
 // (rootfs.CheckCapForStaging): the files' apparent bytes, plus 10 % slack
@@ -80,17 +81,19 @@ module.exports = {
 // the tree is removed. A larger one gets its static assets and public
 // files copied next to the standalone server, as Next's deployment docs do,
 // and the marker written last. The step acts only when the adapter set the
-// output, and never fails the build: without the marker imaged ships the
-// whole app.
+// output, prints its estimate and choice to the build log, and never fails
+// the build: without the marker imaged ships the whole app.
 const nextStandaloneStep = `sh -c 'if [ -f ` + nextAdapterSetFlag + ` ] && [ -f .next/standalone/server.js ]; then ` +
 	`f() { find . \( -path ./.next/standalone -o -path ./.next/cache -o -path ./node_modules/.cache \) -prune -o -type f "$@"; }; keep=0; ` +
 	`n=$(( $(f -print | wc -l) )); s=$(( $(f -size -4096c -print | wc -l) )); b=$(( $(f -exec cat {} + | wc -c) )); ` +
 	`[ "$n" -gt 0 ] || n=1; e=$(( b * (110 * n + 60 * s) / (100 * n) )); m=$(( b + 16777216 )); [ "$m" -le "$e" ] || e=$m; ` +
-	`if [ $(( e + %d )) -gt %d ] && rm -rf .next/standalone/.next/static && mkdir -p .next/standalone/.next && ` +
+	`c=$(( $(find .next/cache node_modules/.cache -type f -exec cat {} + 2>/dev/null | wc -c) )); ` +
+	`echo "Next.js: the full app needs about $(( (e + %[1]d) >> 20 )) MB of the plan cap of %[3]d MB ($n files, build caches of $(( c >> 20 )) MB not counted)"; ` +
+	`if [ $(( e + %[1]d )) -gt %[2]d ] && rm -rf .next/standalone/.next/static && mkdir -p .next/standalone/.next && ` +
 	`{ [ ! -d .next/static ] || cp -R .next/static .next/standalone/.next/static; } && ` +
 	`{ [ ! -d public ] || { rm -rf .next/standalone/public && cp -R public .next/standalone/public; }; }; then ` +
 	`: > .next/standalone/` + nextStandaloneMarkerName + ` && keep=1; fi; ` +
-	`[ "$keep" = 1 ] || rm -rf .next/standalone; fi; true'`
+	`if [ "$keep" = 1 ]; then echo "Next.js: shipping the standalone server"; else rm -rf .next/standalone; echo "Next.js: shipping the full app"; fi; fi; true'`
 
 // nextLayerReserveBytes is what an app layer holds beyond /app: guest-init
 // and the directories above /app.
@@ -98,7 +101,7 @@ const nextLayerReserveBytes = 24 << 20
 
 // nextStandaloneCommand is nextStandaloneStep for a cap of capMB.
 func nextStandaloneCommand(capMB int) string {
-	return fmt.Sprintf(nextStandaloneStep, nextLayerReserveBytes, int64(capMB)<<20)
+	return fmt.Sprintf(nextStandaloneStep, nextLayerReserveBytes, int64(capMB)<<20, capMB)
 }
 
 // nextStandaloneMarkerName is the file nextStandaloneStep writes last.

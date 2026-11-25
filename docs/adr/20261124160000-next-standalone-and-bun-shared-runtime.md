@@ -61,7 +61,8 @@ through its package manager. The build step:
    - **Otherwise.** The step removes `.next/standalone`, so the layer is
      the size it was before.
 
-   The step never fails the build. If the copy fails, no marker is written.
+   The step prints its estimate and its choice to the build log. It never
+   fails the build. If the copy fails, no marker is written.
 
 The deploy inputs are unchanged. imaged ships only `/app/.next/standalone`
 when three things hold: the marker is there, the start command is the plain
