@@ -1901,6 +1901,7 @@ var ResolveSimpleAppPlan = resolveSimpleAppPlan
 var ResolveTestLoadConfig = resolveTestLoadConfig
 var ResolveTestLoadRecovery = resolveTestLoadRecovery
 var ResolveWorkspaceContext = resolveWorkspaceContext
+var ResolveWorkspaceContextReason = resolveWorkspaceContextReason
 var ResolvedTempDir = resolvedTempDir
 var ResponseActionID = responseActionID
 var RestartAuthApp = restartAuthApp

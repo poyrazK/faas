@@ -109,6 +109,14 @@ root lockfile or shared package edit redeploys the affected project services.
 Compose Dockerfile builds use their declared build context. The first deploy
 after this change refreshes the stored source hashes once.
 
+`gregale deploy --app --path <member>` works the same way for one workspace
+member. If the member's own `Dockerfile` copies files that exist only in that
+directory (for example `COPY .mvn .mvn` or `COPY pom.xml .`), the build runs
+from that directory, as `docker build <member>` would. If it copies the root
+lockfile or sibling packages, the build runs from the repository root. The
+deploy prints which context it chose and why, and
+`gregale deploy --path <member> --dry-run --explain-files` shows it too.
+
 ## What becomes a service
 
 Gregale reads, in this order:
