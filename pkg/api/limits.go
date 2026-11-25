@@ -305,6 +305,28 @@ const (
 	ObsGatewayTrafficLongWindowBudget = 10 * time.Second
 )
 
+// Operator disk pressure report (ADR-20261124150000). Filesystems are graded
+// with the FaasHostDisk* alert thresholds: free space under
+// ObsDiskCriticalFreePercent is critical, under ObsDiskFillingFreePercent
+// and predicted full within ObsDiskFillingHorizonHours (deriv over
+// ObsDiskGrowthWindow) is filling, under ObsDiskLowFreePercent is low, and
+// inodes under ObsDiskInodesLowFreePercent are inodes_low. A predicted time
+// to full beyond ObsDiskHoursToFullMax is not shown. The report lists up to
+// ObsDiskFilesystemsMax filesystems and the ObsDiskGuestsMax fullest guest
+// disks, read under ObsDiskPrometheusBudget.
+const (
+	ObsDiskCriticalFreePercent  = 5
+	ObsDiskLowFreePercent       = 15
+	ObsDiskFillingFreePercent   = 25
+	ObsDiskFillingHorizonHours  = 4
+	ObsDiskInodesLowFreePercent = 10
+	ObsDiskHoursToFullMax       = 7 * 24
+	ObsDiskGrowthWindow         = 6 * time.Hour
+	ObsDiskFilesystemsMax       = 500
+	ObsDiskGuestsMax            = 25
+	ObsDiskPrometheusBudget     = 3 * time.Second
+)
+
 // Customer attention signals (ADR-20261113123000): when a customer is
 // probably stuck. Thresholds are platform-wide, not per plan.
 const (
