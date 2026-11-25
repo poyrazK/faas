@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "name": "work-inbox",
+  "input": {
+    "type": "object",
+    "properties": {
+      "kind": {
+        "type": "string",
+        "enum": [
+          "pipeline",
+          "action"
+        ]
+      },
+      "state": {
+        "type": "string",
+        "enum": [
+          "start_unknown",
+          "running",
+          "awaiting_approval",
+          "awaiting_input",
+          "succeeded",
+          "failed",
+          "cancelled",
+          "prepared",
+          "unknown",
+          "pending",
+          "needs_review"
+        ]
+      },
+      "business_ref": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    "required": [],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "kind": {
+        "type": "string",
+        "enum": [
+          "pipeline",
+          "action"
+        ]
+      },
+      "name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      },
+      "state": {
+        "type": "string",
+        "enum": [
+          "start_unknown",
+          "running",
+          "awaiting_approval",
+          "awaiting_input",
+          "succeeded",
+          "failed",
+          "cancelled",
+          "prepared",
+          "unknown",
+          "pending",
+          "needs_review"
+        ]
+      },
+      "next_step": {
+        "type": "string",
+        "enum": [
+          "reconcile_start",
+          "open_review",
+          "inspect",
+          "read_result",
+          "reconcile_action",
+          "review_action",
+          "none"
+        ]
+      },
+      "business_ref": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "request_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 36
+      },
+      "run_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 36
+      },
+      "action_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      },
+      "review": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "approval",
+              "input"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "expires_at": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "review_url": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "expires_at",
+          "review_url"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "required": [
+      "kind",
+      "name",
+      "state",
+      "next_step",
+      "request_id"
+    ],
+    "additionalProperties": false
+  }
+}

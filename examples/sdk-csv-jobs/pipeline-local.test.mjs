@@ -19,6 +19,8 @@ import {csvPipelineTool} from './pipeline-tool.mjs';
 import {paidCsvAdapter} from './paid-producer.mjs';
 import {compensationAcceptance} from './compensation-acceptance.mjs';
 import {pythonFixture} from './python-fixture.mjs';
+import {refundAcceptance} from './refund-acceptance.mjs';
+import {assignedApprovalAcceptance} from './assigned-approval-acceptance.mjs';
 import {csvPipelineSchedule} from './pipeline-schedule.mjs';
 
 const exec=promisify(execFile),here=fileURLToPath(new URL('.',import.meta.url)),root=resolve(here,'../..');
@@ -27,11 +29,17 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
 async function until(fn){for(let i=0;i<1000;i++){try{if(await fn())return;}catch{}await pause(20);}throw new Error('Fixture did not become ready');}
 async function stop(child){if(child.exitCode!==null)return;const done=new Promise(r=>child.once('exit',r));child.kill('SIGTERM');await done;}
 
-const compensationMode=process.env.GREGALE_CSV_COMPENSATION==='1';
+const liveInboxMode=process.env.GREGALE_CSV_LIVE_INBOX==='1';
+const clarificationMode=process.env.GREGALE_CSV_CLARIFICATION==='1';
+const pipelineTasksMode=clarificationMode||process.env.GREGALE_CSV_PIPELINE_TASKS==='1';
+const toolkitMode=pipelineTasksMode||liveInboxMode||process.env.GREGALE_CSV_APP_TOOLKIT==='1';
+const refundMode=toolkitMode||process.env.GREGALE_CSV_REFUND==='1';
+const compensationMode=refundMode||process.env.GREGALE_CSV_COMPENSATION==='1';
 const toolMode=process.env.GREGALE_CSV_TOOL_PIPELINE==='1';
-const paid=process.env.GREGALE_CSV_STRIPE_PIPELINE==='1';
+const assignedApprovalMode=process.env.GREGALE_CSV_ASSIGNED_APPROVAL==='1';
+const paid=refundMode||process.env.GREGALE_CSV_STRIPE_PIPELINE==='1';
 const eventTriggered=paid||process.env.GREGALE_CSV_EVENT_PIPELINE==='1',scheduled=process.env.GREGALE_CSV_SCHEDULED_PIPELINE==='1';
-for(const reviewed of compensationMode?[false]:eventTriggered||scheduled||toolMode?[true]:[false,true])test(`CSV ${compensationMode?'compensation ':toolMode?'agent-tool ':paid?'Stripe-paid ':eventTriggered?'event-triggered ':scheduled?'scheduled ':''}${reviewed?'reviewed':'original'} pipeline: PostgreSQL, mixed SDKs, lost journals and verified report`,{timeout:eventTriggered||scheduled||toolMode||compensationMode?600000:240000},async t=>{
+for(const reviewed of assignedApprovalMode?[true]:compensationMode?[paid]:eventTriggered||scheduled||toolMode?[true]:[false,true])test(`CSV ${refundMode?'paid refund ':compensationMode?'compensation ':toolMode?'agent-tool ':assignedApprovalMode?'assigned approval ':paid?'Stripe-paid ':eventTriggered?'event-triggered ':scheduled?'scheduled ':''}${reviewed?'reviewed':'original'} pipeline: PostgreSQL, mixed SDKs, lost journals and verified report`,{timeout:eventTriggered||scheduled||toolMode||compensationMode||assignedApprovalMode?600000:240000},async t=>{
   try{await access(python);await access(join(pgBin,'initdb'));}catch{t.skip('Set GREGALE_LOCAL_PYTHON and GREGALE_LOCAL_PG_BIN');return;}
   const home=await mkdtemp(join(tmpdir(),'gregale-csv-pipeline-')),cleanup=[];t.after(async()=>{try{for(const close of cleanup.reverse())await close();}finally{await rm(home,{recursive:true,force:true});}});
   await cp(here,join(home,'app'),{recursive:true,filter:p=>!p.includes('node_modules')});await symlink(join(root,'sdk/node/node_modules'),join(home,'app/node_modules'));
@@ -44,7 +52,7 @@ for(const reviewed of compensationMode?[false]:eventTriggered||scheduled||toolMo
   await pool.query('CREATE TABLE sdk_pipeline_runs (id uuid PRIMARY KEY, record jsonb NOT NULL, journal jsonb NOT NULL)');
   await pool.query('CREATE TABLE sdk_pipeline_barrier (driver text PRIMARY KEY)');
   if(eventTriggered){await pool.query(sdk.eventOutboxSchema);await pool.query(sdk.eventPipelineSchema);await pool.query('CREATE TABLE sdk_csv_event_inputs (import_id uuid PRIMARY KEY,owner_id text NOT NULL,input jsonb NOT NULL)');}
-  if(toolMode){await pool.query(sdk.pipelineToolSchema);await pool.query('CREATE TABLE sdk_csv_tool_imports (request_id uuid PRIMARY KEY,owner_id text NOT NULL,enabled boolean NOT NULL DEFAULT true,input jsonb NOT NULL)');}
+  if(toolMode||assignedApprovalMode){await pool.query(sdk.pipelineToolSchema);await pool.query('CREATE TABLE sdk_csv_tool_imports (request_id uuid PRIMARY KEY,owner_id text NOT NULL,enabled boolean NOT NULL DEFAULT true,input jsonb NOT NULL)');}
   const accountId=randomUUID(),jobs=new Map(),templates=new Map(),workflowKeys=new Map(),jobKeys=new Map(),work=new Set(),children=new Set();
   for(const [stage,file]of [['validate','validate-contract.json'],['import','contract.json'],['report','report-contract.json']]){const spec=JSON.parse(await readFile(new URL(file,import.meta.url),'utf8'));templates.set(spec.name,{stage,spec,id:randomUUID()});}
   const storage=fileStorageFixture(()=>env.FAAS_API,{accountId});
@@ -54,11 +62,11 @@ for(const reviewed of compensationMode?[false]:eventTriggered||scheduled||toolMo
   const publications=new Map();let publishPosts=0,scheduleDefinition;const scheduledDeployment=randomUUID();
   if(scheduled)await pool.query('CREATE TABLE sdk_csv_schedule_occurrences (id uuid PRIMARY KEY, scheduled_for timestamptz UNIQUE, record jsonb NOT NULL)');
   let workerCount=0,jobPosts=0,scope,eventPosts=0,dropWakeReplies=true,droppedCompensationAck=false;
-  const env={...process.env,GREGALE_REVIEWED_PIPELINE:reviewed?'1':'0',GREGALE_CSV_REPORT_FAIL:compensationMode?'1':'0',DATABASE_URL:database,PYTHONPATH:join(root,'sdk/python'),FAAS_TOKEN:'fixture-owner',GREGALE_NODE_JOB_RUNTIME:join(root,'sdk/node/dist/job-runtime.js'),GREGALE_FILE_BUCKET:storage.bucket};
+  const env={...process.env,GREGALE_QUERY_CURSOR_KEY:randomUUID()+randomUUID(),GREGALE_REVIEWED_PIPELINE:reviewed?'1':'0',GREGALE_CSV_REPORT_FAIL:compensationMode?'1':'0',DATABASE_URL:database,PYTHONPATH:join(root,'sdk/python'),FAAS_TOKEN:'fixture-owner',GREGALE_NODE_JOB_RUNTIME:join(root,'sdk/node/dist/job-runtime.js'),GREGALE_FILE_BUCKET:storage.bucket};
   const execute=async run=>{
     for(const task of run.tasks){
       for(;;){task.status='claimed';task.attempt++;
-        const manifest=join(home,run.id+'-'+task.task_index+'.json'),usePython=workerCount++%2===1,entry=run.template.stage==='compensate'?'compensation-worker':'pipeline-worker';
+        const manifest=join(home,run.id+'-'+task.task_index+'.json'),usePython=!assignedApprovalMode&&workerCount++%2===1&&!run.template.stage.startsWith('clarification_report'),entry=run.template.stage==='compensate'?'compensation-worker':'pipeline-worker';
         const child=spawn(usePython?python:process.execPath,[join(home,'app',entry+'.'+(usePython?'py':'mjs'))],{env:{...env,GREGALE_CSV_PIPELINE_STAGE:run.template.stage,GREGALE_RUN_ID:run.id,GREGALE_TASK_INDEX:String(task.task_index),GREGALE_TASK_COUNT:String(run.tasks.length),GREGALE_TASK_ATTEMPT:String(task.attempt),GREGALE_INPUT_ID:task.input_id,GREGALE_INPUT_REF:task.input_ref,GREGALE_OUTPUT_MANIFEST_PATH:manifest},stdio:['ignore','pipe','pipe']});children.add(child);let stderr='';child.stderr.on('data',b=>stderr+=b);const code=await new Promise(r=>child.once('exit',r));children.delete(child);
         if(code===0){
           if(compensationMode&&run.template.stage==='compensate'&&!droppedCompensationAck){droppedCompensationAck=true;continue;}
@@ -107,12 +115,17 @@ for(const reviewed of compensationMode?[false]:eventTriggered||scheduled||toolMo
           if(u.pathname.endsWith('/preview')){send(200,{...meta,observed_at:'2026-11-16T00:00:00Z',evaluation_at:'2026-11-16T00:00:00Z',dst_behavior:{mode:'fixed_wall_time',spring_gap:'shift_to_first_valid_minute',fall_fold:'run_once_at_first_occurrence'},upcoming:[{scheduled_for:'2026-11-16T02:00:00Z',local_time:'2026-11-16T02:00:00Z'}],catch_up:{policy:'skip',outcome:'no_due_occurrence',eligible_occurrences:0,coalesced_occurrences:0,missed_occurrences_not_recovered:false,missed_outside_window:false}});return;}
           if(u.pathname.endsWith('/occurrences')){send(200,{occurrences:(await pool.query('SELECT record FROM sdk_csv_schedule_occurrences ORDER BY scheduled_for DESC,id DESC')).rows.map(r=>r.record)});return;}
         }
+        if(req.method==='GET'&&parts[5]==='run-starts'){
+          const match=workflowKeys.get(req.headers['idempotency-key']);
+          if(!match||match.app_id!==storage.app||match.workflow_name!==parts[6]){send(404,{code:'workflow_run_not_found'});return;}
+          send(200,{run_id:match.id});return;
+        }
         if(req.method==='POST'&&u.pathname.endsWith('/runs')){
           const chunks=[];for await(const chunk of req)chunks.push(chunk);const input=JSON.parse(Buffer.concat(chunks).toString()),key=req.headers['idempotency-key'];
           if(workflowKeys.has(key)){send(200,workflowKeys.get(key));return;}
           const record={id:randomUUID(),app_id:storage.app,workflow_name:parts[5],status:'running',input};
           await pool.query('INSERT INTO sdk_pipeline_runs VALUES ($1,$2,$3)',[record.id,record,'[]']);workflowKeys.set(key,record);
-          if(eventTriggered&&key?.startsWith('event-pipeline:')||(toolMode||compensationMode)&&key?.startsWith('pipeline-tool:')){res.destroy();return;}
+          if(eventTriggered&&key?.startsWith('event-pipeline:')||(toolMode||compensationMode)&&!['clarify-csv-columns','clarify-csv-columns-v2'].includes(parts[5])&&key?.startsWith('pipeline-tool:')){res.destroy();return;}
           send(201,record);return;
         }
         const id=parts[4],row=(await pool.query('SELECT record,journal FROM sdk_pipeline_runs WHERE id=$1',[id])).rows[0];if(!row){send(404,{});return;}
@@ -149,10 +162,17 @@ for(const reviewed of compensationMode?[false]:eventTriggered||scheduled||toolMo
   const compensationPython=compensationMode?await pythonFixture({python,home,env,children,cleanup}):null;
   const client=sdk.createClient(env.FAAS_API,{token:'fixture-owner'}),files=client.storage.files({appSlug:'imports',bucket:storage.bucket});
   const csv=Buffer.from('row,email\n1,one@example.test\n2,two@example.test\n3,invalid email\n'),importId=randomUUID(),key='pipelines/'+importId+'/source.csv';
-  await files.put(key,csv,{timeoutMs:10000,ifNoneMatch:'*',contentType:'text/csv'});
-  const source={version:1,scope:files.scope,owner_id:'alice',key,size_bytes:csv.length,sha256:runtime.jobHash(csv)};
+  if(assignedApprovalMode)storage.enableVersions(key);
+  const uploaded=assignedApprovalMode
+    ? await files.upload(key,sdk.blobFileSource(new Blob([csv])),{timeoutMs:10000,contentType:'text/csv'})
+    : await files.put(key,csv,{timeoutMs:10000,ifNoneMatch:'*',contentType:'text/csv'});
+  const source={version:1,scope:files.scope,owner_id:'alice',key,size_bytes:csv.length,sha256:runtime.jobHash(csv),...(assignedApprovalMode&&{version_id:uploaded.version_id})};
   const gateStore=sdk.postgresPipelineGateStore((sql,values)=>pool.query(sql,values));
-  const {contract,pipeline,reviewContract}=await csvPipeline({sdk,client,scope,reviewed,gateStore,store:sdk.postgresPipelineJobStore((sql,values)=>pool.query(sql,values)),jobStore:await files.jobStore({timeoutMs:10000})});
+  const {contract,pipeline,reviewContract}=await csvPipeline({sdk,client,scope,reviewed,gateStore,...(assignedApprovalMode&&{gateTimeoutMs:600000}),store:sdk.postgresPipelineJobStore((sql,values)=>pool.query(sql,values)),jobStore:await files.jobStore({timeoutMs:10000})});
+  if(assignedApprovalMode){
+    await assignedApprovalAcceptance({sdk,runtime,scope,files,contract,pipeline,gateStore,reviewContract,source,importId,pool,home,env,python,cleanup});
+    return;
+  }
   const typed=sdk.createJobPipelineClient({baseURL:env.FAAS_API,token:'fixture-owner',scope,ownerId:'alice',contract});
   let toolMCP,makeTool,pythonTool,toolInvoke,toolRequestId;
   let run,outboxKey='csv-import:'+importId;
@@ -328,7 +348,7 @@ for(const reviewed of compensationMode?[false]:eventTriggered||scheduled||toolMo
       await pool.query('UPDATE sdk_pipeline_runs SET record=$2,journal=$3 WHERE id=$1',[run.checkpoint.run_id,row.record,JSON.stringify(row.journal)]);
       assert.equal((await pool.query('SELECT count(*)::int AS n FROM sdk_csv_rows')).rows[0].n,2);
       const driveNode=async requestPath=>JSON.parse((await exec(process.execPath,[join(home,'app/pipeline_driver.mjs'),requestPath],{env,timeout:30000})).stdout);
-      await compensationAcceptance({sdk,runtime,pool,client,files,scope,sourceRunId:run.checkpoint.run_id,importId,home,env,cleanup,pythonCall:compensationPython,templates,driveNode,pause});
+      await compensationAcceptance({sdk,runtime,pool,client,files,storage,scope,sourceRunId:run.checkpoint.run_id,importId,home,env,cleanup,pythonCall:compensationPython,templates,driveNode,pause,reviewed,withQueries:refundMode,withToolkit:toolkitMode,withPipelineTasks:pipelineTasksMode,withClarification:clarificationMode,withLiveInbox:liveInboxMode?{realtime,python}:undefined,afterCleanup:refundMode?async review=>refundAcceptance({sdk,pool,scope,home,env,cleanup,pythonCall:compensationPython,driveNode,pause,...review}):undefined});
       assert.equal(droppedCompensationAck,true);return;
     }
     if(!compensationMode){assert.equal(reply.result.status==='failed',false,JSON.stringify(reply));assert.equal(reply.ops.some(o=>o.status==='failed'),false,JSON.stringify(reply));}

@@ -265,10 +265,9 @@ already-running database. A transaction already on the standby may finish
 while it is still a standby. The regular `read_only` mode
 continues to prefer the standby and fall back to the primary.
 
-The default replay backlog limit is 16 MiB. Operators can set
-`replica_max_replay_lag_bytes` in pgproxyd configuration. Zero requires a
-sample with zero backlog. Database status shows whether a standby is available,
-its WAL replay backlog in bytes when measured, and the age of the sample.
+The default replay backlog limit is 16 MiB. Database status shows whether a
+standby is available, its WAL replay backlog in bytes when measured, and the
+age of the sample.
 
 To rotate a credential, run `gregale postgres bindings list orders`, then
 `gregale postgres bindings rotate BINDING_ID --wait`. Rotation returns once

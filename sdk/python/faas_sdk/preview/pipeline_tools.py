@@ -6,14 +6,21 @@ import asyncio
 import copy
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
-from typing import Any, Generic, Literal, TypeVar, cast
+from typing import Any, Generic, Literal, TypedDict, TypeVar, cast
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from ..job_runtime import JobContract, JobError, _scope, job_value_hash
 from .event_pipeline_state import event_pipeline_scope
 from .job_pipeline_client import JobPipelineClient, PipelineStepInspection
 from .pipeline_gates import PipelineGateRecord, PipelineGateStore
-from .pipeline_state import PipelineScope, pipeline_name
+from .pipeline_start_preview import PipelineStartPreview, PipelineStartPreviewPolicy, _check_preview, _preview_expired
+from .pipeline_state import (
+    PinnedPipelineSourceFailure,
+    PipelineError,
+    PipelineScope,
+    _is_pinned_source_failure,
+    pipeline_name,
+)
 from .pipeline_tool_state import (
     PipelineToolAction,
     PipelineToolActor,
@@ -23,10 +30,12 @@ from .pipeline_tool_state import (
     identity,
     match_checkpoint,
     request_id,
+    same_pipeline_tool_request,
     tool_name,
 )
 
 I = TypeVar("I")
+P = TypeVar("P")
 O = TypeVar("O")
 A = TypeVar("A")
 T = TypeVar("T")
@@ -36,6 +45,20 @@ T = TypeVar("T")
 class PipelineToolRequest(Generic[I]):
     request_id: str
     input: I | None = None
+
+
+class _FoundStart(TypedDict):
+    state: Literal["found"]
+    request_id: str
+    run_id: str
+
+
+class _UnknownStart(TypedDict):
+    state: Literal["start_unknown"]
+    request_id: str
+
+
+PipelineToolStartMatch = _FoundStart | _UnknownStart
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -65,6 +88,7 @@ class PipelineToolStatus:
     receipt: PipelineToolReceipt
     steps: tuple[PipelineStepInspection, ...]
     approval: PipelineToolApproval | None
+    source_failure: PinnedPipelineSourceFailure | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return dict(
@@ -72,6 +96,7 @@ class PipelineToolStatus:
             receipt=self.receipt.to_dict(),
             steps=[asdict(s) for s in self.steps],
             approval=asdict(self.approval) if self.approval else None,
+            **({"source_failure": self.source_failure} if self.source_failure else {}),
         )
 
 
@@ -91,6 +116,12 @@ def review_url(value: str) -> str:
         return urlunsplit((u.scheme, u.netloc, u.path or "/", "", ""))
     except Exception:
         raise PipelineToolError("invalid_input") from None
+
+
+@dataclass(frozen=True, slots=True)
+class PipelineToolResult(Generic[O]):
+    receipt: PipelineToolReceipt
+    output: O
 
 
 class PipelineTool(Generic[I, O, A]):
@@ -217,45 +248,104 @@ class PipelineTool(Generic[I, O, A]):
         )
 
     async def start(self, input: I, id: str, access: A, *, timeout: float) -> PipelineToolStart:
+        return await self._start(input, id, access, timeout=timeout, replay_only=False)
+
+    async def replay_start(self, input: I, id: str, access: A, *, timeout: float) -> PipelineToolStart:
+        return await self._start(input, id, access, timeout=timeout, replay_only=True)
+
+    async def _prepare_start(self, request: PipelineToolRequest[I], access: A, check: Callable[[], None]) -> tuple[
+        PipelineToolActor, dict[str, Any], dict[str, Any]
+    ]:
+        actor, binding = await self._prepare(request, access, "start", check)
+        trigger = dict(version=1, kind="tool", identity=binding["identity"])
+        envelope = dict(
+            version=1, scope=self._scope.to_dict(), owner_id=actor.owner_id,
+            contract_sha256=self.contract.sha256, input=request.input, trigger=trigger,
+        )
+        return actor, binding | {"input_sha256": job_value_hash(envelope)}, envelope
+
+    async def _check_preview_access(
+        self, request: PipelineToolRequest[I], access: A, check: Callable[[], None], intent: dict[str, Any], expires: int
+    ) -> None:
+        _, current, _ = await self._prepare_start(request, access, check)
+        if _preview_expired(expires) or current != intent:
+            raise PipelineToolError("preview_stale")
+
+    async def preview_start(
+        self, input: I, id: str, access: A, policy: PipelineStartPreviewPolicy[I, P, A], *, timeout: float,
+    ) -> PipelineStartPreview[P]:
+        captured = self.contract.input(input)
+        request = PipelineToolRequest(request_id=request_id(id), input=captured)
+
+        async def work(check: Callable[[], None], left: Callable[[], float]) -> PipelineStartPreview[P]:
+            _, intent, _ = await self._prepare_start(request, access, check)
+            result, _ = await _check_preview(policy, intent, copy.deepcopy(captured), access, left())
+            await self._check_preview_access(request, access, check, intent, result["expires_at"])
+            return result
+
+        return await self._execute(timeout, work)
+
+    async def start_previewed(
+        self, input: I, id: str, access: A, policy: PipelineStartPreviewPolicy[I, Any, A], *,
+        timeout: float, token: str | None = None,
+    ) -> PipelineToolStart:
+        return await self._start(input, id, access, timeout=timeout, replay_only=False, policy=policy, token=token)
+
+    def _replay(self, intent: dict[str, Any], recorded: PipelineToolReceipt) -> PipelineToolStart:
+        receipt = PipelineToolReceipt.from_dict(recorded.to_dict())
+        if not same_pipeline_tool_request(intent, receipt.intent):
+            raise PipelineToolError("receipt_conflict")
+        return self._start_result(receipt, True)
+
+    async def _start(
+        self, input: I, id: str, access: A, *, timeout: float, replay_only: bool,
+        policy: PipelineStartPreviewPolicy[I, Any, A] | None = None, token: str | None = None,
+    ) -> PipelineToolStart:
         captured = self.contract.input(input)
         request = PipelineToolRequest(request_id=request_id(id), input=captured)
 
         async def work(check: Callable[[], None], left: Callable[[], float]) -> PipelineToolStart:
-            actor, binding = await self._prepare(request, access, "start", check)
-            trigger = dict(version=1, kind="tool", identity=binding["identity"])
-            intent = binding | dict(
-                input_sha256=job_value_hash(
-                    dict(
-                        version=1,
-                        scope=self._scope.to_dict(),
-                        owner_id=actor.owner_id,
-                        contract_sha256=self.contract.sha256,
-                        input=captured,
-                        trigger=trigger,
-                    )
+            actor, intent, envelope = await self._prepare_start(request, access, check)
+            pinned = None
+            if replay_only or policy is not None:
+                recorded = await self._stored(lambda: self._store.load(intent["identity"]), check)
+                if recorded is not None:
+                    return self._replay(intent, recorded)
+                if replay_only:
+                    raise PipelineToolError("revision_unavailable")
+            if policy is not None:
+                result, pinned = await _check_preview(
+                    policy, intent, copy.deepcopy(captured), access, left(), confirm=True, token=token,
                 )
-            )
-            created, raw = await self._stored(lambda: self._store.reserve(intent), check)
-            receipt = self._bound(binding, raw)
-            if type(created) is not bool or job_value_hash(receipt.intent) != job_value_hash(intent):
+                await self._check_preview_access(request, access, check, intent, result["expires_at"])
+            admitted = intent
+            if pinned is not None:
+                admitted = intent | {
+                    "request_sha256": intent["input_sha256"],
+                    "input_sha256": job_value_hash(envelope | {"pinned_source": pinned}),
+                }
+            created, raw = await self._stored(lambda: self._store.reserve(admitted), check)
+            if type(created) is not bool:
                 raise PipelineToolError("receipt_conflict")
             if not created:
-                return self._start_result(receipt, True)
+                return self._replay(intent, raw)
+            receipt = self._bound(admitted, raw)
             if receipt.checkpoint is not None:
                 raise PipelineToolError("receipt_conflict")
             try:
                 async with self._client(actor.owner_id) as client:
                     run = await client.start(
-                        captured, timeout=left(), idempotency_key=intent["idempotency_key"], trigger=trigger
+                        captured, timeout=left(), idempotency_key=admitted["idempotency_key"],
+                        trigger=envelope["trigger"], pinned_source=pinned,
                     )
                     check()
                     checkpoint = run.checkpoint
             except Exception:
                 check()
                 return self._start_result(receipt, False)
-            match_checkpoint(intent, checkpoint)
+            match_checkpoint(admitted, checkpoint)
             completed = self._bound(
-                binding, await self._stored(lambda: self._store.complete(intent, checkpoint), check)
+                admitted, await self._stored(lambda: self._store.complete(admitted, checkpoint), check)
             )
             if completed.checkpoint != checkpoint:
                 raise PipelineToolError("receipt_conflict")
@@ -264,12 +354,19 @@ class PipelineTool(Generic[I, O, A]):
         return await self._execute(timeout, work)
 
     async def _operation(
-        self, id: str, access: A, action: PipelineToolAction, timeout: float, run_id: str | None = None
+        self,
+        id: str,
+        access: A,
+        action: PipelineToolAction | Literal["find_start"],
+        timeout: float,
+        run_id: str | None = None,
     ) -> Any:
         request = PipelineToolRequest[I](request_id=request_id(id))
 
         async def work(check: Callable[[], None], left: Callable[[], float]) -> Any:
-            actor, binding = await self._prepare(request, access, action, check)
+            actor, binding = await self._prepare(
+                request, access, "reconcile" if action == "find_start" else action, check
+            )
             raw = await self._stored(lambda: self._store.load(binding["identity"]), check)
             if raw is None:
                 if action == "inspect":
@@ -277,14 +374,40 @@ class PipelineTool(Generic[I, O, A]):
                 raise PipelineToolError("receipt_conflict")
             receipt = self._bound(binding, raw)
             async with self._client(actor.owner_id) as client:
-                if action == "reconcile":
-                    run = await client.resume_by_id(request_id(run_id), timeout=left())
-                    check()
-                    match_checkpoint(receipt.intent, run.checkpoint)
-                    completed = self._bound(
-                        binding, await self._stored(lambda: self._store.complete(receipt.intent, run.checkpoint), check)
+                if action in ("reconcile", "find_start"):
+                    native_id = (
+                        request_id(run_id)
+                        if action == "reconcile"
+                        else (receipt.checkpoint.run_id if receipt.checkpoint else None)
                     )
-                    if completed.checkpoint != run.checkpoint:
+                    try:
+                        checkpoint = (
+                            (await client.resume_by_id(native_id, timeout=left())).checkpoint
+                            if native_id
+                            else await client.find_tool_start(receipt.intent["identity"], timeout=left())
+                        )
+                    except PipelineError as error:
+                        if action == "find_start" and error.code in ("receipt_conflict", "scope_mismatch"):
+                            raise PipelineToolError("receipt_conflict") from None
+                        raise
+                    check()
+                    _, latest = await self._prepare(request, access, "reconcile", check)
+                    if latest != binding:
+                        raise PipelineToolError("unauthorized")
+                    if checkpoint is not None:
+                        match_checkpoint(receipt.intent, checkpoint)
+                    if action == "find_start":
+                        return (
+                            _FoundStart(state="found", request_id=request.request_id, run_id=checkpoint.run_id)
+                            if checkpoint
+                            else _UnknownStart(state="start_unknown", request_id=request.request_id)
+                        )
+                    if checkpoint is None:
+                        raise PipelineToolError("receipt_conflict")
+                    completed = self._bound(
+                        binding, await self._stored(lambda: self._store.complete(receipt.intent, checkpoint), check)
+                    )
+                    if completed.checkpoint != checkpoint:
                         raise PipelineToolError("receipt_conflict")
                     return self._start_result(completed, True)
                 if receipt.checkpoint is None:
@@ -299,7 +422,7 @@ class PipelineTool(Generic[I, O, A]):
                 if action == "result":
                     if info.status != "succeeded" or info.cancelled:
                         raise PipelineToolError("not_terminal")
-                    return await run.result(timeout=left())
+                    return PipelineToolResult(receipt, await run.result(timeout=left()))
                 state = (
                     "cancelled"
                     if info.cancelled
@@ -354,7 +477,11 @@ class PipelineTool(Generic[I, O, A]):
                                     review_url=url,
                                 )
                                 state = "awaiting_approval" if i["kind"] == "approval" else "awaiting_input"
-                return PipelineToolStatus(state=cast(Any, state), receipt=receipt, steps=info.steps, approval=approval)
+                failure = info.failure.code if info.failure else None
+                return PipelineToolStatus(
+                    state=cast(Any, state), receipt=receipt, steps=info.steps, approval=approval,
+                    source_failure=failure if state == "failed" and _is_pinned_source_failure(failure) else None,
+                )
 
         return await self._execute(timeout, work)
 
@@ -362,10 +489,17 @@ class PipelineTool(Generic[I, O, A]):
         return cast(PipelineToolStatus | None, await self._operation(id, access, "inspect", timeout))
 
     async def result(self, id: str, access: A, *, timeout: float) -> O:
-        return cast(O, await self._operation(id, access, "result", timeout))
+        return (await self.result_with_receipt(id, access, timeout=timeout)).output
+
+    async def result_with_receipt(self, id: str, access: A, *, timeout: float) -> PipelineToolResult[O]:
+        return cast(PipelineToolResult[O], await self._operation(id, access, "result", timeout))
 
     async def cancel(self, id: str, access: A, *, timeout: float) -> PipelineToolStatus:
         return cast(PipelineToolStatus, await self._operation(id, access, "cancel", timeout))
 
     async def reconcile(self, id: str, run_id: str, access: A, *, timeout: float) -> PipelineToolStart:
         return cast(PipelineToolStart, await self._operation(id, access, "reconcile", timeout, run_id))
+
+    async def find_accepted_run(self, id: str, access: A, *, timeout: float) -> PipelineToolStartMatch:
+        """Verify a retained start using the original receipt and reconciliation authority."""
+        return cast(PipelineToolStartMatch, await self._operation(id, access, "find_start", timeout))

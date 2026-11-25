@@ -1,0 +1,11 @@
+{
+ "attempt":"SELECT action_id FROM public.gregale_outbound_action_attempts WHERE namespace=$1 AND request_id=$2::uuid",
+ "bind":"INSERT INTO public.gregale_outbound_action_attempts(namespace,request_id,action_id) VALUES ($1,$2::uuid,$3) ON CONFLICT DO NOTHING RETURNING action_id",
+ "run":"SELECT input_sha256 FROM public.gregale_outbound_action_runs WHERE action_id=$1 AND run_id=$2::uuid",
+ "register_run":"INSERT INTO public.gregale_outbound_action_runs(action_id,run_id,input_sha256) VALUES ($1,$2::uuid,$3) ON CONFLICT DO NOTHING RETURNING input_sha256",
+ "load":"SELECT intent,version,outcome FROM public.gregale_outbound_actions WHERE identity=$1",
+ "reserve":"INSERT INTO public.gregale_outbound_actions(identity,intent,outcome,state) VALUES ($1,$2::jsonb,'{\"state\":\"prepared\",\"code\":\"prepared\"}'::jsonb,'prepared') ON CONFLICT DO NOTHING RETURNING intent,version,outcome",
+ "claim":"UPDATE public.gregale_outbound_actions SET state='unknown',outcome='{\"state\":\"unknown\",\"code\":\"dispatch_unconfirmed\"}'::jsonb,version=version+1,updated_at=clock_timestamp() WHERE identity=$1 AND version=$2 AND state='prepared' RETURNING intent,version,outcome",
+ "observe":"UPDATE public.gregale_outbound_actions SET state=$4,outcome=$3::jsonb,version=version+1,updated_at=clock_timestamp() WHERE identity=$1 AND version=$2 AND state IN ('unknown','pending') RETURNING intent,version,outcome",
+ "cancel":"UPDATE public.gregale_outbound_actions SET state='cancelled',outcome='{\"state\":\"cancelled\",\"code\":\"cancelled_before_dispatch\"}'::jsonb,version=version+1,updated_at=clock_timestamp() WHERE identity=$1 AND version=$2 AND state='prepared' RETURNING intent,version,outcome"
+}

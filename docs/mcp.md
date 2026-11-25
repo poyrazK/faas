@@ -5112,6 +5112,9 @@ excluded. Actions carry argument arrays for use by automation or a dashboard.
 
 ## Runtime catalog management
 
+The Node and Python starters can also publish a [typed application toolkit](sdk-application-toolkits.md)
+with explicit scopes for its SDK tools and resources.
+
 The Node, Go, and Python starters expose in-process operations to register,
 replace, and remove tools, resources, and prompts. Application code can change
 catalogs after startup; active `subscriptions/listen` clients receive the
