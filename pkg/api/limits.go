@@ -12003,6 +12003,9 @@ var (
 	// AgentRunConcurrentPerAccount and AgentRunQueuedPerAccount together with
 	// runs. SandboxMaxLifetimeSec is a session's longest life.
 	SandboxMaxLifetimeSec = [4]int{0, 3600, 14_400, 86_400}
+	// SandboxCodeContextsMax bounds a session's code contexts, each its own
+	// Jupyter kernel, the default one included (ADR-20261027090013 step 14).
+	SandboxCodeContextsMax = 8
 	// SandboxBrowserRAMMBMin is the least RAM a session created with
 	// browser: true may have (ADR-20261116182615 §1): Chromium needs about
 	// 1 GB for ordinary pages.

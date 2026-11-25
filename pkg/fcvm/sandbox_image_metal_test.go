@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -39,7 +40,14 @@ func sellerImageDrive(t *testing.T, root string) string {
 		t.Fatal(err)
 	}
 	drive := filepath.Join(t.TempDir(), "seller-image.ext4")
-	if out, err := exec.Command("truncate", "-s", "512M", drive).CombinedOutput(); err != nil {
+	// Sized from the root (a quarter over, plus 256 MB), never under 512 MB.
+	sizeMB := 512
+	if out, err := exec.Command("du", "-sm", root).Output(); err == nil {
+		if mb, err := strconv.Atoi(strings.Fields(string(out))[0]); err == nil {
+			sizeMB = max(sizeMB, mb*5/4+256)
+		}
+	}
+	if out, err := exec.Command("truncate", "-s", strconv.Itoa(sizeMB)+"M", drive).CombinedOutput(); err != nil {
 		t.Fatalf("truncate: %v %s", err, out)
 	}
 	if out, err := exec.Command("mkfs.ext4", "-q", "-O", "^has_journal", "-d", root, "-L", "seller-image", "-F", drive).CombinedOutput(); err != nil {
