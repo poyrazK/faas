@@ -119,6 +119,8 @@
     {"path": "mcp-hosting", "source": "docs/mcp-hosting.md"},
     {"path": "migrate-from-heroku", "source": "docs/migrate-from-heroku.md"},
     {"path": "migrate-from-render", "source": "docs/migrate-from-render.md"},
+    {"path": "migrate-from-railway", "source": "docs/migrate-from-railway.md"},
+    {"path": "migrate-from-fly", "source": "docs/migrate-from-fly.md"},
     {"path": "multi-service", "source": "docs/multi-service-apps.md"},
     {"path": "networking", "source": "docs/networking.md"},
     {"path": "private-networks", "source": "docs/private-networks.md", "unpublished": "preview capability; published when it reaches beta"},
