@@ -12812,7 +12812,7 @@ const AgentBudgetHoursPerMonth = 730
 var ManagedPostgresMinimumQuarterComputeUnits = map[string]int64{
 	"development": 1,
 	"burstable":   1,
-	"production":  4,
+	"production":  2,
 }
 
 // Self-service spend cap ceilings per paid plan, in cents (ADR-20261105120000,
