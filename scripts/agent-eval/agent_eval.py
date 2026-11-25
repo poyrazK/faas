@@ -502,6 +502,11 @@ def _rows(value) -> list:
     return []
 
 
+def _retryable(done: subprocess.CompletedProcess) -> bool:
+    """The CLI's error envelope says the failure is temporary."""
+    return bool(re.search(r'"retryable"\s*:\s*true', (done.stderr or "") + (done.stdout or "")))
+
+
 class CliGregale(Gregale):
     """The caller's own logged-in CLI profile (`--cli-login`).
 
@@ -531,7 +536,13 @@ class CliGregale(Gregale):
         for pattern, args in self.ROUTES:
             match = pattern.match(path)
             if match:
-                done = self.cli(*args(match), timeout=120)
+                # A read the CLI marks retryable (an API timeout) is retried:
+                # one 503 on `app get` failed a working voting-app run (Codex, rc.381).
+                for wait in (2, 5, None):
+                    done = self.cli(*args(match), timeout=120)
+                    if done.returncode == 0 or wait is None or not _retryable(done):
+                        break
+                    time.sleep(wait)
                 if done.returncode != 0:
                     raise ValueError(f"gregale {' '.join(args(match))}: {done.stderr.strip()[-300:] or done.stdout.strip()[-300:]}")
                 return _json_output(done.stdout)

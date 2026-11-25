@@ -664,6 +664,23 @@ class CliLoginTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             g.get("/v1/billing")
 
+    def test_reads_retry_only_retryable_failures(self):
+        timeout = mock.Mock(returncode=3, stdout="", stderr='{"code":"transport_error","retryable":true}')
+        ok = mock.Mock(returncode=0, stdout='{"slug":"vote"}', stderr="")
+        g = ev.CliGregale("/bin/gregale")
+        with mock.patch.object(g, "cli", side_effect=[timeout, ok]) as cli, mock.patch.object(ev.time, "sleep"):
+            self.assertEqual(g.get("/v1/apps/vote"), {"slug": "vote"})
+        self.assertEqual(cli.call_count, 2)
+        with mock.patch.object(g, "cli", side_effect=[timeout] * 3) as cli, mock.patch.object(ev.time, "sleep"):
+            with self.assertRaises(ValueError):
+                g.get("/v1/apps/vote")
+        self.assertEqual(cli.call_count, 3)
+        missing = mock.Mock(returncode=4, stdout="", stderr='{"code":"not_found","retryable":false}')
+        with mock.patch.object(g, "cli", side_effect=[missing]) as cli:
+            with self.assertRaises(ValueError):
+                g.get("/v1/apps/vote")
+        self.assertEqual(cli.call_count, 1)
+
     def test_cli_login_keeps_the_callers_profile(self):
         with mock.patch.dict(os.environ, {"FAAS_PROFILE": "default", "CLAUDECODE": "1"}):
             env = ev.CliGregale("/bin/gregale").env()
