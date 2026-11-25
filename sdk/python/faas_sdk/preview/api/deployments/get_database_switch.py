@@ -84,9 +84,10 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[DatabaseSwitch | Problem]:
-    """Read a rollback that restores the database.
+    """Read a managed PostgreSQL binding switch.
 
-     The switch's phase, restore point, databases, drain counts and outcome.
+     The switch's phase, databases, drain counts, outcome and the restore point or migration operation
+    ID.
 
     Args:
         slug (str):
@@ -118,9 +119,10 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> DatabaseSwitch | Problem | None:
-    """Read a rollback that restores the database.
+    """Read a managed PostgreSQL binding switch.
 
-     The switch's phase, restore point, databases, drain counts and outcome.
+     The switch's phase, databases, drain counts, outcome and the restore point or migration operation
+    ID.
 
     Args:
         slug (str):
@@ -147,9 +149,10 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[DatabaseSwitch | Problem]:
-    """Read a rollback that restores the database.
+    """Read a managed PostgreSQL binding switch.
 
-     The switch's phase, restore point, databases, drain counts and outcome.
+     The switch's phase, databases, drain counts, outcome and the restore point or migration operation
+    ID.
 
     Args:
         slug (str):
@@ -179,9 +182,10 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> DatabaseSwitch | Problem | None:
-    """Read a rollback that restores the database.
+    """Read a managed PostgreSQL binding switch.
 
-     The switch's phase, restore point, databases, drain counts and outcome.
+     The switch's phase, databases, drain counts, outcome and the restore point or migration operation
+    ID.
 
     Args:
         slug (str):

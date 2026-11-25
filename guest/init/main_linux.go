@@ -143,12 +143,20 @@ func boot() error {
 				_ = poweroffDatabase()
 				return fmt.Errorf("database restore mode: %w", targetErr)
 			}
+			timeline, timelineErr := dbguest.RestoreTimeline(string(cmdline))
+			if timelineErr == nil && timeline != 0 && !restoring {
+				timelineErr = errors.New("timeline needs a restore target")
+			}
+			if timelineErr != nil {
+				_ = poweroffDatabase()
+				return fmt.Errorf("database restore mode: %w", timelineErr)
+			}
 			upgradeFrom, upgradeErr := dbguest.UpgradeFrom(string(cmdline), major)
 			if upgradeErr != nil {
 				_ = poweroffDatabase()
 				return fmt.Errorf("database upgrade mode: %w", upgradeErr)
 			}
-			boot := databaseBoot{major: major, archive: dbguest.ArchiveEnabled(string(cmdline)), restoreTarget: target,
+			boot := databaseBoot{major: major, archive: dbguest.ArchiveEnabled(string(cmdline)), restoreTarget: target, restoreTimeline: timeline, queryInsights: dbguest.QueryInsightsEnabled(string(cmdline)),
 				restoreUntilEnd: dbguest.RestoreUntilEnd(string(cmdline)), spare: dbguest.Spare(string(cmdline)), standby: dbguest.Standby(string(cmdline)),
 				promote: dbguest.Promote(string(cmdline)), upgradeFrom: upgradeFrom}
 			if upgradeFrom != 0 && (boot.spare || boot.standby || restoring) {

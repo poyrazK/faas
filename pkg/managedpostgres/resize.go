@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/onebox-faas/faas/pkg/dbmaintenance"
 )
 
 type ResizeState string
@@ -23,12 +25,17 @@ const (
 // receipt. The source snapshot is private control-plane evidence, never a
 // public DTO.
 type ResizeOperation struct {
+	autoGrowPoolBytes                                                 int64
+	autoGrowWindow                                                    dbmaintenance.Interval
+	autoGrowRunningAt                                                 time.Time
+	autoGrowIdleAt, autoGrowPolicyAt                                  time.Time
 	ID, AccountID, DatabaseID                                         string
 	BackendID, BackendFingerprint, ProviderResourceID, DataResourceID string
 	SourceSpec                                                        Spec
 	TargetClass                                                       ServiceClass
 	// TargetStorageLimitBytes grows the storage limit; zero keeps it.
 	TargetStorageLimitBytes int64
+	Automatic               bool
 	PolicyChange            bool
 	TargetScaleToZero       bool
 	// TargetPostgresMajor upgrades the major in place (upgrade.go); zero
@@ -64,9 +71,14 @@ func (r ResizeOperation) MajorUpgrade() bool { return r.TargetPostgresMajor != 0
 // empty class keeps the class; a zero or unchanged storage limit keeps the
 // limit. Storage only grows: a volume cannot shrink under its data.
 type ResizeDatabaseRequest struct {
+	autoGrowPoolBytes                int64
+	autoGrowWindow                   dbmaintenance.Interval
+	autoGrowRunningAt                time.Time
+	autoGrowIdleAt, autoGrowPolicyAt time.Time
 	AccountID, DatabaseID, RequestID string
 	TargetClass                      ServiceClass
 	TargetStorageLimitBytes          int64
+	Automatic                        bool
 	// TargetPostgresMajor is set only by UpgradeMajor.
 	TargetPostgresMajor int
 }
@@ -119,7 +131,19 @@ func validResizeOperation(r ResizeOperation) bool {
 		(r.TargetStorageLimitBytes == 0 || r.SourceSpec.StorageLimitBytes > 0 && r.TargetStorageLimitBytes > r.SourceSpec.StorageLimitBytes) &&
 		(!r.MajorUpgrade() || !r.PolicyChange && r.TargetClass == r.SourceSpec.Class && r.TargetStorageLimitBytes == 0 &&
 			r.TargetPostgresMajor > r.SourceSpec.PostgresMajor) &&
+		(!r.Automatic || validAutomaticGrow(r)) &&
 		r.Generation > 1 && r.State == ResizePending && !r.CreatedAt.IsZero() && r.CompletedAt.IsZero()
+}
+
+func validAutomaticGrow(r ResizeOperation) bool {
+	if r.PolicyChange || r.MajorUpgrade() || r.SourceSpec.Availability != AvailabilitySingleZone ||
+		r.TargetClass != r.SourceSpec.Class || r.TargetStorageLimitBytes <= 0 {
+		return false
+	}
+	if r.SourceSpec.ScaleToZero {
+		return r.autoGrowWindow.Start.IsZero()
+	}
+	return !r.autoGrowRunningAt.IsZero() && !r.autoGrowWindow.Start.IsZero() && r.autoGrowWindow.Start.Before(r.autoGrowWindow.End)
 }
 
 func resizeSourceMatches(d Database, r ResizeOperation) bool {
@@ -173,7 +197,9 @@ func (s *Service) reserveComputeChange(ctx context.Context, request ResizeDataba
 	operation := ResizeOperation{ID: request.RequestID, AccountID: request.AccountID, DatabaseID: database.ID,
 		BackendID: database.BackendID, BackendFingerprint: database.BackendFingerprint, ProviderResourceID: database.ProviderResourceID,
 		DataResourceID: database.DataResourceID, SourceSpec: database.Spec, TargetClass: database.Spec.Class,
-		Generation: database.DesiredGeneration + 1, State: ResizePending, CreatedAt: now}
+		Generation: database.DesiredGeneration + 1, State: ResizePending, CreatedAt: now, Automatic: request.Automatic,
+		autoGrowPoolBytes: request.autoGrowPoolBytes, autoGrowIdleAt: request.autoGrowIdleAt, autoGrowPolicyAt: request.autoGrowPolicyAt,
+		autoGrowWindow: request.autoGrowWindow, autoGrowRunningAt: request.autoGrowRunningAt}
 	switch {
 	case scaleToZero == nil && request.TargetPostgresMajor != 0:
 		if request.TargetClass != "" || request.TargetStorageLimitBytes != 0 || request.TargetPostgresMajor <= database.Spec.PostgresMajor {
@@ -292,7 +318,7 @@ func (s *Service) reconcileResize(ctx context.Context, database Database) (Datab
 	defer cancel()
 	request := UpdateRequest{ResourceID: operation.ProviderResourceID,
 		DataResourceID: operation.DataResourceID, PreviousSpec: operation.SourceSpec, Spec: operation.TargetSpec(),
-		Generation: operation.Generation, IdempotencyKey: "resize-" + operation.ID}
+		Generation: operation.Generation, IdempotencyKey: "resize-" + operation.ID, AutomaticResize: operation.Automatic}
 	request.SuspendTimeoutSeconds = s.ownSuspendTimeout(ctx, claimed.ID, request)
 	observed, err := backend.Provider.Update(providerCtx, request)
 	if err != nil {
@@ -375,12 +401,15 @@ func sameComputeChangeRequest(a, b ResizeOperation) bool {
 	if a.PolicyChange {
 		return a.TargetScaleToZero == b.TargetScaleToZero
 	}
-	return a.TargetClass == b.TargetClass && a.TargetStorageLimitBytes == b.TargetStorageLimitBytes && a.TargetPostgresMajor == b.TargetPostgresMajor
+	return a.Automatic == b.Automatic && a.TargetClass == b.TargetClass && a.TargetStorageLimitBytes == b.TargetStorageLimitBytes && a.TargetPostgresMajor == b.TargetPostgresMajor
 }
 
 // sameComputeChangeIntent reports whether a replayed request asks for what
 // the journaled operation already holds.
 func sameComputeChangeIntent(existing ResizeOperation, request ResizeDatabaseRequest, scaleToZero *bool) bool {
+	if existing.Automatic != request.Automatic {
+		return false
+	}
 	if existing.DatabaseID != request.DatabaseID || existing.PolicyChange != (scaleToZero != nil) {
 		return false
 	}

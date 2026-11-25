@@ -231,3 +231,31 @@ func (r *Runtime) relayArchive(guest net.Conn, header dbarchive.Header) {
 
 // archiveStreamsPerVM caps one VM's concurrent archive streams.
 const archiveStreamsPerVM = 4
+
+// CheckArchiveRestore reads archived recovery evidence through dbbackupd.
+func (r *Runtime) CheckRecoveryArchive(ctx context.Context, id string, target time.Time, major int, latest bool) (dbarchive.RestoreCheck, error) {
+	if r.cfg.ArchiveSocket == "" {
+		return dbarchive.RestoreCheck{}, ErrNoArchive
+	}
+	return dbarchive.CheckRecoveryArchive(ctx, r.cfg.ArchiveSocket, id, target, major, latest)
+}
+
+func (r *Runtime) CheckLatestArchiveRestore(ctx context.Context, id string, target time.Time, major int) (dbarchive.RestoreCheck, error) {
+	if err := validID(id); err != nil {
+		return dbarchive.RestoreCheck{}, err
+	}
+	if r.cfg.ArchiveSocket == "" {
+		return dbarchive.RestoreCheck{}, ErrNoArchive
+	}
+	return dbarchive.CheckLatestArchiveRestore(ctx, r.cfg.ArchiveSocket, id, target, major)
+}
+
+func (r *Runtime) CheckArchiveRestore(ctx context.Context, id string, target time.Time, major int) (dbarchive.RestoreCheck, error) {
+	if err := validID(id); err != nil {
+		return dbarchive.RestoreCheck{}, err
+	}
+	if r.cfg.ArchiveSocket == "" {
+		return dbarchive.RestoreCheck{}, ErrNoArchive
+	}
+	return dbarchive.CheckArchiveRestore(ctx, r.cfg.ArchiveSocket, id, target, major)
+}

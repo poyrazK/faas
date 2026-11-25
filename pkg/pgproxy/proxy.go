@@ -27,6 +27,8 @@ import (
 	"github.com/jackc/pgx/v5/pgproto3"
 
 	"github.com/onebox-faas/faas/pkg/dbcreds"
+	"github.com/onebox-faas/faas/pkg/dbguest"
+	"github.com/onebox-faas/faas/pkg/dbqueryerrors"
 	"github.com/onebox-faas/faas/pkg/dbrefusal"
 	"github.com/onebox-faas/faas/pkg/pgscram"
 )
@@ -56,8 +58,10 @@ type Credentials interface {
 // target alone is a row the node registry lets nodes write
 // (ADR-20261108124106).
 type Backend struct {
-	Target string
-	Node   string
+	Target             string
+	Node               string
+	PrimaryEpochMicros int64
+	replicaOnly        bool
 	// ReplicaTarget and ReplicaNode are where the database's read sessions
 	// go while its standby serves them (replica.go); empty otherwise.
 	ReplicaTarget string
@@ -98,6 +102,9 @@ type Config struct {
 	// ReplicaLoginTimeout bounds a read session's attempt on the replica
 	// before it goes to the primary (default 3 s; replica.go).
 	ReplicaLoginTimeout time.Duration
+	// ReplicaMaxReplayLagBytes is the largest WAL backlog a strict route admits.
+	// Nil uses 16 MiB. An explicit zero requires fully caught-up replay.
+	ReplicaMaxReplayLagBytes *int64
 	// MaxConnections caps open client connections; MaxHandshakes caps
 	// those not yet authenticated, and MaxHandshakesPerSource those from
 	// one address. Unauthenticated clients cost a TLS handshake and a
@@ -147,9 +154,14 @@ type Proxy struct {
 	handshaking map[string]int // by source address
 	handshakes  int
 
-	pools *poolSet
+	pools        *poolSet
+	errorHistory pooledErrorHistory
 	// statementSequence gives every fresh Parse its own backend name.
 	statementSequence atomic.Uint64
+
+	queryControls atomic.Bool
+	queryMu       sync.Mutex
+	queries       map[string]trackedQuery
 
 	cancelMu sync.Mutex
 	cancels  map[cancelKey]canceler
@@ -177,6 +189,14 @@ func New(cfg Config, creds Credentials, waker Waker, dialer SessionDialer, log *
 	if cfg.ReplicaLoginTimeout <= 0 {
 		cfg.ReplicaLoginTimeout = 3 * time.Second
 	}
+	limit := int64(16 << 20)
+	if cfg.ReplicaMaxReplayLagBytes != nil {
+		limit = *cfg.ReplicaMaxReplayLagBytes
+	}
+	if limit < 0 {
+		return nil, errors.New("pgproxy: replica replay lag limit must be non-negative")
+	}
+	cfg.ReplicaMaxReplayLagBytes = &limit
 	if cfg.MaxConnections <= 0 {
 		cfg.MaxConnections = 10000
 	}
@@ -216,6 +236,8 @@ func New(cfg Config, creds Credentials, waker Waker, dialer SessionDialer, log *
 	cfg.HostSuffix = strings.ToLower(strings.TrimPrefix(cfg.HostSuffix, "."))
 	proxy := &Proxy{cfg: cfg, creds: creds, waker: waker, dialer: dialer, log: log, tlsCfg: tlsCfg, handshaking: map[string]int{}, cancels: map[cancelKey]canceler{}, failures: newAuthFailures(cfg.MaxAuthFailures)}
 	proxy.pools = newPoolSet(proxy)
+	proxy.errorHistory.policies = make(map[string]errorHistoryPolicy)
+	proxy.errorHistory.queue = make(chan dbqueryerrors.Event, 8*dbqueryerrors.MaxBatch)
 	return proxy, nil
 }
 
@@ -224,6 +246,7 @@ func (p *Proxy) Serve(ctx context.Context, ln net.Listener) error {
 	poolCtx, stopPools := context.WithCancel(ctx)
 	defer stopPools()
 	go p.pools.maintain(poolCtx)
+	go p.pools.refreshPolicies(poolCtx)
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -440,8 +463,11 @@ func (p *Proxy) establish(ctx context.Context, conn *tls.Conn, client *pgproto3.
 		p.creds.Forget(databaseID, user)
 		return none, &fatal{"28P01", fmt.Sprintf("password authentication failed for user %q", user)}
 	}
+	if strings.HasPrefix(user, dbguest.ReplicaOnlyRolePrefix) && !ep.replicaOnly {
+		return none, &fatal{"08004", "this login requires its replica-only endpoint"}
+	}
 	if pooled {
-		pl, err := p.joinPool(ctx, poolKey{databaseID: databaseID, role: user, dbname: poolParams["database"], verifier: verifierKey(verifier), readOnly: ep.readOnly},
+		pl, err := p.joinPool(ctx, poolKey{databaseID: databaseID, role: user, dbname: poolParams["database"], verifier: verifierKey(verifier), readOnly: ep.readOnly, replicaOnly: ep.replicaOnly},
 			clientKey, verifier.ServerKey, poolParams)
 		if err != nil {
 			return none, err
@@ -449,7 +475,8 @@ func (p *Proxy) establish(ctx context.Context, conn *tls.Conn, client *pgproto3.
 		pl.mu.Lock()
 		status := pl.status
 		pl.mu.Unlock()
-		c := &pooledCanceler{p: p}
+		app := startup.Parameters["application_name"]
+		c := &pooledCanceler{p: p, applicationName: strings.ToValidUTF8(app[:min(len(app), 128)], "")}
 		key, release := p.register(c)
 		if err := greetPooled(client, conn, serverFinal, status, key); err != nil {
 			release()
@@ -465,16 +492,14 @@ func (p *Proxy) establish(ctx context.Context, conn *tls.Conn, client *pgproto3.
 	}
 	wakeCtx, cancel := context.WithTimeout(ctx, p.cfg.WakeTimeout)
 	defer cancel()
-	wakeStarted := time.Now()
-	woken, err := p.waker.Wake(wakeCtx, databaseID)
-	p.cfg.Metrics.woke(time.Since(wakeStarted))
-	if err != nil {
-		if f := wakeRefused(err); f != nil {
-			return none, f
+	var strict Backend
+	if ep.replicaOnly {
+		strict, err = p.strictReplica(wakeCtx, databaseID)
+		if err != nil {
+			return none, err
 		}
-		return none, &fatal{"57P03", "the database is starting or unavailable; retry shortly"}
 	}
-	login, err := p.loginEndpoint(wakeCtx, woken, ep.readOnly, databaseID, forwardParams(startup.Parameters), clientKey, verifier.ServerKey)
+	login, err := p.loginRoute(wakeCtx, databaseID, ep.readOnly, strict, forwardParams(startup.Parameters), clientKey, verifier.ServerKey)
 	if err != nil {
 		var f *fatal
 		if errors.As(err, &f) {
@@ -500,6 +525,9 @@ func (p *Proxy) establish(ctx context.Context, conn *tls.Conn, client *pgproto3.
 	if err := relayUntilReady(login.fe, client, swapKey); err != nil {
 		release()
 		_ = login.rw.Close()
+		if ep.replicaOnly {
+			return none, errReplicaUnavailable
+		}
 		return none, err
 	}
 	if err := errors.Join(login.finish(), finishClientSetup()); err != nil {
@@ -518,7 +546,7 @@ func (p *Proxy) joinPool(ctx context.Context, key poolKey, clientKey, serverKey 
 	pl.mu.Lock()
 	ready := pl.status != nil
 	pl.mu.Unlock()
-	if ready {
+	if ready && !key.replicaOnly {
 		return pl, nil
 	}
 	srv, err := pl.acquire(ctx)

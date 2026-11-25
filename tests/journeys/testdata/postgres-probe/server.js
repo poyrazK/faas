@@ -15,6 +15,7 @@
 // migration binding first.
 
 import crypto from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import http from "node:http";
 import net from "node:net";
 import tls from "node:tls";
@@ -221,6 +222,15 @@ async function notes(req, url) {
 // binding, MIGRATION_DATABASE_URL, which only the release task receives.
 const migrations = {
   create: schema,
+  "masked-source": `${schema}
+    CREATE TABLE IF NOT EXISTS journey_people (id bigint PRIMARY KEY, email text NOT NULL UNIQUE);
+    INSERT INTO journey_people VALUES (1, 'person@production.invalid') ON CONFLICT DO NOTHING;`,
+  "masked-preview": `${schema}
+    DO $$ BEGIN
+      IF (SELECT count(*) FROM journey_people WHERE email LIKE '%@example.test') <> 1
+        OR EXISTS (SELECT FROM journey_people WHERE email = 'person@production.invalid')
+      THEN RAISE EXCEPTION 'expected validated masked fixture'; END IF;
+    END $$;`,
   // The bad migration the journey rolls back: it deletes every row.
   wipe: `${schema} DELETE FROM journey_notes;`,
 };
@@ -253,6 +263,8 @@ function serve() {
         status = 502;
         payload = { error: err.message, code: err.code || "" };
       }
+    } else if (url.pathname === "/fixture-revision" && existsSync("preview-revision.txt")) {
+      payload = { revision: readFileSync("preview-revision.txt", "utf8").trim() };
     } else if (url.pathname !== "/" && url.pathname !== "/healthz") {
       status = 404;
       payload = { error: "not found" };

@@ -48,6 +48,7 @@ func (s *server) databaseSwitchWorker() *databaseswitch.Worker {
 	}
 	return &databaseswitch.Worker{
 		Store: switches, Drain: drain, Databases: s.managedPostgres, Cutovers: s.managedPostgresCutovers, Releases: s.store,
+		MigrationTargets: s.managedPostgres,
 		InvalidateSnapshots: func(ctx context.Context, appID string) error {
 			_, err := state.InvalidateAppSnapshots(ctx, s.store, appID)
 			return err

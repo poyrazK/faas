@@ -211,6 +211,10 @@ to the journeys and steps that test it, and lists what is not covered.
 enables `TestGitHubDeploys` and `TestPreviewDatabases` against a fixture
 repository the account's GitHub App installation can see (e.g.
 `poyrazK/gregale-e2e-fixture`).
+`GREGALE_E2E_NATIVE_MASKED_PREVIEWS=1` also enables
+`TestMaskedPreviewDatabases` in the full tier on a fixture with native
+PostgreSQL. It restores a masked fixture row, pushes another PR commit,
+and verifies database reuse and teardown.
 `--github-functions-repo` enables `TestFunctionsProjectFromGitHub`, which
 deploys a functions project from a second, dedicated fixture repository and
 rewrites its `gregale.yaml` and `functions/` on `main`; it also skips until

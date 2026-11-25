@@ -19,6 +19,7 @@ import (
 // restore_source_database_id names its source.
 func cmdPostgresBranch(args []string) int {
 	const usage = "usage: gregale postgres branch [create] <database> <name> [--from live|RFC3339] [--ttl DURATION]\n" +
+		"       gregale postgres branch masked <database> <name> --policy FILE [--ttl DURATION]\n" +
 		"       gregale postgres branch list <database>\n" +
 		"       gregale postgres branch delete <database> <name> [--yes]"
 	if len(args) == 0 {
@@ -26,6 +27,8 @@ func cmdPostgresBranch(args []string) int {
 		return 1
 	}
 	switch args[0] {
+	case "masked":
+		return cmdPostgresBranchMasked(args[1:])
 	case subList:
 		return cmdPostgresBranchList(args[1:])
 	case "delete", "rm":
@@ -178,7 +181,11 @@ func renderPostgresBranches(w io.Writer, source string, branches []api.ManagedPo
 		if expires == "" {
 			expires = "-"
 		}
-		_, _ = fmt.Fprintf(w, "%-20s %-13s %-32s %s\n", branch.Name, branch.State, branch.RestorePointInTime, expires)
+		from := branch.RestorePointInTime
+		if branch.MaskedBranch {
+			from = "masked"
+		}
+		_, _ = fmt.Fprintf(w, "%-20s %-13s %-32s %s\n", branch.Name, branch.State, from, expires)
 	}
 }
 

@@ -20,7 +20,7 @@ func pickStandby(nodes []Node, usage map[string]nodeUsage, vm VM, exclude ...str
 			others = append(others, n)
 		}
 	}
-	return pickNode(others, usage, vm.VolumeBytes, "", vm.Major)
+	return pickNode(others, usage, vm.VolumeBytes, "", vm.Major, vm.RecoveryRegion)
 }
 
 // claimStandbyOn checks a standby VM against its node.

@@ -19,10 +19,12 @@ type State string
 
 const (
 	StateProvisioning State = "provisioning"
-	StateParked       State = "parked"
-	StateWaking       State = "waking"
-	StateRunning      State = "running"
-	StateParking      State = "parking"
+	// A private restore is invisible to ordinary restore and provision workers.
+	stateRehearsalRestore State = "rehearsal_restore"
+	StateParked           State = "parked"
+	StateWaking           State = "waking"
+	StateRunning          State = "running"
+	StateParking          State = "parking"
 	// StateMoving: the parked database's volume is being copied to
 	// VM.MoveNode (move.go). It cannot wake, park or be deleted meanwhile.
 	StateMoving State = "moving"
@@ -59,6 +61,9 @@ var (
 
 // Node is one database node.
 type Node struct {
+	// RecoveryRegion labels a fleet that reads an incoming regional archive.
+	// Existing, unlabelled nodes form the ordinary database fleet.
+	RecoveryRegion      string
 	ID                  string
 	TargetURL           string
 	AdmissionCeilingMB  int
@@ -82,14 +87,18 @@ const DefaultBootSlots = 4
 
 // VM is the runtime record of one native database.
 type VM struct {
-	DatabaseID   string
-	NodeID       string
-	Major        int
-	VcpuCount    int
-	MemMiB       int
-	VolumeBytes  int64
-	State        State
-	Bootstrapped bool
+	RecoveryRegion      string
+	RestoreFromRecovery bool
+	// QueryInsights is resolved from policy just before a primary boots.
+	QueryInsights bool
+	DatabaseID    string
+	NodeID        string
+	Major         int
+	VcpuCount     int
+	MemMiB        int
+	VolumeBytes   int64
+	State         State
+	Bootstrapped  bool
 	// AlwaysOn databases are never parked for idleness; the keep-warm sweep
 	// wakes them when found parked (scale_to_zero = false).
 	AlwaysOn bool
@@ -109,6 +118,9 @@ type VM struct {
 	// database recovered from and the instant. Both are empty otherwise.
 	RestoreSource string
 	RestoreTarget time.Time
+	// RestoreTimeline pins a verified PostgreSQL timeline for replay.
+	// Zero keeps PostgreSQL's default timeline selection.
+	RestoreTimeline uint32
 	// RestoreRecoveredTo is the restore's last replayed commit, recorded
 	// when it finished (zero: none replayed, or not recorded).
 	RestoreRecoveredTo time.Time
@@ -199,6 +211,8 @@ type TransitionOptions struct {
 	LastError string
 	// Bootstrapped marks the volume as initialized; it never reverts.
 	Bootstrapped bool
+	IdleParkFrom time.Time
+	IdleCutoff   time.Time
 }
 
 // Store persists database nodes and VMs. Implementations must make Place
@@ -243,6 +257,7 @@ type Store interface {
 	// or renews the lease held, returning the new lease. A lease another
 	// replica holds, or a database no longer restoring, is ErrConflict.
 	ClaimRestore(ctx context.Context, id string, held time.Time, lease time.Duration) (time.Time, error)
+	PinRestoreTimeline(ctx context.Context, id string, timeline uint32) error
 	// ClaimProvision is ClaimRestore for a provisioning database that is
 	// not a restore: the lease on its bootstrap.
 	ClaimProvision(ctx context.Context, id string, held time.Time, lease time.Duration) (time.Time, error)
@@ -473,11 +488,11 @@ type nodeUsage struct {
 // volume capacity that still fits volumeBytes; a non-empty pin allows only
 // that node. Ties break
 // on node id for determinism.
-func pickNode(nodes []Node, usage map[string]nodeUsage, volumeBytes int64, pin string, major int) (Node, bool) {
+func pickNode(nodes []Node, usage map[string]nodeUsage, volumeBytes int64, pin string, major int, region string) (Node, bool) {
 	var best Node
 	var bestFree int64 = -1
 	for _, n := range nodes {
-		if n.Lifecycle != NodeActive || (pin != "" && n.ID != pin) || !n.offers(major) {
+		if n.RecoveryRegion != region || n.Lifecycle != NodeActive || (pin != "" && n.ID != pin) || !n.offers(major) {
 			continue
 		}
 		free := n.VolumeCapacityBytes - usage[n.ID].volumeBytes
@@ -549,7 +564,7 @@ func moveTarget(nodes []Node, usage map[string]nodeUsage, vm VM, target string) 
 			others = append(others, n)
 		}
 	}
-	node, ok := pickNode(others, usage, vm.VolumeBytes, target, vm.Major)
+	node, ok := pickNode(others, usage, vm.VolumeBytes, target, vm.Major, vm.RecoveryRegion)
 	if !ok {
 		if target == vm.NodeID {
 			return Node{}, fmt.Errorf("%w: the database is already on %s", ErrInvalid, target)

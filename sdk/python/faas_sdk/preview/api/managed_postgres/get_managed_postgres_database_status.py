@@ -59,6 +59,11 @@ def sync_detailed(
     never stored. Ready follows the lifecycle state; a database whose
     compute scaled to zero is Ready=True with reason suspended. Failed,
     deleting and deleted databases report terminal conditions.
+    Native databases include their storage allocation and last primary and
+    standby samples when available. A recent low-space or read-only sample
+    reports storage_low, storage_read_only or standby_storage_low on the
+    Degraded condition. Storage also includes recent primary alert transitions.
+    Reading this endpoint leaves parked databases asleep.
     Cache-Control no-store.
 
     Args:
@@ -96,6 +101,11 @@ def sync(
     never stored. Ready follows the lifecycle state; a database whose
     compute scaled to zero is Ready=True with reason suspended. Failed,
     deleting and deleted databases report terminal conditions.
+    Native databases include their storage allocation and last primary and
+    standby samples when available. A recent low-space or read-only sample
+    reports storage_low, storage_read_only or standby_storage_low on the
+    Degraded condition. Storage also includes recent primary alert transitions.
+    Reading this endpoint leaves parked databases asleep.
     Cache-Control no-store.
 
     Args:
@@ -128,6 +138,11 @@ async def asyncio_detailed(
     never stored. Ready follows the lifecycle state; a database whose
     compute scaled to zero is Ready=True with reason suspended. Failed,
     deleting and deleted databases report terminal conditions.
+    Native databases include their storage allocation and last primary and
+    standby samples when available. A recent low-space or read-only sample
+    reports storage_low, storage_read_only or standby_storage_low on the
+    Degraded condition. Storage also includes recent primary alert transitions.
+    Reading this endpoint leaves parked databases asleep.
     Cache-Control no-store.
 
     Args:
@@ -163,6 +178,11 @@ async def asyncio(
     never stored. Ready follows the lifecycle state; a database whose
     compute scaled to zero is Ready=True with reason suspended. Failed,
     deleting and deleted databases report terminal conditions.
+    Native databases include their storage allocation and last primary and
+    standby samples when available. A recent low-space or read-only sample
+    reports storage_low, storage_read_only or standby_storage_low on the
+    Degraded condition. Storage also includes recent primary alert transitions.
+    Reading this endpoint leaves parked databases asleep.
     Cache-Control no-store.
 
     Args:

@@ -29,13 +29,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const postgresConnectUsage = "usage: gregale postgres connect <database> [--app SLUG] [--env KEY] [--access read_write|migration|session|read_only] [--port N] [--address A] [--proxy] [--wait-timeout D] [-- psql-args...]"
+const postgresConnectUsage = "usage: gregale postgres connect <database> [--app SLUG] [--env KEY] [--access read_write|migration|session|read_only|replica_only] [--port N] [--address A] [--proxy] [--wait-timeout D] [-- psql-args...]"
 
 // postgresConnectAccessOrder is the default binding preference. Ad-hoc
 // schema work (indexes, migrations) needs write access; a session binding
 // has read_write privileges on the direct endpoint; a read-only binding is
 // used only when it is the one the database has.
-var postgresConnectAccessOrder = []string{"read_write", "migration", "session", "read_only"}
+var postgresConnectAccessOrder = []string{"read_write", "migration", "session", "read_only", "replica_only"}
 
 // postgresConnectDSNLimit bounds what the env read may return.
 const postgresConnectDSNLimit = 8 << 10

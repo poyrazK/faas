@@ -41,7 +41,8 @@ type DatabaseSwitch struct {
 	TargetName       string `json:"target_name"`
 	// RestorePoint is the moment the copy is restored to: writes after it
 	// stay only in the source database.
-	RestorePoint string `json:"restore_point"`
+	RestorePoint         string `json:"restore_point,omitempty"`
+	MigrationOperationID string `json:"migration_operation_id,omitempty"`
 	// Drain counts the fenced app's instances: retired with a native
 	// receipt, parked (no process; snapshot invalidated), still pending, or
 	// blocking the switch.
@@ -121,6 +122,22 @@ type CreateDatabaseSwitchRequest struct {
 func (c *Client) CreateDatabaseSwitch(ctx context.Context, slug string, req CreateDatabaseSwitchRequest) (DatabaseSwitch, error) {
 	var out DatabaseSwitch
 	return out, c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/database-switches", req, &out)
+}
+
+// ActivateManagedPostgresMigrationRequest moves one app scope to its
+// verified native subscriber. VerificationID is also the retryable switch ID.
+type ActivateManagedPostgresMigrationRequest struct {
+	SourceDatabaseID   string `json:"source_database_id"`
+	TargetDatabaseID   string `json:"target_database_id"`
+	OperationID        string `json:"operation_id"`
+	VerificationID     string `json:"verification_id"`
+	SourceWritesPaused bool   `json:"source_writes_paused"`
+	Scope              string `json:"scope,omitempty"`
+}
+
+func (c *Client) ActivateManagedPostgresMigration(ctx context.Context, slug string, req ActivateManagedPostgresMigrationRequest) (DatabaseSwitch, error) {
+	var out DatabaseSwitch
+	return out, c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/database-switches/migration", req, &out)
 }
 
 // DatabaseSwitchFinished reports whether a switch phase ends it.

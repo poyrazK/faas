@@ -123,13 +123,17 @@ const (
 	Vmmd_PruneDatabaseArchive_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/PruneDatabaseArchive"
 	Vmmd_DatabaseArchiveBytes_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/DatabaseArchiveBytes"
 	Vmmd_DatabaseArchiveHold_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/DatabaseArchiveHold"
+	Vmmd_DatabaseArchiveRestoreCheck_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/DatabaseArchiveRestoreCheck"
 	Vmmd_ExportDatabaseVolume_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/ExportDatabaseVolume"
 	Vmmd_ImportDatabaseVolume_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/ImportDatabaseVolume"
 	Vmmd_SyncDatabaseArchive_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/SyncDatabaseArchive"
 	Vmmd_StartDatabase_FullMethodName                           = "/onebox.faas.vmmd.v1.Vmmd/StartDatabase"
 	Vmmd_StopDatabase_FullMethodName                            = "/onebox.faas.vmmd.v1.Vmmd/StopDatabase"
 	Vmmd_DatabaseControl_FullMethodName                         = "/onebox.faas.vmmd.v1.Vmmd/DatabaseControl"
+	Vmmd_StreamDatabaseExport_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/StreamDatabaseExport"
+	Vmmd_StreamDatabaseArchiveImport_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/StreamDatabaseArchiveImport"
 	Vmmd_DatabaseSession_FullMethodName                         = "/onebox.faas.vmmd.v1.Vmmd/DatabaseSession"
+	Vmmd_DatabaseReplicaSession_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/DatabaseReplicaSession"
 	Vmmd_DatabaseReplication_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/DatabaseReplication"
 	Vmmd_RetireManagedPostgresDrain_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/RetireManagedPostgresDrain"
 	Vmmd_ResolveServiceCaller_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/ResolveServiceCaller"
@@ -768,6 +772,8 @@ type VmmdClient interface {
 	// A read of a missing hold is NotFound; placing a name again with
 	// another point is AlreadyExists.
 	DatabaseArchiveHold(ctx context.Context, in *DatabaseArchiveHoldRequest, opts ...grpc.CallOption) (*DatabaseArchiveHoldResponse, error)
+	// DatabaseArchiveRestoreCheck reads archive evidence for a source and target.
+	DatabaseArchiveRestoreCheck(ctx context.Context, in *DatabaseArchiveRestoreCheckRequest, opts ...grpc.CallOption) (*DatabaseArchiveRestoreCheckResponse, error)
 	// ExportDatabaseVolume streams a stopped database's volume for a move to
 	// another node: a header with its size, its data extents, then the
 	// transfer digest. The database cannot start until the stream ends.
@@ -788,11 +794,15 @@ type VmmdClient interface {
 	// DatabaseControl relays one guest control request (status, bootstrap,
 	// admin_sql).
 	DatabaseControl(ctx context.Context, in *DatabaseControlRequest, opts ...grpc.CallOption) (*DatabaseControlResponse, error)
+	StreamDatabaseExport(ctx context.Context, in *DatabaseExportRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DatabaseExportFrame], error)
+	StreamDatabaseArchiveImport(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[DatabaseArchiveImportFrame, DatabaseArchiveImportProgress], error)
 	// DatabaseSession carries one client session to a running database VM's
 	// PostgreSQL data port, never its control port. The first client frame
 	// names the database; every later frame carries raw protocol bytes. The
 	// lifecycle RPCs above accept only schedd; this one only pgproxyd.
 	DatabaseSession(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[DatabaseSessionFrame, DatabaseSessionFrame], error)
+	// Uses the guest's standby-only port, which closes sessions before promotion.
+	DatabaseReplicaSession(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[DatabaseSessionFrame, DatabaseSessionFrame], error)
 	// DatabaseReplication carries one replication stream from a standby's
 	// node to its running primary's guest (ADR-1027 production class). The
 	// first client frame names the database; every later frame carries raw
@@ -1875,6 +1885,16 @@ func (c *vmmdClient) DatabaseArchiveHold(ctx context.Context, in *DatabaseArchiv
 	return out, nil
 }
 
+func (c *vmmdClient) DatabaseArchiveRestoreCheck(ctx context.Context, in *DatabaseArchiveRestoreCheckRequest, opts ...grpc.CallOption) (*DatabaseArchiveRestoreCheckResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseArchiveRestoreCheckResponse)
+	err := c.cc.Invoke(ctx, Vmmd_DatabaseArchiveRestoreCheck_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) ExportDatabaseVolume(ctx context.Context, in *ExportDatabaseVolumeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DatabaseVolumeChunk], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[14], Vmmd_ExportDatabaseVolume_FullMethodName, cOpts...)
@@ -1947,9 +1967,41 @@ func (c *vmmdClient) DatabaseControl(ctx context.Context, in *DatabaseControlReq
 	return out, nil
 }
 
+func (c *vmmdClient) StreamDatabaseExport(ctx context.Context, in *DatabaseExportRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DatabaseExportFrame], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[16], Vmmd_StreamDatabaseExport_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[DatabaseExportRequest, DatabaseExportFrame]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_StreamDatabaseExportClient = grpc.ServerStreamingClient[DatabaseExportFrame]
+
+func (c *vmmdClient) StreamDatabaseArchiveImport(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[DatabaseArchiveImportFrame, DatabaseArchiveImportProgress], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[17], Vmmd_StreamDatabaseArchiveImport_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[DatabaseArchiveImportFrame, DatabaseArchiveImportProgress]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_StreamDatabaseArchiveImportClient = grpc.BidiStreamingClient[DatabaseArchiveImportFrame, DatabaseArchiveImportProgress]
+
 func (c *vmmdClient) DatabaseSession(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[DatabaseSessionFrame, DatabaseSessionFrame], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[16], Vmmd_DatabaseSession_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[18], Vmmd_DatabaseSession_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1960,9 +2012,22 @@ func (c *vmmdClient) DatabaseSession(ctx context.Context, opts ...grpc.CallOptio
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Vmmd_DatabaseSessionClient = grpc.BidiStreamingClient[DatabaseSessionFrame, DatabaseSessionFrame]
 
+func (c *vmmdClient) DatabaseReplicaSession(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[DatabaseSessionFrame, DatabaseSessionFrame], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[19], Vmmd_DatabaseReplicaSession_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[DatabaseSessionFrame, DatabaseSessionFrame]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_DatabaseReplicaSessionClient = grpc.BidiStreamingClient[DatabaseSessionFrame, DatabaseSessionFrame]
+
 func (c *vmmdClient) DatabaseReplication(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[DatabaseSessionFrame, DatabaseSessionFrame], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[17], Vmmd_DatabaseReplication_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[20], Vmmd_DatabaseReplication_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -2635,6 +2700,8 @@ type VmmdServer interface {
 	// A read of a missing hold is NotFound; placing a name again with
 	// another point is AlreadyExists.
 	DatabaseArchiveHold(context.Context, *DatabaseArchiveHoldRequest) (*DatabaseArchiveHoldResponse, error)
+	// DatabaseArchiveRestoreCheck reads archive evidence for a source and target.
+	DatabaseArchiveRestoreCheck(context.Context, *DatabaseArchiveRestoreCheckRequest) (*DatabaseArchiveRestoreCheckResponse, error)
 	// ExportDatabaseVolume streams a stopped database's volume for a move to
 	// another node: a header with its size, its data extents, then the
 	// transfer digest. The database cannot start until the stream ends.
@@ -2655,11 +2722,15 @@ type VmmdServer interface {
 	// DatabaseControl relays one guest control request (status, bootstrap,
 	// admin_sql).
 	DatabaseControl(context.Context, *DatabaseControlRequest) (*DatabaseControlResponse, error)
+	StreamDatabaseExport(*DatabaseExportRequest, grpc.ServerStreamingServer[DatabaseExportFrame]) error
+	StreamDatabaseArchiveImport(grpc.BidiStreamingServer[DatabaseArchiveImportFrame, DatabaseArchiveImportProgress]) error
 	// DatabaseSession carries one client session to a running database VM's
 	// PostgreSQL data port, never its control port. The first client frame
 	// names the database; every later frame carries raw protocol bytes. The
 	// lifecycle RPCs above accept only schedd; this one only pgproxyd.
 	DatabaseSession(grpc.BidiStreamingServer[DatabaseSessionFrame, DatabaseSessionFrame]) error
+	// Uses the guest's standby-only port, which closes sessions before promotion.
+	DatabaseReplicaSession(grpc.BidiStreamingServer[DatabaseSessionFrame, DatabaseSessionFrame]) error
 	// DatabaseReplication carries one replication stream from a standby's
 	// node to its running primary's guest (ADR-1027 production class). The
 	// first client frame names the database; every later frame carries raw
@@ -2983,6 +3054,9 @@ func (UnimplementedVmmdServer) DatabaseArchiveBytes(context.Context, *DatabaseAr
 func (UnimplementedVmmdServer) DatabaseArchiveHold(context.Context, *DatabaseArchiveHoldRequest) (*DatabaseArchiveHoldResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DatabaseArchiveHold not implemented")
 }
+func (UnimplementedVmmdServer) DatabaseArchiveRestoreCheck(context.Context, *DatabaseArchiveRestoreCheckRequest) (*DatabaseArchiveRestoreCheckResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DatabaseArchiveRestoreCheck not implemented")
+}
 func (UnimplementedVmmdServer) ExportDatabaseVolume(*ExportDatabaseVolumeRequest, grpc.ServerStreamingServer[DatabaseVolumeChunk]) error {
 	return status.Error(codes.Unimplemented, "method ExportDatabaseVolume not implemented")
 }
@@ -3001,8 +3075,17 @@ func (UnimplementedVmmdServer) StopDatabase(context.Context, *StopDatabaseReques
 func (UnimplementedVmmdServer) DatabaseControl(context.Context, *DatabaseControlRequest) (*DatabaseControlResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DatabaseControl not implemented")
 }
+func (UnimplementedVmmdServer) StreamDatabaseExport(*DatabaseExportRequest, grpc.ServerStreamingServer[DatabaseExportFrame]) error {
+	return status.Error(codes.Unimplemented, "method StreamDatabaseExport not implemented")
+}
+func (UnimplementedVmmdServer) StreamDatabaseArchiveImport(grpc.BidiStreamingServer[DatabaseArchiveImportFrame, DatabaseArchiveImportProgress]) error {
+	return status.Error(codes.Unimplemented, "method StreamDatabaseArchiveImport not implemented")
+}
 func (UnimplementedVmmdServer) DatabaseSession(grpc.BidiStreamingServer[DatabaseSessionFrame, DatabaseSessionFrame]) error {
 	return status.Error(codes.Unimplemented, "method DatabaseSession not implemented")
+}
+func (UnimplementedVmmdServer) DatabaseReplicaSession(grpc.BidiStreamingServer[DatabaseSessionFrame, DatabaseSessionFrame]) error {
+	return status.Error(codes.Unimplemented, "method DatabaseReplicaSession not implemented")
 }
 func (UnimplementedVmmdServer) DatabaseReplication(grpc.BidiStreamingServer[DatabaseSessionFrame, DatabaseSessionFrame]) error {
 	return status.Error(codes.Unimplemented, "method DatabaseReplication not implemented")
@@ -4681,6 +4764,24 @@ func _Vmmd_DatabaseArchiveHold_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_DatabaseArchiveRestoreCheck_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DatabaseArchiveRestoreCheckRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).DatabaseArchiveRestoreCheck(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_DatabaseArchiveRestoreCheck_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).DatabaseArchiveRestoreCheck(ctx, req.(*DatabaseArchiveRestoreCheckRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Vmmd_ExportDatabaseVolume_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(ExportDatabaseVolumeRequest)
 	if err := stream.RecvMsg(m); err != nil {
@@ -4771,12 +4872,37 @@ func _Vmmd_DatabaseControl_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_StreamDatabaseExport_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(DatabaseExportRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(VmmdServer).StreamDatabaseExport(m, &grpc.GenericServerStream[DatabaseExportRequest, DatabaseExportFrame]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_StreamDatabaseExportServer = grpc.ServerStreamingServer[DatabaseExportFrame]
+
+func _Vmmd_StreamDatabaseArchiveImport_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(VmmdServer).StreamDatabaseArchiveImport(&grpc.GenericServerStream[DatabaseArchiveImportFrame, DatabaseArchiveImportProgress]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_StreamDatabaseArchiveImportServer = grpc.BidiStreamingServer[DatabaseArchiveImportFrame, DatabaseArchiveImportProgress]
+
 func _Vmmd_DatabaseSession_Handler(srv interface{}, stream grpc.ServerStream) error {
 	return srv.(VmmdServer).DatabaseSession(&grpc.GenericServerStream[DatabaseSessionFrame, DatabaseSessionFrame]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Vmmd_DatabaseSessionServer = grpc.BidiStreamingServer[DatabaseSessionFrame, DatabaseSessionFrame]
+
+func _Vmmd_DatabaseReplicaSession_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(VmmdServer).DatabaseReplicaSession(&grpc.GenericServerStream[DatabaseSessionFrame, DatabaseSessionFrame]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_DatabaseReplicaSessionServer = grpc.BidiStreamingServer[DatabaseSessionFrame, DatabaseSessionFrame]
 
 func _Vmmd_DatabaseReplication_Handler(srv interface{}, stream grpc.ServerStream) error {
 	return srv.(VmmdServer).DatabaseReplication(&grpc.GenericServerStream[DatabaseSessionFrame, DatabaseSessionFrame]{ServerStream: stream})
@@ -5187,6 +5313,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Vmmd_DatabaseArchiveHold_Handler,
 		},
 		{
+			MethodName: "DatabaseArchiveRestoreCheck",
+			Handler:    _Vmmd_DatabaseArchiveRestoreCheck_Handler,
+		},
+		{
 			MethodName: "SyncDatabaseArchive",
 			Handler:    _Vmmd_SyncDatabaseArchive_Handler,
 		},
@@ -5306,8 +5436,25 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 			ClientStreams: true,
 		},
 		{
+			StreamName:    "StreamDatabaseExport",
+			Handler:       _Vmmd_StreamDatabaseExport_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "StreamDatabaseArchiveImport",
+			Handler:       _Vmmd_StreamDatabaseArchiveImport_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
 			StreamName:    "DatabaseSession",
 			Handler:       _Vmmd_DatabaseSession_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "DatabaseReplicaSession",
+			Handler:       _Vmmd_DatabaseReplicaSession_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},

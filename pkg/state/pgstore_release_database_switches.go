@@ -21,7 +21,7 @@ func databaseSwitchFromRow(r sqlc.ReleaseDatabaseSwitch) DatabaseSwitch {
 		ID: pgUUIDString(r.ID), AccountID: pgUUIDString(r.AccountID), AppID: pgUUIDString(r.AppID), Scope: r.Scope,
 		FromDeploymentID: dbSwitchUUID(r.FromDeploymentID), TargetDeploymentID: pgUUIDString(r.TargetDeploymentID),
 		UndoneDeploymentIDs: pgUUIDStrings(r.UndoneDeploymentIds), SourceDatabaseID: pgUUIDString(r.SourceDatabaseID),
-		TargetDatabaseID: dbSwitchUUID(r.TargetDatabaseID), TargetName: r.TargetName, RestorePoint: r.RestorePoint.Time.UTC(),
+		TargetDatabaseID: dbSwitchUUID(r.TargetDatabaseID), TargetName: r.TargetName, RestorePoint: r.RestorePoint.Time.UTC(), MigrationOperationID: dbSwitchUUID(r.MigrationOperationID),
 		CutoverID: dbSwitchUUID(r.CutoverID), Phase: r.Phase, FailureCode: r.FailureCode, FailureDetail: r.FailureDetail,
 		RequestedBy: r.RequestedBy, CancelRequestedAt: dbSwitchTime(r.CancelRequestedAt), FencedAt: dbSwitchTime(r.FencedAt),
 		DrainRequestedAt: dbSwitchTime(r.DrainRequestedAt), ReleaseSwitchedAt: dbSwitchTime(r.ReleaseSwitchedAt),
@@ -80,12 +80,20 @@ func (s *PgStore) CreateDatabaseSwitch(ctx context.Context, sw DatabaseSwitch) (
 	if now.IsZero() {
 		now = time.Now()
 	}
+	var restorePoint pgtype.Timestamptz
+	var target pgtype.UUID
+	if sw.MigrationOperationID == "" {
+		restorePoint = pgTimestamptzUTC(sw.RestorePoint)
+	} else {
+		target = dbSwitchNullUUID(sw.TargetDatabaseID)
+	}
 	row, err := sqlc.New().InsertReleaseDatabaseSwitch(ctx, s.pool, sqlc.InsertReleaseDatabaseSwitchParams{
 		ID: mustPgUUID(sw.ID), AccountID: mustPgUUID(sw.AccountID), AppID: mustPgUUID(sw.AppID),
 		Scope: normalizedDeploymentScope(sw.Scope), FromDeploymentID: dbSwitchNullUUID(sw.FromDeploymentID),
 		TargetDeploymentID: mustPgUUID(sw.TargetDeploymentID), UndoneDeploymentIds: pgUUIDList(sw.UndoneDeploymentIDs),
 		SourceDatabaseID: mustPgUUID(sw.SourceDatabaseID), TargetName: sw.TargetName,
-		RestorePoint: pgTimestamptzUTC(sw.RestorePoint), RequestedBy: sw.RequestedBy, Now: pgTimestamptzUTC(now),
+		RestorePoint: restorePoint, TargetDatabaseID: target, MigrationOperationID: dbSwitchNullUUID(sw.MigrationOperationID),
+		RequestedBy: sw.RequestedBy, Now: pgTimestamptzUTC(now),
 		MaxActive: api.DatabaseSwitchesActivePerAccount,
 	})
 	if err != nil {

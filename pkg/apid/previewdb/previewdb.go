@@ -105,6 +105,9 @@ func (m Manager) Prepare(ctx context.Context, plan api.Plan, parent, preview sta
 		if err != nil {
 			return refusal(err)
 		}
+		if source.Previews == managedpostgres.PreviewsMasked && !database.IsMaskedBranch() {
+			return refusal(managedpostgres.ErrPreviewReplacementRequired)
+		}
 		if database.State == managedpostgres.StateDeleting {
 			// A delete is under way; the next attempt sets up a new one.
 			pending = true
@@ -380,7 +383,7 @@ func StorageLimitBytes(plan api.Plan) int64 {
 }
 
 func previewSource(source managedpostgres.Database) bool {
-	return (source.Previews == managedpostgres.PreviewsEmpty || source.Previews == managedpostgres.PreviewsCopy) &&
+	return (source.Previews == managedpostgres.PreviewsEmpty || source.Previews == managedpostgres.PreviewsCopy || source.Previews == managedpostgres.PreviewsMasked) &&
 		source.Preview.IsZero() && source.State != managedpostgres.StateDeleting && source.State != managedpostgres.StateDeleted
 }
 
@@ -396,6 +399,10 @@ func refusal(err error) error {
 		return &RefusedError{Reason: "the plan does not include a PR preview database", Err: err}
 	case errors.Is(err, managedpostgres.ErrPreviewCopyUnsupported):
 		return &RefusedError{Reason: "its production database cannot be copied: it has no restore window", Err: err}
+	case errors.Is(err, managedpostgres.ErrPreviewReplacementRequired):
+		return &RefusedError{Reason: "an existing preview database must be replaced before using the masking policy", Err: err}
+	case errors.Is(err, managedpostgres.ErrMaskedPreviewValidationFailed):
+		return &RefusedError{Reason: "the masked data failed validation; a database owner can update the policy and recreate the preview database", Err: err}
 	case errors.Is(err, managedpostgres.ErrConflict):
 		return &RefusedError{Reason: "its PR preview database conflicts with an existing database or binding", Err: err}
 	default:

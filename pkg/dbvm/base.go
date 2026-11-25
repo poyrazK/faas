@@ -20,14 +20,18 @@ import (
 // digest-pinned image, so what runs is exactly what the operator pinned.
 
 // PostgresImages are the PostgreSQL images this release qualifies, by
-// major: the official Debian bookworm images, pinned to their linux/amd64
-// manifests. The database_vmmd Ansible role's defaults carry the same pins
-// (a test keeps them equal); guest-init runs every major the same way.
+// major: Debian bookworm PostgreSQL images pinned to their linux/amd64
+// manifests. PostgreSQL 16 through 18 include pgvector. The database_vmmd role's
+// defaults carry the same pins (a test keeps them equal). Guest-init runs
+// every major the same way.
 var PostgresImages = map[int]string{
 	15: "docker.io/library/postgres@sha256:bbbf67eadd2381a2738a4a2e36d4c3936c36edd82d80e7ef00411194385d3829",
-	16: "docker.io/library/postgres@sha256:ec9f656f17c8b4dfebf49e58cf5c46d493d4846d4ea6d8b85d0637f68ee33bfc",
-	17: "docker.io/library/postgres@sha256:66aafa11cf15800a3c94763f7e11d1e7b2e37e5e84bc4ce027cb6e1e4bfaf4df",
-	18: "docker.io/library/postgres@sha256:9551dd5bf356409a21b31248f49b33bba9bb1877365f3a7e933aecd9af3cf52d",
+	// pgvector/pgvector:0.8.7-pg16-bookworm (PostgreSQL 16.16).
+	16: "docker.io/pgvector/pgvector@sha256:018b4a92e634c3a5715f613dd43497e3d8028ae051be7ba6fd127bcffb0e7957",
+	// pgvector/pgvector:0.8.7-pg17-bookworm (PostgreSQL 17.12).
+	17: "docker.io/pgvector/pgvector@sha256:0a547a6067fdea4eec4cfb0887c4ddae2e91b1932cecc071541c14ee318312ce",
+	// pgvector/pgvector:0.8.7-pg18-bookworm (PostgreSQL 18.7).
+	18: "docker.io/pgvector/pgvector@sha256:4bdc16048580b56345bca441bffe8d9b45dd2f5d76963808c853df1661df6e00",
 }
 
 // pinnedImage requires a single-platform manifest digest: base staging

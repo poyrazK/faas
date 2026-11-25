@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/dbmigration"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -38,6 +39,13 @@ type Cutovers interface {
 	Activate(ctx context.Context, a managedpostgres.CutoverActivation) (managedpostgres.ActivatedCutover, error)
 	Resume(ctx context.Context, account, id string) error
 	RevokeRetiredSources(ctx context.Context, account, id string) error
+}
+
+// MigrationTargets governs the fenced native subscriber during a live switch.
+type MigrationTargets interface {
+	SealMigrationTarget(context.Context, managedpostgres.Cutover, string) error
+	OpenMigrationTarget(context.Context, string, string, string, string) error
+	AbortMigrationTarget(context.Context, string, string, string, string) error
 }
 
 // Releases reads and moves the app's live release.
@@ -63,11 +71,12 @@ const (
 
 // Worker advances database switches.
 type Worker struct {
-	Store     state.DatabaseSwitchStore
-	Drain     state.DatabaseSwitchDrainStore
-	Databases Databases
-	Cutovers  Cutovers
-	Releases  Releases
+	Store            state.DatabaseSwitchStore
+	Drain            state.DatabaseSwitchDrainStore
+	Databases        Databases
+	Cutovers         Cutovers
+	Releases         Releases
+	MigrationTargets MigrationTargets
 	// InvalidateSnapshots marks every snapshot of the app stale, so the first
 	// wake after the switch cold-boots with the restored credentials.
 	InvalidateSnapshots func(ctx context.Context, appID string) error
@@ -239,6 +248,9 @@ func (w *Worker) step(ctx context.Context, sw state.DatabaseSwitch) state.Databa
 	if sw.CancelRequestedAt != nil && state.DatabaseSwitchCancellable(sw.Phase) {
 		return w.beginAbort(sw, codeCancelled, "Cancelled on request before the switch.")
 	}
+	if w.migrationActivationExpired(sw) && state.DatabaseSwitchCancellable(sw.Phase) {
+		return w.abortExpiredMigration(sw)
+	}
 	switch sw.Phase {
 	case state.DatabaseSwitchRestoring:
 		return w.restore(ctx, sw)
@@ -260,6 +272,16 @@ func (w *Worker) step(ctx context.Context, sw state.DatabaseSwitch) state.Databa
 		return w.abort(ctx, sw)
 	}
 	return w.wait(sw)
+}
+
+// The request was recorded after verification. This bounds retries when the
+// guest is unreachable; the guest checks the actual receipt timestamp.
+func (w *Worker) migrationActivationExpired(sw state.DatabaseSwitch) bool {
+	return sw.MigrationOperationID != "" && w.now().Sub(sw.CreatedAt) > dbmigration.ActivationReceiptMaxAge
+}
+
+func (w *Worker) abortExpiredMigration(sw state.DatabaseSwitch) state.DatabaseSwitch {
+	return w.beginAbort(sw, "migration_receipt_expired", "The verification receipt expired. Verify the migration again before activating it.")
 }
 
 // Failure codes a switch can end with.

@@ -116,12 +116,19 @@ type (
 	InstanceResponse = api.InstanceResponse
 
 	// Usage.
-	UsageResponse                 = api.UsageResponse
-	UsageSummaryResponse          = api.UsageSummaryResponse
-	ExecutionUsageSummaryResponse = api.ExecutionUsageSummaryResponse
-	AccountUsageResponse          = api.AccountUsageResponse
-	ObjectStorageUsageResponse    = api.ObjectStorageUsageResponse
-	ManagedPostgresUsageResponse  = api.ManagedPostgresUsageResponse
+	UsageResponse                            = api.UsageResponse
+	UsageSummaryResponse                     = api.UsageSummaryResponse
+	ExecutionUsageSummaryResponse            = api.ExecutionUsageSummaryResponse
+	AccountUsageResponse                     = api.AccountUsageResponse
+	ObjectStorageUsageResponse               = api.ObjectStorageUsageResponse
+	ManagedPostgresUsageResponse             = api.ManagedPostgresUsageResponse
+	ManagedPostgresBindingTimeouts           = api.ManagedPostgresBindingTimeouts
+	ManagedPostgresBackupSchedule            = api.ManagedPostgresBackupSchedule
+	ManagedPostgresErrorHistory              = api.ManagedPostgresErrorHistory
+	ManagedPostgresQueryError                = api.ManagedPostgresQueryError
+	SetManagedPostgresErrorHistoryRequest    = api.SetManagedPostgresErrorHistoryRequest
+	SetManagedPostgresBackupScheduleRequest  = api.SetManagedPostgresBackupScheduleRequest
+	SetManagedPostgresBindingTimeoutsRequest = api.SetManagedPostgresBindingTimeoutsRequest
 
 	ExecutionWorkflowResponse     = api.ExecutionWorkflowResponse
 	ExecutionWorkflowStatusCounts = api.ExecutionWorkflowStatusCounts

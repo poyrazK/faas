@@ -228,6 +228,17 @@ func loadManagedPostgres(ctx context.Context, pool *pgxpool.Pool, getenv func(st
 			}
 			return api.Plan(account.Plan) == api.PlanFree, nil
 		},
+		AutoGrowAllowance: func(ctx context.Context, subject string) (int64, error) {
+			account, err := state.BillingResourceAccount(ctx, accountStore, subject)
+			if err != nil {
+				return 0, err
+			}
+			limits, ok := api.ManagedPostgresLimitsFor(api.Plan(account.Plan))
+			if !ok || !account.Active() {
+				return 0, managedpostgres.ErrNotInPlan
+			}
+			return limits.StorageLimitBytes, nil
+		},
 		AdmitResize: func(ctx context.Context, accountID string, target managedpostgres.Spec) error {
 			account, err := state.BillingResourceAccount(ctx, accountStore, accountID)
 			if err != nil {

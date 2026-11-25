@@ -16,6 +16,7 @@ package onebox.faas.schedd.v1;
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/wrappers.proto";
+import "onebox/faas/vmmd/v1/vmmd.proto";
 
 option go_package = "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1;scheddpb";
 
@@ -359,6 +360,25 @@ service Schedd {
   rpc DatabaseAdmin(DatabaseAdminRequest) returns (DatabaseAdminResponse);
   rpc DeleteDatabase(DatabaseRef) returns (DeleteDatabaseResponse);
   rpc GetDatabase(DatabaseRef) returns (DatabaseRuntime);
+  // Samples an already-running standby's read availability without waking it.
+  rpc GetDatabaseReplica(DatabaseRef) returns (DatabaseReplicaStatus);
+  // Samples an already running primary, leaving its idle deadline intact.
+  rpc GetDatabaseDiagnostics(DatabaseDiagnosticsRequest) returns (DatabaseDiagnosticsResponse);
+  rpc DatabaseExtensions(DatabaseExtensionsRequest) returns (DatabaseExtensionsResponse);
+  rpc DatabaseAutovacuum(DatabaseAutovacuumRequest) returns (DatabaseAutovacuumResponse);
+  rpc RequestDatabaseRestoreDrill(RequestDatabaseRestoreDrillRequest) returns (DatabaseRestoreDrill);
+  rpc GetDatabaseRestoreDrill(GetDatabaseRestoreDrillRequest) returns (DatabaseRestoreDrill);
+  rpc RequestDatabaseUpgradeRehearsal(RequestDatabaseUpgradeRehearsalRequest) returns (DatabaseUpgradeRehearsal);
+  rpc GetDatabaseUpgradeRehearsal(GetDatabaseUpgradeRehearsalRequest) returns (DatabaseUpgradeRehearsal);
+  rpc ListDatabaseSessions(ListDatabaseSessionsRequest) returns (ListDatabaseSessionsResponse);
+  rpc CancelDatabaseQuery(CancelDatabaseQueryRequest) returns (CancelDatabaseQueryResponse);
+  rpc ExchangeDatabaseQueryControls(ExchangeDatabaseQueryControlsRequest) returns (ExchangeDatabaseQueryControlsResponse);
+  rpc ExchangeDatabaseErrorHistory(ExchangeDatabaseErrorHistoryRequest) returns (ExchangeDatabaseErrorHistoryResponse);
+  rpc StreamDatabaseExport(onebox.faas.vmmd.v1.DatabaseExportRequest) returns (stream onebox.faas.vmmd.v1.DatabaseExportFrame);
+  rpc StreamDatabaseArchiveImport(stream onebox.faas.vmmd.v1.DatabaseArchiveImportFrame) returns (stream onebox.faas.vmmd.v1.DatabaseArchiveImportProgress);
+
+  // CheckDatabaseRestore reads archive evidence for a source and target.
+  rpc CheckDatabaseRestore(CheckDatabaseRestoreRequest) returns (CheckDatabaseRestoreResponse);
   // SetDatabaseAlwaysOn switches a database between scale-to-zero and
   // always-on (ADR-1027). apid only.
   rpc SetDatabaseAlwaysOn(SetDatabaseAlwaysOnRequest) returns (DatabaseRuntime);
@@ -366,6 +386,8 @@ service Schedd {
   // another (ADR-1027). It returns at once with the database provisioning;
   // schedd restores it in the background. apid only.
   rpc RestoreDatabase(RestoreDatabaseRequest) returns (DatabaseRuntime);
+  // Recovery restores use an isolated regional archive and never wake the source.
+  rpc RestoreDatabaseFromRecovery(RestoreDatabaseFromRecoveryRequest) returns (DatabaseRuntime);
   // DatabaseUsage reports a database's metered consumption over a window,
   // also after it was deleted (ADR-1027). apid only.
   rpc DatabaseUsage(DatabaseUsageRequest) returns (DatabaseUsageResponse);
@@ -374,6 +396,7 @@ service Schedd {
   // (the production class). A running database restarts on the new
   // shape. Repeating the request resumes an interrupted resize. apid only.
   rpc ResizeDatabase(ResizeDatabaseRequest) returns (DatabaseRuntime);
+  rpc AutoGrowDatabaseStorage(AutoGrowDatabaseStorageRequest) returns (DatabaseRuntime);
   // UpgradeDatabase upgrades a database in place to a later PostgreSQL
   // major with pg_upgrade (ADR-1027). It returns once the upgrade is
   // recorded, with the database upgrading; schedd runs it in the
@@ -385,6 +408,18 @@ service Schedd {
   // empty database of this one (ADR-1027 migration off Neon), waking it.
   // A running or finished import is reported, not restarted. apid only.
   rpc ImportDatabase(ImportDatabaseRequest) returns (DatabaseImportProgress);
+  // CustomerDatabaseImport supports a compatibility check and a snapshot
+  // copy through the guarded customer relay.
+  rpc CustomerDatabaseImport(CustomerDatabaseImportRequest) returns (DatabaseImportProgress);
+  // CheckDatabaseMigration reads logical migration prerequisites. Older
+  // schedulers reject the method without dispatching another import op.
+  rpc CheckDatabaseMigration(ImportDatabaseRequest) returns (onebox.faas.vmmd.v1.DatabaseMigrationCheck);
+  rpc StartDatabaseMigration(ImportDatabaseRequest) returns (onebox.faas.vmmd.v1.DatabaseMigrationProgress);
+  rpc ControlDatabaseMigrationActivation(DatabaseMigrationActivationRequest) returns (DatabaseRef);
+  rpc VerifyDatabaseMigration(VerifyDatabaseMigrationRequest) returns (onebox.faas.vmmd.v1.DatabaseMigrationProgress);
+  rpc PrepareDatabaseMigration(ImportDatabaseRequest) returns (onebox.faas.vmmd.v1.DatabaseMigrationProgress);
+  rpc StopDatabaseMigration(ImportDatabaseRequest) returns (onebox.faas.vmmd.v1.DatabaseMigrationProgress);
+  rpc DatabaseMigrationStatus(DatabaseRef) returns (onebox.faas.vmmd.v1.DatabaseMigrationProgress);
   // DatabaseImportStatus reports the import; a database that stopped
   // since has none. apid only.
   rpc DatabaseImportStatus(DatabaseRef) returns (DatabaseImportProgress);
@@ -1662,6 +1697,156 @@ message ReportSlowRequestAck {
   string reason = 2;
 }
 // Database VMs (ADR-1027).
+message ListDatabaseSessionsRequest {
+  string database_id = 1;
+  string database_name = 2;
+}
+
+message ListDatabaseSessionsResponse {
+  string state = 1;
+  onebox.faas.vmmd.v1.DatabaseSessionSample sample = 2;
+}
+
+message CancelDatabaseQueryRequest {
+  string database_id = 1;
+  string target_id = 2;
+}
+
+message CancelDatabaseQueryResponse {
+  string outcome = 1;
+}
+
+message DatabaseQueryTarget {
+  string target_id = 1;
+  string database_id = 2;
+  string node_id = 3;
+  int64 primary_epoch_micros = 4;
+  int32 backend_pid = 5;
+  string application_name = 6;
+}
+
+message DatabaseQueryControlResult {
+  string target_id = 1;
+  string outcome = 2;
+}
+
+message ExchangeDatabaseQueryControlsRequest {
+  string owner_id = 1;
+  repeated DatabaseQueryTarget active = 2;
+  repeated DatabaseQueryControlResult results = 3;
+}
+
+message DatabaseQueryCommand {
+  DatabaseQueryTarget target = 1;
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+message ExchangeDatabaseQueryControlsResponse {
+  repeated DatabaseQueryCommand cancel = 1;
+}
+
+message DatabasePooledError {
+  string id = 1;
+  string runtime_database_id = 2;
+  string policy_epoch = 3;
+  google.protobuf.Timestamp observed_at = 4;
+  string severity = 5;
+  string sqlstate = 6;
+  string role_name = 7;
+}
+
+message DatabaseErrorHistoryPolicy {
+  string runtime_database_id = 1;
+  string epoch = 2;
+}
+
+message ExchangeDatabaseErrorHistoryRequest {
+  repeated string runtime_database_ids = 1;
+  repeated DatabasePooledError events = 2;
+}
+
+message ExchangeDatabaseErrorHistoryResponse {
+  repeated DatabaseErrorHistoryPolicy policies = 1;
+}
+
+message DatabaseDiagnosticsRequest {
+  string database_id = 1;
+  string database_name = 2;
+  onebox.faas.vmmd.v1.DatabaseTableHealthOptions table_health_options = 3;
+}
+
+message DatabaseDiagnosticsResponse {
+  string state = 1;
+  onebox.faas.vmmd.v1.DatabaseActivitySample activity = 2;
+  onebox.faas.vmmd.v1.DatabaseTableHealthSample table_health = 3;
+}
+
+message RequestDatabaseRestoreDrillRequest {
+  string database_id = 1;
+  string request_id = 2;
+}
+
+message GetDatabaseRestoreDrillRequest {
+  string database_id = 1;
+  string drill_id = 2;
+}
+
+message DatabaseRestoreDrill {
+  string drill_id = 1;
+  string request_id = 2;
+  string outcome = 3;
+  google.protobuf.Timestamp started_at = 4;
+  google.protobuf.Timestamp target_at = 5;
+  google.protobuf.Timestamp finished_at = 6;
+  google.protobuf.Timestamp recovered_to = 7;
+  string error_code = 8;
+}
+
+message RequestDatabaseUpgradeRehearsalRequest {
+  string database_id = 1;
+  string request_id = 2;
+  int32 postgres_major = 3;
+  string database_name = 4;
+}
+
+message GetDatabaseUpgradeRehearsalRequest {
+  string database_id = 1;
+  string rehearsal_id = 2;
+}
+
+message DatabaseUpgradeRehearsal {
+  DatabaseRestoreDrill drill = 1;
+  int32 source_major = 2;
+  int32 target_major = 3;
+  string phase = 4;
+  string failed_phase = 5;
+}
+
+message DatabaseAutovacuumRequest {
+  string database_id = 1;
+  // Empty reads the current profile.
+  string profile = 2;
+}
+
+message DatabaseAutovacuumResponse {
+  string profile = 1;
+  string state = 2;
+  onebox.faas.vmmd.v1.DatabaseAutovacuumSettings effective = 3;
+  onebox.faas.vmmd.v1.DatabaseAutovacuumSettings replica_effective = 4;
+}
+
+message DatabaseExtensionsRequest {
+  string database_id = 1;
+  string database_name = 2;
+  string enable_extension = 3;
+  int32 target_major = 4;
+}
+
+message DatabaseExtensionsResponse {
+  onebox.faas.vmmd.v1.DatabaseExtensionCatalog catalog = 1;
+  repeated onebox.faas.vmmd.v1.DatabaseExtensionVersion incompatible_extensions = 2;
+}
+
 message DatabaseRef {
   string database_id = 1;
 }
@@ -1690,6 +1875,11 @@ message RestoreDatabaseRequest {
   // The source's snapshot at point_in_time, which keeps it restorable
   // outside the source's restore window.
   string snapshot = 4;
+}
+
+message RestoreDatabaseFromRecoveryRequest {
+  RestoreDatabaseRequest restore = 1;
+  string recovery_region = 2;
 }
 
 message CaptureDatabaseSnapshotRequest {
@@ -1726,6 +1916,14 @@ message HoldDatabaseRequest {
 message SetDatabaseComputeQuotaRequest {
   string database_id = 1;
   int64 quota_unit_seconds = 2;
+}
+
+message DatabaseReplicaStatus {
+  bool available = 1;
+  optional int64 replay_lag_bytes = 2;
+  google.protobuf.Timestamp observed_at = 3;
+  string standby_node_id = 4;
+  string replica_vmmd_target = 5;
 }
 
 message DatabaseRuntime {
@@ -1781,6 +1979,7 @@ message DatabaseRuntime {
   // standby_node_id. Empty otherwise, and from older schedulers; read
   // sessions then go to the primary.
   string replica_vmmd_target = 26;
+  int64 primary_epoch_micros = 27;
 }
 
 message DatabaseMajorSpan {
@@ -1794,6 +1993,7 @@ message UpgradeDatabaseRequest {
   // The upgrade's name, a lowercase UUID: the managed-Postgres driver
   // derives it from apid's journaled request.
   string operation_id = 3;
+  string database_name = 4;
 }
 
 message DatabaseUpgrade {
@@ -1823,6 +2023,23 @@ message ImportDatabaseRequest {
   string operation_id = 10;
 }
 
+message DatabaseMigrationActivationRequest {
+  string database_id = 1;
+  string op = 2;
+  onebox.faas.vmmd.v1.DatabaseMigrationActivation activation = 3;
+}
+
+message VerifyDatabaseMigrationRequest {
+  ImportDatabaseRequest source = 1;
+  string verification_id = 2;
+  bool source_writes_paused = 3;
+}
+
+message CustomerDatabaseImportRequest {
+  ImportDatabaseRequest source = 1;
+  bool check_only = 2;
+}
+
 message DatabaseImportProgress {
   // none, running, done or failed.
   string state = 1;
@@ -1838,6 +2055,13 @@ message DatabaseImportProgress {
   // For target_too_small: the volume size the copy needs, zero when free
   // space ran out during the copy.
   int64 required_volume_bytes = 8;
+  repeated onebox.faas.vmmd.v1.DatabaseExtensionVersion incompatible_extensions = 9;
+}
+
+message AutoGrowDatabaseStorageRequest {
+  string database_id = 1;
+  string resize_id = 2;
+  int64 volume_bytes = 3;
 }
 
 message ResizeDatabaseRequest {
@@ -1906,4 +2130,24 @@ message InterruptHostedTaskWorkerRequest {
 message InterruptHostedTaskWorkerResponse {
   string instance_id = 1;
   string deployment_id = 2;
+}
+
+message CheckDatabaseRestoreRequest {
+  string database_id = 1;
+  google.protobuf.Timestamp point_in_time = 2;
+  string recovery_region = 3;
+  int32 postgres_major = 4;
+  bool latest = 5;
+}
+
+message CheckDatabaseRestoreResponse {
+  string outcome = 1;
+  string reason = 2;
+  google.protobuf.Timestamp backup_completed_at = 3;
+  google.protobuf.Timestamp wal_stop_at = 4;
+  string missing_wal_segment = 5;
+  string recovery_region = 6;
+  google.protobuf.Timestamp recovery_point = 7;
+  uint32 recovery_timeline = 8;
+  string missing_timeline_history = 9;
 }

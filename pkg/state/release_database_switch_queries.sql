@@ -5,14 +5,15 @@
 -- (api.DatabaseSwitchesActivePerAccount).
 INSERT INTO release_database_switches (
   id, account_id, app_id, scope, from_deployment_id, target_deployment_id, undone_deployment_ids,
-  source_database_id, target_name, restore_point, phase, requested_by,
+  source_database_id, target_database_id, target_name, restore_point, migration_operation_id, phase, requested_by,
   phase_started_at, retry_at, created_at, updated_at
 )
 SELECT
   sqlc.arg(id)::uuid, sqlc.arg(account_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(scope)::text,
   sqlc.narg(from_deployment_id)::uuid, sqlc.arg(target_deployment_id)::uuid, sqlc.arg(undone_deployment_ids)::uuid[],
-  sqlc.arg(source_database_id)::uuid, sqlc.arg(target_name)::text, sqlc.arg(restore_point)::timestamptz,
-  'restoring', sqlc.arg(requested_by)::text,
+  sqlc.arg(source_database_id)::uuid, sqlc.narg(target_database_id)::uuid, sqlc.arg(target_name)::text, sqlc.narg(restore_point)::timestamptz,
+  sqlc.narg(migration_operation_id)::uuid,
+  CASE WHEN sqlc.narg(migration_operation_id)::uuid IS NULL THEN 'restoring' ELSE 'staging' END, sqlc.arg(requested_by)::text,
   sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz
  WHERE (SELECT count(*) FROM release_database_switches active
          WHERE active.account_id = sqlc.arg(account_id)::uuid

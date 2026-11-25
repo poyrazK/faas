@@ -878,7 +878,7 @@ Provision or attach PostgreSQL and inject DATABASE_URL
 | `--availability <MODE>` | availability mode | one of `single_zone` · `high_availability` |
 | `--scale-to-zero` | suspend compute when idle |  |
 | `--environment-key <KEY>` | connection environment variable |  |
-| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` · `session` |
+| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` · `session` · `replica_only` |
 | `--wait-timeout <DURATION>` | readiness timeout |  |
 
 ### add bucket
@@ -4947,6 +4947,98 @@ Show one managed PostgreSQL database
 
 `gregale postgres get <database>`
 
+### postgres diagnose
+
+Inspect primary connections, lock blockers, and transactions
+
+`gregale postgres diagnose <database>`
+
+### postgres sessions
+
+Inspect native PostgreSQL client sessions
+
+`gregale postgres sessions <database>`
+
+### postgres cancel-query
+
+Cancel a query using a live session target
+
+`gregale postgres cancel-query <database> <target_id>`
+
+### postgres tables
+
+Inspect table sizes, dead rows, vacuum and analyze activity
+
+`gregale postgres tables [--sort <ORDER>] [--limit <N>] <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--sort <ORDER>` | rank by size, dead-rows, or xid-age (default size) |  |
+| `--limit <N>` | return 1 to 50 tables (default 20) |  |
+
+### postgres autovacuum
+
+Inspect or set the native PostgreSQL autovacuum profile
+
+`gregale postgres autovacuum [--profile <PROFILE>] <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--profile <PROFILE>` | select the default or high-churn profile |  |
+
+### postgres extensions
+
+Inspect and enable native PostgreSQL extensions
+
+#### postgres extensions list
+
+List available and installed extension versions
+
+`gregale postgres extensions list [--target-major <N>] <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--target-major <N>` | check extension compatibility with a later PostgreSQL major |  |
+
+#### postgres extensions enable
+
+Enable a managed extension
+
+`gregale postgres extensions enable <database> <extension>`
+
+### postgres errors
+
+Show recent pooled PostgreSQL errors
+
+`gregale postgres errors [--enable] [--disable] [--since <DURATION>] [--sqlstate <CODE>] [--limit <COUNT>] <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--enable` | enable collection for pooled connections |  |
+| `--disable` | stop collecting new events |  |
+| `--since <DURATION>` | lookback from 1s to 24h |  |
+| `--sqlstate <CODE>` | filter by PostgreSQL SQLSTATE |  |
+| `--limit <COUNT>` | maximum number of events |  |
+
+Examples:
+
+```sh
+gregale postgres errors orders --enable
+gregale postgres errors orders --since 1h --sqlstate 40P01
+```
+
+### postgres queries
+
+Rank native PostgreSQL statements by execution time
+
+`gregale postgres queries [--since <DURATION>] [--enable] [--disable] <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--since <DURATION>` | history window from 1 second to 24 hours |  |
+| `--enable` | enable collection at the next eligible restart |  |
+| `--disable` | stop collecting statement statistics |  |
+
 ### postgres delete
 
 Delete a managed PostgreSQL database; it can be undone for 7 days
@@ -4983,16 +5075,248 @@ gregale postgres recover orders
 
 Works until the database&#39;s restorable_until, 7 days after the delete; a purged database is gone.
 
+### postgres maintenance
+
+Schedule native PostgreSQL base refreshes in a weekly UTC window
+
+`gregale postgres maintenance [--day <WEEKDAY>] [--since <HH:MM>] [--duration <DURATION>] [--off] <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--day <WEEKDAY>` | UTC weekday | one of `sunday` · `monday` · `tuesday` · `wednesday` · `thursday` · `friday` · `saturday` |
+| `--since <HH:MM>` | window start in UTC (also --start) |  |
+| `--duration <DURATION>` | window length from 1m through 24h |  |
+| `--off` | remove the weekly window |  |
+
+Examples:
+
+```sh
+gregale postgres maintenance orders --day sunday --start 02:00 --duration 1h
+```
+
+### postgres auto-grow
+
+Set a storage ceiling for automatic growth
+
+`gregale postgres auto-grow [--max-bytes <BYTES>] [--off] <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--max-bytes <BYTES>` | per-volume ceiling in bytes |  |
+| `--off` | disable automatic storage growth |  |
+
+### postgres backup-schedule
+
+Schedule a daily portable backup to a private bucket
+
+`gregale postgres backup-schedule [--daily-at <HH:MM>] [--bucket-app <APP>] [--bucket <BUCKET>] [--off] <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--daily-at <HH:MM>` | daily UTC time |  |
+| `--bucket-app <APP>` | app that owns the bucket |  |
+| `--bucket <BUCKET>` | private destination bucket name or ID |  |
+| `--off` | disable future runs |  |
+
+Examples:
+
+```sh
+gregale postgres backup-schedule orders --daily-at 03:00 --bucket-app archive --bucket database-backups
+```
+
+### postgres export
+
+Download a portable backup of a native PostgreSQL database
+
+`gregale postgres export --output <FILE> [--request-id <UUID>] <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--output <FILE>` | file to save the PostgreSQL dump | required |
+| `--request-id <UUID>` | stable request UUID to resume an export |  |
+
+Examples:
+
+```sh
+gregale postgres export orders --output orders.dump
+```
+
+### postgres import
+
+Restore a backup file or copy a snapshot into an empty native database
+
+`gregale postgres import [--check] [--from-file <FILE>] [--source-env <ENV>] [--request-id <UUID>] [--skip-extension <NAME>] <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--check` | check compatibility before copying |  |
+| `--from-file <FILE>` | restore a Gregale export with its companion manifest |  |
+| `--source-env <ENV>` | source URL environment variable (default SOURCE_DATABASE_URL) |  |
+| `--request-id <UUID>` | stable operation UUID to reuse on a retry |  |
+| `--skip-extension <NAME>` | omit this source extension if compatible (repeatable) |  |
+
+Examples:
+
+```sh
+gregale postgres import orders --check
+gregale postgres import orders
+gregale postgres import orders-recovery --from-file orders.dump
+```
+
+### postgres import-status
+
+Read a native PostgreSQL import&#39;s progress
+
+`gregale postgres import-status <database> <operation_id>`
+
+### postgres migrate
+
+Manage a live PostgreSQL migration
+
+#### postgres migrate check
+
+Inspect a source and empty native target
+
+`gregale postgres migrate check [--source-env <ENV>] <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--source-env <ENV>` | source URL environment variable (default SOURCE_DATABASE_URL) |  |
+
+Examples:
+
+```sh
+gregale postgres migrate check orders
+```
+
+#### postgres migrate start
+
+Start or resume a fenced native subscriber
+
+`gregale postgres migrate start --request-id <UUID> [--source-env <ENV>] <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--request-id <UUID>` | stable operation UUID | required |
+| `--source-env <ENV>` | source URL environment variable (default SOURCE_DATABASE_URL) |  |
+
+#### postgres migrate prepare
+
+Build supported indexes and report cutover blockers
+
+`gregale postgres migrate prepare --request-id <UUID> [--source-env <ENV>] <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--request-id <UUID>` | original migration operation UUID | required |
+| `--source-env <ENV>` | source URL environment variable (default SOURCE_DATABASE_URL) |  |
+
+#### postgres migrate verify
+
+Verify durable replay after source writes pause
+
+`gregale postgres migrate verify --request-id <UUID> --verification-id <UUID> --source-writes-paused [--source-env <ENV>] <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--request-id <UUID>` | original migration operation UUID | required |
+| `--verification-id <UUID>` | UUID for this continuous source write pause | required |
+| `--source-writes-paused` | confirm source writers are paused and drained | required |
+| `--source-env <ENV>` | source URL environment variable (default SOURCE_DATABASE_URL) |  |
+
+#### postgres migrate activate
+
+Switch an app&#39;s bindings to its verified native database
+
+`gregale postgres migrate activate --source <DATABASE> --app <APP> [--env <SCOPE>] --request-id <UUID> --verification-id <UUID> --source-writes-paused [--no-wait] <target>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--source <DATABASE>` | managed source database | required |
+| `--app <APP>` | app whose managed PostgreSQL bindings move | required |
+| `--env <SCOPE>` | environment whose managed bindings move |  |
+| `--request-id <UUID>` | original migration operation UUID | required |
+| `--verification-id <UUID>` | verification UUID for the current write pause | required |
+| `--source-writes-paused` | confirm source writers remain paused and drained | required |
+| `--no-wait` | return after recording the switch |  |
+
+#### postgres migrate status
+
+Report table copy, apply lag, and retained WAL
+
+`gregale postgres migrate status <database>`
+
+#### postgres migrate stop
+
+Stop replication and leave the target fenced
+
+`gregale postgres migrate stop --request-id <UUID> [--source-env <ENV>] <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--request-id <UUID>` | original migration operation UUID | required |
+| `--source-env <ENV>` | source URL environment variable (default SOURCE_DATABASE_URL) |  |
+
+### postgres recovery-region
+
+Set the configured recovery region for a native PostgreSQL database
+
+`gregale postgres recovery-region [--region <REGION>] [--off] <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--region <REGION>` | configured recovery region |  |
+| `--off` | disable regional recovery |  |
+
+Examples:
+
+```sh
+gregale postgres recovery-region orders --region eu-west-1
+```
+
+### postgres upgrade-rehearsal
+
+Test a PostgreSQL major upgrade on a disposable restore
+
+`gregale postgres upgrade-rehearsal [--major <N>] [--request-id <UUID>] [--rehearsal-id <UUID>] <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--major <N>` | target PostgreSQL major version |  |
+| `--request-id <UUID>` | UUID to reuse when retrying a start |  |
+| `--rehearsal-id <UUID>` | read the status of this rehearsal |  |
+
+Examples:
+
+```sh
+gregale postgres upgrade-rehearsal orders --major 18
+gregale postgres upgrade-rehearsal orders --rehearsal-id REHEARSAL_UUID
+```
+
+### postgres restore-drill
+
+Verify recovery with a disposable restore
+
+`gregale postgres restore-drill [--request-id <UUID>] [--drill-id <UUID>] <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--request-id <UUID>` | UUID to reuse when retrying a start |  |
+| `--drill-id <UUID>` | read the status of this drill |  |
+
 ### postgres restore
 
 Restore a database to a new database
 
-`gregale postgres restore --name <NAME> --point-in-time <TIMESTAMP> [--switch <APP>] [--env <SCOPE>] [--yes] [--no-wait] [--timeout <DURATION>] [--poll-interval <DURATION>] <database>`
+`gregale postgres restore [--check] [--name <NAME>] [--point-in-time <TIMESTAMP>] [--region <REGION>] [--latest] [--switch <APP>] [--env <SCOPE>] [--yes] [--no-wait] [--timeout <DURATION>] [--poll-interval <DURATION>] <database>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--name <NAME>` | name for the restored database | required |
-| `--point-in-time <TIMESTAMP>` | RFC3339 restore timestamp | required |
+| `--check` | inspect archive coverage for the requested time |  |
+| `--name <NAME>` | name for the restored database when creating a copy |  |
+| `--point-in-time <TIMESTAMP>` | RFC3339 restore timestamp |  |
+| `--region <REGION>` | restore in the database&#39;s configured recovery region |  |
+| `--latest` | with --region: use the latest verified point |  |
 | `--switch <APP>` | move this app to the copy, keeping its code |  |
 | `--env <SCOPE>` | with --switch: environment whose bindings move |  |
 | `--yes` | with --switch: switch without prompting |  |
@@ -5004,6 +5328,8 @@ Examples:
 
 ```sh
 gregale postgres restore orders --name orders-before-import --point-in-time 2026-10-30T09:00:00Z
+gregale postgres restore orders --check --point-in-time 2026-10-30T09:00:00Z
+gregale postgres restore orders --region eu-west-1 --name orders-recovery --latest
 gregale postgres restore orders --name orders-0900 --point-in-time 2026-10-30T09:00:00Z --switch my-api
 ```
 
@@ -5042,6 +5368,17 @@ Branch a database from its latest point or a chosen time
 | `--since <live|TIMESTAMP>` | live (default) or an RFC3339 time inside the source&#39;s restore range (also --from) |  |
 | `--ttl <DURATION>` | purge the branch this long after it is created, from 5m to 30d (e.g. 2h, 7d) |  |
 
+#### postgres branch masked
+
+Copy selected data into a validated masked branch
+
+`gregale postgres branch masked --policy <FILE> [--ttl <DURATION>] <database> <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--policy <FILE>` | JSON file selecting tables, columns and masking actions | required |
+| `--ttl <DURATION>` | expire the branch after this duration, from 5m to 7d (default 2h) |  |
+
 #### postgres branch list
 
 List a database&#39;s branches
@@ -5079,7 +5416,7 @@ Bind a database to an app by app ID (attach takes slugs)
 | `--app <APP_ID>` | app ID | required |
 | `--env <SCOPE>` | environment scope (also --scope) | required |
 | `--environment-key <KEY>` | environment variable name | required |
-| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` · `session` |
+| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` · `session` · `replica_only` |
 
 #### postgres bindings get
 
@@ -5092,6 +5429,24 @@ Show one binding
 Delete a binding
 
 `gregale postgres bindings delete <id>`
+
+#### postgres bindings timeouts
+
+Show or set native pooled binding timeout defaults
+
+`gregale postgres bindings timeouts [--statement <DURATION>] [--lock <DURATION>] [--idle-in-transaction <DURATION>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--statement <DURATION>` | statement timeout (0 disables) |  |
+| `--lock <DURATION>` | lock timeout (0 disables) |  |
+| `--idle-in-transaction <DURATION>` | idle transaction timeout (0 disables) |  |
+
+Examples:
+
+```sh
+gregale postgres bindings timeouts BINDING_ID --statement 5s --lock 1s --idle-in-transaction 30s
+```
 
 #### postgres bindings rotate
 
@@ -5123,7 +5478,7 @@ Attach a database to an app
 |---|---|---|
 | `--scope <SCOPE>` | environment scope (defaults to linked project environment, otherwise default) |  |
 | `--env <KEY>` | connection environment variable |  |
-| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` · `session` |
+| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` · `session` · `replica_only` |
 
 Examples:
 

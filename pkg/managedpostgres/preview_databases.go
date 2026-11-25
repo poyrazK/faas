@@ -20,9 +20,10 @@ import (
 type PreviewMode string
 
 const (
-	PreviewsOff   PreviewMode = "off"
-	PreviewsEmpty PreviewMode = "empty"
-	PreviewsCopy  PreviewMode = "copy"
+	PreviewsOff    PreviewMode = "off"
+	PreviewsEmpty  PreviewMode = "empty"
+	PreviewsCopy   PreviewMode = "copy"
+	PreviewsMasked PreviewMode = "masked"
 )
 
 // PreviewOwner names the PR preview environment that owns a database: its
@@ -118,8 +119,10 @@ func (s *Service) SetPreviews(ctx context.Context, accountID, databaseID string,
 	}
 	switch mode {
 	case PreviewsOff, PreviewsEmpty, PreviewsCopy:
+	case PreviewsMasked:
+		return Database{}, fmt.Errorf("%w: masked previews require a policy", ErrInvalid)
 	default:
-		return Database{}, fmt.Errorf("%w: previews must be off, empty or copy", ErrInvalid)
+		return Database{}, fmt.Errorf("%w: previews must be off, empty, copy or masked", ErrInvalid)
 	}
 	database, err := customerDatabase(ctx, s.store, accountID, databaseID)
 	if err != nil {
@@ -151,22 +154,22 @@ func (s *Service) EnsurePreviewDatabase(ctx context.Context, request PreviewData
 	if request.AccountID == "" || !request.Owner.valid() || request.StorageLimitBytes <= 0 || request.Limit < 0 {
 		return Database{}, ErrInvalid
 	}
-	existing, err := store.FindPreviewDatabase(ctx, request.Owner)
-	if err == nil {
-		return s.previewDatabaseProgress(ctx, existing)
-	}
-	if !errors.Is(err, ErrNotFound) {
-		return Database{}, err
-	}
-	if !s.provisioningEnabled() || !s.provisioningAllowed(ctx, request.AccountID) {
-		return Database{}, ErrProvisioningClosed
-	}
 	source, err := customerDatabase(ctx, s.store, request.AccountID, request.Owner.SourceDatabaseID)
 	if err != nil {
 		return Database{}, err
 	}
 	if !source.Preview.IsZero() {
 		return Database{}, ErrPreviewDatabase
+	}
+	existing, err := store.FindPreviewDatabase(ctx, request.Owner)
+	if err == nil {
+		return s.previewDatabaseForMode(ctx, source, existing)
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return Database{}, err
+	}
+	if !s.provisioningEnabled() || !s.provisioningAllowed(ctx, request.AccountID) {
+		return Database{}, ErrProvisioningClosed
 	}
 	if source.State == StateDeleting || source.State == StateDeleted {
 		return Database{}, ErrConflict
@@ -178,6 +181,8 @@ func (s *Service) EnsurePreviewDatabase(ctx context.Context, request PreviewData
 		reservation, err = s.emptyPreview(source, request.StorageLimitBytes)
 	case PreviewsCopy:
 		reservation, err = s.copyPreview(source, now)
+	case PreviewsMasked:
+		reservation, err = s.maskedPreview(source, request.StorageLimitBytes)
 	default:
 		return Database{}, ErrPreviewsOff
 	}
@@ -198,6 +203,29 @@ func (s *Service) EnsurePreviewDatabase(ctx context.Context, request PreviewData
 	database, _, err := store.ReservePreview(ctx, reservation, s.previewLimit(request.Limit))
 	if err != nil {
 		return Database{}, err
+	}
+	return s.previewDatabaseForMode(ctx, source, database)
+}
+
+func (s *Service) previewDatabaseForMode(ctx context.Context, source, database Database) (Database, error) {
+	if database.AccountID != source.AccountID || database.OrgID != source.OrgID {
+		return Database{}, ErrNotFound
+	}
+	if source.Previews == PreviewsMasked && !database.IsMaskedBranch() {
+		return Database{}, ErrPreviewReplacementRequired
+	}
+	if database.IsMaskedBranch() {
+		// Copying can outlast the preview request. The lifecycle worker
+		// owns it, and the preview waits for the normal binding handshake.
+		if database.State == StateFailed {
+			switch database.LastErrorCode {
+			case maskedPolicyUnsupported, maskedCopyLimit, maskedValidationFailed:
+				return Database{}, ErrMaskedPreviewValidationFailed
+			default:
+				return Database{}, ErrUnavailable
+			}
+		}
+		return database, nil
 	}
 	return s.previewDatabaseProgress(ctx, database)
 }

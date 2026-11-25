@@ -26,7 +26,9 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
+	"github.com/onebox-faas/faas/pkg/dbguest"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/pgextension"
 	"github.com/onebox-faas/faas/pkg/pgscram"
 )
 
@@ -415,6 +417,9 @@ func (p *Provider) Update(ctx context.Context, req managedpostgres.UpdateRequest
 	if req.ResourceID == "" || (req.DataResourceID != "" && req.DataResourceID != req.ResourceID) {
 		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrInvalid
 	}
+	if req.AutomaticResize {
+		return p.autoGrowStorage(ctx, req)
+	}
 	if req.Spec.PostgresMajor != req.PreviousSpec.PostgresMajor {
 		return p.upgrade(ctx, req)
 	}
@@ -466,9 +471,12 @@ func (p *Provider) upgrade(ctx context.Context, req managedpostgres.UpdateReques
 	}
 	operation := uuid.NewSHA1(upgradeNamespace, []byte(req.IdempotencyKey)).String()
 	rt, err := p.scheduler.UpgradeDatabase(ctx, &scheddpb.UpgradeDatabaseRequest{
-		DatabaseId: resourceUUID(req.ResourceID), PostgresMajor: int32(req.Spec.PostgresMajor), OperationId: operation, //nolint:gosec // majors are validated
+		DatabaseId: resourceUUID(req.ResourceID), PostgresMajor: int32(req.Spec.PostgresMajor), OperationId: operation, DatabaseName: p.cfg.Database, //nolint:gosec // majors are validated
 	})
 	if err != nil {
+		if st := status.Convert(err); st.Code() == codes.FailedPrecondition && st.Message() == pgextension.UpgradeUnavailable {
+			return managedpostgres.ObservedDatabase{}, &managedpostgres.ChangeRejectedError{Code: pgextension.UpgradeUnavailable}
+		}
 		return managedpostgres.ObservedDatabase{}, providerError(err)
 	}
 	switch rt.GetUpgrade().GetState() {
@@ -495,10 +503,23 @@ func (p *Provider) Restore(ctx context.Context, req managedpostgres.RestoreReque
 	if err := p.supports(req.Spec); err != nil {
 		return managedpostgres.ObservedDatabase{}, err
 	}
-	rt, err := p.scheduler.RestoreDatabase(ctx, &scheddpb.RestoreDatabaseRequest{
+	request := &scheddpb.RestoreDatabaseRequest{
 		Database: p.provisionRequest(resourceUUID(req.ResourceID), req.Spec), SourceDatabaseId: req.SourceResourceID,
 		PointInTime: timestamppb.New(req.PointInTime),
-	})
+	}
+	var rt *scheddpb.DatabaseRuntime
+	var err error
+	if req.FromRecoveryArchive {
+		scheduler, ok := p.scheduler.(interface {
+			RestoreDatabaseFromRecovery(context.Context, *scheddpb.RestoreDatabaseFromRecoveryRequest, ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error)
+		})
+		if !ok {
+			return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnsupported
+		}
+		rt, err = scheduler.RestoreDatabaseFromRecovery(ctx, &scheddpb.RestoreDatabaseFromRecoveryRequest{Restore: request, RecoveryRegion: p.cfg.Region})
+	} else {
+		rt, err = p.scheduler.RestoreDatabase(ctx, request)
+	}
 	if err != nil {
 		return managedpostgres.ObservedDatabase{}, providerError(err)
 	}
@@ -551,7 +572,15 @@ func (p *Provider) IssueCredentials(ctx context.Context, req managedpostgres.Cre
 	if req.ProviderResourceID == "" || req.IdentityKey == "" {
 		return managedpostgres.CredentialMaterial{}, managedpostgres.ErrInvalid
 	}
-	if !slices.Contains(p.Capabilities().CredentialAccess, req.Access) {
+	if req.Access == managedpostgres.CredentialReplicaOnly {
+		rt, err := p.scheduler.GetDatabase(ctx, &scheddpb.DatabaseRef{DatabaseId: req.ProviderResourceID})
+		if err != nil {
+			return managedpostgres.CredentialMaterial{}, providerError(err)
+		}
+		if !rt.GetReplicated() {
+			return managedpostgres.CredentialMaterial{}, managedpostgres.ErrUnsupported
+		}
+	} else if !slices.Contains(p.Capabilities().CredentialAccess, req.Access) {
 		return managedpostgres.CredentialMaterial{}, managedpostgres.ErrUnsupported
 	}
 	role := credentialRoleName(req.ProviderResourceID, req.IdentityKey, req.Access)
@@ -571,6 +600,16 @@ func (p *Provider) IssueCredentials(ctx context.Context, req managedpostgres.Cre
 		return managedpostgres.CredentialMaterial{}, managedpostgres.ErrInvalid
 	}
 	batch = fence + batch + grants
+	if req.TimeoutPolicy.Revision != 0 {
+		if req.Access != managedpostgres.CredentialReadWrite && req.Access != managedpostgres.CredentialReadOnly {
+			return managedpostgres.CredentialMaterial{}, managedpostgres.ErrUnsupported
+		}
+		settings, err := bindingTimeoutSQL(p.cfg.Database, role, req.TimeoutPolicy)
+		if err != nil {
+			return managedpostgres.CredentialMaterial{}, err
+		}
+		batch += settings
+	}
 	if err := p.admin(ctx, req.ProviderResourceID, batch); err != nil {
 		return managedpostgres.CredentialMaterial{}, err
 	}
@@ -590,6 +629,13 @@ func (p *Provider) IssueCredentials(ctx context.Context, req managedpostgres.Cre
 			{Role: managedpostgres.EndpointPooled, Host: req.ProviderResourceID + "-pooler." + p.cfg.HostSuffix, Port: p.cfg.Port},
 			{Role: managedpostgres.EndpointReadOnly, Host: req.ProviderResourceID + "-ro-pooler." + p.cfg.HostSuffix, Port: p.cfg.Port},
 		},
+	}
+	if req.Access == managedpostgres.CredentialReplicaOnly {
+		material.Endpoints = []managedpostgres.Endpoint{{
+			Role: managedpostgres.EndpointReplicaOnly,
+			Host: req.ProviderResourceID + dbguest.ReplicaOnlySuffix + "-pooler." + p.cfg.HostSuffix,
+			Port: p.cfg.Port,
+		}}
 	}
 	return material, material.Validate()
 }

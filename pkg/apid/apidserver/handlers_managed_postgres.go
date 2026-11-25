@@ -170,7 +170,7 @@ func managedPostgresView(database managedpostgres.Database) api.ManagedPostgresD
 		ID: database.ID, Name: database.Name, Region: database.Spec.Region, PostgresMajor: database.Spec.PostgresMajor,
 		ServiceClass: string(database.Spec.Class), Availability: string(database.Spec.Availability), ScaleToZero: database.Spec.ScaleToZero,
 		StorageLimitBytes: database.Spec.StorageLimitBytes, RestoreWindowSeconds: database.Spec.RestoreWindowSeconds,
-		RestoreSourceDatabaseID: database.RestoreSourceDatabaseID, State: string(database.State), LastErrorCode: database.LastErrorCode,
+		RestoreSourceDatabaseID: database.RestoreSourceDatabaseID, MaskedBranch: database.IsMaskedBranch(), State: string(database.State), LastErrorCode: database.LastErrorCode,
 		CreatedAt: database.CreatedAt.UTC().Format(time.RFC3339Nano), UpdatedAt: database.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
 	if !database.RestorePointInTime.IsZero() {
@@ -689,7 +689,7 @@ func (s *server) restoreManagedPostgresDatabase(w http.ResponseWriter, r *http.R
 // No point_in_time restores from the latest point; ttl_seconds makes the copy
 // a branch (ADR-20261106103654).
 func managedPostgresRestoreRequest(accountID, sourceID string, req api.RestoreManagedPostgresDatabaseRequest) (managedpostgres.RestoreDatabaseRequest, error) {
-	restore := managedpostgres.RestoreDatabaseRequest{AccountID: accountID, SourceDatabaseID: sourceID, Name: req.Name}
+	restore := managedpostgres.RestoreDatabaseRequest{AccountID: accountID, SourceDatabaseID: sourceID, Name: req.Name, RecoveryRegion: req.Region}
 	if raw := strings.TrimSpace(req.PointInTime); raw == "" {
 		restore.Latest = true
 	} else {
@@ -713,6 +713,9 @@ func managedPostgresRestoredEvent(database managedpostgres.Database, latest bool
 	event := map[string]any{
 		"database_id": database.ID, "source_database_id": database.RestoreSourceDatabaseID,
 		"point_in_time": database.RestorePointInTime.UTC().Format(time.RFC3339Nano), "latest": latest,
+	}
+	if database.RestoreFromRecovery {
+		event["recovery_region"] = database.Spec.Region
 	}
 	if !database.ExpiresAt.IsZero() {
 		event["expires_at"] = database.ExpiresAt.UTC().Format(time.RFC3339Nano)

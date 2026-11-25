@@ -31,6 +31,9 @@ func TestDatabaseNodeServesOnlyDatabaseRPCs(t *testing.T) {
 	if err := databaseOnlyStream(nil, nil, &grpc.StreamServerInfo{FullMethod: vmmdpb.Vmmd_DatabaseSession_FullMethodName}, stream); err != nil {
 		t.Fatalf("DatabaseSession refused: %v", err)
 	}
+	if err := databaseOnlyStream(nil, nil, &grpc.StreamServerInfo{FullMethod: vmmdpb.Vmmd_DatabaseReplicaSession_FullMethodName}, stream); err != nil {
+		t.Fatalf("DatabaseReplicaSession refused: %v", err)
+	}
 	if err := databaseOnlyStream(nil, nil, &grpc.StreamServerInfo{FullMethod: vmmdpb.Vmmd_ForwardTCPStream_FullMethodName}, stream); status.Code(err) != codes.Unimplemented {
 		t.Fatalf("ForwardTCPStream = %v, want Unimplemented", err)
 	}

@@ -138,6 +138,9 @@ func (s *pooledSession) handle(ctx context.Context, msg pgproto3.FrontendMessage
 			return err
 		}
 	}
+	if s.p.queryControls.Load() && s.canceler != nil {
+		s.canceler.endQuery()
+	}
 	if err := s.forward(msg); err != nil {
 		return err
 	}
@@ -146,6 +149,9 @@ func (s *pooledSession) handle(ctx context.Context, msg pgproto3.FrontendMessage
 	}
 	if err := s.server.fe.Flush(); err != nil {
 		return err
+	}
+	if s.p.queryControls.Load() && s.canceler != nil && inspectableExecution(msg, s.expect) {
+		s.canceler.beginQuery()
 	}
 	return s.relay()
 }
@@ -194,8 +200,13 @@ func readServer(srv *serverConn) {
 			send(serverEvent{err: err})
 			return
 		}
-		if e, ok := msg.(*pgproto3.ErrorResponse); ok && endsSession(e) {
-			srv.ended.Store(true)
+		if e, ok := msg.(*pgproto3.ErrorResponse); ok {
+			if srv.onError != nil {
+				srv.onError(e)
+			}
+			if endsSession(e) {
+				srv.ended.Store(true)
+			}
 		}
 		buf, err := msg.Encode(nil)
 		if err != nil {
@@ -295,6 +306,12 @@ func (s *pooledSession) write(buf []byte) {
 // transaction, the server returned.
 func (s *pooledSession) answer(buf []byte) (bool, error) {
 	kind := buf[0]
+	switch kind {
+	case 'C', 'I', 's', 'E', 'G', 'W', 'Z':
+		if s.canceler != nil && s.p.queryControls.Load() {
+			s.canceler.endQuery()
+		}
+	}
 	pass := true
 	switch kind {
 	case '1': // ParseComplete

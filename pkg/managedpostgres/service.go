@@ -36,6 +36,7 @@ type ServiceOptions struct {
 	NewLeaseToken       func() string
 	Admit               func(context.Context, string) error
 	AdmitResize         func(context.Context, string, Spec) error
+	AutoGrowAllowance   func(context.Context, string) (int64, error)
 	// MaxDatabasesPerAccount supplies the customer-specific reservation limit.
 	// It is evaluated immediately before the store's atomic reservation so
 	// plan entitlements remain race-safe while the service stays provider-neutral.
@@ -66,6 +67,7 @@ type Service struct {
 	newLeaseToken          func() string
 	admit                  func(context.Context, string) error
 	admitResize            func(context.Context, string, Spec) error
+	autoGrowAllowance      func(context.Context, string) (int64, error)
 	maxDatabasesPerAccount func(context.Context, string) (int, error)
 	maxBranchesPerAccount  func(context.Context, string) (int, error)
 	freePlan               func(context.Context, string) (bool, error)
@@ -96,6 +98,7 @@ type CreateRequest struct {
 }
 
 type RestoreDatabaseRequest struct {
+	RecoveryRegion   string
 	AccountID        string
 	SourceDatabaseID string
 	Name             string
@@ -177,6 +180,7 @@ func NewService(registry *Registry, store Store, options ServiceOptions) (*Servi
 		newLeaseToken:          options.NewLeaseToken,
 		admit:                  options.Admit,
 		admitResize:            options.AdmitResize,
+		autoGrowAllowance:      options.AutoGrowAllowance,
 		maxDatabasesPerAccount: options.MaxDatabasesPerAccount,
 		maxBranchesPerAccount:  options.MaxBranchesPerAccount,
 		freePlan:               options.FreePlan,
@@ -289,7 +293,7 @@ func (s *Service) create(ctx context.Context, request CreateRequest, reservedID 
 	if err != nil {
 		return Database{}, quotaDetail(err, reservationLimit)
 	}
-	if database.Spec != request.Spec || database.Name != request.Name || reservedID != "" && database.ID != reservedID {
+	if database.IsMaskedBranch() || database.Spec != request.Spec || database.Name != request.Name || reservedID != "" && database.ID != reservedID {
 		return Database{}, ErrConflict
 	}
 	if database.State == StateReady {
@@ -315,11 +319,17 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	if !s.operationsEnabled() {
 		return Database{}, false, ErrProvisioningClosed
 	}
+	regional := request.RecoveryRegion != ""
+	if regional && (request.TTL != 0 || request.SourceDefinition != nil) {
+		return Database{}, false, ErrInvalid
+	}
 	if request.Latest {
 		if !request.PointInTime.IsZero() {
 			return Database{}, false, ErrInvalid
 		}
-		request.PointInTime = s.now().Add(-LatestRestoreLag)
+		if !regional {
+			request.PointInTime = s.now().Add(-LatestRestoreLag)
+		}
 	}
 	// The catalog stores the point with microsecond precision. A finer
 	// point (an RFC 3339 time with seven or more fractional digits) read back
@@ -327,7 +337,7 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	// request and the restore answered managed_postgres_conflict (production
 	// journey 2026-11-18: 13:52:38.3528715Z).
 	request.PointInTime = request.PointInTime.UTC().Truncate(time.Microsecond)
-	if request.AccountID == "" || request.SourceDatabaseID == "" || !ValidName(request.Name) || request.PointInTime.IsZero() || !validBranchTTL(request.TTL) ||
+	if request.AccountID == "" || request.SourceDatabaseID == "" || !ValidName(request.Name) || request.PointInTime.IsZero() && !(regional && request.Latest) || !validBranchTTL(request.TTL) ||
 		request.WithinLimit && request.TTL > 0 {
 		return Database{}, false, ErrInvalid
 	}
@@ -360,8 +370,9 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 		if _, err := s.Get(ctx, existing.AccountID, existing.ID); err != nil {
 			return Database{}, false, err
 		}
-		if existing.RestoreSourceDatabaseID != request.SourceDatabaseID || !request.Latest && !existing.RestorePointInTime.Equal(request.PointInTime) ||
-			!branchExpiryMatches(existing, request.TTL) {
+		if existing.IsMaskedBranch() || existing.RestoreSourceDatabaseID != request.SourceDatabaseID || !request.Latest && !existing.RestorePointInTime.Equal(request.PointInTime) ||
+			!branchExpiryMatches(existing, request.TTL) || existing.RestoreFromRecovery != regional ||
+			regional && existing.Spec.Region != request.RecoveryRegion {
 			return Database{}, false, ErrConflict
 		}
 		if request.SourceDefinition != nil && !restoreMatchesSourceDefinition(existing, source) {
@@ -383,6 +394,13 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	// recovery intent even if the source is now updating or being deleted.
 	if source.State != StateReady || source.ProviderResourceID == "" {
 		return Database{}, false, ErrConflict
+	}
+	target := source
+	if regional {
+		target, request.PointInTime, err = s.prepareRegionalRestore(ctx, source, request, now)
+		if err != nil {
+			return Database{}, false, err
+		}
 	}
 	if !request.PointInTime.Before(now) || currentRestoreWindow <= 0 || source.Spec.RestoreWindowSeconds <= 0 ||
 		now.Sub(request.PointInTime) > time.Duration(currentRestoreWindow)*time.Second ||
@@ -407,11 +425,15 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	}
 	// A major upgrade preserves the older major's recovery archive. Persist
 	// that historical major before any target or quota slot is reserved.
-	if source.Spec, err = s.resolveRestoreSpec(ctx, source, request.PointInTime, request.SourceDefinition != nil); err != nil {
-		return Database{}, false, err
+	if !regional {
+		target.Spec, err = s.resolveRestoreSpec(ctx, source, request.PointInTime, request.SourceDefinition != nil)
+		if err != nil {
+			return Database{}, false, err
+		}
+		source.Spec = target.Spec
 	}
 	reservationLimit, err := s.AdmitRestoreReservation(ctx, request.AccountID, RestoreSourceDefinition{
-		Spec: source.Spec, BackendID: source.BackendID, BackendFingerprint: source.BackendFingerprint, ProviderResourceID: source.ProviderResourceID, DataResourceID: source.DataResourceID})
+		Spec: target.Spec, BackendID: target.BackendID, BackendFingerprint: target.BackendFingerprint, ProviderResourceID: source.ProviderResourceID, DataResourceID: source.DataResourceID})
 	if err != nil {
 		return Database{}, false, err
 	}
@@ -435,9 +457,10 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 		AccountID:               request.AccountID,
 		OrgID:                   source.OrgID,
 		Name:                    request.Name,
-		Spec:                    source.Spec,
-		BackendID:               source.BackendID,
-		BackendFingerprint:      source.BackendFingerprint,
+		Spec:                    target.Spec,
+		BackendID:               target.BackendID,
+		BackendFingerprint:      target.BackendFingerprint,
+		RestoreFromRecovery:     regional,
 		RestoreSourceDatabaseID: source.ID,
 		RestoreSourceResourceID: databaseDataResource(source),
 		RestorePointInTime:      request.PointInTime.UTC(),
@@ -450,8 +473,9 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	if err != nil {
 		return Database{}, false, quotaDetail(err, reservationLimit)
 	}
-	if database.RestoreSourceDatabaseID != request.SourceDatabaseID || !request.Latest && !database.RestorePointInTime.Equal(request.PointInTime.UTC()) ||
-		!branchExpiryMatches(database, request.TTL) {
+	if database.IsMaskedBranch() || database.RestoreSourceDatabaseID != request.SourceDatabaseID || !request.Latest && !database.RestorePointInTime.Equal(request.PointInTime.UTC()) ||
+		!branchExpiryMatches(database, request.TTL) || database.RestoreFromRecovery != regional ||
+		regional && database.Spec.Region != request.RecoveryRegion {
 		return Database{}, false, ErrConflict
 	}
 	if request.SourceDefinition != nil && !restoreMatchesSourceDefinition(database, source) {
@@ -560,7 +584,12 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 	}
 	now := s.now()
 	leaseToken := s.newLeaseToken()
-	database, err = s.store.Claim(ctx, accountID, databaseID, leaseToken, StateProvisioning, now, now.Add(s.leaseDuration))
+	leaseDuration, providerTimeout := s.leaseDuration, s.providerTimeout
+	if database.IsMaskedBranch() {
+		leaseDuration = max(leaseDuration, 3*time.Minute)
+		providerTimeout = 100 * time.Second
+	}
+	database, err = s.store.Claim(ctx, accountID, databaseID, leaseToken, StateProvisioning, now, now.Add(leaseDuration))
 	if err != nil {
 		return Database{}, err
 	}
@@ -571,7 +600,7 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 	if err := backend.Capabilities.Supports(database.Spec); err != nil {
 		return Database{}, s.releaseKnownError(ctx, database, StateFailed, "unsupported", err, time.Hour)
 	}
-	providerContext, cancel := context.WithTimeout(ctx, s.providerTimeout)
+	providerContext, cancel := context.WithTimeout(ctx, providerTimeout)
 	defer cancel()
 	var observed ObservedDatabase
 	if database.ProviderResourceID == "" {
@@ -584,7 +613,8 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 		}
 		if database.RestoreSourceResourceID != "" {
 			request := RestoreRequest{ResourceID: database.ID, SourceResourceID: database.RestoreSourceResourceID,
-				Spec: database.Spec, PointInTime: database.RestorePointInTime, IdempotencyKey: "restore-" + database.ID}
+				Spec: database.Spec, PointInTime: database.RestorePointInTime, IdempotencyKey: "restore-" + database.ID,
+				FromRecoveryArchive: database.RestoreFromRecovery}
 			if receipts, ok := backend.Provider.(RestoreCreationProvider); ok {
 				observed, err = s.reconcileRestoreCreation(providerContext, receipts, database, request)
 			} else {
@@ -654,6 +684,11 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 	case ProviderStatusReady:
 		if observed.Spec != database.Spec {
 			return Database{}, s.releaseKnownError(ctx, database, StateFailed, "spec_mismatch", ErrConflict, time.Hour)
+		}
+		if database.IsMaskedBranch() {
+			if err := s.validateMaskedBranchCopy(providerContext, database, observed, backend); err != nil {
+				return Database{}, s.releaseMaskedBranchError(ctx, database, err)
+			}
 		}
 		if database.EnvironmentCloneOperationID != "" {
 			finishContext, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), defaultStoreTimeout)

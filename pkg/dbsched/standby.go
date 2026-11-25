@@ -183,6 +183,7 @@ func (s *Scheduler) awaitStandby(ctx context.Context, standby Node, id string) e
 		resp, err := s.vmm.Control(ctx, standby, id, dbguest.Request{Op: dbguest.OpStatus})
 		switch {
 		case err == nil && resp.State == dbguest.StateStandby:
+			s.autovacuumBeforeServing(ctx, standby, id, dbguest.StateStandby)
 			return nil
 		case err == nil && resp.State == dbguest.StateFailed:
 			return fmt.Errorf("standby failed: %w", guestError(resp))
@@ -234,6 +235,11 @@ func (s *Scheduler) finishAttach(ctx context.Context, vm VM, standby Node) error
 func (s *Scheduler) abandonStandby(ctx context.Context, id string, primary, standby Node) {
 	unlock := s.lock(id)
 	defer unlock()
+	release, err := s.lockStandbyOperation(ctx, id)
+	if err != nil {
+		return
+	}
+	defer release()
 	cur, err := s.store.Get(ctx, id)
 	if err != nil {
 		return
@@ -275,6 +281,11 @@ func (s *Scheduler) RestartStandby(ctx context.Context, id string) error {
 func (s *Scheduler) stopStandbyForRestart(ctx context.Context, id string) error {
 	unlock := s.lock(id)
 	defer unlock()
+	release, err := s.lockStandbyOperation(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer release()
 	vm, err := s.store.Get(ctx, id)
 	if err != nil {
 		return err
@@ -345,6 +356,11 @@ func (s *Scheduler) resumeSynchronous(ctx context.Context, node Node, vm VM) err
 func (s *Scheduler) relaxPrimary(ctx context.Context, id string) {
 	unlock := s.lock(id)
 	defer unlock()
+	release, err := s.lockStandbyOperation(ctx, id)
+	if err != nil {
+		return
+	}
+	defer release()
 	cur, err := s.store.Get(ctx, id)
 	if err != nil || cur.State != StateRunning || !cur.StandbySynced || cur.StandbyRunning {
 		return
@@ -407,6 +423,13 @@ func (s *Scheduler) deleteStandby(ctx context.Context, vm VM) {
 // standby on such a node moves to another. It reports how many standbys
 // it gave up on.
 func (s *Scheduler) CheckStandbys(ctx context.Context) (int, error) {
+	now := s.now()
+	s.replicaSamples.Range(func(id, value any) bool {
+		if !now.Before(value.(replicaSample).expiresAt) {
+			s.replicaSamples.CompareAndDelete(id, value)
+		}
+		return true
+	})
 	vms, err := s.store.List(ctx, StateRunning, StateParked)
 	if err != nil {
 		return 0, err
@@ -574,12 +597,24 @@ func (s *Scheduler) dropStandby(ctx context.Context, vm VM, primary, standby Nod
 	id := vm.DatabaseID
 	unlock := s.lock(id)
 	defer unlock()
+	release, err := s.lockStandbyOperation(ctx, id)
+	if err != nil {
+		return false
+	}
+	defer release()
 	cur, err := s.store.Get(ctx, id)
 	if err != nil || cur.State != StateRunning || !cur.StandbyRunning || cur.StandbyNode != vm.StandbyNode || cur.NodeID != primary.ID {
 		return false
 	}
-	if err := s.store.MarkStandbySynced(ctx, id, false); err != nil {
-		s.log.Warn("dbsched: unsync a lagging standby", "database_id", id, "err", err)
+	if store, ok := s.store.(*PgStore); ok {
+		err = store.markStandbyDropped(ctx, cur)
+	} else {
+		err = s.store.MarkStandbySynced(ctx, id, false)
+	}
+	if err != nil {
+		if !errors.Is(err, ErrConflict) {
+			s.log.Warn("dbsched: unsync a lagging standby", "database_id", id, "err", err)
+		}
 		return false
 	}
 	mode := dbguest.ReplicationAsync
@@ -691,12 +726,26 @@ func (s *Scheduler) failover(ctx context.Context, id string, lost Node, trigger 
 
 // failoverLocked is failover with the database's lock held.
 func (s *Scheduler) failoverLocked(ctx context.Context, id string, lost Node, trigger string) (err error) {
+	release, err := s.lockStandbyOperation(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer release()
 	vm, err := s.store.Get(ctx, id)
 	if err != nil {
 		return err
 	}
 	if vm.NodeID != lost.ID || !canFailover(vm) {
 		return ErrConflict // already failed over, or nothing to promote
+	}
+	if store, ok := s.store.(*PgStore); ok && vm.State == StateParking {
+		armed, err := rollingSwitchArmed(ctx, store.pool, id)
+		if err != nil {
+			return err
+		}
+		if armed {
+			return ErrConflict
+		}
 	}
 	defer func() { s.cfg.Metrics.failedOver(trigger, err) }()
 	standby, err := s.node(ctx, vm.StandbyNode)
@@ -707,10 +756,9 @@ func (s *Scheduler) failoverLocked(ctx context.Context, id string, lost Node, tr
 	_ = s.vmm.Stop(fence, lost, id)
 	cancel()
 	if vm.StandbyRunning {
-		resp, err := s.vmm.Control(ctx, standby, id, dbguest.Request{Op: dbguest.OpPromote})
-		promoted := err == nil && (resp.Error == "" || (resp.Error == dbguest.ErrCodeNotStandby && resp.State == dbguest.StateReady))
-		if !promoted {
-			return fmt.Errorf("dbsched: promote the standby of %s: %w", id, errors.Join(err, guestError(resp)))
+		s.autovacuumBeforeServing(ctx, standby, id, dbguest.StateStandby)
+		if err := s.promoteRunningStandby(ctx, standby, id); err != nil {
+			return err
 		}
 	}
 	after, err := s.store.Failover(ctx, id)
@@ -720,6 +768,14 @@ func (s *Scheduler) failoverLocked(ctx context.Context, id string, lost Node, tr
 	s.attachTried.Delete(id)
 	s.log.Warn("dbsched: failed over to the standby", "database_id", id, "from", lost.ID, "to", after.NodeID, "state", after.State, "promote_pending", after.PromotePending)
 	return nil
+}
+
+func (s *Scheduler) promoteRunningStandby(ctx context.Context, standby Node, id string) error {
+	resp, err := s.vmm.Control(ctx, standby, id, dbguest.Request{Op: dbguest.OpPromote})
+	if err == nil && (resp.Error == "" || resp.Error == dbguest.ErrCodeNotStandby && resp.State == dbguest.StateReady) {
+		return nil
+	}
+	return fmt.Errorf("dbsched: promote the standby of %s: %w", id, errors.Join(err, guestError(resp)))
 }
 
 // standbyProbeTimeout bounds one probe of a node, so an unreachable node

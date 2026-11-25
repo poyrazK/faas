@@ -16,6 +16,9 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/dbarchive"
 	"github.com/onebox-faas/faas/pkg/dbguest"
+	"github.com/onebox-faas/faas/pkg/dbguest/diagnosticspb"
+	"github.com/onebox-faas/faas/pkg/dbguest/extensionpb"
+	"github.com/onebox-faas/faas/pkg/dbmigration"
 	"github.com/onebox-faas/faas/pkg/dbvm"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 )
@@ -66,8 +69,8 @@ type DatabaseRuntime interface {
 	// DialReplication opens a standby's replication stream to a running
 	// primary's guest (ADR-1027 production class).
 	DialReplication(ctx context.Context, id string) (net.Conn, error)
-	// SetImportSource lets a running database's import reach src.
-	SetImportSource(id string, src dbvm.ImportSource) error
+	// ControlImport pins the source relay while checking or starting an import.
+	ControlImport(ctx context.Context, id string, src dbvm.ImportSource, req dbguest.Request) (dbguest.Response, error)
 }
 
 // Platform client identities allowed on the database RPCs.
@@ -303,6 +306,8 @@ func databaseBootRequest(req *vmmdpb.StartDatabaseRequest) (dbvm.BootRequest, er
 		RestoreSource:        req.GetRestoreSource(),
 		RestoreWindowSeconds: req.GetRestoreWindowSeconds(),
 		RestoreUntilEnd:      req.GetRestoreUntilEnd(),
+		RestoreTimeline:      req.GetRestoreTimeline(),
+		QueryInsights:        req.GetQueryInsights(),
 	}
 	if req.GetRestoreTarget() != nil {
 		if err := req.GetRestoreTarget().CheckValid(); err != nil {
@@ -313,7 +318,7 @@ func databaseBootRequest(req *vmmdpb.StartDatabaseRequest) (dbvm.BootRequest, er
 	if boot.RestoreWindowSeconds < 0 {
 		return dbvm.BootRequest{}, status.Error(codes.InvalidArgument, "negative restore window")
 	}
-	if (boot.RestoreSource == "") != boot.RestoreTarget.IsZero() || (boot.RestoreUntilEnd && boot.RestoreSource == "") {
+	if (boot.RestoreSource == "") != boot.RestoreTarget.IsZero() || ((boot.RestoreUntilEnd || boot.RestoreTimeline != 0) && boot.RestoreSource == "") {
 		return dbvm.BootRequest{}, status.Error(codes.InvalidArgument, "a restore names its source and target")
 	}
 	if (req.GetPrimaryNode() == "") != (req.GetPrimaryTarget() == "") || (req.GetPrimaryNode() != "" && boot.RestoreSource != "") {
@@ -370,7 +375,36 @@ func (s *Server) DatabaseControl(ctx context.Context, req *vmmdpb.DatabaseContro
 	if err != nil {
 		return nil, err
 	}
-	control := dbguest.Request{Op: dbguest.Op(req.GetOp()), SQL: req.GetSql(), Replication: dbguest.ReplicationMode(req.GetReplication()), Drill: req.GetDrill()}
+	if req.GetOp() == "base_extensions" {
+		major := int(req.GetExtensionsBaseMajor())
+		if major < dbguest.MinMajor || major > dbguest.MaxMajor {
+			return nil, status.Error(codes.InvalidArgument, "invalid PostgreSQL base major")
+		}
+		reader, ok := rt.(interface {
+			BaseExtensionFiles(context.Context, int) ([]string, error)
+		})
+		if !ok {
+			return nil, status.Error(codes.Unimplemented, "PostgreSQL image inventory is unavailable")
+		}
+		files, err := reader.BaseExtensionFiles(ctx, major)
+		if err != nil || len(files) == 0 || len(files) > 4096 {
+			return nil, status.Error(codes.Unavailable, "PostgreSQL image inventory is unavailable")
+		}
+		return &vmmdpb.DatabaseControlResponse{ExtensionFiles: files}, nil
+	}
+	if req.GetExtensionsBaseMajor() != 0 {
+		return nil, status.Error(codes.InvalidArgument, "unexpected PostgreSQL base major")
+	}
+	control := dbguest.Request{Op: dbguest.Op(req.GetOp()), SQL: req.GetSql(), Replication: dbguest.ReplicationMode(req.GetReplication()), Drill: req.GetDrill(),
+		VerificationID: req.GetVerificationId(), SourceWritesPaused: req.GetSourceWritesPaused(), DiagnosticDatabase: req.GetDiagnosticDatabase(),
+		EnableExtension: req.GetEnableExtension(), TableHealthOptions: diagnosticspb.DecodeTableHealthOptions(req.GetTableHealthOptions()),
+		AutovacuumProfile: dbguest.AutovacuumProfile(req.GetAutovacuumProfile()), AutovacuumRevision: req.GetAutovacuumRevision()}
+	if a := req.GetActivation(); a != nil {
+		control.Activation = &dbmigration.Activation{
+			SwitchID: a.GetSwitchId(), OperationID: a.GetOperationId(), SourcePin: a.GetSourcePin(),
+			SourceDatabase: a.GetSourceDatabase(), Roles: a.GetRoles(),
+		}
+	}
 	if in := req.GetImport(); in != nil {
 		control.Import = &dbguest.ImportSource{Database: in.GetDatabase(), User: in.GetUser(), Password: in.GetPassword(),
 			TargetDatabase: in.GetTargetDatabase(), Owner: in.GetOwner(), SkipExtensions: in.GetSkipExtensions(), OperationID: in.GetOperationId()}
@@ -393,19 +427,31 @@ func (s *Server) DatabaseControl(ctx context.Context, req *vmmdpb.DatabaseContro
 			return nil, s.databaseStatus("record standby", err)
 		}
 	}
-	if in := req.GetImport(); in != nil {
-		// The host side of the import: where the guest's connections go.
-		if err := rt.SetImportSource(req.GetDatabaseId(), dbvm.ImportSource{Host: in.GetHost(), Port: int(in.GetPort())}); err != nil {
-			return nil, s.databaseStatus("import source", err)
+	var resp dbguest.Response
+	if control.Op.IsMigrationMutation() {
+		client, ok := rt.(interface {
+			ControlMigration(context.Context, string, dbvm.ImportSource, dbguest.Request) (dbguest.Response, error)
+		})
+		if !ok {
+			return nil, status.Error(codes.Unimplemented, "database migration is unavailable")
 		}
+		in := req.GetImport()
+		resp, err = client.ControlMigration(ctx, req.GetDatabaseId(), dbvm.ImportSource{Host: in.GetHost(), Port: int(in.GetPort())}, control)
+	} else if in := req.GetImport(); in != nil {
+		resp, err = rt.ControlImport(ctx, req.GetDatabaseId(), dbvm.ImportSource{Host: in.GetHost(), Port: int(in.GetPort())}, control)
+	} else {
+		resp, err = rt.Control(ctx, req.GetDatabaseId(), control)
 	}
-	resp, err := rt.Control(ctx, req.GetDatabaseId(), control)
 	if err != nil {
 		return nil, s.databaseStatus("control", err)
 	}
 	out := &vmmdpb.DatabaseControlResponse{
-		State: string(resp.State), PostgresMajor: int32(resp.Major), ErrorCode: resp.Error, Sqlstate: resp.SQLState, Backup: resp.Backup,
+		State: string(resp.State), PostgresMajor: int32(resp.Major), ErrorCode: resp.Error, Sqlstate: resp.SQLState, Backup: resp.Backup, Activity: diagnosticspb.Encode(resp.Activity),
+		TableHealth: diagnosticspb.EncodeTableHealth(resp.TableHealth), Autovacuum: diagnosticspb.EncodeAutovacuum(resp.Autovacuum), Sessions: diagnosticspb.EncodeSessions(resp.Sessions),
+		QueryInsightsSupported: resp.QueryInsightsSupported, QueryInsightsConfigured: resp.QueryInsightsConfigured, QuerySample: diagnosticspb.EncodeQuerySample(resp.QuerySample),
+		Extensions: extensionpb.Encode(resp.Extensions),
 	}
+	out.RestoreTimeline = resp.RestoreTimeline
 	if !resp.RecoveredTo.IsZero() {
 		out.RecoveredTo = timestamppb.New(resp.RecoveredTo)
 	}
@@ -417,13 +463,56 @@ func (s *Server) DatabaseControl(ctx context.Context, req *vmmdpb.DatabaseContro
 	}
 	if control.Op == dbguest.OpStatus {
 		out.Stale = rt.Stale(req.GetDatabaseId())
+		if images, ok := rt.(interface {
+			ImageIdentities(string) (string, string)
+		}); ok {
+			out.RunningImage, out.DesiredImage = images.ImageIdentities(req.GetDatabaseId())
+		}
 	}
 	if r := resp.Replication; r != nil {
-		out.Replication = &vmmdpb.DatabaseReplicationStatus{Mode: string(r.Mode), Streaming: r.Streaming, Synchronous: r.Synchronous, LagBytes: r.LagBytes}
+		out.Replication = &vmmdpb.DatabaseReplicationStatus{Mode: string(r.Mode), Streaming: r.Streaming, Synchronous: r.Synchronous, LagBytes: r.LagBytes, ReplayLagBytes: r.ReplayLagBytes}
+	}
+	out.MigrationRunning = resp.MigrationRunning
+	if p := resp.MigrationProgress; p != nil {
+		out.MigrationProgress = &vmmdpb.DatabaseMigrationProgress{
+			OperationId: p.OperationID, State: p.State, Reason: p.Reason,
+			Tables: int32(p.Tables), TablesReady: int32(p.TablesReady), //nolint:gosec // bounded inventory
+			ApplyLagBytes: p.ApplyLagBytes, RetainedWalBytes: p.RetainedWALBytes,
+		}
+		if prep := p.Preparation; prep != nil {
+			out.MigrationProgress.Preparation = &vmmdpb.DatabaseMigrationPreparation{
+				State: prep.State, Reason: prep.Reason, IndexesTotal: int32(prep.IndexesTotal), //nolint:gosec // bounded index inventory
+				IndexesReady: int32(prep.IndexesReady), Sequences: prep.Sequences, //nolint:gosec // bounded index inventory
+			}
+			for _, blocker := range prep.Blockers {
+				out.MigrationProgress.Preparation.Blockers = append(out.MigrationProgress.Preparation.Blockers,
+					&vmmdpb.DatabaseMigrationPreparation_Blocker{Code: blocker.Code, Count: blocker.Count})
+			}
+		}
+		if verify := p.Verification; verify != nil {
+			v := &vmmdpb.DatabaseMigrationVerification{
+				VerificationId: verify.ID, State: verify.State, Reason: verify.Reason,
+				AppliedLsn: verify.AppliedLSN, SequencesSynced: int32(verify.SequencesSynced), //nolint:gosec // bounded sequence inventory
+			}
+			if !verify.VerifiedAt.IsZero() {
+				v.VerifiedAt = timestamppb.New(verify.VerifiedAt)
+			}
+			out.MigrationProgress.Verification = v
+		}
+	}
+	if m := resp.Migration; m != nil {
+		out.Migration = &vmmdpb.DatabaseMigrationCheck{
+			Outcome: m.Outcome, Reasons: m.Reasons, SourceMajor: int32(m.SourceMajor), TargetMajor: int32(m.TargetMajor), //nolint:gosec // PostgreSQL majors
+			TableCount: m.TableCount, SequenceCount: m.SequenceCount, UnsupportedTableCount: m.UnsupportedTableCount,
+			UnsupportedTables: dbmigration.ReportableTables(m.UnsupportedTables), SourceBytes: m.SourceBytes,
+			TargetFreeBytes: m.TargetFreeBytes, SourceWalLimitBytes: m.SourceWALLimitBytes,
+			FreeSourceSlots: m.FreeSourceSlots, FreeSourceSenders: m.FreeSourceSenders,
+		}
 	}
 	if i := resp.Import; i != nil {
 		out.Import = &vmmdpb.DatabaseImportStatus{State: string(i.State), ErrorCode: i.Error, SourceMajor: int32(i.SourceMajor), OperationId: i.OperationID, //nolint:gosec // a PostgreSQL major
-			MissingExtensions: dbguest.ReportableExtensions(i.MissingExtensions), RequiredVolumeBytes: max(i.RequiredVolumeBytes, 0)}
+			MissingExtensions: dbguest.ReportableExtensions(i.MissingExtensions), RequiredVolumeBytes: max(i.RequiredVolumeBytes, 0),
+			IncompatibleExtensions: extensionpb.EncodeInstalled(i.IncompatibleExtensions)}
 		if !i.StartedAt.IsZero() {
 			out.Import.StartedAt = timestamppb.New(i.StartedAt)
 		}
@@ -457,6 +546,8 @@ func databaseCode(err error) codes.Code {
 		return codes.NotFound
 	case errors.Is(err, dbvm.ErrRunning), errors.Is(err, dbvm.ErrNotRunning), errors.Is(err, dbvm.ErrNoArchive), errors.Is(err, dbvm.ErrTransferring):
 		return codes.FailedPrecondition
+	case errors.Is(err, dbvm.ErrImportBusy):
+		return codes.Aborted
 	case errors.Is(err, dbvm.ErrTransferDigest):
 		return codes.DataLoss
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
@@ -469,6 +560,14 @@ func databaseCode(err error) codes.Code {
 // DatabaseSession relays one client session between pgproxyd and the
 // database VM's data port. Either side ending ends the session.
 func (s *Server) DatabaseSession(stream vmmdpb.Vmmd_DatabaseSessionServer) error {
+	return s.databaseSession(stream, false)
+}
+
+func (s *Server) DatabaseReplicaSession(stream vmmdpb.Vmmd_DatabaseReplicaSessionServer) error {
+	return s.databaseSession(stream, true)
+}
+
+func (s *Server) databaseSession(stream databaseSessionServer, replicaOnly bool) error {
 	ctx := stream.Context()
 	rt, err := s.databaseRuntime(ctx, databaseCallerPgproxy)
 	if err != nil {
@@ -478,13 +577,28 @@ func (s *Server) DatabaseSession(stream vmmdpb.Vmmd_DatabaseSessionServer) error
 	if err != nil {
 		return err
 	}
-	conn, err := rt.Dial(ctx, first.GetDatabaseId())
+	dial := rt.Dial
+	if replicaOnly {
+		replica, ok := rt.(interface {
+			DialReplica(context.Context, string) (net.Conn, error)
+		})
+		if !ok {
+			return status.Error(codes.Unimplemented, "database replica sessions are disabled")
+		}
+		dial = replica.DialReplica
+	}
+	conn, err := dial(ctx, first.GetDatabaseId())
 	if err != nil {
 		return s.databaseStatus("session", err)
 	}
 	defer func() { _ = conn.Close() }()
 	spliceFrames(stream, conn, first.GetData())
 	return nil
+}
+
+type databaseSessionServer interface {
+	frameStream
+	Context() context.Context
 }
 
 // frameStream is either side of a DatabaseSession or DatabaseReplication

@@ -28,6 +28,9 @@ func (s *MemoryStore) ReserveBinding(ctx context.Context, binding Binding) (Bind
 	if database.State != StateReady && database.State != StateProvisioning {
 		return Binding{}, false, ErrConflict
 	}
+	if binding.Access == CredentialReplicaOnly && database.Spec.Class != ClassProduction {
+		return Binding{}, false, ErrUnsupported
+	}
 	if existing, ok := s.bindings[binding.ID]; ok {
 		if !sameBindingReservation(existing, binding) {
 			return Binding{}, false, ErrConflict

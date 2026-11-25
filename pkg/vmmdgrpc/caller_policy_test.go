@@ -118,6 +118,8 @@ func TestCallerPolicyAllowList(t *testing.T) {
 		{"imaged mounts a parent", "imaged.faas", vmmdpb.Vmmd_MountOverlayParent_FullMethodName, nil, codes.OK},
 		{"imaged destroys", "imaged.faas", vmmdpb.Vmmd_Destroy_FullMethodName, nil, codes.PermissionDenied},
 		{"pgproxyd opens a session", "pgproxyd.faas", vmmdpb.Vmmd_DatabaseSession_FullMethodName, nil, codes.OK},
+		{"pgproxyd opens a replica-only session", "pgproxyd.faas", vmmdpb.Vmmd_DatabaseReplicaSession_FullMethodName, nil, codes.OK},
+		{"gateway cannot open a replica-only session", "gatewayd.faas", vmmdpb.Vmmd_DatabaseReplicaSession_FullMethodName, nil, codes.PermissionDenied},
 		{"pgproxyd controls a database", "pgproxyd.faas", vmmdpb.Vmmd_DatabaseControl_FullMethodName, nil, codes.PermissionDenied},
 		{"database peer replicates", "vmmd.faas", vmmdpb.Vmmd_DatabaseReplication_FullMethodName, nil, codes.OK},
 		{"unknown daemon pings", "meterd.faas", vmmdpb.Vmmd_Ping_FullMethodName, nil, codes.PermissionDenied},

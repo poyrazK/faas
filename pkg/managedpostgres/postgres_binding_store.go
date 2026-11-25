@@ -86,6 +86,9 @@ func (s *PostgresStore) ReserveBinding(ctx context.Context, binding Binding) (Bi
 	if database.State != "ready" && database.State != "provisioning" {
 		return Binding{}, false, ErrConflict
 	}
+	if binding.Access == CredentialReplicaOnly && database.ServiceClass != string(ClassProduction) {
+		return Binding{}, false, ErrUnsupported
+	}
 	if err := customRoleBindingFence(ctx, tx, binding, databaseID); err != nil {
 		return Binding{}, false, err
 	}

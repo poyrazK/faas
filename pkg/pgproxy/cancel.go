@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgproto3"
+
+	"github.com/onebox-faas/faas/pkg/dbquerycontrol"
 )
 
 // Query cancellation (ADR-1027). A client cancels its running query on a
@@ -68,9 +70,11 @@ func (d directCanceler) cancel(ctx context.Context) error { return d.p.cancelBac
 // returns a server only under mu, so a cancel in flight finishes before
 // the server can run another client's transaction.
 type pooledCanceler struct {
-	p   *Proxy
-	mu  sync.Mutex
-	srv *serverConn
+	p               *Proxy
+	mu              sync.Mutex
+	srv             *serverConn
+	applicationName string
+	activeQuery     dbquerycontrol.Target
 }
 
 func (c *pooledCanceler) cancel(ctx context.Context) error {
@@ -84,6 +88,7 @@ func (c *pooledCanceler) cancel(ctx context.Context) error {
 
 func (c *pooledCanceler) hold(srv *serverConn) {
 	c.mu.Lock()
+	c.endQueryLocked()
 	c.srv = srv
 	c.mu.Unlock()
 }

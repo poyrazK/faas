@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ActivateManagedPostgresMigrationRequest } from '../models/ActivateManagedPostgresMigrationRequest.js';
 import type { AdvanceCanaryRequest } from '../models/AdvanceCanaryRequest.js';
 import type { BindingCheckFinding } from '../models/BindingCheckFinding.js';
 import type { BindingPromotionRequest } from '../models/BindingPromotionRequest.js';
@@ -1186,8 +1187,60 @@ export class DeploymentsService {
     });
   }
   /**
-   * Read a rollback that restores the database.
-   * The switch's phase, restore point, databases, drain counts and outcome.
+   * Activate a verified native PostgreSQL migration for one app environment
+   * Starts a durable binding switch for a managed source and a single-zone native target. The operator keeps source writers paused through activation. Follow progress using the returned database switch.
+   * @returns DatabaseSwitch The switch was recorded and runs in the background.
+   * @throws ApiError
+   */
+  public static activateManagedPostgresMigration({
+    slug,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: ActivateManagedPostgresMigrationRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<DatabaseSwitch> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/database-switches/migration',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read a managed PostgreSQL binding switch.
+   * The switch's phase, databases, drain counts, outcome and the restore point or migration operation ID.
    * @returns DatabaseSwitch The switch.
    * @throws ApiError
    */

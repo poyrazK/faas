@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/apid/postgresaccess"
+	"github.com/onebox-faas/faas/pkg/conditions"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
@@ -33,6 +34,18 @@ func (s *server) renderManagedPostgres(w http.ResponseWriter, r *http.Request, l
 			data.Error = "Managed PostgreSQL status is temporarily unavailable."
 		} else {
 			data.Databases = projectManagedPostgresDashboard(databases)
+			storage, err := s.managedPostgres.StorageStatuses(r.Context(), databases)
+			if err != nil {
+				log.Warn("dashboard renderManagedPostgres: read storage status", "account_id", acct.ID, "err", err)
+			}
+			for i := range data.Databases {
+				item := &data.Databases[i]
+				volume := storage[item.ID]
+				_, item.StorageWarning = conditions.DatabaseStorageWarning(volume)
+				if volume != nil {
+					item.StorageAlerts = volume.Alerts
+				}
+			}
 			attachDashboardDatabasePlanExcess(data.Databases, s.managedPostgresPlanExcess(databases, acct.Plan))
 			attachDashboardDatabaseLabels(data.Databases, s.dashboardResourceLabels(r, acct, state.LabelKindDatabase, dashboardDatabaseIDs(data.Databases)))
 			s.attachManagedPostgresBindings(r, log, acct.ID, &data)

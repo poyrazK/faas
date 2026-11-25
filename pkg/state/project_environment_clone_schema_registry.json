@@ -11226,6 +11226,8 @@
     "table": "managed_postgres_resizes",
     "columns": [
       "account_id",
+      "auto_grow_idle_at",
+      "automatic",
       "backend_fingerprint",
       "backend_id",
       "completed_at",
@@ -21469,6 +21471,7 @@
       "last_error_code",
       "lease_token",
       "lease_until",
+      "migration_operation_id",
       "phase",
       "phase_started_at",
       "release_switched_at",
@@ -21903,6 +21906,8 @@
       "database_id",
       "drop_standby_slot",
       "held",
+      "idle_parked_at",
+      "idle_parked_from",
       "last_active_at",
       "last_backup_at",
       "last_error",
@@ -21932,6 +21937,138 @@
       "upgrade_result",
       "vcpu_count",
       "volume_bytes"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "native_postgres_auto_grow",
+    "columns": [
+      "checked_at",
+      "database_id",
+      "max_bytes",
+      "reason",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "native_postgres_base_refreshes",
+    "columns": [
+      "database_id",
+      "finished_at",
+      "node_id",
+      "outcome",
+      "recover_after",
+      "refresh_base",
+      "resize_id",
+      "source_running_at",
+      "started_at",
+      "target_volume_bytes",
+      "window_end",
+      "window_start"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "native_postgres_maintenance_windows",
+    "columns": [
+      "database_id",
+      "duration_minutes",
+      "stale_since",
+      "start_minute",
+      "weekday"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "native_postgres_masked_branches",
+    "columns": [
+      "database_id",
+      "policy",
+      "preview_policy_revision",
+      "source_resource_id",
+      "validated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "native_postgres_preview_masking_policies",
+    "columns": [
+      "database_id",
+      "policy",
+      "revision",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "native_postgres_query_intervals",
+    "columns": [
+      "boot_at",
+      "counters",
+      "database_id",
+      "ended_at",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "native_postgres_query_settings",
+    "columns": [
+      "attempted_at",
+      "baseline",
+      "database_id",
+      "database_name",
+      "enabled",
+      "sampled_at",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "native_postgres_scheduled_growth",
+    "columns": [
+      "policy_at",
+      "resize_id",
+      "source_running_at",
+      "window_end",
+      "window_start"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "native_postgres_storage_alerts",
+    "columns": [
+      "attempts",
+      "available_at",
+      "database_id",
+      "database_name",
+      "finished_at",
+      "free_bytes",
+      "growth_reason",
+      "id",
+      "incident_id",
+      "lease_token",
+      "sampled_at",
+      "state",
+      "total_bytes"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "native_postgres_storage_samples",
+    "columns": [
+      "allocated_bytes",
+      "database_id",
+      "free_bytes",
+      "low",
+      "low_since",
+      "node_id",
+      "read_only",
+      "role",
+      "sampled_at",
+      "state_changed_at",
+      "total_bytes"
     ],
     "kind": "operational"
   },

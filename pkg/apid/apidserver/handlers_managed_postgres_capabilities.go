@@ -57,7 +57,7 @@ func managedPostgresCapabilitiesView(d managedpostgres.CapabilityDiscovery, limi
 		out.Availability = append(out.Availability, string(availability))
 	}
 	for _, access := range c.CredentialAccess {
-		if access == managedpostgres.CredentialAuth && !authVisible {
+		if (access == managedpostgres.CredentialAuth && !authVisible) || (access == managedpostgres.CredentialReplicaOnly && !limits.ProductionAllowed) {
 			continue
 		}
 		out.CredentialAccess = append(out.CredentialAccess, string(access))

@@ -27,21 +27,22 @@ import (
 
 // databaseMethods are the only RPCs a database node serves.
 var databaseMethods = map[string]bool{
-	vmmdpb.Vmmd_CreateDatabaseVolume_FullMethodName: true,
-	vmmdpb.Vmmd_DeleteDatabaseVolume_FullMethodName: true,
-	vmmdpb.Vmmd_ListDatabaseVolumes_FullMethodName:  true,
-	vmmdpb.Vmmd_GrowDatabaseVolume_FullMethodName:   true,
-	vmmdpb.Vmmd_PruneDatabaseArchive_FullMethodName: true,
-	vmmdpb.Vmmd_DatabaseArchiveBytes_FullMethodName: true,
-	vmmdpb.Vmmd_DatabaseArchiveHold_FullMethodName:  true,
-	vmmdpb.Vmmd_ExportDatabaseVolume_FullMethodName: true,
-	vmmdpb.Vmmd_ImportDatabaseVolume_FullMethodName: true,
-	vmmdpb.Vmmd_SyncDatabaseArchive_FullMethodName:  true,
-	vmmdpb.Vmmd_StartDatabase_FullMethodName:        true,
-	vmmdpb.Vmmd_StopDatabase_FullMethodName:         true,
-	vmmdpb.Vmmd_DatabaseControl_FullMethodName:      true,
-	vmmdpb.Vmmd_DatabaseSession_FullMethodName:      true,
-	vmmdpb.Vmmd_DatabaseReplication_FullMethodName:  true,
+	vmmdpb.Vmmd_CreateDatabaseVolume_FullMethodName:   true,
+	vmmdpb.Vmmd_DeleteDatabaseVolume_FullMethodName:   true,
+	vmmdpb.Vmmd_ListDatabaseVolumes_FullMethodName:    true,
+	vmmdpb.Vmmd_GrowDatabaseVolume_FullMethodName:     true,
+	vmmdpb.Vmmd_PruneDatabaseArchive_FullMethodName:   true,
+	vmmdpb.Vmmd_DatabaseArchiveBytes_FullMethodName:   true,
+	vmmdpb.Vmmd_DatabaseArchiveHold_FullMethodName:    true,
+	vmmdpb.Vmmd_ExportDatabaseVolume_FullMethodName:   true,
+	vmmdpb.Vmmd_ImportDatabaseVolume_FullMethodName:   true,
+	vmmdpb.Vmmd_SyncDatabaseArchive_FullMethodName:    true,
+	vmmdpb.Vmmd_StartDatabase_FullMethodName:          true,
+	vmmdpb.Vmmd_StopDatabase_FullMethodName:           true,
+	vmmdpb.Vmmd_DatabaseControl_FullMethodName:        true,
+	vmmdpb.Vmmd_DatabaseReplicaSession_FullMethodName: true,
+	vmmdpb.Vmmd_DatabaseSession_FullMethodName:        true,
+	vmmdpb.Vmmd_DatabaseReplication_FullMethodName:    true,
 }
 
 func databaseOnlyUnary(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {

@@ -4,13 +4,14 @@
 /* eslint-disable */
 import type { DatabaseSwitchDrain } from './DatabaseSwitchDrain.js';
 /**
- * A rollback that restores the app's managed PostgreSQL database with the code. The database is restored to restore_point as a new database, and the app moves to it and to the target release while it is fenced.
+ * A durable switch to a restored managed PostgreSQL database or a verified native migration target. The app is fenced while its bindings change.
  */
 export type DatabaseSwitch = {
+  migration_operation_id?: string;
   id: string;
   app_id: string;
   /**
-   * The deployment scope the rollback restores.
+   * The deployment scope whose database bindings change.
    */
   scope: string;
   /**
@@ -51,7 +52,7 @@ export type DatabaseSwitch = {
   /**
    * Writes after this moment stay only in the source database.
    */
-  restore_point: string;
+  restore_point?: string;
   drain: DatabaseSwitchDrain;
   /**
    * Why a switch failed or was cancelled, or why it is aborting.

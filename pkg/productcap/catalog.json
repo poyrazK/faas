@@ -1407,7 +1407,8 @@
       "acceptance_test": "pkg/apid/databaseswitch/worker_test.go::TestDatabaseSwitchRestoresFencesDrainsSwitchesAndResumes",
       "parent": "postgres-restore",
       "routes": [
-        "/v1/apps/{}/database-switches"
+        "/v1/apps/{}/database-switches",
+        "/v1/apps/{}/database-switches/migration"
       ],
       "cli": [
         "rollback switch",
@@ -3291,6 +3292,40 @@
         "/v1/postgres/capabilities",
         "=/v1/postgres/databases",
         "=/v1/postgres/databases/{}",
+        "/v1/postgres/databases/{}/auto-grow",
+        "/v1/postgres/databases/{}/maintenance-window",
+        "/v1/postgres/databases/{}/recovery-region",
+        "/v1/orgs/{}/postgres/databases/{}/recovery-region",
+        "/v1/postgres/databases/{}/migration-check",
+        "/v1/postgres/databases/{}/migration",
+        "/v1/postgres/databases/{}/migration/stop",
+        "/v1/postgres/databases/{}/migration/prepare",
+        "/v1/postgres/databases/{}/migration/verify",
+        "/v1/orgs/{}/postgres/databases/{}/migration-check",
+        "/v1/orgs/{}/postgres/databases/{}/migration",
+        "/v1/orgs/{}/postgres/databases/{}/migration/stop",
+        "/v1/orgs/{}/postgres/databases/{}/migration/prepare",
+        "/v1/orgs/{}/postgres/databases/{}/migration/verify",
+        "/v1/postgres/databases/{}/imports",
+        "/v1/orgs/{}/postgres/databases/{}/imports",
+        "/v1/postgres/databases/{}/exports",
+        "/v1/orgs/{}/postgres/databases/{}/exports",
+        "/v1/postgres/databases/{}/extensions",
+        "/v1/orgs/{}/postgres/databases/{}/extensions",
+        "/v1/postgres/databases/{}/query-insights",
+        "/v1/orgs/{}/postgres/databases/{}/query-insights",
+        "/v1/postgres/databases/{}/autovacuum",
+        "/v1/orgs/{}/postgres/databases/{}/autovacuum",
+        "/v1/postgres/databases/{}/sessions",
+        "/v1/orgs/{}/postgres/databases/{}/sessions",
+        "/v1/postgres/databases/{}/cancel-query",
+        "/v1/orgs/{}/postgres/databases/{}/cancel-query",
+        "/v1/postgres/databases/{}/masked-branches",
+        "/v1/orgs/{}/postgres/databases/{}/masked-branches",
+        "/v1/postgres/databases/{}/diagnostics",
+        "/v1/orgs/{}/postgres/databases/{}/diagnostics",
+        "/v1/postgres/databases/{}/tables",
+        "/v1/orgs/{}/postgres/databases/{}/tables",
         "/v1/postgres/databases/{}/connection-budget",
         "/v1/postgres/databases/{}/query",
         "/v1/postgres/databases/{}/undelete",
@@ -4407,7 +4442,11 @@
       "acceptance_test": "tests/journeys/postgres_test.go::TestManagedPostgres",
       "parent": "managed-postgres",
       "routes": [
-        "/v1/postgres/databases/{}/restore"
+        "/v1/postgres/databases/{}/restore",
+        "/v1/postgres/databases/{}/restore-check",
+        "/v1/orgs/{}/postgres/databases/{}/restore-check",
+        "/v1/postgres/databases/{}/restore-drills",
+        "/v1/orgs/{}/postgres/databases/{}/restore-drills"
       ]
     },
     {

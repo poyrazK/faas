@@ -34,7 +34,8 @@ const pooledSuffix = "-pooler"
 type poolKey struct {
 	databaseID, role, dbname, verifier string
 	// readOnly pools the read-only endpoint's servers apart (replica.go).
-	readOnly bool
+	readOnly    bool
+	replicaOnly bool
 }
 
 // pool keeps a role's server connections to a database and the key a
@@ -45,19 +46,23 @@ type pool struct {
 	clientKey, serverKey []byte
 	params               map[string]string
 
-	mu      sync.Mutex
-	idle    []*serverConn
-	clients int
+	mu       sync.Mutex
+	idle     []*serverConn
+	clients  int
+	revision poolRevision
 	// status is what a server reported at login, replayed to every client.
 	status [][]byte
 }
 
 // serverConn is one logged-in PostgreSQL session.
 type serverConn struct {
-	rw       io.ReadWriteCloser
-	fe       *pgproto3.Frontend
-	prepared map[string]bool
-	idleAt   time.Time
+	onError           func(*pgproto3.ErrorResponse)
+	hasPolicyRevision bool
+	policyRevision    int64
+	rw                io.ReadWriteCloser
+	fe                *pgproto3.Frontend
+	prepared          map[string]bool
+	idleAt            time.Time
 	// key reaches the server's backend for cancel requests.
 	key backendKey
 	// events carries what the server's reader (readServer) read; it runs
@@ -89,9 +94,10 @@ const maxServerStatements = 1000
 
 // poolSet holds the proxy's pools and enforces each database's server cap.
 type poolSet struct {
-	p     *Proxy
-	mu    sync.Mutex
-	pools map[poolKey]*pool
+	revisions poolRevisionReader
+	p         *Proxy
+	mu        sync.Mutex
+	pools     map[poolKey]*pool
 	// servers counts each database's open server connections, opening ones
 	// included; freed wakes waiters for a database.
 	servers map[string]int
@@ -102,7 +108,8 @@ type poolSet struct {
 }
 
 func newPoolSet(p *Proxy) *poolSet {
-	return &poolSet{p: p, pools: map[poolKey]*pool{}, servers: map[string]int{}, freed: map[string]chan struct{}{}, egress: map[string]*atomic.Int64{}}
+	revisions, _ := p.creds.(poolRevisionReader)
+	return &poolSet{p: p, revisions: revisions, pools: map[poolKey]*pool{}, servers: map[string]int{}, freed: map[string]chan struct{}{}, egress: map[string]*atomic.Int64{}}
 }
 
 // join returns the pool for key, made with the client's proven key if it
@@ -145,8 +152,20 @@ func (pl *pool) acquire(ctx context.Context) (*serverConn, error) {
 	ctx, cancel := context.WithTimeout(ctx, s.p.cfg.PoolWait)
 	defer cancel()
 	for {
-		if srv := pl.popIdle(); srv != nil {
-			if !srv.ended.Load() {
+		var strict Backend
+		if pl.key.replicaOnly {
+			var err error
+			strict, err = s.p.strictReplica(ctx, pl.key.databaseID)
+			if err != nil {
+				return nil, err
+			}
+		}
+		srv, revision := pl.borrowIdle()
+		if srv != nil {
+			now := time.Now()
+			reusable := s.revisions == nil || (now.Before(revision.expiresAt) &&
+				srv.hasPolicyRevision && srv.policyRevision == revision.revision)
+			if reusable && !srv.ended.Load() && (!pl.key.replicaOnly || srv.key.target == strict) {
 				return srv, nil
 			}
 			srv.close()
@@ -164,11 +183,14 @@ func (pl *pool) acquire(ctx context.Context) (*serverConn, error) {
 		}
 		s.mu.Unlock()
 		if open {
-			srv, err := pl.open(ctx)
+			observed := time.Now()
+			srv, err := pl.open(ctx, strict)
 			if err != nil {
 				s.release(pl.key.databaseID)
 				return nil, err
 			}
+			srv.policyRevision = revision.revision
+			srv.hasPolicyRevision = observed.Before(revision.expiresAt)
 			return srv, nil
 		}
 		select {
@@ -182,6 +204,10 @@ func (pl *pool) acquire(ctx context.Context) (*serverConn, error) {
 func (pl *pool) popIdle() *serverConn {
 	pl.mu.Lock()
 	defer pl.mu.Unlock()
+	return pl.popIdleLocked()
+}
+
+func (pl *pool) popIdleLocked() *serverConn {
 	if n := len(pl.idle); n > 0 {
 		srv := pl.idle[n-1]
 		pl.idle = pl.idle[:n-1]
@@ -231,20 +257,18 @@ func (s *poolSet) signalLocked(databaseID string) {
 }
 
 // open wakes the database and logs a new server in with the pool's key.
-func (pl *pool) open(ctx context.Context) (*serverConn, error) {
+func (pl *pool) open(ctx context.Context, strict Backend) (_ *serverConn, err error) {
 	p := pl.set.p
 	wakeCtx, cancel := context.WithTimeout(ctx, p.cfg.WakeTimeout)
 	defer cancel()
-	started := time.Now()
-	woken, err := p.waker.Wake(wakeCtx, pl.key.databaseID)
-	p.cfg.Metrics.woke(time.Since(started))
-	if err != nil {
-		if f := wakeRefused(err); f != nil {
-			return nil, f
-		}
-		return nil, err
+	if pl.key.replicaOnly {
+		defer func() {
+			if err != nil {
+				err = errReplicaUnavailable
+			}
+		}()
 	}
-	login, err := p.loginEndpoint(wakeCtx, woken, pl.key.readOnly, pl.key.databaseID, pl.params, pl.clientKey, pl.serverKey)
+	login, err := p.loginRoute(wakeCtx, pl.key.databaseID, pl.key.readOnly, strict, pl.params, pl.clientKey, pl.serverKey)
 	if err != nil {
 		return nil, err
 	}
@@ -282,6 +306,9 @@ func (pl *pool) open(ctx context.Context) (*serverConn, error) {
 			}
 			pl.mu.Unlock()
 			srv.events = make(chan serverEvent, 64)
+			srv.onError = func(e *pgproto3.ErrorResponse) {
+				p.errorHistory.record(pl.key.databaseID, pl.key.role, e)
+			}
 			go readServer(srv)
 			return srv, nil
 		}
@@ -298,6 +325,12 @@ func (pl *pool) put(srv *serverConn, clean bool) {
 	}
 	srv.idleAt = time.Now()
 	pl.mu.Lock()
+	if !pl.reusableLocked(srv, srv.idleAt) {
+		pl.mu.Unlock()
+		srv.close()
+		pl.set.release(pl.key.databaseID)
+		return
+	}
 	pl.idle = append(pl.idle, srv)
 	pl.mu.Unlock()
 	pl.set.mu.Lock()
@@ -329,22 +362,13 @@ func (s *poolSet) maintain(ctx context.Context) {
 // sweep closes idle servers past their time or ended, and returns the
 // databases to touch with their egress.
 func (s *poolSet) sweep() map[string]int64 {
-	cutoff := time.Now().Add(-s.p.cfg.PoolServerIdle)
+	now := time.Now()
+	cutoff := now.Add(-s.p.cfg.PoolServerIdle)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for key, pl := range s.pools {
 		pl.mu.Lock()
-		kept := pl.idle[:0]
-		for _, srv := range pl.idle {
-			if srv.idleAt.Before(cutoff) || srv.ended.Load() {
-				srv.close()
-				s.servers[key.databaseID]--
-				s.signalLocked(key.databaseID)
-				continue
-			}
-			kept = append(kept, srv)
-		}
-		pl.idle = kept
+		s.pruneIdleLocked(pl, now, cutoff)
 		unused := pl.clients == 0 && len(pl.idle) == 0
 		pl.mu.Unlock()
 		if unused && s.servers[key.databaseID] == 0 {
@@ -363,6 +387,21 @@ func (s *poolSet) sweep() map[string]int64 {
 		}
 	}
 	return touch
+}
+
+// pruneIdleLocked retires obsolete server connections with s.mu and pl.mu held.
+func (s *poolSet) pruneIdleLocked(pl *pool, now, cutoff time.Time) {
+	kept := pl.idle[:0]
+	for _, srv := range pl.idle {
+		if srv.idleAt.Before(cutoff) || srv.ended.Load() || !pl.reusableLocked(srv, now) {
+			srv.close()
+			s.servers[pl.key.databaseID]--
+			s.signalLocked(pl.key.databaseID)
+			continue
+		}
+		kept = append(kept, srv)
+	}
+	pl.idle = kept
 }
 
 func (s *poolSet) closeAll() {

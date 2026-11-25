@@ -132,6 +132,10 @@ func databaseSwitchOutcome(slug string, sw api.DatabaseSwitch) int {
 	}
 	switch sw.Phase {
 	case "completed":
+		if sw.MigrationOperationID != "" {
+			PrintOK(osStdout, "%s now uses the native PostgreSQL database %s.", slug, sw.TargetName)
+			return 0
+		}
 		if sw.KeepsRelease {
 			PrintOK(osStdout, "Switched %s to %s. %s keeps every write and is no longer bound to %s; delete it when you no longer need it.",
 				slug, sw.TargetName, databaseName(sw), slug)
@@ -146,7 +150,7 @@ func databaseSwitchOutcome(slug string, sw api.DatabaseSwitch) int {
 		PrintWarn(osStderr, "Database switch failed (%s): %s %s still serves %s on %s.", sw.FailureCode, sw.FailureDetail, slug,
 			revisionRef(sw.FromRevision, sw.FromDeploymentID), databaseName(sw))
 	}
-	if sw.TargetDatabaseID != "" {
+	if sw.TargetDatabaseID != "" && sw.MigrationOperationID == "" {
 		PrintWarn(osStderr, "The restored copy %s was kept; delete it with gregale postgres delete %s if you do not need it.", sw.TargetName, sw.TargetDatabaseID)
 	}
 	return 1

@@ -25,6 +25,9 @@ func TestParseEndpoint(t *testing.T) {
 		{id + "-ro", endpoint{databaseID: id, readOnly: true}, true},
 		{id + "-ro-pooler", endpoint{databaseID: id, pooled: true, readOnly: true}, true},
 		{strings.ToUpper(id) + "-RO", endpoint{databaseID: id, readOnly: true}, true},
+		{id + "-replica", endpoint{databaseID: id, readOnly: true, replicaOnly: true}, true},
+		{id + "-replica-pooler", endpoint{databaseID: id, pooled: true, readOnly: true, replicaOnly: true}, true},
+		{id + "-ro-replica", endpoint{}, false},
 		{id + "-pooler-ro", endpoint{}, false},
 		{id + "-ro-ro", endpoint{}, false},
 		{"not-a-database-ro", endpoint{}, false},
@@ -163,4 +166,82 @@ func TestScheddWakerNamesTheReplica(t *testing.T) {
 			}
 		})
 	}
+}
+
+type replicaRouteFunc func(context.Context, string) (Backend, *int64, time.Time, error)
+
+func (f replicaRouteFunc) ReplicaRoute(ctx context.Context, id string) (Backend, *int64, time.Time, error) {
+	return f(ctx, id)
+}
+
+func (f replicaRouteFunc) Wake(context.Context, string) (Backend, error) {
+	panic("a replica-only client attempted to wake a primary")
+}
+
+func (f replicaRouteFunc) Touch(context.Context, string, int64) error { return nil }
+
+func TestStrictReplicaCheckout(t *testing.T) {
+	zero := int64(0)
+	backlog := int64(1)
+	lag, observed := &zero, time.Now()
+	replica := Backend{Target: "standby-target", Node: "db-b"}
+	waker := replicaRouteFunc(func(context.Context, string) (Backend, *int64, time.Time, error) {
+		return replica, lag, observed, nil
+	})
+	ctx := t.Context()
+	dialCount := 0
+	refuse := false
+	backend := &replicaBackend{}
+	p, err := New(Config{
+		TLS: selfSignedTLS(t), HostSuffix: testSuffix, DecoySecret: []byte(strings.Repeat("k", 32)),
+		ReplicaMaxReplayLagBytes: &zero,
+	}, &mapCredentials{}, waker, setupDialer(func(_ context.Context, target Backend, _ string) (io.ReadWriteCloser, error) {
+		dialCount++
+		if !target.replicaOnly || target.Node != replica.Node || target.Target != replica.Target {
+			t.Errorf("dialed %+v with standby %+v", target, replica)
+		}
+		if refuse {
+			return nil, errors.New("standby lost")
+		}
+		return backend.serve(t, "ok"), nil
+	}), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pl := p.pools.join(poolKey{databaseID: "db-id", readOnly: true, replicaOnly: true}, nil, nil, map[string]string{"user": "reader"})
+	initial, err := pl.acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pl.put(initial, true)
+	for _, tc := range []struct {
+		lag *int64
+		at  time.Time
+	}{
+		{nil, time.Now()},
+		{&backlog, time.Now()},
+		{&zero, time.Now().Add(-2 * replicaMaxSampleAge)},
+	} {
+		lag, observed = tc.lag, tc.at
+		if _, err := pl.acquire(ctx); !errors.Is(err, errReplicaUnavailable) {
+			t.Fatalf("checkout with unknown, excess or expired replay evidence: %v", err)
+		}
+	}
+	lag, observed = &zero, time.Now()
+	got, err := pl.acquire(ctx)
+	if err != nil || got != initial || dialCount != 1 {
+		t.Fatalf("caught-up idle connection: got %p, %v after %d dials", got, err, dialCount)
+	}
+	pl.put(got, true)
+	replica = Backend{Target: "next-standby", Node: "db-c"}
+	refuse = true
+	if _, err := pl.acquire(ctx); !errors.Is(err, errReplicaUnavailable) || dialCount != 2 {
+		t.Fatalf("after standby changed and refused login: %v, %d dials", err, dialCount)
+	}
+	refuse = false
+	got, err = pl.acquire(ctx)
+	if err != nil || got == initial || dialCount != 3 {
+		t.Fatalf("replacement standby: got %p, %v after %d dials", got, err, dialCount)
+	}
+	pl.put(got, false)
 }

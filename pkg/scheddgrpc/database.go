@@ -13,9 +13,12 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
+	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/dbguest"
+	"github.com/onebox-faas/faas/pkg/dbguest/extensionpb"
 	"github.com/onebox-faas/faas/pkg/dbrefusal"
 	"github.com/onebox-faas/faas/pkg/dbsched"
+	"github.com/onebox-faas/faas/pkg/pgextension"
 )
 
 // Platform client identities allowed on the database RPCs.
@@ -92,7 +95,7 @@ func databaseRuntime(vm dbsched.VM) *scheddpb.DatabaseRuntime {
 		AlwaysOn: vm.AlwaysOn, RestoreWindowSeconds: vm.RestoreWindowSeconds, RestoreSourceId: vm.RestoreSource,
 		ResizePending: vm.ResizePending, Replicated: vm.Replicated, StandbyNodeId: vm.StandbyNode, StandbySynced: vm.StandbySynced,
 		MajorHistoryComplete: true, Held: vm.Held, ComputeQuotaUnitSeconds: vm.ComputeQuotaUnitSeconds,
-		ReplicaVmmdTarget: vm.ReplicaTarget,
+		ReplicaVmmdTarget: vm.ReplicaTarget, PrimaryEpochMicros: vm.StateChangedAt.UnixMicro(),
 	}
 	for _, span := range vm.MajorHistory {
 		rt.MajorHistory = append(rt.MajorHistory, &scheddpb.DatabaseMajorSpan{PostgresMajor: int32(span.Major), Until: timestamppb.New(span.Until)}) //nolint:gosec // persisted majors are 14-18
@@ -149,11 +152,26 @@ func (s *Server) RestoreDatabase(ctx context.Context, req *scheddpb.RestoreDatab
 	if err != nil {
 		return nil, err
 	}
+	return s.restoreDatabase(ctx, d, req, "")
+}
+
+func (s *Server) RestoreDatabaseFromRecovery(ctx context.Context, req *scheddpb.RestoreDatabaseFromRecoveryRequest) (*scheddpb.DatabaseRuntime, error) {
+	d, err := s.databaseScheduler(ctx, callerAPID)
+	if err != nil {
+		return nil, err
+	}
+	if !dbsched.ValidRecoveryRegion(req.GetRecoveryRegion()) {
+		return nil, status.Error(codes.InvalidArgument, "invalid recovery region")
+	}
+	return s.restoreDatabase(ctx, d, req.GetRestore(), req.GetRecoveryRegion())
+}
+
+func (s *Server) restoreDatabase(ctx context.Context, d DatabaseScheduler, req *scheddpb.RestoreDatabaseRequest, region string) (*scheddpb.DatabaseRuntime, error) {
 	if req.GetDatabase() == nil || req.GetPointInTime().CheckValid() != nil {
 		return nil, status.Error(codes.InvalidArgument, "restore needs a database and a point in time")
 	}
 	rr := dbsched.RestoreRequest{ProvisionRequest: provisionRequest(req.GetDatabase()), Source: req.GetSourceDatabaseId(), Target: req.GetPointInTime().AsTime(),
-		Snapshot: req.GetSnapshot()}
+		Snapshot: req.GetSnapshot(), RecoveryRegion: region}
 	if err := rr.Validate(); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -239,7 +257,21 @@ func (s *Server) UpgradeDatabase(ctx context.Context, req *scheddpb.UpgradeDatab
 	if err != nil {
 		return nil, err
 	}
-	vm, err := d.StartUpgrade(ctx, req.GetDatabaseId(), int(req.GetPostgresMajor()), req.GetOperationId())
+	var vm dbsched.VM
+	if req.GetDatabaseName() == "" {
+		vm, err = d.StartUpgrade(ctx, req.GetDatabaseId(), int(req.GetPostgresMajor()), req.GetOperationId())
+	} else {
+		checked, ok := d.(interface {
+			StartUpgradeChecked(context.Context, string, int, string, string) (dbsched.VM, error)
+		})
+		if !ok {
+			return nil, status.Error(codes.Unimplemented, "database extension check is unavailable")
+		}
+		vm, err = checked.StartUpgradeChecked(ctx, req.GetDatabaseId(), int(req.GetPostgresMajor()), req.GetOperationId(), req.GetDatabaseName())
+	}
+	if errors.Is(err, dbsched.ErrUpgradeExtensions) {
+		return nil, status.Error(codes.FailedPrecondition, pgextension.UpgradeUnavailable)
+	}
 	if err != nil {
 		return nil, s.databaseStatus("upgrade", err)
 	}
@@ -304,6 +336,31 @@ func (s *Server) GetDatabase(ctx context.Context, req *scheddpb.DatabaseRef) (*s
 		return nil, s.databaseStatus("get", err)
 	}
 	return databaseRuntime(vm), nil
+}
+
+func (s *Server) GetDatabaseReplica(ctx context.Context, req *scheddpb.DatabaseRef) (*scheddpb.DatabaseReplicaStatus, error) {
+	d, err := s.databaseScheduler(ctx, callerAPID, callerPgproxy)
+	if err != nil {
+		return nil, err
+	}
+	reader, ok := d.(interface {
+		ReadReplica(context.Context, string) (dbsched.ReplicaStatus, error)
+	})
+	if !ok {
+		return nil, status.Error(codes.Unimplemented, "database replica routing is disabled")
+	}
+	replica, err := reader.ReadReplica(ctx, req.GetDatabaseId())
+	if err != nil {
+		return nil, s.databaseStatus("read replica status", err)
+	}
+	out := &scheddpb.DatabaseReplicaStatus{
+		Available: replica.Available, ReplayLagBytes: replica.ReplayLagBytes,
+		StandbyNodeId: replica.StandbyNode, ReplicaVmmdTarget: replica.ReplicaTarget,
+	}
+	if !replica.ObservedAt.IsZero() {
+		out.ObservedAt = timestamppb.New(replica.ObservedAt)
+	}
+	return out, nil
 }
 
 func (s *Server) SetDatabaseAlwaysOn(ctx context.Context, req *scheddpb.SetDatabaseAlwaysOnRequest) (*scheddpb.DatabaseRuntime, error) {
@@ -409,7 +466,7 @@ func (s *Server) databaseStatus(op string, err error) error {
 		code = codes.ResourceExhausted
 	case errors.Is(err, dbsched.ErrConflict):
 		code = codes.FailedPrecondition
-	case errors.Is(err, dbsched.ErrNodeUnavailable):
+	case errors.Is(err, dbsched.ErrNodeUnavailable), errors.Is(err, dbsched.ErrStorageResizePending):
 		code = codes.Unavailable
 	case errors.Is(err, dbsched.ErrInvalid):
 		code = codes.InvalidArgument
@@ -432,11 +489,7 @@ func (s *Server) ImportDatabase(ctx context.Context, req *scheddpb.ImportDatabas
 	if err != nil {
 		return nil, err
 	}
-	spec := dbsched.ImportSpec{Host: req.GetHost(), Port: int(req.GetPort()), Source: dbguest.ImportSource{
-		Database: req.GetSourceDatabase(), User: req.GetUser(), Password: req.GetPassword(),
-		TargetDatabase: req.GetTargetDatabase(), Owner: req.GetOwner(), SkipExtensions: req.GetSkipExtensions(),
-		OperationID: req.GetOperationId(),
-	}}
+	spec := importSpec(req)
 	if err := spec.Validate(); err != nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid import source")
 	}
@@ -445,6 +498,68 @@ func (s *Server) ImportDatabase(ctx context.Context, req *scheddpb.ImportDatabas
 		return nil, s.databaseStatus("import", err)
 	}
 	return importProgress(progress), nil
+}
+
+func (s *Server) CustomerDatabaseImport(ctx context.Context, req *scheddpb.CustomerDatabaseImportRequest) (*scheddpb.DatabaseImportProgress, error) {
+	d, err := s.databaseScheduler(ctx, callerAPID)
+	if err != nil {
+		return nil, err
+	}
+	client, ok := d.(interface {
+		CustomerImport(context.Context, string, dbsched.ImportSpec, bool) (dbguest.ImportStatus, error)
+	})
+	if !ok {
+		return nil, status.Error(codes.Unimplemented, "customer import is unavailable")
+	}
+	source := req.GetSource()
+	if source == nil {
+		return nil, status.Error(codes.InvalidArgument, "an import source is required")
+	}
+	spec := importSpec(source)
+	if err := spec.Validate(); err != nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid import source")
+	}
+	progress, err := client.CustomerImport(ctx, source.GetDatabaseId(), spec, req.GetCheckOnly())
+	if errors.Is(err, dbsched.ErrImportUnsupported) {
+		return nil, status.Error(codes.Unimplemented, "customer import is unavailable")
+	}
+	if err != nil {
+		return nil, s.databaseStatus("customer import", err)
+	}
+	return importProgress(progress), nil
+}
+
+func (s *Server) CheckDatabaseMigration(ctx context.Context, req *scheddpb.ImportDatabaseRequest) (*vmmdpb.DatabaseMigrationCheck, error) {
+	d, err := s.databaseScheduler(ctx, callerAPID)
+	if err != nil {
+		return nil, err
+	}
+	client, ok := d.(interface {
+		CheckMigration(context.Context, string, dbsched.ImportSpec) (*vmmdpb.DatabaseMigrationCheck, error)
+	})
+	if !ok {
+		return nil, status.Error(codes.Unimplemented, "migration check is unavailable")
+	}
+	spec := importSpec(req)
+	if err := spec.Validate(); err != nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid migration source")
+	}
+	check, err := client.CheckMigration(ctx, req.GetDatabaseId(), spec)
+	if errors.Is(err, dbsched.ErrImportUnsupported) {
+		return nil, status.Error(codes.Unimplemented, "migration check is unavailable")
+	}
+	if err != nil {
+		return nil, s.databaseStatus("migration check", err)
+	}
+	return check, nil
+}
+
+func importSpec(req *scheddpb.ImportDatabaseRequest) dbsched.ImportSpec {
+	return dbsched.ImportSpec{Host: req.GetHost(), Port: int(req.GetPort()), Source: dbguest.ImportSource{
+		Database: req.GetSourceDatabase(), User: req.GetUser(), Password: req.GetPassword(),
+		TargetDatabase: req.GetTargetDatabase(), Owner: req.GetOwner(), SkipExtensions: req.GetSkipExtensions(),
+		OperationID: req.GetOperationId(),
+	}}
 }
 
 func (s *Server) DatabaseImportStatus(ctx context.Context, req *scheddpb.DatabaseRef) (*scheddpb.DatabaseImportProgress, error) {
@@ -461,7 +576,8 @@ func (s *Server) DatabaseImportStatus(ctx context.Context, req *scheddpb.Databas
 
 func importProgress(in dbguest.ImportStatus) *scheddpb.DatabaseImportProgress {
 	out := &scheddpb.DatabaseImportProgress{State: string(in.State), ErrorCode: in.Error, SourceMajor: int32(in.SourceMajor), OperationId: in.OperationID, //nolint:gosec // a PostgreSQL major
-		MissingExtensions: in.MissingExtensions, RequiredVolumeBytes: in.RequiredVolumeBytes}
+		MissingExtensions: in.MissingExtensions, RequiredVolumeBytes: in.RequiredVolumeBytes,
+		IncompatibleExtensions: extensionpb.EncodeInstalled(in.IncompatibleExtensions)}
 	if !in.StartedAt.IsZero() {
 		out.StartedAt = timestamppb.New(in.StartedAt)
 	}
