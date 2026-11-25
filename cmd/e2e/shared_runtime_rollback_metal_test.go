@@ -195,6 +195,13 @@ func addSharedRuntimeApp(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, p
 	if got := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: slug, Type: "app", RequireAuthn: &falsy}); got != http.StatusCreated {
 		t.Fatalf("create app: status=%d", got)
 	}
+	// require_authn alone left a Pro app answering 401 (metal run
+	// 2026-11-25). Open the gateway's public auth too, as createOpenApp
+	// does: the tests GET the app without a key.
+	if _, status := doReq(t, h, key, http.MethodPatch, "/v1/apps/"+slug, api.UpdateAppRequest{RequireAuthn: &falsy,
+		PublicAuth: &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}}); status != http.StatusOK {
+		t.Fatalf("open app auth: status=%d", status)
+	}
 	app := &sharedRuntimeApp{h: h, pool: pool, store: state.NewPgStore(pool), key: key, slug: slug, appID: mustGetAppID(t, h, key, slug)}
 	setAppIdleTimeout(t, h, key, slug, api.IdleTimeoutFloorSeconds)
 	return app
