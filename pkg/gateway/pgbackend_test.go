@@ -1170,6 +1170,21 @@ func TestPGBackend_ResolveSched_MultiBox_RejectsEmptyNodeID(t *testing.T) {
 	if !errors.Is(err, gateway.ErrAppNotPlaced) {
 		t.Fatalf("Admit on empty NodeID = %v, want ErrAppNotPlaced", err)
 	}
+
+	// A deployed app with no node is a failed placement claim: a platform
+	// error, not the app owner's "nothing deployed".
+	deployed := gateway.NewPGBackend(&fakeRouter{}, legacySched, nil).
+		WithAppResolver(func(_ context.Context, _ string) (gateway.App, bool, error) {
+			return gateway.App{ID: "app-z", HasLiveDeployment: true}, true, nil
+		}).
+		WithClientForApp(func(_ context.Context, _ gateway.App) (gateway.Scheduler, bool, error) {
+			t.Errorf("clientForApp must not be called when NodeID is empty")
+			return nil, false, nil
+		})
+	_, _, _, err = deployed.Admit(context.Background(), "app-z", "", "", "", 5)
+	if err == nil || errors.Is(err, gateway.ErrAppNotPlaced) {
+		t.Fatalf("Admit on a deployed app with empty NodeID = %v, want a platform error", err)
+	}
 	if legacySched.Calls() != 0 {
 		t.Errorf("legacy b.sched received %d Admits, want 0", legacySched.Calls())
 	}

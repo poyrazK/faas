@@ -274,6 +274,12 @@ type App struct {
 	// apps.node_id was added by migration 00090. Tests that
 	// don't exercise the per-schedd routing path leave it zero.
 	NodeID string
+	// HasLiveDeployment: the app has a live public-routing deployment.
+	// With no NodeID it separates an app that has nothing to serve (409
+	// no_live_deployment, ErrAppNotPlaced) from a deployed app schedd could
+	// not place (fleet at capacity, no schedd claiming), which stays a
+	// platform 503 the availability SLO counts.
+	HasLiveDeployment bool
 	// Sidecars (issue #463 / ADR-069 / ADR-071 / PR-C §5) is
 	// the per-deployment sidecar roster mirrored on the app
 	// for the public listener's routing-key split
@@ -10412,10 +10418,9 @@ func writeWakeError(w http.ResponseWriter, err error) {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 			"App instance starting", "this app's instances are starting or stopping and none can take the request yet; retry shortly"))
 	case errors.Is(err, ErrAppNotPlaced):
-		w.Header().Set("Retry-After", "5")
 		w.Header().Set("Cache-Control", "no-store")
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeNoLiveDeployment,
-			"App has no live deployment", "this app has nothing deployed to serve yet; deploy it, or retry once its deployment finishes"))
+			"App has no live deployment", "this app has nothing deployed to serve yet; its owner deploys it with `gregale deploy`"))
 	case errors.Is(err, ErrBootstrapAborted):
 		// ADR-098 C7: the leader aborted under the bootstrap cap
 		// (queue empty AND no live instance). The customer should

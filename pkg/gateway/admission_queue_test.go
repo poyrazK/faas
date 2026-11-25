@@ -106,8 +106,8 @@ func TestWriteWakeErrorAppNotPlaced(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), api.CodeNoLiveDeployment) {
 		t.Fatalf("body missing %s: %s", api.CodeNoLiveDeployment, rec.Body.String())
 	}
-	if got := rec.Header().Get("Retry-After"); got != "5" {
-		t.Fatalf("Retry-After = %q, want 5", got)
+	if got := rec.Header().Get("Retry-After"); got != "" {
+		t.Fatalf("Retry-After = %q, want none (nothing changes until the owner deploys)", got)
 	}
 	if platformErrorForSLO(httptest.NewRequest(http.MethodGet, "/", nil), rec.Code) {
 		t.Fatal("an unplaced app's 409 counts as a platform error")
