@@ -9966,15 +9966,21 @@ func (q *Queries) CommitReceiptIdentity(ctx context.Context, db DBTX, arg Commit
 
 const commitRelayObservationSummary = `-- name: CommitRelayObservationSummary :one
 WITH observations AS (
- SELECT relay_status,pending_events,blocked_events,oldest_pending_at,COALESCE(last_checked_at>=$1::timestamptz
-   AND last_checked_at<=now()+interval '1 minute',false) AS fresh
+ SELECT relay_status,pending_events,blocked_events,oldest_pending_at,cleanup_eligible_events,COALESCE(last_checked_at>=$1::timestamptz
+   - (CASE WHEN queue_name IS NOT NULL THEN poll_interval_ms ELSE 0 END) * interval '1 millisecond'
+   AND last_checked_at<=now()+interval '1 minute',false) AS fresh,
+ COALESCE(cleanup_observed_at>=$1::timestamptz
+   - (CASE WHEN queue_name IS NOT NULL THEN poll_interval_ms ELSE 0 END) * interval '1 millisecond'
+   AND cleanup_observed_at<=now()+interval '1 minute',false) AS cleanup_fresh
  FROM commit_sources WHERE enabled
 ), snapshots AS (
- SELECT relay_status, pending_events, blocked_events, oldest_pending_at, fresh,fresh AND pending_events IS NOT NULL AND blocked_events IS NOT NULL AS known
+ SELECT relay_status, pending_events, blocked_events, oldest_pending_at, cleanup_eligible_events, fresh, cleanup_fresh,fresh AND pending_events IS NOT NULL AND blocked_events IS NOT NULL AS known
  FROM observations
 )
 SELECT count(*)::bigint AS enabled_sources,
  count(*) FILTER(WHERE NOT known)::bigint AS unknown_sources,
+ count(*) FILTER(WHERE NOT cleanup_fresh OR cleanup_eligible_events IS NULL)::bigint AS cleanup_unknown_sources,
+ COALESCE(sum(cleanup_eligible_events) FILTER(WHERE cleanup_fresh),0)::bigint AS cleanup_eligible_events,
  count(*) FILTER(WHERE fresh AND relay_status NOT IN ('healthy','blocked_events'))::bigint AS failing_sources,
  COALESCE(sum(pending_events) FILTER(WHERE known),0)::bigint AS pending_events,
  COALESCE(sum(blocked_events) FILTER(WHERE known),0)::bigint AS blocked_events,
@@ -9985,6 +9991,8 @@ FROM snapshots
 type CommitRelayObservationSummaryRow struct {
 	EnabledSources         int64
 	UnknownSources         int64
+	CleanupUnknownSources  int64
+	CleanupEligibleEvents  int64
 	FailingSources         int64
 	PendingEvents          int64
 	BlockedEvents          int64
@@ -9997,6 +10005,8 @@ func (q *Queries) CommitRelayObservationSummary(ctx context.Context, db DBTX, fr
 	err := row.Scan(
 		&i.EnabledSources,
 		&i.UnknownSources,
+		&i.CleanupUnknownSources,
+		&i.CleanupEligibleEvents,
 		&i.FailingSources,
 		&i.PendingEvents,
 		&i.BlockedEvents,
@@ -10045,7 +10055,8 @@ func (q *Queries) CommitSourceForManagedAdmission(ctx context.Context, db DBTX, 
 
 const commitSourceIdentity = `-- name: CommitSourceIdentity :one
 SELECT id::text,app_id::text,name,enabled,COALESCE(operation_policy,'')::text AS operation_policy,
- contract_version,allow_tenant_selection,destination,relay_status,last_checked_at,pending_events,blocked_events,oldest_pending_at
+ contract_version,allow_tenant_selection,destination,relay_status,last_checked_at,pending_events,blocked_events,oldest_pending_at,
+ (CASE WHEN queue_name IS NOT NULL THEN poll_interval_ms ELSE 0 END)::integer AS poll_interval_ms
 FROM commit_sources WHERE account_id=$1::text::uuid AND id=$2::text::uuid
 `
 
@@ -10068,6 +10079,7 @@ type CommitSourceIdentityRow struct {
 	PendingEvents        pgtype.Int8
 	BlockedEvents        pgtype.Int8
 	OldestPendingAt      pgtype.Timestamptz
+	PollIntervalMs       int32
 }
 
 func (q *Queries) CommitSourceIdentity(ctx context.Context, db DBTX, arg CommitSourceIdentityParams) (CommitSourceIdentityRow, error) {
@@ -10087,6 +10099,7 @@ func (q *Queries) CommitSourceIdentity(ctx context.Context, db DBTX, arg CommitS
 		&i.PendingEvents,
 		&i.BlockedEvents,
 		&i.OldestPendingAt,
+		&i.PollIntervalMs,
 	)
 	return i, err
 }
@@ -110134,7 +110147,8 @@ func (q *Queries) SetBuildRuntimeBaseRef(ctx context.Context, db DBTX, arg SetBu
 const setCommitSourceConnection = `-- name: SetCommitSourceConnection :execrows
 UPDATE commit_sources SET sealed_connection=$1::bytea,
  credential_revision=credential_revision+1,relay_status='unconfigured',
- last_checked_at=NULL,pending_events=NULL,blocked_events=NULL,oldest_pending_at=NULL
+ relay_next_poll_at='-infinity',relay_poll_backoff_ms=0,relay_poll_token=NULL,
+ last_checked_at=NULL,pending_events=NULL,blocked_events=NULL,oldest_pending_at=NULL,cleanup_eligible_events=NULL,cleanup_observed_at=NULL
 WHERE account_id=$2::text::uuid AND id=$3::text::uuid
 `
 
@@ -110159,7 +110173,12 @@ UPDATE commit_sources SET
  last_checked_at=CASE WHEN $1::boolean AND NOT enabled THEN NULL ELSE last_checked_at END,
  pending_events=CASE WHEN $1::boolean AND NOT enabled THEN NULL ELSE pending_events END,
  blocked_events=CASE WHEN $1::boolean AND NOT enabled THEN NULL ELSE blocked_events END,
+ cleanup_eligible_events=CASE WHEN $1::boolean AND NOT enabled THEN NULL ELSE cleanup_eligible_events END,
+ cleanup_observed_at=CASE WHEN $1::boolean AND NOT enabled THEN NULL ELSE cleanup_observed_at END,
  oldest_pending_at=CASE WHEN $1::boolean AND NOT enabled THEN NULL ELSE oldest_pending_at END,
+ relay_next_poll_at=CASE WHEN $1::boolean AND NOT enabled THEN '-infinity'::timestamptz ELSE relay_next_poll_at END,
+ relay_poll_backoff_ms=CASE WHEN $1::boolean AND NOT enabled THEN 0 ELSE relay_poll_backoff_ms END,
+ relay_poll_token=CASE WHEN NOT $1::boolean OR NOT enabled THEN NULL ELSE relay_poll_token END,
  enabled=$1::boolean
 WHERE account_id=$2::text::uuid AND id=$3::text::uuid
 `

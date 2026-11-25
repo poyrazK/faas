@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,6 +25,8 @@ type Proxy struct {
 type proxyState struct {
 	mu                  sync.Mutex
 	connections         map[net.Conn]struct{}
+	rejected            int64
+	attempts            []time.Time
 	closed, unavailable bool
 	connectDelay        time.Duration
 	nextConnectDelay    time.Duration
@@ -35,6 +38,26 @@ func (p Proxy) ConnectionCount() int {
 	p.state.mu.Lock()
 	defer p.state.mu.Unlock()
 	return len(p.state.connections)
+}
+
+// RejectedConnections counts TCP connections refused during a fixture outage.
+func (p Proxy) RejectedConnections() int64 {
+	p.state.mu.Lock()
+	defer p.state.mu.Unlock()
+	return p.state.rejected
+}
+
+// StartConnectionTrace records the accept time of each new TCP connection.
+func (p Proxy) StartConnectionTrace() {
+	p.state.mu.Lock()
+	defer p.state.mu.Unlock()
+	p.state.attempts = []time.Time{}
+}
+
+func (p Proxy) ConnectionAttempts() []time.Time {
+	p.state.mu.Lock()
+	defer p.state.mu.Unlock()
+	return slices.Clone(p.state.attempts)
 }
 
 // Disconnect retires existing sessions while allowing new TLS sessions.
@@ -102,7 +125,13 @@ func OpenProxyWithDeadline(t *testing.T, cluster *pgxpool.Pool, listenIP string,
 				return
 			}
 			state.mu.Lock()
+			if state.attempts != nil {
+				state.attempts = append(state.attempts, time.Now())
+			}
 			if state.closed || state.unavailable {
+				if state.unavailable {
+					state.rejected++
+				}
 				state.mu.Unlock()
 				_ = client.Close()
 				continue

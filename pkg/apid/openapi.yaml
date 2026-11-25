@@ -94168,6 +94168,7 @@ components:
         blocked_events: { type: integer, format: int64 }
         oldest_pending_at: { type: string, format: date-time }
         destination: { type: string, enum: [operation, event], default: operation }
+        poll_interval_ms: { type: integer, minimum: 1000, maximum: 600000, description: Configured poll interval in milliseconds for Postgres row-change sources. }
     CommitPublicationHistoryItem:
       description: Retained publication acceptance receipt with event metadata; excludes event data.
       allOf:

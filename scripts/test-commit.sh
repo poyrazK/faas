@@ -29,8 +29,8 @@ cd "$task_root"
 sh "$task_root/scripts/test-commit-sdk.sh"
 task_results=$(mktemp "${TMPDIR:-/tmp}/gregale-commit-acceptance.XXXXXX")
 trap 'rm -f "$task_results"' EXIT HUP INT TERM
-if ! "${GO:-go}" test -p 1 -json -timeout 20m ./pkg/commit ./pkg/state ./pkg/sched ./pkg/apid/apidserver ./cmd/e2e \
-  -count=1 -run '^(TestConnectionCredentialSourceBindingAndRotation|TestHTTPAcceptorRefusesCredentialRedirect|TestPostgresRelay.*|TestPostgresOutbox.*|TestPostgresConsumerDeduplication|TestPostgresTLSConnectionRecovery|TestPostgresCommitDoctorReadOnly|TestPgCommitObservationSummaryLifecycle|TestCommitReceiptReadFailureDoesNotReportUnaccepted|TestPostgresSchemaQualificationRejectsMissingIdentity|TestPostgresSourceBindingRejectsAnotherDestination|TestPgCommitManagedOperation.*|TestPgCommitManagedSource.*|TestPgCommitAcceptanceReplayConflictAndConcurrency|TestExclusiveOperationDrainDispatchesAndCommitsUnderClaim|TestExclusiveOperationDrainUnparksAcceptedDeployment|TestCommitPostgresToAPIHandoff|TestE2E_CommitProducerDeathReachesCompletedOperation|TestE2E_CommitCLISourceLifecycle|TestE2E_CommitHTTPConsumerCrashRecovery)$' > "$task_results"; then
+if ! "${GO:-go}" test -p 1 -json -timeout 20m ./pkg/commit ./pkg/commitmanaged ./pkg/state ./pkg/sched ./pkg/apid/apidserver ./cmd/e2e \
+  -count=1 -run '^(TestConnectionCredentialSourceBindingAndRotation|TestHTTPAcceptorRefusesCredentialRedirect|TestPostgresRelay.*|TestPostgresOutbox.*|TestPostgresConsumerDeduplication|TestPostgresTLSConnectionRecovery|TestPostgresCommitDoctorReadOnly|TestPgCommitObservationSummaryLifecycle|TestPgCommitReceiptStorageSample|TestPgCommitReceiptUsageConcurrentBackfillAndDeletion|TestPgCommitReceiptUsageResumesBatches|TestPgCommitReceiptUsageTimedOutBatchResumes|TestPgCommitReceiptUsageConcurrentBatches|TestPgCommitReceiptUsageFailedShardDoesNotBlockOthers|TestPgCommitRelayFencesExpiredSourceLease|TestCommitRelayPollsHealthySourceWhileAnotherWaits|TestCommitRelaySourceOutageIsolationAndRecovery|TestCommitManagerTLSAndDNSRecovery|TestCommitRelayBackoffGrowsCapsAndResets|TestCommitReplayKeepsIndependentDeliveryMoving|TestCommitCleanupCatchesUpWhileDelivering|TestCommitCleanupTimeoutPreservesDeliveryAndHealth|TestObservationCollectorUnknownAndRecovery|TestReceiptStorageCollectorFreshFailureAndStale|TestReceiptReconciliationFailureIsCounted|TestChangesSourceOrdersEachRowsChanges|TestCommitReceiptReadFailureDoesNotReportUnaccepted|TestPostgresSchemaQualificationRejectsMissingIdentity|TestPostgresSourceBindingRejectsAnotherDestination|TestPgCommitManagedOperation.*|TestPgCommitManagedSource.*|TestPgCommitAcceptanceReplayConflictAndConcurrency|TestExclusiveOperationDrainDispatchesAndCommitsUnderClaim|TestExclusiveOperationDrainUnparksAcceptedDeployment|TestCommitPostgresToAPIHandoff|TestE2E_CommitProducerDeathReachesCompletedOperation|TestE2E_CommitCLISourceLifecycle|TestE2E_CommitHTTPConsumerCrashRecovery)$' > "$task_results"; then
   cat "$task_results"
   exit 1
 fi
@@ -46,6 +46,24 @@ required = {
     "TestPostgresTLSConnectionRecovery",
     "TestPostgresCommitDoctorReadOnly",
     "TestPgCommitObservationSummaryLifecycle",
+    "TestPgCommitReceiptStorageSample",
+    "TestPgCommitReceiptUsageConcurrentBackfillAndDeletion",
+    "TestPgCommitReceiptUsageResumesBatches",
+    "TestPgCommitReceiptUsageTimedOutBatchResumes",
+    "TestPgCommitReceiptUsageConcurrentBatches",
+    "TestPgCommitReceiptUsageFailedShardDoesNotBlockOthers",
+    "TestPgCommitRelayFencesExpiredSourceLease",
+    "TestCommitRelayPollsHealthySourceWhileAnotherWaits",
+    "TestCommitRelaySourceOutageIsolationAndRecovery",
+    "TestCommitManagerTLSAndDNSRecovery",
+    "TestCommitRelayBackoffGrowsCapsAndResets",
+    "TestCommitReplayKeepsIndependentDeliveryMoving",
+    "TestCommitCleanupCatchesUpWhileDelivering",
+    "TestCommitCleanupTimeoutPreservesDeliveryAndHealth",
+    "TestObservationCollectorUnknownAndRecovery",
+    "TestReceiptStorageCollectorFreshFailureAndStale",
+    "TestReceiptReconciliationFailureIsCounted",
+    "TestChangesSourceOrdersEachRowsChanges",
     "TestCommitReceiptReadFailureDoesNotReportUnaccepted",
     "TestPostgresRelayCommitRollbackAndLostAcceptance",
     "TestPostgresOutboxManagedOperationsUpgrade",
@@ -54,6 +72,7 @@ required = {
     "TestPostgresRelayExpiredLeaseFencesOriginalWorker",
     "TestPgCommitAcceptanceReplayConflictAndConcurrency",
     "TestPgCommitManagedOperationAtomicReplayAndCompletion",
+    "TestPgCommitManagedOperationMixedProducerQuota",
     "TestPgCommitManagedOperationReceiptFailureRollsBackAdmission",
     "TestPgCommitManagedSourcePolicyScopeAndImmutableDestination",
     "TestPgCommitManagedSourcePolicyLifecycle",

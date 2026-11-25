@@ -2184,6 +2184,35 @@ func (h *Harness) RestartSchedd() error {
 	return nil
 }
 
+// StartScheddPeer starts a second scheduler in the same disposable harness.
+// It uses the same database and VMMD, with separate listener addresses.
+func (h *Harness) StartScheddPeer(t *testing.T) string {
+	t.Helper()
+	config, err := os.ReadFile(h.scheddConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	socket := filepath.Join(h.SockDir, "schedd-peer.sock")
+	metrics := freeTCPAddr(t)
+	primaryMetrics := strings.TrimSuffix(strings.TrimPrefix(h.ScheddMetricsURL, "http://"), "/metrics")
+	oldSocket := fmt.Sprintf("socket_path = %q", h.ScheddSock)
+	oldMetrics := fmt.Sprintf("metrics_addr = %q", primaryMetrics)
+	if !strings.Contains(string(config), oldSocket) || !strings.Contains(string(config), oldMetrics) {
+		t.Fatal("scheduler peer could not isolate its listeners")
+	}
+	peerConfig := strings.NewReplacer(oldSocket, fmt.Sprintf("socket_path = %q", socket),
+		oldMetrics, fmt.Sprintf("metrics_addr = %q", metrics)).Replace(string(config))
+	path := filepath.Join(t.TempDir(), "schedd-peer.toml")
+	if err := os.WriteFile(path, []byte(peerConfig), 0600); err != nil {
+		t.Fatal(err)
+	}
+	env := append(append([]string(nil), h.scheddEnv...), "FAAS_SCHEDD_CONFIG="+path)
+	h.procs = append(h.procs, startProc(t, h.BinDir, "schedd", env))
+	waitUnix(t, socket, 30*time.Second)
+	h.requireDaemonsAlive(t)
+	return "http://" + metrics + "/metrics"
+}
+
 // vmmdExtraConfigEnv carries extra vmmd.toml lines from OverrideVMMDConfig.
 const vmmdExtraConfigEnv = "FAAS_E2E_VMMD_EXTRA_TOML"
 

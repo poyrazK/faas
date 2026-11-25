@@ -18428,7 +18428,8 @@ FROM commit_receipts WHERE account_id=sqlc.arg(account_id)::text::uuid
 
 -- name: CommitSourceIdentity :one
 SELECT id::text,app_id::text,name,enabled,COALESCE(operation_policy,'')::text AS operation_policy,
- contract_version,allow_tenant_selection,destination,relay_status,last_checked_at,pending_events,blocked_events,oldest_pending_at
+ contract_version,allow_tenant_selection,destination,relay_status,last_checked_at,pending_events,blocked_events,oldest_pending_at,
+ (CASE WHEN queue_name IS NOT NULL THEN poll_interval_ms ELSE 0 END)::integer AS poll_interval_ms
 FROM commit_sources WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(source_id)::text::uuid;
 
 -- name: SetCommitSourceEnabled :exec
@@ -18438,7 +18439,12 @@ UPDATE commit_sources SET
  last_checked_at=CASE WHEN sqlc.arg(enabled)::boolean AND NOT enabled THEN NULL ELSE last_checked_at END,
  pending_events=CASE WHEN sqlc.arg(enabled)::boolean AND NOT enabled THEN NULL ELSE pending_events END,
  blocked_events=CASE WHEN sqlc.arg(enabled)::boolean AND NOT enabled THEN NULL ELSE blocked_events END,
+ cleanup_eligible_events=CASE WHEN sqlc.arg(enabled)::boolean AND NOT enabled THEN NULL ELSE cleanup_eligible_events END,
+ cleanup_observed_at=CASE WHEN sqlc.arg(enabled)::boolean AND NOT enabled THEN NULL ELSE cleanup_observed_at END,
  oldest_pending_at=CASE WHEN sqlc.arg(enabled)::boolean AND NOT enabled THEN NULL ELSE oldest_pending_at END,
+ relay_next_poll_at=CASE WHEN sqlc.arg(enabled)::boolean AND NOT enabled THEN '-infinity'::timestamptz ELSE relay_next_poll_at END,
+ relay_poll_backoff_ms=CASE WHEN sqlc.arg(enabled)::boolean AND NOT enabled THEN 0 ELSE relay_poll_backoff_ms END,
+ relay_poll_token=CASE WHEN NOT sqlc.arg(enabled)::boolean OR NOT enabled THEN NULL ELSE relay_poll_token END,
  enabled=sqlc.arg(enabled)::boolean
 WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(source_id)::text::uuid;
 
@@ -18453,13 +18459,18 @@ SELECT EXISTS(SELECT 1 FROM commit_sources c
 -- name: SetCommitSourceConnection :execrows
 UPDATE commit_sources SET sealed_connection=sqlc.arg(connection)::bytea,
  credential_revision=credential_revision+1,relay_status='unconfigured',
- last_checked_at=NULL,pending_events=NULL,blocked_events=NULL,oldest_pending_at=NULL
+ relay_next_poll_at='-infinity',relay_poll_backoff_ms=0,relay_poll_token=NULL,
+ last_checked_at=NULL,pending_events=NULL,blocked_events=NULL,oldest_pending_at=NULL,cleanup_eligible_events=NULL,cleanup_observed_at=NULL
 WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(source_id)::text::uuid;
 
 -- name: CommitRelayObservationSummary :one
 WITH observations AS (
- SELECT relay_status,pending_events,blocked_events,oldest_pending_at,COALESCE(last_checked_at>=sqlc.arg(fresh_after)::timestamptz
-   AND last_checked_at<=now()+interval '1 minute',false) AS fresh
+ SELECT relay_status,pending_events,blocked_events,oldest_pending_at,cleanup_eligible_events,COALESCE(last_checked_at>=sqlc.arg(fresh_after)::timestamptz
+   - (CASE WHEN queue_name IS NOT NULL THEN poll_interval_ms ELSE 0 END) * interval '1 millisecond'
+   AND last_checked_at<=now()+interval '1 minute',false) AS fresh,
+ COALESCE(cleanup_observed_at>=sqlc.arg(fresh_after)::timestamptz
+   - (CASE WHEN queue_name IS NOT NULL THEN poll_interval_ms ELSE 0 END) * interval '1 millisecond'
+   AND cleanup_observed_at<=now()+interval '1 minute',false) AS cleanup_fresh
  FROM commit_sources WHERE enabled
 ), snapshots AS (
  SELECT *,fresh AND pending_events IS NOT NULL AND blocked_events IS NOT NULL AS known
@@ -18467,6 +18478,8 @@ WITH observations AS (
 )
 SELECT count(*)::bigint AS enabled_sources,
  count(*) FILTER(WHERE NOT known)::bigint AS unknown_sources,
+ count(*) FILTER(WHERE NOT cleanup_fresh OR cleanup_eligible_events IS NULL)::bigint AS cleanup_unknown_sources,
+ COALESCE(sum(cleanup_eligible_events) FILTER(WHERE cleanup_fresh),0)::bigint AS cleanup_eligible_events,
  count(*) FILTER(WHERE fresh AND relay_status NOT IN ('healthy','blocked_events'))::bigint AS failing_sources,
  COALESCE(sum(pending_events) FILTER(WHERE known),0)::bigint AS pending_events,
  COALESCE(sum(blocked_events) FILTER(WHERE known),0)::bigint AS blocked_events,

@@ -34,6 +34,14 @@ Wait timeout or interruption does not cancel work.
 
 ## Recover
 
+- **FaasCommitReceiptUsageReconciliationStalled:** check scheduler health,
+  platform PostgreSQL access, and the initialized-shard and reconciliation-current
+  gauges. Check `schedd_commit_receipt_reconciliation_failures_total` for failed
+  attempts and inspect `retry_at` and scan progress in `commit_receipt_usage`;
+  failed batches retry after a minute. Preserve receipt rows and partial scan state.
+- **FaasCommitReceiptStorageGrowing:** inspect receipt count and payload JSON
+  text bytes using the Commit storage queries. Check acceptance rate and database
+  capacity. Receipt identities must remain available for accepted-event retries.
 - **FaasCommitBacklogOverdue:** a fresh known observation contains a pending row
   inserted more than fifteen minutes ago, sustained for five minutes. Check
   destination readiness and Operations capacity before requesting replay. The
@@ -42,7 +50,8 @@ Wait timeout or interruption does not cancel work.
   codes. Correct only an unaccepted row, then run `gregale commit replay
   <source-id> <event-id>`. Preserve the ID. Do not clear accepted identities.
 - **FaasCommitSourceObservationUnknown:** a source is unconfigured, unreachable,
-  or has no complete observation within five minutes. Verify both Commit flags,
+  or its last complete observation is stale. The freshness window is five minutes,
+  plus the configured poll interval for Postgres row-change sources. Verify both Commit flags,
   scheduler age identities, approved hostnames/CIDRs, PostgreSQL CA, schema and
   owner binding. Credential rotation and resume intentionally invalidate earlier
   health until a fresh pass. Unknown backlog counts do not mean zero events.

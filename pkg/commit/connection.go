@@ -3,8 +3,10 @@ package commit
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/netip"
+	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -16,10 +18,26 @@ import (
 // retaining server messages, addresses, SQL, or connection credentials.
 var ErrConnectionAuthentication = errors.New("commit: database authentication unavailable")
 
+// ErrConnectionTransport classifies a retryable transport failure while
+// keeping the connection error free of addresses, credentials and server text.
+var ErrConnectionTransport = errors.New("commit: database connection unavailable")
+
 func connectionFailure(err error) error {
-	var authentication *pgconn.PgError
-	if errors.As(err, &authentication) && (authentication.Code == "28P01" || authentication.Code == "28000") {
-		return ErrConnectionAuthentication
+	var serverError *pgconn.PgError
+	if errors.As(err, &serverError) {
+		switch serverError.Code {
+		case "28P01", "28000":
+			return ErrConnectionAuthentication
+		case "57P03": // PostgreSQL is starting up or recovering.
+			return ErrConnectionTransport
+		default:
+			return errors.New("commit: database connection unavailable")
+		}
+	}
+	if errors.Is(err, ErrConnectionTransport) || errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, context.DeadlineExceeded) {
+		return ErrConnectionTransport
 	}
 	return errors.New("commit: database connection unavailable")
 }
@@ -131,7 +149,7 @@ func OpenPool(ctx context.Context, raw string, policy NetworkPolicy) (*pgxpool.P
 		dialer := net.Dialer{Timeout: 5 * time.Second}
 		conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.Unmap().String(), port))
 		if err != nil {
-			return nil, errors.New("commit: qualified database destination unavailable")
+			return nil, ErrConnectionTransport
 		}
 		return conn, nil
 	}
