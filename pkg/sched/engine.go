@@ -5694,9 +5694,9 @@ func (e *Engine) warnRestorePressureFallback(operation string, err error) {
 //
 // Caller contract:
 //   - ctx must be cancellable; the subscriber drops on cancel.
-//   - The cold-start sweep calls this once per ListUnplacedApps
-//     row at schedd startup (closes the pg_notify missed-event
-//     window).
+//   - The unplaced sweep (Engine.SweepUnplaced) calls this for each
+//     ListUnplacedApps row at boot and then about once a minute
+//     (closes the pg_notify missed-event window).
 func (e *Engine) ClaimUnplaced(ctx context.Context, appID string) error {
 	if appID == "" {
 		return fmt.Errorf("sched: claim unplaced: empty app id")

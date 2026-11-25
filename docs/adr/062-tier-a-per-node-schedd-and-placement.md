@@ -218,3 +218,23 @@ reservations carry no vCPU column and are not in the store figure.
 
 Test: `TestPlacementCountsAnotherOwnersVCPUs`; the store aggregate is
 pinned by `checkNodeVCPUUsage` on MemStore and PostgreSQL.
+
+## Amendment 3 — The unplaced sweep repeats every minute (2026-11-25)
+
+"A one-shot cold-start sweep at boot" assumed the only way to miss a
+`kind="created"` notify was a schedd that was down. A project apply that
+failed after reconcile had committed its apps returned before sending it,
+and the retry sends `kind="updated"`, which the subscriber ignores. The
+apps kept `apps.node_id` NULL until the next schedd restart and every
+gateway wake for them failed (prod 2026-11-25, project 8624ac80, about
+1,230 wake errors in 38 minutes).
+
+apid now sends `kind="created"` for those apps before writing the problem.
+As defence in depth, `Engine.RunUnplacedSweep` runs the same
+`ListUnplacedApps` + `ClaimUnplaced` sweep at boot and then every
+`UnplacedSweepInterval` (1 minute, ±10% jitter), behind the same
+`claimsOwners` gate. `ClaimUnplaced` stays the only writer of `node_id`;
+`kind="updated"` is still not a claim trigger.
+
+Tests: `TestSweepUnplaced`, `TestRunUnplacedSweep`,
+`TestProjectApplyFailureAfterReconcileStillPlacesAddedApps`.
