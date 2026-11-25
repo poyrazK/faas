@@ -11,6 +11,18 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// Prod hunt r52: `postgres suspend-timeout set db 30s` printed only usage.
+func TestPostgresSuspendTimeoutSaysWhyAValueIsRefused(t *testing.T) {
+	t.Setenv("FAAS_API", "http://127.0.0.1:1")
+	t.Setenv("FAAS_TOKEN", "test-token")
+	for _, value := range []string{"30s", "2h", "90.5s"} {
+		code, _, stderr := runCLI(t, "postgres", "suspend-timeout", "set", "orders-db", value)
+		if code == 0 || !strings.Contains(stderr, `"`+value+`" is not a whole-second duration from 1m0s to 1h0m0s`) {
+			t.Fatalf("suspend-timeout %s = %d:\n%s", value, code, stderr)
+		}
+	}
+}
+
 // Prod hunt r52 (rc.381): `app restart --fresh --wait` on an app whose new
 // config crashes it at startup printed running/retrying until its 10 min
 // timeout. A startup crash repeats on every retry, so the wait stops at the
