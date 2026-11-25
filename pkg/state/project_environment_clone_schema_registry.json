@@ -22654,6 +22654,7 @@
       "min_cuped_p_values",
       "min_p_values",
       "mixing_lift",
+      "notify_channel_ids",
       "percentile",
       "project_id",
       "rule_id",
@@ -22740,6 +22741,37 @@
     "columns": [
       "cohort_id",
       "customer_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "flag_notification_settings",
+    "columns": [
+      "account_id",
+      "channel_ids",
+      "environment_id",
+      "updated_at",
+      "updated_by"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "flag_notifications",
+    "columns": [
+      "account_id",
+      "attempts",
+      "channel_ids",
+      "created_at",
+      "environment_id",
+      "id",
+      "key",
+      "kind",
+      "last_error",
+      "next_attempt_at",
+      "settled_at",
+      "status",
+      "subject",
+      "summary"
     ],
     "kind": "operational"
   },

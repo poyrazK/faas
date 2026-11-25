@@ -52,6 +52,7 @@ func cloneFlagExperiment(x *FlagExperiment) FlagExperiment {
 		out.MinCupedPValues[k] = v
 	}
 	out.Bandit = slices.Clone(x.Bandit)
+	out.NotifyChannelIDs = slices.Clone(x.NotifyChannelIDs)
 	if x.Breach != nil {
 		out.Breach = map[string]any{}
 		for k, v := range x.Breach {
