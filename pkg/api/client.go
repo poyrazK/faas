@@ -8271,6 +8271,14 @@ func (c *Client) RunWorkflowWithIdempotencyKey(ctx context.Context, slug, workfl
 	return resp, err
 }
 
+// LookupWorkflowRunStart reads the retained run ID for a pipeline tool's original start key.
+func (c *Client) LookupWorkflowRunStart(ctx context.Context, slug, workflowName, key string) (WorkflowRunStartLookupResponse, error) {
+	var resp WorkflowRunStartLookupResponse
+	path := "/v1/apps/" + url.PathEscape(slug) + "/workflows/run-starts/" + url.PathEscape(workflowName)
+	err := c.doWithHeaders(ctx, "GET", path, nil, &resp, http.Header{"Idempotency-Key": {key}})
+	return resp, err
+}
+
 // ListWorkflowRuns (ADR-081) lists workflow runs for an app.
 func (c *Client) ListWorkflowRuns(ctx context.Context, slug string, limit, offset int, status string) (ListWorkflowRunsResponse, error) {
 	return c.ListWorkflowRunsWithOptions(ctx, slug, WorkflowRunListOptions{

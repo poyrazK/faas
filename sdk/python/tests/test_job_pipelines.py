@@ -452,3 +452,28 @@ async def test_typed_start_never_retries_uncertain_mutation_and_checks_deadline_
         with pytest.raises(Exception):
             await client.start(F["input"], timeout=0.005, idempotency_key="two")
     assert posts == 1
+
+
+@pytest.mark.asyncio
+async def test_python_workflow_receives_the_pinned_source_in_context():
+    fixture = json.loads((ROOT / "pipeline-start-preview.json").read_text())
+    source = fixture["pinned_source"]
+    source["scope"].update(base_url=SCOPE.base_url, app_slug=SCOPE.app_slug)
+    native = Native()
+
+    async def run(_value, context):
+        assert context.pinned_source == source
+        return F["output"]
+
+    pipeline = JobPipeline(ROOT_CONTRACT, scope=SCOPE, store=Store(), jobs=native.definitions, run=run)
+    invocation = dict(
+        protocol=WORKFLOW_CODE_PROTOCOL, run_id=F["workflow_run_id"], workflow=ROOT_CONTRACT.spec["name"],
+        input=ENVELOPE | {"pinned_source": source}, invocation=1, journal=[],
+    )
+    accepted = await run_workflow_invocation(pipeline.definition, invocation)
+    assert accepted["result"]["status"] == "succeeded"
+    assert native.posts == 0
+    invocation["input"] = ENVELOPE | {"pinned_source": source | {"owner_id": "bob"}}
+    refused = await run_workflow_invocation(pipeline.definition, invocation)
+    assert refused["result"]["status"] == "failed"
+    assert refused["result"]["error"] == "pipeline:source_unavailable"

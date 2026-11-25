@@ -11,6 +11,13 @@ from .job_runtime import JobContract
 
 
 def generate_job_types(spec: dict[str, Any], language: Literal["typescript", "python"]) -> str:
+    header, body = _render_job_types(spec, language, "Input", "Output", "contract")
+    return header + body
+
+
+def _render_job_types(
+    spec: dict[str, Any], language: Literal["typescript", "python"], input_name: str, output_name: str, contract_name: str
+) -> tuple[str, str]:
     if language not in ("typescript", "python"):
         raise ValueError("Unsupported language")
     spec = JobContract[Any, Any](spec).spec
@@ -38,14 +45,11 @@ def generate_job_types(spec: dict[str, Any], language: Literal["typescript", "py
             return "number" if kind == "integer" else str(kind)
 
         return (
-            '// Generated from a Gregale job contract.\nimport {JobContract} from "@gregale/sdk-node/jobs/runtime";\nexport type Input = '
-            + ts(spec["input"])
-            + ";\nexport type Output = "
-            + ts(spec["output"])
-            + ";\nexport const contract = new JobContract<Input, Output>("
-            + compact(spec)
-            + " as const);\n"
+            '// Generated from a Gregale job contract.\nimport {JobContract} from "@gregale/sdk-node/jobs/runtime";\n',
+            f"export type {input_name} = {ts(spec['input'])};\nexport type {output_name} = {ts(spec['output'])};\n"
+            f"export const {contract_name} = new JobContract<{input_name}, {output_name}>({compact(spec)} as const);\n",
         )
+
     declarations = []
 
     def py(schema: dict[str, Any], name: str) -> str:
@@ -80,17 +84,15 @@ def generate_job_types(spec: dict[str, Any], language: Literal["typescript", "py
             return "list[" + py(schema["items"], name + "_item") + "]"
         return {"integer": "int", "number": "float", "string": "str", "boolean": "bool", "null": "None"}[kind]
 
-    input_type, output_type = py(spec["input"], "Input"), py(spec["output"], "Output")
-    if input_type != "Input":
-        declarations.append("Input: TypeAlias = " + input_type)
-    if output_type != "Output":
-        declarations.append("Output: TypeAlias = " + output_type)
+    input_type, output_type = py(spec["input"], input_name), py(spec["output"], output_name)
+    if input_type != input_name:
+        declarations.append(input_name + ": TypeAlias = " + input_type)
+    if output_type != output_name:
+        declarations.append(output_name + ": TypeAlias = " + output_type)
     return (
-        "# Generated from a Gregale job contract.\n# ruff: noqa: F401\nimport json\nfrom typing import Literal, NotRequired, TypeAlias, TypedDict\nfrom faas_sdk.job_runtime import JobContract\n"
-        + "\n".join(declarations)
-        + "\ncontract: JobContract[Input, Output] = JobContract(json.loads("
-        + compact(compact(spec))
-        + "))\n"
+        "# Generated from a Gregale job contract.\n# ruff: noqa: F401\nimport json\nfrom typing import Literal, NotRequired, TypeAlias, TypedDict\nfrom faas_sdk.job_runtime import JobContract\n",
+        "\n".join(declarations) + "\n"
+        + f"{contract_name}: JobContract[{input_name}, {output_name}] = JobContract(json.loads({compact(compact(spec))}))\n",
     )
 
 

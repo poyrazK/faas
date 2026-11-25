@@ -3816,6 +3816,7 @@ export type { WorkflowRunDiagnosticsResponse } from './WorkflowRunDiagnosticsRes
 export type { WorkflowRunRecoveryPlan } from './WorkflowRunRecoveryPlan.js';
 export type { WorkflowRunRecoveryTarget } from './WorkflowRunRecoveryTarget.js';
 export type { WorkflowRunResponse } from './WorkflowRunResponse.js';
+export type { WorkflowRunStartLookupResponse } from './WorkflowRunStartLookupResponse.js';
 export type { WorkflowScheduleCatchUpPreview } from './WorkflowScheduleCatchUpPreview.js';
 export type { WorkflowScheduleDSTBehavior } from './WorkflowScheduleDSTBehavior.js';
 export type { WorkflowScheduleFirePreview } from './WorkflowScheduleFirePreview.js';

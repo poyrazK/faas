@@ -173,6 +173,10 @@ async def execute(request_path: str) -> dict[str, Any]:
             from batch_pipeline import csv_batch_pipeline
             from faas_sdk.preview import PostgresPipelineChildrenStore
             pipeline, _coordinator = csv_batch_pipeline(scope=scope, token=os.environ["FAAS_TOKEN"], store=PostgresPipelineJobStore(query), children_store=PostgresPipelineChildrenStore(query), gate_store=PostgresPipelineGateStore(query), request_timeout=30)
+        if request["workflow"].startswith("action-"):
+            from refund_backend import backend as refund_backend
+            async with refund_backend(os.environ.get("GREGALE_REFUND_RELAY_URL", os.environ.get("GREGALE_OUTBOUND_URL")), os.environ.get("GREGALE_REFUND_REVIEW_URL", "http://127.0.0.1/")) as action:
+                return await run_workflow_invocation(action.definition, request)
         if request["workflow"].startswith("recover-"):
             from compensation_backend import backend
             async with backend(os.environ.get("GREGALE_COMP_REVIEW_URL", "http://127.0.0.1/")) as (recovery, _handler):
