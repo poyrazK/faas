@@ -16,6 +16,7 @@ type recoveryFixtureVMM struct {
 	answer           string
 	archiveTimeline  uint32
 	checkedTimelines []uint32
+	busyOnCheck      int
 }
 
 func (v *recoveryFixtureVMM) CheckRecoveryArchive(_ context.Context, n Node, _ string, _ time.Time, _ int, _ bool, timeline uint32) (dbarchive.RestoreCheck, error) {
@@ -23,6 +24,9 @@ func (v *recoveryFixtureVMM) CheckRecoveryArchive(_ context.Context, n Node, _ s
 		return dbarchive.RestoreCheck{}, errors.New("recovery used a node outside the destination fleet")
 	}
 	v.checkedTimelines = append(v.checkedTimelines, timeline)
+	if len(v.checkedTimelines) == v.busyOnCheck {
+		return dbarchive.RestoreCheck{Outcome: dbarchive.RestoreUnverified, Reason: "archive_busy"}, nil
+	}
 	if timeline == 0 {
 		timeline = max(1, v.archiveTimeline)
 	}
@@ -92,5 +96,59 @@ func TestRegionalRestoreRechecksReservedTimeline(t *testing.T) {
 	after, err := store.Get(ctx, req.DatabaseID)
 	if err != nil || after.State != StateParked || !slices.Equal(vmm.checkedTimelines, []uint32{0, 2}) {
 		t.Fatalf("replay on reserved timeline: %+v, %v, checks %v", after, err, vmm.checkedTimelines)
+	}
+}
+
+func TestRegionalRestoreRetriesBusyArchive(t *testing.T) {
+	ctx := t.Context()
+	store := NewMemStore()
+	vmm := &recoveryFixtureVMM{fakeVMM: newFakeVMM(), answer: dbarchive.RestoreCovered, archiveTimeline: 2, busyOnCheck: 2}
+	vmm.archive = true
+	seedNodes(t, store, Node{ID: "recovery", TargetURL: "unix:///recovery", Lifecycle: NodeActive,
+		RecoveryRegion: "eu-west-1", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 10 << 30})
+	s := New(store, vmm, Config{SharedArchive: true}, nil)
+	req := restoreRequest(VM{DatabaseID: uuid.NewString(), Major: 17, VolumeBytes: 1 << 30}, time.Now().Add(-time.Minute))
+	req.RecoveryRegion = "eu-west-1"
+	if _, err := s.Restore(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	s.restoreWG.Wait()
+	after, err := store.Get(ctx, req.DatabaseID)
+	if err != nil || after.State != StateParked || after.RestoreTimeline != 2 ||
+		!slices.Equal(vmm.checkedTimelines, []uint32{0, 2, 2}) {
+		t.Fatalf("restore after a busy archive: %+v, %v, checks %v", after, err, vmm.checkedTimelines)
+	}
+}
+
+func TestRegionalRestoreResumesWithoutEnteringLegacyQueue(t *testing.T) {
+	store := storeFactories(t)["pg"](t).(*PgStore)
+	ctx := t.Context()
+	seedNodes(t, store, Node{ID: "recovery", TargetURL: "unix:///recovery", Lifecycle: NodeActive,
+		RecoveryRegion: "eu-west-1", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 10 << 30})
+	placed, err := store.Place(ctx, VM{
+		DatabaseID: uuid.NewString(), RecoveryRegion: "eu-west-1", RestoreFromRecovery: true,
+		Major: 17, VcpuCount: 1, MemMiB: 384, VolumeBytes: 1 << 30,
+		RestoreSource: uuid.NewString(), RestoreTarget: time.Now().Add(-time.Minute), RestoreTimeline: 2,
+	})
+	if err != nil || placed.State != stateRegionalRestore {
+		t.Fatalf("reserve regional restore: %+v, %v", placed, err)
+	}
+	// The previous release's claim predicate must never match this row.
+	tag, err := store.pool.Exec(ctx, `UPDATE database_vms SET restore_lease_until = now() + interval '1 minute'
+		WHERE database_id = $1 AND state = 'provisioning' AND restore_source IS NOT NULL
+		AND (restore_lease_until IS NULL OR restore_lease_until < now())`, mustUUID(placed.DatabaseID))
+	if err != nil || tag.RowsAffected() != 0 {
+		t.Fatalf("previous scheduler claimed regional restore: %v, %v", tag, err)
+	}
+	vmm := &recoveryFixtureVMM{fakeVMM: newFakeVMM(), answer: dbarchive.RestoreCovered}
+	vmm.archive = true
+	s := New(store, vmm, Config{SharedArchive: true}, nil)
+	if err := s.ResumeRestores(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s.restoreWG.Wait()
+	after, err := store.Get(ctx, placed.DatabaseID)
+	if err != nil || after.State != StateParked || !slices.Equal(vmm.checkedTimelines, []uint32{2}) {
+		t.Fatalf("resumed regional restore: %+v, %v, checks %v", after, err, vmm.checkedTimelines)
 	}
 }

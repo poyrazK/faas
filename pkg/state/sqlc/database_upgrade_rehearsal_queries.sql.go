@@ -64,7 +64,7 @@ func (q *Queries) MarkDatabaseUpgradeRehearsalRestoring(ctx context.Context, db 
 const pinDatabaseVMRestoreTimeline = `-- name: PinDatabaseVMRestoreTimeline :execrows
 UPDATE database_vms SET restore_timeline = $1
 WHERE database_id = $2
-AND state IN ('provisioning', 'rehearsal_restore') AND restore_source IS NOT NULL
+AND state IN ('provisioning', 'rehearsal_restore', 'regional_restore') AND restore_source IS NOT NULL
 AND restore_timeline IN (0, $1)
 `
 

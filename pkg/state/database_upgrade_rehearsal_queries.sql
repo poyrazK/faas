@@ -36,5 +36,5 @@ UPDATE database_upgrade_rehearsals SET restore_started = true WHERE drill_id = s
 -- name: PinDatabaseVMRestoreTimeline :execrows
 UPDATE database_vms SET restore_timeline = sqlc.arg(restore_timeline)
 WHERE database_id = sqlc.arg(database_id)
-AND state IN ('provisioning', 'rehearsal_restore') AND restore_source IS NOT NULL
+AND state IN ('provisioning', 'rehearsal_restore', 'regional_restore') AND restore_source IS NOT NULL
 AND restore_timeline IN (0, sqlc.arg(restore_timeline));

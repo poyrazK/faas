@@ -963,7 +963,7 @@ func (s *Scheduler) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	all := []State{StateProvisioning, stateRehearsalRestore, StateParked, StateWaking, StateRunning, StateParking, StateUpgrading, StateFailed, StateDeleting}
+	all := []State{StateProvisioning, stateRehearsalRestore, stateRegionalRestore, StateParked, StateWaking, StateRunning, StateParking, StateUpgrading, StateFailed, StateDeleting}
 	if err := s.store.Transition(ctx, id, all, StateDeleting, TransitionOptions{}); err != nil {
 		return err
 	}

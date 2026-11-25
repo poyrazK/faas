@@ -5726,7 +5726,7 @@ func (q *Queries) ClaimDatabaseVMProvision(ctx context.Context, db DBTX, arg Cla
 const claimDatabaseVMRestore = `-- name: ClaimDatabaseVMRestore :one
 UPDATE database_vms
 SET restore_lease_until = now() + make_interval(secs => $1::double precision)
-WHERE database_id = $2 AND state IN ('provisioning', 'rehearsal_restore') AND restore_source IS NOT NULL
+WHERE database_id = $2 AND state IN ('provisioning', 'rehearsal_restore', 'regional_restore') AND restore_source IS NOT NULL
   AND (restore_lease_until IS NULL OR restore_lease_until < now()
        OR restore_lease_until = $3::timestamptz)
 RETURNING restore_lease_until
@@ -49764,7 +49764,8 @@ func (q *Queries) ListDataUpstreamsByApp(ctx context.Context, db DBTX, arg ListD
 }
 
 const listDatabaseNodes = `-- name: ListDatabaseNodes :many
-SELECT id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, postgres_majors, lifecycle, recovery_region
+SELECT id, target_url, COALESCE(configured_admission_ceiling_mb, admission_ceiling_mb)::integer AS admission_ceiling_mb,
+    volume_capacity_bytes, boot_slots, postgres_majors, lifecycle, recovery_region
 FROM database_nodes ORDER BY id
 `
 
@@ -61531,7 +61532,8 @@ func (q *Queries) LockCustomerOperationWorkflowRun(ctx context.Context, db DBTX,
 }
 
 const lockDatabaseNode = `-- name: LockDatabaseNode :one
-SELECT id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, lifecycle
+SELECT id, target_url, COALESCE(configured_admission_ceiling_mb, admission_ceiling_mb)::integer AS admission_ceiling_mb,
+    volume_capacity_bytes, boot_slots, lifecycle
 FROM database_nodes WHERE id = $1 FOR UPDATE
 `
 
@@ -98757,7 +98759,7 @@ func (q *Queries) RecordDatabaseVMBackup(ctx context.Context, db DBTX, arg Recor
 
 const recordDatabaseVMRestore = `-- name: RecordDatabaseVMRestore :execrows
 UPDATE database_vms SET restore_recovered_to = $1
-WHERE database_id = $2 AND state IN ('provisioning', 'rehearsal_restore') AND restore_source IS NOT NULL
+WHERE database_id = $2 AND state IN ('provisioning', 'rehearsal_restore', 'regional_restore') AND restore_source IS NOT NULL
 `
 
 type RecordDatabaseVMRestoreParams struct {

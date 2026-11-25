@@ -21,10 +21,12 @@ const (
 	StateProvisioning State = "provisioning"
 	// A private restore is invisible to ordinary restore and provision workers.
 	stateRehearsalRestore State = "rehearsal_restore"
-	StateParked           State = "parked"
-	StateWaking           State = "waking"
-	StateRunning          State = "running"
-	StateParking          State = "parking"
+	// An archive-only regional restore must be invisible to older restore workers.
+	stateRegionalRestore State = "regional_restore"
+	StateParked          State = "parked"
+	StateWaking          State = "waking"
+	StateRunning         State = "running"
+	StateParking         State = "parking"
 	// This fence must be distinct from parking so older schedulers cannot recover it as an interrupted stop.
 	stateMaintenanceHandoff State = "maintenance_handoff"
 	// StateMoving: the parked database's volume is being copied to

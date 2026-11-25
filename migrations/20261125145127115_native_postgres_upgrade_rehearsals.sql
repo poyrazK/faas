@@ -18,7 +18,7 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'database_vms'::regclass
         AND conname = 'database_vms_state_check_v2') THEN
         ALTER TABLE database_vms ADD CONSTRAINT database_vms_state_check_v2 CHECK (
-            state IN ('provisioning', 'parked', 'waking', 'running', 'parking', 'moving', 'upgrading', 'deleting', 'failed', 'rehearsal_restore', 'maintenance_handoff')) NOT VALID;
+            state IN ('provisioning', 'parked', 'waking', 'running', 'parking', 'moving', 'upgrading', 'deleting', 'failed', 'rehearsal_restore', 'maintenance_handoff', 'regional_restore')) NOT VALID;
     END IF;
 END;
 $$;

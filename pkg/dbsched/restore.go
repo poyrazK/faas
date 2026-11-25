@@ -211,10 +211,15 @@ func (s *Scheduler) restorable(source VM, req RestoreRequest) error {
 	return nil
 }
 
-// ResumeRestores starts every provisioning restore not already running
+// isRestoring identifies the states owned by the restore worker.
+func isRestoring(state State) bool {
+	return state == StateProvisioning || state == stateRehearsalRestore || state == stateRegionalRestore
+}
+
+// ResumeRestores starts every ordinary or regional restore not already running
 // here; the lease keeps two replicas from running the same one.
 func (s *Scheduler) ResumeRestores(ctx context.Context) error {
-	vms, err := s.store.List(ctx, StateProvisioning)
+	vms, err := s.store.List(ctx, StateProvisioning, stateRegionalRestore)
 	if err != nil {
 		return err
 	}
@@ -227,7 +232,7 @@ func (s *Scheduler) ResumeRestores(ctx context.Context) error {
 // resumeRestore runs vm's restore in the background unless this process
 // already is. The restore outlives the call that started it.
 func (s *Scheduler) resumeRestore(ctx context.Context, vm VM) {
-	if (vm.State != StateProvisioning && vm.State != stateRehearsalRestore) || vm.RestoreSource == "" {
+	if !isRestoring(vm.State) || vm.RestoreSource == "" {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.cfg.RestoreTimeout)
@@ -273,7 +278,7 @@ func (s *Scheduler) runRestore(ctx context.Context, id string) {
 	}()
 	defer func() { cancel(); <-renewed }()
 	vm, err := s.store.Get(ctx, id)
-	if err != nil || (vm.State != StateProvisioning && vm.State != stateRehearsalRestore) {
+	if err != nil || !isRestoring(vm.State) {
 		return
 	}
 	node, err := s.node(ctx, vm.NodeID)
@@ -325,7 +330,7 @@ func (s *Scheduler) restore(ctx context.Context, node Node, vm VM) error {
 		if node.RecoveryRegion != vm.RecoveryRegion {
 			return ErrConflict
 		}
-		probe, err := s.probeRecoveryArchive(ctx, node, vm.RestoreSource, vm.RestoreTarget, vm.Major, false, vm.RestoreTimeline)
+		probe, err := s.checkReservedRecovery(ctx, node, vm)
 		if err != nil {
 			return err
 		}

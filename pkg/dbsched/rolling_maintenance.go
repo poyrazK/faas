@@ -168,7 +168,37 @@ func saveRollingPhase(ctx context.Context, tx pgx.Tx, refresh baseRefresh, phase
 	return err
 }
 
+// Serialize reservation changes with wakes and node re-registration. The
+// trigger projects the journal onto the ceiling read by older schedulers.
+func setRollingHandoffReservation(ctx context.Context, tx pgx.Tx, refresh baseRefresh, reservedMB int64) error {
+	tag, err := tx.Exec(ctx, `SELECT id FROM database_nodes WHERE id = $1 FOR UPDATE`, refresh.NodeID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrNodeUnavailable
+	}
+	tag, err = tx.Exec(ctx, `UPDATE native_postgres_base_refreshes SET handoff_reserved_mb = $3
+		WHERE database_id = $1 AND window_start = $2 AND finished_at IS NULL`,
+		mustUUID(refresh.DatabaseID), refresh.Window.Start, reservedMB)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrConflict
+	}
+	_, err = tx.Exec(ctx, `UPDATE database_nodes
+		SET admission_ceiling_mb = COALESCE(configured_admission_ceiling_mb, admission_ceiling_mb)
+		WHERE id = $1`, refresh.NodeID)
+	return err
+}
+
 func finishRollingRefresh(ctx context.Context, tx pgx.Tx, refresh baseRefresh, outcome, reason string) error {
+	if refresh.HandoffReservedMB != 0 {
+		if err := setRollingHandoffReservation(ctx, tx, refresh, 0); err != nil {
+			return err
+		}
+	}
 	_, err := tx.Exec(ctx, `UPDATE native_postgres_base_refreshes SET finished_at = clock_timestamp(), outcome = $3, reason = $4
 		WHERE database_id = $1 AND window_start = $2`, mustUUID(refresh.DatabaseID), refresh.Window.Start, outcome, reason)
 	if err == nil && outcome == "succeeded" {
@@ -209,10 +239,10 @@ func (s *Scheduler) advanceRollingRefresh(ctx context.Context, store *PgStore, i
 		r.DatabaseID = id
 		err = tx.QueryRow(ctx, `
 			SELECT node_id, rolling_standby_node, source_running_at, window_start, window_end,
-				recover_after, phase, standby_restarted, handoff_started, COALESCE(rolling_image, '')
+				recover_after, phase, standby_restarted, handoff_started, handoff_reserved_mb, COALESCE(rolling_image, '')
 			FROM native_postgres_base_refreshes WHERE database_id = $1
 				AND rolling_standby_node IS NOT NULL AND finished_at IS NULL`, mustUUID(id)).
-			Scan(&r.NodeID, &r.StandbyNode, &r.SourceAt, &r.Window.Start, &r.Window.End, &r.RecoverAt, &r.Phase, &r.StandbyRestarted, &r.HandoffStarted, &r.Image)
+			Scan(&r.NodeID, &r.StandbyNode, &r.SourceAt, &r.Window.Start, &r.Window.End, &r.RecoverAt, &r.Phase, &r.StandbyRestarted, &r.HandoffStarted, &r.HandoffReservedMB, &r.Image)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return VM{}, nil
 		}
@@ -315,6 +345,9 @@ func (s *Scheduler) refreshRollingStandby(ctx context.Context, store *PgStore, t
 	if !window.Contains(now) {
 		return false, false, finishRollingRefresh(ctx, tx, r, "window_closed", "standby_validation_incomplete")
 	}
+	if err := setRollingHandoffReservation(ctx, tx, r, billableMB(vm.MemMiB)); err != nil {
+		return false, false, err
+	}
 	if err := store.transition(ctx, tx, id, []State{StateRunning}, stateMaintenanceHandoff, TransitionOptions{}); err != nil {
 		return false, false, err
 	}
@@ -387,7 +420,16 @@ func (s *Scheduler) handoffRollingRefresh(ctx context.Context, store *PgStore, t
 		return false, saveRollingPhase(ctx, tx, r, r.Phase, "standby_health_unverified_during_handoff")
 	}
 	if err := s.stopRollingVM(ctx, primary, id); err != nil {
-		return false, saveRollingPhase(ctx, tx, r, r.Phase, "primary_stop_unconfirmed")
+		// The operator's unavailable declaration is the same fence used by
+		// ordinary lost-node failover. Re-read it under the node lock so a
+		// concurrent re-registration cannot authorize promotion by mistake.
+		current, readErr := store.q.LockDatabaseNode(ctx, tx, primary.ID)
+		if readErr != nil {
+			return false, readErr
+		}
+		if current.Lifecycle != NodeUnavailable {
+			return false, saveRollingPhase(ctx, tx, r, r.Phase, "primary_stop_unconfirmed")
+		}
 	}
 	if missing {
 		// A stopped synchronous volume can take over through the existing
@@ -406,6 +448,11 @@ func (s *Scheduler) handoffRollingRefresh(ctx context.Context, store *PgStore, t
 	after, err := store.failoverTx(ctx, tx, id)
 	if err != nil {
 		return false, err
+	}
+	if r.HandoffReservedMB != 0 {
+		if err := setRollingHandoffReservation(ctx, tx, r, 0); err != nil {
+			return false, err
+		}
 	}
 	s.attachTried.Delete(id)
 	s.freed.signal(primary.ID)

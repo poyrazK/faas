@@ -16,18 +16,19 @@ import (
 const maintenanceStopTimeout = 2 * time.Minute
 
 type baseRefresh struct {
-	DatabaseID       string
-	SourceAt         time.Time
-	StartedAt        time.Time
-	RecoverAt        time.Time
-	NodeID           string
-	Window           dbmaintenance.Interval
-	QueryOnly        bool
-	StandbyNode      string
-	Phase            string
-	StandbyRestarted bool
-	HandoffStarted   bool
-	Image            string
+	DatabaseID        string
+	SourceAt          time.Time
+	StartedAt         time.Time
+	RecoverAt         time.Time
+	NodeID            string
+	Window            dbmaintenance.Interval
+	QueryOnly         bool
+	StandbyNode       string
+	Phase             string
+	StandbyRestarted  bool
+	HandoffStarted    bool
+	HandoffReservedMB int64
+	Image             string
 }
 
 type baseRefreshObservation struct {

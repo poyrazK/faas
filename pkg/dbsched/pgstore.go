@@ -204,7 +204,9 @@ func (s *PgStore) Place(ctx context.Context, vm VM) (VM, error) {
 			RecoveryRegion: vm.RecoveryRegion, RestoreFromRecovery: vm.RestoreFromRecovery, RestoreTimeline: int64(vm.RestoreTimeline),
 		}
 		params.State = string(StateProvisioning)
-		if vm.State == stateRehearsalRestore {
+		if vm.RestoreFromRecovery {
+			params.State = string(stateRegionalRestore)
+		} else if vm.State == stateRehearsalRestore {
 			params.State = string(stateRehearsalRestore)
 		}
 		if len(placed) == 2 {

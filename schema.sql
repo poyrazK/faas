@@ -24968,6 +24968,30 @@ $$;
 
 
 --
+-- Name: project_database_handoff_admission(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.project_database_handoff_admission() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    reserved bigint;
+BEGIN
+    SELECT COALESCE(sum(handoff_reserved_mb), 0) INTO reserved
+    FROM native_postgres_base_refreshes
+    WHERE node_id = NEW.id AND finished_at IS NULL AND handoff_reserved_mb > 0;
+
+    NEW.configured_admission_ceiling_mb := NULL;
+    IF reserved > 0 AND NEW.admission_ceiling_mb > 0 THEN
+        NEW.configured_admission_ceiling_mb := NEW.admission_ceiling_mb;
+        NEW.admission_ceiling_mb := greatest(1, NEW.admission_ceiling_mb - reserved)::integer;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: project_environment_clone_inventory_present(uuid, uuid, text[], uuid[], uuid[], jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -39365,6 +39389,7 @@ CREATE TABLE public.database_nodes (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     recovery_region text DEFAULT ''::text NOT NULL,
+    configured_admission_ceiling_mb integer,
     CONSTRAINT database_nodes_admission_ceiling_mb_check CHECK ((admission_ceiling_mb > 0)),
     CONSTRAINT database_nodes_boot_slots_check CHECK (((boot_slots >= 1) AND (boot_slots <= 256))),
     CONSTRAINT database_nodes_id_check CHECK ((id ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
@@ -39509,7 +39534,7 @@ CREATE TABLE public.database_vms (
     CONSTRAINT database_vms_restore_timeline_check CHECK ((((restore_timeline >= 0) AND (restore_timeline <= '4294967295'::bigint)) AND ((restore_timeline = 0) OR (restore_source IS NOT NULL)))),
     CONSTRAINT database_vms_restore_window_seconds_check CHECK ((restore_window_seconds >= 0)),
     CONSTRAINT database_vms_standby CHECK ((((standby_node IS NULL) OR (replicated AND (standby_node <> node_id))) AND ((NOT standby_running) OR (standby_node IS NOT NULL)) AND ((NOT standby_synced) OR (standby_node IS NOT NULL)) AND ((move_node IS NULL) OR (standby_node IS NULL) OR (move_node <> standby_node)) AND (NOT (drop_standby_slot AND replicated)))),
-    CONSTRAINT database_vms_state_check_v2 CHECK ((state = ANY (ARRAY['provisioning'::text, 'parked'::text, 'waking'::text, 'running'::text, 'parking'::text, 'moving'::text, 'upgrading'::text, 'deleting'::text, 'failed'::text, 'rehearsal_restore'::text, 'maintenance_handoff'::text]))),
+    CONSTRAINT database_vms_state_check_v2 CHECK ((state = ANY (ARRAY['provisioning'::text, 'parked'::text, 'waking'::text, 'running'::text, 'parking'::text, 'moving'::text, 'upgrading'::text, 'deleting'::text, 'failed'::text, 'rehearsal_restore'::text, 'maintenance_handoff'::text, 'regional_restore'::text]))),
     CONSTRAINT database_vms_upgrade CHECK ((((upgrade_major IS NULL) = (upgrade_from IS NULL)) AND ((upgrade_major IS NULL) = (upgrade_operation IS NULL)) AND ((upgrade_major IS NULL) OR ((upgrade_from >= 14) AND (upgrade_major > upgrade_from) AND (upgrade_major <= 18))) AND ((upgrade_operation IS NULL) OR (upgrade_operation ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text)) AND ((state = 'upgrading'::text) = (upgrade_lease_until IS NOT NULL)) AND ((state <> 'upgrading'::text) OR ((upgrade_major IS NOT NULL) AND (upgrade_result IS NULL) AND (upgrade_from = postgres_major))) AND ((state = 'upgrading'::text) OR (upgrade_major IS NULL) OR (upgrade_result IS NOT NULL)) AND ((upgrade_result IS NULL) OR (upgrade_result <> 'ok'::text) OR (postgres_major = upgrade_major)) AND ((upgrade_result IS NULL) OR (upgrade_result = 'ok'::text) OR (postgres_major = upgrade_from)))),
     CONSTRAINT database_vms_upgrade_result_check CHECK ((upgrade_result = ANY (ARRAY['ok'::text, 'refused'::text, 'failed'::text]))),
     CONSTRAINT database_vms_vcpu_count_check CHECK (((vcpu_count >= 1) AND (vcpu_count <= 32))),
@@ -51589,6 +51614,7 @@ CREATE TABLE public.native_postgres_base_refreshes (
     reason text DEFAULT ''::text NOT NULL,
     standby_restarted boolean DEFAULT false NOT NULL,
     handoff_started boolean DEFAULT false NOT NULL,
+    handoff_reserved_mb bigint DEFAULT 0 NOT NULL,
     CONSTRAINT native_postgres_base_refreshes_check CHECK (((finished_at IS NULL) = (outcome = ''::text))),
     CONSTRAINT native_postgres_base_refreshes_outcome_check CHECK ((outcome = ANY (ARRAY[''::text, 'succeeded'::text, 'still_stale'::text, 'interrupted'::text, 'window_closed'::text, 'runtime_failed'::text]))),
     CONSTRAINT native_postgres_base_refreshes_rolling_check CHECK ((((rolling_standby_node IS NULL) AND (rolling_image IS NULL) AND (phase = ''::text) AND (NOT standby_restarted)) OR ((rolling_standby_node IS NOT NULL) AND (rolling_standby_node <> node_id) AND refresh_base AND (resize_id IS NULL) AND ((phase = 'refreshing_standby'::text) OR ((phase = ANY (ARRAY['switching_over'::text, 'restoring_redundancy'::text])) AND (COALESCE(rolling_image, ''::text) <> ''::text))))))
@@ -95669,6 +95695,13 @@ CREATE TRIGGER data_repair_rehearsals_require_cleanup BEFORE DELETE ON public.da
 --
 
 CREATE TRIGGER data_upstreams_notify_trg AFTER INSERT OR DELETE OR UPDATE ON public.data_upstreams FOR EACH ROW EXECUTE FUNCTION public.data_upstreams_notify();
+
+
+--
+-- Name: database_nodes database_node_handoff_admission; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER database_node_handoff_admission BEFORE UPDATE OF admission_ceiling_mb ON public.database_nodes FOR EACH ROW EXECUTE FUNCTION public.project_database_handoff_admission();
 
 
 --

@@ -27984,11 +27984,13 @@ ON CONFLICT (id) DO UPDATE SET target_url = EXCLUDED.target_url,
 WHERE database_nodes.recovery_region = EXCLUDED.recovery_region;
 
 -- name: ListDatabaseNodes :many
-SELECT id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, postgres_majors, lifecycle, recovery_region
+SELECT id, target_url, COALESCE(configured_admission_ceiling_mb, admission_ceiling_mb)::integer AS admission_ceiling_mb,
+    volume_capacity_bytes, boot_slots, postgres_majors, lifecycle, recovery_region
 FROM database_nodes ORDER BY id;
 
 -- name: LockDatabaseNode :one
-SELECT id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, lifecycle
+SELECT id, target_url, COALESCE(configured_admission_ceiling_mb, admission_ceiling_mb)::integer AS admission_ceiling_mb,
+    volume_capacity_bytes, boot_slots, lifecycle
 FROM database_nodes WHERE id = sqlc.arg(id) FOR UPDATE;
 
 -- name: DatabaseNodeUsage :many
@@ -28126,7 +28128,7 @@ UPDATE database_vms SET resize_pending = false WHERE database_id = sqlc.arg(data
 
 -- name: RecordDatabaseVMRestore :execrows
 UPDATE database_vms SET restore_recovered_to = sqlc.arg(recovered_to)
-WHERE database_id = sqlc.arg(database_id) AND state IN ('provisioning', 'rehearsal_restore') AND restore_source IS NOT NULL;
+WHERE database_id = sqlc.arg(database_id) AND state IN ('provisioning', 'rehearsal_restore', 'regional_restore') AND restore_source IS NOT NULL;
 
 -- name: ClaimDatabaseVMRestore :one
 -- Takes (held is NULL) or renews (held is the current lease) the lease on
@@ -28134,7 +28136,7 @@ WHERE database_id = sqlc.arg(database_id) AND state IN ('provisioning', 'rehears
 -- clocks do not matter.
 UPDATE database_vms
 SET restore_lease_until = now() + make_interval(secs => sqlc.arg(lease_seconds)::double precision)
-WHERE database_id = sqlc.arg(database_id) AND state IN ('provisioning', 'rehearsal_restore') AND restore_source IS NOT NULL
+WHERE database_id = sqlc.arg(database_id) AND state IN ('provisioning', 'rehearsal_restore', 'regional_restore') AND restore_source IS NOT NULL
   AND (restore_lease_until IS NULL OR restore_lease_until < now()
        OR restore_lease_until = sqlc.narg(held)::timestamptz)
 RETURNING restore_lease_until;

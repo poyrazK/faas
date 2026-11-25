@@ -260,4 +260,72 @@ func TestRollingMaintenanceReopensPrimaryBeforeStoppingIt(t *testing.T) {
 		vmm.callCount("stop") != 0 || vmm.callCount("promote") != 0 {
 		t.Fatalf("cancel handoff: %+v, %v, %s, %s, %s, events %s", after, err, phase, outcome, reason, vmm.nodeCalls())
 	}
+	var reserved bool
+	if err := store.pool.QueryRow(ctx, `SELECT configured_admission_ceiling_mb IS NOT NULL
+		FROM database_nodes WHERE id = $1`, vm.NodeID).Scan(&reserved); err != nil || reserved {
+		t.Fatalf("canceled handoff retained a reservation: %v, %v", reserved, err)
+	}
+}
+
+func TestRollingHandoffFailsOverDeclaredLostPrimary(t *testing.T) {
+	store, s, vmm, vm := rollingMaintenanceFixture(t)
+	ctx := t.Context()
+	vmm.stale[vm.NodeID+"/"+vm.DatabaseID] = true
+	setRollingFixtureWindow(t, store, vm, -5*time.Minute)
+	if admitted, err := store.beginRollingRefresh(ctx, vm); err != nil || !admitted {
+		t.Fatalf("admit handoff: %v, %v", admitted, err)
+	}
+	for range 2 {
+		if progressed, err := s.advanceRollingRefresh(ctx, store, vm.DatabaseID); err != nil || !progressed {
+			t.Fatalf("prepare handoff: %v, %v", progressed, err)
+		}
+	}
+	primary, err := s.node(ctx, vm.NodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalCeiling := primary.AdmissionCeilingMB
+	checkCeiling := func(configured, legacy int) {
+		t.Helper()
+		var raw int
+		err := store.pool.QueryRow(ctx, `SELECT admission_ceiling_mb FROM database_nodes WHERE id = $1`, primary.ID).Scan(&raw)
+		if err != nil || raw != legacy {
+			t.Fatalf("previous scheduler's ceiling = %d, want %d: %v", raw, legacy, err)
+		}
+		current, err := s.node(ctx, primary.ID)
+		if err != nil || current.AdmissionCeilingMB != configured {
+			t.Fatalf("current scheduler's configured ceiling = %d, want %d: %v", current.AdmissionCeilingMB, configured, err)
+		}
+	}
+	reserved := int(billableMB(vm.MemMiB))
+	checkCeiling(originalCeiling, originalCeiling-reserved)
+
+	// The old registry writes the configured limit to the original column.
+	// That write has to preserve the reservation while changing the limit.
+	primary.AdmissionCeilingMB = 2048
+	if err := store.UpsertNode(ctx, primary); err != nil {
+		t.Fatal(err)
+	}
+	checkCeiling(2048, 2048-reserved)
+
+	vmm.mu.Lock()
+	vmm.down[primary.ID] = true
+	vmm.mu.Unlock()
+	s.resumeRollingRefreshes(ctx, store)
+	phase, outcome, reason := rollingFixtureOutcome(t, store, vm)
+	if phase != switchingOver || outcome != "" || reason != "primary_stop_unconfirmed" || vmm.callCount("promote") != 0 {
+		t.Fatalf("unconfirmed primary loss: %s, %s, %s, events %s", phase, outcome, reason, vmm.nodeCalls())
+	}
+	checkCeiling(2048, 2048-reserved)
+
+	primary.Lifecycle = NodeUnavailable
+	if err := store.UpsertNode(ctx, primary); err != nil {
+		t.Fatal(err)
+	}
+	s.resumeRollingRefreshes(ctx, store)
+	after, err := s.Wake(ctx, vm.DatabaseID)
+	if err != nil || after.State != StateRunning || after.NodeID != vm.StandbyNode || vmm.callCount("promote") != 1 {
+		t.Fatalf("fail over fenced primary: %+v, %v, events %s", after, err, vmm.nodeCalls())
+	}
+	checkCeiling(2048, 2048)
 }

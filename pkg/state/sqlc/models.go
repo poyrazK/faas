@@ -4358,16 +4358,17 @@ type DataUpstreamProbesDefault struct {
 }
 
 type DatabaseNode struct {
-	ID                  string
-	TargetUrl           string
-	AdmissionCeilingMb  int32
-	VolumeCapacityBytes int64
-	BootSlots           int32
-	PostgresMajors      []int32
-	Lifecycle           string
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
-	RecoveryRegion      string
+	ID                           string
+	TargetUrl                    string
+	AdmissionCeilingMb           int32
+	VolumeCapacityBytes          int64
+	BootSlots                    int32
+	PostgresMajors               []int32
+	Lifecycle                    string
+	CreatedAt                    pgtype.Timestamptz
+	UpdatedAt                    pgtype.Timestamptz
+	RecoveryRegion               string
+	ConfiguredAdmissionCeilingMb pgtype.Int4
 }
 
 type DatabaseRestoreDrill struct {
@@ -10942,6 +10943,7 @@ type NativePostgresBaseRefresh struct {
 	Reason             string
 	StandbyRestarted   bool
 	HandoffStarted     bool
+	HandoffReservedMb  int64
 }
 
 type NativePostgresBindingTimeout struct {

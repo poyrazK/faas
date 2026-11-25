@@ -7,6 +7,9 @@ import (
 	"regexp"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/onebox-faas/faas/pkg/dbarchive"
 )
 
@@ -48,6 +51,36 @@ func (s *Scheduler) probeRecoveryArchive(ctx context.Context, node Node, source 
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	return checker.CheckRecoveryArchive(ctx, node, source, target, major, latest, timeline)
+}
+
+// A busy or unreachable archive provides no evidence about the reserved
+// timeline. Keep the reservation while the restore's context allows retries.
+func (s *Scheduler) checkReservedRecovery(ctx context.Context, node Node, vm VM) (dbarchive.RestoreCheck, error) {
+	for delay := 250 * time.Millisecond; ; delay = min(delay*2, 5*time.Second) {
+		probe, err := s.probeRecoveryArchive(ctx, node, vm.RestoreSource, vm.RestoreTarget, vm.Major, false, vm.RestoreTimeline)
+		retry := false
+		if err == nil {
+			retry = probe.Outcome == dbarchive.RestoreUnverified &&
+				(probe.Reason == "archive_busy" || probe.Reason == "archive_unavailable")
+		} else {
+			switch status.Code(err) {
+			case codes.Unavailable, codes.DeadlineExceeded, codes.ResourceExhausted:
+				retry = true
+			default:
+				retry = errors.Is(err, context.DeadlineExceeded)
+			}
+		}
+		if !retry {
+			return probe, err
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return probe, ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 func (s *Scheduler) restoreFromRecovery(ctx context.Context, req RestoreRequest) (VM, error) {

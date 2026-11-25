@@ -148,7 +148,7 @@ func (s *Scheduler) SampleArchives(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	vms, err := s.store.List(ctx, StateProvisioning, StateParked, StateWaking, StateRunning, StateParking, stateMaintenanceHandoff, StateFailed)
+	vms, err := s.store.List(ctx, StateProvisioning, stateRegionalRestore, StateParked, StateWaking, StateRunning, StateParking, stateMaintenanceHandoff, StateFailed)
 	if err != nil {
 		return 0, err
 	}
