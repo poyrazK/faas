@@ -51,6 +51,8 @@ func consumerAuthKeyOf(key state.ConsumerKey, err error) (gateway.ConsumerAuthKe
 		Scopes:     append([]string(nil), key.Scopes...),
 		ExpiresAt:  key.ExpiresAt,
 		RevokedAt:  key.RevokedAt,
+		// A stage key's consumer is not billed (ADR-20261104120000).
+		EnvironmentID: key.EnvironmentID,
 	}, nil
 }
 

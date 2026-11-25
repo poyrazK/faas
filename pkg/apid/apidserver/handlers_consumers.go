@@ -48,11 +48,61 @@ func (s *server) consumerEnvironment(w http.ResponseWriter, r *http.Request) (st
 		return "", environments, true
 	}
 	if !ok {
-		api.WriteProblem(w, api.NewProblem(http.StatusNotImplemented, api.CodeValidation, "Environments unavailable",
+		api.WriteProblem(w, api.NewProblem(http.StatusNotImplemented, api.CodeNotImplemented, "Environments unavailable",
 			"this server does not keep API consumers per environment"))
 		return "", nil, false
 	}
 	return environment, environments, true
+}
+
+// stageConsumersOpen refuses creating a stage's consumer until operators open
+// stage_api_consumers_enabled, which waits for every gateway to run the
+// release that keeps stage keys off production hosts (ADR-20261104120000
+// Release).
+func (s *server) stageConsumersOpen(w http.ResponseWriter, environment string) bool {
+	if environment == "" || s.runtimeBool(runtimeConfigStageAPIConsumers, false) {
+		return true
+	}
+	api.WriteProblem(w, api.NewProblem(http.StatusNotImplemented, api.CodeNotImplemented, "Stage consumers unavailable",
+		"API consumers in a stage are not available yet; create the consumer in production"))
+	return false
+}
+
+// validCreateAPIConsumer trims and checks a create request; trials are
+// production's.
+func (s *server) validCreateAPIConsumer(w http.ResponseWriter, accountID, environment string, req *api.CreateAPIConsumerRequest) bool {
+	req.ExternalRef = strings.TrimSpace(req.ExternalRef)
+	req.Name = strings.TrimSpace(req.Name)
+	if req.ExternalRef == "" || len(req.ExternalRef) > 256 || req.Name == "" || len(req.Name) > 128 {
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Invalid consumer", "external_ref must be 1-256 characters and name must be 1-128 characters"))
+		return false
+	}
+	if req.TrialDays != 0 && !s.apiMonetizationFor(accountID) {
+		// Trials are API monetization: until it is released the field is
+		// answered like any unknown one (ADR-20261018090210).
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", `json: unknown field "trial_days"`))
+		return false
+	}
+	if req.TrialDays != 0 && (!consumercontrols.ValidTrialDays(req.TrialDays) || environment != "") {
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Invalid consumer", fmt.Sprintf("trial_days must be 1 to %d, and only production consumers have trials", state.MaxAPIConsumerTrialDays)))
+		return false
+	}
+	return true
+}
+
+// writeCreateAPIConsumerError answers a store error from consumer creation.
+func (s *server) writeCreateAPIConsumerError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, state.ErrNotFound):
+		s.notFound(w, "no such environment")
+	case errors.Is(err, state.ErrConflict):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
+			"Consumer already exists", "external_ref is already registered for this app"))
+	default:
+		api.WriteProblem(w, api.ErrInternal("could not create API consumer"))
+	}
 }
 
 // listAPIConsumersIn lists production's consumers or a stage's.
@@ -117,7 +167,7 @@ func (s *server) createAPIConsumer(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 	environment, environments, ok := s.consumerEnvironment(w, r)
-	if !ok {
+	if !ok || !s.stageConsumersOpen(w, environment) {
 		return
 	}
 	var req api.CreateAPIConsumerRequest
@@ -125,36 +175,12 @@ func (s *server) createAPIConsumer(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
-	req.ExternalRef = strings.TrimSpace(req.ExternalRef)
-	req.Name = strings.TrimSpace(req.Name)
-	if req.ExternalRef == "" || len(req.ExternalRef) > 256 || req.Name == "" || len(req.Name) > 128 {
-		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid consumer", "external_ref must be 1-256 characters and name must be 1-128 characters"))
-		return
-	}
-	if req.TrialDays != 0 && !s.apiMonetizationFor(acct.ID) {
-		// Trials are API monetization: until it is released the field is
-		// answered like any unknown one (ADR-20261018090210).
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", `json: unknown field "trial_days"`))
-		return
-	}
-	if req.TrialDays != 0 && (!consumercontrols.ValidTrialDays(req.TrialDays) || environment != "") {
-		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid consumer", fmt.Sprintf("trial_days must be 1 to %d, and only production consumers have trials", state.MaxAPIConsumerTrialDays)))
+	if !s.validCreateAPIConsumer(w, acct.ID, environment, &req) {
 		return
 	}
 	c, err := s.createAPIConsumerIn(r, environments, acct.ID, app.ID, environment, req)
 	if err != nil {
-		if errors.Is(err, state.ErrNotFound) {
-			s.notFound(w, "no such environment")
-			return
-		}
-		if errors.Is(err, state.ErrConflict) {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
-				"Consumer already exists", "external_ref is already registered for this app"))
-			return
-		}
-		api.WriteProblem(w, api.ErrInternal("could not create API consumer"))
+		s.writeCreateAPIConsumerError(w, err)
 		return
 	}
 	s.audit.Emit(r.Context(), "api_consumer.created", &acct.ID, map[string]any{

@@ -125,6 +125,9 @@ func refuseStageConsumerTrialDB(ctx context.Context, db interface {
 	return nil
 }
 
+// productionScopeSlugs are the environment slugs IsProductionScope names.
+var productionScopeSlugs = []string{"production", DefaultEnvScope}
+
 // ConsumerKeyForEnvironment answers a stage host with the stage's keys when
 // it holds consumers of its own, and with production's otherwise. The
 // production environment row resolves to production.
@@ -137,9 +140,11 @@ func (s *PgStore) ConsumerKeyForEnvironment(ctx context.Context, accountID, appI
 	}
 	row := s.pool.QueryRow(ctx,
 		`with stage as (
-		     select e.id from project_environments e join apps a on a.project_id = e.project_id
-		      where a.id = $1::uuid and e.id = $4::uuid and e.slug <> 'production'
-		        and exists (select 1 from api_consumers c where c.app_id = a.id and c.environment_id = e.id)
+		     select e.id from project_environments e
+		       join apps a on a.project_id = e.project_id and a.account_id = e.account_id
+		      where a.id = $1::uuid and e.id = $4::uuid and e.slug <> all($5::text[])
+		        and exists (select 1 from api_consumers c
+		                     where c.app_id = a.id and c.environment_id = e.id and c.revoked_at is null)
 		 )
 		 select `+consumerKeySelectCols+`
 		   from consumer_keys
@@ -152,7 +157,7 @@ func (s *PgStore) ConsumerKeyForEnvironment(ctx context.Context, accountID, appI
 		        join platform_tenants t on t.id = c.platform_tenant_id
 		        where c.id = consumer_keys.consumer_id and t.status = 'suspended'
 		    )`,
-		appID, accountID, prefix, environmentID)
+		appID, accountID, prefix, environmentID, productionScopeSlugs)
 	k, err := scanConsumerKeyRow(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ConsumerKey{}, ErrNotFound

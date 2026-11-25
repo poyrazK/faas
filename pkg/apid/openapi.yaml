@@ -23166,7 +23166,8 @@ paths:
         has any, and production's until then. Plan assignments follow the
         consumer; trials and billing apply to production consumers only. Until
         the release after this one, a stage consumer's `external_ref` and key
-        names must differ from production's.
+        names must differ from production's. Creating a stage's consumer
+        answers 501 `not_implemented` until the platform enables it.
       parameters:
         - name: environment
           in: query

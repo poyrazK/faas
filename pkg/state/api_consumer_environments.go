@@ -137,20 +137,20 @@ func (m *MemStore) stageConsumerLocked(consumerID string) bool {
 	return ok && c.EnvironmentID != ""
 }
 
-func (m *MemStore) ConsumerKeyForEnvironment(ctx context.Context, accountID, appID, environmentID, prefix string) (ConsumerKey, error) {
+func (m *MemStore) ConsumerKeyForEnvironment(_ context.Context, accountID, appID, environmentID, prefix string) (ConsumerKey, error) {
 	if accountID == "" || appID == "" || prefix == "" {
 		return ConsumerKey{}, ErrNotFound
 	}
 	m.mu.Lock()
-	stage := m.stageConsumerEnvironmentLocked(appID, environmentID)
-	m.mu.Unlock()
-	if stage == "" {
-		return m.ConsumerKeyByAppAndPrefix(ctx, accountID, appID, prefix)
-	}
-	m.mu.Lock()
 	defer m.mu.Unlock()
+	stage := m.stageConsumerEnvironmentLocked(accountID, appID, environmentID)
 	for _, k := range m.consumerKeys {
 		if k.AccountID == accountID && k.AppID == appID && k.Prefix == prefix && k.EnvironmentID == stage {
+			if tenantID := m.platformTenantByConsumer[k.ConsumerID]; tenantID != "" {
+				if tenant, ok := m.platformTenants[tenantID]; ok && tenant.Status == PlatformTenantSuspended {
+					return ConsumerKey{}, ErrNotFound
+				}
+			}
 			return k, nil
 		}
 	}
@@ -158,19 +158,19 @@ func (m *MemStore) ConsumerKeyForEnvironment(ctx context.Context, accountID, app
 }
 
 // stageConsumerEnvironmentLocked is the environment whose keys answer a
-// request to environmentID's host: the stage when it holds consumers of its
-// own, otherwise "" (production).
-func (m *MemStore) stageConsumerEnvironmentLocked(appID, environmentID string) string {
+// request to environmentID's host: the stage when it holds active consumers
+// of its own, otherwise "" (production).
+func (m *MemStore) stageConsumerEnvironmentLocked(accountID, appID, environmentID string) string {
 	if environmentID == "" {
 		return ""
 	}
 	env, ok := m.projectEnvironments[environmentID]
 	app, found := m.apps[appID]
-	if !ok || !found || IsProductionScope(env.Slug) || env.ProjectID != app.ProjectID {
+	if !ok || !found || IsProductionScope(env.Slug) || env.ProjectID != app.ProjectID || env.AccountID != accountID || app.AccountID != accountID {
 		return ""
 	}
 	for _, c := range m.apiConsumers {
-		if c.AppID == appID && c.EnvironmentID == environmentID {
+		if c.AppID == appID && c.EnvironmentID == environmentID && c.Active() {
 			return environmentID
 		}
 	}

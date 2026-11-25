@@ -125,6 +125,14 @@ func exerciseAPIConsumerEnvironments(t *testing.T, store apiConsumerEnvironmentT
 		EffectiveFrom: now}); err != nil {
 		t.Fatalf("stage consumer plan assignment = %v, want it to follow the consumer", err)
 	}
+
+	// A stage whose consumers are all revoked answers with production's keys again.
+	if _, err := store.RevokeAPIConsumer(ctx, account.ID, staged.ID); err != nil {
+		t.Fatalf("RevokeAPIConsumer: %v", err)
+	}
+	if k, err := store.ConsumerKeyForEnvironment(ctx, account.ID, app.ID, stage.ID, prodKey.Prefix); err != nil || k.ID != prodKey.ID {
+		t.Fatalf("stage with only revoked consumers = %+v, %v; want production's key", k, err)
+	}
 }
 
 func TestMemStoreAPIConsumerEnvironments(t *testing.T) {

@@ -31,6 +31,12 @@ func TestAPIConsumersInEnvironment(t *testing.T) {
 	}
 	const base = "/v1/apps/env-api/consumers"
 
+	// Creating a stage's consumer waits for the runtime key.
+	if res := e.Do(t, http.MethodPost, base+"?environment=staging", api.CreateAPIConsumerRequest{ExternalRef: "early", Name: "Early"}, nil); res.Code != http.StatusNotImplemented {
+		t.Fatalf("stage consumer before the key = %d %s, want 501", res.Code, res.Body)
+	}
+	(*e.S()).EnableStageAPIConsumersForTest(t)
+
 	production := tenantJSON[api.APIConsumerResponse](t, e, http.MethodPost, base,
 		api.CreateAPIConsumerRequest{ExternalRef: "customer-1", Name: "Acme"}, http.StatusCreated)
 	staged := tenantJSON[api.APIConsumerResponse](t, e, http.MethodPost, base+"?environment=staging",

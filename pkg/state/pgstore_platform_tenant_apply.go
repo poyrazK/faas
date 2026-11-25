@@ -80,7 +80,7 @@ func planPlatformTenantApply(ctx context.Context, tx pgx.Tx, in ApplyPlatformTen
 			return ApplyPlatformTenantResult{}, ErrNotFound
 		}
 		current, err := scanAPIConsumerRow(tx.QueryRow(ctx, `select `+apiConsumerSelectCols+`
-			from api_consumers where app_id = $1::uuid and external_ref = $2 for update`, wanted.AppID, wanted.ExternalRef))
+			from api_consumers where app_id = $1::uuid and external_ref = $2 and environment_id is null for update`, wanted.AppID, wanted.ExternalRef))
 		item := ApplyPlatformTenantConsumerResult{Consumer: current, Action: "create"}
 		if errors.Is(err, pgx.ErrNoRows) {
 			item.Consumer = APIConsumer{AccountID: in.AccountID, AppID: wanted.AppID,

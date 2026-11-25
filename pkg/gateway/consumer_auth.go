@@ -47,6 +47,9 @@ type ConsumerAuthKey struct {
 	Scopes     []string
 	ExpiresAt  *time.Time
 	RevokedAt  *time.Time
+	// EnvironmentID is the stage the key's consumer belongs to; empty for
+	// production (ADR-20261104120000 amendment 2026-11-22).
+	EnvironmentID string
 }
 
 // Active reports whether a key is eligible for authentication at now. The
@@ -299,6 +302,7 @@ func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, re
 	authenticated.ConsumerID = consumer.ID
 	authenticated.ConsumerKeyID = key.ID
 	authenticated.PlatformTenantID = consumer.PlatformTenantID
+	authenticated.StageConsumer = key.EnvironmentID != ""
 	ctx := authmw.WithConsumer(r.Context(), authmw.ConsumerIdentity{
 		ID:     consumer.ID,
 		AppID:  keyAppID,

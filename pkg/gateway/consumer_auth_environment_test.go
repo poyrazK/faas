@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -57,6 +59,46 @@ func TestEnforceConsumerAuthEnvironmentHostUsesEnvironmentKeys(t *testing.T) {
 			}
 			if tc.wantEnvironment && store.appLookups != 0 {
 				t.Fatalf("stage host also read production keys %d times", store.appLookups)
+			}
+		})
+	}
+}
+
+// adr: 20261104120000 — a stage's consumers are not billed: a request with a
+// stage key carries no consumer in its usage and skips plan admission, while
+// a production key keeps both.
+func TestEnforceConsumerAuthStageKeyIsUnbilled(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		environment string
+		wantStage   bool
+	}{
+		{"production key", "", false},
+		{"stage key", "env-1", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base, token := consumerAuthFixture()
+			consumerID := uuid.NewString()
+			base.key.ConsumerID, base.consumer.ID = consumerID, consumerID
+			key := base.key
+			key.EnvironmentID = tc.environment
+			store := &environmentConsumerAuthStore{fakeConsumerAuthStore: *base, environmentKey: key}
+			store.key = key
+			h := NewHandlerWith(nil, nil, nil).WithConsumerAuth(store)
+			app := App{ID: "app-1", AccountID: "acct-1", PublicEnvironmentID: tc.environment, ConsumerAuthMode: api.ConsumerAuthModeRequired}
+			_, r, ok := runConsumerAuthGate(t, h, app, http.MethodGet, token)
+			if !ok {
+				t.Fatal("key refused")
+			}
+			if got := authenticatedFrom(r.Context()).StageConsumer; got != tc.wantStage {
+				t.Fatalf("StageConsumer = %v, want %v", got, tc.wantStage)
+			}
+			attributed := requestUsageAttribution(r).ConsumerID
+			if tc.wantStage && attributed != "" {
+				t.Fatalf("stage usage attributed to consumer %q", attributed)
+			}
+			if !tc.wantStage && attributed != consumerID {
+				t.Fatalf("production usage consumer = %q, want %s", attributed, consumerID)
 			}
 		})
 	}

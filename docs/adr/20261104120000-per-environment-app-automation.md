@@ -422,3 +422,11 @@ the contract release a stage consumer's external reference and key names must
 differ from production's, so a full clone, which copies them, ships with the
 contract release; full clone admission stays off until every apid and gateway
 runs it.
+
+An N-1 gateway reads keys by app and prefix with no environment, so it would
+accept a stage's key on a production host. Creating a stage's consumers waits
+for the apid runtime key `stage_api_consumers_enabled` (default off), which
+operators turn on once every gatewayd-internal runs this release. A stage's
+consumers are not billed: the gateway records their usage without a consumer
+and skips their plan admission, and billing runs read production's consumers
+only.
