@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -744,82 +745,144 @@ def _fetch(url: str) -> tuple[int, str]:
         return 0, str(error)
 
 
-def _http(method: str, url: str, data: bytes | None = None, headers: dict | None = None) -> tuple[int, str]:
+def _http(method: str, url: str, data: bytes | None = None, headers: dict | None = None, timeout: float = 30) -> tuple[int, str]:
     request = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with urllib.request.urlopen(request, timeout=max(timeout, 1)) as response:
             return response.status, response.read(65536).decode("utf-8", "replace")
     except urllib.error.HTTPError as error:
         return error.code, error.read(65536).decode("utf-8", "replace")
-    except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+    except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException) as error:
         return 0, str(error)
 
 
-def socketio_event(base: str, event: str, http=_http, timeout_s: float = 30) -> list:
-    """The arguments of the next `event` a Socket.IO v4 server emits, read
-    over the plain HTTP long-polling transport (no websocket client needed)."""
-    status, body = http("GET", f"{base}/socket.io/?EIO=4&transport=polling")
+class SocketIOUnavailable(ValueError):
+    """The Socket.IO server refused or broke the session."""
+
+    def __init__(self, message: str, status: int = 0):
+        super().__init__(message)
+        self.status = status
+
+
+_SOCKETIO_TEXT = {"Content-Type": "text/plain;charset=UTF-8"}
+
+
+def _socketio_session(base: str, http, timeout_s: float) -> str:
+    status, body = http("GET", f"{base}/socket.io/?EIO=4&transport=polling", timeout=timeout_s)
     if status != 200 or not body.startswith("0"):
-        raise ValueError(f"socket.io handshake {status}: {body[:80]!r}")
-    poll = f"{base}/socket.io/?EIO=4&transport=polling&sid={urllib.parse.quote(json.loads(body[1:])['sid'])}"
-    status, body = http("POST", poll, b"40", {"Content-Type": "text/plain;charset=UTF-8"})
+        raise SocketIOUnavailable(f"socket.io handshake {status}: {body[:80]!r}", status)
+    try:
+        sid = json.loads(body[1:])["sid"]
+    except (ValueError, KeyError, TypeError) as error:
+        raise SocketIOUnavailable(f"socket.io handshake unreadable: {body[:80]!r}") from error
+    poll = f"{base}/socket.io/?EIO=4&transport=polling&sid={urllib.parse.quote(str(sid))}"
+    status, body = http("POST", poll, b"40", _SOCKETIO_TEXT, timeout=timeout_s)
     if status != 200:
-        raise ValueError(f"socket.io connect {status}: {body[:80]!r}")
+        raise SocketIOUnavailable(f"socket.io connect {status}: {body[:80]!r}", status)
+    return poll
+
+
+def socketio_event(base: str, event: str, http=_http, timeout_s: float = 30, attempts: int = 3) -> list:
+    """The arguments of the next `event` a Socket.IO v4 server emits, read
+    over the plain HTTP long-polling transport (no websocket client needed).
+
+    A polling session lives on one server instance. When an app runs more
+    than one, a request can reach an instance that does not know the session
+    (400 "Session ID unknown"); that starts a new session instead of failing.
+    The session is always closed: disconnect from the namespace, then close
+    the transport."""
     deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        status, body = http("GET", poll)
-        if status != 200:
-            raise ValueError(f"socket.io poll {status}: {body[:80]!r}")
-        for packet in body.split("\x1e"):
-            if packet == "2":
-                http("POST", poll, b"3", {"Content-Type": "text/plain;charset=UTF-8"})
-            elif packet.startswith("42"):
-                name, *args = json.loads(packet[2:])
-                if name == event:
-                    return args
-    raise TimeoutError(f"no socket.io {event!r} event within {timeout_s:.0f}s")
+    last = ""
+    for _ in range(attempts):
+        poll = ""
+        try:
+            poll = _socketio_session(base, http, max(deadline - time.monotonic(), 1))
+            while time.monotonic() < deadline:
+                status, body = http("GET", poll, timeout=max(deadline - time.monotonic(), 1))
+                if status == 0 and time.monotonic() >= deadline - 1:
+                    break  # the long poll outlived the deadline: no event came
+                if status != 200:
+                    raise SocketIOUnavailable(f"socket.io poll {status}: {body[:80]!r}", status)
+                for packet in body.split("\x1e"):
+                    if packet == "2":
+                        http("POST", poll, b"3", _SOCKETIO_TEXT, timeout=5)
+                    elif packet.startswith(("44", "41")) or packet == "1":
+                        raise SocketIOUnavailable(f"socket.io refused the connection: {packet[:80]!r}")
+                    elif packet.startswith("42"):
+                        name, *args = json.loads(packet[2:])
+                        if name == event:
+                            return args
+            raise TimeoutError(f"no socket.io {event!r} event within {timeout_s:.0f}s")
+        except SocketIOUnavailable as error:
+            last = str(error)
+            if error.status != 400 or time.monotonic() >= deadline:
+                raise
+        finally:
+            if poll:
+                http("POST", poll, b"41\x1e1", _SOCKETIO_TEXT, timeout=5)
+    raise SocketIOUnavailable(f"socket.io session kept moving between instances: {last}", 400)
 
 
-def _vote_scores(result_url: str, http) -> dict:
-    (scores,) = socketio_event(result_url, "scores", http=http)[:1]
-    return json.loads(scores) if isinstance(scores, str) else scores
+def _vote_scores(result_url: str, http, timeout_s: float) -> dict:
+    args = socketio_event(result_url, "scores", http=http, timeout_s=timeout_s)
+    scores = json.loads(args[0]) if args and isinstance(args[0], str) else (args[0] if args else None)
+    if not isinstance(scores, dict) or not all(isinstance(v, int) for v in scores.values()):
+        raise ValueError(f"scores is not a count per option: {str(args)[:80]}")
+    return scores
+
+
+def _created_public_app(gregale, created_apps: list[str], pattern: str, exclude: str = "") -> tuple[str, str]:
+    for app in created_apps:
+        if app != exclude and re.search(pattern, app):
+            url = _app_url(gregale.get(f"/v1/apps/{app}"))
+            if url:
+                return app, url
+    return "", ""
 
 
 def vote_counted_check(gregale, created_apps: list[str], check: dict, http=_http, deadline_s: float = 120) -> tuple[bool, str]:
     """End to end for the voting app: cast a vote on the vote app and wait for
     the result app to count it. GETs of both pages passed on rc.380 while every
     vote POST returned 500 (Redis unreachable) and the votes table was never
-    created, so serving pages alone said nothing about the app working."""
-    def public(pattern: str) -> str:
-        for app in created_apps:
-            if re.search(pattern, app):
-                url = _app_url(gregale.get(f"/v1/apps/{app}"))
-                if url:
-                    return url
-        return ""
-    vote_url, result_url = public(check.get("vote_match", "vote")), public(check.get("result_match", "result"))
+    created, so serving pages alone said nothing about the app working.
+
+    The grader votes as a new voter for the option with fewer votes, so its own
+    vote is the likeliest change; a total that grows still cannot prove which
+    vote was counted. Both apps must be public: the grader has no session to
+    vote or read scores as the owner."""
+    result_app, result_url = _created_public_app(gregale, created_apps, check.get("result_match", r"(^|-)result$"))
+    vote_app, vote_url = _created_public_app(gregale, created_apps, check.get("vote_match", r"(^|-)vote$"), exclude=result_app)
     if not vote_url or not result_url:
-        return False, f"no public vote ({vote_url or '-'}) or result ({result_url or '-'}) app"
-    option = check.get("option", "a")
+        return False, f"no public vote ({vote_app or '-'}) or result ({result_app or '-'}) app among {','.join(created_apps)}"
+    deadline = time.monotonic() + max(deadline_s, 0)
+    read_s = lambda: min(30.0, max(deadline - time.monotonic(), 5.0))  # noqa: E731
     try:
-        before = _vote_scores(result_url, http).get(option, 0)
-    except (ValueError, TimeoutError, KeyError, TypeError) as error:
-        return False, f"result scores unreadable: {error}"
+        before = _vote_scores(result_url, http, read_s())
+    except SocketIOUnavailable as error:
+        private = " (the result app requires sign-in)" if error.status == 401 else ""
+        return False, f"{result_app} scores unreadable{private}: {error}"
+    except (ValueError, TimeoutError) as error:
+        return False, f"{result_app} scores unreadable: {error}"
+    options = sorted(before) or ["a"]
+    option = check.get("option") or min(options, key=lambda o: (before.get(o, 0), o))
     voter = "agent-eval-" + secrets.token_hex(8)
     status, body = http("POST", vote_url + check.get("path", "/"), urllib.parse.urlencode({"vote": option}).encode(),
                         {"Content-Type": "application/x-www-form-urlencoded", "Cookie": f"voter_id={voter}"})
     if status != 200:
-        return False, f"vote POST {status}: {body[:120]!r}"
-    deadline, after, last = time.monotonic() + deadline_s, before, ""
+        private = " (the vote app requires sign-in)" if status == 401 else ""
+        return False, f"{vote_app} vote POST {status}{private}: {body[:120]!r}"
+    base, after, error_detail = before.get(option, 0), None, ""
     while True:
         try:
-            after = _vote_scores(result_url, http).get(option, 0)
-            if after > before:
-                return True, f"{option}: {before} -> {after}"
-        except (ValueError, TimeoutError, KeyError, TypeError) as error:
-            last = f" ({error})"
+            after = _vote_scores(result_url, http, read_s()).get(option, 0)
+            if after > base:
+                return True, f"{option}: {base} -> {after}"
+        except (ValueError, TimeoutError) as error:
+            error_detail = str(error)
         if time.monotonic() >= deadline:
-            return False, f"vote accepted but not counted: {option} stayed {after}{last}"
+            if after is None:
+                return False, f"vote accepted but {result_app} scores unreadable after it: {error_detail}"
+            return False, f"vote accepted but not counted: {option} stayed {after}"
         time.sleep(5)
 
 

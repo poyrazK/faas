@@ -53,9 +53,11 @@ measure what a cold agent does with a repository Gregale did not create:
   on the created app whose slug matches, `no_traps`), and cleanup deletes
   them. `no_traps` grades the end state: an app still parked by this run, or
   a latest release that failed, not a failed release the agent replaced. Runs are sequential for that reason.
-  `vote_counted` grades the voting app end to end: it posts a vote to the
-  created vote app and waits for the result app's Socket.IO `scores` to count
-  it. Page GETs alone passed a deployment whose votes all failed (rc.380).
+  `vote_counted` grades the voting app end to end: it votes, as a new voter,
+  for the option with fewer votes on the created `vote` app and waits for the
+  `result` app's Socket.IO `scores` to count it (slugs match `(^|-)vote$` and
+  `(^|-)result$`; both must be public). Page GETs alone passed a deployment
+  whose votes all failed (rc.380).
 - `features` lists the Gregale features that apply to the repository. Each is
   a regex over the agent's shell commands (`command`), over files in the
   checkout after the run (`file`), or a fact about what it created

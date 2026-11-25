@@ -91,7 +91,7 @@
       {"kind": "apps_serving"},
       {"kind": "app_http", "match": "vote", "path": "/", "status": 200},
       {"kind": "app_http", "match": "result", "path": "/", "status": 200},
-      {"kind": "vote_counted", "vote_match": "vote", "result_match": "result", "option": "a"},
+      {"kind": "vote_counted"},
       {"kind": "no_traps"}
     ],
     "features": [
