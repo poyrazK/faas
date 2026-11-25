@@ -77,6 +77,12 @@ type Profile struct {
 	// amendment 4). Profiles written before it lack the mark and keep the
 	// image's command.
 	StartPinned bool `json:"start_pinned,omitempty"`
+	// GoBuiltStart reports that StartCommand is the inferred Go `go run .`,
+	// which `gregale dev` runs, while the Railpack build compiles the app and
+	// starts its ./out binary. A Procfile, railpack.json or gregale.yaml start
+	// clears it: that command is what the guest runs (prod hunt r47).
+	// Profiles written before it report their start command unchanged.
+	GoBuiltStart bool `json:"go_built_start,omitempty"`
 	// HealthFromConfig reports that HealthPath is gregale.yaml's explicit
 	// hosting.health, which keeps HTTP readiness even on a raw-TCP routed
 	// port (ADR-20261027090000).
@@ -177,12 +183,12 @@ func Analyze(fsys fs.FS) (Profile, error) {
 		// showed `gunicorn handler:app --bind 0.0.0.0:$PORT` while the
 		// guest ran `gunicorn --workers 2 handler:app` (Hunt 12 H12-3).
 		if web := procfileWebCommand(fsys); web != "" {
-			profile.StartCommand, profile.StartPinned = web, false
+			profile.StartCommand, profile.StartPinned, profile.GoBuiltStart = web, false, false
 		}
 		// railpack.json's deploy.startCommand outranks the Procfile and
 		// Railpack's own detection, so it is the command the guest runs.
 		if start := railpackConfigStartCommand(fsys); start != "" {
-			profile.StartCommand, profile.StartPinned = start, false
+			profile.StartCommand, profile.StartPinned, profile.GoBuiltStart = start, false, false
 		}
 	}
 	// An unknown tree may be a home directory, not a project: do not scan it.
@@ -227,7 +233,7 @@ func rootHealthPathWarning(configFile string) Warning {
 func applyHostingConfig(profile *Profile, cfg hostingconfig.Config) {
 	if start := strings.TrimSpace(cfg.Start); start != "" {
 		profile.StartCommand = start
-		profile.StartFromConfig, profile.StartPinned = true, false
+		profile.StartFromConfig, profile.StartPinned, profile.GoBuiltStart = true, false, false
 	}
 	if cfg.Port != 0 {
 		profile.Port = cfg.Port
@@ -366,7 +372,7 @@ const goLocalStart = "go run ."
 // its ./out binary. The deploy summary and build plan showed `go run .`, as
 // if every cold start compiled the source (prod hunt r47).
 func DeployedStartCommand(p Profile) string {
-	if p.StartCommand == goLocalStart && !p.StartFromConfig {
+	if p.GoBuiltStart && p.StartCommand == goLocalStart && !p.StartFromConfig {
 		return "./out"
 	}
 	return p.StartCommand
@@ -383,7 +389,7 @@ func inferGo(fsys fs.FS, profile *Profile) {
 			break
 		}
 	}
-	profile.StartCommand = goLocalStart
+	profile.StartCommand, profile.GoBuiltStart = goLocalStart, true
 }
 
 func inferDocker(fsys fs.FS, profile *Profile) {
@@ -718,7 +724,9 @@ func loopbackBindLine(body string) bool {
 			continue
 		}
 		rest := strings.ReplaceAll(lower, "localhost", "")
-		for _, word := range []string{"listen", "bind", "host", "serve"} {
+		// run( and run_app( catch positional binds: Flask `app.run("127.0.0.1", 5000)`,
+		// `uvicorn.run(app, "127.0.0.1")`, aiohttp `web.run_app(app, host=...)`.
+		for _, word := range []string{"listen", "bind", "host", "serve", "run(", "run_app("} {
 			if strings.Contains(rest, word) {
 				return true
 			}

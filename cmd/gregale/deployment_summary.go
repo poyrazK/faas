@@ -115,9 +115,11 @@ func releaseChangeLines(changes []api.DeploymentChange) []string {
 		case "status", "traffic_percent", "rollout_state":
 			continue
 		case "source_url":
-			if internalSourceURL(change.Before) || internalSourceURL(change.After) {
+			if internalSourceURL(change.Before) && internalSourceURL(change.After) {
 				continue
 			}
+			lines = append(lines, fmt.Sprintf("%-18s %s -> %s", change.Field, sourceURLLabel(change.Before), sourceURLLabel(change.After)))
+			continue
 		case "build_plan":
 			lines = append(lines, buildPlanChangeLines(change.Before, change.After, listed)...)
 			continue
@@ -134,9 +136,21 @@ func internalSourceURL(value any) bool {
 	return s == "" || strings.HasPrefix(s, "local-tar://")
 }
 
+// sourceURLLabel names one side of a source_url change: an upload reads as
+// "local upload" so a switch between git and a local deploy stays visible.
+func sourceURLLabel(value any) string {
+	if s, _ := value.(string); strings.HasPrefix(s, "local-tar://") {
+		return "local upload"
+	}
+	return formatSummaryValue(value)
+}
+
 // buildPlanChangeLines lists the build_plan keys whose values differ.
 func buildPlanChangeLines(before, after any, listed map[string]bool) []string {
 	b, a := summaryObject(before), summaryObject(after)
+	if b == nil && a == nil {
+		return []string{fmt.Sprintf("%-18s changed", "build_plan")}
+	}
 	keys := make([]string, 0, len(a)+len(b))
 	for key := range a {
 		keys = append(keys, key)

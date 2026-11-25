@@ -104,7 +104,7 @@ func cmdAuditEventsList(args []string) int {
 		if d, err := time.ParseDuration(*since); err == nil && d > 0 {
 			*since = time.Now().UTC().Add(-d).Format(time.RFC3339)
 		} else if _, err := time.Parse(time.RFC3339, *since); err != nil {
-			return printErr("Invalid --since", fmt.Errorf("must be a duration such as 1h or RFC 3339 (e.g. 2026-07-25T00:00:00Z); got %q", *since))
+			return printErr("Invalid --since", fmt.Errorf("must be a duration such as 1h or RFC 3339 (e.g. 2026-07-25T00:00:00Z); got %q: %w", *since, err))
 		}
 	}
 
