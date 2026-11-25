@@ -421,7 +421,7 @@ credentials are redacted from both.
 | Exit code | Category | What the agent should do |
 |---|---|---|
 | `0` | — | Continue |
-| `1` | `invalid_request` | Fix the arguments or the project; don't retry unchanged |
+| `1` | `invalid_request` | Fix the arguments or the project, or use another way when the feature is off on this installation; don't retry unchanged |
 | `2` | `authentication` | Stop and ask for a valid `GREGALE_TOKEN` |
 | `3` | `temporary_failure` | Run the `resume_command` if the output has one; otherwise inspect state, then retry |
 | `4` | `not_found` | Check the app or deployment name |

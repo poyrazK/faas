@@ -64,10 +64,20 @@ const (
 
 // Operations.
 const (
-	OpExec           = "exec"
-	OpExecList       = "exec_list"
-	OpExecOutput     = "exec_output"
-	OpExecKill       = "exec_kill"
+	OpExec       = "exec"
+	OpExecList   = "exec_list"
+	OpExecOutput = "exec_output"
+	OpExecKill   = "exec_kill"
+	// OpExecInput writes to a background command's stdin, ends its input,
+	// or resizes its terminal (ADR-20261027090013 step 12). The request
+	// carries the bytes, so a caller that cannot hold a stream open, such as
+	// an HTTP client, can drive a terminal command between output polls.
+	OpExecInput = "exec_input"
+	// OpSessionEnv replaces the session's environment (ADR-20261027090013
+	// step 13): variables every later command gets, under its own request's
+	// env. guest-init keeps them in memory only; the result names them and
+	// never carries their values.
+	OpSessionEnv     = "session_env"
 	OpFileRead       = "file_read"
 	OpFileWrite      = "file_write"
 	OpFileList       = "file_list"
@@ -103,10 +113,13 @@ const (
 // Limits of one operation. The plan's own limits (pkg/api/limits.go
 // SandboxExec*) are applied by the host and are never above these.
 const (
-	MaxArgv           = 1024
-	MaxCommandBytes   = 256 << 10
-	MaxEnvEntries     = 128
-	MaxEnvValueBytes  = 32 << 10
+	MaxArgv          = 1024
+	MaxCommandBytes  = 256 << 10
+	MaxEnvEntries    = 128
+	MaxEnvValueBytes = 32 << 10
+	// MaxEnvBytes bounds one env (names and values together), so a
+	// command's env under the session's stays well inside execve's limit.
+	MaxEnvBytes       = 256 << 10
 	MaxPathBytes      = 4096
 	MaxTimeoutMillis  = 3600 * 1000
 	MaxOutputBytes    = 16 << 20
@@ -118,6 +131,8 @@ const (
 	// MaxBackgroundCommands bounds a session's background commands, running
 	// or finished and not yet forgotten.
 	MaxBackgroundCommands = 32
+	// MaxInputBytes bounds one exec_input's stdin bytes.
+	MaxInputBytes = 1 << 20
 	// StopGrace is how long a timed-out command has between SIGTERM and
 	// SIGKILL.
 	StopGrace = 2 * time.Second
@@ -140,6 +155,13 @@ const (
 	// CodePortClosed: nothing listens on the guest port a port_connect
 	// names.
 	CodePortClosed = "port_closed"
+	// CodeCommandEnded: exec_input named a command that has exited, or
+	// whose input was already ended.
+	CodeCommandEnded = "command_ended"
+	// CodeInputStalled: exec_input's write timed out because the command
+	// stopped reading. Part of the input may have been written, so a
+	// client must not resend it whole.
+	CodeInputStalled = "input_stalled"
 )
 
 var (
@@ -169,6 +191,11 @@ type Request struct {
 	StdoutOffset int64  `json:"stdout_offset,omitempty"`
 	StderrOffset int64  `json:"stderr_offset,omitempty"`
 	Signal       string `json:"signal,omitempty"`
+
+	// exec_input. Rows and Cols, when set, resize the command's terminal;
+	// then Input is written to its stdin, and CloseInput ends it.
+	Input      []byte `json:"input,omitempty"`
+	CloseInput bool   `json:"close_input,omitempty"`
 
 	// files and archives
 	Path      string `json:"path,omitempty"`
@@ -207,6 +234,10 @@ func (r Request) Validate() error {
 			bounded("max_bytes", r.MaxBytes, MaxOutputBytes))
 	case OpExecKill:
 		err = firstError(validHandle(r.Handle), validSignal(r.Signal))
+	case OpExecInput:
+		err = firstError(validHandle(r.Handle), r.validateInput())
+	case OpSessionEnv:
+		err = validEnv(r.Env)
 	case OpFileRead:
 		err = firstError(validPath("path", r.Path), bounded("max_bytes", r.MaxBytes, MaxWriteBytes))
 	case OpFileWrite:
@@ -237,6 +268,36 @@ func (r Request) Validate() error {
 	return nil
 }
 
+// validEnv checks a command's or the session's environment.
+func validEnv(env map[string]string) error {
+	if len(env) > MaxEnvEntries {
+		return fmt.Errorf("env takes at most %d entries", MaxEnvEntries)
+	}
+	total := 0
+	for k, v := range env {
+		if !envNameRE.MatchString(k) || len(v) > MaxEnvValueBytes || strings.IndexByte(v, 0) >= 0 {
+			return fmt.Errorf("env %q is not a valid variable", k)
+		}
+		total += len(k) + len(v) + 2
+	}
+	if total > MaxEnvBytes {
+		return fmt.Errorf("env takes at most %d bytes, got %d", MaxEnvBytes, total)
+	}
+	return nil
+}
+
+func (r Request) validateInput() error {
+	switch {
+	case len(r.Input) > MaxInputBytes:
+		return fmt.Errorf("input must be at most %d bytes, got %d", MaxInputBytes, len(r.Input))
+	case (r.Rows == 0) != (r.Cols == 0):
+		return errors.New("rows and cols go together")
+	case len(r.Input) == 0 && !r.CloseInput && r.Rows == 0:
+		return errors.New("exec_input needs input, close_input, or rows and cols")
+	}
+	return nil
+}
+
 func (r Request) validateTemplateStart() error {
 	if r.StartCmd == "" && r.ReadyCmd == "" {
 		return errors.New("template_start needs a start or a ready command")
@@ -262,13 +323,8 @@ func (r Request) validateExec() error {
 			return fmt.Errorf("argv must be at most %d bytes of UTF-8 without NUL", MaxCommandBytes)
 		}
 	}
-	if len(r.Env) > MaxEnvEntries {
-		return fmt.Errorf("env takes at most %d entries", MaxEnvEntries)
-	}
-	for k, v := range r.Env {
-		if !envNameRE.MatchString(k) || len(v) > MaxEnvValueBytes || strings.IndexByte(v, 0) >= 0 {
-			return fmt.Errorf("env %q is not a valid variable", k)
-		}
+	if err := validEnv(r.Env); err != nil {
+		return err
 	}
 	if len(r.Workdir) > MaxPathBytes || strings.IndexByte(r.Workdir, 0) >= 0 {
 		return errors.New("workdir is too long or holds NUL")
@@ -276,11 +332,13 @@ func (r Request) validateExec() error {
 	if r.RunAs != "" && r.RunAs != RunAsUser && r.RunAs != RunAsRoot {
 		return errors.New("run_as must be user or root")
 	}
-	if r.TTY && r.Background {
-		return errors.New("a background command has no terminal")
-	}
+	// A background command may run on a terminal (step 12): exec_input
+	// drives it between output polls.
 	if !r.TTY && (r.Rows != 0 || r.Cols != 0) {
 		return errors.New("rows and cols need tty")
+	}
+	if (r.Rows == 0) != (r.Cols == 0) {
+		return errors.New("rows and cols go together")
 	}
 	return firstError(positive("timeout_ms", r.TimeoutMillis, MaxTimeoutMillis), positive("max_output_bytes", r.MaxOutputBytes, MaxOutputBytes))
 }
@@ -371,6 +429,11 @@ func firstError(errs ...error) error {
 	return nil
 }
 
+// SessionEnvResult answers session_env: the names now set, sorted.
+type SessionEnvResult struct {
+	Names []string `json:"names"`
+}
+
 // ExecResult ends a command run in the foreground, or names a background
 // one by its Handle.
 type ExecResult struct {
@@ -385,12 +448,14 @@ type ExecResult struct {
 
 // Command is a background command.
 type Command struct {
-	Handle        string   `json:"handle"`
-	Argv          []string `json:"argv"`
-	Running       bool     `json:"running"`
-	ExitCode      int      `json:"exit_code,omitempty"`
-	Signal        int      `json:"signal,omitempty"`
-	StartedAtUnix int64    `json:"started_at_unix_ms"`
+	Handle  string   `json:"handle"`
+	Argv    []string `json:"argv"`
+	Running bool     `json:"running"`
+	// TTY: the command runs on a terminal, whose output is all stdout.
+	TTY           bool  `json:"tty,omitempty"`
+	ExitCode      int   `json:"exit_code,omitempty"`
+	Signal        int   `json:"signal,omitempty"`
+	StartedAtUnix int64 `json:"started_at_unix_ms"`
 }
 
 // ExecList answers exec_list.

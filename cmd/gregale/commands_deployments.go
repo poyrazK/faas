@@ -945,7 +945,7 @@ func renderDeploymentHostingReceiptFor(w io.Writer, raw json.RawMessage, functio
 		_, _ = fmt.Fprintf(w, "%-14s %s\n", "package_manager:", receipt.Profile.PackageManager)
 	}
 	if receipt.Profile.StartCommand != "" {
-		_, _ = fmt.Fprintf(w, "%-14s %s\n", "start_command:", receipt.Profile.StartCommand)
+		_, _ = fmt.Fprintf(w, "%-14s %s\n", "start_command:", frameworkprofile.DeployedStartCommand(receipt.Profile))
 	}
 	if receipt.Source.CommitSHA != "" {
 		_, _ = fmt.Fprintf(w, "%-14s %s\n", "source_sha:", receipt.Source.CommitSHA)

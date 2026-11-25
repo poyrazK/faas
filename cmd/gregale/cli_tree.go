@@ -911,6 +911,9 @@ func rewriteTreePath(args []string) ([]string, error) {
 		if hasHelpFlag(args) {
 			return args, nil
 		}
+		if folded, ok := foldValueAsFlag(args, path); ok {
+			return folded, nil
+		}
 		return nil, errFoldFlagRequired{fmt.Errorf("gregale %s needs %s; run 'gregale %s --help' for usage", path, strings.Join(flags, " or "), path)}
 	}
 	alias, used, ok := matchCliTreeAlias(args)

@@ -2757,3 +2757,10 @@ func (r *server) StageSourceDeploymentManifest(p0 *http.Request, p1 state.Accoun
 
 // SourceRefManifestStaged is the staged manifest a rollback undoes.
 type SourceRefManifestStaged = sourceRefManifestStaged
+
+// PlanWorkloadReleaseCommand exposes the dry-run's release command for a
+// project workload, read from the scan directory.
+func PlanWorkloadReleaseCommand(scanDir string, workloads []reposcan.Workload, workload reposcan.Workload, releasePhaseOff bool) (string, string, string) {
+	s := &server{releasePhaseOff: releasePhaseOff}
+	return s.planWorkloadReleaseCommand(scanDir, workloads, workload)
+}

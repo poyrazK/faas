@@ -38,6 +38,8 @@ func (s *Server) MaterializeVerifiedParentExt4(ctx context.Context, req *vmmdpb.
 		return nil, status.Error(codes.ResourceExhausted, "parent mount capacity exhausted")
 	}
 	if err != nil {
+		// The caller gets a fixed message; the cause stays in vmmd's log.
+		s.log.Warn("vmmd: verified parent materialization failed", "storage_key", expected.Artifact.StorageKey, "err", err)
 		return nil, status.Error(codes.FailedPrecondition, "verified parent materialization failed")
 	}
 	if actual != expected || ctx.Err() != nil {

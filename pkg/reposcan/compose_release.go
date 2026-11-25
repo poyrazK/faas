@@ -23,8 +23,8 @@ import (
 // It refuses what a release command cannot express: a service that builds
 // from other source than every service waiting for it, one that publishes
 // ports, one without a command, chained completion dependencies, a waiting
-// service that does not serve requests (the release fence holds a serving
-// release), and two release commands for one service.
+// set with only scheduled jobs, and two release commands for one service. A
+// waiting worker owns the step when only workers wait for it.
 func foldComposeReleaseServices(workloads []Workload) ([]Workload, []string, error) {
 	index := make(map[string]int, len(workloads))
 	for i, w := range workloads {
@@ -73,15 +73,26 @@ func foldComposeReleaseServices(workloads []Workload) ([]Workload, []string, err
 		if _, problem := (api.CreateAppTaskRequest{Command: release.Command, CommandShell: release.CommandShell}).Resolve(); problem != nil {
 			return nil, nil, fmt.Errorf("reposcan: %s command cannot run as a release command: %s", release.Name, problem.Detail)
 		}
+		// A waiting service that serves requests owns the step first, as
+		// before; a waiting worker owns it when only workers wait for it. A
+		// worker's release passes the same release fence before its first
+		// instance starts (schedd's Prime), so its consumers never run
+		// before the step does.
 		owner := -1
 		var runtimeMismatch string
-		for _, i := range waiting {
-			if sameComposeBuild(release, workloads[i]) && workloadServes(workloads[i]) {
+		for _, serving := range []bool{true, false} {
+			for _, i := range waiting {
+				if !sameComposeBuild(release, workloads[i]) || workloadServes(workloads[i]) != serving || !workloadRunsRelease(workloads[i]) {
+					continue
+				}
 				if mismatch := composeReleaseRuntimeMismatch(release, workloads[i]); mismatch != "" {
 					runtimeMismatch = mismatch
 					continue
 				}
 				owner = i
+				break
+			}
+			if owner >= 0 {
 				break
 			}
 		}
@@ -93,7 +104,17 @@ func foldComposeReleaseServices(workloads []Workload) ([]Workload, []string, err
 			for n, i := range waiting {
 				names[n] = workloads[i].Name
 			}
-			return nil, nil, fmt.Errorf("reposcan: %s waits for %s with service_completed_successfully; Gregale runs %s as the release command of a waiting service that serves requests, in that service's image, so build %s from the same build: or image: as one of them", strings.Join(names, ", "), release.Name, release.Name, release.Name)
+			return nil, nil, fmt.Errorf("reposcan: %s waits for %s with service_completed_successfully; Gregale runs %s as the release command of a waiting web service or worker, in that service's image, so build %s from the same build: or image: as one of them", strings.Join(names, ", "), release.Name, release.Name, release.Name)
+		}
+		// A worker owns the step only when no web service waits for it: a
+		// waiting web service on another build would lose its wait and serve
+		// before the worker's release ran the step.
+		if !workloadServes(workloads[owner]) {
+			for _, i := range waiting {
+				if workloadServes(workloads[i]) {
+					return nil, nil, fmt.Errorf("reposcan: %s waits for %s with service_completed_successfully but does not share its build, and only the worker %s does; %s would serve before %s ran, so build %s from the same build: or image: as %s", workloads[i].Name, release.Name, workloads[owner].Name, workloads[i].Name, release.Name, release.Name, workloads[i].Name)
+				}
+			}
 		}
 		if len(workloads[owner].ReleaseCommand) > 0 {
 			return nil, nil, fmt.Errorf("reposcan: %s already runs %s as its release command and also waits for %s; Gregale runs one release command per service, so merge them into one command", workloads[owner].Name, workloads[owner].ReleaseService, release.Name)
@@ -209,8 +230,15 @@ func normalizedBuild(o *api.DockerfileBuildOptions) *api.DockerfileBuildOptions 
 	return o
 }
 
-// workloadServes reports whether w serves requests, so its releases pass the
-// release fence before they serve.
+// workloadServes reports whether w serves requests. A serving waiter is
+// preferred as the owner of a folded release command.
 func workloadServes(w Workload) bool {
 	return w.Class != ClassWorker && w.Class != ClassJob
+}
+
+// workloadRunsRelease reports whether w's releases can run a release command
+// before they start: a web service or a long-running worker. A scheduled job
+// has no release to hold; each run starts on its own.
+func workloadRunsRelease(w Workload) bool {
+	return w.Class != ClassJob
 }
