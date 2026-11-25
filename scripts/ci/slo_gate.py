@@ -112,9 +112,12 @@ TENANT_SIGNAL_FAMILIES = (
     "residency",         # resident GB per paying customer (economic density)
     "hosted_mcp_demand",  # hosted MCP connections near the bridge's bound
     # Customers' own alert presets on their apps (an app's API down, its
-    # spend, its failed deploys): one customer's app going down during the
-    # hold must not roll the platform back (deploy freeze #8084, 2026-11-25).
+    # spend, its failed deploys, its per-app SLO burn and queue backlog) and
+    # their per-account rollup: one customer's app going down during the hold
+    # must not roll the platform back (deploy freeze #8084, 2026-11-25). The
+    # platform-wide availability and 5xx alerts still gate gatewayd-internal.
     "alert_preset_signals",
+    "alert_preset_correlation",
 )
 SCRAPE_HOLD_SECONDS = 60
 MAX_ERROR_ROUNDS = 4
