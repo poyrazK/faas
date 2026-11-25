@@ -31,7 +31,7 @@ func TestManagedValkeyImageCheckAcceptsEveryCacheImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, image := range api.ManagedValkeyImages {
+	for _, image := range api.ManagedValkeyImages() {
 		if err := h.managedValkeyImageCheck(ctx, cache, image); err != nil {
 			t.Errorf("cache image %s refused: %v", image, err)
 		}
