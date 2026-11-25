@@ -146,6 +146,12 @@ const (
 	// background commands as it can.
 	CodeSandboxBusy               = "sandbox_busy"
 	CodeSandboxCommandStartFailed = "sandbox_command_start_failed"
+	// CodeSandboxCommandEnded: input for a background command that has
+	// exited, or whose input was already ended.
+	CodeSandboxCommandEnded = "sandbox_command_ended"
+	// CodeSandboxInputStalled: a background command stopped reading its
+	// input; part of it may have been written, so it is not safe to resend.
+	CodeSandboxInputStalled = "sandbox_input_stalled"
 
 	// Persisted workspaces (ADR-20261027090013 step 7).
 	// CodeSandboxSnapshotNotFound: no such snapshot, or one not ready,
@@ -491,8 +497,8 @@ func ErrSandboxUnsupported(field, detail string) *Problem {
 }
 
 // IsSandboxDataPath reports a sandbox session's data-plane path
-// (ADR-20261027090013 §3): its commands, files, terminal input and workspace
-// archives. Those calls run in the session's VM, so the compute gateway serves
+// (ADR-20261027090013 §3): its commands, files, terminal input, environment
+// (step 13) and workspace archives. Those calls run in the session's VM, so the compute gateway serves
 // them; the session itself and its ports are apid's.
 func IsSandboxDataPath(p string) bool {
 	rest, ok := strings.CutPrefix(p, "/v1/sandboxes/")
@@ -506,7 +512,7 @@ func IsSandboxDataPath(p string) bool {
 	resource, _, _ := strings.Cut(tail, "/")
 	resource, _, _ = strings.Cut(resource, ":")
 	switch resource {
-	case "exec", "files", "stdin", "workspace":
+	case "exec", "files", "stdin", "env", "workspace":
 		return true
 	}
 	return false

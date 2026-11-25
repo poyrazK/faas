@@ -216,15 +216,20 @@ func openAppTaskPTY(credential *syscall.Credential) (*os.File, *os.File, error) 
 	if err != nil {
 		return nil, nil, err
 	}
-	fd := int(master.Fd())
-	if err := unix.IoctlSetPointerInt(fd, unix.TIOCSPTLCK, 0); err != nil {
-		_ = master.Close()
-		return nil, nil, fmt.Errorf("unlock pty: %w", err)
-	}
-	index, err := unix.IoctlGetUint32(fd, unix.TIOCGPTN)
+	var index uint32
+	err = ptyControl(master, func(fd int) error {
+		if err := unix.IoctlSetPointerInt(fd, unix.TIOCSPTLCK, 0); err != nil {
+			return fmt.Errorf("unlock pty: %w", err)
+		}
+		var err error
+		if index, err = unix.IoctlGetUint32(fd, unix.TIOCGPTN); err != nil {
+			return fmt.Errorf("pty index: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
 		_ = master.Close()
-		return nil, nil, fmt.Errorf("pty index: %w", err)
+		return nil, nil, err
 	}
 	name := fmt.Sprintf("%s/%d", devptsDir, index)
 	if credential != nil {
@@ -256,7 +261,24 @@ func openAppTaskPTYMaster() (*os.File, error) {
 }
 
 func setAppTaskPTYSize(master *os.File, rows, cols uint16) error {
-	return unix.IoctlSetWinsize(int(master.Fd()), unix.TIOCSWINSZ, &unix.Winsize{Row: rows, Col: cols})
+	return ptyControl(master, func(fd int) error {
+		return unix.IoctlSetWinsize(fd, unix.TIOCSWINSZ, &unix.Winsize{Row: rows, Col: cols})
+	})
+}
+
+// ptyControl runs fn on the master's descriptor without File.Fd, which
+// would put the master in blocking mode and so make its read and write
+// deadlines (exec_input's write timeout) silently never fire.
+func ptyControl(master *os.File, fn func(fd int) error) error {
+	raw, err := master.SyscallConn()
+	if err != nil {
+		return err
+	}
+	var opErr error
+	if err := raw.Control(func(fd uintptr) { opErr = fn(int(fd)) }); err != nil { //nolint:gosec // a kernel descriptor fits in int
+		return err
+	}
+	return opErr
 }
 
 func withDefaultTerm(env []string) []string {
