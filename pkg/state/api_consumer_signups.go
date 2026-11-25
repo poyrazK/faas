@@ -53,8 +53,12 @@ type APIConsumerSignupSettings struct {
 	// MCP oauth-proxy issuer as consumers on it (ADR-20261124094745).
 	FreePlanID     string
 	OAuthConsumers bool
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	// AccountTools adds the account_usage and account_plans tools to the MCP
+	// server for OAuth consumers (ADR-20261125194510); it needs
+	// OAuthConsumers.
+	AccountTools bool
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // APIConsumerSignupStatus is a sign-up's state: pending until its consumer
@@ -168,6 +172,8 @@ func validateAPIConsumerSignupSettings(s APIConsumerSignupSettings) error {
 	switch {
 	case s.OAuthConsumers && s.FreePlanID == "":
 		return errors.New("consumer sign-up settings: OAuth consumers need a free plan")
+	case s.AccountTools && !s.OAuthConsumers:
+		return errors.New("consumer sign-up settings: account tools need OAuth consumers")
 	case s.Provider != APIConsumerSignupProviderStripe:
 		return errors.New("consumer sign-up settings: provider must be stripe")
 	case len(s.PlanIDs) > MaxAPIConsumerSignupPlans:

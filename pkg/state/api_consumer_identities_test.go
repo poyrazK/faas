@@ -41,13 +41,21 @@ func checkAPIConsumerIdentities(t *testing.T, ctx context.Context, st state.Stor
 	if _, _, _, err := enroll("user-1"); !errors.Is(err, state.ErrAPIConsumerOAuthOff) {
 		t.Fatalf("enroll with OAuth consumers off: %v", err)
 	}
+	// ADR-20261125194510: account tools answer OAuth consumers only.
+	settings.AccountTools = true
+	if _, err := signups.PutAPIConsumerSignupSettings(ctx, settings); err == nil {
+		t.Fatal("account tools without OAuth consumers accepted")
+	}
 	settings.OAuthConsumers, settings.FreePlanID = true, ""
 	if _, err := signups.PutAPIConsumerSignupSettings(ctx, settings); err == nil {
 		t.Fatal("OAuth consumers without a free plan accepted")
 	}
 	settings.FreePlanID = free.ID
-	if got, err := signups.PutAPIConsumerSignupSettings(ctx, settings); err != nil || !got.OAuthConsumers || got.FreePlanID != free.ID {
+	if got, err := signups.PutAPIConsumerSignupSettings(ctx, settings); err != nil || !got.OAuthConsumers || got.FreePlanID != free.ID || !got.AccountTools {
 		t.Fatalf("put settings = %+v, %v", got, err)
+	}
+	if got, err := signups.GetAPIConsumerSignupSettings(ctx, settings.AccountID, settings.AppID); err != nil || !got.AccountTools {
+		t.Fatalf("get settings = %+v, %v; want account tools on", got, err)
 	}
 
 	id, consumer, created, err := enroll("user-1")

@@ -94,12 +94,31 @@ func (h *Handler) applyMCPResourcePolicy(w http.ResponseWriter, r *http.Request,
 		return true
 	}
 	status, reason, call := mcpPolicyRequest(r, p, granted)
-	if status != 0 {
+	// Account tools are the caller's own, so the app's tool scopes do not
+	// apply to them (ADR-20261125194510).
+	account := h.mcpAccountRequestOf(r)
+	if status != 0 && account.tool == "" {
 		return mcpPolicyReject(w, status, p, reason)
 	}
 	if h.attachOAuthConsumer(w, r, app, rule, claims) {
 		return true
 	}
+	if mcpAccountToolCall(r, account) {
+		// The rule's identity checks still apply; the gateway answers once
+		// every matching jwt rule admitted the caller (applyEdgeRuleJWT).
+		authenticated := authenticatedFrom(r.Context())
+		authenticated.JWTSubject, authenticated.JWTClaims = claims.Subject, claims.Custom
+		if h.applyPlatformTenantJWTClaim(w, r, app, rule, claims, &authenticated) {
+			return true
+		}
+		*r = *r.WithContext(context.WithValue(withAuthenticated(r.Context(), authenticated), mcpAccountToolCallKey{}, account))
+		h.jwtEmit(r.Context(), "jwt", "match", rule.ID, r.Host, nil, nil)
+		return false
+	}
+	if status != 0 {
+		return mcpPolicyReject(w, status, p, reason)
+	}
+	markMCPAccountToolsList(r, account)
 	if h.mcpToolLimited(w, r, app, rule, call.tool(), "sub\x00"+claims.Subject) {
 		return true
 	}

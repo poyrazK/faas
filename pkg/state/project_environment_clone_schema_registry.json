@@ -1224,6 +1224,7 @@
     "table": "api_consumer_signup_settings",
     "columns": [
       "account_id",
+      "account_tools",
       "app_id",
       "created_at",
       "customer_closing",

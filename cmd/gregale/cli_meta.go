@@ -4002,6 +4002,7 @@ var cliCommands = []cliCommand{
 				{Name: "customer-closing", Short: "let customers close their account with their own key"},
 				{Name: "free-plan", Short: "offered plan that charges nothing; joining it needs no card", Value: "NAME"},
 				{Name: "oauth-consumers", Short: "people signed in through the app's MCP oauth-proxy issuer become consumers on --free-plan"},
+				{Name: "account-tools", Short: "add account_usage and account_plans tools to the MCP server for --oauth-consumers callers"},
 			}, Examples: []string{"gregale api consumer signup set my-api --display-name \"Weather API\" --plans pro --trial-days 14",
 				"gregale api consumer signup set my-mcp --display-name \"Search tools\" --plans free,pro --free-plan free --oauth-consumers --customer-plan-changes"}},
 			{Name: "signup-delete", Short: "Turn sign-up off; pending sign-ups can no longer complete", Positionals: []string{"<slug>"}},

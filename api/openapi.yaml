@@ -137901,6 +137901,7 @@ components:
         customer_closing: { type: boolean, description: "Let customers close their account with their own key." }
         free_plan_id: { type: string, format: uuid, description: "One of plan_ids whose rate cards charge nothing; joining it needs no card." }
         oauth_consumers: { type: boolean, description: "People signed in through the app's MCP oauth-proxy issuer become consumers on free_plan_id; needs free_plan_id." }
+        account_tools: { type: boolean, description: "Add the account_usage and account_plans tools to the app's MCP server for people signed in through it; needs oauth_consumers." }
 
     ConsumerSignupSettingsResponse:
       description: "An app's sign-up settings."
@@ -137926,6 +137927,7 @@ components:
         customer_closing: { type: boolean }
         free_plan_id: { type: string, format: uuid }
         oauth_consumers: { type: boolean }
+        account_tools: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
