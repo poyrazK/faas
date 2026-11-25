@@ -39,6 +39,10 @@ func connectionFailure(err error) error {
 		errors.Is(err, context.DeadlineExceeded) {
 		return ErrConnectionTransport
 	}
+	var dnsError *net.DNSError
+	if errors.As(err, &dnsError) && (dnsError.IsTemporary || dnsError.IsTimeout) {
+		return ErrConnectionTransport
+	}
 	return errors.New("commit: database connection unavailable")
 }
 
@@ -120,7 +124,7 @@ func OpenPool(ctx context.Context, raw string, policy NetworkPolicy) (*pgxpool.P
 		}
 		addresses, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 		if err != nil {
-			return nil, errors.New("commit: database DNS unavailable")
+			return nil, connectionFailure(err)
 		}
 		allowed := make([]string, 0, len(addresses))
 		for _, ip := range addresses {

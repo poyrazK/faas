@@ -150,7 +150,7 @@ func TestCommitRelayReservedConnectionDefersToGeneralWorker(t *testing.T) {
 	var status string
 	var accepted int
 	e.manager.Report = func(_ string, code string, n int) { status, accepted = code, n }
-	reserved, err := e.store.ClaimHealthyCommitRelaySources(ctx, 1, relaySourceLease)
+	reserved, err := e.store.ClaimHealthyCommitRelaySources(ctx, 1, state.CommitRelaySourceLease)
 	if err != nil || len(reserved) != 1 {
 		t.Fatalf("reserved claim: %d %v", len(reserved), err)
 	}
@@ -167,10 +167,10 @@ func TestCommitRelayReservedConnectionDefersToGeneralWorker(t *testing.T) {
 	if !checked.Equal(afterChecked) || !due.Equal(afterDue) || backoff != 0 || status != "healthy" {
 		t.Fatalf("handoff changed the poll schedule or observation: due=%v checked=%v backoff=%d status=%s", afterDue, afterChecked, backoff, status)
 	}
-	if claims, err := e.store.ClaimHealthyCommitRelaySources(ctx, 1, relaySourceLease); err != nil || len(claims) != 0 {
+	if claims, err := e.store.ClaimHealthyCommitRelaySources(ctx, 1, state.CommitRelaySourceLease); err != nil || len(claims) != 0 {
 		t.Fatalf("reserved worker reclaimed the deferred source: %d %v", len(claims), err)
 	}
-	general, err := e.store.ClaimCommitRelaySources(ctx, 1, relaySourceLease)
+	general, err := e.store.ClaimCommitRelaySources(ctx, 1, state.CommitRelaySourceLease)
 	if err != nil || len(general) != 1 {
 		t.Fatalf("general claim: %d %v", len(general), err)
 	}
@@ -280,7 +280,7 @@ func TestCommitRelayPollsHealthySourceWhileAnotherWaits(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("healthy source did not finish while the slow source was blocked")
 	}
-	if claimed, err := e.store.ClaimCommitRelaySources(ctx, 2, relaySourceLease); err != nil || len(claimed) != 0 {
+	if claimed, err := e.store.ClaimCommitRelaySources(ctx, 2, state.CommitRelaySourceLease); err != nil || len(claimed) != 0 {
 		t.Fatalf("another scheduler could claim the active slow source or the rescheduled healthy source: %d, %v", len(claimed), err)
 	}
 	close(releaseSlow)

@@ -26,7 +26,10 @@ type CommitRelayObservation struct {
 }
 
 func (s *PgStore) CommitRelayObservationSummary(ctx context.Context, freshAfter time.Time) (CommitRelayObservation, error) {
-	row, err := sqlc.New().CommitRelayObservationSummary(ctx, s.pool, pgtype.Timestamptz{Time: freshAfter, Valid: true})
+	row, err := sqlc.New().CommitRelayObservationSummary(ctx, s.pool, sqlc.CommitRelayObservationSummaryParams{
+		FreshAfter:    pgtype.Timestamptz{Time: freshAfter, Valid: true},
+		SourceLeaseMs: CommitRelaySourceLease.Milliseconds(),
+	})
 	return CommitRelayObservation{
 		EnabledSources: row.EnabledSources, UnknownSources: row.UnknownSources, FailingSources: row.FailingSources,
 		PendingEvents: row.PendingEvents, BlockedEvents: row.BlockedEvents, OldestPendingTimestamp: row.OldestPendingTimestamp,

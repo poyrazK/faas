@@ -26,7 +26,6 @@ const (
 	relayScanInterval     = time.Second
 	relayPollTimeout      = 15 * time.Second
 	relayStoreTimeout     = 3 * time.Second
-	relaySourceLease      = 30 * time.Second
 	relayMinBackoff       = 5 * time.Second
 	relayMaxBackoff       = 5 * time.Minute
 	relayTransportCeiling = time.Minute
@@ -88,9 +87,9 @@ func (m *Manager) claimSources(ctx context.Context, limit int, healthyOnly bool)
 	claimCtx, cancel := context.WithTimeout(ctx, relayStoreTimeout)
 	defer cancel()
 	if healthyOnly {
-		return m.Store.ClaimHealthyCommitRelaySources(claimCtx, limit, relaySourceLease)
+		return m.Store.ClaimHealthyCommitRelaySources(claimCtx, limit, state.CommitRelaySourceLease)
 	}
-	return m.Store.ClaimCommitRelaySources(claimCtx, limit, relaySourceLease)
+	return m.Store.ClaimCommitRelaySources(claimCtx, limit, state.CommitRelaySourceLease)
 }
 
 func (m *Manager) validate() error {

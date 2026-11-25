@@ -57,7 +57,9 @@ Wait timeout or interruption does not cancel work.
   health until a fresh pass. Unknown backlog counts do not mean zero events.
 - **FaasCommitRelaySourceFailure:** follow the source's bounded relay health code.
   Recover credentials, database access, schema, binding, replay or cleanup as
-  appropriate. Preserve pending and blocked rows throughout recovery.
+  appropriate. A scheduled retry can keep the failure visible for one source
+  lease window after the retry becomes due. Preserve pending and blocked rows
+  throughout recovery.
 - **FaasCommitObservationUnavailable:** the platform health-ledger query failed.
   Check platform PostgreSQL and scheduler metrics before trusting backlog totals.
   Existing daemon-down alerts cover missing scrapes; this alert covers successful

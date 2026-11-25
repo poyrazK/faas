@@ -18468,6 +18468,11 @@ WITH observations AS (
  SELECT relay_status,pending_events,blocked_events,oldest_pending_at,cleanup_eligible_events,COALESCE(last_checked_at>=sqlc.arg(fresh_after)::timestamptz
    - (CASE WHEN queue_name IS NOT NULL THEN poll_interval_ms ELSE 0 END) * interval '1 millisecond'
    AND last_checked_at<=now()+interval '1 minute',false) AS fresh,
+ -- Keep the failure visible through the scheduled retry and one lease window.
+ -- relay_next_poll_at also stores active leases, so use the last completed poll.
+ COALESCE(relay_poll_backoff_ms>0 AND last_checked_at<=now()+interval '1 minute'
+   AND last_checked_at + (poll_interval_ms::bigint + relay_poll_backoff_ms + sqlc.arg(source_lease_ms)::bigint)
+     * interval '1 millisecond'>=now(),false) AS failure_retry_fresh,
  COALESCE(cleanup_observed_at>=sqlc.arg(fresh_after)::timestamptz
    - (CASE WHEN queue_name IS NOT NULL THEN poll_interval_ms ELSE 0 END) * interval '1 millisecond'
    AND cleanup_observed_at<=now()+interval '1 minute',false) AS cleanup_fresh
@@ -18480,7 +18485,7 @@ SELECT count(*)::bigint AS enabled_sources,
  count(*) FILTER(WHERE NOT known)::bigint AS unknown_sources,
  count(*) FILTER(WHERE NOT cleanup_fresh OR cleanup_eligible_events IS NULL)::bigint AS cleanup_unknown_sources,
  COALESCE(sum(cleanup_eligible_events) FILTER(WHERE cleanup_fresh),0)::bigint AS cleanup_eligible_events,
- count(*) FILTER(WHERE fresh AND relay_status NOT IN ('healthy','blocked_events'))::bigint AS failing_sources,
+ count(*) FILTER(WHERE (fresh OR failure_retry_fresh) AND relay_status NOT IN ('healthy','blocked_events'))::bigint AS failing_sources,
  COALESCE(sum(pending_events) FILTER(WHERE known),0)::bigint AS pending_events,
  COALESCE(sum(blocked_events) FILTER(WHERE known),0)::bigint AS blocked_events,
  COALESCE(extract(epoch FROM min(oldest_pending_at) FILTER(WHERE known AND (pending_events>0 OR blocked_events>0))),0)::double precision AS oldest_pending_timestamp

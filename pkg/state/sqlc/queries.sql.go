@@ -9969,24 +9969,34 @@ WITH observations AS (
  SELECT relay_status,pending_events,blocked_events,oldest_pending_at,cleanup_eligible_events,COALESCE(last_checked_at>=$1::timestamptz
    - (CASE WHEN queue_name IS NOT NULL THEN poll_interval_ms ELSE 0 END) * interval '1 millisecond'
    AND last_checked_at<=now()+interval '1 minute',false) AS fresh,
+ -- Keep the failure visible through the scheduled retry and one lease window.
+ -- relay_next_poll_at also stores active leases, so use the last completed poll.
+ COALESCE(relay_poll_backoff_ms>0 AND last_checked_at<=now()+interval '1 minute'
+   AND last_checked_at + (poll_interval_ms::bigint + relay_poll_backoff_ms + $2::bigint)
+     * interval '1 millisecond'>=now(),false) AS failure_retry_fresh,
  COALESCE(cleanup_observed_at>=$1::timestamptz
    - (CASE WHEN queue_name IS NOT NULL THEN poll_interval_ms ELSE 0 END) * interval '1 millisecond'
    AND cleanup_observed_at<=now()+interval '1 minute',false) AS cleanup_fresh
  FROM commit_sources WHERE enabled
 ), snapshots AS (
- SELECT relay_status, pending_events, blocked_events, oldest_pending_at, cleanup_eligible_events, fresh, cleanup_fresh,fresh AND pending_events IS NOT NULL AND blocked_events IS NOT NULL AS known
+ SELECT relay_status, pending_events, blocked_events, oldest_pending_at, cleanup_eligible_events, fresh, failure_retry_fresh, cleanup_fresh,fresh AND pending_events IS NOT NULL AND blocked_events IS NOT NULL AS known
  FROM observations
 )
 SELECT count(*)::bigint AS enabled_sources,
  count(*) FILTER(WHERE NOT known)::bigint AS unknown_sources,
  count(*) FILTER(WHERE NOT cleanup_fresh OR cleanup_eligible_events IS NULL)::bigint AS cleanup_unknown_sources,
  COALESCE(sum(cleanup_eligible_events) FILTER(WHERE cleanup_fresh),0)::bigint AS cleanup_eligible_events,
- count(*) FILTER(WHERE fresh AND relay_status NOT IN ('healthy','blocked_events'))::bigint AS failing_sources,
+ count(*) FILTER(WHERE (fresh OR failure_retry_fresh) AND relay_status NOT IN ('healthy','blocked_events'))::bigint AS failing_sources,
  COALESCE(sum(pending_events) FILTER(WHERE known),0)::bigint AS pending_events,
  COALESCE(sum(blocked_events) FILTER(WHERE known),0)::bigint AS blocked_events,
  COALESCE(extract(epoch FROM min(oldest_pending_at) FILTER(WHERE known AND (pending_events>0 OR blocked_events>0))),0)::double precision AS oldest_pending_timestamp
 FROM snapshots
 `
+
+type CommitRelayObservationSummaryParams struct {
+	FreshAfter    pgtype.Timestamptz
+	SourceLeaseMs int64
+}
 
 type CommitRelayObservationSummaryRow struct {
 	EnabledSources         int64
@@ -9999,8 +10009,8 @@ type CommitRelayObservationSummaryRow struct {
 	OldestPendingTimestamp float64
 }
 
-func (q *Queries) CommitRelayObservationSummary(ctx context.Context, db DBTX, freshAfter pgtype.Timestamptz) (CommitRelayObservationSummaryRow, error) {
-	row := db.QueryRow(ctx, commitRelayObservationSummary, freshAfter)
+func (q *Queries) CommitRelayObservationSummary(ctx context.Context, db DBTX, arg CommitRelayObservationSummaryParams) (CommitRelayObservationSummaryRow, error) {
+	row := db.QueryRow(ctx, commitRelayObservationSummary, arg.FreshAfter, arg.SourceLeaseMs)
 	var i CommitRelayObservationSummaryRow
 	err := row.Scan(
 		&i.EnabledSources,

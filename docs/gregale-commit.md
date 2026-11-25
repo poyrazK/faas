@@ -219,10 +219,10 @@ customer connections per source, and closes each source pool after its poll.
 A source lease expires after 30 seconds so another scheduler can recover it.
 Connection and qualification failures add a per-source delay that starts at five
 seconds, doubles with each failed poll, and resets on recovery. The backoff
-ceiling is 55 to 60 seconds for retryable transport failures and PostgreSQL
-startup failures, with a stable offset per source. Other connection and
-qualification failures have a five-minute ceiling. The configured poll interval
-is added to the backoff.
+ceiling is 55 to 60 seconds for retryable transport failures, temporary DNS
+failures, and PostgreSQL startup failures, with a stable offset per source.
+Other connection and qualification failures have a five-minute ceiling. The
+configured poll interval is added to the backoff.
 Each connection/reconnection resolves DNS and checks the actual IP against the
 operator policy. TLS verifies the original hostname. Credential rotation and
 resume make the source due immediately and revoke earlier leases. Source APIs
@@ -305,10 +305,11 @@ observed facts. No command claims or publishes an event as part of diagnosis.
 Rotation and transition from paused to enabled invalidate prior health and
 increment the observation fence. A pass started before either transition cannot
 overwrite newer source health or blocked snapshots. For Postgres row-change
-sources, observations expire five minutes after the configured poll interval
-elapses, including time spent backing off.
+sources, backlog observations expire five minutes after the configured poll
+interval elapses, including time spent backing off.
 Other sources have a five-minute freshness window. Expired observations have
-unknown backlog totals.
+unknown backlog totals. A failure can remain visible in the failure gauge
+through its scheduled retry and one additional 30-second source lease window.
 
 The scheduler also exposes shared-ledger aggregate gauges for enabled, unknown
 and failing sources, fresh known pending/blocked counts, oldest pending insertion

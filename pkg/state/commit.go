@@ -61,6 +61,9 @@ func (s *PgStore) CommitOperationByID(ctx context.Context, account, id string) (
 		CompletedAt: exclusiveTime(row.CompletedAt)}, mapErr(err)
 }
 
+// CommitRelaySourceLease is the time granted to a scheduler to finish its poll.
+const CommitRelaySourceLease = 30 * time.Second
+
 // CommitRelaySource is an internal source lease. The credential and lease token
 // never appear in the public source response.
 type CommitRelaySource struct {

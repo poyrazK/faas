@@ -627,6 +627,63 @@ func TestPgCommitObservationSummaryLifecycle(t *testing.T) {
 	}
 }
 
+func TestPgCommitObservationFailureRetryFreshness(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		pollInterval time.Duration
+		changes      bool
+	}{
+		{name: "outbox", pollInterval: 5 * time.Second},
+		{name: "changes", pollInterval: 10 * time.Minute, changes: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, pool, source, _ := commitManagedFixture(t)
+			ctx := t.Context()
+			if tc.changes {
+				if _, err := store.SetCommitSourceEnabled(ctx, source.AccountID, source.ID, false); err != nil {
+					t.Fatal(err)
+				}
+				changes, err := store.UpsertCommitChangesSource(ctx, source.AccountID, source.AppID, "order-changes", state.CommitChangesConfig{
+					QueueName: "order-changes", Feeds: []byte(`[{"name":"orders","table":"public.orders","columns":["id"]}]`),
+					PollIntervalMS: int(tc.pollInterval.Milliseconds()),
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				source = changes
+			}
+			if err := store.SetCommitSourceConnection(ctx, source.AccountID, source.ID, []byte("ciphertext-fixture")); err != nil {
+				t.Fatal(err)
+			}
+			const backoff = 5 * time.Minute
+			due := tc.pollInterval + backoff
+			check := func(age, dueIn time.Duration, failing int64) {
+				t.Helper()
+				if _, err := pool.Exec(ctx, `UPDATE commit_sources SET relay_status='handoff_pending',
+ relay_poll_backoff_ms=$4, last_checked_at=statement_timestamp()-$2::bigint*interval '1 millisecond',
+ cleanup_observed_at=statement_timestamp()-$2::bigint*interval '1 millisecond',
+ relay_next_poll_at=statement_timestamp()+$3::bigint*interval '1 millisecond',
+ pending_events=4, blocked_events=2, oldest_pending_at=statement_timestamp()-interval '1 hour',
+ cleanup_eligible_events=17 WHERE id=$1::uuid`, source.ID, age.Milliseconds(), dueIn.Milliseconds(), int32(backoff.Milliseconds())); err != nil {
+					t.Fatal(err)
+				}
+				got, err := store.CommitRelayObservationSummary(ctx, time.Now().Add(-commitwork.ObservationGracePeriod))
+				if err != nil || got.EnabledSources != 1 || got.FailingSources != failing || got.UnknownSources != 1 ||
+					got.PendingEvents != 0 || got.BlockedEvents != 0 || got.OldestPendingTimestamp != 0 ||
+					got.CleanupUnknownSources != 1 || got.CleanupEligibleEvents != 0 {
+					t.Fatalf("age %s: observation=%+v, want %d failing and stale backlog, err=%v", age, got, failing, err)
+				}
+			}
+			if !tc.changes {
+				check(due-2*time.Second, 2*time.Second, 1)
+			}
+			check(due+10*time.Second, state.CommitRelaySourceLease-10*time.Second, 1)
+			// A changed lease cannot keep an old failure current indefinitely.
+			check(due+state.CommitRelaySourceLease+time.Minute, time.Hour, 0)
+		})
+	}
+}
+
 func TestPgCommitRelayFencesExpiredSourceLease(t *testing.T) {
 	store, pool, source, _ := commitManagedFixture(t)
 	ctx := t.Context()
