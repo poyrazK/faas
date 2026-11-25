@@ -158,7 +158,7 @@ func TestLinkUnknownProjectNamesContext(t *testing.T) {
 	if code == 0 {
 		t.Fatal("link of an unknown project succeeded")
 	}
-	for _, want := range []string{`no project "status"`, "gregale context"} {
+	for _, want := range []string{`no project "status"`, "gregale config context get"} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr lacks %q:\n%s", want, stderr)
 		}
