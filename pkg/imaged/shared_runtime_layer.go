@@ -80,6 +80,9 @@ type sharedRuntimeLayers struct {
 	// Reason names why the layer keeps everything above the base; empty
 	// when it holds only /app.
 	Reason string
+	// OutsideApp names the first files outside /app that are not toolchain
+	// when Reason is content_outside_app.
+	OutsideApp []string
 }
 
 // sharedRuntimeAppLayers splits a build artifact at its runner base and
@@ -212,7 +215,7 @@ func (h *Handler) sharedRuntimeAppLayersAt(ctx context.Context, runtime string, 
 		allCleanup()
 		return sharedRuntimeLayers{}, fmt.Errorf("runtime base layer boundary %d is outside artifact layer count %d", start, len(all))
 	}
-	return sharedRuntimeLayers{layers: layersAsReaders(all[start:]), cleanup: allCleanup, Reason: reason}, nil
+	return sharedRuntimeLayers{layers: layersAsReaders(all[start:]), cleanup: allCleanup, Reason: reason, OutsideApp: report.Unexpected}, nil
 }
 
 // setSharedRuntimeStart points manifest at argv with PATH path.

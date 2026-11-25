@@ -175,7 +175,7 @@ func (h *Handler) localOCIAppLayer(ctx context.Context, app state.App, dep state
 			return nil, prepareErr
 		}
 		if shared.Reason != "" {
-			h.log.Info("imaged: shared runtime layer keeps the toolchain", "app", app.Slug, "runtime", runtime, "reason", shared.Reason)
+			h.log.Info("imaged: shared runtime layer keeps the toolchain", "app", app.Slug, "runtime", runtime, "reason", shared.Reason, "outside_app", shared.OutsideApp)
 		}
 		markLayerPhase(ctx, "split")
 		build.Layers = shared.layers

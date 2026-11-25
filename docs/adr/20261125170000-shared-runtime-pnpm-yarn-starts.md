@@ -45,7 +45,12 @@ Two more gaps showed up on the way:
    script. imaged sees `/app/.pnp.cjs` (or `.pnp.js`) while it filters the
    layer and falls back with `yarn_pnp`. The build cannot see it: the
    builder classifies from the plan and `package.json` only.
-4. imaged also resolves an exec-form entrypoint that starts with `pnpm`,
+4. **Corepack's install is toolchain.** With a `packageManager` field,
+   Railpack installs yarn through corepack: `/opt/corepack` (its
+   `COREPACK_HOME`) and the mise Node tree `corepack enable` changed join the
+   build step's deploy input. imaged drops `/opt/corepack` with the rest of
+   the toolchain, and the build's plan check accepts those paths.
+5. imaged also resolves an exec-form entrypoint that starts with `pnpm`,
    `yarn`, `npx` or `corepack`, as it did for `npm`.
 
 The app runs with the runner base's Node and PATH

@@ -64,6 +64,12 @@ func TestClassifyNode(t *testing.T) {
 			d := p["deploy"].(map[string]any)
 			d["inputs"] = append(d["inputs"].([]any), map[string]any{"step": "build", "include": []string{"/usr/share/fonts"}})
 		}), pkg: pkg, wantReason: ReasonExtraDeployInput},
+		{name: "yarn through corepack", plan: platformPlan(t, func(p map[string]any) {
+			// Railpack 0.38 with a packageManager field (usesCorepack).
+			d := p["deploy"].(map[string]any)
+			d["startCommand"] = "yarn start"
+			d["inputs"] = append(d["inputs"].([]any), map[string]any{"step": "build", "include": []string{"/root/.cache", ".", "/opt/corepack", "/mise/installs", "/mise/shims"}})
+		}), pkg: pkg, wantStart: []string{"/bin/sh", "-c", "node worker.js"}},
 		{name: "toolchain step reaching outside mise", plan: platformPlan(t, func(p map[string]any) {
 			d := p["deploy"].(map[string]any)
 			d["inputs"] = append(d["inputs"].([]any), map[string]any{"step": "packages:mise", "include": []string{"/opt/chrome"}})
@@ -124,6 +130,8 @@ func TestDroppableOutsideApp(t *testing.T) {
 		"etc/mise/config.toml":                true,
 		"root/.local/state/mise/x":            true,
 		"root/.cache/npm/_cacache/x":          true,
+		"opt/corepack/v1/yarn/1.22.22/x.js":   true,
+		"opt/corepacked/x":                    false,
 		"usr/lib/x86_64-linux-gnu/libvips.so": false,
 		"etc/passwd":                          false,
 		"misery/file":                         false,

@@ -50,9 +50,20 @@ const toolchainStep = "packages:mise"
 // which is where npm puts them when it runs a script.
 const runnerPath = "/app/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
-var toolchainPaths = []string{"/mise", "/usr/local/bin/mise", "/etc/mise", "/root/.local/state/mise"}
+// toolchainPaths hold the toolchain the runner base replaces. /opt/corepack
+// is Railpack's COREPACK_HOME: with a packageManager field, Railpack installs
+// yarn through corepack there (ADR-20261125170000).
+var toolchainPaths = []string{"/mise", "/usr/local/bin/mise", "/etc/mise", "/root/.local/state/mise", corepackHome}
+
+const corepackHome = "/opt/corepack"
 
 var appPaths = []string{"/app", "/root/.cache"}
+
+// corepackBuildPaths are what Railpack adds to the build step's deploy input
+// when it installs the package manager with corepack: corepack's home and
+// the mise Node tree `corepack enable` changed. All are toolchain, which the
+// layer drops.
+var corepackBuildPaths = []string{corepackHome, "/mise/installs", "/mise/shims"}
 
 type plan struct {
 	Steps  []step `json:"steps"`
@@ -164,7 +175,7 @@ func checkDeployInputs(inputs []layer) string {
 		if in.Image != "" || in.Local || in.Step == "" {
 			return ReasonExtraDeployInput
 		}
-		allowed := appPaths
+		allowed := append(append([]string(nil), appPaths...), corepackBuildPaths...)
 		if in.Step == toolchainStep {
 			allowed = toolchainPaths
 		}

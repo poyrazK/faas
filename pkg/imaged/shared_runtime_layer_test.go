@@ -505,6 +505,8 @@ func TestSharedRuntimeAppLayersNextAndBun(t *testing.T) {
 			files: map[string]string{
 				"app/package.json": `{"scripts":{"serve":"node server.js"}}`, "app/server.js": "listen()",
 				"mise/installs/node/24.1.0/bin/node": "elf", "mise/installs/yarn/1.22.22/bin/yarn": "yarn",
+				// Railpack installs yarn through corepack for a packageManager field.
+				"opt/corepack/v1/yarn/1.22.22/bin/yarn.js": "yarn", "mise/shims/yarn": "shim",
 			},
 			wantArgv:  []string{"/bin/sh", "-c", "node server.js"},
 			wantPath:  sharedruntime.RunnerPath,
