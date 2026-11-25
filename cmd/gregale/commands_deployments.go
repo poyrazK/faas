@@ -798,6 +798,9 @@ func cmdDeploymentGet(args []string) int {
 	if d.ErrorCode != "" {
 		_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "error_code:", d.ErrorCode)
 	}
+	// Prod hunt r35: the error named only a raw task API path; show the
+	// release command's captured output as `deploys status` does.
+	printReleaseTaskOutput(ctx, client, osStdout, *appFlag, d)
 	if drain := d.WorkerDrain; drain != nil {
 		_, _ = fmt.Fprintf(osStdout, "%-14s active=%d completed=%d timed_out=%d failed=%d overdue=%d\n", "worker_drain:", drain.Active, drain.Completed, drain.TimedOut, drain.Failed, drain.Overdue)
 		if drain.Deadline != nil {
@@ -942,7 +945,7 @@ func renderDeploymentHostingReceiptFor(w io.Writer, raw json.RawMessage, functio
 		_, _ = fmt.Fprintf(w, "%-14s %s\n", "package_manager:", receipt.Profile.PackageManager)
 	}
 	if receipt.Profile.StartCommand != "" {
-		_, _ = fmt.Fprintf(w, "%-14s %s\n", "start_command:", receipt.Profile.StartCommand)
+		_, _ = fmt.Fprintf(w, "%-14s %s\n", "start_command:", frameworkprofile.DeployedStartCommand(receipt.Profile))
 	}
 	if receipt.Source.CommitSHA != "" {
 		_, _ = fmt.Fprintf(w, "%-14s %s\n", "source_sha:", receipt.Source.CommitSHA)

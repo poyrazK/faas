@@ -44,21 +44,22 @@ const (
 // thing. Each entry comes from an eval transcript or a guide step;
 // TestGuideSearchAnswersAgentQuestions keeps them honest.
 var guideSynonyms = map[string]string{
-	"public":      "anonymous no-require-authn",
-	"private":     "require-authn",
-	"api key":     "bearer token require-authn",
-	"env var":     "env",
-	"environment": "env",
-	"variable":    "env",
-	"secret":      "secrets env",
-	"migration":   "migrate",
-	"migrations":  "migrate",
-	"roll back":   "rollback",
-	"revert":      "rollback",
-	"outbound":    "egress",
-	"logs":        "logs",
-	"cache":       "redis",
-	"redis":       "redis",
+	"public":             "anonymous no-require-authn",
+	"private":            "require-authn",
+	"protect":            "bearer token require-authn",
+	"require an api key": "bearer token require-authn",
+	"env var":            "env",
+	"environment":        "env",
+	"variable":           "env",
+	"secret":             "secrets env",
+	"migration":          "migrate",
+	"migrations":         "migrate",
+	"roll back":          "rollback",
+	"revert":             "rollback",
+	"outbound":           "egress",
+	"logs":               "logs",
+	"cache":              "redis",
+	"redis":              "redis",
 }
 
 // expandGuideQuery appends the CLI's words for the query's words.
@@ -126,7 +127,10 @@ func guideCommandEntries(ctx context.Context) ([]mcpmanagement.SearchEntry, map[
 			add(guideCommandHit{Command: command + " " + mdFlagLabel(f), Summary: f.Short}, f.Name+"\n"+f.Short+"\n"+context, weight)
 		}
 	}
-	for _, c := range customerCliCommandsContext(ctx) {
+	// The tree's names, as help and completion list them: today's table
+	// without the commands the tree renamed left domain, webhook, key, flag,
+	// alert, project and more out of every search (prod hunt r33).
+	for _, c := range cliTreeManifest(discoverableCliCommandsContext(ctx)) {
 		if len(c.Subcommands) == 0 {
 			command := strings.Join(append([]string{"gregale", c.Name}, c.Positionals...), " ")
 			add(guideCommandHit{Command: command, Summary: c.Short, Example: first(c.Examples)},

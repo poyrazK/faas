@@ -51,6 +51,7 @@ HEALTHY = {
     "loki_write_dropped_entries_total": 0,
     "faas_cgroup_pressure_stall_seconds_total": 0.21,
     "gateway_platform_wake_latency_seconds_bucket": 0.33,
+    "gateway_platform_wake_latency_seconds_count": 1500,
 }
 BASELINE = {
     "faas_cgroup_pressure_stall_seconds_total": 0.18,
@@ -88,6 +89,7 @@ class ObsGateTest(unittest.TestCase):
             "loki_write_dropped_entries_total": 12,
             "faas_cgroup_pressure_stall_seconds_total": 0.30,  # +0.12 over baseline
             "gateway_platform_wake_latency_seconds_bucket": 0.40,  # x1.29
+            "gateway_platform_wake_latency_seconds_count": 19,
         }
         for fragment, bad in cases.items():
             with self.subTest(fragment=fragment):
@@ -153,6 +155,15 @@ class ObsGateTest(unittest.TestCase):
                 code, out = run(FakeProm(HEALTHY, baseline), "--baseline-end", "2026-10-20T00:00:00Z")
                 self.assertEqual(code, 1, out)
                 self.assertRegex(out, r"FAIL\s+platform wake p95 vs baseline")
+
+    def test_a_window_without_platform_wakes_names_the_cause(self):
+        # Smokes and startup-OOM wakes are not platform wakes: a window with
+        # none left has no p95, and the gate says why.
+        window = dict(HEALTHY, gateway_platform_wake_latency_seconds_count=0, gateway_platform_wake_latency_seconds_bucket=None)
+        code, out = run(FakeProm(window, BASELINE), "--baseline-end", "2026-10-20T00:00:00Z")
+        self.assertEqual(code, 1, out)
+        self.assertRegex(out, r"FAIL\s+platform wakes in window\s+0 wakes \(at least 20\)")
+        self.assertEqual(out.splitlines()[-1], "NO-GO")
 
     def test_non_finite_prometheus_samples_are_unavailable(self):
         class Opener:

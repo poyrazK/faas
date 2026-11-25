@@ -141,6 +141,41 @@ func (r *observeRelease) SLO(ctx context.Context, def state.SLO) bool {
 	return r.allows("custom-slos", subject)
 }
 
+// savedInsights reports whether a saved insight still runs: its account is
+// live and has saved insights (whose parent is product analytics). A failed
+// read keeps it running, like alerts.
+func (r *observeRelease) savedInsights(ctx context.Context, si state.SavedInsight) bool {
+	owner, err := r.owner(ctx, si.AccountID, "")
+	switch {
+	case err != nil:
+		return true
+	case !owner.live:
+		return false
+	}
+	subject := platformflags.Subject{AccountID: si.AccountID, Plan: string(owner.plan)}
+	return r.allows("saved-insights", subject) && r.allows("product-analytics", subject)
+}
+
+// flagNotifications reports whether a queued flag notification may be
+// sent: its account is live and has flag notifications
+// (ADR-20261125085913). A failed read sends it, like alerts.
+func (r *observeRelease) flagNotifications(ctx context.Context, n state.FlagNotification) bool {
+	owner, err := r.owner(ctx, n.AccountID, "")
+	switch {
+	case err != nil:
+		return true
+	case !owner.live:
+		return false
+	}
+	// The project's organization was captured when apid queued it, so an
+	// org-targeted release decides here as it did there.
+	orgID := n.OrgID
+	if orgID == "" {
+		orgID = owner.orgID
+	}
+	return r.allows("flag-notifications", platformflags.Subject{AccountID: n.AccountID, Plan: string(owner.plan), OrgID: orgID})
+}
+
 // allows decides a capability's flag for subject. A hand-written flag no
 // operator has written yet falls back, in apid, to an environment gate meterd
 // cannot read; apid already checked it when the rule or check was created, so

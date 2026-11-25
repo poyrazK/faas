@@ -133,7 +133,7 @@ func (s *server) reconcileEnvironmentBranchDataPass(ctx context.Context, store s
 		if err != nil {
 			return soon, errors.Join(errs, err)
 		}
-		copyErr := s.copyEnvironmentBranchData(ctx, store, branch)
+		copyErr := s.copyEnvironmentBranchData(ctx, store, branch, now)
 		if copyErr == nil {
 			if err := store.CompleteProjectEnvironmentBranchData(ctx, branch.EnvironmentID, lease); err != nil {
 				errs = errors.Join(errs, err)
@@ -281,7 +281,7 @@ func environmentBranchDatabaseName(branch state.ProjectEnvironmentBranch, source
 // the branch point, overlays each bucket it binds, and binds the copies into
 // the branch's scope once per parent binding. Every step is idempotent, so a
 // retry resumes.
-func (s *server) copyEnvironmentBranchData(ctx context.Context, store state.ProjectEnvironmentBranchDataStore, branch state.ProjectEnvironmentBranch) error {
+func (s *server) copyEnvironmentBranchData(ctx context.Context, store state.ProjectEnvironmentBranchDataStore, branch state.ProjectEnvironmentBranch, now time.Time) error {
 	ctx, acct, project, err := s.environmentBranchOwner(ctx, branch)
 	if err != nil {
 		return err
@@ -294,7 +294,7 @@ func (s *server) copyEnvironmentBranchData(ctx context.Context, store state.Proj
 	if err != nil {
 		return err
 	}
-	if err := s.copyEnvironmentBranchDatabases(ctx, store, acct, branch, plans); err != nil {
+	if err := s.copyEnvironmentBranchDatabases(ctx, store, acct, branch, plans, now); err != nil {
 		return err
 	}
 	return s.overlayEnvironmentBranchBuckets(ctx, acct, branch, plans)
@@ -342,7 +342,7 @@ func (s *server) environmentProjectOwner(ctx context.Context, project state.Proj
 
 // copyEnvironmentBranchDatabases restores each database the parent binds as
 // of the branch point and binds the copy into the branch's scope.
-func (s *server) copyEnvironmentBranchDatabases(ctx context.Context, store state.ProjectEnvironmentBranchDataStore, acct state.Account, branch state.ProjectEnvironmentBranch, plans []projectEnvironmentBindingClone) error {
+func (s *server) copyEnvironmentBranchDatabases(ctx context.Context, store state.ProjectEnvironmentBranchDataStore, acct state.Account, branch state.ProjectEnvironmentBranch, plans []projectEnvironmentBindingClone, now time.Time) error {
 	sources := map[string]managedpostgres.Database{}
 	for _, plan := range plans {
 		if plan.kind == "managed_postgres" {
@@ -354,6 +354,15 @@ func (s *server) copyEnvironmentBranchDatabases(ctx context.Context, store state
 	}
 	if s.managedPostgres == nil || s.managedPostgresBindings == nil {
 		return managedpostgres.ErrUnavailable
+	}
+	// The provider cannot restore to an instant it has not yet archived: a
+	// point a few hundred milliseconds old is refused as invalid, which fails
+	// the branch's data for good. Branch create wakes the reconciler at once,
+	// so wait until the point is as old as a latest restore's (prod
+	// 2026-11-24: a copy 112 ms after the point was refused). Waiting is not
+	// a failed attempt.
+	if wait := branch.BranchPoint.Add(managedpostgres.LatestRestoreLag).Sub(now); wait > 0 {
+		return fmt.Errorf("the branch point is %s too recent to restore: %w", wait.Round(time.Millisecond), errEnvironmentBranchDataInProgress)
 	}
 	ids := make([]string, 0, len(sources))
 	for id := range sources {

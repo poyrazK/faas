@@ -26,12 +26,17 @@ func cmdDomainsSetup(args []string) int {
 		return 0
 	}
 	fs := newFlagSet("domains setup", flag.ContinueOnError)
-	slug := fs.String("app", "", "app to bind the domain to")
+	slug := fs.String("app", "", "app to bind the domain to (defaults to linked context)")
 	environment := fs.String("environment", "", "project environment to route to")
 	timeout := fs.Duration("timeout", 10*time.Minute, "verification wait deadline")
 	interval := fs.Duration("poll-interval", 10*time.Second, "verification check interval (5s..1m)")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
+	}
+	if *slug == "" {
+		// Prod hunt r35: `domain list` points here, and a linked checkout
+		// printed only the usage line.
+		*slug, *environment = linkedAppAndEnvironment(*environment)
 	}
 	if fs.NArg() != 1 || !validCLISlug(*slug) || *environment != "" && !api.ValidProjectEnvironmentSlug(*environment) {
 		PrintUsage(osStderr, domainsSetupUsage, "domains")

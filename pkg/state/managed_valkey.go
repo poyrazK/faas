@@ -3,11 +3,13 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // ManagedValkeyCache marks an app as a managed Redis-compatible cache
@@ -37,6 +39,91 @@ type ManagedValkeyStore interface {
 
 var _ ManagedValkeyStore = (*PgStore)(nil)
 var _ ManagedValkeyStore = (*MemStore)(nil)
+
+// ManagedValkeyGrantStore records which apps may call a cache. Binding a
+// cache to an app grants the call (ADR-20261124174500): a project workload
+// reaches a cache outside its project only through a grant.
+type ManagedValkeyGrantStore interface {
+	// GrantManagedValkeyCache is idempotent.
+	GrantManagedValkeyCache(ctx context.Context, cacheAppID, appID, accountID string) error
+	// RevokeManagedValkeyCacheGrant reports whether a grant existed.
+	RevokeManagedValkeyCacheGrant(ctx context.Context, cacheAppID, appID string) (bool, error)
+	ManagedValkeyCacheGrantReader
+}
+
+// ManagedValkeyCacheGrantReader is the read half the service authorizer
+// needs; the pinned service policy snapshot implements it too.
+type ManagedValkeyCacheGrantReader interface {
+	// ManagedValkeyCacheGranted reports whether appID holds a grant to
+	// cacheAppID while cacheAppID is still a managed cache.
+	ManagedValkeyCacheGranted(ctx context.Context, cacheAppID, appID string) (bool, error)
+}
+
+var _ ManagedValkeyGrantStore = (*PgStore)(nil)
+var _ ManagedValkeyGrantStore = (*MemStore)(nil)
+var _ ManagedValkeyCacheGrantReader = servicePolicyReader{}
+
+// GrantManagedValkeyCache records that appID may call the cache.
+func (s *PgStore) GrantManagedValkeyCache(ctx context.Context, cacheAppID, appID, accountID string) error {
+	return mapErr(sqlc.New().GrantManagedValkeyCache(ctx, s.pool, sqlc.GrantManagedValkeyCacheParams{
+		CacheAppID: uuidToPgtype(cacheAppID), AppID: uuidToPgtype(appID), AccountID: uuidToPgtype(accountID)}))
+}
+
+// RevokeManagedValkeyCacheGrant removes appID's grant to the cache.
+func (s *PgStore) RevokeManagedValkeyCacheGrant(ctx context.Context, cacheAppID, appID string) (bool, error) {
+	n, err := sqlc.New().RevokeManagedValkeyCacheGrant(ctx, s.pool, sqlc.RevokeManagedValkeyCacheGrantParams{
+		CacheAppID: uuidToPgtype(cacheAppID), AppID: uuidToPgtype(appID)})
+	if err != nil {
+		return false, mapErr(err)
+	}
+	return n > 0, nil
+}
+
+// ManagedValkeyCacheGranted reads a grant outside a policy snapshot.
+func (s *PgStore) ManagedValkeyCacheGranted(ctx context.Context, cacheAppID, appID string) (bool, error) {
+	granted, err := sqlc.New().ReadServicePolicyCacheGrant(ctx, s.pool, sqlc.ReadServicePolicyCacheGrantParams{
+		CacheAppID: uuidToPgtype(cacheAppID), AppID: uuidToPgtype(appID)})
+	if err != nil {
+		return false, mapErr(err)
+	}
+	return granted, nil
+}
+
+// ManagedValkeyCacheGranted reads a grant inside the pinned policy view.
+func (s servicePolicyReader) ManagedValkeyCacheGranted(ctx context.Context, cacheAppID, appID string) (bool, error) {
+	granted, err := sqlc.New().ReadServicePolicyCacheGrant(ctx, s.tx, sqlc.ReadServicePolicyCacheGrantParams{
+		CacheAppID: uuidToPgtype(cacheAppID), AppID: uuidToPgtype(appID)})
+	if err != nil {
+		return false, fmt.Errorf("read managed cache grant: %w", err)
+	}
+	return granted, nil
+}
+
+func managedValkeyGrantKey(cacheAppID, appID string) string { return cacheAppID + "\x00" + appID }
+
+// GrantManagedValkeyCache records that appID may call the cache.
+func (m *MemStore) GrantManagedValkeyCache(ctx context.Context, cacheAppID, appID, accountID string) error {
+	if cacheAppID == appID {
+		return fmt.Errorf("grant cache %s to itself: %w", cacheAppID, ErrConflict)
+	}
+	m.managedValkeyCacheGrants.LoadOrStore(managedValkeyGrantKey(cacheAppID, appID), accountID)
+	return nil
+}
+
+// RevokeManagedValkeyCacheGrant removes appID's grant to the cache.
+func (m *MemStore) RevokeManagedValkeyCacheGrant(ctx context.Context, cacheAppID, appID string) (bool, error) {
+	_, existed := m.managedValkeyCacheGrants.LoadAndDelete(managedValkeyGrantKey(cacheAppID, appID))
+	return existed, nil
+}
+
+// ManagedValkeyCacheGranted reports a grant to a cache that still exists.
+func (m *MemStore) ManagedValkeyCacheGranted(ctx context.Context, cacheAppID, appID string) (bool, error) {
+	if _, ok := m.managedValkeyCaches.Load(cacheAppID); !ok {
+		return false, nil
+	}
+	_, ok := m.managedValkeyCacheGrants.Load(managedValkeyGrantKey(cacheAppID, appID))
+	return ok, nil
+}
 
 // CreateManagedValkeyCache inserts the marker row for an existing app.
 func (s *PgStore) CreateManagedValkeyCache(ctx context.Context, cache ManagedValkeyCache) (ManagedValkeyCache, error) {

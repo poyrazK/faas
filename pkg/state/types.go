@@ -985,6 +985,8 @@ type RequestAuditRecord struct {
 // APIConsumerUsageBucket is the read-side aggregate for one app, attributed
 // consumer, verified surface, or verified JWT rule, and UTC minute.
 type APIConsumerUsageBucket struct {
+	// Model is populated only by the pricing engine for a model-rated bucket.
+	Model                  string
 	AccountID              string
 	AppID                  string
 	ConsumerKey            string
@@ -1066,6 +1068,7 @@ type APIConsumerRateCard struct {
 	// units (ADR-952); unlisted routes count 1. Weighted units feed the
 	// allowance and tiers.
 	RouteWeights map[string]int64
+	ModelPrices  map[string]int64
 	// PlanID names the consumer plan whose price history this card belongs
 	// to (ADR-953); empty is the app default plan.
 	PlanID string
@@ -1080,7 +1083,10 @@ type APIConsumerRateCard struct {
 	// (ADR-1325).
 	ProrateMonthlyFees bool
 	EffectiveFrom      time.Time
-	CreatedAt          time.Time
+	// EffectiveUntil is the exclusive end of a resolved plan assignment.
+	// Stored rate cards have an open end until superseded.
+	EffectiveUntil time.Time
+	CreatedAt      time.Time
 }
 
 // MonthlyFees reports whether the card charges a base fee or a minimum.
@@ -1224,6 +1230,8 @@ const (
 // APIConsumerUsageStatementBucket is the priced snapshot for one UTC minute.
 // Empty RateCardID/Currency denotes an explicitly unpriced bucket.
 type APIConsumerUsageStatementBucket struct {
+	WaivedUnits            int64     `json:"waived_units,omitempty"`
+	Model                  string    `json:"model,omitempty"`
 	WindowStart            time.Time `json:"window_start"`
 	BillableUnits          int64     `json:"billable_units"`
 	RateCardID             string    `json:"rate_card_id,omitempty"`
@@ -1266,6 +1274,7 @@ func (b APIConsumerUsageStatementBucket) Charged() int64 {
 // period can hold several revisions: every revision after a finalized one
 // carries only the usage that arrived later, as an additive adjustment.
 type APIConsumerUsageStatement struct {
+	Waiver           *APIConsumerUsageWaiver
 	ID               string
 	AccountID        string
 	AppID            string
@@ -1327,6 +1336,7 @@ type APIConsumerUsageStatementHandoffInput struct {
 // and PriorStatus name the latest revision the quote was planned against, so
 // a concurrent change is rejected instead of overwritten.
 type APIConsumerUsageStatementInput struct {
+	Waiver           *APIConsumerUsageWaiver
 	AccountID        string
 	AppID            string
 	ConsumerID       string
@@ -2128,6 +2138,12 @@ type WorkerScaling struct {
 // as jsonb in Postgres; lifecycle fields are overlaid onto each deployment's
 // image manifest before it is written into the snapshot for guest-init.
 type AppManifest struct {
+	// DeclaredAccess is the public-URL access the app's project service
+	// declares in gregale.yaml or Compose ("public" or "key",
+	// ADR-20261124090000). A deploy that finds it set but no declaration
+	// in the source restores the plan's auth defaults; an app whose access
+	// was never declared keeps what its owner set by hand.
+	DeclaredAccess string `json:"declared_access,omitempty"`
 	// PublicBuildURLs are explicitly reviewed, non-secret frontend build inputs.
 	// New production source deployments capture an immutable copy at INSERT.
 	PublicBuildURLs map[string]string `json:"public_build_urls,omitempty"`
@@ -8584,6 +8600,10 @@ type CreateAccountWithPersonalOrgParams struct {
 	// TermsAcceptance, when set, records the Terms of Service version the
 	// account accepted at sign-up in the same transaction (legal_acceptances).
 	TermsAcceptance *TermsAcceptance
+	// Unclaimed, when set, records the account as created by an anonymous
+	// deploy (ADR-20261124080000) in the same transaction, so an account
+	// never exists without the expiry that bounds it.
+	Unclaimed *UnclaimedAccountParams
 }
 
 // CreateAccountWithPersonalOrgResult bundles the freshly minted

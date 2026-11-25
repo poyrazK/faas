@@ -114,6 +114,14 @@ var featureRouteActions = map[string]authz.OrgAction{
 	"DELETE /v1/apps/{slug}/consumer-billing-policy": authz.OrgActionManageAppSecurity,
 	"GET /v1/apps/{slug}/consumer-billing-policy":    authz.OrgActionManageAppSecurity,
 	"PUT /v1/apps/{slug}/consumer-billing-policy":    authz.OrgActionManageAppSecurity,
+	// consumer-credit-packs
+	"GET /v1/apps/{slug}/consumer-credit-packs": authz.OrgActionManageAppSecurity,
+	"PUT /v1/apps/{slug}/consumer-credit-packs": authz.OrgActionManageAppSecurity,
+	// consumer-identities: OAuth sign-in identities linked to key consumers;
+	// unlinking one lets it enroll a fresh consumer, so it manages app security
+	// like the consumers themselves.
+	"DELETE /v1/apps/{slug}/consumer-identities/{id}": authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/consumer-identities":         authz.OrgActionManageAppSecurity,
 	// consumer-overdue-holds
 	"GET /v1/apps/{slug}/consumer-overdue-holds": authz.OrgActionReadApp,
 	// consumer-plans

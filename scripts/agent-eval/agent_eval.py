@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -37,6 +38,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -46,7 +48,8 @@ AGENTS = ("claude", "codex", "gemini", "cursor")
 AGENT_BINARIES = {"claude": "claude", "codex": "codex", "gemini": "gemini", "cursor": "cursor-agent"}
 TOOLSETS = ("core", "release", "diagnose", "all", "none")
 SETUP_KINDS = ("deploy", "replace")
-CHECK_KINDS = ("http", "serving", "file_contains", "answer", "apps_created", "apps_serving", "app_http", "no_traps", "owner_response")
+CHECK_KINDS = ("http", "serving", "file_contains", "answer", "apps_created", "apps_serving", "app_http", "no_traps", "owner_response",
+               "vote_counted")
 FEATURE_KINDS = ("command", "file", "state")
 FEATURE_STATES = ("project_created",)
 DEFAULT_API = "https://api.gregale.dev"
@@ -512,6 +515,7 @@ class CliGregale(Gregale):
     ROUTES = (
         (re.compile(r"^/v1/apps$"), lambda m: ["app", "list"]),
         (re.compile(r"^/v1/projects$"), lambda m: ["project", "list"]),
+        (re.compile(r"^/v1/postgres$"), lambda m: ["postgres", "list"]),
         (re.compile(r"^/v1/apps/([a-z0-9-]+)$"), lambda m: ["app", "get", m[1]]),
         (re.compile(r"^/v1/apps/([a-z0-9-]+)/health$"), lambda m: ["app", "health", m[1]]),
         (re.compile(r"^/v1/apps/([a-z0-9-]+)/deployments(\?.*)?$"), lambda m: ["release", "list", "--app", m[1], "--limit", "20"]),
@@ -537,7 +541,17 @@ class CliGregale(Gregale):
         apps = _rows(self.get("/v1/apps"))
         projects = _rows(self.get("/v1/projects"))
         return {"apps": {a["slug"] for a in apps if a.get("slug")}, "projects": {p["slug"] for p in projects if p.get("slug")},
+                "databases": self.databases(),
                 "app_ids": {a["id"]: a["slug"] for a in apps if a.get("id") and a.get("slug")}}
+
+    def databases(self) -> set:
+        """Managed Postgres database names. A run that creates one and leaves it
+        filled the account's database limit: the 2026-11-24 voting-app rerun
+        found 10/10, most of them earlier runs' databases."""
+        try:
+            return {d["name"] for d in _rows(self.get("/v1/postgres")) if isinstance(d, dict) and d.get("name")}
+        except ValueError:
+            return set()
 
     def touched_since(self, before: dict, started_at: str) -> dict:
         after = self.inventory()
@@ -549,8 +563,12 @@ class CliGregale(Gregale):
         return touched
 
 
+# What a run can create in the account, and what cleanup deletes.
+RESOURCE_KINDS = ("apps", "projects", "databases")
+
+
 def created_since(before: dict, after: dict) -> dict:
-    return {kind: sorted(after.get(kind, set()) - before.get(kind, set())) for kind in ("apps", "projects")}
+    return {kind: sorted(after.get(kind, set()) - before.get(kind, set())) for kind in RESOURCE_KINDS}
 
 
 # Project files read for the names of the apps a run deploys (Compose service
@@ -588,15 +606,34 @@ def attribute(gregale: "Gregale", touched: dict, evidence: str, slug: str | None
     (--cli-login) is shared with other sessions, so there an app or project is
     the run's only if the agent named it (or it is the harness's own slug)."""
     if not isinstance(gregale, CliGregale):
-        return touched, {"apps": [], "projects": []}
-    mine: dict = {"apps": [], "projects": []}
-    others: dict = {"apps": [], "projects": []}
+        return touched, {kind: [] for kind in RESOURCE_KINDS}
+    mine: dict = {kind: [] for kind in RESOURCE_KINDS}
+    others: dict = {kind: [] for kind in RESOURCE_KINDS}
     prefixes = _slug_prefixes(evidence)
-    for kind in ("apps", "projects"):
+    for kind in RESOURCE_KINDS:
         for name in touched.get(kind, []):
             named = name == slug or _named(name, evidence) or (kind == "apps" and name.startswith(prefixes))
             (mine if named else others)[kind].append(name)
+    for app in _members_of(gregale, mine["projects"], others["apps"]):
+        others["apps"].remove(app)
+        mine["apps"].append(app)
+    mine["apps"].sort()
     return mine, others
+
+
+def _members_of(gregale: "Gregale", projects: list[str], apps: list[str]) -> list[str]:
+    """The apps among `apps` that belong to one of `projects`. A Compose
+    deploy names a project's apps from its services, names the agent never
+    typed (rc.381 retail-store: retail-catalog and retail-carts went
+    unattributed, failed apps_created and were left behind)."""
+    if not projects or not apps:
+        return []
+    try:
+        ids = {row.get("id") for row in _rows(gregale.get("/v1/projects")) if row.get("slug") in projects}
+        members = {row.get("slug") for row in _rows(gregale.get("/v1/apps")) if row.get("project_id") in ids - {None, ""}}
+    except (OSError, ValueError, AttributeError, urllib.error.URLError, subprocess.TimeoutExpired):
+        return []
+    return [app for app in apps if app in members]
 
 
 def _slug_prefixes(evidence: str) -> tuple:
@@ -616,7 +653,7 @@ def deletable(gregale: "Gregale", before: dict | None, created: dict, slug: str 
     if not isinstance(gregale, CliGregale):
         return created, slug
     if before is None:
-        return {"apps": [], "projects": []}, None
+        return {kind: [] for kind in RESOURCE_KINDS}, None
     new, _ = attribute(gregale, created_since(before, gregale.inventory()), evidence, slug)
     return new, slug if slug in new["apps"] else None
 
@@ -727,6 +764,162 @@ def _fetch(url: str) -> tuple[int, str]:
         return 0, str(error)
 
 
+def _http(method: str, url: str, data: bytes | None = None, headers: dict | None = None, timeout: float = 30) -> tuple[int, str]:
+    request = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=max(timeout, 1)) as response:
+            return response.status, response.read(65536).decode("utf-8", "replace")
+    except urllib.error.HTTPError as error:
+        return error.code, error.read(65536).decode("utf-8", "replace")
+    except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException) as error:
+        return 0, str(error)
+
+
+class SocketIOUnavailable(ValueError):
+    """The Socket.IO server refused or broke the session."""
+
+    def __init__(self, message: str, status: int = 0):
+        super().__init__(message)
+        self.status = status
+
+
+_SOCKETIO_TEXT = {"Content-Type": "text/plain;charset=UTF-8"}
+
+
+def _socketio_session(base: str, http, timeout_s: float) -> str:
+    status, body = http("GET", f"{base}/socket.io/?EIO=4&transport=polling", timeout=timeout_s)
+    if status != 200 or not body.startswith("0"):
+        raise SocketIOUnavailable(f"socket.io handshake {status}: {body[:80]!r}", status)
+    try:
+        sid = json.loads(body[1:])["sid"]
+    except (ValueError, KeyError, TypeError) as error:
+        raise SocketIOUnavailable(f"socket.io handshake unreadable: {body[:80]!r}") from error
+    poll = f"{base}/socket.io/?EIO=4&transport=polling&sid={urllib.parse.quote(str(sid))}"
+    status, body = http("POST", poll, b"40", _SOCKETIO_TEXT, timeout=timeout_s)
+    if status != 200:
+        raise SocketIOUnavailable(f"socket.io connect {status}: {body[:80]!r}", status)
+    return poll
+
+
+def socketio_event(base: str, event: str, http=_http, timeout_s: float = 30, attempts: int = 3) -> list:
+    """The arguments of the next `event` a Socket.IO v4 server emits, read
+    over the plain HTTP long-polling transport (no websocket client needed).
+
+    A polling session lives on one server instance. When an app runs more
+    than one, a request can reach an instance that does not know the session
+    (400 "Session ID unknown"); that starts a new session instead of failing.
+    The session is always closed: disconnect from the namespace, then close
+    the transport."""
+    deadline = time.monotonic() + timeout_s
+    last = ""
+    for _ in range(attempts):
+        poll = ""
+        try:
+            poll = _socketio_session(base, http, max(deadline - time.monotonic(), 1))
+            while time.monotonic() < deadline:
+                status, body = http("GET", poll, timeout=max(deadline - time.monotonic(), 1))
+                if status == 0 and time.monotonic() >= deadline - 1:
+                    break  # the long poll outlived the deadline: no event came
+                if status != 200:
+                    raise SocketIOUnavailable(f"socket.io poll {status}: {body[:80]!r}", status)
+                for packet in body.split("\x1e"):
+                    if packet == "2":
+                        http("POST", poll, b"3", _SOCKETIO_TEXT, timeout=5)
+                    elif packet.startswith(("44", "41")) or packet == "1":
+                        raise SocketIOUnavailable(f"socket.io refused the connection: {packet[:80]!r}")
+                    elif packet.startswith("42"):
+                        name, *args = json.loads(packet[2:])
+                        if name == event:
+                            return args
+            raise TimeoutError(f"no socket.io {event!r} event within {timeout_s:.0f}s")
+        except SocketIOUnavailable as error:
+            last = str(error)
+            if error.status != 400 or time.monotonic() >= deadline:
+                raise
+        finally:
+            if poll:
+                http("POST", poll, b"41\x1e1", _SOCKETIO_TEXT, timeout=5)
+    raise SocketIOUnavailable(f"socket.io session kept moving between instances: {last}", 400)
+
+
+def _vote_scores(result_url: str, http, timeout_s: float) -> dict:
+    args = socketio_event(result_url, "scores", http=http, timeout_s=timeout_s)
+    scores = json.loads(args[0]) if args and isinstance(args[0], str) else (args[0] if args else None)
+    if not isinstance(scores, dict) or not all(isinstance(v, int) for v in scores.values()):
+        raise ValueError(f"scores is not a count per option: {str(args)[:80]}")
+    return scores
+
+
+def _created_public_app(gregale, created_apps: list[str], pattern: str, exclude: str = "") -> tuple[str, str]:
+    for app in created_apps:
+        if app != exclude and re.search(pattern, app):
+            url = _app_url(gregale.get(f"/v1/apps/{app}"))
+            if url:
+                return app, url
+    return "", ""
+
+
+def vote_counted_check(gregale, created_apps: list[str], check: dict, http=_http, deadline_s: float = 120) -> tuple[bool, str]:
+    """End to end for the voting app: cast a vote on the vote app and wait for
+    the result app to count it. GETs of both pages passed on rc.380 while every
+    vote POST returned 500 (Redis unreachable) and the votes table was never
+    created, so serving pages alone said nothing about the app working.
+
+    The grader votes as a new voter for the option with fewer votes, so its own
+    vote is the likeliest change; a total that grows still cannot prove which
+    vote was counted. Both apps must be public: the grader has no session to
+    vote or read scores as the owner."""
+    # A taken name gets the project's prefix (<project>-vote) or, when another
+    # account holds it, a 5-character suffix (vote-k3x7q, pkg/api SuffixedAppSlugs).
+    result_app, result_url = _created_public_app(gregale, created_apps, check.get("result_match", r"(^|-)result(-[a-z0-9]{5})?$"))
+    vote_app, vote_url = _created_public_app(gregale, created_apps, check.get("vote_match", r"(^|-)vote(-[a-z0-9]{5})?$"), exclude=result_app)
+    if not vote_url or not result_url:
+        return False, f"no public vote ({vote_app or '-'}) or result ({result_app or '-'}) app among {','.join(created_apps)}"
+    deadline = time.monotonic() + max(deadline_s, 0)
+    read_s = lambda: min(30.0, max(deadline - time.monotonic(), 5.0))  # noqa: E731
+    try:
+        before = _vote_scores(result_url, http, read_s())
+    except SocketIOUnavailable as error:
+        private = " (the result app requires sign-in)" if error.status == 401 else ""
+        return False, f"{result_app} scores unreadable{private}: {error}"
+    except (ValueError, TimeoutError) as error:
+        return False, f"{result_app} scores unreadable: {error}"
+    options = sorted(before) or ["a"]
+    option = check.get("option") or min(options, key=lambda o: (before.get(o, 0), o))
+    voter = "agent-eval-" + secrets.token_hex(8)
+    status, body = http("POST", vote_url + check.get("path", "/"), urllib.parse.urlencode({"vote": option}).encode(),
+                        {"Content-Type": "application/x-www-form-urlencoded", "Cookie": f"voter_id={voter}"})
+    if status != 200:
+        private = " (the vote app requires sign-in)" if status == 401 else ""
+        return False, f"{vote_app} vote POST {status}{private}: {body[:120]!r}"
+    base, after, error_detail = before.get(option, 0), None, ""
+    while True:
+        try:
+            after = _vote_scores(result_url, http, read_s()).get(option, 0)
+            if after > base:
+                return True, f"{option}: {base} -> {after}"
+        except (ValueError, TimeoutError) as error:
+            error_detail = str(error)
+        if time.monotonic() >= deadline:
+            if after is None:
+                return False, f"vote accepted but {result_app} scores unreadable after it: {error_detail}"
+            return False, f"vote accepted but not counted: {option} stayed {after}"
+        time.sleep(5)
+
+
+def _app_is_serving(gregale, slug: str) -> bool:
+    """An app serves when health names a serving deployment. Health does not
+    assess workers or jobs unless app_health_workers is on (phase
+    "unsupported"); a live worker pool serves its queue, not HTTP, so the app
+    record's deployment availability decides."""
+    health = gregale.get(f"/v1/apps/{slug}/health")
+    if health.get("serving_deployment_ids"):
+        return True
+    if health.get("phase") == "unsupported":
+        return gregale.get(f"/v1/apps/{slug}").get("deployment_availability") == "live"
+    return False
+
+
 def _app_url(app: dict) -> str:
     return (app.get("canonical_url") or app.get("url") or "").rstrip("/")
 
@@ -767,7 +960,7 @@ def first_deploy_live(gregale, apps: list[str], since: str = "") -> bool:
 
 
 def run_checks(task: dict, slug: str, project: Path, answer: str, gregale, fetch=None, http_deadline_s: float = 120, created: dict | None = None,
-               since: str = "", expected_app_id: str | None = None) -> list[dict]:
+               since: str = "", expected_app_id: str | None = None, http=None) -> list[dict]:
     created_apps = (created or {}).get("apps", [])
     results = []
     for check in task["checks"]:
@@ -792,7 +985,7 @@ def run_checks(task: dict, slug: str, project: Path, answer: str, gregale, fetch
                 ok = len(created_apps) >= check.get("min", 1)
                 detail = ",".join(created_apps)
             elif kind == "apps_serving":
-                idle = [app for app in created_apps if not gregale.get(f"/v1/apps/{app}/health").get("serving_deployment_ids")]
+                idle = [app for app in created_apps if not _app_is_serving(gregale, app)]
                 ok, detail = bool(created_apps) and not idle, f"not serving: {','.join(idle)}" if idle else f"{len(created_apps)} serving"
             elif kind == "app_http":
                 matches = [app for app in created_apps if re.search(check["match"], app)]
@@ -803,6 +996,8 @@ def run_checks(task: dict, slug: str, project: Path, answer: str, gregale, fetch
                 else:
                     app, url = pairs[0]
                     ok, detail = _http_or_private(gregale, app, url + check.get("path", "/"), check, http_deadline_s, fetch)
+            elif kind == "vote_counted":
+                ok, detail = vote_counted_check(gregale, created_apps, check, http=http or _http, deadline_s=http_deadline_s)
             elif kind == "no_traps":
                 codes = check.get("codes") or list(DEFAULT_TRAPS)
                 hit = sorted({f"{app}:{code}" for app in created_apps for code in codes if code in _app_final_evidence(gregale, app, since)})
@@ -943,6 +1138,11 @@ def cleanup(gregale: Gregale, created: dict, slug: str | None) -> list[str]:
             left.append(f"app:{app}")
         elif gregale.cli("app", "purge", "--yes", app, timeout=300).returncode != 0:
             left.append(f"name:{app}")
+    # Recoverable for seven days; a deleted database no longer counts against
+    # the account's database limit.
+    for database in created.get("databases", []):
+        if gregale.cli("postgres", "delete", "--yes", database, timeout=300).returncode != 0:
+            left.append(f"database:{database}")
     return left
 
 
@@ -993,7 +1193,7 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
             record["cli_sha256"] = checksum.hexdigest()
     except OSError:
         record["cli_sha256"] = None
-    created: dict = {"apps": [], "projects": []}
+    created: dict = {kind: [] for kind in RESOURCE_KINDS}
     before, evidence = None, ""
     cleanup_allowed = False
     try:

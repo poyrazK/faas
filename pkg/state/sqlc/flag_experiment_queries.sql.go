@@ -299,15 +299,15 @@ func (q *Queries) AdvanceFlagExperiment(ctx context.Context, db DBTX, arg Advanc
 const createFlagExperiment = `-- name: CreateFlagExperiment :one
 INSERT INTO flag_experiments (id, account_id, project_id, environment_id, key, flag_key, rule_id, control,
     metric_event, metric_kind, mixing_lift, weights, guardrails, created_by, metric_definition, cuped,
-    unit, layer, traffic, allocation, denominator_event, percentile)
+    unit, layer, traffic, allocation, denominator_event, percentile, notify_channel_ids)
 SELECT $1::uuid, $2::uuid, $3::uuid, $4::uuid,
     $5::text, $6::text, $7::text, $8::text,
     $9::text, $10::text, $11::double precision, $12::jsonb,
     $13::jsonb, $14::text, $15::jsonb, $16::boolean,
     $17::text, $18::text, $19::int, $20::text,
-    $21::text, $22::int
-WHERE (SELECT count(*) FROM flag_experiments x WHERE x.environment_id = $4::uuid) < $23::bigint
-RETURNING id, account_id, project_id, environment_id, key, flag_key, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, min_p_values, telemetry_cursor, created_by, created_at, started_at, stopped_at, guardrails, latency_threshold_ms, stop_reason, breach, value_through_day, metric_definition, cuped, min_cuped_p_values, unit, layer, traffic, layer_from, layer_to, allocation, bandit, bandit_weighted_at, denominator_event, percentile
+    $21::text, $22::int, $23::uuid[]
+WHERE (SELECT count(*) FROM flag_experiments x WHERE x.environment_id = $4::uuid) < $24::bigint
+RETURNING id, account_id, project_id, environment_id, key, flag_key, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, min_p_values, telemetry_cursor, created_by, created_at, started_at, stopped_at, guardrails, latency_threshold_ms, stop_reason, breach, value_through_day, metric_definition, cuped, min_cuped_p_values, unit, layer, traffic, layer_from, layer_to, allocation, bandit, bandit_weighted_at, denominator_event, percentile, notify_channel_ids
 `
 
 type CreateFlagExperimentParams struct {
@@ -333,6 +333,7 @@ type CreateFlagExperimentParams struct {
 	Allocation       string
 	DenominatorEvent string
 	Percentile       int32
+	NotifyChannelIds []pgtype.UUID
 	MaxExperiments   int64
 }
 
@@ -360,6 +361,7 @@ func (q *Queries) CreateFlagExperiment(ctx context.Context, db DBTX, arg CreateF
 		arg.Allocation,
 		arg.DenominatorEvent,
 		arg.Percentile,
+		arg.NotifyChannelIds,
 		arg.MaxExperiments,
 	)
 	var i FlagExperiment
@@ -401,6 +403,7 @@ func (q *Queries) CreateFlagExperiment(ctx context.Context, db DBTX, arg CreateF
 		&i.BanditWeightedAt,
 		&i.DenominatorEvent,
 		&i.Percentile,
+		&i.NotifyChannelIds,
 	)
 	return i, err
 }
@@ -1498,7 +1501,7 @@ func (q *Queries) FoldFlagExperimentValues(ctx context.Context, db DBTX, arg Fol
 }
 
 const getFlagExperiment = `-- name: GetFlagExperiment :one
-SELECT id, account_id, project_id, environment_id, key, flag_key, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, min_p_values, telemetry_cursor, created_by, created_at, started_at, stopped_at, guardrails, latency_threshold_ms, stop_reason, breach, value_through_day, metric_definition, cuped, min_cuped_p_values, unit, layer, traffic, layer_from, layer_to, allocation, bandit, bandit_weighted_at, denominator_event, percentile FROM flag_experiments
+SELECT id, account_id, project_id, environment_id, key, flag_key, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, min_p_values, telemetry_cursor, created_by, created_at, started_at, stopped_at, guardrails, latency_threshold_ms, stop_reason, breach, value_through_day, metric_definition, cuped, min_cuped_p_values, unit, layer, traffic, layer_from, layer_to, allocation, bandit, bandit_weighted_at, denominator_event, percentile, notify_channel_ids FROM flag_experiments
 WHERE environment_id = $1::uuid AND key = $2::text
 `
 
@@ -1548,12 +1551,13 @@ func (q *Queries) GetFlagExperiment(ctx context.Context, db DBTX, arg GetFlagExp
 		&i.BanditWeightedAt,
 		&i.DenominatorEvent,
 		&i.Percentile,
+		&i.NotifyChannelIds,
 	)
 	return i, err
 }
 
 const listFlagExperiments = `-- name: ListFlagExperiments :many
-SELECT id, account_id, project_id, environment_id, key, flag_key, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, min_p_values, telemetry_cursor, created_by, created_at, started_at, stopped_at, guardrails, latency_threshold_ms, stop_reason, breach, value_through_day, metric_definition, cuped, min_cuped_p_values, unit, layer, traffic, layer_from, layer_to, allocation, bandit, bandit_weighted_at, denominator_event, percentile FROM flag_experiments
+SELECT id, account_id, project_id, environment_id, key, flag_key, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, min_p_values, telemetry_cursor, created_by, created_at, started_at, stopped_at, guardrails, latency_threshold_ms, stop_reason, breach, value_through_day, metric_definition, cuped, min_cuped_p_values, unit, layer, traffic, layer_from, layer_to, allocation, bandit, bandit_weighted_at, denominator_event, percentile, notify_channel_ids FROM flag_experiments
 WHERE environment_id = $1::uuid
 ORDER BY created_at DESC, key
 `
@@ -1605,6 +1609,7 @@ func (q *Queries) ListFlagExperiments(ctx context.Context, db DBTX, environmentI
 			&i.BanditWeightedAt,
 			&i.DenominatorEvent,
 			&i.Percentile,
+			&i.NotifyChannelIds,
 		); err != nil {
 			return nil, err
 		}
@@ -1617,7 +1622,7 @@ func (q *Queries) ListFlagExperiments(ctx context.Context, db DBTX, environmentI
 }
 
 const listRunningFlagExperiments = `-- name: ListRunningFlagExperiments :many
-SELECT x.id, x.account_id, x.project_id, x.environment_id, x.key, x.flag_key, x.rule_id, x.control, x.metric_event, x.metric_kind, x.status, x.mixing_lift, x.weights, x.min_p_values, x.telemetry_cursor, x.created_by, x.created_at, x.started_at, x.stopped_at, x.guardrails, x.latency_threshold_ms, x.stop_reason, x.breach, x.value_through_day, x.metric_definition, x.cuped, x.min_cuped_p_values, x.unit, x.layer, x.traffic, x.layer_from, x.layer_to, x.allocation, x.bandit, x.bandit_weighted_at, x.denominator_event, x.percentile, e.slug AS environment_slug, a.plan::text AS plan
+SELECT x.id, x.account_id, x.project_id, x.environment_id, x.key, x.flag_key, x.rule_id, x.control, x.metric_event, x.metric_kind, x.status, x.mixing_lift, x.weights, x.min_p_values, x.telemetry_cursor, x.created_by, x.created_at, x.started_at, x.stopped_at, x.guardrails, x.latency_threshold_ms, x.stop_reason, x.breach, x.value_through_day, x.metric_definition, x.cuped, x.min_cuped_p_values, x.unit, x.layer, x.traffic, x.layer_from, x.layer_to, x.allocation, x.bandit, x.bandit_weighted_at, x.denominator_event, x.percentile, x.notify_channel_ids, e.slug AS environment_slug, a.plan::text AS plan
 FROM flag_experiments x
 JOIN project_environments e ON e.id = x.environment_id
 JOIN accounts a ON a.id = x.account_id
@@ -1669,6 +1674,7 @@ type ListRunningFlagExperimentsRow struct {
 	BanditWeightedAt   pgtype.Timestamptz
 	DenominatorEvent   string
 	Percentile         int32
+	NotifyChannelIds   []pgtype.UUID
 	EnvironmentSlug    string
 	Plan               string
 }
@@ -1720,6 +1726,7 @@ func (q *Queries) ListRunningFlagExperiments(ctx context.Context, db DBTX, arg L
 			&i.BanditWeightedAt,
 			&i.DenominatorEvent,
 			&i.Percentile,
+			&i.NotifyChannelIds,
 			&i.EnvironmentSlug,
 			&i.Plan,
 		); err != nil {
@@ -1933,7 +1940,7 @@ SET status = 'running', started_at = $1::timestamptz,
     weights = $2::jsonb, layer_from = $3::int, layer_to = $4::int
 WHERE x.environment_id = $5::uuid AND x.key = $6::text AND x.status = 'draft'
   AND (SELECT count(*) FROM flag_experiments r WHERE r.environment_id = $5::uuid AND r.status = 'running') < $7::bigint
-RETURNING id, account_id, project_id, environment_id, key, flag_key, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, min_p_values, telemetry_cursor, created_by, created_at, started_at, stopped_at, guardrails, latency_threshold_ms, stop_reason, breach, value_through_day, metric_definition, cuped, min_cuped_p_values, unit, layer, traffic, layer_from, layer_to, allocation, bandit, bandit_weighted_at, denominator_event, percentile
+RETURNING id, account_id, project_id, environment_id, key, flag_key, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, min_p_values, telemetry_cursor, created_by, created_at, started_at, stopped_at, guardrails, latency_threshold_ms, stop_reason, breach, value_through_day, metric_definition, cuped, min_cuped_p_values, unit, layer, traffic, layer_from, layer_to, allocation, bandit, bandit_weighted_at, denominator_event, percentile, notify_channel_ids
 `
 
 type StartFlagExperimentParams struct {
@@ -2000,6 +2007,7 @@ func (q *Queries) StartFlagExperiment(ctx context.Context, db DBTX, arg StartFla
 		&i.BanditWeightedAt,
 		&i.DenominatorEvent,
 		&i.Percentile,
+		&i.NotifyChannelIds,
 	)
 	return i, err
 }
@@ -2009,7 +2017,7 @@ UPDATE flag_experiments
 SET status = 'stopped', stopped_at = $1::timestamptz, stop_reason = $2::text,
     breach = $3::jsonb
 WHERE environment_id = $4::uuid AND key = $5::text AND status = 'running'
-RETURNING id, account_id, project_id, environment_id, key, flag_key, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, min_p_values, telemetry_cursor, created_by, created_at, started_at, stopped_at, guardrails, latency_threshold_ms, stop_reason, breach, value_through_day, metric_definition, cuped, min_cuped_p_values, unit, layer, traffic, layer_from, layer_to, allocation, bandit, bandit_weighted_at, denominator_event, percentile
+RETURNING id, account_id, project_id, environment_id, key, flag_key, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, min_p_values, telemetry_cursor, created_by, created_at, started_at, stopped_at, guardrails, latency_threshold_ms, stop_reason, breach, value_through_day, metric_definition, cuped, min_cuped_p_values, unit, layer, traffic, layer_from, layer_to, allocation, bandit, bandit_weighted_at, denominator_event, percentile, notify_channel_ids
 `
 
 type StopFlagExperimentParams struct {
@@ -2067,6 +2075,7 @@ func (q *Queries) StopFlagExperiment(ctx context.Context, db DBTX, arg StopFlagE
 		&i.BanditWeightedAt,
 		&i.DenominatorEvent,
 		&i.Percentile,
+		&i.NotifyChannelIds,
 	)
 	return i, err
 }

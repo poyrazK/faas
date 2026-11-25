@@ -36,6 +36,9 @@ const (
 	CodeQueryFailed          = "verify_query_failed"
 	CodeQueryUnavailable     = "verify_query_unavailable"
 	CodeNotRun               = "verify_not_run"
+	// CodeSecretMissing: a header references a secret the deployment's
+	// scope does not hold (amendment 2).
+	CodeSecretMissing = "verify_secret_missing"
 )
 
 // Environments a report records.

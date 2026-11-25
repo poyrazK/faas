@@ -18,10 +18,14 @@ import type { ManagedPostgresOverageRequest } from '../models/ManagedPostgresOve
 import type { ManagedPostgresQueryRequest } from '../models/ManagedPostgresQueryRequest.js';
 import type { ManagedPostgresQueryResponse } from '../models/ManagedPostgresQueryResponse.js';
 import type { ManagedPostgresResize } from '../models/ManagedPostgresResize.js';
+import type { ManagedPostgresSuspendTimeout } from '../models/ManagedPostgresSuspendTimeout.js';
 import type { ManagedPostgresUsageResponse } from '../models/ManagedPostgresUsageResponse.js';
+import type { ManagedPostgresWakeWithApp } from '../models/ManagedPostgresWakeWithApp.js';
 import type { Problem } from '../models/Problem.js';
 import type { ResizeManagedPostgresDatabaseRequest } from '../models/ResizeManagedPostgresDatabaseRequest.js';
 import type { RestoreManagedPostgresDatabaseRequest } from '../models/RestoreManagedPostgresDatabaseRequest.js';
+import type { SetManagedPostgresSuspendTimeoutRequest } from '../models/SetManagedPostgresSuspendTimeoutRequest.js';
+import type { SetManagedPostgresWakeWithAppRequest } from '../models/SetManagedPostgresWakeWithAppRequest.js';
 import type { CancelablePromise } from '../../generated/core/CancelablePromise.js';
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
@@ -331,6 +335,93 @@ export class ManagedPostgresService {
         'id': id,
         'change_id': changeId,
       },
+    });
+  }
+  /**
+   * Start a database when its app wakes
+   * Turns on or off starting a scale-to-zero database when an app bound to it wakes, so the database's cold start overlaps the app's instead of following it. Off by default. A wake that never queries the database still starts it, and the compute bills at least one suspend timeout. Repeating the same value is harmless. An always-on database, or one on a backend that cannot start its compute, answers 409 wake_with_app_unsupported; one with a change in progress answers a conflict. While operations are closed, only turning it off is taken.
+   * @returns ManagedPostgresWakeWithApp The setting in force
+   * @returns Problem Invalid setting, unsupported database, conflict, entitlement or admission failure
+   * @throws ApiError
+   */
+  public static setManagedPostgresWakeWithApp({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: SetManagedPostgresWakeWithAppRequest,
+  }): CancelablePromise<ManagedPostgresWakeWithApp | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/postgres/databases/{id}/wake-with-app',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Start a company database when its app wakes.
+   * An owner or admin turns on or off starting a scale-to-zero company database when an app bound to it wakes. A wake that never queries the database still starts it.
+   * @returns ManagedPostgresWakeWithApp Whether the company database starts with its app.
+   * @returns Problem Problem while setting whether the company database starts with its app.
+   * @throws ApiError
+   */
+  public static setOrgManagedPostgresWakeWithApp({
+    organization,
+    id,
+    requestBody,
+  }: {
+    /**
+     * Organization selected to set whether a company database starts with its app.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: SetManagedPostgresWakeWithAppRequest,
+  }): CancelablePromise<ManagedPostgresWakeWithApp | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/wake-with-app',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Set when a scale-to-zero database suspends
+   * Sets how long a scale-to-zero database stays up after its last activity, from 60 to 3600 seconds, or with null returns it to the platform default. Every wake bills at least this much compute. A suspended database takes the value at once; a running one takes it the next time it suspends, without interrupting connections. Repeating the same value is harmless. seconds is required; null is the default. An always-on database answers 409 suspend_timeout_always_on; one with a change in progress answers a conflict. While operations are closed, only a shorter timeout is taken.
+   * @returns ManagedPostgresSuspendTimeout The suspend timeout in force
+   * @returns Problem Validation, conflict, entitlement or admission failure
+   * @throws ApiError
+   */
+  public static setManagedPostgresSuspendTimeout({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: SetManagedPostgresSuspendTimeoutRequest,
+  }): CancelablePromise<ManagedPostgresSuspendTimeout | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/postgres/databases/{id}/suspend-timeout',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
     });
   }
   /**
@@ -1221,6 +1312,39 @@ export class ManagedPostgresService {
         404: `code: not_found`,
         409: `code: conflict`,
       },
+    });
+  }
+  /**
+   * Set when a company scale-to-zero database suspends.
+   * An owner or admin sets how long a scale-to-zero company database stays up after its last activity, from 60 to 3600 seconds, or with null returns it to the platform default. A running database takes the value the next time it suspends.
+   * @returns ManagedPostgresSuspendTimeout The company database's suspend timeout in force.
+   * @returns Problem Problem while setting when the company database suspends.
+   * @throws ApiError
+   */
+  public static setOrgManagedPostgresSuspendTimeout({
+    organization,
+    id,
+    requestBody,
+  }: {
+    /**
+     * Organization selected to set when a company database suspends.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: SetManagedPostgresSuspendTimeoutRequest,
+  }): CancelablePromise<ManagedPostgresSuspendTimeout | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/suspend-timeout',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
     });
   }
   /**

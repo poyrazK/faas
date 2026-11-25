@@ -679,7 +679,7 @@ func (r *startRunner) printRecovery() {
 	}
 	if pending := r.session.PendingSubmission; pending != nil {
 		PrintProgress(osStdout, "Check the pending launch: %s start %s", recoveryCLI(), recoveryArgument(r.session.ScopePath))
-		PrintProgress(osStdout, "Inspect app history: %s deployments --app %s", recoveryCLI(), recoveryArgument(r.session.AppSlug))
+		PrintProgress(osStdout, "Inspect app history: %s release list --app %s", recoveryCLI(), recoveryArgument(r.session.AppSlug))
 		if r.session.DeploymentID != "" {
 			PrintProgress(osStdout, "Previously accepted deployment: %s deployment %s", recoveryCLI(), recoveryArgument(r.session.DeploymentID))
 		}

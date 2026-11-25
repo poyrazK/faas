@@ -195,6 +195,97 @@ gregale consumers rate-card-create my-api --currency EUR --price-millicents 1 --
 - **What counts.** Only billable consumer requests are counted. Anonymous
   traffic and requests your customer isn't billed for are ignored.
 
+### Price one meter by model
+
+Create a flat app-meter card with a base unit price and up to 16 model
+overrides. All reported variants share the card's included monthly units.
+
+```bash
+gregale api consumer rate-card create my-api --currency EUR --unit app:output_tokens \
+  --price-millicents 2 --included-units 1000 --model-price standard=1 --model-price premium=4
+```
+
+For `POST /generate`, report the model actually used. For example, a
+premium response reports `Gregale-Usage: output_tokens__premium=600`.
+Use `output_tokens__standard` for the standard model and plain
+`output_tokens` when the base price applies. The meter and model are
+lowercase names, each starts with a letter, and the combined name fits
+in 32 characters. Once a consumer's price history enables model rates for a
+meter, a valid alias without an effective rate appears as unpriced in the
+quote and holds statement finalization. An alias with its own effective
+standalone rate card is priced on that card. Reported base units and models
+with an effective rate consume the shared allowance. Configure overrides
+before emitting their aliases and keep them configured while the app still
+reports them. A new rate applies
+from its effective minute. An earlier pricing gap stays with its original
+billing period.
+
+Gregale rechecks the meter ledger before finalizing a priced draft.
+Usage recorded after that check belongs in a later statement revision.
+
+Allowance is assigned by UTC minute, with the base meter first and models
+in alphabetical order within a minute. Request rate cards can price the
+same traffic separately. Model overrides apply to app consumer statements.
+Customer-wide tenant statements use their own applicable rates.
+
+### Inspect a consumer's meters
+
+Add `--breakdown` to `gregale api consumer usage` to see raw billable requests
+by route and reported units by meter. Add it to `gregale api consumer quote`
+to see measured, included and charged units and the amount at each applicable
+rate. Requests that lack a route label appear under unattributed requests.
+Within a minute, the quote allocates shared request allowances and tiers to
+weighted routes first, then other routes, then unattributed requests. Routes
+in each group follow alphabetical order. That allocation preserves the
+statement's rated totals.
+
+Owner usage and quote endpoints and the customer billing usage endpoint
+accept `?breakdown=true`. Quote and finalized statement buckets include the
+model on rated model units and the immutable rate card ID.
+Where exact request audit is enabled, owners can correlate those totals with
+the verified consumer and route in `GET /v1/apps/{slug}/audit/requests`.
+
+### Approve a waiver for unpriced model usage
+
+When a model alias has no effective rate, review the held draft and decide
+whether to approve a zero charge for the recorded usage. An administrator can
+select one app meter, one alias, and a closed UTC-minute window within that
+draft's statement period. Use the exact number of unpriced units in the
+selected buckets. For example, save the following as `waiver.json` after
+substituting the draft ID, units, and minute boundaries from your statement.
+
+```json
+{
+  "source_statement_id": "6a5c870c-b450-46d8-ba06-280e49e45dc9",
+  "unit": "app:output_tokens",
+  "model": "experimental",
+  "since": "2026-11-01T14:20:00Z",
+  "until": "2026-11-01T14:21:00Z",
+  "units": 17,
+  "reason": "Approved zero charge for the launch trial"
+}
+```
+
+```bash
+gregale api consumer statement draft my-api "$CONSUMER_ID" \
+  --month 2026-11 --waiver-file waiver.json
+```
+
+Use the same statement period as the source draft. API clients send the file's
+contents as the `waiver` object in `POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements`.
+Gregale records the approver, time, reason, and exact waived units in a new
+revision. Repeating the approval returns that revision. If another draft has
+superseded the source or the unit count differs, review the latest draft and
+submit a new approval. Quotes and statement buckets expose `waived_units`.
+Finalize the new revision after all holds are resolved. Additional unpriced
+usage, including late units from the same minute, requires a fresh review.
+
+For a first Stripe test-mode invoice, use a test customer and compare the
+finalized statement's amount due against Stripe's draft invoice. Include a
+paid model and a waived model in the same statement so you can verify that
+the waived units are absent from the invoice. Retry export and confirm it
+returns the same invoice ID with the same line items and total.
+
 ### Several units at once
 
 Cards of different units price side by side. Add a compute or token card and
@@ -600,6 +691,47 @@ gregale consumers credit-void my-api CONSUMER_ID CREDIT_ID
   across several apps have
   [their own credit](#customer-credit-and-spend-caps).
 
+### Let consumers buy credit packs
+
+With your app's Stripe connection in place, use an owner key to configure up
+to 16 packs. The return URL is your own billing page. This example sells a
+USD 20 pack that grants USD 20 in prepaid credit.
+
+```sh
+curl -X PUT -H "Authorization: Bearer $OWNER_KEY" -H 'Content-Type: application/json' \
+  -d '{"return_url":"https://billing.example.com/credits","packs":[{"id":"starter","label":"Starter credit","currency":"USD","amount_millicents":2000000}]}' \
+  https://api.gregale.dev/v1/apps/my-api/consumer-credit-packs
+```
+
+In your billing page, use the customer's `billing`-scope consumer key to:
+
+1. List packs with `GET /v1/consumer-billing/my-api/credit-packs`.
+2. Start checkout with `POST /v1/consumer-billing/my-api/credit-purchases` and
+   a body containing `pack_id` and a client-generated `purchase_id` UUID.
+   Save the UUID and reuse it when retrying the same purchase. Send the
+   customer to the response's `checkout_url`.
+3. Read `GET /v1/consumer-billing/my-api/credit-purchases/{purchase_id}`
+   after Stripe returns to your page. Stripe returns the order in the
+   `credit_purchase_id` query parameter. Keep showing a pending state until
+   `status` is `credited` or `expired`.
+
+Credit packs require a live Stripe connection. Gregale checks Stripe in the
+background, including when the customer closes the tab. It adds a single grant
+after Stripe confirms the exact live payment.
+Show the refreshed prepaid credit balance from the consumer billing summary
+once the purchase returns its `credit_grant_id`. The grant applies to
+statements in the pack's currency. It has no expiry. If the consumer has a
+spend cap in that currency, Gregale schedules a fresh cap check.
+
+Customers can resume one open purchase at a time. Checkout sessions expire
+after one hour. To stop new purchases, set `packs` to `[]`; open sessions
+keep their saved terms. Gregale blocks changes to the Stripe connection while
+purchases are pending. A restricted Stripe key needs Checkout Session read
+and write access. Stripe validates charge limits against the merchant's
+settlement currency. If Stripe rejects a new checkout, correct the pack as
+needed and use a new purchase ID. If you issue a refund in Stripe, review the
+grant and void its unused balance in Gregale.
+
 ### Spend caps
 
 Cap what a consumer can run up each month. Once the month's amount due,
@@ -747,6 +879,82 @@ curl -X POST -H "Authorization: Bearer ck_..." https://api.gregale.dev/v1/consum
   `signup-set --customer-closing`.
 - Anything you have not allowed gets `409 consumer_self_service_unavailable`.
 
+### A free plan without a card
+
+Offer a plan whose rate cards charge nothing, and customers can join it
+without Stripe Checkout:
+
+```bash
+gregale consumers plan-create my-api --name free --max-units-per-month 1000
+gregale consumers rate-card-create my-api --plan free --currency USD --price-millicents 0
+gregale consumers signup-set my-api --display-name "Weather API" --plans free,pro --free-plan free
+```
+
+- **What counts as free.** Every rate card of the plan, in force or
+  scheduled, has no unit price, priced tier, base fee or minimum, and the
+  plan has at least one. Gregale refuses `--free-plan` otherwise, and
+  refuses a charging rate card on the free plan while it is the free plan.
+- **Joining.** `POST /v1/consumer-signup/my-api` with the free plan's
+  `plan_id` returns an empty `checkout_url`; complete the sign-up at once
+  with the claim token. The hosted page does this for you. No Stripe
+  customer is created, so the consumer's `external_ref` is `signup:<id>`.
+- **Moving to a paid plan.** With `--customer-plan-changes`, a customer
+  that reaches its plan's limit gets an `upgrade_url` in the `429
+  consumer_plan_limit_exceeded` problem. The link opens a hosted page that
+  lists your offered plans. A paid plan first saves a card with Stripe
+  Checkout; the new Stripe customer becomes the consumer's `external_ref`,
+  and the plan changes from the next minute. The link works for 24 hours
+  and opens only that customer's plan change. A customer without a card
+  cannot switch to a paid plan with its key
+  (`409 consumer_self_service_unavailable`).
+
+### MCP callers become customers
+
+For an MCP server behind OAuth (`gregale mcp server auth enable --mode
+oauth-proxy`, or `--auth external-oauth`; see
+[Host an MCP server](mcp-hosting.md#control-who-can-call-it)), people who
+sign in can become your customers on the free plan the first time they call
+it:
+
+```bash
+gregale consumers signup-set my-mcp --display-name "Search tools" --plans free,pro --free-plan free --oauth-consumers
+```
+
+- **Who they are.** A customer is the token's issuer and subject: the same
+  person signing in again is the same consumer. The token's `email`, when it
+  has one, names the consumer; it is never used to match one.
+- **Billing and limits.** Their calls are metered, priced and capped by the
+  free plan like a consumer key's, including tool route limits.
+- **Daily limit.** New customers count against `--daily-limit` with the
+  sign-up page's. Past it, new callers get `429 consumer_signup_daily_limit`
+  until the next UTC day; existing customers are not affected.
+- **Closing someone.** `gregale consumers revoke my-mcp CONSUMER` refuses
+  their calls with `403` within five minutes.
+- **Turning it on and off.** Changes reach the gateway within five
+  minutes. If Gregale cannot reach its API while your server enrolls
+  callers, they get `503 consumer_enrollment_unavailable` rather than free
+  calls.
+- **Customers who already have a key.** Someone who signed up for a key
+  and also signs in to your MCP server can make their sign-ins bill to
+  that key's account. Their MCP client, or they with the access token it
+  holds, send the key once:
+
+  ```bash
+  curl -X POST https://my-mcp.gregale.app/.well-known/gregale-consumer-link/mcp \
+    -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
+    -d '{"key": "ck_..."}'
+  ```
+
+  The path is `/.well-known/gregale-consumer-link` followed by your MCP
+  endpoint's path. The answer names the consumer they now bill to; the
+  free-plan consumer their first sign-in created is closed. A key that is
+  not a live key of your app gets `403 consumer_link_key_rejected`. A
+  sign-in already linked to another key gets `409 consumer_link_conflict`:
+  `gregale api consumer identity list my-mcp` lists sign-ins and the
+  consumers they bill to, and `gregale api consumer identity delete my-mcp
+  ID` frees one
+  (its next call starts on the free plan again, or it links again).
+
 ### Know when customers sign up or change
 
 Subscribe an app webhook to these events to provision accounts, send
@@ -801,8 +1009,9 @@ gregale platform-tenants statement-draft --id TENANT_ID --month 2026-09
   the total never is.
 - **App cards underneath.** An app's own free requests, tiers, route weights
   or plans don't block a cross-app statement for minutes a tenant card prices.
-  A minute only an app card prices still needs a flat app card; otherwise bill
-  those consumers with app statements.
+  For earlier minutes the statement uses the app's flat request rate in force
+  at the time. If those minutes lack a flat request rate, bill them through
+  app consumer statements or add a tenant rate that covers them.
 
 ### Customer fees, trials and overdue invoices
 

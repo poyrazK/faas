@@ -11,6 +11,25 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// syntheticCheckArgs reads a check command's positionals: `<check>`, or
+// `<app> <check>` like `check list <app>` and `check create <app>` take
+// (`check status my-api root` printed usage; prod hunt r46). Without an app
+// it falls back to the linked one. ok is false when the arguments do not fit.
+func syntheticCheckArgs(slug *string, args []string) (string, bool) {
+	switch len(args) {
+	case 2:
+		if *slug != "" && *slug != args[0] {
+			return "", false
+		}
+		*slug = args[0]
+		return args[1], true
+	case 1:
+		fillLinkedApp(slug)
+		return args[0], *slug != ""
+	}
+	return "", false
+}
+
 // cmdSyntheticsStatus implements `gregale synthetics status --app <slug>
 // <check-id>` (ADR-748): uptime, latency, and the most recent runs.
 func cmdSyntheticsStatus(args []string) int {
@@ -19,16 +38,16 @@ func cmdSyntheticsStatus(args []string) int {
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	fillLinkedApp(slug)
-	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alert check status [--app <slug>] <check-id|name>", "synthetics")
+	ref, ok := syntheticCheckArgs(slug, fs.Args())
+	if !ok {
+		PrintUsage(os.Stderr, "usage: gregale alert check status [<slug>|--app <slug>] <check-id|name>", "synthetics")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	id, err := resolveSyntheticCheckRef(context.Background(), client, *slug, fs.Arg(0))
+	id, err := resolveSyntheticCheckRef(context.Background(), client, *slug, ref)
 	if err != nil {
 		return printErr("Could not fetch synthetic check", err)
 	}

@@ -1205,6 +1205,13 @@ type runDeps struct {
 	// stored hashes through apid (ADR 20261029202403). Nil compares plain
 	// hashes locally (unit tests).
 	credentialMatcher gateway.CredentialMatcher
+	// oauthConsumers enrolls MCP OAuth callers as API consumers through
+	// apid (ADR-20261124094745); nil leaves them unattributed.
+	oauthConsumers gateway.OAuthConsumerEnroller
+	// oauthLinks links signed-in MCP callers to consumer keys they hold.
+	oauthLinks gateway.OAuthConsumerLinker
+	// upgradeLinks adds apid's upgrade links to plan-limit refusals.
+	upgradeLinks gateway.ConsumerUpgradeLinker
 	// apiMonetization is the API monetization release gate
 	// (ADR-20261018090210), following the api_monetization_enabled runtime
 	// setting. Nil keeps monetization off.
@@ -1884,6 +1891,8 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		WithDeploymentSmokeTargetLoader(newDeploymentSmokeTargetLoader(pgStore)).
 		// ADR 20261114150000 §3: stamp each deployment's killed flags.
 		WithFlagKillLoader(pgStore.FeatureFlagKillsForDeployment).
+		// ADR-20261124212701: each app environment's edge-routed flags.
+		WithEdgeFlagLoader(pgStore.FeatureFlagEdgeForApp).
 		// ADR 20261119102741 §4: stamp each verified customer's cohorts.
 		WithFlagCohortLoader(pgStore.AnalyticsCohortsForDeploymentCustomer).
 		// ADR-733: a 5xx asks for a crash capture; the store applies opt-in,
@@ -2461,6 +2470,11 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// only writer of approval requests and the activity log.
 	agentGate := apidgrpc.AgentGate{Auth: credentialAuth}
 	deps.authMw.RemoteAgentGate, deps.authMw.ActivityRecorder = agentGate, agentGate
+	// ADR-20261124094745: apid, the only writer of consumers, enrolls a
+	// verified MCP OAuth caller as the app's consumer.
+	deps.oauthConsumers = apidgrpc.OAuthConsumers{Auth: credentialAuth}
+	deps.upgradeLinks = apidgrpc.OAuthConsumers{Auth: credentialAuth}
+	deps.oauthLinks = apidgrpc.OAuthConsumers{Auth: credentialAuth}
 	// Issue #560: per-deployment require_authn (pro/Scale opt-in).
 	// Build the narrow gateway.RequireAuthnAuthenticator
 	// adapter around the production middleware and the
@@ -3157,10 +3171,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if deps.credentialMatcher != nil {
 		handler.WithCredentialMatcher(deps.credentialMatcher)
 	}
+	if deps.oauthConsumers != nil {
+		handler.WithOAuthConsumers(deps.oauthConsumers)
+	}
+	if deps.oauthLinks != nil {
+		handler.WithOAuthConsumerLinks(deps.oauthLinks)
+	}
+	if deps.upgradeLinks != nil {
+		handler.WithUpgradeLinks(deps.upgradeLinks)
+	}
 	handler.WithTenantRequestBudgetStore(newTenantRequestBudgetStore(deps.pgStore))
 	handler.WithAPIMonetization(deps.apiMonetization)
 	handler.WithAPIMonetizationFlags(deps.platformFlags)
 	handler.WithEdgeFeatureFlags(deps.platformFlags)
+	handler.WithEdgeFlags(deps.platformFlags)
 	handler.WithTrafficRevocationFenceFlags(deps.platformFlags)
 	handler.WithCapabilities(deps.capabilityAllowed)
 	// ADR-978: order the warm-capacity queue by route priority. Rules are
@@ -3573,13 +3597,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			coverageNode = state.DefaultLocalNodeName
 		}
 		publisher := gateway.NewRequestTelemetryPublisher(gateway.RequestTelemetryPublisherConfig{
-			Enabled:        true,
-			FlushInterval:  5 * time.Second,
-			FlushBatchSize: 256,
-			MaxRetries:     3,
-			MinuteCollapse: osGetenv("FAAS_REQUEST_TELEMETRY_MINUTE_COLLAPSE") == "1",
-			OnDropped:      deps.metrics.AddRequestTelemetryDropped,
-			OnShipped:      deps.metrics.AddRequestTelemetryShipped,
+			Enabled:           true,
+			FlushInterval:     5 * time.Second,
+			FlushBatchSize:    256,
+			MaxRetries:        3,
+			MinuteCollapse:    osGetenv("FAAS_REQUEST_TELEMETRY_MINUTE_COLLAPSE") == "1",
+			OnDropped:         deps.metrics.AddRequestTelemetryDropped,
+			OnPlatformDropped: deps.metrics.AddRequestTelemetryPlatformDropped,
+			OnShipped:         deps.metrics.AddRequestTelemetryShipped,
 			OnCoverage: func(heartbeatCtx context.Context, report gateway.RequestTelemetryCoverage) error {
 				if rtTLSErr != nil {
 					return rtTLSErr
@@ -3608,7 +3633,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					SamplingBasisPoints: int32(report.SamplingBasisPoints), DroppedTotal: report.DroppedTotal,
 					PendingCount: int32(report.PendingCount), SourceAtUnixMs: report.SourceAt.UnixMilli(),
 					AppScoped: report.AppScoped, UnattributedDroppedTotal: report.UnattributedDroppedTotal, AppGaps: appGaps,
-					Analytics: analytics,
+					Analytics: analytics, CleanStop: report.CleanStop,
 				})
 				if err != nil {
 					return err
@@ -4773,11 +4798,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				httpsSrv.Protocols.SetHTTP2(true)
 				httpsSrv.ReadTimeout = readTimeoutOrDefault(deps.readTimeout)
 				httpsSrv.WriteTimeout = writeTimeoutOrDefault(deps.writeTimeout)
+				guestServiceServer(httpsSrv)
 				httpsDrain := addSrv(httpsSrv)
 				httpsListener, listenErr := deps.listen("tcp", httpsAddr)
 				if listenErr != nil {
 					return fmt.Errorf("gatewayd guest service HTTPS listen %s: %w", httpsAddr, listenErr)
 				}
+				httpsListener = guestServiceListener{httpsListener}
 				go func() {
 					log.Info("gatewayd guest service HTTPS listening", "addr", httpsAddr)
 					if err := httpsDrain.ServeErr(httpsSrv.ServeTLS(httpsDrain.Listener(httpsListener), "", "")); err != nil {
@@ -5209,11 +5236,13 @@ func startGuestServiceHTTPListeners(deps runDeps, addr string, handler http.Hand
 		srv.Protocols.SetUnencryptedHTTP2(true)
 		srv.ReadTimeout = readTimeoutOrDefault(deps.readTimeout)
 		srv.WriteTimeout = writeTimeoutOrDefault(deps.writeTimeout)
+		guestServiceServer(srv)
 		drain := addSrv(srv)
 		listener, err := deps.listen("tcp", httpAddr)
 		if err != nil {
 			return fmt.Errorf("gatewayd: guest service proxy listen %s: %w", httpAddr, err)
 		}
+		listener = guestServiceListener{listener}
 		go func() {
 			log.Info("gatewayd guest service proxy listening", "addr", httpAddr)
 			if err := drain.ServeErr(srv.Serve(drain.Listener(listener))); err != nil {

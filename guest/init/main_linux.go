@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -86,6 +87,9 @@ func main() {
 	}
 	if os.Getenv(dependencyInputsHelperEnv) == publicBuildURLsHelperValue && os.Getpid() != 1 {
 		os.Exit(runPublicBuildURLs(os.Args[1:]))
+	}
+	if os.Getenv(dependencyInputsHelperEnv) == nextStandaloneHelperValue && os.Getpid() != 1 {
+		os.Exit(runNextStandalone(os.Args[1:]))
 	}
 	// A re-executed copy-out child (ADR-1037) never boots.
 	if len(os.Args) > 0 && os.Args[0] == appTaskCopyOutHelperArg0 && os.Getpid() != 1 {
@@ -1916,6 +1920,16 @@ func prepareRailpackConfig(m api.BuildManifest) (func() error, error) {
 			deploy["startCommand"] = "/bin/true"
 		}
 	}
+	// imaged starts every function through its runner, never the image's
+	// start command. Without one Railpack printed its "No start command"
+	// advice, with Railway docs and RAILPACK_* variables, into every function
+	// deploy (prod hunt r38). This covers functions with a package manifest
+	// too, which the copy-only branch above does not.
+	if m.Function {
+		if _, configured := deploy["startCommand"]; !configured {
+			deploy["startCommand"] = "/bin/true"
+		}
+	}
 	if err := devWatchRailpackConfig(config, m); err != nil {
 		return nil, err
 	}
@@ -2120,6 +2134,11 @@ func buildArgv(m api.BuildManifest) []string {
 	}, " ")
 	goCommand, goCommandEnv := railpackGoCommand(m)
 	prepare += goCommand
+	if nextStandaloneBuild(m) {
+		// Never fails the build; see runNextStandalone.
+		prepare += " && { " + dependencyInputsHelperEnv + "=" + nextStandaloneHelperValue + " /proc/1/exe " +
+			shellQuote(planPath) + " " + shellQuote(m.Workdir) + " " + strconv.Itoa(m.AppLayerMaxMB) + " || true; }"
+	}
 	if len(m.PublicBuildURLs) > 0 || m.BuildDependencyDigest != "" {
 		prepare += " && " + dependencyInputsHelperEnv + "=" + publicBuildURLsHelperValue + " /proc/1/exe " + shellQuote(planPath)
 	}

@@ -11,6 +11,7 @@ from attrs import field as _attrs_field
 from ..models.app_response_app_protocol import AppResponseAppProtocol, check_app_response_app_protocol
 from ..models.app_response_consumer_auth_mode import AppResponseConsumerAuthMode, check_app_response_consumer_auth_mode
 from ..models.app_response_cpu_millicores import AppResponseCpuMillicores, check_app_response_cpu_millicores
+from ..models.app_response_declared_access import AppResponseDeclaredAccess, check_app_response_declared_access
 from ..models.app_response_deployment_availability import (
     AppResponseDeploymentAvailability,
     check_app_response_deployment_availability,
@@ -244,6 +245,9 @@ class AppResponse:
     """Per-deployment token-gate flag. When true, the gateway demands `Authorization: Bearer <token>` on every
     request; cross-account tokens receive 403 insufficient_scope. Pro/Scale only — Free/Hobby PATCH-true is rejected
     with 403 plan_require_authn_not_allowed."""
+    declared_access: AppResponseDeclaredAccess | Unset = UNSET
+    """The access the app's source declares in gregale.yaml: `public` (no Gregale API key) or `key`. Every
+    production deploy applies it. Omitted when the source declares none."""
     consumer_auth_mode: AppResponseConsumerAuthMode | Unset = "optional"
     """End-customer credential policy. optional accepts anonymous requests and attributes valid consumer keys;
     required mandates a valid consumer key."""
@@ -510,6 +514,10 @@ class AppResponse:
 
         require_authn = self.require_authn
 
+        declared_access: str | Unset = UNSET
+        if not isinstance(self.declared_access, Unset):
+            declared_access = self.declared_access
+
         consumer_auth_mode: str | Unset = UNSET
         if not isinstance(self.consumer_auth_mode, Unset):
             consumer_auth_mode = self.consumer_auth_mode
@@ -685,6 +693,8 @@ class AppResponse:
             field_dict["eviction_priority"] = eviction_priority
         if require_authn is not UNSET:
             field_dict["require_authn"] = require_authn
+        if declared_access is not UNSET:
+            field_dict["declared_access"] = declared_access
         if consumer_auth_mode is not UNSET:
             field_dict["consumer_auth_mode"] = consumer_auth_mode
         if platform_tenant_required is not UNSET:
@@ -1067,6 +1077,13 @@ class AppResponse:
 
         require_authn = d.pop("require_authn", UNSET)
 
+        _declared_access = d.pop("declared_access", UNSET)
+        declared_access: AppResponseDeclaredAccess | Unset
+        if isinstance(_declared_access, Unset):
+            declared_access = UNSET
+        else:
+            declared_access = check_app_response_declared_access(_declared_access)
+
         _consumer_auth_mode = d.pop("consumer_auth_mode", UNSET)
         consumer_auth_mode: AppResponseConsumerAuthMode | Unset
         if isinstance(_consumer_auth_mode, Unset):
@@ -1222,6 +1239,7 @@ class AppResponse:
             warm_pool_size=warm_pool_size,
             eviction_priority=eviction_priority,
             require_authn=require_authn,
+            declared_access=declared_access,
             consumer_auth_mode=consumer_auth_mode,
             platform_tenant_required=platform_tenant_required,
             parked_deployment=parked_deployment,

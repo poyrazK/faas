@@ -282,6 +282,97 @@ class CheckTests(unittest.TestCase):
         self.assertTrue(results[0]["ok"], results)
         self.assertEqual(g.verified, ["d1"])
 
+    def test_vote_counted_casts_a_vote_and_reads_it_back(self):
+        # rc.380: both pages answered 200 while every vote POST returned 500
+        # and the votes table never existed; the grader passed it.
+        class VotingApps:
+            def __init__(self, post_status=200, counts=True, scores=None, moved=0, result_status=200):
+                self.scores = scores if scores is not None else {"a": 3, "b": 1}
+                self.post_status, self.counts, self.moved, self.result_status = post_status, counts, moved, result_status
+                self.calls, self.sessions = [], 0
+
+            def __call__(self, method, url, data=None, headers=None, timeout=30):
+                self.calls.append((method, url, data, (headers or {}).get("Cookie", "")))
+                if url.startswith("https://vote.example/"):
+                    if method == "POST" and self.post_status == 200 and self.counts:
+                        option = data.decode().split("=")[1]
+                        self.scores[option] = self.scores.get(option, 0) + 1
+                    return self.post_status, "<html>" if self.post_status == 200 else "Internal Server Error"
+                if self.result_status != 200:
+                    return self.result_status, "Unauthorized"
+                if url == "https://result.example/socket.io/?EIO=4&transport=polling":
+                    self.sessions += 1
+                    return 200, '0{"sid":"s/%d","pingInterval":25000}' % self.sessions
+                if self.moved:
+                    self.moved -= 1
+                    return 400, '{"code":1,"message":"Session ID unknown"}'
+                if method == "POST":
+                    return 200, "ok"
+                payload = json.dumps(json.dumps(self.scores)) if isinstance(self.scores, dict) else json.dumps(self.scores)
+                return 200, '40{"sid":"x"}\x1e2\x1e42["message",{"text":"Welcome!"}]\x1e42["scores",' + payload + "]"
+
+        class Urls:
+            def get(self, path):
+                return {"/v1/apps/vote": {"canonical_url": "https://vote.example"},
+                        "/v1/apps/vote-result": {"canonical_url": "https://result.example/"},
+                        "/v1/apps/vote-worker": {}}[path]
+
+        task = {"checks": [{"kind": "vote_counted"}]}
+        # Every slug carries the project's "vote" prefix: names are anchored,
+        # so the result app is never taken for the vote app.
+        created = {"apps": ["vote-result", "vote-worker", "vote"]}
+
+        def grade(apps, created=created):
+            (result,) = ev.run_checks(task, None, Path("."), "", Urls(), created=created, http=apps, http_deadline_s=0)
+            return result
+
+        apps = VotingApps()
+        self.assertEqual(grade(apps), {"kind": "vote_counted", "ok": True, "detail": "b: 1 -> 2"})
+        post = [c for c in apps.calls if c[0] == "POST" and c[1].startswith("https://vote.example")]
+        self.assertEqual(post[0][2], b"vote=b", "votes for the option with fewer votes")
+        self.assertRegex(post[0][3], r"^voter_id=agent-eval-[0-9a-f]{16}$")
+        closes = [c for c in apps.calls if c[2] == b"41\x1e1"]
+        self.assertEqual(len(closes), apps.sessions, "every Socket.IO session is closed")
+        self.assertIn(("POST", "https://result.example/socket.io/?EIO=4&transport=polling&sid=s/1", b"3", ""), apps.calls)
+
+        moved = VotingApps(moved=1)
+        self.assertTrue(grade(moved)["ok"], "a session that lands on another instance starts again")
+        self.assertEqual(grade(VotingApps(post_status=500))["detail"][:22], "vote vote POST 500: 'I")
+        self.assertIn("requires sign-in", grade(VotingApps(post_status=401))["detail"])
+        self.assertIn("requires sign-in", grade(VotingApps(result_status=401))["detail"])
+        self.assertEqual(grade(VotingApps(counts=False))["detail"], "vote accepted but not counted: b stayed 1")
+        malformed = grade(VotingApps(scores=[1, 2]))
+        self.assertFalse(malformed["ok"])
+        self.assertIn("not a count per option", malformed["detail"])
+        self.assertFalse(grade(VotingApps(), created={"apps": ["vote", "vote-worker"]})["ok"])
+
+        class SuffixedUrls(Urls):
+            def get(self, path):
+                return {"/v1/apps/vote-k3x7q": {"canonical_url": "https://vote.example"},
+                        "/v1/apps/result-a2b4c": {"canonical_url": "https://result.example"}}[path]
+        (suffixed,) = ev.run_checks(task, None, Path("."), "", SuffixedUrls(), created={"apps": ["result-a2b4c", "vote-k3x7q"]},
+                                    http=VotingApps(), http_deadline_s=0)
+        self.assertTrue(suffixed["ok"], "a name another account holds gets a 5-character suffix")
+
+    def test_live_worker_counts_as_serving(self):
+        # Health reads "unsupported" for a worker pool unless app_health_workers
+        # is on; a live worker serves its queue (2026-11-24 voting-app rerun).
+        class WorkerGregale:
+            def __init__(self, availability):
+                self.availability = availability
+
+            def get(self, path):
+                if path.endswith("/health"):
+                    return {"phase": "unsupported", "serving_deployment_ids": []}
+                return {"workload_class": "worker", "deployment_availability": self.availability}
+
+        task = {"checks": [{"kind": "apps_serving"}]}
+        with tempfile.TemporaryDirectory() as d:
+            live = ev.run_checks(task, "worker", Path(d), "", WorkerGregale("live"), created={"apps": ["worker"]})
+            down = ev.run_checks(task, "worker", Path(d), "", WorkerGregale("unavailable"), created={"apps": ["worker"]})
+        self.assertTrue(live[0]["ok"], live)
+        self.assertFalse(down[0]["ok"], down)
+
     def test_command_feature_counts_its_mcp_tool(self):
         task = {"features": [{"id": "verify", "kind": "command", "pattern": r"\brelease\s+verify\b",
                               "tools": ["gregale_verify_application_response"]}]}
@@ -474,7 +565,7 @@ class RepoTaskTests(unittest.TestCase):
     def test_created_since(self):
         before = {"apps": {"old"}, "projects": set()}
         after = {"apps": {"old", "ui", "cart"}, "projects": {"shop"}}
-        self.assertEqual(ev.created_since(before, after), {"apps": ["cart", "ui"], "projects": ["shop"]})
+        self.assertEqual(ev.created_since(before, after), {"apps": ["cart", "ui"], "projects": ["shop"], "databases": []})
 
 
 class ProjectGregale:
@@ -523,6 +614,7 @@ class CliLoginTests(unittest.TestCase):
         outputs = {
             ("app", "list"): '{"slug":"old","id":"i-old"}\n{"slug":"retail-ui","id":"i-ui"}\n{"slug":"new","id":"i-new"}\n',
             ("project", "list"): '{"slug":"shop"}\n',
+            ("postgres", "list"): '{"items":[{"name":"old-db"},{"name":"new-db"}]}\n',
             ("release", "list", "--all", "--limit", "200"): '{"app_id":"i-ui","created_at":"2026-11-12T20:00:05Z"}\n{"app_id":"i-old","created_at":"2026-11-12T19:00:00Z"}\n',
             ("app", "health", "retail-ui"): '{\n  "serving_deployment_ids": ["d1"]\n}\n',
         }
@@ -535,9 +627,9 @@ class CliLoginTests(unittest.TestCase):
         g = ev.CliGregale("/bin/gregale")
         with mock.patch.object(g, "cli", side_effect=cli):
             self.assertEqual(g.get("/v1/apps/retail-ui/health"), {"serving_deployment_ids": ["d1"]})
-            before = {"apps": {"old", "retail-ui"}, "projects": {"shop"}}
+            before = {"apps": {"old", "retail-ui"}, "projects": {"shop"}, "databases": {"old-db"}}
             touched = g.touched_since(before, "2026-11-12T20:00:00Z")
-        self.assertEqual(touched, {"apps": ["new", "retail-ui"], "projects": []})
+        self.assertEqual(touched, {"apps": ["new", "retail-ui"], "projects": [], "databases": ["new-db"]})
         with self.assertRaises(ValueError):
             g.get("/v1/billing")
 
@@ -557,13 +649,13 @@ class CliLoginTests(unittest.TestCase):
         evidence = "gregale deploy --image redis --name voting-redis\ngregale deploy --project --project-slug voting"
         with mock.patch.object(g, "inventory", return_value=after):
             self.assertEqual(ev.deletable(g, before, touched, "eval-x-1", evidence),
-                             ({"apps": ["eval-x-1", "voting-redis"], "projects": ["voting"]}, "eval-x-1"))
+                             ({"apps": ["eval-x-1", "voting-redis"], "projects": ["voting"], "databases": []}, "eval-x-1"))
             # A slug that existed before the run (or never got created) is not deleted.
             self.assertEqual(ev.deletable(g, before, touched, "eval-x-old", evidence)[1], None)
             # With no evidence only the harness's own slug is the run's.
-            self.assertEqual(ev.deletable(g, before, touched, "eval-x-1"), ({"apps": ["eval-x-1"], "projects": []}, "eval-x-1"))
+            self.assertEqual(ev.deletable(g, before, touched, "eval-x-1"), ({"apps": ["eval-x-1"], "projects": [], "databases": []}, "eval-x-1"))
         # Without an inventory from before the run nothing is provably the run's.
-        self.assertEqual(ev.deletable(g, None, touched, "eval-x-1"), ({"apps": [], "projects": []}, None))
+        self.assertEqual(ev.deletable(g, None, touched, "eval-x-1"), ({"apps": [], "projects": [], "databases": []}, None))
         # A dedicated eval account deletes everything the run touched.
         plain = ev.Gregale("/bin/gregale", "https://api.example", "tok")
         self.assertEqual(ev.deletable(plain, before, touched, "eval-x-1"), (touched, "eval-x-1"))
@@ -581,11 +673,11 @@ class CliLoginTests(unittest.TestCase):
         touched = {"apps": ["result", "vote", "voting-app-redis", "voting-worker", "zq-imm-repro-1115", "rb-java-off", "votes"],
                    "projects": ["h15"]}
         mine, others = ev.attribute(g, touched, evidence)
-        self.assertEqual(mine, {"apps": ["result", "vote", "voting-app-redis", "voting-worker"], "projects": []})
-        self.assertEqual(others, {"apps": ["zq-imm-repro-1115", "rb-java-off", "votes"], "projects": ["h15"]})
+        self.assertEqual(mine, {"apps": ["result", "vote", "voting-app-redis", "voting-worker"], "projects": [], "databases": []})
+        self.assertEqual(others, {"apps": ["zq-imm-repro-1115", "rb-java-off", "votes"], "projects": ["h15"], "databases": []})
         # A dedicated eval account has only the run in it.
         plain = ev.Gregale("/bin/gregale", "https://api.example", "tok")
-        self.assertEqual(ev.attribute(plain, touched, ""), (touched, {"apps": [], "projects": []}))
+        self.assertEqual(ev.attribute(plain, touched, ""), (touched, {"apps": [], "projects": [], "databases": []}))
 
     def test_cleanup_purges_deleted_apps_so_the_next_run_gets_the_name(self):
         calls = []
@@ -608,6 +700,34 @@ class CliLoginTests(unittest.TestCase):
             ("app", "delete", "--yes", "--delete-bindings", "stuck"),
         ])
         self.assertEqual(left, ["name:held", "app:stuck"])
+
+    def test_project_members_belong_to_the_run(self):
+        # rc.381 retail-store: Compose named retail-catalog and retail-carts
+        # from its services; the agent never typed them, so they went
+        # unattributed, failed apps_created and were left behind.
+        g = ev.CliGregale("/bin/gregale")
+        lists = {"/v1/projects": {"items": [{"id": "p1", "slug": "retail-store"}, {"id": "p2", "slug": "other"}]},
+                 "/v1/apps": {"items": [{"slug": "retail-catalog", "project_id": "p1"}, {"slug": "retail-carts", "project_id": "p1"},
+                                        {"slug": "bh57-py", "project_id": ""}, {"slug": "side", "project_id": "p2"}]}}
+        touched = {"apps": ["bh57-py", "retail-carts", "retail-catalog", "retail-ui", "side"], "projects": ["retail-store"], "databases": []}
+        with mock.patch.object(g, "get", side_effect=lambda path: lists[path]):
+            mine, others = ev.attribute(g, touched, "gregale deploy --project retail-store\ncurl https://retail-ui.gregale.app")
+        self.assertEqual(mine["apps"], ["retail-carts", "retail-catalog", "retail-ui"])
+        self.assertEqual(others["apps"], ["bh57-py", "side"])
+
+    def test_cleanup_deletes_the_runs_databases_only(self):
+        # The 2026-11-24 voting-app rerun found the account at its database
+        # limit, filled by earlier runs' databases cleanup never deleted.
+        g = ev.CliGregale("/bin/gregale")
+        touched = {"apps": [], "projects": [], "databases": ["example-voting-app-db", "windmill-db"]}
+        mine, others = ev.attribute(g, touched, "gregale postgres create example-voting-app-db")
+        self.assertEqual(mine["databases"], ["example-voting-app-db"])
+        self.assertEqual(others["databases"], ["windmill-db"])
+        calls = []
+        with mock.patch.object(g, "cli", side_effect=lambda *a, **k: calls.append(a) or mock.Mock(returncode=0)):
+            left = ev.cleanup(g, mine, None)
+        self.assertEqual(calls, [("postgres", "delete", "--yes", "example-voting-app-db")])
+        self.assertEqual(left, [])
 
     def test_claude_tool_inputs_are_evidence_but_not_recorded(self):
         lines = [json.dumps({"type": "assistant", "message": {"content": [

@@ -38,6 +38,20 @@
     "kind": "account_identity"
   },
   {
+    "table": "unclaimed_accounts",
+    "columns": [
+      "account_id",
+      "claim_token_sha256",
+      "claimed_at",
+      "created_at",
+      "created_ip",
+      "expired_at",
+      "expires_at",
+      "user_agent"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "account_held_links",
     "columns": [
       "account_id",
@@ -298,6 +312,17 @@
       "reason"
     ],
     "kind": "account_identity"
+  },
+  {
+    "table": "deployment_verification_leases",
+    "columns": [
+      "app_id",
+      "created_at",
+      "deployment_id",
+      "expires_at",
+      "node_name"
+    ],
+    "kind": "operational"
   },
   {
     "table": "deployment_verification_queries",
@@ -991,6 +1016,53 @@
     "kind": "operational"
   },
   {
+    "table": "api_consumer_credit_pack_settings",
+    "columns": [
+      "account_id",
+      "app_id",
+      "packs",
+      "return_url"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_consumer_credit_purchases",
+    "columns": [
+      "account_id",
+      "amount_millicents",
+      "amount_minor",
+      "app_id",
+      "consumer_id",
+      "currency",
+      "expires_at",
+      "id",
+      "label",
+      "livemode",
+      "next_check_at",
+      "pack_id",
+      "return_url",
+      "status",
+      "stripe_customer",
+      "stripe_session"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_consumer_identities",
+    "columns": [
+      "account_id",
+      "app_id",
+      "consumer_id",
+      "created_at",
+      "email",
+      "id",
+      "issuer",
+      "subject",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "api_consumer_meter_usage_minutes",
     "columns": [
       "account_id",
@@ -1089,6 +1161,7 @@
       "id",
       "included_units_per_month",
       "minimum_millicents_per_month",
+      "model_prices",
       "plan_id",
       "price_millicents_per_unit",
       "prorate_monthly_fees",
@@ -1158,7 +1231,9 @@
       "daily_limit",
       "display_name",
       "enabled",
+      "free_plan_id",
       "key_scopes",
+      "oauth_consumers",
       "plan_ids",
       "provider",
       "return_url",
@@ -1282,7 +1357,8 @@
       "priced",
       "revision",
       "status",
-      "unpriced_units"
+      "unpriced_units",
+      "waiver"
     ],
     "kind": "operational"
   },
@@ -11247,6 +11323,24 @@
     "kind": "operational"
   },
   {
+    "table": "managed_postgres_suspend_timeouts",
+    "columns": [
+      "database_id",
+      "seconds",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_postgres_wake_with_app",
+    "columns": [
+      "database_id",
+      "enabled_at",
+      "last_started_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_postgres_usage",
     "columns": [
       "account_id",
@@ -18741,9 +18835,11 @@
     "table": "request_analytics_app_gaps",
     "columns": [
       "app_id",
+      "dropped_total",
       "last_gap_at",
       "node_name",
       "pending_count",
+      "pending_since",
       "updated_at"
     ],
     "kind": "operational"
@@ -18893,6 +18989,7 @@
       "last_gap_at",
       "node_name",
       "pending_count",
+      "pending_since",
       "updated_at"
     ],
     "kind": "operational"
@@ -18902,6 +18999,7 @@
     "columns": [
       "app_scoped",
       "boot_id",
+      "clean_stop_at",
       "dropped_total",
       "enabled",
       "healthy_since",
@@ -22583,6 +22681,7 @@
       "min_cuped_p_values",
       "min_p_values",
       "mixing_lift",
+      "notify_channel_ids",
       "percentile",
       "project_id",
       "rule_id",
@@ -22673,6 +22772,76 @@
     "kind": "operational"
   },
   {
+    "table": "flag_notification_keys",
+    "columns": [
+      "created_at",
+      "environment_id",
+      "key",
+      "kind"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "flag_notification_settings",
+    "columns": [
+      "account_id",
+      "channel_ids",
+      "environment_id",
+      "updated_at",
+      "updated_by"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "flag_notifications",
+    "columns": [
+      "account_id",
+      "attempts",
+      "channel_ids",
+      "created_at",
+      "environment_id",
+      "id",
+      "key",
+      "kind",
+      "last_error",
+      "next_attempt_at",
+      "org_id",
+      "settled_at",
+      "status",
+      "subject",
+      "summary"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "saved_insights",
+    "columns": [
+      "account_id",
+      "alert_comparison",
+      "alert_state",
+      "alert_threshold",
+      "channel_ids",
+      "created_at",
+      "created_by",
+      "digest",
+      "environment_id",
+      "id",
+      "key",
+      "kind",
+      "last_error",
+      "last_run_at",
+      "last_value",
+      "lease_until",
+      "name",
+      "next_check_at",
+      "next_digest_at",
+      "query",
+      "range_days",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "analytics_events",
     "columns": [
       "account_id",
@@ -22694,6 +22863,16 @@
       "created_at",
       "environment_id",
       "key"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_valkey_cache_grants",
+    "columns": [
+      "account_id",
+      "app_id",
+      "cache_app_id",
+      "created_at"
     ],
     "kind": "operational"
   },

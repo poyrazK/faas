@@ -57,5 +57,5 @@ func printSecretDeliveryOverview(app, scope string, resp *api.AppSecretListRespo
 		_, _ = fmt.Fprintln(osStdout, line+".")
 		return
 	}
-	_, _ = fmt.Fprintf(osStdout, "%s. Next: %s inspect %s\n", line, recoveryCLI(), recoveryArgument(app))
+	_, _ = fmt.Fprintf(osStdout, "%s. Next: %s app health %s --explain\n", line, recoveryCLI(), recoveryArgument(app))
 }

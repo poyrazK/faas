@@ -208,8 +208,15 @@ the next push deploys them.
   `api` source declares its own `release.command` or Procfile `release:`. Other
   services that waited for `migrate` no longer wait; the plan names them. The
   step must use the same `build:` (context, Dockerfile, args) or `image:` as a
-  waiting service that serves requests, must have a `command:` and must not
-  publish ports; chained steps and two steps for one service fail the plan.
+  waiting service, must have a `command:` and must not publish ports; chained
+  steps and two steps for one service fail the plan. A waiting web service
+  that shares the build owns the step. When only workers (services without
+  `ports:`, such as queue consumers) wait for it, a worker that shares the
+  build owns it, and the command runs before each worker release starts
+  consuming. A web service that waits but builds elsewhere fails the plan,
+  since it would serve before the worker ran the step. The dry run
+  prints the command under its owner as `release: <command>` with where it
+  is declared.
 
   The step's environment declarations become defaults for its owner. With
   `x-gregale-env-import: true`, eligible plain values are imported there;
@@ -365,6 +372,31 @@ above. gRPC does not need streaming turned on. Wake-ahead is already on for
 production project services under the default `project` service policy, so
 most projects only set it to turn it off.
 
+### Public or key-protected URLs
+
+A service declares who may call its public URL with `x-gregale-access`:
+
+```yaml
+services:
+  vote:
+    build: ./vote
+    x-gregale-access: public     # anyone can open the URL, no Gregale API key
+  admin:
+    build: ./admin
+    x-gregale-access: key        # callers send a Gregale API key
+```
+
+`public` is what `gregale app update <app> --no-require-authn` does; `key`
+turns the API-key gate on (Free has no gate, so `key` changes nothing there).
+Unlike the settings above, the source is the truth on every production
+deploy: a later `app update` is undone by the next deploy, and removing the
+key returns the service to the plan default, which needs a key again on Hobby
+and above. A service that never declared access keeps whatever was set by hand.
+The plan (`gregale deploy --project --dry-run`) prints each change, and a
+named environment applies access only to services it creates. Basic auth set
+with `--public-auth basic` is kept. The `project:` block below takes the same
+values as `access:`.
+
 Plain TCP between services (Redis, PostgreSQL and other non-HTTP protocols)
 is off unless your operator has enabled it; see
 [private TCP](networking.md#private-tcp-between-services).
@@ -381,6 +413,8 @@ project:
     billing:
       visibility: internal       # no public URL; set when the app is created
       depends_on: [ledger]       # billing gets GREGALE_SERVICE_LEDGER_URL
+    web:
+      access: public             # no Gregale API key; applied on every deploy
     admin:
       service_policy: declared   # admin may call only what it declares
 ```

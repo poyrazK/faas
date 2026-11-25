@@ -328,6 +328,18 @@ func inspectExecutionMode(app api.AppResponse) string {
 	return ""
 }
 
+// functionIgnoresProfileWarning lists the source-profile warnings about
+// serving HTTP from a process the source starts. A function's runtime, not
+// its source, decides how it runs, so none of them applies to one.
+var functionIgnoresProfileWarning = map[string]bool{
+	"missing_start_command":         true,
+	"framework_not_detected":        true,
+	"python_framework_not_detected": true,
+	"loopback_bind_possible":        true,
+	"non_http_service":              true,
+	"container_command_deferred":    true,
+}
+
 func inspectRuntime(app api.AppResponse, dep *api.DeploymentResponse, unavailable *[]string) inspectRuntimeSummary {
 	out := inspectRuntimeSummary{
 		Entrypoint: strings.Join(app.Manifest.Entrypoint, " "),
@@ -653,9 +665,11 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 	}
 	for _, warning := range summary.Runtime.Warnings {
 		// A function runs its handler under the platform runner, so it has
-		// no start script by design; health led with "No npm start script"
-		// for every `gregale add function` scaffold (prod 2026-11-20).
-		if summary.App.Type == "function" && warning.Code == "missing_start_command" {
+		// no start script or web framework by design; health led with "No npm
+		// start script" for every `gregale add function` scaffold (prod
+		// 2026-11-20) and with "no FastAPI, Flask, or Django dependency" for
+		// every Python function (prod hunt r36).
+		if summary.App.Type == "function" && functionIgnoresProfileWarning[warning.Code] {
 			continue
 		}
 		add("profile_"+warning.Code, "warning", warning.Message, "Review the inferred deployment profile before the next release.")

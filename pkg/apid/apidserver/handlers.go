@@ -301,6 +301,9 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 	}
 	limits := api.MustLimitsFor(acct.Plan)
 	app, prob := s.buildApp(acct, req, limits)
+	if prob == nil {
+		prob = s.blockedAppNameProblem(acct.ID, app.Slug)
+	}
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -502,7 +505,7 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 			return state.App{}, api.NewProblem(http.StatusForbidden,
 				api.CodePlanWarmPoolNotAllowed,
 				"Warm-pool capacity is not allowed on this plan",
-				"Free tier does not support per-app warm pools; upgrade to Hobby or higher.")
+				"Free tier does not support per-app warm pools; upgrade to Hobby or higher.").WithDocs("https://gregale.dev/docs/plans")
 		}
 		if v < 0 || v > mc {
 			return state.App{}, api.NewProblem(http.StatusUnprocessableEntity,
@@ -540,7 +543,7 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 		return state.App{}, api.NewProblem(http.StatusForbidden,
 			api.CodePlanStreamingNotAllowed,
 			"Streaming responses are not allowed on this plan",
-			"Free tier does not support per-app streaming; upgrade to Hobby or higher.")
+			"Free tier does not support per-app streaming; upgrade to Hobby or higher.").WithDocs("https://gregale.dev/docs/plans")
 	}
 	streaming := acct.Plan.StreamingEnabled()
 	if req.StreamingEnabled != nil {
@@ -607,7 +610,7 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 		return state.App{}, api.NewProblem(http.StatusForbidden,
 			api.CodePlanRequireAuthnNotAllowed,
 			"Per-app authentication is not allowed on this plan",
-			"Free and Hobby tiers do not support per-app require_authn; upgrade to Pro or higher.")
+			"Free and Hobby tiers do not support per-app require_authn; upgrade to Pro or higher.").WithDocs("https://gregale.dev/docs/plans")
 	}
 	if req.PlatformTenantRequired != nil && *req.PlatformTenantRequired && acct.Plan.ConsumerKeysPerApp() == 0 {
 		return state.App{}, api.ErrPlanPlatformTenantRequiredNotAllowed(acct.Plan)
@@ -1278,6 +1281,7 @@ func (s *server) appResponseWithDomain(a state.App, plan api.Plan, domain string
 		// round-trip. The token-scope enforcement (cross-account
 		// 403) lives in gatewayd-internal, not here.
 		RequireAuthn:           a.RequireAuthn,
+		DeclaredAccess:         a.Manifest.DeclaredAccess,
 		ConsumerAuthMode:       consumerAuthMode,
 		PlatformTenantRequired: a.PlatformTenantRequired,
 		// Issue #477 / ADR-079: per-app public-URL auth.

@@ -149,6 +149,9 @@ type Problem struct {
 	// upgrade. PaddleCheckoutURL remains below for backwards compatibility
 	// with older SDKs that only know the Paddle-specific field.
 	CheckoutURL string `json:"checkout_url,omitempty"`
+	// UpgradeURL opens the API's hosted upgrade page for the consumer that
+	// reached its plan's limit (ADR-20261124094745).
+	UpgradeURL string `json:"upgrade_url,omitempty"`
 	// BillingPortalURL is set on payment_required (CodePayment) errors
 	// when the customer must manage an existing subscription. It may be a
 	// provider-created session URL or an operator-controlled URL with the
@@ -2759,6 +2762,12 @@ func StatusForCode(code string) int {
 		return http.StatusUnauthorized
 	case CodeEmailVerificationRequired:
 		return http.StatusForbidden
+	case CodeClaimRequired:
+		return http.StatusForbidden
+	case CodeAnonymousDeploysUnavailable:
+		return http.StatusTooManyRequests
+	case CodeClaimExpired:
+		return http.StatusGone
 	case CodePasswordTooWeak, CodeAccountExists:
 		return http.StatusBadRequest
 	case CodeResetTokenInvalid, CodeResetTokenExpired, CodeVerificationLinkInvalid:
@@ -3015,7 +3024,7 @@ func ErrBillingContactMember() *Problem {
 // to select the plan default; an update pointer is always explicit.
 func ErrInvalidAppRAM(requestedMB int) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidAppRAM,
-		"Invalid RAM", fmt.Sprintf("ram_mb must be greater than zero; requested %d MB.", requestedMB))
+		"Invalid RAM", fmt.Sprintf("ram_mb must be greater than zero; requested %d MB.", requestedMB)).WithDocs(docsBase + "/plans#what-each-limit-means")
 }
 
 // ErrInvalidCPURAMPair rejects an explicit guest vCPU count that is not its
@@ -5543,7 +5552,7 @@ func ErrPlanLogDrainQuota(plan Plan, scope string, limit, observed int) *Problem
 
 func ErrAppLogDrainInvalid(reason string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeAppLogDrainInvalid,
-		"Invalid log drain", reason)
+		"Invalid log drain", reason).WithDocs(docsBase + "/logs#log-drains")
 }
 
 // ErrTenantSurfacesNotAllowed is returned by apid's createTenantSurface
@@ -8068,7 +8077,7 @@ func ErrPlanCustomMetricsNotAllowed(plan Plan) *Problem {
 		"Custom metrics not available on this plan",
 		fmt.Sprintf("custom application metrics are not included in the %s plan. "+
 			"Scale on a platform-measured signal (rps, cpu, concurrent_requests, "+
-			"queue_depth, queue_lag) or upgrade.", plan))
+			"queue_depth, queue_lag) or upgrade.", plan)).WithDocs(docsBase + "/plans")
 }
 
 const CodeUDPListenerLimit = "udp_listener_limit"

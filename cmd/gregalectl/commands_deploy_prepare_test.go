@@ -139,7 +139,7 @@ func TestStagePrepareSecretsRejectsCAKey(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(secrets, "pki", "ca", "ca.key"), []byte("private"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err = stagePrepareSecrets(secrets, filepath.Join(t.TempDir(), "out"))
+	err = stagePrepareSecrets(secrets, filepath.Join(t.TempDir(), "out"), false)
 	if err == nil || !strings.Contains(err.Error(), "ca/ca.key") {
 		t.Fatalf("stagePrepareSecrets error = %v, want CA key rejection", err)
 	}
@@ -173,7 +173,7 @@ func TestStagePrepareSecretsRequiresMatchingFleetSealPair(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = stagePrepareSecrets(secrets, filepath.Join(t.TempDir(), "out"))
+	err = stagePrepareSecrets(secrets, filepath.Join(t.TempDir(), "out"), false)
 	if err == nil || !strings.Contains(err.Error(), "do not match") {
 		t.Fatalf("stagePrepareSecrets error = %v, want fleet pair mismatch", err)
 	}

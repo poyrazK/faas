@@ -2291,6 +2291,83 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
+  /v1/postgres/databases/{id}/wake-with-app:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    put:
+      operationId: setManagedPostgresWakeWithApp
+      summary: Start a database when its app wakes
+      description: Turns on or off starting a scale-to-zero database when an app bound to it wakes, so the database's cold start overlaps the app's instead of following it. Off by default. A wake that never queries the database still starts it, and the compute bills at least one suspend timeout. Repeating the same value is harmless. An always-on database, or one on a backend that cannot start its compute, answers 409 wake_with_app_unsupported; one with a change in progress answers a conflict. While operations are closed, only turning it off is taken.
+      tags: [managed_postgres]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SetManagedPostgresWakeWithAppRequest'}
+      responses:
+        '200':
+          description: The setting in force
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresWakeWithApp'}
+        default:
+          description: Invalid setting, unsupported database, conflict, entitlement or admission failure
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/orgs/{organization}/postgres/databases/{id}/wake-with-app:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to set whether a company database starts with its app."
+        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    put:
+      operationId: setOrgManagedPostgresWakeWithApp
+      summary: "Start a company database when its app wakes."
+      description: "An owner or admin turns on or off starting a scale-to-zero company database when an app bound to it wakes. A wake that never queries the database still starts it."
+      tags: [managed_postgres]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SetManagedPostgresWakeWithAppRequest'}
+      responses:
+        '200':
+          description: "Whether the company database starts with its app."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresWakeWithApp'}
+        default:
+          description: "Problem while setting whether the company database starts with its app."
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/postgres/databases/{id}/suspend-timeout:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    put:
+      operationId: setManagedPostgresSuspendTimeout
+      summary: Set when a scale-to-zero database suspends
+      description: Sets how long a scale-to-zero database stays up after its last activity, from 60 to 3600 seconds, or with null returns it to the platform default. Every wake bills at least this much compute. A suspended database takes the value at once; a running one takes it the next time it suspends, without interrupting connections. Repeating the same value is harmless. seconds is required; null is the default. An always-on database answers 409 suspend_timeout_always_on; one with a change in progress answers a conflict. While operations are closed, only a shorter timeout is taken.
+      tags: [managed_postgres]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SetManagedPostgresSuspendTimeoutRequest'}
+      responses:
+        '200':
+          description: The suspend timeout in force
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresSuspendTimeout'}
+        default:
+          description: Validation, conflict, entitlement or admission failure
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
   /v1/postgres/databases/{id}/resize:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -5763,6 +5840,38 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/apps/{slug}/consumer-identities:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [consumers]
+      operationId: listConsumerIdentities
+      summary: List the OAuth sign-ins of the app's MCP server and the consumers they bill to, newest first.
+      responses:
+        '200':
+          description: The app's consumer identities.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ConsumerIdentityListResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /v1/apps/{slug}/consumer-identities/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: The identity to unlink, as listed by the consumer identities endpoint.
+        schema: {type: string, format: uuid}
+    delete:
+      tags: [consumers]
+      operationId: deleteConsumerIdentity
+      summary: Unlink an OAuth sign-in from its consumer; the next sign-in enrolls again or links by key.
+      responses:
+        '204':
+          description: Unlinked.
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
   /v1/deleted-apps:
     get:
       tags: [apps]
@@ -13484,6 +13593,44 @@ paths:
               schema: {$ref: '#/components/schemas/Problem'}
         '409':
           description: "Tenant-required apps need a tenant-scoped run route, or the Idempotency-Key was already used with different workflow input."
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServerError'}
+  /v1/apps/{slug}/workflows/run-starts/{name}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 128}
+        description: Workflow name used for the original start.
+    get:
+      tags: [workflows]
+      operationId: lookupWorkflowRunStart
+      summary: Find a retained workflow run by its original pipeline-tool start key.
+      description: |
+        Reads the existing workflow admission binding for this app and workflow.
+        A successful response contains only the native run ID. This operation
+        applies to non-tenant pipeline-tool starts while the run is retained.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: The pipeline tool start receipt's original native idempotency key.
+          schema: {type: string, pattern: '^pipeline-tool:[0-9a-f]{64}$'}
+      responses:
+        '200':
+          description: An accepted run for this key.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WorkflowRunStartLookupResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404':
+          description: "code: workflow_run_not_found | app_not_found — no retained scoped start matches this key."
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -26656,6 +26803,35 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
+  /v1/orgs/{organization}/postgres/databases/{id}/suspend-timeout:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to set when a company database suspends."
+        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    put:
+      operationId: setOrgManagedPostgresSuspendTimeout
+      summary: "Set when a company scale-to-zero database suspends."
+      description: "An owner or admin sets how long a scale-to-zero company database stays up after its last activity, from 60 to 3600 seconds, or with null returns it to the platform default. A running database takes the value the next time it suspends."
+      tags: [managed_postgres]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SetManagedPostgresSuspendTimeoutRequest'}
+      responses:
+        '200':
+          description: "The company database's suspend timeout in force."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresSuspendTimeout'}
+        default:
+          description: "Problem while setting when the company database suspends."
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
   /v1/orgs/{organization}/postgres/bindings/{id}/rotate:
     parameters:
       - name: organization
@@ -32641,6 +32817,41 @@ components:
         last_error_code: {type: string, description: "Safe policy-change diagnostic. A confirmed rejection retains the source policy; uncertain outcomes remain pending."}
         created_at: {type: string, format: date-time}
         completed_at: {type: string, format: date-time}
+    SetManagedPostgresWakeWithAppRequest:
+      description: Whether a scale-to-zero database starts when an app bound to it wakes.
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled: {type: boolean, description: "True starts the database with its app; false leaves it to start on the app's first query."}
+    ManagedPostgresWakeWithApp:
+      description: Whether a database starts when an app bound to it wakes.
+      type: object
+      required: [database_id, enabled]
+      properties:
+        database_id: {type: string}
+        enabled: {type: boolean}
+    SetManagedPostgresSuspendTimeoutRequest:
+      description: How long a scale-to-zero database stays up after its last activity before it suspends.
+      type: object
+      additionalProperties: false
+      required: [seconds]
+      properties:
+        seconds:
+          type: [integer, 'null']
+          format: int64
+          minimum: 60
+          maximum: 3600
+          description: Seconds of inactivity before the database suspends; null returns it to the platform default.
+    ManagedPostgresSuspendTimeout:
+      description: A scale-to-zero database's suspend timeout. Every wake bills at least this much compute.
+      type: object
+      required: [database_id, seconds, custom, applied]
+      properties:
+        database_id: {type: string}
+        seconds: {type: integer, format: int64, description: "Seconds of inactivity before the database suspends."}
+        custom: {type: boolean, description: "True when the database has its own value; false when it follows the platform default."}
+        applied: {type: boolean, description: "False while the database is running: it takes the value the next time it suspends."}
     ResizeManagedPostgresDatabaseRequest:
       description: Canonical UUID request for a compute-class change on an existing managed PostgreSQL database.
       type: object
@@ -32677,6 +32888,9 @@ components:
         service_class: {type: string, enum: [development, burstable, production]}
         availability: {type: string, enum: [single_zone, high_availability]}
         scale_to_zero: {type: boolean}
+        suspend_timeout_seconds: {type: integer, format: int64, description: "Seconds a scale-to-zero database stays up after its last activity; absent for an always-on database."}
+        suspend_timeout_custom: {type: boolean, description: "True when the database has its own suspend timeout rather than the platform default."}
+        wake_with_app: {type: boolean, description: "True when the database starts when an app bound to it wakes."}
         storage_limit_bytes: {type: integer, format: int64, minimum: 0}
         restore_window_seconds: {type: integer, format: int64, minimum: 0}
         restore_source_database_id: {type: [string, "null"], minLength: 1, maxLength: 128}
@@ -32793,6 +33007,7 @@ components:
         history_byte_seconds: {type: integer, format: int64, minimum: 0, description: "Point-in-time restore history held this month, in byte-seconds."}
         snapshot_byte_seconds: {type: integer, format: int64, minimum: 0, description: "Snapshot storage held this month, in byte-seconds."}
         included_history_bytes: {type: integer, format: int64, minimum: 0, description: "Restore history and snapshot storage the plan includes, held for the whole month. Restore history uses it first. With overage on, history past it is billed per GB-month."}
+        history_state: {type: string, enum: [normal, limited], description: "limited while restore history and snapshots passed twice the included history this month with overage off: the databases keep a 24-hour restore window until the 1st of next month, or until overage is turned on. Absent while the history limit is not enforced."}
         egress_bytes: {type: integer, format: int64, minimum: 0}
         compute_allowance_unit_seconds:
           description: The plan's monthly compute allowance in compute-unit seconds, pooled across the account's databases.
@@ -35271,6 +35486,10 @@ components:
           description: "Per-deployment token-gate flag. When true, the gateway demands `Authorization: Bearer <token>` on every request; cross-account tokens receive 403 insufficient_scope. Pro/Scale only — Free/Hobby PATCH-true is rejected with 403 plan_require_authn_not_allowed."
           type: boolean
           example: false
+        declared_access:
+          description: "The access the app's source declares in gregale.yaml: `public` (no Gregale API key) or `key`. Every production deploy applies it. Omitted when the source declares none."
+          type: string
+          enum: [public, key]
         consumer_auth_mode:
           description: "End-customer credential policy. optional accepts anonymous requests and attributes valid consumer keys; required mandates a valid consumer key."
           type: string
@@ -42918,6 +43137,13 @@ components:
         updated_at:
           type: string
           format: date-time
+    WorkflowRunStartLookupResponse:
+      description: The retained run ID for a previously accepted pipeline-tool start.
+      type: object
+      additionalProperties: false
+      required: [run_id]
+      properties:
+        run_id: {type: string, format: uuid}
     ListWorkflowRunsResponse:
       description: "A paginated list of durable workflow runs."
       type: object
@@ -46043,6 +46269,10 @@ components:
           type: string
           enum: [internal]
           description: "Present when the app is or will be internal (no public route): an existing internal app, or a new Compose service without `ports:`. Omitted means public."
+        access:
+          type: string
+          enum: [public, key]
+          description: "Declared access to the service's public URL (`x-gregale-access` in Compose or `project.services.<name>.access` in gregale.yaml): `public` needs no Gregale API key, `key` needs one. Every production deploy applies it. Omitted when the source declares none."
         root_dir:
           type: string
           example: ""
@@ -46089,6 +46319,12 @@ components:
             type: string
             enum: [service_started, service_healthy]
           description: "Explicit Compose dependency conditions. service_started retains admission ordering; service_healthy gates release on the captured same-project, same-environment dependency deployment."
+        release_command:
+          type: string
+          description: "Command the service runs once before each of its releases goes live (shell string, or exec-form argv joined by spaces). Omitted when it declares none."
+        release_command_source:
+          type: string
+          description: "Where release_command is declared: a Compose service the workload waits for with service_completed_successfully, a Procfile release: process, or gregale.yaml release.command."
         service_binding_policy:
           $ref: '#/components/schemas/ServiceBindingPolicy'
           description: "Effective policy selected by Compose `x-gregale-service-policy` (`project`, `declared` or `account`). New project workloads default to `project`; existing workloads retain their persisted policy when the extension is omitted."
@@ -53396,6 +53632,12 @@ components:
           description: |
             Provider-neutral hosted checkout URL on a `payment_required`
             402 when a paid plan upgrade requires a new subscription.
+        upgrade_url:
+          type: string
+          format: uri
+          description: |
+            On a `consumer_plan_limit_exceeded` 429, the API's hosted page
+            where the consumer moves to another plan.
         billing_portal_url: {type: string, format: uri}
         paddle_checkout_url:
           type: string
@@ -54280,6 +54522,26 @@ components:
         current_count: {type: integer, format: int64, minimum: 0, description: Calls the current value was taken over.}
         baseline_count: {type: integer, format: int64, minimum: 0}
         detected_at: {type: string, format: date-time}
+    ConsumerIdentity:
+      description: "An OAuth sign-in of an app's MCP server and the consumer it bills to."
+      type: object
+      required: [id, consumer_id, issuer, subject, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        consumer_id: {type: string, format: uuid}
+        issuer: {type: string}
+        subject: {type: string}
+        email: {type: string, description: "The token's email claim; display only."}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    ConsumerIdentityListResponse:
+      description: "An app's OAuth identities, newest first."
+      type: object
+      required: [identities]
+      properties:
+        identities:
+          type: array
+          items: {$ref: '#/components/schemas/ConsumerIdentity'}
     PlatformTenantHostnameVerifiedWebhookPayload:
       type: object
       description: DNS ownership verification for a hostname on a surface explicitly linked to this tenant. It does not imply certificate issuance or routing, and never contains the DNS challenge token.

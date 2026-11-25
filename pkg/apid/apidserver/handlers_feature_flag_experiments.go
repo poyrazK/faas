@@ -53,6 +53,7 @@ func flagExperimentResponse(x state.FlagExperiment) api.FlagExperiment {
 	}
 	out.Guardrails, out.LatencyThresholdMS = guardrailSettingsResponse(x.Guardrails), x.LatencyThresholdMS
 	out.StopReason, out.Breach = x.StopReason, x.Breach
+	out.NotifyChannelIDs = x.NotifyChannelIDs
 	flagExperimentMetricResponse(&out, x)
 	flagExperimentDesignResponse(&out, x)
 	return out
@@ -132,6 +133,11 @@ func (s *server) createFlagExperiment(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, p)
 		return
 	}
+	notify, p := s.experimentNotifyChannels(r, acct, scope, req.NotifyChannelIDs)
+	if p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	guardrails := defaultFlagExperimentGuardrails(req.Guardrails)
 	if design.unit == flags.ExperimentUnitSubject {
 		guardrails = noGuardrails()
@@ -141,7 +147,7 @@ func (s *server) createFlagExperiment(w http.ResponseWriter, r *http.Request, ac
 		MetricEvent: metric.event, MetricKind: metric.kind, MetricDefinition: metric.def, Cuped: req.Cuped == nil || *req.Cuped,
 		MixingLift: flagExperimentMixing(req), Weights: weights, Guardrails: guardrails, CreatedBy: acct.ID,
 		Unit: design.unit, Layer: design.layer, Traffic: design.traffic, Allocation: design.allocation,
-		DenominatorEvent: design.denominator, Percentile: design.percentile}, api.FlagExperimentsMaxPerEnvironment)
+		DenominatorEvent: design.denominator, Percentile: design.percentile, NotifyChannelIDs: notify}, api.FlagExperimentsMaxPerEnvironment)
 	if err == nil && req.Start {
 		x, err = s.startExperiment(r.Context(), store, x, weights, acct.ID)
 	}

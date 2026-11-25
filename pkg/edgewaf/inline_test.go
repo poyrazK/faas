@@ -108,7 +108,10 @@ func TestCheckInlineAccountShare(t *testing.T) {
 		t.Fatalf("flood check on a full pool = %s (%s), want skipped (account_share)", res.Outcome, res.SkipReason)
 	}
 
-	i.inlineWait = time.Second
+	// Both checks below are granted a slot, so the wait never runs out in a
+	// passing test; a 1 s wait expired on a loaded race runner and the
+	// flood's check left the queue before the slot was freed.
+	i.inlineWait = time.Minute
 	floodRes, otherRes := make(chan gateway.WAFInlineResult, 1), make(chan gateway.WAFInlineResult, 1)
 	go func() { floodRes <- i.CheckInline(flood) }()
 	waitForWaiters(t, i.inlineSlots, 0, 1)

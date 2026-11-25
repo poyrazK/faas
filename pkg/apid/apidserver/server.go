@@ -32,6 +32,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/billingsync"
 	"github.com/onebox-faas/faas/pkg/apid/capgate"
 	"github.com/onebox-faas/faas/pkg/apid/ciapi"
+	"github.com/onebox-faas/faas/pkg/apid/claim"
 	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
 	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
 	"github.com/onebox-faas/faas/pkg/apid/consumercredits"
@@ -327,7 +328,10 @@ type server struct {
 	managedPostgresCapMode managedpostgres.CapEnforcementMode
 	// managedPostgresPlanExcessOn is true while the cap sweep suspends
 	// databases past their plan (ADR-20261102125208), so the views say so.
-	managedPostgresPlanExcessOn    bool
+	managedPostgresPlanExcessOn bool
+	// managedPostgresHistoryMode is FAAS_MANAGED_POSTGRES_HISTORY_LIMIT, read
+	// by the usage views (ADR-20261123062111 D2).
+	managedPostgresHistoryMode     managedpostgres.CapEnforcementMode
 	managedPostgresHealthCollector *managedpostgres.HealthCollector
 	// managedPostgresSQLProber probes the canary databases (ADR-20261029172812); nil when unconfigured.
 	managedPostgresSQLProber  *managedpostgres.SQLProber
@@ -537,6 +541,9 @@ type server struct {
 	// signups caps self-service accounts per address and network a day
 	// (signup_network_limit.go).
 	signups *signupNetworkLimiter
+	// claim serves claimable deploys (ADR-20261124080000); Host wired in
+	// newServer.
+	claim claim.Service
 	// signupGeo resolves a sign-up address to its country and network owner
 	// for the sign-up record (signup_facts.go). nil leaves both empty.
 	signupGeo *signupGeo
@@ -1839,6 +1846,14 @@ func newServerWithDeps(
 	s.consumerCredits.Host = consumerCreditsHost{s}
 	s.consumerControls.Host = consumerControlsHost{s}
 	s.consumerSignup.Host = consumerSignupHost{s}
+	// Upgrade links are signed with a key derived from the session binding
+	// key (ADR-20261124094745); without it no link is minted.
+	if s.sessions != nil {
+		if key, err := consumersignup.UpgradeKey(s.sessions.BindingKey()); err == nil {
+			s.consumerSignup.UpgradeKey = key
+		}
+	}
+	s.claim.Host = claimHost{s}
 	s.tenantPlans.Host = tenantPlansHost{s}
 	s.serviceMap.Host = serviceMapHost{s}
 	s.serviceMap.Released = func(r *http.Request, acct state.Account) bool {
@@ -2089,6 +2104,10 @@ func (s *server) handler() http.Handler {
 	// frozen by the generic HTTP idempotency response cache.
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/compute-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.changeManagedPostgresComputePolicy)))))
 	mux.HandleFunc("GET /v1/postgres/databases/{id}/compute-policy-changes/{change_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresComputePolicyChange))))
+	// A database's own scale-to-zero suspend timeout; idempotent by value.
+	mux.HandleFunc("PUT /v1/postgres/databases/{id}/suspend-timeout", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.setManagedPostgresSuspendTimeout)))))
+	// Whether a database starts when a bound app wakes (ADR-20261125105038).
+	mux.HandleFunc("PUT /v1/postgres/databases/{id}/wake-with-app", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.setManagedPostgresWakeWithApp)))))
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/resize", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.managedPostgresResize(managedpg.Resizes.Post))))))
 	mux.HandleFunc("GET /v1/postgres/databases/{id}/resizes/{resize_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.managedPostgresResize(managedpg.Resizes.Get)))))
 	// ADR-1027 in-place major upgrades, served by pkg/apid/managedpg: hidden
@@ -2514,6 +2533,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/flags/versions", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listFeatureFlagVersions)))
 	// ADR 20261114150000 §4: owner, expiry, staleness and evaluation per flag.
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/flags/lifecycle", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getFeatureFlagLifecycle)))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/flags/notifications", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getFlagNotifications)))
+	mux.HandleFunc("PUT /v1/projects/{slug}/environments/{environment}/flags/notifications", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setFlagNotifications))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/experiments", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listFlagExperiments)))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/experiments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createFlagExperiment))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/experiments/{key}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getFlagExperiment)))
@@ -2525,6 +2546,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/insights/funnel", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.postInsightFunnel)))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/insights/retention", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.postInsightRetention)))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/insights/requests", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getInsightRequests)))
+	// ADR-20261122190000: saved insights, run and exported by project readers.
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/insights/saved", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listSavedInsights)))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/insights/saved", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createSavedInsight))))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/insights/saved/{key}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getSavedInsight)))
+	mux.HandleFunc("PUT /v1/projects/{slug}/environments/{environment}/insights/saved/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.replaceSavedInsight))))
+	mux.HandleFunc("DELETE /v1/projects/{slug}/environments/{environment}/insights/saved/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteSavedInsight))))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/insights/saved/{key}/run", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.runSavedInsight)))
 	// ADR 20261119102741 §3: analytics cohorts, targeted with gregale.cohort.
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/cohorts", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listInsightCohorts)))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/cohorts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createInsightCohort))))
@@ -2820,6 +2848,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/trial", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.consumerControls.GetTrial)))
 	mux.HandleFunc("PUT /v1/apps/{slug}/consumers/{consumer_id}/trial", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.PutTrial))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/consumers/{consumer_id}/trial", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.EndTrial))))
+	mux.HandleFunc("GET /v1/apps/{slug}/consumer-credit-packs", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.consumerBilling.GetCreditPackSettings)))
+	mux.HandleFunc("PUT /v1/apps/{slug}/consumer-credit-packs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerBilling.PutCreditPackSettings))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumer-billing-policy", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.consumerControls.GetBillingPolicy)))
 	mux.HandleFunc("PUT /v1/apps/{slug}/consumer-billing-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.PutBillingPolicy))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/consumer-billing-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.DeleteBillingPolicy))))
@@ -2827,6 +2857,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/apps/{slug}/consumer-signup", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerSignup.PutSettings))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/consumer-signup", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerSignup.DeleteSettings))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumer-signups", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerSignup.List))))
+	mux.HandleFunc("GET /v1/apps/{slug}/consumer-identities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerSignup.ListIdentities))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/consumer-identities/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerSignup.DeleteIdentity))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumer-overdue-holds", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.consumerControls.ListOverdueHolds)))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage-alerts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAPIConsumerUsageAlerts))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage/quote", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIConsumerUsageQuote))))
@@ -2835,7 +2867,7 @@ func (s *server) handler() http.Handler {
 	// period. Creation is naturally idempotent on (consumer, period); finalize
 	// is an idempotent lifecycle transition once all units are priced.
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage-statements", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAPIConsumerUsageStatements))))
-	mux.HandleFunc("POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAPIConsumerUsageStatement)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createAPIConsumerUsageStatement))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIConsumerUsageStatement))))
 	mux.HandleFunc("POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/finalize", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.finalizeAPIConsumerUsageStatement)))))
 	// A finalized statement can be claimed exactly once by the customer's
@@ -3910,6 +3942,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/platform-tenant-self/workflows/runs/{id}/callbacks", s.authLimited(s.requireScope(api.ScopePlatformTenantInvocationsRead)(s.listPlatformTenantSelfWorkflowCallbacks)))
 	mux.HandleFunc("POST /v1/platform-tenant-self/workflows/runs/{id}/callbacks/{callback_id}", s.authLimited(s.requireScope(api.ScopePlatformTenantInvocationsManage)(s.completePlatformTenantSelfWorkflowCallback)))
 	mux.HandleFunc("POST /v1/platform-tenant-self/workflows/runs/{id}/events", s.authLimited(s.requireScope(api.ScopePlatformTenantInvocationsManage)(s.idempotent(s.injectPlatformTenantSelfWorkflowEvent))))
+	mux.HandleFunc("GET /v1/apps/{slug}/workflows/run-starts/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.lookupWorkflowRunStart))))
 	mux.HandleFunc("GET /v1/apps/{slug}/workflows/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listWorkflowRuns))))
 	mux.HandleFunc("POST /v1/apps/{slug}/workflows/runs:cancel-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.previewUnstartedWorkflowRunCancellations))))
 	mux.HandleFunc("POST /v1/apps/{slug}/workflows/runs:cancel-queued", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelUnstartedWorkflowRuns))))
@@ -4881,6 +4914,10 @@ func (s *server) handler() http.Handler {
 		s.authLimited(s.requireOperatorSessionRead(s.getAccountRisk)))
 	mux.HandleFunc("GET /v1/admin/held-links",
 		s.authLimited(s.requireOperatorSessionRead(s.listHeldLinks)))
+	// Existing apps an app name blocklist matches, for review only; names
+	// tenants' apps, so operator session only.
+	mux.HandleFunc("GET /v1/admin/app-names/report",
+		s.authLimited(s.requireOperatorSessionRead(s.appNameReport)))
 	mux.HandleFunc("GET /v1/admin/obs/overview",
 		s.authLimited(s.requireOperatorSessionRead(s.obsOverview)))
 	mux.HandleFunc("GET /v1/admin/managed-postgres/usage/{account_id}",
@@ -4946,6 +4983,9 @@ func (s *server) handler() http.Handler {
 	// Memory pressure: node headroom, evictions and OOM kills (ADR-20261123190507).
 	mux.HandleFunc("GET /v1/admin/obs/memory-pressure",
 		s.authLimited(s.requireOperatorSessionRead(s.obsMemoryPressure)))
+	// Gateway traffic: status codes, platform errors, wake queues (ADR-20261124093000).
+	mux.HandleFunc("GET /v1/admin/obs/gateway-traffic",
+		s.authLimited(s.requireOperatorSessionRead(s.obsGatewayTraffic)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/heartbeats",
 		s.authLimited(s.requireOperatorRead(s.obsNodeHeartbeats)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/probe-notifications",
@@ -5658,6 +5698,28 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /v1/auth/signup", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
 	}, s.fromTrustedOrigin(s.sales.WithSignupCode(http.HandlerFunc(s.postV1AuthSignup)))))
+	// Claimable deploys (ADR-20261124080000): an agent's anonymous
+	// session, an unclaimed account's fresh claim link, and the claim
+	// pages. Anonymous sessions count every attempt against the same
+	// per-IP auth bucket as sign-up.
+	mux.Handle("POST /v1/anonymous/sessions", s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{middleware.CountEveryAttempt},
+	}, http.HandlerFunc(s.claim.Session)))
+	mux.HandleFunc("POST /v1/account/claim-link", s.authLimited(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		s.claim.Link(w, r, actorAccount(r, acct))
+	}))
+	mux.Handle("GET "+claim.PagePath+"/{token}", s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{http.StatusGone},
+	}, http.HandlerFunc(s.claim.Page)))
+	mux.Handle("POST "+claim.PagePath+"/{token}", s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{middleware.CountEveryAttempt},
+	}, s.fromTrustedOrigin(http.HandlerFunc(s.claim.Request))))
+	mux.Handle("GET "+claim.ConfirmPath, s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{middleware.CountEveryAttempt, http.StatusGone},
+	}, http.HandlerFunc(s.claim.ConfirmPage)))
+	mux.Handle("POST "+claim.ConfirmPath, s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{middleware.CountEveryAttempt, http.StatusGone},
+	}, s.fromTrustedOrigin(http.HandlerFunc(s.claim.Confirm))))
 	mux.Handle("POST /v1/auth/login", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt},
 	}, s.fromTrustedOrigin(http.HandlerFunc(s.postV1AuthLogin))))
@@ -6145,6 +6207,9 @@ func (s *server) handler() http.Handler {
 	// Customer self-service with a billing-scope key (ADR-20261021183000).
 	mux.Handle("GET /v1/consumer-billing/{slug}/plans", selfVerified(s.consumerBilling.Plans))
 	mux.Handle("PUT /v1/consumer-billing/{slug}/plan", selfVerified(s.consumerBilling.ChangePlan))
+	mux.Handle("GET /v1/consumer-billing/{slug}/credit-packs", selfVerified(s.consumerBilling.CreditPacks))
+	mux.Handle("POST /v1/consumer-billing/{slug}/credit-purchases", selfVerified(s.consumerBilling.CreateCreditPurchase))
+	mux.Handle("GET /v1/consumer-billing/{slug}/credit-purchases/{purchase_id}", selfVerified(s.consumerBilling.GetCreditPurchase))
 	mux.Handle("POST /v1/consumer-billing/{slug}/portal", selfVerified(s.consumerBilling.Portal))
 	mux.Handle("POST /v1/consumer-billing/{slug}/close", selfVerified(s.consumerBilling.Close))
 	// Consumer self-service sign-up (ADR-20261021143000): no credential; the
@@ -6156,6 +6221,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/consumer-signup/{slug}/page", s.consumerSignup.Page)
 	mux.HandleFunc("GET /v1/consumer-signup/{slug}/signup.js", s.consumerSignup.Script)
 	mux.HandleFunc("GET /v1/consumer-signup/{slug}/signup.css", s.consumerSignup.Style)
+	// Upgrade links (ADR-20261124094745): the link's signed token is the
+	// only credential, and opens only the consumer's plan change.
+	mux.HandleFunc("GET /v1/consumer-signup/{slug}/upgrade", s.consumerSignup.UpgradePage)
+	mux.HandleFunc("GET /v1/consumer-signup/{slug}/upgrade.js", s.consumerSignup.UpgradeScript)
+	mux.HandleFunc("GET /v1/consumer-signup/{slug}/upgrade/plans", s.consumerSignup.Upgrade)
+	mux.HandleFunc("POST /v1/consumer-signup/{slug}/upgrade", s.consumerSignup.StartUpgrade)
+	mux.HandleFunc("POST /v1/consumer-signup/{slug}/upgrade/complete", s.consumerSignup.CompleteUpgrade)
 	mux.HandleFunc("GET /v1/status/incidents/{public_id}", s.publicStatusIncidentHandler)
 	mux.HandleFunc("POST /v1/admin/status/incidents", s.authLimited(s.requireAdminMutation(s.createAdminStatusEvent)))
 	mux.HandleFunc("PATCH /v1/admin/status/incidents/{public_id}", s.authLimited(s.requireAdminMutation(s.editAdminStatusEvent)))

@@ -107,7 +107,9 @@ CREATE TABLE deployment_image_preparations (
 CREATE TABLE deployments (
     id                   uuid NOT NULL PRIMARY KEY,
     app_id               uuid NOT NULL,
-    build_registry_scope text[]
+    build_registry_scope text[],
+    status               text NOT NULL,
+    scope                text NOT NULL
 );
 
 -- Projections of job_registry_credentials and jobs: a job's registry
@@ -194,4 +196,19 @@ CREATE TABLE storage_grant_audit (
     access        text        NOT NULL,
     objects       integer     NOT NULL,
     granted_at    timestamptz NOT NULL DEFAULT now()
+);
+
+-- Projections of deployment_verification_leases and app_verification_contracts:
+-- the node verifying a deployment and the contract whose header secret
+-- references OpenVerificationSecrets opens (ADR-20261122220000 amendment 2).
+CREATE TABLE deployment_verification_leases (
+    deployment_id uuid        NOT NULL PRIMARY KEY,
+    app_id        uuid        NOT NULL,
+    node_name     text        NOT NULL,
+    expires_at    timestamptz NOT NULL
+);
+
+CREATE TABLE app_verification_contracts (
+    app_id   uuid  NOT NULL PRIMARY KEY,
+    contract jsonb NOT NULL
 );

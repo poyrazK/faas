@@ -91,7 +91,7 @@ func TestUnavailableCapabilitiesHideTheirTools(t *testing.T) {
 		status int
 		listed bool
 	}{
-		"hidden":   {body: `{"plan":"free","capabilities":[{"key":"incidents","enabled":false}],"hidden_capabilities":["log-search","product-analytics"]}`, status: 200},
+		"hidden":   {body: `{"plan":"free","capabilities":[{"key":"incidents","enabled":false}],"hidden_capabilities":["log-search","product-analytics","saved-insights"]}`, status: 200},
 		"released": {body: `{"plan":"pro","capabilities":[{"key":"incidents","enabled":true}]}`, status: 200, listed: true},
 		"failed":   {status: 503, listed: true},
 	} {

@@ -87,10 +87,15 @@ func cmdInit(args []string) int {
 	noMCP := fs.Bool("no-mcp", false, "do not write .mcp.json")
 	agents := fs.Bool("agents", false, "set up an existing project for coding agents instead of scaffolding one")
 	dryRun := fs.Bool("dry-run", false, "with --agents, show the changes without writing them")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 0 {
+	// `gregale init --template X my-app` printed only the usage on prod
+	// (prod hunt r47): with the template named, one bare word is the
+	// directory, as in most scaffolders.
+	if *tpl != "" && *dest == "" && fs.NArg() == 1 && !templates.Exists(fs.Arg(0)) {
+		*dest = fs.Arg(0)
+	} else if fs.NArg() != 0 {
 		usage := initCmdUsage
 		// `gregale init function-python313 .` printed only the usage on prod
 		// (hunt 2026-11-21): name the command the words meant.
@@ -394,15 +399,15 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 }
 
 func deployInitTemplate(tpl, dir, slug, secretsFile string) int {
-	args := []string{"--template", tpl, "--name", slug}
-	if tpl == templates.PrivateNode {
-		args = privateNodeDeployArgs(dir, slug)
-		if jsonOutput || !stdinIsTTY() {
-			args = append(args, "--yes")
+	args := initDeployArgs(tpl, dir, slug, secretsFile)
+	if templatesDeployAsMCP[tpl] {
+		if mcpHostingAvailable() {
+			return cmdMCPDeploy(args)
 		}
-	}
-	if secretsFile != "" {
-		args = append(args, "--secrets-file", secretsFile)
+		// MCP hosting needs streaming, which the plan lacks: deploy the app as
+		// before rather than fail after the files are written.
+		_, _ = fmt.Fprintf(osStderr, "Note: MCP hosting needs a plan with streaming; deploying %s as a private app. After upgrading, run: gregale mcp server deploy --path %s --name %s\n", slug, dir, slug)
+		args = plainInitDeployArgs(tpl, dir, slug, secretsFile)
 	}
 	if tpl != templates.PrivateNode {
 		return cmdDeployTarball(args)
@@ -415,6 +420,50 @@ func deployInitTemplate(tpl, dir, slug, secretsFile string) int {
 			return verifyUnusedPrivateNodeProject(ctx, client, slug)
 		},
 	})
+}
+
+// initDeployArgs are the deploy flags `init --deploy` runs. A template whose
+// callers cannot present a Gregale API key deploys public, as its README and
+// next steps do (prod hunt r35: init --deploy still made them private).
+func initDeployArgs(tpl, dir, slug, secretsFile string) []string {
+	if templatesDeployAsMCP[tpl] {
+		args := []string{"--path", dir, "--name", slug}
+		if secretsFile != "" {
+			args = append(args, "--secrets-file", secretsFile)
+		}
+		return args
+	}
+	return plainInitDeployArgs(tpl, dir, slug, secretsFile)
+}
+
+// mcpHostingAvailable reports whether the account's plan can host an MCP
+// server (`mcp server deploy` needs streaming). When the plan cannot be read
+// it answers true and lets the MCP deploy report the error.
+func mcpHostingAvailable() bool {
+	client, err := authedClient()
+	if err != nil {
+		return true
+	}
+	account, err := client.Whoami(context.Background())
+	return err != nil || api.Plan(account.Plan).StreamingEnabled()
+}
+
+// plainInitDeployArgs are the `gregale deploy` flags for tpl.
+func plainInitDeployArgs(tpl, dir, slug, secretsFile string) []string {
+	args := []string{"--template", tpl, "--name", slug}
+	if tpl == templates.PrivateNode {
+		args = privateNodeDeployArgs(dir, slug)
+		if jsonOutput || !stdinIsTTY() {
+			args = append(args, "--yes")
+		}
+	}
+	if secretsFile != "" {
+		args = append(args, "--secrets-file", secretsFile)
+	}
+	if templatesPublicOnPurpose[tpl] {
+		args = append(args, "--no-require-authn")
+	}
+	return args
 }
 
 func rememberInitTemplate(tpl, dir, slug string) error {
@@ -510,16 +559,30 @@ func pluralY(n int) string {
 func requireTemplateSecretsBeforeFirstStart(ctx context.Context, apps interface {
 	GetApp(context.Context, string) (api.AppResponse, error)
 }, tpl, secretsFile string, createOnly bool, slug string) error {
-	if tpl == "" || secretsFile != "" || createOnly {
+	if tpl == "" || createOnly {
 		return nil
 	}
-	missing := validateTemplateSecrets(tpl, nil)
-	if missing == nil {
+	var missing error
+	if secretsFile == "" {
+		missing = validateTemplateSecrets(tpl, nil)
+	}
+	// A binding never comes from a secrets file, so a secrets file does not
+	// excuse it: object-storage-node deployed with its token file and crashed
+	// on startup_unavailable for want of its bucket (prod hunt r41).
+	binding := templateRequiredBindings[tpl]
+	bucket := templateRequiredBuckets[tpl]
+	if missing == nil && binding == "" && bucket == "" {
 		return nil
 	}
 	var ae *APIError
 	if _, err := apps.GetApp(ctx, slug); !errors.As(err, &ae) || ae.Problem.Status != http.StatusNotFound {
 		return nil
+	}
+	if binding != "" {
+		return fmt.Errorf("template %s needs a managed database binding (%s) before its first start, so nothing was deployed. As README.md \"Configure and deploy\" shows: reserve the app with `gregale deploy --create-only --path . --dockerfile --name %s`, run `gregale postgres attach <database> %s --access migration --env %s`, wait until `gregale postgres bindings get <binding-id>` reports ready (attach opens outbound TCP 5432), then deploy", tpl, binding, slug, slug, binding)
+	}
+	if bucket != "" {
+		return fmt.Errorf("template %s needs a managed bucket before its first start, so nothing was deployed. As README.md shows: reserve the app with `gregale deploy --create-only --template %s --name %s`, run `%s`, then deploy with your secrets file", tpl, tpl, slug, strings.ReplaceAll(bucket, "<slug>", slug))
 	}
 	return fmt.Errorf("%w; template %s cannot start without them. Pass --secrets-file <file> on the first deploy, or reserve the app with --create-only, set them with `gregale env set --app %s ...`, then deploy", missing, tpl, slug)
 }
@@ -625,7 +688,7 @@ func nextStepsFor(tpl string) []string {
 			"  gregale postgres attach <database> <slug> --access read_write --env DATABASE_URL",
 			"  gregale postgres attach <database> <slug> --access migration --env MIGRATION_DATABASE_URL",
 			"Use a runtime role without superuser or BYPASSRLS privileges.",
-			"For PostgreSQL on TCP 5432 (Pro/Scale): `gregale app <slug> egress-ports add 5432`.",
+			"postgres attach opens outbound TCP 5432 itself; only an external PostgreSQL needs `gregale app <slug> egress-ports add 5432` (Pro/Scale).",
 			"  cd <dest> && gregale deploy --name <slug> --platform-tenant-required --no-require-authn",
 			"The Procfile release command installs the tenant-scoped document schema before activation.",
 			"Onboard customers locally with `node tools/customer.js onboard <slug> <external-ref> <customer-name>`.",
@@ -639,8 +702,9 @@ func nextStepsFor(tpl string) []string {
 			"  gregale deploy --create-only --template object-storage-python --name <slug>",
 			"  gregale add bucket assets --app <slug> --permission read_write --prefix GREGALE_S3_ASSETS",
 			"Set STORAGE_APP_TOKEN from a 0600 secrets file outside the source directory; see README.md.",
-			"  cd <dest> && gregale deploy --name <slug> --secrets-file <secrets-file>",
-			"Use a Bearer token for PUT/GET /objects/<key>; /readyz reports adoption and restore readiness.",
+			"  cd <dest> && gregale deploy --name <slug> --secrets-file <secrets-file> --no-require-authn",
+			"  (public on purpose: the app checks STORAGE_APP_TOKEN itself, and a Gregale API key would take the same Authorization header)",
+			"Use a Bearer token for PUT/GET /objects/<key>; read /readyz (adoption and restore readiness) with `gregale release verify <deployment-id> --app <slug> --path /readyz`: the edge answers it publicly.",
 		}
 	case "object-storage-node":
 		return []string{
@@ -649,8 +713,9 @@ func nextStepsFor(tpl string) []string {
 			"  gregale deploy --create-only --template object-storage-node --name <slug>",
 			"  gregale add bucket assets --app <slug> --permission read_write --prefix GREGALE_S3_ASSETS",
 			"Set STORAGE_APP_TOKEN from a 0600 secrets file outside the source directory; see README.md.",
-			"  cd <dest> && gregale deploy --name <slug> --secrets-file <secrets-file>",
-			"Use a Bearer token for PUT/GET /objects/<key>; /readyz reports storage adoption and restore readiness.",
+			"  cd <dest> && gregale deploy --name <slug> --secrets-file <secrets-file> --no-require-authn",
+			"  (public on purpose: the app checks STORAGE_APP_TOKEN itself, and a Gregale API key would take the same Authorization header)",
+			"Use a Bearer token for PUT/GET /objects/<key>; read /readyz (storage adoption and restore readiness) with `gregale release verify <deployment-id> --app <slug> --path /readyz`: the edge answers it publicly.",
 		}
 	case "s3-uploader":
 		return []string{
@@ -674,12 +739,13 @@ func nextStepsFor(tpl string) []string {
 			"  SLACK_SIGNING_SECRET=...",
 			"  (optional SLACK_BOT_TOKEN=xoxb-...)",
 			"First deploy with secrets sealed before startup:",
-			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",
+			"  cd <dest> && gregale deploy --secrets-file <secrets-file> --no-require-authn",
+			"  (public on purpose: the sender cannot present a Gregale API key; the handler checks the sender's own secret or signature)",
 			"After the app exists, rotate/add with `gregale env set --app <slug> ...`.",
 			"Or reserve the app before setting secrets separately:",
 			"  gregale deploy --create-only --template slack-bot --name <slug>",
 			"  gregale env set --app <slug> SLACK_SIGNING_SECRET=... SLACK_BOT_TOKEN=xoxb-...",
-			"  cd <dest> && gregale deploy",
+			"  cd <dest> && gregale deploy --no-require-authn",
 		}
 	case "auth":
 		return []string{"Deploy application Auth bound to a ready managed database:", "  gregale auth create <slug> --database <database> --site-url https://app.example.com", "See README.md for sign-up, tokens and Data API RLS."}
@@ -712,7 +778,7 @@ func nextStepsFor(tpl string) []string {
 			"  gregale deploy --create-only --template " + tpl + " --name <slug>",
 			"  gregale postgres attach <database> <slug> --access read_write --env DATABASE_URL",
 			"  gregale postgres attach <database> <slug> --access migration --env MIGRATION_DATABASE_URL",
-			"For PostgreSQL on TCP 5432 (Pro/Scale): `gregale app <slug> egress-ports add 5432`.",
+			"postgres attach opens outbound TCP 5432 itself; only an external PostgreSQL needs `gregale app <slug> egress-ports add 5432` (Pro/Scale).",
 			"  cd <dest> && gregale deploy --name <slug>",
 			"The Procfile release command creates the schema before activation.",
 			"For external PostgreSQL, run migrations locally; see README.md for gregale env set and --secrets-file setup.",
@@ -725,6 +791,15 @@ func nextStepsFor(tpl string) []string {
 			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",
 			"After the app exists, rotate the credential with `gregale env rotate --app <slug> ... --wait-for-ack`.",
 		}
+	case "cron-example":
+		// Prod hunt r39: the steps ended at deploy, so `init --deploy` left an
+		// app that nothing ever called; the schedule was only in README.md.
+		return []string{
+			"cd <dest> && gregale deploy",
+			"Schedule it (a POST to / every 5 minutes):",
+			"  cd <dest> && gregale cron create --schedule '*/5 * * * *' --path /",
+			"Watch it fire: cd <dest> && gregale logs --follow",
+		}
 	case "cron-worker":
 		return []string{
 			"Create a 0600 secrets file outside this directory (one KEY=VALUE per line):",
@@ -733,13 +808,14 @@ func nextStepsFor(tpl string) []string {
 			"  UPSTASH_REDIS_REST_URL=...",
 			"  UPSTASH_REDIS_REST_TOKEN=...",
 			"First deploy with secrets sealed before startup:",
-			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",
+			"  cd <dest> && gregale deploy --secrets-file <secrets-file> --no-require-authn",
+			"  (public on purpose: the sender cannot present a Gregale API key; the handler checks the sender's own secret or signature)",
 			"Then wire QStash to invoke the function (curl or the QStash dashboard).",
 			"After the app exists, rotate/add with `gregale env set --app <slug> ...`.",
 			"Or reserve the app before setting secrets separately:",
 			"  gregale deploy --create-only --template cron-worker --name <slug>",
 			"  gregale env set --app <slug> QSTASH_CURRENT_SIGNING_KEY=... QSTASH_NEXT_SIGNING_KEY=... UPSTASH_REDIS_REST_URL=... UPSTASH_REDIS_REST_TOKEN=...",
-			"  cd <dest> && gregale deploy",
+			"  cd <dest> && gregale deploy --no-require-authn",
 		}
 	case "webhook-receiver":
 		return []string{
@@ -747,8 +823,9 @@ func nextStepsFor(tpl string) []string {
 			"  WEBHOOK_SECRET=$(openssl rand -hex 32)",
 			"  (optional WEBHOOK_ALLOWED_PATHS=/stripe,/github)",
 			"First deploy with secrets sealed before startup:",
-			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",
-			"Wire the provider's webhook URL to https://<slug>.gregale.dev/<your-path>.",
+			"  cd <dest> && gregale deploy --secrets-file <secrets-file> --no-require-authn",
+			"  (public on purpose: the sender cannot present a Gregale API key; the handler checks the sender's own secret or signature)",
+			"Wire the provider's webhook URL to https://<slug>.gregale.app/<your-path>.",
 			"After the app exists, rotate/add with `gregale env set --app <slug> ...`.",
 		}
 	case "ai-chat":

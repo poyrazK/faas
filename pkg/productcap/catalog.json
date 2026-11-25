@@ -407,6 +407,7 @@
         "/v1/account/billing-run-schedule",
         "/v1/account/billing-runs",
         "/v1/apps/{}/consumer-billing-policy",
+        "/v1/apps/{}/consumer-credit-packs",
         "/v1/apps/{}/consumer-overdue-holds",
         "/v1/apps/{}/consumer-plans",
         "/v1/apps/{}/consumer-signup",
@@ -432,7 +433,8 @@
       "acceptance_test": "pkg/apid/apidserver/handlers_ext_test.go::TestGetApp_SurfacesRequireAuthn",
       "settings": [
         "app.public_auth",
-        "app.require_authn"
+        "app.require_authn",
+        "manifest.access"
       ]
     },
     {
@@ -1002,6 +1004,29 @@
       ],
       "settings": [
         "edge_rule.circuit_breaker"
+      ]
+    },
+    {
+      "id": "claimable-deploys",
+      "name": "Claimable deploys",
+      "category": "account",
+      "description": "An agent deploys with no account and gets a live URL plus a claim link; a person who opens the link and confirms an email address owns the app on the Free plan. Unclaimed deploys are limited and expire.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/claimable-deploys",
+      "acceptance_test": "pkg/apid/apidserver/claimable_deploys_test.go::TestAnonymousDeployIsClaimedInPlace",
+      "routes": [
+        "/claim",
+        "/v1/account/claim-link",
+        "/v1/anonymous"
+      ],
+      "cli": [
+        "claim"
       ]
     },
     {
@@ -2653,6 +2678,20 @@
       "always_on": true
     },
     {
+      "id": "flag-notifications",
+      "name": "Flag notifications",
+      "category": "delivery",
+      "description": "Send experiment decisions and problems, a weekly digest of flags that need a decision and flag expiries to notification channels.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261125085913-flag-notifications",
+      "acceptance_test": "pkg/flagnotify/flagnotify_test.go::TestRunner",
+      "parent": "feature-flags",
+      "routes": [
+        "/v1/projects/{}/environments/{}/flags/notifications"
+      ]
+    },
+    {
       "id": "framework-profiles",
       "name": "Framework profiles",
       "category": "delivery",
@@ -3270,6 +3309,7 @@
         "=/v1/postgres/databases/{}",
         "/v1/postgres/databases/{}/connection-budget",
         "/v1/postgres/databases/{}/query",
+        "/v1/postgres/databases/{}/suspend-timeout",
         "/v1/postgres/databases/{}/undelete",
         "/v1/postgres/usage"
       ],
@@ -5541,6 +5581,22 @@
       ]
     },
     {
+      "id": "saved-insights",
+      "name": "Saved insights",
+      "category": "observability",
+      "description": "Save analytics queries per environment, run and export them as CSV or JSON, and send their value to notification channels as daily or weekly digests and threshold alerts.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261122190000-saved-insights",
+      "acceptance_test": "pkg/apid/insights/saved_test.go::TestRunSavedValues",
+      "parent": "product-analytics",
+      "routes": [
+        "/v1/projects/{}/environments/{}/insights/saved",
+        "/v1/projects/{}/environments/{}/insights/saved/{}",
+        "/v1/projects/{}/environments/{}/insights/saved/{}/run"
+      ]
+    },
+    {
       "id": "scale-to-zero",
       "name": "Scale to zero",
       "category": "runtime",
@@ -6072,9 +6128,9 @@
     },
     {
       "id": "tcp-listeners",
-      "name": "TCP listeners",
+      "name": "Public TCP listeners",
       "category": "edge",
-      "description": "Serve raw TCP on a dedicated listener.",
+      "description": "Serve raw TCP to the internet on a dedicated public port at the edge. Private TCP between your own apps (managed Redis, internal service addresses) does not need it.",
       "maturity": "preview",
       "plans": [
         "free",
@@ -6181,9 +6237,9 @@
     },
     {
       "id": "udp-listeners",
-      "name": "UDP listeners",
+      "name": "Public UDP listeners",
       "category": "edge",
-      "description": "Serve UDP on a dedicated listener.",
+      "description": "Serve UDP to the internet on a dedicated public port at the edge.",
       "maturity": "preview",
       "plans": [
         "free",

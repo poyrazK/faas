@@ -3,15 +3,15 @@ import { jobHash, jobValueHash, jobSnapshot, jobScope } from './job-runtime.js';
 import { parseJobCheckpoint, type JobCheckpoint } from './typed-jobs.js';
 import { NonRetryableError } from './workflows.js';
 import { fileEventUUID, fileEventHash } from './file-events.js';
-import type { FileBucket, FileOptions, FileScope } from './files.js';
+import { FileError, type FileBucket, type FileOptions, type FileScope } from './files.js';
 
-export type PipelineCode = 'invalid_input' | 'scope_mismatch' | 'receipt_conflict' | 'store_failed' | 'submission_unresolved' | 'job_failed' | 'invalid_result' | 'poll_limit' | 'operation_limit' | 'journal_limit' | 'artifact_changed' | 'request_failed' | 'acceptance_unknown' | 'deadline' | 'cancelled';
+export type PipelineCode = 'invalid_input' | 'scope_mismatch' | 'receipt_conflict' | 'store_failed' | 'submission_unresolved' | 'job_failed' | 'invalid_result' | 'poll_limit' | 'operation_limit' | 'journal_limit' | 'artifact_changed' | PinnedPipelineSourceFailure | 'request_failed' | 'acceptance_unknown' | 'deadline' | 'cancelled';
 export class PipelineError extends NonRetryableError {
   constructor(readonly code: PipelineCode, readonly step?: string, readonly jobRunId?: string) {
     super('pipeline:' + code + (step ? ':' + step : '') + (jobRunId ? ':' + jobRunId : ''));
   }
 }
-const pipelineCodes = new Set<string>(['invalid_input', 'scope_mismatch', 'receipt_conflict', 'store_failed', 'submission_unresolved', 'job_failed', 'invalid_result', 'poll_limit', 'operation_limit', 'journal_limit', 'artifact_changed', 'request_failed', 'acceptance_unknown', 'deadline', 'cancelled']);
+const pipelineCodes = new Set<string>(['invalid_input', 'scope_mismatch', 'receipt_conflict', 'store_failed', 'submission_unresolved', 'job_failed', 'invalid_result', 'poll_limit', 'operation_limit', 'journal_limit', 'artifact_changed', 'source_unavailable', 'source_forbidden', 'request_failed', 'acceptance_unknown', 'deadline', 'cancelled']);
 /** Decode only SDK codes; never expose arbitrary native/database error text. */
 export function pipelineFailure(value: unknown): { readonly code: PipelineCode; readonly jobRunId?: string } | undefined {
   if (typeof value !== 'string') return;
@@ -36,9 +36,10 @@ export function parsePipelineLineage(value: unknown): PipelineLineage {
 export interface PipelineEnvelope<I> {
   readonly lineage?: PipelineLineage;
   readonly trigger?: PipelineTrigger;
+  readonly pinned_source?: PinnedPipelineSource;
   readonly version: 1; readonly contract_sha256: string; readonly scope: PipelineScope; readonly owner_id: string; readonly input: I;
 }
-export interface PipelineResultEnvelope<O> extends Omit<PipelineEnvelope<O>, 'input'> { readonly output: O; }
+export interface PipelineResultEnvelope<O> extends Omit<PipelineEnvelope<O>, 'input' | 'pinned_source'> { readonly output: O; }
 export interface PipelineJobIntent {
   readonly version: 1; readonly identity: string; readonly scope: PipelineScope;
   readonly workflow_run_id: string; readonly step: string; readonly owner_id: string;
@@ -111,14 +112,14 @@ export interface PipelineArtifact {
   readonly version: 1; readonly scope: FileScope; readonly owner_id: string;
   readonly key: string; readonly version_id?: string | null; readonly size_bytes: number; readonly sha256: string;
 }
-export function parsePipelineArtifact(value: unknown, files: FileBucket, ownerId: string): PipelineArtifact {
+export function parsePipelineArtifact(value: unknown, files: Pick<FileBucket, 'scope'>, ownerId: string): PipelineArtifact {
   const a = value as PipelineArtifact;
   if (!a || a.version !== 1 || !pipelineName(ownerId) || a.owner_id !== ownerId || jobValueHash(a.scope) !== jobValueHash(files.scope) || typeof a.key !== 'string' || !a.key || Buffer.byteLength(a.key) > 1024 || /[\x00-\x1f]/.test(a.key) || !Number.isSafeInteger(a.size_bytes) || a.size_bytes < 0 || !fileEventHash(a.sha256) || a.version_id != null && !fileEventUUID(a.version_id)) throw new PipelineError('artifact_changed');
   return jobSnapshot({ version: 1, scope: files.scope, owner_id: ownerId, key: a.key, ...(a.version_id ? { version_id: a.version_id } : {}), size_bytes: a.size_bytes, sha256: a.sha256 });
 }
 /** No bearer URLs enter the workflow journal. Every read verifies bytes, even
  * when an immutable provider version is available. Authorize ownerId first. */
-export function readPipelineArtifact(files: FileBucket, artifact: PipelineArtifact, ownerId: string, options: FileOptions): Promise<Uint8Array> {
+export function readPipelineArtifact(files: Pick<FileBucket, 'scope' | 'download'>, artifact: PipelineArtifact, ownerId: string, options: FileOptions): Promise<Uint8Array> {
   const a = parsePipelineArtifact(artifact, files, ownerId);
   if (a.size_bytes > (options.maxBytes ?? 16 * 1024 * 1024)) throw new PipelineError('journal_limit');
   const deadline = performance.now() + options.timeoutMs;
@@ -127,6 +128,58 @@ export function readPipelineArtifact(files: FileBucket, artifact: PipelineArtifa
     signal.throwIfAborted();
     if (bytes.length !== a.size_bytes || jobHash(bytes) !== a.sha256) throw new PipelineError('artifact_changed');
     if (performance.now() >= deadline) throw new PipelineError('deadline');
+    return bytes;
+  });
+}
+
+/** An immutable, owned managed-file version. */
+export interface PinnedPipelineSource extends PipelineArtifact {
+  readonly version_id: string;
+}
+export type PinnedPipelineSourceFailure = 'source_unavailable' | 'source_forbidden';
+export function isPinnedPipelineSourceFailure(value: unknown): value is PinnedPipelineSourceFailure {
+  return value === 'source_unavailable' || value === 'source_forbidden';
+}
+export function parsePinnedPipelineSource(value: unknown, scope: Pick<PipelineScope, 'base_url' | 'app_slug'>, ownerId: string): PinnedPipelineSource {
+  const raw = value as PinnedPipelineSource;
+  if (!raw || Object.keys(raw).sort().join() !== 'key,owner_id,scope,sha256,size_bytes,version,version_id' || !fileEventUUID(raw.version_id) || !fileEventUUID(raw.scope?.bucket))
+    throw new PipelineError('source_unavailable');
+  try {
+    const artifact = parsePipelineArtifact(raw, { scope: { base_url: scope.base_url, app_slug: scope.app_slug, bucket: raw.scope.bucket } }, ownerId);
+    return jobSnapshot({ ...artifact, version_id: raw.version_id });
+  } catch {
+    throw new PipelineError('source_unavailable');
+  }
+}
+
+/** Check application authority and verify the exact version before returning any bytes. */
+export function readPinnedPipelineSource(
+  files: Pick<FileBucket, 'scope' | 'download'>, source: PinnedPipelineSource, ownerId: string,
+  options: FileOptions & { authorize(source: PinnedPipelineSource, signal: AbortSignal): Promise<boolean> },
+): Promise<Uint8Array> {
+  const artifact = parsePinnedPipelineSource(source, files.scope, ownerId);
+  if (artifact.scope.bucket !== files.scope.bucket) throw new PipelineError('source_unavailable');
+  const end = performance.now() + options.timeoutMs;
+  return jobScope(options.timeoutMs, options.signal, async (signal) => {
+    async function checkAccess() {
+      if (await options.authorize(artifact, signal) !== true) throw new PipelineError('source_forbidden');
+      signal.throwIfAborted();
+      if (performance.now() >= end) throw new PipelineError('deadline');
+    }
+    await checkAccess();
+    let bytes;
+    try {
+      bytes = await readPipelineArtifact(files, artifact, ownerId, {
+        ...options, signal, timeoutMs: Math.max(1, Math.ceil(end - performance.now())),
+      });
+    } catch (error) {
+      signal.throwIfAborted();
+      if (error instanceof PipelineError && error.code === 'deadline' || error instanceof FileError && error.code === 'deadline')
+        throw new PipelineError('deadline');
+      if (error instanceof FileError && error.status === 403) throw new PipelineError('source_forbidden');
+      throw new PipelineError('source_unavailable');
+    }
+    await checkAccess();
     return bytes;
   });
 }

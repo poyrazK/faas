@@ -22,10 +22,14 @@ type consentView struct {
 	// ConsentAction is the consent endpoint, under /mcp on the hosted bridge.
 	ConsentAction string
 	// Capabilities describe the extra scopes chosen before sign-in.
-	Capabilities       []string
-	RequestID          string
-	CSRF               string
-	Writes             bool
+	Capabilities []string
+	RequestID    string
+	CSRF         string
+	Writes       bool
+	// OfferWrites: the client asked only to inspect, but this bridge allows
+	// writes, so the page before sign-in lets the person choose deploy
+	// access (ADR-20261028205920 amendment 1).
+	OfferWrites        bool
 	Invocations        bool
 	Publishing         bool
 	PrivateInvocations bool
@@ -55,7 +59,7 @@ func (r *remoteServer) authorize(w http.ResponseWriter, req *http.Request) {
 	r.pruneLocked()
 	c := r.clients[query.Get("client_id")]
 	scopes, valid := r.requestedScopes(query.Get("scope"))
-	if c == nil || !slices.Contains(c.Redirects, query.Get("redirect_uri")) || query.Get("response_type") != "code" || query.Get("resource") != r.opts.ResourceURL || query.Get("code_challenge_method") != "S256" || !pkceChallenge.MatchString(query.Get("code_challenge")) || !valid || len(query.Get("state")) > 2048 {
+	if c == nil || !clientRedirectMatches(c, query.Get("redirect_uri")) || !r.redirectAllowed(query.Get("redirect_uri")) || query.Get("response_type") != "code" || query.Get("resource") != r.opts.ResourceURL || query.Get("code_challenge_method") != "S256" || !pkceChallenge.MatchString(query.Get("code_challenge")) || !valid || len(query.Get("state")) > 2048 {
 		oauthError(w, 400, "invalid_request", "Registered redirect URI, exact resource, supported scopes, code response type and S256 PKCE are required")
 		return
 	}
@@ -102,6 +106,7 @@ func (r *remoteServer) renderConsent(w http.ResponseWriter, flow *authorizationR
 	if r.opts.Hosted {
 		view.APIBase = r.opts.ResourceURL
 	}
+	view.OfferWrites = r.offersWrites(flow)
 	if g := r.grants[flow.GrantID]; g != nil {
 		// The connection's key may carry less than the client asked for: an
 		// organization's agent policy caps it (ADR-20261101225122).

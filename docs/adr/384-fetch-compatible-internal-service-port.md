@@ -61,3 +61,31 @@ it is a separate decision. Removing 10080 breaks persisted deployments.
 - Full compute-stage and fleet release gates check 10081 and 10080 listeners.
 - Post-rollout real guests verify cold/warm, same/cross-node, legacy callers,
   and denied unbound/cross-account/private-host paths.
+
+## Amendment 1 (2026-11-24): no TCP keepalive on guest connections
+
+**Context.** The listeners accepted guest connections with Go's default TCP
+keepalive: a probe every 15 s once a connection is idle. Each probe is a
+packet for the guest, and an app that holds idle service connections is
+resumed by it from quiet pause (ADR-20261107122928). A 10-minute capture
+inside a paused app's namespace on bhs-3 (2026-11-24; the retail demo's
+frontend, four idle gRPC connections to `<name>.svc.gregale:10081`) matched
+11 of its 16 pause ends to these probes, and to the HTTP/2 GOAWAY the
+server sent 60 s after the connections went idle, which the client answered
+by reconnecting straight away. That woke the app about four times a minute
+for as long as it stayed resident.
+
+**Decision.** The service proxy listeners (10081, 10080 and the opt-in
+HTTPS alias) turn TCP keepalive off on every accepted guest connection,
+inherited listeners included, and close a guest connection after
+`api.GatewaydInternalGuestServiceIdleTimeoutSecondsDefault` (300 s) idle
+instead of 60 s. The HTTP server's idle timeout already closes idle
+connections, and its read and write timeouts bound one in use, so the probes
+added nothing. Handler, identity, policy, protocols and the other timeouts
+are unchanged.
+
+**Consequences.** A paused caller with idle service connections is woken
+once per idle timeout (the close, then its reconnect) instead of about four
+times a minute. A connection whose guest vanished without closing it stays
+open until the idle timeout instead of the probes' roughly two and a half
+minutes; that holds a little gatewayd-internal memory, nothing else.

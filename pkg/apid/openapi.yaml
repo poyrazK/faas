@@ -9864,6 +9864,11 @@ paths:
           required: false
           description: RFC 3339 end, at most 31 days after since (default now).
           schema: { type: string, format: date-time }
+        - name: breakdown
+          in: query
+          required: false
+          description: Include totals for your consumer, grouped by route and meter.
+          schema: { type: boolean, default: false }
       responses:
         '200':
           description: Requests and billable units per UTC day.
@@ -9994,6 +9999,90 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/consumer-billing/{slug}/credit-packs:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [consumers]
+      operationId: listConsumerCreditPacks
+      summary: List the prepaid credit packs available to your consumer.
+      security:
+        - consumerKey: []
+      responses:
+        '200':
+          description: The credit packs offered to this consumer, possibly empty.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerCreditPacksResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/consumer-billing/{slug}/credit-purchases:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [consumers]
+      operationId: createConsumerCreditPurchase
+      summary: Start or resume a one-time Stripe Checkout for a credit pack.
+      description: |
+        Choose a unique purchase_id and reuse it when retrying the same pack.
+        A consumer can have one pending purchase at a time. Granting credit
+        requires Stripe to confirm the exact live payment amount and currency.
+      security:
+        - consumerKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateConsumerCreditPurchaseRequest' }
+      responses:
+        '200':
+          description: The purchase, with a checkout URL when the session is open.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerCreditPurchaseResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: The purchase ID or pack ID is invalid, or Stripe rejected the new checkout.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '502':
+          description: Stripe Checkout could not be reached or opened.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/consumer-billing/{slug}/credit-purchases/{purchase_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: purchase_id
+        in: path
+        required: true
+        description: The UUID supplied when the purchase began.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [consumers]
+      operationId: getConsumerCreditPurchase
+      summary: Read your purchase and its credit grant receipt.
+      security:
+        - consumerKey: []
+      responses:
+        '200':
+          description: The latest state of the caller's purchase.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerCreditPurchaseResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/consumer-billing/{slug}/portal:
     parameters:
@@ -10225,6 +10314,164 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '503':
           description: The app's billing setup cannot complete sign-ups (`consumer_signup_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/consumer-signup/{slug}/upgrade/plans:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app whose plan the customer changes.
+        schema: { type: string }
+    get:
+      tags: [consumers]
+      operationId: getConsumerUpgrade
+      summary: Read the plans an upgrade link's customer can move to.
+      description: |
+        Needs no credential: the upgrade link's token
+        names the customer. A plan-limit `429` carries the link in
+        `upgrade_url`.
+      security: []
+      parameters:
+        - name: token
+          in: query
+          required: true
+          description: The upgrade link's token.
+          schema: { type: string }
+      responses:
+        '200':
+          description: The customer's plan, the offered plans and whether it has a saved card.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerUpgradeResponse' }
+        '404':
+          description: The app takes no sign-ups, or the link is invalid or expired.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: The app does not let customers change plans (`consumer_self_service_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Too many upgrade-page requests from this address (`consumer_signup_rate_limited`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/consumer-signup/{slug}/upgrade:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app of the upgrade being started.
+        schema: { type: string }
+    post:
+      tags: [consumers]
+      operationId: startConsumerUpgrade
+      summary: Move an upgrade link's customer to another offered plan.
+      description: |
+        Needs no credential. A free plan, or any plan for a customer with a
+        saved card, changes from the next minute. A paid plan for a customer
+        without a card returns a Stripe Checkout URL to save one; Checkout
+        returns to the upgrade page, which completes the upgrade.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StartConsumerUpgradeRequest' }
+      responses:
+        '200':
+          description: The changed plan, or the Checkout to save a card first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerUpgradeResult' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404':
+          description: The app takes no sign-ups, or the upgrade link is invalid or expired.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Plan changes are off (`consumer_self_service_unavailable`) or one starts at the next minute already.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: The plan is not offered.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Too many upgrade starts from this address (`consumer_signup_rate_limited`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '502':
+          description: Stripe could not be reached to start Checkout (`billing_provider_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: The app's billing setup cannot take cards (`consumer_signup_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/consumer-signup/{slug}/upgrade/complete:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app of the upgrade being completed.
+        schema: { type: string }
+    post:
+      tags: [consumers]
+      operationId: completeConsumerUpgrade
+      summary: Finish an upgrade once Checkout saved the card.
+      description: |
+        Needs no credential: the upgrade link's token and the complete token
+        from the started upgrade prove it. Makes the new Stripe customer the
+        consumer's external_ref and changes the plan from the next minute.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CompleteConsumerUpgradeRequest' }
+      responses:
+        '200':
+          description: The changed plan.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerUpgradeResult' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404':
+          description: The app takes no sign-ups, or a token is invalid or expired.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: The card is not saved yet (`consumer_signup_checkout_incomplete`), the consumer already has another payment account, or a plan change starts at the next minute already.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Too many upgrade completions from this address (`consumer_signup_rate_limited`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '502':
+          description: Stripe could not be reached to finish the upgrade (`billing_provider_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: The app's billing setup cannot save the card (`consumer_signup_unavailable`).
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -11018,6 +11265,83 @@ paths:
               schema: { $ref: '#/components/schemas/ManagedPostgresComputePolicyChange' }
         default:
           description: Authentication or policy lookup error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/postgres/databases/{id}/wake-with-app:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    put:
+      operationId: setManagedPostgresWakeWithApp
+      summary: Start a database when its app wakes
+      description: Turns on or off starting a scale-to-zero database when an app bound to it wakes, so the database's cold start overlaps the app's instead of following it. Off by default. A wake that never queries the database still starts it, and the compute bills at least one suspend timeout. Repeating the same value is harmless. An always-on database, or one on a backend that cannot start its compute, answers 409 wake_with_app_unsupported; one with a change in progress answers a conflict. While operations are closed, only turning it off is taken.
+      tags: [managed_postgres]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetManagedPostgresWakeWithAppRequest' }
+      responses:
+        '200':
+          description: The setting in force
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresWakeWithApp' }
+        default:
+          description: Invalid setting, unsupported database, conflict, entitlement or admission failure
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/orgs/{organization}/postgres/databases/{id}/wake-with-app:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to set whether a company database starts with its app."
+        schema: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$' }
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    put:
+      operationId: setOrgManagedPostgresWakeWithApp
+      summary: "Start a company database when its app wakes."
+      description: "An owner or admin turns on or off starting a scale-to-zero company database when an app bound to it wakes. A wake that never queries the database still starts it."
+      tags: [managed_postgres]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetManagedPostgresWakeWithAppRequest' }
+      responses:
+        '200':
+          description: "Whether the company database starts with its app."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresWakeWithApp' }
+        default:
+          description: "Problem while setting whether the company database starts with its app."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/postgres/databases/{id}/suspend-timeout:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    put:
+      operationId: setManagedPostgresSuspendTimeout
+      summary: Set when a scale-to-zero database suspends
+      description: Sets how long a scale-to-zero database stays up after its last activity, from 60 to 3600 seconds, or with null returns it to the platform default. Every wake bills at least this much compute. A suspended database takes the value at once; a running one takes it the next time it suspends, without interrupting connections. Repeating the same value is harmless. seconds is required; null is the default. An always-on database answers 409 suspend_timeout_always_on; one with a change in progress answers a conflict. While operations are closed, only a shorter timeout is taken.
+      tags: [managed_postgres]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetManagedPostgresSuspendTimeoutRequest' }
+      responses:
+        '200':
+          description: The suspend timeout in force
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresSuspendTimeout' }
+        default:
+          description: Validation, conflict, entitlement or admission failure
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -16044,6 +16368,62 @@ paths:
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/anonymous/sessions:
+    post:
+      tags: [account]
+      operationId: createAnonymousSession
+      summary: Deploy without an account; a person claims the app later.
+      description: |
+        For agents working for someone without a Gregale account. Needs no
+        credential. Creates a Free account limited to deploying and reading
+        its apps, and returns its deploy key and a claim link. A person who
+        opens the link and confirms an email address owns the account and
+        its apps; the key then stops working. Unclaimed accounts are deleted
+        after the claim window (72 hours by default). Custom domains,
+        databases, buckets, cron, API keys, organizations and billing answer
+        `claim_required` until the claim. New sessions are limited per
+        network and across the platform (`anonymous_deploys_unavailable`).
+        Answers 404 while the feature is not offered.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AnonymousSessionRequest' }
+      responses:
+        '201':
+          description: Session created. The key is returned once.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AnonymousSessionResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429':
+          description: 'Anonymous deploys are not available from this network now, or the platform limit is reached (`anonymous_deploys_unavailable`). Sign up and deploy again.'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
+  /v1/account/claim-link:
+    post:
+      tags: [account]
+      operationId: createClaimLink
+      summary: Get a fresh claim link for an account deployed without one.
+      description: |
+        Only for the key of an anonymous deploy's account. Returns a new
+        claim link; earlier links stop working.
+      responses:
+        '200':
+          description: The new claim link.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClaimLinkResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: The account is a regular account with nothing to claim.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '410':
+          description: The claim window ended.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
   /v1/account/sign-in-methods:
     get:
       tags: [account]
@@ -19378,7 +19758,7 @@ paths:
         read access to customers; Lago
         an API key and, for the EU region or a self-hosted Lago, api_url. Only
         the last four characters, the mode and the Lago API URL are ever
-        returned.
+        returned. Pending credit pack purchases prevent Stripe connection changes.
       requestBody:
         required: true
         content:
@@ -19392,6 +19772,7 @@ paths:
               schema: { $ref: '#/components/schemas/BillingConnectionResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '422':
           description: Not a key of this provider, a bad api_url, or the provider rejected the key.
           content:
@@ -19411,10 +19792,12 @@ paths:
       tags: [account]
       operationId: deleteBillingConnection
       summary: Remove the account's key for one billing provider.
+      description: Pending credit pack purchases prevent removing the Stripe connection.
       responses:
         '204': { description: Removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /v1/account/statement-invoices:
     get:
@@ -23067,6 +23450,11 @@ paths:
         required: false
         description: RFC3339 exclusive upper bound, snapped to UTC midnight. Defaults to the next UTC midnight, so today is included.
         schema: { type: string, format: date-time }
+      - name: breakdown
+        in: query
+        required: false
+        description: Include separate usage totals by route and meter.
+        schema: { type: boolean, default: false }
     get:
       tags: [consumers]
       operationId: getAPIConsumerUsage
@@ -23104,6 +23492,11 @@ paths:
         required: false
         description: Optional RFC3339 exclusive upper bound for the quote period; defaults to the next UTC midnight, so today is included.
         schema: { type: string, format: date-time }
+      - name: breakdown
+        in: query
+        required: false
+        description: Include priced usage totals by route and meter.
+        schema: { type: boolean, default: false }
     get:
       tags: [consumers]
       operationId: getAPIConsumerUsageQuote
@@ -23188,7 +23581,12 @@ paths:
       tags: [consumers]
       operationId: createAPIConsumerUsageStatement
       summary: Snapshot an API consumer usage quote or create a late-usage adjustment.
-      description: Creates an immutable, auditable statement revision for the explicit UTC-minute period. An unchanged draft replays. If usage or effective prices changed, the open draft becomes superseded and a new draft revision is created. After finalization, new units create the next revision containing only those units; no new units replay the latest revision. Finalized revisions are never rewritten.
+      description: >-
+        Creates an immutable statement revision for the explicit UTC-minute period. An unchanged draft replays.
+        Changes supersede an open draft and late usage after finalization creates an adjustment.
+        An administrator can submit a waiver for the exact unpriced model units on the latest held draft.
+        The waiver records zero-charge coverage for those units in a new revision. Repeating the approval returns its revision.
+        Additional unpriced units require a new approval.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -23198,7 +23596,7 @@ paths:
             schema: { $ref: '#/components/schemas/CreateAPIConsumerUsageStatementRequest' }
       responses:
         '200':
-          description: The latest existing revision; the period has no new usage or the draft is unchanged.
+          description: An unchanged statement revision or a replay of the requested waiver approval.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/APIConsumerUsageStatementResponse' }
@@ -23210,8 +23608,14 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PlanLimit' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: The statement period or waiver selection is invalid.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}:
     parameters:
@@ -23810,6 +24214,50 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/apps/{slug}/consumer-credit-packs:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [consumers]
+      operationId: getConsumerCreditPackSettings
+      summary: Read the credit packs an app offers.
+      responses:
+        '200':
+          description: The configured purchases and the app's checkout return URL.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerCreditPackSettings' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [consumers]
+      operationId: putConsumerCreditPackSettings
+      summary: Set the fixed-value packs customers can buy through the app owner's Stripe.
+      description: |
+        An empty pack list disables new purchases. Existing checkout sessions
+        keep the terms saved when the purchase started.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConsumerCreditPackSettings' }
+      responses:
+        '200':
+          description: The saved settings.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerCreditPackSettings' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: The pack ID, label, return URL, amount, or currency is invalid.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/consumer-signup:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -23882,6 +24330,40 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ConsumerSignupListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/consumer-identities:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [consumers]
+      operationId: listConsumerIdentities
+      summary: List the OAuth sign-ins of the app's MCP server and the consumers they bill to, newest first.
+      responses:
+        '200':
+          description: The app's consumer identities.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerIdentityListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/consumer-identities/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: The identity to unlink, as listed by the consumer identities endpoint.
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [consumers]
+      operationId: deleteConsumerIdentity
+      summary: Unlink an OAuth sign-in from its consumer; the next sign-in enrolls again or links by key.
+      responses:
+        '204':
+          description: Unlinked.
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
@@ -39906,6 +40388,45 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '409':
           description: "Tenant-required apps need a tenant-scoped run route, or the Idempotency-Key was already used with different workflow input."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/apps/{slug}/workflows/run-starts/{name}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        schema: { type: string, minLength: 1, maxLength: 128 }
+        description: Workflow name used for the original start.
+    get:
+      tags: [workflows]
+      operationId: lookupWorkflowRunStart
+      summary: Find a retained workflow run by its original pipeline-tool start key.
+      description: |
+        Reads the existing workflow admission binding for this app and workflow.
+        A successful response contains only the native run ID. This operation
+        applies to non-tenant pipeline-tool starts while the run is retained.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: The pipeline tool start receipt's original native idempotency key.
+          schema: { type: string, pattern: '^pipeline-tool:[0-9a-f]{64}$' }
+      responses:
+        '200':
+          description: An accepted run for this key.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowRunStartLookupResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: "code: workflow_run_not_found | app_not_found — no retained scoped start matches this key."
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -61417,6 +61938,35 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/admin/app-names/report:
+    get:
+      tags: [admin]
+      operationId: getAppNameReport
+      summary: Existing apps an app name blocklist matches (operator-only).
+      description: |
+        Lists existing apps whose names the live `app_name_blocklist` runtime
+        setting matches, for review. Nothing is changed: existing apps keep
+        their names. With `blocklist` the report uses that list instead of the
+        live one, so an operator can see a list's effect before setting it.
+        Deleted apps that can still be restored are listed too (status
+        `deleted`): a restore brings their name back. When more than 5000 apps
+        match, the first 5000 by name are listed and `truncated` is true.
+      parameters:
+        - { name: blocklist, in: query, required: false, schema: { type: string }, description: "Entries separated by commas, spaces or newlines: exact names or patterns where * matches any characters." }
+      responses:
+        '200':
+          description: Matching apps, sorted by name.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppNameReportResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: 'code: admin_required — the app name report needs an operator session with MFA.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   # ─── Operator Polar refunds (issue #279) ───────────────────────────────
   # Money-moving route. MFA is enforced for session principals, while the
   # admin scope + FAAS_ADMIN_EMAILS allowlist protect operator API keys.
@@ -64836,6 +65386,47 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/flags/notifications:
+    parameters:
+      - { $ref: '#/components/parameters/FlagsProjectSlug' }
+      - { $ref: '#/components/parameters/FlagsEnvironment' }
+    get:
+      tags: [flags]
+      operationId: getProjectFlagNotifications
+      summary: Read the channels an environment's flag notifications go to.
+      description: "Experiment decisions (ship a variant, keep control) and problems (guardrail rollback, sample ratio mismatch) of experiments without their own channels, a weekly digest of flags that need a decision and flag expiries go to these notification channels. Needs the flag_notifications release."
+      responses:
+        '200':
+          description: The environment's flag notification channels; empty when off.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagNotificationSettings' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [flags]
+      operationId: setProjectFlagNotifications
+      summary: Replace the channels an environment's flag notifications go to.
+      description: "Up to 5 of the account's notification channels; an empty list turns the environment's flag notifications off. Queued notifications keep the channels they were queued with."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FlagNotificationSettingsRequest' }
+      responses:
+        '200':
+          description: The environment's new flag notification channels.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagNotificationSettings' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments/{environment}/flags/rollback:
     parameters:
       - { $ref: '#/components/parameters/FlagsProjectSlug' }
@@ -65433,6 +66024,143 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/InsightRequests' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/projects/{slug}/environments/{environment}/insights/saved:
+    get:
+      tags: [flags]
+      operationId: listProjectSavedInsights
+      summary: List the environment's saved insights.
+      description: "Saved insights with their query, schedule, last scheduled value and alert state. Anyone who can read the project lists them. Requires the saved_insights and product_analytics platform flags."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+      responses:
+        '200':
+          description: The environment's saved insights.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SavedInsightList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    post:
+      tags: [flags]
+      operationId: createProjectSavedInsight
+      summary: Save an insight.
+      description: "Saves an events, funnel or retention query over the last range_days days, with an optional daily or weekly digest and threshold alert sent to the account's notification channels. At most 50 per environment (409 saved_insight_limit)."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SavedInsightRequest' }
+      responses:
+        '201':
+          description: The created saved insight.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SavedInsight' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/projects/{slug}/environments/{environment}/insights/saved/{key}:
+    get:
+      tags: [flags]
+      operationId: getProjectSavedInsight
+      summary: Read one saved insight.
+      description: "A saved insight's query, schedule, last scheduled value, alert state and last error."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+        - { name: key, in: path, required: true, description: Saved insight key., schema: { type: string } }
+      responses:
+        '200':
+          description: The saved insight.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SavedInsight' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    put:
+      tags: [flags]
+      operationId: replaceProjectSavedInsight
+      summary: Replace a saved insight.
+      description: "Replaces the query and schedule. Changing the query, range or alert resets the alert state to ok."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+        - { name: key, in: path, required: true, description: Key of the saved insight to replace., schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SavedInsightRequest' }
+      responses:
+        '200':
+          description: The replaced saved insight.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SavedInsight' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [flags]
+      operationId: deleteProjectSavedInsight
+      summary: Delete a saved insight.
+      description: "Its digests and alert stop."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+        - { name: key, in: path, required: true, description: Key of the saved insight to delete., schema: { type: string } }
+      responses:
+        '204': { description: The saved insight is deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/projects/{slug}/environments/{environment}/insights/saved/{key}/run:
+    get:
+      tags: [flags]
+      operationId: runProjectSavedInsight
+      summary: Run a saved insight now.
+      description: "Read-only. Runs the saved query over its last range_days days, clamped to the plan's analytics retention, and returns its value and result. format=csv returns a CSV attachment instead: one row per series point, funnel step or retention period."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+        - { name: key, in: path, required: true, description: Key of the saved insight to run., schema: { type: string } }
+        - { name: format, in: query, required: false, description: "json (default) or csv.", schema: { type: string, enum: [json, csv] } }
+      responses:
+        '200':
+          description: The saved insight's value and result.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SavedInsightResult' }
+            text/csv:
+              schema: { type: string }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -73689,6 +74417,35 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/postgres/databases/{id}/suspend-timeout:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to set when a company database suspends."
+        schema: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$' }
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    put:
+      operationId: setOrgManagedPostgresSuspendTimeout
+      summary: "Set when a company scale-to-zero database suspends."
+      description: "An owner or admin sets how long a scale-to-zero company database stays up after its last activity, from 60 to 3600 seconds, or with null returns it to the platform default. A running database takes the value the next time it suspends."
+      tags: [managed_postgres]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetManagedPostgresSuspendTimeoutRequest' }
+      responses:
+        '200':
+          description: "The company database's suspend timeout in force."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresSuspendTimeout' }
+        default:
+          description: "Problem while setting when the company database suspends."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/orgs/{organization}/postgres/bindings/{id}/rotate:
     parameters:
       - name: organization
@@ -92899,6 +93656,33 @@ components:
         seed: { type: string, maxLength: 128, description: Server-supplied stable allocation seed; omit for a new flag. }
         rules: { type: array, maxItems: 32, items: { $ref: '#/components/schemas/FlagRule' } }
         variants: { type: array, minItems: 2, maxItems: 16, items: { $ref: '#/components/schemas/FlagVariant' }, description: Required for variant flags; weights must total 10000 basis points. }
+        edge: { $ref: '#/components/schemas/FlagEdge' }
+    FlagEdge:
+      description: "Edge routing of a variant flag: the gateway evaluates the flag for GET and HEAD requests to a routed path and rewrites the path for the decided variant, so apps without an SDK serve it. Verified customers bucket as in an SDK; anonymous visitors by a first-party cookie. Needs the edge_flags platform flag to add or change; runtime bundles leave it out."
+      type: object
+      additionalProperties: false
+      required: [routes]
+      properties:
+        routes: { type: array, minItems: 1, maxItems: 8, items: { $ref: '#/components/schemas/FlagEdgeRoute' } }
+    FlagEdgeRoute:
+      description: "One routed path: /page matches exactly, /prefix/* matches the prefix and everything under it. Variants without an action serve the request unchanged."
+      type: object
+      additionalProperties: false
+      required: [path, variants]
+      properties:
+        path: { type: string, maxLength: 256, pattern: '^/' }
+        variants:
+          type: object
+          minProperties: 1
+          description: Variant key to the action requests decided as that variant get.
+          additionalProperties: { $ref: '#/components/schemas/FlagEdgeAction' }
+    FlagEdgeAction:
+      description: What a variant does to a routed request.
+      type: object
+      additionalProperties: false
+      required: [rewrite]
+      properties:
+        rewrite: { type: string, maxLength: 256, pattern: '^/', description: "The path served instead: the whole path for an exact route, the prefix for a /prefix/* route." }
     FlagsConfig:
       description: Complete atomic environment configuration; omitted flags are removed from current evaluation.
       type: object
@@ -92936,6 +93720,7 @@ components:
         allocation: { type: string, enum: [fixed, bandit], description: "fixed (default) or bandit: Thompson sampling re-weights the flag's variants hourly, keeping 10% per arm; needs a binary metric and the flag's only weighted rule." }
         denominator_event: { type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$', description: "A ratio metric's denominator event." }
         percentile: { type: integer, minimum: 50, maximum: 99, description: "A percentile metric's percentile." }
+        notify_channel_ids: { type: array, maxItems: 5, items: { type: string, format: uuid }, description: "Notification channels for the experiment's decisions and problems; omitted uses the environment's. Needs the flag_notifications release." }
     FlagExperimentFunnel:
       description: "A funnel metric: a customer converts when it completes the steps in order within the window after its first exposure."
       type: object
@@ -93049,6 +93834,22 @@ components:
         latency_threshold_ms: { type: integer, description: "Control's p95 latency, fixed once control has enough requests." }
         stop_reason: { type: string, enum: [manual, guardrail_breach, shipped] }
         breach: { type: object, additionalProperties: true, description: The guardrail breach that stopped the experiment. }
+        notify_channel_ids: { type: array, items: { type: string, format: uuid }, description: "The experiment's own notification channels for its decisions and problems; absent uses the environment's." }
+    FlagNotificationSettings:
+      description: An environment's flag notification channels.
+      type: object
+      required: [channel_ids]
+      properties:
+        channel_ids: { type: array, maxItems: 5, items: { type: string, format: uuid }, description: "Notification channel IDs; empty when the environment's flag notifications are off." }
+        updated_by: { type: string, description: The account that last changed them. }
+        updated_at: { type: string, format: date-time }
+    FlagNotificationSettingsRequest:
+      description: New flag notification channels for an environment.
+      type: object
+      additionalProperties: false
+      required: [channel_ids]
+      properties:
+        channel_ids: { type: array, maxItems: 5, items: { type: string, format: uuid }, description: "Up to 5 of the account's notification channels; empty turns notifications off." }
     FlagExperimentList:
       description: An environment's flag experiments.
       type: object
@@ -93400,6 +94201,76 @@ components:
         from: { type: string, format: date-time }
         until: { type: string, format: date-time }
         variants: { type: array, items: { $ref: '#/components/schemas/InsightRequestVariant' } }
+    InsightEventsQuery:
+      description: "A saved events insight: the event series query and the measure its value totals."
+      type: object
+      additionalProperties: false
+      required: [event]
+      properties:
+        event: { type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$' }
+        where: { type: object, maxProperties: 10, additionalProperties: { type: string } }
+        interval: { type: string, enum: [day, hour], default: day }
+        unit: { type: string, enum: [customer, subject], default: customer }
+        by: { type: string, description: "Breakdown of the series: flag:KEY or property:KEY." }
+        measure: { type: string, enum: [events, value], default: events, description: "What the insight's value totals." }
+    SavedInsightAlert:
+      description: "Fires when the saved insight's value compares to threshold; funnel and retention values are fractions."
+      type: object
+      additionalProperties: false
+      required: [comparison, threshold]
+      properties:
+        comparison: { type: string, enum: [gt, gte, lt, lte] }
+        threshold: { type: number, format: double }
+    SavedInsightRequest:
+      description: "A saved insight: exactly the query of its kind, without from or until, over the last range_days days. A digest or alert needs at least one notification channel."
+      type: object
+      additionalProperties: false
+      required: [key, kind]
+      properties:
+        key: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+        name: { type: string, maxLength: 128, description: Display name; defaults to the key. }
+        kind: { type: string, enum: [events, funnel, retention] }
+        events: { $ref: '#/components/schemas/InsightEventsQuery' }
+        funnel: { $ref: '#/components/schemas/InsightFunnelRequest' }
+        retention: { $ref: '#/components/schemas/InsightRetentionRequest' }
+        range_days: { type: integer, minimum: 1, maximum: 90, description: "Days each run covers; default 7 (28 for retention), at most the plan's analytics retention." }
+        digest: { type: string, enum: [daily, weekly], description: "Send the value to the channels at 08:00 UTC, weekly on Mondays. PagerDuty channels get no digests." }
+        alert: { $ref: '#/components/schemas/SavedInsightAlert' }
+        channel_ids: { type: array, maxItems: 5, items: { type: string, format: uuid }, description: The account's notification channels for digests and alerts. }
+    SavedInsight:
+      description: "A saved insight and its last scheduled run. Its value is an events total, a funnel's overall conversion or the first-period retention rate."
+      allOf:
+        - { $ref: '#/components/schemas/SavedInsightRequest' }
+        - type: object
+          required: [alert_state, created_by, created_at, updated_at]
+          properties:
+            alert_state: { type: string, enum: [ok, firing], description: The alert's state after the last successful scheduled run. }
+            last_value: { type: number, format: double }
+            last_run_at: { type: string, format: date-time }
+            last_error: { type: string }
+            next_digest_at: { type: string, format: date-time }
+            created_by: { type: string }
+            created_at: { type: string, format: date-time }
+            updated_at: { type: string, format: date-time }
+    SavedInsightList:
+      description: An environment's saved insights.
+      type: object
+      required: [insights]
+      properties:
+        insights: { type: array, items: { $ref: '#/components/schemas/SavedInsight' } }
+    SavedInsightResult:
+      description: One run of a saved insight.
+      type: object
+      required: [key, kind, from, until]
+      properties:
+        key: { type: string }
+        kind: { type: string, enum: [events, funnel, retention] }
+        value: { type: number, format: double, description: "Absent when there is no data: a funnel without entrants, or retention before a period has ended." }
+        from: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        events: { $ref: '#/components/schemas/InsightEventSeries' }
+        funnel: { $ref: '#/components/schemas/InsightFunnel' }
+        retention: { $ref: '#/components/schemas/InsightRetention' }
     FlagEventsRequest:
       description: A batch of runtime conversion events.
       type: object
@@ -95767,6 +96638,41 @@ components:
         last_error_code: { type: string, description: "Safe policy-change diagnostic. A confirmed rejection retains the source policy; uncertain outcomes remain pending." }
         created_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time }
+    SetManagedPostgresWakeWithAppRequest:
+      description: Whether a scale-to-zero database starts when an app bound to it wakes.
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled: { type: boolean, description: "True starts the database with its app; false leaves it to start on the app's first query." }
+    ManagedPostgresWakeWithApp:
+      description: Whether a database starts when an app bound to it wakes.
+      type: object
+      required: [database_id, enabled]
+      properties:
+        database_id: { type: string }
+        enabled: { type: boolean }
+    SetManagedPostgresSuspendTimeoutRequest:
+      description: How long a scale-to-zero database stays up after its last activity before it suspends.
+      type: object
+      additionalProperties: false
+      required: [seconds]
+      properties:
+        seconds:
+          type: [integer, 'null']
+          format: int64
+          minimum: 60
+          maximum: 3600
+          description: Seconds of inactivity before the database suspends; null returns it to the platform default.
+    ManagedPostgresSuspendTimeout:
+      description: A scale-to-zero database's suspend timeout. Every wake bills at least this much compute.
+      type: object
+      required: [database_id, seconds, custom, applied]
+      properties:
+        database_id: { type: string }
+        seconds: { type: integer, format: int64, description: "Seconds of inactivity before the database suspends." }
+        custom: { type: boolean, description: "True when the database has its own value; false when it follows the platform default." }
+        applied: { type: boolean, description: "False while the database is running: it takes the value the next time it suspends." }
     ResizeManagedPostgresDatabaseRequest:
       description: Canonical UUID request for a compute-class change on an existing managed PostgreSQL database.
       type: object
@@ -95803,6 +96709,9 @@ components:
         service_class: { type: string, enum: [development, burstable, production] }
         availability: { type: string, enum: [single_zone, high_availability] }
         scale_to_zero: { type: boolean }
+        suspend_timeout_seconds: { type: integer, format: int64, description: "Seconds a scale-to-zero database stays up after its last activity; absent for an always-on database." }
+        suspend_timeout_custom: { type: boolean, description: "True when the database has its own suspend timeout rather than the platform default." }
+        wake_with_app: { type: boolean, description: "True when the database starts when an app bound to it wakes." }
         storage_limit_bytes: { type: integer, format: int64, minimum: 0 }
         restore_window_seconds: { type: integer, format: int64, minimum: 0 }
         restore_source_database_id: { type: [string, "null"], minLength: 1, maxLength: 128 }
@@ -95919,6 +96828,7 @@ components:
         history_byte_seconds: { type: integer, format: int64, minimum: 0, description: "Point-in-time restore history held this month, in byte-seconds." }
         snapshot_byte_seconds: { type: integer, format: int64, minimum: 0, description: "Snapshot storage held this month, in byte-seconds." }
         included_history_bytes: { type: integer, format: int64, minimum: 0, description: "Restore history and snapshot storage the plan includes, held for the whole month. Restore history uses it first. With overage on, history past it is billed per GB-month." }
+        history_state: { type: string, enum: [normal, limited], description: "limited while restore history and snapshots passed twice the included history this month with overage off: the databases keep a 24-hour restore window until the 1st of next month, or until overage is turned on. Absent while the history limit is not enforced." }
         egress_bytes: { type: integer, format: int64, minimum: 0 }
         compute_allowance_unit_seconds:
           description: The plan's monthly compute allowance in compute-unit seconds, pooled across the account's databases.
@@ -98615,6 +99525,30 @@ components:
           type: array
           items: { $ref: '#/components/schemas/HeldLinkReview' }
         truncated: { type: boolean }
+
+    AppNameReportResponse:
+      description: "Existing apps an app name blocklist matches. source is live (app_name_blocklist) or preview (the request's blocklist). truncated means more apps matched than were listed."
+      type: object
+      required: [source, entries, matches, truncated]
+      properties:
+        source: { type: string, enum: [live, preview] }
+        entries: { type: integer, description: "Number of blocklist entries checked." }
+        matches:
+          type: array
+          items: { $ref: '#/components/schemas/AppNameReportMatch' }
+        truncated: { type: boolean }
+
+    AppNameReportMatch:
+      description: "An existing app whose name a blocklist entry matches."
+      type: object
+      required: [slug, app_id, account_id, status, entry]
+      properties:
+        slug: { type: string }
+        app_id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid }
+        status: { type: string }
+        entry: { type: string, description: "The blocklist entry that matched." }
 
     AccountLimits:
       description: "Plan-driven quota, resource caps, and trigger capabilities returned by GET /v1/account."
@@ -103181,6 +104115,10 @@ components:
           description: "Per-deployment token-gate flag. When true, the gateway demands `Authorization: Bearer <token>` on every request; cross-account tokens receive 403 insufficient_scope. Pro/Scale only — Free/Hobby PATCH-true is rejected with 403 plan_require_authn_not_allowed."
           type: boolean
           example: false
+        declared_access:
+          description: "The access the app's source declares in gregale.yaml: `public` (no Gregale API key) or `key`. Every production deploy applies it. Omitted when the source declares none."
+          type: string
+          enum: [public, key]
         consumer_auth_mode:
           description: "End-customer credential policy. optional accepts anonymous requests and attributes valid consumer keys; required mandates a valid consumer key."
           type: string
@@ -104529,11 +105467,50 @@ components:
         error_count: { type: integer, format: int64, minimum: 0 }
         billable_units: { type: integer, format: int64, minimum: 0 }
 
+    APIConsumerRouteUsage:
+      description: Unweighted billable requests for one route over the requested period.
+      type: object
+      required: [route, billable_requests]
+      properties:
+        route: { type: string, description: Method and route template. Empty for unattributed requests. }
+        billable_requests: { type: integer, format: int64, minimum: 0 }
+
+    APIConsumerMeterUsage:
+      description: Reported units for one app meter over the requested period.
+      type: object
+      required: [meter, units]
+      properties:
+        meter: { type: string }
+        units: { type: integer, format: int64, minimum: 0 }
+
+    APIConsumerQuoteBreakdown:
+      description: Units and charge allocated to a route or meter at one rate.
+      type: object
+      required: [unit, price_millicents_per_unit, billable_units, included_units, charged_units, amount_millicents]
+      properties:
+        route: { type: string, description: Method and route template for attributed request units. }
+        unit: { type: string }
+        model: { type: string }
+        rate_card_id: { type: string, format: uuid }
+        price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+        included_units: { type: integer, format: int64, minimum: 0, description: Units covered by the flat card's monthly allowance. }
+        waived_units: { type: integer, format: int64, minimum: 0, description: Reported model units waived in this breakdown. }
+        charged_units: { type: integer, format: int64, minimum: 0 }
+        amount_millicents: { type: integer, format: int64, minimum: 0 }
+        trial: { type: boolean }
+
     APIConsumerUsageResponse:
       description: "Durable minute usage for one stable API consumer."
       type: object
       required: [consumer_id, period_start, period_end, request_count, error_count, billable_units, buckets, as_of]
       properties:
+        route_breakdown:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerRouteUsage' }
+        meter_breakdown:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerMeterUsage' }
         consumer_id: { type: string, format: uuid }
         period_start: { type: string, format: date-time }
         period_end: { type: string, format: date-time }
@@ -104559,6 +105536,11 @@ components:
           maxItems: 10
           description: "Optional graduated ladder that replaces price_millicents_per_unit and included_units_per_month. Each consumer's units are counted per UTC calendar month in minute order and priced by the step their position falls in. Bounds increase strictly, only the last step is unbounded, and only the first step may be free. Statements of periods priced by a tiered card must cover exactly one UTC calendar month."
           items: { $ref: '#/components/schemas/APIConsumerRateCardTier' }
+        model_prices:
+          type: object
+          maxProperties: 16
+          description: Model price overrides for a flat app meter. Report a configured override as meter__model and use the base meter for the base price. All models share the meter allowance.
+          additionalProperties: { type: integer, format: int64, minimum: 0 }
         route_weights:
           type: object
           maxProperties: 50
@@ -104700,6 +105682,11 @@ components:
           type: array
           items: { $ref: '#/components/schemas/APIConsumerRateCardTier' }
         tier_mode: { type: string, enum: [graduated, volume], description: "How the ladder prices a consumer's month." }
+        model_prices:
+          type: object
+          maxProperties: 16
+          description: Configured per-unit prices by model, in millicents.
+          additionalProperties: { type: integer, format: int64, minimum: 0 }
         route_weights:
           type: object
           description: "Units charged per request on a listed route; unlisted routes count 1."
@@ -104722,8 +105709,10 @@ components:
       type: object
       required: [window_start, billable_units, charged_units, amount_millicents]
       properties:
+        model: { type: string, description: Configured model for this app-meter bucket. }
         window_start: { type: string, format: date-time }
         billable_units: { type: integer, format: int64, minimum: 0 }
+        waived_units: { type: integer, format: int64, minimum: 0, description: Model units with an approved waiver in the quoted minute. }
         rate_card_id: { type: string, format: uuid }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
@@ -104741,6 +105730,12 @@ components:
       type: object
       required: [consumer_id, period_start, period_end, billable_units, unpriced_units, amount_millicents, priced, buckets, as_of]
       properties:
+        route_breakdown:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerQuoteBreakdown' }
+        meter_breakdown:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerQuoteBreakdown' }
         consumer_id: { type: string, format: uuid }
         period_start: { type: string, format: date-time }
         period_end: { type: string, format: date-time }
@@ -104773,6 +105768,29 @@ components:
         hours_checked: { type: integer, minimum: 0 }
         hours_without_telemetry: { type: integer, minimum: 0, description: "Hours with billed requests but no telemetry." }
 
+    APIConsumerUsageWaiverRequest:
+      description: The exact unpriced model usage selected for administrative approval on an app consumer draft.
+      type: object
+      required: [source_statement_id, unit, model, since, until, units, reason]
+      properties:
+        source_statement_id: { type: string, format: uuid, description: Latest held statement revision reviewed for this waiver. }
+        unit: { type: string, description: App meter being waived in app:<meter> form. }
+        model: { type: string, description: Reported alias without an effective price in the selected window. }
+        since: { type: string, format: date-time, description: Inclusive UTC-minute start within the source statement period. }
+        until: { type: string, format: date-time, description: Exclusive UTC-minute end within the source period. Must be a closed boundary. }
+        units: { type: integer, format: int64, minimum: 1, description: Exact count of remaining unpriced units for the model and window on the source draft. }
+        reason: { type: string, minLength: 1, maxLength: 500, description: Reason for approving zero charge. The API limit is 500 UTF-8 bytes. }
+
+    APIConsumerUsageWaiverResponse:
+      description: Approval attached to the statement revision that recorded the waiver.
+      allOf:
+        - $ref: '#/components/schemas/APIConsumerUsageWaiverRequest'
+        - type: object
+          required: [approved_by, approved_at]
+          properties:
+            approved_by: { type: string, format: uuid, description: Gregale account ID of the approver. }
+            approved_at: { type: string, format: date-time, description: UTC time Gregale recorded the approval. }
+
     CreateAPIConsumerUsageStatementRequest:
       description: "Explicit UTC-minute period to snapshot as an immutable usage statement."
       type: object
@@ -104780,14 +105798,19 @@ components:
       properties:
         period_start: { type: string, format: date-time }
         period_end: { type: string, format: date-time }
+        waiver:
+          description: Optional administrative approval supported on app consumer statements.
+          $ref: '#/components/schemas/APIConsumerUsageWaiverRequest'
 
     APIConsumerUsageStatementBucketResponse:
       description: "One UTC minute captured in a durable usage statement."
       type: object
       required: [window_start, billable_units, charged_units, amount_millicents]
       properties:
+        model: { type: string, description: Model priced in this statement bucket. }
         window_start: { type: string, format: date-time }
         billable_units: { type: integer, format: int64, minimum: 0 }
+        waived_units: { type: integer, format: int64, minimum: 0, description: Model units recorded at zero charge by a waiver in this revision. }
         rate_card_id: { type: string, format: uuid }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
@@ -104825,6 +105848,7 @@ components:
         unpriced_units: { type: integer, format: int64, minimum: 0 }
         amount_millicents: { type: integer, format: int64, minimum: 0 }
         priced: { type: boolean }
+        waiver: { $ref: '#/components/schemas/APIConsumerUsageWaiverResponse' }
         buckets:
           type: array
           items: { $ref: '#/components/schemas/APIConsumerUsageStatementBucketResponse' }
@@ -117856,6 +118880,14 @@ components:
           type: string
           format: date-time
 
+    WorkflowRunStartLookupResponse:
+      description: The retained run ID for a previously accepted pipeline-tool start.
+      type: object
+      additionalProperties: false
+      required: [run_id]
+      properties:
+        run_id: { type: string, format: uuid }
+
     ListWorkflowRunsResponse:
       description: "A paginated list of durable workflow runs."
       type: object
@@ -123242,6 +124274,10 @@ components:
           type: string
           enum: [internal]
           description: "Present when the app is or will be internal (no public route): an existing internal app, or a new Compose service without `ports:`. Omitted means public."
+        access:
+          type: string
+          enum: [public, key]
+          description: "Declared access to the service's public URL (`x-gregale-access` in Compose or `project.services.<name>.access` in gregale.yaml): `public` needs no Gregale API key, `key` needs one. Every production deploy applies it. Omitted when the source declares none."
         root_dir:
           type: string
           example: ""
@@ -123288,6 +124324,12 @@ components:
             type: string
             enum: [service_started, service_healthy]
           description: "Explicit Compose dependency conditions. service_started retains admission ordering; service_healthy gates release on the captured same-project, same-environment dependency deployment."
+        release_command:
+          type: string
+          description: "Command the service runs once before each of its releases goes live (shell string, or exec-form argv joined by spaces). Omitted when it declares none."
+        release_command_source:
+          type: string
+          description: "Where release_command is declared: a Compose service the workload waits for with service_completed_successfully, a Procfile release: process, or gregale.yaml release.command."
         service_binding_policy:
           $ref: '#/components/schemas/ServiceBindingPolicy'
           description: "Effective policy selected by Compose `x-gregale-service-policy` (`project`, `declared` or `account`). New project workloads default to `project`; existing workloads retain their persisted policy when the extension is omitted."
@@ -133889,6 +134931,39 @@ components:
       required: [display_name]
       properties:
         display_name: { type: string, maxLength: 80, description: "Empty clears the display name." }
+    AnonymousSessionRequest:
+      description: "Body for `POST /v1/anonymous/sessions`."
+      type: object
+      required: [accept_terms]
+      properties:
+        client: { type: string, maxLength: 80, description: "The tool creating the session, such as gregale-cli." }
+        accept_terms: { type: boolean, description: "Must be true: deploying without an account accepts the Terms of Service." }
+    AnonymousSessionResponse:
+      description: "An anonymous deploy session."
+      type: object
+      required: [account_id, api_key, claim_url, expires_at, limits]
+      properties:
+        account_id: { type: string, format: uuid }
+        api_key: { type: string, description: "Deploy key, returned once. Use it as a bearer token." }
+        claim_url: { type: string, format: uri, description: "Give this link to the person the agent works for." }
+        expires_at: { type: string, format: date-time, description: "The account and its apps are deleted after this unless claimed." }
+        limits: { $ref: '#/components/schemas/UnclaimedLimits' }
+    UnclaimedLimits:
+      description: "What an account deployed without an owner may use until it is claimed."
+      type: object
+      required: [plan, max_apps, max_ram_mb, blocked]
+      properties:
+        plan: { type: string }
+        max_apps: { type: integer }
+        max_ram_mb: { type: integer }
+        blocked: { type: array, items: { type: string } }
+    ClaimLinkResponse:
+      description: "A fresh claim link."
+      type: object
+      required: [claim_url, expires_at]
+      properties:
+        claim_url: { type: string, format: uri }
+        expires_at: { type: string, format: date-time }
     AccountEmailChangeRequest:
       description: "Body for `POST /v1/account/email`."
       type: object
@@ -134247,6 +135322,12 @@ components:
           description: |
             Provider-neutral hosted checkout URL on a `payment_required`
             402 when a paid plan upgrade requires a new subscription.
+        upgrade_url:
+          type: string
+          format: uri
+          description: |
+            On a `consumer_plan_limit_exceeded` 429, the API's hosted page
+            where the consumer moves to another plan.
         billing_portal_url: { type: string, format: uri }
         paddle_checkout_url:
           type: string
@@ -136763,6 +137844,12 @@ components:
       type: object
       required: [since, until, days]
       properties:
+        route_breakdown:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerRouteUsage' }
+        meter_breakdown:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerMeterUsage' }
         since: { type: string, format: date-time }
         until: { type: string, format: date-time }
         days:
@@ -136832,6 +137919,8 @@ components:
         daily_limit: { type: integer, minimum: 1, maximum: 1000, description: "Sign-ups per UTC day (default 100)." }
         customer_plan_changes: { type: boolean, description: "Let customers switch between plan_ids with their own key." }
         customer_closing: { type: boolean, description: "Let customers close their account with their own key." }
+        free_plan_id: { type: string, format: uuid, description: "One of plan_ids whose rate cards charge nothing; joining it needs no card." }
+        oauth_consumers: { type: boolean, description: "People signed in through the app's MCP oauth-proxy issuer become consumers on free_plan_id; needs free_plan_id." }
 
     ConsumerSignupSettingsResponse:
       description: "An app's sign-up settings."
@@ -136855,6 +137944,8 @@ components:
         page_url: { type: string, format: uri, description: "The hosted sign-up page to link customers to." }
         customer_plan_changes: { type: boolean }
         customer_closing: { type: boolean }
+        free_plan_id: { type: string, format: uuid }
+        oauth_consumers: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -136884,6 +137975,28 @@ components:
           type: array
           items: { $ref: '#/components/schemas/ConsumerSignupResponse' }
 
+    ConsumerIdentity:
+      description: "An OAuth sign-in of an app's MCP server and the consumer it bills to."
+      type: object
+      required: [id, consumer_id, issuer, subject, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        issuer: { type: string }
+        subject: { type: string }
+        email: { type: string, description: "The token's email claim; display only." }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ConsumerIdentityListResponse:
+      description: "An app's OAuth identities, newest first."
+      type: object
+      required: [identities]
+      properties:
+        identities:
+          type: array
+          items: { $ref: '#/components/schemas/ConsumerIdentity' }
+
     ConsumerSignupPrice:
       description: "One unit's current price on a plan."
       type: object
@@ -136906,6 +138019,7 @@ components:
         name: { type: string }
         max_requests_per_minute: { type: integer, format: int64 }
         max_units_per_month: { type: integer, format: int64 }
+        free: { type: boolean, description: "Joining this plan needs no card." }
         prices:
           type: array
           items: { $ref: '#/components/schemas/ConsumerSignupPrice' }
@@ -136939,9 +138053,50 @@ components:
       required: [id, checkout_url, claim_token, expires_at]
       properties:
         id: { type: string, format: uuid }
-        checkout_url: { type: string, format: uri }
+        checkout_url: { type: string, description: "Stripe Checkout URL; empty for the free plan, which completes at once." }
         claim_token: { type: string }
         expires_at: { type: string, format: date-time }
+
+    ConsumerUpgradeResponse:
+      description: "What the upgrade page shows an upgrade link's customer."
+      type: object
+      required: [app, display_name, livemode, plans, has_card]
+      properties:
+        app: { type: string }
+        display_name: { type: string }
+        current_plan_id: { type: string, format: uuid }
+        livemode: { type: boolean }
+        plans:
+          type: array
+          items: { $ref: '#/components/schemas/ConsumerSignupPlan' }
+        has_card: { type: boolean, description: "A card is saved: a paid plan needs no checkout." }
+
+    StartConsumerUpgradeRequest:
+      description: "Moves an upgrade link's customer to an offered plan."
+      type: object
+      required: [token, plan_id]
+      properties:
+        token: { type: string }
+        plan_id: { type: string, format: uuid }
+
+    ConsumerUpgradeResult:
+      description: "A changed plan, or the Stripe Checkout to save a card first."
+      type: object
+      required: [plan_id]
+      properties:
+        plan_id: { type: string, format: uuid }
+        effective_from: { type: string, format: date-time }
+        checkout_url: { type: string, format: uri }
+        complete_token: { type: string, description: "Completes the upgrade after Checkout." }
+
+    CompleteConsumerUpgradeRequest:
+      description: "Finishes an upgrade after Checkout saved the card."
+      type: object
+      required: [token, complete_token, checkout_session_id]
+      properties:
+        token: { type: string }
+        complete_token: { type: string }
+        checkout_session_id: { type: string }
 
     CompleteConsumerSignupRequest:
       description: "Completes a sign-up."
@@ -136998,6 +138153,65 @@ components:
       properties:
         return_url: { type: string, format: uri, maxLength: 2048 }
 
+    ConsumerCreditPack:
+      type: object
+      description: A predefined amount of prepaid credit, sold for the same amount in Stripe Checkout.
+      required: [id, label, currency, amount_millicents]
+      properties:
+        id: { type: string, pattern: '^[a-z][a-z0-9_-]{0,31}$' }
+        label: { type: string, maxLength: 80 }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        amount_millicents: { type: integer, format: int64, minimum: 1, maximum: 1000000000000 }
+    ConsumerCreditPackSettings:
+      type: object
+      description: The packs offered by an app and the billing page where buyers return.
+      required: [packs]
+      properties:
+        return_url:
+          type: string
+          format: uri
+          description: The HTTPS billing page to return to, required when packs are offered.
+        packs:
+          type: array
+          maxItems: 16
+          items: { $ref: '#/components/schemas/ConsumerCreditPack' }
+    ConsumerCreditPacksResponse:
+      type: object
+      description: The credit packs this consumer can buy.
+      required: [packs]
+      properties:
+        packs:
+          type: array
+          items: { $ref: '#/components/schemas/ConsumerCreditPack' }
+    CreateConsumerCreditPurchaseRequest:
+      type: object
+      description: A pack selection and the UUID used to recover the purchase on retry.
+      required: [purchase_id, pack_id]
+      properties:
+        purchase_id:
+          type: string
+          format: uuid
+          description: A unique client-generated identifier. Reuse it to retry this purchase.
+        pack_id: { type: string }
+    ConsumerCreditPurchaseResponse:
+      type: object
+      description: The saved purchase terms, current checkout state and verified credit receipt.
+      required: [id, pack_id, currency, amount_millicents, status, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        pack_id: { type: string }
+        currency: { type: string }
+        amount_millicents: { type: integer, format: int64 }
+        status: { type: string, enum: [pending, credited, expired] }
+        expires_at: { type: string, format: date-time }
+        checkout_url:
+          type: string
+          format: uri
+          description: Stripe Checkout URL, returned when starting or resuming an open session.
+        credit_grant_id:
+          type: string
+          format: uuid
+          description: The prepaid credit grant once Stripe payment is confirmed.
     ConsumerBillingPortalResponse:
       description: "A short-lived customer portal URL."
       type: object

@@ -272,6 +272,9 @@ type Flag struct {
 	Seed      string        `json:"seed"`
 	Rules     []Rule        `json:"rules"`
 	Variants  []FlagVariant `json:"variants,omitempty"`
+	// Edge routes the flag's variants at the gateway, without an SDK
+	// (ADR-20261124212701). Runtime bundles leave it out.
+	Edge *Edge `json:"edge,omitempty"`
 }
 type FlagVariant struct {
 	Key    string `json:"key"`
@@ -700,6 +703,9 @@ func Validate(c Config) error {
 				}
 			}
 		}
+	}
+	if err := validateEdge(c); err != nil {
+		return err
 	}
 	return validateExperiments(c)
 }

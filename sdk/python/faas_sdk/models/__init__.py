@@ -195,6 +195,7 @@ from .app_response import AppResponse
 from .app_response_app_protocol import AppResponseAppProtocol
 from .app_response_consumer_auth_mode import AppResponseConsumerAuthMode
 from .app_response_cpu_millicores import AppResponseCpuMillicores
+from .app_response_declared_access import AppResponseDeclaredAccess
 from .app_response_deployment_availability import AppResponseDeploymentAvailability
 from .app_response_eviction_priority import AppResponseEvictionPriority
 from .app_response_function_callables import AppResponseFunctionCallables
@@ -417,6 +418,8 @@ from .connection_budget_inventory import ConnectionBudgetInventory
 from .connection_budget_runtime_observations import ConnectionBudgetRuntimeObservations
 from .connection_budget_runtime_observations_source import ConnectionBudgetRuntimeObservationsSource
 from .connection_budget_runtime_observations_state import ConnectionBudgetRuntimeObservationsState
+from .consumer_identity import ConsumerIdentity
+from .consumer_identity_list_response import ConsumerIdentityListResponse
 from .control_project_release_action import ControlProjectReleaseAction
 from .control_workflow_recovery_policy_request import ControlWorkflowRecoveryPolicyRequest
 from .control_workflow_recovery_policy_request_operation import ControlWorkflowRecoveryPolicyRequestOperation
@@ -1245,11 +1248,14 @@ from .managed_postgres_resize_from_class import ManagedPostgresResizeFromClass
 from .managed_postgres_resize_state import ManagedPostgresResizeState
 from .managed_postgres_resize_target_class import ManagedPostgresResizeTargetClass
 from .managed_postgres_restore_range import ManagedPostgresRestoreRange
+from .managed_postgres_suspend_timeout import ManagedPostgresSuspendTimeout
 from .managed_postgres_usage_response import ManagedPostgresUsageResponse
 from .managed_postgres_usage_response_compute_cap_state import ManagedPostgresUsageResponseComputeCapState
 from .managed_postgres_usage_response_egress_state import ManagedPostgresUsageResponseEgressState
 from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsageResponseGuardrailState
+from .managed_postgres_usage_response_history_state import ManagedPostgresUsageResponseHistoryState
 from .managed_postgres_usage_response_hold import ManagedPostgresUsageResponseHold
+from .managed_postgres_wake_with_app import ManagedPostgresWakeWithApp
 from .managed_realtime_close_request import ManagedRealtimeCloseRequest
 from .managed_realtime_connection_list_response import ManagedRealtimeConnectionListResponse
 from .managed_realtime_connection_response import ManagedRealtimeConnectionResponse
@@ -2151,6 +2157,7 @@ from .plan_response import PlanResponse
 from .plan_response_scan_source import PlanResponseScanSource
 from .plan_source_host import PlanSourceHost
 from .plan_workload import PlanWorkload
+from .plan_workload_access import PlanWorkloadAccess
 from .plan_workload_action import PlanWorkloadAction
 from .plan_workload_class import PlanWorkloadClass
 from .plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
@@ -2689,6 +2696,8 @@ from .set_custom_domain_hosts_request import SetCustomDomainHostsRequest
 from .set_deployment_alias_request import SetDeploymentAliasRequest
 from .set_financial_budget_channels_request import SetFinancialBudgetChannelsRequest
 from .set_grace_window_request import SetGraceWindowRequest
+from .set_managed_postgres_suspend_timeout_request import SetManagedPostgresSuspendTimeoutRequest
+from .set_managed_postgres_wake_with_app_request import SetManagedPostgresWakeWithAppRequest
 from .set_mcp_readiness_fallback_request import SetMCPReadinessFallbackRequest
 from .set_mcp_readiness_fallback_request_provider import SetMCPReadinessFallbackRequestProvider
 from .set_mcp_readiness_fallback_request_region import SetMCPReadinessFallbackRequestRegion
@@ -3165,6 +3174,7 @@ from .workflow_run_recovery_plan import WorkflowRunRecoveryPlan
 from .workflow_run_recovery_target import WorkflowRunRecoveryTarget
 from .workflow_run_response import WorkflowRunResponse
 from .workflow_run_response_status import WorkflowRunResponseStatus
+from .workflow_run_start_lookup_response import WorkflowRunStartLookupResponse
 from .workflow_schedule_catch_up_preview import WorkflowScheduleCatchUpPreview
 from .workflow_schedule_catch_up_preview_outcome import WorkflowScheduleCatchUpPreviewOutcome
 from .workflow_schedule_catch_up_preview_policy import WorkflowScheduleCatchUpPreviewPolicy
@@ -3404,6 +3414,7 @@ __all__ = (
     "AppResponseAppProtocol",
     "AppResponseConsumerAuthMode",
     "AppResponseCpuMillicores",
+    "AppResponseDeclaredAccess",
     "AppResponseDeploymentAvailability",
     "AppResponseEvictionPriority",
     "AppResponseFunctionCallables",
@@ -3619,6 +3630,8 @@ __all__ = (
     "ConnectionBudgetRuntimeObservations",
     "ConnectionBudgetRuntimeObservationsSource",
     "ConnectionBudgetRuntimeObservationsState",
+    "ConsumerIdentity",
+    "ConsumerIdentityListResponse",
     "ControlProjectReleaseAction",
     "ControlWorkflowRecoveryPolicyRequest",
     "ControlWorkflowRecoveryPolicyRequestOperation",
@@ -4419,11 +4432,14 @@ __all__ = (
     "ManagedPostgresResizeState",
     "ManagedPostgresResizeTargetClass",
     "ManagedPostgresRestoreRange",
+    "ManagedPostgresSuspendTimeout",
     "ManagedPostgresUsageResponse",
     "ManagedPostgresUsageResponseComputeCapState",
     "ManagedPostgresUsageResponseEgressState",
     "ManagedPostgresUsageResponseGuardrailState",
+    "ManagedPostgresUsageResponseHistoryState",
     "ManagedPostgresUsageResponseHold",
+    "ManagedPostgresWakeWithApp",
     "ManagedRealtimeCloseRequest",
     "ManagedRealtimeConnectionListResponse",
     "ManagedRealtimeConnectionResponse",
@@ -5205,6 +5221,7 @@ __all__ = (
     "PlanResponseScanSource",
     "PlanSourceHost",
     "PlanWorkload",
+    "PlanWorkloadAccess",
     "PlanWorkloadAction",
     "PlanWorkloadClass",
     "PlanWorkloadDependsOnConditions",
@@ -5723,6 +5740,8 @@ __all__ = (
     "SetDeploymentAliasRequest",
     "SetFinancialBudgetChannelsRequest",
     "SetGraceWindowRequest",
+    "SetManagedPostgresSuspendTimeoutRequest",
+    "SetManagedPostgresWakeWithAppRequest",
     "SetMCPReadinessFallbackRequest",
     "SetMCPReadinessFallbackRequestProvider",
     "SetMCPReadinessFallbackRequestRegion",
@@ -6171,6 +6190,7 @@ __all__ = (
     "WorkflowRunRecoveryTarget",
     "WorkflowRunResponse",
     "WorkflowRunResponseStatus",
+    "WorkflowRunStartLookupResponse",
     "WorkflowScheduleCatchUpPreview",
     "WorkflowScheduleCatchUpPreviewOutcome",
     "WorkflowScheduleCatchUpPreviewPolicy",

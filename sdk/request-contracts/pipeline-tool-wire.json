@@ -127,6 +127,13 @@
       },
       "replayed": {
         "type": "boolean"
+      },
+      "source_failure": {
+        "type": "string",
+        "enum": [
+          "source_unavailable",
+          "source_forbidden"
+        ]
       }
     },
     "required": [
@@ -143,5 +150,277 @@
     "result",
     "cancel",
     "reconcile"
-  ]
+  ],
+  "task_recovery": {
+    "preview": {
+      "name": "pipeline_task_recovery_preview",
+      "description": "Review a replacement for an eligible failed pipeline Task.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "recovery_request_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "expected_contract_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "required": [
+          "task_id",
+          "recovery_request_id",
+          "expected_contract_sha256"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    "confirm": {
+      "name": "pipeline_task_recovery_confirm",
+      "description": "Explicitly confirm the reviewed replacement for a failed pipeline Task.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "recovery_request_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "expected_contract_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "preview_token": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{0,12}\\.[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "task_id",
+          "recovery_request_id",
+          "expected_contract_sha256",
+          "preview_token"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    }
+  },
+  "task_handoff": {
+    "read": {
+      "name": "pipeline_task_handoff_read",
+      "description": "Read the clarification assigned to your account.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "handoff_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "handoff_id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    "reply": {
+      "name": "pipeline_task_handoff_reply",
+      "description": "Submit an answer to the assigned clarification.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "handoff_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "request_key": {
+            "type": "string",
+            "minLength": 110,
+            "maxLength": 110
+          },
+          "input": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "handoff_id",
+          "request_key",
+          "input"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    "list": {
+      "name": "pipeline_task_handoff_list",
+      "description": "List pending clarifications currently assigned to your account.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 25
+          },
+          "cursor": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}\\.[0-9a-f]{64}$"
+          },
+          "include_approvals": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "maxItems": 25,
+            "items": {
+              "type": "object",
+              "properties": {
+                "handoff_id": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                },
+                "expires_at": {
+                  "type": "string"
+                },
+                "question": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024
+                },
+                "kind": {
+                  "type": "string",
+                  "const": "approval"
+                }
+              },
+              "required": [
+                "handoff_id",
+                "expires_at",
+                "question"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9a-f]{32}\\.[0-9a-f]{64}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    "approval": {
+      "name": "pipeline_task_handoff_approval",
+      "description": "Read the exact action awaiting your approval.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "handoff_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "handoff_id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    "decide": {
+      "name": "pipeline_task_handoff_decide",
+      "description": "Approve or reject the exact assigned action.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "handoff_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "decision_key": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "approved",
+              "rejected"
+            ]
+          },
+          "input": {}
+        },
+        "required": [
+          "handoff_id",
+          "decision_key",
+          "state",
+          "input"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    }
+  }
 }

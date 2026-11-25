@@ -15,6 +15,7 @@ from ..models.api_consumer_rate_card_response_tier_mode import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.api_consumer_rate_card_response_model_prices import APIConsumerRateCardResponseModelPrices
     from ..models.api_consumer_rate_card_response_route_weights import APIConsumerRateCardResponseRouteWeights
     from ..models.api_consumer_rate_card_tier import APIConsumerRateCardTier
 
@@ -45,6 +46,8 @@ class APIConsumerRateCardResponse:
     tiers: list[APIConsumerRateCardTier] | Unset = UNSET
     tier_mode: APIConsumerRateCardResponseTierMode | Unset = UNSET
     """How the ladder prices a consumer's month."""
+    model_prices: APIConsumerRateCardResponseModelPrices | Unset = UNSET
+    """Configured per-unit prices by model, in millicents."""
     route_weights: APIConsumerRateCardResponseRouteWeights | Unset = UNSET
     """Units charged per request on a listed route; unlisted routes count 1."""
     plan_id: UUID | Unset = UNSET
@@ -84,6 +87,10 @@ class APIConsumerRateCardResponse:
         if not isinstance(self.tier_mode, Unset):
             tier_mode = self.tier_mode
 
+        model_prices: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.model_prices, Unset):
+            model_prices = self.model_prices.to_dict()
+
         route_weights: dict[str, Any] | Unset = UNSET
         if not isinstance(self.route_weights, Unset):
             route_weights = self.route_weights.to_dict()
@@ -116,6 +123,8 @@ class APIConsumerRateCardResponse:
             field_dict["tiers"] = tiers
         if tier_mode is not UNSET:
             field_dict["tier_mode"] = tier_mode
+        if model_prices is not UNSET:
+            field_dict["model_prices"] = model_prices
         if route_weights is not UNSET:
             field_dict["route_weights"] = route_weights
         if plan_id is not UNSET:
@@ -125,6 +134,7 @@ class APIConsumerRateCardResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.api_consumer_rate_card_response_model_prices import APIConsumerRateCardResponseModelPrices
         from ..models.api_consumer_rate_card_response_route_weights import APIConsumerRateCardResponseRouteWeights
         from ..models.api_consumer_rate_card_tier import APIConsumerRateCardTier
 
@@ -167,6 +177,13 @@ class APIConsumerRateCardResponse:
         else:
             tier_mode = check_api_consumer_rate_card_response_tier_mode(_tier_mode)
 
+        _model_prices = d.pop("model_prices", UNSET)
+        model_prices: APIConsumerRateCardResponseModelPrices | Unset
+        if isinstance(_model_prices, Unset):
+            model_prices = UNSET
+        else:
+            model_prices = APIConsumerRateCardResponseModelPrices.from_dict(_model_prices)
+
         _route_weights = d.pop("route_weights", UNSET)
         route_weights: APIConsumerRateCardResponseRouteWeights | Unset
         if isinstance(_route_weights, Unset):
@@ -195,6 +212,7 @@ class APIConsumerRateCardResponse:
             prorate_monthly_fees=prorate_monthly_fees,
             tiers=tiers,
             tier_mode=tier_mode,
+            model_prices=model_prices,
             route_weights=route_weights,
             plan_id=plan_id,
         )

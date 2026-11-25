@@ -75,6 +75,25 @@ contract.
 - SQL checks run in a read-only transaction as the database's agent query
   login, with a 5-second statement timeout.
 - Do not put credentials in the file: it is stored as plain configuration.
+  Reference one of the app's secrets in a header instead (below).
+
+## Secrets in headers
+
+An HTTP check's header value can use one of the app's secrets:
+
+```yaml
+  - name: me
+    http:
+      path: /api/me
+      headers:
+        Authorization: "Bearer ${secret:API_TOKEN}"
+```
+
+Gregale reads `API_TOKEN` from the deployment's own environment scope (the
+same value the app gets as env) and sends it only to the new deployment.
+Reports show the name, never the value. References work only in HTTP header
+values, at most 8 distinct secrets per contract. If the scope does not have
+the secret, the check fails with `verify_secret_missing`.
 
 ## The report
 

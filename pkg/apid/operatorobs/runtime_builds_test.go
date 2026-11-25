@@ -135,6 +135,7 @@ func TestRuntimeBuildEvidenceStatesAndRedaction(t *testing.T) {
 }
 
 func TestRuntimeBuildRegistryIdentityAndFullSetCounts(t *testing.T) {
+	lengthenRuntimeCollectionBudget(t)
 	now := time.Now().UTC().Truncate(time.Second)
 	f, selected, registry := runtimeFixture("control-plane-v1", now, 40)
 	// Same target count, wrong registry member: both extra and missing survive.

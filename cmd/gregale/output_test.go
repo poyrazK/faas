@@ -46,6 +46,10 @@ func TestMain(m *testing.M) {
 	// coding agent (CLAUDECODE=1 and the like): the agent pointer is off
 	// unless a test turns it on (ADR-20261112223000 §5).
 	_ = os.Setenv("GREGALE_NO_AGENT_HINT", "1")
+	// And a deploy without a login must not go anonymous just because the
+	// suite runs inside a coding agent (ADR-20261124080000); tests that
+	// exercise the anonymous default pass their own environment.
+	_ = os.Setenv("GREGALE_NO_ANONYMOUS_DEPLOY", "1")
 	// Likewise for the CLI's files. On macOS os.UserConfigDir follows HOME,
 	// not XDG_CONFIG_HOME, so tests that isolate only XDG wrote a fake
 	// api_base, session, token and completion caches into the developer's

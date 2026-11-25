@@ -105,7 +105,7 @@ Scaffold a project from a built-in template
 
 | Flag | Meaning | |
 |---|---|---|
-| `--template <NAME>` | template name (required unless --agents) | one of `hello-node` · `hello-python` · `hello-go` · `hello-node-private` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `object-storage-python` · `slack-bot` · `rest-api-postgres` · `rest-api-postgres-python` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-node-tasks` · `mcp-go` · `mcp-go-tasks` · `mcp-python` · `mcp-python-tasks` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `data-api-teams` · `data-api-support-console` |
+| `--template <NAME>` | template name (required unless --agents) | one of `hello-node` · `hello-python` · `hello-go` · `hello-node-private` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `object-storage-python` · `slack-bot` · `rest-api-postgres` · `rest-api-postgres-python` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-node-tasks` · `mcp-go` · `mcp-go-tasks` · `mcp-python` · `mcp-python-tasks` · `data-api` · `data-api-starter` · `data-api-teams` · `data-api-support-console` |
 | `--path <DIR>` | target directory (required unless --agents, which defaults to .) |  |
 | `--deploy` | deploy after scaffolding |  |
 | `--name <SLUG>` | app slug used with --deploy, or the app --agents deploys (default: the linked app, else the directory name) |  |
@@ -128,15 +128,15 @@ gregale init --agents --name my-api
 
 Deploy an app, function, or project
 
-`gregale deploy [<subcommand>] [--atomic] [--add-services] [--verify] [--workers] [--stabilize] [--progressive] [--worker-health] [--migrate] [--release-secrets-file <PATH>] [--release-secrets-request-id <ID>] [--config-file <PATH>] [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--source-branch <BRANCH>] [--github] [--pinned-sha <SHA>] [--pin-action] [--template <NAME>] [--dockerfile] [--issue-source-maps <PATH>] [--issue-source-map-directory <PATH>] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--size <SIZE>] [--profile <SIZE>] [--vcpu <N>] [--execution-mode <MODE>] [--restart-policy <POLICY>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--only <SLUGS>] [--project] [--env <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--prefix <PREFIX>] [--rollout <MODE>] [--override-freeze <REASON>] [--at <WHEN>] [--release-notify <CHANNEL,...>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--queue-canary-binding <NAME>]... [--healthcheck-path <PATH>] [--readiness-path <PATH>] [--healthcheck-grpc] [--healthcheck-grpc-service <SERVICE>] [--disable-startup-cpu-boost] [--mcp-task-migration-override] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <DURATION>] [--idempotency-key <KEY>] [--resume-upload-id <ID>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--preview] [--plan] [--dry-run] [--explain-files] [--yes] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
+`gregale deploy [<subcommand>] [--atomic] [--add-services] [--verify] [--workers] [--stabilize] [--progressive] [--worker-health] [--migrate] [--release-secrets-file <PATH>] [--release-secrets-request-id <ID>] [--config-file <PATH>] [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--anonymous] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--source-branch <BRANCH>] [--github] [--pinned-sha <SHA>] [--pin-action] [--template <NAME>] [--dockerfile] [--issue-source-maps <PATH>] [--issue-source-map-directory <PATH>] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--size <SIZE>] [--profile <SIZE>] [--vcpu <N>] [--execution-mode <MODE>] [--restart-policy <POLICY>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--only <SLUGS>] [--project] [--env <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--prefix <PREFIX>] [--rollout <MODE>] [--override-freeze <REASON>] [--at <WHEN>] [--release-notify <CHANNEL,...>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--queue-canary-binding <NAME>]... [--healthcheck-path <PATH>] [--readiness-path <PATH>] [--healthcheck-grpc] [--healthcheck-grpc-service <SERVICE>] [--disable-startup-cpu-boost] [--mcp-task-migration-override] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <DURATION>] [--idempotency-key <KEY>] [--resume-upload-id <ID>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--preview] [--plan] [--dry-run] [--explain-files] [--yes] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
 
 Source defaults to committed HEAD when origin exists; otherwise local files. Use --source=worktree to include local changes.
 
 RAM/CPU: use --size SIZE (--profile SIZE after the command is deprecated). Connection: use --profile NAME before the command.
 
-Projects: --project (every workload), --only SLUGS. Traffic: --rollout MODE.
+Projects: --project, --only SLUGS; Compose keys/RAM: gregale guide compose-keys
 
-Retry a project&#39;s failed workloads: gregale release attempt retry SESSION_ID
+Traffic: --rollout MODE. Retry failed: gregale release attempt retry SESSION_ID
 
 | Flag | Meaning | |
 |---|---|---|
@@ -156,6 +156,7 @@ Retry a project&#39;s failed workloads: gregale release attempt retry SESSION_ID
 | `--path <DIR>` | source directory (default: current directory) |  |
 | `--source <auto|head|worktree>` | local source policy (default: auto) | one of `auto` · `head` · `worktree` |
 | `--worktree` | deploy the selected source directory from the working tree, including local changes |  |
+| `--anonymous` | deploy without an account when not logged in; prints a link a person opens to claim the app |  |
 | `--repo <OWNER/NAME>` | deploy a GitHub repository (requires --ref) |  |
 | `--repository <OWNER/NAME>` | bind a project to GitHub (requires --install-id) |  |
 | `--install-id <N>` | GitHub installation ID (requires --repository) |  |
@@ -165,7 +166,7 @@ Retry a project&#39;s failed workloads: gregale release attempt retry SESSION_ID
 | `--github` | emit a GitHub Actions workflow snippet for the Gregale deploy action |  |
 | `--pinned-sha <SHA>` | with --github only, pin the generated Action to this full 40-character commit SHA |  |
 | `--pin-action` | with --github only, resolve the current v0 Action tag to its commit SHA |  |
-| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `hello-node-private` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `object-storage-python` · `slack-bot` · `rest-api-postgres` · `rest-api-postgres-python` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-node-tasks` · `mcp-go` · `mcp-go-tasks` · `mcp-python` · `mcp-python-tasks` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `data-api-teams` · `data-api-support-console` |
+| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `hello-node-private` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `object-storage-python` · `slack-bot` · `rest-api-postgres` · `rest-api-postgres-python` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-node-tasks` · `mcp-go` · `mcp-go-tasks` · `mcp-python` · `mcp-python-tasks` · `data-api` · `data-api-starter` · `data-api-teams` · `data-api-support-console` |
 | `--dockerfile` | build with the supplied Dockerfile inside --tarball |  |
 | `--issue-source-maps <PATH>` | publish a portable manifest from the selected source; requires zero production traffic |  |
 | `--issue-source-map-directory <PATH>` | deployed bundle directory corresponding to the manifest directory |  |
@@ -2177,7 +2178,7 @@ gregale project export shop --out compose.yaml
 
 Env values stay sealed: each variable is referenced by name, as ${NAME}.
 
-Gregale settings are written as x-gregale-* keys; other Compose tools ignore them, and gregale deploy reads them back.
+Gregale settings are written as x-gregale-* keys; other Compose tools ignore them, and gregale deploy reads them back. Every key: gregale guide compose-keys.
 
 ### project import
 
@@ -4845,6 +4846,58 @@ Read compute policy change progress
 
 `gregale postgres compute-policy status <database> <request_uuid>`
 
+### postgres suspend-timeout
+
+Set how long an idle scale-to-zero database stays up (1m-1h)
+
+`gregale postgres suspend-timeout <set> <database> <duration|default>`
+
+Examples:
+
+```sh
+gregale postgres suspend-timeout set orders-db 2m
+gregale postgres suspend-timeout set orders-db default
+```
+
+#### postgres suspend-timeout set
+
+Set how long an idle scale-to-zero database stays up (1m-1h)
+
+`gregale postgres suspend-timeout set <database> <duration|default>`
+
+Examples:
+
+```sh
+gregale postgres suspend-timeout set orders-db 2m
+gregale postgres suspend-timeout set orders-db default
+```
+
+### postgres app-wake
+
+Start a scale-to-zero database when an app bound to it wakes (on/off)
+
+`gregale postgres app-wake <set> <database> <on|off>`
+
+Examples:
+
+```sh
+gregale postgres app-wake set orders-db on
+gregale postgres app-wake set orders-db off
+```
+
+#### postgres app-wake set
+
+Start a scale-to-zero database when an app bound to it wakes (on/off)
+
+`gregale postgres app-wake set <database> <on|off>`
+
+Examples:
+
+```sh
+gregale postgres app-wake set orders-db on
+gregale postgres app-wake set orders-db off
+```
+
 ### postgres resize
 
 Durably resize compute; clients may disconnect
@@ -5251,7 +5304,7 @@ Account object storage observations, safety policy and billing state
 
 List an app&#39;s object-storage buckets and their IDs
 
-`gregale bucket list <app>`
+`gregale bucket list [<app>]`
 
 ### bucket delete
 
@@ -5719,7 +5772,7 @@ List cron rules
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug (required without -l) |  |
+| `--app <slug>` | app slug (defaults to the linked app; optional with -l) |  |
 | `--selector|-l <SELECTOR>` | only crons whose labels match (preview) |  |
 | `--one-off` | list one-off requests (--at or --in) instead of cron rules |  |
 
@@ -5734,7 +5787,7 @@ Schedule a POST to an app path, or a deployment command
 | `--at <RFC3339>` | send one request at this RFC3339 time instead of on a schedule |  |
 | `--in <DURATION>` | send one request after this delay (such as 30m) instead of on a schedule |  |
 | `--interactive` | choose an HTTP path, schedule, and timezone, preview run times, and confirm creation |  |
-| `--app <slug>` | app slug (interactive mode can use linked app or picker) |  |
+| `--app <slug>` | app slug (defaults to linked context; interactive mode can also pick one) |  |
 | `--schedule <EXPR>` | five-field cron expression (required unless interactive) |  |
 | `--path <PATH>` | path the cron sends a POST to (mutually exclusive with --command) |  |
 | `--command <EXEC>` | executable for a deployment command cron (preview: needs app tasks) |  |
@@ -8233,14 +8286,14 @@ Search your account&#39;s audit log
 
 List audit events
 
-`gregale audit list [--kind-prefix <PREFIX>] [--app <SLUG>] [--app-id <UUID>] [--since <RFC3339>] [--limit <N>] [--include-anonymous] [--verbose]`
+`gregale audit list [--kind-prefix <PREFIX>] [--app <SLUG>] [--app-id <UUID>] [--since <DURATION|RFC3339>] [--limit <N>] [--include-anonymous] [--verbose]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--kind-prefix <PREFIX>` | filter by kind prefix |  |
 | `--app <SLUG>` | filter by app slug |  |
 | `--app-id <UUID>` | filter by app UUID |  |
-| `--since <RFC3339>` | RFC3339 lower bound |  |
+| `--since <DURATION|RFC3339>` | lower bound: a duration such as 1h, or RFC3339 |  |
 | `--limit <N>` | maximum rows (1..100; default 50) |  |
 | `--include-anonymous` | include rows without a subject |  |
 | `--verbose` | expand stateless advisory rows |  |
@@ -8417,11 +8470,11 @@ Rotate the alert&#39;s webhook secret
 
 Rotate the alert&#39;s webhook secret
 
-`gregale alert secret rotate --app <slug> [--from-stdin] <alert-id>`
+`gregale alert secret rotate [--app <slug>] [--from-stdin] <alert-id>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug | required |
+| `--app <slug>` | app slug (defaults to the linked app) |  |
 | `--from-stdin` | read the replacement secret from stdin |  |
 
 ### alert channel
@@ -8476,21 +8529,21 @@ Delete a channel
 
 List alert rules
 
-`gregale alert list --app <slug>`
+`gregale alert list [--app <slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug | required |
+| `--app <slug>` | app slug (defaults to the linked app) |  |
 
 ### alert create
 
 Add an alert rule
 
-`gregale alert create --app <slug> --name <NAME> [--metric <METRIC>] [--comparison <OP>] [--threshold <N>] [--window-spec <WINDOW>] [--event-subscription-id <UUID>] [--edge-rule-id <ID>] [--mcp-readiness-scope <SCOPE>] [--failure-source <SOURCE>] [--channel <CHANNEL_ID>]... [--custom-metric <NAME>] [--metric-label <KEY=VALUE>]... [--log-query <FILTERS>] [--saved-search <NAME>] [--slo <SLO_ID>] [--synthetic-check <CHECK_ID>] [--webhook-url <URL>] [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [--webhook-secret <VALUE>] [--notify-resolved]`
+`gregale alert create [--app <slug>] --name <NAME> [--metric <METRIC>] [--comparison <OP>] [--threshold <N>] [--window-spec <WINDOW>] [--event-subscription-id <UUID>] [--edge-rule-id <ID>] [--mcp-readiness-scope <SCOPE>] [--failure-source <SOURCE>] [--channel <CHANNEL_ID>]... [--custom-metric <NAME>] [--metric-label <KEY=VALUE>]... [--log-query <FILTERS>] [--saved-search <NAME>] [--slo <SLO_ID>] [--synthetic-check <CHECK_ID>] [--webhook-url <URL>] [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [--webhook-secret <VALUE>] [--notify-resolved]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug | required |
+| `--app <slug>` | app slug (defaults to the linked app) |  |
 | `--name <NAME>` | rule name (3..120 chars) | required |
 | `--metric <METRIC>` | metric (mcp_tasks_metrics_stale includes the min=0 observer heartbeat) | one of `mcp_protocol_error_rate_pct` · `mcp_protocol_execution_p95_ms` · `route_insights_detected` · `route_monitor_incidents` · `route_health_holds` · `ai_budget_alerts` · `oom_kills` · `event_recovery_notification_admission_overdue_jobs` · `event_recovery_notification_admission_dead_jobs` · `event_recovery_notification_admission_unknown_jobs` · `event_recovery_notification_admission_no_receivers_jobs` · `event_recovery_notification_execution_overdue_jobs` · `event_recovery_notification_execution_dead_jobs` · `event_recovery_notification_execution_unknown_jobs` · `event_recovery_notification_execution_no_receivers_jobs` · `event_retention_expiring_receipts` · `event_storage_utilization_pct` · `event_execution_dead_letters` · `event_execution_dead_letter_rate_per_second` · `event_handler_failure_pct` · `event_completion_latency_p95_seconds` · `event_recovery_stalled_jobs` · `event_recovery_expiring_jobs` · `event_recovery_execution_waiting_jobs` · `event_recovery_execution_prolonged_wait_jobs` · `event_recovery_execution_unknown_jobs` · `event_recovery_execution_retention_risk_jobs` · `event_recovery_capacity_wait_jobs` · `event_pending_recipients` · `event_oldest_pending_seconds` · `event_retry_rate_per_second` · `event_terminal_failure_pct` · `event_routing_latency_p95_seconds` · `event_paused_seconds` · `event_drain_rate_per_second` · `error_rate_pct` · `latency_p50_ms` · `latency_p95_ms` · `latency_p99_ms` · `cold_start_pct` · `request_count` · `failed_invocations` · `api_up` · `account_spend_eur` · `deployment_failed` · `cert_expiry_seconds` · `cert_issuance_failed` · `queue_depth` · `queue_backlog` · `queue_oldest_age_seconds` · `pre_auth_target_threshold` · `pre_auth_target_signal_gap_pct` · `pre_auth_pressure` · `edge_validation_failures` · `edge_rejections` · `edge_waf_detections` · `workflow_failures` · `workflow_schedule_quota_skips` · `workflow_pending_age_seconds` · `workflow_waiting_age_seconds` · `workflow_due_age_seconds` · `log_error_lines` · `log_warn_lines` · `edge_rule_hits` · `edge_rule_log_hits` · `edge_rule_activity` · `new_error_fingerprint` · `cold_wake_rate_pct` · `daily_cost_cents` · `slo_burn_rate` · `slo_budget_burn` · `slo_budget_remaining_pct` · `synthetic_check_consecutive_failures` · `synthetic_check_latency_p95_ms` · `canary_stuck_step` · `safedeploy_audit_emit_failing` · `deployment_audit_gc_failing` · `canary_fleet_in_flight_high` · `mcp_tasks_oldest_age_seconds` · `mcp_tasks_metrics_stale` · `mcp_task_promotion_hold_age_seconds` · `mcp_policy_unconverged_gateways` · `mcp_policy_unverified` · `mcp_readiness_unhealthy` · `mcp_catalog_drift` · `mcp_catalog_monitor_unavailable` · `mcp_oauth_reauthorization_required` · `mcp_oauth_renewal_failed` · `mcp_oauth_retirement_expiring` · `mcp_oauth_issuance_unknown` · `custom_metric` · `log_search_matches` |
 | `--comparison <OP>` | gt\|gte\|lt\|lte\|above_baseline\|below_baseline |  |
@@ -8526,11 +8579,11 @@ printf '%s\n' "$WEBHOOK_SECRET" | gregale alert create --app mcp-worker --name m
 
 Show one alert rule and its last delivery
 
-`gregale alert get --app <slug> <alert-id>`
+`gregale alert get [--app <slug>] <alert-id>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug | required |
+| `--app <slug>` | app slug (defaults to the linked app) |  |
 
 ### alert deliveries
 
@@ -8584,11 +8637,11 @@ gregale alert update --app my-api --interactive
 
 Delete one alert rule
 
-`gregale alert delete --app <slug> [--yes] <alert-id>`
+`gregale alert delete [--app <slug>] [--yes] <alert-id>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug | required |
+| `--app <slug>` | app slug (defaults to the linked app) |  |
 | `--yes` | accepted for consistency; rm does not prompt |  |
 
 ### alert preset

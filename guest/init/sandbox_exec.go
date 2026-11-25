@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"io"
+	"maps"
 	"path"
+	"slices"
 	"sync"
 	"syscall"
 	"time"
@@ -30,8 +32,33 @@ func (s *sandboxServer) commandSpec(req sandboxproto.Request) sandboxCommandSpec
 	case !path.IsAbs(dir):
 		dir = path.Join(s.workspace, dir)
 	}
-	return sandboxCommandSpec{argv: req.Argv, env: sandboxEnv(home, user, req.TTY, req.Env), dir: dir, root: root,
+	return sandboxCommandSpec{argv: req.Argv, env: sandboxEnv(home, user, req.TTY, s.commandEnv(req.Env)), dir: dir, root: root,
 		tty: req.TTY, rows: req.Rows, cols: req.Cols}
+}
+
+// setSessionEnv replaces the session's environment and names what is set.
+func (s *sandboxServer) setSessionEnv(env map[string]string) sandboxproto.SessionEnvResult {
+	kept := maps.Clone(env)
+	s.envMu.Lock()
+	s.env = kept
+	s.envMu.Unlock()
+	names := slices.Sorted(maps.Keys(kept))
+	if names == nil {
+		names = []string{}
+	}
+	return sandboxproto.SessionEnvResult{Names: names}
+}
+
+// commandEnv is the session's environment under a command's own variables.
+func (s *sandboxServer) commandEnv(requested map[string]string) map[string]string {
+	s.envMu.Lock()
+	defer s.envMu.Unlock()
+	if len(s.env) == 0 {
+		return requested
+	}
+	out := maps.Clone(s.env)
+	maps.Copy(out, requested)
+	return out
 }
 
 // exec runs a command in the foreground, streaming its output until it

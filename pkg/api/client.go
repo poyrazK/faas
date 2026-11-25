@@ -1047,8 +1047,9 @@ func (c *Client) GetAPIConsumerRateCard(ctx context.Context, slug, rateCardID st
 // consumer usage and usage-quote methods. Empty bounds use the server's
 // trailing-30d default.
 type APIConsumerUsageOptions struct {
-	Since string
-	Until string
+	Since     string
+	Until     string
+	Breakdown bool
 }
 
 // GetAPIConsumerUsage returns durable minute usage for one stable API
@@ -1063,6 +1064,9 @@ func (c *Client) GetAPIConsumerUsage(ctx context.Context, slug, consumerID strin
 	}
 	if opts.Until != "" {
 		q.Set("until", opts.Until)
+	}
+	if opts.Breakdown {
+		q.Set("breakdown", "true")
 	}
 	if len(q) > 0 {
 		path += "?" + q.Encode()
@@ -1080,6 +1084,9 @@ func (c *Client) GetAPIConsumerUsageQuote(ctx context.Context, slug, consumerID 
 	}
 	if opts.Until != "" {
 		q.Set("until", opts.Until)
+	}
+	if opts.Breakdown {
+		q.Set("breakdown", "true")
 	}
 	if len(q) > 0 {
 		path += "?" + q.Encode()
@@ -8282,6 +8289,14 @@ func (c *Client) RunWorkflowWithIdempotencyKey(ctx context.Context, slug, workfl
 	var resp WorkflowRunResponse
 	path := fmt.Sprintf("/v1/apps/%s/workflows/%s/runs", slug, workflowName)
 	err := c.doWithIdempotencyKey(ctx, "POST", path, input, &resp, idempotencyKey)
+	return resp, err
+}
+
+// LookupWorkflowRunStart reads the retained run ID for a pipeline tool's original start key.
+func (c *Client) LookupWorkflowRunStart(ctx context.Context, slug, workflowName, key string) (WorkflowRunStartLookupResponse, error) {
+	var resp WorkflowRunStartLookupResponse
+	path := "/v1/apps/" + url.PathEscape(slug) + "/workflows/run-starts/" + url.PathEscape(workflowName)
+	err := c.doWithHeaders(ctx, "GET", path, nil, &resp, http.Header{"Idempotency-Key": {key}})
 	return resp, err
 }
 

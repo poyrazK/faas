@@ -87,7 +87,7 @@ func TestSecretDeliveryOverviewIsOneLine(t *testing.T) {
 			if strings.Count(got, "\n") != 1 || !strings.HasPrefix(got, "Delivery (app=my-api") {
 				t.Fatalf("overview = %q; want one line", got)
 			}
-			if strings.Contains(got, "inspect my-api") != tc.next {
+			if strings.Contains(got, "app health my-api --explain") != tc.next {
 				t.Fatalf("overview = %q; want next command shown = %v", got, tc.next)
 			}
 		})

@@ -92,6 +92,80 @@ service Auth {
   // (ADR-20261111150000); apid is the only writer of the activity log.
   // Errors are InvalidArgument, NotFound and Unavailable.
   rpc RecordAgentActivity(RecordAgentActivityRequest) returns (RecordAgentActivityResponse);
+
+  // EnrollOAuthConsumer returns the API consumer a verified OAuth caller of
+  // an app's MCP server is, creating it on the app's free plan the first
+  // time (ADR-20261124094745): apid is the only writer of consumers, so a
+  // gateway that verified the caller's token asks apid. Errors are
+  // InvalidArgument, NotFound (no such app or free plan), FailedPrecondition
+  // (the app does not enroll OAuth callers), ResourceExhausted (the app took
+  // its sign-ups for the day) and Unavailable.
+  rpc EnrollOAuthConsumer(EnrollOAuthConsumerRequest) returns (EnrollOAuthConsumerResponse);
+
+  // ConsumerUpgradeLink returns the hosted upgrade page link for a consumer
+  // that reached its plan's limit (ADR-20261124094745), or an empty url when
+  // the app does not let customers change plans. The link expires; it opens
+  // only the consumer's plan change. Errors are InvalidArgument, NotFound
+  // (no such app on the account) and Unavailable.
+  rpc ConsumerUpgradeLink(ConsumerUpgradeLinkRequest) returns (ConsumerUpgradeLinkResponse);
+
+  // LinkOAuthConsumer points a verified OAuth caller of an app's MCP server
+  // at the consumer whose key the caller proved (ADR-20261124094745), and
+  // revokes the consumer the caller's first sign-in enrolled. The gateway
+  // verifies the token; apid verifies the key. Errors are InvalidArgument,
+  // PermissionDenied (the key is not a live key of this app's consumer),
+  // FailedPrecondition (the app does not enroll OAuth callers),
+  // AlreadyExists (the identity is linked to another key's consumer; the
+  // owner unlinks it first) and Unavailable.
+  rpc LinkOAuthConsumer(LinkOAuthConsumerRequest) returns (LinkOAuthConsumerResponse);
+}
+
+message LinkOAuthConsumerRequest {
+  string account_id = 1;
+  string app_id = 2;
+  // issuer and subject are the verified token's iss and sub claims.
+  string issuer = 3;
+  string subject = 4;
+  string email = 5;
+  // key is the consumer key the caller sent; apid compares its hash.
+  string key = 6;
+}
+
+message LinkOAuthConsumerResponse {
+  string consumer_id = 1;
+  // revoked_consumer_id is the enrolled consumer the link closed, if any.
+  string revoked_consumer_id = 2;
+}
+
+message ConsumerUpgradeLinkRequest {
+  string account_id = 1;
+  string app_id = 2;
+  string consumer_id = 3;
+}
+
+message ConsumerUpgradeLinkResponse {
+  // url is empty when the app offers no upgrade.
+  string url = 1;
+  int64 expires_at_unix_ms = 2;
+}
+
+message EnrollOAuthConsumerRequest {
+  string account_id = 1;
+  string app_id = 2;
+  // issuer and subject are the verified token's iss and sub claims.
+  string issuer = 3;
+  string subject = 4;
+  // email is the token's email claim, when it has one; it names the
+  // consumer and is never used to match one.
+  string email = 5;
+}
+
+message EnrollOAuthConsumerResponse {
+  string consumer_id = 1;
+  // active is false for a revoked or closed consumer: the gateway refuses it.
+  bool active = 2;
+  // created reports a new consumer.
+  bool created = 3;
 }
 
 message DecideAgentRequestRequest {

@@ -2,7 +2,7 @@
 import { defineWorkflow, type WorkflowDefinition } from './workflows.js';
 import { JobContract, jobHash, jobValueHash, jobSnapshot, jobScope, jobInputId, prepareJobInput, type JobInput, type JobStore } from './job-runtime.js';
 import type { TypedJob, JobProgress } from './typed-jobs.js';
-import { PipelineError, parsePipelineTrigger, parsePipelineLineage, pipelineScope, pipelineName, pipelineJobIdentity, parsePipelineJobReceipt, matchPipelineJob, type PipelineScope, type PipelineEnvelope, type PipelineResultEnvelope, type PipelineJobStore, type PipelineJobIntent, type PipelineJobReceipt } from './pipeline-state.js';
+import { PipelineError, parsePinnedPipelineSource, type PinnedPipelineSource, parsePipelineTrigger, parsePipelineLineage, pipelineScope, pipelineName, pipelineJobIdentity, parsePipelineJobReceipt, matchPipelineJob, type PipelineScope, type PipelineEnvelope, type PipelineResultEnvelope, type PipelineJobStore, type PipelineJobIntent, type PipelineJobReceipt } from './pipeline-state.js';
 export * from './pipeline-state.js';
 import { PipelineChildren, PipelineChildrenError, type PipelineChild } from './pipeline-children.js';
 import type { PipelineChildPolicy, PipelineBatchResult, PipelineChildView } from './pipeline-children-types.js';
@@ -20,7 +20,7 @@ export interface PipelineJobResult<O> {
   readonly results: readonly { readonly input_id: string; readonly index: number; readonly attempt: number; readonly result: O }[];
 }
 export interface JobPipelineContext<J extends Jobs> {
-  readonly runId: string; readonly ownerId: string;
+  readonly runId: string; readonly ownerId: string; readonly pinnedSource?: PinnedPipelineSource;
   child<I, O>(name: string, definition: PipelineChild<I, O>, input: I, options: PipelineChildPolicy): Promise<PipelineChildView<O>>;
   children<I, O>(name: string, definition: PipelineChild<I, O>, inputs: readonly JobInput<I>[], options: PipelineChildPolicy): Promise<PipelineBatchResult<O>>;
   approval<R, D>(name: string, contract: JobContract<R, D>, review: R, options: PipelineGateOptions): Promise<PipelineGateOutcome<D>>;
@@ -69,6 +69,7 @@ export function defineJobPipeline<I, O, J extends Jobs>(contract: JobContract<I,
     if (envelope.lineage !== undefined) parsePipelineLineage(envelope.lineage);
     if (envelope.trigger !== undefined) parsePipelineTrigger(envelope.trigger);
     const input = contract.input(envelope.input), owner = envelope.owner_id, used = new Set<string>();
+    const pinnedSource = envelope.pinned_source === undefined ? undefined : parsePinnedPipelineSource(envelope.pinned_source, scope, owner);
     let count = 0, journalBytes = 0, pendingGates = 0, blocked = false;
     const canSubmit = () => { if (pendingGates || blocked) throw new PipelineGateError('blocked'); };
     const claim = () => { if (++count > operations) throw new PipelineError('operation_limit'); };
@@ -98,7 +99,7 @@ export function defineJobPipeline<I, O, J extends Jobs>(contract: JobContract<I,
       child: async (name, definition, value, settings) => (await batch(name, definition, [{ id: 'one', value }], { ...settings, concurrency: 1 })).children[0]!,
       approval: (name, c, review, settings) => gate('approval', name, c, review, settings),
       waitForInput: (name, c, review, settings) => gate('input', name, c, review, settings),
-      runId: wf.runId, ownerId: owner, async job(step, rawInputs) {
+      runId: wf.runId, ownerId: owner, ...(pinnedSource && { pinnedSource }), async job(step, rawInputs) {
       canSubmit();
       if (composing) throw new PipelineChildrenError('blocked');
       if (!Object.hasOwn(jobs, step) || used.has(step)) throw new PipelineError('invalid_input', step); used.add(step);

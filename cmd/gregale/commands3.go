@@ -168,6 +168,7 @@ func secretsList(args []string) int {
 		return jsonOut(writeJSON(resp))
 	}
 	code := renderSecretListHuman(*app, *scope, *secretClass, *olderThan, *deliveryStatus, &resp, keys...)
+	printRecentConfigGuardVerdict(context.Background(), client, *app, *scope)
 	printSecretKeyHints(*app, *scope, secretKeyHints(keys, availableKeys, secretMetadataKeys(&resp)))
 	if *scope != api.EnvScopeAllSentinel && *secretClass == "" && *deliveryStatus == "" && age == 0 {
 		printPlainVariables(osStdout, client, *app, *scope, keys)
@@ -651,6 +652,14 @@ func secretsSet(args []string) int {
 			// JSON consumers route on the same code (#6662).
 			return printErr(problem.Title, &APIError{Problem: *problem})
 		}
+		// An empty value failed only at its own PUT, after the keys before it
+		// were saved: `env set A=1 B= C=2` saved A, never C, and reported an
+		// unconfirmed partial write (prod hunt r48). The size cap stays with
+		// the server, which knows the plan.
+		if problem := (api.PutAppSecretRequest{Value: p.Value}).Validate(0); problem != nil {
+			problem.Detail = p.Key + ": " + problem.Detail
+			return printErr(problem.Title, &APIError{Problem: *problem})
+		}
 	}
 
 	if *dryRun {
@@ -927,7 +936,7 @@ func readSecretsFile(path string) ([]secretsPair, error) {
 				next := strings.TrimRight(scanner.Text(), "\r")
 				value.WriteByte('\n')
 				value.WriteString(next)
-				if dotenvClosesQuote(strings.TrimRight(next, " \t"), quote) {
+				if dotenvContinuationCloses(next, quote) {
 					closed = true
 					break
 				}
@@ -973,8 +982,22 @@ func dotenvOpenQuote(line string) (byte, bool) {
 	if value == "" || value[0] != '"' && value[0] != '\'' {
 		return 0, false
 	}
-	quote := value[0]
-	return quote, !dotenvClosesQuote(value[1:], quote)
+	// A quote closed before a trailing ` # comment` closes the value on this
+	// line: `URL="x" # note` was read as an unterminated multi-line value
+	// (prod hunt r48).
+	return value[0], dotenvClosingQuote(value) < 0
+}
+
+// dotenvContinuationCloses reports whether a continuation line of a
+// multi-line quoted value closes it: it ends in the closing quote, or the
+// closing quote is followed only by a ` # comment` (a PEM whose last line is
+// `-----END KEY-----" # prod key` was refused as unclosed).
+func dotenvContinuationCloses(line string, quote byte) bool {
+	if dotenvClosesQuote(strings.TrimRight(line, " \t"), quote) {
+		return true
+	}
+	end := dotenvClosingQuote(string(quote) + line)
+	return end > 0 && strings.HasPrefix(strings.TrimSpace(line[end:]), "#")
 }
 
 // dotenvClosesQuote reports whether s ends with an unescaped closing quote.

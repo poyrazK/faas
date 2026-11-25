@@ -28,8 +28,35 @@ Operators: see the [operator guide](managed-postgres.md).
   database.
 - Storage is pooled across your databases: one database may use the whole
   pool.
-- Compute suspends when a database is idle. Always-on compute is not part of
-  these plans.
+- Compute suspends when a database is idle, by default after 2 minutes
+  without activity. Every wake bills at least that long, so a shorter time
+  costs less and a longer one avoids more cold starts. Choose it per database
+  from 1 minute to 1 hour:
+
+  ```sh
+  gregale postgres suspend-timeout set orders-db 5m
+  gregale postgres suspend-timeout set orders-db default
+  ```
+
+  A suspended database takes the new time at once; a running one takes it
+  the next time it suspends, without dropping connections. `gregale postgres
+  get` shows the current value. Always-on compute is not part of these plans.
+- **Start with your app.** A suspended
+  database normally starts on your app's first query after idle, so that
+  request waits for the app's wake and then the database's (a few hundred
+  milliseconds). Turn on `app-wake` and the database starts as soon as
+  an app bound to it starts waking, so the two overlap:
+
+  ```sh
+  gregale postgres app-wake set orders-db on
+  gregale postgres app-wake set orders-db off
+  ```
+
+  It is off by default. Every app wake starts the database, including wakes
+  that never query it (a health check, a static page, a cron job), and each
+  start bills at least one suspend timeout of compute. A database is started
+  at most once a minute this way. `gregale postgres get` shows
+  `wake_with_app`.
 - Restore history (what point-in-time restore keeps) and snapshots are
   included up to the size of the storage pool, averaged over the month.
 - Without overage, storage is a limit and nothing past the plan is billed.
@@ -479,6 +506,13 @@ databases by up to two hours.
   over the month, is billed at $0.21 per GB-month for restore history and
   $0.0945 per GB-month for snapshots (10^9 bytes). A month that billed it
   keeps the charge if you turn overage off.
+- With overage off, restore history is bounded instead of billed. Once this
+  month's restore history and snapshots pass twice the included amount,
+  `usage` shows `history_state: limited` and your databases keep only the
+  last 24 hours of history until the 1st of next month, or until you turn
+  overage on. Restoring to a point older than 24 hours is refused while
+  limited, and history dropped while limited does not come back. Writes,
+  reads and data are not affected.
 - Egress: each database has its own 500 GB (10^9 bytes) monthly egress
   allowance, separate from your apps' plan allowance. `usage` shows
   `egress_allowance_bytes` (per database) and what all the databases sent

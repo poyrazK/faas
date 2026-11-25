@@ -31,16 +31,23 @@ var errDeployToAlternativeDeclined = errors.New("deploy cancelled")
 // The conflict error stays when gregale.yaml in sourceDir names the app (its
 // triggers, routes and bindings would no longer match another name) or the
 // owner cannot be read. confirmExisting, when set, may decline updating an
-// existing alternative (the unlinked-app guard).
-func createOrFetchAppWithAlternatives(ctx context.Context, client *Client, req, existingReq api.CreateAppRequest, sourceDir string, confirmExisting func(slug string) bool, requireAuthnPtr *bool, appProtocolPtr *string, publicAuthPtr *api.PublicAuthBlock, resolved *api.AppResponse) (string, error) {
-	err := createOrFetchAppWith(ctx, client, req, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, resolved)
+// existing alternative (the unlinked-app guard). An alternative held by one
+// of the caller's own deleted apps is skipped. unavailable reports that the
+// requested name is not offered (app_name_blocklist) rather than held by
+// another owner.
+func createOrFetchAppWithAlternatives(ctx context.Context, client *Client, req, existingReq api.CreateAppRequest, sourceDir string, confirmExisting func(slug string) bool, requireAuthnPtr *bool, appProtocolPtr *string, publicAuthPtr *api.PublicAuthBlock, resolved *api.AppResponse) (slug string, unavailable bool, err error) {
+	err = createOrFetchAppWith(ctx, client, req, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, resolved)
 	var taken *slugTakenError
-	if !errors.As(err, &taken) || manifestNamesApp(sourceDir, req.Slug) {
-		return req.Slug, err
+	if !errors.As(err, &taken) {
+		return req.Slug, false, err
+	}
+	unavailable = taken.unavailable
+	if manifestNamesApp(sourceDir, req.Slug) {
+		return req.Slug, unavailable, err
 	}
 	acct, whoErr := client.Whoami(ctx)
 	if whoErr != nil || acct.ID == "" {
-		return req.Slug, err
+		return req.Slug, unavailable, err
 	}
 	// An organization key creates the app in the organization, so every
 	// member deploying the same checkout gets the same alternatives.
@@ -52,23 +59,34 @@ func createOrFetchAppWithAlternatives(ctx context.Context, client *Client, req, 
 	for _, alt := range alternatives {
 		if confirmExisting != nil {
 			if _, getErr := client.GetApp(ctx, alt); getErr == nil && !confirmExisting(alt) {
-				return alt, errDeployToAlternativeDeclined
+				return alt, unavailable, errDeployToAlternativeDeclined
 			}
 		}
 		altReq, altExisting := req, existingReq
 		altReq.Slug, altExisting.Slug = alt, alt
 		err = createOrFetchAppWith(ctx, client, altReq, altExisting, requireAuthnPtr, appProtocolPtr, publicAuthPtr, resolved)
-		if !errors.As(err, &taken) {
-			return alt, err
+		// An alternative the caller's own deleted app holds (they deleted
+		// the suffixed app) is skipped like a taken one: the deploy takes
+		// the next alternative instead of failing.
+		var ownDeleted *ownDeletedSlugError
+		if !errors.As(err, &taken) && !errors.As(err, &ownDeleted) {
+			return alt, unavailable, err
 		}
 	}
-	return req.Slug, fmt.Errorf("slug %q and its alternatives %s are already in use; pick a different --name", req.Slug, strings.Join(alternatives, ", "))
+	if unavailable {
+		return req.Slug, true, fmt.Errorf("app name %q is not available, nor are its alternatives %s; pick a different --name", req.Slug, strings.Join(alternatives, ", "))
+	}
+	return req.Slug, false, fmt.Errorf("slug %q and its alternatives %s are already in use; pick a different --name", req.Slug, strings.Join(alternatives, ", "))
 }
 
 // printSlugAlternativeNotice tells the user their app has a different name
 // from the one they asked for, and how to change it.
-func printSlugAlternativeNotice(requested, got string) {
+func printSlugAlternativeNotice(requested, got string, unavailable bool) {
 	if jsonOutput || requested == got {
+		return
+	}
+	if unavailable {
+		_, _ = fmt.Fprintf(osStderr, "Note: the name %s is not available, so this app is %s (%s). Pass --name to choose a different name.\n", requested, got, deployedAppURL(got))
 		return
 	}
 	_, _ = fmt.Fprintf(osStderr, "Note: the name %s belongs to another account, so this app is %s (%s). Pass --name to choose a different name.\n", requested, got, deployedAppURL(got))

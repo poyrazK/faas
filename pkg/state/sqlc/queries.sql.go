@@ -12190,13 +12190,16 @@ func (q *Queries) CountUnfinishedProjectEnvironmentCloneOperationsForProject(ctx
 }
 
 const countVerifiedAccountsCreatedSince = `-- name: CountVerifiedAccountsCreatedSince :one
-select count(*)::bigint from accounts
- where created_at >= $1::timestamptz and email_verified_at is not null
+select count(*)::bigint from accounts a
+ where a.created_at >= $1::timestamptz and a.email_verified_at is not null
+   and not exists (select 1 from unclaimed_accounts u where u.account_id = a.id and u.claimed_at is null)
 `
 
 // Accounts created at or after since that have verified their email
 // (ADR-20261104145353 amendment 1: the platform-wide daily sign-up cap counts
 // the accounts that can use a Free allowance). Read only on a sign-up attempt.
+// Unclaimed anonymous-deploy accounts have their own cap (ADR-20261124080000)
+// and count here only once a human claims them.
 func (q *Queries) CountVerifiedAccountsCreatedSince(ctx context.Context, db DBTX, since pgtype.Timestamptz) (int64, error) {
 	row := db.QueryRow(ctx, countVerifiedAccountsCreatedSince, since)
 	var column_1 int64
@@ -31484,6 +31487,23 @@ func (q *Queries) GitHubRepositoryIDsBoundToAccount(ctx context.Context, db DBTX
 	var i GitHubRepositoryIDsBoundToAccountRow
 	err := row.Scan(&i.OwnerID, &i.RepoID)
 	return i, err
+}
+
+const grantManagedValkeyCache = `-- name: GrantManagedValkeyCache :exec
+INSERT INTO managed_valkey_cache_grants (cache_app_id, app_id, account_id)
+VALUES ($1::uuid, $2::uuid, $3::uuid)
+ON CONFLICT (cache_app_id, app_id) DO NOTHING
+`
+
+type GrantManagedValkeyCacheParams struct {
+	CacheAppID pgtype.UUID
+	AppID      pgtype.UUID
+	AccountID  pgtype.UUID
+}
+
+func (q *Queries) GrantManagedValkeyCache(ctx context.Context, db DBTX, arg GrantManagedValkeyCacheParams) error {
+	_, err := db.Exec(ctx, grantManagedValkeyCache, arg.CacheAppID, arg.AppID, arg.AccountID)
+	return err
 }
 
 const guardWorkflowAdmissionSnapshot = `-- name: GuardWorkflowAdmissionSnapshot :exec
@@ -51835,6 +51855,41 @@ func (q *Queries) ListEnvironmentWorkloadQualificationsForDispatch(ctx context.C
 	return items, nil
 }
 
+const listEventSubjectsWithKind = `-- name: ListEventSubjectsWithKind :many
+select distinct subject::uuid as subject
+from events
+where subject = any($1::uuid[]) and kind = $2 and at >= $3
+`
+
+type ListEventSubjectsWithKindParams struct {
+	Subjects []pgtype.UUID
+	Kind     string
+	Since    pgtype.Timestamptz
+}
+
+// Which of the given subjects have an event of one kind since a time, in one
+// read: app health asks it of an app's recently stopped instances
+// (liveness_failed, prod hunt r33). events_subject_idx (subject, at desc).
+func (q *Queries) ListEventSubjectsWithKind(ctx context.Context, db DBTX, arg ListEventSubjectsWithKindParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, listEventSubjectsWithKind, arg.Subjects, arg.Kind, arg.Since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var subject pgtype.UUID
+		if err := rows.Scan(&subject); err != nil {
+			return nil, err
+		}
+		items = append(items, subject)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEventSubscriptionsForApp = `-- name: ListEventSubscriptionsForApp :many
 
 select id, account_id, app_id, source, type, filter, enabled, created_at, updated_at, routing_retry_policy, schema_versions, acknowledgment_lease_seconds, deployment_scope, environment_id, clone_paused
@@ -64798,13 +64853,13 @@ func (q *Queries) LockRouteMonitorRollbackIncident(ctx context.Context, db DBTX,
 
 const lockRoutePolicyAccount = `-- name: LockRoutePolicyAccount :one
 WITH namespace AS MATERIALIZED (
- SELECT id FROM resource_namespaces WHERE id=$2::text::uuid FOR UPDATE
+ SELECT id FROM resource_namespaces WHERE id=$2::text::uuid FOR NO KEY UPDATE
 ), owner AS MATERIALIZED (
  SELECT o.id,o.personal_org,o.resource_ownership_enabled FROM orgs o JOIN apps a ON a.org_id=o.id
  JOIN namespace n ON n.id=a.account_id WHERE a.id=$1::text::uuid FOR SHARE OF o
 ), legacy AS MATERIALIZED (
  SELECT ac.id FROM accounts ac JOIN namespace n ON n.id=ac.id
- JOIN owner o ON o.personal_org OR NOT o.resource_ownership_enabled FOR UPDATE OF ac
+ JOIN owner o ON o.personal_org OR NOT o.resource_ownership_enabled FOR NO KEY UPDATE OF ac
 )
 SELECT jsonb_build_object('ID', a.id, 'Plan', a.plan, 'Status', a.status, 'AbuseHoldAt', a.abuse_hold_at) AS snapshot
 FROM app_resource_accounts a JOIN namespace n ON n.id=a.id JOIN owner o ON true
@@ -64817,6 +64872,10 @@ type LockRoutePolicyAccountParams struct {
 	AccountID string
 }
 
+// FOR NO KEY UPDATE, not FOR UPDATE: the snapshot then locks the app row, and
+// a child insert's foreign-key checks take KEY SHARE on the app before the
+// namespace (request_id_journal), so FOR UPDATE here deadlocked them. Route
+// policy writers, plan/status updates and deletes still conflict with it.
 func (q *Queries) LockRoutePolicyAccount(ctx context.Context, db DBTX, arg LockRoutePolicyAccountParams) ([]byte, error) {
 	row := db.QueryRow(ctx, lockRoutePolicyAccount, arg.AppID, arg.AccountID)
 	var snapshot []byte
@@ -86264,7 +86323,10 @@ SELECT (jsonb_build_object(
     'project_environment_branch_deployments_deployment_id_fkey', (SELECT count(*) FROM project_environment_branch_deployments WHERE deployment_id = $1::uuid),
     'environment_branch_captures_deployment_id_fkey', (SELECT count(*) FROM environment_branch_captures WHERE deployment_id = $1::uuid),
     -- Project deploy rollbacks (#7923) record each deployment's deploy group.
-    'project_deploy_rollback_members_deployment_id_fkey', (SELECT count(*) FROM project_deploy_rollback_members WHERE deployment_id = $1::uuid)
+    'project_deploy_rollback_members_deployment_id_fkey', (SELECT count(*) FROM project_deploy_rollback_members WHERE deployment_id = $1::uuid),
+    -- Verification leases (ADR-20261122220000 amendment 2) hold a deployment
+    -- only while unexpired; an expired one opens no secrets.
+    'deployment_verification_leases_deployment_id_fkey', (SELECT count(*) FROM deployment_verification_leases WHERE deployment_id = $1::uuid AND expires_at > now())
 ))::jsonb AS borrowers
 `
 
@@ -95982,6 +96044,28 @@ func (q *Queries) ReadServicePolicyAppBySlug(ctx context.Context, db DBTX, slug 
 		&i.Manifest,
 	)
 	return i, err
+}
+
+const readServicePolicyCacheGrant = `-- name: ReadServicePolicyCacheGrant :one
+SELECT EXISTS (
+    SELECT 1 FROM managed_valkey_cache_grants g
+    JOIN managed_valkey_caches c ON c.app_id = g.cache_app_id
+    WHERE g.cache_app_id = $1::uuid AND g.app_id = $2::uuid
+)::boolean AS granted
+`
+
+type ReadServicePolicyCacheGrantParams struct {
+	CacheAppID pgtype.UUID
+	AppID      pgtype.UUID
+}
+
+// A grant counts only while its target is still a managed cache
+// (ADR-20261124174500).
+func (q *Queries) ReadServicePolicyCacheGrant(ctx context.Context, db DBTX, arg ReadServicePolicyCacheGrantParams) (bool, error) {
+	row := db.QueryRow(ctx, readServicePolicyCacheGrant, arg.CacheAppID, arg.AppID)
+	var granted bool
+	err := row.Scan(&granted)
+	return granted, err
 }
 
 const readServicePolicyCallerScope = `-- name: ReadServicePolicyCallerScope :one
@@ -107051,6 +107135,24 @@ type RevokeManagedPostgresCutoverCredentialParams struct {
 
 func (q *Queries) RevokeManagedPostgresCutoverCredential(ctx context.Context, db DBTX, arg RevokeManagedPostgresCutoverCredentialParams) (int64, error) {
 	result, err := db.Exec(ctx, revokeManagedPostgresCutoverCredential, arg.ID, arg.CutoverID, arg.Token)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const revokeManagedValkeyCacheGrant = `-- name: RevokeManagedValkeyCacheGrant :execrows
+DELETE FROM managed_valkey_cache_grants
+WHERE cache_app_id = $1::uuid AND app_id = $2::uuid
+`
+
+type RevokeManagedValkeyCacheGrantParams struct {
+	CacheAppID pgtype.UUID
+	AppID      pgtype.UUID
+}
+
+func (q *Queries) RevokeManagedValkeyCacheGrant(ctx context.Context, db DBTX, arg RevokeManagedValkeyCacheGrantParams) (int64, error) {
+	result, err := db.Exec(ctx, revokeManagedValkeyCacheGrant, arg.CacheAppID, arg.AppID)
 	if err != nil {
 		return 0, err
 	}
