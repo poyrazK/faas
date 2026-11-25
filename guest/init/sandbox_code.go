@@ -299,13 +299,14 @@ func (s *sandboxServer) codeRun(ctx context.Context, req sandboxproto.Request, c
 			_, _ = call.Stderr().Write([]byte(ev.Text))
 		case "result":
 			out := sandboxproto.CodeOutput{Data: ev.Data, IsMainResult: ev.IsMainResult}
-			encoded, err := json.Marshal(out)
-			if err != nil || resultBytes+len(encoded) > sandboxCodeResultMaxBytes {
+			// A result that cannot be encoded or does not fit is dropped and
+			// reported, like output past the run's cap.
+			if encoded, err := json.Marshal(out); err == nil && resultBytes+len(encoded) <= sandboxCodeResultMaxBytes {
+				resultBytes += len(encoded)
+				res.Results = append(res.Results, out)
+			} else {
 				res.OutputTruncated = true
-				return nil
 			}
-			resultBytes += len(encoded)
-			res.Results = append(res.Results, out)
 		case "error":
 			res.Error = &sandboxproto.CodeError{Name: ev.Name, Value: ev.Value, Traceback: ev.Traceback}
 		case "done":
