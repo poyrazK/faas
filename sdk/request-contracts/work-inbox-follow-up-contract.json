@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "name": "work-inbox-follow-up",
+  "input": {
+    "type": "object",
+    "properties": {
+      "kind": {
+        "type": "string",
+        "enum": [
+          "pipeline",
+          "action"
+        ]
+      },
+      "name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      },
+      "request_id": {
+        "type": "string",
+        "minLength": 36,
+        "maxLength": 36
+      },
+      "business_ref": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    "required": [
+      "kind",
+      "name",
+      "request_id"
+    ],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "kind": {
+        "type": "string",
+        "enum": [
+          "human_review",
+          "tool_call",
+          "no_action"
+        ]
+      },
+      "state": {
+        "type": "string",
+        "enum": [
+          "start_unknown",
+          "running",
+          "awaiting_approval",
+          "awaiting_input",
+          "succeeded",
+          "failed",
+          "cancelled",
+          "prepared",
+          "unknown",
+          "pending",
+          "needs_review"
+        ]
+      },
+      "review": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "approval",
+              "input"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "expires_at": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "review_url": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "expires_at",
+          "review_url"
+        ],
+        "additionalProperties": false
+      },
+      "name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "arguments": {
+        "type": "object",
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "minLength": 36,
+            "maxLength": 36
+          },
+          "action_id": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "run_id": {
+            "type": "string",
+            "minLength": 36,
+            "maxLength": 36
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    "required": [
+      "kind",
+      "state"
+    ],
+    "additionalProperties": false
+  }
+}

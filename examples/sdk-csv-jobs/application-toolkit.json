@@ -1,0 +1,63 @@
+{
+  "rows": {
+    "csv_import_rows": [
+      "imports:read"
+    ]
+  },
+  "failure": {
+    "csv_import_failure": [
+      "imports:read"
+    ]
+  },
+  "payment": {
+    "csv_import_payment": [
+      "payments:read"
+    ]
+  },
+  "cleanup": {
+    "recover_csv_cleanup_plan": [
+      "imports:recover"
+    ],
+    "recover_csv_cleanup_start": [
+      "imports:recover"
+    ],
+    "recover_csv_cleanup_status": [
+      "imports:read"
+    ],
+    "recover_csv_cleanup_result": [
+      "imports:read"
+    ],
+    "recover_csv_cleanup_reconcile": [
+      "imports:recover"
+    ]
+  },
+  "refund": {
+    "action_csv_refund_prepare": [
+      "payments:refund"
+    ],
+    "action_csv_refund_start": [
+      "payments:refund"
+    ],
+    "action_csv_refund_status": [
+      "payments:read"
+    ],
+    "action_csv_refund_result": [
+      "payments:read"
+    ],
+    "action_csv_refund_observe": [
+      "payments:read"
+    ],
+    "action_csv_refund_refresh": [
+      "payments:refund"
+    ],
+    "action_csv_refund_reconcile": [
+      "payments:refund"
+    ]
+  },
+  "inbox": {
+    "work_inbox": [
+      "imports:read",
+      "payments:read"
+    ]
+  }
+}

@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "sha256": "d46f0017ced4edca5e2a5554dedd6952759fa4d90bcf57c3777c5a7453dbd35f",
+  "pipelines": [
+    {
+      "tool": "csv_import",
+      "contract": {
+        "version": 1,
+        "name": "csv-import",
+        "input": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "rows": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "rows"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "contract_sha256": "ae9cfddaf43a5dcadeab65cdafb2ed301829a22925f620e3ba8dc860b01e7211",
+      "clarification": {
+        "message": "Choose a column",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "email_column": {
+              "type": "string",
+              "enum": [
+                "contact",
+                "alternate_contact"
+              ]
+            }
+          },
+          "required": [
+            "email_column"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "artifacts": [
+        {
+          "name": "report",
+          "mimeType": "text/csv",
+          "description": "CSV report"
+        }
+      ],
+      "revision": {
+        "family": "csv_imports",
+        "starts": "retained"
+      }
+    },
+    {
+      "tool": "csv_import_v2",
+      "contract": {
+        "version": 1,
+        "name": "csv-import-v2",
+        "input": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "rows": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "rows"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "contract_sha256": "0e29b3d79c2c8872be31de182be4410cbd3ca04ab736a73981094b3959acccbe",
+      "clarification": null,
+      "artifacts": [],
+      "revision": {
+        "family": "csv_imports",
+        "starts": "default"
+      }
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "contract": {
+    "version": 1,
+    "name": "pipeline-start-preview",
+    "input": {
+      "type": "null"
+    },
+    "output": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "source_version": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "changed_version": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "summary": 17,
+  "pinned_bytes": "contact\nreviewed@example.test\n",
+  "pinned_source": {
+    "version": 1,
+    "scope": {
+      "base_url": "https://api.example.test",
+      "app_slug": "imports",
+      "bucket": "33333333-3333-4333-8333-333333333333"
+    },
+    "owner_id": "alice",
+    "key": "imports/source.csv",
+    "version_id": "44444444-4444-4444-8444-444444444444",
+    "size_bytes": 30,
+    "sha256": "c97375801a7c3363494b8fdabd425e8491034292aec24aef8ebaafc75dd3f44b"
+  },
+  "replacement_version_id": "55555555-5555-4555-8555-555555555555"
+}

@@ -1,0 +1,3 @@
+-- Create each index after its corresponding receipt table has been installed.
+CREATE INDEX IF NOT EXISTS gregale_work_inbox_pipeline_idx ON public.gregale_pipeline_tool_starts (((receipt->'intent')->'scope'), ((receipt->'intent')->>'owner_id'), ((receipt->'intent')->>'name'), ((receipt->'intent')->>'subject_id'), ((receipt->'intent')->>'contract_sha256'), ((encode(sha256(decode(identity,'hex')),'hex')||'p') COLLATE "C"));
+CREATE INDEX IF NOT EXISTS gregale_work_inbox_action_idx ON public.gregale_outbound_actions ((intent->'scope'), (intent->>'owner_id'), (intent->>'name'), ((encode(sha256(decode(identity,'hex')),'hex')||'a') COLLATE "C"));

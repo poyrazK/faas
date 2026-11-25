@@ -2106,6 +2106,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/postgres/databases/{id}/compute-policy-changes/{change_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresComputePolicyChange))))
 	// A database's own scale-to-zero suspend timeout; idempotent by value.
 	mux.HandleFunc("PUT /v1/postgres/databases/{id}/suspend-timeout", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.setManagedPostgresSuspendTimeout)))))
+	// Whether a database starts when a bound app wakes (ADR-20261125105038).
+	mux.HandleFunc("PUT /v1/postgres/databases/{id}/wake-with-app", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.setManagedPostgresWakeWithApp)))))
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/resize", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.managedPostgresResize(managedpg.Resizes.Post))))))
 	mux.HandleFunc("GET /v1/postgres/databases/{id}/resizes/{resize_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.managedPostgresResize(managedpg.Resizes.Get)))))
 	// ADR-1027 in-place major upgrades, served by pkg/apid/managedpg: hidden
@@ -3940,6 +3942,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/platform-tenant-self/workflows/runs/{id}/callbacks", s.authLimited(s.requireScope(api.ScopePlatformTenantInvocationsRead)(s.listPlatformTenantSelfWorkflowCallbacks)))
 	mux.HandleFunc("POST /v1/platform-tenant-self/workflows/runs/{id}/callbacks/{callback_id}", s.authLimited(s.requireScope(api.ScopePlatformTenantInvocationsManage)(s.completePlatformTenantSelfWorkflowCallback)))
 	mux.HandleFunc("POST /v1/platform-tenant-self/workflows/runs/{id}/events", s.authLimited(s.requireScope(api.ScopePlatformTenantInvocationsManage)(s.idempotent(s.injectPlatformTenantSelfWorkflowEvent))))
+	mux.HandleFunc("GET /v1/apps/{slug}/workflows/run-starts/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.lookupWorkflowRunStart))))
 	mux.HandleFunc("GET /v1/apps/{slug}/workflows/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listWorkflowRuns))))
 	mux.HandleFunc("POST /v1/apps/{slug}/workflows/runs:cancel-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.previewUnstartedWorkflowRunCancellations))))
 	mux.HandleFunc("POST /v1/apps/{slug}/workflows/runs:cancel-queued", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelUnstartedWorkflowRuns))))
