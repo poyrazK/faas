@@ -12830,11 +12830,12 @@ const AgentBudgetHoursPerMonth = 730
 // class's smallest compute size, in quarter compute units: what a database
 // that never scales to zero keeps running, so what an agent's budget pays
 // for it (ADR-20261111114059 slice 3). It mirrors the Neon class profiles
-// (pkg/managedpostgres/neon/config.go; a test there keeps them equal).
+// (pkg/managedpostgres/neon/config.go; a test there keeps them equal), not the
+// older accepted ranges (ADR-20261124221402).
 var ManagedPostgresMinimumQuarterComputeUnits = map[string]int64{
 	"development": 1,
 	"burstable":   1,
-	"production":  4,
+	"production":  2,
 }
 
 // Self-service spend cap ceilings per paid plan, in cents (ADR-20261105120000,
