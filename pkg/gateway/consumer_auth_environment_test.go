@@ -29,6 +29,8 @@ func (s *environmentConsumerAuthStore) ConsumerKeyForEnvironment(_ context.Conte
 	return s.environmentKey, s.environmentErr
 }
 
+// adr: 20261104120000 — a stage host reads its own consumer keys; a production
+// host reads production's.
 func TestEnforceConsumerAuthEnvironmentHostUsesEnvironmentKeys(t *testing.T) {
 	for _, tc := range []struct {
 		name            string
