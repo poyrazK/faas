@@ -4421,7 +4421,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			createReq.VCPU = *vcpu
 		}
 		if err := requireTemplateSecretsBeforeFirstStart(ctx, client, *templateName, *secretsFile, *createOnly, slug); err != nil {
-			return printErr("Template needs secrets", err)
+			return printErr("Template needs setup before its first deploy", err)
 		}
 		if execution.resolveApp != nil {
 			resolvedApp, err = execution.resolveApp(ctx, client, createReq)

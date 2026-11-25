@@ -579,7 +579,7 @@ func requireTemplateSecretsBeforeFirstStart(ctx context.Context, apps interface 
 		return nil
 	}
 	if binding != "" {
-		return fmt.Errorf("template %s needs a managed database binding (%s) before its first start, so nothing was deployed. As README.md \"Configure and deploy\" shows: reserve the app with `gregale deploy --create-only --path . --dockerfile --name %s`, run `gregale postgres attach <database> %s --access migration --env %s`, wait until `gregale postgres bindings get <binding-id>` reports ready, run `gregale app egress-ports add %s 5432`, then deploy", tpl, binding, slug, slug, binding, slug)
+		return fmt.Errorf("template %s needs a managed database binding (%s) before its first start, so nothing was deployed. As README.md \"Configure and deploy\" shows: reserve the app with `gregale deploy --create-only --path . --dockerfile --name %s`, run `gregale postgres attach <database> %s --access migration --env %s`, wait until `gregale postgres bindings get <binding-id>` reports ready (attach opens outbound TCP 5432), then deploy", tpl, binding, slug, slug, binding)
 	}
 	if bucket != "" {
 		return fmt.Errorf("template %s needs a managed bucket before its first start, so nothing was deployed. As README.md shows: reserve the app with `gregale deploy --create-only --template %s --name %s`, run `%s`, then deploy with your secrets file", tpl, tpl, slug, strings.ReplaceAll(bucket, "<slug>", slug))

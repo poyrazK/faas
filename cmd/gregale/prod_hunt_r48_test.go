@@ -40,7 +40,8 @@ func TestEnvSetRefusesEmptyValueBeforeWriting(t *testing.T) {
 // multi-line value; a value that spans lines still reads whole.
 func TestSecretsFileQuotedValueWithComment(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "app.env")
-	body := "URL=\"https://x\" # note\nPEM=\"-----BEGIN\nabc\n-----END\"\nPORT=3000 # web\n"
+	body := "URL=\"https://x\" # note\nPEM=\"-----BEGIN\nabc\n-----END\"\nPORT=3000 # web\n" +
+		"KEY=\"-----BEGIN\nxyz\n-----END\" # prod key\n"
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +49,7 @@ func TestSecretsFileQuotedValueWithComment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadSecretsFile: %v", err)
 	}
-	want := map[string]string{"URL": "https://x", "PEM": "-----BEGIN\nabc\n-----END", "PORT": "3000"}
+	want := map[string]string{"URL": "https://x", "PEM": "-----BEGIN\nabc\n-----END", "PORT": "3000", "KEY": "-----BEGIN\nxyz\n-----END"}
 	if len(pairs) != len(want) {
 		t.Fatalf("pairs = %d, want %d", len(pairs), len(want))
 	}
@@ -71,6 +72,9 @@ func TestDotenvValueDropsTrailingComment(t *testing.T) {
 		{`"plain"`, "plain"},
 		{`'plain'`, "plain"},
 		{`"unterminated # x`, `"unterminated # x`},
+		{`"https://x" # see "docs"`, "https://x"},
+		{`'a' # it's "here"'`, "a"},
+		{`"a"b"`, `a"b`},
 		{"plain", "plain"},
 	} {
 		if got := main.DotenvValue(tc.in); got != tc.want {

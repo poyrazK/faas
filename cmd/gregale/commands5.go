@@ -2488,21 +2488,23 @@ func openCustomerDirectoryForSync(path string) (*os.File, error) {
 // its quotes (prod hunt r48). A # with no space before it is part of the
 // value. Other values are unchanged.
 func dotenvValue(v string) string {
-	unescape := strings.NewReplacer(`\n`, "\n", `\"`, `"`, `\\`, `\`)
-	if len(v) >= 2 && v[0] == '\'' && v[len(v)-1] == '\'' {
-		return v[1 : len(v)-1]
-	}
-	if len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' {
-		return unescape.Replace(v[1 : len(v)-1])
-	}
 	if len(v) > 0 && (v[0] == '\'' || v[0] == '"') {
-		if end := dotenvClosingQuote(v); end > 0 {
-			if rest := strings.TrimSpace(v[end+1:]); strings.HasPrefix(rest, "#") {
-				if v[0] == '"' {
-					return unescape.Replace(v[1:end])
-				}
-				return v[1:end]
+		unquote := func(inner string) string {
+			if v[0] == '"' {
+				return strings.NewReplacer(`\n`, "\n", `\"`, `"`, `\\`, `\`).Replace(inner)
 			}
+			return inner
+		}
+		// The quote that closes the opening one ends the value when only a
+		// comment follows it; checked first so a comment that itself ends in
+		// a quote (`"x" # see "docs"`) is not read as part of the value.
+		if end := dotenvClosingQuote(v); end > 0 {
+			if rest := strings.TrimSpace(v[end+1:]); rest == "" || strings.HasPrefix(rest, "#") {
+				return unquote(v[1:end])
+			}
+		}
+		if len(v) >= 2 && v[len(v)-1] == v[0] {
+			return unquote(v[1 : len(v)-1])
 		}
 		return v
 	}

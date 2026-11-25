@@ -70,17 +70,21 @@ func (s *server) getAppDeploymentSummary(w http.ResponseWriter, r *http.Request,
 // replaces, so it wins over a newer superseded row: after a rollback to v1,
 // a canary of v3 was summarized as "Changes since v2" while v1 served 99%,
 // and the CLI offered a generic split hint instead of aborting the canary
-// (prod hunt r49).
+// (prod hunt r49). This applies only while the summarized deployment is
+// itself live: a superseded release keeps the predecessor its created_at
+// history gives, so a later rollback does not rewrite older summaries.
 func (s *server) previousAppDeployment(ctx context.Context, appID string, current state.Deployment) (*state.Deployment, error) {
-	live, err := s.store.LiveDeployments(ctx, appID)
-	if err != nil {
-		return nil, err
-	}
-	for i := range live {
-		d := live[i]
-		if d.ID != current.ID && d.Scope == current.Scope && deploymentServed(d) &&
-			(current.CreatedAt.IsZero() || d.CreatedAt.Before(current.CreatedAt)) {
-			return &d, nil
+	if current.Status == state.DeployLive {
+		live, err := s.store.LiveDeployments(ctx, appID)
+		if err != nil {
+			return nil, err
+		}
+		for i := range live {
+			d := live[i]
+			if d.ID != current.ID && d.Scope == current.Scope && deploymentServed(d) &&
+				(current.CreatedAt.IsZero() || d.CreatedAt.Before(current.CreatedAt)) {
+				return &d, nil
+			}
 		}
 	}
 	if current.CreatedAt.IsZero() {

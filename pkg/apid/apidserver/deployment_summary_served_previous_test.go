@@ -85,3 +85,38 @@ func TestDeploymentSummaryPrefersStillLiveRelease(t *testing.T) {
 		t.Fatalf("previous = %+v, want the still-live v1 %s", got.Previous, rolledBackTo.ID)
 	}
 }
+
+// A rollback must not rewrite the history of a superseded release: v3,
+// rolled back from, still summarizes against v2, the release it replaced.
+func TestDeploymentSummaryOfSupersededReleaseIgnoresLiveRows(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	appID := apidserver.MustSeedApp(t, e, "summary-history")
+	ctx := context.Background()
+	base := time.Now().UTC().Add(-time.Minute)
+	create := func(build string, at time.Duration, status state.DeploymentStatus) state.Deployment {
+		t.Helper()
+		d, err := (*e.Store()).CreateDeployment(ctx, state.Deployment{
+			AppID: appID, BuildID: build, ImageDigest: "sha256:" + build, Kind: state.DeploymentKindImage,
+			Status: status, CreatedAt: base.Add(at), Scope: "production",
+		})
+		if err != nil {
+			t.Fatalf("create %s: %v", build, err)
+		}
+		return d
+	}
+	create("v1", 0, state.DeployLive)
+	replaced := create("v2", time.Second, state.DeploySuperseded)
+	current := create("v3", 2*time.Second, state.DeploySuperseded)
+
+	rec := e.Do(t, http.MethodGet, "/v1/apps/summary-history/deployments/"+current.ID+"/summary", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var got api.DeploymentSummaryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Previous == nil || got.Previous.ID != replaced.ID {
+		t.Fatalf("previous = %+v, want v2 %s, the release v3 replaced", got.Previous, replaced.ID)
+	}
+}

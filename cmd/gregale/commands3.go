@@ -936,7 +936,7 @@ func readSecretsFile(path string) ([]secretsPair, error) {
 				next := strings.TrimRight(scanner.Text(), "\r")
 				value.WriteByte('\n')
 				value.WriteString(next)
-				if dotenvClosesQuote(strings.TrimRight(next, " \t"), quote) {
+				if dotenvContinuationCloses(next, quote) {
 					closed = true
 					break
 				}
@@ -986,6 +986,18 @@ func dotenvOpenQuote(line string) (byte, bool) {
 	// line: `URL="x" # note` was read as an unterminated multi-line value
 	// (prod hunt r48).
 	return value[0], dotenvClosingQuote(value) < 0
+}
+
+// dotenvContinuationCloses reports whether a continuation line of a
+// multi-line quoted value closes it: it ends in the closing quote, or the
+// closing quote is followed only by a ` # comment` (a PEM whose last line is
+// `-----END KEY-----" # prod key` was refused as unclosed).
+func dotenvContinuationCloses(line string, quote byte) bool {
+	if dotenvClosesQuote(strings.TrimRight(line, " \t"), quote) {
+		return true
+	}
+	end := dotenvClosingQuote(string(quote) + line)
+	return end > 0 && strings.HasPrefix(strings.TrimSpace(line[end:]), "#")
 }
 
 // dotenvClosesQuote reports whether s ends with an unescaped closing quote.
