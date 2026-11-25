@@ -143,7 +143,11 @@ func (s *server) populateDataAPIUsageAndAccess(r *http.Request, acct state.Accou
 }
 
 func (s *server) currentDataAPITask(r *http.Request, app state.App, task state.AppTask) bool {
-	if task.Status != state.AppTaskSucceeded || task.ExitCode == nil || *task.ExitCode != 0 || task.OutputTruncated || len(task.StdoutTail) > api.AppTaskDefaultMaxOutputBytes {
+	limit := api.AppTaskDefaultMaxOutputBytes
+	if api.IsDataAPIContractArtifactTask(task.Command, task.CommandShell) {
+		limit = api.DataAPIContractArtifactBytes
+	}
+	if task.Status != state.AppTaskSucceeded || task.ExitCode == nil || *task.ExitCode != 0 || task.OutputTruncated || len(task.StdoutTail) == 0 || len(task.StdoutTail) > limit {
 		return false
 	}
 	deployment, err := s.store.LiveDeployment(r.Context(), app.ID)
@@ -163,7 +167,7 @@ func (s *server) runDashboardDataAPI(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAppTaskAPI(w) {
 		return
 	}
-	resolved, problem := api.DataAPIContractTaskKind(operation).Request().Resolve()
+	resolved, problem := api.DataAPIContractTaskKind(operation).ArtifactRequest().Resolve()
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -199,11 +203,7 @@ func (s *server) downloadDashboardDataAPITypes(w http.ResponseWriter, r *http.Re
 		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Content-Disposition", `attachment; filename="database.types.ts"`)
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	_, _ = w.Write([]byte(task.StdoutTail))
+	writeDataAPIContractDownload(w, "text/plain; charset=utf-8", "database.types.ts", task)
 }
 
 func (s *server) refreshDashboardDataAPI(w http.ResponseWriter, r *http.Request) {

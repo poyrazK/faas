@@ -1165,7 +1165,8 @@ type MemStore struct {
 	nextExecutionEventID        int64
 	// appTasks are deployment-attached command intents (ADR-230). Unlike
 	// disposable executions they reference an app artifact and scope.
-	appTasks map[string]AppTask
+	appTasks                    map[string]AppTask
+	dataAPIInspectionExecutions map[string]DataAPIInspectionExecution
 	// appTaskNetworks mirrors app_task_networks (ADR-20261118070000), keyed
 	// by task id; created on first use.
 	appTaskNetworks map[string]appTaskNetwork
@@ -1971,6 +1972,7 @@ func NewMemStore(options ...StoreOption) *MemStore {
 		workflowEvents:                  map[string][]WorkflowEvent{},
 		workflowEventApps:               map[string]string{},
 		appTasks:                        map[string]AppTask{},
+		dataAPIInspectionExecutions:     map[string]DataAPIInspectionExecution{},
 		fireNowRequests:                 map[string]FireNowRequest{},
 		operatorIntents:                 map[string]OperatorIntent{},
 		runtimeConfigs:                  map[string]RuntimeConfig{},
@@ -8191,6 +8193,7 @@ func (m *MemStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	for key, task := range m.appTasks {
 		if task.AppID == id {
 			delete(m.appTasks, key)
+			delete(m.dataAPIInspectionExecutions, key)
 		}
 	}
 	for key, fork := range m.appForks {
@@ -25154,6 +25157,7 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 	for taskID, task := range m.appTasks {
 		if task.AccountID == id && personalApps[task.AppID] {
 			delete(m.appTasks, taskID)
+			delete(m.dataAPIInspectionExecutions, taskID)
 		}
 	}
 	// Snapshots + builds are keyed by deployment_id; resolve the

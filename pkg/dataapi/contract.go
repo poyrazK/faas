@@ -107,7 +107,7 @@ func decodeJSON(content []byte, target any) error {
 
 func Parse(content []byte) (Contract, error) {
 	var contract Contract
-	if len(content) > api.AppTaskDefaultMaxOutputBytes {
+	if len(content) > api.DataAPIContractArtifactBytes {
 		return contract, errors.New("schema snapshot exceeds output limit")
 	}
 	if err := decodeJSON(content, &contract); err != nil {

@@ -565,6 +565,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if caErr != nil {
 		return caErr
 	}
+	dataAPIInspectionCAPEM, caErr := loadDataAPIInspectionCA(cfg.DataAPIInspectionCAPath)
+	if caErr != nil {
+		return caErr
+	}
 	// Keep the :443 admission rule coupled to trust delivery. Both remain
 	// disabled unless the operator explicitly configures the private CA.
 	netns.SetDefaultServiceProxyHTTPS(len(serviceProxyCAPEM) > 0)
@@ -1082,6 +1086,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	jailer := fcvm.NewJailerVMM(fcvm.JailChrootBase, 30*time.Second).
 		WithRuntimeSourceRoot(vmmdRuntimeSourceRoot(storageBackend)).
 		WithServiceProxyCA(serviceProxyCAPEM).
+		WithDataAPIInspectionCA(dataAPIInspectionCAPEM).
 		WithLogCommitCallback(func(appID string, line logbuf.Line) { protocolMetrics.Observe(appID, line.Line, line.WrittenAt) }).
 		WithInstanceLogObserver(protocolCoverage.Start).
 		WithInstancePauseObserver(protocolCoverage.Pause).

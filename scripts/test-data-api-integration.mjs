@@ -35,7 +35,7 @@ async function main() {
     await writeFile(join(app, 'package.json'), JSON.stringify(metadata))
     await writeFile(join(app, 'tsconfig.json'), config)
     await writeFile(join(app, 'src/existing.ts'), 'export const application = "unchanged"\n')
-    const args = ['--json', 'data-api', 'integrate', '--directory', app, '--bundle', join(bundleDir, 'data-api-bundle.json')]
+    const args = ['--json', 'data-api', 'integrate', '--directory', app, '--numeric-mode', 'exact', '--bundle', join(bundleDir, 'data-api-bundle.json')]
     const preview = JSON.parse(run(cli, [...args, '--dry-run']))
     assert.equal(preview.event, 'integration_plan')
     assert.equal(preview.dry_run, true)
@@ -50,12 +50,15 @@ async function main() {
     const typesPath = join(app, 'src/gregale-data/database.types.ts')
     const types = await readFile(typesPath, 'utf8')
     assert.match(types, /notes/)
+    assert.match(types, /export const dataAPINumericMode = "exact" as const/)
     const verify = ['--json', 'data-api', 'serve', '--directory', app, '--config', 'gregale-data/data-api.dev.json', '--port', '0', '--once', '--check', '--replay', 'gregale-data/requests.json']
     await writeFile(join(app, 'gregale-data/migrations/0002_label.sql'), 'ALTER TABLE api.notes ADD COLUMN label text;\n')
     refused(cli, [...verify, '--check-types'], /types are stale/i)
     assert.equal(await readFile(typesPath, 'utf8'), types, 'stale-types check rewrote declarations')
     run(cli, verify, { timeout: 240000, stdio: 'inherit' })
-    assert.match(await readFile(typesPath, 'utf8'), /label/)
+    const refreshedTypes = await readFile(typesPath, 'utf8')
+    assert.match(refreshedTypes, /label/)
+    assert.match(refreshedTypes, /export const dataAPINumericMode = "exact" as const/)
     // A permissive second policy must fail authorization, not report activation.
     await writeFile(join(app, 'gregale-data/migrations/0003_bad_policy.sql'), 'CREATE POLICY broken_isolation ON api.notes USING (true) WITH CHECK (true);\n')
     refused(cli, verify, /required project authorization verification/)

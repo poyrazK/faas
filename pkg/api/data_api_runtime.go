@@ -16,10 +16,14 @@ import (
 // while the runtime is healthy, and three such answers would destroy it.
 const DataAPILivenessPath = "/livez"
 
+// DataAPIReadinessPath reaches the runtime through the public app route.
+// The platform can answer the deployment health path at the edge.
+const DataAPIReadinessPath = "/__gregale/ready"
+
 // DataAPIRuntime is the Data API runtime the control plane currently serves
 // (ADR-20261031095954). The CLI deploys this archive instead of the runtime it
 // was built with, so an old CLI release cannot redeploy an old runtime once
-// it fetches from apid; a running Data API reports Version from /healthz.
+// it fetches from apid; a running Data API reports Version from its readiness endpoint.
 type DataAPIRuntime struct {
 	Version       string `json:"version"`
 	ArchiveSHA256 string `json:"archive_sha256"`

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Read-only queries (ADR-20261117215858 §2). apid runs one customer
@@ -74,6 +76,45 @@ func (e *QueryError) Error() string {
 // database's agent query login.
 type ReadOnlyQuerier interface {
 	QueryReadOnly(context.Context, ReadOnlyQueryRequest) (ReadOnlyQueryResult, error)
+}
+
+// DataAPICatalogPreviewer supports the fixed metadata-only inspection without
+// enabling arbitrary SQL queries on a backend.
+type DataAPICatalogPreviewer interface {
+	PreviewDataAPICatalog(context.Context, string) (ReadOnlyQueryResult, error)
+}
+
+func (s *Service) PreviewDataAPICatalog(ctx context.Context, database Database) (ReadOnlyQueryResult, error) {
+	if database.State != StateReady || database.ProviderResourceID == "" {
+		return ReadOnlyQueryResult{}, ErrNotReady
+	}
+	backend, err := s.registry.Resolve(database.BackendID, database.BackendFingerprint)
+	if err != nil {
+		return ReadOnlyQueryResult{}, err
+	}
+	if backend.Capabilities.SupportsCredentialAccess(CredentialReadOnly) != nil {
+		return ReadOnlyQueryResult{}, ErrUnsupported
+	}
+	previewer, previewOK := backend.Provider.(DataAPICatalogPreviewer)
+	query, queryOK := backend.Provider.(ReadOnlyQuerier)
+	if !previewOK && !queryOK {
+		return ReadOnlyQueryResult{}, ErrUnsupported
+	}
+	if _, busy := s.queriesInFlight.LoadOrStore(database.ID, struct{}{}); busy {
+		return ReadOnlyQueryResult{}, ErrQueryBusy
+	}
+	defer s.queriesInFlight.Delete(database.ID)
+	callCtx, cancel := context.WithTimeout(ctx, queryCallTimeout)
+	defer cancel()
+	started := time.Now()
+	var result ReadOnlyQueryResult
+	if previewOK {
+		result, err = previewer.PreviewDataAPICatalog(callCtx, database.ProviderResourceID)
+	} else {
+		result, err = query.QueryReadOnly(callCtx, ReadOnlyQueryRequest{ProviderResourceID: database.ProviderResourceID, SQL: api.DataAPICatalogPreviewSQL, MaxRows: QueryMaxRows, MaxBytes: QueryMaxValueBytes})
+	}
+	result.Duration = time.Since(started)
+	return result, err
 }
 
 var (

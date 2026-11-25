@@ -20,6 +20,8 @@ type dataAPIRefreshReceipt struct {
 	Ready  bool   `json:"ready"`
 }
 
+const dataAPIHealthSourceHeader = "X-Faas-Health-Source"
+
 func dataAPIReadinessURL(app api.AppResponse) (string, error) {
 	address := app.CanonicalURL
 	if address == "" {
@@ -29,7 +31,7 @@ func dataAPIReadinessURL(app api.AppResponse) (string, error) {
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
 		return "", errors.New("readiness requires an HTTPS app URL without credentials, paths, queries or fragments")
 	}
-	u.Path = "/healthz"
+	u.Path, u.RawPath = api.DataAPIReadinessPath, ""
 	return u.String(), nil
 }
 
@@ -99,30 +101,46 @@ func probeDataAPIReadiness(ctx context.Context, client *http.Client, address str
 	if err != nil {
 		return false, errors.New("invalid Data API readiness URL")
 	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Cache-Control", "no-cache")
-	response, err := client.Do(req)
+	response, err := doDataAPIHealth(client, req)
 	if err != nil {
 		return false, nil // Transport failures can be transient during a cold wake.
 	}
 	defer func() { _ = response.Body.Close() }()
+	if response.Header.Get(dataAPIHealthSourceHeader) == "edge" {
+		return false, errors.New("the gateway answered Data API readiness; run gregale data-api deploy NAME to add the runtime readiness endpoint")
+	}
 	if response.StatusCode >= 500 || response.StatusCode == http.StatusRequestTimeout || response.StatusCode == http.StatusTooManyRequests {
 		return false, nil
 	}
 	if response.StatusCode != http.StatusOK {
-		return false, fmt.Errorf("/healthz returned HTTP %d; check the app URL and ingress settings", response.StatusCode)
+		return false, fmt.Errorf("Data API readiness returned HTTP %d; check the app URL and ingress settings", response.StatusCode)
 	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, (8<<10)+1))
+	body, err := io.ReadAll(io.LimitReader(response.Body, api.DataAPIHealthMaxBytes+1))
 	if err != nil {
 		return false, nil
 	}
 	var health struct {
 		Ready *bool `json:"ready"`
 	}
-	if len(body) > 8<<10 || json.Unmarshal(body, &health) != nil || health.Ready == nil {
-		return false, errors.New("/healthz did not return a valid Data API readiness response")
+	if len(body) > api.DataAPIHealthMaxBytes || json.Unmarshal(body, &health) != nil || health.Ready == nil {
+		return false, errors.New("the app did not return a valid Data API readiness response")
 	}
 	return *health.Ready, nil
+}
+
+func doDataAPIHealth(client *http.Client, req *http.Request) (*http.Response, error) {
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Cache-Control", "no-cache")
+	response, err := client.Do(req)
+	if err != nil || response.StatusCode != http.StatusNotFound || req.URL.Path != api.DataAPIReadinessPath {
+		return response, err
+	}
+	// Older runtimes only serve /healthz. Probe the same app and let the
+	// caller distinguish a runtime response from the gateway's synthetic one.
+	_ = response.Body.Close()
+	legacy := req.Clone(req.Context())
+	legacy.URL.Path, legacy.URL.RawPath = "/healthz", ""
+	return client.Do(legacy)
 }
 
 func dataAPIRefreshPoll(ctx context.Context, interval time.Duration) error {

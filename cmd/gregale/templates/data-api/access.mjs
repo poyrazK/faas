@@ -136,17 +136,15 @@ export function publicRpcTarget(req, config, rpc) {
   return { schema: rpc.schema, rpc: rpc.name, embedded }
 }
 
-const jsonMediaRange = /^\s*(application\/json|text\/plain|\*\/\*)\s*(;[^,]*)?$/i
+const jsonMediaRange = /^\s*(application\/json|\*\/\*)\s*$/i
 
-// The edge cache key covers method, host, path and query only. A response may
-// become a shared entry only when those fully determine it: the default schema
-// and the default full JSON representation. Everything else stays no-store.
+// The gateway partitions full JSON responses by URL, Accept and profile.
 export function publicReadCache(req, config, target) {
   if (!config.publicReadMaxAge || !(target?.relation || target?.rpc) || target.schema !== config.schemas[0]) return null
   const h = req.headers
   if (h.range !== undefined || h['range-unit'] !== undefined || h.prefer !== undefined || h.cookie !== undefined) return null
   if (h['accept-profile'] !== undefined && h['accept-profile'] !== config.schemas[0]) return null
-  if (h.accept !== undefined && !h.accept.split(',').every(part => jsonMediaRange.test(part))) return null
+  if (h.accept !== undefined && !jsonMediaRange.test(h.accept)) return null
   // Tags let owners purge one relation or function; every relation in the body
   // must be tagged. A function's own reads are not known, so its tag is separate.
   const own = target.rpc ? `data-api-rpc:${target.schema}.${target.rpc}` : `data-api:${target.schema}.${target.relation}`

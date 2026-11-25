@@ -199,7 +199,7 @@ func runCoordinatedDataAPISync(ctx context.Context, client *api.Client, slug str
 		return receipt, err
 	}
 	receipt.ContractVerified = true
-	if err := writeDataAPITypes(config.Output, false, types.StdoutTail); err != nil {
+	if err := writeDataAPITypes(config.Output, false, dataAPITypesForMode(types, config.NumericMode)); err != nil {
 		return receipt, err
 	}
 	env["GREGALE_DATA_API_REFRESH_FINGERPRINT"] = receipt.Fingerprint
