@@ -38,8 +38,7 @@ func TestRequestValidate(t *testing.T) {
 			t.Errorf("%s: %v", r.Op, err)
 		}
 	}
-	tty := exec("sh")
-	tty.TTY, tty.Background = true, true
+	noHandle := sandboxproto.Request{Op: sandboxproto.OpExecInput, Input: []byte("x")}
 	rows := exec("sh")
 	rows.Rows = 24
 	badEnv := exec("sh")
@@ -53,7 +52,7 @@ func TestRequestValidate(t *testing.T) {
 		"no argv":                 exec(),
 		"an empty command":        exec(""),
 		"NUL in argv":             exec("sh", "a\x00b"),
-		"a background terminal":   tty,
+		"input without a handle":  noHandle,
 		"rows without a terminal": rows,
 		"a bad env name":          badEnv,
 		"an unknown user":         root,

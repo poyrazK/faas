@@ -22,6 +22,8 @@ type execBody struct {
 	Workdir        string            `json:"workdir,omitempty"`
 	Env            map[string]string `json:"env,omitempty"`
 	TTY            bool              `json:"tty,omitempty"`
+	Rows           uint16            `json:"rows,omitempty"`
+	Cols           uint16            `json:"cols,omitempty"`
 	Background     bool              `json:"background,omitempty"`
 	TimeoutMillis  int64             `json:"timeout_ms,omitempty"`
 	MaxOutputBytes int64             `json:"max_output_bytes,omitempty"`
@@ -129,8 +131,14 @@ func execRequest(c sandboxtoken.Claims, body execBody) (sandboxproto.Request, *a
 	} else if err := json.Unmarshal(body.Cmd, &req.Argv); err != nil || len(req.Argv) == 0 {
 		return req, api.ErrValidation("cmd must be a command line or a non-empty array of arguments")
 	}
+	// A terminal command runs in the background: its input goes to
+	// POST …/exec/{handle}/input between output polls, since one HTTP call
+	// cannot carry both ways of a foreground terminal.
+	if body.TTY && !body.Background {
+		return req, api.ErrSandboxUnsupported("tty", "a terminal command must run with background: true; send its input to /exec/{handle}/input")
+	}
 	if body.TTY {
-		return req, api.ErrSandboxUnsupported("tty", "terminal commands need the session's interactive attach, which is not available yet")
+		req.TTY, req.Rows, req.Cols = true, body.Rows, body.Cols
 	}
 	req.TimeoutMillis, req.MaxOutputBytes = min(defaultExecTimeoutMillis, c.ExecTimeoutMaxMillis), c.ExecOutputMaxBytes
 	if body.TimeoutMillis > 0 {
@@ -192,6 +200,51 @@ func (h *Handler) execOutput(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	h.run(w, r, c, req)
+}
+
+// inputBody is POST /v1/sandboxes/{id}/exec/{handle}/input. data is
+// base64; rows and cols resize the command's terminal before data is
+// written, and eof ends its input after.
+type inputBody struct {
+	Data []byte `json:"data,omitempty"`
+	EOF  bool   `json:"eof,omitempty"`
+	Rows uint16 `json:"rows,omitempty"`
+	Cols uint16 `json:"cols,omitempty"`
+}
+
+// execInput writes to a background command's stdin, resizes its terminal
+// or ends its input, and answers the command.
+func (h *Handler) execInput(w http.ResponseWriter, r *http.Request) {
+	c, ok := h.claims(w, r)
+	if !ok {
+		return
+	}
+	var body inputBody
+	if !httpkit.DecodeJSONLimit(w, r, &body, inputRequestMaxBytes) {
+		return
+	}
+	h.run(w, r, c, sandboxproto.Request{Op: sandboxproto.OpExecInput, Handle: r.PathValue("handle"), Input: body.Data,
+		CloseInput: body.EOF, Rows: body.Rows, Cols: body.Cols})
+}
+
+// sessionEnvBody is PUT /v1/sandboxes/{id}/env.
+type sessionEnvBody struct {
+	Env map[string]string `json:"env"`
+}
+
+// sessionEnv replaces the session's environment, which every later command
+// gets under its own env (ADR-20261027090013 step 13). The guest keeps it in
+// memory only; the answer names the variables and never echoes values.
+func (h *Handler) sessionEnv(w http.ResponseWriter, r *http.Request) {
+	c, ok := h.claims(w, r)
+	if !ok {
+		return
+	}
+	var body sessionEnvBody
+	if !httpkit.DecodeJSONLimit(w, r, &body, inputRequestMaxBytes) {
+		return
+	}
+	h.run(w, r, c, sandboxproto.Request{Op: sandboxproto.OpSessionEnv, Env: body.Env})
 }
 
 func (h *Handler) execKill(w http.ResponseWriter, r *http.Request) {

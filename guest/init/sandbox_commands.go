@@ -3,6 +3,8 @@ package main
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
+	"os"
 	"sync"
 	"syscall"
 	"time"
@@ -26,13 +28,23 @@ type sandboxCommands struct {
 type backgroundCommand struct {
 	handle  string
 	argv    []string
+	tty     bool
 	started time.Time
 	proc    sandboxProcess
 	stdout  *outputRing
 	stderr  *outputRing
 	done    chan struct{}
 	exit    sandboxExit
+
+	// inMu orders exec_input calls and the close of stdin when the command
+	// exits; inputEnded is set by either.
+	inMu       sync.Mutex
+	inputEnded bool
 }
+
+// sandboxInputWriteTimeout bounds one exec_input write, so a command that
+// stops reading its input cannot hold an operation open.
+const sandboxInputWriteTimeout = 5 * time.Second
 
 func newSandboxCommands(runner sandboxRunner, max int, now func() time.Time) *sandboxCommands {
 	return &sandboxCommands{runner: runner, max: max, now: now, byID: map[string]*backgroundCommand{}}
@@ -50,7 +62,7 @@ func (c *sandboxCommands) start(spec sandboxCommandSpec, req sandboxproto.Reques
 	if err != nil {
 		return nil, sandboxError(sandboxproto.CodeStartFailed, "%s", err.Error())
 	}
-	cmd := &backgroundCommand{handle: newCommandHandle(), argv: append([]string(nil), spec.argv...), started: c.now(), proc: proc,
+	cmd := &backgroundCommand{handle: newCommandHandle(), argv: append([]string(nil), spec.argv...), tty: spec.tty, started: c.now(), proc: proc,
 		stdout: newOutputRing(req.MaxOutputBytes), stderr: newOutputRing(req.MaxOutputBytes), done: make(chan struct{})}
 	c.byID[cmd.handle] = cmd
 	c.order = append(c.order, cmd.handle)
@@ -111,7 +123,14 @@ func (b *backgroundCommand) run(timeout time.Duration) {
 			b.exit = <-exited
 		}
 	}
-	_ = b.proc.stdin().Close()
+	// A terminal's input is its output too: closeOutput closes it once the
+	// output is drained.
+	b.inMu.Lock()
+	b.inputEnded = true
+	if !b.tty {
+		_ = b.proc.stdin().Close()
+	}
+	b.inMu.Unlock()
 	drained := make(chan struct{})
 	go func() { pumps.Wait(); close(drained) }()
 	select {
@@ -123,7 +142,7 @@ func (b *backgroundCommand) run(timeout time.Duration) {
 }
 
 func (b *backgroundCommand) info() sandboxproto.Command {
-	out := sandboxproto.Command{Handle: b.handle, Argv: b.argv, Running: true, StartedAtUnix: b.started.UnixMilli()}
+	out := sandboxproto.Command{Handle: b.handle, Argv: b.argv, Running: true, TTY: b.tty, StartedAtUnix: b.started.UnixMilli()}
 	select {
 	case <-b.done:
 		out.Running, out.ExitCode, out.Signal = false, b.exit.code, b.exit.signal
@@ -189,6 +208,68 @@ func (c *sandboxCommands) kill(req sandboxproto.Request) (any, error) {
 		return nil, sandboxError(sandboxproto.CodeInternal, "signal %s: %s", cmd.handle, err.Error())
 	}
 	return cmd.info(), nil
+}
+
+// input resizes a background command's terminal, writes to its stdin and
+// ends its input (exec_input). A terminal's input ends with ^D, since
+// closing it would also close its output.
+func (c *sandboxCommands) input(req sandboxproto.Request) (any, error) {
+	cmd, err := c.find(req.Handle)
+	if err != nil {
+		return nil, err
+	}
+	cmd.inMu.Lock()
+	defer cmd.inMu.Unlock()
+	if cmd.inputEnded {
+		return nil, sandboxError(sandboxproto.CodeCommandEnded, "command %s has ended or its input was closed", cmd.handle)
+	}
+	if req.Rows > 0 {
+		if !cmd.tty {
+			return nil, sandboxError(sandboxproto.CodeUnsupported, "command %s has no terminal to resize", cmd.handle)
+		}
+		if err := cmd.proc.resize(req.Rows, req.Cols); err != nil {
+			return nil, sandboxError(sandboxproto.CodeInternal, "resize %s: %s", cmd.handle, err.Error())
+		}
+	}
+	data := req.Input
+	if req.CloseInput && cmd.tty {
+		data = append(append([]byte(nil), data...), 4)
+	}
+	if err := writeInput(cmd.proc.stdin(), data); err != nil {
+		return nil, inputError(cmd.handle, err)
+	}
+	if req.CloseInput {
+		cmd.inputEnded = true
+		if !cmd.tty {
+			_ = cmd.proc.stdin().Close()
+		}
+	}
+	return cmd.info(), nil
+}
+
+// writeInput writes data within sandboxInputWriteTimeout when the stream
+// supports deadlines (pipes and terminals do).
+func writeInput(w interface{ Write([]byte) (int, error) }, data []byte) error {
+	if len(data) == 0 {
+		return nil
+	}
+	if d, ok := w.(interface{ SetWriteDeadline(time.Time) error }); ok {
+		if d.SetWriteDeadline(time.Now().Add(sandboxInputWriteTimeout)) == nil {
+			defer func() { _ = d.SetWriteDeadline(time.Time{}) }()
+		}
+	}
+	_, err := w.Write(data)
+	return err
+}
+
+func inputError(handle string, err error) error {
+	switch {
+	case errors.Is(err, os.ErrDeadlineExceeded):
+		return sandboxError(sandboxproto.CodeLimit, "command %s is not reading its input; some of it may have been written", handle)
+	case errors.Is(err, os.ErrClosed), errors.Is(err, syscall.EPIPE), errors.Is(err, syscall.EIO):
+		return sandboxError(sandboxproto.CodeCommandEnded, "command %s no longer reads its input", handle)
+	}
+	return sandboxError(sandboxproto.CodeInternal, "write to %s: %s", handle, err.Error())
 }
 
 func newCommandHandle() string {
