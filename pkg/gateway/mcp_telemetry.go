@@ -29,6 +29,10 @@ func (h *Handler) observeMCPRequest(r *http.Request, status int, appID string, e
 		return
 	}
 	outcome := api.MCPHTTPOutcome(status)
+	if r.Context().Value(mcpPlanRefusedKey{}) == true {
+		// A plan refusal answered in JSON-RPC (ADR-20261125230541).
+		outcome = "rate_limited"
+	}
 	if errors.Is(r.Context().Err(), context.DeadlineExceeded) {
 		outcome = "timeout"
 	} else if errors.Is(r.Context().Err(), context.Canceled) {

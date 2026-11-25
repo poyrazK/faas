@@ -48,10 +48,11 @@ answered in MCP terms. Spend-cap and overdue-invoice refusals keep their
    on every request (`params._meta["io.modelcontextprotocol/clientCapabilities"]`).
    Older protocols declare them once in `initialize`: when that request
    declares `elicitation.url`, the gateway remembers the `Mcp-Session-Id`
-   of the answer for 24 hours, per app, in that gateway process (bounded
-   like the OAuth consumer cache; a full cache drops expired sessions, then
-   refuses new ones). A later request of the session reaching another node
-   gets the tool-error form, which still carries the link.
+   of the answer for 24 hours, per app, in that gateway process (at most
+   1,024 sessions per app, so one app's callers cannot crowd out another's;
+   a full app drops expired sessions, then an arbitrary one). A later
+   request of the session reaching another node gets the tool-error form,
+   which still carries the link.
 4. **Ownership.** Only gatewayd-internal changes. apid still mints the link
    (`Auth.ConsumerUpgradeLink`).
 
@@ -61,7 +62,12 @@ answered in MCP terms. Spend-cap and overdue-invoice refusals keep their
 - Clients that relied on the 429 for MCP requests now get HTTP 200 with a
   JSON-RPC error or tool error; MCP clients could not act on the 429.
 - Request telemetry records the answer as status 200 with the platform
-  error code header, so it counts as a gateway answer, not the app's.
+  error code header, so it counts as a gateway answer, not the app's. MCP
+  telemetry (`mcp_requests` outcome, seller insights) still counts it as
+  `rate_limited`.
+- A request whose body spells `id`, `method` or `params` twice (in any
+  case) keeps the 429, so the answer never echoes an id the app would not
+  read.
 
 ## Consequences
 

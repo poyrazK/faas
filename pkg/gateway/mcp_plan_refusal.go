@@ -42,6 +42,10 @@ const mcpEnvelopeMaxBytes = api.MCPPolicyMaxRequestBytes
 // mcpRequestKey carries the JSON-RPC request an MCP resource policy admitted.
 type mcpRequestKey struct{}
 
+// mcpPlanRefusedKey marks a request writeMCPPlanRefusal answered, so MCP
+// telemetry counts it as rate limited although the status is 200.
+type mcpPlanRefusedKey struct{}
+
 // mcpInitializeKey marks an initialize request whose client declared URL
 // elicitation; the answer's session id is remembered.
 type mcpInitializeKey struct{}
@@ -75,8 +79,11 @@ func readMCPEnvelope(r *http.Request) (mcpEnvelope, bool) {
 	if err != nil || len(body) > mcpEnvelopeMaxBytes {
 		return mcpEnvelope{}, false
 	}
+	// The answer echoes the id the app would read, so a body that spells a
+	// field twice (Go's decoder takes the last case-insensitive match) is
+	// left alone.
 	var env mcpEnvelope
-	if json.Unmarshal(body, &env) != nil {
+	if json.Unmarshal(body, &env) != nil || !mcpPolicyFieldsUnambiguous(body, "id", "method", "params") {
 		return mcpEnvelope{}, false
 	}
 	return env, true
@@ -156,6 +163,7 @@ func writeMCPPlanRefusal(w http.ResponseWriter, r *http.Request, refusal mcpPlan
 	w.Header().Set("Cache-Control", "no-store")
 	// The answer is the gateway's, not the app's, though it is a 200.
 	w.Header().Set(api.ErrorCodeHeader, refusal.code)
+	*r = *r.WithContext(context.WithValue(r.Context(), mcpPlanRefusedKey{}, true))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
 	return true
@@ -175,12 +183,16 @@ func mcpPlanRefusalMessage(decision ConsumerPlanDecision, route string) string {
 // declared URL elicitation.
 const mcpSessionTTL = 24 * time.Hour
 
+// mcpSessionsPerApp bounds the sessions remembered for one app, so one
+// app's callers cannot crowd out another's.
+const mcpSessionsPerApp = 1024
+
 // mcpSessionCapabilities remembers, per gateway process, the MCP sessions
 // whose initialize declared URL elicitation. A session served by another
 // node gets the plain-text refusal.
 type mcpSessionCapabilities struct {
-	mu      sync.Mutex
-	entries map[string]time.Time
+	mu   sync.Mutex
+	apps map[string]map[string]time.Time
 }
 
 func (c *mcpSessionCapabilities) urlElicitation(appID, session string, now time.Time) bool {
@@ -189,30 +201,59 @@ func (c *mcpSessionCapabilities) urlElicitation(appID, session string, now time.
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	expires, ok := c.entries[appID+"\x00"+session]
+	expires, ok := c.apps[appID][session]
 	return ok && now.Before(expires)
 }
 
+// remember adds an app's session. A full app drops its expired sessions,
+// then an arbitrary one; past oauthConsumerCacheMax apps, apps whose
+// sessions all expired are dropped and a new app waits for room.
 func (c *mcpSessionCapabilities) remember(appID, session string, now time.Time) {
 	if session == "" || len(session) > 256 {
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.entries == nil {
-		c.entries = map[string]time.Time{}
+	if c.apps == nil {
+		c.apps = map[string]map[string]time.Time{}
 	}
-	if len(c.entries) >= oauthConsumerCacheMax {
-		for k, expires := range c.entries {
-			if !now.Before(expires) {
-				delete(c.entries, k)
+	sessions, ok := c.apps[appID]
+	if !ok {
+		if len(c.apps) >= oauthConsumerCacheMax {
+			c.dropExpiredApps(now)
+			if len(c.apps) >= oauthConsumerCacheMax {
+				return
 			}
 		}
-		if len(c.entries) >= oauthConsumerCacheMax {
-			return
+		sessions = map[string]time.Time{}
+		c.apps[appID] = sessions
+	}
+	if len(sessions) >= mcpSessionsPerApp {
+		dropExpired(sessions, now)
+		for k := range sessions {
+			if len(sessions) < mcpSessionsPerApp {
+				break
+			}
+			delete(sessions, k)
 		}
 	}
-	c.entries[appID+"\x00"+session] = now.Add(mcpSessionTTL)
+	sessions[session] = now.Add(mcpSessionTTL)
+}
+
+func (c *mcpSessionCapabilities) dropExpiredApps(now time.Time) {
+	for appID, sessions := range c.apps {
+		if dropExpired(sessions, now); len(sessions) == 0 {
+			delete(c.apps, appID)
+		}
+	}
+}
+
+func dropExpired(sessions map[string]time.Time, now time.Time) {
+	for k, expires := range sessions {
+		if !now.Before(expires) {
+			delete(sessions, k)
+		}
+	}
 }
 
 // wrapMCPInitialize remembers the session id of an initialize answer whose

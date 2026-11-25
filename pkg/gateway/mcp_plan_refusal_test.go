@@ -57,6 +57,9 @@ func TestMCPPlanRefusal(t *testing.T) {
 			t.Fatal("admitted")
 		}
 		var a answer
+		if refused := r.Context().Value(mcpPlanRefusedKey{}) == true; refused != (w.Code == http.StatusOK) {
+			t.Fatalf("telemetry mark = %v for status %d", refused, w.Code)
+		}
 		if w.Code == http.StatusOK {
 			if err := json.Unmarshal(w.Body.Bytes(), &a); err != nil {
 				t.Fatalf("body %s: %v", w.Body, err)
@@ -105,6 +108,7 @@ func TestMCPPlanRefusal(t *testing.T) {
 		mark bool
 	}{
 		"notification":     {`{"jsonrpc":"2.0","method":"notifications/initialized"}`, true},
+		"ambiguous id":     {`{"jsonrpc":"2.0","id":1,"ID":2,"method":"tools/call","params":{"name":"search"}}`, true},
 		"batch":            {`[` + call + `]`, true},
 		"not an MCP route": {call, false},
 	} {
@@ -150,21 +154,35 @@ func TestMCPSessionURLElicitation(t *testing.T) {
 	}
 }
 
-// A full session cache drops expired entries, then refuses new ones rather
-// than forgetting live ones.
+// Sessions are bounded per app, so one app's callers cannot crowd out
+// another's; expired sessions and apps make room.
 func TestMCPSessionCapabilitiesBounded(t *testing.T) {
 	var c mcpSessionCapabilities
 	now := time.Date(2026, 11, 26, 9, 0, 0, 0, time.UTC)
-	for i := range oauthConsumerCacheMax {
+	c.remember("other", "o1", now)
+	for i := range mcpSessionsPerApp + 10 {
 		c.remember("app", fmt.Sprint("s", i), now)
 	}
-	c.remember("app", "new", now)
-	if c.urlElicitation("app", "new", now) || !c.urlElicitation("app", "s0", now) {
-		t.Fatal("full cache admitted a new session or dropped a live one")
+	if len(c.apps["app"]) != mcpSessionsPerApp || !c.urlElicitation("app", fmt.Sprint("s", mcpSessionsPerApp+9), now) {
+		t.Fatalf("full app holds %d sessions or dropped the newest", len(c.apps["app"]))
+	}
+	if !c.urlElicitation("other", "o1", now) {
+		t.Fatal("one app's sessions crowded out another's")
 	}
 	later := now.Add(mcpSessionTTL)
 	c.remember("app", "new", later)
-	if !c.urlElicitation("app", "new", later) || c.urlElicitation("app", "s0", later) {
-		t.Fatal("expired sessions not replaced")
+	if !c.urlElicitation("app", "new", later) || len(c.apps["app"]) != 1 {
+		t.Fatalf("expired sessions not dropped: %d", len(c.apps["app"]))
+	}
+	for i := len(c.apps); i < oauthConsumerCacheMax; i++ {
+		c.remember(fmt.Sprint("app", i), "s", now)
+	}
+	c.remember("late", "s", now)
+	if c.urlElicitation("late", "s", now) {
+		t.Fatal("app admitted past the app bound with no expired app")
+	}
+	c.remember("late", "s", later)
+	if !c.urlElicitation("late", "s", later) {
+		t.Fatal("expired apps not dropped for a new one")
 	}
 }
