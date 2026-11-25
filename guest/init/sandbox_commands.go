@@ -3,7 +3,10 @@ package main
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
+	"os"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -26,13 +29,28 @@ type sandboxCommands struct {
 type backgroundCommand struct {
 	handle  string
 	argv    []string
+	tty     bool
 	started time.Time
 	proc    sandboxProcess
 	stdout  *outputRing
 	stderr  *outputRing
 	done    chan struct{}
 	exit    sandboxExit
+
+	// inTurn admits one exec_input at a time; a call waits for its turn no
+	// longer than one write may take. linePending is guarded by it.
+	inTurn chan struct{}
+	// inputEnded is set when the command exits or its pipe is closed. The
+	// exit never waits for an input write: closing the pipe ends it.
+	inputEnded atomic.Bool
+	// linePending: the terminal holds a partial line, so a ^D would only
+	// hand it over rather than end the input.
+	linePending bool
 }
+
+// sandboxInputWriteTimeout bounds one exec_input write, so a command that
+// stops reading its input cannot hold an operation open. Tests shorten it.
+var sandboxInputWriteTimeout = 5 * time.Second
 
 func newSandboxCommands(runner sandboxRunner, max int, now func() time.Time) *sandboxCommands {
 	return &sandboxCommands{runner: runner, max: max, now: now, byID: map[string]*backgroundCommand{}}
@@ -50,8 +68,9 @@ func (c *sandboxCommands) start(spec sandboxCommandSpec, req sandboxproto.Reques
 	if err != nil {
 		return nil, sandboxError(sandboxproto.CodeStartFailed, "%s", err.Error())
 	}
-	cmd := &backgroundCommand{handle: newCommandHandle(), argv: append([]string(nil), spec.argv...), started: c.now(), proc: proc,
-		stdout: newOutputRing(req.MaxOutputBytes), stderr: newOutputRing(req.MaxOutputBytes), done: make(chan struct{})}
+	cmd := &backgroundCommand{handle: newCommandHandle(), argv: append([]string(nil), spec.argv...), tty: spec.tty, started: c.now(), proc: proc,
+		stdout: newOutputRing(req.MaxOutputBytes), stderr: newOutputRing(req.MaxOutputBytes), done: make(chan struct{}),
+		inTurn: make(chan struct{}, 1)}
 	c.byID[cmd.handle] = cmd
 	c.order = append(c.order, cmd.handle)
 	go cmd.run(time.Duration(req.TimeoutMillis) * time.Millisecond)
@@ -111,7 +130,12 @@ func (b *backgroundCommand) run(timeout time.Duration) {
 			b.exit = <-exited
 		}
 	}
-	_ = b.proc.stdin().Close()
+	// A terminal's input is its output too: closeOutput closes it once the
+	// output is drained.
+	b.inputEnded.Store(true)
+	if !b.tty {
+		_ = b.proc.stdin().Close()
+	}
 	drained := make(chan struct{})
 	go func() { pumps.Wait(); close(drained) }()
 	select {
@@ -123,7 +147,7 @@ func (b *backgroundCommand) run(timeout time.Duration) {
 }
 
 func (b *backgroundCommand) info() sandboxproto.Command {
-	out := sandboxproto.Command{Handle: b.handle, Argv: b.argv, Running: true, StartedAtUnix: b.started.UnixMilli()}
+	out := sandboxproto.Command{Handle: b.handle, Argv: b.argv, Running: true, TTY: b.tty, StartedAtUnix: b.started.UnixMilli()}
 	select {
 	case <-b.done:
 		out.Running, out.ExitCode, out.Signal = false, b.exit.code, b.exit.signal
@@ -189,6 +213,115 @@ func (c *sandboxCommands) kill(req sandboxproto.Request) (any, error) {
 		return nil, sandboxError(sandboxproto.CodeInternal, "signal %s: %s", cmd.handle, err.Error())
 	}
 	return cmd.info(), nil
+}
+
+// input resizes a background command's terminal, writes to its stdin and
+// ends its input (exec_input). A terminal's input ends with ^D, since
+// closing it would also close its output; the terminal itself stays open
+// for input until its command exits.
+func (c *sandboxCommands) input(req sandboxproto.Request) (any, error) {
+	cmd, err := c.find(req.Handle)
+	if err != nil {
+		return nil, err
+	}
+	select {
+	case cmd.inTurn <- struct{}{}:
+		defer func() { <-cmd.inTurn }()
+	case <-time.After(sandboxInputWriteTimeout):
+		return nil, sandboxError(sandboxproto.CodeInputStalled, "command %s is not reading its input; an earlier input is still waiting", cmd.handle)
+	}
+	if cmd.inputEnded.Load() {
+		return nil, sandboxError(sandboxproto.CodeCommandEnded, "command %s has ended or its input was closed", cmd.handle)
+	}
+	if req.Rows > 0 {
+		if !cmd.tty {
+			return nil, sandboxError(sandboxproto.CodeUnsupported, "command %s has no terminal to resize", cmd.handle)
+		}
+		if err := cmd.proc.resize(req.Rows, req.Cols); err != nil {
+			return nil, sandboxError(sandboxproto.CodeInternal, "resize %s: %s", cmd.handle, err.Error())
+		}
+	}
+	data := req.Input
+	if cmd.tty {
+		if req.CloseInput {
+			data = terminalEOF(cmd.linePending, data)
+		}
+		// The line state follows what was written, even in part: a stalled
+		// write leaves it unknown, and assuming a pending line at worst
+		// hands over an empty one.
+		cmd.linePending, _ = terminalLine(cmd.linePending, data)
+	}
+	if err := writeInput(cmd.proc.stdin(), data); err != nil {
+		return nil, inputError(cmd.handle, err)
+	}
+	// A terminal outlives the program that read its ^D (a shell returns to
+	// its prompt), so only a pipe's input ends here.
+	if req.CloseInput && !cmd.tty {
+		cmd.inputEnded.Store(true)
+		_ = cmd.proc.stdin().Close()
+	}
+	return cmd.info(), nil
+}
+
+// terminalLine follows a canonical terminal's line through data: whether a
+// partial line is pending afterwards, and whether data ended in a ^D that
+// ended input (one at the start of a line).
+func terminalLine(pending bool, data []byte) (bool, bool) {
+	endedInput := false
+	for _, b := range data {
+		endedInput = false
+		switch b {
+		case '\n', '\r':
+			pending = false
+		case 4:
+			endedInput, pending = !pending, false
+		default:
+			pending = true
+		}
+	}
+	return pending, endedInput
+}
+
+// terminalEOF makes data end the terminal program's input. A canonical
+// terminal reads ^D as end of input only at the start of a line; after a
+// partial line, written now or by an earlier call, ^D just hands the line
+// over, so a second one follows. Data that already ends input gets none:
+// another ^D would reach the shell behind the program.
+func terminalEOF(pending bool, data []byte) []byte {
+	pending, ended := terminalLine(pending, data)
+	if ended && len(data) > 0 {
+		return data
+	}
+	out := append([]byte(nil), data...)
+	if pending {
+		out = append(out, 4)
+	}
+	return append(out, 4)
+}
+
+// writeInput writes data within sandboxInputWriteTimeout when the stream
+// supports deadlines (pipes and terminals do).
+func writeInput(w interface{ Write([]byte) (int, error) }, data []byte) error {
+	if len(data) == 0 {
+		return nil
+	}
+	if d, ok := w.(interface{ SetWriteDeadline(time.Time) error }); ok {
+		if d.SetWriteDeadline(time.Now().Add(sandboxInputWriteTimeout)) == nil {
+			defer func() { _ = d.SetWriteDeadline(time.Time{}) }()
+		}
+	}
+	_, err := w.Write(data)
+	return err
+}
+
+func inputError(handle string, err error) error {
+	switch {
+	case errors.Is(err, os.ErrDeadlineExceeded):
+		return sandboxError(sandboxproto.CodeInputStalled, "command %s is not reading its input; some of it may have been written", handle)
+	case errors.Is(err, os.ErrClosed), errors.Is(err, syscall.EPIPE), errors.Is(err, syscall.EIO):
+		return sandboxError(sandboxproto.CodeCommandEnded, "command %s no longer reads its input", handle)
+	}
+	return sandboxError(sandboxproto.CodeInternal, "write to %s: %s", handle, err.Error())
 }
 
 func newCommandHandle() string {

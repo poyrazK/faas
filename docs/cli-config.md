@@ -779,9 +779,9 @@ include `category` and `exit_code` alongside the server's unchanged `code`:
 | Exit code | JSON category | Meaning |
 |---|---|---|
 | `0` | — | Success |
-| `1` | `invalid_request` | Invalid arguments, local validation/filesystem failures, or other API rejection |
+| `1` | `invalid_request` | Invalid arguments, local validation/filesystem failures, API 501 (a feature this installation does not run), or other API rejection |
 | `2` | `authentication` | Missing credential or API 401; log in again |
-| `3` | `temporary_failure` | Network/transport failure, timeout, API 408/429, or API 5xx |
+| `3` | `temporary_failure` | Network/transport failure, timeout, API 408/429, or API 5xx other than 501 |
 | `4` | `not_found` | API 404/410; resource missing or gone |
 | `5` | `conflict` | API 409/412; inspect current state before retrying |
 | `6` | `permission_denied` | API 403; check access or plan requirements |

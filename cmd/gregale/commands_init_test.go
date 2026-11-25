@@ -782,6 +782,13 @@ func TestRequireTemplateSecretsBeforeFirstStart(t *testing.T) {
 		// Prod hunt r35: the migration app failed in its release task.
 		{name: "data-api-starter first deploy without a migration binding", tpl: "data-api-starter", lookupErr: notFound, wantErr: true, wantLookup: true,
 			wantRemedy: "gregale postgres attach <database> demo --access migration --env MIGRATION_DATABASE_URL"},
+		// Prod hunt r41: a secrets file does not attach the bucket; the app
+		// crashed on startup_unavailable.
+		{name: "object-storage-node first deploy with secrets but no bucket", tpl: "object-storage-node", secretsFile: "/tmp/s", lookupErr: notFound, wantErr: true, wantLookup: true,
+			wantRemedy: "gregale add bucket assets --app demo"},
+		{name: "data-api-starter with a secrets file still needs its binding", tpl: "data-api-starter", secretsFile: "/tmp/s", lookupErr: notFound, wantErr: true, wantLookup: true,
+			wantRemedy: "gregale postgres attach"},
+		{name: "existing storage app may already hold its bucket", tpl: "object-storage-node", secretsFile: "/tmp/s", wantLookup: true},
 		{name: "existing app may already hold secrets", tpl: "ai-chat", wantLookup: true},
 		{name: "lookup failure keeps the old behaviour", tpl: "ai-chat", lookupErr: unavailable, wantLookup: true},
 		{name: "secrets file supplied", tpl: "ai-chat", secretsFile: "/tmp/s", lookupErr: notFound},

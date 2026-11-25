@@ -653,8 +653,11 @@ type MemStore struct {
 	apiConsumerBillingPolicies           map[string]APIConsumerBillingPolicy       // ADR-1315, by app
 	apiConsumerOverdueHolds              map[string]APIConsumerOverdueHold         // ADR-1315, by consumer
 	platformTenants                      map[string]PlatformTenant
-	flagEvents                           *memFlagEvents                 // ADR 20261115163113, lazily made
-	savedInsights                        map[string]*memSavedInsightRow // ADR-20261122190000, by ID, lazily made
+	flagEvents                           *memFlagEvents                      // ADR 20261115163113, lazily made
+	savedInsights                        map[string]*memSavedInsightRow      // ADR-20261122190000, by ID, lazily made
+	flagNotificationSettings             map[string]FlagNotificationSettings // ADR-20261125085913, by environment ID, lazily made
+	flagNotifications                    []FlagNotification                  // ADR-20261125085913
+	flagNotificationKeys                 map[string]flagNotificationKey      // ADR-20261125085913
 	platformTenantReconciliationReceipts map[string]api.PlatformTenantReconciliationReceiptResponse
 	platformTenantOffboardingReceipts    map[string]api.PlatformTenantOffboardingReceiptResponse
 	platformTenantAccessTokens           map[string]PlatformTenantAccessToken

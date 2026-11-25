@@ -1183,6 +1183,9 @@ var methodRouteMap = map[string]string{
 	"GET /v1/projects/{slug}/environments/{environment}/cohorts/{key}":              "GetProjectInsightCohort",
 	"DELETE /v1/projects/{slug}/environments/{environment}/cohorts/{key}":           "DeleteProjectInsightCohort",
 	"POST /v1/projects/{slug}/environments/{environment}/cohorts/{key}/refresh":     "RefreshProjectInsightCohort",
+	// Flag notifications (ADR-20261125085913).
+	"GET /v1/projects/{slug}/environments/{environment}/flags/notifications": "ProjectFlagNotifications",
+	"PUT /v1/projects/{slug}/environments/{environment}/flags/notifications": "SetProjectFlagNotifications",
 	// Saved insights (ADR-20261122190000); PUT is SaveProjectInsight with replace.
 	"GET /v1/projects/{slug}/environments/{environment}/insights/saved":               "ListProjectSavedInsights",
 	"POST /v1/projects/{slug}/environments/{environment}/insights/saved":              "SaveProjectInsight",

@@ -206,6 +206,9 @@ func (r *featureFlagLifecycleReconciler) checkEnvironment(ctx context.Context, o
 		}
 		return
 	}
+	if err := r.notifyLifecycle(ctx, acct, env, report.Flags, now); err != nil && r.log != nil {
+		r.log.WarnContext(ctx, "flags lifecycle: notification failed", "environment", env.Scope.EnvironmentID, "err", err)
+	}
 	for _, f := range report.Flags {
 		for _, reason := range f.Attention {
 			data, _ := json.Marshal(map[string]any{

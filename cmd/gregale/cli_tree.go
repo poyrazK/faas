@@ -219,6 +219,10 @@ var cliTreeAliases = []cliTreeAlias{
 	{"flag edge delete", "flags edge-rm"},
 	{"flag edge list", "flags edge-list"},
 	{"flag stale list", "flags stale"},
+	// ADR-20261125085913: flag notifications.
+	{"flag notify get", "flags notifications get"},
+	{"flag notify set", "flags notifications set"},
+	{"flag notify clear", "flags notifications clear"},
 	{"flag experiment list", "flags experiments list"},
 	{"flag experiment create", "flags experiments create"},
 	{"flag experiment get", "flags experiments get"},
@@ -906,6 +910,9 @@ func rewriteTreePath(args []string) ([]string, error) {
 		// Help for the path comes from the tree manifest (treeHelpWords).
 		if hasHelpFlag(args) {
 			return args, nil
+		}
+		if folded, ok := foldValueAsFlag(args, path); ok {
+			return folded, nil
 		}
 		return nil, errFoldFlagRequired{fmt.Errorf("gregale %s needs %s; run 'gregale %s --help' for usage", path, strings.Join(flags, " or "), path)}
 	}

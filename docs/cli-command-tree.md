@@ -414,6 +414,9 @@ touch them. The tables below map each earlier name.
 | `gregale flags experiments start` | `gregale flag experiment start` |
 | `gregale flags experiments stop` | `gregale flag experiment stop` |
 | `gregale flags kill` | `gregale flag kill set` |
+| `gregale flags notifications clear` | `gregale flag notify clear` |
+| `gregale flags notifications get` | `gregale flag notify get` |
+| `gregale flags notifications set` | `gregale flag notify set` |
 | `gregale flags off` | `gregale flag disable` |
 | `gregale flags on` | `gregale flag enable` |
 | `gregale flags percent` | `gregale flag rollout set` |

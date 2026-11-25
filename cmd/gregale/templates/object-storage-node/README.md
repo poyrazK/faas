@@ -39,7 +39,9 @@ curl --fail-with-body -X PUT "$APP_URL/objects/file.bin" \
   -H 'Content-Type: application/octet-stream' --data-binary @file.bin
 curl --fail-with-body "$APP_URL/objects/file.bin" \
   -H "Authorization: Bearer $STORAGE_APP_TOKEN" --output downloaded.bin
-curl --fail-with-body "$APP_URL/readyz"
+# Gregale's edge answers a public GET /readyz (the health path) itself
+# without waking the app; read the app's own readiness report with:
+gregale release verify <deployment-id> --app <slug> --path /readyz
 ```
 
 Keys are simple file identifiers: 1–128 letters, digits, dots, underscores or

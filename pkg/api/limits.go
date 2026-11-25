@@ -3096,6 +3096,21 @@ const (
 	FlagsMaxConfigVersion      = int64(9007199254740991)
 )
 
+// Flag notification bounds (ADR-20261125085913): experiment decisions and
+// problems, weekly lifecycle digests and flag expiries sent to notification
+// channels.
+const (
+	// FlagsMaxNotificationChannels bounds the channels an environment or an
+	// experiment notifies.
+	FlagsMaxNotificationChannels = 5
+	// FlagsNotificationMaxAttempts is how many times meterd tries to deliver
+	// a notification before giving up.
+	FlagsNotificationMaxAttempts = 6
+	// FlagsNotificationRetentionDays is how long settled notifications are
+	// kept, and how long an undelivered one may wait to be sent.
+	FlagsNotificationRetentionDays = 30
+)
+
 // Edge flag routing bounds (ADR-20261124212701): variant flags the gateway
 // evaluates without an SDK and the paths they rewrite.
 const (

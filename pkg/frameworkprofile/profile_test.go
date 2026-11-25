@@ -194,6 +194,27 @@ func TestAnalyzeDockerfileWarnsForRawTCPServer(t *testing.T) {
 	}
 }
 
+// Prod hunt r42: a loopback address that is not bound warned on every deploy
+// of rest-api-postgres.
+func TestLoopbackBindLine(t *testing.T) {
+	for body, want := range map[string]bool{
+		"app.listen(3000, '127.0.0.1')":                                     true,
+		"const HOST = process.env.HOST || 'localhost'":                      true,
+		"uvicorn.run(app, host=\"127.0.0.1\")":                              true,
+		"server.bind(('localhost', 8080))":                                  true,
+		"app.run('127.0.0.1', 8080)":                                        true,
+		"uvicorn.run(app, \"127.0.0.1\")":                                   true,
+		"web.run_app(app, \"127.0.0.1\")":                                   true,
+		"if (![\"127.0.0.1\", \"::1\"].includes(req.socket.remoteAddress))": false,
+		"const url = 'http://localhost:5432/db'":                            false,
+		"// try it at http://localhost:8080":                                false,
+	} {
+		if got := loopbackBindLine(body); got != want {
+			t.Errorf("loopbackBindLine(%q) = %v, want %v", body, got, want)
+		}
+	}
+}
+
 func TestAnalyzeUnknownAndLoopbackWarning(t *testing.T) {
 	got, err := Analyze(fstest.MapFS{
 		"server.js": &fstest.MapFile{Data: []byte("app.listen(3000, '127.0.0.1')\n")},
