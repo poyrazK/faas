@@ -612,7 +612,7 @@ export class ManagedPostgresService {
    * Start a database when its app wakes
    * Turns on or off starting a scale-to-zero database when an app bound to it wakes, so the database's cold start overlaps the app's instead of following it. Off by default. A wake that never queries the database still starts it, and the compute bills at least one suspend timeout. Repeating the same value is harmless. An always-on database, or one on a backend that cannot start its compute, answers 409 wake_with_app_unsupported; one with a change in progress answers a conflict. While operations are closed, only turning it off is taken.
    * @returns ManagedPostgresWakeWithApp The setting in force
-   * @returns Problem Validation, conflict, entitlement or admission failure
+   * @returns Problem Invalid setting, unsupported database, conflict, entitlement or admission failure
    * @throws ApiError
    */
   public static setManagedPostgresWakeWithApp({
