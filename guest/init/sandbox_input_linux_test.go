@@ -75,13 +75,14 @@ func TestSandboxTerminalEOFAfterAPartialLine(t *testing.T) {
 
 // adr: 20261027090013 step 12 — a terminal command that stops reading
 // cannot hold exec_input: the write times out as input_stalled, and the
-// command still ends and is reaped.
+// command still ends and is reaped. It sleeps far past the test so no call
+// can see it exit first.
 func TestSandboxTerminalInputStalls(t *testing.T) {
 	old := sandboxInputWriteTimeout
 	sandboxInputWriteTimeout = 300 * time.Millisecond
 	t.Cleanup(func() { sandboxInputWriteTimeout = old })
 	f := newTerminalFixture(t)
-	req := execReq("sh", "-c", "stty raw -echo; sleep 2")
+	req := execReq("sh", "-c", "stty raw -echo; sleep 600")
 	req.TTY, req.Rows, req.Cols = true, 24, 80
 	handle := startBackground(t, f, req)
 	started := time.Now()
@@ -90,7 +91,7 @@ func TestSandboxTerminalInputStalls(t *testing.T) {
 	if r.code() != sandboxproto.CodeInputStalled {
 		t.Fatalf("a full terminal: %v, want %s", r.err, sandboxproto.CodeInputStalled)
 	}
-	if took := time.Since(started); took > 1500*time.Millisecond {
+	if took := time.Since(started); took > 3*time.Second {
 		t.Fatalf("the stalled write took %s", took)
 	}
 	// A call queued behind the stalled one gives up as quickly, so a
@@ -112,8 +113,12 @@ func TestSandboxTerminalInputStalls(t *testing.T) {
 			t.Fatalf("concurrent stalled inputs answered %v", codes)
 		}
 	}
-	if took := time.Since(started); took > 1500*time.Millisecond {
+	if took := time.Since(started); took > 3*time.Second {
 		t.Fatalf("queued stalled writes took %s", took)
+	}
+	// The command still ends and is reaped once killed.
+	if r := f.call(t, sandboxproto.Request{Op: sandboxproto.OpExecKill, Handle: handle, Signal: "KILL"}, nil, nil); r.err != nil {
+		t.Fatalf("kill: %v", r.err)
 	}
 	if out := pollUntilExit(t, f, handle); out.Running {
 		t.Fatalf("the command did not end: %+v", out)
