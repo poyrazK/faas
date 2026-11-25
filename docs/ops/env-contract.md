@@ -169,7 +169,11 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_COMMIT_DATABASE_CIDRS` | schedd | `default` |  |  | `` | operator-approved database address prefixes; required when the Commit relay is enabled |
 | `FAAS_COMMIT_DATABASE_HOSTS` | schedd | `default` |  |  | `` | exact operator-approved database hostnames; required when the Commit relay is enabled |
 | `FAAS_COMMIT_PUBLIC_DATABASES` | schedd | `default` |  | false | `` | ADR-20261112140000 §6: true lets Postgres changes sources reach customer databases at any globally reachable address; other Commit sources keep the FAAS_COMMIT_DATABASE_HOSTS/CIDRS allowlist; true or false only |
+| `FAAS_COMMIT_RELAY_ADAPTIVE_RESERVED_CONNECT` | schedd | `default` |  |  | `` | Opt-in adaptive deadline for reserved workers. Requires the fast reserved connection budget. |
+| `FAAS_COMMIT_RELAY_ADAPTIVE_RESERVED_CONNECT_MAX_MS` | schedd | `default` |  |  | `` | Optional adaptive connection cap from 750 to 2000 milliseconds. Adaptive mode uses 2000 when this setting is unset. |
 | `FAAS_COMMIT_RELAY_ENABLED` | schedd | `default` |  |  | `` | opt-in Gregale Commit qualification gate; disabled unless explicitly set to true |
+| `FAAS_COMMIT_RELAY_FAST_RESERVED_CONNECT` | schedd | `default` |  |  | `` | Opt-in 750 ms connection budget. Requires the reserved healthy worker. |
+| `FAAS_COMMIT_RELAY_RESERVE_HEALTHY_WORKER` | schedd | `default` |  |  | `` | Opt-in reservation of one relay worker per scheduler for recently healthy sources. |
 | `FAAS_COMMIT_SHA` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
 | `FAAS_COMMIT_TLS_PG_BIN_DIR` | shared | `dev-only` |  |  | `` | PostgreSQL server binaries for the private TLS acceptance fixture |
 | `FAAS_COMMIT_TLS_PG_TMPDIR` | shared | `dev-only` |  |  | `` | short traversable parent directory for private PostgreSQL TLS fixture sockets |
