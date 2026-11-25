@@ -6,6 +6,11 @@ from protocol_headers import (
     validate_mcp_headers,
 )
 from http_body import RequestBodyError, read_request_body
+from task_inbox_protocol import (
+    TASK_INBOX_EXTENSION, TASK_INBOX_METHOD, TASK_INBOX_METHODS, TASK_INPUT_REVIEW_EXTENSION,
+    TASK_INPUT_REVIEW_METHOD, TASK_RESPOND_REVIEWED_METHOD, TASK_REVIEW_RESPONSE_METHODS,
+    InvalidTaskInboxRequest, dump_review_json, load_review_json,
+)
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -452,6 +457,8 @@ def dispatch(message, protocol, authenticator, granted_scopes, task_runtime=None
         return 200, call_tool(request_id, params, authenticator, granted_scopes, protocol, task_runtime)
     if method == TASK_SUBMISSION_LOOKUP_METHOD:
         return lookup_task_submission(request_id, params, authenticator, granted_scopes, protocol, task_runtime)
+    if method in TASK_INBOX_METHODS:
+        return dispatch_task_inbox(request_id, method, params, authenticator, granted_scopes, protocol, task_runtime)
     if method == "resources/list":
         return 200, rpc_response(request_id, {"resources": visible_resources(authenticator, granted_scopes)})
     if method == "resources/templates/list":
@@ -516,6 +523,42 @@ def lookup_task_submission(request_id, params, authenticator, identity, protocol
         return 500, rpc_error(request_id, -32603, "could not read Task status")
 
 
+def supports_task_input_review(task_runtime, authenticator):
+    return getattr(task_runtime, "task_input_review_ready", False) and authenticator.mode == "external-oauth"
+
+
+def dispatch_task_inbox(request_id, method, params, authenticator, identity, protocol, task_runtime):
+    if (protocol != CURRENT_PROTOCOL or not supports_task_input_review(task_runtime, authenticator)
+            or (method == TASK_INBOX_METHOD and not task_runtime.task_inbox_ready)):
+        return 404, rpc_error(request_id, -32601, "method not found")
+    if not getattr(identity, "subject", ""):
+        return 404, rpc_error(request_id, -32002, "task not found")
+    tools = authenticator.tool_policy
+    allowed_tools = ([name for name in tools["rules"] if authenticator.can_access_tool(name, identity)]
+                     if tools["configured"] else None)
+    try:
+        if method == TASK_INBOX_METHOD:
+            result = task_runtime.list_inbox(params, identity, allowed_tools)
+        else:
+            task_id = params.get("taskId")
+            if not isinstance(task_id, str) or not TASK_ID_PATTERN.fullmatch(task_id):
+                raise InvalidTaskInboxRequest("taskId must be a UUID")
+            if method == TASK_INPUT_REVIEW_METHOD:
+                result = task_runtime.get_input_review(task_id.lower(), identity, allowed_tools)
+            else:
+                result = task_runtime.reviewed_input_response(
+                    task_id.lower(), params.get("reviewRevision"), params.get("responses"),
+                    identity, allowed_tools, apply=method == TASK_RESPOND_REVIEWED_METHOD,
+                )
+        return 200, rpc_response(request_id, result)
+    except TaskNotFound:
+        return 404, rpc_error(request_id, -32002, "task not found")
+    except InvalidTaskInboxRequest as exc:
+        return 400, rpc_error(request_id, -32602, str(exc))
+    except Exception:
+        return 500, rpc_error(request_id, -32603, "could not process Task inbox request")
+
+
 def server_capabilities(task_runtime, modern, authenticator):
     resources = {"listChanged": True}
     if modern:
@@ -530,6 +573,10 @@ def server_capabilities(task_runtime, modern, authenticator):
         extensions = capabilities["extensions"] = {TASKS_EXTENSION_ID: {}}
         if supports_task_submission(task_runtime, authenticator):
             extensions.update({TASK_SUBMISSION_EXTENSION: {}, TASK_SUBMISSION_LOOKUP_EXTENSION: {}})
+        if supports_task_input_review(task_runtime, authenticator):
+            extensions[TASK_INPUT_REVIEW_EXTENSION] = {}
+            if task_runtime.task_inbox_ready:
+                extensions[TASK_INBOX_EXTENSION] = {}
     return capabilities
 
 
@@ -1074,8 +1121,19 @@ class MCPHandler(BaseHTTPRequestHandler):
                 return
             self.serve_stream_demo(message["id"], params, protocol)
             return
+        if message["method"] in TASK_REVIEW_RESPONSE_METHODS:
+            try:
+                # Keep the ordinary decoder for the envelope and existing methods.
+                # Reviewed answers retain exact JSON numbers for durable confirmation.
+                message["params"] = load_review_json(body).get("params", {})
+            except (ValueError, ArithmeticError, RecursionError):
+                self.send_rpc(400, rpc_error(message["id"], -32602, "invalid reviewed Task input responses"), protocol)
+                return
         status, response = dispatch(message, protocol, self.server.authenticator, granted_scopes, self.server.task_runtime, legacy=legacy)
-        self.send_rpc(status, response, protocol)
+        if message["method"] == TASK_INPUT_REVIEW_METHOD:
+            self.send_rpc(status, response, protocol, exact_numbers=True)
+        else:
+            self.send_rpc(status, response, protocol)
 
     def serve_stream_demo(self, request_id, params, protocol):
         arguments = params.get("arguments", {})
@@ -1620,16 +1678,23 @@ class MCPHandler(BaseHTTPRequestHandler):
             headers["Retry-After"] = "1"
         self.send_json(failure.status, body, headers)
 
-    def send_rpc(self, status, value, protocol=None):
+    def send_rpc(self, status, value, protocol=None, *, exact_numbers=False):
         observation = getattr(self, "_protocol_observation", None)
         if observation:observation.response(value)
         headers = {}
         if protocol:
             headers["MCP-Protocol-Version"] = protocol
-        self.send_json(status, protocol_response(value, protocol), headers)
+        wire = protocol_response(value, protocol)
+        if exact_numbers:
+            self._send_json_bytes(status, dump_review_json(wire).encode("utf-8"), headers)
+        else:
+            self.send_json(status, wire, headers)
 
     def send_json(self, status, value, extra_headers=None):
         body = json.dumps(value, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        self._send_json_bytes(status, body, extra_headers)
+
+    def _send_json_bytes(self, status, body, extra_headers):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Cache-Control", "no-store")

@@ -83,6 +83,7 @@ on:
       - 'scripts/ci/test_mcp_qualification*.py'
       - 'scripts/ops/mcp-qualification.py'
       - 'scripts/ops/mcp-sdk-client/**'
+      - 'sdk/node/src/mcp-task-inbox.ts'
       - 'pkg/secretscan/**'
       - 'pkg/apid/apidserver/secretscan*.go'
       - 'pkg/apid/apidserver/handlers_templates*.go'
@@ -469,6 +470,13 @@ jobs:
           "$RUNNER_TEMP/gregale" mcp lock --url http://127.0.0.1:18808/mcp --legacy --out "$RUNNER_TEMP/mcp-legacy.json" --json
       - name: Install the pinned official MCP client
         run: npm ci --prefix scripts/ops/mcp-sdk-client --ignore-scripts
+      - name: Exercise the Node SDK Task inbox with the pinned MCP client
+        env:
+          MCP_TASKS_TEST_DATABASE_URL: postgres://mcp:mcp-ci-only@127.0.0.1:5432/mcp
+        run: |
+          npm ci --prefix sdk/node --ignore-scripts --no-audit --no-fund
+          npm --prefix sdk/node run build
+          MCP_TASKS_TEST_NODE_STARTER="$RUNNER_TEMP/mcp-starter" node --test scripts/ops/mcp-sdk-client/task-inbox.test.mjs
       - name: Qualify all starter runtimes with the official MCP SDK
         shell: bash
         run: |

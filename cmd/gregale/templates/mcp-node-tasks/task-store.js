@@ -1,5 +1,5 @@
 import { isMcpTaskToolName } from './task-compatibility.js';
-import { createHash, createHmac, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { isDeepStrictEqual } from 'node:util';
 import { MCP_TASK_OWNER_SCHEMA, MCP_TASK_PRUNE_OWNERS, associateMcpTaskOwners, mcpTaskOwnerGroup } from './task-owners.js';
@@ -7,6 +7,7 @@ import { authenticateRetainedMcpTaskPayloads, createMcpTaskPayloadCipher } from 
 import { initializeMcpTaskAdmission, validateMcpTaskAdmissionHandlers } from './task-admission.js';
 import { MCP_TASK_SCHEMA_VERSION, checkMcpTaskSchema, assertMcpTaskSchemaTrust } from './task-schema.js';
 import defaults from './task-limits.json' with { type: 'json' };
+import { taskInboxCursor } from './task-inbox.js';
 
 const TABLE = 'gregale_mcp_tasks';
 const WORKER_HANDLERS_TABLE = 'gregale_mcp_task_worker_handlers';
@@ -18,6 +19,7 @@ const MAX_ARGUMENT_BYTES = 256 * 1024;
 const MIN_TASK_TTL_MS = 60_000;
 const MAX_RESULT_BYTES = 1024 * 1024;
 const MAX_INPUT_STATE_BYTES = 256 * 1024;
+const MAX_REVIEWED_FORMS = 16;
 const SUPPORTED_INPUT_METHODS = new Set(['elicitation/create:form', 'elicitation/create:url', 'sampling/createMessage', 'roots/list']);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const isSubmissionKey = key => typeof key === 'string' && UUID_PATTERN.test(key) && key[14] === '7' && key === key.toLowerCase();
@@ -225,6 +227,29 @@ function outstandingRequests(state) {
   return Object.fromEntries(Object.entries(state.requests).filter(([key]) => !Object.hasOwn(state.responses, key)));
 }
 
+function containsOnlyReviewableForms(requests) {
+  const forms = Object.values(requests);
+  return forms.length > 0 && forms.length <= MAX_REVIEWED_FORMS && forms.every(form =>
+    form.method === 'elicitation/create' && (form.params?.mode === undefined || form.params.mode === 'form'));
+}
+
+function validReviewedResponse(response) {
+  if (!response || typeof response !== 'object' || Array.isArray(response)
+      || Object.keys(response).some(key => key !== 'action' && key !== 'content')) return false;
+  if (response.action === 'accept') {
+    return !!response.content && typeof response.content === 'object' && !Array.isArray(response.content);
+  }
+  return (response.action === 'decline' || response.action === 'cancel') && !Object.hasOwn(response, 'content');
+}
+
+function validateInputResponses(inputResponses) {
+  if (!inputResponses || typeof inputResponses !== 'object' || Array.isArray(inputResponses)) throw new Error('MCP task input responses must be an object');
+  const entries = Object.entries(inputResponses);
+  if (entries.length > 64 || entries.some(([key]) => !key || key.length > 128)) throw new Error('Invalid MCP task input response keys');
+  encodeJSON(inputResponses, MAX_INPUT_STATE_BYTES, 'MCP task input responses');
+  return entries;
+}
+
 async function withTransaction(pool, callback, { readOnly = false } = {}) {
   const client = typeof pool.connect === 'function' ? await pool.connect() : pool;
   let inTransaction = false;
@@ -402,12 +427,56 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
     client.release();
   }
 
+  async function selectTaskInput(db, taskID, authInfo, authMode, lock) {
+    const statement = `
+      SELECT task_id::text, tool_name, status, expires_at, created_at, updated_at, input_state_encrypted
+        FROM ${TABLE}
+       WHERE namespace = $1 AND task_id = $2::uuid AND owner_hash = ANY($3::bytea[])
+         AND expires_at > clock_timestamp()
+     `;
+    // PostgreSQL can initially evaluate expiry before a row lock is available.
+    const query = lock ? `WITH locked AS MATERIALIZED (${statement} FOR UPDATE)
+      SELECT * FROM locked WHERE expires_at > clock_timestamp()` : statement;
+    const result = await db.query(query, [namespace, taskID, ownerHashes(authInfo, authMode)]);
+    return result.rows?.[0];
+  }
+
+  function inputReviewRevision(taskID, requests) {
+    const body = JSON.stringify([namespace, taskID, requests], (_, value) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+      return Object.fromEntries(Object.keys(value).sort().map(key => [key, value[key]]));
+    });
+    return createHmac('sha256', ownerKey).update('gregale-mcp-task-input-review:v1:').update(body).digest('hex');
+  }
+
+  function matchesInputReview(revision, taskID, requests) {
+    return timingSafeEqual(Buffer.from(revision, 'hex'), Buffer.from(inputReviewRevision(taskID, requests), 'hex'));
+  }
+
+  async function persistTaskInputs(client, taskID, state) {
+    const pending = Object.keys(state.requests).some(key => !Object.hasOwn(state.responses, key));
+    const encrypted = encryptJSON(state, payloadKey, taskAAD(namespace, taskID, 'input-state'), MAX_INPUT_STATE_BYTES, 'MCP task input state');
+    const updated = await client.query(`
+      UPDATE ${TABLE}
+         SET input_state_encrypted = $3,
+             status = CASE WHEN $4::boolean THEN 'input_required' ELSE 'queued' END,
+             resume_pending = NOT $4::boolean,
+             updated_at = clock_timestamp()
+       WHERE namespace = $1 AND task_id = $2::uuid AND status = 'input_required'
+         AND expires_at > clock_timestamp()
+       RETURNING task_id::text, status, created_at, updated_at, expires_at
+    `, [namespace, taskID, encrypted, pending]);
+    return updated.rows?.[0];
+  }
+
   let supportsTaskSubmission = false;
+  let supportsTaskInbox = false;
   return {
     get supportsTaskSubmission() { return supportsTaskSubmission; },
+    get supportsTaskInbox() { return supportsTaskInbox; },
     async initialize({ admissionHandlers = [] } = {}) {
       validateMcpTaskAdmissionHandlers(admissionHandlers);
-      supportsTaskSubmission = await withTransaction(pool, async client => {
+      const indexes = await withTransaction(pool, async client => {
         await checkMcpTaskSchema({ pool: client, namespace, inTransaction: true });
         const registered = await client.query('SELECT key_id, key_fingerprint FROM gregale_mcp_task_crypto_keys WHERE namespace = $1', [namespace]);
         const known = new Map(registered.rows.map(row => [row.key_id, row.key_fingerprint]));
@@ -421,11 +490,17 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
           const configured = await client.query('SELECT enabled FROM gregale_mcp_task_admission WHERE namespace = $1 AND tool_name = $2 AND handler_version = $3', [namespace, handler.name, handler.version]);
           if (!configured.rows.length) throw new Error('MCP Task handler version is not registered; run tasks:migrate before startup');
         }
-        const submissionIndex = await client.query(`SELECT EXISTS (SELECT 1 FROM pg_index
-          WHERE indexrelid = to_regclass('gregale_mcp_tasks_submission_key_idx')
-            AND indrelid = '${TABLE}'::regclass AND indisvalid AND indisunique) AS ready`);
-        return submissionIndex.rows[0]?.ready === true;
+        const indexes = await client.query(`SELECT
+          EXISTS (SELECT 1 FROM pg_index
+            WHERE indexrelid = to_regclass('gregale_mcp_tasks_submission_key_idx')
+              AND indrelid = '${TABLE}'::regclass AND indisvalid AND indisunique) AS submission,
+          EXISTS (SELECT 1 FROM pg_index
+            WHERE indexrelid = to_regclass('gregale_mcp_tasks_inbox_idx')
+              AND indrelid = '${TABLE}'::regclass AND indisvalid) AS inbox`);
+        return indexes.rows[0];
       }, { readOnly: true });
+      supportsTaskSubmission = indexes?.submission === true;
+      supportsTaskInbox = indexes?.inbox === true;
     },
     async migrate({ admissionHandlers = [] } = {}) {
       return withTransaction(pool, async (client, dedicated) => {
@@ -483,6 +558,8 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
         await client.query(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS submission_key uuid`);
         await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS gregale_mcp_tasks_submission_key_idx
           ON ${TABLE} (namespace, submission_key) WHERE submission_key IS NOT NULL`);
+        await client.query(`CREATE INDEX IF NOT EXISTS gregale_mcp_tasks_inbox_idx
+          ON ${TABLE} (namespace, owner_hash, expires_at DESC, task_id DESC)`);
         await initializeMcpTaskAdmission(client, namespace, admissionHandlers, { schema: version < 1 });
         // Verify every retained field before registering or retiring keys.
         await authenticateRetainedMcpTaskPayloads(client, namespace, payloadKey);
@@ -644,6 +721,27 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
           AND expires_at > clock_timestamp()`, [namespace, submissionKey, ownerHashes(authInfo, authMode)]);
       return result.rows?.[0] ?? null;
     },
+    async inbox({ status, limit, cursor, authInfo, authMode, toolNames }) {
+      if (!supportsTaskInbox || authMode !== 'external-oauth') throw new Error('MCP Task inbox is unavailable');
+      const continuation = taskInboxCursor(ownerKey, namespace, principalFor(authInfo, authMode), status);
+      const [anchorExpiry, anchorID] = continuation.decode(cursor);
+      const statuses = status === 'working' ? ['queued', 'running'] : status ? [status] : null;
+      const result = await pool.query(`
+        SELECT task_id::text, status, created_at, updated_at, expires_at,
+               to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_expiry
+          FROM ${TABLE}
+         WHERE namespace = $1 AND owner_hash = ANY($2::bytea[]) AND expires_at > clock_timestamp()
+           AND ($3::text[] IS NULL OR status = ANY($3))
+           AND ($4::text[] IS NULL OR tool_name = ANY($4))
+           AND ($5::timestamptz IS NULL OR (expires_at, task_id) < ($5, $6::uuid))
+         ORDER BY expires_at DESC, task_id DESC
+         LIMIT $7
+      `, [namespace, ownerHashes(authInfo, authMode), statuses, toolNames, anchorExpiry, anchorID, limit + 1]);
+      const tasks = result.rows.slice(0, limit);
+      const last = tasks.at(-1);
+      const nextCursor = result.rows.length > limit ? continuation.encode(last.cursor_expiry, last.task_id) : undefined;
+      return { tasks, nextCursor };
+    },
     async getMany({ taskIDs, authInfo, authMode }) {
       const ids = [...new Set((Array.isArray(taskIDs) ? taskIDs : []).filter(taskID => typeof taskID === 'string' && UUID_PATTERN.test(taskID)))];
       if (ids.length === 0) return [];
@@ -710,47 +808,71 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
         return { ready: true, responses };
       });
     },
+    async getInputReview({ taskID, authInfo, authMode, canAccessTool }) {
+      if (authMode !== 'external-oauth' || !UUID_PATTERN.test(taskID)) return null;
+      const row = await selectTaskInput(pool, taskID, authInfo, authMode, false);
+      if (!row || !canAccessTool(row.tool_name)) return null;
+      if (row.status !== 'input_required' || row.input_state_encrypted == null) return { row };
+
+      const state = decryptInputState(row.input_state_encrypted, payloadKey, namespace, row.task_id);
+      const requests = outstandingRequests(state);
+      if (!containsOnlyReviewableForms(requests)) return { row };
+      return { row, requests, revision: inputReviewRevision(row.task_id, requests) };
+    },
+    async reviewedInputResponse({ taskID, revision, inputResponses, authInfo, authMode, canAccessTool, apply }) {
+      if (authMode !== 'external-oauth' || !UUID_PATTERN.test(taskID)) return null;
+      if (typeof revision !== 'string' || !/^[0-9a-f]{64}$/.test(revision)) throw new Error('Invalid MCP task input review revision');
+      const entries = validateInputResponses(inputResponses);
+      if (entries.length < 1 || entries.length > MAX_REVIEWED_FORMS || entries.some(([, response]) => !validReviewedResponse(response))) {
+        throw new Error('Invalid reviewed MCP task input responses');
+      }
+
+      const respond = async client => {
+        const row = await selectTaskInput(client, taskID, authInfo, authMode, apply);
+        if (!row || !canAccessTool(row.tool_name)) return null;
+
+        const state = decryptInputState(row.input_state_encrypted, payloadKey, namespace, row.task_id);
+        // Retained requests are immutable by ID. Compare the submitted answers
+        // with those stored for that exact reviewed set, including after resume.
+        const recorded = Object.fromEntries(entries.filter(([id]) => Object.hasOwn(state.requests, id))
+          .map(([id]) => [id, state.requests[id]]));
+        if (Object.keys(recorded).length === entries.length && containsOnlyReviewableForms(recorded)
+            && matchesInputReview(revision, row.task_id, recorded)
+            && entries.every(([id, response]) => Object.hasOwn(state.responses, id) && isDeepStrictEqual(response, state.responses[id]))) {
+          return { row, outcome: 'applied' };
+        }
+        if (!apply) return { row, outcome: 'unconfirmed' };
+
+        const pending = outstandingRequests(state);
+        if (row.status !== 'input_required' || !containsOnlyReviewableForms(pending)
+            || Object.keys(pending).length !== entries.length || !entries.every(([id]) => Object.hasOwn(pending, id))
+            || !matchesInputReview(revision, row.task_id, pending)) {
+          return { row, outcome: 'stale' };
+        }
+        for (const [id, response] of entries) state.responses[id] = response;
+        const updated = await persistTaskInputs(client, row.task_id, state);
+        return updated ? { row: updated, outcome: 'applied', changed: true } : null;
+      };
+
+      return apply ? withTransaction(pool, respond) : respond(pool);
+    },
     async updateInputs({ taskID, authInfo, authMode, inputResponses }) {
       if (typeof taskID !== 'string' || !UUID_PATTERN.test(taskID)) return false;
-      taskID = taskID.toLowerCase();
-      if (!inputResponses || typeof inputResponses !== 'object' || Array.isArray(inputResponses)) throw new Error('MCP task input responses must be an object');
-      const responseEntries = Object.entries(inputResponses);
-      if (responseEntries.length > 64 || responseEntries.some(([key]) => !key || key.length > 128)) throw new Error('Invalid MCP task input response keys');
-      encodeJSON(inputResponses, MAX_INPUT_STATE_BYTES, 'MCP task input responses');
-
+      const responseEntries = validateInputResponses(inputResponses);
       await withTransaction(pool, client => associateMcpTaskOwners(client, namespace, ownerHashes(authInfo, authMode)));
       return withTransaction(pool, async client => {
-        const selected = await client.query(`
-          SELECT status, input_state_encrypted
-            FROM ${TABLE}
-           WHERE namespace = $1 AND task_id = $2::uuid AND owner_hash = ANY($3::bytea[])
-             AND expires_at > clock_timestamp()
-           FOR UPDATE
-        `, [namespace, taskID, ownerHashes(authInfo, authMode)]);
-        const row = selected.rows?.[0];
+        const row = await selectTaskInput(client, taskID, authInfo, authMode, true);
         if (!row) return false;
         if (row.status !== 'input_required' || row.input_state_encrypted == null) return true;
 
-        const state = decryptInputState(row.input_state_encrypted, payloadKey, namespace, taskID);
+        const state = decryptInputState(row.input_state_encrypted, payloadKey, namespace, row.task_id);
         let changed = false;
         for (const [key, response] of responseEntries) {
           if (!Object.hasOwn(state.requests, key) || Object.hasOwn(state.responses, key)) continue;
           state.responses[key] = response;
           changed = true;
         }
-        if (!changed) return true;
-
-        const pending = Object.keys(state.requests).some(key => !Object.hasOwn(state.responses, key));
-        const encrypted = encryptJSON(state, payloadKey, taskAAD(namespace, taskID, 'input-state'), MAX_INPUT_STATE_BYTES, 'MCP task input state');
-        await client.query(`
-          UPDATE ${TABLE}
-             SET input_state_encrypted = $3,
-                 status = CASE WHEN $4::boolean THEN 'input_required' ELSE 'queued' END,
-                 resume_pending = NOT $4::boolean,
-                 updated_at = clock_timestamp()
-           WHERE namespace = $1 AND task_id = $2::uuid AND status = 'input_required'
-        `, [namespace, taskID, encrypted, pending]);
-        return true;
+        return !changed || !!await persistTaskInputs(client, row.task_id, state);
       });
     },
     async requestCancel({ taskID, authInfo, authMode }) {

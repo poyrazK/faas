@@ -28,6 +28,11 @@ export * from './job-pipeline-live.js';
 export type { ManagedFileBucket, FileHelpers } from './file-client.js';
 export { pathFileSource } from './file-client.js';
 export type { RequestOptions, ResponseInfo, ResponseObserver } from './request-options.js';
+export {
+  listTaskInbox, watchTaskInbox, McpTaskInboxError, type McpTaskInboxConnection,
+  type McpTaskInboxEntry, type McpTaskInboxPage, type McpTaskInboxStatus,
+  type McpTaskInboxListOptions, type McpTaskInboxWatchOptions, type McpTaskInboxFailureCode,
+} from './mcp-task-inbox.js';
 export { PaginationError, type PaginationOptions, type DeploymentPagination } from './deployment-pagination.js';
 export { WaiterError, type WaiterFailureCode, type WaiterOptions, type WaiterSnapshot, type WaiterProgress, type BuildWaitOptions, type DeploymentWaitOptions, type DeploymentWaiters } from './deployment-waiters.js';
 

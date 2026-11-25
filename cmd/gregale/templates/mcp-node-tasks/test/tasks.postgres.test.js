@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { execFile, fork } from 'node:child_process';
 import { createHash, createHmac, createCipheriv, randomBytes, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -314,6 +314,326 @@ for (const [title, mode] of [
       server.closeAllConnections();
     });
     await api.handler.close();
+    await runtime.stop();
+  }
+});
+
+test('a fresh CLI finds only the caller’s retained Task inbox', {
+  skip: postgresOnly.skip || (!process.env.MCP_TASKS_TEST_GREGALE && 'set MCP_TASKS_TEST_GREGALE to the Gregale CLI binary'),
+  timeout: 30_000,
+}, async t => {
+  const { store, pool, namespace } = await harness(t, { ttlMs: 120_000 });
+  await pool.query('DROP INDEX gregale_mcp_tasks_inbox_idx');
+  await store.initialize();
+  assert.equal(store.supportsTaskInbox, false);
+  assert.equal(store.supportsTaskSubmission, true);
+  await store.migrate({ admissionHandlers: [{ name: 'build_report', version: '1' }] });
+  const runtime = createMcpTaskRuntime({ store, handlers: mcpTaskHandlers, pollIntervalMs: 500 });
+  const auth = {
+    mode: 'external-oauth', issuer: 'https://issuer.example', jwks_url: 'https://issuer.example/jwks',
+    resource: 'https://mcp.example/mcp', scopes: ['mcp:tools'], tool_scopes: { build_report: ['reports:read'] },
+  };
+  const { publicKey, privateKey } = await generateKeyPair('ES256');
+  const mint = (subject, scope = 'mcp:tools reports:read', client_id = 'original-client') =>
+    new SignJWT({ scope, client_id }).setJti(randomUUID()).setProtectedHeader({ alg: 'ES256' })
+      .setAudience(auth.resource).setIssuer(auth.issuer).setSubject(subject).setExpirationTime('5m').sign(privateKey);
+  const [owner, refreshed, foreign, reduced, otherClient] = await Promise.all([
+    mint('alice'), mint('alice'), mint('bob'), mint('alice', 'mcp:tools'), mint('alice', undefined, 'other-client'),
+  ]);
+  const clientDir = await mkdtemp(join(tmpdir(), 'gregale-task-inbox-'));
+  t.after(() => rm(clientDir, { recursive: true, force: true }));
+  const freshDir = join(clientDir, 'fresh');
+  await mkdir(freshDir);
+  const api = createApp({ version: 1, endpoint: '/mcp', transport: 'streamable-http', mode: 'stateless',
+    legacy: false, allowed_origins: [], tasks: { enabled: true }, auth,
+  }, { taskRuntime: runtime, keyResolver: publicKey, log() {} });
+  const methods = [];
+  let fault, racingTask;
+  const server = createServer((req, res) => {
+    const method = req.headers['mcp-method'];
+    methods.push(method);
+    if (method === 'gregale/tasks/respond-reviewed' && fault) {
+      const action = fault;
+      fault = undefined;
+      if (action === 'before') {
+        req.socket.destroy();
+        return;
+      }
+      if (action === 'after') {
+        res.write = () => true;
+        res.end = () => { req.socket.destroy(); return res; };
+      }
+      if (action === 'race') {
+        // Consume the form after the CLI validates the draft and before the
+        // guarded writer takes its PostgreSQL lock.
+        const authInfo = { resource: new URL(auth.resource), clientId: 'original-client', extra: { subject: 'alice' } };
+        void store.updateInputs({ taskID: racingTask, authInfo, authMode: 'external-oauth',
+          inputResponses: { approval: { action: 'decline' } } })
+          .then(ok => { assert.equal(ok, true); api.app(req, res); })
+          .catch(error => res.destroy(error));
+        return;
+      }
+    }
+    api.app(req, res);
+  });
+  try {
+    await runtime.start();
+    assert.equal(store.supportsTaskInbox, true);
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const endpoint = `http://127.0.0.1:${server.address().port}/mcp`;
+    const run = promisify(execFile);
+    const binary = resolve(process.env.MCP_TASKS_TEST_GREGALE);
+    async function cli(verb, credential, args, { success = true, expectedExit = success ? 0 : 1, cwd = freshDir } = {}) {
+      const response = await run(binary, [
+        'mcp', 'client', verb, '--url', endpoint, '--token-env', 'GREGALE_JOURNEY_TOKEN',
+        '--timeout', '5s', ...args,
+      ], { cwd, env: { XDG_CONFIG_HOME: cwd, GREGALE_JOURNEY_TOKEN: credential }, timeout: 8000 })
+        .then(({ stdout, stderr }) => ({ stdout, stderr, code: 0 }), error => error);
+      assert.equal(response.code, expectedExit, response.stderr);
+      assert.ok(!(response.stdout + response.stderr).includes(credential));
+      if (expectedExit === 0 || expectedExit === 3) return JSON.parse(response.stdout);
+      assert.equal(response.stdout, '');
+    }
+    async function submit(name, credential, paused = true) {
+      const { result } = await cli('call', credential, ['--tool', 'build_report', '--tasks', '--defer-form-input',
+        '--task-receipt', join(clientDir, `${name}.json`),
+        '--arguments', JSON.stringify({ report: `private-inbox-${name}`, steps: 1, request_approval: paused }),
+      ], { cwd: clientDir });
+      return result.taskId;
+    }
+    const older = await submit('older', owner);
+    const newer = await submit('newer', owner);
+    const expired = await submit('expired', owner);
+    const other = await submit('foreign', foreign);
+    const completed = await submit('completed', owner, false);
+    await eventually(async () => {
+      const rows = await pool.query('SELECT task_id::text, status FROM gregale_mcp_tasks WHERE namespace=$1', [namespace]);
+      const statuses = new Map(rows.rows.map(row => [row.task_id, row.status]));
+      return [older, newer, expired, other].every(id => statuses.get(id) === 'input_required') && statuses.get(completed) === 'completed';
+    }, 'PostgreSQL did not retain all expected Task states');
+    // Both page anchors round to the same JavaScript millisecond.
+    await pool.query(`UPDATE gregale_mcp_tasks SET expires_at = CASE task_id
+        WHEN $2::uuid THEN date_trunc('second', statement_timestamp()) + interval '60 seconds 1 microsecond'
+        WHEN $3::uuid THEN date_trunc('second', statement_timestamp()) + interval '60 seconds 2 microseconds'
+        ELSE clock_timestamp() END
+      WHERE namespace=$1 AND task_id IN ($2, $3, $4)`, [namespace, older, newer, expired]);
+
+    const filter = ['--status', 'input_required', '--limit', '1'];
+    const page = await cli('inbox', refreshed, filter);
+    assert.equal(page.tasks.length, 1);
+    const [found] = page.tasks;
+    assert.ok(Number.isFinite(Date.parse(found.createdAt)));
+    assert.ok(Number.isFinite(Date.parse(found.lastUpdatedAt)));
+    assert.deepEqual(found, { taskId: newer, status: 'input_required', nextAction: 'provide_input',
+      createdAt: found.createdAt, lastUpdatedAt: found.lastUpdatedAt });
+    assert.ok(page.nextCursor);
+    const cursor = ['--cursor', page.nextCursor];
+    const badCursor = (page.nextCursor.startsWith('A') ? 'B' : 'A') + page.nextCursor.slice(1);
+    await cli('inbox', foreign, [...filter, ...cursor], { success: false });
+    await cli('inbox', refreshed, ['--status', 'working', ...cursor], { success: false });
+    await cli('inbox', refreshed, [...filter, '--cursor', badCursor], { success: false });
+    assert.deepEqual(await cli('inbox', reduced, [...filter, ...cursor]), { tasks: [] });
+    assert.deepEqual(await cli('inbox', otherClient, []), { tasks: [] });
+    assert.deepEqual((await cli('inbox', foreign, [])).tasks.map(task => task.taskId), [other]);
+    assert.deepEqual((await cli('inbox', refreshed, ['--status', 'completed'])).tasks.map(task => task.taskId), [completed]);
+    const status = await cli('status', refreshed, ['--task-id', found.taskId, '--metadata-only', '--json']);
+    assert.equal(status.nextAction, 'provide_input');
+
+    // A continuation survives expiry of the previous page’s last row.
+    await pool.query('UPDATE gregale_mcp_tasks SET expires_at=clock_timestamp() WHERE namespace=$1 AND task_id=$2', [namespace, newer]);
+    const next = await cli('inbox', refreshed, [...filter, ...cursor]);
+    assert.deepEqual(next.tasks.map(task => task.taskId), [older]);
+    assert.equal(next.nextCursor, undefined);
+    assert.deepEqual(await readdir(freshDir), []);
+
+    const writes = () => methods.filter(method => method === 'gregale/tasks/respond-reviewed').length;
+    const checks = () => methods.filter(method => method === 'gregale/tasks/check-reviewed-response').length;
+    const wait = taskId => cli('wait', refreshed, ['--task-id', taskId]);
+    async function draft(taskId, name) {
+      const file = join(freshDir, `${name}.json`);
+      await cli('status', refreshed, ['--task-id', taskId, '--write-input-template', file]);
+      assert.equal((await stat(file)).mode & 0o777, 0o600);
+      const template = JSON.parse(await readFile(file, 'utf8'));
+      assert.equal(template.taskId, taskId);
+      assert.equal(template.version, 2);
+      assert.match(template.reviewRevision, /^[0-9a-f]{64}$/);
+      template.forms.approval.response = { action: 'accept', content: { approved: true } };
+      await writeFile(file, JSON.stringify(template));
+      return ['--task-id', taskId, '--reviewed-input-file', file];
+    }
+
+    const reviewed = await draft(next.tasks[0].taskId, 'reviewed');
+    await cli('respond', foreign, reviewed, { success: false });
+    await cli('respond', reduced, reviewed, { success: false });
+    await cli('respond', otherClient, reviewed, { success: false });
+    assert.equal(writes(), 0);
+
+    fault = 'before';
+    const unconfirmed = await cli('respond', refreshed, reviewed, { expectedExit: 3 });
+    assert.equal(unconfirmed.outcome, 'unconfirmed');
+    assert.equal(unconfirmed.status, 'input_required');
+    assert.equal(unconfirmed.nextAction, 'retry_status');
+    assert.equal(writes(), 1);
+    assert.equal(checks(), 1);
+
+    fault = 'after';
+    const applied = await cli('respond', refreshed, reviewed);
+    assert.equal(applied.outcome, 'applied');
+    assert.equal(applied.taskId, older);
+    assert.equal(writes(), 2);
+    assert.equal(checks(), 2);
+    assert.match((await wait(older)).result.content[0].text, /Report private-inbox-older is ready/);
+
+    assert.equal((await cli('respond', refreshed, reviewed)).outcome, 'applied');
+    assert.equal(writes(), 2);
+    assert.equal(checks(), 3);
+
+    racingTask = await submit('racing', owner);
+    await eventually(async () =>
+      (await pool.query('SELECT status FROM gregale_mcp_tasks WHERE namespace=$1 AND task_id=$2', [namespace, racingTask])).rows[0]?.status === 'input_required',
+      'PostgreSQL did not retain the Task for the concurrent response');
+    const stale = await draft(racingTask, 'racing');
+    fault = 'race';
+    await cli('respond', refreshed, stale, { success: false });
+    assert.equal(writes(), 3);
+    assert.equal(checks(), 3);
+    assert.equal((await wait(racingTask)).result.content[0].text, 'Report was not approved.');
+    assert.equal(methods.filter(method => method === 'tasks/update').length, 0);
+  } finally {
+    api.closeTaskSubscriptions();
+    await new Promise(resolve => {
+      server.close(resolve);
+      server.closeAllConnections();
+    });
+    await api.handler.close();
+    await runtime.stop();
+  }
+});
+
+test('Task inbox watch discovers paused Tasks and reconciles a failed page', {
+  skip: postgresOnly.skip || (!process.env.MCP_TASKS_TEST_GREGALE && 'set MCP_TASKS_TEST_GREGALE to the Gregale CLI binary'),
+  timeout: 45_000,
+}, async t => {
+  const { store, pool, namespace } = await harness(t, { ttlMs: 120_000 });
+  const runtime = createMcpTaskRuntime({ store, handlers: mcpTaskHandlers, workerEnabled: false });
+  const auth = {
+    mode: 'external-oauth', issuer: 'https://issuer.example', jwks_url: 'https://issuer.example/jwks',
+    resource: 'https://mcp.example/mcp', scopes: ['mcp:tools'], tool_scopes: { build_report: ['reports:read'] },
+  };
+  const { publicKey, privateKey } = await generateKeyPair('ES256');
+  const clientId = 'inbox-watch-fixture';
+  const ownerToken = await new SignJWT({ scope: 'mcp:tools reports:read', client_id: clientId })
+    .setProtectedHeader({ alg: 'ES256' }).setAudience(auth.resource).setIssuer(auth.issuer)
+    .setSubject('alice').setExpirationTime('5m').sign(privateKey);
+  const owner = subject => ({ clientId, resource: new URL(auth.resource), extra: { subject } });
+  const config = { version: 1, endpoint: '/mcp', transport: 'streamable-http', mode: 'stateless',
+    legacy: false, allowed_origins: [], tasks: { enabled: true }, auth };
+  const options = { taskRuntime: runtime, keyResolver: publicKey, log() {} };
+  const api = createApp(config, options);
+  const restricted = createApp({ ...config, auth: { ...auth, tool_scopes: { build_report: ['reports:review'] } } }, options);
+
+  const seeded = Promise.withResolvers();
+  const retryScan = Promise.withResolvers();
+  let inboxResponse, dropped = false, scans = 0, completeInitial = false, revoked = false, revokedReads = 0;
+  const list = runtime.inbox.bind(runtime);
+  runtime.inbox = async (query, ...args) => {
+    if (!query.cursor && ++scans > 1) {
+      await seeded.promise;
+      if (dropped) await retryScan.promise;
+    }
+    if (query.cursor && !dropped) {
+      dropped = true;
+      inboxResponse.destroy();
+    }
+    return list(query, ...args);
+  };
+  const server = createServer((req, res) => {
+    if (req.headers['mcp-method'] === 'gregale/tasks/inbox') {
+      inboxResponse = res;
+      const wasRevoked = revoked;
+      res.on('finish', () => {
+        completeInitial = true;
+        if (wasRevoked) revokedReads++;
+      });
+    }
+    (revoked ? restricted : api).app(req, res);
+  });
+  const profile = await mkdtemp(join(tmpdir(), 'gregale-inbox-watch-'));
+  t.after(() => rm(profile, { recursive: true, force: true }));
+  let watch, closed;
+  const form = { method: 'elicitation/create', params: { mode: 'form', message: 'Private watch prompt',
+    requestedSchema: { type: 'object', properties: {} } } };
+  async function pause(subject, requests = { first: form }) {
+    const task = await store.create({ toolName: 'build_report', handlerVersion: '1',
+      args: { report: 'watch fixture', steps: 1 }, authInfo: owner(subject), authMode: 'external-oauth',
+      inputMethods: ['elicitation/create:form'] });
+    const claimed = await store.claim(3, 30_000);
+    assert.equal(claimed.task_id, task.task_id);
+    assert.equal((await store.requestInputs({ taskID: task.task_id, leaseToken: claimed.lease_token, requests })).ready, false);
+    return task.task_id;
+  }
+
+  try {
+    await runtime.start();
+    const foreign = await pause('bob');
+    const expired = await pause('alice');
+    await pool.query('UPDATE gregale_mcp_tasks SET expires_at=clock_timestamp() WHERE namespace=$1 AND task_id=$2', [namespace, expired]);
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const endpoint = `http://127.0.0.1:${server.address().port}/mcp`;
+    watch = execFile(resolve(process.env.MCP_TASKS_TEST_GREGALE), [
+      'mcp', 'client', 'inbox', '--url', endpoint, '--token-env', 'GREGALE_JOURNEY_TOKEN',
+      '--status', 'input_required', '--watch', '--interval', '1s', '--timeout', '5s', '--limit', '1',
+    ], { cwd: profile, env: { XDG_CONFIG_HOME: profile, GREGALE_JOURNEY_TOKEN: ownerToken }, timeout: 30_000 });
+    closed = new Promise(resolve => watch.once('close', (code, signal) => resolve({ code, signal })));
+    let stdout = '', stderr = '';
+    watch.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
+    watch.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
+    const events = () => stdout.split('\n').slice(0, -1).map(line => JSON.parse(line));
+
+    await eventually(() => completeInitial, 'watch did not read an empty inbox', 400);
+    assert.equal(stdout, '');
+    const older = await pause('alice', { first: form, second: form });
+    const newer = await pause('alice');
+    seeded.resolve();
+    await eventually(() => dropped && stderr.includes('Retrying'), 'watch did not retry the disconnected page', 400);
+    assert.equal(stdout, '', 'watch published a partial scan');
+    retryScan.resolve();
+    await eventually(() => events().length >= 2, 'watch did not publish the recovered inbox scan', 400);
+    assert.deepEqual(events().map(event => event.taskId), [newer, older]);
+    for (const event of events()) {
+      assert.equal(event.status, 'input_required');
+      assert.equal(event.nextAction, 'provide_input');
+      assert.deepEqual(Object.keys(event).sort(), ['createdAt', 'lastUpdatedAt', 'nextAction', 'status', 'taskId']);
+    }
+
+    const before = events()[1].lastUpdatedAt;
+    assert.equal(await store.updateInputs({ taskID: older, authInfo: owner('alice'), authMode: 'external-oauth',
+      inputResponses: { first: { action: 'decline' } } }), true);
+    await eventually(() => events().length >= 3, 'watch did not report the changed pending Task', 400);
+    assert.equal(events()[2].taskId, older);
+    assert.notEqual(events()[2].lastUpdatedAt, before);
+
+    revoked = true;
+    const hidden = await pause('alice');
+    await eventually(() => revokedReads >= 2, 'watch stopped polling after tool access changed', 400);
+    assert.deepEqual(events().map(event => event.taskId), [newer, older, older]);
+    assert.ok(![foreign, expired, hidden, ownerToken, form.params.message].some(value => (stdout + stderr).includes(value)));
+    assert.deepEqual(await readdir(profile), []);
+
+    watch.kill('SIGINT');
+    assert.deepEqual(await closed, { code: 0, signal: null });
+  } finally {
+    seeded.resolve();
+    retryScan.resolve();
+    if (watch && watch.exitCode === null && watch.signalCode === null) watch.kill('SIGKILL');
+    if (closed) await closed;
+    await new Promise(resolve => {
+      server.close(resolve);
+      server.closeAllConnections();
+    });
+    await Promise.all([api.handler.close(), restricted.handler.close()]);
     await runtime.stop();
   }
 });
@@ -830,8 +1150,8 @@ function sqlIdentifier(value) {
   return `"${value.replaceAll('"', '""')}"`;
 }
 
-async function eventually(fn, message) {
-  for (let attempt = 0; attempt < 100; attempt++) {
+async function eventually(fn, message, attempts = 100) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
     const value = await fn();
     if (value) return value;
     await delay(20);
@@ -1846,7 +2166,7 @@ async function taskDoctorFixture(t, { schema, namespace, ownerKey }) {
   const root = dirname(dirname(fileURLToPath(import.meta.url)));
   const fixture = await mkdtemp(join(root, 'doctor-fixture-'));
   t.after(() => rm(fixture, { recursive: true, force: true }));
-  for (const file of ['task-doctor.js', 'tasks-compatibility.js', 'task-compatibility.js', 'tasks.js', 'task-output.js', 'task-lease.js', 'task-runtime.js', 'task-handlers.js', 'task-store.js', 'task-owners.js', 'task-crypto.js', 'task-admission.js', 'task-schema.js', 'tasks-admission.js', 'tasks-migrate.js', 'tasks-roles.js', 'task-metrics.js', 'task-limits.json']) await copyFile(join(root, file), join(fixture, file));
+  for (const file of ['task-doctor.js', 'tasks-compatibility.js', 'task-compatibility.js', 'tasks.js', 'task-output.js', 'task-lease.js', 'task-runtime.js', 'task-handlers.js', 'task-store.js', 'task-inbox.js', 'task-owners.js', 'task-crypto.js', 'task-admission.js', 'task-schema.js', 'tasks-admission.js', 'tasks-migrate.js', 'tasks-roles.js', 'task-metrics.js', 'task-limits.json']) await copyFile(join(root, file), join(fixture, file));
   await writeFile(join(fixture, 'package.json'), JSON.stringify({ type: 'module' }));
   await writeFile(join(fixture, 'gregale-mcp.json'), JSON.stringify({ tasks: { enabled: true, database_url_env: 'DOCTOR_DATABASE', owner_key_env: 'DOCTOR_OWNER' } }));
   const url = new URL(databaseURL);
@@ -2219,7 +2539,7 @@ test('release CLI executes bounded adapters without migration credentials', post
   const root = dirname(dirname(fileURLToPath(import.meta.url)));
   const fixture = await mkdtemp(join(root, 'release-fixture-'));
   t.after(() => rm(fixture, { recursive: true, force: true }));
-  for (const file of ['task-release.js', 'tasks-release.js', 'tasks-release-readiness.js', 'task-compatibility.js', 'tasks.js', 'task-output.js', 'task-lease.js', 'task-runtime.js', 'task-handlers.js', 'task-store.js', 'task-owners.js', 'task-crypto.js', 'task-admission.js', 'task-schema.js', 'task-metrics.js', 'task-limits.json']) await copyFile(join(root, file), join(fixture, file));
+  for (const file of ['task-release.js', 'tasks-release.js', 'tasks-release-readiness.js', 'task-compatibility.js', 'tasks.js', 'task-output.js', 'task-lease.js', 'task-runtime.js', 'task-handlers.js', 'task-store.js', 'task-inbox.js', 'task-owners.js', 'task-crypto.js', 'task-admission.js', 'task-schema.js', 'task-metrics.js', 'task-limits.json']) await copyFile(join(root, file), join(fixture, file));
   await writeFile(join(fixture, 'package.json'), '{"type":"module"}');
   await writeFile(join(fixture, 'gregale-mcp.json'), JSON.stringify({ tasks: { enabled: true, database_url_env: 'RELEASE_DATABASE', owner_key_env: 'RELEASE_OWNER' } }));
   // The current candidate executes version 2 and retains version 1 for queued work.

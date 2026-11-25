@@ -5735,8 +5735,8 @@ Exit code 3 means at least one entry needs a retry. Exit code 1 covers other
 unavailable or invalid entries. The array is returned in all three cases once
 the batch starts. A single receipt still returns the Task metadata object.
 
-To recover an inbox after restart, point metadata status at a directory
-containing the application's receipts.
+To check a directory of local receipts after restart, point metadata status
+at the application's receipts.
 
 ```sh
 gregale mcp client status --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
@@ -5750,6 +5750,126 @@ skips subdirectories and the CLI's temporary publication files. Entries must
 be private regular files for the selected endpoint. Malformed, mismatched, or
 unreadable entries receive `invalid_receipt`. The current credential and the
 usual batch exit codes apply to the whole scan.
+
+#### Find retained Tasks on the server
+
+Use the Task inbox when a new CLI profile has no local receipts or Task IDs.
+
+```sh
+gregale mcp client inbox --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --status input_required
+```
+
+The command returns a JSON object with a `tasks` array. Each entry contains the
+Task ID, status, creation and update timestamps, and the suggested next action.
+Working Tasks also include a poll interval. The inbox reads metadata only.
+Use an ID from the inbox with `gregale mcp client status --task-id` or
+`gregale mcp client wait --task-id` on the same endpoint.
+
+Omit `--status` for all retained states, or filter by `working`,
+`input_required`, `completed`, `failed`, or `cancelled`. Pages hold up to
+20 Tasks by default, or up to 50 with `--limit`. The server orders entries by
+latest expiry first, with the Task ID breaking ties. If the response contains
+`nextCursor`, use it with `--cursor`, the same endpoint, caller, and status
+filter to continue. Each page reflects current retention and tool access.
+
+The Node, Go, and Python PostgreSQL Tasks starters advertise `io.gregale/task-inbox` on
+modern external OAuth endpoints after they detect the inbox index at startup.
+Update the starter and run its migration command with the migration credential.
+Use `npm run tasks:migrate -- apply` for Node, `go run . tasks-migrate apply`
+for Go, or `python task_schema.py apply` for Python. Restart the Task server
+after applying the migration. Use a credential
+with the original OAuth subject and client ID and the current scope for each
+Task's tool. Start a new scan if the server changes runtimes or owner keys.
+
+#### Watch for Tasks that need input
+
+```sh
+gregale mcp client inbox --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --status input_required --watch
+```
+
+Each line on stdout is one Task metadata object, with its ID, status,
+timestamps, and next action. The watch reports existing matches from the
+initial scan, then reports new matches and changed metadata. It keeps
+running when the inbox is empty. Use a reported ID to
+[review and submit input](#review-and-submit-input-by-task-id).
+
+Every scan starts from the first page and uses the server's current tool
+access and retention checks. An unsuccessful scan publishes no events. The
+watch waits before retrying temporary network and server failures and uses
+the server's retry delay when available. A Task that leaves the visible set
+produces no event. If it becomes visible again, the watch can report it again.
+
+`--interval` sets the delay between scans (default 30 seconds, from 1 second to
+1 hour). `--timeout` applies to each scan (default 30 seconds). Each scan is
+limited to 64 pages. Increase `--limit` or narrow `--status` if the inbox
+exceeds that bound. Press Ctrl+C to stop.
+
+To resume an inbox watch after restarting the CLI, pass the same checkpoint
+file, endpoint, status filter, and bearer credential:
+
+```sh
+gregale mcp client inbox --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --status input_required --watch --checkpoint-file ./inbox-watch.json
+```
+
+Use a path in an existing private directory and one file per watch. The CLI
+saves fingerprints of the reported entries still visible in the last complete
+scan. On restart it scans the current inbox again and skips
+unchanged entries. A renewed bearer credential starts a fresh history with the
+currently visible Tasks. An interruption after output and before the checkpoint
+is saved can replay those events on restart.
+
+#### Wait for one Task that needs input
+
+```sh
+gregale mcp client inbox --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --status input_required --watch --once --checkpoint-file ./inbox-watch.json \
+  --wait-timeout 2m
+```
+
+`--once` prints the first new or changed entry from a complete scan as one
+JSON line and exits with code 0. Later entries stay eligible for a subsequent
+invocation with the same checkpoint. Use the returned ID to
+[review and submit input](#review-and-submit-input-by-task-id).
+
+`--wait-timeout` takes a positive duration and requires `--watch --once`.
+It covers endpoint resolution, scanning, retries, and the time between
+scans. When that budget expires before an event is printed, the command exits
+with code 124 and empty stdout. `--timeout` sets the deadline for each scan.
+Without `--wait-timeout`, a one-shot watch keeps polling until it prints an
+event, encounters a permanent error, or is interrupted.
+
+#### Read or watch the inbox from TypeScript
+
+The Node SDK preview accepts an already connected, authenticated
+`@modelcontextprotocol/client` connection. Connect to the Tasks starter
+using MCP `2026-07-28` and the caller's OAuth credential.
+
+```ts
+import { listTaskInbox, watchTaskInbox } from '@gregale/sdk-node/preview';
+
+const page = await listTaskInbox(mcp, { status: 'input_required', limit: 20 });
+console.log(page.tasks.map(task => task.taskId));
+
+for await (const task of watchTaskInbox(mcp, {
+  status: 'input_required',
+  intervalMs: 5_000,
+  signal: AbortSignal.timeout(120_000),
+})) {
+  await handlePendingTask(task.taskId);
+  break;
+}
+```
+
+`listTaskInbox` returns metadata and an optional `nextCursor`. Pass it as
+`cursor` with the same filter and connection when listing another page.
+`watchTaskInbox` collects up to 64 pages per scan before yielding new or
+changed entries. It restarts at the first page after a transient read
+failure. Each scan has its own `timeoutMs` (default 30 seconds). An
+`AbortSignal` can bound the whole wait, and closing the iterator cancels
+its outstanding work. Each iterator starts with a fresh in-memory history.
 
 To watch Task status from a receipt, use `client watch` with the same endpoint
 and the caller's current credential.
@@ -5883,6 +6003,37 @@ To submit reviewed input and wait for completion in the same process, use
 gregale mcp client wait --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
   --task-receipt ./approval-task.json --reviewed-input-file ./reviewed-input.json
 ```
+
+#### Review and submit input by Task ID
+
+On the Node, Go, or Python PostgreSQL starter, get the ID from
+`gregale mcp client inbox --status input_required` and export its forms with
+the same endpoint and OAuth caller.
+
+```sh
+gregale mcp client status --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-id 786512e2-9e0d-44bd-8f29-789f320fe840 --write-input-template ./reviewed-input.json
+```
+
+Fill in each form's `response` in the private file and submit the review.
+
+```sh
+gregale mcp client respond --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-id 786512e2-9e0d-44bd-8f29-789f320fe840 --reviewed-input-file ./reviewed-input.json
+```
+
+The template includes the server's revision of the complete pending form set.
+The server checks it under a PostgreSQL row lock before recording the answers.
+If the forms changed, export a new template and review it again. After a lost
+reply, the CLI checks once whether the original answers were recorded. The
+result is `applied` when the server confirms the answers, or `unconfirmed`
+with exit code 3 when the check cannot confirm them. The CLI sends at most one
+update per invocation. Use `client wait --task-id` to retrieve the result.
+
+The server advertises `io.gregale/task-input-review` on modern external OAuth
+endpoints. Upgrade and restart the Task server to use the version 2 template. Export a new
+review if the server changes runtimes or owner keys. Receipt workflows continue
+to use their version 1 template.
 
 ## MCP catalog snapshots
 

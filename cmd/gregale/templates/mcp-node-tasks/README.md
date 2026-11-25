@@ -327,6 +327,34 @@ When the last watched Task expires or becomes inaccessible, its subscription
 slot and database listener are released. A Task-only SSE stream finishes; any
 resource or catalog filters on the same stream continue receiving updates.
 
+### Find retained Tasks from a fresh CLI profile
+
+After installing this starter's schema with `npm run tasks:migrate -- apply`
+and starting the server, use the original OAuth caller's current credential.
+
+```sh
+gregale mcp client inbox --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --status input_required
+```
+
+The response lists retained Task metadata for tools the caller can currently
+access. Use `--limit` to set the page size (default 20, maximum 50) and pass
+`nextCursor` as `--cursor` with the same filter for the next page. Use the
+returned ID with `gregale mcp client status --task-id` to inspect that Task.
+The inbox is available on modern external OAuth endpoints and needs no
+local receipt.
+
+Add `--watch` to wait for matching Tasks. The CLI emits a JSON line each time
+a retained Task appears or changes in the inbox. Use `--interval` to change
+the polling delay (default 30 seconds).
+
+Pass the discovered `--task-id` to `gregale mcp client status
+--write-input-template ./reviewed-input.json`. Review and fill the responses,
+then use `gregale mcp client respond --task-id ID --reviewed-input-file
+./reviewed-input.json` against the same endpoint and OAuth caller. The Task
+server checks the reviewed form revision before applying the answers. Use
+`client wait --task-id` to read the finished result.
+
 ### Resume a report with the example supervisor
 
 The [Task supervisor](examples/task-supervisor.mjs) calls the Gregale CLI using

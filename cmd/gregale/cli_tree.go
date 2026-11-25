@@ -383,6 +383,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"mcp client read", "mcp resource-read"},
 	{"mcp client watch", "mcp resource-watch"},
 	{"mcp client status", "mcp task-get"},
+	{"mcp client inbox", "mcp task-inbox"},
 	{"mcp client wait", "mcp task-wait"},
 	{"mcp client respond", "mcp task-respond"},
 	{"mcp client cancel", "mcp task-cancel"},

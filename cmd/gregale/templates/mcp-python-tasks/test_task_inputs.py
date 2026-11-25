@@ -1,5 +1,6 @@
 """Default form mode remains valid through durable persistence and replay."""
 import copy
+import json
 import unittest
 from unittest.mock import MagicMock, Mock
 
@@ -18,7 +19,7 @@ class TaskInputTests(unittest.TestCase):
         self.runtime = DurableTaskRuntime.__new__(DurableTaskRuntime)
         self.runtime.namespace = "test"
         self.runtime.pool = MagicMock()
-        self.runtime._encrypt = Mock(return_value=b"encrypted-state")
+        self.runtime._encrypt_payload = Mock(return_value=b"encrypted-state")
         self.connection = self.runtime.pool.connection.return_value.__enter__.return_value
         self.connection.execute.return_value.fetchone.return_value = {
             "input_state_encrypted": None, "cancel_requested_at": None,
@@ -33,15 +34,15 @@ class TaskInputTests(unittest.TestCase):
         original = copy.deepcopy(self.requests)
         self.assertEqual(self.runtime._request_inputs(self.task, self.requests), ({}, False))
         self.assertEqual(self.requests, original)
-        state = self.runtime._encrypt.call_args.args[0]
+        state = json.loads(self.runtime._encrypt_payload.call_args.args[0])
         self.assertEqual(state["requests"], original)
         self.assertTrue(any("status='input_required'" in call.args[0] for call in self.connection.execute.call_args_list))
         response = {"action": "accept", "content": {}}
         state["responses"]["approval"] = response
-        self.runtime._decrypt = Mock(return_value=state)
+        self.runtime._decrypt_payload = Mock(return_value=json.dumps(state).encode())
         self.connection.execute.return_value.fetchone.return_value["input_state_encrypted"] = b"encrypted-state"
         self.assertEqual(self.runtime._request_inputs(self.task, self.requests), ({"approval": response}, True))
-        self.assertEqual(self.runtime._encrypt.call_count, 1)
+        self.assertEqual(self.runtime._encrypt_payload.call_count, 1)
 
     def test_explicit_invalid_modes_fail_before_accessing_storage(self):
         for mode in (None, "", "invalid", 1):

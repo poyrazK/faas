@@ -167,7 +167,7 @@ function guestConfig(config) {
 export function createApp(suppliedConfig, { keyResolver, log = console.log, taskRuntime, tasks = NO_TASKS, resourceUpdateAdapter: suppliedResourceUpdateAdapter, expectedCatalogSHA256 = process.env.MCP_CATALOG_EXPECTED_SHA256 } = {}) {
   const config = guestConfig(suppliedConfig);
   const gatewayOnly = config !== suppliedConfig;
-  const { clientSupportsMcpTasks, installMcpTaskHandlers, MCP_TASKS_EXTENSION_ID } = tasks;
+  const { clientSupportsMcpTasks, installMcpTaskHandlers, MCP_TASKS_EXTENSION_ID, TASK_INBOX_EXTENSION, MCP_TASK_INPUT_REVIEW_EXTENSION_ID } = tasks;
   if (taskRuntime && tasks === NO_TASKS) throw new Error('A task runtime needs the MCP Tasks module');
   if (config.version !== 1 || config.transport !== 'streamable-http' || config.mode !== 'stateless') throw new Error('Unsupported MCP hosting profile');
   if (typeof config.endpoint !== 'string' || !/^\/(?:[A-Za-z0-9._~-]+\/?)*$/.test(config.endpoint) || config.endpoint.split('/').some(s => s === '.' || s === '..')) throw new Error('Invalid MCP endpoint');
@@ -240,6 +240,9 @@ export function createApp(suppliedConfig, { keyResolver, log = console.log, task
   function createServer({ authInfo, era }) {
     const caller = verifiedCallerIdentity(authInfo);
     const keyedTasks = era === 'modern' && supportsTaskSubmission();
+    const authenticatedModern = era === 'modern' && config.auth.mode === 'external-oauth';
+    const taskInbox = authenticatedModern && taskRuntime?.supportsTaskInbox?.();
+    const reviewedInput = authenticatedModern && taskRuntime?.supportsReviewedInput?.();
     const canReadSampleRecord = recordID => Object.hasOwn(SAMPLE_RECORD_OWNERS, recordID)
       && (config.auth.mode === 'open' || SAMPLE_RECORD_OWNERS[recordID] === caller?.subject);
     const server = createCatalogServer({ name: 'gregale-mcp-server', version: '1.0.0' }, {
@@ -247,11 +250,15 @@ export function createApp(suppliedConfig, { keyResolver, log = console.log, task
         tools: { listChanged: true }, resources: { listChanged: true, ...(era === 'modern' ? { subscribe: true } : {}) }, prompts: { listChanged: true }, completions: {},
         ...(taskRuntime ? { extensions: { [MCP_TASKS_EXTENSION_ID]: {},
           ...(keyedTasks ? { 'io.gregale/task-submission': {}, 'io.gregale/task-submission-lookup': {} } : {}),
+          ...(taskInbox ? { [TASK_INBOX_EXTENSION]: {} } : {}),
+          ...(reviewedInput ? { [MCP_TASK_INPUT_REVIEW_EXTENSION_ID]: {} } : {}),
         } } : {}),
       },
     });
     observeServerTransport(server, protocolContext.getStore());
-    if (taskRuntime) installMcpTaskHandlers(server, taskRuntime, authInfo, config.auth.mode, name => auth.toolPolicy.canAccess(name, authInfo), keyedTasks);
+    if (taskRuntime) installMcpTaskHandlers(server, taskRuntime, authInfo, config.auth.mode, name => auth.toolPolicy.canAccess(name, authInfo), {
+      keyedTasks, reviewedInput, inboxTools: taskInbox ? auth.toolPolicy.visibleNames(authInfo) : undefined,
+    });
     for (const entry of catalog.tools()) {
       // Each SDK server serves one HTTP request. A Tasks call returns a handle,
       // so final-output validation belongs to its worker. Discovery and ordinary

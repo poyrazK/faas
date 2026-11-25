@@ -4,8 +4,11 @@ import { snapshotTaskOutputSchema, validateTaskOutput } from './task-output.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import * as z from 'zod/v4';
+import { TASK_INBOX_METHOD, TASK_INBOX_DEFAULT_LIMIT, TASK_INBOX_MAX_LIMIT, TASK_INBOX_STATUSES, TASK_INBOX_CURSOR_PATTERN } from './task-inbox.js';
+export { TASK_INBOX_EXTENSION } from './task-inbox.js';
 
 export const MCP_TASKS_EXTENSION_ID = 'io.modelcontextprotocol/tasks';
+export const MCP_TASK_INPUT_REVIEW_EXTENSION_ID = 'io.gregale/task-input-review';
 const TASK_HANDLER_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 const LEASE_MS = 30_000;
 const HEARTBEAT_MS = 5_000;
@@ -491,6 +494,27 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
       return stopping;
     },
     supportsTaskSubmission: () => store.supportsTaskSubmission === true,
+    supportsTaskInbox: () => store.supportsTaskInbox === true,
+    supportsReviewedInput: () => typeof store.getInputReview === 'function' && typeof store.reviewedInputResponse === 'function',
+    async inputReview(taskID, authInfo, authMode, canAccessTool) {
+      const review = await store.getInputReview({ taskID, authInfo, authMode, canAccessTool });
+      if (!review) throw new Error('Task not found');
+      return { resultType: 'complete', task: wireTaskMetadata(review.row, pollIntervalMs),
+        ...(review.revision ? { reviewRevision: review.revision, inputRequests: review.requests } : {}) };
+    },
+    async reviewedResponse({ taskId, reviewRevision, responses }, authInfo, authMode, canAccessTool, apply) {
+      const response = await store.reviewedInputResponse({
+        taskID: taskId, revision: reviewRevision, inputResponses: responses, authInfo, authMode, canAccessTool, apply,
+      });
+      if (!response) throw new Error('Task not found');
+      if (response.changed && workerEnabled) void drain();
+      return { resultType: 'complete', task: wireTaskMetadata(response.row, pollIntervalMs), outcome: response.outcome };
+    },
+    async inbox({ status, limit, cursor }, authInfo, authMode, toolNames) {
+      const page = await store.inbox({ status, limit, cursor, authInfo, authMode, toolNames });
+      return { resultType: 'complete', tasks: page.tasks.map(task => wireTaskMetadata(task, pollIntervalMs)),
+        ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
+    },
     async create(toolName, args, authInfo, authMode, clientCapabilities = {}, outputSchema, submissionKey) {
       if (stopping) throw new Error('MCP task runtime is draining');
       const handler = handlers[toolName];
@@ -591,11 +615,33 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
   };
 }
 
-export function installMcpTaskHandlers(server, runtime, authInfo, authMode, canAccessTool, keyedTasks = false) {
+export function installMcpTaskHandlers(server, runtime, authInfo, authMode, canAccessTool, { keyedTasks, inboxTools, reviewedInput } = {}) {
   if (typeof canAccessTool !== 'function') throw new Error('MCP task handlers require the tool authorization policy');
   if (keyedTasks) server.server.setRequestHandler('gregale/tasks/lookup', {
     params: z.object({ submissionKey: z.string().uuid() }),
   }, ({ submissionKey }) => runtime.getBySubmissionKey(submissionKey, authInfo, authMode, canAccessTool));
+  if (inboxTools !== undefined) server.server.setRequestHandler(TASK_INBOX_METHOD, {
+    params: z.object({
+      status: z.enum(TASK_INBOX_STATUSES).optional(),
+      limit: z.number().int().min(1).max(TASK_INBOX_MAX_LIMIT).default(TASK_INBOX_DEFAULT_LIMIT),
+      cursor: z.string().regex(TASK_INBOX_CURSOR_PATTERN).optional(),
+    }),
+  }, params => runtime.inbox(params, authInfo, authMode, inboxTools));
+  if (reviewedInput) {
+    const taskId = z.string().uuid();
+    const reviewedResponse = z.object({
+      taskId,
+      reviewRevision: z.string().regex(/^[0-9a-f]{64}$/),
+      responses: z.unknown(),
+    });
+    server.server.setRequestHandler('gregale/tasks/input-review', {
+      params: z.object({ taskId }),
+    }, params => runtime.inputReview(params.taskId, authInfo, authMode, canAccessTool));
+    server.server.setRequestHandler('gregale/tasks/respond-reviewed', { params: reviewedResponse },
+      params => runtime.reviewedResponse(params, authInfo, authMode, canAccessTool, true));
+    server.server.setRequestHandler('gregale/tasks/check-reviewed-response', { params: reviewedResponse },
+      params => runtime.reviewedResponse(params, authInfo, authMode, canAccessTool, false));
+  }
   server.server.setRequestHandler('tasks/get', {
     params: z.object({ taskId: z.string().uuid() }),
   }, ({ taskId }) => runtime.get(taskId, authInfo, authMode, canAccessTool));
