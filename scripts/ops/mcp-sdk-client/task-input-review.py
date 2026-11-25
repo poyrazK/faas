@@ -15,6 +15,7 @@ import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 from auth import AuthContext, Authenticator
+from protocol_headers import TASK_SUBMISSION_LOOKUP_METHOD, TASK_SUBMISSION_METHOD
 from server import DrainingHTTPServer, MCPHandler
 from task_inbox_protocol import (
     TASK_CHECK_REVIEWED_METHOD, TASK_RESPOND_REVIEWED_METHOD,
@@ -26,7 +27,7 @@ import test_task_execution
 class TaskInputReviewJourney(unittest.TestCase):
     setUp = test_task_execution.TaskExecutionPostgresTests.setUp
 
-    def test_sdk_recovers_a_lost_reply_and_retains_exact_numbers(self):
+    def test_sdk_recovers_lost_submission_and_review_replies(self):
         config = {"endpoint": "/mcp", "tasks": {"enabled": True, "poll_interval_ms": 500},
                   "auth": {"mode": "external-oauth", "issuer": "https://issuer.example",
                            "jwks_url": "https://issuer.example/jwks", "resource": "https://mcp.example/mcp",
@@ -78,11 +79,15 @@ class TaskInputReviewJourney(unittest.TestCase):
         faults = Queue()
         for fault in ("before", "after", "stale"):
             faults.put(fault)
-        observed = []
+        observed, submissions, lookups, committed = [], [], [], []
 
         class ReviewJourneyHandler(MCPHandler):
             def do_POST(self):
                 method = self.headers.get("Mcp-Method")
+                if method == TASK_SUBMISSION_METHOD:
+                    submissions.append(self.headers.get("Mcp-Name"))
+                if method == TASK_SUBMISSION_LOOKUP_METHOD:
+                    lookups.append(method)
                 if method in {TASK_RESPOND_REVIEWED_METHOD, TASK_CHECK_REVIEWED_METHOD}:
                     observed.append(method)
                 if method == TASK_RESPOND_REVIEWED_METHOD:
@@ -99,8 +104,13 @@ class TaskInputReviewJourney(unittest.TestCase):
                 self.connection.shutdown(socket.SHUT_RDWR)
 
             def send_json(self, status, value, extra_headers=None):
-                if getattr(self, "drop_after", False) and value.get("result", {}).get("outcome") == "applied":
+                result = value.get("result", {})
+                if getattr(self, "drop_after", False) and result.get("outcome") == "applied":
                     return self.drop_reply()
+                if self.headers.get("Mcp-Method") == TASK_SUBMISSION_METHOD and result.get("resultType") == "task":
+                    committed.append(result["taskId"])
+                    if len(committed) == 1:
+                        return self.drop_reply()
                 return super().send_json(status, value, extra_headers)
 
         server = DrainingHTTPServer(("127.0.0.1", 0), ReviewJourneyHandler)
@@ -120,6 +130,19 @@ class TaskInputReviewJourney(unittest.TestCase):
                                     TASK_RESPOND_REVIEWED_METHOD, TASK_CHECK_REVIEWED_METHOD,
                                     TASK_RESPOND_REVIEWED_METHOD])
         self.assertTrue(faults.empty())
+        self.assertEqual(submissions, ["build_report", "build_report", "build_report", None])
+        self.assertEqual(lookups, [TASK_SUBMISSION_LOOKUP_METHOD])
+        with runtime.pool.connection() as connection:
+            rows = connection.execute(
+                """SELECT task_id::text AS task_id,status,attempt_count,submission_key IS NOT NULL AS keyed
+                   FROM gregale_mcp_tasks WHERE namespace=%s""",
+                (runtime.namespace,),
+            ).fetchall()
+        self.assertEqual(len(committed), 2)
+        self.assertEqual(committed[0], committed[1])
+        self.assertEqual(len(rows), 3)
+        self.assertEqual([row for row in rows if row["keyed"]],
+                         [{"task_id": committed[0], "status": "completed", "attempt_count": 1, "keyed": True}])
 
         def confirm(rate):
             answers = {"approval": {"action": "accept",

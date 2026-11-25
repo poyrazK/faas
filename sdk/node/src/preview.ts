@@ -45,6 +45,11 @@ export {
   type McpTaskConnection, type McpTaskReadOptions, type McpTaskReadFailureCode,
   type McpTaskSnapshot, type McpTaskWaitResult,
 } from './mcp-task-result.js';
+export {
+  createMcpTaskSubmissionFetch, submitMcpTask, lookupMcpTaskBySubmissionKey, McpTaskSubmissionError,
+  type McpTaskArgument, type McpTaskArguments, type McpTaskSubmission, type McpTaskSubmissionOptions,
+  type McpTaskSubmissionConnection, type McpTaskSubmissionFailureCode, type McpTaskSubmissionOutcome,
+} from './mcp-task-submission.js';
 export { PaginationError, type PaginationOptions, type DeploymentPagination } from './deployment-pagination.js';
 export { WaiterError, type WaiterFailureCode, type WaiterOptions, type WaiterSnapshot, type WaiterProgress, type BuildWaitOptions, type DeploymentWaitOptions, type DeploymentWaiters } from './deployment-waiters.js';
 

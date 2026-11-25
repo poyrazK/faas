@@ -8,7 +8,9 @@ import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
-import { listTaskInbox, watchTaskInbox } from '../../../sdk/node/dist/preview.js';
+import {
+  createMcpTaskSubmissionFetch, listTaskInbox, lookupMcpTaskBySubmissionKey, submitMcpTask, watchTaskInbox,
+} from '../../../sdk/node/dist/preview.js';
 
 test('the official SDK watches the authenticated PostgreSQL Task inbox', { timeout: 25_000 }, async t => {
   const starterDir = process.env.MCP_TASKS_TEST_NODE_STARTER;
@@ -115,6 +117,7 @@ test('the official SDK watches the authenticated PostgreSQL Task inbox', { timeo
     clients.push(client);
     await client.connect(new StreamableHTTPClientTransport(endpoint, {
       requestInit: { headers: { Authorization: `Bearer ${token}` } }, onInsufficientScope: 'throw',
+      fetch: createMcpTaskSubmissionFetch(),
     }));
     return client;
   }
@@ -165,4 +168,15 @@ test('the official SDK watches the authenticated PostgreSQL Task inbox', { timeo
 
   const reduced = await connect('alice', 'mcp:tools');
   assert.deepEqual(await listTaskInbox(reduced, { status: 'input_required' }), { tasks: [] });
+
+  const timestamp = (Date.now() - 1000).toString(16).padStart(12, '0');
+  const submissionKey = `${timestamp.slice(0, 8)}-${timestamp.slice(8)}-7000-8000-000000000001`;
+  const receipt = await submitMcpTask(owner, {
+    submissionKey, toolName: 'build_report', arguments: { report: 'keyed inbox fixture', steps: 1 },
+  });
+  assert.equal(receipt.outcome, 'accepted');
+  const found = await lookupMcpTaskBySubmissionKey(owner, submissionKey);
+  assert.equal(found.taskId, receipt.task.taskId);
+  assert.equal(found.status, 'working');
+  await assert.rejects(lookupMcpTaskBySubmissionKey(reduced, submissionKey), { name: 'McpTaskSubmissionError' });
 });

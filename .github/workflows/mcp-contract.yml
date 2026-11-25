@@ -470,7 +470,7 @@ jobs:
           "$RUNNER_TEMP/gregale" mcp lock --url http://127.0.0.1:18808/mcp --legacy --out "$RUNNER_TEMP/mcp-legacy.json" --json
       - name: Install the pinned official MCP client
         run: npm ci --prefix scripts/ops/mcp-sdk-client --ignore-scripts
-      - name: Exercise the Node SDK Task inbox and reviewed input with the pinned MCP client
+      - name: Exercise the Node SDK Task journey with the pinned MCP client
         env:
           MCP_TASKS_TEST_DATABASE_URL: postgres://mcp:mcp-ci-only@127.0.0.1:5432/mcp
         run: |

@@ -5751,6 +5751,46 @@ be private regular files for the selected endpoint. Malformed, mismatched, or
 unreadable entries receive `invalid_receipt`. The current credential and the
 usual batch exit codes apply to the whole scan.
 
+#### Submit and recover a keyed Task from TypeScript
+
+Pass `createMcpTaskSubmissionFetch()` from `@gregale/sdk-node/preview` as
+the `fetch` option on the official `StreamableHTTPClientTransport`. To use
+exact form numbers on the same connection, pass
+`createMcpTaskSubmissionFetch(createMcpTaskReviewFetch())`. Connect with the
+caller's OAuth credential to a Tasks endpoint that advertises keyed submission
+and lookup on protocol `2026-07-28`.
+
+```ts
+import {
+  lookupMcpTaskBySubmissionKey, submitMcpTask, waitForMcpTask,
+} from '@gregale/sdk-node/preview';
+
+const submission = {
+  submissionKey: savedUuidV7,
+  toolName: 'build_report',
+  arguments: { report: 'weekly', steps: 8 },
+};
+const result = await submitMcpTask(mcp, submission);
+const accepted = result.outcome === 'accepted'
+  ? result.task
+  : await lookupMcpTaskBySubmissionKey(mcp, submission.submissionKey);
+
+const task = await waitForMcpTask(mcp, accepted.taskId);
+```
+
+Save a new lowercase UUIDv7 before submitting and keep it with the endpoint,
+tool, and original arguments if the process may restart. The SDK sends one
+submission per invocation. An `unconfirmed` result means the server may have
+accepted it. Use the saved key for a read-only lookup, including from a fresh
+connection. The lookup returns only Task metadata and works while the Task is
+retained and the caller has access.
+
+Within the server's one-minute submission window, an explicit retry with the
+same endpoint, caller, key, tool, arguments, and deferred-input setting recovers
+the original handle if the first call succeeded. If the window has closed,
+continue with lookup and reconcile the original request before issuing a new
+key. Set `deferFormInput: true` to let the Task pause for reviewed forms.
+
 #### Find retained Tasks on the server
 
 Use the Task inbox when a new CLI profile has no local receipts or Task IDs.
