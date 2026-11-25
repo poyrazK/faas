@@ -75,10 +75,11 @@ func (s *Service) syncInvoice(ctx context.Context, payments state.StatementInvoi
 	if !s.released(export.AccountID) {
 		return payments.DeferStatementInvoiceSync(ctx, export.ID, now.Add(api.APIMonetizationUnreleasedRetry))
 	}
+	var stripeClaim string
 	if export.Provider == state.BillingProviderStripe {
 		// Serialize the provider read and write with owner refreshes and reviewed sends.
-		token := uuid.NewString()
-		current, err := exports.ClaimStatementInvoiceExport(ctx, export.AccountID, export.ID, token, time.Now().Add(api.StatementInvoiceExportClaimTTL))
+		stripeClaim = uuid.NewString()
+		current, err := exports.ClaimStatementInvoiceExport(ctx, export.AccountID, export.ID, stripeClaim, time.Now().Add(api.StatementInvoiceExportClaimTTL))
 		if errors.Is(err, state.ErrStatementInvoiceExportInProgress) || errors.Is(err, state.ErrNotFound) {
 			return nil
 		}
@@ -86,7 +87,7 @@ func (s *Service) syncInvoice(ctx context.Context, payments state.StatementInvoi
 			return err
 		}
 		defer func() {
-			_ = exports.ReleaseStatementInvoiceExport(context.WithoutCancel(ctx), export.AccountID, export.ID, token)
+			_ = exports.ReleaseStatementInvoiceExport(context.WithoutCancel(ctx), export.AccountID, export.ID, stripeClaim)
 		}()
 		if current.NextStatusSyncAt == nil {
 			return nil
@@ -118,6 +119,9 @@ func (s *Service) syncInvoice(ctx context.Context, payments state.StatementInvoi
 	}
 	if err != nil || !known {
 		return payments.DeferStatementInvoiceSync(ctx, export.ID, now.Add(api.StatementInvoiceSyncRetry))
+	}
+	if stripeClaim != "" && conn.livemode == export.Livemode && (payment.Status == state.InvoicePaymentPaid || payment.AmountPaidMinor > 0) {
+		_, _ = s.reconcileStripeInvoiceSend(ctx, export, stripeClaim, conn.key)
 	}
 	return s.recordInvoicePayment(ctx, payments, export, payment, s.now())
 }

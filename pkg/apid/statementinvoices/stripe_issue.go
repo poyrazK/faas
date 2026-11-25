@@ -96,13 +96,8 @@ func validStripeSendToken(token string) bool {
 func (s *Service) loadStripeIssueReview(ctx context.Context, store state.StatementInvoiceExportStore,
 	export state.StatementInvoiceExport) (*stripeinvoice.Client, connection, stripeinvoice.InvoiceState, api.StripeInvoiceSendReview, *api.Problem) {
 	now := s.now()
-	if issue := export.StripeIssue; issue != nil && issue.FinalizationStarted {
-		switch {
-		case issue.SentAt != nil:
-			return nil, connection{}, stripeinvoice.InvoiceState{}, api.StripeInvoiceSendReview{}, exportConflict("the invoice has already been sent")
-		case now.Before(issue.ApprovedAt) || !now.Before(issue.ApprovedAt.Add(stripeIssueRetryWindow)):
-			return nil, connection{}, stripeinvoice.InvoiceState{}, api.StripeInvoiceSendReview{}, exportConflict("the retry window expired; confirm delivery in Stripe")
-		}
+	if issue := export.StripeIssue; issue != nil && issue.SentAt != nil {
+		return nil, connection{}, stripeinvoice.InvoiceState{}, api.StripeInvoiceSendReview{}, exportConflict("the invoice has already been sent")
 	}
 	client := s.stripeInvoiceClient()
 	conn, problem := s.openConnection(ctx, store, export.AccountID, state.BillingProviderStripe, stripeProvider{client: client})
@@ -116,6 +111,10 @@ func (s *Service) loadStripeIssueReview(ctx context.Context, store state.Stateme
 	if err != nil {
 		return nil, conn, invoice, api.StripeInvoiceSendReview{}, issueStripeProblem(err)
 	}
+	if issue := export.StripeIssue; issue != nil && issue.FinalizationStarted &&
+		(now.Before(issue.ApprovedAt) || !now.Before(issue.ApprovedAt.Add(stripeIssueRetryWindow))) {
+		return client, conn, invoice, api.StripeInvoiceSendReview{}, exportConflict("the retry window expired; confirm delivery in Stripe")
+	}
 	dueAt := now.Truncate(24*time.Hour).AddDate(0, 0, export.DaysUntilDue)
 	if invoice.CollectionMethod == "send_invoice" && invoice.DueDate != nil && invoice.DueDate.After(now) {
 		dueAt = *invoice.DueDate
@@ -128,9 +127,7 @@ func (s *Service) loadStripeIssueReview(ctx context.Context, store state.Stateme
 }
 
 func buildStripeIssueReview(export state.StatementInvoiceExport, invoice stripeinvoice.InvoiceState, dueAt, now time.Time) (api.StripeInvoiceSendReview, *api.Problem) {
-	if invoice.Deleted || invoice.ID != export.ProviderInvoiceID || invoice.Customer != export.Customer ||
-		invoice.Livemode == nil || *invoice.Livemode != export.Livemode || invoice.StatementID != export.StatementID ||
-		invoice.SourceKind != export.SourceKind || !strings.EqualFold(invoice.Currency, export.Currency) {
+	if !stripeIssueInvoiceMatches(export, invoice) {
 		return api.StripeInvoiceSendReview{}, exportConflict("the Stripe invoice no longer matches this statement export")
 	}
 	issue := export.StripeIssue
@@ -165,6 +162,12 @@ func buildStripeIssueReview(export state.StatementInvoiceExport, invoice stripei
 		return api.StripeInvoiceSendReview{}, exportConflict("the recipient or amount changed during issuance; review the invoice in Stripe")
 	}
 	return review, nil
+}
+
+func stripeIssueInvoiceMatches(export state.StatementInvoiceExport, invoice stripeinvoice.InvoiceState) bool {
+	return !invoice.Deleted && invoice.ID == export.ProviderInvoiceID && invoice.Customer == export.Customer &&
+		invoice.Livemode != nil && *invoice.Livemode == export.Livemode && invoice.StatementID == export.StatementID &&
+		invoice.SourceKind == export.SourceKind && strings.EqualFold(invoice.Currency, export.Currency)
 }
 
 func manualStripeTerms(invoice stripeinvoice.InvoiceState, dueAt time.Time) bool {
@@ -205,6 +208,13 @@ func (s *Service) issueReviewedStripeInvoice(ctx context.Context, store state.St
 	}
 	client, conn, invoice, review, problem := s.loadStripeIssueReview(ctx, store, current)
 	if problem != nil {
+		if issue := current.StripeIssue; issue != nil && issue.IssuedAt != nil && stripeIssueInvoiceMatches(current, invoice) &&
+			(invoice.Status == state.InvoicePaymentPaid || invoice.AmountPaid > 0) {
+			if issue.ReviewToken != reviewed {
+				return current, exportConflict("the invoice was issued after another review")
+			}
+			return s.recoverPaidStripeInvoiceSend(ctx, store, payments, current, claim, conn.key, invoice)
+		}
 		return current, problem
 	}
 	if review.ReviewToken != reviewed {
@@ -294,6 +304,59 @@ func (s *Service) issueReviewedStripeInvoice(ctx context.Context, store state.St
 		"currency": review.Currency, "amount_due_minor": review.AmountDueMinor, "due_at": review.DueAt,
 		"exported_at": current.CompletedAt, "issued_at": issue.IssuedAt, "sent_at": now,
 	})
+	out, err := store.GetStatementInvoiceExport(ctx, current.AccountID, current.SourceKind, current.StatementID)
+	if err != nil {
+		return current, api.ErrInternal("could not reload the sent Stripe invoice")
+	}
+	return out, nil
+}
+
+// reconcileStripeInvoiceSend records Stripe's receipt under the export
+// claim. A payment can arrive via a hosted link without any email.
+func (s *Service) reconcileStripeInvoiceSend(ctx context.Context, export state.StatementInvoiceExport, claim, key string) (bool, error) {
+	issue := export.StripeIssue
+	if issue == nil || issue.IssuedAt == nil || issue.SentAt != nil {
+		return false, nil
+	}
+	issues, ok := s.Host.Store().(state.StripeInvoiceIssueStore)
+	if !ok {
+		return false, errors.New("Stripe invoice delivery is unavailable")
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	sentAt, err := s.stripeInvoiceClient().FindInvoiceSentAt(lookupCtx, key, export.ProviderInvoiceID,
+		stripeIdempotencyKey(&export, "manual-send"), export.Livemode, *issue.IssuedAt, issue.ApprovedAt.Add(stripeIssueRetryWindow))
+	if err != nil || sentAt == nil {
+		return false, err
+	}
+	checkpoint := *issue
+	checkpoint.SentAt = sentAt
+	if err := issues.SaveStripeInvoiceIssue(ctx, export.AccountID, export.ID, claim, checkpoint); err != nil {
+		return false, err
+	}
+	s.Host.Audit(ctx, "statement_invoice.stripe_sent", export.AccountID, map[string]any{
+		"statement_id": export.StatementID, "invoice_id": export.ProviderInvoiceID, "livemode": export.Livemode,
+		"currency": export.Currency, "due_at": issue.DueAt, "exported_at": export.CompletedAt,
+		"issued_at": issue.IssuedAt, "sent_at": sentAt, "reconciled": true,
+	})
+	return true, nil
+}
+
+func (s *Service) recoverPaidStripeInvoiceSend(ctx context.Context, store state.StatementInvoiceExportStore, payments state.StatementInvoicePaymentStore,
+	current state.StatementInvoiceExport, claim, key string, invoice stripeinvoice.InvoiceState) (state.StatementInvoiceExport, *api.Problem) {
+	recovered, err := s.reconcileStripeInvoiceSend(ctx, current, claim, key)
+	switch {
+	case errors.Is(err, stripeinvoice.ErrKeyRejected):
+		return current, providerProblem(http.StatusUnprocessableEntity, "Stripe delivery confirmation needs Events read access",
+			"grant the connected Stripe key Events read access, then check the invoice again")
+	case err != nil:
+		return current, providerProblem(http.StatusBadGateway, "Could not confirm Stripe invoice delivery", "try checking the invoice again")
+	case !recovered:
+		return current, exportConflict("Stripe shows a payment but has no matching send receipt; check delivery in Stripe")
+	}
+	if payment, known, _ := stripeInvoicePayment(invoice); known {
+		_ = s.recordInvoicePayment(ctx, payments, current, payment, s.now())
+	}
 	out, err := store.GetStatementInvoiceExport(ctx, current.AccountID, current.SourceKind, current.StatementID)
 	if err != nil {
 		return current, api.ErrInternal("could not reload the sent Stripe invoice")

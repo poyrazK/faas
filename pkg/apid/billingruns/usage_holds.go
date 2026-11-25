@@ -46,7 +46,11 @@ func (s *Service) serveUsageHold(w http.ResponseWriter, r *http.Request, acct st
 		httpkit.NotFound(w, "no such billing run usage hold")
 		return
 	}
-	if recheck && item.UsageRecoveredAt == nil && len(item.UsageGapHours) > 0 {
+	if len(item.UsageGapHours) == 0 {
+		api.WriteProblem(w, draftReviewConflict("historical gap counts are unavailable for this hold; reconcile usage and start a new draft run for this month"))
+		return
+	}
+	if recheck && item.UsageRecoveredAt == nil {
 		var problem *api.Problem
 		item, problem = s.recheckUsageHold(ctx, acct, store, run, item)
 		if problem != nil {

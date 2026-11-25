@@ -219,7 +219,7 @@ RULES = [
     (r"commit-relay|commit-source|^commit|gregale-commit|/commit", "Gregale Commit"),
     (r"exclusive-operation|exclusive_operation|managed-exclusive|^exclusive", "Managed exclusive operations"),
     # --- account, billing, identity
-    (r"api-monetization|consumer-billing|consumer-plan|consumer-signup|rate-card|billing-run|consumer-overdue|consumer-credit|consumer-meter|consumer-route-usage|api-consumer-(billing|credit|meter|plan|rate|route|signup|overdue)|lagoinvoice|automatic-tax|billing-connection", "API monetization"),
+    (r"api-monetization|monetization-funnel|consumer-billing|consumer-plan|consumer-signup|rate-card|billing-run|consumer-overdue|consumer-credit|consumer-meter|consumer-route-usage|api-consumer-(billing|credit|meter|plan|rate|route|signup|overdue)|lagoinvoice|automatic-tax|billing-connection", "API monetization"),
     (r"consumers?|consumer-keys|api-consumer|end-user", "API consumers"),
     (r"platform-tenant", "Platform tenants"),
     (r"tenant-surface|tenant-hostname|wildcard", "Tenant surfaces"),

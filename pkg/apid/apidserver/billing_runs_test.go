@@ -365,6 +365,33 @@ func TestScheduledDraftRunHoldsUsageGapsWithoutProviderCalls(t *testing.T) {
 		t.Fatalf("original hold: %+v", original)
 	}
 	store, accountID := *f.e.Store(), (*f.e.Acct()).ID
+	t.Run("legacy hold without captured counts", func(t *testing.T) {
+		ctx := context.Background()
+		item, err := store.GetBillingRunAppConsumerItem(ctx, accountID, run.ID, gap.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gapHours := item.UsageGapHours
+		item.UsageGapHours = nil
+		if err := store.SaveBillingRunUsageRecheck(ctx, accountID, item); err != nil {
+			t.Fatal(err)
+		}
+		for _, method := range []string{http.MethodGet, http.MethodPost} {
+			w := f.e.Do(t, method, path, nil, nil)
+			if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "historical gap counts are unavailable") ||
+				!strings.Contains(w.Body.String(), "start a new draft run") {
+				t.Errorf("%s legacy usage hold: %d %s", method, w.Code, w.Body)
+			}
+		}
+		item, err = store.GetBillingRunAppConsumerItem(ctx, accountID, run.ID, gap.ID)
+		if err != nil || item.Outcome != state.BillingRunItemHeld || item.UsageRecoveredAt != nil {
+			t.Fatalf("legacy recheck changed the hold: %+v, %v", item, err)
+		}
+		item.UsageGapHours = gapHours
+		if err := store.SaveBillingRunUsageRecheck(ctx, accountID, item); err != nil {
+			t.Fatal(err)
+		}
+	})
 	release, acquired, err := store.TryLockBillingRunUsageRecheck(context.Background(), run.ID, gap.ID)
 	if err != nil || !acquired {
 		t.Fatalf("lock usage hold: acquired=%v err=%v", acquired, err)
