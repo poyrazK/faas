@@ -3,16 +3,55 @@ package commit
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 type acceptFunc func(context.Context, Event) (Receipt, error)
 
 func (f acceptFunc) Accept(ctx context.Context, e Event) (Receipt, error) { return f(ctx, e) }
+
+func TestPostgresRelayOffersClaimedRowsInDueOrder(t *testing.T) {
+	pool := pgtest.OpenDatabase(t)
+	ctx := t.Context()
+	if _, err := pool.Exec(ctx, Schema); err != nil {
+		t.Fatal(err)
+	}
+	// Insert in reverse physical order, then favor a hash join so RETURNING's
+	// row order does not inherit the candidate selection order by accident.
+	if _, err := pool.Exec(ctx, `INSERT INTO public.gregale_outbox(event_id,event_type,payload,created_at,next_attempt_at)
+		SELECT gen_random_uuid(),'order.created',to_jsonb(n),now()-interval '1 hour'+n*interval '1 second',now()-interval '1 hour'
+		FROM generate_series(1,40) AS n ORDER BY n DESC`); err != nil {
+		t.Fatal(err)
+	}
+	cfg := pool.Config()
+	cfg.ConnConfig.RuntimeParams["enable_nestloop"] = "off"
+	cfg.ConnConfig.RuntimeParams["enable_mergejoin"] = "off"
+	ordered, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ordered.Close()
+	next := 1
+	relay := Relay{Pool: ordered, Acceptor: acceptFunc(func(_ context.Context, event Event) (Receipt, error) {
+		got, err := strconv.Atoi(string(event.Data))
+		if err != nil || got != next {
+			t.Fatalf("event offered in position %d: got %s (%v)", next, event.Data, err)
+		}
+		next++
+		return Receipt{ID: uuid.NewString(), OperationID: uuid.NewString()}, nil
+	})}
+	for _, want := range []int{32, 8, 0} {
+		if got, err := relay.Tick(ctx); got != want || err != nil {
+			t.Fatalf("claimed batch accepted %d, want %d: %v", got, want, err)
+		}
+	}
+}
 
 func TestPostgresRelayCommitRollbackAndLostAcceptance(t *testing.T) {
 	pool := pgtest.OpenDatabase(t)

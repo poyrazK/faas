@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"hash/crc32"
+	"sync"
 	"time"
 
 	"filippo.io/age"
@@ -16,15 +18,38 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+const (
+	FastReservedConnectBudget         = 750 * time.Millisecond
+	DefaultAdaptiveReservedConnectMax = 2 * time.Second
+
+	relayWorkers          = 4
+	relayScanInterval     = time.Second
+	relayPollTimeout      = 15 * time.Second
+	relayStoreTimeout     = 3 * time.Second
+	relayMinBackoff       = 5 * time.Second
+	relayMaxBackoff       = 5 * time.Minute
+	relayTransportCeiling = time.Minute
+	relayTransportSpread  = 5 * time.Second
+	relayReplayBudget     = 2 * time.Second
+	relayReplayStep       = 500 * time.Millisecond
+	relayReplayRetry      = 5 * time.Second
+	relayDeliveryReserve  = 5 * time.Second
+	relayCleanupBudget    = time.Second
+	relayCleanupBatch     = 128
+	relayCleanupBatches   = 8
+)
+
 type Store interface {
 	state.CommitStore
-	ListCommitRelaySources(context.Context, string, int) ([]state.CommitRelaySource, error)
+	ClaimCommitRelaySources(context.Context, int, time.Duration) ([]state.CommitRelaySource, error)
+	ClaimHealthyCommitRelaySources(context.Context, int, time.Duration) ([]state.CommitRelaySource, error)
+	DeferCommitRelaySource(context.Context, state.CommitRelaySource) (bool, error)
 	AppByID(context.Context, string) (state.App, error)
 	AccountByID(context.Context, string) (state.Account, error)
-	RecordCommitRelayStatus(context.Context, state.CommitRelaySource, string, *int64, *int64, *time.Time) error
+	RecordCommitRelayPoll(context.Context, state.CommitRelaySource, string, *int64, *int64, *time.Time, time.Duration, state.CommitRelayPollObservation) error
 	RecordCommitBlockedEvents(context.Context, state.CommitRelaySource, []state.CommitBlockedEvent) error
 	PendingCommitReplays(context.Context, string, string) ([]state.CommitReplay, error)
-	CompleteCommitReplay(context.Context, string, string, string, int64) error
+	RecordCommitReplayAttempt(context.Context, state.CommitRelaySource, state.CommitReplay, time.Duration) error
 	// AcceptCommitChange enqueues a changes source's captured row change into
 	// its app's named queue (ADR-20261112140000), in its row's order when
 	// work is set (ADR-20261112193306).
@@ -39,79 +64,170 @@ type Manager struct {
 	Policy            commitwork.NetworkPolicy
 	AcceptedRetention time.Duration
 	RealtimeEnabled   bool
+	// ReserveHealthyWorker keeps one Run worker available for recently healthy sources.
+	ReserveHealthyWorker bool
+	// ReservedConnectBudget limits only the initial connection on the reserved worker.
+	ReservedConnectBudget time.Duration
+	// AdaptiveReservedConnectMax caps the deadline for recently observed slow
+	// connections. Zero disables adaptive deadlines.
+	AdaptiveReservedConnectMax time.Duration
 	// PublicDatabases lets changes sources reach customer databases at any
 	// globally reachable address (FAAS_COMMIT_PUBLIC_DATABASES,
 	// ADR-20261112140000 §6). Other sources keep the operator allowlist.
 	PublicDatabases bool
 	// Open is injectable for isolated acceptance environments. Production uses
 	// the policy-enforcing TLS dialer. Each pool is closed after its bounded tick.
-	Open   func(context.Context, string, commitwork.NetworkPolicy) (*pgxpool.Pool, error)
-	Report func(string, string, int)
-	// Now is injectable for tests; nil uses time.Now.
-	Now    func() time.Time
-	cursor string
+	Open func(context.Context, string, commitwork.NetworkPolicy) (*pgxpool.Pool, error)
+	// Report may be called concurrently by polling workers.
+	Report        func(string, string, int)
+	ReportCleanup func(int64, time.Duration, string)
 }
 
-func (m *Manager) now() time.Time {
-	if m.Now != nil {
-		return m.Now()
+func (m *Manager) claimSources(ctx context.Context, limit int, healthyOnly bool) ([]state.CommitRelaySource, error) {
+	claimCtx, cancel := context.WithTimeout(ctx, relayStoreTimeout)
+	defer cancel()
+	if healthyOnly {
+		return m.Store.ClaimHealthyCommitRelaySources(claimCtx, limit, state.CommitRelaySourceLease)
 	}
-	return time.Now()
+	return m.Store.ClaimCommitRelaySources(claimCtx, limit, state.CommitRelaySourceLease)
 }
 
-func (m *Manager) Tick(ctx context.Context) error {
+func (m *Manager) validate() error {
 	if m.Store == nil || len(m.Identities) == 0 {
 		return errors.New("commit: managed relay configuration missing")
-	}
-	sources, err := m.Store.ListCommitRelaySources(ctx, m.cursor, 16)
-	if err != nil {
-		return err
-	}
-	if len(sources) == 0 {
-		m.cursor = ""
-		return nil
-	}
-	for _, src := range sources {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		// A changes source is polled no more often than its interval, so an
-		// idle scale-to-zero database can suspend (ADR-20261112140000 §7).
-		if !src.Changes.PollDue(src.LastCheckedAt, m.now()) {
-			m.cursor = src.ID
-			continue
-		}
-		sourceCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		count, code, backlog := m.tickSource(sourceCtx, src)
-		cancel()
-		statusCtx, statusCancel := context.WithTimeout(ctx, 3*time.Second)
-		var pending, blocked *int64
-		var oldest *time.Time
-		if backlog != nil {
-			pending = &backlog.Pending
-			blocked = &backlog.Blocked
-			oldest = backlog.OldestPending
-		}
-		statusErr := m.Store.RecordCommitRelayStatus(statusCtx, src, code, pending, blocked, oldest)
-		statusCancel()
-		if statusErr != nil {
-			code = "status_write_failed"
-		}
-		if m.Report != nil {
-			m.Report(src.ID, code, count)
-		}
-		m.cursor = src.ID
-	}
-	if len(sources) < 16 {
-		m.cursor = ""
 	}
 	return nil
 }
 
-func (m *Manager) tickSource(ctx context.Context, src state.CommitRelaySource) (int, string, *commitwork.Backlog) {
+// Tick processes one bounded batch. Run keeps each worker polling independently.
+func (m *Manager) Tick(ctx context.Context) error {
+	if err := m.validate(); err != nil {
+		return err
+	}
+	sources, err := m.claimSources(ctx, relayWorkers, false)
+	if err != nil {
+		return err
+	}
+	var workers sync.WaitGroup
+	for _, src := range sources {
+		workers.Go(func() { m.pollSource(ctx, src, 0) })
+	}
+	workers.Wait()
+	return ctx.Err()
+}
+
+func (m *Manager) pollSource(ctx context.Context, src state.CommitRelaySource, connectBudget time.Duration) {
+	sourceCtx, cancel := context.WithTimeout(ctx, relayPollTimeout)
+	result := m.tickSource(sourceCtx, src, connectBudget)
+	backoff := sourceBackoff(src, result.status, errors.Is(sourceCtx.Err(), context.DeadlineExceeded), result.transportUnavailable)
+	cancel()
+
+	statusCtx, statusCancel := context.WithTimeout(ctx, relayStoreTimeout)
+	defer statusCancel()
+	if result.deferToGeneral {
+		deferred, err := m.Store.DeferCommitRelaySource(statusCtx, src)
+		if m.Report != nil {
+			if err != nil {
+				m.Report(src.ID, "status_write_failed", 0)
+			} else if deferred {
+				m.Report(src.ID, "reserved_connect_deferred", 0)
+			}
+		}
+		return
+	}
+	var pending, blocked *int64
+	var oldest *time.Time
+	var cleanupEligible *int64
+	if result.backlog != nil {
+		pending, blocked, oldest = &result.backlog.Pending, &result.backlog.Blocked, result.backlog.OldestPending
+		cleanupEligible = result.backlog.CleanupEligible
+	}
+	observation := state.CommitRelayPollObservation{CleanupEligible: cleanupEligible}
+	if m.AdaptiveReservedConnectMax > 0 && result.status == "healthy" {
+		milliseconds := int32(result.connectDuration.Milliseconds())
+		observation.ConnectMS = &milliseconds
+	}
+	if err := m.Store.RecordCommitRelayPoll(statusCtx, src, result.status, pending, blocked, oldest, backoff, observation); err != nil {
+		result.status = "status_write_failed"
+	}
+	if m.Report != nil {
+		m.Report(src.ID, result.status, result.accepted)
+	}
+}
+
+func sourceBackoff(src state.CommitRelaySource, status string, timedOut, transportUnavailable bool) time.Duration {
+	switch status {
+	case "database_unavailable", "credential_unavailable", "schema_unqualified", "source_binding_unqualified":
+	default:
+		if !timedOut {
+			return 0
+		}
+	}
+	ceiling := relayMaxBackoff
+	if status == "database_unavailable" && transportUnavailable {
+		// Spread capped retries across sources, with a stable ceiling across
+		// scheduler replicas taking ownership of the same source.
+		offset := int64(crc32.ChecksumIEEE([]byte(src.ID))) % (relayTransportSpread.Milliseconds() + 1)
+		ceiling = relayTransportCeiling - time.Duration(offset)*time.Millisecond
+	}
+	return min(ceiling, max(relayMinBackoff, 2*time.Duration(src.PollBackoffMS)*time.Millisecond))
+}
+
+// processReplays gives replay a share of the source deadline. A failed request
+// stays pending while the remaining requests and the normal delivery pass run.
+func (m *Manager) processReplays(ctx context.Context, relay *commitwork.Relay, src state.CommitRelaySource) (pending bool) {
+	budget := relayReplayBudget
+	if deadline, ok := ctx.Deadline(); ok {
+		budget = min(budget, time.Until(deadline)-relayDeliveryReserve)
+	}
+	if budget <= 0 {
+		return false
+	}
+	replayCtx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	requests, err := m.Store.PendingCommitReplays(replayCtx, src.AccountID, src.ID)
+	if err != nil {
+		return true
+	}
+	for _, request := range requests {
+		if replayCtx.Err() != nil {
+			return true
+		}
+		attemptCtx, cancelAttempt := context.WithTimeout(replayCtx, relayReplayStep)
+		_, attemptErr := relay.ReplayBlocked(attemptCtx, request.EventID)
+		cancelAttempt()
+		var delay time.Duration
+		if attemptErr != nil {
+			delay, pending = relayReplayRetry, true
+		}
+		recordCtx, cancelRecord := context.WithTimeout(replayCtx, relayReplayStep)
+		err := m.Store.RecordCommitReplayAttempt(recordCtx, src, request, delay)
+		cancelRecord()
+		pending = pending || err != nil
+	}
+	return pending
+}
+
+type relayPollResult struct {
+	accepted             int
+	status               string
+	backlog              *commitwork.Backlog
+	transportUnavailable bool
+	deferToGeneral       bool
+	connectDuration      time.Duration
+}
+
+func qualificationPollFailure(err error, status string) relayPollResult {
+	if errors.Is(err, commitwork.ErrConnectionTransport) {
+		return relayPollResult{status: "database_unavailable", transportUnavailable: true}
+	}
+	return relayPollResult{status: status}
+}
+
+func (m *Manager) tickSource(ctx context.Context, src state.CommitRelaySource, connectBudget time.Duration) relayPollResult {
 	raw, err := commitwork.OpenConnection(m.Identities, src.ID, src.SealedConnection)
 	if err != nil {
-		return 0, "credential_unavailable", nil
+		return relayPollResult{status: "credential_unavailable"}
 	}
 	open := m.Open
 	if open == nil {
@@ -119,40 +235,66 @@ func (m *Manager) tickSource(ctx context.Context, src state.CommitRelaySource) (
 	}
 	policy := m.Policy
 	policy.PublicInternet = m.PublicDatabases && src.Changes.IsChanges()
-	pool, err := open(ctx, raw, policy)
+	connectCtx := ctx
+	cancel := func() {}
+	if connectBudget > 0 {
+		connectCtx, cancel = context.WithTimeout(ctx, connectBudget)
+	}
+	connectStarted := time.Now()
+	pool, err := open(connectCtx, raw, policy)
+	connectDuration := time.Since(connectStarted)
+	budgetExpired := connectBudget > 0 && errors.Is(connectCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
+	cancel()
 	if err != nil {
-		return 0, "database_unavailable", nil
+		if budgetExpired {
+			return relayPollResult{deferToGeneral: true}
+		}
+		return relayPollResult{status: "database_unavailable", transportUnavailable: errors.Is(err, commitwork.ErrConnectionTransport)}
 	}
 	defer pool.Close()
 	if err := commitwork.QualifySchemaVersion(ctx, pool, src.ContractVersion); err != nil {
-		return 0, "schema_unqualified", nil
+		return qualificationPollFailure(err, "schema_unqualified")
 	}
 	if err := commitwork.QualifySource(ctx, pool, src.ID); err != nil {
-		return 0, "source_binding_unqualified", nil
+		return qualificationPollFailure(err, "source_binding_unqualified")
 	}
 	relay := commitwork.Relay{ContractVersion: src.ContractVersion, SourceID: src.ID, Pool: pool, Acceptor: &acceptor{store: m.Store, source: src}}
-	replays, replayErr := m.Store.PendingCommitReplays(ctx, src.AccountID, src.ID)
-	if replayErr != nil {
-		return 0, "replay_pending", nil
-	}
-	for _, request := range replays {
-		if _, err := relay.ReplayBlocked(ctx, request.EventID); err != nil {
-			return 0, "replay_pending", nil
-		}
-		if err := m.Store.CompleteCommitReplay(ctx, src.AccountID, src.ID, request.EventID, request.Generation); err != nil {
-			return 0, "replay_pending", nil
-		}
-	}
+	replayPending := m.processReplays(ctx, &relay, src)
 	count, err := relay.Tick(ctx)
 	retention := m.AcceptedRetention
 	if retention == 0 {
 		retention = 7 * 24 * time.Hour
 	}
 	if retention < 24*time.Hour || retention > 30*24*time.Hour {
-		return count, "retention_unqualified", nil
+		return relayPollResult{accepted: count, status: "retention_unqualified"}
 	}
-	if _, cleanupErr := relay.Cleanup(ctx, time.Now().UTC().Add(-retention), 32); cleanupErr != nil {
-		return count, "cleanup_pending", nil
+	cleanupCtx, cancelCleanup := context.WithTimeout(ctx, relayCleanupBudget)
+	cleanupStarted := time.Now()
+	var totalRemoved int64
+	cleanupResult := "complete"
+	var cleanupErr error
+	cutoff := time.Now().UTC().Add(-retention)
+	for range relayCleanupBatches {
+		var removed int64
+		removed, cleanupErr = relay.Cleanup(cleanupCtx, cutoff, relayCleanupBatch)
+		totalRemoved += removed
+		if cleanupErr != nil || removed < relayCleanupBatch {
+			cleanupResult = "complete"
+			break
+		}
+		cleanupResult = "batch_limit"
+	}
+	// A spent cleanup budget leaves more work for the next poll. A parent
+	// cancellation still invalidates the source pass.
+	if errors.Is(cleanupErr, context.DeadlineExceeded) && ctx.Err() == nil {
+		cleanupResult = "time_limit"
+		cleanupErr = nil
+	} else if cleanupErr != nil {
+		cleanupResult = "error"
+	}
+	cancelCleanup()
+	if m.ReportCleanup != nil {
+		m.ReportCleanup(totalRemoved, time.Since(cleanupStarted), cleanupResult)
 	}
 	var realtimeBacklog *commitwork.Backlog
 	if m.RealtimeEnabled {
@@ -161,33 +303,35 @@ func (m *Manager) tickSource(ctx context.Context, src state.CommitRelaySource) (
 		realtimeBacklog = observed
 		err = errors.Join(err, realtimeErr)
 		if realtimeErr != nil && observed == nil {
-			return count, "status_unavailable", nil
+			result := qualificationPollFailure(realtimeErr, "status_unavailable")
+			result.accepted = count
+			return result
 		}
 	}
 	rows, blockedErr := pool.Query(ctx, `SELECT event_id::text,left(event_type,256),
- CASE WHEN blocked_code IN ('invalid_event','invalid_routing','identity_conflict','destination_unqualified','payload_too_large','acceptance_rejected') THEN blocked_code ELSE 'blocked' END,created_at
+	 CASE WHEN blocked_code IN ('invalid_event','invalid_routing','identity_conflict','destination_unqualified','payload_too_large','acceptance_rejected','event_schema_rejected') THEN blocked_code ELSE 'blocked' END,created_at
  FROM public.gregale_outbox WHERE accepted_at IS NULL AND blocked_code IS NOT NULL ORDER BY created_at,event_id LIMIT 32`)
 	if blockedErr != nil {
-		return count, "blocked_scan_pending", nil
+		return relayPollResult{accepted: count, status: "blocked_scan_pending"}
 	}
 	items := []state.CommitBlockedEvent{}
 	for rows.Next() {
 		var item state.CommitBlockedEvent
 		if scanErr := rows.Scan(&item.EventID, &item.Type, &item.Code, &item.CreatedAt); scanErr != nil {
 			rows.Close()
-			return count, "blocked_scan_pending", nil
+			return relayPollResult{accepted: count, status: "blocked_scan_pending"}
 		}
 		items = append(items, item)
 	}
 	blockedErr = rows.Err()
 	rows.Close()
 	if blockedErr != nil {
-		return count, "blocked_scan_pending", nil
+		return relayPollResult{accepted: count, status: "blocked_scan_pending"}
 	}
 	if err := m.Store.RecordCommitBlockedEvents(ctx, src, items); err != nil {
-		return count, "blocked_status_pending", nil
+		return relayPollResult{accepted: count, status: "blocked_status_pending"}
 	}
-	backlog, backlogErr := relay.Backlog(ctx)
+	backlog, backlogErr := relay.Backlog(ctx, cutoff)
 	if realtimeBacklog != nil {
 		backlog.Pending += realtimeBacklog.Pending
 		backlog.Blocked += realtimeBacklog.Blocked
@@ -200,33 +344,68 @@ func (m *Manager) tickSource(ctx context.Context, src state.CommitRelaySource) (
 		snapshot = &backlog
 	}
 	if err != nil {
-		return count, "handoff_pending", snapshot
+		return relayPollResult{accepted: count, status: "handoff_pending", backlog: snapshot}
 	}
 	if backlogErr != nil {
-		return count, "status_unavailable", nil
+		return relayPollResult{accepted: count, status: "status_unavailable"}
+	}
+	if cleanupErr != nil {
+		return relayPollResult{accepted: count, status: "cleanup_pending", backlog: snapshot}
+	}
+	if replayPending {
+		return relayPollResult{accepted: count, status: "replay_pending", backlog: snapshot}
 	}
 	if backlog.Blocked > 0 {
-		return count, "blocked_events", snapshot
+		return relayPollResult{accepted: count, status: "blocked_events", backlog: snapshot}
 	}
-	return count, "healthy", snapshot
+	return relayPollResult{accepted: count, status: "healthy", backlog: snapshot, connectDuration: connectDuration}
 }
 
 func (m *Manager) Run(ctx context.Context) error {
-	ticker := time.NewTicker(5 * time.Second)
+	if err := m.validate(); err != nil {
+		return err
+	}
+	var workers sync.WaitGroup
+	for i := range relayWorkers {
+		workers.Go(func() { m.runWorker(ctx, m.ReserveHealthyWorker && i == 0) })
+	}
+	workers.Wait()
+	return ctx.Err()
+}
+
+func (m *Manager) runWorker(ctx context.Context, healthyOnly bool) {
+	ticker := time.NewTicker(relayScanInterval)
 	defer ticker.Stop()
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
+	for ctx.Err() == nil {
+		sources, err := m.claimSources(ctx, 1, healthyOnly)
+		if err == nil && len(sources) > 0 {
+			var connectBudget time.Duration
+			if healthyOnly {
+				connectBudget = m.reservedConnectDeadline(sources[0].LastConnectMS)
+			}
+			m.pollSource(ctx, sources[0], connectBudget)
+			continue
 		}
-		if err := m.Tick(ctx); err != nil && m.Report != nil {
+		if err != nil && ctx.Err() == nil && m.Report != nil {
 			m.Report("", "source_scan_failed", 0)
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return
 		case <-ticker.C:
 		}
 	}
+}
+
+func (m *Manager) reservedConnectDeadline(observedMS int32) time.Duration {
+	budget := m.ReservedConnectBudget
+	if budget <= 0 || m.AdaptiveReservedConnectMax == 0 {
+		return budget
+	}
+	if observed := time.Duration(observedMS) * time.Millisecond; observed > budget {
+		budget = observed + 250*time.Millisecond
+	}
+	return min(m.AdaptiveReservedConnectMax, budget)
 }
 
 type acceptor struct {

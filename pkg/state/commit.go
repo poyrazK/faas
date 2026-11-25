@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
 	commitwork "github.com/onebox-faas/faas/pkg/commit"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -27,6 +28,7 @@ type CommitSource struct {
 	AllowTenantSelection bool       `json:"allow_tenant_selection"`
 	RelayStatus          string     `json:"relay_status,omitempty"`
 	LastCheckedAt        *time.Time `json:"last_checked_at,omitempty"`
+	PollIntervalMS       int32      `json:"poll_interval_ms,omitempty"`
 	PendingEvents        *int64     `json:"pending_events,omitempty"`
 	BlockedEvents        *int64     `json:"blocked_events,omitempty"`
 	OldestPendingAt      *time.Time `json:"oldest_pending_at,omitempty"`
@@ -59,14 +61,20 @@ func (s *PgStore) CommitOperationByID(ctx context.Context, account, id string) (
 		CompletedAt: exclusiveTime(row.CompletedAt)}, mapErr(err)
 }
 
-// CommitRelaySource is an internal projection. Ciphertext never appears in the
-// public source DTO. Keyset paging bounds scheduler work without starving
-// sources beyond the first page.
+// CommitRelaySourceLease is the time granted to a scheduler to finish its poll.
+const CommitRelaySourceLease = 30 * time.Second
+
+// CommitRelaySource is an internal source lease. The credential and lease token
+// never appear in the public source response.
 type CommitRelaySource struct {
 	CommitSource
 	SealedConnection   []byte
 	CredentialRevision int64
+	PollToken          string
+	PollBackoffMS      int
+	LastConnectMS      int32
 	Changes            CommitChangesConfig
+	pollDueAt          pgtype.Timestamptz
 }
 
 type CommitBlockedEvent struct {
@@ -75,6 +83,17 @@ type CommitBlockedEvent struct {
 	Code       string    `json:"blocked_code"`
 	CreatedAt  time.Time `json:"created_at"`
 	ObservedAt time.Time `json:"observed_at"`
+}
+
+func lockCurrentCommitRelaySource(ctx context.Context, tx pgx.Tx, src CommitRelaySource) (bool, error) {
+	var current bool
+	err := tx.QueryRow(ctx, `SELECT true FROM commit_sources WHERE account_id=$1::uuid AND id=$2::uuid AND enabled
+ AND credential_revision=$3 AND relay_poll_token=$4::uuid AND relay_next_poll_at>clock_timestamp() FOR UPDATE`,
+		src.AccountID, src.ID, src.CredentialRevision, src.PollToken).Scan(&current)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return current, err
 }
 
 func (s *PgStore) ListCommitBlockedEvents(ctx context.Context, account, source string) ([]CommitBlockedEvent, error) {
@@ -103,8 +122,7 @@ func (s *PgStore) RecordCommitBlockedEvents(ctx context.Context, src CommitRelay
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var current bool
-	err = tx.QueryRow(ctx, `SELECT enabled AND credential_revision=$3 FROM commit_sources WHERE account_id=$1::uuid AND id=$2::uuid FOR UPDATE`, src.AccountID, src.ID, src.CredentialRevision).Scan(&current)
+	current, err := lockCurrentCommitRelaySource(ctx, tx, src)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -125,7 +143,7 @@ func (s *PgStore) RecordCommitBlockedEvents(ctx context.Context, src CommitRelay
 func (s *PgStore) RequestCommitReplay(ctx context.Context, account, source, event string) error {
 	tag, err := s.pool.Exec(ctx, `INSERT INTO commit_replay_requests(account_id,source_id,event_id)
  SELECT account_id,source_id,event_id FROM commit_blocked_events WHERE account_id=$1::uuid AND source_id=$2::uuid AND event_id=$3::uuid
- ON CONFLICT(source_id,event_id) DO UPDATE SET state='pending',requested_at=now(),generation=commit_replay_requests.generation+1`, account, source, event)
+ ON CONFLICT(source_id,event_id) DO UPDATE SET state='pending',requested_at=now(),next_attempt_at=now(),generation=commit_replay_requests.generation+1`, account, source, event)
 	if err != nil {
 		return err
 	}
@@ -141,7 +159,9 @@ type CommitReplay struct {
 }
 
 func (s *PgStore) PendingCommitReplays(ctx context.Context, account, source string) ([]CommitReplay, error) {
-	rows, err := s.pool.Query(ctx, `SELECT event_id::text,generation FROM commit_replay_requests WHERE account_id=$1::uuid AND source_id=$2::uuid AND state='pending' ORDER BY requested_at,event_id LIMIT 32`, account, source)
+	rows, err := s.pool.Query(ctx, `SELECT event_id::text,generation FROM commit_replay_requests
+ WHERE account_id=$1::uuid AND source_id=$2::uuid AND state='pending' AND next_attempt_at<=statement_timestamp()
+ ORDER BY next_attempt_at,requested_at,event_id LIMIT 32`, account, source)
 	if err != nil {
 		return nil, err
 	}
@@ -156,19 +176,59 @@ func (s *PgStore) PendingCommitReplays(ctx context.Context, account, source stri
 	}
 	return ids, rows.Err()
 }
-func (s *PgStore) CompleteCommitReplay(ctx context.Context, account, source, event string, generation int64) error {
-	_, err := s.pool.Exec(ctx, `UPDATE commit_replay_requests SET state='completed' WHERE account_id=$1::uuid AND source_id=$2::uuid AND event_id=$3::uuid AND generation=$4`, account, source, event, generation)
+
+// RecordCommitReplayAttempt completes a successful or already-applied replay.
+// A positive delay leaves a failed replay pending and schedules its next attempt.
+func (s *PgStore) RecordCommitReplayAttempt(ctx context.Context, src CommitRelaySource, request CommitReplay, retryDelay time.Duration) error {
+	_, err := s.pool.Exec(ctx, `WITH current_source AS (
+ SELECT id FROM commit_sources WHERE account_id=$1::uuid AND id=$2::uuid AND enabled
+ AND credential_revision=$3 AND relay_poll_token=$4::uuid AND relay_next_poll_at>clock_timestamp() FOR UPDATE
+ ) UPDATE commit_replay_requests r
+ SET state=CASE WHEN $7::bigint=0 THEN 'completed' ELSE 'pending' END,
+ next_attempt_at=CASE WHEN $7::bigint=0 THEN r.next_attempt_at ELSE clock_timestamp()+$7::bigint*interval '1 millisecond' END
+ FROM current_source WHERE r.source_id=current_source.id AND r.account_id=$1::uuid
+ AND r.event_id=$5::uuid AND r.generation=$6 AND r.state='pending'`,
+		src.AccountID, src.ID, src.CredentialRevision, src.PollToken, request.EventID, request.Generation, retryDelay.Milliseconds())
 	return err
 }
 
-func (s *PgStore) ListCommitRelaySources(ctx context.Context, after string, limit int) ([]CommitRelaySource, error) {
-	if limit < 1 || limit > 64 {
+// ClaimCommitRelaySources moves each due source's next eligible time to its
+// lease deadline. Finishing a pass replaces it with the next scheduled poll.
+// The last-checked guard honors the configured cadence for existing sources
+// and observations written by older schedulers during a rolling upgrade.
+func (s *PgStore) ClaimCommitRelaySources(ctx context.Context, limit int, lease time.Duration) ([]CommitRelaySource, error) {
+	return s.claimCommitRelaySources(ctx, limit, lease, false)
+}
+
+// ClaimHealthyCommitRelaySources leases due sources with a fresh healthy poll.
+func (s *PgStore) ClaimHealthyCommitRelaySources(ctx context.Context, limit int, lease time.Duration) ([]CommitRelaySource, error) {
+	return s.claimCommitRelaySources(ctx, limit, lease, true)
+}
+
+func (s *PgStore) claimCommitRelaySources(ctx context.Context, limit int, lease time.Duration, healthyOnly bool) ([]CommitRelaySource, error) {
+	if limit < 1 || limit > 64 || lease < time.Millisecond {
 		return nil, ErrInvalidArgument
 	}
-	rows, err := s.pool.Query(ctx, `SELECT id::text,account_id::text,app_id::text,name,enabled,COALESCE(operation_policy,''),contract_version,allow_tenant_selection,destination,sealed_connection,credential_revision,
- COALESCE(queue_name,''),changes_feeds,COALESCE(managed_database_id::text,''),poll_interval_ms,last_checked_at
- FROM commit_sources WHERE enabled AND sealed_connection IS NOT NULL
- AND ($1::text='' OR id>NULLIF($1,'')::uuid) ORDER BY id LIMIT $2`, after, limit)
+	query := `WITH due AS (
+ SELECT id,relay_next_poll_at FROM commit_sources WHERE enabled AND sealed_connection IS NOT NULL
+ AND relay_next_poll_at <= statement_timestamp()
+ AND (last_checked_at IS NULL OR last_checked_at <= statement_timestamp() - poll_interval_ms * interval '1 millisecond')
+ AND (NOT $3::boolean OR (relay_status = 'healthy'
+ AND last_checked_at IS DISTINCT FROM relay_reserved_deferred_check_at
+ AND last_checked_at >= statement_timestamp() - (poll_interval_ms + $4::bigint) * interval '1 millisecond'))
+ ORDER BY relay_next_poll_at,id LIMIT $1 FOR UPDATE SKIP LOCKED
+ ) UPDATE commit_sources s
+ SET relay_next_poll_at=statement_timestamp()+$2::bigint*interval '1 millisecond',relay_poll_token=gen_random_uuid()
+ FROM due WHERE s.id=due.id
+ RETURNING s.id::text,s.account_id::text,s.app_id::text,s.name,s.enabled,COALESCE(s.operation_policy,''),s.contract_version,
+ s.allow_tenant_selection,s.destination,s.sealed_connection,s.credential_revision,s.relay_poll_token::text,s.relay_poll_backoff_ms,
+ COALESCE(s.queue_name,''),s.changes_feeds,COALESCE(s.managed_database_id::text,''),s.poll_interval_ms,s.last_checked_at,due.relay_next_poll_at,
+ CASE WHEN s.relay_connect_observed_at=s.last_checked_at THEN COALESCE(s.relay_connect_ms,0) ELSE 0 END`
+	if healthyOnly {
+		query = "/* commit relay reserved poll */ " + query
+	}
+	rows, err := s.pool.Query(ctx, query,
+		limit, lease.Milliseconds(), healthyOnly, commitwork.ObservationGracePeriod.Milliseconds())
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +238,8 @@ func (s *PgStore) ListCommitRelaySources(ctx context.Context, after string, limi
 		var src CommitRelaySource
 		var feeds []byte
 		if err := rows.Scan(&src.ID, &src.AccountID, &src.AppID, &src.Name, &src.Enabled, &src.OperationPolicy, &src.ContractVersion, &src.AllowTenantSelection, &src.Destination, &src.SealedConnection, &src.CredentialRevision,
-			&src.Changes.QueueName, &feeds, &src.Changes.ManagedDatabaseID, &src.Changes.PollIntervalMS, &src.LastCheckedAt); err != nil {
+			&src.PollToken, &src.PollBackoffMS,
+			&src.Changes.QueueName, &feeds, &src.Changes.ManagedDatabaseID, &src.Changes.PollIntervalMS, &src.LastCheckedAt, &src.pollDueAt, &src.LastConnectMS); err != nil {
 			return nil, err
 		}
 		if len(feeds) > 0 {
@@ -186,7 +247,22 @@ func (s *PgStore) ListCommitRelaySources(ctx context.Context, after string, limi
 		}
 		sources = append(sources, src)
 	}
-	return sources, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return sources, nil
+}
+
+// DeferCommitRelaySource releases the current lease at its original due time.
+// General workers can claim it immediately. A completed poll updates
+// last_checked_at so the reserved worker can consider the new observation.
+func (s *PgStore) DeferCommitRelaySource(ctx context.Context, src CommitRelaySource) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `/* commit relay general handoff */
+ UPDATE commit_sources SET relay_next_poll_at=$5,relay_poll_token=NULL,relay_reserved_deferred_check_at=last_checked_at
+ WHERE account_id=$1::uuid AND id=$2::uuid AND credential_revision=$3 AND enabled
+ AND relay_poll_token=$4::uuid AND relay_next_poll_at>clock_timestamp()`,
+		src.AccountID, src.ID, src.CredentialRevision, src.PollToken, src.pollDueAt)
+	return tag.RowsAffected() == 1, err
 }
 
 type CommitStore interface {
@@ -265,7 +341,7 @@ func (s *PgStore) CommitSourceByID(ctx context.Context, account, id string) (Com
 	row, err := sqlc.New().CommitSourceIdentity(ctx, s.pool, sqlc.CommitSourceIdentityParams{AccountID: account, SourceID: id})
 	src := CommitSource{ID: row.ID, AccountID: account, AppID: row.AppID, Name: row.Name, Destination: row.Destination,
 		Enabled: row.Enabled, OperationPolicy: row.OperationPolicy, ContractVersion: int(row.ContractVersion), AllowTenantSelection: row.AllowTenantSelection, RelayStatus: row.RelayStatus,
-		LastCheckedAt: exclusiveTime(row.LastCheckedAt), OldestPendingAt: exclusiveTime(row.OldestPendingAt)}
+		LastCheckedAt: exclusiveTime(row.LastCheckedAt), OldestPendingAt: exclusiveTime(row.OldestPendingAt), PollIntervalMS: row.PollIntervalMs}
 	if row.PendingEvents.Valid {
 		src.PendingEvents = &row.PendingEvents.Int64
 	}
@@ -275,10 +351,34 @@ func (s *PgStore) CommitSourceByID(ctx context.Context, account, id string) (Com
 	return src, mapErr(err)
 }
 
-func (s *PgStore) RecordCommitRelayStatus(ctx context.Context, src CommitRelaySource, code string, pending, blocked *int64, oldest *time.Time) error {
-	_, err := s.pool.Exec(ctx, `UPDATE commit_sources SET relay_status=$4,last_checked_at=now(),
- pending_events=$5,blocked_events=$6,oldest_pending_at=$7
- WHERE account_id=$1::uuid AND id=$2::uuid AND credential_revision=$3 AND enabled`, src.AccountID, src.ID, src.CredentialRevision, code, pending, blocked, oldest)
+func (s *PgStore) RecordCommitRelayStatus(ctx context.Context, src CommitRelaySource, code string, pending, blocked *int64, oldest *time.Time, backoff time.Duration, cleanup ...*int64) error {
+	var observation CommitRelayPollObservation
+	if len(cleanup) > 0 {
+		observation.CleanupEligible = cleanup[0]
+	}
+	return s.RecordCommitRelayPoll(ctx, src, code, pending, blocked, oldest, backoff, observation)
+}
+
+type CommitRelayPollObservation struct {
+	CleanupEligible *int64
+	ConnectMS       *int32
+}
+
+// RecordCommitRelayPoll binds a connection measurement to the same fenced
+// healthy observation that allows a source onto the reserved worker.
+func (s *PgStore) RecordCommitRelayPoll(ctx context.Context, src CommitRelaySource, code string, pending, blocked *int64, oldest *time.Time, backoff time.Duration, observation CommitRelayPollObservation) error {
+	connectMS := observation.ConnectMS
+	if code != "healthy" {
+		connectMS = nil
+	}
+	_, err := s.pool.Exec(ctx, `UPDATE commit_sources SET relay_status=$4,last_checked_at=statement_timestamp(),
+ pending_events=$5,blocked_events=$6,oldest_pending_at=$7,relay_poll_backoff_ms=$8,cleanup_eligible_events=$10,
+ cleanup_observed_at=CASE WHEN $10::bigint IS NULL THEN NULL ELSE statement_timestamp() END,
+ relay_connect_ms=$11,relay_connect_observed_at=CASE WHEN $11::int IS NULL THEN NULL ELSE statement_timestamp() END,
+ relay_next_poll_at=statement_timestamp()+(poll_interval_ms+$8::int)*interval '1 millisecond',relay_poll_token=NULL
+ WHERE account_id=$1::uuid AND id=$2::uuid AND credential_revision=$3 AND enabled
+ AND relay_poll_token=$9::uuid AND relay_next_poll_at>clock_timestamp()`,
+		src.AccountID, src.ID, src.CredentialRevision, code, pending, blocked, oldest, backoff.Milliseconds(), src.PollToken, observation.CleanupEligible, connectMS)
 	return err
 }
 func (s *PgStore) CommitReceiptByEvent(ctx context.Context, account, source, event string) (CommitReceipt, error) {

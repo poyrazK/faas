@@ -158,7 +158,7 @@ func TestE2E_CommitCLISourceLifecycle(t *testing.T) {
 	if err := json.Unmarshal(run("info", source.ID), &info); err != nil || info.ID != source.ID || !info.Enabled {
 		t.Fatalf("CLI source info: %+v (%v)", info, err)
 	}
-	waitCommitSourceHealth(t, f.h, f.key, source.ID, "healthy", time.Time{})
+	waitCommitSourceHealth(t, ctx, f.h, f.key, source.ID, "healthy", time.Time{})
 	var doctor struct {
 		Healthy bool                         `json:"healthy"`
 		Checks  []commitwork.DiagnosticCheck `json:"checks"`
