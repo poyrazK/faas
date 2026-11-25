@@ -356,6 +356,22 @@ func pythonDependencyNamed(content, name string) bool {
 	return regexp.MustCompile(pattern).MatchString(content)
 }
 
+// goLocalStart is the Go start command for `gregale dev`, which runs the
+// source directly.
+const goLocalStart = "go run ."
+
+// DeployedStartCommand is the command a deployed build runs. It differs
+// from StartCommand only for Go: StartCommand is the local `go run .` that
+// `gregale dev` uses, while the Railpack build compiles the app and starts
+// its ./out binary. The deploy summary and build plan showed `go run .`, as
+// if every cold start compiled the source (prod hunt r47).
+func DeployedStartCommand(p Profile) string {
+	if p.StartCommand == goLocalStart && !p.StartFromConfig {
+		return "./out"
+	}
+	return p.StartCommand
+}
+
 func inferGo(fsys fs.FS, profile *Profile) {
 	profile.Framework = "go-net-http"
 	profile.PackageManager = "go"
@@ -367,7 +383,7 @@ func inferGo(fsys fs.FS, profile *Profile) {
 			break
 		}
 	}
-	profile.StartCommand = "go run ."
+	profile.StartCommand = goLocalStart
 }
 
 func inferDocker(fsys fs.FS, profile *Profile) {

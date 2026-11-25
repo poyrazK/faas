@@ -87,10 +87,15 @@ func cmdInit(args []string) int {
 	noMCP := fs.Bool("no-mcp", false, "do not write .mcp.json")
 	agents := fs.Bool("agents", false, "set up an existing project for coding agents instead of scaffolding one")
 	dryRun := fs.Bool("dry-run", false, "with --agents, show the changes without writing them")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 0 {
+	// `gregale init --template X my-app` printed only the usage on prod
+	// (prod hunt r47): with the template named, one bare word is the
+	// directory, as in most scaffolders.
+	if *tpl != "" && *dest == "" && fs.NArg() == 1 && !templates.Exists(fs.Arg(0)) {
+		*dest = fs.Arg(0)
+	} else if fs.NArg() != 0 {
 		usage := initCmdUsage
 		// `gregale init function-python313 .` printed only the usage on prod
 		// (hunt 2026-11-21): name the command the words meant.
