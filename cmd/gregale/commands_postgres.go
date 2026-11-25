@@ -21,7 +21,7 @@ import (
 
 func cmdPostgres(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|create|get|status|wait|delete|recover|resize|resize-status|compute-policy|compute-policy-status|suspend-timeout|wake-with-app|restore|branch|bindings|attach|connect|cutover|live>", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|create|get|status|wait|delete|recover|resize|resize-status|compute-policy|compute-policy-status|suspend-timeout|app-wake|restore|branch|bindings|attach|connect|cutover|live>", "postgres")
 		return 1
 	}
 	switch args[0] {
@@ -62,7 +62,7 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresComputePolicy(args[1:])
 	case "compute-policy-status":
 		return cmdPostgresComputePolicyStatus(args[1:])
-	case "wake-with-app":
+	case "app-wake":
 		return cmdPostgresWakeWithApp(args[1:])
 	case "suspend-timeout":
 		return cmdPostgresSuspendTimeout(args[1:])

@@ -41,15 +41,15 @@ Operators: see the [operator guide](managed-postgres.md).
   A suspended database takes the new time at once; a running one takes it
   the next time it suspends, without dropping connections. `gregale postgres
   get` shows the current value. Always-on compute is not part of these plans.
-- <a id="start-with-your-app"></a>**Start with your app.** A suspended
+- **Start with your app.** A suspended
   database normally starts on your app's first query after idle, so that
   request waits for the app's wake and then the database's (a few hundred
-  milliseconds). Turn on `wake-with-app` and the database starts as soon as
+  milliseconds). Turn on `app-wake` and the database starts as soon as
   an app bound to it starts waking, so the two overlap:
 
   ```sh
-  gregale postgres wake-with-app set orders-db on
-  gregale postgres wake-with-app set orders-db off
+  gregale postgres app-wake set orders-db on
+  gregale postgres app-wake set orders-db off
   ```
 
   It is off by default. Every app wake starts the database, including wakes

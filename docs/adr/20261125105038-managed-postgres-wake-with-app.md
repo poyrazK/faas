@@ -26,8 +26,8 @@ Starting the database with its app is a per-database opt-in, off by default
 (owner, 2026-11-25), so no customer's bill changes unless they choose it:
 
 ```sh
-gregale postgres wake-with-app set orders-db on
-gregale postgres wake-with-app set orders-db off
+gregale postgres app-wake set orders-db on
+gregale postgres app-wake set orders-db off
 ```
 
 - **Storage.** `managed_postgres_wake_with_app` has one row per opted-in

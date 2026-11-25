@@ -2311,7 +2311,7 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/ManagedPostgresWakeWithApp'}
         default:
-          description: Validation, conflict, entitlement or admission failure
+          description: Invalid setting, unsupported database, conflict, entitlement or admission failure
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}

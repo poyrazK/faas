@@ -9,12 +9,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const postgresWakeWithAppUsage = "usage: gregale postgres wake-with-app set DATABASE on|off"
+const postgresWakeWithAppUsage = "usage: gregale postgres app-wake set DATABASE on|off"
 
 // cmdPostgresWakeWithApp turns starting a scale-to-zero database when a
 // bound app wakes on or off (ADR-20261125105038).
 func cmdPostgresWakeWithApp(args []string) int {
-	fs := newFlagSet("postgres wake-with-app", flag.ContinueOnError)
+	fs := newFlagSet("postgres app-wake", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}

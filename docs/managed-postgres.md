@@ -545,7 +545,7 @@ none; false disables compute suspension. Customer requests cannot currently sele
 retains the provider-neutral field for a future always-on entitlement.
 
 A customer can opt a scale-to-zero database into starting when an app bound
-to it wakes (`gregale postgres wake-with-app set DB on`,
+to it wakes (`gregale postgres app-wake set DB on`,
 [ADR-20261125105038](adr/20261125105038-managed-postgres-wake-with-app.md)).
 Every apid listens to schedd's `instance_changed`; on a waking instance it
 claims the app's opted-in databases (at most once a minute each, one replica

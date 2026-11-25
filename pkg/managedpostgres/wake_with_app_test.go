@@ -25,6 +25,7 @@ func (p *wakeStartProvider) StartCompute(_ context.Context, id string) error {
 // wakeStartStore claims like the SQL: an opted-in database of the app not
 // started within gap.
 type wakeStartStore struct {
+	*MemoryStore
 	mu       sync.Mutex
 	enabled  map[string]bool   // database -> opted in
 	bindings map[string]string // database -> app
@@ -88,7 +89,7 @@ func TestWakeStarterStartsOptedInDatabasesOncePerGap(t *testing.T) {
 	registry := testRegistry(t, provider, nil)
 	backend := registry.backends["primary-a"]
 	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
-	store := &wakeStartStore{enabled: map[string]bool{"db-1": true, "db-2": false},
+	store := &wakeStartStore{MemoryStore: NewMemoryStore(), enabled: map[string]bool{"db-1": true, "db-2": false},
 		bindings: map[string]string{"db-1": "app-1", "db-2": "app-2"}, started: map[string]time.Time{}, now: now,
 		claims: WakeStartClaim{BackendID: backend.ID, BackendFingerprint: backend.Fingerprint}}
 	var outcomes []WakeStartOutcome
@@ -153,7 +154,7 @@ func TestWakeStarterStartsOptedInDatabasesOncePerGap(t *testing.T) {
 }
 
 func TestWakeStarterRereadsAppsAfterOptIn(t *testing.T) {
-	store := &wakeStartStore{enabled: map[string]bool{}, bindings: map[string]string{"db-1": "app-1"}, started: map[string]time.Time{}}
+	store := &wakeStartStore{MemoryStore: NewMemoryStore(), enabled: map[string]bool{}, bindings: map[string]string{"db-1": "app-1"}, started: map[string]time.Time{}}
 	service := &Service{store: store}
 	starter := service.NewWakeStarter(nil, nil)
 	ctx := context.Background()

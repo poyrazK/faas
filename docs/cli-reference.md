@@ -4872,6 +4872,32 @@ gregale postgres suspend-timeout set orders-db 2m
 gregale postgres suspend-timeout set orders-db default
 ```
 
+### postgres app-wake
+
+Start a scale-to-zero database when an app bound to it wakes (on/off)
+
+`gregale postgres app-wake <set> <database> <on|off>`
+
+Examples:
+
+```sh
+gregale postgres app-wake set orders-db on
+gregale postgres app-wake set orders-db off
+```
+
+#### postgres app-wake set
+
+Start a scale-to-zero database when an app bound to it wakes (on/off)
+
+`gregale postgres app-wake set <database> <on|off>`
+
+Examples:
+
+```sh
+gregale postgres app-wake set orders-db on
+gregale postgres app-wake set orders-db off
+```
+
 ### postgres resize
 
 Durably resize compute; clients may disconnect

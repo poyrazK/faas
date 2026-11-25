@@ -1313,7 +1313,7 @@ const (
 const ManagedPostgresSuspendTimeoutDocsURL = "https://gregale.dev/docs/postgres#plans"
 
 // ManagedPostgresWakeWithAppDocsURL is cited by wake-with-app refusals.
-const ManagedPostgresWakeWithAppDocsURL = "https://gregale.dev/docs/postgres#start-with-your-app"
+const ManagedPostgresWakeWithAppDocsURL = "https://gregale.dev/docs/postgres#plans"
 
 // ManagedPostgresNeonScaleMillicentsPerComputeUnitHour is what Neon's Scale
 // plan charges Gregale per CU-hour ($0.222, neon.com/pricing on 2026-11-02),

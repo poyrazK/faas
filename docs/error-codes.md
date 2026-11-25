@@ -1506,7 +1506,7 @@ See [Progressive rollouts](rollouts.md).
 
 HTTP 422 Unprocessable Entity · Invalid wake-with-app setting
 
-See [Managed PostgreSQL](postgres.md#start-with-your-app).
+See [Managed PostgreSQL](postgres.md#plans).
 
 ### `invalid_warm_pool_size`
 
@@ -4022,7 +4022,7 @@ The response's `title` and `detail` describe the failure.
 
 HTTP 409 Conflict · Database cannot start with its app
 
-See [Managed PostgreSQL](postgres.md#start-with-your-app).
+See [Managed PostgreSQL](postgres.md#plans).
 
 ### `webhook_outbox_full`
 

@@ -6502,8 +6502,8 @@ var cliCommands = []cliCommand{
 			{Name: "compute-policy-status", Short: "Read compute policy change progress", Positionals: []string{"<database>", "<request_uuid>"}},
 			{Name: "suspend-timeout", Short: "Set how long an idle scale-to-zero database stays up (1m-1h, or default)", Positionals: []string{"<database>", "<duration|default>"},
 				Examples: []string{"gregale postgres suspend-timeout set orders-db 2m", "gregale postgres suspend-timeout set orders-db default"}},
-			{Name: "wake-with-app", Short: "Start a scale-to-zero database when an app bound to it wakes (on/off)", Positionals: []string{"<database>", "<on|off>"},
-				Examples: []string{"gregale postgres wake-with-app set orders-db on", "gregale postgres wake-with-app set orders-db off"}},
+			{Name: "app-wake", Short: "Start a scale-to-zero database when an app bound to it wakes (on/off)", Positionals: []string{"<database>", "<on|off>"},
+				Examples: []string{"gregale postgres app-wake set orders-db on", "gregale postgres app-wake set orders-db off"}},
 			{Name: "resize", Short: "Durably resize compute; clients may disconnect", Positionals: []string{"<database>"}, Flags: []cliFlag{
 				{Name: "class", Short: "target service class", Req: true, Value: "CLASS", ClosedSet: []string{"development", "burstable", "production"}},
 				{Name: "request-id", Short: "stable request UUID; reuse after uncertain responses", Req: true, Value: "UUID"},
