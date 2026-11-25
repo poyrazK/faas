@@ -55,6 +55,9 @@ const (
 	// successful claim. The user lands on their account page so the
 	// browser is logged in alongside the CLI.
 	cliAuthDashboard = "/dashboard/account"
+	// cliAuthHome is where an expired MCP approval page sends a browser
+	// that has nothing left to approve.
+	cliAuthHome = "/dashboard"
 	// Browser-authorized CLI sessions are replaceable credentials. A finite
 	// lifetime bounds exposure for a lost device even when the user never
 	// returns to run `gregale logout`.
@@ -383,6 +386,10 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err != nil || status != api.CliAuthStatusPending {
+		if err != nil && isMCPAuthCode(r.URL.Query().Get("code")) {
+			h.renderMCPCodeExpired(w, r)
+			return
+		}
 		h.renderCliAuthRetry(w, r, "Code unavailable")
 		return
 	}
@@ -597,6 +604,28 @@ func (h *cliAuthHandlers) renderCliAuthRetry(w http.ResponseWriter, r *http.Requ
 		Data:  map[string]any{"CLIRetry": true, "AccountEmail": acct.Email},
 	}
 	h.renderCliAuthFailure(w, r, page)
+}
+
+// renderMCPCodeExpired answers an approval link whose MCP code has expired.
+// The link outlives its code when the person signs up or signs in first, so
+// the page says why it stopped and gives the signed-in browser somewhere to
+// go. A missing row means expired: only a well-formed MCP code reaches the
+// lookup, and each carries 256 random bits. Like renderCliAuthError, it never
+// says whether the code was approved before it expired.
+func (h *cliAuthHandlers) renderMCPCodeExpired(w http.ResponseWriter, r *http.Request) {
+	acct, _ := AccountFrom(r.Context())
+	h.renderCliAuthFailure(w, r, dashboard.Page{
+		Title: "Approval link expired",
+		Body:  "cli_auth",
+		Data: map[string]any{
+			"Error":        true,
+			"MCP":          true,
+			"Expired":      true,
+			"TTLMinutes":   int(api.MCPBrowserAuthorizationTTL / time.Minute),
+			"AccountEmail": acct.Email,
+			"DashboardURL": cliAuthHome,
+		},
+	})
 }
 
 func (h *cliAuthHandlers) renderCliAuthError(w http.ResponseWriter, r *http.Request, title, detail string) {

@@ -574,6 +574,76 @@ func TestRenderCliAuthPage_UnknownRendersError(t *testing.T) {
 	}
 }
 
+// TestRenderCliAuthPage_MCPCodeStates: a person who signs up from an MCP
+// approval link can arrive after its code expired. That page says the link
+// expired and offers the dashboard; a used code keeps the generic recovery,
+// which never claims that nothing was authorized.
+func TestRenderCliAuthPage_MCPCodeStates(t *testing.T) {
+	const email = "mcp-expired@example.com"
+	tests := []struct {
+		name   string
+		issue  func(t *testing.T, store *state.MemStore, hash []byte)
+		want   []string
+		forbid []string
+	}{
+		{
+			name: "expired",
+			issue: func(t *testing.T, store *state.MemStore, hash []byte) {
+				if err := store.IssueCliAuthCode(t.Context(), hash, time.Now().Add(-time.Minute)); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: []string{"Approval link expired", "Approval links last 60 minutes",
+				"Start the connection again from your agent", email, `href="/dashboard"`},
+			forbid: []string{"Code unavailable", "Nothing was authorized", "gregale login", "<form"},
+		},
+		{
+			name: "used",
+			issue: func(t *testing.T, store *state.MemStore, hash []byte) {
+				if err := store.IssueCliAuthCode(t.Context(), hash, time.Now().Add(time.Hour)); err != nil {
+					t.Fatal(err)
+				}
+				if err := store.ClaimCliAuthCode(t.Context(), hash, "acct-earlier-approval"); err != nil {
+					t.Fatal(err)
+				}
+				if _, _, err := store.ConsumeCliAuthCode(t.Context(), hash); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want:   []string{"Code unavailable", "This connection attempt can no longer continue.", "Start the connection again from your agent"},
+			forbid: []string{"expired", "Nothing was authorized", "gregale login", "<form"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, store := newCliAuthTestServer(t)
+			code, hash, err := mintMCPAuthCode(api.CliAuthCodeRequest{Purpose: api.CliAuthPurposeMCPRead})
+			if err != nil {
+				t.Fatal(err)
+			}
+			tc.issue(t, store, hash)
+			rec := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodGet, "/cli-auth?code="+code+"&return=mcp", nil)
+			r.AddCookie(&http.Cookie{Name: sessionCookie, Value: srv.issueBrowserSessionForTest(t, email)})
+			srv.ServeHTTP(rec, r)
+			body := rec.Body.String()
+			if rec.Code != http.StatusOK {
+				t.Fatalf("code = %d, want 200: %s", rec.Code, body)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(body, want) {
+					t.Errorf("page lacks %q: %s", want, body)
+				}
+			}
+			for _, forbid := range tc.forbid {
+				if strings.Contains(body, forbid) {
+					t.Errorf("page contains %q: %s", forbid, body)
+				}
+			}
+		})
+	}
+}
+
 // TestPostCliAuthPage_BindsToAuthenticatedAccount proves the browser's
 // submitted email is not an account-selection primitive. The claim is
 // always bound to the account established by sessionAuth.
