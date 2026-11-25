@@ -18475,14 +18475,18 @@ SELECT jsonb_build_object('ID', id, 'Plan', plan, 'Status', status, 'AbuseHoldAt
 FROM app_resource_accounts WHERE id=sqlc.arg(account_id)::text::uuid AND app_id=sqlc.arg(app_id)::text::uuid;
 
 -- name: LockRoutePolicyAccount :one
+-- FOR NO KEY UPDATE, not FOR UPDATE: the snapshot then locks the app row, and
+-- a child insert's foreign-key checks take KEY SHARE on the app before the
+-- namespace (request_id_journal), so FOR UPDATE here deadlocked them. Route
+-- policy writers, plan/status updates and deletes still conflict with it.
 WITH namespace AS MATERIALIZED (
- SELECT id FROM resource_namespaces WHERE id=sqlc.arg(account_id)::text::uuid FOR UPDATE
+ SELECT id FROM resource_namespaces WHERE id=sqlc.arg(account_id)::text::uuid FOR NO KEY UPDATE
 ), owner AS MATERIALIZED (
  SELECT o.id,o.personal_org,o.resource_ownership_enabled FROM orgs o JOIN apps a ON a.org_id=o.id
  JOIN namespace n ON n.id=a.account_id WHERE a.id=sqlc.arg(app_id)::text::uuid FOR SHARE OF o
 ), legacy AS MATERIALIZED (
  SELECT ac.id FROM accounts ac JOIN namespace n ON n.id=ac.id
- JOIN owner o ON o.personal_org OR NOT o.resource_ownership_enabled FOR UPDATE OF ac
+ JOIN owner o ON o.personal_org OR NOT o.resource_ownership_enabled FOR NO KEY UPDATE OF ac
 )
 SELECT jsonb_build_object('ID', a.id, 'Plan', a.plan, 'Status', a.status, 'AbuseHoldAt', a.abuse_hold_at) AS snapshot
 FROM app_resource_accounts a JOIN namespace n ON n.id=a.id JOIN owner o ON true

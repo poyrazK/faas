@@ -5116,6 +5116,10 @@ type Querier interface {
 	// ADR-845: waits for an in-flight evaluation instead of skipping it, so the
 	// claim reads the incident that evaluation committed.
 	LockRouteMonitorRollbackIncident(ctx context.Context, db DBTX, arg LockRouteMonitorRollbackIncidentParams) (LockRouteMonitorRollbackIncidentRow, error)
+	// FOR NO KEY UPDATE, not FOR UPDATE: the snapshot then locks the app row, and
+	// a child insert's foreign-key checks take KEY SHARE on the app before the
+	// namespace (request_id_journal), so FOR UPDATE here deadlocked them. Route
+	// policy writers, plan/status updates and deletes still conflict with it.
 	LockRoutePolicyAccount(ctx context.Context, db DBTX, arg LockRoutePolicyAccountParams) ([]byte, error)
 	LockRoutePolicyApp(ctx context.Context, db DBTX, arg LockRoutePolicyAppParams) ([]byte, error)
 	LockRoutePolicyContract(ctx context.Context, db DBTX, arg LockRoutePolicyContractParams) (LockRoutePolicyContractRow, error)
