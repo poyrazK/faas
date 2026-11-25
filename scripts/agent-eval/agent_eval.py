@@ -614,7 +614,26 @@ def attribute(gregale: "Gregale", touched: dict, evidence: str, slug: str | None
         for name in touched.get(kind, []):
             named = name == slug or _named(name, evidence) or (kind == "apps" and name.startswith(prefixes))
             (mine if named else others)[kind].append(name)
+    for app in _members_of(gregale, mine["projects"], others["apps"]):
+        others["apps"].remove(app)
+        mine["apps"].append(app)
+    mine["apps"].sort()
     return mine, others
+
+
+def _members_of(gregale: "Gregale", projects: list[str], apps: list[str]) -> list[str]:
+    """The apps among `apps` that belong to one of `projects`. A Compose
+    deploy names a project's apps from its services, names the agent never
+    typed (rc.381 retail-store: retail-catalog and retail-carts went
+    unattributed, failed apps_created and were left behind)."""
+    if not projects or not apps:
+        return []
+    try:
+        ids = {row.get("id") for row in _rows(gregale.get("/v1/projects")) if row.get("slug") in projects}
+        members = {row.get("slug") for row in _rows(gregale.get("/v1/apps")) if row.get("project_id") in ids - {None, ""}}
+    except (OSError, ValueError, AttributeError, urllib.error.URLError, subprocess.TimeoutExpired):
+        return []
+    return [app for app in apps if app in members]
 
 
 def _slug_prefixes(evidence: str) -> tuple:

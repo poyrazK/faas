@@ -701,6 +701,20 @@ class CliLoginTests(unittest.TestCase):
         ])
         self.assertEqual(left, ["name:held", "app:stuck"])
 
+    def test_project_members_belong_to_the_run(self):
+        # rc.381 retail-store: Compose named retail-catalog and retail-carts
+        # from its services; the agent never typed them, so they went
+        # unattributed, failed apps_created and were left behind.
+        g = ev.CliGregale("/bin/gregale")
+        lists = {"/v1/projects": {"items": [{"id": "p1", "slug": "retail-store"}, {"id": "p2", "slug": "other"}]},
+                 "/v1/apps": {"items": [{"slug": "retail-catalog", "project_id": "p1"}, {"slug": "retail-carts", "project_id": "p1"},
+                                        {"slug": "bh57-py", "project_id": ""}, {"slug": "side", "project_id": "p2"}]}}
+        touched = {"apps": ["bh57-py", "retail-carts", "retail-catalog", "retail-ui", "side"], "projects": ["retail-store"], "databases": []}
+        with mock.patch.object(g, "get", side_effect=lambda path: lists[path]):
+            mine, others = ev.attribute(g, touched, "gregale deploy --project retail-store\ncurl https://retail-ui.gregale.app")
+        self.assertEqual(mine["apps"], ["retail-carts", "retail-catalog", "retail-ui"])
+        self.assertEqual(others["apps"], ["bh57-py", "side"])
+
     def test_cleanup_deletes_the_runs_databases_only(self):
         # The 2026-11-24 voting-app rerun found the account at its database
         # limit, filled by earlier runs' databases cleanup never deleted.
