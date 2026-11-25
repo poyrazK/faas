@@ -872,6 +872,7 @@ var dtoExclude = map[string]bool{
 	// ADR-20261117215858: a query result column, declared inline in the
 	// ManagedPostgresQueryResponse schema.
 	"ManagedPostgresQueryColumn":     true,
+	"DataAPIInspectionIdentity":      true, // Nested inline in DataAPIInspectionResponse.
 	"NormalizedIssueTrackerLink":     true, // internal provider identity canonicalizer; never a wire DTO
 	"EventSubscriptionDeadlineQuery": true, // client-only query builder; wire parameters are declared on the route
 	// ADR 20261114180740: the body of an app's call to outboundd's /p/{name}, not an apid route.
@@ -1815,6 +1816,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "data_api_usage.go"),               // ADR-20261019102108 runtime usage reports and owner views.
 		filepath.Join(root, "pkg", "api", "data_api_change_events.go"),       // ADR-20261022121642 runtime change hook publications.
 		filepath.Join(root, "pkg", "api", "data_api_access.go"),              // ADR-20261016151947 access settings for live reads without a token.
+		filepath.Join(root, "pkg", "api", "data_api_inspection.go"),          // Data API inspection request and response.
 		filepath.Join(root, "pkg", "api", "data_api_contract_tasks.go"),      // ADR-20261027123814 Data API contract tasks.
 		filepath.Join(root, "pkg", "api", "data_api_runtime.go"),             // ADR-20261031095954 runtime served by apid.
 		filepath.Join(root, "pkg", "api", "data_api_status.go"),              // ADR-20261022121642 amd 1: Data API status and change hook reports.
