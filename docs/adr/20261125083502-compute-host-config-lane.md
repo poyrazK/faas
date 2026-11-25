@@ -116,7 +116,7 @@ have restarted are added to the deployctl restart set (§1.4), so:
 - `faas-schedd` and `faas-gatewayd-internal` restart in deployctl's waves
   with their readiness checks.
 - A task that applies state directly rather than through a handler (the
-  nftables role's atomic `nft -f` reload) applies during step 2. The
+  nftables role's atomic `nft -f` reload) applies during step 3. The
   rollback (§4) reapplies the recorded ruleset the same way.
 
 A lane-role handler that restarts any unit without honouring
@@ -234,6 +234,45 @@ changed the production manifest. Its value depends on how often a commit
 changes only lane roles, which this window never did. Per-variable
 `group_vars` ownership (the follow-up ADR-20261115120000 names) would add
 0f872e67ae only once the executor exists.
+
+## Open before building
+
+Reviews of this ADR against the code it relies on (2026-11-25) found gaps a
+revival must close first; the decisions above assume them closed:
+
+1. **The role record names no commit.** `compute-roles.json` is
+   `host_roles.py` `group_hashes` output plus `.environment`. §4.1's
+   "recorded commit" needs a `commit` field that node_join and the lane
+   both write.
+2. **The environment hash.** node_join converges every role when the
+   record's `.environment` (manifest-rendered inventory and operator vars)
+   differs; `host_roles.py changed --record` never compares it. The lane
+   must refuse (or treat as `all: true`) a node whose environment changed,
+   and record only the environment it converged under.
+3. **Unguarded restart handlers.** Besides `vmmd_service`'s
+   networkd-dispatcher, these compute roles' handlers restart or reload
+   with no `faas_join_defer_service_handlers` guard: `tenant_egress_client`
+   and `agent_egress_client` (`wg-quick@`, guest egress), `overlay`
+   (`faas-overlay`, nftables), `node_exporter`, `alloy`, `promtail`, and
+   part of `gatewayd_public_edge_service`. Each is guarded, excepted by
+   name, or kept full-release-only before it becomes a lane role.
+4. **Restarting the derived set.** `host_roles.restart_roles` is a function
+   that needs a services list, not a CLI; deployctl's waves only know faas
+   units. Each unit the set can contain (faas-imaged,
+   faas-gatewayd-public-edge, faas-cloudflared, networkd-dispatcher,
+   `wg-quick@*`, faas-overlay, …) needs a stated restart path: a deployctl
+   wave or a direct, guarded restart.
+5. **Files a release added.** `host_roles.py` hashes role sources; it does
+   not parse `dest:` paths. §4.2 needs a new destination extractor for
+   template, copy and file tasks.
+6. **Changed versus pulled-in roles.** `host_roles.changed()` returns one
+   merged list. §1.1's rule (handler-only roles do not refuse) needs a split
+   output, or the plan compares record and release hashes itself.
+7. **Rollback adoption refusal.** If the old vmmd's adoption check refuses
+   a guest woken under the new vmmd during the gate, the rollback stands
+   down with the node on the recorded config and the new binary, record
+   unchanged, freeze issue naming the refused guest; the repair is a full
+   release.
 
 ## Build order (if revived)
 
