@@ -3175,6 +3175,7 @@ var cliCommands = []cliCommand{
 			{Name: "path", Group: "Source and build", Common: true, Short: "source directory (default: current directory)", Value: "DIR"},
 			{Name: "source", Group: "Source and build", Common: true, Short: "local source policy (default: auto)", Value: "auto|head|worktree", ClosedSet: []string{"auto", "head", "worktree"}},
 			{Name: "worktree", Group: "Source and build", Short: "deploy the selected source directory from the working tree, including local changes"},
+			{Name: "anonymous", Group: "Source and build", Short: "deploy without an account when not logged in; prints a link a person opens to claim the app", Bool: true},
 			{Name: "repo", Group: "GitHub", Short: "deploy a GitHub repository (requires --ref)", Value: "OWNER/NAME"},
 			{Name: "repository", Group: "GitHub", Short: "bind a project to GitHub (requires --install-id)", Value: "OWNER/NAME"},
 			{Name: "install-id", Group: "GitHub", Short: "GitHub installation ID (requires --repository)", Value: "N"},
@@ -6408,10 +6409,13 @@ var cliCommands = []cliCommand{
 				{Name: "idle-timeout", Short: "seconds without traffic before the cache parks (default 900)", Value: "SECONDS"},
 			}, Examples: []string{"gregale redis create sessions --memory 128"}},
 			{Name: "get", Short: "Show one managed Redis cache", Positionals: []string{"<name>"}},
-			{Name: "bind", Short: "Set the cache's connection URL on an app", Positionals: []string{"<name>"}, Flags: []cliFlag{
+			{Name: "bind", Short: "Let an app call the cache and set its connection URL", Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app that receives the URL", Req: true, Value: "APP"},
 				{Name: "env", Short: "environment variable (default REDIS_URL)", Value: "KEY"},
 			}, Examples: []string{"gregale redis bind sessions --app web"}},
+			{Name: "unbind", Short: "Stop an app from calling the cache", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app that loses access", Req: true, Value: "APP"},
+			}, Notes: []string{"The app's connection variable stays set; unset it with `gregale env unset`."}, Examples: []string{"gregale redis unbind sessions --app web"}},
 			{Name: "resize", Short: "Change a cache's size or eviction policy; its data is kept", Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "memory", Short: "new data size in MB", Value: "MB"},
 				{Name: "eviction-policy", Short: "new eviction policy", Value: "POLICY", ClosedSet: api.ManagedValkeyEvictionPolicies},
@@ -6493,6 +6497,8 @@ var cliCommands = []cliCommand{
 				{Name: "request-id", Short: "stable request UUID; reuse after uncertain responses", Req: true, Value: "UUID"},
 			}},
 			{Name: "compute-policy-status", Short: "Read compute policy change progress", Positionals: []string{"<database>", "<request_uuid>"}},
+			{Name: "suspend-timeout", Short: "Set how long an idle scale-to-zero database stays up (1m-1h, or default)", Positionals: []string{"<database>", "<duration|default>"},
+				Examples: []string{"gregale postgres suspend-timeout set orders-db 2m", "gregale postgres suspend-timeout set orders-db default"}},
 			{Name: "resize", Short: "Durably resize compute; clients may disconnect", Positionals: []string{"<database>"}, Flags: []cliFlag{
 				{Name: "class", Short: "target service class", Req: true, Value: "CLASS", ClosedSet: []string{"development", "burstable", "production"}},
 				{Name: "request-id", Short: "stable request UUID; reuse after uncertain responses", Req: true, Value: "UUID"},
@@ -7701,6 +7707,16 @@ var cliCommands = []cliCommand{
 		Name:    "whoami",
 		DocSlug: "auth",
 		Short:   "Show the authenticated account",
+	},
+	{
+		Name:     "claim",
+		DocSlug:  "claimable-deploys",
+		Short:    "Print a fresh claim link for an app deployed without an account",
+		Examples: []string{"gregale account claim create", "gregale --json account claim create"},
+		HelpNotes: []string{
+			"Works only with the key an anonymous deploy saved; earlier claim links stop working.",
+			"The person who opens the link and confirms an email address owns the app on the Free plan; the anonymous key then stops working.",
+		},
 	},
 
 	{

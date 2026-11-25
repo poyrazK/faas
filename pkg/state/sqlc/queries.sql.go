@@ -12190,13 +12190,16 @@ func (q *Queries) CountUnfinishedProjectEnvironmentCloneOperationsForProject(ctx
 }
 
 const countVerifiedAccountsCreatedSince = `-- name: CountVerifiedAccountsCreatedSince :one
-select count(*)::bigint from accounts
- where created_at >= $1::timestamptz and email_verified_at is not null
+select count(*)::bigint from accounts a
+ where a.created_at >= $1::timestamptz and a.email_verified_at is not null
+   and not exists (select 1 from unclaimed_accounts u where u.account_id = a.id and u.claimed_at is null)
 `
 
 // Accounts created at or after since that have verified their email
 // (ADR-20261104145353 amendment 1: the platform-wide daily sign-up cap counts
 // the accounts that can use a Free allowance). Read only on a sign-up attempt.
+// Unclaimed anonymous-deploy accounts have their own cap (ADR-20261124080000)
+// and count here only once a human claims them.
 func (q *Queries) CountVerifiedAccountsCreatedSince(ctx context.Context, db DBTX, since pgtype.Timestamptz) (int64, error) {
 	row := db.QueryRow(ctx, countVerifiedAccountsCreatedSince, since)
 	var column_1 int64
@@ -31484,6 +31487,23 @@ func (q *Queries) GitHubRepositoryIDsBoundToAccount(ctx context.Context, db DBTX
 	var i GitHubRepositoryIDsBoundToAccountRow
 	err := row.Scan(&i.OwnerID, &i.RepoID)
 	return i, err
+}
+
+const grantManagedValkeyCache = `-- name: GrantManagedValkeyCache :exec
+INSERT INTO managed_valkey_cache_grants (cache_app_id, app_id, account_id)
+VALUES ($1::uuid, $2::uuid, $3::uuid)
+ON CONFLICT (cache_app_id, app_id) DO NOTHING
+`
+
+type GrantManagedValkeyCacheParams struct {
+	CacheAppID pgtype.UUID
+	AppID      pgtype.UUID
+	AccountID  pgtype.UUID
+}
+
+func (q *Queries) GrantManagedValkeyCache(ctx context.Context, db DBTX, arg GrantManagedValkeyCacheParams) error {
+	_, err := db.Exec(ctx, grantManagedValkeyCache, arg.CacheAppID, arg.AppID, arg.AccountID)
+	return err
 }
 
 const guardWorkflowAdmissionSnapshot = `-- name: GuardWorkflowAdmissionSnapshot :exec
@@ -96019,6 +96039,28 @@ func (q *Queries) ReadServicePolicyAppBySlug(ctx context.Context, db DBTX, slug 
 	return i, err
 }
 
+const readServicePolicyCacheGrant = `-- name: ReadServicePolicyCacheGrant :one
+SELECT EXISTS (
+    SELECT 1 FROM managed_valkey_cache_grants g
+    JOIN managed_valkey_caches c ON c.app_id = g.cache_app_id
+    WHERE g.cache_app_id = $1::uuid AND g.app_id = $2::uuid
+)::boolean AS granted
+`
+
+type ReadServicePolicyCacheGrantParams struct {
+	CacheAppID pgtype.UUID
+	AppID      pgtype.UUID
+}
+
+// A grant counts only while its target is still a managed cache
+// (ADR-20261124174500).
+func (q *Queries) ReadServicePolicyCacheGrant(ctx context.Context, db DBTX, arg ReadServicePolicyCacheGrantParams) (bool, error) {
+	row := db.QueryRow(ctx, readServicePolicyCacheGrant, arg.CacheAppID, arg.AppID)
+	var granted bool
+	err := row.Scan(&granted)
+	return granted, err
+}
+
 const readServicePolicyCallerScope = `-- name: ReadServicePolicyCallerScope :one
 SELECT scope FROM deployments
 WHERE id = $1::uuid AND app_id = $2::uuid
@@ -107086,6 +107128,24 @@ type RevokeManagedPostgresCutoverCredentialParams struct {
 
 func (q *Queries) RevokeManagedPostgresCutoverCredential(ctx context.Context, db DBTX, arg RevokeManagedPostgresCutoverCredentialParams) (int64, error) {
 	result, err := db.Exec(ctx, revokeManagedPostgresCutoverCredential, arg.ID, arg.CutoverID, arg.Token)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const revokeManagedValkeyCacheGrant = `-- name: RevokeManagedValkeyCacheGrant :execrows
+DELETE FROM managed_valkey_cache_grants
+WHERE cache_app_id = $1::uuid AND app_id = $2::uuid
+`
+
+type RevokeManagedValkeyCacheGrantParams struct {
+	CacheAppID pgtype.UUID
+	AppID      pgtype.UUID
+}
+
+func (q *Queries) RevokeManagedValkeyCacheGrant(ctx context.Context, db DBTX, arg RevokeManagedValkeyCacheGrantParams) (int64, error) {
+	result, err := db.Exec(ctx, revokeManagedValkeyCacheGrant, arg.CacheAppID, arg.AppID)
 	if err != nil {
 		return 0, err
 	}

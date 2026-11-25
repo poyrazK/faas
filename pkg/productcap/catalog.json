@@ -1005,6 +1005,29 @@
       ]
     },
     {
+      "id": "claimable-deploys",
+      "name": "Claimable deploys",
+      "category": "account",
+      "description": "An agent deploys with no account and gets a live URL plus a claim link; a person who opens the link and confirms an email address owns the app on the Free plan. Unclaimed deploys are limited and expire.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/claimable-deploys",
+      "acceptance_test": "pkg/apid/apidserver/claimable_deploys_test.go::TestAnonymousDeployIsClaimedInPlace",
+      "routes": [
+        "/claim",
+        "/v1/account/claim-link",
+        "/v1/anonymous"
+      ],
+      "cli": [
+        "claim"
+      ]
+    },
+    {
       "id": "cli",
       "name": "CLI",
       "category": "developer",
@@ -6088,9 +6111,9 @@
     },
     {
       "id": "tcp-listeners",
-      "name": "TCP listeners",
+      "name": "Public TCP listeners",
       "category": "edge",
-      "description": "Serve raw TCP on a dedicated listener.",
+      "description": "Serve raw TCP to the internet on a dedicated public port at the edge. Private TCP between your own apps (managed Redis, internal service addresses) does not need it.",
       "maturity": "preview",
       "plans": [
         "free",
@@ -6197,9 +6220,9 @@
     },
     {
       "id": "udp-listeners",
-      "name": "UDP listeners",
+      "name": "Public UDP listeners",
       "category": "edge",
-      "description": "Serve UDP on a dedicated listener.",
+      "description": "Serve UDP to the internet on a dedicated public port at the edge.",
       "maturity": "preview",
       "plans": [
         "free",

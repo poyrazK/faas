@@ -10000,6 +10000,90 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/consumer-billing/{slug}/credit-packs:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [consumers]
+      operationId: listConsumerCreditPacks
+      summary: List the prepaid credit packs available to your consumer.
+      security:
+        - consumerKey: []
+      responses:
+        '200':
+          description: The credit packs offered to this consumer, possibly empty.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerCreditPacksResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/consumer-billing/{slug}/credit-purchases:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [consumers]
+      operationId: createConsumerCreditPurchase
+      summary: Start or resume a one-time Stripe Checkout for a credit pack.
+      description: |
+        Choose a unique purchase_id and reuse it when retrying the same pack.
+        A consumer can have one pending purchase at a time. Granting credit
+        requires Stripe to confirm the exact live payment amount and currency.
+      security:
+        - consumerKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateConsumerCreditPurchaseRequest' }
+      responses:
+        '200':
+          description: The purchase, with a checkout URL when the session is open.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerCreditPurchaseResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: The purchase ID or pack ID is invalid, or Stripe rejected the new checkout.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '502':
+          description: Stripe Checkout could not be reached or opened.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/consumer-billing/{slug}/credit-purchases/{purchase_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: purchase_id
+        in: path
+        required: true
+        description: The UUID supplied when the purchase began.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [consumers]
+      operationId: getConsumerCreditPurchase
+      summary: Read your purchase and its credit grant receipt.
+      security:
+        - consumerKey: []
+      responses:
+        '200':
+          description: The latest state of the caller's purchase.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerCreditPurchaseResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/consumer-billing/{slug}/portal:
     parameters:
       - name: slug
@@ -11023,6 +11107,30 @@ paths:
               schema: { $ref: '#/components/schemas/ManagedPostgresComputePolicyChange' }
         default:
           description: Authentication or policy lookup error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/postgres/databases/{id}/suspend-timeout:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    put:
+      operationId: setManagedPostgresSuspendTimeout
+      summary: Set when a scale-to-zero database suspends
+      description: Sets how long a scale-to-zero database stays up after its last activity, from 60 to 3600 seconds, or with null returns it to the platform default. Every wake bills at least this much compute. A suspended database takes the value at once; a running one takes it the next time it suspends, without interrupting connections. Repeating the same value is harmless. seconds is required; null is the default. An always-on database answers 409 suspend_timeout_always_on; one with a change in progress answers a conflict. While operations are closed, only a shorter timeout is taken.
+      tags: [managed_postgres]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetManagedPostgresSuspendTimeoutRequest' }
+      responses:
+        '200':
+          description: The suspend timeout in force
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresSuspendTimeout' }
+        default:
+          description: Validation, conflict, entitlement or admission failure
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -16049,6 +16157,62 @@ paths:
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/anonymous/sessions:
+    post:
+      tags: [account]
+      operationId: createAnonymousSession
+      summary: Deploy without an account; a person claims the app later.
+      description: |
+        For agents working for someone without a Gregale account. Needs no
+        credential. Creates a Free account limited to deploying and reading
+        its apps, and returns its deploy key and a claim link. A person who
+        opens the link and confirms an email address owns the account and
+        its apps; the key then stops working. Unclaimed accounts are deleted
+        after the claim window (72 hours by default). Custom domains,
+        databases, buckets, cron, API keys, organizations and billing answer
+        `claim_required` until the claim. New sessions are limited per
+        network and across the platform (`anonymous_deploys_unavailable`).
+        Answers 404 while the feature is not offered.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AnonymousSessionRequest' }
+      responses:
+        '201':
+          description: Session created. The key is returned once.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AnonymousSessionResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429':
+          description: 'Anonymous deploys are not available from this network now, or the platform limit is reached (`anonymous_deploys_unavailable`). Sign up and deploy again.'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
+  /v1/account/claim-link:
+    post:
+      tags: [account]
+      operationId: createClaimLink
+      summary: Get a fresh claim link for an account deployed without one.
+      description: |
+        Only for the key of an anonymous deploy's account. Returns a new
+        claim link; earlier links stop working.
+      responses:
+        '200':
+          description: The new claim link.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClaimLinkResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: The account is a regular account with nothing to claim.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '410':
+          description: The claim window ended.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
   /v1/account/sign-in-methods:
     get:
       tags: [account]
@@ -19383,7 +19547,7 @@ paths:
         read access to customers; Lago
         an API key and, for the EU region or a self-hosted Lago, api_url. Only
         the last four characters, the mode and the Lago API URL are ever
-        returned.
+        returned. Pending credit pack purchases prevent Stripe connection changes.
       requestBody:
         required: true
         content:
@@ -19397,6 +19561,7 @@ paths:
               schema: { $ref: '#/components/schemas/BillingConnectionResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '422':
           description: Not a key of this provider, a bad api_url, or the provider rejected the key.
           content:
@@ -19416,10 +19581,12 @@ paths:
       tags: [account]
       operationId: deleteBillingConnection
       summary: Remove the account's key for one billing provider.
+      description: Pending credit pack purchases prevent removing the Stripe connection.
       responses:
         '204': { description: Removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /v1/account/statement-invoices:
     get:
@@ -23816,6 +23983,50 @@ paths:
         '204': { description: The overdue rule was removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/consumer-credit-packs:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [consumers]
+      operationId: getConsumerCreditPackSettings
+      summary: Read the credit packs an app offers.
+      responses:
+        '200':
+          description: The configured purchases and the app's checkout return URL.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerCreditPackSettings' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [consumers]
+      operationId: putConsumerCreditPackSettings
+      summary: Set the fixed-value packs customers can buy through the app owner's Stripe.
+      description: |
+        An empty pack list disables new purchases. Existing checkout sessions
+        keep the terms saved when the purchase started.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConsumerCreditPackSettings' }
+      responses:
+        '200':
+          description: The saved settings.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerCreditPackSettings' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: The pack ID, label, return URL, amount, or currency is invalid.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/apps/{slug}/consumer-signup:
     parameters:
@@ -73862,6 +74073,35 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/postgres/databases/{id}/suspend-timeout:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to set when a company database suspends."
+        schema: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$' }
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    put:
+      operationId: setOrgManagedPostgresSuspendTimeout
+      summary: "Set when a company scale-to-zero database suspends."
+      description: "An owner or admin sets how long a scale-to-zero company database stays up after its last activity, from 60 to 3600 seconds, or with null returns it to the platform default. A running database takes the value the next time it suspends."
+      tags: [managed_postgres]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetManagedPostgresSuspendTimeoutRequest' }
+      responses:
+        '200':
+          description: "The company database's suspend timeout in force."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresSuspendTimeout' }
+        default:
+          description: "Problem while setting when the company database suspends."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/orgs/{organization}/postgres/bindings/{id}/rotate:
     parameters:
       - name: organization
@@ -96010,6 +96250,27 @@ components:
         last_error_code: { type: string, description: "Safe policy-change diagnostic. A confirmed rejection retains the source policy; uncertain outcomes remain pending." }
         created_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time }
+    SetManagedPostgresSuspendTimeoutRequest:
+      description: How long a scale-to-zero database stays up after its last activity before it suspends.
+      type: object
+      additionalProperties: false
+      required: [seconds]
+      properties:
+        seconds:
+          type: [integer, 'null']
+          format: int64
+          minimum: 60
+          maximum: 3600
+          description: Seconds of inactivity before the database suspends; null returns it to the platform default.
+    ManagedPostgresSuspendTimeout:
+      description: A scale-to-zero database's suspend timeout. Every wake bills at least this much compute.
+      type: object
+      required: [database_id, seconds, custom, applied]
+      properties:
+        database_id: { type: string }
+        seconds: { type: integer, format: int64, description: "Seconds of inactivity before the database suspends." }
+        custom: { type: boolean, description: "True when the database has its own value; false when it follows the platform default." }
+        applied: { type: boolean, description: "False while the database is running: it takes the value the next time it suspends." }
     ResizeManagedPostgresDatabaseRequest:
       description: Canonical UUID request for a compute-class change on an existing managed PostgreSQL database.
       type: object
@@ -96046,6 +96307,8 @@ components:
         service_class: { type: string, enum: [development, burstable, production] }
         availability: { type: string, enum: [single_zone, high_availability] }
         scale_to_zero: { type: boolean }
+        suspend_timeout_seconds: { type: integer, format: int64, description: "Seconds a scale-to-zero database stays up after its last activity; absent for an always-on database." }
+        suspend_timeout_custom: { type: boolean, description: "True when the database has its own suspend timeout rather than the platform default." }
         storage_limit_bytes: { type: integer, format: int64, minimum: 0 }
         restore_window_seconds: { type: integer, format: int64, minimum: 0 }
         restore_source_database_id: { type: [string, "null"], minLength: 1, maxLength: 128 }
@@ -134250,6 +134513,39 @@ components:
       required: [display_name]
       properties:
         display_name: { type: string, maxLength: 80, description: "Empty clears the display name." }
+    AnonymousSessionRequest:
+      description: "Body for `POST /v1/anonymous/sessions`."
+      type: object
+      required: [accept_terms]
+      properties:
+        client: { type: string, maxLength: 80, description: "The tool creating the session, such as gregale-cli." }
+        accept_terms: { type: boolean, description: "Must be true: deploying without an account accepts the Terms of Service." }
+    AnonymousSessionResponse:
+      description: "An anonymous deploy session."
+      type: object
+      required: [account_id, api_key, claim_url, expires_at, limits]
+      properties:
+        account_id: { type: string, format: uuid }
+        api_key: { type: string, description: "Deploy key, returned once. Use it as a bearer token." }
+        claim_url: { type: string, format: uri, description: "Give this link to the person the agent works for." }
+        expires_at: { type: string, format: date-time, description: "The account and its apps are deleted after this unless claimed." }
+        limits: { $ref: '#/components/schemas/UnclaimedLimits' }
+    UnclaimedLimits:
+      description: "What an account deployed without an owner may use until it is claimed."
+      type: object
+      required: [plan, max_apps, max_ram_mb, blocked]
+      properties:
+        plan: { type: string }
+        max_apps: { type: integer }
+        max_ram_mb: { type: integer }
+        blocked: { type: array, items: { type: string } }
+    ClaimLinkResponse:
+      description: "A fresh claim link."
+      type: object
+      required: [claim_url, expires_at]
+      properties:
+        claim_url: { type: string, format: uri }
+        expires_at: { type: string, format: date-time }
     AccountEmailChangeRequest:
       description: "Body for `POST /v1/account/email`."
       type: object
@@ -137365,6 +137661,65 @@ components:
       properties:
         return_url: { type: string, format: uri, maxLength: 2048 }
 
+    ConsumerCreditPack:
+      type: object
+      description: A predefined amount of prepaid credit, sold for the same amount in Stripe Checkout.
+      required: [id, label, currency, amount_millicents]
+      properties:
+        id: { type: string, pattern: '^[a-z][a-z0-9_-]{0,31}$' }
+        label: { type: string, maxLength: 80 }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        amount_millicents: { type: integer, format: int64, minimum: 1, maximum: 1000000000000 }
+    ConsumerCreditPackSettings:
+      type: object
+      description: The packs offered by an app and the billing page where buyers return.
+      required: [packs]
+      properties:
+        return_url:
+          type: string
+          format: uri
+          description: The HTTPS billing page to return to, required when packs are offered.
+        packs:
+          type: array
+          maxItems: 16
+          items: { $ref: '#/components/schemas/ConsumerCreditPack' }
+    ConsumerCreditPacksResponse:
+      type: object
+      description: The credit packs this consumer can buy.
+      required: [packs]
+      properties:
+        packs:
+          type: array
+          items: { $ref: '#/components/schemas/ConsumerCreditPack' }
+    CreateConsumerCreditPurchaseRequest:
+      type: object
+      description: A pack selection and the UUID used to recover the purchase on retry.
+      required: [purchase_id, pack_id]
+      properties:
+        purchase_id:
+          type: string
+          format: uuid
+          description: A unique client-generated identifier. Reuse it to retry this purchase.
+        pack_id: { type: string }
+    ConsumerCreditPurchaseResponse:
+      type: object
+      description: The saved purchase terms, current checkout state and verified credit receipt.
+      required: [id, pack_id, currency, amount_millicents, status, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        pack_id: { type: string }
+        currency: { type: string }
+        amount_millicents: { type: integer, format: int64 }
+        status: { type: string, enum: [pending, credited, expired] }
+        expires_at: { type: string, format: date-time }
+        checkout_url:
+          type: string
+          format: uri
+          description: Stripe Checkout URL, returned when starting or resuming an open session.
+        credit_grant_id:
+          type: string
+          format: uuid
+          description: The prepaid credit grant once Stripe payment is confirmed.
     ConsumerBillingPortalResponse:
       description: "A short-lived customer portal URL."
       type: object

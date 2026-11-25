@@ -1288,6 +1288,30 @@ const OperationBusinessConditionDescriptionMaxBytes = 1024
 // PostgreSQL databases before the cap suspends them (ADR-20261025094915).
 const ManagedPostgresOverageCeilingMultiplier = 2
 
+// ManagedPostgresSuspendTimeoutMinSeconds and ...MaxSeconds bound the suspend
+// timeout a customer chooses for a scale-to-zero database (gregale postgres
+// suspend-timeout): past an hour a database is close to always-on, which plans
+// sell separately. The managed_postgres_suspend_timeouts CHECK matches.
+// Docs: docs/postgres.md.
+const (
+	ManagedPostgresSuspendTimeoutMinSeconds = 60
+	ManagedPostgresSuspendTimeoutMaxSeconds = 3600
+)
+
+// ManagedPostgresSuspendTimeoutDefaultSeconds is the platform default suspend
+// timeout of a scale-to-zero database: every wake bills at least this much
+// compute. Operators change it hot (managed_postgres_policy
+// suspend_timeout_seconds) within ManagedPostgresSuspendTimeoutPolicyMin/
+// MaxSeconds, Neon's own range. Docs: docs/managed-postgres.md.
+const (
+	ManagedPostgresSuspendTimeoutDefaultSeconds   = 120
+	ManagedPostgresSuspendTimeoutPolicyMinSeconds = 60
+	ManagedPostgresSuspendTimeoutPolicyMaxSeconds = 7 * 24 * 60 * 60
+)
+
+// ManagedPostgresSuspendTimeoutDocsURL is cited by the out-of-range error.
+const ManagedPostgresSuspendTimeoutDocsURL = "https://gregale.dev/docs/postgres#plans"
+
 // ManagedPostgresNeonScaleMillicentsPerComputeUnitHour is what Neon's Scale
 // plan charges Gregale per CU-hour ($0.222, neon.com/pricing on 2026-11-02),
 // and ManagedPostgresOverageMarkupPercent what Gregale adds to the
@@ -1898,6 +1922,10 @@ const (
 	// A consumer holds at most this many grants with credit left.
 	ConsumerCreditOpenGrantsMax = 100
 	ConsumerCreditNoteMaxBytes  = 200
+	// Self-service checkout catalog limits and the lifetime of an open checkout.
+	ConsumerCreditPacksMax          = 16
+	ConsumerCreditPackLabelMaxBytes = 80
+	ConsumerCreditPurchaseTTL       = time.Hour
 	// apid rechecks each capped consumer's month to date this often, in
 	// batches; a claimed check is retried after the lease.
 	ConsumerSpendCapCheckInterval = time.Minute
@@ -2757,6 +2785,12 @@ const (
 	VerificationContractMaxBodyContains     = 16
 	VerificationContractMaxJSONAssertions   = 32
 	VerificationContractMaxSQLBytes         = 64 << 10
+	// VerificationContractMaxSecretRefs bounds the distinct app secrets one
+	// contract's check headers reference (${secret:NAME}, amendment 2).
+	VerificationContractMaxSecretRefs = 8
+	// VerificationLeaseGrace is how long past the contract's own timeout the
+	// verifying node's lease lets secretd open referenced secrets.
+	VerificationLeaseGrace = 2 * time.Minute
 	// VerificationContractMaxResponseBytes is how much of a check's response
 	// body is read for body and JSON assertions.
 	VerificationContractMaxResponseBytes = 1 << 20
@@ -20883,3 +20917,43 @@ const (
 )
 
 const HostedTaskBindingKeyIDMaxBytes = 64
+
+// Claimable deploys (ADR-20261124080000).
+// Defaults for the operator-tunable claimable-deploy limits. apid reads the
+// live values from its runtime config (unclaimed_deploy_ttl_hours,
+// unclaimed_accounts_live_max, unclaimed_accounts_per_address_per_day,
+// unclaimed_accounts_per_network_per_day); these are the defaults and bounds.
+const (
+	// UnclaimedDeployTTLHoursDefault is how long an unclaimed account lives
+	// before the sweep schedules its deletion.
+	UnclaimedDeployTTLHoursDefault = 72
+	UnclaimedDeployTTLHoursMax     = 168
+	// UnclaimedAccountsLiveMaxDefault caps unclaimed accounts alive at once
+	// on the platform. 0 closes anonymous deploys without the kill switch.
+	UnclaimedAccountsLiveMaxDefault = 500
+	UnclaimedAccountsLiveMaxBound   = 100_000
+	// Per address and per /24 (/48) a day. Separate from the sign-up caps,
+	// so anonymous deploys never use up a network's human sign-ups.
+	UnclaimedAccountsPerAddressPerDayDefault = 3
+	UnclaimedAccountsPerNetworkPerDayDefault = 10
+	UnclaimedAccountsPerDayBound             = 1_000
+	// UnclaimedAccountWindow is how far back the per-address and
+	// per-network caps count anonymous accounts; a refusal by either asks
+	// the caller to retry after it.
+	UnclaimedAccountWindow = 24 * time.Hour
+	// UnclaimedLiveCapRetryAfter is the retry hint when the platform-wide
+	// cap refuses a new anonymous session.
+	UnclaimedLiveCapRetryAfter = time.Hour
+	// UnclaimedAccountExpiryBatch is one page of the expiry sweep, and
+	// UnclaimedAccountSweepMaxPages bounds one run; the next run carries on.
+	UnclaimedAccountExpiryBatch   = 200
+	UnclaimedAccountSweepMaxPages = 50
+	// UnclaimedAccountSweepInterval is how often apid runs the sweep.
+	UnclaimedAccountSweepInterval = 5 * time.Minute
+	// UnclaimedClaimEmailTTL is how long the claim confirmation mailed to
+	// the claimer stays valid.
+	UnclaimedClaimEmailTTL = time.Hour
+)
+
+// UnclaimedDeployTTLDefault is UnclaimedDeployTTLHoursDefault as a duration.
+const UnclaimedDeployTTLDefault = UnclaimedDeployTTLHoursDefault * time.Hour

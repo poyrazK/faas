@@ -34,6 +34,10 @@ import type { InsightRetention } from '../models/InsightRetention.js';
 import type { InsightRetentionRequest } from '../models/InsightRetentionRequest.js';
 import type { InspectFeatureFlagRequest } from '../models/InspectFeatureFlagRequest.js';
 import type { RollbackFeatureFlagsRequest } from '../models/RollbackFeatureFlagsRequest.js';
+import type { SavedInsight } from '../models/SavedInsight.js';
+import type { SavedInsightList } from '../models/SavedInsightList.js';
+import type { SavedInsightRequest } from '../models/SavedInsightRequest.js';
+import type { SavedInsightResult } from '../models/SavedInsightResult.js';
 import type { UpdateFeatureFlagsRequest } from '../models/UpdateFeatureFlagsRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -1453,6 +1457,302 @@ export class FlagsService {
         'flag': flag,
         'from': from,
         'until': until,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | env_var_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List the environment's saved insights.
+   * Saved insights with their query, schedule, last scheduled value and alert state. Anyone who can read the project lists them. Requires the saved_insights and product_analytics platform flags.
+   * @returns SavedInsightList The environment's saved insights.
+   * @throws ApiError
+   */
+  public static listProjectSavedInsights({
+    slug,
+    environment,
+  }: {
+    /**
+     * Project that owns this environment flag configuration.
+     */
+    slug: string,
+    /**
+     * Named environment whose flag configuration is selected.
+     */
+    environment: string,
+  }): CancelablePromise<SavedInsightList> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/insights/saved',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Save an insight.
+   * Saves an events, funnel or retention query over the last range_days days, with an optional daily or weekly digest and threshold alert sent to the account's notification channels. At most 50 per environment (409 saved_insight_limit).
+   * @returns SavedInsight The created saved insight.
+   * @throws ApiError
+   */
+  public static createProjectSavedInsight({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Project that owns this environment flag configuration.
+     */
+    slug: string,
+    /**
+     * Named environment whose flag configuration is selected.
+     */
+    environment: string,
+    requestBody: SavedInsightRequest,
+  }): CancelablePromise<SavedInsight> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/insights/saved',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | env_var_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read one saved insight.
+   * A saved insight's query, schedule, last scheduled value, alert state and last error.
+   * @returns SavedInsight The saved insight.
+   * @throws ApiError
+   */
+  public static getProjectSavedInsight({
+    slug,
+    environment,
+    key,
+  }: {
+    /**
+     * Project that owns this environment flag configuration.
+     */
+    slug: string,
+    /**
+     * Named environment whose flag configuration is selected.
+     */
+    environment: string,
+    /**
+     * Saved insight key.
+     */
+    key: string,
+  }): CancelablePromise<SavedInsight> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/insights/saved/{key}',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'key': key,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Replace a saved insight.
+   * Replaces the query and schedule. Changing the query, range or alert resets the alert state to ok.
+   * @returns SavedInsight The replaced saved insight.
+   * @throws ApiError
+   */
+  public static replaceProjectSavedInsight({
+    slug,
+    environment,
+    key,
+    requestBody,
+  }: {
+    /**
+     * Project that owns this environment flag configuration.
+     */
+    slug: string,
+    /**
+     * Named environment whose flag configuration is selected.
+     */
+    environment: string,
+    /**
+     * Key of the saved insight to replace.
+     */
+    key: string,
+    requestBody: SavedInsightRequest,
+  }): CancelablePromise<SavedInsight> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/projects/{slug}/environments/{environment}/insights/saved/{key}',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'key': key,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | env_var_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Delete a saved insight.
+   * Its digests and alert stop.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteProjectSavedInsight({
+    slug,
+    environment,
+    key,
+  }: {
+    /**
+     * Project that owns this environment flag configuration.
+     */
+    slug: string,
+    /**
+     * Named environment whose flag configuration is selected.
+     */
+    environment: string,
+    /**
+     * Key of the saved insight to delete.
+     */
+    key: string,
+  }): CancelablePromise<void> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/projects/{slug}/environments/{environment}/insights/saved/{key}',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'key': key,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Run a saved insight now.
+   * Read-only. Runs the saved query over its last range_days days, clamped to the plan's analytics retention, and returns its value and result. format=csv returns a CSV attachment instead: one row per series point, funnel step or retention period.
+   * @returns SavedInsightResult The saved insight's value and result.
+   * @throws ApiError
+   */
+  public static runProjectSavedInsight({
+    slug,
+    environment,
+    key,
+    format,
+  }: {
+    /**
+     * Project that owns this environment flag configuration.
+     */
+    slug: string,
+    /**
+     * Named environment whose flag configuration is selected.
+     */
+    environment: string,
+    /**
+     * Key of the saved insight to run.
+     */
+    key: string,
+    /**
+     * json (default) or csv.
+     */
+    format?: 'json' | 'csv',
+  }): CancelablePromise<SavedInsightResult> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/insights/saved/{key}/run',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'key': key,
+      },
+      query: {
+        'format': format,
       },
       errors: {
         401: `code: unauthorized`,

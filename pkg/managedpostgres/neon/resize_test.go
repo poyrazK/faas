@@ -15,11 +15,14 @@ import (
 )
 
 type resizeHTTPFixture struct {
-	mu                                                                      sync.Mutex
-	patches                                                                 int
-	maximum                                                                 float64
-	suspendTimeout                                                          int64
-	policy                                                                  bool
+	mu             sync.Mutex
+	patches        int
+	maximum        float64
+	suspendTimeout int64
+	policy         bool
+	// ownTimeout is the database's own suspend timeout a change back to
+	// scale-to-zero must send; 0 expects the 120 s default.
+	ownTimeout                                                              int64
 	pending, changedDefault, duplicatePrimary, drift, lostResponse, delayed bool
 	// disabled serves the endpoint held by the cap sweep; refuseDisabled
 	// answers its PATCH with 409; namedDisabled records a PATCH that names
@@ -92,8 +95,12 @@ func resizeHTTPProvider(t *testing.T, f *resizeHTTPFixture) *Provider {
 			if !f.policy && (len(payload) != 1 || len(compute) != 2 || compute["autoscaling_limit_min_cu"] != 0.25 || compute["autoscaling_limit_max_cu"] != 1) {
 				t.Error("resize changed fields outside compute", payload)
 			}
-			if f.policy && (len(payload) != 1 || len(compute) != 1 || (compute["suspend_timeout_seconds"] != -1 && compute["suspend_timeout_seconds"] != 300)) {
-				t.Error("policy changed compute capacity", payload)
+			scaleToZeroTimeout := 120.0
+			if f.ownTimeout != 0 {
+				scaleToZeroTimeout = float64(f.ownTimeout)
+			}
+			if f.policy && (len(payload) != 1 || len(compute) != 1 || (compute["suspend_timeout_seconds"] != -1 && compute["suspend_timeout_seconds"] != scaleToZeroTimeout)) {
+				t.Error("policy changed compute capacity or sent the wrong timeout", payload)
 			}
 			f.patches++
 			if !f.delayed {

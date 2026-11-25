@@ -81,6 +81,7 @@ touch them. The tables below map each earlier name.
 | `gregale capabilities` | `gregale feature list` |
 | `gregale channels` | `gregale alert channel` |
 | `gregale chaos` | `gregale test` |
+| `gregale claim` | `gregale account claim create` |
 | `gregale connect` | `gregale github` |
 | `gregale consumers` | `gregale api consumer` |
 | `gregale context` | `gregale config context get` |
@@ -562,6 +563,7 @@ touch them. The tables below map each earlier name.
 | `gregale postgres overage` | `gregale postgres overage set` |
 | `gregale postgres previews` | `gregale postgres previews set` |
 | `gregale postgres resize-status` | `gregale postgres resize status` |
+| `gregale postgres suspend-timeout` | `gregale postgres suspend-timeout set` |
 | `gregale previews join` | `gregale feature join` |
 | `gregale previews leave` | `gregale feature leave` |
 | `gregale projects environments abort` | `gregale environment cancel` |

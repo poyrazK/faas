@@ -4781,8 +4781,11 @@ callback, and use authorization-code **S256 PKCE** with the exact resource URL.
 Read scope is `gregale:read`; optional write scope is `gregale:write`. API keys
 are accepted only by browser account review, never as MCP access tokens. Gregale
 API scopes remain authoritative for every tool call.
-The default challenge requests read access. To expose remote write tools, request
-both scopes in the client's OAuth settings as well as enabling bridge writes.
+The default challenge requests read access. When bridge writes are enabled and a
+client asks only for `gregale:read`, browser consent offers "Deploy and manage
+apps" (preselected) or "Inspect only" before sign-in; choosing deploy grants
+`gregale:write` too, and the token response names the granted scope. A client
+can also request both scopes in its OAuth settings.
 
 Each grant has its own SDK server, API credential, and plan store. Every remote
 request rechecks its account credential through the API. Access tokens expire
@@ -6125,6 +6128,26 @@ key set can provide one eligible key for each supported algorithm.
 The OAuth provider doctor's signing-key check applies the same `key_ops`
 requirement and does not count encryption-only or malformed-operation keys
 as usable verification keys.
+
+The `jwks_url` must answer anonymous requests. When the starter cannot fetch
+its keys it does not call the token wrong: a network failure, timeout, 5xx or
+429 is answered with `error_description="signing keys unavailable"` and
+`Retry-After`, and a 401 or 403 with `error_description="signing keys
+refused"` and no `Retry-After`. The CLI names the cause in both cases. A 403
+can also come from a firewall in front of the provider that refuses the app's
+requests.
+
+An authorization server you deploy on Gregale answers 401 or 403 while its URL
+is private (new apps start private on some plans) or has a `--public-auth`
+mode other than `open` (see [App access control](auth.md#app-access-control)).
+Open it to anonymous callers:
+
+```bash
+gregale app update <authorization-server-app> --no-require-authn --public-auth open
+```
+
+and set `access: public` in its `gregale.yaml`, or its next deploy makes it
+private again.
 
 All three starters filter `tools/list`, `resources/list`,
 `resources/templates/list` and `prompts/list` using verified JWT scopes for each

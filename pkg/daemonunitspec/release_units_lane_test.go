@@ -65,6 +65,15 @@ func checkComputeLaneServices(t *testing.T, binary string, table []laneTableServ
 		got[s.Name+"@"+host] = laneService{optional: s.Optional, readyz: s.Readyz}
 	}
 	for key, s := range registry {
+		// Compute nodes bind most daemons' metrics (and /readyz) to the
+		// node's own address from the manifest (bhs-2: 10.20.0.2:9104), not
+		// the registry's loopback URL, so a compute-only service may omit
+		// readyz: the lane then verifies it active on the new binary and the
+		// SLO gate judges it (2026-11-24 canary, bhs-2).
+		if g, ok := got[key]; ok && strings.HasSuffix(key, "@"+string(daemonunitspec.RoleComputeOnly)) &&
+			g.readyz == "" && g.optional == s.optional {
+			continue
+		}
 		if got[key] != s {
 			t.Errorf("%s: service %s is %+v in the lane table, registry says %+v", binary, key, got[key], s)
 		}
@@ -103,6 +112,11 @@ func TestReleaseUnitLanesMatchTheRegistry(t *testing.T) {
 	optional := map[string]bool{}
 	for _, entry := range daemonunitspec.OptionalRegistry {
 		optional[entry.Name] = true
+	}
+	// Units the playbooks install but leave disabled until an operator
+	// enables them (profiled) restart only where they run: optional too.
+	for _, name := range operatorEnabledUnits(t) {
+		optional[name] = true
 	}
 	for _, entry := range daemonunitspec.UnitEntries() {
 		exec := strings.Fields(entry.Unit().ExecStart)
@@ -194,4 +208,34 @@ func TestReleaseUnitLanesMatchTheRegistry(t *testing.T) {
 	if len(unitless) > 0 {
 		t.Errorf("lane table puts binaries without a registry unit on the control plane: %v", unitless)
 	}
+}
+
+// operatorEnabledUnits lists deploy/ansible/vars/daemons.yml's
+// faas_operator_enabled_units as daemon names: units a unit release must not
+// start where the operator left them off (the 2026-11-24 compute canary
+// failed restarting a disabled faas-profiled).
+func operatorEnabledUnits(t *testing.T) []string {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "vars", "daemons.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	in := false
+	for _, line := range strings.Split(string(body), "\n") {
+		item := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "faas_operator_enabled_units:"):
+			in = true
+		case in && strings.HasPrefix(item, "- "):
+			unit := strings.TrimSpace(strings.TrimPrefix(item, "- "))
+			names = append(names, strings.TrimSuffix(strings.TrimPrefix(unit, "faas-"), ".service"))
+		case in && item != "" && !strings.HasPrefix(item, "#"):
+			in = false
+		}
+	}
+	if len(names) == 0 {
+		t.Fatal("daemons.yml lists no faas_operator_enabled_units")
+	}
+	return names
 }

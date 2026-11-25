@@ -146,7 +146,8 @@ func TestStorageGrantStoreOnPostgres(t *testing.T) {
 		t.Errorf("no job = %v, %v", ok, err)
 	}
 
-	// The audit appends; refuses a bad subject.
+	// The audit appends; refuses a bad subject class (platform and
+	// build_output are valid since 20261124135843100).
 	if err := store.RecordStorageGrant(ctx, secretd.StorageGrantRecord{NodeID: node.ID, Class: "deployment", SubjectID: dep.ID,
 		AppID: app.ID, Access: "read", Objects: 3}); err != nil {
 		t.Fatal(err)
@@ -155,8 +156,8 @@ func TestStorageGrantStoreOnPostgres(t *testing.T) {
 	if err := pool.QueryRow(ctx, `select objects from storage_grant_audit where node_id = $1 and subject_id = $2`, node.ID, dep.ID).Scan(&n); err != nil || n != 3 {
 		t.Fatalf("audit row objects = %d, %v", n, err)
 	}
-	if err := store.RecordStorageGrant(ctx, secretd.StorageGrantRecord{NodeID: node.ID, Class: "platform", SubjectID: dep.ID,
+	if err := store.RecordStorageGrant(ctx, secretd.StorageGrantRecord{NodeID: node.ID, Class: "unknown_class", SubjectID: dep.ID,
 		Access: "read", Objects: 1}); err == nil {
-		t.Fatal("the audit accepted a platform row")
+		t.Fatal("the audit accepted an unknown subject class")
 	}
 }

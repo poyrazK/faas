@@ -32825,6 +32825,48 @@ COMMENT ON TABLE public.api_consumer_credit_grants IS 'Prepaid credit granted to
 
 
 --
+-- Name: api_consumer_credit_pack_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_credit_pack_settings (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    return_url text NOT NULL,
+    packs jsonb NOT NULL,
+    CONSTRAINT api_consumer_credit_pack_settings_packs_check CHECK ((jsonb_typeof(packs) = 'array'::text))
+);
+
+
+--
+-- Name: api_consumer_credit_purchases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_credit_purchases (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    consumer_id uuid NOT NULL,
+    pack_id text NOT NULL,
+    label text NOT NULL,
+    currency text NOT NULL,
+    amount_millicents bigint NOT NULL,
+    amount_minor bigint NOT NULL,
+    return_url text NOT NULL,
+    stripe_customer text NOT NULL,
+    stripe_session text,
+    livemode boolean NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    next_check_at timestamp with time zone NOT NULL,
+    CONSTRAINT api_consumer_credit_purchases_amount_millicents_check CHECK (((amount_millicents >= 1) AND (amount_millicents <= '1000000000000'::bigint))),
+    CONSTRAINT api_consumer_credit_purchases_amount_minor_check CHECK ((amount_minor > 0)),
+    CONSTRAINT api_consumer_credit_purchases_check CHECK (((status <> 'credited'::text) OR (stripe_session IS NOT NULL))),
+    CONSTRAINT api_consumer_credit_purchases_currency_check CHECK ((currency ~ '^[A-Z]{3}$'::text)),
+    CONSTRAINT api_consumer_credit_purchases_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'credited'::text, 'expired'::text])))
+);
+
+
+--
 -- Name: api_consumer_meter_usage_minutes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -40181,6 +40223,27 @@ CREATE TABLE public.deployment_submission_receipts (
     CONSTRAINT deployment_submission_receipts_accepted_at_check CHECK (isfinite(accepted_at)),
     CONSTRAINT deployment_submission_receipts_attempt_id_check CHECK ((attempt_id ~ '^[0-9a-f]{32}$'::text))
 );
+
+
+--
+-- Name: deployment_verification_leases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_verification_leases (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    node_name text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_verification_leases_node_name_check CHECK (((octet_length(node_name) >= 1) AND (octet_length(node_name) <= 253)))
+);
+
+
+--
+-- Name: TABLE deployment_verification_leases; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.deployment_verification_leases IS 'Node verifying a deployment candidate; secretd opens contract-referenced app secrets only for it (ADR-20261122220000 amendment 2).';
 
 
 --
@@ -49036,6 +49099,26 @@ CREATE TABLE public.managed_postgres_restore_verifications (
 
 
 --
+-- Name: managed_postgres_suspend_timeouts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_suspend_timeouts (
+    database_id uuid NOT NULL,
+    seconds integer NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT managed_postgres_suspend_timeouts_seconds_check CHECK (((seconds >= 60) AND (seconds <= 3600))),
+    CONSTRAINT managed_postgres_suspend_timeouts_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
+-- Name: TABLE managed_postgres_suspend_timeouts; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.managed_postgres_suspend_timeouts IS 'Customer-chosen scale-to-zero suspend timeout per managed PostgreSQL database; no row is the platform default; written only by apid.';
+
+
+--
 -- Name: managed_postgres_usage; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -50347,6 +50430,19 @@ CREATE TABLE public.managed_realtime_worker_heartbeats (
     CONSTRAINT managed_realtime_worker_heartbeats_ready_check CHECK ((ready = ANY (ARRAY[true, false]))),
     CONSTRAINT managed_realtime_worker_heartbeats_status_code_check CHECK (((octet_length(status_code) <= 64) AND (status_code ~ '^[ -~]*$'::text))),
     CONSTRAINT managed_realtime_worker_heartbeats_worker_check CHECK (((octet_length(worker) >= 1) AND (octet_length(worker) <= 128)))
+);
+
+
+--
+-- Name: managed_valkey_cache_grants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_valkey_cache_grants (
+    cache_app_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT managed_valkey_cache_grants_check CHECK ((cache_app_id <> app_id))
 );
 
 
@@ -63662,6 +63758,33 @@ CREATE TABLE public.triggers (
 
 
 --
+-- Name: unclaimed_accounts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.unclaimed_accounts (
+    account_id uuid NOT NULL,
+    claim_token_sha256 bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    claimed_at timestamp with time zone,
+    expired_at timestamp with time zone,
+    created_ip inet,
+    user_agent text DEFAULT ''::text NOT NULL,
+    CONSTRAINT unclaimed_accounts_check CHECK ((expires_at > created_at)),
+    CONSTRAINT unclaimed_accounts_check1 CHECK (((claimed_at IS NULL) OR (expired_at IS NULL))),
+    CONSTRAINT unclaimed_accounts_claim_token_sha256_check CHECK ((octet_length(claim_token_sha256) = 32)),
+    CONSTRAINT unclaimed_accounts_user_agent_check CHECK ((char_length(user_agent) <= 512))
+);
+
+
+--
+-- Name: TABLE unclaimed_accounts; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.unclaimed_accounts IS 'Accounts created by an anonymous agent deploy, until a human claims them or they expire; written by apid (ADR-20261124080000).';
+
+
+--
 -- Name: upload_commit_outcomes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -65320,6 +65443,30 @@ ALTER TABLE ONLY public.api_consumer_credit_applications
 
 ALTER TABLE ONLY public.api_consumer_credit_grants
     ADD CONSTRAINT api_consumer_credit_grants_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: api_consumer_credit_pack_settings api_consumer_credit_pack_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_pack_settings
+    ADD CONSTRAINT api_consumer_credit_pack_settings_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: api_consumer_credit_purchases api_consumer_credit_purchases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_purchases
+    ADD CONSTRAINT api_consumer_credit_purchases_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: api_consumer_credit_purchases api_consumer_credit_purchases_stripe_session_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_purchases
+    ADD CONSTRAINT api_consumer_credit_purchases_stripe_session_key UNIQUE (stripe_session);
 
 
 --
@@ -68784,6 +68931,14 @@ ALTER TABLE ONLY public.deployment_sidecar_secret_reload_signals
 
 ALTER TABLE ONLY public.deployment_submission_receipts
     ADD CONSTRAINT deployment_submission_receipts_pkey PRIMARY KEY (app_id, attempt_id);
+
+
+--
+-- Name: deployment_verification_leases deployment_verification_leases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_verification_leases
+    ADD CONSTRAINT deployment_verification_leases_pkey PRIMARY KEY (deployment_id);
 
 
 --
@@ -72707,6 +72862,14 @@ ALTER TABLE ONLY public.managed_postgres_restore_verifications
 
 
 --
+-- Name: managed_postgres_suspend_timeouts managed_postgres_suspend_timeouts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_suspend_timeouts
+    ADD CONSTRAINT managed_postgres_suspend_timeouts_pkey PRIMARY KEY (database_id);
+
+
+--
 -- Name: managed_postgres_usage_coverage managed_postgres_usage_coverage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -73176,6 +73339,14 @@ ALTER TABLE ONLY public.managed_realtime_worker_heartbeats
 
 ALTER TABLE ONLY public.managed_realtime_worker_heartbeats
     ADD CONSTRAINT managed_realtime_worker_heartbeats_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: managed_valkey_cache_grants managed_valkey_cache_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_valkey_cache_grants
+    ADD CONSTRAINT managed_valkey_cache_grants_pkey PRIMARY KEY (cache_app_id, app_id);
 
 
 --
@@ -79163,6 +79334,22 @@ ALTER TABLE ONLY public.triggers
 
 
 --
+-- Name: unclaimed_accounts unclaimed_accounts_claim_token_sha256_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.unclaimed_accounts
+    ADD CONSTRAINT unclaimed_accounts_claim_token_sha256_key UNIQUE (claim_token_sha256);
+
+
+--
+-- Name: unclaimed_accounts unclaimed_accounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.unclaimed_accounts
+    ADD CONSTRAINT unclaimed_accounts_pkey PRIMARY KEY (account_id);
+
+
+--
 -- Name: upload_commit_outcomes upload_commit_outcomes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -80186,6 +80373,27 @@ CREATE INDEX api_consumer_credit_applications_statement_idx ON public.api_consum
 --
 
 CREATE INDEX api_consumer_credit_grants_consumer_idx ON public.api_consumer_credit_grants USING btree (consumer_id, currency, created_at);
+
+
+--
+-- Name: api_consumer_credit_purchases_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_credit_purchases_due ON public.api_consumer_credit_purchases USING btree (next_check_at, id) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: api_consumer_credit_purchases_pending_consumer; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX api_consumer_credit_purchases_pending_consumer ON public.api_consumer_credit_purchases USING btree (consumer_id) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: api_consumer_credit_purchases_pending_live_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_credit_purchases_pending_live_account ON public.api_consumer_credit_purchases USING btree (account_id) WHERE ((status = 'pending'::text) AND livemode);
 
 
 --
@@ -83032,6 +83240,13 @@ CREATE INDEX deployment_sidecar_layers_storage_key_idx ON public.deployment_side
 --
 
 CREATE INDEX deployment_submission_receipts_deployment_idx ON public.deployment_submission_receipts USING btree (deployment_id);
+
+
+--
+-- Name: deployment_verification_leases_expires_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_verification_leases_expires_idx ON public.deployment_verification_leases USING btree (expires_at);
 
 
 --
@@ -86637,6 +86852,13 @@ CREATE UNIQUE INDEX managed_realtime_subscription_tickets_id ON public.managed_r
 --
 
 CREATE INDEX managed_realtime_subscription_tickets_principal ON public.managed_realtime_subscription_tickets USING btree (endpoint_id, principal);
+
+
+--
+-- Name: managed_valkey_cache_grants_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_valkey_cache_grants_app_idx ON public.managed_valkey_cache_grants USING btree (app_id);
 
 
 --
@@ -91037,6 +91259,13 @@ CREATE UNIQUE INDEX triggers_one_enabled_queue_source ON public.triggers USING b
 --
 
 CREATE UNIQUE INDEX triggers_queue_binding_identity_unique ON public.triggers USING btree (queue_binding_id) WHERE (queue_binding_id IS NOT NULL);
+
+
+--
+-- Name: unclaimed_accounts_open_expires_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX unclaimed_accounts_open_expires_idx ON public.unclaimed_accounts USING btree (expires_at) WHERE ((claimed_at IS NULL) AND (expired_at IS NULL));
 
 
 --
@@ -100168,6 +100397,46 @@ ALTER TABLE ONLY public.api_consumer_credit_grants
 
 
 --
+-- Name: api_consumer_credit_pack_settings api_consumer_credit_pack_settings_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_pack_settings
+    ADD CONSTRAINT api_consumer_credit_pack_settings_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_credit_pack_settings api_consumer_credit_pack_settings_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_pack_settings
+    ADD CONSTRAINT api_consumer_credit_pack_settings_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_credit_purchases api_consumer_credit_purchases_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_purchases
+    ADD CONSTRAINT api_consumer_credit_purchases_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_credit_purchases api_consumer_credit_purchases_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_purchases
+    ADD CONSTRAINT api_consumer_credit_purchases_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_credit_purchases api_consumer_credit_purchases_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_purchases
+    ADD CONSTRAINT api_consumer_credit_purchases_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
+
+
+--
 -- Name: api_consumer_meter_usage_minutes api_consumer_meter_usage_minutes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -104720,6 +104989,22 @@ ALTER TABLE ONLY public.deployment_submission_receipts
 
 
 --
+-- Name: deployment_verification_leases deployment_verification_leases_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_verification_leases
+    ADD CONSTRAINT deployment_verification_leases_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_verification_leases deployment_verification_leases_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_verification_leases
+    ADD CONSTRAINT deployment_verification_leases_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
 -- Name: deployment_verification_queries deployment_verification_queries_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -108944,6 +109229,14 @@ ALTER TABLE ONLY public.managed_postgres_restore_verifications
 
 
 --
+-- Name: managed_postgres_suspend_timeouts managed_postgres_suspend_timeouts_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_suspend_timeouts
+    ADD CONSTRAINT managed_postgres_suspend_timeouts_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
 -- Name: managed_postgres_usage managed_postgres_usage_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -109453,6 +109746,22 @@ ALTER TABLE ONLY public.managed_realtime_worker_credentials
 
 ALTER TABLE ONLY public.managed_realtime_worker_heartbeats
     ADD CONSTRAINT managed_realtime_worker_heartbeats_group_id_fkey FOREIGN KEY (group_id) REFERENCES public.managed_realtime_consumer_groups(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_valkey_cache_grants managed_valkey_cache_grants_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_valkey_cache_grants
+    ADD CONSTRAINT managed_valkey_cache_grants_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_valkey_cache_grants managed_valkey_cache_grants_cache_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_valkey_cache_grants
+    ADD CONSTRAINT managed_valkey_cache_grants_cache_app_id_fkey FOREIGN KEY (cache_app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
@@ -116645,6 +116954,14 @@ ALTER TABLE ONLY public.triggers
 
 ALTER TABLE ONLY public.triggers
     ADD CONSTRAINT triggers_queue_binding_identity_fk FOREIGN KEY (queue_binding_id, app_id, account_id) REFERENCES public.queue_bindings(id, app_id, account_id) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: unclaimed_accounts unclaimed_accounts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.unclaimed_accounts
+    ADD CONSTRAINT unclaimed_accounts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

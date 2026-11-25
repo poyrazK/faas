@@ -653,6 +653,9 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	// Claimable deploys (ADR-20261124080000).
+	"POST /v1/anonymous/sessions": "CreateAnonymousSession",
+	"POST /v1/account/claim-link": "CreateClaimLink",
 	// Reviewed agent-tool publication, grants, invocation and execution credentials.
 	"DELETE /v1/tool-grants/{id}":                              "RevokeToolGrant",
 	"DELETE /v1/tool-oauth-connections/{id}":                   "RevokeToolOAuthConnection",
@@ -826,6 +829,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/orgs/{organization}/postgres/databases/{id}/undelete":                                                    "UndeleteOrgManagedPostgresDatabase",
 	"POST /v1/orgs/{organization}/postgres/databases/{id}/resize":                                                      "ResizeOrgManagedPostgresDatabase",
 	"POST /v1/orgs/{organization}/postgres/databases/{id}/compute-policy":                                              "ChangeOrgManagedPostgresComputePolicy",
+	"PUT /v1/orgs/{organization}/postgres/databases/{id}/suspend-timeout":                                              "SetOrgManagedPostgresSuspendTimeout",
 	"POST /v1/orgs/{organization}/postgres/bindings/{id}/rotate":                                                       "RotateOrgManagedPostgresBinding",
 	"GET /v1/orgs/{organization}/postgres/usage":                                                                       "GetOrgManagedPostgresUsage",
 
@@ -1784,6 +1788,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/account/realtime-history-usage":                                          "GetManagedRealtimeHistoryUsage",
 	"GET /v1/account/usage":                                                           "AccountUsage",
 	"POST /v1/postgres/databases/{id}/compute-policy":                                 "ChangeManagedPostgresComputePolicy",
+	"PUT /v1/postgres/databases/{id}/suspend-timeout":                                 "SetManagedPostgresSuspendTimeout",
 	"GET /v1/postgres/databases/{id}/compute-policy-changes/{change_id}":              "GetManagedPostgresComputePolicyChange",
 	"POST /v1/postgres/databases/{id}/resize":                                         "ResizeManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}/resizes/{resize_id}":                             "GetManagedPostgresResize",
@@ -2286,6 +2291,11 @@ var methodRouteMap = map[string]string{
 	"GET /v1/consumer-billing/{slug}":                                                     "GetConsumerBillingSummary",
 	"GET /v1/consumer-billing/{slug}/usage":                                               "GetConsumerBillingUsage",
 	"GET /v1/consumer-billing/{slug}/statements":                                          "ListConsumerBillingStatements",
+	"GET /v1/apps/{slug}/consumer-credit-packs":                                           "GetConsumerCreditPackSettings",
+	"PUT /v1/apps/{slug}/consumer-credit-packs":                                           "PutConsumerCreditPackSettings",
+	"GET /v1/consumer-billing/{slug}/credit-packs":                                        "ListConsumerCreditPacks",
+	"POST /v1/consumer-billing/{slug}/credit-purchases":                                   "CreateConsumerCreditPurchase",
+	"GET /v1/consumer-billing/{slug}/credit-purchases/{purchase_id}":                      "GetConsumerCreditPurchase",
 	"GET /v1/consumer-billing/{slug}/plans":                                               "ListConsumerBillingPlans",
 	"PUT /v1/consumer-billing/{slug}/plan":                                                "ChangeConsumerBillingPlan",
 	"POST /v1/consumer-billing/{slug}/portal":                                             "CreateConsumerBillingPortalSession",
