@@ -98,8 +98,8 @@ class TaskInputReviewJourney(unittest.TestCase):
         for fault in ("before", "after", "acknowledged", "race"):
             cancel_faults.put(fault)
         observed, submissions, lookups, committed, cancellations = [], [], [], [], []
-        receipt_phase, release_receipt_reply = Event(), Event()
-        receipt_commits = Queue()
+        receipt_phase = Event()
+        receipt_events, receipt_faults = Queue(), Queue()
         receipt_methods = []
 
         class ReviewJourneyHandler(MCPHandler):
@@ -118,6 +118,15 @@ class TaskInputReviewJourney(unittest.TestCase):
                         wait_for_status(completed_cancel_id, "completed")
                 if method == TASK_SUBMISSION_METHOD:
                     submissions.append(self.headers.get("Mcp-Name"))
+                    if receipt_phase.is_set():
+                        try:
+                            self.receipt_fault, self.release_receipt_reply = receipt_faults.get_nowait()
+                        except Empty:
+                            self.receipt_fault = None
+                        if self.receipt_fault == "before":
+                            receipt_events.put(None)
+                            self.release_receipt_reply.wait(10)
+                            return self.drop_reply()
                 if method == TASK_SUBMISSION_LOOKUP_METHOD:
                     lookups.append(method)
                 if method in {TASK_RESPOND_REVIEWED_METHOD, TASK_CHECK_REVIEWED_METHOD}:
@@ -145,9 +154,11 @@ class TaskInputReviewJourney(unittest.TestCase):
                     return self.drop_reply()
                 if self.headers.get("Mcp-Method") == TASK_SUBMISSION_METHOD and result.get("resultType") == "task":
                     if receipt_phase.is_set():
-                        receipt_commits.put(result["taskId"])
-                        release_receipt_reply.wait(10)
-                        return self.drop_reply()
+                        if getattr(self, "receipt_fault", None) == "after":
+                            receipt_events.put(result["taskId"])
+                            self.release_receipt_reply.wait(10)
+                            return self.drop_reply()
+                        return super().send_json(status, value, extra_headers)
                     committed.append(result["taskId"])
                     if len(committed) == 1:
                         return self.drop_reply()
@@ -204,51 +215,82 @@ class TaskInputReviewJourney(unittest.TestCase):
         self.assertEqual(confirm(Decimal("0.1000000000000000002")), "unconfirmed")
 
         receipt_phase.set()
-        with TemporaryDirectory() as directory:
-            receipt_path = Path(directory, "task.json")
-            receipt_script = str(Path(__file__).with_name("task-receipt.mjs"))
-            command = ["node", receipt_script, "submit", endpoint, str(receipt_path)]
-            with subprocess.Popen(command, env={**os.environ, "MCP_TASKS_TEST_TOKEN": token},
-                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as submitter:
-                try:
-                    try:
-                        receipt_task = receipt_commits.get(timeout=8)
-                    except Empty:
-                        self.fail("SDK submission never reached the committed reply")
-                    submitter.kill()
-                    stdout, stderr = submitter.communicate(timeout=5)
-                    self.assertEqual(submitter.returncode, -signal.SIGKILL, stderr)
-                    self.assertNotIn(token, stdout + stderr)
-                finally:
-                    if submitter.poll() is None:
-                        submitter.kill()
-                        submitter.wait(timeout=5)
-                    release_receipt_reply.set()
-            initial = receipt_path.read_text()
-            self.assertEqual(stat.S_IMODE(receipt_path.stat().st_mode), 0o600)
-            receipt = json.loads(initial)
-            self.assertEqual(set(receipt), {"version", "endpointSha256", "submissionKey"})
-            self.assertNotIn(token, initial)
-            self.assertNotIn(endpoint, initial)
+        receipt_script = str(Path(__file__).with_name("task-receipt.mjs"))
+        renewed = mint(jti="fresh-receipt-recovery")
 
-            renewed = mint(jti="fresh-receipt-recovery")
-            result = subprocess.run(["node", receipt_script, "resume", endpoint, str(receipt_path)],
-                                    env={**os.environ, "MCP_TASKS_TEST_TOKEN": renewed}, capture_output=True,
+        def receipt_client(mode, path, credential):
+            result = subprocess.run(["node", receipt_script, mode, endpoint, str(path)],
+                                    env={**os.environ, "MCP_TASKS_TEST_TOKEN": credential}, capture_output=True,
                                     text=True, timeout=16)
-            self.assertNotIn(renewed, result.stdout + result.stderr)
+            self.assertNotIn(credential, result.stdout + result.stderr)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(json.loads(result.stdout), {"taskId": receipt_task, "status": "completed"})
-            self.assertEqual(receipt_path.read_text(), initial)
-            self.assertEqual(receipt_methods[:3], [TASK_SUBMISSION_METHOD, TASK_SUBMISSION_LOOKUP_METHOD, "tasks/get"])
-            self.assertTrue(all(method == "tasks/get" for method in receipt_methods[3:]))
+            return json.loads(result.stdout) if result.stdout else None
+
+        def receipt_rows(key):
             with runtime.pool.connection() as connection:
-                tasks = connection.execute(
+                return connection.execute(
                     """SELECT task_id::text AS task_id,status,attempt_count
                        FROM gregale_mcp_tasks WHERE namespace=%s AND submission_key=%s""",
-                    (runtime.namespace, receipt["submissionKey"]),
+                    (runtime.namespace, key),
                 ).fetchall()
-            self.assertEqual(tasks, [{"task_id": receipt_task, "status": "completed", "attempt_count": 1}])
 
+        with TemporaryDirectory() as directory:
+            for fault in ("before", "after"):
+                with self.subTest(submission_reply=fault):
+                    receipt_methods.clear()
+                    release_receipt_reply = Event()
+                    receipt_faults.put((fault, release_receipt_reply))
+                    receipt_path = Path(directory, f"{fault}.json")
+                    command = ["node", receipt_script, "submit", endpoint, str(receipt_path)]
+                    with subprocess.Popen(command, env={**os.environ, "MCP_TASKS_TEST_TOKEN": token},
+                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as submitter:
+                        try:
+                            try:
+                                original_id = receipt_events.get(timeout=8)
+                            except Empty:
+                                self.fail("SDK submission did not reach the fault")
+                            submitter.kill()
+                            stdout, stderr = submitter.communicate(timeout=5)
+                            self.assertEqual(submitter.returncode, -signal.SIGKILL, stderr)
+                            self.assertNotIn(token, stdout + stderr)
+                        finally:
+                            if submitter.poll() is None:
+                                submitter.kill()
+                                submitter.wait(timeout=5)
+                            release_receipt_reply.set()
+
+                    initial = receipt_path.read_text()
+                    self.assertEqual(stat.S_IMODE(receipt_path.stat().st_mode), 0o600)
+                    receipt = json.loads(initial)
+                    self.assertEqual(set(receipt), {"version", "endpointSha256", "submissionKey",
+                                                    "requestSha256", "credentialProof"})
+                    self.assertEqual(receipt["version"], 2)
+                    self.assertNotIn(token, initial)
+                    self.assertNotIn(endpoint, initial)
+                    self.assertNotIn("crash receipt journey", initial)
+                    self.assertEqual([row["task_id"] for row in receipt_rows(receipt["submissionKey"])],
+                                     [original_id] if fault == "after" else [])
+                    self.assertEqual(receipt_methods, [TASK_SUBMISSION_METHOD])
+
+                    receipt_client("reject-credential", receipt_path, renewed)
+                    self.assertEqual(receipt_methods, [TASK_SUBMISSION_METHOD])
+                    if fault == "after":
+                        self.assertEqual(receipt_client("resume", receipt_path, renewed),
+                                         {"taskId": original_id, "status": "completed"})
+                        self.assertEqual(receipt_path.read_text(), initial)
+                        self.assertEqual(receipt_methods[1:3], [TASK_SUBMISSION_LOOKUP_METHOD, "tasks/get"])
+
+                    before_retry = len(receipt_methods)
+                    recovered = receipt_client("retry", receipt_path, token)
+                    admitted = recovered["taskId"]
+                    if original_id is not None:
+                        self.assertEqual(admitted, original_id)
+                    self.assertEqual(receipt_methods[before_retry], TASK_SUBMISSION_METHOD)
+                    self.assertTrue(all(method == "tasks/get" for method in receipt_methods[before_retry + 1:]))
+                    self.assertEqual(receipt_methods.count(TASK_SUBMISSION_METHOD), 2)
+                    self.assertEqual(json.loads(receipt_path.read_text()), {**receipt, "taskId": admitted})
+                    self.assertEqual(receipt_rows(receipt["submissionKey"]),
+                                     [{"task_id": admitted, "status": "completed", "attempt_count": 1}])
 
 
 if __name__ == "__main__":

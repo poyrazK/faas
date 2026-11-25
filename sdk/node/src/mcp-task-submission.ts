@@ -6,7 +6,8 @@ const protocolMeta = 'io.modelcontextprotocol/protocolVersion';
 const tasksExtension = 'io.modelcontextprotocol/tasks';
 const submitMethod = 'gregale/tasks/submit';
 const lookupMethod = 'gregale/tasks/lookup';
-const submissionKeyMeta = 'io.gregale/task-submission-key';
+export const submissionKeyMeta = 'io.gregale/task-submission-key';
+export const localReceiptMeta = 'io.gregale/local-task-receipt-operation';
 const keyPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(?![\s\S])/u;
 
 const resultSchema = {
@@ -262,8 +263,13 @@ function adaptSubmissionReply(response: Response, id: string | number, signal?: 
   return response;
 }
 
-/** Pass to the official Streamable HTTP transport's fetch option for keyed Task submission. */
-export function createMcpTaskSubmissionFetch(fetcher: typeof globalThis.fetch = globalThis.fetch): typeof globalThis.fetch {
+type ReceiptSubmissionGuard = (
+  operationId: string, params: Record<string, unknown>, metadata: Record<string, unknown>, headers: Headers,
+) => Promise<void>;
+
+export function createGuardedMcpTaskSubmissionFetch(
+  fetcher: typeof globalThis.fetch = globalThis.fetch, guard?: ReceiptSubmissionGuard,
+): typeof globalThis.fetch {
   return async (input, init) => {
     const request = input instanceof Request ? input : undefined;
     const headers = new Headers(init?.headers ?? request?.headers);
@@ -280,9 +286,22 @@ export function createMcpTaskSubmissionFetch(fetcher: typeof globalThis.fetch = 
         headers.get('mcp-protocol-version') !== protocol || message.params._meta[protocolMeta] !== protocol) {
       throw new TypeError('Invalid keyed MCP Task request envelope');
     }
+    const metadata = message.params._meta;
+    if (Object.hasOwn(metadata, localReceiptMeta)) {
+      const operationId = metadata[localReceiptMeta];
+      if (!guard || typeof operationId !== 'string') throw new TypeError('Unbound MCP Task receipt operation');
+      await guard(operationId, message.params, metadata, headers);
+      delete metadata[localReceiptMeta];
+    }
+    (init?.signal ?? request?.signal)?.throwIfAborted();
     headers.set('mcp-name', nameHeader(message.params.name));
     headers.delete('content-length');
     const response = await fetcher(input, { ...init, headers, body: JSON.stringify({ ...message, method: 'tools/call' }) });
     return adaptSubmissionReply(response, message.id, init?.signal ?? request?.signal);
   };
+}
+
+/** Pass to the official Streamable HTTP transport's fetch option for keyed Task submission. */
+export function createMcpTaskSubmissionFetch(fetcher: typeof globalThis.fetch = globalThis.fetch): typeof globalThis.fetch {
+  return createGuardedMcpTaskSubmissionFetch(fetcher);
 }

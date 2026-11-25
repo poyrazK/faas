@@ -5813,10 +5813,11 @@ const submitted = await submitMcpTaskWithReceipt(mcp, './receipts/weekly.json', 
 Use a new path in an existing application-owned directory on a POSIX file
 system that supports hard links and directory sync. The SDK generates the
 UUIDv7 key, syncs the private receipt, and then sends the submission. The
-file stores an endpoint fingerprint and the key. If the server returns the
-Task ID, the SDK atomically adds it and reports whether it durably recorded
-the ID in `taskIdRecorded`. Credentials and tool arguments stay out of
-the receipt.
+file stores the endpoint fingerprint and key. With bearer authentication,
+it also records a request fingerprint and a proof of the bearer credential
+selected by the transport. If the server returns the Task ID, the SDK
+atomically adds it and reports whether it durably recorded the ID in
+`taskIdRecorded`. Credentials and tool arguments stay out of the receipt.
 
 After restart, reconnect using the same endpoint and the current credential.
 Recover the Task using the receipt path alone.
@@ -5832,6 +5833,28 @@ sending requests. Recovery uses the recorded Task ID when present and otherwise
 does a read-only lookup by submission key. It returns the current Task snapshot
 and any retained result. Use `waitForMcpTask` if it is still working. This
 workflow uses the Node SDK's receipt format.
+
+#### Retry the original submission from a TypeScript receipt
+
+If a submitter is interrupted and you need to resend its request, reconnect
+to the same endpoint with the original bearer credential and supply the
+original tool, arguments, and deferred-input setting.
+
+```ts
+import { retryMcpTaskFromReceipt } from '@gregale/sdk-node/preview';
+
+const retried = await retryMcpTaskFromReceipt(mcp, './receipts/weekly.json', {
+  toolName: 'build_report',
+  arguments: { report: 'weekly', steps: 8 },
+});
+```
+
+The SDK checks the request fingerprint and the bearer on the outgoing
+request. It reuses the recorded key within the one-minute submission window.
+If the server accepted the first request, a matching retry returns its
+original Task. Otherwise the retry can admit it. If the credential has
+changed, the key has expired, or the receipt has no proof, use the read-only
+resume helper to check for a retained Task.
 
 #### Find retained Tasks on the server
 

@@ -1,17 +1,25 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { constants } from 'node:fs';
 import { link, open, realpath, rename, unlink } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
+import { jobValueHash } from './job-runtime.js';
 import { isMcpTaskId } from './mcp-task-inbox.js';
 import { getMcpTask, type McpTaskConnection, type McpTaskSnapshot } from './mcp-task-result.js';
 import {
-  createMcpTaskSubmissionFetch, isSubmissionKey, lookupMcpTaskBySubmissionKey,
-  prepareMcpTaskSubmission, sendMcpTaskSubmission,
+  createGuardedMcpTaskSubmissionFetch, isSubmissionKey, localReceiptMeta, lookupMcpTaskBySubmissionKey,
+  prepareMcpTaskSubmission, sendMcpTaskSubmission, submissionKeyMeta,
   type McpTaskSubmission, type McpTaskSubmissionConnection, type McpTaskSubmissionOptions, type McpTaskSubmissionOutcome,
 } from './mcp-task-submission.js';
 
 const maxReceiptBytes = 4096;
-const transports = new WeakMap<object, string>();
+type SubmissionGuard = NonNullable<Parameters<typeof createGuardedMcpTaskSubmissionFetch>[1]>;
+type TransportBinding = {
+  endpointSha256: string;
+  operations: Map<string, SubmissionGuard>;
+};
+
+const transports = new WeakMap<object, TransportBinding>();
+const submissionWindowMs = 60_000;
 const receiptMethods = new Set(['gregale/tasks/submit', 'gregale/tasks/lookup', 'tasks/get']);
 const sha256Pattern = /^[0-9a-f]{64}(?![\s\S])/u;
 
@@ -23,12 +31,14 @@ export type McpTaskReceiptSubmissionOutcome =
   | (Extract<McpTaskSubmissionOutcome, { outcome: 'accepted' }> & { readonly taskIdRecorded: boolean })
   | Extract<McpTaskSubmissionOutcome, { outcome: 'unconfirmed' }>;
 
-type Receipt = {
-  version: 1;
+type ReceiptFields = {
   endpointSha256: string;
   submissionKey: string;
   taskId?: string;
 };
+type ReadOnlyReceipt = ReceiptFields & { version: 1 };
+type RetryReceipt = ReceiptFields & { version: 2; requestSha256: string; credentialProof: string };
+type Receipt = ReadOnlyReceipt | RetryReceipt;
 
 const messages = {
   invalid_endpoint: 'MCP Task receipts require an HTTP or HTTPS endpoint without credentials or a fragment',
@@ -37,6 +47,11 @@ const messages = {
   invalid_receipt: 'Invalid or non-private MCP Task receipt',
   receipt_exists: 'MCP Task receipt already exists. Resume it to check the saved submission',
   receipt_io: 'Could not read or write the MCP Task receipt',
+  retry_unavailable: 'MCP Task receipt does not have a credential binding for retry',
+  retry_window_closed: 'MCP Task submission is outside its retry window',
+  request_mismatch: 'MCP Task retry requires the original tool, arguments, and deferred-input setting',
+  task_mismatch: 'The returned MCP Task ID does not match the receipt',
+  credential_mismatch: 'MCP Task retry requires the original bearer credential',
 } as const;
 export type McpTaskReceiptFailureCode = keyof typeof messages;
 
@@ -64,7 +79,12 @@ export function createMcpTaskReceiptTransport<Transport extends TransportConstru
   TransportClass: Transport, endpoint: string | URL, options?: ConstructorParameters<Transport>[1],
 ): InstanceType<Transport> {
   const href = endpointURL(endpoint).href;
-  const fetcher = createMcpTaskSubmissionFetch(options?.fetch);
+  const binding: TransportBinding = { endpointSha256: createHash('sha256').update(href).digest('hex'), operations: new Map() };
+  const fetcher = createGuardedMcpTaskSubmissionFetch(options?.fetch, async (operationId, params, metadata, headers) => {
+    const guard = binding.operations.get(operationId);
+    if (!guard) throw new McpTaskReceiptError('unbound_connection');
+    await guard(operationId, params, metadata, headers);
+  });
   const fetch: Fetch = async (input, init) => {
     const request = input instanceof Request ? input : undefined;
     const headers = new Headers(init?.headers ?? request?.headers);
@@ -80,18 +100,20 @@ export function createMcpTaskReceiptTransport<Transport extends TransportConstru
     return response;
   };
   const transport = new TransportClass(new URL(href), { ...options, fetch }) as InstanceType<Transport>;
-  transports.set(transport, createHash('sha256').update(href).digest('hex'));
+  transports.set(transport, binding);
   return transport;
 }
 
-function fingerprint(connection: McpTaskReceiptConnection): string {
+function transportBinding(connection: McpTaskReceiptConnection): TransportBinding {
   const binding = connection.transport && transports.get(connection.transport);
   if (!binding) throw new McpTaskReceiptError('unbound_connection');
   return binding;
 }
 
-function checkEndpoint(connection: McpTaskReceiptConnection, expected: string): void {
-  if (fingerprint(connection) !== expected) throw new McpTaskReceiptError('endpoint_mismatch');
+function checkEndpoint(connection: McpTaskReceiptConnection, expected: string): TransportBinding {
+  const binding = transportBinding(connection);
+  if (binding.endpointSha256 !== expected) throw new McpTaskReceiptError('endpoint_mismatch');
+  return binding;
 }
 
 function newSubmissionKey(): string {
@@ -123,19 +145,34 @@ async function receiptPath(path: string): Promise<string> {
   }
 }
 
+function isDigest(value: unknown): value is string {
+  return typeof value === 'string' && sha256Pattern.test(value);
+}
+
 function decodeReceipt(bytes: Uint8Array): Receipt {
   try {
-    const receipt = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as Partial<Receipt> | null;
-    if (receipt?.version === 1 && typeof receipt.endpointSha256 === 'string' &&
-        sha256Pattern.test(receipt.endpointSha256) && isSubmissionKey(receipt.submissionKey) &&
-        (!Object.hasOwn(receipt, 'taskId') || isMcpTaskId(receipt.taskId)) &&
-        Object.keys(receipt).every(key => ['version', 'endpointSha256', 'submissionKey', 'taskId'].includes(key))) {
-      return receipt as Receipt;
+    const receipt = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as Partial<RetryReceipt> |
+      Partial<ReadOnlyReceipt> | null;
+    if (receipt && isDigest(receipt.endpointSha256) && isSubmissionKey(receipt.submissionKey) &&
+        (!Object.hasOwn(receipt, 'taskId') || isMcpTaskId(receipt.taskId))) {
+      const keys = ['version', 'endpointSha256', 'submissionKey', 'taskId'];
+      if (receipt.version === 1 && Object.keys(receipt).every(key => keys.includes(key))) return receipt as ReadOnlyReceipt;
+      if (receipt.version === 2 && isDigest(receipt.requestSha256) && isDigest(receipt.credentialProof) &&
+          Object.keys(receipt).every(key => keys.includes(key) || key === 'requestSha256' || key === 'credentialProof')) {
+        return receipt as RetryReceipt;
+      }
     }
   } catch {
     // Treat malformed text and malformed JSON as invalid receipts.
   }
   throw new McpTaskReceiptError('invalid_receipt');
+}
+
+function sameSubmission(saved: Receipt, receipt: Receipt): boolean {
+  return saved.version === receipt.version && saved.endpointSha256 === receipt.endpointSha256 &&
+    saved.submissionKey === receipt.submissionKey &&
+    (saved.version !== 2 || (receipt.version === 2 && saved.requestSha256 === receipt.requestSha256 &&
+      saved.credentialProof === receipt.credentialProof));
 }
 
 function hasFsCode(error: unknown, code: string): boolean {
@@ -196,8 +233,12 @@ async function writeReceipt(path: string, receipt: Receipt): Promise<void> {
         // Check the original receipt just before replacing it. Only the
         // creator adds the ID, and readers always see a complete file.
         const current = await loadReceipt(path);
-        if (current.endpointSha256 !== receipt.endpointSha256 || current.submissionKey !== receipt.submissionKey ||
-            current.taskId !== undefined) throw new McpTaskReceiptError('invalid_receipt');
+        if (!sameSubmission(current, receipt)) throw new McpTaskReceiptError('invalid_receipt');
+        if (current.taskId !== undefined) {
+          if (current.taskId !== receipt.taskId) throw new McpTaskReceiptError('task_mismatch');
+          await directory.sync();
+          return;
+        }
         await rename(temporary, path);
         createdTemporary = false;
       }
@@ -213,6 +254,100 @@ async function writeReceipt(path: string, receipt: Receipt): Promise<void> {
   }
 }
 
+function submissionDigest(params: Record<string, unknown>, metadata: Record<string, unknown>): string {
+  return jobValueHash({
+    tool: params.name,
+    arguments: params.arguments,
+    capabilities: metadata['io.modelcontextprotocol/clientCapabilities'],
+  });
+}
+
+function bearerCredential(headers: Headers): string | undefined {
+  return /^Bearer[ \t]+([A-Za-z0-9._~+\/-]+=*)$/i.exec(headers.get('Authorization') ?? '')?.[1];
+}
+
+function credentialProof(receipt: Omit<RetryReceipt, 'credentialProof'>, credential: string): string {
+  return createHmac('sha256', credential)
+    .update('gregale/node-sdk/mcp-task-receipt/v2:')
+    .update(receipt.endpointSha256).update(receipt.submissionKey).update(receipt.requestSha256)
+    .digest('hex');
+}
+
+function verifyCredential(receipt: RetryReceipt, credential: string | undefined): void {
+  if (!credential || !timingSafeEqual(Buffer.from(credentialProof(receipt, credential), 'hex'),
+    Buffer.from(receipt.credentialProof, 'hex'))) {
+    throw new McpTaskReceiptError('credential_mismatch');
+  }
+}
+
+function requireRetryWindow(receipt: Receipt): void {
+  const issued = Number.parseInt(receipt.submissionKey.slice(0, 8) + receipt.submissionKey.slice(9, 13), 16);
+  const now = Date.now();
+  if (now < issued || now - issued >= submissionWindowMs) throw new McpTaskReceiptError('retry_window_closed');
+}
+
+async function runReceiptSubmission(
+  connection: McpTaskReceiptConnection, path: string, seed: Receipt, input: McpTaskReceiptSubmission,
+  operation: ReturnType<typeof scope>, retry: boolean,
+): Promise<McpTaskReceiptSubmissionOutcome> {
+  operation.signal.throwIfAborted();
+  const binding = checkEndpoint(connection, seed.endpointSha256);
+  const request = prepareMcpTaskSubmission(connection, { ...input, submissionKey: seed.submissionKey });
+  const requestSha256 = submissionDigest(request.params, request.params._meta);
+  if (seed.version === 2 && seed.requestSha256 !== requestSha256) throw new McpTaskReceiptError('request_mismatch');
+
+  let receipt = retry ? seed : undefined;
+  let guardError: unknown;
+  const operationId = randomUUID();
+  request.params._meta[localReceiptMeta] = operationId;
+  binding.operations.set(operationId, async (_, params, metadata, headers) => {
+    try {
+      operation.signal.throwIfAborted();
+      if (metadata[submissionKeyMeta] !== seed.submissionKey || submissionDigest(params, metadata) !== requestSha256) {
+        throw new McpTaskReceiptError('request_mismatch');
+      }
+      if (retry) requireRetryWindow(seed);
+      const credential = bearerCredential(headers);
+      if (!receipt) {
+        // Capture the bearer on the prepared HTTP request before allowing it to leave.
+        let initial = seed;
+        if (credential) {
+          const bound = { ...seed, version: 2 as const, requestSha256 };
+          initial = { ...bound, credentialProof: credentialProof(bound, credential) };
+        }
+        await writeReceipt(path, initial);
+        receipt = initial;
+      }
+      if (receipt.version === 2) verifyCredential(receipt, credential);
+      else if (credential) throw new McpTaskReceiptError('credential_mismatch');
+      operation.signal.throwIfAborted();
+    } catch (error) {
+      guardError = error;
+      throw error;
+    }
+  });
+
+  let result: McpTaskSubmissionOutcome;
+  try {
+    result = await sendMcpTaskSubmission(connection, request, operation);
+  } catch (error) {
+    throw guardError ?? error;
+  } finally {
+    binding.operations.delete(operationId);
+  }
+  if (guardError !== undefined) throw guardError;
+  if (result.outcome === 'unconfirmed') return result;
+  if (!receipt) throw new McpTaskReceiptError('unbound_connection');
+  try {
+    await writeReceipt(path, { ...receipt, taskId: result.task.taskId });
+    return { ...result, taskIdRecorded: true };
+  } catch (error) {
+    if (error instanceof McpTaskReceiptError && error.code === 'task_mismatch') throw error;
+    // Admission is confirmed even if the local acknowledgement could not be saved.
+    return { ...result, taskIdRecorded: false };
+  }
+}
+
 /** Publish a private receipt before admitting the keyed submission. */
 export async function submitMcpTaskWithReceipt(
   connection: McpTaskReceiptConnection, path: string, submission: McpTaskReceiptSubmission,
@@ -220,24 +355,25 @@ export async function submitMcpTaskWithReceipt(
 ): Promise<McpTaskReceiptSubmissionOutcome> {
   const operation = scope(options);
   operation.signal.throwIfAborted();
-  const endpointSha256 = fingerprint(connection);
+  const { endpointSha256 } = transportBinding(connection);
   const file = await receiptPath(path);
-  const seed: Receipt = { version: 1, endpointSha256, submissionKey: newSubmissionKey() };
-  const request = prepareMcpTaskSubmission(connection, { ...submission, submissionKey: seed.submissionKey });
-  operation.signal.throwIfAborted();
-  await writeReceipt(file, seed);
-  operation.signal.throwIfAborted();
-  checkEndpoint(connection, endpointSha256);
-  const result = await sendMcpTaskSubmission(connection, request, operation);
-  if (result.outcome === 'unconfirmed') return result;
+  const seed: ReadOnlyReceipt = { version: 1, endpointSha256, submissionKey: newSubmissionKey() };
+  return runReceiptSubmission(connection, file, seed, submission, operation, false);
+}
 
-  try {
-    await writeReceipt(file, { ...seed, taskId: result.task.taskId });
-    return { ...result, taskIdRecorded: true };
-  } catch {
-    // Admission is confirmed even if the local acknowledgement could not be saved.
-    return { ...result, taskIdRecorded: false };
-  }
+/** Explicitly retry the original keyed submission within the receipt's admission window. */
+export async function retryMcpTaskFromReceipt(
+  connection: McpTaskReceiptConnection, path: string, submission: McpTaskReceiptSubmission,
+  options: McpTaskSubmissionOptions = {},
+): Promise<McpTaskReceiptSubmissionOutcome> {
+  const operation = scope(options);
+  operation.signal.throwIfAborted();
+  const file = await receiptPath(path);
+  const receipt = await loadReceipt(file);
+  checkEndpoint(connection, receipt.endpointSha256);
+  if (receipt.version !== 2) throw new McpTaskReceiptError('retry_unavailable');
+  requireRetryWindow(receipt);
+  return runReceiptSubmission(connection, file, receipt, submission, operation, true);
 }
 
 /** Recover a retained Task with the current credential using read-only requests. */
@@ -246,7 +382,7 @@ export async function resumeMcpTaskFromReceipt(
 ): Promise<McpTaskSnapshot> {
   const operation = scope(options);
   operation.signal.throwIfAborted();
-  const selectedEndpoint = fingerprint(connection);
+  const { endpointSha256: selectedEndpoint } = transportBinding(connection);
   const receipt = await loadReceipt(await receiptPath(path));
   if (receipt.endpointSha256 !== selectedEndpoint) throw new McpTaskReceiptError('endpoint_mismatch');
   checkEndpoint(connection, selectedEndpoint);

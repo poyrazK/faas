@@ -51,7 +51,7 @@ export {
   type McpTaskSubmissionConnection, type McpTaskSubmissionFailureCode, type McpTaskSubmissionOutcome,
 } from './mcp-task-submission.js';
 export {
-  createMcpTaskReceiptTransport, submitMcpTaskWithReceipt, resumeMcpTaskFromReceipt, McpTaskReceiptError,
+  createMcpTaskReceiptTransport, submitMcpTaskWithReceipt, resumeMcpTaskFromReceipt, retryMcpTaskFromReceipt, McpTaskReceiptError,
   type McpTaskReceiptConnection, type McpTaskReceiptFailureCode, type McpTaskReceiptSubmission,
   type McpTaskReceiptSubmissionOutcome,
 } from './mcp-task-receipt.js';

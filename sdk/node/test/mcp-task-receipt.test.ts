@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
-  createMcpTaskReceiptTransport, resumeMcpTaskFromReceipt, submitMcpTaskWithReceipt,
+  createMcpTaskReceiptTransport, resumeMcpTaskFromReceipt, retryMcpTaskFromReceipt, submitMcpTaskWithReceipt,
   type McpTaskConnection, type McpTaskReceiptConnection, type McpTaskSubmissionConnection,
 } from '../src/preview.js';
 
@@ -26,13 +26,17 @@ class FixtureTransport {
 type Request = Parameters<McpTaskConnection['request']>[0] | Parameters<McpTaskSubmissionConnection['request']>[0];
 type Wire = { id: number; method: string; params: Record<string, unknown> };
 
-function connection(reply: (request: Wire) => Promise<object>, url = endpoint): McpTaskReceiptConnection {
+function connection(
+  reply: (request: Wire) => Promise<object>, url = endpoint,
+  credential: string | (() => string) = 'private-fixture-credential',
+): McpTaskReceiptConnection {
   let id = 0;
   const transport = createMcpTaskReceiptTransport(FixtureTransport, url, {
     onInsufficientScope: 'throw',
     fetch: async (_, init) => {
       const message = JSON.parse(String(init?.body)) as Wire;
       const result = await reply(message);
+      if (result instanceof Response) return result;
       return Response.json({ jsonrpc: '2.0', id: message.id, result });
     },
   });
@@ -42,13 +46,16 @@ function connection(reply: (request: Wire) => Promise<object>, url = endpoint): 
     getServerCapabilities: () => ({ extensions: { 'io.modelcontextprotocol/tasks': {},
       'io.gregale/task-submission': {}, 'io.gregale/task-submission-lookup': {} } }),
     async request({ method, params }: Request, _, { signal }) {
-      const response = await transport.options!.fetch!(transport.url, {
+      const body = JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params: {
+        ...params, _meta: { ...('_meta' in params ? params._meta : {}), 'io.modelcontextprotocol/protocolVersion': protocol },
+      } });
+      const send = () => transport.options!.fetch!(transport.url, {
         method: 'POST', signal, headers: { 'Mcp-Method': method, 'Mcp-Protocol-Version': protocol,
-          Authorization: 'Bearer private fixture credential' },
-        body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params: {
-          ...params, _meta: { ...('_meta' in params ? params._meta : {}), 'io.modelcontextprotocol/protocolVersion': protocol },
-        } }),
+          Authorization: `Bearer ${typeof credential === 'function' ? credential() : credential}` },
+        body,
       });
+      const response = await send();
+      if (response.status === 401 && typeof credential === 'function') return (await (await send()).json()).result;
       return (await response.json()).result;
     },
   };
@@ -70,10 +77,14 @@ test('publishes one private receipt before sending and records the returned ID a
     assert.equal((await stat(path)).mode & 0o777, 0o600);
     const text = await readFile(path, 'utf8');
     const saved = JSON.parse(text);
-    assert.deepEqual(Object.keys(saved).sort(), ['endpointSha256', 'submissionKey', 'version']);
+    assert.deepEqual(Object.keys(saved).sort(), ['credentialProof', 'endpointSha256', 'requestSha256', 'submissionKey', 'version']);
+    assert.equal(saved.version, 2);
+    assert.match(saved.credentialProof, /^[a-f0-9]{64}$/);
+    assert.match(saved.requestSha256, /^[a-f0-9]{64}$/);
     assert.match(saved.submissionKey, /^[a-f0-9-]+-7[a-f0-9]{3}-[89ab][a-f0-9-]+$/);
     assert.equal(saved.submissionKey, (message.params._meta as Record<string, unknown>)['io.gregale/task-submission-key']);
-    assert.ok(!text.includes(endpoint) && !text.includes('private fixture'));
+    assert.ok(!text.includes(endpoint) && !text.includes('private fixture') && !text.includes('private-fixture-credential'));
+    assert.equal(Object.hasOwn(message.params._meta as object, 'io.gregale/local-task-receipt-operation'), false);
     return { resultType: 'task', ...task };
   });
 
@@ -154,13 +165,13 @@ test('a confirmed Task handle survives failure to record its ID', async t => {
   const client = connection(async () => {
     // A concurrently replaced receipt must survive the acknowledgement write.
     const saved = JSON.parse(await readFile(path, 'utf8'));
-    await writeFile(path, JSON.stringify({ ...saved, version: 2 }));
+    await writeFile(path, JSON.stringify({ ...saved, version: 3 }));
     return { resultType: 'task', ...task };
   });
   assert.deepEqual(await submitMcpTaskWithReceipt(client, path, submission), {
     outcome: 'accepted', task: { ...task, nextAction: 'poll_status' }, taskIdRecorded: false,
   });
-  assert.equal(JSON.parse(await readFile(path, 'utf8')).version, 2);
+  assert.equal(JSON.parse(await readFile(path, 'utf8')).version, 3);
 });
 
 test('the bound fetch checks the full destination and rejects redirects', async () => {
@@ -177,4 +188,96 @@ test('the bound fetch checks the full destination and rejects redirects', async 
   assert.equal(calls, 0);
   await assert.rejects(transport.options!.fetch!(endpoint, init), { code: 'endpoint_mismatch' });
   assert.equal(calls, 1);
+});
+
+test('explicit retry uses the saved key and original canonical request', async t => {
+  const path = join(await folder(t), 'task.json');
+  const initial = { ...submission, arguments: { nested: { a: 'one', b: [2, 3] }, report: 'weekly' }, deferFormInput: true };
+  const lost = connection(async () => { throw new Error('lost initial reply'); });
+  assert.deepEqual(await submitMcpTaskWithReceipt(lost, path, initial), { outcome: 'unconfirmed' });
+  const seed = JSON.parse(await readFile(path, 'utf8'));
+  const retry = { ...initial, arguments: { report: 'weekly', nested: { b: [2, 3], a: 'one' } } };
+  let sent = 0;
+  const fresh = connection(async ({ method, params }) => {
+    assert.equal(method, 'tools/call');
+    sent++;
+    assert.equal((params._meta as Record<string, unknown>)['io.gregale/task-submission-key'], seed.submissionKey);
+    return { resultType: 'task', ...task };
+  });
+
+  const attempts = await Promise.all([
+    retryMcpTaskFromReceipt(fresh, path, retry), retryMcpTaskFromReceipt(fresh, path, retry),
+  ]);
+  for (const result of attempts) {
+    assert.deepEqual(result, { outcome: 'accepted', task: { ...task, nextAction: 'poll_status' }, taskIdRecorded: true });
+  }
+  assert.equal(sent, 2);
+  assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), { ...seed, taskId: task.taskId });
+  const conflicting = connection(async () => ({ resultType: 'task', ...task, taskId: 'conflicting Task' }));
+  await assert.rejects(retryMcpTaskFromReceipt(conflicting, path, retry), { code: 'task_mismatch' });
+  assert.equal(JSON.parse(await readFile(path, 'utf8')).taskId, task.taskId);
+});
+
+test('changed request and credential are rejected before transport', async t => {
+  const path = join(await folder(t), 'task.json');
+  const lost = connection(async () => { throw new Error('lost initial reply'); });
+  await submitMcpTaskWithReceipt(lost, path, submission);
+  const seed = await readFile(path, 'utf8');
+  let sent = 0;
+  const rejectWire = async () => { sent++; return { resultType: 'task', ...task }; };
+  const original = connection(rejectWire);
+  const changed = connection(rejectWire, endpoint, 'a-new-credential');
+  for (const input of [
+    { ...submission, toolName: 'other_tool' },
+    { ...submission, arguments: { report: 'changed' } },
+    { ...submission, deferFormInput: true },
+  ]) {
+    await assert.rejects(retryMcpTaskFromReceipt(original, path, input), { code: 'request_mismatch' });
+  }
+  await assert.rejects(retryMcpTaskFromReceipt(changed, path, submission), { code: 'credential_mismatch' });
+  await assert.rejects(retryMcpTaskFromReceipt(connection(rejectWire, endpoint + '/other'), path, submission),
+    { code: 'endpoint_mismatch' });
+  assert.equal(await readFile(path, 'utf8'), seed);
+  assert.equal(sent, 0);
+});
+
+test('legacy receipts remain resumable and the retry window is checked before sending', async t => {
+  const directory = await folder(t);
+  const path = join(directory, 'task.json');
+  const initial = connection(async () => { throw new Error('lost initial reply'); });
+  await submitMcpTaskWithReceipt(initial, path, submission);
+  const receipt = JSON.parse(await readFile(path, 'utf8'));
+  let sent = 0;
+  const client = connection(async ({ method }) => { sent++; assert.equal(method, 'tasks/get'); return task; });
+  const legacy = join(directory, 'legacy.json');
+  await writeFile(legacy, JSON.stringify({
+    version: 1, endpointSha256: receipt.endpointSha256, submissionKey: receipt.submissionKey, taskId: task.taskId,
+  }), { mode: 0o600 });
+  await assert.rejects(retryMcpTaskFromReceipt(client, legacy, submission), { code: 'retry_unavailable' });
+  assert.equal((await resumeMcpTaskFromReceipt(client, legacy)).taskId, task.taskId);
+  assert.equal(sent, 1);
+
+  const expiredKey = '019b0000-0000-7123-8123-0123456789ab';
+  await writeFile(path, JSON.stringify({ ...receipt, submissionKey: expiredKey }));
+  await assert.rejects(retryMcpTaskFromReceipt(client, path, submission), { code: 'retry_window_closed' });
+  assert.equal(sent, 1);
+});
+
+test('an auth refresh cannot send a receipt-backed mutation with a different bearer', async t => {
+  const path = join(await folder(t), 'task.json');
+  let bearer = 'private-fixture-credential';
+  let sent = 0;
+  const refreshing = connection(async () => {
+    sent++;
+    bearer = 'renewed-fixture-credential';
+    return new Response(null, { status: 401 });
+  }, endpoint, () => bearer);
+  await assert.rejects(submitMcpTaskWithReceipt(refreshing, path, submission), { code: 'credential_mismatch' });
+  assert.equal(sent, 1);
+  const saved = JSON.parse(await readFile(path, 'utf8'));
+  assert.equal(saved.version, 2);
+  assert.equal(saved.taskId, undefined);
+  assert.equal((await retryMcpTaskFromReceipt(
+    connection(async () => ({ resultType: 'task', ...task })), path, submission,
+  )).outcome, 'accepted');
 });
