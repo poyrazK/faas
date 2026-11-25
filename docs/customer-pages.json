@@ -60,6 +60,7 @@
     {"path": "production-protection", "source": "docs/production-protection.md", "unpublished": "preview capability; published when it reaches beta"},
     {"path": "customer-support", "source": "docs/customer-support.md", "unpublished": "preview capability; published when it reaches beta"},
     {"path": "custom-domains", "source": "docs/domains.md"},
+    {"path": "cost-controls", "source": "docs/cost-controls.md"},
     {"path": "compliance", "source": "docs/compliance/overview.md"},
     {"path": "container-compatibility", "source": "docs/container-compatibility.md"},
     {"path": "crons", "source": "docs/crons.md"},
