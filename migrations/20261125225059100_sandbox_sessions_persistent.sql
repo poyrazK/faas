@@ -1,4 +1,4 @@
--- filename: 20261122132055100_sandbox_sessions_persistent.sql
+-- filename: 20261125225059100_sandbox_sessions_persistent.sql
 -- migration-compat: expand
 -- ADR-20261122132055 persistent sandbox sessions. A session of kind
 -- persistent can be paused with its memory kept and resumed, forked, given a
