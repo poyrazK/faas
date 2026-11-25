@@ -385,6 +385,20 @@ func TestCacheNeverHandsOutALocalParentsDelta(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A cold node, before any Get, has only the parent's delta: nothing may
+	// report it as the drive on this node.
+	if path, local, err := other.LocalPath(testDriveKey); err != nil || local {
+		t.Fatalf("cold node: LocalPath = %q %v %v, want not local", path, local, err)
+	}
+	if path, local, _ := LocalPathWithoutTouch(other, testDriveKey); local {
+		t.Fatalf("cold node: LocalPathWithoutTouch = %q, want not local", path)
+	}
+	if cached, _, err := CachedLocally(other, testDriveKey); err != nil || cached {
+		t.Fatalf("cold node: CachedLocally = %v %v, want false", cached, err)
+	}
+	if err := other.MarkGeneration(testDriveKey, "gen-1"); err == nil {
+		t.Fatal("cold node: MarkGeneration took the parent's delta for the drive")
+	}
 	want := readAll(t, drivePath)
 	for name, c := range map[string]*LocalCacheBackend{"capturing node": cache, "another node": other} {
 		if got, err := getBytes(t, c, testDriveKey); err != nil || !bytes.Equal(got, want) {
@@ -400,5 +414,39 @@ func TestCacheNeverHandsOutALocalParentsDelta(t *testing.T) {
 		if path, local, _ := LocalPathWithoutTouch(c, testDriveKey); !local || !bytes.Equal(readAll(t, path), want) {
 			t.Fatalf("%s: LocalPathWithoutTouch %s is not the drive", name, path)
 		}
+	}
+}
+
+// isDriveDeltaPayload fails closed: a snapshot drive file it cannot read
+// counts as a delta, so the cache never hands it out unchecked.
+func TestIsDriveDeltaPayload(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string, mode os.FileMode) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(body), mode); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	delta := write("delta", driveDeltaMagic+"rest", 0o600)
+	drive := write("drive", "an ext4 image, not a delta", 0o600)
+	short := write("short", "ab", 0o600)
+	unreadable := write("unreadable", "an ext4 image", 0o000)
+	for _, tc := range []struct {
+		name, key, path string
+		want            bool
+	}{
+		{"a delta", testDriveKey, delta, true},
+		{"a whole drive", testDriveKey, drive, false},
+		{"a short file", testDriveKey, short, false},
+		{"a missing file", testDriveKey, filepath.Join(dir, "missing"), true},
+		{"another key", testLayerKey, delta, false},
+	} {
+		if got := isDriveDeltaPayload(tc.key, tc.path); got != tc.want {
+			t.Errorf("%s: isDriveDeltaPayload = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+	if os.Geteuid() != 0 && !isDriveDeltaPayload(testDriveKey, unreadable) {
+		t.Error("an unreadable drive file is handed out as the drive")
 	}
 }

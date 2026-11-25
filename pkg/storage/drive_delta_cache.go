@@ -31,19 +31,25 @@ func (c *LocalCacheBackend) DriveDeltas() bool { return c.driveDeltas.Load() }
 // file out as the drive: a VM restored from it boots the encoded payload
 // (a 1.6 MB "disk"). Only the cache's own entry or a fetch that rebuilds the
 // delta is the drive. It reads the delta's magic, whether or not deltas are
-// on now, since deltas written earlier stay in the parent.
+// on now, since deltas written earlier stay in the parent. It fails closed:
+// a drive file it cannot read (out of descriptors, an I/O error) counts as a
+// delta, so the caller falls through to the cache entry or a fetch rather
+// than risk handing out the payload. The cost is one open and an 8-byte read
+// of a local file, for snapshot drive keys only.
 func isDriveDeltaPayload(key, path string) bool {
 	if !isSnapshotDriveKey(key) {
 		return false
 	}
-	// nolint:forbidigo // path is the local parent's own file for key.
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:forbidigo // path is the local parent's own file for key.
 	if err != nil {
-		return false
+		return true
 	}
 	defer func() { _ = f.Close() }()
 	magic := make([]byte, len(driveDeltaMagic))
-	n, _ := io.ReadFull(f, magic)
+	n, err := io.ReadFull(f, magic)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
 	return n == len(magic) && string(magic) == driveDeltaMagic
 }
 
