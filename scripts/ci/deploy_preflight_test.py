@@ -38,6 +38,7 @@ class FakeGitHub:
         self.active = {"in_progress": [run_obj(ME, 50, sha=SHA)], "queued": [], "waiting": []}
         # workflow file -> its newest runs (actions/workflows/{file}/runs).
         self.workflow_runs = {}
+        self.paged = []
         self.jobs = {}
         self.light = []
         self.runs = {}
@@ -52,6 +53,7 @@ class FakeGitHub:
     def get(self, path, params=None):
         self.requests.append(path)
         params = params or {}
+        self.paged.append((path, params.get("per_page")))
         if path == "actions/artifacts":
             assert params["name"] == dp.RELEASE_MARKER + SHA
             return {"artifacts": [{"name": params["name"], "workflow_run": {"id": r}} for r in self.released_by]}
@@ -66,7 +68,9 @@ class FakeGitHub:
             assert params["head_sha"] == SHA
             return {"workflow_runs": self.light}
         if path == "actions/runs":
-            return {"workflow_runs": self.active[params["status"]]}
+            runs = self.active[params["status"]]
+            page = params.get("page", 1)
+            return {"workflow_runs": runs[(page - 1) * 100:page * 100], "total_count": len(runs)}
         if path.startswith("actions/workflows/") and path.endswith("/runs") and path.split("/")[2] in dp.DEPLOY_WORKFLOWS:
             return {"workflow_runs": self.workflow_runs.get(path.split("/")[2], [])}
         if path.startswith("actions/runs/") and path.endswith("/artifacts"):
@@ -326,10 +330,33 @@ class PreflightTest(PreflightCase):
         self.assertEqual(len(light_reads), 1)
 
     def test_api_requests_per_round_stay_within_the_token_budget(self):
-        self.host = healthy_host(lock="held")
-        self.run_preflight(wait=40 * 60, interval=60)
         # 1,000 requests an hour per repository for the workflow token.
-        self.assertLess(len(self.gh.requests), 400)
+        for name, host in (("lock held", healthy_host(lock="held")),
+                           ("idle but unhealthy", healthy_host(alerts=[alert("ApidDown")]))):
+            with self.subTest(name):
+                self.gh.requests = []
+                self.host = host
+                self.run_preflight(wait=40 * 60, interval=60)
+                self.assertLess(len(self.gh.requests), 400)
+                # The idle confirmation never runs while another check waits.
+                self.assertFalse([p for p in self.gh.requests if p == "actions/workflows/cd-platform.yml/runs"])
+
+    def test_a_busy_repository_listing_is_followed_past_its_first_page(self):
+        noise = [run_obj(1000 + i, 1, path="ci.yml", name="ci") for i in range(150)]
+        self.gh.active["in_progress"] = noise + [run_obj(300, 9, path="cd-platform.yml", name="cd-platform")]
+        pre = dp.Preflight(self.gh, lambda: self.host, ME, SHA, log=self.logs.append)
+        verdict = pre.idle(self.host)
+        self.assertEqual(verdict.state, dp.WAIT)
+        self.assertIn("cd-platform run 300", verdict.detail)
+
+    def test_confirmation_reads_far_enough_back_for_unit_runs_and_ignores_stuck_requested_runs(self):
+        self.gh.workflow_runs["cd-edge-node.yml"] = [
+            run_obj(400, 3, path="cd-edge-node.yml", name="cd-edge-node", status="requested")]
+        pre = dp.Preflight(self.gh, lambda: self.host, ME, SHA, log=self.logs.append)
+        pre.listed_active()
+        self.assertEqual(pre.confirm_idle().state, dp.OK)
+        self.assertIn(("actions/workflows/release-units.yml/runs", 30), [
+            (p, n) for p, n in self.gh.paged if p.endswith("/runs")])
 
 
 class FollowBuildTest(PreflightCase):
