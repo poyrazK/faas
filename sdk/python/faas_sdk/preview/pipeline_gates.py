@@ -12,7 +12,9 @@ from typing import Any, Generic, Literal, Protocol, TypeVar, cast
 
 from ..job_runtime import JobContract, _scope, job_value_hash
 from ..workflows import NonRetryableError, RetryPolicy, WorkflowContext
+from ._pipeline_tool_protocol import SQL
 from .pipeline_state import PipelineScope, _hash, _uuid, pipeline_name
+from .pipeline_task_handoffs import PipelineGateHandoff
 
 R = TypeVar("R")
 D = TypeVar("D")
@@ -239,6 +241,18 @@ class PostgresPipelineGateStore:
         if record is None or record.intent["binding_sha256"] != binding:
             raise PipelineGateError("conflict")
         return record
+
+    async def decide_handoff(
+        self, identity: str, binding: str, proposal: dict[str, Any], handoff: PipelineGateHandoff,
+    ) -> PipelineGateRecord[Any, Any]:
+        if proposal.get("state") not in ("submitted", "approved", "rejected"):
+            raise PipelineGateError("forbidden")
+        rows = await self._rows(SQL["task_handoff_decide"], [
+            identity, binding, _json(proposal), handoff["namespace"], handoff["id"], handoff["reviewer_hash"], handoff["run_id"],
+        ])
+        if len(rows) != 1:
+            raise PipelineGateError("forbidden")
+        return rows[0]
 
     async def mark(self, identity: str, decision: PipelineGateOutcome[Any], delivery: str) -> None:
         rows = await self._rows(
@@ -467,6 +481,7 @@ class PipelineGateService(Generic[R, D, A]):
         auth: A,
         payload: D | None = None,
         timeout: float,
+        _handoff: PipelineGateHandoff | None = None,
     ) -> PipelineGateView[R, D]:
         async def work(check: Callable[[], None]) -> PipelineGateView[R, D]:
             r, actor, _ = await self._access(identity, "decide", auth, check)
@@ -484,7 +499,13 @@ class PipelineGateService(Generic[R, D, A]):
             }
             if len(_json(proposal["payload"]).encode()) > 16384:
                 raise PipelineGateError("invalid_input")
-            saved = self._owned(await self.store.decide(identity, binding_sha256, proposal))
+            if _handoff is not None:
+                decide_handoff = getattr(self.store, "decide_handoff", None)
+                if state == "cancelled" or not callable(decide_handoff):
+                    raise PipelineGateError("forbidden")
+                saved = self._owned(await decide_handoff(identity, binding_sha256, proposal, _handoff))
+            else:
+                saved = self._owned(await self.store.decide(identity, binding_sha256, proposal))
             check()
             d = saved.decision
             if (
@@ -505,6 +526,16 @@ class PipelineGateService(Generic[R, D, A]):
             return self._view(self._owned(raw))
 
         return await self._execute(timeout, work)
+
+    async def decide_handoff(
+        self, identity: str, *, binding_sha256: str, auth: A, payload: D,
+        handoff: PipelineGateHandoff, timeout: float,
+        state: Literal["submitted", "approved", "rejected"] = "submitted",
+    ) -> PipelineGateView[R, D]:
+        return await self.decide(
+            identity, binding_sha256=binding_sha256, state=state, auth=auth, payload=payload,
+            timeout=timeout, _handoff=handoff,
+        )
 
     async def drain(self, limit: int, *, timeout: float) -> int:
         async def work(check: Callable[[], None]) -> int:

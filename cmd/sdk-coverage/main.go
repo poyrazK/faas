@@ -2015,6 +2015,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/workflows/stored/{name}/live-suites/{suite_id}/compare/{baseline_id}":          "CompareStoredWorkflowLiveSuites",
 
 	"POST /v1/apps/{slug}/workflows/{name}/runs":                                     "RunWorkflow",
+	"GET /v1/apps/{slug}/workflows/run-starts/{name}":                                "LookupWorkflowRunStart",
 	"GET /v1/apps/{slug}/workflows/runs":                                             "ListWorkflowRuns",
 	"POST /v1/apps/{slug}/workflows/runs:cancel-preview":                             "PreviewUnstartedWorkflowRunCancellations",
 	"POST /v1/apps/{slug}/workflows/runs:cancel-queued":                              "CancelUnstartedWorkflowRuns",
