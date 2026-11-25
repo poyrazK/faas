@@ -312,8 +312,11 @@ func (s *server) applyProjectPreview(w http.ResponseWriter, r *http.Request, log
 		ProjectSlug: slug,
 		Preview:     true,
 	}
-	resp, _, added, changed, removedSlugs, _, prob := s.scanService(synthReq, acct, planToken, true)
+	resp, project, added, changed, removedSlugs, _, prob := s.scanService(synthReq, acct, planToken, true)
 	if prob != nil {
+		// Same contract as applyProject: apps reconcile inserted before
+		// the failing step still need kind=created for schedd to place them.
+		s.notifyProjectAppsApplied(r.Context(), project.ID, added, nil)
 		log.Warn("dashboard project_preview apply: scan problem",
 			"account_id", acct.ID, "slug", logsanitize.Field(slug), "code", logsanitize.Field(prob.Code), "detail", logsanitize.Field(prob.Detail))
 		view.PreScanProblem = prob.Detail
@@ -332,6 +335,7 @@ func (s *server) applyProjectPreview(w http.ResponseWriter, r *http.Request, log
 		s.renderProjectPreviewPage(w, log, r, view, acct)
 		return
 	}
+	s.notifyProjectAppsApplied(r.Context(), project.ID, added, changed)
 	// Success: render the partition with an apply-result banner.
 	// Removed slugs come from the scanService return value (the
 	// destructive subset the operator should see explicitly per
