@@ -3,8 +3,9 @@ import { JobContract, JobError, jobScope, jobSnapshot, jobValueHash } from './jo
 import { createJobPipelineClient, type PipelineCheckpoint, type PipelineRunOptions } from './job-pipeline-client.js';
 import { eventPipelineScope } from './event-pipeline-state.js';
 import { parsePipelineGateRecord, type PipelineGateStore } from './pipeline-gates.js';
-import { pipelineName, type PipelineScope } from './pipeline-state.js';
-import { PipelineToolError, pipelineToolName, pipelineToolRequestId, pipelineToolIdentity, parsePipelineToolReceipt, matchPipelineToolCheckpoint, type PipelineToolActor, type PipelineToolAction, type PipelineToolIntent, type PipelineToolReceipt, type PipelineToolStore } from './pipeline-tool-state.js';
+import { PipelineError, isPinnedPipelineSourceFailure, pipelineName, type PipelineScope, type PinnedPipelineSource, type PinnedPipelineSourceFailure } from './pipeline-state.js';
+import { PipelineToolError, pipelineToolName, pipelineToolRequestId, pipelineToolIdentity, parsePipelineToolReceipt, samePipelineToolRequest, matchPipelineToolCheckpoint, type PipelineToolActor, type PipelineToolAction, type PipelineToolIntent, type PipelineToolReceipt, type PipelineToolStore } from './pipeline-tool-state.js';
+import { checkPipelinePreview, pipelinePreviewExpired, type PipelineStartPreview, type PipelineStartPreviewPolicy } from './pipeline-start-preview.js';
 export * from './pipeline-tool-state.js';
 export interface PipelineToolRequest<I> {
     readonly request_id: string;
@@ -31,16 +32,35 @@ export interface PipelineToolStatus {
         readonly attempt: number;
     }[];
     readonly approval: PipelineToolApproval | null;
+    readonly source_failure?: PinnedPipelineSourceFailure;
+}
+export type PipelineToolStartMatch =
+    | Readonly<{ state: 'found'; request_id: string; run_id: string }>
+    | Readonly<{ state: 'start_unknown'; request_id: string }>;
+export interface PipelineToolResult<O> {
+    readonly receipt: PipelineToolReceipt;
+    readonly output: O;
 }
 export interface PipelineTool<I, O, A> {
     readonly name: string;
     readonly description: string;
     readonly contract: JobContract<I, O>;
     start(input: I, requestId: string, access: A, options: PipelineRunOptions): Promise<PipelineToolStart>;
+    replayStart?(input: I, requestId: string, access: A, options: PipelineRunOptions): Promise<PipelineToolStart>;
+    previewStart?<P>(input: I, id: string, access: A, options: PipelineRunOptions, policy: PipelineStartPreviewPolicy<I, P, A>): Promise<PipelineStartPreview<P>>;
+    startPreviewed?(input: I, id: string, access: A, options: PipelineRunOptions, policy: PipelineStartPreviewPolicy<I, unknown, A>, token?: string): Promise<PipelineToolStart>;
     inspect(requestId: string, access: A, options: PipelineRunOptions): Promise<PipelineToolStatus | null>;
     result(requestId: string, access: A, options: PipelineRunOptions): Promise<O>;
     cancel(requestId: string, access: A, options: PipelineRunOptions): Promise<PipelineToolStatus>;
     reconcile(requestId: string, runId: string, access: A, options: PipelineRunOptions): Promise<PipelineToolStart>;
+    /** Verify an accepted run for the receipt using current reconciliation authority. */
+    findAcceptedRun?(requestId: string, access: A, options: PipelineRunOptions): Promise<PipelineToolStartMatch>;
+}
+export interface PipelineToolWithResult<I, O, A> extends PipelineTool<I, O, A> {
+    resultWithReceipt(requestId: string, access: A, options: PipelineRunOptions): Promise<PipelineToolResult<O>>;
+}
+export interface PipelineToolWithStartLookup<I, O, A> extends PipelineTool<I, O, A> {
+    findAcceptedRun(requestId: string, access: A, options: PipelineRunOptions): Promise<PipelineToolStartMatch>;
 }
 export interface PipelineToolDefinition<I, A> {
     readonly name: string;
@@ -65,7 +85,7 @@ export function pipelineToolReviewURL(value: string): string {
         throw new PipelineToolError('invalid_input');
     }
 }
-export function definePipelineTool<I, O, A>(source: JobContract<I, O>, definition: PipelineToolDefinition<I, A>): PipelineTool<I, O, A> {
+export function definePipelineTool<I, O, A>(source: JobContract<I, O>, definition: PipelineToolDefinition<I, A>): PipelineToolWithStartLookup<I, O, A> & PipelineToolWithResult<I, O, A> {
     const d = { ...definition, scope: eventPipelineScope(definition.scope) }, contract = new JobContract<I, O>(source.spec), scope = d.scope;
     if (!pipelineToolName(d.name) || typeof d.description !== 'string' || !d.description.trim() || d.description.length > 4096 || !d.token || !!d.gateStore !== !!d.reviewBaseURL)
         throw new PipelineToolError('invalid_input');
@@ -132,20 +152,39 @@ export function definePipelineTool<I, O, A>(source: JobContract<I, O>, definitio
     }
     const client = (ownerId: string) => createJobPipelineClient({ baseURL: scope.base_url, scope, ownerId, contract, token: d.token, ...(d.fetch ? { fetch: d.fetch } : {}) });
     const startResult = (receipt: PipelineToolReceipt, replayed: boolean): PipelineToolStart => jobSnapshot({ state: receipt.checkpoint ? 'started' : 'start_unknown', receipt, replayed });
-    async function operation(requestId: string, access: A, action: Exclude<PipelineToolAction, 'start'>, settings: PipelineRunOptions, runId?: string): Promise<PipelineToolStatus | O | PipelineToolStart | null> {
+    async function operation(requestId: string, access: A, action: Exclude<PipelineToolAction, 'start'> | 'find_start', settings: PipelineRunOptions, runId?: string): Promise<PipelineToolStatus | PipelineToolResult<O> | PipelineToolStart | PipelineToolStartMatch | null> {
         const request = { request_id: pipelineToolRequestId(requestId) };
         return execute(settings, async (signal, check, left) => {
-            const { actor, binding } = await prepare(request, access, action, signal, check), raw = await stored(() => d.store.load(binding.identity, signal), check);
+            const authorization = action === 'find_start' ? 'reconcile' : action;
+            const { actor, binding } = await prepare(request, access, authorization, signal, check), raw = await stored(() => d.store.load(binding.identity, signal), check);
             if (!raw) {
                 if (action === 'inspect')
                     return null;
                 throw new PipelineToolError('receipt_conflict');
             }
             let receipt = bound(binding, raw);
-            if (action === 'reconcile') {
-                const checkpoint = (await client(actor.owner_id).resumeById(pipelineToolRequestId(runId), { timeoutMs: left(), signal })).checkpoint;
+            if (action === 'reconcile' || action === 'find_start') {
+                const native = client(actor.owner_id), settings = { timeoutMs: left(), signal };
+                let checkpoint: PipelineCheckpoint | null;
+                try {
+                    const id = action === 'reconcile' ? pipelineToolRequestId(runId) : receipt.checkpoint?.run_id;
+                    checkpoint = id
+                        ? (await native.resumeById(id, settings)).checkpoint
+                        : await native.findToolStart(receipt.intent.identity, settings);
+                } catch (error) {
+                    if (action === 'find_start' && error instanceof PipelineError && ['receipt_conflict', 'scope_mismatch'].includes(error.code))
+                        throw new PipelineToolError('receipt_conflict');
+                    throw error;
+                }
                 check();
-                matchPipelineToolCheckpoint(receipt.intent, checkpoint);
+                // Recheck application authority before exposing a candidate or attaching it.
+                const latest = await prepare(request, access, 'reconcile', signal, check);
+                if (jobValueHash(latest.binding) !== jobValueHash(binding)) throw new PipelineToolError('unauthorized');
+                if (checkpoint) matchPipelineToolCheckpoint(receipt.intent, checkpoint);
+                if (action === 'find_start') return checkpoint
+                    ? jobSnapshot({ state: 'found' as const, request_id: request.request_id, run_id: checkpoint.run_id })
+                    : jobSnapshot({ state: 'start_unknown' as const, request_id: request.request_id });
+                if (!checkpoint) throw new PipelineToolError('receipt_conflict');
                 receipt = bound(binding, await stored(() => d.store.complete(receipt.intent, checkpoint, signal), check));
                 if (jobValueHash(receipt.checkpoint) !== jobValueHash(checkpoint))
                     throw new PipelineToolError('receipt_conflict');
@@ -164,7 +203,8 @@ export function definePipelineTool<I, O, A>(source: JobContract<I, O>, definitio
             if (action === 'result') {
                 if (info.status !== 'succeeded' || info.cancelled)
                     throw new PipelineToolError('not_terminal');
-                return run.result({ timeoutMs: left(), signal });
+                const output = await run.result({ timeoutMs: left(), signal });
+                return { receipt, output };
             }
             let approval: PipelineToolApproval | null = null;
             let state: PipelineToolStatus['state'] = info.cancelled ? 'cancelled' : info.status === 'succeeded' ? 'succeeded' : ['failed', 'dead'].includes(info.status) ? 'failed' : 'running';
@@ -195,41 +235,94 @@ export function definePipelineTool<I, O, A>(source: JobContract<I, O>, definitio
                     }
                 }
             }
-            return jobSnapshot({ state, receipt, steps: info.steps, approval });
+            const failure = info.failure?.code;
+            return jobSnapshot({ state, receipt, steps: info.steps, approval,
+                ...(state === 'failed' && isPinnedPipelineSourceFailure(failure) && { source_failure: failure }),
+            });
         });
     }
+    async function prepareStart(request: PipelineToolRequest<I>, access: A, signal: AbortSignal, check: () => void) {
+        const { actor, binding } = await prepare(request, access, 'start', signal, check);
+        const trigger = { version: 1 as const, kind: 'tool' as const, identity: binding.identity };
+        const envelope = { version: 1, scope, owner_id: actor.owner_id, contract_sha256: contract.sha256, input: request.input, trigger };
+        const intent: PipelineToolIntent = jobSnapshot({ ...binding, input_sha256: jobValueHash(envelope) });
+        return { actor, binding, intent, trigger, envelope };
+    }
+    function replay(intent: PipelineToolIntent, receipt: PipelineToolReceipt) {
+        if (!samePipelineToolRequest(intent, receipt.intent))
+            throw new PipelineToolError('receipt_conflict');
+        return startResult(receipt, true);
+    }
+    function start(input: I, requestId: string, access: A, settings: PipelineRunOptions, replayOnly: boolean,
+        confirmation?: { policy: PipelineStartPreviewPolicy<I, unknown, A>; token: string | undefined }) {
+        const captured = contract.input(input), request = { request_id: pipelineToolRequestId(requestId), input: captured };
+        return execute(settings, async (signal, check, left) => {
+            const { actor, binding, intent, trigger, envelope } = await prepareStart(request, access, signal, check);
+            let pinnedSource: PinnedPipelineSource | undefined;
+            if (replayOnly || confirmation) {
+                const raw = await stored(() => d.store.load(binding.identity, signal), check);
+                if (raw)
+                    return replay(intent, bound(binding, raw));
+                if (replayOnly)
+                    throw new PipelineToolError('revision_unavailable');
+            }
+            if (confirmation) {
+                const checked = await checkPipelinePreview(confirmation.policy, intent, captured, access,
+                    { timeoutMs: left(), signal }, confirmation);
+                const current = await prepareStart(request, access, signal, check);
+                if (pipelinePreviewExpired(checked.preview.expires_at) || current.intent.input_sha256 !== intent.input_sha256 || current.intent.identity !== intent.identity)
+                    throw new PipelineToolError('preview_stale');
+                pinnedSource = checked.pinnedSource;
+            }
+            const admitted: PipelineToolIntent = pinnedSource
+                ? jobSnapshot({ ...intent, request_sha256: intent.input_sha256, input_sha256: jobValueHash({ ...envelope, pinned_source: pinnedSource }) })
+                : intent;
+            const reservation = await stored(() => d.store.reserve(admitted, signal), check), receipt = bound(binding, reservation.receipt);
+            if (typeof reservation.created !== 'boolean')
+                throw new PipelineToolError('receipt_conflict');
+            if (!reservation.created)
+                return replay(intent, receipt);
+            if (receipt.checkpoint || jobValueHash(receipt.intent) !== jobValueHash(admitted))
+                throw new PipelineToolError('receipt_conflict');
+            let checkpoint: PipelineCheckpoint;
+            try {
+                checkpoint = (await client(actor.owner_id).start(captured, { timeoutMs: left(), signal, idempotencyKey: admitted.idempotency_key, trigger, ...(pinnedSource && { pinnedSource }) })).checkpoint;
+                check();
+            }
+            catch {
+                check();
+                return startResult(receipt, false);
+            }
+            matchPipelineToolCheckpoint(admitted, checkpoint);
+            const completed = bound(admitted, await stored(() => d.store.complete(admitted, checkpoint, signal), check));
+            if (jobValueHash(completed.checkpoint) !== jobValueHash(checkpoint))
+                throw new PipelineToolError('receipt_conflict');
+            return startResult(completed, false);
+        });
+    }
+    const resultWithReceipt = (id: string, access: A, settings: PipelineRunOptions) =>
+        operation(id, access, 'result', settings) as Promise<PipelineToolResult<O>>;
     return Object.freeze({ name: d.name, description: d.description, contract,
-        start(input, requestId, access, settings) {
-            const captured = contract.input(input), request = { request_id: pipelineToolRequestId(requestId), input: captured };
+        start: (input, id, access, settings) => start(input, id, access, settings, false),
+        replayStart: (input, id, access, settings) => start(input, id, access, settings, true),
+        previewStart(input, id, access, settings, policy) {
+            const captured = contract.input(input), request = { request_id: pipelineToolRequestId(id), input: captured };
             return execute(settings, async (signal, check, left) => {
-                const { actor, binding } = await prepare(request, access, 'start', signal, check), trigger = { version: 1 as const, kind: 'tool' as const, identity: binding.identity };
-                const intent: PipelineToolIntent = jobSnapshot({ ...binding, input_sha256: jobValueHash({ version: 1, scope, owner_id: actor.owner_id, contract_sha256: contract.sha256, input: captured, trigger }) });
-                const reservation = await stored(() => d.store.reserve(intent, signal), check), receipt = bound(binding, reservation.receipt);
-                if (typeof reservation.created !== 'boolean' || jobValueHash(receipt.intent) !== jobValueHash(intent))
-                    throw new PipelineToolError('receipt_conflict');
-                if (!reservation.created)
-                    return startResult(receipt, true);
-                if (receipt.checkpoint)
-                    throw new PipelineToolError('receipt_conflict');
-                let checkpoint: PipelineCheckpoint;
-                try {
-                    checkpoint = (await client(actor.owner_id).start(captured, { timeoutMs: left(), signal, idempotencyKey: intent.idempotency_key, trigger })).checkpoint;
-                    check();
-                }
-                catch {
-                    check();
-                    return startResult(receipt, false);
-                }
-                matchPipelineToolCheckpoint(intent, checkpoint);
-                const completed = bound(binding, await stored(() => d.store.complete(intent, checkpoint, signal), check));
-                if (jobValueHash(completed.checkpoint) !== jobValueHash(checkpoint))
-                    throw new PipelineToolError('receipt_conflict');
-                return startResult(completed, false);
+                const { intent } = await prepareStart(request, access, signal, check);
+                const { preview } = await checkPipelinePreview(policy, intent, captured, access, { timeoutMs: left(), signal });
+                const current = await prepareStart(request, access, signal, check);
+                if (pipelinePreviewExpired(preview.expires_at) || current.intent.input_sha256 !== intent.input_sha256 || current.intent.identity !== intent.identity)
+                    throw new PipelineToolError('preview_stale');
+                return jobSnapshot(preview);
             });
         },
+        startPreviewed: (input, id, access, settings, policy, token) =>
+            start(input, id, access, settings, false, { policy, token }),
         inspect: (id, access, settings) => operation(id, access, 'inspect', settings) as Promise<PipelineToolStatus | null>,
-        result: (id, access, settings) => operation(id, access, 'result', settings) as Promise<O>,
+        async result(id, access, settings) { return (await resultWithReceipt(id, access, settings)).output; },
+        resultWithReceipt,
         cancel: (id, access, settings) => operation(id, access, 'cancel', settings) as Promise<PipelineToolStatus>,
         reconcile: (id, runId, access, settings) => operation(id, access, 'reconcile', settings, runId) as Promise<PipelineToolStart>,
-    } satisfies PipelineTool<I, O, A>);
+        findAcceptedRun: (id, access, settings) => operation(id, access, 'find_start', settings) as Promise<PipelineToolStartMatch>,
+    } satisfies PipelineToolWithStartLookup<I, O, A> & PipelineToolWithResult<I, O, A>);
 }

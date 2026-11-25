@@ -236,6 +236,7 @@ var pooledAcquireOK = map[string]string{
 	"pkg/livequery/compiler.go":                          "livequeryd's own pool to the customer database it serves (beside it in the database VM, or the compiler's direct URL), never the control-plane transaction pooler; the pinned connection only describes statements (unnamed Prepare) and reads catalogs",
 	"pkg/livequery/engine.go":                            "livequeryd's own pool to the customer database it serves (beside it in the database VM, or the compiler's direct URL), never the control-plane transaction pooler; the pinned connection only describes statements (unnamed Prepare) and reads catalogs",
 	"pkg/datapipeline/engine.go":                         "the pipeline engine's pool to the customer's source database, never the control-plane pooler; the acquired connection runs one transaction (CREATE PUBLICATION + COMMENT) and holds no session state",
+	"cmd/gregale/commands_mcp_native_gate.go":            "the CLI's own pool to the customer's Task database (the worker's DATABASE_URL binding), never the control-plane pooler; the pinned connection holds the namespace's release advisory lock, as the Node starter's tasks-release.js does on the same binding",
 }
 
 // TestSessionScopedAcquiresRouteThroughDirectPool is the gate.

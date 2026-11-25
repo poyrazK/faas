@@ -1,0 +1,22 @@
+{
+  "tool": "recover_csv_cleanup",
+  "request_id": "22222222-2222-2222-2222-222222222222",
+  "run_id": "11111111-1111-1111-1111-111111111111",
+  "receipt_identity": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "created_at": "2026-11-18T09:00:00.000Z",
+  "review": {
+    "kind": "approval",
+    "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "expires_at": "2030-01-02T12:00:00Z",
+    "review_url": "https://review.test/?run=11111111-1111-1111-1111-111111111111&gate=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "step": {
+    "name": "review",
+    "status": "awaiting_event",
+    "attempt": 1
+  },
+  "output": {
+    "state": "completed",
+    "rows": 2
+  }
+}

@@ -4,6 +4,12 @@ export * from './files.js';
 export * from './live-jobs.js';
 export * from './live-job-realtime.js';
 export {
+    LiveWorkInboxError, parseLiveWorkInboxSnapshot, watchWorkInbox, workInboxInvalidation, workInboxWatchTarget,
+    type LiveWorkInboxCode, type LiveWorkInboxOptions, type LiveWorkInboxSink, type LiveWorkInboxSnapshot,
+    type LiveWorkInboxSource, type WorkInboxInvalidation, type WorkInboxWatchTarget,
+} from './live-work-inbox.js';
+export * from './live-work-inbox-realtime.js';
+export {
   createGregaleBrowserFetch,
   GREGALE_RELEASE_HEADER,
   GREGALE_RELEASE_COOKIE,

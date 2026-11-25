@@ -283,6 +283,9 @@ func loadManagedPostgres(ctx context.Context, pool *pgxpool.Pool, getenv func(st
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
+	// Opt-in start with a waking app (ADR-20261125105038); runs from
+	// runManagedPostgresWakeStarter.
+	service.NewWakeStarter(log, metrics.ObserveWakeStart)
 	fleet = service
 	reconciler, err := managedpostgres.NewReconciler(service, managedpostgres.ReconcilerOptions{
 		IncludeProvisioning: operationsGate,

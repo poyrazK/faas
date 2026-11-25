@@ -26,6 +26,9 @@ Tasks live in `tasks.json`:
 | `deploy-flask-render` | Deploy Render's Flask example |
 | `migrate-django-heroku` | Move Heroku's Django getting-started app; its `ALLOWED_HOSTS` opens only when Heroku's `DYNO` is set, so Gregale's smoke request gets 400 until the agent fixes it, and it asks for Python 3.15 |
 | `deploy-go-heroku` | Deploy Heroku's Go getting-started app; its Procfile starts `go-getting-started`, a binary only Heroku's buildpack makes |
+| `day2-config-change` | Change a live app's greeting through its `GREETING` variable without editing code (`http` + `file_contains`) |
+| `day2-schedule` | Add `POST /tick` and have Gregale call it every 15 minutes (`cli_output` on `gregale cron list`) |
+| `day2-no-cold-start` | Remove cold starts and state the monthly cost (`app_field` `min_instances` ≥ 1, `answer` names a price) |
 
 The five framework tasks follow the framework and migration guides
 (`docs/frameworks.md`, `docs/deploy-*.md`, `docs/migrate-from-*.md`): each
@@ -56,7 +59,7 @@ measure what a cold agent does with a repository Gregale did not create:
   `vote_counted` grades the voting app end to end: it votes, as a new voter,
   for the option with fewer votes on the created `vote` app and waits for the
   `result` app's Socket.IO `scores` to count it (slugs match `(^|-)vote$` and
-  `(^|-)result$`; both must be public). Page GETs alone passed a deployment
+  `(^|-)result$`, each optionally with the 5-character suffix a taken name gets; both must be public). Page GETs alone passed a deployment
   whose votes all failed (rc.380).
 - `features` lists the Gregale features that apply to the repository. Each is
   a regex over the agent's shell commands (`command`), over files in the

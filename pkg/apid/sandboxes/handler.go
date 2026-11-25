@@ -65,6 +65,10 @@ type Handler struct {
 	// WebNetwork is FAAS_SANDBOX_WEB_NETWORK: it admits network.mode web
 	// (ADR-20261112121456 §6). Off, web is sandbox_unsupported.
 	WebNetwork bool
+	// CodeInterpreterImage is FAAS_SANDBOX_CODE_INTERPRETER_IMAGE: the
+	// image preset code-interpreter boots (ADR-20261027090013 step 14).
+	// Empty, the preset is sandbox_unsupported.
+	CodeInterpreterImage string
 	// Files is the artifact store gregale_browser's screenshots are kept in
 	// (ADR-20261117065818 §5); nil: they cannot be read from this host.
 	Files storage.StorageBackend
@@ -72,6 +76,23 @@ type Handler struct {
 	// policies (ADR-20261117091026 §3). Off, a non-empty one is
 	// sandbox_unsupported.
 	EgressPolicy bool
+}
+
+// codeInterpreter turns preset code-interpreter into an image session of
+// the platform's code-interpreter image, which carries the driver guest-init
+// runs code with (ADR-20261027090013 step 14).
+func (h *Handler) codeInterpreter(body *createBody) *api.Problem {
+	if body.Preset != api.SandboxPresetCodeInterpreter {
+		return nil
+	}
+	switch {
+	case h.CodeInterpreterImage == "":
+		return api.ErrSandboxUnsupported("preset", "the code interpreter is not available on this platform yet")
+	case body.Image != "" || body.Template != "" || body.Pull != "" || body.RegistryAuth != nil || body.Browser:
+		return api.ErrValidation("preset code-interpreter takes no image, template, pull, registry_auth or browser")
+	}
+	body.Preset, body.Image = "", h.CodeInterpreterImage
+	return nil
 }
 
 // requestMaxBytes bounds a create or change request.
@@ -84,6 +105,10 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request, acct state.Acco
 	}
 	var body createBody
 	if !httpkit.DecodeJSONLimit(w, r, &body, requestMaxBytes) {
+		return
+	}
+	if prob := h.codeInterpreter(&body); prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
 	admission, prob := h.admission(r.Context(), acct, body)

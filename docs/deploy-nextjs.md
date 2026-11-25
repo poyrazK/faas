@@ -11,9 +11,9 @@ actions and middleware all work.
 A Next.js 16 app runs on every plan, Free included. When the `start` script
 is a plain `next start`, Gregale builds the app with `output: "standalone"`,
 so `next build` also copies the files the server needs into
-`.next/standalone`. With its full `node_modules`, a small app is about
-340 MB. If that would not fit your plan, which is the case on Free, the app
-ships only the standalone tree: about 40 MB. The build log shows
+`.next/standalone`. With its full `node_modules`, a small app needs about
+530 MB. If that would not fit your plan, which is the case on Free and Hobby,
+it ships only the standalone tree: about 40 MB. The build log shows
 `Applying modifyConfig from gregale-standalone`. The Free plan
 caps the app layer at 256 MB, and a larger build fails with
 `app_layer_too_large`. See [App layer](build.md#app-layer),
@@ -89,7 +89,7 @@ The build runs in a microVM with 2048 MB of memory. A large app whose
 Gregale ships only `.next/standalone`, with `.next/static` and `public`
 copied into it, when the app's full `/app` (without the build cache) is
 larger than the plan's app layer, as a Next.js app with its `node_modules` is
-on Free, and all of these hold:
+on Free and Hobby, and all of these hold:
 
 - `next` 16 or later is in `dependencies`;
 - the `build` script runs `next build`;
@@ -100,6 +100,15 @@ on Free, and all of these hold:
   version carries its own Node and its full `node_modules`;
 - the deployment has no release command, which may need your sources or
   `node_modules`.
+
+The build estimates the full `/app` the way Gregale sizes the app layer:
+the files are about 340 MB, but `node_modules` holds many small files, which
+take more room on disk. The build log reports the estimate and the choice:
+
+```text
+Next.js: the full app needs about 531 MB of the plan cap of 256 MB (10537 files, build caches of 22 MB not counted)
+Next.js: shipping the standalone server
+```
 
 An app that ships only the standalone tree has nothing else in `/app`: a
 `gregale run` task or script sees only the standalone server's files. An

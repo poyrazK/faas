@@ -1591,6 +1591,10 @@ func (p *ServiceProxy) writeWakeFailure(w http.ResponseWriter, appID string, err
 		writeWakeError(w, err)
 		return
 	}
+	if errors.Is(err, ErrAppNotPlaced) {
+		writeWakeError(w, err)
+		return
+	}
 	p.metrics.IncServiceCall(ServiceCallWakeFailed)
 	var problem *api.Problem
 	if errors.As(err, &problem) {

@@ -850,6 +850,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/orgs/{organization}/postgres/databases/{id}/resize":                                                      "ResizeOrgManagedPostgresDatabase",
 	"POST /v1/orgs/{organization}/postgres/databases/{id}/compute-policy":                                              "ChangeOrgManagedPostgresComputePolicy",
 	"PUT /v1/orgs/{organization}/postgres/databases/{id}/suspend-timeout":                                              "SetOrgManagedPostgresSuspendTimeout",
+	"PUT /v1/orgs/{organization}/postgres/databases/{id}/wake-with-app":                                                "SetOrgManagedPostgresWakeWithApp",
 	"POST /v1/orgs/{organization}/postgres/bindings/{id}/rotate":                                                       "RotateOrgManagedPostgresBinding",
 	"GET /v1/orgs/{organization}/postgres/usage":                                                                       "GetOrgManagedPostgresUsage",
 
@@ -1812,6 +1813,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/account/usage":                                                           "AccountUsage",
 	"POST /v1/postgres/databases/{id}/compute-policy":                                 "ChangeManagedPostgresComputePolicy",
 	"PUT /v1/postgres/databases/{id}/suspend-timeout":                                 "SetManagedPostgresSuspendTimeout",
+	"PUT /v1/postgres/databases/{id}/wake-with-app":                                   "SetManagedPostgresWakeWithApp",
 	"GET /v1/postgres/databases/{id}/compute-policy-changes/{change_id}":              "GetManagedPostgresComputePolicyChange",
 	"POST /v1/postgres/databases/{id}/resize":                                         "ResizeManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}/resizes/{resize_id}":                             "GetManagedPostgresResize",
@@ -2032,6 +2034,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/workflows/stored/{name}/live-suites/{suite_id}/compare/{baseline_id}":          "CompareStoredWorkflowLiveSuites",
 
 	"POST /v1/apps/{slug}/workflows/{name}/runs":                                     "RunWorkflow",
+	"GET /v1/apps/{slug}/workflows/run-starts/{name}":                                "LookupWorkflowRunStart",
 	"GET /v1/apps/{slug}/workflows/runs":                                             "ListWorkflowRuns",
 	"POST /v1/apps/{slug}/workflows/runs:cancel-preview":                             "PreviewUnstartedWorkflowRunCancellations",
 	"POST /v1/apps/{slug}/workflows/runs:cancel-queued":                              "CancelUnstartedWorkflowRuns",

@@ -1034,6 +1034,8 @@ type ApiConsumerSignupSetting struct {
 	OauthConsumers bool
 	// Offered plan that charges nothing: joining it skips Checkout (ADR-20261124094745).
 	FreePlanID pgtype.UUID
+	// The gateway adds account_usage and account_plans tools to the app's MCP server for OAuth consumers (ADR-20261125194510).
+	AccountTools bool
 }
 
 // Monthly spend cap per API consumer; apid checks the month to date and the gateway denies capped consumers (ADR-1306).
@@ -9791,6 +9793,13 @@ type ManagedPostgresUsageWaiver struct {
 	DatabaseID  pgtype.UUID
 	WaivedFrom  pgtype.Timestamptz
 	WaivedUntil pgtype.Timestamptz
+}
+
+// Managed PostgreSQL databases that start when a bound app wakes (opt-in); no row is off; written only by apid.
+type ManagedPostgresWakeWithApp struct {
+	DatabaseID    pgtype.UUID
+	EnabledAt     pgtype.Timestamptz
+	LastStartedAt pgtype.Timestamptz
 }
 
 type ManagedRealtimeChannelBatch struct {

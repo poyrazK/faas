@@ -1236,6 +1236,7 @@
     "table": "api_consumer_signup_settings",
     "columns": [
       "account_id",
+      "account_tools",
       "app_id",
       "created_at",
       "customer_closing",
@@ -11342,6 +11343,15 @@
       "database_id",
       "seconds",
       "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_postgres_wake_with_app",
+    "columns": [
+      "database_id",
+      "enabled_at",
+      "last_started_at"
     ],
     "kind": "operational"
   },

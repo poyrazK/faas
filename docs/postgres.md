@@ -41,6 +41,22 @@ Operators: see the [operator guide](managed-postgres.md).
   A suspended database takes the new time at once; a running one takes it
   the next time it suspends, without dropping connections. `gregale postgres
   get` shows the current value. Always-on compute is not part of these plans.
+- **Start with your app.** A suspended
+  database normally starts on your app's first query after idle, so that
+  request waits for the app's wake and then the database's (a few hundred
+  milliseconds). Turn on `app-wake` and the database starts as soon as
+  an app bound to it starts waking, so the two overlap:
+
+  ```sh
+  gregale postgres app-wake set orders-db on
+  gregale postgres app-wake set orders-db off
+  ```
+
+  It is off by default. Every app wake starts the database, including wakes
+  that never query it (a health check, a static page, a cron job), and each
+  start bills at least one suspend timeout of compute. A database is started
+  at most once a minute this way. `gregale postgres get` shows
+  `wake_with_app`.
 - Restore history (what point-in-time restore keeps) and snapshots are
   included up to the size of the storage pool, averaged over the month.
 - Without overage, storage is a limit and nothing past the plan is billed.

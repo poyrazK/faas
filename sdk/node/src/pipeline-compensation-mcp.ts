@@ -50,6 +50,7 @@ export function createCompensationMCP<I, O, A>(
     },
   };
   return Object.freeze({
+    ...(inner.pipelineContract && { pipelineContract: inner.pipelineContract }),
     tools: jobSnapshot([...inner.tools, descriptor]),
     async call(tool, args, access, settings) {
       if (tool !== name) return inner.call(tool, args, access, settings);

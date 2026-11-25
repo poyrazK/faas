@@ -1,0 +1,83 @@
+{
+  "scope": {
+    "base_url": "https://control.test",
+    "account_id": "11111111-1111-4111-8111-111111111111",
+    "app_id": "22222222-2222-4222-8222-222222222222",
+    "app_slug": "imports"
+  },
+  "review_entry": {
+    "kind": "pipeline",
+    "name": "recover_csv_cleanup",
+    "business_ref": "import-1",
+    "request_id": "22222222-2222-2222-2222-222222222222",
+    "run_id": "11111111-1111-1111-1111-111111111111",
+    "state": "awaiting_approval",
+    "next_step": "open_review",
+    "review": {
+      "kind": "approval",
+      "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expires_at": "2030-01-02T12:00:00Z",
+      "review_url": "https://review.test/?run=11111111-1111-1111-1111-111111111111&gate=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  "refund_entry": {
+    "kind": "action",
+    "name": "action_csv_refund",
+    "business_ref": "import-1",
+    "request_id": "33333333-3333-3333-3333-333333333333",
+    "action_id": "0272d9c6a112d68ccae2e5e787f95cf2e102c25ba8198917152630b8cbe17812",
+    "state": "unknown",
+    "next_step": "reconcile_action"
+  },
+  "review_ref": {
+    "kind": "pipeline",
+    "name": "recover_csv_cleanup",
+    "request_id": "22222222-2222-2222-2222-222222222222",
+    "business_ref": "import-1"
+  },
+  "action_ref": {
+    "kind": "action",
+    "name": "action_csv_refund",
+    "request_id": "33333333-3333-3333-3333-333333333333",
+    "business_ref": "import-1"
+  },
+  "review": {
+    "kind": "human_review",
+    "state": "awaiting_approval",
+    "review": {
+      "kind": "approval",
+      "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expires_at": "2030-01-02T12:00:00Z",
+      "review_url": "https://review.test/?run=11111111-1111-1111-1111-111111111111&gate=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  "refresh": {
+    "kind": "tool_call",
+    "state": "unknown",
+    "name": "action_csv_refund_refresh",
+    "arguments": {
+      "action_id": "0272d9c6a112d68ccae2e5e787f95cf2e102c25ba8198917152630b8cbe17812"
+    }
+  },
+  "observe": {
+    "kind": "tool_call",
+    "state": "succeeded",
+    "name": "action_csv_refund_observe",
+    "arguments": {
+      "action_id": "0272d9c6a112d68ccae2e5e787f95cf2e102c25ba8198917152630b8cbe17812"
+    }
+  },
+  "no_action": {
+    "kind": "no_action",
+    "state": "start_unknown"
+  },
+  "start_reconcile": {
+    "kind": "tool_call",
+    "state": "start_unknown",
+    "name": "recover_csv_cleanup_reconcile",
+    "arguments": {
+      "request_id": "22222222-2222-2222-2222-222222222222",
+      "run_id": "11111111-1111-1111-1111-111111111111"
+    }
+  }
+}

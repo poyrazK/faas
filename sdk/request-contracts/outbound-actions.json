@@ -1,0 +1,1801 @@
+{
+  "version": 1,
+  "name": "csv_refund",
+  "revision": "v1",
+  "scope": {
+    "base_url": "https://control.test",
+    "account_id": "11111111-1111-4111-8111-111111111111",
+    "app_id": "22222222-2222-4222-8222-222222222222",
+    "app_slug": "imports"
+  },
+  "request_id": "44444444-4444-4444-8444-444444444444",
+  "input": {
+    "payment_intent": "pi_csv",
+    "amount_minor": 1000,
+    "currency": "usd",
+    "reason": "requested_by_customer"
+  },
+  "business_contract": {
+    "version": 1,
+    "name": "stripe-refund",
+    "input": {
+      "type": "object",
+      "properties": {
+        "payment_intent": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 131
+        },
+        "amount_minor": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "currency": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 3
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "requested_by_customer",
+            "duplicate"
+          ]
+        }
+      },
+      "required": [
+        "payment_intent",
+        "amount_minor",
+        "currency",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "refund_id": {
+          "type": "string"
+        },
+        "payment_intent": {
+          "type": "string"
+        },
+        "amount_minor": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "currency": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "succeeded",
+            "pending",
+            "requires_action",
+            "failed",
+            "canceled"
+          ]
+        }
+      },
+      "required": [
+        "refund_id",
+        "payment_intent",
+        "amount_minor",
+        "currency",
+        "status"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "intent": {
+    "version": 1,
+    "identity": "36e3d344fc4adf3081d359c44e5fc8c644f1108cfd562e360c9a925f5f14cdc4",
+    "scope": {
+      "base_url": "https://control.test",
+      "account_id": "11111111-1111-4111-8111-111111111111",
+      "app_id": "22222222-2222-4222-8222-222222222222",
+      "app_slug": "imports"
+    },
+    "name": "csv_refund",
+    "revision": "v1",
+    "config_sha256": "7a7917b49f05133af9e06d143382b3f4528198387402a760c0d1cce7c72e47c7",
+    "owner_id": "alice",
+    "request_id": "44444444-4444-4444-8444-444444444444",
+    "input": {
+      "payment_intent": "pi_csv",
+      "amount_minor": 1000,
+      "currency": "usd",
+      "reason": "requested_by_customer"
+    },
+    "input_sha256": "0d854df0dcfe6d2e63865a7257ae1735cdcc002a6232259f04e14037777b73ed",
+    "request": {
+      "path": "/v1/refunds",
+      "content_type": "application/x-www-form-urlencoded",
+      "body": "payment_intent=pi_csv&amount=1000&currency=usd&reason=requested_by_customer&metadata%5Bgregale_action_id%5D=36e3d344fc4adf3081d359c44e5fc8c644f1108cfd562e360c9a925f5f14cdc4&metadata%5Bgregale_input_sha256%5D=0d854df0dcfe6d2e63865a7257ae1735cdcc002a6232259f04e14037777b73ed",
+      "api_version": "2026-10-28.endive"
+    },
+    "binding_sha256": "ec718c0731500f64f964e9bdf8c47ad7d06ec03e88e67e22416fc8c6502548f7"
+  },
+  "root_contract": {
+    "version": 1,
+    "name": "action-csv-refund",
+    "input": {
+      "type": "object",
+      "properties": {
+        "action_id": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "binding_sha256": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "action_id",
+        "binding_sha256"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "decision": {
+          "type": "string",
+          "enum": [
+            "approved",
+            "rejected",
+            "expired",
+            "cancelled"
+          ]
+        },
+        "action": {
+          "type": "object",
+          "properties": {
+            "action_id": {
+              "type": "string",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            "binding_sha256": {
+              "type": "string",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            "outcome": {
+              "type": "object",
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "prepared",
+                    "unknown",
+                    "pending",
+                    "succeeded",
+                    "failed",
+                    "needs_review",
+                    "cancelled"
+                  ]
+                },
+                "code": {
+                  "type": "string"
+                },
+                "reference": {
+                  "type": "string"
+                },
+                "result": {
+                  "type": "object",
+                  "properties": {
+                    "refund_id": {
+                      "type": "string"
+                    },
+                    "payment_intent": {
+                      "type": "string"
+                    },
+                    "amount_minor": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "currency": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "succeeded",
+                        "pending",
+                        "requires_action",
+                        "failed",
+                        "canceled"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "refund_id",
+                    "payment_intent",
+                    "amount_minor",
+                    "currency",
+                    "status"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "state",
+                "code"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "action_id",
+            "binding_sha256",
+            "outcome"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "decision",
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "review_contract": {
+    "version": 1,
+    "name": "review-csv-refund",
+    "input": {
+      "type": "object",
+      "properties": {
+        "action_id": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "binding_sha256": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "name": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "string"
+        },
+        "input": {
+          "type": "object",
+          "properties": {
+            "payment_intent": {
+              "type": "string",
+              "minLength": 4,
+              "maxLength": 131
+            },
+            "amount_minor": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "currency": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 3
+            },
+            "reason": {
+              "type": "string",
+              "enum": [
+                "requested_by_customer",
+                "duplicate"
+              ]
+            }
+          },
+          "required": [
+            "payment_intent",
+            "amount_minor",
+            "currency",
+            "reason"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "action_id",
+        "binding_sha256",
+        "name",
+        "revision",
+        "input"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "maxLength": 1000
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "tools": [
+    {
+      "name": "action_csv_refund_start",
+      "description": "Review and execute a typed external action. Start once using a stable request_id; retain it for recovery. Unknown starts require reconciliation; never invent a new ID to retry.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "input": {
+            "type": "object",
+            "properties": {
+              "action_id": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64
+              },
+              "binding_sha256": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64
+              }
+            },
+            "required": [
+              "action_id",
+              "binding_sha256"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "request_id",
+          "input"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "started",
+              "start_unknown",
+              "not_found",
+              "running",
+              "awaiting_approval",
+              "awaiting_input",
+              "succeeded",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "receipt": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "identity": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "request_id": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                  },
+                  "run_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "tool": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "identity",
+                  "request_id",
+                  "run_id",
+                  "tool"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "attempt": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "name",
+                "status",
+                "attempt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "approval": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "approval",
+                      "input"
+                    ]
+                  },
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "expires_at": {
+                    "type": "string"
+                  },
+                  "review_url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id",
+                  "name",
+                  "expires_at",
+                  "review_url"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "replayed": {
+            "type": "boolean"
+          },
+          "source_failure": {
+            "type": "string",
+            "enum": [
+              "source_unavailable",
+              "source_forbidden"
+            ]
+          }
+        },
+        "required": [
+          "state",
+          "receipt",
+          "steps",
+          "approval"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "action_csv_refund_status",
+      "description": "Review and execute a typed external action. Read current status and an authenticated human review link when approval is pending.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "request_id"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "started",
+              "start_unknown",
+              "not_found",
+              "running",
+              "awaiting_approval",
+              "awaiting_input",
+              "succeeded",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "receipt": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "identity": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "request_id": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                  },
+                  "run_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "tool": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "identity",
+                  "request_id",
+                  "run_id",
+                  "tool"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "attempt": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "name",
+                "status",
+                "attempt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "approval": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "approval",
+                      "input"
+                    ]
+                  },
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "expires_at": {
+                    "type": "string"
+                  },
+                  "review_url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id",
+                  "name",
+                  "expires_at",
+                  "review_url"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "replayed": {
+            "type": "boolean"
+          },
+          "source_failure": {
+            "type": "string",
+            "enum": [
+              "source_unavailable",
+              "source_forbidden"
+            ]
+          }
+        },
+        "required": [
+          "state",
+          "receipt",
+          "steps",
+          "approval"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "action_csv_refund_result",
+      "description": "Review and execute a typed external action. Read validated output when complete; otherwise return current status.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "request_id"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "started",
+              "start_unknown",
+              "not_found",
+              "running",
+              "awaiting_approval",
+              "awaiting_input",
+              "succeeded",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "receipt": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "identity": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "request_id": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                  },
+                  "run_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "tool": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "identity",
+                  "request_id",
+                  "run_id",
+                  "tool"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "attempt": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "name",
+                "status",
+                "attempt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "approval": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "approval",
+                      "input"
+                    ]
+                  },
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "expires_at": {
+                    "type": "string"
+                  },
+                  "review_url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id",
+                  "name",
+                  "expires_at",
+                  "review_url"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "replayed": {
+            "type": "boolean"
+          },
+          "output": {
+            "type": "object",
+            "properties": {
+              "decision": {
+                "type": "string",
+                "enum": [
+                  "approved",
+                  "rejected",
+                  "expired",
+                  "cancelled"
+                ]
+              },
+              "action": {
+                "type": "object",
+                "properties": {
+                  "action_id": {
+                    "type": "string",
+                    "minLength": 64,
+                    "maxLength": 64
+                  },
+                  "binding_sha256": {
+                    "type": "string",
+                    "minLength": 64,
+                    "maxLength": 64
+                  },
+                  "outcome": {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "enum": [
+                          "prepared",
+                          "unknown",
+                          "pending",
+                          "succeeded",
+                          "failed",
+                          "needs_review",
+                          "cancelled"
+                        ]
+                      },
+                      "code": {
+                        "type": "string"
+                      },
+                      "reference": {
+                        "type": "string"
+                      },
+                      "result": {
+                        "type": "object",
+                        "properties": {
+                          "refund_id": {
+                            "type": "string"
+                          },
+                          "payment_intent": {
+                            "type": "string"
+                          },
+                          "amount_minor": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 9007199254740991
+                          },
+                          "currency": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "succeeded",
+                              "pending",
+                              "requires_action",
+                              "failed",
+                              "canceled"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "refund_id",
+                          "payment_intent",
+                          "amount_minor",
+                          "currency",
+                          "status"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "code"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "action_id",
+                  "binding_sha256",
+                  "outcome"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "decision",
+              "action"
+            ],
+            "additionalProperties": false
+          },
+          "source_failure": {
+            "type": "string",
+            "enum": [
+              "source_unavailable",
+              "source_forbidden"
+            ]
+          }
+        },
+        "required": [
+          "state",
+          "receipt",
+          "steps",
+          "approval"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "action_csv_refund_cancel",
+      "description": "Review and execute a typed external action. Explicitly cancel orchestration; already accepted Jobs may continue.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "request_id"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "started",
+              "start_unknown",
+              "not_found",
+              "running",
+              "awaiting_approval",
+              "awaiting_input",
+              "succeeded",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "receipt": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "identity": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "request_id": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                  },
+                  "run_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "tool": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "identity",
+                  "request_id",
+                  "run_id",
+                  "tool"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "attempt": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "name",
+                "status",
+                "attempt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "approval": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "approval",
+                      "input"
+                    ]
+                  },
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "expires_at": {
+                    "type": "string"
+                  },
+                  "review_url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id",
+                  "name",
+                  "expires_at",
+                  "review_url"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "replayed": {
+            "type": "boolean"
+          },
+          "source_failure": {
+            "type": "string",
+            "enum": [
+              "source_unavailable",
+              "source_forbidden"
+            ]
+          }
+        },
+        "required": [
+          "state",
+          "receipt",
+          "steps",
+          "approval"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "action_csv_refund_reconcile",
+      "description": "Review and execute a typed external action. Adopt an exact verified run after uncertain acceptance; never starts or restarts work.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "run_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        },
+        "required": [
+          "request_id",
+          "run_id"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "started",
+              "start_unknown",
+              "not_found",
+              "running",
+              "awaiting_approval",
+              "awaiting_input",
+              "succeeded",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "receipt": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "identity": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "request_id": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                  },
+                  "run_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "tool": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "identity",
+                  "request_id",
+                  "run_id",
+                  "tool"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "attempt": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "name",
+                "status",
+                "attempt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "approval": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "approval",
+                      "input"
+                    ]
+                  },
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "expires_at": {
+                    "type": "string"
+                  },
+                  "review_url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id",
+                  "name",
+                  "expires_at",
+                  "review_url"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "replayed": {
+            "type": "boolean"
+          },
+          "source_failure": {
+            "type": "string",
+            "enum": [
+              "source_unavailable",
+              "source_forbidden"
+            ]
+          }
+        },
+        "required": [
+          "state",
+          "receipt",
+          "steps",
+          "approval"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "action_csv_refund_prepare",
+      "description": "Save an immutable typed action intent. Start its approval workflow using the returned action reference and a separate stable workflow request ID.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "minLength": 36,
+            "maxLength": 36
+          },
+          "input": {
+            "type": "object",
+            "properties": {
+              "payment_intent": {
+                "type": "string",
+                "minLength": 4,
+                "maxLength": 131
+              },
+              "amount_minor": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "currency": {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 3
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "requested_by_customer",
+                  "duplicate"
+                ]
+              }
+            },
+            "required": [
+              "payment_intent",
+              "amount_minor",
+              "currency",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "request_id",
+          "input"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "action_id": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "binding_sha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "outcome": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "prepared",
+                  "unknown",
+                  "pending",
+                  "succeeded",
+                  "failed",
+                  "needs_review",
+                  "cancelled"
+                ]
+              },
+              "code": {
+                "type": "string"
+              },
+              "reference": {
+                "type": "string"
+              },
+              "result": {
+                "type": "object",
+                "properties": {
+                  "refund_id": {
+                    "type": "string"
+                  },
+                  "payment_intent": {
+                    "type": "string"
+                  },
+                  "amount_minor": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "currency": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "succeeded",
+                      "pending",
+                      "requires_action",
+                      "failed",
+                      "canceled"
+                    ]
+                  }
+                },
+                "required": [
+                  "refund_id",
+                  "payment_intent",
+                  "amount_minor",
+                  "currency",
+                  "status"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "state",
+              "code"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "action_id",
+          "binding_sha256",
+          "outcome"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "action_csv_refund_observe",
+      "description": "Read a currently authorized durable action outcome.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action_id": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "action_id"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "action_id": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "binding_sha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "outcome": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "prepared",
+                  "unknown",
+                  "pending",
+                  "succeeded",
+                  "failed",
+                  "needs_review",
+                  "cancelled"
+                ]
+              },
+              "code": {
+                "type": "string"
+              },
+              "reference": {
+                "type": "string"
+              },
+              "result": {
+                "type": "object",
+                "properties": {
+                  "refund_id": {
+                    "type": "string"
+                  },
+                  "payment_intent": {
+                    "type": "string"
+                  },
+                  "amount_minor": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "currency": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "succeeded",
+                      "pending",
+                      "requires_action",
+                      "failed",
+                      "canceled"
+                    ]
+                  }
+                },
+                "required": [
+                  "refund_id",
+                  "payment_intent",
+                  "amount_minor",
+                  "currency",
+                  "status"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "state",
+              "code"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "action_id",
+          "binding_sha256",
+          "outcome"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "action_csv_refund_refresh",
+      "description": "Reconcile through provider GETs. Never submits or retries an external write.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action_id": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "action_id"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "action_id": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "binding_sha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "outcome": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "prepared",
+                  "unknown",
+                  "pending",
+                  "succeeded",
+                  "failed",
+                  "needs_review",
+                  "cancelled"
+                ]
+              },
+              "code": {
+                "type": "string"
+              },
+              "reference": {
+                "type": "string"
+              },
+              "result": {
+                "type": "object",
+                "properties": {
+                  "refund_id": {
+                    "type": "string"
+                  },
+                  "payment_intent": {
+                    "type": "string"
+                  },
+                  "amount_minor": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "currency": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "succeeded",
+                      "pending",
+                      "requires_action",
+                      "failed",
+                      "canceled"
+                    ]
+                  }
+                },
+                "required": [
+                  "refund_id",
+                  "payment_intent",
+                  "amount_minor",
+                  "currency",
+                  "status"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "state",
+              "code"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "action_id",
+          "binding_sha256",
+          "outcome"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "action_csv_refund_discard",
+      "description": "Cancel a prepared action before dispatch. Already submitted provider work cannot be recalled.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action_id": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "action_id"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "action_id": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "binding_sha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "outcome": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "prepared",
+                  "unknown",
+                  "pending",
+                  "succeeded",
+                  "failed",
+                  "needs_review",
+                  "cancelled"
+                ]
+              },
+              "code": {
+                "type": "string"
+              },
+              "reference": {
+                "type": "string"
+              },
+              "result": {
+                "type": "object",
+                "properties": {
+                  "refund_id": {
+                    "type": "string"
+                  },
+                  "payment_intent": {
+                    "type": "string"
+                  },
+                  "amount_minor": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "currency": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "succeeded",
+                      "pending",
+                      "requires_action",
+                      "failed",
+                      "canceled"
+                    ]
+                  }
+                },
+                "required": [
+                  "refund_id",
+                  "payment_intent",
+                  "amount_minor",
+                  "currency",
+                  "status"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "state",
+              "code"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "action_id",
+          "binding_sha256",
+          "outcome"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    }
+  ],
+  "provider_cases": [
+    {
+      "status": 200,
+      "refund_status": "succeeded",
+      "state": "succeeded"
+    },
+    {
+      "status": 200,
+      "refund_status": "pending",
+      "state": "pending"
+    },
+    {
+      "status": 200,
+      "refund_status": "requires_action",
+      "state": "needs_review"
+    },
+    {
+      "status": 200,
+      "refund_status": "failed",
+      "state": "failed"
+    },
+    {
+      "status": 200,
+      "refund_status": "canceled",
+      "state": "failed"
+    },
+    {
+      "status": 500,
+      "refund_status": "succeeded",
+      "state": "unknown"
+    },
+    {
+      "status": 409,
+      "refund_status": "succeeded",
+      "state": "unknown"
+    },
+    {
+      "status": 400,
+      "refund_status": "succeeded",
+      "state": "failed"
+    }
+  ]
+}

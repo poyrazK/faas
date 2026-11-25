@@ -78,7 +78,7 @@ function validateInputRequests(requests) {
   }
 }
 
-function inputMethodsFor(clientCapabilities) {
+export function inputMethodsFor(clientCapabilities) {
   const methods = [];
   const elicitation = clientCapabilities?.elicitation;
   if (elicitation && typeof elicitation === 'object') {
@@ -598,7 +598,9 @@ export function installMcpTaskHandlers(server, runtime, authInfo, authMode, canA
   }, ({ submissionKey }) => runtime.getBySubmissionKey(submissionKey, authInfo, authMode, canAccessTool));
   server.server.setRequestHandler('tasks/get', {
     params: z.object({ taskId: z.string().uuid() }),
-  }, ({ taskId }) => runtime.get(taskId, authInfo, authMode, canAccessTool));
+  }, ({ taskId }, ctx) => runtime.get(
+    taskId, authInfo, authMode, canAccessTool, ctx.mcpReq.envelope?.['io.modelcontextprotocol/clientCapabilities'],
+  ));
   server.server.setRequestHandler('tasks/cancel', {
     params: z.object({ taskId: z.string().uuid() }),
   }, ({ taskId }) => runtime.cancel(taskId, authInfo, authMode, canAccessTool));

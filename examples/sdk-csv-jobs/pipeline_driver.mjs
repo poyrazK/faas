@@ -37,6 +37,7 @@ try{
     }
     return pool.query(sql,values);
   }),gateStore:sdk.postgresPipelineGateStore(query),requestTimeoutMs:30000}));
+  if(request.workflow.startsWith('action-')){const{csvRefund}=await import('./refund.mjs');pipeline=await csvRefund({sdk,scope,pool,relayURL:process.env.GREGALE_REFUND_RELAY_URL??process.env.GREGALE_OUTBOUND_URL,reviewBaseURL:process.env.GREGALE_REFUND_REVIEW_URL??'http://127.0.0.1/'});}
   if(request.workflow.startsWith('recover-')){const{csvCompensation}=await import('./compensation.mjs');const result=await csvCompensation({sdk,runtime:await import(runtime.href),client,scope,pool,jobStore,reviewBaseURL:process.env.GREGALE_COMP_REVIEW_URL??'http://127.0.0.1/'});pipeline=result.recovery;}
   console.log(JSON.stringify(await runWorkflowInvocation(pipeline.definition,request)));
 }finally{await pool.end();}

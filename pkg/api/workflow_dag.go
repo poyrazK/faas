@@ -880,6 +880,11 @@ type WorkflowRunResponse struct {
 	UpdatedAt        string          `json:"updated_at"`
 }
 
+// WorkflowRunStartLookupResponse identifies one previously accepted run.
+type WorkflowRunStartLookupResponse struct {
+	RunID string `json:"run_id"`
+}
+
 // ListWorkflowRunsResponse is the payload returned by GET /v1/apps/{slug}/workflows/runs.
 type ListWorkflowRunsResponse struct {
 	Runs  []WorkflowRunResponse `json:"runs"`
