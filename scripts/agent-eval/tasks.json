@@ -279,9 +279,6 @@
       {"kind": "http", "path": "/", "status": 200, "contains": "day2-config"},
       {"kind": "file_contains", "file": "handler.js", "text": "process.env.GREETING"}
     ],
-    "features": [
-      {"id": "env-set", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*\\b(env|secrets?)\\s+(set|push)\\b"}
-    ],
     "budget_usd": 3.0,
     "timeout_s": 900
   },
