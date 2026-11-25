@@ -360,6 +360,19 @@ class HelpersTest(unittest.TestCase):
         rules, _ = sg.select_rules(loaded, ["apid"], max_hold=120)
         self.assertEqual(sorted(r.name for r in rules), sorted([*sg.PLATFORM_ALERTS, "ApidDown"]))
 
+    def test_a_customers_alert_preset_does_not_gate_meterd(self):
+        # Deploy freeze #8084: FaasApiDownAccount for one customer's app held
+        # 120 s after a meterd deploy and rolled the control plane back.
+        loaded = platform_rules() + [
+            rule("FaasApiDownAccount", component="meterd", severity="warn", family="alert_preset_signals"),
+            rule("FaasAlertPresetAnyFiringAccount", component="meterd", severity="warn", family="alert_preset_correlation"),
+            rule("MeterdDown", component="meterd", severity="page", family="daemon_liveness"),
+        ]
+        rules, _ = sg.select_rules(loaded, ["meterd"], max_hold=120)
+        self.assertNotIn("FaasApiDownAccount", [r.name for r in rules])
+        self.assertNotIn("FaasAlertPresetAnyFiringAccount", [r.name for r in rules])
+        self.assertIn("MeterdDown", [r.name for r in rules])
+
     def test_parse_time(self):
         self.assertAlmostEqual(sg.parse_time("2026-10-17T15:09:13.123456789Z"),
                                datetime(2026, 10, 17, 15, 9, 13, tzinfo=timezone.utc).timestamp() + 0.123456789, places=6)
@@ -391,6 +404,13 @@ class RepositoryContractTest(unittest.TestCase):
 
     def test_tenant_signal_families_exist(self):
         self.assertEqual([f for f in sg.TENANT_SIGNAL_FAMILIES if f not in self.families], [])
+
+    def test_customer_alert_preset_families_never_gate(self):
+        # Every family of alerts built from customers' alert presets is a
+        # tenant signal, so a new preset rollup cannot freeze deploys again.
+        presets = sorted(f for f in self.families if f.startswith("alert_preset"))
+        self.assertTrue(presets)
+        self.assertEqual([f for f in presets if f not in sg.TENANT_SIGNAL_FAMILIES], [])
 
     def test_unit_jobs_exist(self):
         for unit, cfg in sg.UNITS.items():
