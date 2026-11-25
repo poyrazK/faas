@@ -96,3 +96,23 @@ func TestCmdRedisBindExplainsMissingApp(t *testing.T) {
 		})
 	}
 }
+
+// TestCmdRedisUnbind pins `gregale redis unbind`: it revokes the app's grant
+// to call the cache (ADR-20261124174500) and says the variable stays set.
+func TestCmdRedisUnbind(t *testing.T) {
+	var method, path string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path = r.Method, r.URL.Path
+		_, _ = w.Write([]byte(`{"cache":"sessions","app":"web"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	main.WithCwd(t, t.TempDir())
+	var out bytes.Buffer
+	code := main.CaptureStdoutSwap(t, &out, func() int { return main.CmdRedis([]string{"unbind", "sessions", "--app", "web"}) })
+	if code != 0 || method != http.MethodDelete || path != "/v1/redis/sessions/bindings/web" ||
+		!strings.Contains(out.String(), "web can no longer call sessions") || !strings.Contains(out.String(), "gregale env unset") {
+		t.Fatalf("exit = %d %s %s stdout = %q", code, method, path, out.String())
+	}
+}

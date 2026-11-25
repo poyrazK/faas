@@ -519,6 +519,8 @@ const UploadSessionOffsetConflictCode = uploadSessionOffsetConflictCode
 
 // Package-level vars
 var TerminalSafe = terminalSafe
+var ParsePostgresSuspendTimeout = parsePostgresSuspendTimeout
+var RenderPostgresSuspendTimeout = renderPostgresSuspendTimeout
 var AgentKeyScopes = agentKeyScopes
 var TerminalSafeLines = terminalSafeLines
 var AuthAdminHTTPClient = &authAdminHTTPClient
@@ -3115,6 +3117,26 @@ func RunMCPReplayGateForTest(ctx context.Context, endpoint, candidate, serving s
 	return report.Skipped, ok
 }
 
+// SaveAnonymousSession and LoadStoredToken expose the anonymous deploy key
+// file and the login store (ADR-20261124080000).
+var SaveAnonymousSession = saveAnonymousSession
+
+func LoadStoredToken() string { return loadStoredToken(io.Discard) }
+
+// LoadAnonymousSessionToken exposes the saved anonymous deploy key.
+var LoadAnonymousSessionToken = loadAnonymousSessionToken
+
+// LoadAnonymousSessionURL returns the saved anonymous deploy's claim link.
+func LoadAnonymousSessionURL() string {
+	saved, _ := loadAnonymousSession()
+	return saved.ClaimURL
+}
+
+// AnonymousDeployByDefault exposes the no-credential deploy default (ADR-20261124080000).
+func AnonymousDeployByDefault(getenv func(string) string) bool {
+	return anonymousDeployByDefault(getenv)
+}
+
 // MCPDiscoverJWKS is mcpDiscoverJWKS.
 var MCPDiscoverJWKS = mcpDiscoverJWKS
 
@@ -3162,3 +3184,16 @@ var TemplatesPublicOnPurpose = templatesPublicOnPurpose
 
 // DotenvValue reads one .env value (prod hunt r48).
 var DotenvValue = dotenvValue
+
+// NewIdleWatchdogReader wraps rc in the deploy log stream's idle watchdog.
+func NewIdleWatchdogReader(rc io.ReadCloser, idle time.Duration) io.ReadCloser {
+	return newIdleWatchdogReader(rc, idle)
+}
+
+var ErrDeployStreamIdle = errDeployStreamIdle
+
+// StreamDeployLogsWait follows a deployment's log stream with --wait
+// semantics and the given stream idle bound.
+func StreamDeployLogsWait(ctx context.Context, c *Client, dep api.DeploymentResponse, slug string, wait, idle time.Duration) int {
+	return streamDeployLogsContextWithOptions(ctx, c, dep, slug, streamDeployOptions{waitTimeout: wait, streamIdleTimeout: idle})
+}

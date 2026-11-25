@@ -2,14 +2,15 @@ package markers
 
 import "strings"
 
-// lenientJSON returns s with what a tolerant JSON reader (Node's require
-// after npm's BOM strip, Bun's JSONC reader) accepts blanked out: a leading
-// UTF-8 byte order mark, // and /* */ comments, and a trailing comma before
-// } or ]. Blanked bytes become spaces and newlines stay, so a parse error's
-// offset and line still point into the original text. Text inside JSON
-// strings is never touched.
+// lenientJSON returns s with what the build's package.json readers accept
+// (Railpack's hujson, Bun's JSONC reader) blanked out: // and /* */
+// comments and a trailing comma before } or ]. They are blanked because
+// those readers accept them; npm does not, but its EJSONPARSE error names
+// the line in the build log, so the build reports them itself. Blanked bytes become spaces and newlines stay, so a parse error's offset
+// and line still point into the original text. Text inside JSON strings is
+// never touched. A byte order mark is not stripped: hujson rejects it.
 func lenientJSON(s string) string {
-	b := []byte(strings.TrimPrefix(s, "\xef\xbb\xbf"))
+	b := []byte(s)
 	inString, escaped := false, false
 	lastComma := -1 // index of a comma not yet followed by a value byte
 	for i := 0; i < len(b); i++ {

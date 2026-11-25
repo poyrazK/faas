@@ -281,6 +281,9 @@ type PGBackend struct {
 	// flagKills caches each deployment's X-Faas-Flag-Kills value
 	// (ADR 20261114150000 §3); nil until WithFlagKillLoader.
 	flagKills *FlagKillCache
+	// edgeFlags caches each app environment's edge-routed flags
+	// (ADR-20261124212701); nil until WithEdgeFlagLoader.
+	edgeFlags *EdgeFlagCache
 	// flagCohorts caches each deployment and customer's
 	// X-Faas-Flag-Cohorts value (ADR 20261119102741 §4); nil until
 	// WithFlagCohortLoader.

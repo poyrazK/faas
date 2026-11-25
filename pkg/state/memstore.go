@@ -583,6 +583,7 @@ type MemStore struct {
 	// ADR-20261122220000 verification contracts and their SQL handoff.
 	verificationContracts       map[string]VerificationContract
 	verificationQueries         map[string]VerificationQuery
+	verificationLeases          map[string]VerificationLease
 	mu                          sync.Mutex
 	outboundProbePolicies       map[string]api.OutboundBindingProbePolicy
 	outboundCredentialRevisions map[string]int64
@@ -602,6 +603,7 @@ type MemStore struct {
 	apps                      map[string]App
 	appOwnerHome              map[string]string
 	managedValkeyCaches       sync.Map               // app id -> ManagedValkeyCache (ADR-20261116192126)
+	managedValkeyCacheGrants  sync.Map               // cache app id + "\x00" + app id -> account id (ADR-20261124174500)
 	appSlugHolds              map[string]appSlugHold // mirrors app_slug_holds (H80)
 	scenarioTestMembers       map[string]ScenarioTestMember
 	scenarioPostgres          map[string]rehearsalpg.Resource
@@ -650,7 +652,8 @@ type MemStore struct {
 	apiConsumerBillingPolicies           map[string]APIConsumerBillingPolicy       // ADR-1315, by app
 	apiConsumerOverdueHolds              map[string]APIConsumerOverdueHold         // ADR-1315, by consumer
 	platformTenants                      map[string]PlatformTenant
-	flagEvents                           *memFlagEvents // ADR 20261115163113, lazily made
+	flagEvents                           *memFlagEvents                 // ADR 20261115163113, lazily made
+	savedInsights                        map[string]*memSavedInsightRow // ADR-20261122190000, by ID, lazily made
 	platformTenantReconciliationReceipts map[string]api.PlatformTenantReconciliationReceiptResponse
 	platformTenantOffboardingReceipts    map[string]api.PlatformTenantOffboardingReceiptResponse
 	platformTenantAccessTokens           map[string]PlatformTenantAccessToken
@@ -1212,6 +1215,9 @@ type MemStore struct {
 	// signal that an OAuth-only flow is required to mint a session.
 	accountPasswords map[string]AccountPassword
 	legalAcceptances map[string][]LegalAcceptance
+	// unclaimedAccounts marks accounts created by an anonymous deploy
+	// (ADR-20261124080000), keyed by account_id. Lazily initialised.
+	unclaimedAccounts map[string]UnclaimedAccount
 	// oauthLinks is keyed by (provider + "\x00" + provider_subject)
 	// so the §11 anti-takeover invariant (one OAuth subject per
 	// account) is enforceable in-memory the same way the composite
@@ -1354,6 +1360,8 @@ type MemStore struct {
 	// apiConsumerSpendCaps (by consumer ID) back prepaid credits and spend
 	// caps (ADR-1306).
 	apiConsumerCreditGrants       map[string]APIConsumerCreditGrant
+	apiConsumerCreditPackSettings map[string]api.ConsumerCreditPackSettings
+	apiConsumerCreditPurchases    map[string]APIConsumerCreditPurchase
 	apiConsumerCreditApplications []apiConsumerCreditApplication
 	apiConsumerSpendCaps          map[string]APIConsumerSpendCap
 	// platformTenantCreditGrants (by ID), platformTenantCreditApplications
@@ -2342,6 +2350,11 @@ func (m *MemStore) CreateAccountWithPersonalOrg(ctx context.Context, params Crea
 	if params.InitialPasswordHash != "" {
 		if err := m.setAccountPasswordLocked(acct.ID, params.InitialPasswordHash); err != nil {
 			delete(m.accountPasswords, acct.ID)
+			return CreateAccountWithPersonalOrgResult{}, err
+		}
+	}
+	if u := params.Unclaimed; u != nil {
+		if err := m.insertUnclaimedLocked(acct.ID, *u, now); err != nil {
 			return CreateAccountWithPersonalOrgResult{}, err
 		}
 	}

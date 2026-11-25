@@ -28,6 +28,11 @@ type AppSecret struct {
 	Ciphertext []byte
 }
 
+type AppVerificationContract struct {
+	AppID    pgtype.UUID
+	Contract []byte
+}
+
 type Build struct {
 	ID              pgtype.UUID
 	DeploymentID    pgtype.UUID
@@ -47,6 +52,8 @@ type Deployment struct {
 	ID                 pgtype.UUID
 	AppID              pgtype.UUID
 	BuildRegistryScope []string
+	Status             string
+	Scope              string
 }
 
 type DeploymentImagePreparation struct {
@@ -54,6 +61,13 @@ type DeploymentImagePreparation struct {
 	NodeName     string
 	Phase        string
 	UpdatedAt    pgtype.Timestamptz
+}
+
+type DeploymentVerificationLease struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	NodeName     string
+	ExpiresAt    pgtype.Timestamptz
 }
 
 type EdgeRule struct {

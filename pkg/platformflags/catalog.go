@@ -94,6 +94,16 @@ const (
 	// experiments and no raw event is stored.
 	ProductAnalytics = "product_analytics"
 
+	// EdgeFlags releases gateway-evaluated variant routing of customer flags
+	// (ADR-20261124212701): apid accepts edge routes, the gateway applies
+	// them. Off, the gateway serves requests unchanged.
+	EdgeFlags = "edge_flags"
+
+	// SavedInsights releases saved insights, their CSV/JSON export,
+	// scheduled digests and threshold alerts (ADR-20261122190000). It
+	// needs ProductAnalytics as well.
+	SavedInsights = "saved_insights"
+
 	// RouteResourcePeaks keeps each app instance's per-minute memory and CPU
 	// and its route activity, and serves which routes the app's peaks come
 	// from (ADR-20261121170000).
@@ -457,6 +467,28 @@ var catalog = []Spec{
 		Consumers:    []string{"apid"},
 		Attributes:   []Attribute{AttributePlan, AttributeOrg},
 		HealthRoutes: []string{"GET /v1/projects/{slug}/environments/{environment}/insights/events"},
+		RetireBy:     "2027-06-30",
+	},
+	{
+		Key:   EdgeFlags,
+		Label: "Edge flag routing",
+		Description: "Let a variant flag rewrite request paths at the gateway, so apps without an SDK serve its variants; anonymous visitors " +
+			"keep their bucket in a first-party cookie. Off, apid refuses edge routes and the gateway serves every request unchanged.",
+		ADR:        "ADR-20261124212701",
+		Consumers:  []string{"apid", "gatewayd-internal"},
+		Attributes: []Attribute{AttributePlan},
+		RetireBy:   "2027-06-30",
+	},
+	{
+		Key:        SavedInsights,
+		Capability: "saved-insights",
+		Label:      "Saved insights",
+		Description: "Save analytics queries per environment, run and export them as CSV or JSON, and send their value to notification channels " +
+			"as daily or weekly digests and threshold alerts. Off, the saved insight routes refuse and meterd sends nothing; saved rows are kept.",
+		ADR:          "ADR-20261122190000",
+		Consumers:    []string{"apid", "meterd"},
+		Attributes:   []Attribute{AttributePlan, AttributeOrg},
+		HealthRoutes: []string{"GET /v1/projects/{slug}/environments/{environment}/insights/saved"},
 		RetireBy:     "2027-06-30",
 	},
 	{

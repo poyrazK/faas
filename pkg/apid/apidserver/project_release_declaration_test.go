@@ -87,3 +87,52 @@ func TestProjectWorkloadReleaseCommandReadsServiceDirNotAppRoot(t *testing.T) {
 		t.Fatalf("release = %v, %v; want none (the worker declares nothing in worker/)", command, problem)
 	}
 }
+
+// A Compose service with its own build context is staged as the archive root,
+// so its own Procfile sits at that root. Its release: process used to be
+// dropped as if it were the repository root's (agent eval 2026-11-24: a
+// Compose worker's worker/Procfile migration never ran, so its table was
+// never created). An archive that is not narrowed still leaves the root
+// Procfile to reposcan. Where something else already decided (a shared build
+// context, a Compose completion step) the command stays what it was, so an
+// existing project's redeploy neither fails nor swaps its migration.
+func TestProjectWorkloadReleaseCommandReadsNarrowedComposeContext(t *testing.T) {
+	vote := reposcan.Workload{Name: "vote", RootDir: "vote"}
+	worker := reposcan.Workload{Name: "worker", RootDir: "worker"}
+	composeStep := reposcan.Workload{Name: "worker", RootDir: "worker", ReleaseCommand: []string{"./migrate"}, ReleaseService: "migrate"}
+	narrowed := sourceArchive(t, map[string]string{"Procfile": "release: dotnet Worker.dll migrate\n", "Program.cs": "x"})
+	// A Procfile that is not used must not fail the deploy either.
+	malformed := sourceArchive(t, map[string]string{"Procfile": "release: one\nrelease: two\n", "Program.cs": "x"})
+	// The --migrate prepare stages the whole repository.
+	whole := sourceArchive(t, map[string]string{"worker/Procfile": "release: dotnet Worker.dll migrate\n", "vote/app.py": "x"})
+	for _, tc := range []struct {
+		name        string
+		archive     string
+		workloads   []reposcan.Workload
+		workload    reposcan.Workload
+		contextRoot string
+		narrowed    bool
+		want        []string
+	}{
+		{name: "narrowed to the service's build context", archive: narrowed, workloads: []reposcan.Workload{vote, worker}, workload: worker,
+			contextRoot: "worker", narrowed: true, want: []string{"dotnet Worker.dll migrate"}},
+		{name: "prepare reads the same context in the whole repository", archive: whole, workloads: []reposcan.Workload{vote, worker}, workload: worker,
+			contextRoot: "worker", want: []string{"dotnet Worker.dll migrate"}},
+		{name: "no build context leaves the root Procfile to reposcan", archive: narrowed, workloads: []reposcan.Workload{vote, worker}, workload: worker},
+		{name: "shared build context keeps none", archive: narrowed, workloads: []reposcan.Workload{{Name: "web", RootDir: "app"}, {Name: "worker", RootDir: "app"}},
+			workload: reposcan.Workload{Name: "worker", RootDir: "app"}, contextRoot: "app", narrowed: true},
+		{name: "compose completion step kept", archive: narrowed, workloads: []reposcan.Workload{vote, composeStep}, workload: composeStep,
+			contextRoot: "worker", narrowed: true, want: []string{"./migrate"}},
+		{name: "compose completion step kept over a malformed Procfile", archive: malformed, workloads: []reposcan.Workload{vote, composeStep}, workload: composeStep,
+			contextRoot: "worker", narrowed: true, want: []string{"./migrate"}},
+		{name: "shared check uses the staged context", archive: narrowed, workloads: []reposcan.Workload{{Name: "web", RootDir: "services/worker"}, worker},
+			workload: worker, contextRoot: "services/worker", narrowed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			command, _, problem := apidserver.ProjectWorkloadReleaseCommandStaged(tc.archive, tc.workloads, tc.workload, state.App{}, tc.contextRoot, tc.narrowed, nil)
+			if problem != nil || !slices.Equal(command, tc.want) {
+				t.Fatalf("release = %v, %v; want %v", command, problem, tc.want)
+			}
+		})
+	}
+}
