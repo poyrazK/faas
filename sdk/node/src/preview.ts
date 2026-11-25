@@ -40,6 +40,11 @@ export {
   type McpTaskReviewAnswer, type McpTaskReviewAnswers, type McpTaskReviewOutcome,
 } from './mcp-task-input-review.js';
 export { createMcpTaskReviewFetch, McpTaskReviewNumber } from './mcp-task-review-json.js';
+export {
+  getMcpTask, waitForMcpTask, McpTaskReadError,
+  type McpTaskConnection, type McpTaskReadOptions, type McpTaskReadFailureCode,
+  type McpTaskSnapshot, type McpTaskWaitResult,
+} from './mcp-task-result.js';
 export { PaginationError, type PaginationOptions, type DeploymentPagination } from './deployment-pagination.js';
 export { WaiterError, type WaiterFailureCode, type WaiterOptions, type WaiterSnapshot, type WaiterProgress, type BuildWaitOptions, type DeploymentWaitOptions, type DeploymentWaiters } from './deployment-waiters.js';
 

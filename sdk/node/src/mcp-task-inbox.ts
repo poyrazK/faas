@@ -129,6 +129,11 @@ export function parseMcpTaskMetadata(value: unknown): McpTaskInboxEntry {
       Object.keys(value).some(key => payloadFields.has(key.toLowerCase()))) {
     throw new McpTaskInboxError('invalid_page');
   }
+  return parseMcpTaskFields(value);
+}
+
+/** Project the shared metadata fields from an already checked Task response. */
+export function parseMcpTaskFields(value: Record<string, unknown>): McpTaskInboxEntry {
   const { taskId, status, createdAt, lastUpdatedAt, ttlMs, pollIntervalMs } = value;
   if (typeof taskId !== 'string' || taskId === '' || Buffer.byteLength(taskId, 'utf8') > 256 || /[\r\n\0]/u.test(taskId) ||
       !isStatus(status) ||

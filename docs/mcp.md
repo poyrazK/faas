@@ -6070,6 +6070,43 @@ operation's time budget. It returns `unconfirmed` if it cannot establish
 that the answer was recorded. The response includes Task metadata when
 available. Retrieve the original result with the same Task ID.
 
+#### Reconnect and retrieve a Task result from TypeScript
+
+Keep the Task ID and reconnect to the same MCP endpoint using the caller's
+current credential. The Node SDK preview uses the existing Tasks capability
+on protocol `2026-07-28`.
+
+```ts
+import { waitForMcpTask } from '@gregale/sdk-node/preview';
+
+const task = await waitForMcpTask(mcp, taskId, { timeoutMs: 120_000, signal });
+
+switch (task.status) {
+  case 'completed':
+    await handleOriginalResult(task.result);
+    break;
+  case 'input_required':
+    await reviewPendingInput(task.taskId);
+    break;
+  case 'failed':
+    await handleTaskError(task.error);
+    break;
+  case 'cancelled':
+    break;
+}
+```
+
+`getMcpTask` reads one snapshot. `waitForMcpTask` polls at the server's
+interval and returns when the Task finishes or needs input. Use
+`getTaskInputReview` for the pending forms. A completed Task's `result`
+includes the original tool response, including its `isError` field when
+present. A failed Task returns its retained execution error.
+
+The default deadlines are 30 seconds for a read and two minutes for a
+wait. Aborting or timing out stops observation while the Task follows
+its existing lifecycle. Expired Tasks and Tasks the caller cannot access
+may report the same `not_found` read error.
+
 ## MCP catalog snapshots
 
 Capture caller-visible definitions before changing a server:
