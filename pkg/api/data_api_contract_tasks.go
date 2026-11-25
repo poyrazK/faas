@@ -147,17 +147,17 @@ func (c *Client) DownloadDataAPIContractArtifact(ctx context.Context, slug, id, 
 		return nil, apiErrorFromResponse(resp, body)
 	}
 	if deploymentID == "" || resp.Header.Get(DataAPIContractArtifactDeploymentHeader) != deploymentID {
-		return nil, errors.New("Data API contract download belongs to a different deployment")
+		return nil, errors.New("data API contract download belongs to a different deployment")
 	}
 	if resp.Header.Get("Content-Type") != "application/octet-stream" || resp.ContentLength > DataAPIContractArtifactBytes {
-		return nil, errors.New("Data API contract download has an invalid content type or size")
+		return nil, errors.New("data API contract download has an invalid content type or size")
 	}
 	body, err := readBoundedResponse(resp, DataAPIContractArtifactBytes)
 	if err != nil {
 		return nil, err
 	}
 	if len(body) == 0 || resp.Header.Get(DataAPIContractArtifactSHA256Header) != fmt.Sprintf("%x", sha256.Sum256(body)) {
-		return nil, errors.New("Data API contract download checksum mismatch")
+		return nil, errors.New("data API contract download checksum mismatch")
 	}
 	return body, nil
 }

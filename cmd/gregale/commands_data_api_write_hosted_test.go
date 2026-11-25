@@ -221,7 +221,22 @@ func TestDataAPIWriteReadinessCLIInspectsSelectedBinding(t *testing.T) {
 					task.Command = request.Command
 					writeJSONTest(w, task)
 				case "POST /v1/apps/notes/data-api-inspections":
-					w.WriteHeader(http.StatusNotFound) // older control plane
+					if scenario != "binding_changed" {
+						w.WriteHeader(http.StatusNotFound) // older control plane
+						return
+					}
+					var observation map[string]json.RawMessage
+					if err := json.Unmarshal([]byte(validWriteObservation), &observation); err != nil {
+						t.Error(err)
+						return
+					}
+					delete(observation, "transport")
+					raw, err := json.Marshal(observation)
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					writeJSONTest(w, api.DataAPIInspectionResponse{TaskID: "task-1", AppID: "app-1", DeploymentID: "dep-1", DatabaseID: "db-1", BindingID: "binding-1", CredentialGeneration: 3, TaskStatus: api.AppTaskStatusSucceeded, BindingIdentity: api.DataAPIInspectionIdentity{Status: "verified", Reason: "provider_target_and_trust_matched"}, Observation: raw})
 				default:
 					t.Errorf("unexpected API request %s %s", r.Method, r.URL.Path)
 					w.WriteHeader(404)
@@ -233,20 +248,31 @@ func TestDataAPIWriteReadinessCLIInspectsSelectedBinding(t *testing.T) {
 			stdout, stderr, restore := swapIO(t)
 			defer restore()
 			code := run([]string{"--json", "data-api", "write-readiness", "--database", "db-1", "--app", "notes", "--binding", "binding-1", "--schema", "api", "--table", "notes", "--operations", "insert"})
-			if scenario == "binding_changed" || scenario == "missing_app" {
-				if code == 0 || !strings.Contains(stdout.String(), `"status":"unavailable"`) || !strings.Contains(stdout.String(), `"binding_identity":{"status":"unknown"`) {
-					t.Fatalf("accepted changed binding: exit=%d output=%s error=%s", code, stdout.String(), stderr())
-				}
-			} else if scenario == "wrong_app" {
-				if code == 0 || !strings.Contains(stdout.String(), `"status":"unavailable"`) || !strings.Contains(stdout.String(), `"binding_identity":{"status":"mismatch","reason":"binding_belongs_to_different_app_or_database"}`) {
-					t.Fatalf("did not report selection mismatch: exit=%d output=%s error=%s", code, stdout.String(), stderr())
-				}
-			} else if code == 0 || !strings.Contains(stdout.String(), `"status":"unavailable"`) || !strings.Contains(stdout.String(), `"binding_identity":{"status":"unknown"`) {
-				t.Fatalf("unexpected response: exit=%d output=%s error=%s", code, stdout.String(), stderr())
+			var report struct {
+				Status          string `json:"status"`
+				Reason          string `json:"reason"`
+				BindingIdentity struct {
+					Status string `json:"status"`
+					Reason string `json:"reason"`
+				} `json:"binding_identity"`
 			}
-			wantReads := int64(1)
+			if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+				t.Fatalf("invalid report: %v output=%s", err, stdout.String())
+			}
+			wantReason, wantIdentity, wantIdentityReason, wantReads := "server_inspection_unsupported", "unknown", "server_inspection_unsupported", int64(1)
+			switch scenario {
+			case "binding_changed":
+				wantReason, wantIdentityReason, wantReads = "binding_or_deployment_changed", "binding_or_deployment_changed", 2
+			case "wrong_app":
+				wantReason, wantIdentity, wantIdentityReason = "binding_selection_mismatch", "mismatch", "binding_belongs_to_different_app_or_database"
+			case "missing_app":
+				wantReason, wantIdentityReason = "binding_or_deployment_unavailable", "binding_or_deployment_unavailable"
+			}
+			if code == 0 || report.Status != "unavailable" || report.Reason != wantReason || report.BindingIdentity.Status != wantIdentity || report.BindingIdentity.Reason != wantIdentityReason {
+				t.Fatalf("unexpected response: exit=%d report=%+v error=%s", code, report, stderr())
+			}
 			if bindingReads.Load() != wantReads {
-				t.Fatalf("binding observed %d times", bindingReads.Load())
+				t.Fatalf("binding observed %d times, want %d", bindingReads.Load(), wantReads)
 			}
 		})
 	}

@@ -57,7 +57,7 @@ func Resume(directory, client, numericMode string) (*Plan, error) {
 }
 
 func build(directory, client, numericMode string, resume bool, hosted *HostedSpec) (*Plan, error) {
-	if numericMode != "number" && numericMode != "exact" && !(hosted != nil && numericMode == "lossless") {
+	if numericMode != "number" && numericMode != "exact" && (hosted == nil || numericMode != "lossless") {
 		return nil, errors.New("numeric mode must be number or exact")
 	}
 	root, err := filepath.Abs(directory)
@@ -227,7 +227,7 @@ func build(directory, client, numericMode string, resume bool, hosted *HostedSpe
 			NumericMode string `json:"numeric_mode"`
 		}
 		if err != nil || json.Unmarshal(existing, &saved) != nil || saved.Version != 1 || saved.Output != p.GeneratedTypes ||
-			(saved.NumericMode != numericMode && !(numericMode == "number" && saved.NumericMode == "")) {
+			(saved.NumericMode != numericMode && (numericMode != "number" || saved.NumericMode != "")) {
 			return nil, errors.New("cannot resume: integration configuration differs from the requested client or numeric mode")
 		}
 		p.Files = nil

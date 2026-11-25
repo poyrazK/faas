@@ -37,7 +37,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
-	"github.com/onebox-faas/faas/pkg/sched"
+	"github.com/onebox-faas/faas/pkg/sched" //nolint:depguard // End-to-end test exercises the actual scheduler, not control-plane production code.
 	"github.com/onebox-faas/faas/pkg/state"
 )
 

@@ -15,11 +15,11 @@ func loadDataAPIInspectionCA(path string) ([]byte, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, nil
 	}
-	file, err := os.Open(path)
+	file, err := os.Open(path) //nolint:forbidigo // The daemon reads an operator-owned host trust bundle.
 	if err != nil {
 		return nil, errors.New("vmmd: cannot read data API inspection CA")
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	data, err := io.ReadAll(io.LimitReader(file, dataapiinspectioncommand.MaxTrustBundleBytes+1))
 	if err != nil {
 		return nil, errors.New("vmmd: cannot read data API inspection CA")

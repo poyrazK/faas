@@ -134110,6 +134110,7 @@ components:
         next_offset: { type: integer, description: "Next offset, or -1 at the end of the result set." }
 
     CreateDataAPIInspectionRequest:
+      description: Identifies the database binding and table to inspect.
       type: object
       additionalProperties: false
       required: [database_id, binding_id, table]
@@ -134118,6 +134119,7 @@ components:
         binding_id: { type: string, format: uuid }
         table: { type: string, pattern: '^[A-Za-z_][A-Za-z0-9_]{0,62}$' }
     DataAPIInspectionResponse:
+      description: Reports the status and verified identity of a Data API inspection.
       type: object
       required: [task_id, app_id, deployment_id, database_id, binding_id, credential_generation, task_status, binding_identity]
       properties:

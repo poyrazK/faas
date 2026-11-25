@@ -62,7 +62,7 @@ func (s *PgStore) AdmitDataAPIInspection(ctx context.Context, input DataAPIInspe
 	if err != nil {
 		return "", mapErr(err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	var fence DataAPIInspectionFence
 	var generation, desired, observed int64
 	var credentialRef, identity, resource, backend, backendFingerprint string

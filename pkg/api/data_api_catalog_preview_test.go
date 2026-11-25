@@ -24,7 +24,7 @@ func TestPreviewDataAPICatalogSendsNoSQL(t *testing.T) {
 				t.Fatalf("unexpected request body: %q %v", body, err)
 			}
 		}
-		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"database_id":"db-id","columns":[],"rows":[],"row_count":0}`)), Request: r}, nil
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"database_id":"db-id","columns":[],"rows":[],"row_count":0}`)), ContentLength: -1, Request: r}, nil
 	})}
 	response, err := client.PreviewDataAPICatalog(context.Background(), "db-id")
 	if err != nil || response.DatabaseID != "db-id" {

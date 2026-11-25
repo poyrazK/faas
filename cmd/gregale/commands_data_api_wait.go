@@ -113,7 +113,7 @@ func probeDataAPIReadiness(ctx context.Context, client *http.Client, address str
 		return false, nil
 	}
 	if response.StatusCode != http.StatusOK {
-		return false, fmt.Errorf("Data API readiness returned HTTP %d; check the app URL and ingress settings", response.StatusCode)
+		return false, fmt.Errorf("data API readiness returned HTTP %d; check the app URL and ingress settings", response.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, api.DataAPIHealthMaxBytes+1))
 	if err != nil {

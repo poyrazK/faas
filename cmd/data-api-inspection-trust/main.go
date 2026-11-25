@@ -15,12 +15,13 @@ func main() {
 		fmt.Fprintln(os.Stderr, "usage: data-api-inspection-trust CA_BUNDLE.pem")
 		os.Exit(2)
 	}
-	f, err := os.Open(os.Args[1])
+	// The operator supplies a path to a public CA bundle on the host.
+	f, err := os.Open(os.Args[1]) //nolint:forbidigo // Operator-owned trust material is intentionally read by path.
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cannot open CA bundle")
 		os.Exit(1)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	data, err := io.ReadAll(io.LimitReader(f, dataapiinspectioncommand.MaxTrustBundleBytes+1))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cannot read CA bundle")

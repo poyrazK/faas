@@ -554,7 +554,7 @@ func waitDataAPIContractTask(ctx context.Context, client *api.Client, slug strin
 	outputLimit := api.AppTaskDefaultMaxOutputBytes
 	if !legacy && api.IsDataAPIContractArtifactTask(task.Command, task.CommandShell) {
 		if task.OutputTruncated {
-			return task, fmt.Errorf("Data API contract artifact exceeded its %d-byte output limit", api.DataAPIContractArtifactBytes)
+			return task, fmt.Errorf("data API contract artifact exceeded its %d-byte output limit", api.DataAPIContractArtifactBytes)
 		}
 		content, err := client.DownloadDataAPIContractArtifact(ctx, slug, task.ID, task.DeploymentID)
 		if err != nil {
