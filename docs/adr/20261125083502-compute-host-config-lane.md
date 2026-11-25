@@ -121,9 +121,10 @@ next to `held`):
 - **Globals:** `group_vars/compute_nodes/*`, the compute play bodies,
   `ansible.cfg` and the collection pins. `host_roles.py changed` already
   reports these as `all: true`, so the lane refuses them (§1.1).
-- **`node_join.yml`:** keeps its `compute_only` class and blocks. It
-  drives full rollouts only, but a role change can depend on a node_join
-  step made in the same commit, and the lane does not run node_join.
+- **`node_join.yml` with a compute role change in the same commit:** it
+  drives full rollouts only, but the role change can depend on the
+  node_join step, and the lane does not run node_join. Alone, it holds no
+  lane (§6).
 - **Unit files** under `compute_only_service/files/` and the other compute
   roles' `files/*.service|*.socket|*.slice`: listed in
   `host_config.release_units` for compute too, as on the control plane,
@@ -159,34 +160,42 @@ the preflight's `base` check (it stands down while prod runs a full release
 other than the build's base). The converge step adds nothing new to race:
 it runs inside that job, on one node at a time.
 
+### 6. `node_join.yml` alone holds no lane (owner decision 2026-11-25)
+
+The `compute_only` playbooks (`node_join.yml`, `node_join_accept_release.yml`,
+`node_join_contract_probe.yml`) run only inside `gregalectl deploy join`, so
+a change to one affects the next full rollout and nothing a unit release
+does. A commit that changes one and no path a compute host role reads maps
+it to `compute_rollout`: reported, holds no lane. A commit that changes one
+together with a compute role path (a group global included) keeps both
+`compute_deploy`, because the role change may depend on the playbook step
+(`affected_units.rollout_promotions`).
+
 ## What it frees
 
-The same seven commits, under §3:
+The same seven commits, under §3 and the `node_join.yml` narrowing (§6),
+judged per commit by the planner of this ADR's step 1:
 
-| commit | blocked by | lane? |
+| commit | still blocked by | freed |
 | --- | --- | --- |
-| 18289035dc | — (`nftables`, `vmmd_service` drop-in) | **yes** |
+| 14eb61e7fb | — (`node_join.yml` alone) | **yes, §6** |
+| de9bcafc47 | — (`node_join.yml` alone) | **yes, §6** |
+| 18289035dc | `deploy/manifest/production/ovh-live.template.yaml` (deploy, blocking) | no; its roles (`nftables`, `vmmd_service` drop-in) are lane roles |
 | 0f872e67ae | `group_vars/compute_nodes` (global) | no |
-| 361b9afe87 | `group_vars/compute_nodes`, `node_join.yml` | no |
-| f21c87d48c | unit file | no |
-| 14eb61e7fb | `node_join.yml` | no |
-| de9bcafc47 | `node_join.yml` | no |
-| 902041da04 | `node_join.yml` | no |
+| 361b9afe87 | `group_vars/compute_nodes`; `node_join.yml` paired with it | no |
+| f21c87d48c | unit file; control-plane `release_units` | no |
+| 902041da04 | `node_join.yml` paired with `compute_admission`/`compute_only_service` | no |
 
-1 of 7. `node_join.yml` alone holds 4 of them and `group_vars/compute_nodes`
-2, so they decide whether this lane pays off. Two narrowings are left open
-for the owner, each a separate amendment:
-
-- **`node_join.yml` → inert for the lanes** when the same commit changes no
-  lane role (14eb61e7fb, de9bcafc47): the change only affects the next full
-  rollout, which runs it. Frees 2 more.
-- **Per-variable `group_vars` ownership:** treat a
-  `group_vars/compute_nodes/<file>.yml` change as a change to the roles that
-  read its variables instead of a global (the follow-up ADR-20261115120000
-  already names). Frees 0f872e67ae.
+§6 frees 2 of 7 on its own, with no executor. The converge executor (§1–§4)
+frees none of these seven: the one commit whose roles it could converge
+also changed the production manifest. Its value depends on how often a
+commit changes only lane roles, which this window never did; per-variable
+`group_vars` ownership (the follow-up ADR-20261115120000 names) would add
+0f872e67ae.
 
 ## Build order
 
+0. §6 (`compute_rollout`), live without an executor.
 1. `affected_units.py`: `compute_deploy` splits into lane-role changes
    (deployable by the compute lane) and full-release-only changes (still
    `compute_deploy`); `full_release_roles` and compute `release_units` in

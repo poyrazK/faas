@@ -71,19 +71,23 @@ Non-Go inputs map to flags (scripts/ci/release_units.json):
                the roles whose content hash changed before anything else
                (docs/adr/20261018133100-host-configuration-lane.md).
   pending      guest/, images/, kernel, and deploy/ paths a compute host
-               role reads or of the `compute_only` class (compute_deploy).
-               They ship with the next full release and do not stop
-               control-plane units from deploying alone. compute_deploy
-               holds the edge lane while it restarts a gateway on a compute
-               host, which it does without converging that host's roles.
+               role reads (compute_deploy) or of the `compute_only` class
+               (compute_rollout). They ship with the next full release and
+               do not stop control-plane units from deploying alone.
+               compute_deploy holds the edge lane while it restarts a
+               gateway on a compute host, which it does without converging
+               that host's roles. compute_rollout holds nothing: the
+               rollout playbooks only drive the next full rollout, unless a
+               commit changes one with a compute role path, which makes it
+               compute_deploy (rollout_promotions).
 
 Every deploy/ path has exactly one class (deploy_class), decided in this
 order: a release unit (host_config.release_units: blocking); a path a host
 role reads (host_config for a converged group, compute_deploy for compute);
 then the first pattern class of release_units.json deploy_classes that
 matches it: `inert` (documentation, tests, samples no daemon reads, trees
-no release installs: no flag), `compute_only` (compute playbooks:
-compute_deploy) or `blocking` (deploy). A path no rule names blocks too,
+no release installs: no flag), `compute_only` (compute rollout
+playbooks: compute_rollout) or `blocking` (deploy). A path no rule names blocks too,
 and the repository test fails until the table names it. A path no host role
 reads whose change since base only touches comment lines is inert whatever
 its class (comment_only_paths). docs/adr/20261027151755-unit-lane-deploy-
@@ -142,7 +146,7 @@ FLAG_PATH_LIMIT = 20
 HOST_GROUP_ROLES = {"control_plane": "control-plane", "compute_nodes": "compute-only"}
 # The pattern classes of release_units.json deploy_classes, in match order,
 # and the flag each maps a changed path to.
-DEPLOY_CLASSES = {"inert": None, "compute_only": "compute_deploy", "blocking": "deploy"}
+DEPLOY_CLASSES = {"inert": None, "compute_only": "compute_rollout", "blocking": "deploy"}
 # Files whose `#` lines are comments to every reader: a change confined to
 # them changes nothing a host runs (comment_only_paths).
 COMMENT_SUFFIXES = (".yml", ".yaml", ".ini", ".toml", ".cfg", ".conf", ".nft", ".sh")
@@ -459,6 +463,29 @@ def deploy_class(path, config, host, comment_only=frozenset()):
     return cls, [DEPLOY_CLASSES.get(cls) or "deploy"]
 
 
+def rollout_promotions(found_flags, commits, host):
+    """Settle the compute rollout playbooks (deploy_classes compute_only:
+    node_join.yml and the plays it runs) in place. They only drive the next
+    full rollout, which runs them, so they wait for it without holding a
+    lane (compute_rollout), unless a commit changes one together with a path
+    a compute host role reads: that role change may depend on the playbook
+    change, so both wait for the full release (compute_deploy;
+    docs/adr/20261125083502-compute-host-config-lane.md)."""
+    rollout = set(found_flags.get("compute_rollout") or [])
+    if not rollout:
+        return
+    owned = set((host.get("compute_nodes") or {}).get("owners") or {})
+    paired = {p for _, ps in commits if any(q in owned for q in ps) for p in ps if p in rollout}
+    if not paired:
+        return
+    found_flags["compute_deploy"] = sorted(set(found_flags.get("compute_deploy") or []) | paired)
+    left = sorted(rollout - paired)
+    if left:
+        found_flags["compute_rollout"] = left
+    else:
+        del found_flags["compute_rollout"]
+
+
 def classify_deploy(paths, config, host, comment_only=frozenset()):
     """({flag: [paths]}, {class: [paths]}) for changed deploy/ paths
     (deploy_class): release_units and deploy block both lanes,
@@ -565,6 +592,7 @@ def analyze(commits, closures, config, exists, recipe_shas=frozenset(), data=Non
     deploy_paths = {p for p in changed_paths if matches(p, deploy_prefixes)
                     or (matches(p, bundle_prefixes) and p in converged_owned)}
     found_flags, deploy_classes = classify_deploy(deploy_paths, config, host, comment_only)
+    rollout_promotions(found_flags, commits, host)
     for flag, found in found_flags.items():
         flags[flag] = {"blocking": flag in ("deploy", "release_units"), "count": len(found),
                        "paths": found[:FLAG_PATH_LIMIT]}
