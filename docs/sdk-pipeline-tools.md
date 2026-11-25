@@ -118,14 +118,30 @@ Starts return `started` or `start_unknown`, plus the portable receipt and
 state is `start_unknown`, `running`, `awaiting_approval`, `awaiting_input`,
 `succeeded`, `failed` or `cancelled`, with sanitized step progress.
 
-After an uncertain native start, retain the request ID, inspect native runs and
-explicitly call `reconcile(requestId, verifiedRunId, principal, options)`
-(Python: `reconcile(request_id, run_id, principal, timeout=...)`). The SDK matches
-scope, owner, contract and input digest **including this tool trigger identity**.
-Another request with identical business input cannot be adopted. Reconciliation
-never starts or restarts work. If the reservation committed but native dispatch
-cannot be established, keep it unresolved; a deliberately new request needs
-business review and may repeat effects.
+After an uncertain native start, use the original request ID to find and
+verify the accepted run.
+
+```ts
+const match = await tool.findAcceptedRun(requestId, principal, { timeoutMs: 10_000 });
+if (match.state === "found") {
+  await tool.reconcile(requestId, match.run_id, principal, { timeoutMs: 10_000 });
+}
+```
+
+Python uses `find_accepted_run(request_id, principal, timeout=10)` and
+`reconcile(request_id, match["run_id"], principal, timeout=10)`. The lookup
+uses the original native start key from the durable receipt and requires
+current reconciliation authority. It returns `found` only after checking the
+native run's app, owner, contract, and full input-envelope digest, including the
+tool's trigger identity. It returns `start_unknown` if no retained binding is
+visible, including on a server without the lookup route.
+
+Lookup reads the receipt and native run. Call `reconcile` separately to attach
+the verified checkpoint. Reconciliation checks the run and current access
+again. Concurrent attempts converge on the same checkpoint. If you already
+know the verified run ID, pass it directly to `reconcile`. If the reservation
+committed but native dispatch cannot be established, keep the receipt unresolved.
+Review the business effects before issuing a deliberately new request.
 
 `result` reauthorizes, verifies native completion and validates the generated
 output. Before completion it raises `not_terminal`; unresolved starts raise
@@ -165,7 +181,9 @@ JSON-RPC codes -32601 and -32602 for the host to encode.
 Default wire compatibility is MCP `2025-11-25`. After host negotiation,
 `protocolVersion:'2026-07-28'` / `protocol_version='2026-07-28'` adds the required
 `resultType:'complete'`. The host supplies that version, not model arguments.
-No MCP Tasks, elicitation or model sampling capability is advertised. See the
+The application toolkit can opt selected starts into
+[durable MCP Task views](sdk-pipeline-tasks.md), which use the original receipt
+for status and results. See the
 [MCP tools specification](https://modelcontextprotocol.io/specification/2026-07-28/server/tools).
 SDK tool arguments and complete response frames are bounded to 1 MiB; gate
 inspection is bounded to 100 records. Native plan limits remain authoritative.
@@ -203,3 +221,74 @@ JSON-RPC fixture, lost-start reconciliation, mixed workers and Chrome human
 review before retrieving the verified report. Native APIs and MCP transport are
 fixtures; this does not establish deployed broker/VM or hosted MCP publication
 acceptance. No model provider or agent loop is required by the SDK.
+
+## Publish pipeline output files
+
+Register named output resources when a successful pipeline returns a
+`PipelineArtifact`, such as a CSV report. Each registration selects an
+artifact from the validated output and declares its media type and byte limit.
+This adapter serves UTF-8 files.
+
+```ts
+const adapter = createPipelineToolMCP(importTool, {
+  outputResources: [{
+    name: "validation_report",
+    description: "Validation report for the import.",
+    mimeType: "text/csv",
+    files: reportBucket,
+    maxBytes: 65_536,
+    select: output => output.report,
+  }],
+});
+
+const [report] = adapter.resourceTemplates;
+const mount = {
+  adapter,
+  toolScopes: importToolScopes,
+  resourceScopes: { [report.uriTemplate]: ["imports:read", "reports:read"] },
+};
+```
+
+```python
+from faas_sdk.preview import PipelineOutputResource, PipelineToolMCP, ToolkitMount
+
+adapter = PipelineToolMCP(
+    import_tool,
+    output_resources=[
+        PipelineOutputResource(
+            name="validation_report",
+            description="Validation report for the import.",
+            mime_type="text/csv",
+            files=report_bucket,
+            max_bytes=65_536,
+            select=lambda output: output.get("report"),
+        ),
+    ],
+)
+mount = ToolkitMount(
+    adapter,
+    tool_scopes=import_tool_scopes,
+    resource_scopes={
+        adapter.resource_templates[0]["uriTemplate"]: ["imports:read", "reports:read"],
+    },
+)
+```
+
+Mount the adapter in the application toolkit. The toolkit publishes the
+resource templates with the declared OAuth scopes and filters resource links
+using the same policy. Use a file bucket whose client can serve the host's
+request model. The Python starter dispatches requests in separate event loops.
+The CSV fixture uses an HTTP/1.1 file client with connection reuse disabled.
+
+Successful `_result` calls and completed Tasks include the same
+`resource_link` blocks alongside their structured output. An absent artifact
+produces no link. A client can retain the URI and pass it to `resources/read`.
+The reader resolves the authorized receipt, checks that the URI still matches
+the run and artifact, and verifies the byte count and SHA-256. It checks
+authorization again before returning the content. Repeat reads use the current
+access policy and the original artifact binding.
+
+The default resource byte limit is 256 KiB. Configure up to 1 MiB per resource
+within the 1 MiB serialized response budget. Revoked application access and
+mismatched links return resource-not-found. Changed files and over-budget content return a read
+error with no file bytes. See the [CSV mapping report walkthrough](../examples/sdk-csv-jobs/README.md#read-the-csv-mapping-report-over-mcp).

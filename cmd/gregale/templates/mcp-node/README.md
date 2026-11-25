@@ -210,3 +210,17 @@ every 30 seconds, independent of RPC traffic. Shutdown stops the emitter.
 This is process telemetry, not an MCP readiness check. Set
 `MCP_TELEMETRY_LOSS_ALERT=true` to opt into platform operator alerts for lost
 heartbeats; customer performance webhook settings are separate.
+
+## Deploy a typed application toolkit
+
+Use the Gregale SDK preview to compose query, resource, pipeline, and action
+adapters into a toolkit. Pass it as `toolkit` in the options to `createApp` in `server.js`.
+Toolkits require external OAuth. Select each operation and assign its scopes
+when mounting its adapter. Keep existing tool or resource policies explicitly
+listed in `gregale-mcp.json` when you want them alongside the toolkit. The
+application adapters enforce current business access and any human approvals.
+
+To expose selected pipeline starts as MCP Tasks, configure the SDK pipeline
+Task view and pass `pipelineTasks` with the toolkit. Apply the pipeline Task binding
+schema first and share its database, namespace, and owner key across serving
+replicas. Use `tasks/get` to follow current progress and read the typed result.
