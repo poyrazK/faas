@@ -23172,7 +23172,9 @@ func (m *MemStore) PeekCliAuthCode(_ context.Context, tokenHash []byte) (api.Cli
 	if !row.ExpiresAt.After(time.Now()) {
 		return api.CliAuthStatusExpired, "", ErrNotFound
 	}
-	if row.ConsumedAt != nil {
+	// PgStore's claim sets status = 'consumed' before the CLI exchanges the
+	// code, so a claimed row is consumed here too.
+	if row.ConsumedAt != nil || row.AccountID != "" {
 		return api.CliAuthStatusConsumed, row.AccountID, nil
 	}
 	return api.CliAuthStatusPending, row.AccountID, nil

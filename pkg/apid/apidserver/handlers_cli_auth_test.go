@@ -24,6 +24,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -574,6 +575,116 @@ func TestRenderCliAuthPage_UnknownRendersError(t *testing.T) {
 	}
 }
 
+// TestCliAuthPage_MCPCodeStates: a person who signs up from an MCP approval
+// link can arrive, or press Authorize, after its code expired. Those pages say
+// the link expired and offer the console dashboard. A code an earlier
+// submission approved keeps the generic recovery, which never says whether
+// anything was authorized: on page load, and when a bind step (org/projects)
+// finds the code no longer pending.
+func TestCliAuthPage_MCPCodeStates(t *testing.T) {
+	const email = "mcp-expired@example.com"
+	issue := func(t *testing.T, store *state.MemStore, ttl time.Duration) (string, []byte) {
+		t.Helper()
+		code, hash, err := mintMCPAuthCode(api.CliAuthCodeRequest{Purpose: api.CliAuthPurposeMCPRead})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.IssueCliAuthCode(t.Context(), hash, time.Now().Add(ttl)); err != nil {
+			t.Fatal(err)
+		}
+		return code, hash
+	}
+	get := func(t *testing.T, srv *cliAuthTestServer, code string) *httptest.ResponseRecorder {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/cli-auth?code="+code+"&return=mcp", nil)
+		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: srv.issueBrowserSessionForTest(t, email)})
+		srv.ServeHTTP(rec, r)
+		return rec
+	}
+	// bindGone drives renderMCPCodeGone, the answer of the org and project
+	// bind steps when their pending-only update matches no row.
+	bindGone := func(t *testing.T, srv *cliAuthTestServer, code string, hash []byte) *httptest.ResponseRecorder {
+		t.Helper()
+		h := &cliAuthHandlers{srv: srv.apid, log: srv.apid.log, urlBase: srv.apid.cliAuthURLBase}
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/cli-auth", strings.NewReader("code="+code))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		h.renderMCPCodeGone(rec, r, hash)
+		return rec
+	}
+	claim := func(t *testing.T, store *state.MemStore, hash []byte) {
+		t.Helper()
+		if err := store.ClaimCliAuthCode(t.Context(), hash, "acct-earlier-approval"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tests := []struct {
+		name    string
+		run     func(t *testing.T, srv *cliAuthTestServer, store *state.MemStore) *httptest.ResponseRecorder
+		expired bool
+	}{
+		{name: "load expired", expired: true, run: func(t *testing.T, srv *cliAuthTestServer, store *state.MemStore) *httptest.ResponseRecorder {
+			code, _ := issue(t, store, -time.Minute)
+			return get(t, srv, code)
+		}},
+		{name: "load used", run: func(t *testing.T, srv *cliAuthTestServer, store *state.MemStore) *httptest.ResponseRecorder {
+			code, hash := issue(t, store, time.Hour)
+			claim(t, store, hash)
+			return get(t, srv, code)
+		}},
+		{name: "authorize expired", expired: true, run: func(t *testing.T, srv *cliAuthTestServer, store *state.MemStore) *httptest.ResponseRecorder {
+			// The CSRF pair binds the account, not the code, so a pending
+			// code's page can submit the one that expired meanwhile.
+			pending, _ := issue(t, store, time.Hour)
+			cookie, csrf := renderCliAuthForTestAs(t, srv, pending+"&return=mcp", email)
+			expired, _ := issue(t, store, -time.Minute)
+			return postCliAuthForTest(t, srv, expired, email, cookie, csrf)
+		}},
+		{name: "bind expired", expired: true, run: func(t *testing.T, srv *cliAuthTestServer, store *state.MemStore) *httptest.ResponseRecorder {
+			code, hash := issue(t, store, -time.Minute)
+			return bindGone(t, srv, code, hash)
+		}},
+		{name: "bind used", run: func(t *testing.T, srv *cliAuthTestServer, store *state.MemStore) *httptest.ResponseRecorder {
+			code, hash := issue(t, store, time.Hour)
+			claim(t, store, hash)
+			return bindGone(t, srv, code, hash)
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, store := newCliAuthTestServer(t)
+			rec := tc.run(t, srv, store)
+			body := rec.Body.String()
+			if rec.Code != http.StatusOK {
+				t.Fatalf("code = %d, want 200: %s", rec.Code, body)
+			}
+			want := []string{"Code unavailable", "This connection attempt can no longer continue.", "Start the connection again from your agent"}
+			forbid := []string{"expired", "Nothing was authorized", "gregale login", "<form"}
+			if tc.expired {
+				home := strings.TrimRight(srv.apid.cliAuthURLBase, "/") + cliAuthHome
+				want = []string{"Approval link expired",
+					fmt.Sprintf("Approval links last %d minutes", int(api.MCPBrowserAuthorizationTTL/time.Minute)),
+					"Start the connection again from your agent", `href="` + home + `"`}
+				forbid = []string{"Code unavailable", "Nothing was authorized", "gregale login", "<form"}
+				if !strings.HasPrefix(home, "http") {
+					t.Fatalf("dashboard link %q is not on the console origin", home)
+				}
+			}
+			for _, w := range want {
+				if !strings.Contains(body, w) {
+					t.Errorf("page lacks %q: %s", w, body)
+				}
+			}
+			for _, f := range forbid {
+				if strings.Contains(body, f) {
+					t.Errorf("page contains %q: %s", f, body)
+				}
+			}
+		})
+	}
+}
+
 // TestPostCliAuthPage_BindsToAuthenticatedAccount proves the browser's
 // submitted email is not an account-selection primitive. The claim is
 // always bound to the account established by sessionAuth.
@@ -601,8 +712,8 @@ func TestPostCliAuthPage_BindsToAuthenticatedAccount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("peek claimed code: %v", err)
 	}
-	if claimed != api.CliAuthStatusPending || claimedAccountID != account.ID {
-		t.Fatalf("status/account = %q/%q, want pending/%q", claimed, claimedAccountID, account.ID)
+	if claimed != api.CliAuthStatusConsumed || claimedAccountID != account.ID {
+		t.Fatalf("status/account = %q/%q, want consumed/%q", claimed, claimedAccountID, account.ID)
 	}
 	if _, err := store.AccountByEmail(t.Context(), "attacker@example.com"); err == nil {
 		t.Fatal("attacker email unexpectedly created an account")
@@ -738,11 +849,12 @@ func TestPostCliAuthPage_AlreadyClaimed(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	minted := mintCliAuthCodeForTest(t, srv)
+	// The page loads while the code is pending; another browser claims it
+	// before this one submits. A claimed code no longer renders a form.
+	cookieValue, formValue := renderCliAuthForTest(t, srv, minted.Code)
 	if err := store.ClaimCliAuthCode(t.Context(), mustHashCode(t, minted.Code), acct.ID); err != nil {
 		t.Fatalf("pre-claim: %v", err)
 	}
-
-	cookieValue, formValue := renderCliAuthForTest(t, srv, minted.Code)
 	rec := postCliAuthForTest(t, srv, minted.Code, "someone-else@example.com", cookieValue, formValue)
 
 	if rec.Code != http.StatusOK {
