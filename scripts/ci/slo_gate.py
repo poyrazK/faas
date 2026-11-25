@@ -111,6 +111,10 @@ TENANT_SIGNAL_FAMILIES = (
     "security_anomaly",  # failed-login spikes
     "residency",         # resident GB per paying customer (economic density)
     "hosted_mcp_demand",  # hosted MCP connections near the bridge's bound
+    # Customers' own alert presets on their apps (an app's API down, its
+    # spend, its failed deploys): one customer's app going down during the
+    # hold must not roll the platform back (deploy freeze #8084, 2026-11-25).
+    "alert_preset_signals",
 )
 SCRAPE_HOLD_SECONDS = 60
 MAX_ERROR_ROUNDS = 4

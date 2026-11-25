@@ -360,6 +360,17 @@ class HelpersTest(unittest.TestCase):
         rules, _ = sg.select_rules(loaded, ["apid"], max_hold=120)
         self.assertEqual(sorted(r.name for r in rules), sorted([*sg.PLATFORM_ALERTS, "ApidDown"]))
 
+    def test_a_customers_alert_preset_does_not_gate_meterd(self):
+        # Deploy freeze #8084: FaasApiDownAccount for one customer's app held
+        # 120 s after a meterd deploy and rolled the control plane back.
+        loaded = platform_rules() + [
+            rule("FaasApiDownAccount", component="meterd", severity="warn", family="alert_preset_signals"),
+            rule("MeterdDown", component="meterd", severity="page", family="daemon_liveness"),
+        ]
+        rules, _ = sg.select_rules(loaded, ["meterd"], max_hold=120)
+        self.assertNotIn("FaasApiDownAccount", [r.name for r in rules])
+        self.assertIn("MeterdDown", [r.name for r in rules])
+
     def test_parse_time(self):
         self.assertAlmostEqual(sg.parse_time("2026-10-17T15:09:13.123456789Z"),
                                datetime(2026, 10, 17, 15, 9, 13, tzinfo=timezone.utc).timestamp() + 0.123456789, places=6)
