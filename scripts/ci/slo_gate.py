@@ -111,6 +111,15 @@ TENANT_SIGNAL_FAMILIES = (
     "security_anomaly",  # failed-login spikes
     "residency",         # resident GB per paying customer (economic density)
     "hosted_mcp_demand",  # hosted MCP connections near the bridge's bound
+    # Customer alert presets: one series per customer app or account (app
+    # down, deploy failed, spend, cert expiry), labelled with the daemon that
+    # computes them. A customer's app being down is not that daemon's health:
+    # on 2026-11-25 FaasApiDownAccount for a test app down since before the
+    # deploy rolled back 13 units (#8084), because meterd's restart reset the
+    # alert's activeAt. The public status page excludes them the same way
+    # (pkg/apid/apidserver/status.go).
+    "alert_preset_signals",
+    "alert_preset_correlation",
 )
 SCRAPE_HOLD_SECONDS = 60
 MAX_ERROR_ROUNDS = 4
