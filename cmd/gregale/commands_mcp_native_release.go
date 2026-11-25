@@ -856,7 +856,9 @@ func startMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 		return err
 	}
 	if !isWorkerApp(candidate) || candidate.Manifest.WorkerReplicas == nil || candidate.Manifest.WorkerReplicas.Min < 1 {
-		return errors.New("candidate must be a worker app with at least one replica")
+		// A candidate created with `deploy --create-only` has no replica
+		// setting until its first deploy; the operator sets it explicitly.
+		return fmt.Errorf("candidate must be a worker app with at least one replica; run `gregale workers scale %s --min 1` before the release", p.WorkerApp)
 	}
 	if !s.ServingCaptured {
 		instances, err := c.ListInstances(ctx, p.WorkerApp)

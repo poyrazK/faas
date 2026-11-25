@@ -452,6 +452,9 @@ func runMCPBuiltinTaskGate(ctx context.Context, runtime string, p mcpNativeRelea
 		defer cancel()
 		cmd := exec.CommandContext(hookCtx, command[0], command[1:]...) //nolint:gosec // The CLI's own adapter entrypoints.
 		cmd.Env = append(environWithout(os.Environ(), "MCP_TASK_RELEASE_INPUT", "MCP_TASK_MIGRATION_DATABASE_URL"), "MCP_TASK_RELEASE_INPUT="+string(body))
+		// The adapters are this CLI; their problem details go to the operator,
+		// never into the gate report.
+		cmd.Stderr = os.Stderr
 		return cmd.Output()
 	}
 	view := reportMCPGateView{
