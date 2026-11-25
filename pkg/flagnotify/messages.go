@@ -14,23 +14,34 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// Channels are the channels a notification goes to: the experiment's own,
-// else the environment's.
-func Channels(own, environment []string) []string {
-	if len(own) > 0 {
-		return slices.Clone(own)
+// Channels are the channels a notification goes to: the experiment's own
+// that still exist, else the environment's. own reports which.
+func Channels(liveOwn, environment []string) (channels []string, own bool) {
+	if len(liveOwn) > 0 {
+		return slices.Clone(liveOwn), true
 	}
-	return slices.Clone(environment)
+	return slices.Clone(environment), false
 }
 
 // Where names an environment in messages and commands.
 type Where struct {
 	AccountID, EnvironmentID string
-	Project, Environment     string
+	// OrgID is the project's organization, for the release decision.
+	OrgID                string
+	Project, Environment string
 }
 
 func (w Where) flags() string {
 	return fmt.Sprintf("--project %s --environment %s", w.Project, w.Environment)
+}
+
+// writeSettings ends a message with how to change where it goes.
+func (w Where) writeSettings(b *strings.Builder, experiment string, own bool) {
+	if own {
+		fmt.Fprintf(b, "\nExperiment %s sends to the channels it was created with (gregale flag experiment create --notify).", experiment)
+		return
+	}
+	fmt.Fprintf(b, "\nChange where these go: gregale flag notify set --channel ID %s; turn them off: gregale flag notify clear %s", w.flags(), w.flags())
 }
 
 // ExperimentInput is an experiment's current recommendation.
@@ -41,6 +52,8 @@ type ExperimentInput struct {
 	// recommendation.
 	Action, Variant, Summary string
 	Commands                 []string
+	// OwnChannels is set when the channels are the experiment's own.
+	OwnChannels bool
 }
 
 // Experiment returns the notification for a recommendation that needs a
@@ -67,8 +80,9 @@ func Experiment(in ExperimentInput, channels []string) (state.FlagNotification, 
 	fmt.Fprintf(&b, "Experiment %s on flag %s in %s/%s: %s.", in.Experiment, in.Flag, in.Project, in.Environment, in.Summary)
 	writeCommands(&b, in.Commands)
 	fmt.Fprintf(&b, "\nResults: gregale flag experiment results %s %s", in.Experiment, in.flags())
+	in.writeSettings(&b, in.Experiment, in.OwnChannels)
 	return state.FlagNotification{
-		AccountID: in.AccountID, EnvironmentID: in.EnvironmentID, Kind: kind,
+		AccountID: in.AccountID, OrgID: in.OrgID, EnvironmentID: in.EnvironmentID, Kind: kind,
 		Key:     clip(fmt.Sprintf("experiment:%s:%s:%s:%s", in.EnvironmentID, in.Experiment, in.Action, in.Variant), 256),
 		Subject: clip(subject, 256), Summary: clip(b.String(), 8192), ChannelIDs: slices.Clone(channels),
 	}, true
@@ -104,8 +118,9 @@ func Digest(w Where, report []flags.FlagLifecycle, channels []string, now time.T
 			fmt.Fprintf(&b, ": %s", cmd)
 		}
 	}
+	w.writeSettings(&b, "", false)
 	return state.FlagNotification{
-		AccountID: w.AccountID, EnvironmentID: w.EnvironmentID, Kind: state.FlagNotifyLifecycleDigest,
+		AccountID: w.AccountID, OrgID: w.OrgID, EnvironmentID: w.EnvironmentID, Kind: state.FlagNotifyLifecycleDigest,
 		Key:     fmt.Sprintf("lifecycle-digest:%s:%d-W%02d", w.EnvironmentID, year, week),
 		Subject: clip(fmt.Sprintf("%d flag(s) in %s/%s need a decision", len(attention), w.Project, w.Environment), 256),
 		Summary: clip(b.String(), 8192), ChannelIDs: slices.Clone(channels),
@@ -130,8 +145,9 @@ func Expired(w Where, report []flags.FlagLifecycle, channels []string) []state.F
 		}
 		fmt.Fprintf(&b, "\nRemove it from code, then: gregale flag delete %s %s", f.Key, w.flags())
 		fmt.Fprintf(&b, "\nOr keep it: gregale flag set %s --expires YYYY-MM-DD %s", f.Key, w.flags())
+		w.writeSettings(&b, "", false)
 		out = append(out, state.FlagNotification{
-			AccountID: w.AccountID, EnvironmentID: w.EnvironmentID, Kind: state.FlagNotifyFlagExpired,
+			AccountID: w.AccountID, OrgID: w.OrgID, EnvironmentID: w.EnvironmentID, Kind: state.FlagNotifyFlagExpired,
 			Key:     clip(fmt.Sprintf("flag-expired:%s:%s:%s", w.EnvironmentID, f.Key, f.ExpiresAt), 256),
 			Subject: clip(fmt.Sprintf("Flag %s expired", f.Key), 256), Summary: clip(b.String(), 8192),
 			ChannelIDs: slices.Clone(channels),

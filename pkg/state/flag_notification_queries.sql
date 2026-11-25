@@ -12,10 +12,18 @@ SET channel_ids = EXCLUDED.channel_ids, updated_by = EXCLUDED.updated_by, update
 RETURNING *;
 
 -- name: EnqueueFlagNotification :execrows
--- Queues a notification unless one with its key exists.
-INSERT INTO flag_notifications (account_id, environment_id, kind, key, subject, summary, channel_ids, next_attempt_at)
-VALUES (sqlc.arg(account_id)::uuid, sqlc.arg(environment_id)::uuid, sqlc.arg(kind)::text, sqlc.arg(key)::text,
-    sqlc.arg(subject)::text, sqlc.arg(summary)::text, sqlc.arg(channel_ids)::uuid[], sqlc.arg(now)::timestamptz)
+-- Queues a notification unless its key was ever queued: the key outlives
+-- the outbox row, so a swept notification is not sent again.
+WITH k AS (
+    INSERT INTO flag_notification_keys (key, environment_id, kind)
+    VALUES (sqlc.arg(key)::text, sqlc.arg(environment_id)::uuid, sqlc.arg(kind)::text)
+    ON CONFLICT (key) DO NOTHING
+    RETURNING key
+)
+INSERT INTO flag_notifications (account_id, org_id, environment_id, kind, key, subject, summary, channel_ids, next_attempt_at)
+SELECT sqlc.arg(account_id)::uuid, sqlc.narg(org_id)::uuid, sqlc.arg(environment_id)::uuid, sqlc.arg(kind)::text, k.key,
+    sqlc.arg(subject)::text, sqlc.arg(summary)::text, sqlc.arg(channel_ids)::uuid[], sqlc.arg(now)::timestamptz
+FROM k
 ON CONFLICT (key) DO NOTHING;
 
 -- name: ClaimDueFlagNotifications :many
@@ -33,13 +41,17 @@ FROM due, accounts a
 WHERE n.id = due.id AND a.id = n.account_id
 RETURNING n.*, a.plan::text AS plan;
 
--- name: SettleFlagNotification :exec
--- Records an attempt: delivered, abandoned, or retried at next_attempt_at.
+-- name: SettleFlagNotification :execrows
+-- Records an attempt: delivered, abandoned, or retried at next_attempt_at
+-- to the channels still owed it. Only the claim that counted
+-- claimed_attempts settles: a row reclaimed after its lease ran out is not
+-- settled by the older claim.
 UPDATE flag_notifications
 SET status = sqlc.arg(status)::text, last_error = sqlc.arg(last_error)::text,
     next_attempt_at = sqlc.arg(next_attempt_at)::timestamptz,
+    attempts = sqlc.arg(attempts)::int, channel_ids = sqlc.arg(channel_ids)::uuid[],
     settled_at = CASE WHEN sqlc.arg(status)::text = 'pending' THEN NULL ELSE sqlc.arg(now)::timestamptz END
-WHERE id = sqlc.arg(id)::uuid AND status = 'pending';
+WHERE id = sqlc.arg(id)::uuid AND status = 'pending' AND attempts = sqlc.arg(claimed_attempts)::int;
 
 -- name: SweepFlagNotifications :execrows
 -- Deletes settled notifications settled before cutoff, at most max_rows.
@@ -48,6 +60,16 @@ WHERE id IN (
     SELECT id FROM flag_notifications
     WHERE status <> 'pending' AND settled_at < sqlc.arg(cutoff)::timestamptz
     ORDER BY settled_at
+    LIMIT sqlc.arg(max_rows)::int);
+
+-- name: SweepFlagNotificationDigestKeys :execrows
+-- Deletes weekly digest keys queued before cutoff, at most max_rows: a past
+-- week's key is never queued again.
+DELETE FROM flag_notification_keys
+WHERE key IN (
+    SELECT key FROM flag_notification_keys
+    WHERE kind = 'lifecycle_digest' AND created_at < sqlc.arg(cutoff)::timestamptz
+    ORDER BY created_at
     LIMIT sqlc.arg(max_rows)::int);
 
 -- name: FlagNotificationChannels :many

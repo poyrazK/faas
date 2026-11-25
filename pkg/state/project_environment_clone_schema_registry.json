@@ -22745,6 +22745,16 @@
     "kind": "operational"
   },
   {
+    "table": "flag_notification_keys",
+    "columns": [
+      "created_at",
+      "environment_id",
+      "key",
+      "kind"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "flag_notification_settings",
     "columns": [
       "account_id",
@@ -22768,6 +22778,7 @@
       "kind",
       "last_error",
       "next_attempt_at",
+      "org_id",
       "settled_at",
       "status",
       "subject",

@@ -52,17 +52,25 @@ change never re-sends or retargets a queued one.
 
 ### 2. Experiment notifications
 
-apid's experiment reconciler, after each pass over a running experiment whose
-channels (its own, else the environment's) are not empty, computes the same
-recommendation the results endpoint returns. It queues one notification per
-experiment, action and variant: `ship_variant` and `keep_control` as a
-decision, `fix_allocation` as a problem. The guardrail rollback queues a
-`rolled_back` problem when it stops the experiment. The message names the
-experiment, flag, environment, the recommendation's summary and its commands
-(`gregale flag experiment promote|stop ...`).
+An experiment's channels are its own that still exist, else the
+environment's; a message says which and how to change them.
+
+apid's experiment reconciler, at most once an hour per running experiment
+with channels and under its own timeout, computes the same recommendation
+the results endpoint returns. It queues one notification per experiment,
+action and variant: `ship_variant` and `keep_control` as a decision,
+`fix_allocation` as a problem. The guardrail check queues the `rolled_back`
+problem before it stops the experiment, from the breach alone (no results
+report); when queueing fails the experiment stays running and the next
+pass, which finds the same breach, tries again. The message names the
+experiment, flag, environment, the recommendation's summary and its
+commands (`gregale flag experiment promote|stop ...`).
 
 A recommendation that flaps (`ship_variant` → `keep_running` → `ship_variant`)
-notifies once: the queue key is the experiment, action and variant.
+notifies once: the queue key is the experiment, action and variant, and
+`flag_notification_keys` keeps every key queued, so a key is never queued
+twice, even after its outbox row is swept. Only weekly digest keys, which
+never recur, are swept from it.
 
 ### 3. Lifecycle notifications
 
@@ -79,18 +87,24 @@ The `flags.lifecycle_attention` audit events are unchanged.
 
 ### 4. Delivery
 
-apid writes `flag_notifications` rows (an outbox: account, environment, kind,
-unique key, subject, summary, channel ids, attempts, next attempt, delivered
-time). meterd, which holds the channel credentials, claims due rows, sends
-them through the alert channel sender, marks them delivered, and retries
-failures with backoff up to `FlagsNotificationMaxAttempts`. Delivered and
-abandoned rows are deleted after `FlagsNotificationRetentionDays`. A channel
-deleted since queueing is skipped.
+apid writes `flag_notifications` rows (an outbox: account, the project's
+organization, environment, kind, unique key, subject, summary, channel ids,
+attempts, next attempt, delivered time). meterd, which holds the channel
+credentials, claims due rows under a five-minute lease, sends them through
+the alert channel sender and marks them delivered. A notification some
+channels refused is retried, with backoff up to
+`FlagsNotificationMaxAttempts`, to those channels only. A batch starts no
+send in the lease's last 45 s and hands the remaining rows back, and a
+settle applies only to the claim that made it, so a row is never sent by
+two meterds. Waiting for the release (§5) is not an attempt. Delivered and
+abandoned rows are deleted after `FlagsNotificationRetentionDays`. A
+channel deleted since queueing is skipped.
 
 ### 5. Release
 
-Dark behind the `flag_notifications` platform flag (by plan), checked when
-apid queues and when meterd sends: off, nothing is queued, queued rows wait,
+Dark behind the `flag_notifications` platform flag (by plan or
+organization: the project's organization is captured on each row), checked
+when apid queues and when meterd sends: off, nothing is queued, queued rows wait,
 the settings endpoints and an experiment with its own channels answer 403.
 
 ## Consequences

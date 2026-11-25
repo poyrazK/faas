@@ -7124,6 +7124,7 @@ type FlagExperimentUnit struct {
 type FlagNotification struct {
 	ID            pgtype.UUID
 	AccountID     pgtype.UUID
+	OrgID         pgtype.UUID
 	EnvironmentID pgtype.UUID
 	Kind          string
 	Key           string
@@ -7136,6 +7137,14 @@ type FlagNotification struct {
 	LastError     string
 	CreatedAt     pgtype.Timestamptz
 	SettledAt     pgtype.Timestamptz
+}
+
+// Every flag notification key queued, so a swept notification is never queued again (ADR-20261125085913).
+type FlagNotificationKey struct {
+	Key           string
+	EnvironmentID pgtype.UUID
+	Kind          string
+	CreatedAt     pgtype.Timestamptz
 }
 
 // Notification channels for an environment's experiments and flag lifecycle (ADR-20261125085913).

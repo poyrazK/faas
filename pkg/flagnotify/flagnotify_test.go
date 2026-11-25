@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-var where = flagnotify.Where{AccountID: "acct-1", EnvironmentID: "env-1", Project: "shop", Environment: "production"}
+var where = flagnotify.Where{AccountID: "acct-1", EnvironmentID: "env-1", OrgID: "org-1", Project: "shop", Environment: "production"}
 
 // ADR-20261125085913 §2: decisions and problems notify, other
 // recommendations do not; one key per experiment, action and variant.
@@ -44,22 +44,30 @@ func TestExperimentNotification(t *testing.T) {
 			}
 			if n.Kind != tc.kind || n.Subject != tc.subject || n.Key != "experiment:env-1:checkout:"+tc.action+":"+tc.variant ||
 				!strings.Contains(n.Summary, "Next: gregale flag experiment promote checkout b") ||
-				!strings.Contains(n.Summary, "--project shop --environment production") {
+				!strings.Contains(n.Summary, "--project shop --environment production") || n.OrgID != "org-1" ||
+				!strings.Contains(n.Summary, "Change where these go: gregale flag notify set --channel ID --project shop --environment production") {
 				t.Fatalf("notification = %+v", n)
 			}
 		})
+	}
+	in := flagnotify.ExperimentInput{Where: where, Experiment: "checkout", Action: flags.RecommendKeepControl, OwnChannels: true}
+	if n, _ := flagnotify.Experiment(in, []string{"ch-1"}); !strings.Contains(n.Summary, "sends to the channels it was created with") ||
+		strings.Contains(n.Summary, "flag notify set") {
+		t.Fatalf("own-channel summary = %q", n.Summary)
 	}
 	if _, ok := flagnotify.Experiment(flagnotify.ExperimentInput{Where: where, Action: flags.RecommendShipVariant}, nil); ok {
 		t.Fatal("a notification without channels was queued")
 	}
 }
 
+// An experiment's own channels that still exist win; with none left the
+// environment's are used.
 func TestChannelsPreferTheExperiments(t *testing.T) {
-	if got := flagnotify.Channels([]string{"own"}, []string{"env"}); len(got) != 1 || got[0] != "own" {
-		t.Fatalf("own channels = %v", got)
+	if got, own := flagnotify.Channels([]string{"own"}, []string{"env"}); len(got) != 1 || got[0] != "own" || !own {
+		t.Fatalf("own channels = %v, %v", got, own)
 	}
-	if got := flagnotify.Channels(nil, []string{"env"}); len(got) != 1 || got[0] != "env" {
-		t.Fatalf("fallback = %v", got)
+	if got, own := flagnotify.Channels(nil, []string{"env"}); len(got) != 1 || got[0] != "env" || own {
+		t.Fatalf("fallback = %v, %v", got, own)
 	}
 }
 
@@ -93,16 +101,39 @@ func TestLifecycleNotifications(t *testing.T) {
 }
 
 type fakeSender struct {
-	mu        sync.Mutex
-	sent      []alertchannels.Message
-	delivered int
+	mu      sync.Mutex
+	sent    []alertchannels.Message
+	to      [][]string
+	failing map[string]bool
+	// tick runs after each send (advances a test clock).
+	tick func()
 }
 
-func (f *fakeSender) SendToChannels(_ context.Context, chans []state.NotificationChannel, msg alertchannels.Message, _ time.Time) (int, int) {
+func (f *fakeSender) SendToChannelsFailed(_ context.Context, chans []state.NotificationChannel, msg alertchannels.Message, _ time.Time) []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sent = append(f.sent, msg)
-	return len(chans), f.delivered
+	var to, failed []string
+	for _, c := range chans {
+		to = append(to, c.ID)
+		if f.failing[c.ID] {
+			failed = append(failed, c.ID)
+		}
+	}
+	f.to = append(f.to, to)
+	if f.tick != nil {
+		f.tick()
+	}
+	return failed
+}
+
+func notificationByKey(store *state.MemStore, key string) state.FlagNotification {
+	for _, n := range store.FlagNotificationsForTest() {
+		if n.Key == key {
+			return n
+		}
+	}
+	return state.FlagNotification{}
 }
 
 // §4: meterd delivers once, retries with backoff, gives up after the
@@ -129,7 +160,7 @@ func TestRunner(t *testing.T) {
 	}
 	queue("ok", state.FlagNotifyExperimentProblem, ch.ID)
 	queue("gone", state.FlagNotifyLifecycleDigest, "00000000-0000-4000-8000-000000000009")
-	sender := &fakeSender{delivered: 1}
+	sender := &fakeSender{}
 	clock := now
 	r := &flagnotify.Runner{Store: store, Channels: sender, Now: func() time.Time { return clock }}
 	if n, err := r.RunOnce(ctx); err != nil || n != 2 {
@@ -147,7 +178,7 @@ func TestRunner(t *testing.T) {
 	}
 
 	queue("failing", state.FlagNotifyExperimentDecision, ch.ID)
-	sender.delivered = 0
+	sender.failing = map[string]bool{ch.ID: true}
 	for attempt := 1; attempt <= api.FlagsNotificationMaxAttempts; attempt++ {
 		if _, err := r.RunOnce(ctx); err != nil {
 			t.Fatal(err)
@@ -173,6 +204,111 @@ func TestRunner(t *testing.T) {
 	}
 	if len(sender.sent) != sent {
 		t.Fatal("a notification of an account without the feature was sent")
+	}
+}
+
+// Passes while the account waits for the release do not count as delivery
+// attempts, so the first real failure afterwards still retries.
+func TestRunnerNotReleasedKeepsAttempts(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(ctx, "dark@example.com", api.PlanPro)
+	ch, _ := store.CreateNotificationChannel(ctx, state.NotificationChannel{AccountID: acct.ID, Name: "ops", Kind: "slack", TargetSealed: []byte("x")}, 10)
+	clock := time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC)
+	if _, err := store.EnqueueFlagNotification(ctx, state.FlagNotification{AccountID: acct.ID, EnvironmentID: "env-1",
+		Kind: state.FlagNotifyExperimentDecision, Key: "k", Subject: "s", Summary: "b", ChannelIDs: []string{ch.ID}}, clock); err != nil {
+		t.Fatal(err)
+	}
+	released := false
+	sender := &fakeSender{failing: map[string]bool{ch.ID: true}}
+	r := &flagnotify.Runner{Store: store, Channels: sender, Now: func() time.Time { return clock },
+		Released: func(context.Context, state.FlagNotification) bool { return released }}
+	for range api.FlagsNotificationMaxAttempts + 2 {
+		if _, err := r.RunOnce(ctx); err != nil {
+			t.Fatal(err)
+		}
+		clock = clock.Add(flagnotify.NotReleasedRetry)
+	}
+	if n := notificationByKey(store, "k"); n.Attempts != 0 || n.Status != state.FlagNotificationPending {
+		t.Fatalf("after dark passes = %+v; want pending with 0 attempts", n)
+	}
+	released = true
+	if _, err := r.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := notificationByKey(store, "k"); n.Status != state.FlagNotificationPending || n.Attempts != 1 {
+		t.Fatalf("after the first failure = %+v; want a retry", n)
+	}
+}
+
+// A notification some channels accepted is retried only to the channels
+// that did not.
+func TestRunnerRetriesOnlyFailedChannels(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(ctx, "partial@example.com", api.PlanPro)
+	slack, _ := store.CreateNotificationChannel(ctx, state.NotificationChannel{AccountID: acct.ID, Name: "slack", Kind: "slack", TargetSealed: []byte("x")}, 10)
+	pager, _ := store.CreateNotificationChannel(ctx, state.NotificationChannel{AccountID: acct.ID, Name: "pager", Kind: "pagerduty", TargetSealed: []byte("x")}, 10)
+	clock := time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC)
+	if _, err := store.EnqueueFlagNotification(ctx, state.FlagNotification{AccountID: acct.ID, EnvironmentID: "env-1",
+		Kind: state.FlagNotifyExperimentProblem, Key: "k", Subject: "s", Summary: "b", ChannelIDs: []string{slack.ID, pager.ID}}, clock); err != nil {
+		t.Fatal(err)
+	}
+	sender := &fakeSender{failing: map[string]bool{pager.ID: true}}
+	r := &flagnotify.Runner{Store: store, Channels: sender, Now: func() time.Time { return clock }}
+	if _, err := r.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := notificationByKey(store, "k"); n.Status != state.FlagNotificationPending || len(n.ChannelIDs) != 1 || n.ChannelIDs[0] != pager.ID {
+		t.Fatalf("after a partial send = %+v; want pending for the pager only", n)
+	}
+	sender.failing = nil
+	clock = clock.Add(time.Hour)
+	if _, err := r.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if last := sender.to[len(sender.to)-1]; len(last) != 1 || last[0] != pager.ID {
+		t.Fatalf("retry went to %v; want the pager only", last)
+	}
+	if n := notificationByKey(store, "k"); n.Status != state.FlagNotificationDelivered {
+		t.Fatalf("after the retry = %+v", n)
+	}
+}
+
+// A batch starts no send once its lease is nearly over: the rest go back
+// at once, with no attempt counted.
+func TestRunnerHandsBackPastTheLease(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(ctx, "slow@example.com", api.PlanPro)
+	ch, _ := store.CreateNotificationChannel(ctx, state.NotificationChannel{AccountID: acct.ID, Name: "ops", Kind: "slack", TargetSealed: []byte("x")}, 10)
+	clock := time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC)
+	for _, key := range []string{"a", "b", "c"} {
+		if _, err := store.EnqueueFlagNotification(ctx, state.FlagNotification{AccountID: acct.ID, EnvironmentID: "env-1",
+			Kind: state.FlagNotifyExperimentDecision, Key: key, Subject: "s", Summary: "b", ChannelIDs: []string{ch.ID}}, clock); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Each send takes most of the lease.
+	sender := &fakeSender{tick: func() { clock = clock.Add(flagnotify.Lease - flagnotify.SendBudget + time.Second) }}
+	r := &flagnotify.Runner{Store: store, Channels: sender, Now: func() time.Time { return clock }}
+	if _, err := r.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("sent %d in one lease; want 1", len(sender.sent))
+	}
+	pending := 0
+	for _, n := range store.FlagNotificationsForTest() {
+		if n.Status == state.FlagNotificationPending {
+			pending++
+			if n.Attempts != 0 || n.NextAttemptAt.After(clock) {
+				t.Fatalf("handed back = %+v; want due now with 0 attempts", n)
+			}
+		}
+	}
+	if pending != 2 {
+		t.Fatalf("pending = %d; want 2", pending)
 	}
 }
 

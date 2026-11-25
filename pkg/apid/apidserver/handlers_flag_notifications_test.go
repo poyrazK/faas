@@ -112,6 +112,33 @@ func TestFlagExperimentRollbackNotifies(t *testing.T) {
 	}
 }
 
+// §2: an experiment whose own channels were all deleted notifies the
+// environment's, and the message says how to change them.
+func TestFlagExperimentDeletedChannelsFallBack(t *testing.T) {
+	f := newFlagExperimentTestEnv(t)
+	(*f.e.S()).EnablePlatformFlagForAll(platformflags.FlagNotifications)
+	envCh, ownCh := f.channel(t, "env"), f.channel(t, "own")
+	if code, body := f.do(t, http.MethodPut, flagNotificationsPath, api.FlagNotificationSettingsRequest{ChannelIDs: []string{envCh}}); code != http.StatusOK {
+		t.Fatalf("set = %d %s", code, body)
+	}
+	x := f.create(t, api.FlagExperimentCreateRequest{Key: "orphaned", Flag: "checkout", RuleID: "weighted", Control: "legacy",
+		MetricEvent: "order_completed", Start: true, NotifyChannelIDs: []string{ownCh}})
+	if err := f.mem.DeleteNotificationChannel(context.Background(), f.scope.AccountID, ownCh); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	for i := 0; i < 150; i++ {
+		f.mem.SeedFlagExperimentUnitForTest(x.ID, uuid.NewString(), "legacy", now, 20, int64(i%2), 0, 0, 100)
+		f.mem.SeedFlagExperimentUnitForTest(x.ID, uuid.NewString(), "new", now, 20, int64(8+i%5), 0, 0, 100)
+	}
+	apidserver.RunFlagExperimentPass(*f.e.S(), now)
+	problems := f.notifications(state.FlagNotifyExperimentProblem)
+	if len(problems) != 1 || len(problems[0].ChannelIDs) != 1 || problems[0].ChannelIDs[0] != envCh ||
+		!strings.Contains(problems[0].Summary, "gregale flag notify set --channel ID --project flags-guard --environment production") {
+		t.Fatalf("problems = %+v; want one to the environment's channel", problems)
+	}
+}
+
 // §2: a running experiment without a decision queues nothing.
 func TestFlagExperimentKeepRunningDoesNotNotify(t *testing.T) {
 	f := newFlagExperimentTestEnv(t)

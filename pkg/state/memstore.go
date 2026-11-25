@@ -656,6 +656,7 @@ type MemStore struct {
 	savedInsights                        map[string]*memSavedInsightRow      // ADR-20261122190000, by ID, lazily made
 	flagNotificationSettings             map[string]FlagNotificationSettings // ADR-20261125085913, by environment ID, lazily made
 	flagNotifications                    []FlagNotification                  // ADR-20261125085913
+	flagNotificationKeys                 map[string]flagNotificationKey      // ADR-20261125085913
 	platformTenantReconciliationReceipts map[string]api.PlatformTenantReconciliationReceiptResponse
 	platformTenantOffboardingReceipts    map[string]api.PlatformTenantOffboardingReceiptResponse
 	platformTenantAccessTokens           map[string]PlatformTenantAccessToken

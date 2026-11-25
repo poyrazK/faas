@@ -1467,7 +1467,8 @@ type Querier interface {
 	EnqueueEnvironmentGitNotification(ctx context.Context, db DBTX, arg EnqueueEnvironmentGitNotificationParams) error
 	EnqueueEnvironmentGitOps(ctx context.Context, db DBTX, arg EnqueueEnvironmentGitOpsParams) error
 	EnqueueExclusiveWebhookEffect(ctx context.Context, db DBTX, arg EnqueueExclusiveWebhookEffectParams) error
-	// Queues a notification unless one with its key exists.
+	// Queues a notification unless its key was ever queued: the key outlives
+	// the outbox row, so a swept notification is not sent again.
 	EnqueueFlagNotification(ctx context.Context, db DBTX, arg EnqueueFlagNotificationParams) (int64, error)
 	// Managed-work capture takes this action-run lock in its trigger; acquire it before replay-parent row locks.
 	EnqueueInvocationRow(ctx context.Context, db DBTX, arg EnqueueInvocationRowParams) (Invocation, error)
@@ -8651,8 +8652,11 @@ type Querier interface {
 	SetWorkflowScheduleOccurrenceReplay(ctx context.Context, db DBTX, arg SetWorkflowScheduleOccurrenceReplayParams) (int64, error)
 	SettleCustomerOperationWorkflow(ctx context.Context, db DBTX, arg SettleCustomerOperationWorkflowParams) (int64, error)
 	SettleEventSubscriptionIntent(ctx context.Context, db DBTX, arg SettleEventSubscriptionIntentParams) error
-	// Records an attempt: delivered, abandoned, or retried at next_attempt_at.
-	SettleFlagNotification(ctx context.Context, db DBTX, arg SettleFlagNotificationParams) error
+	// Records an attempt: delivered, abandoned, or retried at next_attempt_at
+	// to the channels still owed it. Only the claim that counted
+	// claimed_attempts settles: a row reclaimed after its lease ran out is not
+	// settled by the older claim.
+	SettleFlagNotification(ctx context.Context, db DBTX, arg SettleFlagNotificationParams) (int64, error)
 	// Records a run's outcome and releases the lease. A definition changed
 	// since the claim (updated_at) keeps its new schedule.
 	SettleSavedInsight(ctx context.Context, db DBTX, arg SettleSavedInsightParams) (int64, error)
@@ -8777,6 +8781,9 @@ type Querier interface {
 	SupersedeTriggerRecordItems(ctx context.Context, db DBTX, arg SupersedeTriggerRecordItemsParams) (int64, error)
 	SuppressMCPReminder(ctx context.Context, db DBTX, arg SuppressMCPReminderParams) error
 	SweepCountedMirrorResults(ctx context.Context, db DBTX, cutoff pgtype.Timestamptz) (int64, error)
+	// Deletes weekly digest keys queued before cutoff, at most max_rows: a past
+	// week's key is never queued again.
+	SweepFlagNotificationDigestKeys(ctx context.Context, db DBTX, arg SweepFlagNotificationDigestKeysParams) (int64, error)
 	// Deletes settled notifications settled before cutoff, at most max_rows.
 	SweepFlagNotifications(ctx context.Context, db DBTX, arg SweepFlagNotificationsParams) (int64, error)
 	// Bounded sweep of windows that ended; run after each recorded failure.

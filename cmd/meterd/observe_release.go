@@ -167,7 +167,13 @@ func (r *observeRelease) flagNotifications(ctx context.Context, n state.FlagNoti
 	case !owner.live:
 		return false
 	}
-	return r.allows("flag-notifications", platformflags.Subject{AccountID: n.AccountID, Plan: string(owner.plan), OrgID: owner.orgID})
+	// The project's organization was captured when apid queued it, so an
+	// org-targeted release decides here as it did there.
+	orgID := n.OrgID
+	if orgID == "" {
+		orgID = owner.orgID
+	}
+	return r.allows("flag-notifications", platformflags.Subject{AccountID: n.AccountID, Plan: string(owner.plan), OrgID: orgID})
 }
 
 // allows decides a capability's flag for subject. A hand-written flag no

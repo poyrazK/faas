@@ -9,8 +9,10 @@ import (
 )
 
 // ADR-20261125085913: an environment's channels are replaced in place, a
-// notification key queues once, due rows are leased once with their plan
-// and count an attempt, a retry waits for its time, and settled rows sweep.
+// notification key queues once for good (even after its row is swept),
+// due rows are leased once with their plan and count an attempt, only the
+// current claim settles, a retry waits for its time with the channels
+// still owed, settled rows sweep, and past digest keys sweep.
 func TestPg_FlagNotifications(t *testing.T) {
 	f := newFlagExperimentPgFixture(t, "flag-notifications")
 	s, ctx, acct := f.s, f.ctx, f.acct
@@ -51,8 +53,12 @@ func TestPg_FlagNotifications(t *testing.T) {
 		t.Fatalf("second claim = %+v, %v; want none while leased", again, err)
 	}
 	retry := now.Add(5 * time.Minute)
+	if err := s.SettleFlagNotification(ctx, state.FlagNotificationSettle{ID: claimed[0].ID, Status: state.FlagNotificationDelivered,
+		Now: now, ClaimedAttempts: 0, Attempts: 0, ChannelIDs: []string{ch.ID}}); err != nil {
+		t.Fatalf("stale settle: %v", err)
+	}
 	if err := s.SettleFlagNotification(ctx, state.FlagNotificationSettle{ID: claimed[0].ID, Status: state.FlagNotificationPending,
-		LastError: "slack 500", NextAttemptAt: retry, Now: now}); err != nil {
+		LastError: "slack 500", NextAttemptAt: retry, Now: now, ClaimedAttempts: 1, Attempts: 1, ChannelIDs: []string{ch.ID}}); err != nil {
 		t.Fatalf("settle retry: %v", err)
 	}
 	if early, err := s.ClaimDueFlagNotifications(ctx, now.Add(time.Minute), now.Add(2*time.Minute), 10); err != nil || len(early) != 0 {
@@ -60,9 +66,10 @@ func TestPg_FlagNotifications(t *testing.T) {
 	}
 	later, err := s.ClaimDueFlagNotifications(ctx, retry, retry.Add(time.Minute), 10)
 	if err != nil || len(later) != 1 || later[0].Attempts != 2 || later[0].LastError != "slack 500" {
-		t.Fatalf("claim at retry = %+v, %v", later, err)
+		t.Fatalf("claim at retry = %+v, %v (a stale settle must not deliver it)", later, err)
 	}
-	if err := s.SettleFlagNotification(ctx, state.FlagNotificationSettle{ID: later[0].ID, Status: state.FlagNotificationDelivered, Now: retry}); err != nil {
+	if err := s.SettleFlagNotification(ctx, state.FlagNotificationSettle{ID: later[0].ID, Status: state.FlagNotificationDelivered, Now: retry,
+		ClaimedAttempts: 2, Attempts: 2, ChannelIDs: []string{ch.ID}}); err != nil {
 		t.Fatalf("settle delivered: %v", err)
 	}
 	if swept, err := s.SweepFlagNotifications(ctx, retry, 10); err != nil || swept != 0 {
@@ -70,6 +77,17 @@ func TestPg_FlagNotifications(t *testing.T) {
 	}
 	if swept, err := s.SweepFlagNotifications(ctx, retry.Add(time.Second), 10); err != nil || swept != 1 {
 		t.Fatalf("sweep = %d, %v; want 1", swept, err)
+	}
+	if queued, err := s.EnqueueFlagNotification(ctx, n, now); err != nil || queued {
+		t.Fatalf("enqueue after sweep = %v, %v; want not queued", queued, err)
+	}
+	digest := state.FlagNotification{AccountID: acct, EnvironmentID: f.env, Kind: state.FlagNotifyLifecycleDigest,
+		Key: "lifecycle-digest:x:2026-W48", Subject: "1 flag", Summary: "x", ChannelIDs: []string{ch.ID}}
+	if queued, err := s.EnqueueFlagNotification(ctx, digest, now); err != nil || !queued {
+		t.Fatalf("enqueue digest = %v, %v", queued, err)
+	}
+	if _, err := s.SweepFlagNotifications(ctx, time.Now().Add(time.Hour), 10); err != nil {
+		t.Fatalf("sweep digest keys: %v", err)
 	}
 
 	chans, err := s.FlagNotificationChannels(ctx, acct, []string{ch.ID})

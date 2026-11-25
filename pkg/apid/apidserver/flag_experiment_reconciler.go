@@ -3,6 +3,7 @@ package apidserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -37,6 +38,9 @@ type flagExperimentReconciler struct {
 	events  state.FlagEventStore
 	log     *slog.Logger
 	afterID string
+	// notifyChecked is when each running experiment's recommendation was
+	// last checked for a notification (ADR-20261125085913).
+	notifyChecked map[string]time.Time
 }
 
 func startFlagExperimentReconciler(ctx context.Context, s *server, log *slog.Logger) {
@@ -298,6 +302,9 @@ func (r *flagExperimentReconciler) checkGuardrails(ctx context.Context, x state.
 		return err
 	}
 	breach := breachRecord(g, v, version, rolledBack)
+	if err := r.notifyRollback(ctx, x, g.Name, v.Variant, rolledBack, now); err != nil {
+		return fmt.Errorf("queue guardrail notification (the experiment stops on the next pass): %w", err)
+	}
 	if _, err := r.store.StopFlagExperiment(ctx, x.EnvironmentID, x.Key, now, flags.StopGuardrailBreach, breach); err != nil && !errors.Is(err, state.ErrNotFound) {
 		return err
 	}

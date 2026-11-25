@@ -44348,6 +44348,26 @@ CREATE TABLE public.flag_experiments (
 
 
 --
+-- Name: flag_notification_keys; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.flag_notification_keys (
+    key text NOT NULL,
+    environment_id uuid NOT NULL,
+    kind text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT flag_notification_keys_chk CHECK (((kind = ANY (ARRAY['experiment_decision'::text, 'experiment_problem'::text, 'lifecycle_digest'::text, 'flag_expired'::text])) AND ((length(key) >= 1) AND (length(key) <= 256))))
+);
+
+
+--
+-- Name: TABLE flag_notification_keys; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.flag_notification_keys IS 'Every flag notification key queued, so a swept notification is never queued again (ADR-20261125085913).';
+
+
+--
 -- Name: flag_notification_settings; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -44375,6 +44395,7 @@ COMMENT ON TABLE public.flag_notification_settings IS 'Notification channels for
 CREATE TABLE public.flag_notifications (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     account_id uuid NOT NULL,
+    org_id uuid,
     environment_id uuid NOT NULL,
     kind text NOT NULL,
     key text NOT NULL,
@@ -70723,6 +70744,14 @@ ALTER TABLE ONLY public.flag_experiments
 
 
 --
+-- Name: flag_notification_keys flag_notification_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_notification_keys
+    ADD CONSTRAINT flag_notification_keys_pkey PRIMARY KEY (key);
+
+
+--
 -- Name: flag_notification_settings flag_notification_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -84850,6 +84879,20 @@ CREATE UNIQUE INDEX flag_experiments_one_running_per_rule ON public.flag_experim
 --
 
 CREATE INDEX flag_experiments_running_idx ON public.flag_experiments USING btree (id) WHERE (status = 'running'::text);
+
+
+--
+-- Name: flag_notification_keys_digest_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX flag_notification_keys_digest_idx ON public.flag_notification_keys USING btree (created_at) WHERE (kind = 'lifecycle_digest'::text);
+
+
+--
+-- Name: flag_notification_keys_environment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX flag_notification_keys_environment_idx ON public.flag_notification_keys USING btree (environment_id);
 
 
 --
@@ -107069,6 +107112,14 @@ ALTER TABLE ONLY public.flag_experiments
 
 ALTER TABLE ONLY public.flag_experiments
     ADD CONSTRAINT flag_experiments_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: flag_notification_keys flag_notification_keys_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.flag_notification_keys
+    ADD CONSTRAINT flag_notification_keys_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
 
 
 --

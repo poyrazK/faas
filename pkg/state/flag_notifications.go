@@ -40,30 +40,42 @@ type FlagNotificationSettings struct {
 	UpdatedAt                time.Time
 }
 
-// FlagNotification is one queued notification. Key is unique: queueing a
-// key again does nothing.
+// FlagNotification is one queued notification. Key is unique for good:
+// queueing a key again does nothing, even after the notification was swept.
 type FlagNotification struct {
 	ID, AccountID, EnvironmentID string
-	Kind, Key, Subject, Summary  string
-	ChannelIDs                   []string
-	Status                       string
-	Attempts                     int
-	NextAttemptAt                time.Time
-	LastError                    string
-	CreatedAt                    time.Time
-	SettledAt                    *time.Time
+	// OrgID is the organization of the notification's project, for the
+	// release decision; empty outside an organization.
+	OrgID                       string
+	Kind, Key, Subject, Summary string
+	ChannelIDs                  []string
+	Status                      string
+	Attempts                    int
+	NextAttemptAt               time.Time
+	LastError                   string
+	CreatedAt                   time.Time
+	SettledAt                   *time.Time
 	// Plan is set on claimed rows.
 	Plan string
 }
 
 // FlagNotificationSettle is the outcome of one delivery attempt: Status
-// delivered or abandoned, or pending with the next attempt's time.
+// delivered or abandoned, or pending with the next attempt's time and the
+// channels still owed the notification.
 type FlagNotificationSettle struct {
 	ID            string
 	Status        string
 	LastError     string
 	NextAttemptAt time.Time
 	Now           time.Time
+	// ClaimedAttempts is the attempt count the claim returned; a row
+	// reclaimed since (its lease ran out) is left alone.
+	ClaimedAttempts int
+	// Attempts is the count to record: ClaimedAttempts, or one less when
+	// the attempt did not count.
+	Attempts int
+	// ChannelIDs are the channels still owed the notification.
+	ChannelIDs []string
 }
 
 // FlagNotificationStore keeps flag notification settings and the outbox.
@@ -82,7 +94,7 @@ type FlagNotificationStore interface {
 	// SettleFlagNotification records a delivery attempt.
 	SettleFlagNotification(ctx context.Context, s FlagNotificationSettle) error
 	// SweepFlagNotifications deletes up to limit notifications settled
-	// before cutoff.
+	// before cutoff, and up to limit weekly digest keys queued before it.
 	SweepFlagNotifications(ctx context.Context, cutoff time.Time, limit int) (int64, error)
 	// FlagNotificationChannels returns the account's channels among ids.
 	FlagNotificationChannels(ctx context.Context, accountID string, ids []string) ([]NotificationChannel, error)
@@ -97,7 +109,7 @@ func flagNotificationErr(op string, err error) error {
 
 func flagNotificationFromRow(r sqlc.FlagNotification) FlagNotification {
 	return FlagNotification{
-		ID: pgUUIDString(r.ID), AccountID: pgUUIDString(r.AccountID), EnvironmentID: pgUUIDString(r.EnvironmentID),
+		ID: pgUUIDString(r.ID), AccountID: pgUUIDString(r.AccountID), OrgID: pgUUIDString(r.OrgID), EnvironmentID: pgUUIDString(r.EnvironmentID),
 		Kind: r.Kind, Key: r.Key, Subject: r.Subject, Summary: r.Summary, ChannelIDs: pgUUIDStrings(r.ChannelIds),
 		Status: r.Status, Attempts: int(r.Attempts), NextAttemptAt: r.NextAttemptAt.Time.UTC(), LastError: r.LastError,
 		CreatedAt: r.CreatedAt.Time.UTC(), SettledAt: optionalTimestamptz(r.SettledAt),
@@ -129,7 +141,7 @@ func (s *PgStore) SetFlagNotificationSettings(ctx context.Context, in FlagNotifi
 // EnqueueFlagNotification implements FlagNotificationStore.
 func (s *PgStore) EnqueueFlagNotification(ctx context.Context, n FlagNotification, now time.Time) (bool, error) {
 	rows, err := sqlc.New().EnqueueFlagNotification(ctx, s.pool, sqlc.EnqueueFlagNotificationParams{
-		AccountID: uuidToPgtype(n.AccountID), EnvironmentID: uuidToPgtype(n.EnvironmentID), Kind: n.Kind, Key: n.Key,
+		AccountID: uuidToPgtype(n.AccountID), OrgID: uuidToPgtype(n.OrgID), EnvironmentID: uuidToPgtype(n.EnvironmentID), Kind: n.Kind, Key: n.Key,
 		Subject: n.Subject, Summary: n.Summary, ChannelIds: pgUUIDList(n.ChannelIDs), Now: pgTimestamptzUTC(now)})
 	if err != nil {
 		return false, flagNotificationErr("enqueue", err)
@@ -147,7 +159,7 @@ func (s *PgStore) ClaimDueFlagNotifications(ctx context.Context, now, leaseUntil
 	out := make([]FlagNotification, 0, len(rows))
 	for _, r := range rows {
 		n := flagNotificationFromRow(sqlc.FlagNotification{
-			ID: r.ID, AccountID: r.AccountID, EnvironmentID: r.EnvironmentID, Kind: r.Kind, Key: r.Key, Subject: r.Subject,
+			ID: r.ID, AccountID: r.AccountID, OrgID: r.OrgID, EnvironmentID: r.EnvironmentID, Kind: r.Kind, Key: r.Key, Subject: r.Subject,
 			Summary: r.Summary, ChannelIds: r.ChannelIds, Status: r.Status, Attempts: r.Attempts, NextAttemptAt: r.NextAttemptAt,
 			LastError: r.LastError, CreatedAt: r.CreatedAt, SettledAt: r.SettledAt})
 		n.Plan = r.Plan
@@ -162,9 +174,10 @@ func (s *PgStore) SettleFlagNotification(ctx context.Context, st FlagNotificatio
 	if next.IsZero() {
 		next = st.Now
 	}
-	err := sqlc.New().SettleFlagNotification(ctx, s.pool, sqlc.SettleFlagNotificationParams{
+	_, err := sqlc.New().SettleFlagNotification(ctx, s.pool, sqlc.SettleFlagNotificationParams{
 		Status: st.Status, LastError: truncateUTF8(st.LastError, 512), NextAttemptAt: pgTimestamptzUTC(next),
-		Now: pgTimestamptzUTC(st.Now), ID: uuidToPgtype(st.ID)})
+		Attempts: int32(st.Attempts), ChannelIds: pgUUIDList(st.ChannelIDs), Now: pgTimestamptzUTC(st.Now),
+		ID: uuidToPgtype(st.ID), ClaimedAttempts: int32(st.ClaimedAttempts)})
 	if err != nil {
 		return flagNotificationErr("settle", err)
 	}
@@ -173,10 +186,15 @@ func (s *PgStore) SettleFlagNotification(ctx context.Context, st FlagNotificatio
 
 // SweepFlagNotifications implements FlagNotificationStore.
 func (s *PgStore) SweepFlagNotifications(ctx context.Context, cutoff time.Time, limit int) (int64, error) {
-	n, err := sqlc.New().SweepFlagNotifications(ctx, s.pool, sqlc.SweepFlagNotificationsParams{
+	q := sqlc.New()
+	n, err := q.SweepFlagNotifications(ctx, s.pool, sqlc.SweepFlagNotificationsParams{
 		Cutoff: pgTimestamptzUTC(cutoff), MaxRows: int32(limit)})
 	if err != nil {
 		return 0, flagNotificationErr("sweep", err)
+	}
+	if _, err := q.SweepFlagNotificationDigestKeys(ctx, s.pool, sqlc.SweepFlagNotificationDigestKeysParams{
+		Cutoff: pgTimestamptzUTC(cutoff), MaxRows: int32(limit)}); err != nil {
+		return n, flagNotificationErr("sweep digest keys", err)
 	}
 	return n, nil
 }
@@ -242,11 +260,13 @@ func (m *MemStore) SetFlagNotificationSettings(_ context.Context, in FlagNotific
 func (m *MemStore) EnqueueFlagNotification(_ context.Context, n FlagNotification, now time.Time) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, existing := range m.flagNotifications {
-		if existing.Key == n.Key {
-			return false, nil
-		}
+	if _, seen := m.flagNotificationKeys[n.Key]; seen {
+		return false, nil
 	}
+	if m.flagNotificationKeys == nil {
+		m.flagNotificationKeys = map[string]flagNotificationKey{}
+	}
+	m.flagNotificationKeys[n.Key] = flagNotificationKey{kind: n.Kind, createdAt: now.UTC()}
 	n.ID, n.Status, n.Attempts, n.LastError = uuid.NewString(), FlagNotificationPending, 0, ""
 	n.NextAttemptAt, n.CreatedAt, n.SettledAt = now.UTC(), now.UTC(), nil
 	m.flagNotifications = append(m.flagNotifications, cloneFlagNotification(n))
@@ -288,10 +308,11 @@ func (m *MemStore) SettleFlagNotification(_ context.Context, st FlagNotification
 	defer m.mu.Unlock()
 	for i := range m.flagNotifications {
 		n := &m.flagNotifications[i]
-		if n.ID != st.ID || n.Status != FlagNotificationPending {
+		if n.ID != st.ID || n.Status != FlagNotificationPending || n.Attempts != st.ClaimedAttempts {
 			continue
 		}
 		n.Status, n.LastError = st.Status, truncateUTF8(st.LastError, 512)
+		n.Attempts, n.ChannelIDs = st.Attempts, slices.Clone(st.ChannelIDs)
 		n.NextAttemptAt = st.NextAttemptAt
 		if n.NextAttemptAt.IsZero() {
 			n.NextAttemptAt = st.Now
@@ -317,7 +338,20 @@ func (m *MemStore) SweepFlagNotifications(_ context.Context, cutoff time.Time, l
 		}
 		return false
 	})
+	swept := 0
+	for key, k := range m.flagNotificationKeys {
+		if swept < limit && k.kind == FlagNotifyLifecycleDigest && k.createdAt.Before(cutoff) {
+			delete(m.flagNotificationKeys, key)
+			swept++
+		}
+	}
 	return n, nil
+}
+
+// flagNotificationKey is a MemStore record of a queued key.
+type flagNotificationKey struct {
+	kind      string
+	createdAt time.Time
 }
 
 // FlagNotificationChannels implements FlagNotificationStore.

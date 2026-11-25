@@ -22,7 +22,7 @@ WITH due AS (
 UPDATE flag_notifications n SET next_attempt_at = $1::timestamptz, attempts = n.attempts + 1
 FROM due, accounts a
 WHERE n.id = due.id AND a.id = n.account_id
-RETURNING n.id, n.account_id, n.environment_id, n.kind, n.key, n.subject, n.summary, n.channel_ids, n.status, n.attempts, n.next_attempt_at, n.last_error, n.created_at, n.settled_at, a.plan::text AS plan
+RETURNING n.id, n.account_id, n.org_id, n.environment_id, n.kind, n.key, n.subject, n.summary, n.channel_ids, n.status, n.attempts, n.next_attempt_at, n.last_error, n.created_at, n.settled_at, a.plan::text AS plan
 `
 
 type ClaimDueFlagNotificationsParams struct {
@@ -34,6 +34,7 @@ type ClaimDueFlagNotificationsParams struct {
 type ClaimDueFlagNotificationsRow struct {
 	ID            pgtype.UUID
 	AccountID     pgtype.UUID
+	OrgID         pgtype.UUID
 	EnvironmentID pgtype.UUID
 	Kind          string
 	Key           string
@@ -63,6 +64,7 @@ func (q *Queries) ClaimDueFlagNotifications(ctx context.Context, db DBTX, arg Cl
 		if err := rows.Scan(
 			&i.ID,
 			&i.AccountID,
+			&i.OrgID,
 			&i.EnvironmentID,
 			&i.Kind,
 			&i.Key,
@@ -88,34 +90,44 @@ func (q *Queries) ClaimDueFlagNotifications(ctx context.Context, db DBTX, arg Cl
 }
 
 const enqueueFlagNotification = `-- name: EnqueueFlagNotification :execrows
-INSERT INTO flag_notifications (account_id, environment_id, kind, key, subject, summary, channel_ids, next_attempt_at)
-VALUES ($1::uuid, $2::uuid, $3::text, $4::text,
-    $5::text, $6::text, $7::uuid[], $8::timestamptz)
+WITH k AS (
+    INSERT INTO flag_notification_keys (key, environment_id, kind)
+    VALUES ($9::text, $3::uuid, $4::text)
+    ON CONFLICT (key) DO NOTHING
+    RETURNING key
+)
+INSERT INTO flag_notifications (account_id, org_id, environment_id, kind, key, subject, summary, channel_ids, next_attempt_at)
+SELECT $1::uuid, $2::uuid, $3::uuid, $4::text, k.key,
+    $5::text, $6::text, $7::uuid[], $8::timestamptz
+FROM k
 ON CONFLICT (key) DO NOTHING
 `
 
 type EnqueueFlagNotificationParams struct {
 	AccountID     pgtype.UUID
+	OrgID         pgtype.UUID
 	EnvironmentID pgtype.UUID
 	Kind          string
-	Key           string
 	Subject       string
 	Summary       string
 	ChannelIds    []pgtype.UUID
 	Now           pgtype.Timestamptz
+	Key           string
 }
 
-// Queues a notification unless one with its key exists.
+// Queues a notification unless its key was ever queued: the key outlives
+// the outbox row, so a swept notification is not sent again.
 func (q *Queries) EnqueueFlagNotification(ctx context.Context, db DBTX, arg EnqueueFlagNotificationParams) (int64, error) {
 	result, err := db.Exec(ctx, enqueueFlagNotification,
 		arg.AccountID,
+		arg.OrgID,
 		arg.EnvironmentID,
 		arg.Kind,
-		arg.Key,
 		arg.Subject,
 		arg.Summary,
 		arg.ChannelIds,
 		arg.Now,
+		arg.Key,
 	)
 	if err != nil {
 		return 0, err
@@ -190,32 +202,69 @@ func (q *Queries) GetFlagNotificationSettings(ctx context.Context, db DBTX, envi
 	return i, err
 }
 
-const settleFlagNotification = `-- name: SettleFlagNotification :exec
+const settleFlagNotification = `-- name: SettleFlagNotification :execrows
 UPDATE flag_notifications
 SET status = $1::text, last_error = $2::text,
     next_attempt_at = $3::timestamptz,
-    settled_at = CASE WHEN $1::text = 'pending' THEN NULL ELSE $4::timestamptz END
-WHERE id = $5::uuid AND status = 'pending'
+    attempts = $4::int, channel_ids = $5::uuid[],
+    settled_at = CASE WHEN $1::text = 'pending' THEN NULL ELSE $6::timestamptz END
+WHERE id = $7::uuid AND status = 'pending' AND attempts = $8::int
 `
 
 type SettleFlagNotificationParams struct {
-	Status        string
-	LastError     string
-	NextAttemptAt pgtype.Timestamptz
-	Now           pgtype.Timestamptz
-	ID            pgtype.UUID
+	Status          string
+	LastError       string
+	NextAttemptAt   pgtype.Timestamptz
+	Attempts        int32
+	ChannelIds      []pgtype.UUID
+	Now             pgtype.Timestamptz
+	ID              pgtype.UUID
+	ClaimedAttempts int32
 }
 
-// Records an attempt: delivered, abandoned, or retried at next_attempt_at.
-func (q *Queries) SettleFlagNotification(ctx context.Context, db DBTX, arg SettleFlagNotificationParams) error {
-	_, err := db.Exec(ctx, settleFlagNotification,
+// Records an attempt: delivered, abandoned, or retried at next_attempt_at
+// to the channels still owed it. Only the claim that counted
+// claimed_attempts settles: a row reclaimed after its lease ran out is not
+// settled by the older claim.
+func (q *Queries) SettleFlagNotification(ctx context.Context, db DBTX, arg SettleFlagNotificationParams) (int64, error) {
+	result, err := db.Exec(ctx, settleFlagNotification,
 		arg.Status,
 		arg.LastError,
 		arg.NextAttemptAt,
+		arg.Attempts,
+		arg.ChannelIds,
 		arg.Now,
 		arg.ID,
+		arg.ClaimedAttempts,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const sweepFlagNotificationDigestKeys = `-- name: SweepFlagNotificationDigestKeys :execrows
+DELETE FROM flag_notification_keys
+WHERE key IN (
+    SELECT key FROM flag_notification_keys
+    WHERE kind = 'lifecycle_digest' AND created_at < $1::timestamptz
+    ORDER BY created_at
+    LIMIT $2::int)
+`
+
+type SweepFlagNotificationDigestKeysParams struct {
+	Cutoff  pgtype.Timestamptz
+	MaxRows int32
+}
+
+// Deletes weekly digest keys queued before cutoff, at most max_rows: a past
+// week's key is never queued again.
+func (q *Queries) SweepFlagNotificationDigestKeys(ctx context.Context, db DBTX, arg SweepFlagNotificationDigestKeysParams) (int64, error) {
+	result, err := db.Exec(ctx, sweepFlagNotificationDigestKeys, arg.Cutoff, arg.MaxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const sweepFlagNotifications = `-- name: SweepFlagNotifications :execrows
