@@ -294,7 +294,7 @@ func (h *Handler) dial(ctx context.Context, _, _ string) (net.Conn, error) {
 	if err := stream.Send(&vmmdpb.SandboxCallRequest{Message: &vmmdpb.SandboxCallRequest_Start{Start: start}}); err != nil {
 		return fail(err)
 	}
-	return &streamConn{stream: stream, cancel: cancel, onClose: func() { _ = closer.Close(); release() }}, nil
+	return &streamConn{stream: stream, cancel: cancel, ended: make(chan struct{}), onClose: func() { _ = closer.Close(); release() }}, nil
 }
 
 var (
