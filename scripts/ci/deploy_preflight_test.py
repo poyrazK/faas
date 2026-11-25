@@ -36,6 +36,8 @@ class FakeGitHub:
         self.issues = []
         self.unit_runs = [run_obj(ME, 50, sha=SHA)]
         self.active = {"in_progress": [run_obj(ME, 50, sha=SHA)], "queued": [], "waiting": []}
+        # workflow file -> its newest runs (actions/workflows/{file}/runs).
+        self.workflow_runs = {}
         self.jobs = {}
         self.light = []
         self.runs = {}
@@ -65,6 +67,8 @@ class FakeGitHub:
             return {"workflow_runs": self.light}
         if path == "actions/runs":
             return {"workflow_runs": self.active[params["status"]]}
+        if path.startswith("actions/workflows/") and path.endswith("/runs") and path.split("/")[2] in dp.DEPLOY_WORKFLOWS:
+            return {"workflow_runs": self.workflow_runs.get(path.split("/")[2], [])}
         if path.startswith("actions/runs/") and path.endswith("/artifacts"):
             run = int(path.split("/")[2])
             sha, base = self.markers.get(run), self.bases.get(run)
@@ -231,6 +235,22 @@ class PreflightTest(PreflightCase):
         self.assertIn("cd-platform run 200", summary)
         self.assertIn("idle: 180 s", summary)
         self.assertTrue(any("::notice::" in line and "cd-platform run 200" in line for line in self.logs))
+
+    def test_a_deploy_run_the_status_listing_misses_still_makes_it_wait(self):
+        # 2026-11-25: the repository-wide listing dropped cd-platform run
+        # 45639008753 while it rolled rc.381 out (#8070).
+        self.gh.workflow_runs["cd-platform.yml"] = [
+            run_obj(201, 10, path="cd-platform.yml", name="cd-platform"),
+            run_obj(199, 8, path="cd-platform.yml", name="cd-platform", status="completed")]
+
+        def done(t):
+            if t.clock.t >= 1_800_000_000.0 + 120:
+                t.gh.workflow_runs["cd-platform.yml"][0]["status"] = "completed"
+        self.on_sleep = done
+        code, go, summary = self.run_preflight()
+        self.assertEqual((code, go), (0, True))
+        self.assertIn("cd-platform run 201", summary)
+        self.assertNotIn("run 199", summary)
 
     def test_other_unit_run_deploying_makes_it_wait_but_its_watch_does_not(self):
         self.gh.active["in_progress"].append(run_obj(90, 49, status="in_progress"))

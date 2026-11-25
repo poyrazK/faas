@@ -45,7 +45,8 @@ usage error.
 The host checks come from `scripts/ci/unit_deploy.sh preflight-state`, run
 over SSH on the control plane (one round-trip a round). The GitHub checks
 read the REST API with the workflow token, whose budget is 1,000 requests an
-hour per repository, so a round costs about six requests and rounds are a
+hour per repository, so a round costs about six requests (a dozen on the round that
+finds production idle) and rounds are a
 minute apart.
 """
 from __future__ import annotations
@@ -313,26 +314,48 @@ class Preflight:
         return Verdict("main", OK, f"main's light tier on {self.sha[:12]} has not failed ({state}); the watch reads its result")
 
     # --- idle -------------------------------------------------------------
-    def idle(self, host: dict) -> Verdict:
+    def busy_runs(self, runs) -> list[str]:
+        """Why the runs keep production busy: a deploy workflow's run, or a
+        unit release whose lane jobs are queued or running."""
         busy = []
         paths = {f".github/workflows/{w}" for w in DEPLOY_WORKFLOWS}
-        seen = set()
+        for run in runs:
+            if run["id"] == self.run_id:
+                continue
+            path = run.get("path", "").split("@")[0]
+            if path in paths:
+                busy.append(f"{run['name']} run {run['id']} is {run['status']} ({run['html_url']})")
+            elif path == f".github/workflows/{UNITS_WORKFLOW}":
+                lanes = [j["name"] for j in self.jobs(run["id"])
+                         if j["name"].startswith(LANE_JOB_PREFIXES) and j["status"] in ACTIVE_JOB_STATUSES]
+                if lanes:
+                    busy.append(f"unit release run {run['id']} is deploying ({lanes[0]})")
+        return busy
+
+    def idle(self, host: dict) -> Verdict:
+        found = {}
         for status in ACTIVE_RUN_STATUSES:
             for run in self.gh.get("actions/runs", {"status": status, "per_page": 100}).get("workflow_runs", []):
-                if run["id"] == self.run_id or run["id"] in seen:
-                    continue
-                seen.add(run["id"])
-                if run.get("path", "").split("@")[0] in paths:
-                    busy.append(f"{run['name']} run {run['id']} is {run['status']} ({run['html_url']})")
-                elif run.get("path", "").split("@")[0] == f".github/workflows/{UNITS_WORKFLOW}":
-                    lanes = [j["name"] for j in self.jobs(run["id"])
-                             if j["name"].startswith(LANE_JOB_PREFIXES) and j["status"] in ACTIVE_JOB_STATUSES]
-                    if lanes:
-                        busy.append(f"unit release run {run['id']} is deploying ({lanes[0]})")
+                found.setdefault(run["id"], run)
+        busy = self.busy_runs(found[i] for i in sorted(found))
         if host.get("error"):
             busy.append(f"cannot read the control plane's deploy lock: {host['error']}")
         elif host.get("lock") != "free":
             busy.append(f"the control plane's deploy lock is {host.get('lock', 'unknown')}")
+        if not busy:
+            # Confirm before a go. The repository-wide listing filtered by
+            # status missed an in-progress cd-platform run on 2026-11-25
+            # (run 45639008753, rc.381): the lane activated during that full
+            # release and a canary 503 froze deploys (#8070). Each deploy
+            # workflow's own newest runs carry the run's status; read them
+            # only when the cheap listing finds nothing, to keep a waiting
+            # round within the token budget.
+            confirm = []
+            for workflow in DEPLOY_WORKFLOWS + (UNITS_WORKFLOW,):
+                for run in self.gh.get(f"actions/workflows/{workflow}/runs", {"per_page": 10}).get("workflow_runs", []):
+                    if run["id"] not in found and run.get("status") in ACTIVE_RUN_STATUSES + ("requested", "pending"):
+                        confirm.append(run)
+            busy = self.busy_runs(confirm)
         if busy:
             return Verdict("idle", WAIT, "; ".join(busy))
         return Verdict("idle", OK, "no other deploy is running and the deploy lock is free")
