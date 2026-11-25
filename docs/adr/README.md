@@ -2531,12 +2531,12 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261117235900: Typed query tools](20261117235900-sdk-typed-query-tools.md) — bounded typed application reads, signed portable cursors, current authorization and MCP resources.
 - [ADR-20261118000100: Application toolkits](20261118000100-sdk-application-toolkits.md) — publish selected typed SDK adapters through the authenticated Node and Python MCP starters.
 - [ADR-20261118083100: Resumable SDK work inbox](20261118083100-sdk-work-inbox.md) — authorized discovery over existing pipeline and outbound action receipts.
-- [ADR-20261118090000: Live SDK work inbox](20261118090000-sdk-live-work-inbox.md) — authorized snapshots with private realtime refresh signals.
+- [ADR-20261118090001: Live SDK work inbox](20261118090001-sdk-live-work-inbox.md) — authorized snapshots with private realtime refresh signals.
 - [ADR-20261118100000: SDK work inbox follow-ups](20261118100000-sdk-work-inbox-follow-ups.md) — resolve the current authorized action from a receipt reference.
 - [ADR-20261118110000: SDK pipeline start recovery](20261118110000-sdk-pipeline-start-recovery.md) — find and verify a retained run after a lost start response.
-- [ADR-20261118120000: SDK pipeline Tasks](20261118120000-sdk-pipeline-tasks.md) — owned MCP Task handles for existing typed pipelines.
+- [ADR-20261118120001: SDK pipeline Tasks](20261118120001-sdk-pipeline-tasks.md) — owned MCP Task handles for existing typed pipelines.
 - [ADR-20261118130000: SDK pipeline Task clarification](20261118130000-sdk-pipeline-task-clarification.md) — typed answers for authorized pipeline input gates.
-- [ADR-20261118140000: SDK pipeline Task subscriptions](20261118140000-sdk-pipeline-task-subscriptions.md) — live authorized snapshots across Node and Python MCP starters.
+- [ADR-20261118140001: SDK pipeline Task subscriptions](20261118140001-sdk-pipeline-task-subscriptions.md) — live authorized snapshots across Node and Python MCP starters.
 - [ADR-20261118150000: SDK pipeline output resources](20261118150000-sdk-pipeline-output-resources.md) — verified pipeline report links and reads through MCP.
-- [ADR-20261118160000: SDK pipeline Task client](20261118160000-sdk-pipeline-task-client.md) — typed Task consumers with portable checkpoints and reconnecting watches.
+- [ADR-20261118160001: SDK pipeline Task client](20261118160001-sdk-pipeline-task-client.md) — typed Task consumers with portable checkpoints and reconnecting watches.
 - [ADR-20261118170000: SDK pipeline Task manifests and bindings](20261118170000-sdk-pipeline-task-manifest.md) — scoped discovery and deterministic client generation.

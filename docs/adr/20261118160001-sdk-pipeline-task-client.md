@@ -1,4 +1,4 @@
-# ADR-20261118160000 SDK pipeline Task client
+# ADR-20261118160001 SDK pipeline Task client
 
 The Node and Python preview SDKs consume authenticated pipeline MCP Tasks
 using the existing typed pipeline contract. A checkpoint contains the

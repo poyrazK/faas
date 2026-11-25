@@ -1,4 +1,4 @@
-# ADR-20261118140000 SDK pipeline Task subscriptions
+# ADR-20261118140001 SDK pipeline Task subscriptions
 
 Applications mounted in the Node and Python MCP starters can accept pipeline
 Task IDs in `subscriptions/listen`. The acknowledgement and notifications use
