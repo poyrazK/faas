@@ -243,8 +243,8 @@ func environmentBranchDataMessage(err error) string {
 		return errEnvironmentBranchBucketLimit.Error()
 	case errors.Is(err, objectstorage.ErrUnavailable), errors.Is(err, state.ErrObjectUsageStale):
 		return "object storage is unavailable; retrying"
-	case errors.Is(err, managedpostgres.ErrPreviewDatabaseLimit):
-		return "the account's PR preview databases are all in use (its plan's allowance or its share of the platform); close a pull request or tear a preview down"
+	case errors.Is(err, errEnvironmentBranchPreviewDatabaseLimit):
+		return errEnvironmentBranchPreviewDatabaseLimit.Error()
 	case errors.Is(err, managedpostgres.ErrQuotaExceeded):
 		return "the plan has no room for a copy of the parent's database; a branch that lives 7 days or less takes a place in the plan's PostgreSQL branch allowance, a longer one a free database slot, and either needs point-in-time restore"
 	case errors.Is(err, managedpostgres.ErrInvalid), errors.Is(err, managedpostgres.ErrUnsupported):
@@ -401,19 +401,19 @@ func (s *server) copyEnvironmentBranchDatabases(ctx context.Context, store state
 		if err := store.SetProjectEnvironmentBranchDatabaseCopy(ctx, row.ID, copied.ID); err != nil {
 			return err
 		}
-		if err := s.bindEnvironmentBranchDatabase(ctx, acct, branch, plans, id, copied.ID, false); err != nil {
+		if err := s.bindEnvironmentBranchDatabase(ctx, acct, branch, plans, id, copied.ID); err != nil {
 			return err
 		}
 	}
 	for _, id := range empties {
 		database, err := s.ensureEnvironmentBranchPreviewDatabase(ctx, acct, branch, plans, sources[id])
 		if errors.Is(err, managedpostgres.ErrPreviewsOff) {
-			continue // turned off since the plan was read
+			continue // turned off since the plan was read, or the plan gives none
 		}
 		if err != nil {
-			return err
+			return environmentBranchPreviewError("set up the pull request's empty PostgreSQL database", err)
 		}
-		if err := s.bindEnvironmentBranchDatabase(ctx, acct, branch, plans, id, database.ID, true); err != nil {
+		if err := s.bindEnvironmentBranchPreviewDatabase(ctx, acct, branch, plans, id, database.ID); err != nil {
 			return err
 		}
 	}
@@ -447,48 +447,89 @@ func environmentBranchPreviewOwner(branch state.ProjectEnvironmentBranch, source
 
 // ensureEnvironmentBranchPreviewDatabase sets up the empty database a pull
 // request's branch gets for source, on the plan of the app that binds it.
+// Preview databases stay behind their capability, as for app previews:
+// without it, empty reads as off.
 func (s *server) ensureEnvironmentBranchPreviewDatabase(ctx context.Context, acct state.Account, branch state.ProjectEnvironmentBranch, plans []projectEnvironmentBindingClone, source managedpostgres.Database) (managedpostgres.Database, error) {
+	manager := s.previewDatabaseManager()
+	if manager == nil {
+		return managedpostgres.Database{}, managedpostgres.ErrUnavailable
+	}
 	plan := api.Plan(acct.Plan)
 	for _, p := range plans {
-		if p.kind == "managed_postgres" && p.database.ID == source.ID {
-			// Preview databases stay behind their capability, as for app
-			// previews: without it, empty reads as off.
-			if !s.capabilityEnabledFor(previewDatabasesCapability, acct, p.app) {
-				return managedpostgres.Database{}, managedpostgres.ErrPreviewsOff
-			}
-			if resource, err := state.AppResourceAccount(ctx, s.store, p.app); err == nil {
-				plan = resource.Plan
-			}
-			break
+		if p.kind != "managed_postgres" || p.database.ID != source.ID {
+			continue
+		}
+		if !s.capabilityEnabledFor(previewDatabasesCapability, acct, p.app) {
+			return managedpostgres.Database{}, managedpostgres.ErrPreviewsOff
+		}
+		resource, err := state.AppResourceAccount(ctx, s.store, p.app)
+		if err != nil {
+			return managedpostgres.Database{}, fmt.Errorf("load the plan of workload %q: %w", p.app.Slug, err)
+		}
+		plan = resource.Plan
+		break
+	}
+	return manager.EnsureBranch(ctx, plan, acct.ID, environmentBranchPreviewOwner(branch, source.ID))
+}
+
+// bindEnvironmentBranchPreviewDatabase binds a pull request branch's empty
+// database for sourceID into the branch's scope once per parent binding of
+// sourceID, with that binding's environment key and access.
+func (s *server) bindEnvironmentBranchPreviewDatabase(ctx context.Context, acct state.Account, branch state.ProjectEnvironmentBranch, plans []projectEnvironmentBindingClone, sourceID, databaseID string) error {
+	manager := s.previewDatabaseManager()
+	if manager == nil {
+		return managedpostgres.ErrUnavailable
+	}
+	for _, plan := range plans {
+		if plan.kind != "managed_postgres" || plan.database.ID != sourceID {
+			continue
+		}
+		err := manager.BindBranch(ctx, managedpostgres.CreateBindingRequest{
+			AccountID: acct.ID, DatabaseID: databaseID, AppID: plan.app.ID,
+			Scope: branch.Slug, EnvironmentKey: plan.postgres.EnvironmentKey, Access: plan.postgres.Access,
+		})
+		if err != nil {
+			return environmentBranchPreviewError(fmt.Sprintf("bind the empty database for workload %q", plan.app.Slug), err)
 		}
 	}
-	database, err := s.managedPostgres.EnsurePreviewDatabase(ctx, managedpostgres.PreviewDatabaseRequest{
-		AccountID: acct.ID, Owner: environmentBranchPreviewOwner(branch, source.ID),
-		StorageLimitBytes: previewdb.StorageLimitBytes(plan), Limit: api.ManagedPostgresPreviewDatabasesMax(plan),
-	})
-	if err != nil {
-		return managedpostgres.Database{}, err
-	}
-	// Provisioning, or a reset's purge still under way: the next pass binds
-	// it or sets up a new one.
-	if database.State != managedpostgres.StateReady {
-		return managedpostgres.Database{}, fmt.Errorf("the pull request's empty PostgreSQL database is not ready: %w%w", errEnvironmentBranchDataInProgress, managedpostgres.ErrConflict)
-	}
-	return database, nil
+	return nil
 }
+
+// environmentBranchPreviewError makes previewdb's answers branch data
+// errors: a database or binding still provisioning is in progress, and the
+// account's preview database limit waits for a pull request to close instead
+// of failing the branch for good.
+func environmentBranchPreviewError(op string, err error) error {
+	switch {
+	case errors.Is(err, previewdb.ErrPending):
+		return fmt.Errorf("%s: %w%w", op, errEnvironmentBranchDataInProgress, managedpostgres.ErrConflict)
+	case errors.Is(err, managedpostgres.ErrPreviewDatabaseLimit):
+		return fmt.Errorf("%s: %w", op, errEnvironmentBranchPreviewDatabaseLimit)
+	}
+	return fmt.Errorf("%s: %w", op, err)
+}
+
+// errEnvironmentBranchPreviewDatabaseLimit is the preview database limit as a
+// retryable branch data error: closing a pull request frees a database.
+var errEnvironmentBranchPreviewDatabaseLimit = errors.New("the account's PR preview databases are all in use (its plan's allowance or its share of the platform); close a pull request or tear a preview down")
 
 // bindEnvironmentBranchDatabase binds databaseID, the branch's database for
 // sourceID, into the branch's scope once per parent binding of sourceID, with
 // that binding's environment key and access.
-func (s *server) bindEnvironmentBranchDatabase(ctx context.Context, acct state.Account, branch state.ProjectEnvironmentBranch, plans []projectEnvironmentBindingClone, sourceID, databaseID string, previewSetup bool) error {
+func (s *server) bindEnvironmentBranchDatabase(ctx context.Context, acct state.Account, branch state.ProjectEnvironmentBranch, plans []projectEnvironmentBindingClone, sourceID, databaseID string) error {
 	for _, plan := range plans {
 		if plan.kind != "managed_postgres" || plan.database.ID != sourceID {
 			continue
 		}
 		binding, _, err := s.managedPostgresBindings.CreateWithResult(ctx, managedpostgres.CreateBindingRequest{
 			AccountID: acct.ID, DatabaseID: databaseID, AppID: plan.app.ID,
-			Scope: branch.Slug, EnvironmentKey: plan.postgres.EnvironmentKey, Access: plan.postgres.Access, PreviewSetup: previewSetup,
+			Scope: branch.Slug, EnvironmentKey: plan.postgres.EnvironmentKey, Access: plan.postgres.Access,
 		})
+		// The binding reconciler holds it, or its next attempt is not due:
+		// still provisioning, not a failed attempt.
+		if errors.Is(err, managedpostgres.ErrConflict) && binding.DatabaseID == databaseID && binding.AppID == plan.app.ID {
+			return fmt.Errorf("branch database binding for workload %q is not ready: %w%w", plan.app.Slug, errEnvironmentBranchDataInProgress, err)
+		}
 		if err != nil {
 			return fmt.Errorf("bind branch database for workload %q: %w", plan.app.Slug, err)
 		}
@@ -575,48 +616,32 @@ func (s *server) deleteEnvironmentBranchCopyBindings(ctx context.Context, accoun
 }
 
 // releaseEnvironmentBranchPreviewDatabases removes a pull request branch's
-// bindings to its empty databases, and purges each one nothing else binds
-// (an app preview of the same pull request may), so a reset starts from an
-// empty database again. A branch that is only deleted leaves them to the
-// preview database sweep.
+// bindings to its empty databases. It leaves the databases: a reset purges
+// them once the branch is gone (purgeEnvironmentBranchPreviewDatabases), and
+// the preview database sweep after a delete.
 func (s *server) releaseEnvironmentBranchPreviewDatabases(ctx context.Context, branch state.ProjectEnvironmentBranch) error {
 	if branch.PullRequestNumber <= 0 || s.managedPostgres == nil {
 		return nil
 	}
-	if s.managedPostgresBindings == nil {
+	manager := s.previewDatabaseManager()
+	if manager == nil {
 		return managedpostgres.ErrUnavailable
 	}
-	databases, err := s.managedPostgres.PreviewDatabases(ctx, branch.AccountID, branch.ProjectID, branch.PullRequestNumber)
-	if err != nil {
-		return fmt.Errorf("list the pull request's preview databases: %w", err)
+	return manager.ReleaseBranch(ctx, branch.AccountID, branch.ProjectID, branch.PullRequestNumber, branch.Slug)
+}
+
+// purgeEnvironmentBranchPreviewDatabases purges a deleted pull request
+// branch's empty databases that nothing else binds (an app preview of the
+// same pull request may), so its reset starts from an empty database again.
+func (s *server) purgeEnvironmentBranchPreviewDatabases(ctx context.Context, branch state.ProjectEnvironmentBranch) error {
+	if branch.PullRequestNumber <= 0 {
+		return nil
 	}
-	for _, database := range databases {
-		bindings, err := s.managedPostgresBindings.List(ctx, database.AccountID, database.ID)
-		if err != nil && !errors.Is(err, managedpostgres.ErrNotFound) {
-			return err
-		}
-		others := 0
-		for _, binding := range bindings {
-			if binding.Scope != branch.Slug {
-				others++
-				continue
-			}
-			if _, err := s.managedPostgresBindings.Delete(ctx, database.AccountID, binding.ID); err != nil && !errors.Is(err, managedpostgres.ErrNotFound) {
-				return fmt.Errorf("release preview database %s: %w", database.Name, err)
-			}
-		}
-		if others > 0 {
-			continue
-		}
-		manager := s.previewDatabaseManager()
-		if manager == nil {
-			return managedpostgres.ErrUnavailable
-		}
-		if _, err := manager.Purge(ctx, database.AccountID, database.ID); err != nil && !errors.Is(err, managedpostgres.ErrNotFound) {
-			return fmt.Errorf("purge preview database %s: %w", database.Name, err)
-		}
+	manager := s.previewDatabaseManager()
+	if manager == nil {
+		return nil
 	}
-	return nil
+	return manager.PurgeUnbound(ctx, branch.AccountID, branch.ProjectID, branch.PullRequestNumber)
 }
 
 // releaseEnvironmentBranchCredentials removes the credentials a branch's

@@ -353,6 +353,12 @@ func (s *server) resetProjectEnvironmentBranch(w http.ResponseWriter, r *http.Re
 		api.WriteProblem(w, api.ErrCapacity("could not reset the environment branch"))
 		return
 	}
+	// Only now that the old branch is gone: a pull request branch's reset
+	// starts from an empty database again. A purge that fails leaves the
+	// database to the new branch and the sweep, so the reset goes on.
+	if err := s.purgeEnvironmentBranchPreviewDatabases(ctx, branch); err != nil && s.log != nil {
+		s.log.Warn("environment branch reset kept its empty databases", "environment_id", branch.EnvironmentID, "err", err)
+	}
 	response, problem := s.branchProjectEnvironment(ctx, store, acct, project, spec)
 	if problem != nil {
 		// The old branch is gone; say so, so the caller creates it again.

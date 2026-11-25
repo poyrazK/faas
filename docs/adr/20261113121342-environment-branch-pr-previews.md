@@ -107,11 +107,15 @@ For each production database the PR branch's parent binds:
 | `empty` | The PR environment's empty preview database (owner: the project and the PR number), set up with `EnsurePreviewDatabase` and bound into `pr-{N}` with the production binding's environment key and access. An app preview of the same PR, after a fallback, binds the same database. It needs the `preview-databases` capability, as app previews do; without it `empty` reads as `off`. |
 | `off` (default) | No database. The workload starts without the binding's environment key, as an app preview does. |
 
-- **Waits and failures.** An empty database still provisioning is a copy in progress (no
-  failed attempt). Past the plan's preview database allowance the branch's data fails with
-  that limit's message.
-- **Reset.** `--reset` removes the branch's bindings to its empty databases and purges each
-  one nothing else binds, so the new branch starts from an empty database again.
+- **Waits and failures.** An empty database or binding still provisioning is in progress (no
+  failed attempt). On a plan that gives no preview databases, `empty` reads as `off`. Past
+  the plan's preview database allowance the branch's data waits and retries with that
+  limit's message: closing a pull request frees a database.
+- **Reset.** `--reset` removes the branch's bindings to its empty databases before it deletes
+  the branch, and only once the branch row is gone purges each one nothing live binds (a
+  binding neither ready nor provisioning is a leftover), so the new branch starts from an
+  empty database again. A reset refused for child branches keeps the database and its data;
+  a purge that conflicts leaves the database to the new branch and the sweep.
 - **Delete and expiry.** The preview database sweep keeps a PR environment's databases while
   its project has a branch for that pull request (`pull_request_number`), and purges them
   once neither the branch nor an app preview is left.
