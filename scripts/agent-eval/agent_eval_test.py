@@ -63,7 +63,8 @@ class TaskTests(unittest.TestCase):
     def test_shipped_tasks_load(self):
         tasks = ev.load_tasks()
         self.assertEqual([t["id"] for t in tasks], ["deploy-starter", "fix-failed-deploy", "rollback-bad-release", "diagnose-failure", "deploy-retail-store", "deploy-voting-app", "first-hour-private", "first-hour-edit",
-                                                    "deploy-express-render", "migrate-fastapi-render", "deploy-flask-render", "migrate-django-heroku", "deploy-go-heroku"])
+                                                    "deploy-express-render", "migrate-fastapi-render", "deploy-flask-render", "migrate-django-heroku", "deploy-go-heroku",
+                                                "day2-config-change", "day2-schedule", "day2-no-cold-start"])
 
     def test_framework_tasks_grade_the_fix_not_the_repo(self):
         # The pristine repositories leave these features unused; only the
@@ -353,6 +354,36 @@ class CheckTests(unittest.TestCase):
         (suffixed,) = ev.run_checks(task, None, Path("."), "", SuffixedUrls(), created={"apps": ["result-a2b4c", "vote-k3x7q"]},
                                     http=VotingApps(), http_deadline_s=0)
         self.assertTrue(suffixed["ok"], "a name another account holds gets a 5-character suffix")
+
+    def test_day2_checks_read_the_app_record_and_cli(self):
+        class Day2:
+            def __init__(self, app, cron_out="", code=0):
+                self.app, self.cron_out, self.code, self.calls = app, cron_out, code, []
+
+            def get(self, path):
+                return self.app
+
+            def cli(self, *args, **kwargs):
+                self.calls.append(args)
+                return mock.Mock(returncode=self.code, stdout=self.cron_out, stderr="")
+
+        task = {"checks": [{"kind": "app_field", "field": "min_instances", "min": 1},
+                           {"kind": "cli_output", "args": ["cron", "list", "--app", "{app}"], "patterns": ["/tick", "(\\*/15|15m)"]}]}
+        cron = '{"items":[{"path":"/tick","method":"POST","schedule":"*/15 * * * *"}]}'
+        g = Day2({"min_instances": 1}, cron)
+        warm, scheduled = ev.run_checks(task, "eval-app", Path("."), "", g)
+        self.assertEqual((warm["ok"], warm["detail"]), (True, "min_instances=1"))
+        self.assertEqual((scheduled["ok"], scheduled["detail"]), (True, "all patterns present"))
+        self.assertEqual(g.calls, [("cron", "list", "--app", "eval-app")])
+
+        cold, hourly = ev.run_checks(task, "eval-app", Path("."), "", Day2({"min_instances": 0}, cron.replace("*/15", "0")))
+        self.assertFalse(cold["ok"])
+        self.assertFalse(hourly["ok"])
+        self.assertIn("missing", hourly["detail"])
+        _, failed = ev.run_checks(task, "eval-app", Path("."), "", Day2({}, "boom", code=4))
+        self.assertIn("exited 4", failed["detail"])
+        self.assertFalse(ev.app_field_check({"min_instances": None}, {"field": "min_instances", "min": 1})[0])
+        self.assertTrue(ev.app_field_check({"require_authn": True}, {"field": "require_authn", "equals": True})[0])
 
     def test_live_worker_counts_as_serving(self):
         # Health reads "unsupported" for a worker pool unless app_health_workers
