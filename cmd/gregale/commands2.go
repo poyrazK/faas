@@ -4466,7 +4466,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			if err == nil {
 				printSlugAlternativeNotice(requestedSlug, slug, nameUnavailable)
 			}
-			if err == nil && creating {
+			// A --template deploy sends the embedded template, not this
+			// directory, so linking the directory to the new app is wrong:
+			// `init --path web --deploy` run from a parent linked the parent,
+			// and every sibling (a Compose project beside web/) then deployed
+			// as that app (prod hunt r52). init links its --path itself.
+			if err == nil && creating && *templateName == "" {
 				rememberCreatedApp(contextDir, slug)
 			}
 		}

@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -61,5 +64,66 @@ func TestRestartWaitStopsOnStartupCrash(t *testing.T) {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("stderr missing %q:\n%s", want, stderr)
 		}
+	}
+}
+
+// Prod hunt r52: `init --path web --deploy` run from a parent ran `deploy
+// --template`, which linked the parent (the cwd) to the new app, so a Compose
+// project beside web/ planned itself as that app. A template deploy sends the
+// embedded template, not the cwd, and leaves the cwd unlinked; a deploy of
+// the cwd itself still remembers the app it created.
+func TestTemplateDeployDoesNotLinkTheWorkingDirectory(t *testing.T) {
+	var mu sync.Mutex
+	created := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/capabilities":
+			_ = json.NewEncoder(w).Encode(api.CapabilitiesResponse{Plan: "scale"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps":
+			mu.Lock()
+			created++
+			mu.Unlock()
+			var req struct {
+				Slug string `json:"slug"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "11111111-1111-4111-8111-111111111111", Slug: req.Slug})
+		default:
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "test: unhandled "+r.Method+" "+r.URL.Path))
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	t.Setenv("HOME", t.TempDir())
+
+	parent := t.TempDir()
+	t.Chdir(parent)
+	_, _, _ = runCLI(t, "deploy", "--template", "hello-node", "--name", "tpl-app", "--yes")
+	if created == 0 {
+		t.Fatal("the template deploy never created its app; the test does not reach the remember step")
+	}
+	if _, err := os.Stat(filepath.Join(parent, ".gregale", "project.json")); !os.IsNotExist(err) {
+		t.Fatalf("template deploy linked the working directory: %v", err)
+	}
+
+	// Control: deploying the working directory itself remembers the app.
+	own := t.TempDir()
+	if err := os.WriteFile(filepath.Join(own, "index.js"), []byte("require('http').createServer((q,s)=>s.end('ok')).listen(process.env.PORT)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(own, "package.json"), []byte(`{"name":"own","scripts":{"start":"node index.js"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(own)
+	before := created
+	_, _, _ = runCLI(t, "deploy", "--name", "own-app", "--yes")
+	if created == before {
+		t.Skip("the source deploy did not reach app creation against the fake server")
+	}
+	if _, err := os.Stat(filepath.Join(own, ".gregale", "project.json")); err != nil {
+		t.Fatalf("a deploy of the working directory did not remember its app: %v", err)
 	}
 }
