@@ -28,6 +28,18 @@ Covers `FaasHostedMCPDown`, `FaasHostedMCPRestarting` and
   dropped after ten idle minutes, so memory follows active connections.
   `gregale_management_mcp_connection_servers` counts the built ones.
 
+## Run a controlled restart
+
+Dispatch [ops-restart-hosted-mcp](https://github.com/poyrazK/faas/actions/workflows/ops-restart-hosted-mcp.yml)
+from `main` when the `production-us` fleet rollout is idle. It restarts
+`faas-mcp-bridge.service` on the control plane and reports the old and new
+systemd invocation IDs once the new invocation answers on loopback.
+
+For an upload approval rehearsal, record the pending plan ID, approval ID,
+and upload ID before dispatch. After the restart, confirm that hosted MCP
+still returns the same plan and approval. Have the reviewer approve using the
+original review link, then retry the same plan ID.
+
 ## OAuth client callback refused
 
 `invalid_client` with `none of the client's redirect URIs is allowed on this

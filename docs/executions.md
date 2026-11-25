@@ -779,6 +779,9 @@ vmmd and protocol-v5 guest artifacts first. Then configure digest-pinned
 `FAAS_EXECUTION_ENVIRONMENTS_ENABLED=1` on apid, builderd and imaged. The installer
 image must match the selected runtime/architecture and include npm or pip.
 Operator image recipes are in `images/execution-environment-*.Dockerfile`.
+Pass each base as an image and a digest: `RUNTIME_BASE_IMAGE` and
+`RUNTIME_BASE_DIGEST` (`sha256:...`), plus `NODE_TOOLS_IMAGE` and
+`NODE_TOOLS_DIGEST` for Node. A build without a digest fails.
 Local deployments also need `/srv/fc/run-environments` owned by `root:faas`, mode
 0770; the compute bootstrap and generated unit permissions include it. Shared
 artifact backends carry the same immutable objects across nodes.

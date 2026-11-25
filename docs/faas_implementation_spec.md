@@ -1140,7 +1140,16 @@ gateway capacity admission/`wake.boot_started` through the first
 `wake.proxy_first_byte`, corroborated by `wake.restore_breakdown.total_ms` from
 VMMD entry through the first successful readiness probe. It excludes the rest
 of the application response, Cloudflare, the public Internet, client location,
-and physical distance. `gateway_platform_wake_latency_seconds` is the canonical
+and physical distance. It also excludes wakes during which the guest reported
+that the kernel killed an app process for memory (ADR-121 workload OOM, vmmd
+`WakeResponse.startup_oom`): that wait is the app exhausting its RAM, not the
+platform. Such wakes are counted in
+`gateway_platform_wake_excluded_total{reason="startup_oom"}` and stay in the
+app's own wake latency; a rising exclusion rate is itself a signal to check
+guest memory overhead. Wakes admitted by a deployment smoke verification are
+excluded the same way (`reason="deployment_smoke"`, ADR-20261123170000
+amendment 1): the smoke restores a candidate whose first-boot snapshot is
+still being captured, so its wait belongs to the deploy pipeline. `gateway_platform_wake_latency_seconds` is the canonical
 fleet series; public probes remain separate end-to-end diagnostics.
 
 `wake.proxy_first_byte.data.latency_ms` records request/queue acceptance to

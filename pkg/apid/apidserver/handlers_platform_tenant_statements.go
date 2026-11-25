@@ -84,6 +84,10 @@ func (s *server) createPlatformTenantStatement(w http.ResponseWriter, r *http.Re
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	if req.Waiver != nil {
+		api.WriteProblem(w, api.ErrValidation("usage waivers apply to app consumer statements"))
+		return
+	}
 	if req.PeriodStart == nil || req.PeriodEnd == nil || !validateTenantStatementPeriod(*req.PeriodStart, *req.PeriodEnd) {
 		tenantStatementPeriodProblem(w)
 		return
@@ -324,7 +328,7 @@ func tenantStatementProblem(err error) *api.Problem {
 			"No tenant usage", "the requested period has no billable tenant-attributed usage and no monthly fee to bill")
 	case errors.Is(err, billing.ErrAPIConsumerAllowanceInTenantStatement):
 		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"App pricing needs an app statement", "an app rate card with included units, tiers, route weights, or a plan cannot price minutes no platform tenant rate card covers; add a tenant rate card in force for those minutes or bill through app consumer statements")
+			"App pricing needs an app statement", "an app rate card with included units, tiers, route weights, model prices, or a plan cannot price minutes no platform tenant rate card covers; add a tenant rate card in force for those minutes or bill through app consumer statements")
 	case errors.Is(err, billing.ErrTenantMonthPeriodRequired):
 		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
 			"Calendar month required", "a platform tenant rate card with a monthly allowance, tiers, route weights, monthly fees or a unit other than requests prices this period, so the statement must cover exactly one UTC calendar month")

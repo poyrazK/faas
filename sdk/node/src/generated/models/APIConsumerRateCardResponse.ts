@@ -34,6 +34,10 @@ export type APIConsumerRateCardResponse = {
    */
   tier_mode?: 'graduated' | 'volume';
   /**
+   * Configured per-unit prices by model, in millicents.
+   */
+  model_prices?: Record<string, number>;
+  /**
    * Units charged per request on a listed route; unlisted routes count 1.
    */
   route_weights?: Record<string, number>;

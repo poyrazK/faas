@@ -1221,8 +1221,8 @@ process group; ordinary scenario cleanup and hosted resource expiry still apply.
 Real-VM execution runs the applications in microVMs, but recipe commands still
 run on the invoking machine unless the recipe uses `command_execution`: `setup`,
 `trigger`, `command`, step commands and `cleanup` start inside each extracted
-revision, so a candidate's scripts run there with your environment (`FAAS_TOKEN`
-is removed). The command prints a warning before it starts. Rehearse only
+revision, so a candidate's scripts run there with your environment
+(`GREGALE_TOKEN` and `FAAS_TOKEN` are removed). The command prints a warning before it starts. Rehearse only
 revisions you trust.
 
 When the platform has not enabled a capability the scenario needs, it answers
@@ -2669,7 +2669,7 @@ command exits unsuccessfully if any row fails. Interruption stops new rows.
 Commands receive `GREGALE_TEST_CASE` (`row-1`, `row-2`, etc.) and
 `GREGALE_TEST_DATA_JSON`, plus the local URL, run ID, engine, profile, and scenario
 name. Without a data file, there is one unnamed case with empty `{}` data.
-The CLI strips its `FAAS_TOKEN` account credential from command environments.
+The CLI strips its `GREGALE_TOKEN` and `FAAS_TOKEN` account credential from command environments.
 Command output goes to stderr under `--json`.
 
 JSON and JUnit reports identify the row and attempt, including request evidence
@@ -3152,7 +3152,7 @@ such as `http://worker.svc.gregale:10081` inside the platform. Local commands re
 `GREGALE_TEST_SERVICE_WORKER_APP_SLUG`. Each service has its own source directory
 and developer session. The base project plus service name must fit in 40
 characters; plan developer-session quotas apply to every workload.
-The CLI does not pass its `FAAS_TOKEN` account credential to scenario commands;
+The CLI does not pass its `GREGALE_TOKEN` or `FAAS_TOKEN` account credential to scenario commands;
 use the run-scoped credentials below for customer requests.
 Declared `consumers` are created for the primary app before deployment. Local
 commands receive each consumer's ID and key as

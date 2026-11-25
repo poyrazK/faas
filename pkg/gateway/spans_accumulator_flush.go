@@ -28,6 +28,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"sort"
 	"time"
 )
 
@@ -51,6 +52,21 @@ type FlushLoopConfig struct {
 	// MaxRetries caps the per-entry retry budget before the
 	// loop drops the entry. Default 3 when zero.
 	MaxRetries int
+	// NoRowRetries caps the flushes a trace waits for its request row
+	// (outcome no_row) before it is dropped, apart from MaxRetries: a row
+	// can trail its spans by a collapsed minute plus a delivery backoff, and
+	// the shared three-attempt budget (90 s at the default interval) dropped
+	// ~40% of traces on prod (2026-11-24). Default 10 when zero.
+	NoRowRetries int
+	// MaxPendingTraces caps the traces held between flushes. With a longer
+	// no_row budget, a request-row delivery outage at high trace volume
+	// would otherwise grow gateway memory and the serial writes of each
+	// flush without bound. The oldest traces are dropped first. Default
+	// 4096 when zero.
+	MaxPendingTraces int
+	// OnPendingDropped receives the number of traces dropped to stay under
+	// MaxPendingTraces. nil = no-op.
+	OnPendingDropped func(n int)
 	// MaxSpansPerTrace is the per-trace cap applied at flush
 	// time (PR-D code-review #5). Pulled via a closure so
 	// the value tracks the customer's plan dynamically.
@@ -71,6 +87,39 @@ type pendingEntry struct {
 	target  SpanTarget
 	spans   []summarizedSpan
 	retries int
+	// queuedAt orders entries for MaxPendingTraces: the oldest go first.
+	queuedAt time.Time
+	// noRows counts flushes answered no_row (the request row was not
+	// written yet); it has its own budget, NoRowRetries.
+	noRows int
+}
+
+// capPendingTraces drops the oldest pending traces above MaxPendingTraces.
+func capPendingTraces(cfg FlushLoopConfig, pending map[spanBucketKey]*pendingEntry) {
+	limit := cfg.MaxPendingTraces
+	if limit <= 0 {
+		limit = 4096
+	}
+	excess := len(pending) - limit
+	if excess <= 0 {
+		return
+	}
+	keys := make([]spanBucketKey, 0, len(pending))
+	for k := range pending {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return pending[keys[i]].queuedAt.Before(pending[keys[j]].queuedAt) })
+	for _, k := range keys[:excess] {
+		delete(pending, k)
+	}
+	log := cfg.Log
+	if log == nil {
+		log = slog.Default()
+	}
+	log.Warn("otel spans pending traces over cap; dropping oldest", "dropped", excess, "cap", limit)
+	if cfg.OnPendingDropped != nil {
+		cfg.OnPendingDropped(excess)
+	}
 }
 
 // errNarrowedTargetWithoutWriter refuses to write a narrowed target through
@@ -97,6 +146,9 @@ func (s *SpansAccumulator) RunFlushLoop(ctx context.Context, cfg FlushLoopConfig
 	}
 	if cfg.MaxRetries <= 0 {
 		cfg.MaxRetries = 3
+	}
+	if cfg.NoRowRetries <= 0 {
+		cfg.NoRowRetries = 10
 	}
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
@@ -200,13 +252,15 @@ func (s *SpansAccumulator) drainOnce(ctx context.Context, cfg FlushLoopConfig, p
 			}
 		} else {
 			pending[key] = &pendingEntry{
-				traceID: traceID,
-				target:  key.target,
-				spans:   spans,
+				traceID:  traceID,
+				target:   key.target,
+				spans:    spans,
+				queuedAt: time.Now(),
 			}
 		}
 		return true
 	})
+	capPendingTraces(cfg, pending)
 
 	// Now iterate the pending map. drainOnce is the single
 	// caller; mutating during iteration is safe because we
@@ -215,12 +269,21 @@ func (s *SpansAccumulator) drainOnce(ctx context.Context, cfg FlushLoopConfig, p
 	for k := range pending {
 		keys = append(keys, k)
 	}
+	noRowBudget := cfg.NoRowRetries
+	if noRowBudget <= 0 {
+		noRowBudget = 10
+	}
 	for _, key := range keys {
 		traceID := key.traceID
 		entry := pending[key]
-		if entry.retries >= cfg.MaxRetries {
+		if entry.retries >= cfg.MaxRetries || entry.noRows >= noRowBudget {
+			// The target names the rows the trace was meant to merge into, so
+			// a trace whose row never matches can be told from one that
+			// failed to write.
 			cfg.Log.Warn("otel spans entry dropped after max retries",
-				"trace_id", traceID, "retries", entry.retries)
+				"trace_id", traceID, "retries", entry.retries, "no_row_flushes", entry.noRows,
+				"account_id", entry.target.AccountID, "app_id", entry.target.AppID,
+				"org_id", entry.target.OrgID, "customer_credential", entry.target.CustomerCredential)
 			delete(pending, key)
 			continue
 		}
@@ -251,8 +314,8 @@ func (s *SpansAccumulator) drainOnce(ctx context.Context, cfg FlushLoopConfig, p
 			// ADR-958: the request_telemetry row is published on
 			// its own cadence and may land after the spans. Keep
 			// the entry and retry on the next tick, bounded by
-			// MaxRetries like any transient failure.
-			entry.retries++
+			// NoRowRetries.
+			entry.noRows++
 		default:
 			// Unknown outcome → drop to avoid wedging the
 			// loop on a server-side contract drift.

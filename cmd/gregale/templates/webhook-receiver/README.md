@@ -47,8 +47,12 @@ the runtime:
 printf 'WEBHOOK_SECRET=%s\n' "$(openssl rand -hex 32)" > ../webhook-receiver.secrets
 # Optional: printf 'WEBHOOK_ALLOWED_PATHS=/stripe,/github\n' >> ../webhook-receiver.secrets
 chmod 600 ../webhook-receiver.secrets
-gregale deploy --secrets-file ../webhook-receiver.secrets
+gregale deploy --secrets-file ../webhook-receiver.secrets --no-require-authn
 ```
+
+`--no-require-authn` makes the app public on purpose: the sender cannot
+present a Gregale API key, so the handler checks the sender's own secret or
+signature instead. It stays public on later deploys.
 
 ## Rotate or update secrets
 
@@ -66,7 +70,7 @@ If `WEBHOOK_SECRET` is missing, the receiver still works in
 From this directory:
 
 ```sh
-gregale deploy
+gregale deploy --no-require-authn
 ```
 
 ## Try it
@@ -74,19 +78,19 @@ gregale deploy
 ```sh
 # Health probe — shows whether the secret is configured and what
 # paths are allowed.
-curl https://<slug>.gregale.dev/healthz
+curl https://<slug>.gregale.app/healthz
 
 # Unauthenticated POST when WEBHOOK_SECRET is unset:
 curl -X POST -H 'content-type: application/json' \
      -d '{"event":"test","data":{"hello":"world"}}' \
-     https://<slug>.gregale.dev/stripe
+     https://<slug>.gregale.app/stripe
 
 # Authenticated POST when WEBHOOK_SECRET is set:
 curl -X POST \
      -H 'X-Webhook-Secret: <the-secret>' \
      -H 'content-type: application/json' \
      -d '{"event":"test","data":{"hello":"world"}}' \
-     https://<slug>.gregale.dev/stripe
+     https://<slug>.gregale.app/stripe
 ```
 
 ## Adding provider-specific verification

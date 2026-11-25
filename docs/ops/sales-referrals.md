@@ -26,7 +26,7 @@ This feature requires PostgreSQL. It ships disabled. It never enables payouts.
    to this frontend. Live session mutations require the canonical sales origin,
    so Vercel preview hostnames are not added to the backend CSRF allowlist.
 4. Set at least one owner admin in `FAAS_SALES_ADMIN_EMAILS` and enable the
-   backend feature. The owner admin then adds managers and salespeople in the
+   backend feature. An owner admin then adds managers and salespeople (managers may add salespeople) in the
    portal (see [Roles, agreements, credit and payouts](#roles-agreements-credit-and-payouts)).
    The older manager and rep email lists still work. Use existing Gregale
    accounts with verified email and an enrolled authenticator. Removing a member
@@ -48,7 +48,7 @@ allowlists empty. No production DNS or account access is changed by the code.
 | `FAAS_SALES_ENABLED` | off | Only `1` enables sales and referral surfaces |
 | `FAAS_SALES_EMAILS` | empty | Comma-separated rep email addresses, exact matches |
 | `FAAS_SALES_MANAGER_EMAILS` | empty | Comma-separated managers; includes rep privileges and team-wide reads |
-| `FAAS_SALES_ADMIN_EMAILS` | empty | Comma-separated owner admins; manager rights plus team, agreements, credit moves and payout records. Only this setting grants it |
+| `FAAS_SALES_ADMIN_EMAILS` | empty | Comma-separated owner admins; manager rights plus agreements, credit moves and payout records. Only this setting grants it |
 | `FAAS_REFERRAL_CURRENCY` | `usd` | `usd` or `eur`; amounts are never mixed or converted |
 | `FAAS_REFERRAL_REWARD_CENTS` | `0` | Fixed potential reward for a customer referrer |
 | `FAAS_REFERRAL_NEW_CUSTOMER_REWARD_CENTS` | `0` | Fixed potential reward for the referred customer |
@@ -179,7 +179,8 @@ Apply `20261120181326259_sales_team_agreements.sql` and
 | --- | --- | --- | --- |
 | Own code, own customers, leads and tasks | yes | yes | yes |
 | Every salesperson's customers, leads, tasks, reports and inquiries | no | yes | yes |
-| Add, change or deactivate managers and salespeople | no | no | yes |
+| Add, deactivate or reactivate salespeople | no | yes | yes |
+| Add, change or deactivate managers; promote a salesperson | no | no | yes |
 | Set a salesperson's commission agreement | no | no | yes |
 | Move a customer's sales credit to another salesperson | no | no | yes |
 | Record or void a payout | no | no | yes |
@@ -189,7 +190,12 @@ Owner admins come only from `FAAS_SALES_ADMIN_EMAILS`, so the portal can never
 remove the last one. Portal members and the email lists combine; the strongest
 grant wins. An account named only by configuration shows as config-managed.
 
-**Team.** Add an existing Gregale account by email as `manager` or `rep`. A
+**Team.** Owner admins add an existing Gregale account by email as `manager` or
+`rep`, change roles and deactivate members. Sales managers do this for
+salespeople only: they cannot add, demote or deactivate a manager, or promote a
+salesperson. The team list
+omits agreements for managers (customer rows still show the rate frozen on each
+customer), and nobody can change their own role or deactivate themselves. A
 member who has not verified their email or enrolled an authenticator shows
 `ready: false` and cannot sign in to sales. Deactivate instead of deleting;
 history stays.
@@ -217,9 +223,9 @@ it. Nothing is paid by Gregale.
 
 | Private route | Role | Use |
 | --- | --- | --- |
-| `GET /v1/sales/admin/team` | owner admin | Members, effective role, source, readiness, current agreement |
-| `POST /v1/sales/admin/team` | owner admin | `{"email","role"}` adds a manager or rep |
-| `PUT /v1/sales/admin/team/{member}` | owner admin | `{"role","active","version"}` changes or deactivates |
+| `GET /v1/sales/admin/team` | manager | Members, effective role, source, readiness; current agreement for owner admins only |
+| `POST /v1/sales/admin/team` | manager (rep only) | `{"email","role"}` adds a manager or rep |
+| `PUT /v1/sales/admin/team/{member}` | manager (rep records only) | `{"role","active","version"}` changes or deactivates |
 | `GET /v1/sales/admin/team/{member}/agreements` | owner admin | Agreement history |
 | `POST /v1/sales/admin/team/{member}/agreements` | owner admin | `{"commission_bps","effective_from","note"}` |
 | `GET /v1/sales/customers/{account}/credit` | manager | Credit move history |

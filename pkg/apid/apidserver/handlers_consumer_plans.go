@@ -16,7 +16,24 @@ func apiConsumerPlanResponse(plan state.APIConsumerPlan) api.APIConsumerPlanResp
 	return api.APIConsumerPlanResponse{ID: plan.ID, AppID: plan.AppID, Name: plan.Name,
 		MaxRequestsPerMinute: plan.MaxRequestsPerMinute, MaxUnitsPerMonth: plan.MaxUnitsPerMonth,
 		AlertThresholdsPercent: append([]int32{}, plan.AlertThresholdsPercent...),
+		RouteLimits:            apiPlanRouteLimits(plan.RouteLimits),
 		CreatedAt:              plan.CreatedAt.UTC(), UpdatedAt: plan.UpdatedAt.UTC()}
+}
+
+func apiPlanRouteLimits(in map[string]state.APIConsumerPlanRouteLimit) map[string]api.APIConsumerPlanRouteLimit {
+	out := make(map[string]api.APIConsumerPlanRouteLimit, len(in))
+	for route, limit := range in {
+		out[route] = api.APIConsumerPlanRouteLimit{MaxRequestsPerMinute: limit.MaxRequestsPerMinute, MaxRequestsPerMonth: limit.MaxRequestsPerMonth}
+	}
+	return out
+}
+
+func statePlanRouteLimits(in map[string]api.APIConsumerPlanRouteLimit) map[string]state.APIConsumerPlanRouteLimit {
+	out := make(map[string]state.APIConsumerPlanRouteLimit, len(in))
+	for route, limit := range in {
+		out[route] = state.APIConsumerPlanRouteLimit{MaxRequestsPerMinute: limit.MaxRequestsPerMinute, MaxRequestsPerMonth: limit.MaxRequestsPerMonth}
+	}
+	return out
 }
 
 func apiConsumerPlanAssignmentResponse(a state.APIConsumerPlanAssignment) api.APIConsumerPlanAssignmentResponse {
@@ -73,7 +90,7 @@ func (s *server) createAPIConsumerPlan(w http.ResponseWriter, r *http.Request, a
 	}
 	plan := state.APIConsumerPlan{AccountID: acct.ID, AppID: app.ID, Name: req.Name,
 		MaxRequestsPerMinute: req.MaxRequestsPerMinute, MaxUnitsPerMonth: req.MaxUnitsPerMonth,
-		AlertThresholdsPercent: req.AlertThresholdsPercent}
+		AlertThresholdsPercent: req.AlertThresholdsPercent, RouteLimits: statePlanRouteLimits(req.RouteLimits)}
 	if err := state.ValidateAPIConsumerPlan(plan); err != nil {
 		api.WriteProblem(w, planProblem(err.Error()))
 		return
@@ -91,7 +108,7 @@ func (s *server) createAPIConsumerPlan(w http.ResponseWriter, r *http.Request, a
 	s.audit.Emit(r.Context(), "api_consumer_plan.created", &acct.ID, map[string]any{
 		"app_id": app.ID, "plan_id": created.ID, "name": created.Name,
 		"max_requests_per_minute": created.MaxRequestsPerMinute, "max_units_per_month": created.MaxUnitsPerMonth,
-		"alert_thresholds_percent": created.AlertThresholdsPercent,
+		"alert_thresholds_percent": created.AlertThresholdsPercent, "route_limit_count": len(created.RouteLimits),
 	})
 	writeJSON(w, http.StatusCreated, apiConsumerPlanResponse(created))
 }
@@ -114,7 +131,11 @@ func (s *server) updateAPIConsumerPlanLimits(w http.ResponseWriter, r *http.Requ
 	if req.AlertThresholdsPercent != nil {
 		alerts = append([]int32{}, *req.AlertThresholdsPercent...)
 	}
-	plan, err := store.UpdateAPIConsumerPlanLimits(r.Context(), acct.ID, app.ID, r.PathValue("plan_id"), req.MaxRequestsPerMinute, req.MaxUnitsPerMonth, alerts)
+	var routeLimits map[string]state.APIConsumerPlanRouteLimit
+	if req.RouteLimits != nil {
+		routeLimits = statePlanRouteLimits(*req.RouteLimits)
+	}
+	plan, err := store.UpdateAPIConsumerPlanLimits(r.Context(), acct.ID, app.ID, r.PathValue("plan_id"), req.MaxRequestsPerMinute, req.MaxUnitsPerMonth, alerts, routeLimits)
 	switch {
 	case errors.Is(err, state.ErrInvalidArgument):
 		api.WriteProblem(w, planProblem(strings.TrimPrefix(err.Error(), state.ErrInvalidArgument.Error()+": ")))
@@ -126,7 +147,7 @@ func (s *server) updateAPIConsumerPlanLimits(w http.ResponseWriter, r *http.Requ
 	s.audit.Emit(r.Context(), "api_consumer_plan.limits_updated", &acct.ID, map[string]any{
 		"app_id": app.ID, "plan_id": plan.ID,
 		"max_requests_per_minute": plan.MaxRequestsPerMinute, "max_units_per_month": plan.MaxUnitsPerMonth,
-		"alert_thresholds_percent": plan.AlertThresholdsPercent,
+		"alert_thresholds_percent": plan.AlertThresholdsPercent, "route_limit_count": len(plan.RouteLimits),
 	})
 	writeJSON(w, http.StatusOK, apiConsumerPlanResponse(plan))
 }

@@ -1122,6 +1122,7 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 		db.NotifyKeyChanged,
 		db.NotifyDeploymentChanged,
 		db.NotifyDeploymentRouteChanged,
+		db.NotifyProjectRollbackRouteChanged,
 		db.NotifyDeploymentSmokeChallenge,
 		db.NotifyRouteProbeChallenge,
 		db.NotifyEdgeRuleChanged,
@@ -1200,6 +1201,12 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 				}
 				continue
 			}
+			if n.Channel == db.NotifyProjectRollbackRouteChanged {
+				if gatewayNode != "" {
+					observeProjectRollbackRoute(ctx, pool, inv, n.Payload, gatewayNode, log)
+				}
+				continue
+			}
 			if n.Channel == db.NotifyDeploymentRouteChanged {
 				payload, applied := handleDeploymentRouteInvalidation(ctx, inv, n.Payload, log)
 				if applied && gatewayNode != "" {
@@ -1266,6 +1273,10 @@ func handleDeploymentRouteInvalidation(ctx context.Context, inv invalidator, raw
 		log.Warn("gatewayd: bad deployment_route_changed payload", "err", err)
 		return db.DeploymentRouteChangedPayload{}, false
 	}
+	return payload, refreshDeploymentRoute(ctx, inv, payload, log)
+}
+
+func refreshDeploymentRoute(ctx context.Context, inv invalidator, payload db.DeploymentRouteChangedPayload, log *slog.Logger) bool {
 	if admission, ok := inv.(interface{ InvalidateWorkloadAdmission(string) }); ok {
 		admission.InvalidateWorkloadAdmission(payload.AppID)
 	}
@@ -1275,17 +1286,17 @@ func handleDeploymentRouteInvalidation(ctx context.Context, inv invalidator, raw
 	// cached target is assigned zero but the new target is not cached yet.
 	if err := inv.RefreshLiveTargets(ctx, payload.AppID); err != nil {
 		log.Warn("gatewayd: refresh deployment route targets failed", "app", payload.AppID, "generation", payload.Generation, "err", err)
-		return payload, false
+		return false
 	}
 	if err := inv.RefreshDeploymentWeights(ctx, payload.AppID); err != nil {
 		log.Warn("gatewayd: refresh deployment route weights failed", "app", payload.AppID, "generation", payload.Generation, "err", err)
-		return payload, false
+		return false
 	}
 	if err := refreshPublicRoutingForRoute(ctx, inv, payload.AppID); err != nil {
 		log.Warn("gatewayd: refresh deployment route routing view failed", "app", payload.AppID, "generation", payload.Generation, "err", err)
-		return payload, false
+		return false
 	}
-	return payload, true
+	return true
 }
 
 func ackDeploymentRouteInvalidation(ctx context.Context, pool *pgxpool.Pool, generation int64, node string, log *slog.Logger) {

@@ -38,7 +38,7 @@ func newSnapshotReaderFixture(t *testing.T) *snapshotReaderFixture {
 }
 
 func (f *snapshotReaderFixture) owned() endpoint {
-	settings := endpointSettingsForSpec(f.base.definition.Spec)
+	settings := (&Provider{}).endpointSettingsForSpec(f.base.definition.Spec)
 	no := false
 	return endpoint{ID: "ep-owned", Name: f.base.p.snapshotCopyReaderName(f.request.ResourceID), CreatedAt: f.request.CaptureCreatedAt.Add(time.Minute).Format(time.RFC3339Nano),
 		ProjectID: "project-source", BranchID: "br-target", RegionID: "aws-eu-central-1", Type: "read_only", Host: "ep-owned.us-east-1.aws.neon.tech", CurrentState: "active",
@@ -58,7 +58,7 @@ func (f *snapshotReaderFixture) serveHTTP(w http.ResponseWriter, r *http.Request
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		if payload != snapshotCopyReaderPayload(f.base.p.snapshotCopyReaderName(f.request.ResourceID), "br-target", "aws-eu-central-1", f.base.definition.Spec) {
+		if payload != f.base.p.snapshotCopyReaderPayload(f.base.p.snapshotCopyReaderName(f.request.ResourceID), "br-target", "aws-eu-central-1", f.base.definition.Spec) {
 			f.base.t.Error("creation changed frozen owner/branch/readonly/settings")
 		}
 		actual := f.owned()

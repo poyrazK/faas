@@ -72,6 +72,11 @@ on:
         required: false
         default: ""
         type: string
+      compute_lane:
+        description: "This run only: turn the compute lane on (vmmd and the other compute daemons), the owner-watched canary of docs/adr/20261123122457-compute-unit-lane.md. release_units.json compute_lane.enabled turns it on for every run."
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -95,7 +100,9 @@ jobs:
     timeout-minutes: 35
     concurrency:
       # Keyed by the deploy target, as the preflight's `if:` decides it.
-      group: release-units-build-${{ inputs.deploy_environment || ((github.event_name == 'push' || github.event_name == 'schedule') && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT) || 'build-only' }}
+      # A compute-lane canary has its own group: the 10-minute schedule or a
+      # merge (lane off) must not cancel the build the owner is watching.
+      group: release-units-build-${{ inputs.deploy_environment || ((github.event_name == 'push' || github.event_name == 'schedule') && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT) || 'build-only' }}${{ inputs.compute_lane && '-compute-canary' || '' }}
       cancel-in-progress: true
     outputs:
       eligible: ${{ steps.detect.outputs.eligible }}
@@ -204,6 +211,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           BLAST_CAP: "5"
           UNITS_BIN_DIR: ${{ runner.temp }}/unit-bin
+          COMPUTE_LANE: ${{ inputs.compute_lane && 'on' || '' }}
         run: |
           set -euo pipefail
           mkdir -p "$OUT_DIR"
@@ -216,6 +224,13 @@ jobs:
           # the full analysis of that commit, checked out.
           tools="$RUNNER_TEMP/unit-tools"
           rm -rf "$tools" && cp -R scripts/ci "$tools"
+          # The dispatched compute-lane canary turns the lane on in the copied
+          # table, so the verdict, the build and the release agree on it.
+          if [[ "$COMPUTE_LANE" == on ]]; then
+            jq '.compute_lane.enabled = true' "$tools/release_units.json" > "$tools/release_units.json.new"
+            mv "$tools/release_units.json.new" "$tools/release_units.json"
+            echo "::notice::compute lane on for this run (owner-dispatched canary)" >&2
+          fi
           python3 "$tools/affected_units.py" --base "$BASE" --head HEAD --output "$OUT_DIR/report-main.json"
           target="$(git rev-parse HEAD)" stall=""
           # The whole range's verdict wins: a commit that looks blocked on
@@ -286,7 +301,9 @@ jobs:
             echo "eligible=$eligible"
             echo "deployable=$deployable"
             echo "control_plane=$(jq -r '.lanes["control-plane"].eligible' "$OUT_DIR/report.json")"
-            echo "edge=$(jq -r '.lanes.edge.eligible' "$OUT_DIR/report.json")"
+            # The compute lane rides the edge lane's per-node jobs
+            # (docs/adr/20261123122457-compute-unit-lane.md).
+            echo "edge=$(jq -r '.lanes.edge.eligible or (.lanes.compute.eligible // false)' "$OUT_DIR/report.json")"
             # false only when the host view names the control-plane group
             # and no role of it changed since the base full release; an
             # unknown group (no host view) keeps the host-config job.

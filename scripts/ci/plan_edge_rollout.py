@@ -68,11 +68,24 @@ def load_gates(path=os.path.join(HERE, "release_units.json")):
     return out
 
 
+# The compute lane's units ride this lane's per-node jobs
+# (docs/adr/20261123122457-compute-unit-lane.md); their control-plane
+# services (schedd) went out with the control-plane lane.
+COMPUTE_UNIT_LANES = ("shared", "compute")
+
+
 def edge_units(manifest):
     """(units a compute node restarts, units the control plane restarts)
-    among the release's edge units; optional services do not count."""
+    among the release's edge units and the compute lane's node units (a
+    helper counts: the node's overlay replaces it); optional services do
+    not count."""
     node, cp = set(), set()
     for name, unit in manifest["units"].items():
+        if unit["lane"] in COMPUTE_UNIT_LANES:
+            if unit.get("helper") or any(s.get("host") == "compute-only" and not s.get("optional")
+                                         for s in unit["services"]):
+                node.add(name)
+            continue
         if unit["lane"] != "edge":
             continue
         for service in unit["services"]:
@@ -83,9 +96,10 @@ def edge_units(manifest):
 
 
 def touches_nodes(manifest):
-    return any(service.get("host") == "compute-only"
-               for unit in manifest["units"].values() if unit["lane"] == "edge"
-               for service in unit["services"])
+    return bool(edge_units(manifest)[0]) or any(
+        service.get("host") == "compute-only"
+        for unit in manifest["units"].values() if unit["lane"] in ("edge",) + COMPUTE_UNIT_LANES
+        for service in unit["services"])
 
 
 def plan(manifest, targets, canary=""):

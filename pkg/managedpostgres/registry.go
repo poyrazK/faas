@@ -310,6 +310,7 @@ func NewRegistry(config Config, getenv func(string) string, factories map[string
 	if _, ok := registry.defaults[registry.DefaultRegion]; !ok {
 		return nil, errors.New("managed postgres: default_region is not configured")
 	}
+	registry.pushSuspendTimeout(registry.SuspendTimeoutSeconds())
 	return registry, nil
 }
 

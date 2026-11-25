@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 )
 
@@ -23,6 +25,7 @@ type RollbackOperation struct {
 	UpdatedAt           time.Time             `json:"updated_at"`
 	CompletedAt         *time.Time            `json:"completed_at,omitempty"`
 	AuditID             string                `json:"audit_id,omitempty"`
+	ProjectRollbackID   string                `json:"project_rollback_id,omitempty"`
 	// Plain rollbacks (ADR-1446) also report what started them
 	// (manual, auto_5xx, alert), the measured time from request to serving,
 	// and a failure detail. Checked rollbacks leave these empty.
@@ -40,4 +43,21 @@ func (c *Client) GetRollbackOperation(ctx context.Context, slug, id string) (Rol
 	var out RollbackOperation
 	err := c.doWithoutIdempotencyKey(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/rollbacks/"+url.PathEscape(id), nil, &out)
 	return out, err
+}
+
+// PreflightCheckedRollback reads admission checks for an exact rollback pair.
+func (c *Client) PreflightCheckedRollback(ctx context.Context, slug, current, target string, ack bool) ([]BindingCheckFinding, error) {
+	query := url.Values{
+		"expected_current_deployment_id": {current},
+		"target_deployment_id":           {target},
+		"acknowledge_releases":           {strconv.FormatBool(ack)},
+	}
+	var warnings []BindingCheckFinding
+	if err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/rollbacks/preflight?"+query.Encode(), nil, &warnings); err != nil {
+		return nil, err
+	}
+	if warnings == nil {
+		return nil, errors.New("server returned no rollback preflight result")
+	}
+	return warnings, nil
 }

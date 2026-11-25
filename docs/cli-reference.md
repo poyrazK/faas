@@ -35,7 +35,7 @@ Read retries: put `--http-retries 3` before the command for up to three addition
 | [`version`](#version) | Print the CLI version |
 | [`update`](#update) | Update the CLI to the newest release |
 | [`man`](#man) | Print the CLI manual page, or one command&#39;s page |
-| [`guide`](#guide) | Short task pages: deploy, health checks, private services, rollouts |
+| [`guide`](#guide) | Task pages, or search commands and docs for a task in your own words |
 | [`release`](#release) | Inspect releases and control rollouts: canary, traffic, approvals |
 | [`preview`](#preview) | Manage pull-request preview environments |
 | [`project`](#project) | Inspect and recover repository projects |
@@ -60,6 +60,7 @@ Read retries: put `--http-retries 3` before the command for up to three addition
 | [`debug`](#debug) | Inspect requests, traces, issues, profiles and regressions |
 | [`audit`](#audit) | Search your account&#39;s audit log |
 | [`alert`](#alert) | Manage alert rules, channels, incidents, SLOs and checks |
+| [`mcp`](#mcp) | Connect agents, host MCP servers, or call MCP tools |
 | [`account`](#account) | Manage your account, MFA and data exports |
 | [`org`](#org) | Manage orgs, members and invitations |
 | [`key`](#key) | Manage your account&#39;s API keys |
@@ -127,7 +128,7 @@ gregale init --agents --name my-api
 
 Deploy an app, function, or project
 
-`gregale deploy [<subcommand>] [--atomic] [--add-services] [--verify] [--workers] [--stabilize] [--progressive] [--worker-health] [--migrate] [--release-secrets-file <PATH>] [--release-secrets-request-id <ID>] [--config-file <PATH>] [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--source-branch <BRANCH>] [--github] [--pinned-sha <SHA>] [--pin-action] [--template <NAME>] [--dockerfile] [--issue-source-maps <PATH>] [--issue-source-map-directory <PATH>] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--size <SIZE>] [--profile <SIZE>] [--vcpu <N>] [--execution-mode <MODE>] [--restart-policy <POLICY>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--only <SLUGS>] [--project] [--env <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--prefix <PREFIX>] [--rollout <MODE>] [--override-freeze <REASON>] [--at <WHEN>] [--release-notify <CHANNEL,...>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--queue-canary-binding <NAME>]... [--healthcheck-path <PATH>] [--readiness-path <PATH>] [--healthcheck-grpc] [--healthcheck-grpc-service <SERVICE>] [--disable-startup-cpu-boost] [--mcp-task-migration-override] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <DURATION>] [--idempotency-key <KEY>] [--resume-upload-id <ID>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--preview] [--plan] [--dry-run] [--explain-files] [--yes] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
+`gregale deploy [<subcommand>] [--atomic] [--add-services] [--verify] [--workers] [--stabilize] [--progressive] [--worker-health] [--migrate] [--release-secrets-file <PATH>] [--release-secrets-request-id <ID>] [--config-file <PATH>] [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--anonymous] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--source-branch <BRANCH>] [--github] [--pinned-sha <SHA>] [--pin-action] [--template <NAME>] [--dockerfile] [--issue-source-maps <PATH>] [--issue-source-map-directory <PATH>] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--size <SIZE>] [--profile <SIZE>] [--vcpu <N>] [--execution-mode <MODE>] [--restart-policy <POLICY>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--only <SLUGS>] [--project] [--env <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--prefix <PREFIX>] [--rollout <MODE>] [--override-freeze <REASON>] [--at <WHEN>] [--release-notify <CHANNEL,...>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--queue-canary-binding <NAME>]... [--healthcheck-path <PATH>] [--readiness-path <PATH>] [--healthcheck-grpc] [--healthcheck-grpc-service <SERVICE>] [--disable-startup-cpu-boost] [--mcp-task-migration-override] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <DURATION>] [--idempotency-key <KEY>] [--resume-upload-id <ID>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--preview] [--plan] [--dry-run] [--explain-files] [--yes] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
 
 Source defaults to committed HEAD when origin exists; otherwise local files. Use --source=worktree to include local changes.
 
@@ -155,6 +156,7 @@ Retry a project&#39;s failed workloads: gregale release attempt retry SESSION_ID
 | `--path <DIR>` | source directory (default: current directory) |  |
 | `--source <auto|head|worktree>` | local source policy (default: auto) | one of `auto` · `head` · `worktree` |
 | `--worktree` | deploy the selected source directory from the working tree, including local changes |  |
+| `--anonymous` | deploy without an account when not logged in; prints a link a person opens to claim the app |  |
 | `--repo <OWNER/NAME>` | deploy a GitHub repository (requires --ref) |  |
 | `--repository <OWNER/NAME>` | bind a project to GitHub (requires --install-id) |  |
 | `--install-id <N>` | GitHub installation ID (requires --repository) |  |
@@ -1092,19 +1094,22 @@ Print the CLI manual page, or one command&#39;s page
 
 ## guide
 
-Short task pages: deploy, health checks, private services, rollouts
+Task pages, or search commands and docs for a task in your own words
 
-`gregale guide [<task>] [--json]`
+`gregale guide [<task>|<question>] [--json]`
+
+A question lists the matching commands, then docs sections from the docs shipped with this CLI and the live site. Preview pages show only when your account has that preview feature. GREGALE_DOCS_OFFLINE=1 skips the live site.
 
 | Flag | Meaning | |
 |---|---|---|
-| `--json` | print the pages as JSON |  |
+| `--json` | print the pages or the search results as JSON |  |
 
 Examples:
 
 ```sh
 gregale guide
 gregale guide private-services
+gregale guide "open an outbound tcp port"
 ```
 
 
@@ -2059,21 +2064,76 @@ Preview or delete a project
 
 ### project rollback
 
-Roll the latest project deploy back, callers first
+Roll back a recorded project deploy, callers first
 
-`gregale project rollback [--dry-run] [--yes] [--all] [--acknowledge-releases] [--timeout <DURATION>] <slug>`
+`gregale project rollback [--dry-run] [--yes] [--history] [--targets] [--protect-deploy <UUID>] [--ttl <DURATION>] [--status <OPERATION_ID>] [--preview-resume <OPERATION_ID>] [--resume <OPERATION_ID>] [--pause <OPERATION_ID>] [--preview-undo <OPERATION_ID>] [--undo <OPERATION_ID>] [--all] [--to-deploy <UUID>] [--verify] [--verify-before-cutover] [--stabilize-for <DURATION>] [--verify-live-traffic] [--undo-on-health-failure] [--undo-on-live-traffic-failure] [--acknowledge-releases] [--plan-hash <SHA256>] [--request-id <UUID>] [--timeout <DURATION>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--dry-run` | print the rollback plan |  |
-| `--yes` | roll the latest deploy back |  |
-| `--all` | roll back every service, not only those the latest deploy changed |  |
+| `--yes` | start the server rollback and wait |  |
+| `--history` | list recent project rollbacks and undos |  |
+| `--targets` | list recorded deploys eligible for rollback preview |  |
+| `--protect-deploy <UUID>` | retain a recorded deploy&#39;s rollback artifacts |  |
+| `--ttl <DURATION>` | rollback artifact protection duration (default 168h) |  |
+| `--status <OPERATION_ID>` | inspect the server rollback receipt |  |
+| `--preview-resume <OPERATION_ID>` | preview the remaining steps of a paused rollback or undo |  |
+| `--resume <OPERATION_ID>` | retry a blocked rollback or follow a running one |  |
+| `--pause <OPERATION_ID>` | pause a running project rollback or undo |  |
+| `--preview-undo <OPERATION_ID>` | preview the exact undo of a paused rollback |  |
+| `--undo <OPERATION_ID>` | restore the original revisions from a paused rollback |  |
+| `--all` | select each serving service and its current predecessor |  |
+| `--to-deploy <UUID>` | restore the revisions recorded for a project deploy |  |
+| `--verify` | verify configured HTTP health probes between cutovers |  |
+| `--verify-before-cutover` | probe prepared revisions before moving project traffic |  |
+| `--stabilize-for <DURATION>` | require healthy post-cutover probes for this duration |  |
+| `--verify-live-traffic` | verify configured production 5xx budgets after cutover |  |
+| `--undo-on-health-failure` | undo switched services on a confirmed health probe 5xx |  |
+| `--undo-on-live-traffic-failure` | undo switched services on a sustained production 5xx breach |  |
 | `--acknowledge-releases` | accept rolling back across release commands |  |
+| `--plan-hash <SHA256>` | apply the plan printed by --dry-run, --preview-resume, or --preview-undo |  |
+| `--request-id <UUID>` | reuse a rollback start request UUID |  |
 | `--timeout <DURATION>` | wait per service (default 10m) |  |
 
-Only services the latest deploy changed roll back unless --all; services added since and services already rolled back are left as they are.
+By default, select the exact services and predecessors recorded for the latest serving project deploy.
 
-Stops at the first service that fails; run it again to finish.
+Use --targets to list recent deploy IDs. Pass --to-deploy with --dry-run or --yes to restore the recorded revisions for that deploy.
+
+Use --protect-deploy to retain the artifacts for a known-good deploy. --ttl defaults to 168h and accepts 1s to 168h. The --targets list shows expiry and retained layer bytes.
+
+Dry run reports preflight blockers for every targeted service. The server warms and checks every target before moving traffic. The receipt shows preparation progress and any blockers.
+
+The server continues after the CLI exits. Use --status with the operation ID to inspect progress from any authorized connection.
+
+Run --dry-run and pass its plan hash to --yes --plan-hash with the same options to apply the reviewed plan. If the plan changed, review a fresh preview.
+
+The CLI prints a request ID before submitting a rollback. To retry a start after a lost response, use --yes with the same --request-id and options.
+
+Use --history to find recent rollback and undo receipts. The running operation appears first, followed by the most recent receipts, up to 20 in total.
+
+Use --verify to check configured HTTP health probes after each cutover. A failed check pauses the operation. Fix the service and use --resume to recheck it before continuing.
+
+Use --verify-before-cutover with --verify to probe all configured prepared target revisions at zero traffic before the first cutover. A failed probe or missing verification by the preparation deadline holds traffic.
+
+Use --stabilize-for with --verify to require a 1s to 60s window of healthy probes after each cutover. The next cutover waits for the current service to pass.
+
+Use --verify-live-traffic with --verify to check configured production 5xx budgets on restored services. A budget breach or insufficient evidence by the deadline holds the next cutover.
+
+Use --undo-on-health-failure with --verify to undo switched services after a confirmed health probe 5xx. Use --status with the linked undo ID to follow it.
+
+Use --undo-on-live-traffic-failure with --verify-live-traffic to undo switched services when a sustained production 5xx breach is confirmed again before undo.
+
+Use --pause with a running operation ID to stop further cutovers. Gregale settles committed handoffs and releases unused preparations before reporting the pause.
+
+Use --preview-resume with a paused operation ID to see completed and pending cutovers, blockers, and which verification will run. Pass its hash to --resume --plan-hash to continue the same operation only if the reviewed plan still matches.
+
+Use --undo with a paused rollback ID to restore the original revisions for services that switched. Undo has its own operation ID. Use --status or --resume with that ID to follow it.
+
+Use --preview-undo with a paused rollback ID to see the restored revisions and crossed release runs in reverse cutover order. Pass its plan hash to --undo --plan-hash with the same release acknowledgement to apply the reviewed undo.
+
+Status and undo preview show the artifact hold for each revision that an undo can restore. The hold lasts while the rollback runs and for 24 hours after it pauses. An accepted undo takes over any active holds while it runs.
+
+The receipt shows when HTTP routing committed, when gateways applied it, and when a successful request reached the restored revision.
 
 ### project health
 
@@ -3283,7 +3343,7 @@ Reuse an idempotency key only with the same async request within the server&#39;
 
 ### invocation watch
 
-Watch async invocations finish across your account in real time (not app output or HTTP requests; see gregale logs --follow)
+Watch async invocations finish across your account in real time
 
 `gregale invocation watch [--app <slug>] [--include-stateless] [<slug>]`
 
@@ -3291,6 +3351,8 @@ Watch async invocations finish across your account in real time (not app output 
 |---|---|---|
 | `--app <slug>` | filter to a single app slug (optional) |  |
 | `--include-stateless` | also print stateless.advisory frames (default: hide) |  |
+
+This shows invocation results, not app output or HTTP requests; for those, run `gregale logs --follow`.
 
 ### invocation list
 
@@ -3453,6 +3515,8 @@ gregale env list --app my-api --env __all__
 gregale env list --app my-api --class ephemeral
 gregale env list --app my-api --older-than 90d
 ```
+
+Delivery counts describe runtime-start delivery; runtime reload and application acknowledgement are separate evidence in each row, and delivery does not confirm that the application adopted a value.
 
 ### env rotate
 
@@ -4305,12 +4369,12 @@ Add an edge rule
 Examples:
 
 ```sh
-gregale edge rule create --app my-api --kind throttle --match-host my-api.gregale.dev --match-path /search --throttle-requests-per-second 5 --throttle-burst 10
-gregale edge rule create --app my-api --kind throttle --match-host my-api.gregale.dev --match-path /login --throttle-requests-per-second 0.1 --throttle-burst 5 --throttle-key-by composite --throttle-key-field ip --throttle-key-field header:x-username --throttle-count-status 401
-gregale edge rule create --app my-api --kind redirect --match-host my-api.gregale.dev --match-path /old --redirect-status 308 --redirect-to https://my-api.gregale.dev/new
-gregale edge rule create --app my-api --kind cache --match-host my-api.gregale.dev --match-path /catalog --cache-max-age-seconds 60
+gregale edge rule create --app my-api --kind throttle --match-host my-api.gregale.app --match-path /search --throttle-requests-per-second 5 --throttle-burst 10
+gregale edge rule create --app my-api --kind throttle --match-host my-api.gregale.app --match-path /login --throttle-requests-per-second 0.1 --throttle-burst 5 --throttle-key-by composite --throttle-key-field ip --throttle-key-field header:x-username --throttle-count-status 401
+gregale edge rule create --app my-api --kind redirect --match-host my-api.gregale.app --match-path /old --redirect-status 308 --redirect-to https://my-api.gregale.app/new
+gregale edge rule create --app my-api --kind cache --match-host my-api.gregale.app --match-path /catalog --cache-max-age-seconds 60
 gregale edge rule create --app my-site --kind challenge --match-host @app --match-path '/*' --match '{"field":"verified_bot","op":"missing"}'
-gregale edge rule create --app my-api --kind budget --match-host my-api.gregale.dev --match-path /reports --budget-ms 20000
+gregale edge rule create --app my-api --kind budget --match-host my-api.gregale.app --match-path /reports --budget-ms 20000
 gregale edge rule create --app my-api --kind validate --match-host api.example.com --validate-schema @schema.json --validate-content-type application/json --validate-mode block
 cat schema.json | gregale edge rule create --app my-api --kind validate --match-host api.example.com --validate-schema -
 gregale edge rule create --app my-api --kind validate --match-host api.example.com --match-path '/users/?*' --match-method GET --validate-path-template '/users/{id}' --validate-path-schema '{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}' --validate-query-schema @query.json
@@ -4737,13 +4801,12 @@ With overage on, databases keep running up to twice the allowance.
 
 Show whether databases keep running past the monthly compute allowance
 
-`gregale postgres overage get [on|off]`
+`gregale postgres overage get`
 
 Examples:
 
 ```sh
 gregale postgres overage get
-gregale postgres overage get set on
 ```
 
 With overage on, databases keep running up to twice the allowance.
@@ -4757,7 +4820,6 @@ Turn compute overage on or off (on: databases run up to twice the allowance)
 Examples:
 
 ```sh
-gregale postgres overage set get
 gregale postgres overage set on
 ```
 
@@ -4783,6 +4845,32 @@ Durably switch between idle suspension and always-on compute
 Read compute policy change progress
 
 `gregale postgres compute-policy status <database> <request_uuid>`
+
+### postgres suspend-timeout
+
+Set how long an idle scale-to-zero database stays up (1m-1h, or default)
+
+`gregale postgres suspend-timeout <set> <database> <duration|default>`
+
+Examples:
+
+```sh
+gregale postgres suspend-timeout set orders-db 2m
+gregale postgres suspend-timeout set orders-db default
+```
+
+#### postgres suspend-timeout set
+
+Set how long an idle scale-to-zero database stays up (1m-1h, or default)
+
+`gregale postgres suspend-timeout set <database> <duration|default>`
+
+Examples:
+
+```sh
+gregale postgres suspend-timeout set orders-db 2m
+gregale postgres suspend-timeout set orders-db default
+```
 
 ### postgres resize
 
@@ -5045,7 +5133,7 @@ gregale postgres attach orders my-api --env DATABASE_URL --access read_write
 
 ### postgres query
 
-Run one SQL query and print rows (read-only unless --write)
+Run one SQL query and print rows; read-only by default
 
 `gregale postgres query [--file <PATH>] [--write] [--read-only] [--max-rows <N>] [--timeout <D>] [--app <SLUG>] [--env <KEY>] [--access <MODE>] [--wait-timeout <D>] <database> [<query>]`
 
@@ -5190,7 +5278,7 @@ Account object storage observations, safety policy and billing state
 
 List an app&#39;s object-storage buckets and their IDs
 
-`gregale bucket list <app>`
+`gregale bucket list [<app>]`
 
 ### bucket delete
 
@@ -5658,7 +5746,7 @@ List cron rules
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug (required without -l) |  |
+| `--app <slug>` | app slug (defaults to the linked app; optional with -l) |  |
 | `--selector|-l <SELECTOR>` | only crons whose labels match (preview) |  |
 | `--one-off` | list one-off requests (--at or --in) instead of cron rules |  |
 
@@ -5673,7 +5761,7 @@ Schedule a POST to an app path, or a deployment command
 | `--at <RFC3339>` | send one request at this RFC3339 time instead of on a schedule |  |
 | `--in <DURATION>` | send one request after this delay (such as 30m) instead of on a schedule |  |
 | `--interactive` | choose an HTTP path, schedule, and timezone, preview run times, and confirm creation |  |
-| `--app <slug>` | app slug (interactive mode can use linked app or picker) |  |
+| `--app <slug>` | app slug (defaults to linked context; interactive mode can also pick one) |  |
 | `--schedule <EXPR>` | five-field cron expression (required unless interactive) |  |
 | `--path <PATH>` | path the cron sends a POST to (mutually exclusive with --command) |  |
 | `--command <EXEC>` | executable for a deployment command cron (preview: needs app tasks) |  |
@@ -8201,6 +8289,153 @@ Manage alert rules, channels, incidents, SLOs and checks
 |---|---|---|
 | `--app <slug>` | app slug |  |
 
+### alert maintenance
+
+list · create · cancel
+
+#### alert maintenance list
+
+List maintenance windows including expired and cancelled history
+
+`gregale alert maintenance list --app <SLUG> [--env <SCOPE>] [--cursor <CURSOR>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--env <SCOPE>` | environment (default default) (also --scope) |  |
+| `--cursor <CURSOR>` | history cursor (also --before) |  |
+| `--limit <N>` | page size 1–50 |  |
+
+#### alert maintenance create
+
+Silence MCP readiness notifications while still recording incidents
+
+`gregale alert maintenance create --app <SLUG> [--env <SCOPE>] [--since <TIME>] [--until <TIME>] [--duration <DURATION>] --reason <TEXT>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--env <SCOPE>` | exact environment (default default) (also --scope) |  |
+| `--since <TIME>` | RFC3339 start (default now) (also --start) |  |
+| `--until <TIME>` | RFC3339 end; mutually exclusive with duration (also --end) |  |
+| `--duration <DURATION>` | duration from start up to 720h |  |
+| `--reason <TEXT>` | maintenance reason | required |
+
+#### alert maintenance cancel
+
+End a window and retain cancellation attribution
+
+`gregale alert maintenance cancel --app <SLUG> --id <UUID> --reason <TEXT>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--id <UUID>` | maintenance window | required |
+| `--reason <TEXT>` | cancellation reason | required |
+
+### alert pagerduty
+
+get · set · disable · ack-sync
+
+#### alert pagerduty get
+
+Read masked PagerDuty settings
+
+`gregale alert pagerduty get --app <SLUG> --rule <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--rule <UUID>` | readiness alert rule | required |
+
+#### alert pagerduty set
+
+Use PagerDuty as primary for unattempted incidents
+
+`gregale alert pagerduty set --app <SLUG> --rule <UUID> --expected-version <N> --key-env <ENV> [--region <us|eu>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--rule <UUID>` | readiness alert rule | required |
+| `--expected-version <N>` | current reminder defaults version | required |
+| `--key-env <ENV>` | environment variable containing the integration key | required |
+| `--region <us|eu>` | PagerDuty Events API region (default us) |  |
+
+#### alert pagerduty disable
+
+Restore webhook primary for unattempted incidents
+
+`gregale alert pagerduty disable --app <SLUG> --rule <UUID> --expected-version <N>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--rule <UUID>` | readiness alert rule | required |
+| `--expected-version <N>` | current reminder defaults version | required |
+
+#### alert pagerduty ack-sync
+
+Sync signed PagerDuty acknowledgements into readiness reminders
+
+`gregale alert pagerduty ack-sync <get|set|disable|events>`
+
+##### alert pagerduty ack-sync get
+
+Read masked webhook configuration
+
+`gregale alert pagerduty ack-sync get --app <SLUG> --rule <UUID> [--destination <primary|fallback>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--rule <UUID>` | readiness alert rule | required |
+| `--destination <primary|fallback>` | native PagerDuty receiver |  |
+
+##### alert pagerduty ack-sync set
+
+Bind a service and webhook subscription signing secret
+
+`gregale alert pagerduty ack-sync set --app <SLUG> --rule <UUID> --expected-version <N> [--destination <primary|fallback>] [--expected-pagerduty-version <N>] [--expected-fallback-version <N>] --service-id <ID> --secret-env <ENV> [--sync-unacknowledgements]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--rule <UUID>` | readiness alert rule | required |
+| `--expected-version <N>` | current reminder defaults version | required |
+| `--destination <primary|fallback>` | native PagerDuty receiver; default primary |  |
+| `--expected-pagerduty-version <N>` | current native primary version; required for primary |  |
+| `--expected-fallback-version <N>` | current fallback version; required for fallback |  |
+| `--service-id <ID>` | PagerDuty service ID | required |
+| `--secret-env <ENV>` | environment variable containing the webhook signing secret | required |
+| `--sync-unacknowledgements` | resume bounded reminders after matching provider unacknowledgements (opt-in) |  |
+
+##### alert pagerduty ack-sync disable
+
+Revoke webhook signing credentials immediately
+
+`gregale alert pagerduty ack-sync disable --app <SLUG> --rule <UUID> --expected-version <N> [--destination <primary|fallback>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--rule <UUID>` | readiness alert rule | required |
+| `--expected-version <N>` | current reminder defaults version | required |
+| `--destination <primary|fallback>` | native PagerDuty receiver; omission selects the original callback binding |  |
+
+##### alert pagerduty ack-sync events
+
+Page through durable provider acknowledgement receipts
+
+`gregale alert pagerduty ack-sync events --app <SLUG> --rule <UUID> [--cursor <CURSOR>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--rule <UUID>` | readiness alert rule | required |
+| `--cursor <CURSOR>` | opaque event cursor (also --before) |  |
+| `--limit <N>` | page size 1–50 |  |
+
 ### alert secret
 
 Rotate the alert&#39;s webhook secret
@@ -8209,11 +8444,11 @@ Rotate the alert&#39;s webhook secret
 
 Rotate the alert&#39;s webhook secret
 
-`gregale alert secret rotate --app <slug> [--from-stdin] <alert-id>`
+`gregale alert secret rotate [--app <slug>] [--from-stdin] <alert-id>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug | required |
+| `--app <slug>` | app slug (defaults to the linked app) |  |
 | `--from-stdin` | read the replacement secret from stdin |  |
 
 ### alert channel
@@ -8268,21 +8503,21 @@ Delete a channel
 
 List alert rules
 
-`gregale alert list --app <slug>`
+`gregale alert list [--app <slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug | required |
+| `--app <slug>` | app slug (defaults to the linked app) |  |
 
 ### alert create
 
 Add an alert rule
 
-`gregale alert create --app <slug> --name <NAME> [--metric <METRIC>] [--comparison <OP>] [--threshold <N>] [--window-spec <WINDOW>] [--event-subscription-id <UUID>] [--edge-rule-id <ID>] [--mcp-readiness-scope <SCOPE>] [--failure-source <SOURCE>] [--channel <CHANNEL_ID>]... [--custom-metric <NAME>] [--metric-label <KEY=VALUE>]... [--log-query <FILTERS>] [--saved-search <NAME>] [--slo <SLO_ID>] [--synthetic-check <CHECK_ID>] [--webhook-url <URL>] [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [--webhook-secret <VALUE>] [--notify-resolved]`
+`gregale alert create [--app <slug>] --name <NAME> [--metric <METRIC>] [--comparison <OP>] [--threshold <N>] [--window-spec <WINDOW>] [--event-subscription-id <UUID>] [--edge-rule-id <ID>] [--mcp-readiness-scope <SCOPE>] [--failure-source <SOURCE>] [--channel <CHANNEL_ID>]... [--custom-metric <NAME>] [--metric-label <KEY=VALUE>]... [--log-query <FILTERS>] [--saved-search <NAME>] [--slo <SLO_ID>] [--synthetic-check <CHECK_ID>] [--webhook-url <URL>] [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [--webhook-secret <VALUE>] [--notify-resolved]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug | required |
+| `--app <slug>` | app slug (defaults to the linked app) |  |
 | `--name <NAME>` | rule name (3..120 chars) | required |
 | `--metric <METRIC>` | metric (mcp_tasks_metrics_stale includes the min=0 observer heartbeat) | one of `mcp_protocol_error_rate_pct` · `mcp_protocol_execution_p95_ms` · `route_insights_detected` · `route_monitor_incidents` · `route_health_holds` · `ai_budget_alerts` · `oom_kills` · `event_recovery_notification_admission_overdue_jobs` · `event_recovery_notification_admission_dead_jobs` · `event_recovery_notification_admission_unknown_jobs` · `event_recovery_notification_admission_no_receivers_jobs` · `event_recovery_notification_execution_overdue_jobs` · `event_recovery_notification_execution_dead_jobs` · `event_recovery_notification_execution_unknown_jobs` · `event_recovery_notification_execution_no_receivers_jobs` · `event_retention_expiring_receipts` · `event_storage_utilization_pct` · `event_execution_dead_letters` · `event_execution_dead_letter_rate_per_second` · `event_handler_failure_pct` · `event_completion_latency_p95_seconds` · `event_recovery_stalled_jobs` · `event_recovery_expiring_jobs` · `event_recovery_execution_waiting_jobs` · `event_recovery_execution_prolonged_wait_jobs` · `event_recovery_execution_unknown_jobs` · `event_recovery_execution_retention_risk_jobs` · `event_recovery_capacity_wait_jobs` · `event_pending_recipients` · `event_oldest_pending_seconds` · `event_retry_rate_per_second` · `event_terminal_failure_pct` · `event_routing_latency_p95_seconds` · `event_paused_seconds` · `event_drain_rate_per_second` · `error_rate_pct` · `latency_p50_ms` · `latency_p95_ms` · `latency_p99_ms` · `cold_start_pct` · `request_count` · `failed_invocations` · `api_up` · `account_spend_eur` · `deployment_failed` · `cert_expiry_seconds` · `cert_issuance_failed` · `queue_depth` · `queue_backlog` · `queue_oldest_age_seconds` · `pre_auth_target_threshold` · `pre_auth_target_signal_gap_pct` · `pre_auth_pressure` · `edge_validation_failures` · `edge_rejections` · `edge_waf_detections` · `workflow_failures` · `workflow_schedule_quota_skips` · `workflow_pending_age_seconds` · `workflow_waiting_age_seconds` · `workflow_due_age_seconds` · `log_error_lines` · `log_warn_lines` · `edge_rule_hits` · `edge_rule_log_hits` · `edge_rule_activity` · `new_error_fingerprint` · `cold_wake_rate_pct` · `daily_cost_cents` · `slo_burn_rate` · `slo_budget_burn` · `slo_budget_remaining_pct` · `synthetic_check_consecutive_failures` · `synthetic_check_latency_p95_ms` · `canary_stuck_step` · `safedeploy_audit_emit_failing` · `deployment_audit_gc_failing` · `canary_fleet_in_flight_high` · `mcp_tasks_oldest_age_seconds` · `mcp_tasks_metrics_stale` · `mcp_task_promotion_hold_age_seconds` · `mcp_policy_unconverged_gateways` · `mcp_policy_unverified` · `mcp_readiness_unhealthy` · `mcp_catalog_drift` · `mcp_catalog_monitor_unavailable` · `mcp_oauth_reauthorization_required` · `mcp_oauth_renewal_failed` · `mcp_oauth_retirement_expiring` · `mcp_oauth_issuance_unknown` · `custom_metric` · `log_search_matches` |
 | `--comparison <OP>` | gt\|gte\|lt\|lte\|above_baseline\|below_baseline |  |
@@ -8318,11 +8553,11 @@ printf '%s\n' "$WEBHOOK_SECRET" | gregale alert create --app mcp-worker --name m
 
 Show one alert rule and its last delivery
 
-`gregale alert get --app <slug> <alert-id>`
+`gregale alert get [--app <slug>] <alert-id>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug | required |
+| `--app <slug>` | app slug (defaults to the linked app) |  |
 
 ### alert deliveries
 
@@ -8376,11 +8611,11 @@ gregale alert update --app my-api --interactive
 
 Delete one alert rule
 
-`gregale alert delete --app <slug> [--yes] <alert-id>`
+`gregale alert delete [--app <slug>] [--yes] <alert-id>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug | required |
+| `--app <slug>` | app slug (defaults to the linked app) |  |
 | `--yes` | accepted for consistency; rm does not prompt |  |
 
 ### alert preset
@@ -8416,6 +8651,2165 @@ Examples:
 ```sh
 gregale alert preset enable --app my-api --interactive
 ```
+
+
+## mcp
+
+Connect agents, host MCP servers, or call MCP tools
+
+`gregale mcp [<subcommand>]`
+
+### mcp connect
+
+Add Gregale&#39;s hosted MCP server to your agents
+
+`gregale mcp connect [--client <NAME>] [--project] [--toolsets <LIST>] [--headless] [--force] [--dry-run] [--yes] [--check] [--ci] [--repo <OWNER/NAME>] [--scopes <LIST>] [--approvals <LIST>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--client <NAME>` | claude-code, codex, cursor, vscode, windsurf, antigravity or claude-desktop; repeatable (default: every client found) |  |
+| `--project` | write this project&#39;s .mcp.json instead of the user-wide config |  |
+| `--toolsets <LIST>` | MCP toolsets to list, comma-separated (default core) |  |
+| `--headless` | mint an agent key for an agent with no person at a browser |  |
+| `--force` | replace an existing gregale entry that differs |  |
+| `--dry-run` | show what would be written |  |
+| `--yes` | connect every client found without asking |  |
+| `--check` | only check why an agent does not see Gregale; changes nothing |  |
+| `--ci` | set up an agent in GitHub Actions: key, repository secret, workflow |  |
+| `--repo <OWNER/NAME>` | GitHub repository for --ci (default: the current clone&#39;s) |  |
+| `--scopes <LIST>` | agent key scopes for --ci (default agent,deploy:write) |  |
+| `--approvals <LIST>` | kinds of action the --ci key needs approval for (default every kind; none) |  |
+
+Examples:
+
+```sh
+gregale mcp connect
+gregale mcp connect --client codex --toolsets core,operate
+gregale mcp connect --client claude-code --project
+gregale mcp connect --headless --yes
+gregale mcp connect --check
+gregale mcp connect --ci --repo acme/api
+```
+
+With no --client, connects the clients it finds on this machine, asking for each one in a terminal.
+
+The agent signs in through your browser the first time it connects; nothing secret is written. --headless mints an agent key instead and the config reads it from GREGALE_AGENT_KEY.
+
+Claude Code is configured with claude mcp add; Codex&#39;s ~/.codex/config.toml gets only its [mcp_servers.gregale] table; Cursor, VS Code, Windsurf and Antigravity get a gregale entry in their JSON config, keeping everything else; Antigravity signs in only through the browser, so --headless skips it. Claude Desktop adds remote servers only in its settings, so connect prints those steps.
+
+--check changes nothing: it checks the hosted endpoint, each client&#39;s gregale entry, this directory&#39;s .mcp.json, the agent key in GREGALE_AGENT_KEY, your connected agents and approval requests waiting for you, and names the fix for each problem. It exits 1 when a check fails.
+
+### mcp server
+
+Scaffold, deploy and check the MCP servers you host
+
+#### mcp server invocation
+
+Run one journaled registered-tool invocation; arguments come on stdin
+
+`gregale mcp server invocation <run>`
+
+##### mcp server invocation run
+
+Run one journaled registered-tool invocation; arguments come on stdin
+
+`gregale mcp server invocation run --id <ID> [--token-env <ENV>] [--delegated]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <ID>` | queued invocation UUID | required |
+| `--token-env <ENV>` | named MCP_* application OAuth token |  |
+| `--delegated` | use the current connection exact native invocation grant |  |
+
+#### mcp server export
+
+Emit remote MCP connection JSON without credentials
+
+`gregale mcp server export [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--legacy` | check legacy compatibility (doctor), or use protocol 2025-11-25 |  |
+| `--tool <NAME>` | tool to execute (call) |  |
+| `--uri <URI>` | resource URI to read (resource-read) |  |
+| `--prompt <NAME>` | prompt to render (prompt-get) |  |
+| `--stream-tool <NAME>` | explicitly execute a tool to verify live progress (doctor) |  |
+| `--arguments <JSON>` | tool or prompt arguments as a JSON object |  |
+| `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
+| `--name <NAME>` | connection name (config) |  |
+| `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp server export --app my-mcp --name my-mcp
+```
+
+#### mcp server approval
+
+Show or choose the channels that get agent approval requests
+
+`gregale mcp server approval <channels>`
+
+##### mcp server approval channels
+
+Show or choose the channels that get agent approval requests
+
+`gregale mcp server approval channels [--set <NAME,NAME>] [--clear]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--set <NAME,NAME>` | replace with these comma-separated notification channel names |  |
+| `--clear` | remove every channel; requests go to email only |  |
+
+Examples:
+
+```sh
+gregale mcp server approval channels
+gregale mcp server approval channels --set ops-slack
+gregale mcp server approval channels --clear
+```
+
+These notification channels also get your agents&#39; approval requests. Without flags, shows them. Each request still emails the person who connected the agent.
+
+Changing them needs an admin credential; an agent key cannot.
+
+#### mcp server monitor
+
+Manage reviewed catalog roles and OAuth connections
+
+`gregale mcp server monitor <check|setup|disable|status|run|pause|resume|restart|stop|connect|reconnect|disconnect>`
+
+##### mcp server monitor check
+
+provider-check catalog observer
+
+`gregale mcp server monitor check [--app <VALUE>] [--role <VALUE>] [--callback-port <VALUE>] [--timeout <VALUE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <VALUE>` | HTTP MCP app slug |  |
+| `--role <VALUE>` | managed OAuth role |  |
+| `--callback-port <VALUE>` | override a dynamic loopback callback port (0–65535) |  |
+| `--timeout <VALUE>` | browser authorization deadline |  |
+
+##### mcp server monitor setup
+
+setup catalog observer
+
+`gregale mcp server monitor setup [--env <VALUE>] [--app <VALUE>] [--role <VALUE>] [--all-roles] [--oauth-revocation-endpoint <VALUE>] [--oauth-revocation-auth-method <VALUE>] [--oauth-profile <VALUE>] [--oauth-token-auth-method <VALUE>] [--oauth-browser-redirect-uri <VALUE>] [--oauth-callback-port <VALUE>] [--oauth-resource <VALUE>] [--oauth-issuer <VALUE>] [--oauth-discovery-url <VALUE>] [--oauth-guided] [--oauth-authorization-endpoint <VALUE>] [--oauth-scopes <VALUE>] [--oauth-token-endpoint <VALUE>] [--oauth-client-id <VALUE>] [--oauth-refresh-secret-ref <VALUE>] [--oauth-client-secret-ref <VALUE>] [--managed] [--secret-ref <VALUE>] [--baseline <VALUE>] [--freshness-seconds <VALUE>] [--token-env <VALUE>] [--endpoint <VALUE>] [--interval <VALUE>] [--timeout <VALUE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--env <VALUE>` | connection environment (default when omitted) (also --scope) |  |
+| `--app <VALUE>` | HTTP MCP app slug |  |
+| `--role <VALUE>` | reviewed MCP authorization role |  |
+| `--all-roles` | aggregate all configured roles (status only) |  |
+| `--oauth-revocation-endpoint <VALUE>` | explicit HTTPS RFC 7009 endpoint |  |
+| `--oauth-revocation-auth-method <VALUE>` | revocation authentication: none, client_secret_basic or client_secret_post |  |
+| `--oauth-profile <VALUE>` | provider profile: generic (default), google or oidc |  |
+| `--oauth-token-auth-method <VALUE>` | none, client_secret_basic or client_secret_post |  |
+| `--oauth-browser-redirect-uri <VALUE>` | registered HTTPS console MCP callback URL |  |
+| `--oauth-callback-port <VALUE>` | fixed loopback port; 0 chooses a dynamic port |  |
+| `--oauth-resource <VALUE>` | reviewed HTTPS MCP resource indicator |  |
+| `--oauth-issuer <VALUE>` | reviewed HTTPS provider issuer |  |
+| `--oauth-discovery-url <VALUE>` | explicit HTTPS provider metadata URL |  |
+| `--oauth-guided` | use browser authorization instead of a refresh secret |  |
+| `--oauth-authorization-endpoint <VALUE>` | explicit HTTPS browser authorization endpoint |  |
+| `--oauth-scopes <VALUE>` | space-separated OAuth scopes |  |
+| `--oauth-token-endpoint <VALUE>` | explicit HTTPS OAuth token endpoint (managed setup) |  |
+| `--oauth-client-id <VALUE>` | OAuth client ID (managed setup) |  |
+| `--oauth-refresh-secret-ref <VALUE>` | app secret holding initial OAuth refresh token |  |
+| `--oauth-client-secret-ref <VALUE>` | optional app secret for confidential client authentication |  |
+| `--managed` | run a platform-managed observer (setup only) |  |
+| `--secret-ref <VALUE>` | app environment secret:NAME for the managed MCP token (setup only) |  |
+| `--baseline <VALUE>` | reviewed format-2 catalog baseline (setup only) |  |
+| `--freshness-seconds <VALUE>` | maximum observation age (setup only) |  |
+| `--token-env <VALUE>` | MCP client token environment variable name (setup/run) |  |
+| `--endpoint <VALUE>` | MCP endpoint path (managed setup/run) |  |
+| `--interval <VALUE>` | catalog check interval (managed setup/run) |  |
+| `--timeout <VALUE>` | per-check read and report deadline |  |
+
+##### mcp server monitor disable
+
+disable catalog observer
+
+`gregale mcp server monitor disable [--app <VALUE>] [--role <VALUE>] [--all-roles] [--oauth-revocation-endpoint <VALUE>] [--oauth-revocation-auth-method <VALUE>] [--oauth-profile <VALUE>] [--oauth-token-auth-method <VALUE>] [--oauth-browser-redirect-uri <VALUE>] [--oauth-callback-port <VALUE>] [--oauth-resource <VALUE>] [--oauth-issuer <VALUE>] [--oauth-discovery-url <VALUE>] [--oauth-guided] [--oauth-authorization-endpoint <VALUE>] [--oauth-scopes <VALUE>] [--oauth-token-endpoint <VALUE>] [--oauth-client-id <VALUE>] [--oauth-refresh-secret-ref <VALUE>] [--oauth-client-secret-ref <VALUE>] [--managed] [--secret-ref <VALUE>] [--baseline <VALUE>] [--freshness-seconds <VALUE>] [--token-env <VALUE>] [--endpoint <VALUE>] [--interval <VALUE>] [--timeout <VALUE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <VALUE>` | HTTP MCP app slug |  |
+| `--role <VALUE>` | reviewed MCP authorization role |  |
+| `--all-roles` | aggregate all configured roles (status only) |  |
+| `--oauth-revocation-endpoint <VALUE>` | explicit HTTPS RFC 7009 endpoint |  |
+| `--oauth-revocation-auth-method <VALUE>` | revocation authentication: none, client_secret_basic or client_secret_post |  |
+| `--oauth-profile <VALUE>` | provider profile: generic (default), google or oidc |  |
+| `--oauth-token-auth-method <VALUE>` | none, client_secret_basic or client_secret_post |  |
+| `--oauth-browser-redirect-uri <VALUE>` | registered HTTPS console MCP callback URL |  |
+| `--oauth-callback-port <VALUE>` | fixed loopback port; 0 chooses a dynamic port |  |
+| `--oauth-resource <VALUE>` | reviewed HTTPS MCP resource indicator |  |
+| `--oauth-issuer <VALUE>` | reviewed HTTPS provider issuer |  |
+| `--oauth-discovery-url <VALUE>` | explicit HTTPS provider metadata URL |  |
+| `--oauth-guided` | use browser authorization instead of a refresh secret |  |
+| `--oauth-authorization-endpoint <VALUE>` | explicit HTTPS browser authorization endpoint |  |
+| `--oauth-scopes <VALUE>` | space-separated OAuth scopes |  |
+| `--oauth-token-endpoint <VALUE>` | explicit HTTPS OAuth token endpoint (managed setup) |  |
+| `--oauth-client-id <VALUE>` | OAuth client ID (managed setup) |  |
+| `--oauth-refresh-secret-ref <VALUE>` | app secret holding initial OAuth refresh token |  |
+| `--oauth-client-secret-ref <VALUE>` | optional app secret for confidential client authentication |  |
+| `--managed` | run a platform-managed observer (setup only) |  |
+| `--secret-ref <VALUE>` | app environment secret:NAME for the managed MCP token (setup only) |  |
+| `--baseline <VALUE>` | reviewed format-2 catalog baseline (setup only) |  |
+| `--freshness-seconds <VALUE>` | maximum observation age (setup only) |  |
+| `--token-env <VALUE>` | MCP client token environment variable name (setup/run) |  |
+| `--endpoint <VALUE>` | MCP endpoint path (managed setup/run) |  |
+| `--interval <VALUE>` | catalog check interval (managed setup/run) |  |
+| `--timeout <VALUE>` | per-check read and report deadline |  |
+
+##### mcp server monitor status
+
+status catalog observer
+
+`gregale mcp server monitor status [--app <VALUE>] [--role <VALUE>] [--all-roles] [--oauth-revocation-endpoint <VALUE>] [--oauth-revocation-auth-method <VALUE>] [--oauth-profile <VALUE>] [--oauth-token-auth-method <VALUE>] [--oauth-browser-redirect-uri <VALUE>] [--oauth-callback-port <VALUE>] [--oauth-resource <VALUE>] [--oauth-issuer <VALUE>] [--oauth-discovery-url <VALUE>] [--oauth-guided] [--oauth-authorization-endpoint <VALUE>] [--oauth-scopes <VALUE>] [--oauth-token-endpoint <VALUE>] [--oauth-client-id <VALUE>] [--oauth-refresh-secret-ref <VALUE>] [--oauth-client-secret-ref <VALUE>] [--managed] [--secret-ref <VALUE>] [--baseline <VALUE>] [--freshness-seconds <VALUE>] [--token-env <VALUE>] [--endpoint <VALUE>] [--interval <VALUE>] [--timeout <VALUE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <VALUE>` | HTTP MCP app slug |  |
+| `--role <VALUE>` | reviewed MCP authorization role |  |
+| `--all-roles` | aggregate all configured roles (status only) |  |
+| `--oauth-revocation-endpoint <VALUE>` | explicit HTTPS RFC 7009 endpoint |  |
+| `--oauth-revocation-auth-method <VALUE>` | revocation authentication: none, client_secret_basic or client_secret_post |  |
+| `--oauth-profile <VALUE>` | provider profile: generic (default), google or oidc |  |
+| `--oauth-token-auth-method <VALUE>` | none, client_secret_basic or client_secret_post |  |
+| `--oauth-browser-redirect-uri <VALUE>` | registered HTTPS console MCP callback URL |  |
+| `--oauth-callback-port <VALUE>` | fixed loopback port; 0 chooses a dynamic port |  |
+| `--oauth-resource <VALUE>` | reviewed HTTPS MCP resource indicator |  |
+| `--oauth-issuer <VALUE>` | reviewed HTTPS provider issuer |  |
+| `--oauth-discovery-url <VALUE>` | explicit HTTPS provider metadata URL |  |
+| `--oauth-guided` | use browser authorization instead of a refresh secret |  |
+| `--oauth-authorization-endpoint <VALUE>` | explicit HTTPS browser authorization endpoint |  |
+| `--oauth-scopes <VALUE>` | space-separated OAuth scopes |  |
+| `--oauth-token-endpoint <VALUE>` | explicit HTTPS OAuth token endpoint (managed setup) |  |
+| `--oauth-client-id <VALUE>` | OAuth client ID (managed setup) |  |
+| `--oauth-refresh-secret-ref <VALUE>` | app secret holding initial OAuth refresh token |  |
+| `--oauth-client-secret-ref <VALUE>` | optional app secret for confidential client authentication |  |
+| `--managed` | run a platform-managed observer (setup only) |  |
+| `--secret-ref <VALUE>` | app environment secret:NAME for the managed MCP token (setup only) |  |
+| `--baseline <VALUE>` | reviewed format-2 catalog baseline (setup only) |  |
+| `--freshness-seconds <VALUE>` | maximum observation age (setup only) |  |
+| `--token-env <VALUE>` | MCP client token environment variable name (setup/run) |  |
+| `--endpoint <VALUE>` | MCP endpoint path (managed setup/run) |  |
+| `--interval <VALUE>` | catalog check interval (managed setup/run) |  |
+| `--timeout <VALUE>` | per-check read and report deadline |  |
+
+##### mcp server monitor run
+
+run catalog observer
+
+`gregale mcp server monitor run [--app <VALUE>] [--role <VALUE>] [--all-roles] [--oauth-revocation-endpoint <VALUE>] [--oauth-revocation-auth-method <VALUE>] [--oauth-profile <VALUE>] [--oauth-token-auth-method <VALUE>] [--oauth-browser-redirect-uri <VALUE>] [--oauth-callback-port <VALUE>] [--oauth-resource <VALUE>] [--oauth-issuer <VALUE>] [--oauth-discovery-url <VALUE>] [--oauth-guided] [--oauth-authorization-endpoint <VALUE>] [--oauth-scopes <VALUE>] [--oauth-token-endpoint <VALUE>] [--oauth-client-id <VALUE>] [--oauth-refresh-secret-ref <VALUE>] [--oauth-client-secret-ref <VALUE>] [--managed] [--secret-ref <VALUE>] [--baseline <VALUE>] [--freshness-seconds <VALUE>] [--token-env <VALUE>] [--endpoint <VALUE>] [--interval <VALUE>] [--timeout <VALUE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <VALUE>` | HTTP MCP app slug |  |
+| `--role <VALUE>` | reviewed MCP authorization role |  |
+| `--all-roles` | aggregate all configured roles (status only) |  |
+| `--oauth-revocation-endpoint <VALUE>` | explicit HTTPS RFC 7009 endpoint |  |
+| `--oauth-revocation-auth-method <VALUE>` | revocation authentication: none, client_secret_basic or client_secret_post |  |
+| `--oauth-profile <VALUE>` | provider profile: generic (default), google or oidc |  |
+| `--oauth-token-auth-method <VALUE>` | none, client_secret_basic or client_secret_post |  |
+| `--oauth-browser-redirect-uri <VALUE>` | registered HTTPS console MCP callback URL |  |
+| `--oauth-callback-port <VALUE>` | fixed loopback port; 0 chooses a dynamic port |  |
+| `--oauth-resource <VALUE>` | reviewed HTTPS MCP resource indicator |  |
+| `--oauth-issuer <VALUE>` | reviewed HTTPS provider issuer |  |
+| `--oauth-discovery-url <VALUE>` | explicit HTTPS provider metadata URL |  |
+| `--oauth-guided` | use browser authorization instead of a refresh secret |  |
+| `--oauth-authorization-endpoint <VALUE>` | explicit HTTPS browser authorization endpoint |  |
+| `--oauth-scopes <VALUE>` | space-separated OAuth scopes |  |
+| `--oauth-token-endpoint <VALUE>` | explicit HTTPS OAuth token endpoint (managed setup) |  |
+| `--oauth-client-id <VALUE>` | OAuth client ID (managed setup) |  |
+| `--oauth-refresh-secret-ref <VALUE>` | app secret holding initial OAuth refresh token |  |
+| `--oauth-client-secret-ref <VALUE>` | optional app secret for confidential client authentication |  |
+| `--managed` | run a platform-managed observer (setup only) |  |
+| `--secret-ref <VALUE>` | app environment secret:NAME for the managed MCP token (setup only) |  |
+| `--baseline <VALUE>` | reviewed format-2 catalog baseline (setup only) |  |
+| `--freshness-seconds <VALUE>` | maximum observation age (setup only) |  |
+| `--token-env <VALUE>` | MCP client token environment variable name (setup/run) |  |
+| `--endpoint <VALUE>` | MCP endpoint path (managed setup/run) |  |
+| `--interval <VALUE>` | catalog check interval (managed setup/run) |  |
+| `--timeout <VALUE>` | per-check read and report deadline |  |
+
+##### mcp server monitor pause
+
+pause catalog observer
+
+`gregale mcp server monitor pause [--app <VALUE>] [--role <VALUE>] [--all-roles] [--oauth-revocation-endpoint <VALUE>] [--oauth-revocation-auth-method <VALUE>] [--oauth-profile <VALUE>] [--oauth-token-auth-method <VALUE>] [--oauth-browser-redirect-uri <VALUE>] [--oauth-callback-port <VALUE>] [--oauth-resource <VALUE>] [--oauth-issuer <VALUE>] [--oauth-discovery-url <VALUE>] [--oauth-guided] [--oauth-authorization-endpoint <VALUE>] [--oauth-scopes <VALUE>] [--oauth-token-endpoint <VALUE>] [--oauth-client-id <VALUE>] [--oauth-refresh-secret-ref <VALUE>] [--oauth-client-secret-ref <VALUE>] [--managed] [--secret-ref <VALUE>] [--baseline <VALUE>] [--freshness-seconds <VALUE>] [--token-env <VALUE>] [--endpoint <VALUE>] [--interval <VALUE>] [--timeout <VALUE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <VALUE>` | HTTP MCP app slug |  |
+| `--role <VALUE>` | reviewed MCP authorization role |  |
+| `--all-roles` | aggregate all configured roles (status only) |  |
+| `--oauth-revocation-endpoint <VALUE>` | explicit HTTPS RFC 7009 endpoint |  |
+| `--oauth-revocation-auth-method <VALUE>` | revocation authentication: none, client_secret_basic or client_secret_post |  |
+| `--oauth-profile <VALUE>` | provider profile: generic (default), google or oidc |  |
+| `--oauth-token-auth-method <VALUE>` | none, client_secret_basic or client_secret_post |  |
+| `--oauth-browser-redirect-uri <VALUE>` | registered HTTPS console MCP callback URL |  |
+| `--oauth-callback-port <VALUE>` | fixed loopback port; 0 chooses a dynamic port |  |
+| `--oauth-resource <VALUE>` | reviewed HTTPS MCP resource indicator |  |
+| `--oauth-issuer <VALUE>` | reviewed HTTPS provider issuer |  |
+| `--oauth-discovery-url <VALUE>` | explicit HTTPS provider metadata URL |  |
+| `--oauth-guided` | use browser authorization instead of a refresh secret |  |
+| `--oauth-authorization-endpoint <VALUE>` | explicit HTTPS browser authorization endpoint |  |
+| `--oauth-scopes <VALUE>` | space-separated OAuth scopes |  |
+| `--oauth-token-endpoint <VALUE>` | explicit HTTPS OAuth token endpoint (managed setup) |  |
+| `--oauth-client-id <VALUE>` | OAuth client ID (managed setup) |  |
+| `--oauth-refresh-secret-ref <VALUE>` | app secret holding initial OAuth refresh token |  |
+| `--oauth-client-secret-ref <VALUE>` | optional app secret for confidential client authentication |  |
+| `--managed` | run a platform-managed observer (setup only) |  |
+| `--secret-ref <VALUE>` | app environment secret:NAME for the managed MCP token (setup only) |  |
+| `--baseline <VALUE>` | reviewed format-2 catalog baseline (setup only) |  |
+| `--freshness-seconds <VALUE>` | maximum observation age (setup only) |  |
+| `--token-env <VALUE>` | MCP client token environment variable name (setup/run) |  |
+| `--endpoint <VALUE>` | MCP endpoint path (managed setup/run) |  |
+| `--interval <VALUE>` | catalog check interval (managed setup/run) |  |
+| `--timeout <VALUE>` | per-check read and report deadline |  |
+
+##### mcp server monitor resume
+
+resume catalog observer
+
+`gregale mcp server monitor resume [--app <VALUE>] [--role <VALUE>] [--all-roles] [--oauth-revocation-endpoint <VALUE>] [--oauth-revocation-auth-method <VALUE>] [--oauth-profile <VALUE>] [--oauth-token-auth-method <VALUE>] [--oauth-browser-redirect-uri <VALUE>] [--oauth-callback-port <VALUE>] [--oauth-resource <VALUE>] [--oauth-issuer <VALUE>] [--oauth-discovery-url <VALUE>] [--oauth-guided] [--oauth-authorization-endpoint <VALUE>] [--oauth-scopes <VALUE>] [--oauth-token-endpoint <VALUE>] [--oauth-client-id <VALUE>] [--oauth-refresh-secret-ref <VALUE>] [--oauth-client-secret-ref <VALUE>] [--managed] [--secret-ref <VALUE>] [--baseline <VALUE>] [--freshness-seconds <VALUE>] [--token-env <VALUE>] [--endpoint <VALUE>] [--interval <VALUE>] [--timeout <VALUE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <VALUE>` | HTTP MCP app slug |  |
+| `--role <VALUE>` | reviewed MCP authorization role |  |
+| `--all-roles` | aggregate all configured roles (status only) |  |
+| `--oauth-revocation-endpoint <VALUE>` | explicit HTTPS RFC 7009 endpoint |  |
+| `--oauth-revocation-auth-method <VALUE>` | revocation authentication: none, client_secret_basic or client_secret_post |  |
+| `--oauth-profile <VALUE>` | provider profile: generic (default), google or oidc |  |
+| `--oauth-token-auth-method <VALUE>` | none, client_secret_basic or client_secret_post |  |
+| `--oauth-browser-redirect-uri <VALUE>` | registered HTTPS console MCP callback URL |  |
+| `--oauth-callback-port <VALUE>` | fixed loopback port; 0 chooses a dynamic port |  |
+| `--oauth-resource <VALUE>` | reviewed HTTPS MCP resource indicator |  |
+| `--oauth-issuer <VALUE>` | reviewed HTTPS provider issuer |  |
+| `--oauth-discovery-url <VALUE>` | explicit HTTPS provider metadata URL |  |
+| `--oauth-guided` | use browser authorization instead of a refresh secret |  |
+| `--oauth-authorization-endpoint <VALUE>` | explicit HTTPS browser authorization endpoint |  |
+| `--oauth-scopes <VALUE>` | space-separated OAuth scopes |  |
+| `--oauth-token-endpoint <VALUE>` | explicit HTTPS OAuth token endpoint (managed setup) |  |
+| `--oauth-client-id <VALUE>` | OAuth client ID (managed setup) |  |
+| `--oauth-refresh-secret-ref <VALUE>` | app secret holding initial OAuth refresh token |  |
+| `--oauth-client-secret-ref <VALUE>` | optional app secret for confidential client authentication |  |
+| `--managed` | run a platform-managed observer (setup only) |  |
+| `--secret-ref <VALUE>` | app environment secret:NAME for the managed MCP token (setup only) |  |
+| `--baseline <VALUE>` | reviewed format-2 catalog baseline (setup only) |  |
+| `--freshness-seconds <VALUE>` | maximum observation age (setup only) |  |
+| `--token-env <VALUE>` | MCP client token environment variable name (setup/run) |  |
+| `--endpoint <VALUE>` | MCP endpoint path (managed setup/run) |  |
+| `--interval <VALUE>` | catalog check interval (managed setup/run) |  |
+| `--timeout <VALUE>` | per-check read and report deadline |  |
+
+##### mcp server monitor restart
+
+restart catalog observer
+
+`gregale mcp server monitor restart [--app <VALUE>] [--role <VALUE>] [--all-roles] [--oauth-revocation-endpoint <VALUE>] [--oauth-revocation-auth-method <VALUE>] [--oauth-profile <VALUE>] [--oauth-token-auth-method <VALUE>] [--oauth-browser-redirect-uri <VALUE>] [--oauth-callback-port <VALUE>] [--oauth-resource <VALUE>] [--oauth-issuer <VALUE>] [--oauth-discovery-url <VALUE>] [--oauth-guided] [--oauth-authorization-endpoint <VALUE>] [--oauth-scopes <VALUE>] [--oauth-token-endpoint <VALUE>] [--oauth-client-id <VALUE>] [--oauth-refresh-secret-ref <VALUE>] [--oauth-client-secret-ref <VALUE>] [--managed] [--secret-ref <VALUE>] [--baseline <VALUE>] [--freshness-seconds <VALUE>] [--token-env <VALUE>] [--endpoint <VALUE>] [--interval <VALUE>] [--timeout <VALUE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <VALUE>` | HTTP MCP app slug |  |
+| `--role <VALUE>` | reviewed MCP authorization role |  |
+| `--all-roles` | aggregate all configured roles (status only) |  |
+| `--oauth-revocation-endpoint <VALUE>` | explicit HTTPS RFC 7009 endpoint |  |
+| `--oauth-revocation-auth-method <VALUE>` | revocation authentication: none, client_secret_basic or client_secret_post |  |
+| `--oauth-profile <VALUE>` | provider profile: generic (default), google or oidc |  |
+| `--oauth-token-auth-method <VALUE>` | none, client_secret_basic or client_secret_post |  |
+| `--oauth-browser-redirect-uri <VALUE>` | registered HTTPS console MCP callback URL |  |
+| `--oauth-callback-port <VALUE>` | fixed loopback port; 0 chooses a dynamic port |  |
+| `--oauth-resource <VALUE>` | reviewed HTTPS MCP resource indicator |  |
+| `--oauth-issuer <VALUE>` | reviewed HTTPS provider issuer |  |
+| `--oauth-discovery-url <VALUE>` | explicit HTTPS provider metadata URL |  |
+| `--oauth-guided` | use browser authorization instead of a refresh secret |  |
+| `--oauth-authorization-endpoint <VALUE>` | explicit HTTPS browser authorization endpoint |  |
+| `--oauth-scopes <VALUE>` | space-separated OAuth scopes |  |
+| `--oauth-token-endpoint <VALUE>` | explicit HTTPS OAuth token endpoint (managed setup) |  |
+| `--oauth-client-id <VALUE>` | OAuth client ID (managed setup) |  |
+| `--oauth-refresh-secret-ref <VALUE>` | app secret holding initial OAuth refresh token |  |
+| `--oauth-client-secret-ref <VALUE>` | optional app secret for confidential client authentication |  |
+| `--managed` | run a platform-managed observer (setup only) |  |
+| `--secret-ref <VALUE>` | app environment secret:NAME for the managed MCP token (setup only) |  |
+| `--baseline <VALUE>` | reviewed format-2 catalog baseline (setup only) |  |
+| `--freshness-seconds <VALUE>` | maximum observation age (setup only) |  |
+| `--token-env <VALUE>` | MCP client token environment variable name (setup/run) |  |
+| `--endpoint <VALUE>` | MCP endpoint path (managed setup/run) |  |
+| `--interval <VALUE>` | catalog check interval (managed setup/run) |  |
+| `--timeout <VALUE>` | per-check read and report deadline |  |
+
+##### mcp server monitor stop
+
+stop catalog observer
+
+`gregale mcp server monitor stop [--app <VALUE>] [--role <VALUE>] [--all-roles] [--oauth-revocation-endpoint <VALUE>] [--oauth-revocation-auth-method <VALUE>] [--oauth-profile <VALUE>] [--oauth-token-auth-method <VALUE>] [--oauth-browser-redirect-uri <VALUE>] [--oauth-callback-port <VALUE>] [--oauth-resource <VALUE>] [--oauth-issuer <VALUE>] [--oauth-discovery-url <VALUE>] [--oauth-guided] [--oauth-authorization-endpoint <VALUE>] [--oauth-scopes <VALUE>] [--oauth-token-endpoint <VALUE>] [--oauth-client-id <VALUE>] [--oauth-refresh-secret-ref <VALUE>] [--oauth-client-secret-ref <VALUE>] [--managed] [--secret-ref <VALUE>] [--baseline <VALUE>] [--freshness-seconds <VALUE>] [--token-env <VALUE>] [--endpoint <VALUE>] [--interval <VALUE>] [--timeout <VALUE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <VALUE>` | HTTP MCP app slug |  |
+| `--role <VALUE>` | reviewed MCP authorization role |  |
+| `--all-roles` | aggregate all configured roles (status only) |  |
+| `--oauth-revocation-endpoint <VALUE>` | explicit HTTPS RFC 7009 endpoint |  |
+| `--oauth-revocation-auth-method <VALUE>` | revocation authentication: none, client_secret_basic or client_secret_post |  |
+| `--oauth-profile <VALUE>` | provider profile: generic (default), google or oidc |  |
+| `--oauth-token-auth-method <VALUE>` | none, client_secret_basic or client_secret_post |  |
+| `--oauth-browser-redirect-uri <VALUE>` | registered HTTPS console MCP callback URL |  |
+| `--oauth-callback-port <VALUE>` | fixed loopback port; 0 chooses a dynamic port |  |
+| `--oauth-resource <VALUE>` | reviewed HTTPS MCP resource indicator |  |
+| `--oauth-issuer <VALUE>` | reviewed HTTPS provider issuer |  |
+| `--oauth-discovery-url <VALUE>` | explicit HTTPS provider metadata URL |  |
+| `--oauth-guided` | use browser authorization instead of a refresh secret |  |
+| `--oauth-authorization-endpoint <VALUE>` | explicit HTTPS browser authorization endpoint |  |
+| `--oauth-scopes <VALUE>` | space-separated OAuth scopes |  |
+| `--oauth-token-endpoint <VALUE>` | explicit HTTPS OAuth token endpoint (managed setup) |  |
+| `--oauth-client-id <VALUE>` | OAuth client ID (managed setup) |  |
+| `--oauth-refresh-secret-ref <VALUE>` | app secret holding initial OAuth refresh token |  |
+| `--oauth-client-secret-ref <VALUE>` | optional app secret for confidential client authentication |  |
+| `--managed` | run a platform-managed observer (setup only) |  |
+| `--secret-ref <VALUE>` | app environment secret:NAME for the managed MCP token (setup only) |  |
+| `--baseline <VALUE>` | reviewed format-2 catalog baseline (setup only) |  |
+| `--freshness-seconds <VALUE>` | maximum observation age (setup only) |  |
+| `--token-env <VALUE>` | MCP client token environment variable name (setup/run) |  |
+| `--endpoint <VALUE>` | MCP endpoint path (managed setup/run) |  |
+| `--interval <VALUE>` | catalog check interval (managed setup/run) |  |
+| `--timeout <VALUE>` | per-check read and report deadline |  |
+
+##### mcp server monitor connect
+
+connect catalog observer
+
+`gregale mcp server monitor connect [--app <VALUE>] [--role <VALUE>] [--callback-port <VALUE>] [--timeout <VALUE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <VALUE>` | HTTP MCP app slug |  |
+| `--role <VALUE>` | managed OAuth role |  |
+| `--callback-port <VALUE>` | override a dynamic loopback callback port (0–65535) |  |
+| `--timeout <VALUE>` | browser authorization deadline |  |
+
+##### mcp server monitor reconnect
+
+reconnect catalog observer
+
+`gregale mcp server monitor reconnect [--app <VALUE>] [--role <VALUE>] [--callback-port <VALUE>] [--timeout <VALUE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <VALUE>` | HTTP MCP app slug |  |
+| `--role <VALUE>` | managed OAuth role |  |
+| `--callback-port <VALUE>` | override a dynamic loopback callback port (0–65535) |  |
+| `--timeout <VALUE>` | browser authorization deadline |  |
+
+##### mcp server monitor disconnect
+
+disconnect catalog observer
+
+`gregale mcp server monitor disconnect [--app <VALUE>] [--role <VALUE>] [--callback-port <VALUE>] [--timeout <VALUE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <VALUE>` | HTTP MCP app slug |  |
+| `--role <VALUE>` | managed OAuth role |  |
+| `--callback-port <VALUE>` | override a dynamic loopback callback port (0–65535) |  |
+| `--timeout <VALUE>` | browser authorization deadline |  |
+
+#### mcp server retirements
+
+Inspect and recover durable OAuth grant retirement
+
+`gregale mcp server retirements <ack|list|retry>`
+
+##### mcp server retirements ack
+
+Acknowledge manual provider cleanup
+
+`gregale mcp server retirements ack --id <ID> [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <ID>` | retirement UUID | required |
+| `--timeout <DURATION>` | API deadline |  |
+
+##### mcp server retirements list
+
+List retirement history
+
+`gregale mcp server retirements list [--offset <N>] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--offset <N>` | history page offset |  |
+| `--timeout <DURATION>` | API deadline |  |
+
+##### mcp server retirements retry
+
+Retry provider retirement
+
+`gregale mcp server retirements retry --id <ID> [--allow-active-grant-revocation] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <ID>` | retirement UUID | required |
+| `--allow-active-grant-revocation` | allow active grant revocation |  |
+| `--timeout <DURATION>` | API deadline |  |
+
+#### mcp server tasks
+
+Configure, release and inspect durable task workers
+
+`gregale mcp server tasks <deploy|review|run|audit|bind|rehearse|configure|setup|status>`
+
+##### mcp server tasks deploy
+
+Review, deploy and resume a gated web and worker release
+
+`gregale mcp server tasks deploy [--resume] --plan <PATH> [--state <PATH>] [plan|run|status|recover|restore|quarantine|retire]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--resume` | resume a healthy failed rollout (recover only) |  |
+| `--plan <PATH>` | native deployment plan JSON | required |
+| `--state <PATH>` | persistent release journal outside source directories; required except for plan |  |
+
+Examples:
+
+```sh
+gregale mcp server tasks deploy plan --plan release.json --json
+gregale mcp server tasks deploy --plan release.json --state ./release-state.json
+gregale mcp server tasks deploy status --plan release.json --state ./release-state.json
+```
+
+plan performs offline source review without --state; all other actions require --state. Review does not run migrations, execute Task code or certify deployed bindings.
+
+##### mcp server tasks review
+
+Prepare, inspect or decide on a durable Task stack review
+
+`gregale mcp server tasks review [--plan <PATH>] [--id <ID>] [--reason <TEXT>] [--intent-sha256 <SHA256>] <prepare|get|approve|reject|revoke>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | local native plan required by prepare/get/approve |  |
+| `--id <ID>` | stable intent ID; generated on prepare if omitted |  |
+| `--reason <TEXT>` | reviewable purpose required by prepare |  |
+| `--intent-sha256 <SHA256>` | exact digest required by owner decisions |  |
+
+Examples:
+
+```sh
+gregale mcp server tasks review prepare --plan release.json --reason 'Review reports worker upgrade'
+gregale mcp server tasks review get --id INTENT --plan release.json
+gregale mcp server tasks review approve --id INTENT --plan release.json --intent-sha256 DIGEST
+```
+
+Records the owner decision on the pinned review. Approval covers the pinned review only and grants no execution authority. Prepare, get and approve re-review --plan; get invalidates observed drift. Reject/revoke use the retained review and need no source files.
+
+##### mcp server tasks run
+
+Authorize, inspect or plan recovery for a guarded Task release
+
+`gregale mcp server tasks run --id <ID> [--operation-id <ID>] [--handover-id <ID>] [--qualification-sha256 <SHA256>] [--allow-local-checks] [--plan <PATH>] [--bindings-file <PATH>] [--intent-sha256 <SHA256>] [--allow-tool-execution] <authorize|apply|get|guard|inspect|plan-recovery|retire-qualify|retire-approve|retire-revoke|retire>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <ID>` | exact reviewed intent identity | required |
+| `--operation-id <ID>` | immutable owner-selected execution identity |  |
+| `--handover-id <ID>` | settled recovery identity for retirement |  |
+| `--qualification-sha256 <SHA256>` | separate retirement qualification digest |  |
+| `--allow-local-checks` | allow reviewed local checks for retire-qualify |  |
+| `--plan <PATH>` | owner-reviewed plan, authorize only |  |
+| `--bindings-file <PATH>` | private owner binding JSON, authorize only |  |
+| `--intent-sha256 <SHA256>` | owner-reviewed digest, authorize only |  |
+| `--allow-tool-execution` | explicit consent to reviewed code, migrations and release effects |  |
+
+Execution authority is separate from review approval. Only the requesting key can apply. Inspect and plan-recovery use native GET APIs and require no local files or bindings. Recovery plans include lifecycle progress and the next step, never grant execution, and never resume fenced executors or repeat committed recovery work. Retirement requires retained restore/quarantine results, separate owner qualification/approval and execution consent. Pending retirement only reconciles shutdown.
+
+##### mcp server tasks audit
+
+Inspect or decide on retained hosted Task source
+
+`gregale mcp server tasks audit --id <ID> [--review-sha256 <SHA256>] [--intent-sha256 <SHA256>] <get|check|approve|reject|revoke>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <ID>` | retained hosted source review identity | required |
+| `--review-sha256 <SHA256>` | exact review fingerprint for checks and decisions |  |
+| `--intent-sha256 <SHA256>` | exact intent digest for owner decisions |  |
+
+Examples:
+
+```sh
+gregale mcp server tasks audit get --id INTENT
+gregale mcp server tasks audit approve --id INTENT --intent-sha256 DIGEST --review-sha256 REVIEW
+```
+
+Source is retained for the original fifteen-minute deadline. Review metadata is readable by its requester and owner; decisions require an unscoped personal owner. Approval binds the exact source review and grants no credential or execution authority. Checks permanently invalidate observed drift.
+
+##### mcp server tasks bind
+
+Qualify or inspect hosted Task bindings
+
+`gregale mcp server tasks bind [--id <INTENT>] [--intent-sha256 <DIGEST>] [--review-sha256 <DIGEST>] [--namespace <NAMESPACE>] [--web-database-ref <REF>] [--worker-database-ref <REF>] [--migration-database-ref <REF>] [--observer-database-ref <REF>] [--binding-sha256 <DIGEST>] <qualify|get|revoke>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <INTENT>` | Retained source intent identity |  |
+| `--intent-sha256 <DIGEST>` | Exact approved intent digest |  |
+| `--review-sha256 <DIGEST>` | Exact approved review digest |  |
+| `--namespace <NAMESPACE>` | Task queue namespace |  |
+| `--web-database-ref <REF>` | Web native managed PostgreSQL reference |  |
+| `--worker-database-ref <REF>` | Worker native managed PostgreSQL reference |  |
+| `--migration-database-ref <REF>` | Worker migration-only reference |  |
+| `--observer-database-ref <REF>` | Observer read-only reference |  |
+| `--binding-sha256 <DIGEST>` | Exact binding fingerprint for revocation |  |
+
+Examples:
+
+```sh
+gregale mcp server tasks bind get --id INTENT
+gregale mcp server tasks bind revoke --id INTENT --binding-sha256 DIGEST
+```
+
+Owner-selected native managed PostgreSQL references only. Qualification runs bounded read-only catalog probes once per source intent; evidence expires within one minute or on drift. Credentials remain private and execution requires separate owner authorization.
+
+##### mcp server tasks rehearse
+
+Plan or approve an isolated hosted Task rehearsal
+
+`gregale mcp server tasks rehearse --id <INTENT> [--intent-sha256 <DIGEST>] [--review-sha256 <DIGEST>] [--binding-sha256 <DIGEST>] [--plan-sha256 <DIGEST>] <plan|get|approve|revoke>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <INTENT>` | Retained source intent identity | required |
+| `--intent-sha256 <DIGEST>` | Exact retained intent digest for plan |  |
+| `--review-sha256 <DIGEST>` | Exact approved review digest for plan |  |
+| `--binding-sha256 <DIGEST>` | Exact passing binding digest for plan |  |
+| `--plan-sha256 <DIGEST>` | Exact rehearsal plan digest for a decision |  |
+
+An unscoped personal administrator API key is required. A plan reserves a disposable target identity and expires with the passing binding evidence. Approval records one decision and creates no runtime resources.
+
+##### mcp server tasks configure
+
+Preview or apply non-secret role settings before first deployment
+
+`gregale mcp server tasks configure --app <SLUG> --role <ROLE> --namespace <NAME> [--worker-app <SLUG>] [--apply]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | reserved task app slug | required |
+| `--role <ROLE>` | task process role | required; one of `web` · `worker` · `observer` |
+| `--namespace <NAME>` | shared stable queue namespace | required |
+| `--worker-app <SLUG>` | metrics destination for worker or observer |  |
+| `--apply` | write the previewed non-secret settings |  |
+
+Examples:
+
+```sh
+gregale mcp server tasks configure --app reports-worker --role worker --namespace reports --worker-app reports-worker
+gregale mcp server tasks configure --app reports-observer --role observer --namespace reports --worker-app reports-worker --apply
+```
+
+##### mcp server tasks setup
+
+Preview or apply the task-backlog scaling policy
+
+`gregale mcp server tasks setup [--app <SLUG>] [--min <N>] [--max <N>] [--target <N>] [--observer-app <SLUG>] [--apply]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | worker app slug (defaults to the linked project app) |  |
+| `--min <N>` | minimum replicas (default 1; use 0 with an always-on observer) |  |
+| `--max <N>` | maximum replicas (default 10) |  |
+| `--target <N>` | outstanding tasks per worker (default 4) |  |
+| `--observer-app <SLUG>` | separate always-on observer publishing worker metrics |  |
+| `--apply` | apply the proposed worker scaling policy |  |
+
+Examples:
+
+```sh
+gregale mcp server tasks setup --app mcp-worker
+gregale mcp server tasks setup --app mcp-worker --observer-app mcp-observer --min 0 --apply
+```
+
+##### mcp server tasks status
+
+Show task scaling policy and custom metric freshness
+
+`gregale mcp server tasks status [--app <SLUG>] [--details] [--require-fresh] [--max-oldest-age <DURATION>] [--max-without-compatible-worker <N>] [--sustain-for <DURATION>] [--poll-interval <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | worker app slug (defaults to the linked project app) |  |
+| `--details` | include observer handler-version compatibility details |  |
+| `--require-fresh` | fail when required metrics or observer signals are unavailable |  |
+| `--max-oldest-age <DURATION>` | maximum oldest queued Task age |  |
+| `--max-without-compatible-worker <N>` | maximum pending Tasks without compatible workers |  |
+| `--sustain-for <DURATION>` | require a violation to persist before failing |  |
+| `--poll-interval <DURATION>` | poll interval for sustained checks (default 15s) |  |
+
+Examples:
+
+```sh
+gregale mcp server tasks status --app mcp-worker --json
+```
+
+#### mcp server approvals
+
+get · set
+
+`gregale mcp server approvals <get|set>`
+
+##### mcp server approvals get
+
+Show or choose the channels that get agent approval requests
+
+`gregale mcp server approvals get [--set <NAME,NAME>] [--clear]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--set <NAME,NAME>` | replace with these comma-separated notification channel names |  |
+| `--clear` | remove every channel; requests go to email only |  |
+
+Examples:
+
+```sh
+gregale mcp server approval channels
+gregale mcp server approval channels --set ops-slack
+gregale mcp server approval channels --clear
+```
+
+These notification channels also get your agents&#39; approval requests. Without flags, shows them. Each request still emails the person who connected the agent.
+
+Changing them needs an admin credential; an agent key cannot.
+
+##### mcp server approvals set
+
+Show or choose the channels that get agent approval requests
+
+`gregale mcp server approvals set [--set <NAME,NAME>] [--clear]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--set <NAME,NAME>` | replace with these comma-separated notification channel names |  |
+| `--clear` | remove every channel; requests go to email only |  |
+
+Examples:
+
+```sh
+gregale mcp server approval channels
+gregale mcp server approval channels --set ops-slack
+gregale mcp server approval channels --clear
+```
+
+These notification channels also get your agents&#39; approval requests. Without flags, shows them. Each request still emails the person who connected the agent.
+
+Changing them needs an admin credential; an agent key cannot.
+
+#### mcp server tool-connection
+
+Manage owner-approved execution OAuth connections
+
+`gregale mcp server tool-connection <create|connect|reconnect|get|list|revoke>`
+
+##### mcp server tool-connection create
+
+Create an immutable execution connection from reviewed provider config
+
+`gregale mcp server tool-connection create --id <UUID> --config <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | caller-retained connection UUID | required |
+| `--config <PATH>` | owner-reviewed execution OAuth JSON configuration | required |
+
+##### mcp server tool-connection connect
+
+Authorize a new guided execution connection through browser PKCE
+
+`gregale mcp server tool-connection connect --id <UUID> [--callback-port <PORT>] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | exact new guided connection UUID | required |
+| `--callback-port <PORT>` | IPv4 loopback callback port; 0 chooses a dynamic port |  |
+| `--timeout <DURATION>` | browser authorization deadline, at most 5m |  |
+
+##### mcp server tool-connection reconnect
+
+Replace a guided connection with a new identity and new authorization
+
+`gregale mcp server tool-connection reconnect --id <UUID> --from <UUID> [--callback-port <PORT>] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | exact new guided connection UUID | required |
+| `--from <UUID>` | old guided connection to replace and locally revoke | required |
+| `--callback-port <PORT>` | IPv4 loopback callback port; 0 chooses a dynamic port |  |
+| `--timeout <DURATION>` | browser authorization deadline, at most 5m |  |
+
+##### mcp server tool-connection get
+
+Read execution connection state without credentials
+
+`gregale mcp server tool-connection get --id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | exact connection UUID | required |
+
+##### mcp server tool-connection list
+
+List retained execution connections
+
+`gregale mcp server tool-connection list [--cursor <CURSOR>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--cursor <CURSOR>` | opaque continuation |  |
+| `--limit <N>` | page size 1-20 |  |
+
+##### mcp server tool-connection revoke
+
+Revoke execution authority without deleting its identity
+
+`gregale mcp server tool-connection revoke --id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | exact connection UUID | required |
+
+#### mcp server tool-publication
+
+Review private candidate test authority and publication receipts
+
+`gregale mcp server tool-publication <get|approve|revoke>`
+
+##### mcp server tool-publication get
+
+Inspect publication and candidate test approval metadata
+
+`gregale mcp server tool-publication get --id <SHA256>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <SHA256>` | exact publication identity | required |
+
+##### mcp server tool-publication approve
+
+Approve candidate tests with a sealed token or an OAuth connection
+
+`gregale mcp server tool-publication approve --id <SHA256> --request-sha256 <SHA256> [--credential-secret-ref <REF>] [--credential-connection-id <UUID>] [--approve-readiness-roles]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <SHA256>` | exact publication identity | required |
+| `--request-sha256 <SHA256>` | reviewed candidate test request digest | required |
+| `--credential-secret-ref <REF>` | owner-selected secret:MCP_* test token reference; exclusive with connection |  |
+| `--credential-connection-id <UUID>` | owner-approved execution OAuth connection UUID; exclusive with secret reference |  |
+| `--approve-readiness-roles` | approve candidate use of the reviewed policy&#39;s separate role credentials |  |
+
+##### mcp server tool-publication revoke
+
+Revoke pending or running candidate test authority
+
+`gregale mcp server tool-publication revoke --id <SHA256> --request-sha256 <SHA256>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <SHA256>` | exact publication identity | required |
+| `--request-sha256 <SHA256>` | reviewed candidate test request digest | required |
+
+#### mcp server tool-grant
+
+Delegate one exact published tool to an existing agent connection
+
+`gregale mcp server tool-grant <create|get|list|revoke>`
+
+##### mcp server tool-grant create
+
+Create an immutable expiring tool grant as the personal owner
+
+`gregale mcp server tool-grant create --id <UUID> --connection-key <UUID> --version <SHA256> --tool <NAME> --expires-at <TIME> [--allow-invocation] [--credential-secret-ref <REF>] [--credential-connection-id <UUID>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | caller-retained grant UUID | required |
+| `--connection-key <UUID>` | existing native agent connection key UUID | required |
+| `--version <SHA256>` | exact publication version | required |
+| `--tool <NAME>` | exact published tool name | required |
+| `--expires-at <TIME>` | absolute RFC3339 expiry within 30 days | required |
+| `--allow-invocation` | allow exact invocation within separate connection consent |  |
+| `--credential-secret-ref <REF>` | existing secret:MCP_* token reference for a private invocation grant |  |
+| `--credential-connection-id <UUID>` | owner-approved execution OAuth connection UUID; exclusive with secret reference |  |
+
+##### mcp server tool-grant get
+
+Read a retained tool grant
+
+`gregale mcp server tool-grant get --id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | exact grant UUID | required |
+
+##### mcp server tool-grant list
+
+List the personal account&#39;s retained tool grants
+
+`gregale mcp server tool-grant list [--cursor <CURSOR>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--cursor <CURSOR>` | opaque continuation |  |
+| `--limit <N>` | page size 1-20 |  |
+
+##### mcp server tool-grant revoke
+
+Revoke a grant without deleting its identity
+
+`gregale mcp server tool-grant revoke --id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | exact grant UUID | required |
+
+#### mcp server init
+
+Create an MCP starter in Node, Go or Python
+
+`gregale mcp server init --path <DIR> [--language <LANGUAGE>] [--runtime <RUNTIME>] [--auth <MODE>] [--issuer <URL>] [--jwks-url <URL>] [--resource <URL>] [--scopes <SCOPES>] [--tasks] [--name <SLUG>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--path <DIR>` | empty destination directory | required |
+| `--language <LANGUAGE>` | starter language alias | one of `node` · `go` · `python` |
+| `--runtime <RUNTIME>` | starter language (node, go or python; default node) | one of `node` · `go` · `python` |
+| `--auth <MODE>` | access mode (default open) | one of `open` · `external-oauth` |
+| `--issuer <URL>` | HTTPS OAuth issuer for private access |  |
+| `--jwks-url <URL>` | HTTPS OAuth signing-key URL |  |
+| `--resource <URL>` | canonical HTTPS MCP endpoint and token audience |  |
+| `--scopes <SCOPES>` | comma-separated required OAuth scopes |  |
+| `--tasks` | scaffold separate web, worker and observer task projects |  |
+| `--name <SLUG>` | app slug prefix and task namespace (required with --tasks) |  |
+
+Examples:
+
+```sh
+gregale mcp server init --path ./my-mcp
+gregale mcp server init --path ./my-mcp --runtime go
+gregale mcp server init --path ./my-mcp --runtime python
+gregale mcp server init --path ./private-mcp --auth external-oauth --issuer https://identity.example.com --jwks-url https://identity.example.com/jwks --resource https://mcp.example.com/mcp --scopes mcp:tools
+gregale mcp server init --path ./reports --tasks --name reports
+```
+
+#### mcp server import
+
+Generate Node MCP tools from selected public API operations
+
+`gregale mcp server import --spec <FILE> --path <DIR> --server-url <URL> --operations <IDS>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--spec <FILE>` | OpenAPI JSON/YAML file, or - for stdin | required |
+| `--path <DIR>` | empty destination directory | required |
+| `--server-url <URL>` | explicit public HTTPS API base URL | required |
+| `--operations <IDS>` | comma-separated exact operation IDs | required |
+
+Examples:
+
+```sh
+gregale mcp server import --spec api.yaml --operations listReports,getReport --server-url https://api.example.com/v1 --path ./report-tools
+```
+
+#### mcp server capabilities
+
+Show the built-in starter contract and runtime differences
+
+`gregale mcp server capabilities [--runtime <RUNTIME>] [--markdown]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--runtime <RUNTIME>` | filter to one starter runtime | one of `node` · `go` · `python` |
+| `--markdown` | render the generated starter capability reference |  |
+
+Examples:
+
+```sh
+gregale mcp server capabilities --json
+gregale mcp server capabilities --runtime python
+```
+
+#### mcp server access
+
+Audit MCP access-policy drift and admission evidence
+
+`gregale mcp server access <audit|history|explain>`
+
+##### mcp server access audit
+
+Compare source and role policy with stored account gateway rules
+
+`gregale mcp server access audit --app <SLUG> [--path <DIR>] --auth-placement <PLACEMENT> [--algorithms <LIST>] [--release-policy <PATH>] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | MCP application slug | required |
+| `--path <DIR>` | reviewed source directory (default .) |  |
+| `--auth-placement <PLACEMENT>` | explicit authentication placement | required; one of `gateway` · `guest-only` |
+| `--algorithms <LIST>` | reviewed gateway algorithms (default RS256,ES256) |  |
+| `--release-policy <PATH>` | optional confined role baselines and exclusions; tokens are not read |  |
+| `--timeout <DURATION>` | overall audit deadline (default 30s, at most 2m) |  |
+
+Examples:
+
+```sh
+gregale mcp server access audit --app my-mcp --path ./my-mcp --auth-placement gateway --json
+gregale mcp server access audit --app my-mcp --auth-placement guest-only --release-policy release.json
+```
+
+##### mcp server access history
+
+history MCP access evidence
+
+`gregale mcp server access history [--release <VALUE>] [--limit <VALUE>] [--cursor <VALUE>] [--outcome <VALUE>] [--evidence <VALUE>] [--timeout <VALUE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--release <VALUE>` | deployment id to inspect (promotion or recovery target) (also --deployment) |  |
+| `--limit <VALUE>` | MCP receipts per page, 1–50 |  |
+| `--cursor <VALUE>` | next cursor from a previous page |  |
+| `--outcome <VALUE>` | filter accepted or rejected receipts |  |
+| `--evidence <VALUE>` | inspect an exact evidence UUID instead of deployment history |  |
+| `--timeout <VALUE>` | overall read deadline, at most 2m |  |
+
+##### mcp server access explain
+
+explain MCP access evidence
+
+`gregale mcp server access explain [--evidence <VALUE>] [--app <VALUE>] [--timeout <VALUE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--evidence <VALUE>` | retained admission evidence UUID |  |
+| `--app <VALUE>` | optional application slug for current convergence |  |
+| `--timeout <VALUE>` | overall read deadline, at most 2m |  |
+
+#### mcp server health
+
+Inspect account MCP connection health
+
+`gregale mcp server health [--app <SLUG>] [--offset <N>] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | optional app filter |  |
+| `--offset <N>` | issue page offset |  |
+| `--timeout <DURATION>` | API deadline |  |
+
+#### mcp server diagnostics
+
+Summarize retained MCP transport failures
+
+`gregale mcp server diagnostics --app <SLUG> [--route <PATH>] [--since <DURATION>] [--cursor <CURSOR>] [--limit <N>] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--route <PATH>` | retained route label |  |
+| `--since <DURATION>` | telemetry window |  |
+| `--cursor <CURSOR>` | next page cursor |  |
+| `--limit <N>` | rows per page |  |
+| `--timeout <DURATION>` | API deadline |  |
+
+#### mcp server validate
+
+Validate MCP protocol and catalog compatibility
+
+`gregale mcp server validate --url <URL> [--app <SLUG>] [--release <ID>] [--endpoint-path <PATH>] [--token-env <ENV>] [--protocol-version <VERSION>] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | MCP endpoint | required |
+| `--app <SLUG>` | optional app for exact-instance probes |  |
+| `--release <ID>` | deployment to qualify (also --deployment) |  |
+| `--endpoint-path <PATH>` | configured MCP path |  |
+| `--token-env <ENV>` | MCP token environment variable |  |
+| `--protocol-version <VERSION>` | selected protocol version |  |
+| `--timeout <DURATION>` | overall deadline |  |
+
+#### mcp server test
+
+Run reviewed MCP application smoke fixtures
+
+`gregale mcp server test --url <URL> [--fixtures <PATH>] [--token-env <ENV>] [--allow-tool-execution] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | MCP endpoint | required |
+| `--fixtures <PATH>` | fixture JSON file |  |
+| `--token-env <ENV>` | MCP token environment variable |  |
+| `--allow-tool-execution` | execute reviewed tool fixtures once |  |
+| `--timeout <DURATION>` | overall deadline |  |
+
+#### mcp server deploy
+
+Pin the candidate catalog, verify MCP discovery and promote
+
+`gregale mcp server deploy [--path <DIR>] --name <SLUG> [--size <SIZE>] [--profile <SIZE>] [--token-env <ENV>] [--secrets-file <PATH>] [--release-policy <PATH>] [--validate-url <URL>] [--fixtures <PATH>] [--allow-tool-execution] [--access-audit <PLACEMENT>] [--access-audit-algorithms <LIST>] [--idempotency-key <KEY>] [--expected-serving-deployment <ID>] [--expected-app-id <ID>] [--require-catalog-pin] [--publication-id <SHA256>] [--require-reviewed-tools] [--mcp-task-migration-override] [--timeout <SECONDS>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--path <DIR>` | source directory (default .) |  |
+| `--name <SLUG>` | app slug | required |
+| `--size <SIZE>` | app RAM/CPU resource size | one of `micro` · `small` · `medium` · `large` · `xlarge` |
+| `--profile <SIZE>` | deprecated: use --size |  |
+| `--token-env <ENV>` | client token for external OAuth verification |  |
+| `--secrets-file <PATH>` | sealed app secrets |  |
+| `--release-policy <PATH>` | role-specific catalog baselines to verify before promotion |  |
+| `--validate-url <URL>` | pre-upload compatibility gate endpoint |  |
+| `--fixtures <PATH>` | candidate smoke fixtures |  |
+| `--allow-tool-execution` | execute reviewed tool fixtures once |  |
+| `--access-audit <PLACEMENT>` | optional stored-policy gate with gateway or guest-only placement | one of `gateway` · `guest-only` |
+| `--access-audit-algorithms <LIST>` | reviewed gateway algorithms for --access-audit (default RS256,ES256) |  |
+| `--idempotency-key <KEY>` | retry identity printed by a failed submission |  |
+| `--expected-serving-deployment <ID>` | reviewed serving deployment; empty requires no serving release |  |
+| `--expected-app-id <ID>` | reviewed immutable app identity |  |
+| `--require-catalog-pin` | require candidate catalog integrity support |  |
+| `--publication-id <SHA256>` | native private publication requiring owner-approved platform tests |  |
+| `--require-reviewed-tools` | require runtime tools to match configured tool_scopes before fixtures and promotion |  |
+| `--mcp-task-migration-override` | allow this deployment to replace incompatible MCP task workers once |  |
+| `--timeout <SECONDS>` | deployment and verification wait timeout in seconds (default 1200) |  |
+
+Examples:
+
+```sh
+gregale mcp server deploy --path ./my-mcp --name my-mcp --size small
+```
+
+#### mcp server overview
+
+Inspect replicas, Task workers, observers and promotion holds
+
+`gregale mcp server overview --app <SLUG> [--worker-app <SLUG>] [--observer-app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--release-policy <PATH>] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | serving HTTP MCP application | required |
+| `--worker-app <SLUG>` | optional separate durable Task worker application |  |
+| `--observer-app <SLUG>` | observer to inspect (defaults to worker scaling link) |  |
+| `--endpoint <PATH>` | literal MCP endpoint path (default /mcp) |  |
+| `--token-env <ENV>` | MCP bearer token environment variable |  |
+| `--release-policy <PATH>` | role-specific reviewed catalog baselines |  |
+| `--timeout <DURATION>` | overall inspection deadline (default 30s, at most 2m) |  |
+
+Examples:
+
+```sh
+gregale mcp server overview --app my-mcp
+gregale mcp server overview --app reports-web --worker-app reports-worker --observer-app reports-observer --json
+gregale mcp server overview --app my-mcp --release-policy release.json
+```
+
+#### mcp server status
+
+Qualify serving replicas and watch health or catalog changes
+
+`gregale mcp server status --app <SLUG> [--endpoint <PATH>] [--token-env <ENV>] [--release-policy <PATH>] [--timeout <DURATION>] [--follow] [--interval <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | Gregale MCP app slug | required |
+| `--endpoint <PATH>` | literal MCP endpoint path (default /mcp) |  |
+| `--token-env <ENV>` | MCP client bearer token environment variable |  |
+| `--release-policy <PATH>` | role-specific catalog baselines and token environments |  |
+| `--timeout <DURATION>` | overall replica qualification deadline (default 10s) |  |
+| `--follow` | poll until interrupted and report status changes (also --watch) |  |
+| `--interval <DURATION>` | poll interval with --watch (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp server status --app my-mcp
+gregale mcp server status --app my-mcp --token-env MCP_READER_TOKEN
+gregale mcp server status --app my-mcp --release-policy release.json --json
+gregale mcp server status --app my-mcp --follow --interval 15s --json
+```
+
+#### mcp server doctor
+
+Check discovery, Origin rejection, compatibility and streaming
+
+`gregale mcp server doctor [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--stack] [--hosting] [--path <DIR>] [--worker-app <SLUG>] [--observer-app <SLUG>] [--release-policy <PATH>] [<app>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--legacy` | check legacy compatibility (doctor), or use protocol 2025-11-25 |  |
+| `--tool <NAME>` | tool to execute (call) |  |
+| `--uri <URI>` | resource URI to read (resource-read) |  |
+| `--prompt <NAME>` | prompt to render (prompt-get) |  |
+| `--stream-tool <NAME>` | explicitly execute a tool to verify live progress (doctor) |  |
+| `--arguments <JSON>` | tool or prompt arguments as a JSON object |  |
+| `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
+| `--name <NAME>` | connection name (config) |  |
+| `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
+| `--stack` | check hosting overview and reviewed OAuth configuration |  |
+| `--hosting` | run the existing Task hosting doctor |  |
+| `--path <DIR>` | source configuration directory (with --stack) |  |
+| `--worker-app <SLUG>` | distinct Task worker app (with --stack) |  |
+| `--observer-app <SLUG>` | observer app (with --stack) |  |
+| `--release-policy <PATH>` | reviewed role catalog baselines (with --stack) |  |
+
+Examples:
+
+```sh
+gregale mcp server doctor --app my-mcp --legacy --stream-tool stream_demo
+gregale mcp server doctor --stack --app reports-web --worker-app reports-worker --path ./reports/web --json
+```
+
+The streaming check is optional.
+
+#### mcp server watch
+
+Watch caller-visible MCP catalog definitions for drift
+
+`gregale mcp server watch [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] --baseline <PATH> [--interval <DURATION>] [--tools] [--resources] [--prompts]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--baseline <PATH>` | contract snapshot to watch for drift | required |
+| `--interval <DURATION>` | poll interval and stream reconciliation interval (default 30s) |  |
+| `--tools` | subscribe to tool definition changes |  |
+| `--resources` | subscribe to resource and template definition changes |  |
+| `--prompts` | subscribe to prompt definition changes |  |
+
+Examples:
+
+```sh
+gregale mcp server watch --app my-mcp --baseline gregale-mcp.lock.json
+```
+
+#### mcp server lock
+
+Capture MCP catalog definitions without invoking anything
+
+`gregale mcp server lock [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--out <PATH>] [--force] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing a client token |  |
+| `--legacy` | use protocol 2025-11-25 |  |
+| `--out <PATH>` | snapshot destination (default gregale-mcp.lock.json) |  |
+| `--force` | replace an existing regular snapshot file |  |
+| `--timeout <DURATION>` | total discovery timeout (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp server lock --app my-mcp --out baseline.json
+```
+
+Does not read resources, render prompts or invoke tools.
+
+#### mcp server diff
+
+Compare local MCP catalogs and report changes needing review
+
+`gregale mcp server diff --before <PATH> --after <PATH> [--check] [--strict-catalog]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--before <PATH>` | baseline MCP contract snapshot | required |
+| `--after <PATH>` | candidate MCP contract snapshot | required |
+| `--check` | fail on breaking changes or changes needing review |  |
+| `--strict-catalog` | require review when a caller gains visibility of any catalog definition |  |
+
+Examples:
+
+```sh
+gregale mcp server diff --before baseline.json --after candidate.json --check --json
+```
+
+### mcp client
+
+tools · call · complete · prompts · render · resources · read · watch · status · wait · respond · cancel
+
+#### mcp client tools
+
+Discover tool schemas without invoking tools
+
+`gregale mcp client tools [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [<app>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--legacy` | check legacy compatibility (doctor), or use protocol 2025-11-25 |  |
+| `--tool <NAME>` | tool to execute (call) |  |
+| `--uri <URI>` | resource URI to read (resource-read) |  |
+| `--prompt <NAME>` | prompt to render (prompt-get) |  |
+| `--stream-tool <NAME>` | explicitly execute a tool to verify live progress (doctor) |  |
+| `--arguments <JSON>` | tool or prompt arguments as a JSON object |  |
+| `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
+| `--name <NAME>` | connection name (config) |  |
+| `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp client tools --app my-mcp
+```
+
+#### mcp client call
+
+Execute one discovered tool; opt in to input requests or durable tasks
+
+`gregale mcp client call [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--interactive] [--input-responses-file <PATH>] [--tasks] [--task-submission-key <UUID>] [--task-receipt <FILE>] [--retry-submission] [--defer-form-input] [--wait] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--legacy` | check legacy compatibility (doctor), or use protocol 2025-11-25 |  |
+| `--tool <NAME>` | tool to execute (call) |  |
+| `--uri <URI>` | resource URI to read (resource-read) |  |
+| `--prompt <NAME>` | prompt to render (prompt-get) |  |
+| `--stream-tool <NAME>` | explicitly execute a tool to verify live progress (doctor) |  |
+| `--arguments <JSON>` | tool or prompt arguments as a JSON object |  |
+| `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
+| `--name <NAME>` | connection name (config) |  |
+| `--timeout <DURATION>` | total request timeout (default 30s; interactive/--wait 5m) |  |
+| `--interactive` | answer modern MCP input forms in the terminal |  |
+| `--input-responses-file <PATH>` | JSON file with elicitation responses keyed by request ID |  |
+| `--tasks` | accept modern MCP task handles for later inspection |  |
+| `--task-submission-key <UUID>` | saved UUIDv7 for retrying a Task submission (requires --tasks) |  |
+| `--task-receipt <FILE>` | save a private Task receipt before submission (requires --tasks) |  |
+| `--retry-submission` | retry the original Task submission using an existing --task-receipt |  |
+| `--defer-form-input` | allow a keyed Task to request forms for a later wait |  |
+| `--wait` | wait for a task result; request cancellation on timeout |  |
+
+Examples:
+
+```sh
+gregale mcp client call --app my-mcp --tool add --arguments '{"a":7,"b":5}'
+gregale mcp client call --app my-mcp --tool report_preview --wait
+gregale mcp client call --app my-mcp --tool report_preview --tasks
+```
+
+#### mcp client complete
+
+Request bounded suggestions for a prompt or resource-template argument
+
+`gregale mcp client complete [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--prompt <NAME>] [--resource-template <URI-TEMPLATE>] --argument <NAME> --value <TEXT> [--context <JSON>] [--context-file <PATH>] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--legacy` | use protocol 2025-11-25 |  |
+| `--prompt <NAME>` | prompt name to complete |  |
+| `--resource-template <URI-TEMPLATE>` | resource URI template to complete |  |
+| `--argument <NAME>` | prompt argument or template variable name | required |
+| `--value <TEXT>` | partial value; empty requests the first suggestions | required |
+| `--context <JSON>` | previously resolved arguments as a JSON object |  |
+| `--context-file <PATH>` | read previous arguments from a JSON file |  |
+| `--timeout <DURATION>` | total completion request timeout (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp client complete --app my-mcp --prompt summarize --argument style --value exec
+gregale mcp client complete --app my-mcp --resource-template 'customer://records/{recordId}' --argument recordId --value example-
+```
+
+#### mcp client prompts
+
+Discover prompt definitions without rendering them
+
+`gregale mcp client prompts [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--legacy` | check legacy compatibility (doctor), or use protocol 2025-11-25 |  |
+| `--tool <NAME>` | tool to execute (call) |  |
+| `--uri <URI>` | resource URI to read (resource-read) |  |
+| `--prompt <NAME>` | prompt to render (prompt-get) |  |
+| `--stream-tool <NAME>` | explicitly execute a tool to verify live progress (doctor) |  |
+| `--arguments <JSON>` | tool or prompt arguments as a JSON object |  |
+| `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
+| `--name <NAME>` | connection name (config) |  |
+| `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp client prompts --app my-mcp
+```
+
+#### mcp client render
+
+Render one explicitly selected prompt
+
+`gregale mcp client render [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--legacy` | check legacy compatibility (doctor), or use protocol 2025-11-25 |  |
+| `--tool <NAME>` | tool to execute (call) |  |
+| `--uri <URI>` | resource URI to read (resource-read) |  |
+| `--prompt <NAME>` | prompt to render (prompt-get) |  |
+| `--stream-tool <NAME>` | explicitly execute a tool to verify live progress (doctor) |  |
+| `--arguments <JSON>` | tool or prompt arguments as a JSON object |  |
+| `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
+| `--name <NAME>` | connection name (config) |  |
+| `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp client render --app my-mcp --prompt summarize --arguments '{"text":"weekly report"}'
+```
+
+#### mcp client resources
+
+Discover resource and template definitions without reading contents
+
+`gregale mcp client resources [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [<app>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--legacy` | check legacy compatibility (doctor), or use protocol 2025-11-25 |  |
+| `--tool <NAME>` | tool to execute (call) |  |
+| `--uri <URI>` | resource URI to read (resource-read) |  |
+| `--prompt <NAME>` | prompt to render (prompt-get) |  |
+| `--stream-tool <NAME>` | explicitly execute a tool to verify live progress (doctor) |  |
+| `--arguments <JSON>` | tool or prompt arguments as a JSON object |  |
+| `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
+| `--name <NAME>` | connection name (config) |  |
+| `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp client resources --app my-mcp
+```
+
+#### mcp client read
+
+Read one explicitly selected resource URI
+
+`gregale mcp client read [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [<app>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--legacy` | check legacy compatibility (doctor), or use protocol 2025-11-25 |  |
+| `--tool <NAME>` | tool to execute (call) |  |
+| `--uri <URI>` | resource URI to read (resource-read) |  |
+| `--prompt <NAME>` | prompt to render (prompt-get) |  |
+| `--stream-tool <NAME>` | explicitly execute a tool to verify live progress (doctor) |  |
+| `--arguments <JSON>` | tool or prompt arguments as a JSON object |  |
+| `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
+| `--name <NAME>` | connection name (config) |  |
+| `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp client read --app my-mcp --uri 'file:///reports/current'
+```
+
+#### mcp client watch
+
+Watch a resource for content updates or a Task receipt for status
+
+`gregale mcp client watch [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--uri <URI>] [--task-receipt <FILE>] [--interval <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--uri <URI>` | resource URI to read and watch |  |
+| `--task-receipt <FILE>` | private Task receipt for a metadata-only watch (repeatable) |  |
+| `--interval <DURATION>` | poll and stream reconciliation interval (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp client watch --app my-mcp --uri 'file:///reports/current'
+gregale mcp client watch --app my-mcp --token-env MCP_TOKEN --task-receipt ./task.json
+```
+
+#### mcp client status
+
+Read the status or result of a previously returned task handle
+
+`gregale mcp client status [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--task-id <ID>] [--metadata-only] [--read-result] [--task-submission-key <UUID>] [--task-receipt <FILE>] [--receipt-dir <DIR>] [--write-input-template <FILE>] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--legacy` | check legacy compatibility (doctor), or use protocol 2025-11-25 |  |
+| `--tool <NAME>` | tool to execute (call) |  |
+| `--uri <URI>` | resource URI to read (resource-read) |  |
+| `--prompt <NAME>` | prompt to render (prompt-get) |  |
+| `--stream-tool <NAME>` | explicitly execute a tool to verify live progress (doctor) |  |
+| `--arguments <JSON>` | tool or prompt arguments as a JSON object |  |
+| `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
+| `--name <NAME>` | connection name (config) |  |
+| `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
+| `--task-id <ID>` | opaque task ID (task-get, task-wait or task-cancel) |  |
+| `--metadata-only` | show Task metadata and next action |  |
+| `--read-result` | read a completed Task result from a private receipt |  |
+| `--task-submission-key <UUID>` | find a retained Task by saved UUIDv7 |  |
+| `--task-receipt <FILE>` | find a retained Task from a private receipt (repeatable with --metadata-only) |  |
+| `--receipt-dir <DIR>` | list private Task receipts in one directory (with --metadata-only) |  |
+| `--write-input-template <FILE>` | write pending forms to a new private file |  |
+
+Examples:
+
+```sh
+gregale mcp client status --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840
+```
+
+#### mcp client wait
+
+Resume waiting for a task to finish
+
+`gregale mcp client wait [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--task-id <ID>] [--task-receipt <FILE>] [--interactive] [--input-responses-file <PATH>] [--reviewed-input-file <FILE>] [--cancel-on-timeout] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--legacy` | check legacy compatibility (doctor), or use protocol 2025-11-25 |  |
+| `--tool <NAME>` | tool to execute (call) |  |
+| `--uri <URI>` | resource URI to read (resource-read) |  |
+| `--prompt <NAME>` | prompt to render (prompt-get) |  |
+| `--stream-tool <NAME>` | explicitly execute a tool to verify live progress (doctor) |  |
+| `--arguments <JSON>` | tool or prompt arguments as a JSON object |  |
+| `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
+| `--name <NAME>` | connection name (config) |  |
+| `--timeout <DURATION>` | total task wait timeout (default 5m) |  |
+| `--task-id <ID>` | opaque task ID (task-get, task-wait or task-cancel) |  |
+| `--task-receipt <FILE>` | resume a retained Task from a private receipt instead of supplying the Task ID |  |
+| `--interactive` | answer modern MCP task input forms in the terminal |  |
+| `--input-responses-file <PATH>` | JSON file with elicitation responses keyed by request ID |  |
+| `--reviewed-input-file <FILE>` | answer forms from a reviewed private Task input template |  |
+| `--cancel-on-timeout` | request cancellation when the resumed wait times out |  |
+
+Examples:
+
+```sh
+gregale mcp client wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840
+gregale mcp client wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840 --interactive
+```
+
+#### mcp client respond
+
+Submit reviewed Task input and return a status snapshot
+
+`gregale mcp client respond [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] --task-receipt <FILE> --reviewed-input-file <FILE> [--timeout <DURATION>] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--task-receipt <FILE>` | private receipt for the retained Task | required |
+| `--reviewed-input-file <FILE>` | answer forms from a reviewed private Task input template | required |
+| `--timeout <DURATION>` | total request timeout (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp client respond --app my-mcp --token-env MCP_TOKEN --task-receipt ./task.json --reviewed-input-file ./reviewed-input.json
+```
+
+#### mcp client cancel
+
+Request cooperative cancellation of a previously returned task
+
+`gregale mcp client cancel [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--task-id <ID>] [--task-receipt <FILE>] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--legacy` | check legacy compatibility (doctor), or use protocol 2025-11-25 |  |
+| `--tool <NAME>` | tool to execute (call) |  |
+| `--uri <URI>` | resource URI to read (resource-read) |  |
+| `--prompt <NAME>` | prompt to render (prompt-get) |  |
+| `--stream-tool <NAME>` | explicitly execute a tool to verify live progress (doctor) |  |
+| `--arguments <JSON>` | tool or prompt arguments as a JSON object |  |
+| `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
+| `--name <NAME>` | connection name (config) |  |
+| `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
+| `--task-id <ID>` | opaque task ID (task-get, task-wait or task-cancel) |  |
+| `--task-receipt <FILE>` | cancel a retained Task from a private receipt instead of supplying the Task ID |  |
+
+Examples:
+
+```sh
+gregale mcp client cancel --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840
+gregale mcp client cancel --app my-mcp --task-receipt ./task.json --token-env MCP_TOKEN
+```
+
+### mcp readiness
+
+Check deployment public MCP readiness without executing tools
+
+`gregale mcp readiness [notification|reminder|attention|pagerduty|fallback|maintenance|incidents|policy] --app <SLUG> --release <UUID> [--endpoint <PATH>] [--token-env <ENV>] [--baseline <PATH>] [--record] [--role <NAME>] [--legacy] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--release <UUID>` | deployment UUID (also --deployment) | required |
+| `--endpoint <PATH>` | MCP path (default /mcp) |  |
+| `--token-env <ENV>` | dedicated scoped probe token variable |  |
+| `--baseline <PATH>` | expected role-visible MCP catalog lock |  |
+| `--record` | run and retain a server-side policy-bound probe |  |
+| `--role <NAME>` | configured probe role with --record (default default) |  |
+| `--legacy` | use the legacy protocol |  |
+| `--timeout <DURATION>` | overall deadline up to 30s |  |
+
+Examples:
+
+```sh
+gregale mcp readiness --app my-mcp --release <uuid> --token-env MCP_PROBE_TOKEN --baseline gregale-mcp.lock.json --json
+```
+
+#### mcp readiness notification
+
+Inspect readiness notification queues and recover blocked delivery
+
+`gregale mcp readiness notification <list|retry|abandon>`
+
+##### mcp readiness notification list
+
+Show queue heads, age and delivery blockers
+
+`gregale mcp readiness notification list --app <SLUG> [--env <SCOPE>] [--cursor <UUID>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--env <SCOPE>` | environment; includes all-environment rules (also --scope) |  |
+| `--cursor <UUID>` | rule UUID cursor (also --after) |  |
+| `--limit <N>` | page size 1–50 |  |
+
+##### mcp readiness notification retry
+
+Make a failed head eligible for the next evaluator pass
+
+`gregale mcp readiness notification retry [--destination <primary|fallback>] --app <SLUG> --event <UUID> --expected-version <N> --request-id <UUID> --reason <TEXT>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--destination <primary|fallback>` | receiver queue; omit for the whole event |  |
+| `--app <SLUG>` | owning app slug | required |
+| `--event <UUID>` | head event | required |
+| `--expected-version <N>` | current head delivery version | required |
+| `--request-id <UUID>` | stable request ID; reuse on retries | required |
+| `--reason <TEXT>` | operator reason | required |
+
+##### mcp readiness notification abandon
+
+Permanently stop a head notification and allow the queue to advance
+
+`gregale mcp readiness notification abandon [--destination <primary|fallback>] --app <SLUG> --event <UUID> --expected-version <N> --request-id <UUID> --reason <TEXT>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--destination <primary|fallback>` | receiver queue; omit for the whole event |  |
+| `--app <SLUG>` | owning app slug | required |
+| `--event <UUID>` | head event | required |
+| `--expected-version <N>` | current head delivery version | required |
+| `--request-id <UUID>` | stable request ID; reuse on retries | required |
+| `--reason <TEXT>` | operator reason | required |
+
+#### mcp readiness reminder
+
+Configure reminder defaults for future incidents
+
+`gregale mcp readiness reminder <get|set|disable>`
+
+##### mcp readiness reminder get
+
+Read the rule reminder defaults
+
+`gregale mcp readiness reminder get --app <SLUG> --rule <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--rule <UUID>` | readiness alert rule | required |
+
+##### mcp readiness reminder set
+
+Set reminders inherited by new incidents
+
+`gregale mcp readiness reminder set --app <SLUG> --rule <UUID> --expected-version <N> --interval-seconds <N> --max-reminders <N>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--rule <UUID>` | readiness alert rule | required |
+| `--expected-version <N>` | current reminder defaults version | required |
+| `--interval-seconds <N>` | reminder interval, 60–86400 seconds | required |
+| `--max-reminders <N>` | per-incident reminder budget, 1–10 | required |
+
+##### mcp readiness reminder disable
+
+Disable reminders for future incidents
+
+`gregale mcp readiness reminder disable --app <SLUG> --rule <UUID> --expected-version <N>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--rule <UUID>` | readiness alert rule | required |
+| `--expected-version <N>` | current reminder defaults version | required |
+
+#### mcp readiness attention
+
+Acknowledge readiness incidents and configure bounded reminders
+
+`gregale mcp readiness attention <reopen|list|history|ack|configure>`
+
+##### mcp readiness attention reopen
+
+Release acknowledgement and preserve its history
+
+`gregale mcp readiness attention reopen --app <SLUG> --incident <UUID> --expected-version <N> --request-id <UUID> --reason <TEXT>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--incident <UUID>` | incident | required |
+| `--expected-version <N>` | current attention version | required |
+| `--request-id <UUID>` | stable decision UUID; reuse on retries | required |
+| `--reason <TEXT>` | operator reason | required |
+
+##### mcp readiness attention list
+
+List open incidents and attention state
+
+`gregale mcp readiness attention list --app <SLUG> [--env <SCOPE>] [--cursor <UUID>] [--limit <N>] [--include-resolved]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--env <SCOPE>` | environment; includes all-environment incidents (also --scope) |  |
+| `--cursor <UUID>` | incident UUID cursor (also --after) |  |
+| `--limit <N>` | page size 1–50 |  |
+| `--include-resolved` | include resolved incident attention |  |
+
+##### mcp readiness attention history
+
+List retained acknowledgement and policy decisions
+
+`gregale mcp readiness attention history --app <SLUG> --incident <UUID> [--cursor <CURSOR>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--incident <UUID>` | incident | required |
+| `--cursor <CURSOR>` | attention history cursor (also --before) |  |
+| `--limit <N>` | page size 1–50 |  |
+
+##### mcp readiness attention ack
+
+Record ownership without changing readiness
+
+`gregale mcp readiness attention ack --app <SLUG> --incident <UUID> --expected-version <N> --request-id <UUID> --reason <TEXT> [--expires-at <TIME>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--incident <UUID>` | incident | required |
+| `--expected-version <N>` | current attention version | required |
+| `--request-id <UUID>` | stable decision UUID; reuse on retries | required |
+| `--reason <TEXT>` | operator reason | required |
+| `--expires-at <TIME>` | optional absolute RFC3339 expiry |  |
+
+##### mcp readiness attention configure
+
+Set a finite reminder interval and lifetime budget
+
+`gregale mcp readiness attention configure --app <SLUG> --incident <UUID> --expected-version <N> --request-id <UUID> --reason <TEXT> --interval <DURATION> --max-reminders <N>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--incident <UUID>` | incident | required |
+| `--expected-version <N>` | current attention version | required |
+| `--request-id <UUID>` | stable decision UUID; reuse on retries | required |
+| `--reason <TEXT>` | operator reason | required |
+| `--interval <DURATION>` | whole-second interval 1m–24h; zero disables | required |
+| `--max-reminders <N>` | lifetime limit 1–10; zero disables | required |
+
+#### mcp readiness pagerduty
+
+Configure native PagerDuty readiness incidents
+
+`gregale mcp readiness pagerduty <acknowledgements|get|set|disable>`
+
+##### mcp readiness pagerduty acknowledgements
+
+Sync signed PagerDuty acknowledgements into readiness reminders
+
+`gregale mcp readiness pagerduty acknowledgements <get|set|disable|events>`
+
+###### mcp readiness pagerduty acknowledgements get
+
+Read masked webhook configuration
+
+`gregale mcp readiness pagerduty acknowledgements get --app <SLUG> --rule <UUID> [--destination <primary|fallback>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--rule <UUID>` | readiness alert rule | required |
+| `--destination <primary|fallback>` | native PagerDuty receiver |  |
+
+###### mcp readiness pagerduty acknowledgements set
+
+Bind a service and webhook subscription signing secret
+
+`gregale mcp readiness pagerduty acknowledgements set --app <SLUG> --rule <UUID> --expected-version <N> [--destination <primary|fallback>] [--expected-pagerduty-version <N>] [--expected-fallback-version <N>] --service-id <ID> --secret-env <ENV> [--sync-unacknowledgements]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--rule <UUID>` | readiness alert rule | required |
+| `--expected-version <N>` | current reminder defaults version | required |
+| `--destination <primary|fallback>` | native PagerDuty receiver; default primary |  |
+| `--expected-pagerduty-version <N>` | current native primary version; required for primary |  |
+| `--expected-fallback-version <N>` | current fallback version; required for fallback |  |
+| `--service-id <ID>` | PagerDuty service ID | required |
+| `--secret-env <ENV>` | environment variable containing the webhook signing secret | required |
+| `--sync-unacknowledgements` | resume bounded reminders after matching provider unacknowledgements (opt-in) |  |
+
+###### mcp readiness pagerduty acknowledgements disable
+
+Revoke webhook signing credentials immediately
+
+`gregale mcp readiness pagerduty acknowledgements disable --app <SLUG> --rule <UUID> --expected-version <N> [--destination <primary|fallback>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--rule <UUID>` | readiness alert rule | required |
+| `--expected-version <N>` | current reminder defaults version | required |
+| `--destination <primary|fallback>` | native PagerDuty receiver; omission selects the original callback binding |  |
+
+###### mcp readiness pagerduty acknowledgements events
+
+Page through durable provider acknowledgement receipts
+
+`gregale mcp readiness pagerduty acknowledgements events --app <SLUG> --rule <UUID> [--cursor <CURSOR>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--rule <UUID>` | readiness alert rule | required |
+| `--cursor <CURSOR>` | opaque event cursor (also --before) |  |
+| `--limit <N>` | page size 1–50 |  |
+
+##### mcp readiness pagerduty get
+
+Read masked PagerDuty settings
+
+`gregale mcp readiness pagerduty get --app <SLUG> --rule <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--rule <UUID>` | readiness alert rule | required |
+
+##### mcp readiness pagerduty set
+
+Use PagerDuty as primary for unattempted incidents
+
+`gregale mcp readiness pagerduty set --app <SLUG> --rule <UUID> --expected-version <N> --key-env <ENV> [--region <us|eu>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--rule <UUID>` | readiness alert rule | required |
+| `--expected-version <N>` | current reminder defaults version | required |
+| `--key-env <ENV>` | environment variable containing the integration key | required |
+| `--region <us|eu>` | PagerDuty Events API region (default us) |  |
+
+##### mcp readiness pagerduty disable
+
+Restore webhook primary for unattempted incidents
+
+`gregale mcp readiness pagerduty disable --app <SLUG> --rule <UUID> --expected-version <N>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--rule <UUID>` | readiness alert rule | required |
+| `--expected-version <N>` | current reminder defaults version | required |
+
+#### mcp readiness fallback
+
+Configure webhook or native PagerDuty readiness fallback
+
+`gregale mcp readiness fallback <get|set|disable>`
+
+##### mcp readiness fallback get
+
+Read the masked fallback policy
+
+`gregale mcp readiness fallback get --app <SLUG> --rule <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--rule <UUID>` | readiness alert rule UUID | required |
+
+##### mcp readiness fallback set
+
+Enable fallback for incidents not yet attempted
+
+`gregale mcp readiness fallback set --app <SLUG> --rule <UUID> --expected-version <N> [--provider <webhook|pagerduty>] [--webhook-url <URL>] [--secret-env <VAR>] [--key-env <VAR>] [--region <us|eu>] --after-failures <N>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--rule <UUID>` | readiness alert rule UUID | required |
+| `--expected-version <N>` | current fallback policy version | required |
+| `--provider <webhook|pagerduty>` | fallback provider; default webhook |  |
+| `--webhook-url <URL>` | public HTTP(S) receiver for webhook fallback |  |
+| `--secret-env <VAR>` | environment variable holding webhook signing secret |  |
+| `--key-env <VAR>` | environment variable holding PagerDuty integration key |  |
+| `--region <us|eu>` | PagerDuty region; default us |  |
+| `--after-failures <N>` | completed primary failures, 1–10 | required |
+
+##### mcp readiness fallback disable
+
+Disable fallback for new incidents
+
+`gregale mcp readiness fallback disable --app <SLUG> --rule <UUID> --expected-version <N>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--rule <UUID>` | readiness alert rule UUID | required |
+| `--expected-version <N>` | current fallback policy version | required |
+
+#### mcp readiness maintenance
+
+Silence MCP readiness notifications (alert rules still deliver)
+
+`gregale mcp readiness maintenance <list|create|cancel>`
+
+##### mcp readiness maintenance list
+
+List maintenance windows including expired and cancelled history
+
+`gregale mcp readiness maintenance list --app <SLUG> [--env <SCOPE>] [--cursor <CURSOR>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--env <SCOPE>` | environment (default default) (also --scope) |  |
+| `--cursor <CURSOR>` | history cursor (also --before) |  |
+| `--limit <N>` | page size 1–50 |  |
+
+##### mcp readiness maintenance create
+
+Silence MCP readiness notifications while still recording incidents
+
+`gregale mcp readiness maintenance create --app <SLUG> [--env <SCOPE>] [--since <TIME>] [--until <TIME>] [--duration <DURATION>] --reason <TEXT>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--env <SCOPE>` | exact environment (default default) (also --scope) |  |
+| `--since <TIME>` | RFC3339 start (default now) (also --start) |  |
+| `--until <TIME>` | RFC3339 end; mutually exclusive with duration (also --end) |  |
+| `--duration <DURATION>` | duration from start up to 720h |  |
+| `--reason <TEXT>` | maintenance reason | required |
+
+##### mcp readiness maintenance cancel
+
+End a window and retain cancellation attribution
+
+`gregale mcp readiness maintenance cancel --app <SLUG> --id <UUID> --reason <TEXT>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--id <UUID>` | maintenance window | required |
+| `--reason <TEXT>` | cancellation reason | required |
+
+#### mcp readiness incidents
+
+List readiness events with incident and notification status
+
+`gregale mcp readiness incidents --app <SLUG> [--env <SCOPE>] [--cursor <CURSOR>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--env <SCOPE>` | environment (default default; empty selects all) (also --scope) |  |
+| `--cursor <CURSOR>` | timeline cursor (also --before) |  |
+| `--limit <N>` | page size 1–50 |  |
+
+#### mcp readiness policy
+
+Manage environment readiness policies
+
+`gregale mcp readiness policy <history|diff|restore|get|set>`
+
+##### mcp readiness policy history
+
+List environment policy revisions
+
+`gregale mcp readiness policy history --app <SLUG> [--env <SCOPE>] [--before-revision <UUID>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--env <SCOPE>` | environment (default default) (also --scope) |  |
+| `--before-revision <UUID>` | history page cursor |  |
+| `--limit <N>` | page size 1–50 (default 20) |  |
+
+##### mcp readiness policy diff
+
+Compare historical policy configuration
+
+`gregale mcp readiness policy diff --app <SLUG> [--env <SCOPE>] --from-revision <UUID> [--to-revision <UUID>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--env <SCOPE>` | environment (default default) (also --scope) |  |
+| `--from-revision <UUID>` | historical revision | required |
+| `--to-revision <UUID>` | comparison revision (default current) |  |
+
+##### mcp readiness policy restore
+
+Restore as a new revision requiring fresh evidence
+
+`gregale mcp readiness policy restore --app <SLUG> [--env <SCOPE>] --revision <UUID> --expected-revision <UUID> --reason <TEXT>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--env <SCOPE>` | environment (default default) (also --scope) |  |
+| `--revision <UUID>` | historical revision | required |
+| `--expected-revision <UUID>` | current policy revision CAS | required |
+| `--reason <TEXT>` | audit reason | required |
+
+##### mcp readiness policy get
+
+Read an environment policy
+
+`gregale mcp readiness policy get --app <SLUG> [--env <SCOPE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--env <SCOPE>` | environment (default default) (also --scope) |  |
+
+##### mcp readiness policy set
+
+Save a reviewed environment policy with revision CAS
+
+`gregale mcp readiness policy set --app <SLUG> [--env <SCOPE>] --file <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owning app slug | required |
+| `--env <SCOPE>` | environment (default default) (also --scope) |  |
+| `--file <PATH>` | reviewed policy JSON | required |
+
+### mcp observer
+
+Validate observer credentials, namespace and metric readiness
+
+#### mcp observer setup
+
+Inspect the observer and optionally ensure minimum one replica
+
+`gregale mcp observer setup --app <SLUG> --worker-app <SLUG> [--config <PATH>] [--apply]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | observer worker app slug | required |
+| `--worker-app <SLUG>` | task worker app slug | required |
+| `--config <PATH>` | local MCP source config (default gregale-mcp.json) |  |
+| `--apply` | ensure at least one configured observer replica |  |
+
+#### mcp observer status
+
+Read observer configuration and heartbeat freshness
+
+`gregale mcp observer status [--app <SLUG>] --worker-app <SLUG> [--config <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | observer slug (defaults to linked observer) |  |
+| `--worker-app <SLUG>` | task worker app slug | required |
+| `--config <PATH>` | optional local MCP source config |  |
 
 
 ## account

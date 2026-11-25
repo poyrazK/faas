@@ -67,6 +67,9 @@ type sourceRefManifestStaged struct {
 	lifecycleChanged      bool
 	previousLifecycle     state.AppManifest
 	appliedLifecycle      state.AppManifest
+	// accessRestore is the app's access before the deploy applied its
+	// gregale.yaml access key (ADR-20261124090000 amendment 1).
+	accessRestore *sourceAccessRestore
 
 	// ADR-20261031130000: subscriptions this deploy disabled or re-enabled,
 	// restored if the deploy rolls back.
@@ -1251,6 +1254,9 @@ func sourceRefManifestStoreProblem(err error, plan api.Plan, cron bool) *api.Pro
 
 func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRefManifestStaged) error {
 	var errs []error
+	if err := s.restoreManifestAccess(ctx, staged.appID, staged.accessRestore); err != nil {
+		errs = append(errs, err)
+	}
 	if err := s.cancelSourceManifestCrons(ctx, staged); err != nil {
 		errs = append(errs, err)
 	}

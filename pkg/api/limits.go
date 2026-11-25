@@ -20,6 +20,21 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/capgrant"
+)
+
+// Cross-app capability bindings (ADR-20261122191423). A workload S3
+// credential lives an hour; guest-init caches it until five minutes before
+// expiry, so a well-behaved instance holds one or two per bucket and the
+// per-instance cap only bounds rows a looping workload can create.
+// CapabilityGrantsPerKindMax is pkg/capgrant's cap on each `uses:` list;
+// capgrant keeps it as its own constant because it stays stdlib-only, so
+// the manifest parser can validate `uses:` without importing this package.
+const (
+	WorkloadObjectCredentialTTL                = time.Hour
+	WorkloadObjectCredentialsPerInstanceBucket = 8
+	CapabilityGrantsPerKindMax                 = capgrant.MaxGrantsPerKind
 )
 
 // Pipeline limits bound durable orchestration independently of Run concurrency.
@@ -240,6 +255,54 @@ const (
 	ObsSnapshotUnsnapshottedMax = 200
 	ObsSnapshotFleetAvgWarnMB   = 160
 	ObsSnapshotFleetAvgPageMB   = 200
+)
+
+// Operator build queue report (ADR-20261123163340). The report reads at most
+// ObsBuildQueueActiveMax queued and running builds and ObsBuildQueueFinishedMax
+// builds finished in the window (beyond either it says it was truncated). A
+// build waiting longer than ObsBuildQueueWaitWarnSeconds is flagged, and a
+// running one past BuildTimeoutSeconds is overdue. Builder slot use comes from
+// builderd's gauges in Prometheus under ObsBuildQueuePrometheusBudget.
+const (
+	ObsBuildQueueActiveMax        = 500
+	ObsBuildQueueFinishedMax      = 20000
+	ObsBuildQueueListMax          = 50
+	ObsBuildQueueSlowestMax       = 25
+	ObsBuildQueueWaitWarnSeconds  = 300
+	ObsBuildQueueWindowDefault    = 24 * time.Hour
+	ObsBuildQueueWindowMax        = 7 * 24 * time.Hour
+	ObsBuildQueuePrometheusBudget = 2 * time.Second
+)
+
+// Operator memory pressure report (ADR-20261123190507). The report reads at
+// most ObsMemoryPressureEventsMax evictions, frozen parks and OOM kills in
+// the window (beyond that it says it was truncated), lists the newest
+// ObsMemoryPressureListMax and the ObsMemoryPressureAppsMax most affected
+// apps. A node's measured memory older than ObsMemoryMeasurementStaleSeconds
+// is stale; a node at or above MeasuredEvictionTargetPercent of its ceiling
+// is near it.
+const (
+	ObsMemoryPressureEventsMax       = 20000
+	ObsMemoryPressureListMax         = 100
+	ObsMemoryPressureAppsMax         = 25
+	ObsMemoryMeasurementStaleSeconds = 30
+	ObsMemoryPressureWindowDefault   = 24 * time.Hour
+	ObsMemoryPressureWindowMax       = 7 * 24 * time.Hour
+)
+
+// Operator gateway traffic report (ADR-20261124093000). The report reads
+// gatewayd's Prometheus series over the window under
+// ObsGatewayTrafficPrometheusBudget, or ObsGatewayTrafficLongWindowBudget
+// for windows over ObsGatewayTrafficShortWindowMax, and lists the
+// ObsGatewayTrafficAppsMax most affected apps.
+const (
+	ObsGatewayTrafficAppsMax          = 25
+	ObsGatewayTrafficWindowDefault    = time.Hour
+	ObsGatewayTrafficWindowMin        = 5 * time.Minute
+	ObsGatewayTrafficWindowMax        = 7 * 24 * time.Hour
+	ObsGatewayTrafficPrometheusBudget = 3 * time.Second
+	ObsGatewayTrafficShortWindowMax   = 24 * time.Hour
+	ObsGatewayTrafficLongWindowBudget = 10 * time.Second
 )
 
 // Customer attention signals (ADR-20261113123000): when a customer is
@@ -1225,6 +1288,30 @@ const OperationBusinessConditionDescriptionMaxBytes = 1024
 // PostgreSQL databases before the cap suspends them (ADR-20261025094915).
 const ManagedPostgresOverageCeilingMultiplier = 2
 
+// ManagedPostgresSuspendTimeoutMinSeconds and ...MaxSeconds bound the suspend
+// timeout a customer chooses for a scale-to-zero database (gregale postgres
+// suspend-timeout): past an hour a database is close to always-on, which plans
+// sell separately. The managed_postgres_suspend_timeouts CHECK matches.
+// Docs: docs/postgres.md.
+const (
+	ManagedPostgresSuspendTimeoutMinSeconds = 60
+	ManagedPostgresSuspendTimeoutMaxSeconds = 3600
+)
+
+// ManagedPostgresSuspendTimeoutDefaultSeconds is the platform default suspend
+// timeout of a scale-to-zero database: every wake bills at least this much
+// compute. Operators change it hot (managed_postgres_policy
+// suspend_timeout_seconds) within ManagedPostgresSuspendTimeoutPolicyMin/
+// MaxSeconds, Neon's own range. Docs: docs/managed-postgres.md.
+const (
+	ManagedPostgresSuspendTimeoutDefaultSeconds   = 120
+	ManagedPostgresSuspendTimeoutPolicyMinSeconds = 60
+	ManagedPostgresSuspendTimeoutPolicyMaxSeconds = 7 * 24 * 60 * 60
+)
+
+// ManagedPostgresSuspendTimeoutDocsURL is cited by the out-of-range error.
+const ManagedPostgresSuspendTimeoutDocsURL = "https://gregale.dev/docs/postgres#plans"
+
 // ManagedPostgresNeonScaleMillicentsPerComputeUnitHour is what Neon's Scale
 // plan charges Gregale per CU-hour ($0.222, neon.com/pricing on 2026-11-02),
 // and ManagedPostgresOverageMarkupPercent what Gregale adds to the
@@ -1304,6 +1391,15 @@ const ManagedPostgresHistoryMonthSeconds int64 = 744 * 3600
 func ManagedPostgresIncludedHistoryBytes(storagePoolBytes int64) int64 {
 	return max(storagePoolBytes, 0)
 }
+
+// ManagedPostgresHistoryLimitFactor and
+// ManagedPostgresHistoryLimitedRestoreWindow bound the restore history of a
+// subject with overage off (ADR-20261123062111 D2): once its month-to-date
+// restore history and snapshots pass this many times its included history,
+// its databases keep only this restore window until the 1st of the next UTC
+// month, or until overage is turned on.
+const ManagedPostgresHistoryLimitFactor = 2
+const ManagedPostgresHistoryLimitedRestoreWindow = 24 * time.Hour
 
 // Production managed PostgreSQL provisioning (ADR-20261028103115). An
 // operator approval pins one backend for at most the approval window; the
@@ -1441,7 +1537,16 @@ const (
 	MCPTaskDefaultMaxOutstandingPerOwner = 100
 	MCPPolicyMaxEntries                  = 256
 	MCPPolicyMaxKeyBytes                 = 4096
-	MCPPolicyMaxRequestBytes             = 1 << 20
+	// MCPBillingNameMaxBytes bounds a tool or prompt name in an MCP billing
+	// label (ADR-20261123192254).
+	MCPBillingNameMaxBytes = 128
+	// MCPJWTAudienceMaxBytes bounds the audience an external OAuth issuer
+	// declares for an MCP server (ADR-20261123192254).
+	MCPJWTAudienceMaxBytes = 512
+	// APIConsumerPlanMaxRouteLimits bounds a consumer plan's per-route and
+	// per-tool caps (ADR-20261123192254).
+	APIConsumerPlanMaxRouteLimits = 50
+	MCPPolicyMaxRequestBytes      = 1 << 20
 	// MCP tool limits (ADR-20261122194324): per caller and tool.
 	MCPToolLimitMaxRequests      = 100000
 	MCPToolLimitMaxWindowSeconds = 3600
@@ -1452,8 +1557,10 @@ const (
 	MCPReplayMaxRuns      = 5
 	// ConsumerKeyMCPScopeMaxBytes bounds one "mcp:<scope>" consumer-key scope.
 	ConsumerKeyMCPScopeMaxBytes = 128
-	MCPReleaseMaxRoles          = 32
-	MCPReleasePolicyMaxBytes    = 64 << 10
+	// ConsumerKeyNameMaxBytes bounds a consumer key's name.
+	ConsumerKeyNameMaxBytes  = 64
+	MCPReleaseMaxRoles       = 32
+	MCPReleasePolicyMaxBytes = 64 << 10
 )
 
 // Historical replay preview bounds retained-envelope reads (ADR-645).
@@ -1815,6 +1922,10 @@ const (
 	// A consumer holds at most this many grants with credit left.
 	ConsumerCreditOpenGrantsMax = 100
 	ConsumerCreditNoteMaxBytes  = 200
+	// Self-service checkout catalog limits and the lifetime of an open checkout.
+	ConsumerCreditPacksMax          = 16
+	ConsumerCreditPackLabelMaxBytes = 80
+	ConsumerCreditPurchaseTTL       = time.Hour
 	// apid rechecks each capped consumer's month to date this often, in
 	// batches; a claimed check is retried after the lease.
 	ConsumerSpendCapCheckInterval = time.Minute
@@ -2658,6 +2769,48 @@ const (
 // one candidate. Restarts cannot renew this operational budget.
 const HostingVerificationRecoveryWindow = 5 * time.Minute
 
+// Verification contract bounds (ADR-20261122220000) are abuse limits on the
+// work one deployment's gregale.verify.yaml can ask for, not plan tiers.
+// docs/verification-contracts.md states the customer-visible ones.
+const (
+	VerificationContractMaxBytes            = 256 << 10
+	VerificationContractMaxChecks           = 32
+	VerificationContractDefaultTimeoutSecs  = 30
+	VerificationContractMaxTimeoutSecs      = 120
+	VerificationContractMaxPathBytes        = 2048
+	VerificationContractMaxHeaders          = 16
+	VerificationContractMaxHeaderValueBytes = 1024
+	VerificationContractMaxBodyBytes        = 64 << 10
+	VerificationContractMaxStatuses         = 16
+	VerificationContractMaxBodyContains     = 16
+	VerificationContractMaxJSONAssertions   = 32
+	VerificationContractMaxSQLBytes         = 64 << 10
+	// VerificationContractMaxSecretRefs bounds the distinct app secrets one
+	// contract's check headers reference (${secret:NAME}, amendment 2).
+	VerificationContractMaxSecretRefs = 8
+	// VerificationLeaseGrace is how long past the contract's own timeout the
+	// verifying node's lease lets secretd open referenced secrets.
+	VerificationLeaseGrace = 2 * time.Minute
+	// VerificationContractMaxResponseBytes is how much of a check's response
+	// body is read for body and JSON assertions.
+	VerificationContractMaxResponseBytes = 1 << 20
+	// VerificationQueryWorkers bounds the SQL checks one apid runs at once.
+	VerificationQueryWorkers = 8
+	// VerificationQueryStaleClaim returns a claimed SQL check to the queue
+	// when the apid that claimed it stopped without finishing it. A live
+	// worker finishes a check within its 30 s query call plus
+	// VerificationQueryBusyWait, so a claim older than this is abandoned.
+	VerificationQueryStaleClaim = 90 * time.Second
+	// VerificationQueryBusyWait bounds how long a SQL check waits for another
+	// query of the same database to end.
+	VerificationQueryBusyWait = 5 * time.Second
+	// VerificationQueryRetention keeps expired SQL handoff rows this long.
+	VerificationQueryRetention = time.Hour
+	// VerificationFirstValueMaxBytes bounds the first value a SQL check
+	// returns to imaged.
+	VerificationFirstValueMaxBytes = 1024
+)
+
 // Route customer analytics bounds are structural safeguards, not plan quotas.
 const (
 	RouteCustomerUsageMaxRoutes    = 200
@@ -2943,6 +3096,20 @@ const (
 	FlagsMaxConfigVersion      = int64(9007199254740991)
 )
 
+// Edge flag routing bounds (ADR-20261124212701): variant flags the gateway
+// evaluates without an SDK and the paths they rewrite.
+const (
+	// FlagsMaxEdgeFlags is how many flags of an environment may route at the edge.
+	FlagsMaxEdgeFlags = 16
+	// FlagsMaxEdgeRoutesPerFlag bounds the paths one flag routes.
+	FlagsMaxEdgeRoutesPerFlag = 8
+	// FlagsMaxEdgePathBytes bounds a route's path and a rewrite target.
+	FlagsMaxEdgePathBytes = 256
+	// FlagsEdgeVisitorCookieMaxAge is how long an anonymous visitor keeps its
+	// edge bucket (the first-party visitor cookie's Max-Age).
+	FlagsEdgeVisitorCookieMaxAge = 365 * 24 * time.Hour
+)
+
 // Flag attribute targeting bounds (ADR 20261114150000 §2).
 const (
 	FlagsMaxConditionsPerRule   = 8
@@ -3016,6 +3183,35 @@ const (
 	AnalyticsCohortMaxMinCount = 1000
 	// AnalyticsCohortRefreshInterval is how often a cohort is recomputed.
 	AnalyticsCohortRefreshInterval = time.Hour
+)
+
+// Saved insights (ADR-20261122190000).
+const (
+	// SavedInsightsMaxPerEnvironment bounds an environment's saved insights.
+	SavedInsightsMaxPerEnvironment = 50
+	// SavedInsightMaxChannels bounds the channels one saved insight sends to.
+	SavedInsightMaxChannels = 5
+	// SavedInsightAlertInterval is how often meterd checks a saved insight
+	// that has an alert.
+	SavedInsightAlertInterval = 15 * time.Minute
+	// SavedInsightDigestHourUTC is the hour digests go out: daily ones every
+	// day, weekly ones on Mondays.
+	SavedInsightDigestHourUTC = 8
+	// SavedInsightRunBatch bounds the saved insights one meterd pass runs.
+	SavedInsightRunBatch = 10
+	// SavedInsightItemBudget bounds one saved insight's run: its query
+	// (AnalyticsQueryTimeout) and at most two channel sends of 30 s each.
+	SavedInsightItemBudget = AnalyticsQueryTimeout + time.Minute
+	// SavedInsightLease is how long a claimed batch stays leased; a pass
+	// releases the items it cannot start with SavedInsightItemBudget left.
+	SavedInsightLease = SavedInsightRunBatch*SavedInsightItemBudget + time.Minute
+	// SavedInsightNotReleasedRetry is how long a saved insight of an account
+	// without saved insights waits before meterd looks at it again.
+	SavedInsightNotReleasedRetry = time.Hour
+	// SavedInsightNameMaxBytes bounds a saved insight's display name.
+	SavedInsightNameMaxBytes = 128
+	// SavedInsightRequestMaxBytes bounds a create or replace request body.
+	SavedInsightRequestMaxBytes = 32 << 10
 )
 
 // Subject units, layers and the holdout, richer metrics, bandits and
@@ -9822,6 +10018,13 @@ const (
 	GatewaydInternalControlReadTimeoutSecondsDefault  = 30 // control + unix-socket
 	GatewaydInternalControlWriteTimeoutSecondsDefault = 30 // control + unix-socket
 	GatewaydInternalControlIdleTimeoutSecondsDefault  = 60 // control + unix-socket keep-alive
+	// GatewaydInternalGuestServiceIdleTimeoutSecondsDefault closes a guest's
+	// idle connection to the service proxy (<name>.svc.gregale:10081/10080,
+	// and its HTTPS alias). Those connections carry no TCP keepalive: with
+	// Go's default of one probe every 15 s, an app holding idle service
+	// connections was woken from quiet pause four times a minute, and so was
+	// each close and the client's reconnect (ADR-384 amendment 1).
+	GatewaydInternalGuestServiceIdleTimeoutSecondsDefault = 300
 
 	// VmmdLocalDataSocket is where vmmd serves its own node's
 	// gatewayd-internal without TLS, admitting only GatewaydInternalUser by
@@ -20728,3 +20931,43 @@ const (
 )
 
 const HostedTaskBindingKeyIDMaxBytes = 64
+
+// Claimable deploys (ADR-20261124080000).
+// Defaults for the operator-tunable claimable-deploy limits. apid reads the
+// live values from its runtime config (unclaimed_deploy_ttl_hours,
+// unclaimed_accounts_live_max, unclaimed_accounts_per_address_per_day,
+// unclaimed_accounts_per_network_per_day); these are the defaults and bounds.
+const (
+	// UnclaimedDeployTTLHoursDefault is how long an unclaimed account lives
+	// before the sweep schedules its deletion.
+	UnclaimedDeployTTLHoursDefault = 72
+	UnclaimedDeployTTLHoursMax     = 168
+	// UnclaimedAccountsLiveMaxDefault caps unclaimed accounts alive at once
+	// on the platform. 0 closes anonymous deploys without the kill switch.
+	UnclaimedAccountsLiveMaxDefault = 500
+	UnclaimedAccountsLiveMaxBound   = 100_000
+	// Per address and per /24 (/48) a day. Separate from the sign-up caps,
+	// so anonymous deploys never use up a network's human sign-ups.
+	UnclaimedAccountsPerAddressPerDayDefault = 3
+	UnclaimedAccountsPerNetworkPerDayDefault = 10
+	UnclaimedAccountsPerDayBound             = 1_000
+	// UnclaimedAccountWindow is how far back the per-address and
+	// per-network caps count anonymous accounts; a refusal by either asks
+	// the caller to retry after it.
+	UnclaimedAccountWindow = 24 * time.Hour
+	// UnclaimedLiveCapRetryAfter is the retry hint when the platform-wide
+	// cap refuses a new anonymous session.
+	UnclaimedLiveCapRetryAfter = time.Hour
+	// UnclaimedAccountExpiryBatch is one page of the expiry sweep, and
+	// UnclaimedAccountSweepMaxPages bounds one run; the next run carries on.
+	UnclaimedAccountExpiryBatch   = 200
+	UnclaimedAccountSweepMaxPages = 50
+	// UnclaimedAccountSweepInterval is how often apid runs the sweep.
+	UnclaimedAccountSweepInterval = 5 * time.Minute
+	// UnclaimedClaimEmailTTL is how long the claim confirmation mailed to
+	// the claimer stays valid.
+	UnclaimedClaimEmailTTL = time.Hour
+)
+
+// UnclaimedDeployTTLDefault is UnclaimedDeployTTLHoursDefault as a duration.
+const UnclaimedDeployTTLDefault = UnclaimedDeployTTLHoursDefault * time.Hour

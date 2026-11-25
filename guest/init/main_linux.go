@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -86,6 +87,9 @@ func main() {
 	}
 	if os.Getenv(dependencyInputsHelperEnv) == publicBuildURLsHelperValue && os.Getpid() != 1 {
 		os.Exit(runPublicBuildURLs(os.Args[1:]))
+	}
+	if os.Getenv(dependencyInputsHelperEnv) == nextStandaloneHelperValue && os.Getpid() != 1 {
+		os.Exit(runNextStandalone(os.Args[1:]))
 	}
 	// A re-executed copy-out child (ADR-1037) never boots.
 	if len(os.Args) > 0 && os.Args[0] == appTaskCopyOutHelperArg0 && os.Getpid() != 1 {
@@ -598,7 +602,7 @@ func boot() error {
 			return BuildEnvWithSecrets(os.Environ(), manifest, currentSecrets, apiEnv)
 		},
 	}); err != nil {
-		slog.Default().Warn("healthcheck poll unavailable", "err", err)
+		logHealthcheckPollUnavailable(slog.Default(), err)
 	}
 	// M-2 / ADR-138 §Decision 1 / issue #474 — install the PID 1
 	// signal handler before invoking the supervisor. The handler
@@ -1597,7 +1601,7 @@ func runBuildOnce(m api.BuildManifest) error {
 	var combined bytes.Buffer
 	if buf.Len() > 0 {
 		combined.WriteString("[build]\n")
-		combined.WriteString(tailOf(buf.Bytes(), m.LogTailBytes/2))
+		combined.WriteString(tailOf(withoutPlatformBuildNoise(buf.Bytes()), m.LogTailBytes/2))
 	}
 	if err != nil && buildkitLog.Len() > 0 {
 		combined.WriteString("\n[buildkitd]\n")
@@ -2120,6 +2124,11 @@ func buildArgv(m api.BuildManifest) []string {
 	}, " ")
 	goCommand, goCommandEnv := railpackGoCommand(m)
 	prepare += goCommand
+	if nextStandaloneBuild(m) {
+		// Never fails the build; see runNextStandalone.
+		prepare += " && { " + dependencyInputsHelperEnv + "=" + nextStandaloneHelperValue + " /proc/1/exe " +
+			shellQuote(planPath) + " " + shellQuote(m.Workdir) + " " + strconv.Itoa(m.AppLayerMaxMB) + " || true; }"
+	}
 	if len(m.PublicBuildURLs) > 0 || m.BuildDependencyDigest != "" {
 		prepare += " && " + dependencyInputsHelperEnv + "=" + publicBuildURLsHelperValue + " /proc/1/exe " + shellQuote(planPath)
 	}
@@ -3096,6 +3105,7 @@ func runCharacterizationForSup(sup *Supervisor, manifest api.AppManifest) {
 		Manifest:       manifest,
 		ProvenWorker:   bootProvenWorker(),
 		FunctionRunner: bootFunctionRunner(),
+		RawTCPListener: bootRawTCPListener(),
 		AppPID:         func() int { return sup.LastAppPID() },
 		ExitStatus:     func() (int, bool) { return sup.LastExitStatus() },
 		RingBufferTail: func() string {

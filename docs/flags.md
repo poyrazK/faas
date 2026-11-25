@@ -476,6 +476,54 @@ environment under `inherited_from`; its configuration version and rule ID refer
 to the original decision. The envelope carries behavior context, not permission
 or entitlement.
 
+## Serve variants at the edge
+
+A variant flag can route requests at Gregale's gateway, so a page serves its
+variants without an SDK: a static site, a marketing page, or a route your code
+does not branch on (ADR-20261124212701). For each GET or HEAD request to a
+routed path, the gateway decides the flag and rewrites the path for the decided
+variant before the response cache and your app see it:
+
+```sh
+gregale flag create pricing --variants a,b --project site
+gregale flag rollout set pricing 100 --project site
+gregale flag edge set pricing --path /pricing --variant b --rewrite /pricing-b --project site
+gregale flag edge set pricing --path '/docs/*' --variant b --rewrite /docs-b --project site
+gregale flag edge list --project site
+```
+
+`/pricing` matches exactly; `/docs/*` matches `/docs` and everything under it
+and replaces the prefix (`/docs/start` serves `/docs-b/start`). Variants
+without a rewrite serve the path unchanged. Deploy both pages: the rewrite
+target is an ordinary path of your app.
+
+- A **verified customer** (consumer key, platform tenant) gets the variant an
+  SDK would give it, and its exposure counts in experiments like an SDK
+  decision, so `gregale flag experiment` works on routed pages.
+- An **anonymous visitor** gets a random first-party cookie
+  (`__Host-gregale_vid`, one year) and keeps its variant across visits.
+  Percentage and weighted rules split visitors; customer, group and cohort
+  targeting never match them. Anonymous visitors are served but not counted
+  in experiments.
+  The cookie is the platform's: your app never receives it.
+- A kill (`gregale flag kill set pricing`) serves the unrouted path on the
+  next request, even if the default variant has a rewrite.
+  `gregale flag edge delete pricing [--path /pricing]` removes routes.
+- Each environment routes with its own flags. PR preview links are never
+  routed.
+- A rewrite is served only when the target path passes the same gates as the
+  requested one (declared routes, IP, geo, JWT, rate limit, WAF and
+  challenge rules); otherwise the requested path is served and no exposure is
+  recorded.
+- Each variant is cached separately, and routed responses are kept out of
+  shared caches such as Cloudflare. Request logs and analytics show the path
+  served (`/pricing-b`), not the one requested.
+
+Limits: 16 routed flags per environment, 8 paths per flag, paths up to 256
+bytes without query, fragment or dot segments. Edge routing is released by
+the `edge_flags` platform flag; without it, adding or changing routes answers
+403 and the gateway serves requests unchanged.
+
 ## Carry decisions into queued work
 
 For work created while handling a customer request, include the SDK's bounded
@@ -905,6 +953,51 @@ so neither `in` nor `not_in` matches. Runtime SDKs need capability
 `cohort-targeting-v1`. The API routes are under
 `/v1/projects/{slug}/environments/{environment}/cohorts`; MCP agents list
 cohorts with `gregale_list_insight_cohorts` (diagnose toolset).
+
+### Save, share and export an insight
+
+A saved insight is a named events, funnel or retention query over the last
+`--days` days (default 7, 28 for retention). Anyone who can read the project
+lists and runs it; saving, replacing and deleting one needs deploy rights.
+An operator releases saved insights with the `saved_insights` platform flag
+(on top of `product_analytics`).
+
+```bash
+gregale insight saved create checkout-conv --kind funnel --step signup --step order_completed --days 14 --project shop
+gregale insight saved list --project shop
+gregale insight saved run checkout-conv --project shop
+gregale insight saved run checkout-conv --format csv --project shop > checkout-conv.csv
+```
+
+Each saved insight has one value: an events total (`--measure value` sums
+event values instead of counting events), a funnel's overall conversion, or
+the share of units that came back in the first retention period. Funnel and
+retention values are fractions (0.25 is 25%).
+
+Send the value to [notification channels](alerts.md) with a digest, an alert
+or both (up to 5 channels):
+
+```bash
+gregale insight saved create orders --kind events --event order_completed --days 1 \
+  --digest daily --alert lt:100 --channel CHANNEL_ID --project shop
+```
+
+- Digests go out at 08:00 UTC, `weekly` ones on Mondays. PagerDuty channels
+  get no digests.
+- An alert (`gt`, `gte`, `lt` or `lte` a threshold) is checked every 15
+  minutes. It notifies once when the value crosses the threshold and once
+  when it comes back. If the query fails, nothing is sent, the state is kept,
+  `last_error` says why and the insight is retried in 15 minutes; a due
+  digest goes out once a run succeeds. A funnel without entrants or
+  retention before its first period ends has no value and does not alert.
+- Replace a saved insight with `gregale insight saved create KEY --replace ...`;
+  changing its query, range or alert resets the alert state.
+
+An environment holds at most 50 saved insights. The API routes are under
+`/v1/projects/{slug}/environments/{environment}/insights/saved`
+(`GET /{key}/run?format=csv` exports). MCP agents use
+`gregale_list_saved_insights` and `gregale_run_saved_insight` (diagnose
+toolset).
 
 ## Promote a guarded rollout stage
 

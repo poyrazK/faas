@@ -581,6 +581,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	} else {
 		netns.SetDefaultDatabaseRouteAddress(netip.Addr{})
 	}
+	// ADR-20261114100000 amendment 2026-11-23: public destinations that are
+	// Gregale's own count as internal egress in every namespace from here on.
+	if err := seedInternalEgressDestinations(ctx, cfg.ComputeNode, log); err != nil {
+		return err
+	}
 	// Runtime policy rebuilds happen after every VM cache mutation. Seed the
 	// mutable policy from this host's deployment-owned network values before
 	// any wake can trigger a render; otherwise the package default (eth0)

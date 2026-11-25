@@ -23,6 +23,8 @@ normal `set` can still replace a malformed regular declaration. Matching setting
 report no change. JSON includes `path`, `dry_run: true`, `changed: false`,
 `would_change`, `before_saved`, `before` (null if absent), and `after`.
 
+### Unset the saved task count
+
 Unset only the saved task count with
 `gregale job defaults update --clear-tasks --dry-run`, then remove `--dry-run`
 to save. The Job name, results preference, image-wait preference, and artifact
@@ -31,6 +33,8 @@ Unset means no saved task-count override; it does not force zero tasks on a run.
 `--clear-tasks` is supported on `update` only and conflicts with any explicit
 `--tasks` value. Explicit `--clear-tasks=false` does not clear the count and
 requires another update operation. Already-unset counts preview as no change.
+
+### Edit saved artifact filters
 
 Edit saved artifact filters incrementally with repeatable `--add-include`,
 `--remove-include`, `--add-exclude`, and `--remove-exclude` flags on
@@ -63,6 +67,8 @@ oversized, or unsafe defaults produce no suggestions or remote fallback. This
 is offline, does not change files, and follows inherited project-root defaults.
 Reload your generated shell completion script to use it.
 
+### Preview the next run from saved defaults
+
 Saved Job defaults now show the next run-preview step after `set`, `update`, and
 `show`. When a positive task count is saved, output includes a copyable,
 profile-preserving `gregale --profile PROFILE jobs run JOB --dry-run` command.
@@ -78,6 +84,8 @@ task count or present an incomplete command as ready to run. JSON preserves
 commands use POSIX shell quoting. Unsaved defaults previews continue to show
 proposed settings without claiming they are active defaults.
 
+### Preview clearing saved defaults
+
 Preview removal with `gregale job defaults clear --dry-run`. It shows the
 absolute file path, saved settings, and the effect on omitted Job selectors,
 task/results/image-wait preferences, and artifact filters. Missing defaults
@@ -91,6 +99,8 @@ defaults. JSON includes `dry_run: true`, `changed: false`, `cleared: false`,
 `would_change`, `before_saved`, `before`, `after: null`, `path`, and `effects`.
 Without `--dry-run`, the existing clear behavior and JSON receipt are preserved.
 
+### Rename a context preset
+
 Rename a context preset offline with
 `gregale config preset rename staging staging-eu`. It preserves the preset's
 project/app/environment targets and all other presets without applying or
@@ -103,6 +113,8 @@ The receipt includes `from`, `to`, `preset`, absolute `path`,
 `active_context_changed: false`, and a profile-preserving `inspect_command`
 using the new name. Source-name tab completion is available; destination names
 remain user-chosen. No API queries, credential changes, or prompts are involved.
+
+### Copy a context preset
 
 Create a similar preset without applying it first:
 
@@ -124,6 +136,8 @@ rename receipts include `operation` and `source_preserved` in addition to
 `from`, `to`, `preset`, `path`, `active_context_changed`, and `inspect_command`.
 Copy reports `source_preserved: true`; rename reports false.
 
+### Preview deleting a context preset
+
 Preview a preset deletion with
 `gregale config preset delete staging --dry-run`. It displays the preset's
 project/app/environment selection and absolute source file, confirming that
@@ -138,6 +152,8 @@ Normal deletion and its `deleted`/`path` receipt remain available by omitting
 `--dry-run`. Preview does not remove a preset, create directories, or update
 active targets.
 
+### Copy a saved log view
+
 Copy a saved log view with `gregale logs views copy errors checkout-errors`,
 then adjust only the copied view with `logs views update`. Copy preserves the
 source and every saved filter: source, relative window, latest-error selector,
@@ -151,6 +167,8 @@ Source-name completion is available; destination names remain user-chosen.
 Receipts include a profile-preserving `run_command` for the new name. Copy and
 rename also report `operation` and `source_preserved`, alongside their existing
 `from`, `to`, `view`, and `path` fields. Copy reports true and rename false.
+
+### Preview deleting a saved log view
 
 Preview saved log-view deletion with
 `gregale logs views delete checkout-errors --dry-run`. It shows the view's
@@ -219,6 +237,8 @@ previewable by explicit UUID. Preview excludes record-maintenance and overview
 modes; `--dry-run=false` retains the normal action. Ambiguous selections keep
 their exact-run choice commands, including `--dry-run`, for offline review.
 
+### Preview workflow recovery
+
 Workflow recovery supports the same offline review:
 `gregale workflow recover --run UUID --dry-run`, or add `--diagnose`
 to preview reading diagnostics. `--workflow NAME` filters local records on the
@@ -240,7 +260,7 @@ action; its existing server identity checks remain in place.
 
 The overview also displays the effective profile and API endpoint, including
 where each setting came from. This helps distinguish a profile's configured
-endpoint from a `FAAS_API` override without another context command. JSON adds
+endpoint from a `GREGALE_API_URL` override without another context command. JSON adds
 `connection` with the same source fields and `address_redacted`. Credentials,
 query parameters, and fragments are removed from displayed URLs; malformed
 addresses are hidden. This is configuration context captured before existing

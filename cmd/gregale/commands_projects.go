@@ -37,6 +37,8 @@ func cmdProjects(args []string) int {
 		return cmdProjectsRemove(args[1:])
 	case "rollback":
 		return cmdProjectsRollback(args[1:])
+	case "destroy":
+		return cmdProjectsDestroy(args[1:])
 	case "preview-secrets":
 		return cmdProjectsPreviewSecrets(args[1:])
 	case "import":

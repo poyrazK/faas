@@ -53,3 +53,32 @@ receipts (platform flags, builder slots).
 - The provider registry file shrinks to backends, metering and health;
   Ansible stops carrying commercial values.
 - Usage metering and cap modes still need a restart to change.
+
+## Amendment 2026-11-23: scale-to-zero suspend timeout
+
+The Neon suspend timeout was hard-coded at 300 s, so every wake billed at
+least five minutes of compute and anything touching a database more often
+than that kept it awake. It is now the policy field `suspend_timeout_seconds`
+(60..604800, default 120). The registry pushes it to providers that implement
+`SuspendTimeoutSetter` at start and on every applied policy; new databases,
+restores and compute-policy changes use it at once. Existing databases are
+moved by `SuspendTimeoutSweeper`, on its own 5-minute loop on every apid
+(independent of usage metering): it PATCHes only a primary endpoint that is
+suspended, enabled and not changing, so a serving or held compute is never
+touched. It remembers, per database, the value it confirmed and the row's
+`updated_at`, and reads the provider only when either moved (a value
+change, a compute-policy change, restore or cutover) or the database was
+deferred. Snapshot-copy checks compare scale-to-zero against always-on,
+not the exact timeout, so a changed setting is not drift.
+
+Customer override (same day): a customer sets a scale-to-zero database's own
+timeout with `gregale postgres suspend-timeout set DB 1m..1h|default`
+(`PUT /v1/postgres/databases/{id}/suspend-timeout`). It lives in
+`managed_postgres_suspend_timeouts` (one row per database, 60..3600 s), not
+in the database's spec, so resize and compute-policy journals, their JSON
+checks and triggers are unchanged. The policy value stays the default for
+databases without a row. Setting it writes the provider at once when the
+compute is suspended, else the sweep does; a longer value passes the usage
+guardrail. The sweep re-reads a database's value just before writing, so a
+customer change made during a sweep is not overwritten. Database views show
+`suspend_timeout_seconds` and `suspend_timeout_custom`.

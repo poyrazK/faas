@@ -64,6 +64,36 @@ func (d cliTreeDiscovery) shortcutCommand(command cliCommand) cliCommand {
 // have tree names elsewhere (`apps tcp` is `app listener`).
 var cliTreeBarePaths = map[string]bool{"app list": true}
 
+// cliTreeLeafPositionals replace the positionals a tree verb inherits from
+// today's command when its verbs split that command (`postgres overage get`
+// takes no `[on|off]`; prod hunt r29).
+var cliTreeLeafPositionals = map[string][]string{"postgres overage get": nil}
+
+// withoutSiblingVerbExamples drops a sibling verb's examples from a tree verb
+// that runs the same command today: `postgres overage get` and `set` both run
+// `postgres overage`, so each inherited the other's example, renamed to
+// `postgres overage get set on` (prod hunt r29).
+func withoutSiblingVerbExamples(examples []string, prefix []string, head, old string) []string {
+	self := "gregale " + strings.Join(append(slices.Clone(prefix), head), " ") + " "
+	var siblings []string
+	for _, alias := range cliTreeAliases {
+		path := strings.Fields(alias.New)
+		if alias.Old == old && len(path) == len(prefix)+1 && slices.Equal(path[:len(prefix)], prefix) && path[len(prefix)] != head {
+			siblings = append(siblings, self+path[len(prefix)]+" ")
+		}
+	}
+	if len(siblings) == 0 {
+		return examples
+	}
+	kept := make([]string, 0, len(examples))
+	for _, example := range examples {
+		if !slices.ContainsFunc(siblings, func(s string) bool { return strings.HasPrefix(example+" ", s) }) {
+			kept = append(kept, example)
+		}
+	}
+	return kept
+}
+
 // treeCommand builds a noun's command. A noun that names one of today's
 // paths takes that path's flags, notes and examples.
 func (d cliTreeDiscovery) treeCommand(noun cliTreeNoun) (cliCommand, bool) {
@@ -249,6 +279,10 @@ func (d cliTreeDiscovery) treeSubs(prefix []string) []cliSub {
 			if sub, ok := d.subAt(old); ok {
 				sub = renameCliSub(sub, old, strings.Join(child, " "))
 				sub.Name, sub.Aliases = head, nil
+				sub.Examples = withoutSiblingVerbExamples(sub.Examples, prefix, head, old)
+				if positionals, ok := cliTreeLeafPositionals[strings.Join(child, " ")]; ok {
+					sub.Positionals = positionals
+				}
 				if short, ok := cliTreeShorts[strings.Join(child, " ")]; ok {
 					sub.Short = short
 				}

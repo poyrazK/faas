@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/whycopy"
 )
 
 // jsonOutput is set by run() from --json or FAAS_JSON=1; read by
@@ -483,6 +484,7 @@ func writeJSONProblem(p api.Problem) error {
 }
 
 func writeJSONProblemTo(w io.Writer, p api.Problem) error {
+	_ = whycopy.Complete(&p, whycopy.Values{})
 	b, err := json.Marshal(struct {
 		api.Problem
 		RequestID string `json:"request_id,omitempty"`
@@ -500,6 +502,9 @@ func writeJSONProblemWithExit(w io.Writer, p api.Problem, code int) error {
 }
 
 func writeJSONProblemWithCLI(w io.Writer, p api.Problem, code int, advice *cliFlagDiagnostic) error {
+	// fix_commands and retryable even from a server that predates them
+	// (ADR-20261123230000); p is a copy.
+	_ = whycopy.Complete(&p, whycopy.Values{})
 	b, err := json.Marshal(struct {
 		api.Problem
 		Category  string             `json:"category"`

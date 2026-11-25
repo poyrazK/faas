@@ -30,8 +30,10 @@ the node. Everything is off by default.
      FAAS_S3_LIVE_ACCESS_KEY_ID=… FAAS_S3_LIVE_SECRET_ACCESS_KEY=…
      go test -run LiveGrantedS3 ./pkg/storage`.
 2. **One compute node.** Set `faas_storage_grants: true` for the node and
-   converge it. Then restart `faas-imaged`, `faas-builderd` and `faas-vmmd`
-   on that node, in that order.
+   converge it. Then restart `faas-imaged`, `faas-builderd`, `faas-vmmd` and
+   `faas-schedd` on that node, in that order. A granted node's schedd does
+   not run the snapshot disk-drift scan (it lists `snap/`, which no grant
+   covers); the control plane's schedd still does.
    - Check: each journal shows `shared store reached through secretd grants`.
    - Wake an app on the node from a cold cache, and run a build there.
    - `faas_secretd_storage_grants_total{outcome="granted"}` rises.
@@ -39,9 +41,20 @@ the node. Everything is off by default.
      shows the node's tenants only.
 3. **The fleet.** Roll the node switch out node by node.
 4. **Take the store role away** (ADR slice 5). Once every node runs
-   grants, remove the compute service account's bucket role (GCS) or delete
-   its access key (S3). Check from a compute node that a direct read of a
-   bucket object is refused.
+   grants, remove the compute service account's bucket role (GCS). On S3,
+   drop `FAAS_S3_ACCESS_KEY_ID` and `FAAS_S3_SECRET_ACCESS_KEY` from the
+   compute nodes' `storage.env`, empty their `imaged-storage.env`, converge
+   them, then delete the compute access key. The compute gates accept a
+   key-less file only with `faas_storage_grants: true` and an S3 or GCS
+   backend. `gregalectl deploy join-node`, `join-fleet` and `prepare-node`
+   read it from the Ansible vars file (`--ansible-vars-file`, or the
+   secrets dir's `ansible-vars.yml`), which is what cd-compute passes;
+   `--storage-grants` turns it on by hand. After a join, `gregalectl
+   artifact lifecycle-check` reports `skipped` for an empty
+   `imaged-storage.env`. Check from a compute node that a
+   direct read of a bucket object is refused. Execution dispatch
+   (`FAAS_EXECUTION_DISPATCH=1`, off on prod) reads runtime snapshots that
+   no grant covers yet; keep it off on granted nodes.
 
 ## Read it
 
@@ -53,6 +66,10 @@ the node. Everything is off by default.
   on the node means a placement row is missing. Compare the node with
   `instances`, `deployment_image_preparations`, `builds.builder_node_name`
   and `sandbox_sessions.placed_node_id`.
+- End-to-end check: the native lane `storage-grants-only`
+  (`FAAS_E2E_PHASE=storage-grants-only`, `FAAS_E2E_MINIO_BIN=<minio>`) runs
+  source and image deploy → wake with imaged, builderd and vmmd holding no
+  key; teardown logs the grants issued per class.
 - On granted nodes, imaged's superseded job artifacts and builderd's
   expired sources are no longer swept there. schedd's object GC worker
   sweeps them instead every 6 hours; schedd's journal shows

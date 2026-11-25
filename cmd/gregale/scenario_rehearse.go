@@ -117,7 +117,7 @@ func cmdTestRehearse(args []string) int {
 		return printErr("Invalid rehearsal output", err)
 	}
 	if local := testRehearsalLocalExecution(session.scenario, o.Engine); local != "" {
-		_, _ = fmt.Fprintf(osStderr, "Warning: %s, inside each checked-out revision and with your environment (FAAS_TOKEN removed). Rehearse only revisions you trust.\n", local)
+		_, _ = fmt.Fprintf(osStderr, "Warning: %s, inside each checked-out revision and with your environment (GREGALE_TOKEN and FAAS_TOKEN removed). Rehearse only revisions you trust.\n", local)
 	}
 	report := runTestRehearsal(ctx, client, session, o)
 	outputErr := saveTestRehearsalReport(o, report)

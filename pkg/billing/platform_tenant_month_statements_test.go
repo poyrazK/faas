@@ -180,6 +180,25 @@ func TestQuotePlatformTenantUsageAppAllowanceOnlyOnFallback(t *testing.T) {
 	}
 }
 
+// adr: 1319 — the monthly statement applies app fallback only before the tenant tariff.
+func TestBuildPlatformTenantMonthStatementIgnoresModelCardOutsideFallback(t *testing.T) {
+	start := allowanceStart
+	end := start.AddDate(0, 1, 0)
+	appID := uuid.NewString()
+	app := planCard("", start, 10)
+	model := planCard("", start.Add(time.Hour), 5)
+	model.Unit, model.ModelPrices = "app:tokens", map[string]int64{"premium": 20}
+	appCards := map[string][]state.APIConsumerRateCard{appID: {app, model}}
+	tenant := state.PlatformTenantRateCard{ID: uuid.NewString(), Currency: "EUR", EffectiveFrom: model.EffectiveFrom,
+		PriceMillicentsPerUnit: 25, IncludedUnitsPerMonth: 1}
+	usage := []state.APIConsumerUsageBucket{tenantBucket(appID, "consumer", start, 2), tenantBucket(appID, "consumer", model.EffectiveFrom, 3)}
+	statement, err := BuildPlatformTenantMonthStatement("acct", "tenant", start, end, end, 1, "", usage, usage, appCards,
+		[]state.PlatformTenantRateCard{tenant}, nil, nil)
+	if err != nil || statement.UnpricedUnits != 0 || statement.AmountMillicents != 70 || statement.BillableUnits != 5 {
+		t.Fatalf("monthly statement = %+v, err = %v", statement, err)
+	}
+}
+
 // adr: 1307 — a tenant card's route weights charge consumer subjects by
 // route while surfaces count 1; a late request re-prices the month and
 // overlap is checked on raw request units, not weighted ones.

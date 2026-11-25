@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"time"
@@ -29,6 +30,7 @@ func (s *server) registerRedisRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/redis/{name}/upgrade", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.upgradeRedisCache))))))
 	mux.HandleFunc("POST /v1/redis/{name}/restart", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.restartRedisCache)))))
 	mux.HandleFunc("POST /v1/redis/{name}/bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.requireVerifiedEmail(s.bindRedisCache)))))
+	mux.HandleFunc("DELETE /v1/redis/{name}/bindings/{app}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.unbindRedisCache))))
 }
 
 func (s *server) redisStore(w http.ResponseWriter) (state.ManagedValkeyStore, bool) {
@@ -151,6 +153,9 @@ func (s *server) provisionRedisCache(r *http.Request, acct state.Account, req ap
 	store, ok := s.store.(state.ManagedValkeyStore)
 	if !ok {
 		return state.App{}, state.ManagedValkeyCache{}, api.ErrCapacity("managed Redis is unavailable on this installation")
+	}
+	if !s.privateServiceTCPEnabled() {
+		return state.App{}, state.ManagedValkeyCache{}, errPrivateServiceTCPOff()
 	}
 	req = redisCacheDefaults(acct.Plan, req)
 	if problem := s.redisCacheAdmission(r, store, acct, req); problem != nil {
@@ -278,15 +283,43 @@ func (s *server) updateRedisCache(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 	if problem := firstProblem(api.ValidateManagedValkeyMemory(acct.Plan, next.MemoryMB), api.ValidateManagedValkeyEvictionPolicy(next.EvictionPolicy)); problem != nil {
-		api.WriteProblem(w, problem)
+		s.refuseRedisChange(w, app, problem, nil)
 		return
 	}
 	if next.MemoryMB < cache.MemoryMB && !req.Evict {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "cache_shrink_needs_evict", "Shrinking needs evict",
-			"a smaller cache may not hold the current data; repeat with evict to let the cache evict keys by its policy"))
+		s.refuseRedisChange(w, app, errRedisShrinkNeedsEvict(app.Slug, cache, next), nil)
 		return
 	}
 	s.handOffRedisCache(w, r, acct, app, next)
+}
+
+// errRedisShrinkNeedsEvict refuses a shrink the caller did not allow to evict
+// keys, and names the flag that allows it.
+func errRedisShrinkNeedsEvict(name string, cache, next state.ManagedValkeyCache) *api.Problem {
+	command := fmt.Sprintf("gregale redis resize %s --memory %d", name, next.MemoryMB)
+	if next.EvictionPolicy != cache.EvictionPolicy {
+		command += " --eviction-policy " + next.EvictionPolicy
+	}
+	return api.NewProblem(http.StatusConflict, "cache_shrink_needs_evict", "Shrinking needs --evict",
+		fmt.Sprintf("%s holds up to %d MB and would shrink to %d MB, which may not fit its data; set evict to let the cache drop keys by its eviction policy", name, cache.MemoryMB, next.MemoryMB)).
+		WithHint("Run " + command + " --evict.")
+}
+
+// refuseRedisChange writes a refused cache change and logs it, so a refusal a
+// customer reports can be found by the cache's app ID.
+// cause is the underlying error behind a server-side refusal, or nil; a 5xx
+// refusal logs at Warn so it surfaces next to other failures.
+func (s *server) refuseRedisChange(w http.ResponseWriter, app state.App, problem *api.Problem, cause error) {
+	attrs := []any{"app_id", app.ID, "status", problem.Status, "code", problem.Code, "detail", problem.Detail}
+	if cause != nil {
+		attrs = append(attrs, "err", cause)
+	}
+	if problem.Status >= http.StatusInternalServerError {
+		s.log.Warn("apid: redis cache change refused", attrs...)
+	} else {
+		s.log.Info("apid: redis cache change refused", attrs...)
+	}
+	api.WriteProblem(w, problem)
 }
 
 // upgradeRedisCache moves a cache to the current Valkey image through the
@@ -308,7 +341,7 @@ func (s *server) handOffRedisCache(w http.ResponseWriter, r *http.Request, acct 
 	}
 	previous, err := store.GetManagedValkeyCache(r.Context(), app.ID)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not load Redis cache"))
+		s.refuseRedisChange(w, app, api.ErrCapacity("could not load Redis cache"), err)
 		return
 	}
 	previousRAM := app.RAMMB
@@ -325,14 +358,14 @@ func (s *server) handOffRedisCache(w http.ResponseWriter, r *http.Request, acct 
 	// would cold-boot empty and the copy would be empty (native run
 	// redis-20261118T095202). Wake it first, while the RAM still matches.
 	if problem := s.redisEnsureRunning(r.Context(), acct, app); problem != nil {
-		api.WriteProblem(w, problem)
+		s.refuseRedisChange(w, app, problem, nil)
 		return
 	}
 	ram := api.ManagedValkeyVMRAMMB(next.MemoryMB)
 	if ram != app.RAMMB {
 		updated, err := s.store.UpdateApp(r.Context(), app.ID, state.UpdateAppParams{RAMMB: &ram})
 		if err != nil {
-			api.WriteProblem(w, api.ErrCapacity("could not resize Redis cache"))
+			s.refuseRedisChange(w, app, api.ErrCapacity("could not resize Redis cache"), err)
 			return
 		}
 		app = updated
@@ -340,7 +373,7 @@ func (s *server) handOffRedisCache(w http.ResponseWriter, r *http.Request, acct 
 	cache, err := store.UpdateManagedValkeyCache(r.Context(), app.ID, next.MemoryMB, next.EvictionPolicy)
 	if err != nil {
 		rollback(r.Context())
-		api.WriteProblem(w, api.ErrCapacity("could not record Redis cache change"))
+		s.refuseRedisChange(w, app, api.ErrCapacity("could not record Redis cache change"), err)
 		return
 	}
 	until := timeNow().Unix() + api.ManagedValkeyHandoffWindowS
@@ -357,11 +390,11 @@ func (s *server) handOffRedisCache(w http.ResponseWriter, r *http.Request, acct 
 		rollback(r.Context())
 		var problem api.Problem
 		if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil || problem.Code == "" {
-			api.WriteProblem(w, api.ErrCapacity("could not deploy the Redis cache change"))
+			s.refuseRedisChange(w, app, api.ErrCapacity("could not deploy the Redis cache change"), err)
 			return
 		}
 		problem.Status = rec.Code
-		api.WriteProblem(w, &problem)
+		s.refuseRedisChange(w, app, &problem, nil)
 		return
 	}
 	var dep api.DeploymentResponse
@@ -389,11 +422,29 @@ func (s *server) restartRedisCache(w http.ResponseWriter, r *http.Request, acct 
 	if !ok {
 		return
 	}
+	if app.Status != state.AppActive {
+		s.refuseRedisChange(w, app, redisRestartRefusal(app), nil)
+		return
+	}
 	query := r.URL.Query()
 	query.Del("fresh")
 	r.URL.RawQuery = query.Encode()
 	r.SetPathValue("slug", app.Slug)
 	s.restartApp(w, r, acct)
+}
+
+// redisRestartRefusal explains a restart of a cache that is not running. A
+// parked cache wakes with its data on its next connection; one between VMs
+// during a resize or update shows as parked too until the new VM serves.
+// Neither names the backing app, which customers never see.
+func redisRestartRefusal(app state.App) *api.Problem {
+	if app.Status == state.AppEvictedCold {
+		return api.NewProblem(http.StatusConflict, api.CodeConflict, "Redis cache is not running",
+			fmt.Sprintf("%s is parked or switching to a new VM after a resize or update, so nothing is running to restart; its next connection starts it with its data", app.Slug)).
+			WithHint(fmt.Sprintf("No restart is needed. Check its state with gregale redis get %s.", app.Slug))
+	}
+	return api.NewProblem(http.StatusConflict, api.CodeConflict, "Redis cache is not active",
+		fmt.Sprintf("%s is %s; only an active cache can be restarted", app.Slug, app.Status))
 }
 
 func (s *server) bindRedisCache(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -425,6 +476,10 @@ func (s *server) bindRedisCache(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrValidation("a cache cannot be bound to itself"))
 		return
 	}
+	if problem := s.grantRedisCache(r.Context(), acct, cacheApp, target); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	limits := api.MustLimitsFor(acct.Plan)
 	if problem := s.sealAndPersist(r.Context(), acct, target, api.DefaultEnvScope, req.EnvKey,
 		api.ManagedValkeyURL(cacheApp.Slug), api.SecretClassPersistent, limits); problem != nil {
@@ -435,6 +490,52 @@ func (s *server) bindRedisCache(w http.ResponseWriter, r *http.Request, acct sta
 		"cache_app_id": cacheApp.ID, "app_id": target.ID, "env_key": req.EnvKey,
 	})
 	writeJSON(w, http.StatusOK, api.RedisCacheBinding{Cache: cacheApp.Slug, App: target.Slug, EnvKey: req.EnvKey})
+}
+
+// grantRedisCache lets app call the cache: binding grants the call
+// (ADR-20261124174500), so a project workload reaches a cache outside its
+// project under the default project policy.
+func (s *server) grantRedisCache(ctx context.Context, acct state.Account, cacheApp, app state.App) *api.Problem {
+	grants, ok := s.store.(state.ManagedValkeyGrantStore)
+	if !ok {
+		return api.ErrCapacity("managed Redis is unavailable on this installation")
+	}
+	if err := grants.GrantManagedValkeyCache(ctx, cacheApp.ID, app.ID, acct.ID); err != nil {
+		s.log.ErrorContext(ctx, "grant managed cache", "cache_app_id", cacheApp.ID, "app_id", app.ID, "err", err)
+		return api.ErrCapacity("could not record the cache binding")
+	}
+	return nil
+}
+
+// unbindRedisCache revokes an app's grant to call the cache. The app keeps
+// its connection variable until it is unset; calls are refused from now on.
+func (s *server) unbindRedisCache(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	cacheApp, _, ok := s.loadRedisCache(w, r, acct)
+	if !ok {
+		return
+	}
+	grants, ok := s.store.(state.ManagedValkeyGrantStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("managed Redis is unavailable on this installation"))
+		return
+	}
+	target, ok := s.loadApp(w, r, acct, r.PathValue("app"))
+	if !ok {
+		return
+	}
+	revoked, err := grants.RevokeManagedValkeyCacheGrant(r.Context(), cacheApp.ID, target.ID)
+	if err != nil {
+		s.log.ErrorContext(r.Context(), "revoke managed cache grant", "cache_app_id", cacheApp.ID, "app_id", target.ID, "err", err)
+		api.WriteProblem(w, api.ErrCapacity("could not remove the cache binding"))
+		return
+	}
+	if !revoked {
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found",
+			fmt.Sprintf("%s is not bound to Redis cache %s", target.Slug, cacheApp.Slug)))
+		return
+	}
+	s.audit.Emit(r.Context(), "redis.unbound", &acct.ID, map[string]any{"cache_app_id": cacheApp.ID, "app_id": target.ID})
+	writeJSON(w, http.StatusOK, api.RedisCacheUnbinding{Cache: cacheApp.Slug, App: target.Slug})
 }
 
 func redisCacheResponse(app state.App, cache state.ManagedValkeyCache) api.RedisCache {
@@ -498,4 +599,18 @@ func (s *server) redisEnsureRunning(ctx context.Context, acct state.Account, app
 	}
 	return api.NewProblem(http.StatusServiceUnavailable, "cache_waking", "Redis cache is waking",
 		"the cache did not wake in time; it is unchanged, retry the command")
+}
+
+// privateServiceTCPEnabled reports whether the data plane serves private
+// service TCP (ADR-576), the only way an app reaches a managed cache. The
+// switch defaults on and is a kill switch for when a node loses the listener;
+// a server without runtime configuration counts it as on.
+func (s *server) privateServiceTCPEnabled() bool {
+	return s.runtimeBool(runtimeConfigPrivateServiceTCP, true)
+}
+
+// errPrivateServiceTCPOff refuses a cache that no app could connect to.
+func errPrivateServiceTCPOff() *api.Problem {
+	return api.NewProblem(http.StatusNotImplemented, api.CodeNotImplemented, "Managed Redis unavailable",
+		"managed Redis needs private TCP between services, which is not enabled on this Gregale installation right now; contact support, or set REDIS_URL to a Redis you run elsewhere")
 }

@@ -263,3 +263,22 @@ func TestClearGuestIdentityHeadersRemovesNonCanonicalKey(t *testing.T) {
 		t.Fatalf("non-identity header removed: %v", h)
 	}
 }
+
+func TestClearGuestIdentityHeadersRemovesNonCanonicalServiceSelectors(t *testing.T) {
+	h := http.Header{
+		"x-faas-app":                            {"spoofed-app"},
+		"x-faas-instance":                       {"spoofed-instance"},
+		"X-FAAS-NODE":                           {"spoofed-node"},
+		strings.ToLower(TargetDeploymentHeader): {"spoofed-dep"},
+		"Accept":                                {"*/*"},
+	}
+	ClearGuestIdentityHeaders(h)
+	for k, v := range h {
+		if isServiceSelectorHeader(k) {
+			t.Fatalf("service selector %q survived ClearGuestIdentityHeaders: %v", k, v)
+		}
+	}
+	if h.Get("Accept") != "*/*" {
+		t.Fatalf("Accept was removed: %v", h)
+	}
+}

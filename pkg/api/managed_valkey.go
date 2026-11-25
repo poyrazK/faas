@@ -262,6 +262,12 @@ func ErrManagedValkeyLimit(plan Plan, limit int) *Problem {
 		WithLimit(int64(limit), int64(limit+1))
 }
 
+// ComposeRedisConfiguredReason is a plan's not_provisioned_reason for a
+// Compose redis service whose every user already has its key set (bound to a
+// managed cache by an earlier apply, or set by hand). Feature hints read it to
+// say the key is in place instead of asking for an external Redis.
+const ComposeRedisConfiguredReason = "every service that uses it already has its key set"
+
 // Problem codes for managed caches.
 const (
 	CodeManagedRedisNotInPlan = "managed_redis_not_in_plan"
@@ -318,9 +324,17 @@ type BindRedisCacheRequest struct {
 	EnvKey string `json:"env_key,omitempty"`
 }
 
-// RedisCacheBinding is the result of a binding.
+// RedisCacheBinding is the result of a binding. Binding also grants the app
+// the call to the cache (ADR-20261124174500).
 type RedisCacheBinding struct {
 	Cache  string `json:"cache"`
 	App    string `json:"app"`
 	EnvKey string `json:"env_key"`
+}
+
+// RedisCacheUnbinding answers DELETE /v1/redis/{name}/bindings/{app}: the
+// app may no longer call the cache. Its connection variable stays set.
+type RedisCacheUnbinding struct {
+	Cache string `json:"cache"`
+	App   string `json:"app"`
 }

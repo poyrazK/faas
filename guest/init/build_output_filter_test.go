@@ -29,4 +29,9 @@ func TestBuildOutputFilterDropsPlatformNpmNoise(t *testing.T) {
 	if out.String() != want {
 		t.Fatalf("console =\n%q\nwant\n%q", out.String(), want)
 	}
+	// Prod hunt r29: the log tail builderd shows as "[guest build output]"
+	// is cut from the whole capture; it drops the same lines.
+	if got := string(withoutPlatformBuildNoise([]byte(in))); got != want {
+		t.Fatalf("log tail =\n%q\nwant\n%q", got, want)
+	}
 }

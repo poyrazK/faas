@@ -1668,6 +1668,12 @@ type WakeResponse struct {
 	// refuses a new deployment's prime that reports it. Older vmmd never sets
 	// it; it refused such boots outright.
 	BaseScanGrace bool `protobuf:"varint,21,opt,name=base_scan_grace,json=baseScanGrace,proto3" json:"base_scan_grace,omitempty"`
+	// The guest reported that the kernel killed a workload process for memory
+	// (ADR-121) before this wake returned, yet the instance still became ready.
+	// The wake's latency is then the app's memory exhaustion, not the
+	// platform's: gateways keep it out of the platform wake SLO. Older vmmd
+	// never sets it.
+	StartupOom    bool `protobuf:"varint,22,opt,name=startup_oom,json=startupOom,proto3" json:"startup_oom,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1845,6 +1851,13 @@ func (x *WakeResponse) GetEnvironmentBranchContained() bool {
 func (x *WakeResponse) GetBaseScanGrace() bool {
 	if x != nil {
 		return x.BaseScanGrace
+	}
+	return false
+}
+
+func (x *WakeResponse) GetStartupOom() bool {
+	if x != nil {
+		return x.StartupOom
 	}
 	return false
 }
@@ -23078,7 +23091,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
 	"sealed_key\x18\n" +
 	" \x01(\fR\tsealedKey\x12!\n" +
-	"\fsealed_cache\x18\v \x01(\bR\vsealedCacheJ\x04\b\x02\x10\x03\"\xe7\a\n" +
+	"\fsealed_cache\x18\v \x01(\bR\vsealedCacheJ\x04\b\x02\x10\x03\"\x88\b\n" +
 	"\fWakeResponse\x12(\n" +
 	"\x10rehearsal_run_id\x18\x13 \x01(\tR\x0erehearsalRunId\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1b\n" +
@@ -23103,7 +23116,9 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x1asupports_image_healthcheck\x18\x11 \x01(\bR\x18supportsImageHealthcheck\x12Q\n" +
 	"%supports_image_healthcheck_monitoring\x18\x12 \x01(\bR\"supportsImageHealthcheckMonitoring\x12@\n" +
 	"\x1cenvironment_branch_contained\x18\x14 \x01(\bR\x1aenvironmentBranchContained\x12&\n" +
-	"\x0fbase_scan_grace\x18\x15 \x01(\bR\rbaseScanGrace\"\xc8\x02\n" +
+	"\x0fbase_scan_grace\x18\x15 \x01(\bR\rbaseScanGrace\x12\x1f\n" +
+	"\vstartup_oom\x18\x16 \x01(\bR\n" +
+	"startupOom\"\xc8\x02\n" +
 	"\x19CreateFromSnapshotRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12.\n" +
 	"\x03app\x18\x02 \x01(\v2\x1c.onebox.faas.vmmd.v1.AppSpecR\x03app\x12<\n" +

@@ -81,6 +81,7 @@ func auditMCPGatewayRules(appID string, cfg mcphosting.Config, options mcpAccess
 		{"resource_scopes", mcpAuditScopeMap(actual.MCP.ResourceScopes), mcpAuditScopeMap(expected.MCP.ResourceScopes)},
 		{"prompt_scopes", mcpAuditScopeMap(actual.MCP.PromptScopes), mcpAuditScopeMap(expected.MCP.PromptScopes)},
 		{"credential", actual.MCP.Credential, expected.MCP.Credential},
+		{"audience", actual.MCP.Audience, expected.MCP.Audience},
 		{"tool_limits", mcpAuditToolLimits(actual.MCP.ToolLimits), mcpAuditToolLimits(expected.MCP.ToolLimits)},
 	}
 	for _, comparison := range comparisons {
@@ -111,9 +112,16 @@ func mcpExpectedGatewayAction(cfg mcphosting.Config, algorithms []string, apiBas
 		issuer, jwks, algorithms = base+api.MCPConsumerKeyIssuerPath, base+api.MCPConsumerKeyJWKSPath, []string{"ES256"}
 		policy.Credential = api.MCPCredentialConsumerKey
 	case mcphosting.AuthOAuthProxy:
-		jwks, algorithms = mcphosting.OAuthProxyJWKSURL(issuer), []string{"ES256"}
+		if cfg.Auth.ExternalIssuer() {
+			// External OpenID Connect issuers sign with RSA or ECDSA keys
+			// (ADR-20261123192254).
+			algorithms = []string{"RS256", "ES256"}
+			policy.Audience = cfg.Auth.Audience
+		} else {
+			jwks, algorithms = mcphosting.OAuthProxyJWKSURL(issuer), []string{"ES256"}
+		}
 	}
-	return api.EdgeRuleJWTAction{Issuer: issuer, Audience: []string{cfg.Auth.Resource}, JWKSURL: jwks, Algorithms: algorithms, MCP: policy}
+	return api.EdgeRuleJWTAction{Issuer: issuer, Audience: []string{cfg.Auth.TokenAudience()}, JWKSURL: jwks, Algorithms: algorithms, MCP: policy}
 }
 
 func mcpAuditSet(values []string) []string {

@@ -59,6 +59,13 @@ const (
 	// A gateway older than this outcome treats it as a rejection, as it did
 	// rate_limited.
 	rtOutcomeNotRetained = "not_retained"
+	// rtOutcomeInvalid answers a row apid will never accept: a malformed
+	// field or an app or account that no longer exists. It is final, so the
+	// gateway drops and journals the row instead of retrying it three times
+	// and then dropping its whole batch as a platform loss (prod 2026-11-23:
+	// ~200 such batches in three days, the cause unlogged). A gateway older
+	// than this outcome still retries it, as it retried db_error.
+	rtOutcomeInvalid = "invalid"
 )
 
 // RequestTelemetryStore is the Store subset the receiver needs.
@@ -114,6 +121,8 @@ type requestTelemetryReceiver struct {
 	routeResources *RouteResources
 	// dbErrorLoggedAt throttles the db_error warning to one a minute.
 	dbErrorLoggedAt atomic.Int64
+	// invalidLoggedAt throttles the invalid-row warning to one a minute.
+	invalidLoggedAt atomic.Int64
 }
 
 // RequestTelemetryOption configures RegisterRequestTelemetryReceiver.
@@ -421,30 +430,22 @@ func (r *requestTelemetryReceiver) prepareOne(ctx context.Context, req *apidpb.I
 	// ---- 1. Validate UUIDs ----
 	accountID, err := uuid.Parse(req.GetAccountId())
 	if err != nil {
-		r.observe(rtOutcomeDBError)
-		out.Outcome = rtOutcomeDBError
-		return out, nil
+		return r.invalid(out, "account_id"), nil
 	}
 	appID, err := uuid.Parse(req.GetAppId())
 	if err != nil {
-		r.observe(rtOutcomeDBError)
-		out.Outcome = rtOutcomeDBError
-		return out, nil
+		return r.invalid(out, "app_id"), nil
 	}
 	deploymentID, err := uuid.Parse(req.GetDeploymentId())
 	if err != nil {
-		r.observe(rtOutcomeDBError)
-		out.Outcome = rtOutcomeDBError
-		return out, nil
+		return r.invalid(out, "deployment_id"), nil
 	}
 	var consumerID pgtype.UUID
 	consumerKey := state.AnonymousConsumerKey
 	if raw := req.GetConsumerId(); raw != "" {
 		parsed, parseErr := uuid.Parse(raw)
 		if parseErr != nil {
-			r.observe(rtOutcomeDBError)
-			out.Outcome = rtOutcomeDBError
-			return out, nil
+			return r.invalid(out, "consumer_id"), nil
 		}
 		consumerID = state.NewPgtypeUUID(parsed)
 		consumerKey = parsed.String()
@@ -456,27 +457,21 @@ func (r *requestTelemetryReceiver) prepareOne(ctx context.Context, req *apidpb.I
 	if raw := req.GetPlatformTenantSurfaceId(); raw != "" {
 		parsed, parseErr := uuid.Parse(raw)
 		if parseErr != nil || consumerKey != state.AnonymousConsumerKey {
-			r.observe(rtOutcomeDBError)
-			out.Outcome = rtOutcomeDBError
-			return out, nil
+			return r.invalid(out, "platform_tenant_surface_id"), nil
 		}
 		platformTenantSurfaceID = parsed.String()
 	}
 	if raw := req.GetPlatformTenantJwtAuthorizationRuleId(); raw != "" {
 		parsed, parseErr := uuid.Parse(raw)
 		if parseErr != nil || consumerKey != state.AnonymousConsumerKey || platformTenantSurfaceID != "" {
-			r.observe(rtOutcomeDBError)
-			out.Outcome = rtOutcomeDBError
-			return out, nil
+			return r.invalid(out, "platform_tenant_jwt_rule_id"), nil
 		}
 		platformTenantJWTAuthorizationRuleID = parsed.String()
 	}
 	if raw := req.GetPlatformTenantId(); raw != "" {
 		parsed, parseErr := uuid.Parse(raw)
 		if parseErr != nil || (consumerKey == state.AnonymousConsumerKey && platformTenantSurfaceID == "" && platformTenantJWTAuthorizationRuleID == "") {
-			r.observe(rtOutcomeDBError)
-			out.Outcome = rtOutcomeDBError
-			return out, nil
+			return r.invalid(out, "platform_tenant_id"), nil
 		}
 		platformTenantID = parsed.String()
 		platformTenantUUID = parsed
@@ -487,9 +482,7 @@ func (r *requestTelemetryReceiver) prepareOne(ctx context.Context, req *apidpb.I
 		count = 1
 	}
 	if req.GetHttpStatus() < 100 || req.GetHttpStatus() > 599 {
-		r.observe(rtOutcomeDBError)
-		out.Outcome = rtOutcomeDBError
-		return out, nil
+		return r.invalid(out, "http_status"), nil
 	}
 	windowStart := msToTime(req.GetReceivedAtUnixMs())
 	if windowStart.IsZero() {
@@ -536,8 +529,11 @@ func (r *requestTelemetryReceiver) prepareOne(ctx context.Context, req *apidpb.I
 	// no extra read.
 	plan, planErr := r.plans.forApp(ctx, accountID, appID)
 	if planErr != nil {
-		// Account or app gone — treat as db_error so the gateway
-		// doesn't retry forever.
+		// An app or account that is gone never accepts the row; any other
+		// failure reading the plan is transient and stays retryable.
+		if errors.Is(planErr, state.ErrNotFound) {
+			return r.invalid(out, "app_or_account_gone"), nil
+		}
 		r.observe(rtOutcomeDBError)
 		out.Outcome = rtOutcomeDBError
 		return out, nil
@@ -620,15 +616,11 @@ func (r *requestTelemetryReceiver) prepareOne(ctx context.Context, req *apidpb.I
 		!validRequestTelemetryGuestRuntime(guestRuntime) ||
 		!validRequestTelemetryGuestOutcome(guestOutcome) ||
 		!validRequestTelemetryGuestErrorClass(guestErrorClass) {
-		r.observe(rtOutcomeDBError)
-		out.Outcome = rtOutcomeDBError
-		return out, nil
+		return r.invalid(out, "guest_fields"), nil
 	}
 	flagEvidence, flagErr := flags.CanonicalEvidence([]byte(req.GetFlagEvidenceJson()))
 	if flagErr != nil {
-		r.observe(rtOutcomeDBError)
-		out.Outcome = rtOutcomeDBError
-		return out, nil
+		return r.invalid(out, "flag_evidence"), nil
 	}
 	// ADR-1188: an outcome this apid does not know is dropped, not the row.
 	contentOutcome := req.GetContentOutcome()
@@ -723,6 +715,18 @@ func validRequestTelemetryGuestErrorClass(value string) bool {
 	default:
 		return false
 	}
+}
+
+// invalid answers a row apid will never accept and names the reason in the
+// log, at most once a minute, so a rejected row is no longer silent.
+func (r *requestTelemetryReceiver) invalid(out *apidpb.IncrementRequestTelemetryResponse, reason string) *apidpb.IncrementRequestTelemetryResponse {
+	r.observe(rtOutcomeInvalid)
+	out.Outcome = rtOutcomeInvalid
+	now := time.Now().UnixNano()
+	if last := r.invalidLoggedAt.Load(); now-last >= int64(time.Minute) && r.invalidLoggedAt.CompareAndSwap(last, now) {
+		slog.Warn("request telemetry row refused", "outcome", rtOutcomeInvalid, "reason", reason, "effect", "the gateway drops it as the app's loss")
+	}
+	return out
 }
 
 // observe is a nil-safe wrapper around the recorded counter.

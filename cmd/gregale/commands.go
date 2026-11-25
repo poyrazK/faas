@@ -82,11 +82,11 @@ func cmdLogin(args []string) int {
 		}
 		*token = value
 	}
-	// FAAS_TOKEN outranks every saved login, so a login saved now would never
-	// be used. Passing FAAS_TOKEN's own value (`login --token "$FAAS_TOKEN"`)
+	// The token variable outranks every saved login, so a login saved now would never
+	// be used. Passing the variable's own value (`login --token "$GREGALE_TOKEN"`)
 	// stays allowed: later commands authenticate the same way either way.
 	if env := envToken(); env != "" && *token != env {
-		return printErr("FAAS_TOKEN is set", errEnvTokenShadowsLogin("gregale login"))
+		return printErr(envTokenName()+" is set", errEnvTokenShadowsLogin("gregale login"))
 	}
 
 	previousCredential := loginErrorCredential
@@ -158,9 +158,10 @@ func readerIsTerminal(r io.Reader) bool {
 }
 
 // errEnvTokenShadowsLogin explains why a command that saves a login refuses
-// while FAAS_TOKEN is set.
+// while a token variable is set.
 func errEnvTokenShadowsLogin(command string) error {
-	return fmt.Errorf("FAAS_TOKEN overrides any saved login, so later commands would keep using it instead of the login %s saves; run 'unset FAAS_TOKEN' and retry", command)
+	name := envTokenName()
+	return fmt.Errorf("%s overrides any saved login, so later commands would keep using it instead of the login %s saves; run 'unset %s' and retry", name, command, name)
 }
 
 // waitForApproval polls /v1/cli-auth/exchange at 1s until the user
@@ -236,7 +237,8 @@ func finalizeLogin(ctx context.Context, c *Client, plaintext, managedKeyID strin
 		revokeReplacedLogin(ctx, previous)
 	}
 	if env := envToken(); env != "" && env != plaintext {
-		PrintWarn(osStderr, "FAAS_TOKEN is set and overrides the login just saved; unset FAAS_TOKEN to use it.")
+		name := envTokenName()
+		PrintWarn(osStderr, "%s is set and overrides the login just saved; unset %s to use it.", name, name)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(acct))
@@ -258,7 +260,7 @@ func finalizeLogin(ctx context.Context, c *Client, plaintext, managedKeyID strin
 }
 
 func cmdLogout() int {
-	// Revoke the saved login's own CLI key, never FAAS_TOKEN's credential.
+	// Revoke the saved login's own CLI key, never the token variable's credential.
 	var revokeErr error
 	if _, metaErr := loadManagedSession(); metaErr != nil {
 		PrintWarn(os.Stderr, "Could not read CLI session metadata; the server credential may require manual revocation: %v", metaErr)
@@ -269,6 +271,7 @@ func cmdLogout() int {
 	// Best-effort: a stuck keychain must not block logout, and a
 	// missing file is not an error. Issue #293.
 	deleteToken()
+	deleteAnonymousSession()
 	clearManagedSession()
 	if revokeErr != nil {
 		return printErr("Logged out locally, but server revocation failed", revokeErr)
@@ -283,7 +286,8 @@ func cmdLogout() int {
 	}
 	if envActive {
 		PrintOK(osStdout, "Removed the saved login")
-		PrintWarn(osStderr, "FAAS_TOKEN is still set, so commands keep authenticating with it; run 'unset FAAS_TOKEN' to log out completely.")
+		name := envTokenName()
+		PrintWarn(osStderr, "%s is still set, so commands keep authenticating with it; run 'unset %s' to log out completely.", name, name)
 		return 0
 	}
 	PrintOK(osStdout, "Logged out")
@@ -629,7 +633,7 @@ func submitsDeployments(path string) bool {
 // server returned a Problem when the request never reached it.
 func transportProblem(err error) api.Problem {
 	detail := "The Gregale API could not be reached."
-	hint := "Check your network connection and FAAS_API endpoint; run gregale config profile check."
+	hint := "Check your network connection and " + envAPIName() + " endpoint; run gregale config profile check."
 	canceledHint := "Canceling the CLI request does not guarantee the server stopped it; check the result before retrying a change."
 	if submitsDeployments(invokedCommandPath) {
 		hint += " Inspect deployment status before retrying a deploy."
@@ -651,7 +655,7 @@ func transportProblem(err error) api.Problem {
 		detail = "The request timed out before the Gregale API responded."
 	case errors.As(err, &dns):
 		detail = "The Gregale API hostname could not be resolved."
-		hint = "Check the selected profile's endpoint, FAAS_API override, and DNS connectivity with gregale config profile check."
+		hint = "Check the selected profile's endpoint, " + envAPIName() + " override, and DNS connectivity with gregale config profile check."
 	case errors.As(err, &unknownCA) || errors.As(err, &invalidCertificate) || errors.As(err, &hostname) || errors.As(err, &tlsHeader):
 		detail = "The Gregale API TLS connection could not be verified or established."
 		hint = "Check the HTTPS endpoint and trusted certificates with gregale config profile check."

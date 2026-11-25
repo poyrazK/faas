@@ -501,6 +501,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		Activity:             activity,
 		AppID:                app.ID,
 		DeliveryID:           req.DeliveryId,
+		ProjectDeployGroupID: req.GetProjectDeployGroupId(),
 		Kind:                 kind,
 		ImageRef:             app.Manifest.ProjectImage,
 		ImagePort:            app.Manifest.ProjectImagePort,

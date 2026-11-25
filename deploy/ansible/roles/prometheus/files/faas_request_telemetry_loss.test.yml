@@ -1,0 +1,53 @@
+rule_files:
+  - faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - name: lost request telemetry warns; a quiet pipeline and rate-limited rows do not
+    interval: 1m
+    input_series:
+      - series: 'gateway_request_telemetry_platform_dropped_total{instance="bhs-2"}'
+        values: '0x10 0+3x20'
+      - series: 'gateway_request_telemetry_overwritten_total{instance="bhs-2"}'
+        values: '0x30'
+      - series: 'apid_request_telemetry_recorded_total{outcome="rate_limited"}'
+        values: '0+50x30'
+      # Rows apid refused for a customer's quota count as gateway drops but
+      # not platform drops.
+      - series: 'gateway_request_telemetry_dropped_total{instance="bhs-3"}'
+        values: '0+50x30'
+      - series: 'apid_request_telemetry_recorded_total{outcome="inserted"}'
+        values: '0+500x30'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: FaasRequestTelemetryLoss
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: FaasRequestTelemetryLoss
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: gatewayd-internal
+              family: request_telemetry
+            exp_annotations:
+              summary: "Request telemetry rows are being lost"
+              description: 'Gateways or apid lost request telemetry rows in the last 15m. Analytics for the affected apps read incomplete, and canaries and 5xx rollbacks hold over windows that lost rows. Drill-down: `sum by (instance) (increase(gateway_request_telemetry_platform_dropped_total[15m]))` (publisher gave up: apid unreachable or slow), `increase(gateway_request_telemetry_overwritten_total[15m])` (ring full: publisher behind), `sum by (outcome) (increase(apid_request_telemetry_recorded_total[15m]))` (db_error: insert failures; invalid: rows apid will never take, logged as `request telemetry row refused`).'
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRequestTelemetryLoss.md
+  - name: apid refusing rows warns without gateway series
+    interval: 1m
+    input_series:
+      - series: 'apid_request_telemetry_recorded_total{outcome="invalid"}'
+        values: '0+2x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasRequestTelemetryLoss
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: gatewayd-internal
+              family: request_telemetry
+            exp_annotations:
+              summary: "Request telemetry rows are being lost"
+              description: 'Gateways or apid lost request telemetry rows in the last 15m. Analytics for the affected apps read incomplete, and canaries and 5xx rollbacks hold over windows that lost rows. Drill-down: `sum by (instance) (increase(gateway_request_telemetry_platform_dropped_total[15m]))` (publisher gave up: apid unreachable or slow), `increase(gateway_request_telemetry_overwritten_total[15m])` (ring full: publisher behind), `sum by (outcome) (increase(apid_request_telemetry_recorded_total[15m]))` (db_error: insert failures; invalid: rows apid will never take, logged as `request telemetry row refused`).'
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRequestTelemetryLoss.md

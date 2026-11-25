@@ -33,7 +33,8 @@ Still open from this ADR:
   - The storage pool doubles.
   - None of it is billed, and the `postgres-overage` capability is `internal`.
 - **A production database cannot last the month.**
-  - A production-class database never scales below 1 CU.
+  - A production-class database never scales below 1 CU (0.5 CU under
+    ADR-20261124221402).
   - Scale includes 200 CU-hours, so steady traffic spends the allowance in about 8 days and the 2× ceiling in about 17. A month needs 720 CU-hours.
 - **Usage is already measured.**
   - The usage collector records each database's compute-unit seconds and storage byte-seconds per window from Neon's consumption API (ADR-516).

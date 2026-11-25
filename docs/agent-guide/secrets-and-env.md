@@ -2,7 +2,7 @@
 
 Set values before the first request; the dry run lists keys the code reads that will have no value.
 
-- Set a value (stored sealed; never shown again):
+- Set a value or secret (stored sealed; never shown again):
     gregale env set --app <app> KEY=<value>
 - Push a local .env file:
     gregale env push --app <app> -f .env

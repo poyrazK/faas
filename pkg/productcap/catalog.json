@@ -1005,6 +1005,29 @@
       ]
     },
     {
+      "id": "claimable-deploys",
+      "name": "Claimable deploys",
+      "category": "account",
+      "description": "An agent deploys with no account and gets a live URL plus a claim link; a person who opens the link and confirms an email address owns the app on the Free plan. Unclaimed deploys are limited and expire.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/claimable-deploys",
+      "acceptance_test": "pkg/apid/apidserver/claimable_deploys_test.go::TestAnonymousDeployIsClaimedInPlace",
+      "routes": [
+        "/claim",
+        "/v1/account/claim-link",
+        "/v1/anonymous"
+      ],
+      "cli": [
+        "claim"
+      ]
+    },
+    {
       "id": "cli",
       "name": "CLI",
       "category": "developer",
@@ -3364,13 +3387,13 @@
       "name": "MCP hosting",
       "category": "runtime",
       "description": "Scaffold and deploy stateless Streamable HTTP MCP servers with explicit client access, protocol diagnostics, verified tool discovery, and optional PostgreSQL-backed durable Tasks that can run in a separate Gregale worker app.",
-      "maturity": "preview",
+      "maturity": "beta",
       "plans": [
         "hobby",
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/mcp",
+      "docs_url": "/docs/mcp-hosting",
       "acceptance_test": "cmd/gregale/commands_mcp_test.go::TestMCPCLIJourney",
       "routes": [
         "/dashboard/apps/{}/mcp-catalog-monitor",
@@ -3415,13 +3438,13 @@
       "name": "MCP readiness monitoring",
       "category": "runtime",
       "description": "Monitor MCP server readiness with incidents, maintenance and notifications.",
-      "maturity": "preview",
+      "maturity": "beta",
       "plans": [
         "hobby",
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/mcp",
+      "docs_url": "/docs/mcp-hosting",
       "acceptance_test": "pkg/apid/apidserver/handlers_dashboard_mcp_alerts_test.go::TestMCPReadinessAlertScopeAPIRoundTrip",
       "parent": "mcp-hosting",
       "routes": [
@@ -3475,6 +3498,23 @@
       "parent": "mcp-hosting",
       "routes": [
         "/v1/tool-grants"
+      ]
+    },
+    {
+      "id": "mcp-tool-insights",
+      "name": "MCP tool insights",
+      "category": "observability",
+      "description": "Per-tool MCP calls, failures, argument mismatches and estimated compute over the last hour, from the hosted MCP protocol telemetry.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261123110137-mcp-replay-gate-insights-api-mcp-keys",
+      "acceptance_test": "pkg/apid/mcpinsights/mcpinsights_test.go::TestRow",
+      "parent": "mcp-hosting",
+      "routes": [
+        "/v1/apps/{}/mcp-tool-insights"
+      ],
+      "cli": [
+        "mcp insights"
       ]
     },
     {
@@ -3717,7 +3757,8 @@
         "/v1/apps/{}/buckets/{}/notifications",
         "/v1/orgs/{}/apps/{}/buckets/{}/compute-bindings",
         "/v1/orgs/{}/apps/{}/buckets/{}/compute-triggers",
-        "/v1/orgs/{}/apps/{}/buckets/{}/notifications"
+        "/v1/orgs/{}/apps/{}/buckets/{}/notifications",
+        "/v1/workload/object-storage/credentials"
       ]
     },
     {
@@ -4689,7 +4730,8 @@
         "/v1/projects/{}/environments/{}/config",
         "/v1/projects/{}/environments/{}/secrets",
         "/v1/projects/{}/exclusions",
-        "/v1/projects/{}/release-secrets"
+        "/v1/projects/{}/release-secrets",
+        "/v1/projects/{}/rollbacks"
       ],
       "cli": [
         "projects",
@@ -5522,6 +5564,22 @@
       ]
     },
     {
+      "id": "saved-insights",
+      "name": "Saved insights",
+      "category": "observability",
+      "description": "Save analytics queries per environment, run and export them as CSV or JSON, and send their value to notification channels as daily or weekly digests and threshold alerts.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261122190000-saved-insights",
+      "acceptance_test": "pkg/apid/insights/saved_test.go::TestRunSavedValues",
+      "parent": "product-analytics",
+      "routes": [
+        "/v1/projects/{}/environments/{}/insights/saved",
+        "/v1/projects/{}/environments/{}/insights/saved/{}",
+        "/v1/projects/{}/environments/{}/insights/saved/{}/run"
+      ]
+    },
+    {
       "id": "scale-to-zero",
       "name": "Scale to zero",
       "category": "runtime",
@@ -6053,9 +6111,9 @@
     },
     {
       "id": "tcp-listeners",
-      "name": "TCP listeners",
+      "name": "Public TCP listeners",
       "category": "edge",
-      "description": "Serve raw TCP on a dedicated listener.",
+      "description": "Serve raw TCP to the internet on a dedicated public port at the edge. Private TCP between your own apps (managed Redis, internal service addresses) does not need it.",
       "maturity": "preview",
       "plans": [
         "free",
@@ -6162,9 +6220,9 @@
     },
     {
       "id": "udp-listeners",
-      "name": "UDP listeners",
+      "name": "Public UDP listeners",
       "category": "edge",
-      "description": "Serve UDP on a dedicated listener.",
+      "description": "Serve UDP to the internet on a dedicated public port at the edge.",
       "maturity": "preview",
       "plans": [
         "free",
@@ -6180,6 +6238,30 @@
       ],
       "cli": [
         "app udp"
+      ]
+    },
+    {
+      "id": "verification-contracts",
+      "name": "Verification contracts",
+      "category": "delivery",
+      "description": "Declare HTTP, MCP and read-only SQL checks in gregale.verify.yaml; Gregale runs them against each new deployment before it takes traffic and returns one pass/fail report.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/verification-contracts",
+      "acceptance_test": "pkg/verifycontract/contract_test.go::TestRunSkipsMutationsInProductionAndBlocksOnRequiredFailures",
+      "consumers": [
+        "imaged"
+      ],
+      "routes": [
+        "/v1/apps/{}/verification-contract"
+      ],
+      "cli": [
+        "verify"
       ]
     },
     {

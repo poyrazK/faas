@@ -32,5 +32,12 @@ export type MCPResourcePolicy = {
    * Per-caller limits on tools/call, keyed by tool name.
    */
   tool_limits?: Record<string, MCPToolLimit>;
+  /**
+   * Token audience an external OAuth issuer uses for this server when
+   * it is not the resource. The rule's JWT audience must then be
+   * exactly this value. Bearer-token policies only.
+   *
+   */
+  audience?: string;
 };
 

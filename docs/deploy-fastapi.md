@@ -93,7 +93,7 @@ gregale env set --app my-api API_KEY="$API_KEY"
 ```
 
 Values arrive as environment variables (`os.environ["API_KEY"]`). See
-[Delivered secrets](secrets.md).
+[Secrets](secrets.md).
 
 ## Add PostgreSQL
 

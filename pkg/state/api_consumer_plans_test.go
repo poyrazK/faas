@@ -73,7 +73,7 @@ func TestMemConsumerPlansAssignmentsAndPolicy(t *testing.T) {
 	if err != nil || after.PlanID != plan.ID || after.MaxUnitsPerMonth != 100 || after.Units("POST /generate") != 20 || after.Units("GET /x") != 1 {
 		t.Fatalf("policy after assignment = %+v err=%v", after, err)
 	}
-	updated, err := m.UpdateAPIConsumerPlanLimits(ctx, accountID, appID, plan.ID, 60, 0, nil)
+	updated, err := m.UpdateAPIConsumerPlanLimits(ctx, accountID, appID, plan.ID, 60, 0, nil, nil)
 	if err != nil || updated.MaxRequestsPerMinute != 60 || updated.MaxUnitsPerMonth != 0 {
 		t.Fatalf("updated = %+v err=%v", updated, err)
 	}

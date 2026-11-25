@@ -84,6 +84,7 @@ func TestFlagsAndExperiments(t *testing.T) {
 		return
 	}
 	s.check("sdk_matches_inspector", j.sdkMatchesInspector)
+	s.check("edge_routes_variants", j.edgeRoutes)
 	if !s.step("start_experiment", j.startExperiment) {
 		return
 	}
@@ -96,6 +97,7 @@ func TestFlagsAndExperiments(t *testing.T) {
 	s.check("layer_and_holdout", j.layerAndHoldout)
 	s.check("kill_serves_fallback", j.kill)
 	s.check("product_analytics_events", j.analytics)
+	s.check("saved_insight_run_and_export", j.savedInsight)
 }
 
 // skipFlagsUnreleased skips the journey when the account cannot use Flags.
@@ -250,6 +252,55 @@ func (j *flagsJourney) sdkMatchesInspector(t *testing.T) {
 	}
 }
 
+// edgeRoutes routes /page at the edge (ADR-20261124212701): each verified
+// customer gets the page of the variant `flag inspect` explains, without any
+// flag code in the app, and an anonymous visitor keeps its page through its
+// visitor cookie. It skips when edge routing is not released to the account.
+func (j *flagsJourney) edgeRoutes(t *testing.T) {
+	res := j.tg.run(t, time.Minute, "flag", "edge", "set", "checkout", "--path", "/page", "--variant", "new", "--rewrite", "/page-b", "--project", j.project)
+	if res.exit != 0 {
+		if strings.Contains(res.problem(), "Edge flags unavailable") || strings.Contains(res.problem(), "edge flag routing is not enabled") {
+			t.Skipf("edge flag routing is not enabled for this account: %s", res.problem())
+		}
+		t.Fatalf("flag edge set failed (exit %d): %s", res.exit, res.problem())
+	}
+	t.Cleanup(func() { j.tg.run(t, time.Minute, "flag", "edge", "delete", "checkout", "--project", j.project) })
+	for _, c := range j.customers {
+		inspect := object(t, j.flag(t, "inspect", "--key", "checkout", "--customer-id", c.tenant, "--fallback-variant", "legacy").stdout)
+		want := "a"
+		if str(inspect, "value") == "new" {
+			want = "b"
+		}
+		eventually(t, "the edge serves "+c.tenant+" page "+want, 2*time.Minute, 3*time.Second, func() (bool, string) {
+			r := j.call(c, "/page")
+			if r.status != http.StatusOK {
+				return false, r.String()
+			}
+			return str(jsonBody(t, r), "page") == want, r.String()
+		})
+	}
+	first := get(j.base + "/page")
+	if first.status != http.StatusOK {
+		t.Fatalf("anonymous /page: %s", first.String())
+	}
+	var visitor string
+	for _, raw := range first.header.Values("Set-Cookie") {
+		if name, rest, ok := strings.Cut(raw, "="); ok && name == "__Host-gregale_vid" {
+			visitor, _, _ = strings.Cut(rest, ";")
+		}
+	}
+	if visitor == "" {
+		t.Fatalf("anonymous /page set no visitor cookie: %v", first.header.Values("Set-Cookie"))
+	}
+	page := str(jsonBody(t, first), "page")
+	for i := 0; i < 3; i++ {
+		again := fetch(http.MethodGet, j.base+"/page", map[string]string{"Cookie": "__Host-gregale_vid=" + visitor})
+		if again.status != http.StatusOK || str(jsonBody(t, again), "page") != page {
+			t.Fatalf("returning visitor got %s; first visit got page %s", again.String(), page)
+		}
+	}
+}
+
 func (j *flagsJourney) startExperiment(t *testing.T) {
 	j.flag(t, "experiment", "create", "checkout-exp", "--flag", "checkout", "--rule", j.rule(t), "--control", "legacy",
 		"--metric", "order_completed", "--no-guardrails", "--start")
@@ -367,4 +418,37 @@ func (j *flagsJourney) analytics(t *testing.T) {
 		}
 		return units == float64(converted), compact(doc)
 	})
+}
+
+// savedInsight saves the conversion event as an insight (ADR-20261122190000),
+// runs it as a teammate would and exports it as CSV.
+func (j *flagsJourney) savedInsight(t *testing.T) {
+	converted := 0
+	for _, c := range j.customers {
+		if c.converted {
+			converted++
+		}
+	}
+	res := j.tg.run(t, time.Minute, "--json", "insight", "saved", "create", "orders", "--kind", "events", "--event", "order_completed",
+		"--days", "1", "--project", j.project)
+	if res.exit != 0 {
+		// Off for the account the routes refuse (403); off everywhere the
+		// capability gate hides them (404 no such route).
+		if strings.Contains(res.problem(), "unavailable") || strings.Contains(res.problem(), "no such API route") {
+			t.Skipf("saved insights are not enabled for this account: %s", res.problem())
+		}
+		t.Fatalf("save insight: %s", res.problem())
+	}
+	t.Cleanup(func() { j.tg.run(t, time.Minute, "insight", "saved", "delete", "orders", "--project", j.project) })
+	run := j.tg.run(t, time.Minute, "--json", "insight", "saved", "run", "orders", "--project", j.project)
+	if run.exit != 0 {
+		t.Fatalf("run saved insight: %s", run.problem())
+	}
+	if got := num(object(t, run.stdout), "value"); got < float64(converted) {
+		t.Fatalf("saved insight value = %v, want at least the %d conversions: %s", got, converted, run.stdout)
+	}
+	csv := j.tg.run(t, time.Minute, "insight", "saved", "run", "orders", "--format", "csv", "--project", j.project)
+	if csv.exit != 0 || !strings.HasPrefix(string(csv.stdout), "start,breakdown,events,units,value\n") {
+		t.Fatalf("export saved insight: %s %q", csv.problem(), csv.stdout)
+	}
 }

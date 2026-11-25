@@ -22,6 +22,7 @@ func mcpCLICommand() cliCommand {
 		cliFlag{Name: "tasks", Short: "accept modern MCP task handles for later inspection"},
 		cliFlag{Name: "task-submission-key", Short: "saved UUIDv7 for retrying a Task submission (requires --tasks)", Value: "UUID"},
 		cliFlag{Name: "task-receipt", Short: "save a private Task receipt before submission (requires --tasks)", Value: "FILE"},
+		cliFlag{Name: "retry-submission", Short: "retry the original Task submission using an existing --task-receipt"},
 		cliFlag{Name: "defer-form-input", Short: "allow a keyed Task to request forms for a later wait"},
 		cliFlag{Name: "wait", Short: "wait for a task result; request cancellation on timeout"},
 	)
@@ -39,8 +40,10 @@ func mcpCLICommand() cliCommand {
 	taskRemote := append(append([]cliFlag{}, remote...), cliFlag{Name: "task-id", Short: "opaque task ID (task-get, task-wait or task-cancel)", Value: "ID"})
 	taskStatusFlags := append(append([]cliFlag{}, taskRemote...),
 		cliFlag{Name: "metadata-only", Short: "show Task metadata and next action"},
+		cliFlag{Name: "read-result", Short: "read a completed Task result from a private receipt"},
 		cliFlag{Name: "task-submission-key", Short: "find a retained Task by saved UUIDv7", Value: "UUID"},
-		cliFlag{Name: "task-receipt", Short: "find a retained Task from a private receipt", Value: "FILE"},
+		cliFlag{Name: "task-receipt", Short: "find a retained Task from a private receipt (repeatable with --metadata-only)", Value: "FILE"},
+		cliFlag{Name: "receipt-dir", Short: "list private Task receipts in one directory (with --metadata-only)", Value: "DIR"},
 		cliFlag{Name: "write-input-template", Short: "write pending forms to a new private file", Value: "FILE"},
 	)
 	for i := range callFlags {
@@ -48,6 +51,14 @@ func mcpCLICommand() cliCommand {
 			callFlags[i].Short = "total request timeout (default 30s; interactive/--wait 5m)"
 		}
 	}
+	taskCancelFlags := append(append([]cliFlag{}, taskRemote...),
+		cliFlag{Name: "task-receipt", Short: "cancel a retained Task from a private receipt instead of supplying the Task ID", Value: "FILE"},
+	)
+	taskRespondFlags := append(append([]cliFlag{}, remote[:4]...),
+		cliFlag{Name: "task-receipt", Short: "private receipt for the retained Task", Value: "FILE", Req: true},
+		cliFlag{Name: "reviewed-input-file", Short: "answer forms from a reviewed private Task input template", Value: "FILE", Req: true},
+		cliFlag{Name: "timeout", Short: "total request timeout (default 30s)", Value: "DURATION"},
+	)
 	taskWaitFlags := append(append([]cliFlag{}, taskRemote...),
 		cliFlag{Name: "task-receipt", Short: "resume a retained Task from a private receipt instead of supplying the Task ID", Value: "FILE"},
 		cliFlag{Name: "interactive", Short: "answer modern MCP task input forms in the terminal"},
@@ -208,7 +219,7 @@ func mcpCLICommand() cliCommand {
 				{Name: "dry-run", Short: "print the source change and gateway policy without writing either", Bool: true},
 			}, Examples: []string{"gregale mcp server auth enable --mode api-key --app my-mcp", "gregale mcp server auth enable --mode oauth-proxy --app my-mcp --auth-app my-auth"}},
 		}},
-		{Name: "replay", Short: "Compare a zero-traffic candidate with the serving deployment before promotion", Notes: []string{"Sends discovery, static resource reads and reviewed fixtures only; tools run only when named with --allow-tool. Captures no production traffic and changes nothing."}, Flags: []cliFlag{
+		{Name: "replay", Short: "Compare a zero-traffic candidate with the serving deployment", Notes: []string{"Run it before promotion. Sends discovery, static resource reads and reviewed fixtures only; tools run only when named with --allow-tool. Captures no production traffic and changes nothing."}, Flags: []cliFlag{
 			{Name: "app", Short: "app slug", Value: "SLUG", Req: true},
 			{Name: "candidate", Short: "candidate deployment UUID with zero traffic", Value: "UUID", Req: true},
 			{Name: "path", Short: "MCP source directory (default .)", Value: "DIR"},
@@ -218,6 +229,34 @@ func mcpCLICommand() cliCommand {
 			{Name: "runs", Short: "times to send each probe (1-5, default 3)", Value: "N"},
 			{Name: "timeout", Short: "overall deadline (default 2m)", Value: "DURATION"},
 		}, Examples: []string{"gregale mcp server replay --app my-mcp --candidate <uuid> --token-env MCP_TOKEN", "gregale mcp server replay --app my-mcp --candidate <uuid> --fixtures fixtures.json --allow-tool search"}},
+		{Name: "insights", Short: "Show per-tool calls, failures, mismatches and estimated cost", Notes: []string{"Covers the last hour. Cost is an upper bound at the overage rate; usage inside the plan's included GB-hours costs nothing extra."}, Flags: []cliFlag{
+			{Name: "app", Short: "app slug", Value: "SLUG", Req: true},
+			{Name: "timeout", Short: "API deadline (default 30s)", Value: "DURATION"},
+		}, Examples: []string{"gregale mcp server insights --app my-mcp", "gregale mcp server insights --app my-mcp --json"}},
+		{Name: "keys", Short: "Issue, list and revoke consumer keys for an api-key MCP server", Subcommands: []cliSub{
+			{Name: "create", Short: "Create a consumer key with mcp: scopes", Notes: []string{"Scopes default to the endpoint scopes in gregale-mcp.json."}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "SLUG", Req: true},
+				{Name: "name", Short: "key name", Value: "NAME", Req: true},
+				{Name: "consumer", Short: "existing API consumer ID", Value: "ID"},
+				{Name: "new-consumer", Short: "create an API consumer with this name", Value: "NAME"},
+				{Name: "scopes", Short: "comma-separated MCP scopes without the mcp: prefix", Value: "SCOPES"},
+				{Name: "tools", Short: "tools the key may call; grants their scopes from gregale-mcp.json", Value: "TOOLS"},
+				{Name: "expires", Short: "key expiry, RFC3339", Value: "TIME"},
+				{Name: "path", Short: "MCP source directory (default .)", Value: "DIR"},
+				{Name: "timeout", Short: "API deadline (default 30s)", Value: "DURATION"},
+			}, Examples: []string{"gregale mcp server keys create --app my-mcp --new-consumer acme --name prod", "gregale mcp server keys create --app my-mcp --consumer <id> --name ci --scopes tools,admin", "gregale mcp server keys create --app my-mcp --consumer <id> --name reader --tools search,fetch"}},
+			{Name: "list", Short: "List a consumer's MCP keys", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "SLUG", Req: true},
+				{Name: "consumer", Short: "API consumer ID", Value: "ID", Req: true},
+				{Name: "timeout", Short: "API deadline (default 30s)", Value: "DURATION"},
+			}},
+			{Name: "revoke", Short: "Revoke an MCP key", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "SLUG", Req: true},
+				{Name: "consumer", Short: "API consumer ID", Value: "ID", Req: true},
+				{Name: "key", Short: "key ID", Value: "ID", Req: true},
+				{Name: "timeout", Short: "API deadline (default 30s)", Value: "DURATION"},
+			}},
+		}},
 		{Name: "access", Short: "Audit MCP access-policy drift and admission evidence", Subcommands: []cliSub{{Name: "audit", Short: "Compare source and role policy with stored account gateway rules", Flags: []cliFlag{
 			{Name: "app", Short: "MCP application slug", Value: "SLUG", Req: true},
 			{Name: "path", Short: "reviewed source directory (default .)", Value: "DIR"},
@@ -235,7 +274,7 @@ func mcpCLICommand() cliCommand {
 			{Name: "retry", Short: "Retry provider retirement", Flags: []cliFlag{{Name: "id", Short: "retirement UUID", Value: "ID", Req: true}, {Name: "allow-active-grant-revocation", Short: "allow active grant revocation", Bool: true}, {Name: "timeout", Short: "API deadline", Value: "DURATION"}}},
 			{Name: "acknowledge-manual", Short: "Acknowledge manual provider cleanup", Flags: []cliFlag{{Name: "id", Short: "retirement UUID", Value: "ID", Req: true}, {Name: "timeout", Short: "API deadline", Value: "DURATION"}}},
 		}},
-		{Name: "deploy", Short: "Pin the candidate catalog, verify MCP discovery and promote", Flags: []cliFlag{{Name: "path", Short: "source directory (default .)", Value: "DIR"}, {Name: "name", Short: "app slug", Value: "SLUG", Req: true}, {Name: "size", Short: "app RAM/CPU resource size", Value: "SIZE", ClosedSet: []string{"micro", "small", "medium", "large", "xlarge"}}, {Name: "profile", Short: "deprecated: use --size", Value: "SIZE"}, {Name: "token-env", Short: "client token for external OAuth verification", Value: "ENV"}, {Name: "secrets-file", Short: "sealed app secrets", Value: "PATH"}, {Name: "release-policy", Short: "role-specific catalog baselines to verify before promotion", Value: "PATH"}, {Name: "validate-url", Short: "pre-upload compatibility gate endpoint", Value: "URL"}, {Name: "fixtures", Short: "candidate smoke fixtures", Value: "PATH"}, {Name: "allow-tool-execution", Short: "execute reviewed tool fixtures once", Bool: true}, {Name: "access-audit", Short: "optional stored-policy gate with gateway or guest-only placement", Value: "PLACEMENT", ClosedSet: []string{"gateway", "guest-only"}}, {Name: "access-audit-algorithms", Short: "reviewed gateway algorithms for --access-audit (default RS256,ES256)", Value: "LIST"}, {Name: "idempotency-key", Short: "retry identity printed by a failed submission", Value: "KEY"}, {Name: "expected-serving-deployment", Short: "reviewed serving deployment; empty requires no serving release", Value: "ID"}, {Name: "expected-app-id", Short: "reviewed immutable app identity", Value: "ID"}, {Name: "require-catalog-pin", Short: "require candidate catalog integrity support", Bool: true}, {Name: "publication-id", Short: "native private publication requiring owner-approved platform tests", Value: "SHA256"}, {Name: "require-reviewed-tools", Short: "require runtime tools to match configured tool_scopes before fixtures and promotion", Bool: true}, {Name: "mcp-task-migration-override", Short: "allow this deployment to replace incompatible MCP task workers once", Bool: true}, {Name: "timeout", Short: "deployment and verification wait timeout in seconds (default 1200)", Value: "SECONDS"}}, Examples: []string{"gregale mcp server deploy --path ./my-mcp --name my-mcp --size small"}},
+		{Name: "deploy", Short: "Pin the candidate catalog, verify MCP discovery and promote", Flags: []cliFlag{{Name: "path", Short: "source directory (default .)", Value: "DIR"}, {Name: "name", Short: "app slug", Value: "SLUG", Req: true}, {Name: "size", Short: "app RAM/CPU resource size", Value: "SIZE", ClosedSet: []string{"micro", "small", "medium", "large", "xlarge"}}, {Name: "profile", Short: "deprecated: use --size", Value: "SIZE"}, {Name: "token-env", Short: "client token for external OAuth verification", Value: "ENV"}, {Name: "secrets-file", Short: "sealed app secrets", Value: "PATH"}, {Name: "release-policy", Short: "role-specific catalog baselines to verify before promotion", Value: "PATH"}, {Name: "validate-url", Short: "pre-upload compatibility gate endpoint", Value: "URL"}, {Name: "fixtures", Short: "candidate smoke fixtures", Value: "PATH"}, {Name: "allow-tool-execution", Short: "execute reviewed tool fixtures once", Bool: true}, {Name: "access-audit", Short: "optional stored-policy gate with gateway or guest-only placement", Value: "PLACEMENT", ClosedSet: []string{"gateway", "guest-only"}}, {Name: "access-audit-algorithms", Short: "reviewed gateway algorithms for --access-audit (default RS256,ES256)", Value: "LIST"}, {Name: "idempotency-key", Short: "retry identity printed by a failed submission", Value: "KEY"}, {Name: "expected-serving-deployment", Short: "reviewed serving deployment; empty requires no serving release", Value: "ID"}, {Name: "expected-app-id", Short: "reviewed immutable app identity", Value: "ID"}, {Name: "require-catalog-pin", Short: "require candidate catalog integrity support", Bool: true}, {Name: "publication-id", Short: "native private publication requiring owner-approved platform tests", Value: "SHA256"}, {Name: "require-reviewed-tools", Short: "require runtime tools to match configured tool_scopes before fixtures and promotion", Bool: true}, {Name: "mcp-task-migration-override", Short: "allow this deployment to replace incompatible MCP task workers once", Bool: true}, {Name: "timeout", Short: "deployment and verification wait timeout in seconds (default 1200)", Value: "SECONDS"}, {Name: "replay", Short: "compare the candidate with the serving deployment (discovery, static resources, prompt fixtures) and refuse promotion on a breaking change or a new error", Bool: true}}, Examples: []string{"gregale mcp server deploy --path ./my-mcp --name my-mcp --size small"}},
 		{Name: "overview", Short: "Inspect replicas, Task workers, observers and promotion holds", Flags: []cliFlag{
 			{Name: "app", Short: "serving HTTP MCP application", Value: "SLUG", Req: true},
 			{Name: "worker-app", Short: "optional separate durable Task worker application", Value: "SLUG"},
@@ -265,21 +304,23 @@ func mcpCLICommand() cliCommand {
 		{Name: "tools", Short: "Discover tool schemas without invoking tools", Positionals: []string{"[<app>]"}, Flags: remote, Examples: []string{"gregale mcp client tools --app my-mcp"}},
 		{Name: "resources", Short: "Discover resource and template definitions without reading contents", Positionals: []string{"[<app>]"}, Flags: remote, Examples: []string{"gregale mcp client resources --app my-mcp"}},
 		{Name: "resource-read", Short: "Read one explicitly selected resource URI", Positionals: []string{"[<app>]"}, Flags: remote, Examples: []string{"gregale mcp client read --app my-mcp --uri 'file:///reports/current'"}},
-		{Name: "resource-watch", Short: "Watch one resource URI for content updates", Flags: []cliFlag{
+		{Name: "resource-watch", Short: "Watch a resource for content updates or a Task receipt for status", Flags: []cliFlag{
 			{Name: "url", Short: "full MCP endpoint URL", Value: "URL"},
 			{Name: "app", Short: "resolve a Gregale app's public endpoint", Value: "SLUG"},
 			{Name: "endpoint", Short: "endpoint path with --app (default /mcp)", Value: "PATH"},
 			{Name: "token-env", Short: "environment variable containing an MCP client token", Value: "ENV"},
-			{Name: "uri", Short: "resource URI to read and watch", Value: "URI", Req: true},
+			{Name: "uri", Short: "resource URI to read and watch", Value: "URI"},
+			{Name: "task-receipt", Short: "private Task receipt for a metadata-only watch (repeatable)", Value: "FILE"},
 			{Name: "interval", Short: "poll and stream reconciliation interval (default 30s)", Value: "DURATION"},
-		}, Examples: []string{"gregale mcp client watch --app my-mcp --uri 'file:///reports/current'"}},
+		}, Examples: []string{"gregale mcp client watch --app my-mcp --uri 'file:///reports/current'", "gregale mcp client watch --app my-mcp --token-env MCP_TOKEN --task-receipt ./task.json"}},
 		{Name: "prompts", Short: "Discover prompt definitions without rendering them", Positionals: []string{"[<slug>]"}, Flags: remote, Examples: []string{"gregale mcp client prompts --app my-mcp"}},
 		{Name: "prompt-get", Short: "Render one explicitly selected prompt", Positionals: []string{"[<slug>]"}, Flags: remote, Examples: []string{`gregale mcp client render --app my-mcp --prompt summarize --arguments '{"text":"weekly report"}'`}},
 		{Name: "complete", Short: "Request bounded suggestions for a prompt or resource-template argument", Flags: completionFlags, Examples: []string{"gregale mcp client complete --app my-mcp --prompt summarize --argument style --value exec", "gregale mcp client complete --app my-mcp --resource-template 'customer://records/{recordId}' --argument recordId --value example-"}},
 		{Name: "call", Short: "Execute one discovered tool; opt in to input requests or durable tasks", Positionals: []string{"[<slug>]"}, Flags: callFlags, Examples: []string{`gregale mcp client call --app my-mcp --tool add --arguments '{"a":7,"b":5}'`, `gregale mcp client call --app my-mcp --tool report_preview --wait`, `gregale mcp client call --app my-mcp --tool report_preview --tasks`}},
 		{Name: "task-get", Short: "Read the status or result of a previously returned task handle", Positionals: []string{"[<slug>]"}, Flags: taskStatusFlags, Examples: []string{"gregale mcp client status --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840"}},
 		{Name: "task-wait", Short: "Resume waiting for a task to finish", Positionals: []string{"[<slug>]"}, Flags: taskWaitFlags, Examples: []string{"gregale mcp client wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840", "gregale mcp client wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840 --interactive"}},
-		{Name: "task-cancel", Short: "Request cooperative cancellation of a previously returned task", Positionals: []string{"[<slug>]"}, Flags: taskRemote, Examples: []string{"gregale mcp client cancel --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840"}},
+		{Name: "task-respond", Short: "Submit reviewed Task input and return a status snapshot", Positionals: []string{"[<slug>]"}, Flags: taskRespondFlags, Examples: []string{"gregale mcp client respond --app my-mcp --token-env MCP_TOKEN --task-receipt ./task.json --reviewed-input-file ./reviewed-input.json"}},
+		{Name: "task-cancel", Short: "Request cooperative cancellation of a previously returned task", Positionals: []string{"[<slug>]"}, Flags: taskCancelFlags, Examples: []string{"gregale mcp client cancel --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840", "gregale mcp client cancel --app my-mcp --task-receipt ./task.json --token-env MCP_TOKEN"}},
 		{Name: "tasks", Short: "Configure, release and inspect durable task workers", Subcommands: []cliSub{
 
 			{Name: "bindings", Short: "Qualify or inspect hosted Task bindings", Positionals: []string{"<qualify|get|revoke>"}, Notes: []string{"Owner-selected native managed PostgreSQL references only. Qualification runs bounded read-only catalog probes once per source intent; evidence expires within one minute or on drift. Credentials remain private and execution requires separate owner authorization."}, Flags: []cliFlag{

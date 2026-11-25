@@ -104,6 +104,8 @@ type Problem struct {
 	// (ADR-1448).
 	CrossedReleases []RollbackCrossedRelease `json:"crossed_releases,omitempty"`
 	RestorePoints   []ReleaseRestorePoint    `json:"restore_points,omitempty"`
+	// ActiveOperationID identifies the running project rollback behind a conflict.
+	ActiveOperationID string `json:"active_operation_id,omitempty"`
 	// AgentApproval is the request behind approval_required: the link a
 	// person opens to approve it (ADR-20261104140058).
 	AgentApproval *AgentApprovalPendingInfo `json:"agent_approval,omitempty"`
@@ -217,6 +219,16 @@ type Problem struct {
 	// secret-scan specific. Optional + omitempty so every other
 	// problem+json site keeps its existing flat shape unchanged.
 	RelevantLogs []LogExcerpt `json:"relevant_logs,omitempty"`
+	// FixCommands are the runnable commands from Fix with this failure's
+	// values (app, deployment) filled in, in order. A command that still
+	// needs a value nobody knew is left out rather than shown with a
+	// placeholder. Optional + omitempty (ADR-20261123230000).
+	FixCommands []string `json:"fix_commands,omitempty"`
+	// Retryable reports whether repeating the same request can succeed
+	// without changing anything: true for rate limits and transient
+	// platform errors, false when the request or the app must change.
+	// Absent when unknown. Optional + omitempty (ADR-20261123230000).
+	Retryable *bool `json:"retryable,omitempty"`
 	// extraHeaders are non-JSON response headers attached via WithHeader.
 	// Kept unexported so the wire body (RFC 9457 problem+json) is
 	// exactly the spec; WriteProblem flushes these onto the wire
@@ -1963,6 +1975,11 @@ const (
 	// Public candidate verification stayed unavailable within the durable
 	// recovery window. This does not establish an application health verdict.
 	CodeDeploymentVerificationUnavailable = "deployment_verification_unavailable"
+	// CodeDeploymentVerificationContractFailed means a required check of the
+	// app's gregale.verify.yaml failed against the candidate, so it was not
+	// promoted (ADR-20261122220000). The deployment's hosting receipt holds
+	// the full report.
+	CodeDeploymentVerificationContractFailed = "deployment_verification_contract_failed"
 	// CodePromotionRolledBack means an environment promotion was rolled back
 	// and this release, the first in its environment, had no earlier release
 	// to restore, so it was retired. The release itself did not fail.
@@ -2508,6 +2525,7 @@ func StatusForCode(code string) int {
 		CodeFunctionInitFailed,
 		CodeExecutionModeConflict,
 		CodeDeploymentSmokeFailed,
+		CodeDeploymentVerificationContractFailed,
 		CodeReleaseCommandFailed,
 		CodeReleasePhaseUnavailable,
 		CodeReleaseOutcomeUncertain:
@@ -2741,6 +2759,12 @@ func StatusForCode(code string) int {
 		return http.StatusUnauthorized
 	case CodeEmailVerificationRequired:
 		return http.StatusForbidden
+	case CodeClaimRequired:
+		return http.StatusForbidden
+	case CodeAnonymousDeploysUnavailable:
+		return http.StatusTooManyRequests
+	case CodeClaimExpired:
+		return http.StatusGone
 	case CodePasswordTooWeak, CodeAccountExists:
 		return http.StatusBadRequest
 	case CodeResetTokenInvalid, CodeResetTokenExpired, CodeVerificationLinkInvalid:
@@ -2997,7 +3021,7 @@ func ErrBillingContactMember() *Problem {
 // to select the plan default; an update pointer is always explicit.
 func ErrInvalidAppRAM(requestedMB int) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidAppRAM,
-		"Invalid RAM", fmt.Sprintf("ram_mb must be greater than zero; requested %d MB.", requestedMB))
+		"Invalid RAM", fmt.Sprintf("ram_mb must be greater than zero; requested %d MB.", requestedMB)).WithDocs(docsBase + "/plans#what-each-limit-means")
 }
 
 // ErrInvalidCPURAMPair rejects an explicit guest vCPU count that is not its
@@ -5525,7 +5549,7 @@ func ErrPlanLogDrainQuota(plan Plan, scope string, limit, observed int) *Problem
 
 func ErrAppLogDrainInvalid(reason string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeAppLogDrainInvalid,
-		"Invalid log drain", reason)
+		"Invalid log drain", reason).WithDocs(docsBase + "/logs#log-drains")
 }
 
 // ErrTenantSurfacesNotAllowed is returned by apid's createTenantSurface
@@ -8050,7 +8074,7 @@ func ErrPlanCustomMetricsNotAllowed(plan Plan) *Problem {
 		"Custom metrics not available on this plan",
 		fmt.Sprintf("custom application metrics are not included in the %s plan. "+
 			"Scale on a platform-measured signal (rps, cpu, concurrent_requests, "+
-			"queue_depth, queue_lag) or upgrade.", plan))
+			"queue_depth, queue_lag) or upgrade.", plan)).WithDocs(docsBase + "/plans")
 }
 
 const CodeUDPListenerLimit = "udp_listener_limit"

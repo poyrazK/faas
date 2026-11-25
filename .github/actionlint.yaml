@@ -1,11 +1,4 @@
-# actionlint configuration. Used by the workflow-lint CI job
-# (ci.yml:~1175) and auto-detected by rhysd/actionlint at this path.
-#
-# Only the `self-hosted-runner.labels` key is documented in the
-# actionlint config schema (https://github.com/rhysd/actionlint/blob/v1.7.12/docs/config.md).
-# Pre-existing shellcheck info/warning findings in ci.yml are silenced
-# via the `-ignore` regex passed as the action's `args:` input
-# (ci.yml:~1200), NOT here — `shellcheck:` is not a valid config key.
+# actionlint configuration used by ci.yml.
 self-hosted-runner:
   labels:
     - kvm
@@ -17,3 +10,10 @@ self-hosted-runner:
     - gregale-scenario-acceptance
     - gregale-gitops-acceptance
     - gregale-financial-pair
+
+paths:
+  .github/workflows/ops-restart-hosted-mcp.yml:
+    ignore:
+      # GitHub Actions supports concurrency.queue. actionlint v1.7.12 does not yet parse it.
+      # https://github.com/rhysd/actionlint/issues/657
+      - '^unexpected key "queue" for "concurrency" section\.'

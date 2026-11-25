@@ -148,6 +148,7 @@ internal hosting service and Gregale Agents are already unreachable.
 | 34 | Release commands: a command (e.g. migrations) that must succeed before a deployment takes traffic | `gregale.yaml` `release` | **MISSING** | — | beta |
 | 35 | Traffic mirroring | `mirrors`, `gregale mirror`, `gregale traffic` | **MISSING** | — | preview |
 | 36 | Critical route health during canaries | `route-health` | `route-health-canary-guard` preview | — | preview |
+| 177 | Verification contracts: `gregale.verify.yaml` HTTP, MCP and read-only SQL checks run against a candidate before it takes traffic (ADR-20261122220000) | `verification-contract`, `verification-contracts`, `app_verification_contracts`, `gregale release check` | `verification-contracts` preview | `verification_contracts` platform flag (off) | preview |
 | 37 | Alert-triggered rollbacks | `alert-rollbacks` | **MISSING** | — | preview |
 
 ## C. Runtime and compute
@@ -314,7 +315,7 @@ internal hosting service and Gregale Agents are already unreachable.
 | 157 | Web dashboard | `pkg/dashboard` | **MISSING** | — | GA |
 | 158 | SDKs: Node, Python, Go, Kotlin, Swift; auth and data SDKs; webhook verifier, idempotency helpers | `sdk/` | **MISSING** | — | beta |
 | 159 | Public OpenAPI spec and capabilities endpoint | `/v1/openapi.json`, `/v1/capabilities` | **MISSING** | — | GA |
-| 160 | Gregale management MCP server: AI agents manage Gregale over MCP, with an OAuth server | `gregale mcp serve`, `pkg/mcpmanagement`, `/oauth/*`, `/.well-known/oauth-*`, `/v1/tool-*`, `/v1/delegated-tool-*`, `pkg/toolpublication`, `pkg/toolinvocation`, `pkg/toolgrant`, `pkg/toolconnection` | **MISSING** | — | preview |
+| 160 | Gregale management MCP server: AI agents manage Gregale over MCP, with an OAuth server | `gregale mcp serve`, `pkg/mcpmanagement`, `pkg/docsindex` (shipped docs index for docs search and `gregale guide "<text>"`), `/oauth/*`, `/.well-known/oauth-*`, `/v1/tool-*`, `/v1/delegated-tool-*`, `pkg/toolpublication`, `pkg/toolinvocation`, `pkg/toolgrant`, `pkg/toolconnection` | **MISSING** | — | preview |
 | 161 | Docs site and trust pages: DPA, subprocessors, security reporting, security.txt | `docs/customer-pages.json`, `/.well-known/security.txt` | **MISSING** | — | GA |
 
 | 169 | Native customer support: portal, staff inbox, conversations, target policies, routing, reopening and reviewed staff operations | `/dashboard/support`, `/dashboard/orgs/{org}/support`, `/v1/support`, `/v1/orgs/{org}/support`, `pkg/apid/support` | `customer-support` preview | `pf: customer_support` | preview |

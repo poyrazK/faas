@@ -103,6 +103,10 @@ type retryWriter struct {
 	committed   bool
 	interimSent bool
 	buffer      bytes.Buffer
+	// platformResponse marks this attempt as gateway-written
+	// (markPlatformResponse). It reaches the statusRecorder only when the
+	// attempt commits, so a discarded failure never unbills the replay.
+	platformResponse bool
 }
 
 func newRetryWriter(dst http.ResponseWriter) *retryWriter {
@@ -160,6 +164,9 @@ func (w *retryWriter) commit() {
 		return
 	}
 	w.committed = true
+	if w.platformResponse {
+		markPlatformResponse(w.dst)
+	}
 	for key, values := range w.header {
 		w.dst.Header()[key] = append([]string(nil), values...)
 	}
@@ -185,6 +192,7 @@ func (w *retryWriter) finish() {
 func (w *retryWriter) discard() {
 	w.buffer.Reset()
 	w.status = 0
+	w.platformResponse = false
 	w.header = w.dst.Header().Clone()
 }
 

@@ -117,6 +117,9 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
     assert.deepEqual(seen, [['https://a.test/v1/apps/a', 'Bearer a'], ['https://b.test/v1/apps/b', 'Bearer b']]);
     assert.equal(globalThis.fetch, original);
     assert.equal('flags' in a, false);
+    // Object storage is GA, application files stay preview (ADR-20261121230052).
+    assert.equal(typeof a.storage, 'object'); assert.equal('files' in a.storage, false);
+    assert.equal(typeof createPreviewClient('https://preview.test').storage.files, 'function');
     assert.equal(typeof createPreviewClient('https://preview.test').flags, 'object');
     const diagnostics = [];
     const observed = createClient('https://options.test', { onResponse: info => diagnostics.push(info), fetch: async () =>

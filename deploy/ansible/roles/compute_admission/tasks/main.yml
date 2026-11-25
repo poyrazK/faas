@@ -79,14 +79,16 @@
       - >-
         (((faas_admission_storage_blob.content | b64decode) | regex_search('(?m)^FAAS_STORAGE_BACKEND=s3$')) is none) or
         ((((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_S3_BUCKET=[a-z0-9][a-z0-9.-]+$') | length) == 1) and
-        (((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_S3_ENDPOINT=https://[^\\s]+$') | length) == 1) and
-        (((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_S3_REGION=[^\\s]+$') | length) == 1) and
-        (((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_S3_ACCESS_KEY_ID=[^\\s]+$') | length) == 1) and
-        (((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_S3_SECRET_ACCESS_KEY=[^\\s]+$') | length) == 1))
+        (((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_S3_ENDPOINT=https://[^\s]+$') | length) == 1) and
+        (((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_S3_REGION=[^\s]+$') | length) == 1) and
+        (((((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_S3_ACCESS_KEY_ID=[^\s]+$') | length) == 1) and
+        (((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_S3_SECRET_ACCESS_KEY=[^\s]+$') | length) == 1)) or
+        ((faas_storage_grants | default(false) | bool) and
+        (((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_S3_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY)=') | length) == 0))))
       - >-
         (((((faas_admission_storage_blob.content | b64decode) | regex_search('(?m)^FAAS_STORAGE_BACKEND=oci$')) is none) and
         (((faas_admission_storage_blob.content | b64decode) | regex_search('(?m)^FAAS_STORAGE_FALLBACK_BACKEND=oci$')) is none)) or
-        (((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_OCI_REGISTRY=https://[^\\s]+$') | length) == 1))
+        (((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_OCI_REGISTRY=https://[^\s]+$') | length) == 1))
     fail_msg: >-
       The shared storage environment does not declare exactly one canonical
       strict shared-artifact contract. Require remote-only storage,
@@ -123,16 +125,21 @@
   ansible.builtin.assert:
     that:
       - >-
-        (((faas_admission_imaged_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_OCI_USERNAME=[^\\r\\n]+$') | length) == 1 and
-        ((faas_admission_imaged_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_OCI_PASSWORD=[^\\r\\n]+$') | length) == 1 and
+        (((faas_admission_imaged_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_OCI_USERNAME=[^\r\n]+$') | length) == 1 and
+        ((faas_admission_imaged_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_OCI_PASSWORD=[^\r\n]+$') | length) == 1 and
         ((faas_admission_imaged_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_(?!OCI_(USERNAME|PASSWORD)=)') | length) == 0) or
-        (((faas_admission_imaged_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_S3_ACCESS_KEY_ID=[^\\r\\n]+$') | length) == 1 and
-        ((faas_admission_imaged_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_S3_SECRET_ACCESS_KEY=[^\\r\\n]+$') | length) == 1 and
-        ((faas_admission_imaged_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_(?!S3_(ACCESS_KEY_ID|SECRET_ACCESS_KEY)=)') | length) == 0)
+        (((faas_admission_imaged_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_S3_ACCESS_KEY_ID=[^\r\n]+$') | length) == 1 and
+        ((faas_admission_imaged_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_S3_SECRET_ACCESS_KEY=[^\r\n]+$') | length) == 1 and
+        ((faas_admission_imaged_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_(?!S3_(ACCESS_KEY_ID|SECRET_ACCESS_KEY)=)') | length) == 0) or
+        ((faas_storage_grants | default(false) | bool) and
+        ((faas_admission_storage_blob.content | b64decode) | regex_findall('(?m)^FAAS_STORAGE_BACKEND=(?:gcs|s3)$') | length) == 1 and
+        ((faas_admission_imaged_storage_blob.content | b64decode) | regex_findall('(?m)^[ \t]*(?:export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*=') | length) == 0)
     fail_msg: >-
       The imaged lifecycle environment must contain exactly one non-empty
       credential pair (OCI username and password, or S3 access key ID and
-      secret) and no storage topology overrides.
+      secret) and no storage topology overrides; on an S3 or GCS node with
+      faas_storage_grants it may instead hold no assignment at all
+      (ADR-20261117190000 slice 5).
   no_log: true
   when: not (faas_image_seed | default(false) | bool)
 

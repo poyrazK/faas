@@ -411,6 +411,11 @@ func (s *PgStore) CreateAccountWithPersonalOrg(ctx context.Context, params Creat
 			return CreateAccountWithPersonalOrgResult{}, err
 		}
 	}
+	if u := params.Unclaimed; u != nil {
+		if err := insertUnclaimedAccountTx(ctx, tx, acct.ID, *u); err != nil {
+			return CreateAccountWithPersonalOrgResult{}, err
+		}
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return CreateAccountWithPersonalOrgResult{}, fmt.Errorf("state: commit: %w", err)
@@ -8412,6 +8417,11 @@ func (s *PgStore) createDeploymentOnce(ctx context.Context, d Deployment, activi
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, 0, err
+	}
+	if d.ProjectDeployGroupID != "" {
+		if err := recordProjectDeployGroup(ctx, tx, created, d.ProjectDeployGroupID); err != nil {
+			return Deployment{}, 0, err
+		}
 	}
 	if d.submissionAttemptID != "" {
 		if _, err := attachDeploymentSubmission(ctx, tx, created.AppID, d.submissionAttemptID, created.ID); err != nil {

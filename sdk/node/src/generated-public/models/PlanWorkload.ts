@@ -39,6 +39,10 @@ export type PlanWorkload = {
    */
   visibility?: 'internal';
   /**
+   * Declared access to the service's public URL (`x-gregale-access` in Compose or `project.services.<name>.access` in gregale.yaml): `public` needs no Gregale API key, `key` needs one. Every production deploy applies it. Omitted when the source declares none.
+   */
+  access?: 'public' | 'key';
+  /**
    * Effective build context inside the uploaded repository archive. Workspace manifests and sibling packages remain available outside this directory.
    */
   root_dir: string;

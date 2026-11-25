@@ -211,6 +211,39 @@ func printConfigRollback(out api.ConfigRollbackResponse, app, scope string) {
 	}
 }
 
+// configGuardRecentVerdict is how long env list keeps naming a guard that
+// restored or failed the scope's config.
+const configGuardRecentVerdict = 24 * time.Hour
+
+// configGuardVerdictTimeout bounds env list's optional guard read, so a slow
+// guard endpoint cannot hold the command open after its rows are printed.
+const configGuardVerdictTimeout = 3 * time.Second
+
+// printRecentConfigGuardVerdict says when the guard restored or flagged this
+// scope's config in the last day. Prod hunt r33: the guard removed a value
+// six minutes after env set, and env list said only "No results".
+func printRecentConfigGuardVerdict(ctx context.Context, client *Client, app, scope string) {
+	if jsonOutput || scope == api.EnvScopeAllSentinel {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, configGuardVerdictTimeout)
+	defer cancel()
+	g, err := client.GetConfigGuard(ctx, app, scope)
+	if err != nil || (g.Status != "restored" && g.Status != "regressed") {
+		return
+	}
+	closed, err := time.Parse(time.RFC3339Nano, g.ClosedAt)
+	if err != nil || time.Since(closed) > configGuardRecentVerdict {
+		return
+	}
+	scopeArg := ""
+	if scope != "" {
+		scopeArg = " --scope " + quoteCLIArg(scope)
+	}
+	_, _ = fmt.Fprintf(osStdout, "%s Closed %s; see `%s env history --app %s%s`.\n",
+		configGuardLine(g), g.ClosedAt, recoveryCLI(), recoveryArgument(app), scopeArg)
+}
+
 // printConfigGuardNotice tells the person whether a config guard is
 // watching the change they just made. It reads the scope's guard once and
 // says nothing when none watches, or when the read fails.

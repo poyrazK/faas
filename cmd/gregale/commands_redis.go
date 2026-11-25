@@ -7,13 +7,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const redisUsage = "usage: gregale redis <list|create|get|bind|resize|update|restart|delete>"
+const redisUsage = "usage: gregale redis <list|create|get|bind|unbind|resize|update|restart|delete>"
 
 func cmdRedis(args []string) int {
 	if len(args) == 0 {
@@ -29,6 +30,8 @@ func cmdRedis(args []string) int {
 		return cmdRedisGet(args[1:])
 	case "bind":
 		return cmdRedisBind(args[1:])
+	case "unbind":
+		return cmdRedisUnbind(args[1:])
 	case "resize":
 		return cmdRedisResize(args[1:])
 	case "update":
@@ -143,15 +146,65 @@ func cmdRedisBind(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	binding, err := client.BindRedisCache(context.Background(), fs.Arg(0), api.BindRedisCacheRequest{App: *app, EnvKey: *envKey})
+	ctx := context.Background()
+	binding, err := client.BindRedisCache(ctx, fs.Arg(0), api.BindRedisCacheRequest{App: *app, EnvKey: *envKey})
 	if err != nil {
-		return printErr("Could not bind Redis cache", err)
+		return printErr("Could not bind Redis cache", redisBindError(ctx, client, fs.Arg(0), *app, err))
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(binding))
 	}
 	_, _ = fmt.Fprintf(osStdout, "Set %s on %s; it takes effect at the app's next deploy or wake.\n", binding.EnvKey, binding.App)
 	return 0
+}
+
+func cmdRedisUnbind(args []string) int {
+	const usage = "usage: gregale redis unbind NAME --app APP"
+	flags, positional := splitArgsForFlags(args)
+	fs := newFlagSet("redis unbind", flag.ContinueOnError)
+	app := fs.String("app", "", "app that loses access to the cache")
+	if err := fs.Parse(append(flags, positional...)); err != nil {
+		return 1
+	}
+	if fs.NArg() != 1 || *app == "" {
+		PrintUsage(os.Stderr, usage, "redis")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	out, err := client.UnbindRedisCache(context.Background(), fs.Arg(0), *app)
+	if err != nil {
+		return printErr("Could not unbind Redis cache", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(out))
+	}
+	_, _ = fmt.Fprintf(osStdout, "%s can no longer call %s. Its connection variable is still set; remove it with `gregale env unset`.\n", out.App, out.Cache)
+	return 0
+}
+
+// redisBindError explains a bind to an app that does not exist yet. A cache
+// binds only to an existing app, and an app that reads REDIS_URL at startup
+// fails its first deploy's health check without it (prod trial 2026-11-24),
+// so the error spells out the order that works. Bind does not create the app
+// itself: it cannot know the app's shape, plan or lifecycle, which the first
+// deploy sets.
+func redisBindError(ctx context.Context, client *api.Client, cache, app string, err error) error {
+	if !isNotFound(err) {
+		return err
+	}
+	if _, cacheErr := client.GetRedisCache(ctx, cache); cacheErr != nil {
+		return err
+	}
+	if _, appErr := client.GetApp(ctx, app); appErr == nil || !isNotFound(appErr) {
+		return err
+	}
+	problem := api.Problem{Status: http.StatusNotFound, Code: api.CodeNotFound, Title: "App does not exist yet",
+		Detail: fmt.Sprintf("a cache binds only to an existing app, and %s has not been deployed; an app that needs Redis to start fails its first deploy's health check, which the deploy after binding fixes", app),
+		Hint:   fmt.Sprintf("Deploy it once with `gregale deploy --name %s`, then bind the cache and deploy again.", app)}
+	return &api.APIError{Problem: problem}
 }
 
 func cmdRedisResize(args []string) int {

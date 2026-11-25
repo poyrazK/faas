@@ -9,6 +9,7 @@ Transcripts follow the shapes `claude -p --output-format stream-json` and
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import types
@@ -262,6 +263,53 @@ class CheckTests(unittest.TestCase):
             failed = ev.run_checks(task, "eval-app", Path(d), "no idea", FakeGregale(["d2"], "d2"), fetch=lambda url: (500, "broken"), http_deadline_s=0)
         self.assertEqual([r["ok"] for r in failed], [False, False, True, False])
 
+    def test_private_app_is_graded_on_its_serving_deployment(self):
+        # Apps are private by default: a public GET gets 401, so the grader asks
+        # the serving deployment (not the latest, a bad release after a rollback).
+        class PrivateGregale(FakeGregale):
+            verified = []
+
+            def cli(self, *args, **kwargs):
+                self.verified.append(args[2])
+                body = "hello from gregale" if args[2] == "d1" else "broken"
+                return subprocess.CompletedProcess(args, 0, json.dumps({"http_status": 200, "body": body}), "")
+
+        task = {"checks": [{"kind": "http", "path": "/", "status": 200, "contains": "hello from gregale"}]}
+        g = PrivateGregale(["d1"], "d2")
+        with mock.patch.object(ev, "_fetch", return_value=(401, "this app requires an API key")), \
+                tempfile.TemporaryDirectory() as d:
+            results = ev.run_checks(task, "eval-app", Path(d), "", g, http_deadline_s=0)
+        self.assertTrue(results[0]["ok"], results)
+        self.assertEqual(g.verified, ["d1"])
+
+    def test_live_worker_counts_as_serving(self):
+        # Health reads "unsupported" for a worker pool unless app_health_workers
+        # is on; a live worker serves its queue (2026-11-24 voting-app rerun).
+        class WorkerGregale:
+            def __init__(self, availability):
+                self.availability = availability
+
+            def get(self, path):
+                if path.endswith("/health"):
+                    return {"phase": "unsupported", "serving_deployment_ids": []}
+                return {"workload_class": "worker", "deployment_availability": self.availability}
+
+        task = {"checks": [{"kind": "apps_serving"}]}
+        with tempfile.TemporaryDirectory() as d:
+            live = ev.run_checks(task, "worker", Path(d), "", WorkerGregale("live"), created={"apps": ["worker"]})
+            down = ev.run_checks(task, "worker", Path(d), "", WorkerGregale("unavailable"), created={"apps": ["worker"]})
+        self.assertTrue(live[0]["ok"], live)
+        self.assertFalse(down[0]["ok"], down)
+
+    def test_command_feature_counts_its_mcp_tool(self):
+        task = {"features": [{"id": "verify", "kind": "command", "pattern": r"\brelease\s+verify\b",
+                              "tools": ["gregale_verify_application_response"]}]}
+        with tempfile.TemporaryDirectory() as d:
+            mcp = ev.grade_features(task, ["gregale deploy"], Path(d), {}, tools=["Bash", "mcp__gregale__gregale_verify_application_response"])
+            none = ev.grade_features(task, ["gregale deploy"], Path(d), {}, tools=["Bash"])
+        self.assertEqual(mcp["features_used"], ["verify"])
+        self.assertEqual(none["features_missed"], ["verify"])
+
     def test_http_check_retries_through_a_cold_wake(self):
         responses = iter([(503, "waking"), (200, "hello from gregale")])
         with mock.patch.object(ev.time, "sleep"):
@@ -445,7 +493,7 @@ class RepoTaskTests(unittest.TestCase):
     def test_created_since(self):
         before = {"apps": {"old"}, "projects": set()}
         after = {"apps": {"old", "ui", "cart"}, "projects": {"shop"}}
-        self.assertEqual(ev.created_since(before, after), {"apps": ["cart", "ui"], "projects": ["shop"]})
+        self.assertEqual(ev.created_since(before, after), {"apps": ["cart", "ui"], "projects": ["shop"], "databases": []})
 
 
 class ProjectGregale:
@@ -456,7 +504,7 @@ class ProjectGregale:
         if path == "/v1/apps/ui":
             return {"canonical_url": "https://ui.gregale.dev/", "parked_deployment": {"parked_reason": "liveness_exhausted", "parked_at": "2026-11-12T16:59:17Z"}}
         if path == "/v1/apps/orders":
-            return {"canonical_url": "", "parked_deployment": {"parked_reason": "liveness_exhausted", "parked_at": "2026-11-12T20:10:00Z"}}
+            return {"canonical_url": "", "status": "evicted_cold", "parked_deployment": {"parked_reason": "liveness_exhausted", "parked_at": "2026-11-12T20:10:00Z"}}
         if path == "/v1/apps/ui/health":
             return {"serving_deployment_ids": ["d1"]}
         if path == "/v1/apps/orders/health":
@@ -494,6 +542,7 @@ class CliLoginTests(unittest.TestCase):
         outputs = {
             ("app", "list"): '{"slug":"old","id":"i-old"}\n{"slug":"retail-ui","id":"i-ui"}\n{"slug":"new","id":"i-new"}\n',
             ("project", "list"): '{"slug":"shop"}\n',
+            ("postgres", "list"): '{"items":[{"name":"old-db"},{"name":"new-db"}]}\n',
             ("release", "list", "--all", "--limit", "200"): '{"app_id":"i-ui","created_at":"2026-11-12T20:00:05Z"}\n{"app_id":"i-old","created_at":"2026-11-12T19:00:00Z"}\n',
             ("app", "health", "retail-ui"): '{\n  "serving_deployment_ids": ["d1"]\n}\n',
         }
@@ -506,9 +555,9 @@ class CliLoginTests(unittest.TestCase):
         g = ev.CliGregale("/bin/gregale")
         with mock.patch.object(g, "cli", side_effect=cli):
             self.assertEqual(g.get("/v1/apps/retail-ui/health"), {"serving_deployment_ids": ["d1"]})
-            before = {"apps": {"old", "retail-ui"}, "projects": {"shop"}}
+            before = {"apps": {"old", "retail-ui"}, "projects": {"shop"}, "databases": {"old-db"}}
             touched = g.touched_since(before, "2026-11-12T20:00:00Z")
-        self.assertEqual(touched, {"apps": ["new", "retail-ui"], "projects": []})
+        self.assertEqual(touched, {"apps": ["new", "retail-ui"], "projects": [], "databases": ["new-db"]})
         with self.assertRaises(ValueError):
             g.get("/v1/billing")
 
@@ -528,13 +577,13 @@ class CliLoginTests(unittest.TestCase):
         evidence = "gregale deploy --image redis --name voting-redis\ngregale deploy --project --project-slug voting"
         with mock.patch.object(g, "inventory", return_value=after):
             self.assertEqual(ev.deletable(g, before, touched, "eval-x-1", evidence),
-                             ({"apps": ["eval-x-1", "voting-redis"], "projects": ["voting"]}, "eval-x-1"))
+                             ({"apps": ["eval-x-1", "voting-redis"], "projects": ["voting"], "databases": []}, "eval-x-1"))
             # A slug that existed before the run (or never got created) is not deleted.
             self.assertEqual(ev.deletable(g, before, touched, "eval-x-old", evidence)[1], None)
             # With no evidence only the harness's own slug is the run's.
-            self.assertEqual(ev.deletable(g, before, touched, "eval-x-1"), ({"apps": ["eval-x-1"], "projects": []}, "eval-x-1"))
+            self.assertEqual(ev.deletable(g, before, touched, "eval-x-1"), ({"apps": ["eval-x-1"], "projects": [], "databases": []}, "eval-x-1"))
         # Without an inventory from before the run nothing is provably the run's.
-        self.assertEqual(ev.deletable(g, None, touched, "eval-x-1"), ({"apps": [], "projects": []}, None))
+        self.assertEqual(ev.deletable(g, None, touched, "eval-x-1"), ({"apps": [], "projects": [], "databases": []}, None))
         # A dedicated eval account deletes everything the run touched.
         plain = ev.Gregale("/bin/gregale", "https://api.example", "tok")
         self.assertEqual(ev.deletable(plain, before, touched, "eval-x-1"), (touched, "eval-x-1"))
@@ -552,11 +601,11 @@ class CliLoginTests(unittest.TestCase):
         touched = {"apps": ["result", "vote", "voting-app-redis", "voting-worker", "zq-imm-repro-1115", "rb-java-off", "votes"],
                    "projects": ["h15"]}
         mine, others = ev.attribute(g, touched, evidence)
-        self.assertEqual(mine, {"apps": ["result", "vote", "voting-app-redis", "voting-worker"], "projects": []})
-        self.assertEqual(others, {"apps": ["zq-imm-repro-1115", "rb-java-off", "votes"], "projects": ["h15"]})
+        self.assertEqual(mine, {"apps": ["result", "vote", "voting-app-redis", "voting-worker"], "projects": [], "databases": []})
+        self.assertEqual(others, {"apps": ["zq-imm-repro-1115", "rb-java-off", "votes"], "projects": ["h15"], "databases": []})
         # A dedicated eval account has only the run in it.
         plain = ev.Gregale("/bin/gregale", "https://api.example", "tok")
-        self.assertEqual(ev.attribute(plain, touched, ""), (touched, {"apps": [], "projects": []}))
+        self.assertEqual(ev.attribute(plain, touched, ""), (touched, {"apps": [], "projects": [], "databases": []}))
 
     def test_cleanup_purges_deleted_apps_so_the_next_run_gets_the_name(self):
         calls = []
@@ -579,6 +628,20 @@ class CliLoginTests(unittest.TestCase):
             ("app", "delete", "--yes", "--delete-bindings", "stuck"),
         ])
         self.assertEqual(left, ["name:held", "app:stuck"])
+
+    def test_cleanup_deletes_the_runs_databases_only(self):
+        # The 2026-11-24 voting-app rerun found the account at its database
+        # limit, filled by earlier runs' databases cleanup never deleted.
+        g = ev.CliGregale("/bin/gregale")
+        touched = {"apps": [], "projects": [], "databases": ["example-voting-app-db", "windmill-db"]}
+        mine, others = ev.attribute(g, touched, "gregale postgres create example-voting-app-db")
+        self.assertEqual(mine["databases"], ["example-voting-app-db"])
+        self.assertEqual(others["databases"], ["windmill-db"])
+        calls = []
+        with mock.patch.object(g, "cli", side_effect=lambda *a, **k: calls.append(a) or mock.Mock(returncode=0)):
+            left = ev.cleanup(g, mine, None)
+        self.assertEqual(calls, [("postgres", "delete", "--yes", "example-voting-app-db")])
+        self.assertEqual(left, [])
 
     def test_claude_tool_inputs_are_evidence_but_not_recorded(self):
         lines = [json.dumps({"type": "assistant", "message": {"content": [
@@ -726,6 +789,62 @@ class GradeTests(unittest.TestCase):
             graded = ev.grade_features(task, ["ls", "gregale deploy --dry-run"], Path(d), {"apps": ["ui"], "projects": ["shop"]})
         self.assertEqual(graded, {"features_used": ["project", "preflight", "health-config"], "features_missed": ["logs"], "feature_score": 0.75})
         self.assertIsNone(ev.grade_features({}, [], Path("."), {})["feature_score"])
+
+    def test_feature_unless_first_deploy_live(self):
+        # G3 (2026-11-23): Gregale found the uvicorn command itself, so pinning
+        # it was a fix the agent did not need.
+        task = {"features": [{"id": "start-command-pinned", "kind": "file", "glob": "*", "pattern": "uvicorn", "unless": "first_deploy_live"}]}
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(ev.grade_features(task, [], Path(d), {}, first_live=True)["features_used"], ["start-command-pinned"])
+            self.assertEqual(ev.grade_features(task, [], Path(d), {}, first_live=False)["features_missed"], ["start-command-pinned"])
+
+    def test_first_deploy_live(self):
+        class G:
+            def __init__(self, rows):
+                self.rows = rows
+
+            def get(self, path):
+                return {"items": self.rows}
+        since = "2026-11-23T10:00:00Z"
+        first_failed = [{"created_at": "2026-11-23T10:05:00Z", "status": "failed"}, {"created_at": "2026-11-23T10:09:00Z", "status": "live"}]
+        first_live = [{"created_at": "2026-11-23T10:05:00Z", "status": "superseded"}, {"created_at": "2026-11-23T10:09:00Z", "status": "live"},
+                      {"created_at": "2026-11-22T10:00:00Z", "status": "failed"}]
+        self.assertFalse(ev.first_deploy_live(G(first_failed), ["web"], since))
+        self.assertTrue(ev.first_deploy_live(G(first_live), ["web"], since))
+        self.assertFalse(ev.first_deploy_live(G(first_live), [], since))
+
+    def test_no_traps_grades_the_end_state(self):
+        # G4 (voting-app 2026-11-23): a HEALTHCHECK experiment the agent
+        # replaced with a working release is not a trap it was left in.
+        class G:
+            def __init__(self, app, rows):
+                self.app, self.rows = app, rows
+
+            def get(self, path):
+                return {"items": self.rows} if path.endswith("deployments?limit=20") else self.app
+        since = "2026-11-23T10:00:00Z"
+        experiment = {"created_at": "2026-11-23T10:05:00Z", "status": "failed", "error_code": "app_startup_timeout"}
+        fixed = {"created_at": "2026-11-23T10:09:00Z", "status": "live"}
+        task = {"checks": [{"kind": "no_traps"}]}
+        recovered = ev.run_checks(task, "s", Path("."), "", G({"status": "active"}, [experiment, fixed]), created={"apps": ["worker"]}, since=since)
+        self.assertTrue(recovered[0]["ok"], recovered)
+        stuck = ev.run_checks(task, "s", Path("."), "", G({"status": "active"}, [fixed, dict(experiment, created_at="2026-11-23T10:20:00Z")]),
+                              created={"apps": ["worker"]}, since=since)
+        self.assertEqual(stuck[0]["detail"], "worker:app_startup_timeout")
+        parked = {"status": "evicted_cold", "parked_deployment": {"parked_at": "2026-11-23T10:30:00Z", "parked_reason": "liveness_exhausted"}}
+        self.assertFalse(ev.run_checks(task, "s", Path("."), "", G(parked, [fixed]), created={"apps": ["worker"]}, since=since)[0]["ok"])
+        woken = dict(parked, status="active")
+        self.assertTrue(ev.run_checks(task, "s", Path("."), "", G(woken, [fixed]), created={"apps": ["worker"]}, since=since)[0]["ok"])
+
+    def test_prefixed_compose_apps_are_the_runs(self):
+        # Codex 2026-11-23: `--prefix retail-sample-` named four apps the
+        # agent never typed whole.
+        g = ev.CliGregale("/bin/gregale")
+        evidence = "gregale project deploy --prefix retail-sample- --yes\ngregale deploy --prefix a"
+        touched = {"apps": ["retail-sample-cart", "retail-sample-orders", "other-cart", "alpha"], "projects": []}
+        mine, others = ev.attribute(g, touched, evidence)
+        self.assertEqual(mine["apps"], ["retail-sample-cart", "retail-sample-orders"])
+        self.assertEqual(others["apps"], ["other-cart", "alpha"])
 
     def test_anti_patterns(self):
         commands = ["curl -sS -X POST https://api.gregale.dev/v1/apps/ui/deployments -F source=@ui.tgz", "tar -czf ui.tgz -C src/ui .",
