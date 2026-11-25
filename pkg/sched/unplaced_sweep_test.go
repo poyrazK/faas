@@ -20,13 +20,14 @@ func TestSweepUnplaced(t *testing.T) {
 		ramMB      int
 		preplaced  bool
 		wantFound  int
+		wantFailed int
 		wantPlaced bool
 	}{
 		{name: "unplaced app is claimed", ramMB: 256, wantFound: 1, wantPlaced: true},
 		{name: "placed app is left alone", ramMB: 256, preplaced: true, wantFound: 0, wantPlaced: true},
 		// 50 GB fits no node: the claim fails, the sweep keeps going and
 		// the row stays NULL for the next sweep.
-		{name: "no fit stays unplaced for the next sweep", ramMB: 50_000, wantFound: 1},
+		{name: "no fit stays unplaced for the next sweep", ramMB: 50_000, wantFound: 1, wantFailed: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -39,12 +40,12 @@ func TestSweepUnplaced(t *testing.T) {
 				}
 			}
 
-			found, err := e.SweepUnplaced(ctx)
+			found, failed, err := e.SweepUnplaced(ctx)
 			if err != nil {
 				t.Fatalf("SweepUnplaced: %v", err)
 			}
-			if found != tc.wantFound {
-				t.Errorf("found = %d, want %d", found, tc.wantFound)
+			if found != tc.wantFound || failed != tc.wantFailed {
+				t.Errorf("found, failed = %d, %d; want %d, %d", found, failed, tc.wantFound, tc.wantFailed)
 			}
 			got, err := store.AppByID(ctx, app.ID)
 			if err != nil {

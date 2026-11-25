@@ -5689,8 +5689,9 @@ func (e *Engine) warnRestorePressureFallback(operation string, err error) {
 // both observe app.NodeID != "" and return nil. Returns the
 // underlying store / chooser error wrapped with %w+op when
 // placement cannot proceed (capacity exhausted, FK rejection,
-// etc.); the subscriber logs and continues — the next notify
-// (e.g. a later admin update) is a fresh opportunity.
+// etc.); the caller logs and continues. Only kind=created triggers a
+// claim, so a later update is not a retry: the next unplaced sweep
+// (about a minute later) is.
 //
 // Caller contract:
 //   - ctx must be cancellable; the subscriber drops on cancel.

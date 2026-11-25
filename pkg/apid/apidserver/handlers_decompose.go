@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -355,14 +356,24 @@ func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state
 	writeJSON(w, http.StatusOK, out)
 }
 
+// projectAppsNotifyTimeout bounds the app_changed notifications a project
+// apply sends after its own request context may be gone.
+const projectAppsNotifyTimeout = 5 * time.Second
+
 // notifyProjectAppsApplied emits one NotifyAppChanged per app a project
 // apply touched: kind=created for inserted apps (schedd claims their node
 // on it, Engine.ClaimUnplaced) and kind=updated for changed ones (keeps
 // schedd in sync when a workload's RootDir / WorkloadName / StartCommand
 // drifted). Reconcile commits its rows before returning, so schedd sees
 // them. A failed apply passes only added: the rows exist even though a
-// later step failed.
+// later step failed. The apply may have failed because its context
+// expired or the client went away, so the events do not ride on it.
 func (s *server) notifyProjectAppsApplied(ctx context.Context, projectID string, added, changed []state.App) {
+	if len(added) == 0 && len(changed) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), projectAppsNotifyTimeout)
+	defer cancel()
 	notify := func(a state.App, kind string) {
 		_ = s.notif.Notify(ctx, db.NotifyAppChanged,
 			string(safetext.JSONObject(struct {

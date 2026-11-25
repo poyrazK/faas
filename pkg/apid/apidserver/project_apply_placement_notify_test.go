@@ -4,15 +4,19 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -40,16 +44,26 @@ const projectPlacementCompose = `services:
 // kind=created. schedd claims a node only on that event, so the apps kept
 // apps.node_id NULL and every gateway wake failed until schedd restarted.
 // A failure after reconcile must still send kind=created for every app it
-// inserted; the dry-run scan must send nothing.
+// inserted, through the API and the dashboard preview apply alike; the
+// dry-run scan must send nothing.
 func TestProjectApplyFailureAfterReconcileStillPlacesAddedApps(t *testing.T) {
+	apiCall := func(path string) func(*testing.T, testEnv) *httptest.ResponseRecorder {
+		return func(t *testing.T, e testEnv) *httptest.ResponseRecorder {
+			rec := httptest.NewRecorder()
+			e.h.ServeHTTP(rec, projectPlacementRequest(t, e.key, path))
+			return rec
+		}
+	}
 	for _, tc := range []struct {
 		name        string
-		path        string
+		do          func(*testing.T, testEnv) *httptest.ResponseRecorder
 		wantStatus  int
 		wantCreated bool
 	}{
-		{name: "apply fails at compose redis name taken", path: "/v1/projects", wantStatus: http.StatusConflict, wantCreated: true},
-		{name: "dry-run scan", path: "/v1/projects/scan", wantStatus: http.StatusOK},
+		{name: "apply fails at compose redis name taken", do: apiCall("/v1/projects"), wantStatus: http.StatusConflict, wantCreated: true},
+		// The page re-renders with the problem, so the status is 200.
+		{name: "dashboard apply fails at compose redis name taken", do: dashboardPreviewApply, wantStatus: http.StatusOK, wantCreated: true},
+		{name: "dry-run scan", do: apiCall("/v1/projects/scan"), wantStatus: http.StatusOK},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			spool := t.TempDir()
@@ -68,10 +82,9 @@ func TestProjectApplyFailureAfterReconcileStillPlacesAddedApps(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			rec := httptest.NewRecorder()
-			e.h.ServeHTTP(rec, projectPlacementRequest(t, e.key, tc.path))
+			rec := tc.do(t, e)
 			if rec.Code != tc.wantStatus {
-				t.Fatalf("%s = %d %s; want %d", tc.path, rec.Code, rec.Body.String(), tc.wantStatus)
+				t.Fatalf("status = %d %s; want %d", rec.Code, rec.Body.String(), tc.wantStatus)
 			}
 
 			type notice struct {
@@ -128,6 +141,60 @@ func TestProjectApplyFailureAfterReconcileStillPlacesAddedApps(t *testing.T) {
 				t.Fatalf("kind=created for %v; want one per inserted app %v (body %s)", gotIDs, wantIDs, rec.Body.String())
 			}
 		})
+	}
+}
+
+// dashboardPreviewApply scans through the API (which caches the source
+// and sends nothing), then applies the plan the way the dashboard form
+// does, with an apply CSRF envelope bound to the account.
+func dashboardPreviewApply(t *testing.T, e testEnv) *httptest.ResponseRecorder {
+	t.Helper()
+	scan := httptest.NewRecorder()
+	e.h.ServeHTTP(scan, projectPlacementRequest(t, e.key, "/v1/projects/scan"))
+	if scan.Code != http.StatusOK {
+		t.Fatalf("scan = %d %s", scan.Code, scan.Body.String())
+	}
+	var plan api.PlanResponse
+	if err := json.Unmarshal(scan.Body.Bytes(), &plan); err != nil || plan.PlanToken == "" {
+		t.Fatalf("scan plan token: %v (%s)", err, scan.Body.String())
+	}
+	tok, err := middleware.IssueForAuthenticated(e.s.sessions, projectPreviewApplyAction, e.acct.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{"plan_token": {plan.PlanToken}, middleware.FormFieldName: {tok}}
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/projects/voting/preview/apply", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: middleware.CookieNameAuthenticated, Value: tok})
+	rec := httptest.NewRecorder()
+	e.s.applyProjectPreview(rec, req, e.s.log, e.acct, "voting")
+	return rec
+}
+
+// cancelAwareNotifier refuses a notification whose context is done, as a
+// real pg_notify on that context would.
+type cancelAwareNotifier struct{ *capturingNotifier }
+
+func (n cancelAwareNotifier) Notify(ctx context.Context, channel, payload string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return n.capturingNotifier.Notify(ctx, channel, payload)
+}
+
+// An apply can fail because its own context expired (ProjectApplyTimeout,
+// the migration deadline) or the client went away. The rows reconcile
+// committed still need their kind=created, so the notifications must not
+// use that context.
+func TestNotifyProjectAppsAppliedOutlivesRequestContext(t *testing.T) {
+	e := setupSecrets(t, api.PlanPro)
+	notif := cancelAwareNotifier{&capturingNotifier{}}
+	e.s.notif = notif
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	e.s.notifyProjectAppsApplied(ctx, "project-1", []state.App{{ID: "app-a"}, {ID: "app-b"}}, nil)
+	if got := len(notif.emitted); got != 2 {
+		t.Fatalf("sent %d notifications after the request context ended, want 2: %v", got, notif.emitted)
 	}
 }
 
