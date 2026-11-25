@@ -387,6 +387,9 @@ type appLayerReport struct {
 	// NextStandalone records the builder's marker beside a Next.js
 	// standalone server whose static and public files it copied.
 	NextStandalone bool
+	// YarnPnP records Yarn Plug'n'Play's loader at the root of /app
+	// (ADR-20261125170000): the app runs only through yarn.
+	YarnPnP bool
 }
 
 // keepName returns the name a kept entry has in the filtered layer: an /app
@@ -413,6 +416,8 @@ func (r *appLayerReport) noteKept(hdr *tar.Header) {
 	switch {
 	case hdr.Name == sharedruntime.NextStandaloneMarker && hdr.Typeflag == tar.TypeReg:
 		r.NextStandalone = true
+	case sharedruntime.YarnPnPLoader(hdr.Name):
+		r.YarnPnP = true
 	case r.KeepBun && r.BunBinDir == "" && (hdr.Typeflag == tar.TypeReg || hdr.Typeflag == tar.TypeSymlink || hdr.Typeflag == tar.TypeLink):
 		r.BunBinDir = sharedruntime.BunBinDir(hdr.Name)
 	}

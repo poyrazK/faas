@@ -24,7 +24,22 @@ const (
 	ReasonNPMArguments        = "npm_arguments"
 	ReasonMissingScript       = "missing_script"
 	ReasonNPMLifecycleHooks   = "npm_lifecycle_hooks"
+	// ReasonScriptPackageManager: the start script, or a script it reaches,
+	// calls a package manager or a script runner the runner base does not
+	// ship (npm, npx, yarn, pnpm, corepack, mise, npm-run-all and the
+	// like), so it would exit 127 there.
+	ReasonScriptPackageManager = "script_package_manager"
+	// ReasonYarnPnP: the app installed its dependencies with Yarn Plug'n'Play
+	// (/app/.pnp.cjs, no node_modules). Node resolves them only through
+	// yarn's loader, which yarn adds when it runs a script.
+	ReasonYarnPnP = "yarn_pnp"
 )
+
+// YarnPnPLoader reports whether name, a clean relative tar path, is Yarn
+// Plug'n'Play's loader at the root of /app.
+func YarnPnPLoader(name string) bool {
+	return name == "app/.pnp.cjs" || name == "app/.pnp.js"
+}
 
 // toolchainStep is the Railpack step that installs the language toolchain
 // with mise. The runner base supplies that toolchain, so its deploy paths are
@@ -178,9 +193,11 @@ func within(p string, roots []string) bool {
 }
 
 // resolveStart turns Railpack's start command into an argv that needs no
-// package manager. `npm start` and `npm run <script>` run the script body
-// through sh, as npm does; lifecycle hooks and forwarded arguments keep the
-// build on the full-layer path rather than approximating npm.
+// package manager. `npm start`, `npm run <script>`, and the same through pnpm
+// and yarn (ADR-20261125170000), run the script body through sh, as the
+// package manager does; lifecycle hooks, forwarded arguments and scripts that
+// call a package manager keep the build on the full-layer path rather than
+// approximating it.
 func resolveStart(command string, packageJSON []byte) ([]string, string) {
 	command = strings.TrimSpace(command)
 	if command == "" {
@@ -188,28 +205,21 @@ func resolveStart(command string, packageJSON []byte) ([]string, string) {
 	}
 	fields := strings.Fields(command)
 	switch fields[0] {
-	case "npm":
-	case "npx", "yarn", "pnpm", "bun", "bunx", "corepack":
+	case "npm", "pnpm", "yarn":
+	case "npx", "bun", "bunx", "corepack":
 		return nil, ReasonPackageManagerStart
 	default:
 		return []string{"/bin/sh", "-c", command}, ""
-	}
-	var script string
-	switch {
-	case len(fields) == 2 && fields[1] == "start":
-		script = "start"
-	case len(fields) == 3 && (fields[1] == "run" || fields[1] == "run-script"):
-		script = fields[2]
-	case len(fields) > 3 && (fields[1] == "run" || fields[1] == "run-script"):
-		return nil, ReasonNPMArguments
-	default:
-		return nil, ReasonPackageManagerStart
 	}
 	var pkg struct {
 		Scripts map[string]string `json:"scripts"`
 	}
 	if err := json.Unmarshal(packageJSON, &pkg); err != nil {
 		return nil, ReasonPackageUnreadable
+	}
+	script, reason := startScript(fields, pkg.Scripts)
+	if reason != "" {
+		return nil, reason
 	}
 	body := strings.TrimSpace(pkg.Scripts[script])
 	if body == "" {
@@ -218,7 +228,50 @@ func resolveStart(command string, packageJSON []byte) ([]string, string) {
 	if pkg.Scripts["pre"+script] != "" || pkg.Scripts["post"+script] != "" {
 		return nil, ReasonNPMLifecycleHooks
 	}
+	if walkStartScripts(body, packageJSON, func(name string) bool {
+		return name != "bun" && name != "bunx" && (nodePackageManagers[name] || nodeScriptRunners[name])
+	}) {
+		return nil, ReasonScriptPackageManager
+	}
 	return []string{"/bin/sh", "-c", body}, ""
+}
+
+// startScript names the package.json script a package manager start runs:
+// `<pm> start`, `<pm> run <name>` (npm also `run-script`), and pnpm's and
+// yarn's `<pm> <name>` for a script that is not one of their own commands.
+// More words are arguments the script would get.
+func startScript(fields []string, scripts map[string]string) (string, string) {
+	manager := fields[0]
+	run := len(fields) >= 3 && (fields[1] == "run" || manager == "npm" && fields[1] == "run-script")
+	switch {
+	case len(fields) == 2 && fields[1] == "start":
+		return "start", ""
+	case run && len(fields) == 3:
+		return fields[2], ""
+	case run:
+		return "", ReasonNPMArguments
+	case manager != "npm" && len(fields) >= 2 && !strings.HasPrefix(fields[1], "-") && !shorthandCommands[fields[1]]:
+		if _, ok := scripts[fields[1]]; !ok {
+			return "", ReasonPackageManagerStart
+		}
+		if len(fields) > 2 {
+			return "", ReasonNPMArguments
+		}
+		return fields[1], ""
+	}
+	return "", ReasonPackageManagerStart
+}
+
+// shorthandCommands are pnpm and yarn commands that `<pm> <name>` runs
+// instead of a script of that name.
+var shorthandCommands = map[string]bool{
+	"add": true, "audit": true, "bin": true, "cache": true, "config": true, "create": true, "dedupe": true,
+	"deploy": true, "dlx": true, "env": true, "exec": true, "fetch": true, "import": true, "info": true,
+	"init": true, "install": true, "link": true, "list": true, "ls": true, "node": true, "outdated": true,
+	"pack": true, "patch": true, "plugin": true, "prune": true, "publish": true, "rebuild": true,
+	"remove": true, "root": true, "run": true, "server": true, "set": true, "setup": true, "store": true,
+	"unlink": true, "unplug": true, "up": true, "update": true, "upgrade": true, "version": true,
+	"why": true, "workspace": true, "workspaces": true,
 }
 
 // RunnerPath is the PATH a shared-runtime app runs with on the runner base.
