@@ -121,10 +121,10 @@ next to `held`):
 - **Globals:** `group_vars/compute_nodes/*`, the compute play bodies,
   `ansible.cfg` and the collection pins. `host_roles.py changed` already
   reports these as `all: true`, so the lane refuses them (§1.1).
-- **`node_join.yml` with a compute role change in the same commit:** it
-  drives full rollouts only, but the role change can depend on the
-  node_join step, and the lane does not run node_join. Alone, it holds no
-  lane (§6).
+- **`node_join.yml` in a range that also changes a compute role or
+  compute-side code:** it drives full rollouts only, but that change can
+  depend on the node_join step, and the lane does not run node_join.
+  Otherwise it holds no lane (§6).
 - **Unit files** under `compute_only_service/files/` and the other compute
   roles' `files/*.service|*.socket|*.slice`: listed in
   `host_config.release_units` for compute too, as on the control plane,
@@ -165,15 +165,16 @@ it runs inside that job, on one node at a time.
 The `compute_only` playbooks (`node_join.yml`, `node_join_accept_release.yml`,
 `node_join_contract_probe.yml`) run only inside `gregalectl deploy join`, so
 a change to one affects the next full rollout and nothing a unit release
-does. A commit that changes one and no path a compute host role reads maps
-it to `compute_rollout`: reported, holds no lane. A commit that changes one
-together with a compute role path (a group global included), or with an
-input of a binary that runs on compute hosts (shared and compute daemons,
-gateways with a compute-only service; not `go.mod`/`go.sum`), keeps the
-playbook `compute_deploy`: that change may depend on the playbook step, so
-the compute and edge lanes must not ship it first
-(`affected_units.rollout_promotions`; the report lists such playbooks
-under `compute_only_paired`).
+does, so it maps to `compute_rollout`: reported, holds no lane. When any
+commit of the range (the lanes ship it whole) also changes a compute role
+path (a group global included), an input of a binary a lane runs on
+compute hosts (the compute lane's daemons, not the held database-node
+ones, and gateways with a compute-only service; not `go.mod`/`go.sum`) or
+the build recipe, the playbooks stay `compute_deploy`: that change may
+depend on the playbook step, in its commit or a later one, so the compute
+and edge lanes must not ship it first (`affected_units.rollout_promotions`;
+the report lists such playbooks under `compute_only_paired`). The
+control-plane lane never waited for them.
 
 ## What it frees
 
@@ -182,7 +183,7 @@ judged per commit by the planner of this ADR's step 1:
 
 | commit | still blocked by | freed |
 | --- | --- | --- |
-| 14eb61e7fb | — (`node_join.yml` alone) | **yes, §6** |
+| 14eb61e7fb | — (`node_join.yml` alone; gregalectl is a tool) | **yes, §6**, while its range to the next full release changes no compute role or compute-side code |
 | de9bcafc47 | `node_join.yml` paired with `pkg/manifest` (vmmd, schedd and gateways import it) | no, §6 pairs it |
 | 18289035dc | `deploy/manifest/production/ovh-live.template.yaml` (deploy, blocking) | no; its roles (`nftables`, `vmmd_service` drop-in) are lane roles |
 | 0f872e67ae | `group_vars/compute_nodes` (global) | no |

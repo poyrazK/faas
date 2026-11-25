@@ -77,9 +77,10 @@ Non-Go inputs map to flags (scripts/ci/release_units.json):
                compute_deploy holds the edge lane while it restarts a
                gateway on a compute host, which it does without converging
                that host's roles. compute_rollout holds nothing: the
-               rollout playbooks only drive the next full rollout, unless a
-               commit changes one with a compute role path, which makes it
-               compute_deploy (rollout_promotions).
+               rollout playbooks only drive the next full rollout, unless
+               the range also changes a compute role path, the code of a
+               binary a lane runs on compute hosts or the build recipe,
+               which makes them compute_deploy (rollout_promotions).
 
 Every deploy/ path has exactly one class (deploy_class), decided in this
 order: a release unit (host_config.release_units: blocking); a path a host
@@ -463,24 +464,26 @@ def deploy_class(path, config, host, comment_only=frozenset()):
     return cls, [DEPLOY_CLASSES.get(cls) or "deploy"]
 
 
-def rollout_promotions(found_flags, commits, host, on_compute=lambda path: False):
+def rollout_promotions(found_flags, commits, host, on_compute=lambda path: False, recipe_shas=frozenset()):
     """Settle the compute rollout playbooks (deploy_classes compute_only:
     node_join.yml and the plays it runs) in place. They only drive the next
     full rollout, which runs them, so they wait for it without holding a
-    lane (compute_rollout), unless a commit changes one together with a path
-    a compute host role reads or an input of a binary that runs on compute
-    hosts (on_compute): that change may depend on the playbook step, so
-    the playbook waits for the full release and holds what compute_deploy
-    holds (docs/adr/20261125083502-compute-host-config-lane.md §6).
-    Returns the promoted paths."""
+    lane (compute_rollout), unless any commit of the range (the lanes ship
+    it whole) changes a path a compute host role reads, an input of a binary
+    a lane runs on compute hosts (on_compute) or the build recipe
+    (recipe_shas): that change may depend on the playbook step, in its own
+    commit or a later one, so every rollout playbook of the range waits for
+    the full release and holds what compute_deploy holds
+    (docs/adr/20261125083502-compute-host-config-lane.md §6). Returns the
+    promoted paths."""
     rollout = set(found_flags.get("compute_rollout") or [])
     if not rollout:
         return set()
     owned = set((host.get("compute_nodes") or {}).get("owners") or {})
-    paired = {p for _, ps in commits if any(q in owned or on_compute(q) for q in ps if q not in rollout)
-              for p in ps if p in rollout}
-    if not paired:
-        return paired
+    if not any(sha in recipe_shas or any(q not in rollout and (q in owned or on_compute(q)) for q in ps)
+               for sha, ps in commits):
+        return set()
+    paired = set(rollout)
     found_flags["compute_deploy"] = sorted(set(found_flags.get("compute_deploy") or []) | paired)
     left = sorted(rollout - paired)
     if left:
@@ -601,11 +604,15 @@ def analyze(commits, closures, config, exists, recipe_shas=frozenset(), data=Non
     found_flags, deploy_classes = classify_deploy(deploy_paths, config, host, comment_only)
     # Binaries a commit could land on compute hosts with: shared and compute
     # daemons, and gateways with a compute-only service.
-    compute_side = [closures[n] for n, e in config["binaries"].items() if n in closures and (
-        e["lane"] in ("shared", "compute") or any(
-            svc.get("host") == "compute-only" for svc in e.get("services") or []))]
+    # Binaries a lane lands on compute hosts: the compute lane's (shared and
+    # compute daemons, not the held ones, which run on hosts no lane
+    # reaches) and gateways with a compute-only service.
+    compute_names = set(compute_lane(config)["binaries"]) | {
+        n for n, e in config["binaries"].items()
+        if any(svc.get("host") == "compute-only" for svc in e.get("services") or [])}
+    compute_side = [closures[n] for n in sorted(compute_names) if n in closures]
     paired = rollout_promotions(found_flags, commits, host, lambda path: path not in global_inputs and any(
-        hits(path, dirs, files, exists) for dirs, files in compute_side))
+        hits(path, dirs, files, exists) for dirs, files in compute_side), recipe_shas)
     if paired:
         # Report promoted playbooks apart from the ones that hold nothing.
         left = [p for p in deploy_classes.pop("compute_only", []) if p not in paired]
