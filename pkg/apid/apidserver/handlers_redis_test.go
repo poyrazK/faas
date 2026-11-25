@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -63,6 +64,20 @@ func TestRedisCacheCreateBindDelete(t *testing.T) {
 	}
 	if secret, err := e.store.GetAppSecretInScope(ctx, e.acct.ID, web.ID, api.DefaultEnvScope, "REDIS_URL"); err != nil || secret == nil {
 		t.Fatalf("REDIS_URL secret on web: %v", err)
+	}
+	// Binding grants the call (ADR-20261124174500); unbind takes it back.
+	if granted, err := e.store.ManagedValkeyCacheGranted(ctx, app.ID, web.ID); err != nil || !granted {
+		t.Fatalf("grant after bind = %v, %v; want true", granted, err)
+	}
+	if unbind := e.do(t, "DELETE", "/v1/redis/sessions/bindings/web", nil, nil); unbind.Code != http.StatusOK ||
+		!strings.Contains(unbind.Body.String(), `"app":"web"`) {
+		t.Fatalf("unbind: %d %s", unbind.Code, unbind.Body.String())
+	}
+	if granted, err := e.store.ManagedValkeyCacheGranted(ctx, app.ID, web.ID); err != nil || granted {
+		t.Fatalf("grant after unbind = %v, %v; want false", granted, err)
+	}
+	if again := e.do(t, "DELETE", "/v1/redis/sessions/bindings/web", nil, nil); again.Code != http.StatusNotFound {
+		t.Fatalf("second unbind = %d %s, want 404", again.Code, again.Body.String())
 	}
 	if notCache := e.do(t, "GET", "/v1/redis/web", nil, nil); notCache.Code != http.StatusNotFound {
 		t.Fatalf("get of a plain app = %d, want 404", notCache.Code)
@@ -212,3 +227,37 @@ func TestRedisCachePlanGates(t *testing.T) {
 }
 
 var _ state.ManagedValkeyStore = (*state.MemStore)(nil)
+
+// The 2026-11-24 voting-app eval: Compose wrote REDIS_URL on each consumer,
+// but the project policy refused every connection to the cache. Compose
+// provisioning grants each consumer the call, as `redis bind` does.
+func TestComposeRedisGrantsConsumers(t *testing.T) {
+	e := setupSecrets(t, api.PlanPro)
+	ctx := context.Background()
+	if rec := e.do(t, "POST", "/v1/redis", api.CreateRedisCacheRequest{Name: "voting-redis"}, nil); rec.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	cache, err := e.store.AppBySlug(ctx, "voting-redis")
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := createApp(t, e, "voting-worker")
+	worker.WorkloadName = "worker"
+	provisions := map[string]composeRedisProvision{"redis": {service: "redis", cache: "voting-redis", existing: true,
+		bindings: []composeRedisBinding{{Workload: "worker", EnvKey: "REDIS_URL", Value: api.ManagedValkeyURL("voting-redis")}}}}
+	r := httptest.NewRequest(http.MethodPost, "/", nil).WithContext(ctx)
+	if problem := e.s.applyComposeRedis(r, e.acct, api.DefaultEnvScope, provisions, []state.App{worker}); problem != nil {
+		t.Fatalf("applyComposeRedis: %+v", problem)
+	}
+	if granted, err := e.store.ManagedValkeyCacheGranted(ctx, cache.ID, worker.ID); err != nil || !granted {
+		t.Fatalf("consumer grant = %v, %v; want true", granted, err)
+	}
+
+	// A planned cache that is gone by apply time is refused, not granted.
+	provisions["redis"] = composeRedisProvision{service: "redis", cache: "voting-gone", existing: true,
+		bindings: provisions["redis"].bindings}
+	if problem := e.s.applyComposeRedis(r, e.acct, api.DefaultEnvScope, provisions, []state.App{worker}); problem == nil ||
+		problem.Code != "managed_redis_cache_missing" {
+		t.Fatalf("apply with a missing cache = %+v, want managed_redis_cache_missing", problem)
+	}
+}

@@ -142,6 +142,7 @@ func loadManagedPostgres(ctx context.Context, pool *pgxpool.Pool, getenv func(st
 	if metrics != nil {
 		usageOptions.Observe = metrics.ObserveUsage
 		usageOptions.ObserveSweep = metrics.ObserveUsageSweep
+		usageOptions.ObserveIdleTail = metrics.ObserveIdleTail
 	}
 	overage, released := hooks.overage(), hooks.released()
 	capEnforcer, err := loadManagedPostgresCapEnforcer(registry, store, accountStore, getenv, log, hooks, registerers...)
@@ -831,6 +832,17 @@ func (s *server) runManagedPostgresUsageCollector(ctx context.Context) {
 	}
 	if err := s.managedPostgresUsageCollector.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		s.log.Error("managed postgres usage collector exited", "error", err)
+	}
+}
+
+// runManagedPostgresSuspendTimeouts moves scale-to-zero databases onto their
+// suspend timeout on its own loop, whether or not usage metering runs.
+func (s *server) runManagedPostgresSuspendTimeouts(ctx context.Context) {
+	if s.managedPostgres == nil {
+		return
+	}
+	if err := s.managedPostgres.RunSuspendTimeoutSweeper(ctx, s.log); err != nil && !errors.Is(err, context.Canceled) {
+		s.log.Error("managed postgres suspend timeout sweeper exited", "error", err)
 	}
 }
 

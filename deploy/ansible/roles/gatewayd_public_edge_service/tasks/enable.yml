@@ -96,6 +96,9 @@
     mode: "0644"
   when: faas_edge_tunnel | bool
 
+- name: gatewayd_public_edge_service — install the reload-or-restart helper
+  ansible.builtin.include_tasks: ../../_shared/tasks/reload_or_restart_helper.yml
+
 - name: gatewayd_public_edge_service — install the edge unit and socket
   notify: restart faas-gatewayd-public-edge
   ansible.builtin.copy:

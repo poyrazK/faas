@@ -1122,7 +1122,14 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// build context is staged as the archive root (H10-25).
 		sourceApp := app
 		composeContext := composeDockerBuildContext(scanDir, workload, app)
+		// A release-phase-off installation keeps ignoring a build
+		// context's Procfile, as before it counted: honoring it there would
+		// refuse redeploys of projects that deployed fine.
+		var buildContext composeReleaseContext
 		if composeContext {
+			if !s.releasePhaseOff {
+				buildContext = composeReleaseContext{root: app.RootDir, archiveNarrowed: true}
+			}
 			sourceApp.RootDir = ""
 		}
 		staged, bytes, stageErr := s.stageApplyTarball(ctx, scanDir, acct.ID, project.ID, app, composeContext)
@@ -1183,7 +1190,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// release: in its own directory) applies as on a single-app deploy
 		// unless another service builds from the same directory
 		// (ADR-20261019120007 amendment 1).
-		releaseCommand, releaseProblem := projectWorkloadReleaseCommand(staged, workloads, workload, sourceApp, manifest)
+		releaseCommand, releaseProblem := projectWorkloadReleaseCommand(staged, workloads, workload, sourceApp, buildContext, manifest)
 		if releaseProblem != nil {
 			_ = os.Remove(staged)
 			res.Error = "release declaration invalid (server logs carry the detail)"
@@ -2303,6 +2310,14 @@ func (s *server) scanService(
 		warnings = append(warnings, projectsetup.IngressNotes(w.Name, slug, w.IngressSettings, acct.Plan, limits)...)
 		if w.ServiceBindingPolicy == "" && existing != nil {
 			pw.ServiceBindingPolicy = existing.Manifest.EffectiveServiceBindingPolicy()
+		}
+		// The release command the apply runs, including one the service
+		// declares in its own directory.
+		var releaseNote string
+		pw.ReleaseCommand, pw.ReleaseCommandSource, releaseNote = s.planWorkloadReleaseCommand(req.ScanDir, filteredW, w)
+		// Two services sharing a directory each report the same refusal.
+		if releaseNote != "" && !slices.Contains(warnings, releaseNote) {
+			warnings = append(warnings, releaseNote)
 		}
 		respWorkloads[i] = pw
 	}

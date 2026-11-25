@@ -14,7 +14,7 @@ func SlackPayload(msg Message) map[string]any {
 	if msg.Release != nil {
 		return releaseSlackPayload(*msg.Release)
 	}
-	icon := map[string]string{EventFire: ":rotating_light:", EventResolve: ":white_check_mark:", EventTest: ":wave:"}[msg.Event]
+	icon := map[string]string{EventFire: ":rotating_light:", EventResolve: ":white_check_mark:", EventTest: ":wave:", EventDigest: ":bar_chart:"}[msg.Event]
 	headline, detail := slackEscape(Headline(msg)), slackEscape(Detail(msg))
 	text := fmt.Sprintf("%s *%s*\n%s", icon, headline, detail)
 	for _, note := range msg.Notes {

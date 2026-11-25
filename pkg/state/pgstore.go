@@ -411,6 +411,11 @@ func (s *PgStore) CreateAccountWithPersonalOrg(ctx context.Context, params Creat
 			return CreateAccountWithPersonalOrgResult{}, err
 		}
 	}
+	if u := params.Unclaimed; u != nil {
+		if err := insertUnclaimedAccountTx(ctx, tx, acct.ID, *u); err != nil {
+			return CreateAccountWithPersonalOrgResult{}, err
+		}
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return CreateAccountWithPersonalOrgResult{}, fmt.Errorf("state: commit: %w", err)

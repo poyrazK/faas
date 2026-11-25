@@ -293,6 +293,17 @@
     - restart grafana-server
     - reload grafana provisioning
 
+- name: grafana — drop managed PostgreSQL scale-to-zero dashboard JSON
+  ansible.builtin.copy:
+    src: managed-postgres-scale-to-zero.json
+    dest: "{{ gv_dashboards_dir }}/managed-postgres-scale-to-zero.json"
+    owner: grafana
+    group: grafana
+    mode: "0640"
+  notify:
+    - restart grafana-server
+    - reload grafana provisioning
+
 - name: grafana — drop warm-snapshot dashboard JSON
   ansible.builtin.copy:
     src: warm-snapshot.json

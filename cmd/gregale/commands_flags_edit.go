@@ -25,7 +25,7 @@ const (
 	flagsEditAttempts     = 3
 	flagsEveryonePercent  = "everyone-percent"
 	flagsTypeVariant      = "variant"
-	flagsUsageEditVerbs   = "list|stale|create|set|on|off|kill|unkill|percent|rule-add|rule-rm|rm"
+	flagsUsageEditVerbs   = "list|stale|create|set|on|off|kill|unkill|percent|rule-add|rule-rm|rm|edge-set|edge-rm|edge-list"
 	flagsEditConflictCode = "flags_version_conflict"
 )
 
@@ -43,6 +43,10 @@ var flagsEditVerbs = map[string]string{
 	"rule-add": "a flag KEY and --id",
 	"rule-rm":  "a flag KEY and --id",
 	"rm":       "a flag KEY",
+	// ADR-20261124212701: edge routing.
+	"edge-set":  "a flag KEY, --path, --variant and --rewrite",
+	"edge-rm":   "a flag KEY (and --path for one route)",
+	"edge-list": "--project",
 }
 
 // flagsSnapshot is the part of GET .../flags the edit verbs use.
@@ -74,6 +78,9 @@ func cmdFlagsEdit(verb string, args []string) int {
 	owner := fs.String("owner", "", "who decides about the flag: a team or an email")
 	expires := fs.String("expires", "", "expiry date YYYY-MM-DD, or 'never' to clear")
 	all := fs.Bool("all", false, "stale: list every flag, not only those needing attention")
+	edgePath := fs.String("path", "", "edge: the routed path, /page or /prefix/*")
+	edgeVariant := fs.String("variant", "", "edge: the variant the route rewrites")
+	edgeRewrite := fs.String("rewrite", "", "edge: the path the variant serves instead")
 	var customers, attrs repeatedFlag
 	fs.Var(&customers, "customer", "platform customer UUID (repeatable)")
 	fs.Var(&attrs, "attr", "attribute condition NAME=V1,V2, NAME!=V1,V2 or NAME$=SUFFIX (repeatable)")
@@ -83,7 +90,7 @@ func cmdFlagsEdit(verb string, args []string) int {
 	}
 	want := 1
 	switch verb {
-	case "list", "stale":
+	case "list", "stale", "edge-list":
 		want = 0
 	case "percent":
 		want = 2
@@ -103,6 +110,13 @@ func cmdFlagsEdit(verb string, args []string) int {
 			return printErr("Flags operation failed", err)
 		}
 		return printFlagsList(snap)
+	}
+	if verb == "edge-list" {
+		snap, err := readFlagsSnapshot(ctx, client, *project, *environment)
+		if err != nil {
+			return printErr("Flags operation failed", err)
+		}
+		return printFlagsEdge(snap)
 	}
 	if verb == "stale" {
 		raw, err := client.ProjectFlagLifecycle(ctx, *project, *environment)
@@ -156,6 +170,14 @@ func cmdFlagsEdit(verb string, args []string) int {
 		edit = flagsRuleRemove(key, *ruleID)
 	case "rm":
 		edit = flagsRemove(key)
+	case "edge-set":
+		if *edgePath == "" || *edgeVariant == "" || *edgeRewrite == "" {
+			PrintUsage(os.Stderr, "gregale flag edge set needs --path, --variant and --rewrite", "flags")
+			return 1
+		}
+		edit = flagsEdgeSet(key, *edgePath, *edgeVariant, *edgeRewrite)
+	case "edge-rm":
+		edit = flagsEdgeRemove(key, *edgePath)
 	}
 	version, summary, err := runFlagsEdit(ctx, client, *project, *environment, edit)
 	if err != nil {
@@ -445,3 +467,54 @@ func printFlagsList(snap flagsSnapshot) int {
 	_, _ = fmt.Fprintf(osStdout, "version %d\n", snap.Version)
 	return 0
 }
+
+// flagEdgeRow is one route action in `gregale flag edge list`.
+type flagEdgeRow struct {
+	Flag    string `json:"flag"`
+	Path    string `json:"path"`
+	Variant string `json:"variant"`
+	Rewrite string `json:"rewrite"`
+}
+
+// printFlagsEdge lists every edge route action (ADR-20261124212701).
+func printFlagsEdge(snap flagsSnapshot) int {
+	rows := []flagEdgeRow{}
+	for _, f := range snap.Flags {
+		if f.Edge == nil {
+			continue
+		}
+		for _, route := range f.Edge.Routes {
+			variants := make([]string, 0, len(route.Variants))
+			for v := range route.Variants {
+				variants = append(variants, v)
+			}
+			slices.Sort(variants)
+			for _, v := range variants {
+				rows = append(rows, flagEdgeRow{Flag: f.Key, Path: route.Path, Variant: v, Rewrite: route.Variants[v].Rewrite})
+			}
+		}
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(map[string]any{"version": snap.Version, "routes": rows}))
+	}
+	if len(rows) == 0 {
+		_, _ = fmt.Fprintf(osStdout, "No edge routes (version %d). Add one with gregale flag edge set KEY --path /page --variant VARIANT --rewrite /page-b --project ...\n", snap.Version)
+		return 0
+	}
+	tw := tabwriter.NewWriter(osStdout, 0, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "FLAG\tPATH\tVARIANT\tSERVES")
+	for _, r := range rows {
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", r.Flag, r.Path, r.Variant, r.Rewrite)
+	}
+	if err := tw.Flush(); err != nil {
+		return 1
+	}
+	_, _ = fmt.Fprintf(osStdout, "version %d; other variants serve the path unchanged\n", snap.Version)
+	return 0
+}
+
+func flagsEdgeSet(key, path, variant, rewrite string) flagsEdit {
+	return flagsEdit(flags.EditEdgeSet(key, path, variant, rewrite))
+}
+
+func flagsEdgeRemove(key, path string) flagsEdit { return flagsEdit(flags.EditEdgeRemove(key, path)) }

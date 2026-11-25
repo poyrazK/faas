@@ -137,6 +137,17 @@ gregalectl config set -key managed_postgres_policy -yes -reason "launch limits" 
   an unknown backend, an invalid merged usage policy). A stored value that
   stops fitting after a file change is logged at start and the file's values
   serve until it is fixed.
+- `suspend_timeout_seconds` (60..604800, default 120) is how long a
+  scale-to-zero database's compute stays up after its last activity; every
+  wake bills at least this much compute. New databases and compute-policy
+  changes use it at once. A customer may give a database its own value
+  (`gregale postgres suspend-timeout`, 1 min to 1 h); the default covers the
+  rest. A sweep every 5 minutes on each apid, independent of usage metering,
+  moves existing Neon databases onto their value, writing only an endpoint
+  that is suspended and not held, so a running compute is never touched and
+  a busy database converges the next time it is idle. It reads Neon only for
+  databases whose row or value changed since it last confirmed them, or that
+  it had to defer.
 - `gregalectl config set -key managed_postgres_policy -value '{}'` goes back
   to the file's values; `gregalectl config rollback` restores an earlier
   version.
@@ -512,18 +523,25 @@ The adapter requires explicit `max_storage_bytes` and
 Neon organization plan. A value of `0` disables the point-in-time-restore
 promise. The storage ceiling must be positive.
 
-The initial service-class mapping is:
+The service-class mapping is:
 
 | Gregale class | Neon autoscaling range |
 | --- | ---: |
 | `development` | 0.25–1 CU |
 | `burstable` | 0.25–2 CU |
-| `production` | 1–4 CU |
+| `production` | 1–4 CU (0.5–4 CU accepted) |
+
+Production moves to 0.5–4 CU over two releases
+([ADR-20261124221402](adr/20261124221402-neon-production-class-half-cu-floor.md)):
+every neond now reads a database at either range as `production`, and a later
+release starts provisioning at 0.5 CU.
 
 Only `single_zone` is advertised. Gregale does not claim a portable
 high-availability promise merely because Neon storage has internal redundancy.
-`scale_to_zero=true` uses a 300-second suspend timeout; false disables compute
-suspension. Customer requests cannot currently select `false`; the adapter
+`scale_to_zero=true` suspends after the database's own suspend timeout
+(`gregale postgres suspend-timeout set`, 1 minute to 1 hour), or the
+`managed_postgres_policy.suspend_timeout_seconds` default (120 s) when it has
+none; false disables compute suspension. Customer requests cannot currently select `false`; the adapter
 retains the provider-neutral field for a future always-on entitlement.
 PostgreSQL majors 15 through 18 are enabled. PostgreSQL 14 reached upstream
 end of life in November 2026 and is not supported (owner, 2026-11-12); Neon

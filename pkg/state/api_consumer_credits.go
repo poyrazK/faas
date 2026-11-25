@@ -181,13 +181,7 @@ func (m *MemStore) CreateAPIConsumerCreditGrant(_ context.Context, g APIConsumer
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	open := 0
-	for _, existing := range m.apiConsumerCreditGrants {
-		if existing.ConsumerID == g.ConsumerID && existing.RemainingMillicents > 0 {
-			open++
-		}
-	}
-	if open >= api.ConsumerCreditOpenGrantsMax {
+	if m.countReservedConsumerCreditGrantsLocked(g.ConsumerID) >= api.ConsumerCreditOpenGrantsMax {
 		return APIConsumerCreditGrant{}, ErrConflict
 	}
 	if m.apiConsumerCreditGrants == nil {
@@ -196,6 +190,21 @@ func (m *MemStore) CreateAPIConsumerCreditGrant(_ context.Context, g APIConsumer
 	g.ID, g.RemainingMillicents, g.VoidedAt, g.CreatedAt = uuid.NewString(), g.AmountMillicents, nil, now
 	m.apiConsumerCreditGrants[g.ID] = g
 	return g, nil
+}
+
+func (m *MemStore) countReservedConsumerCreditGrantsLocked(consumerID string) int {
+	open := 0
+	for _, existing := range m.apiConsumerCreditGrants {
+		if existing.ConsumerID == consumerID && existing.RemainingMillicents > 0 {
+			open++
+		}
+	}
+	for _, purchase := range m.apiConsumerCreditPurchases {
+		if purchase.ConsumerID == consumerID && purchase.Status == ConsumerCreditPurchasePending {
+			open++
+		}
+	}
+	return open
 }
 
 func (m *MemStore) ListAPIConsumerCreditGrants(_ context.Context, accountID, appID, consumerID string) ([]APIConsumerCreditGrant, error) {

@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -86,6 +87,9 @@ func main() {
 	}
 	if os.Getenv(dependencyInputsHelperEnv) == publicBuildURLsHelperValue && os.Getpid() != 1 {
 		os.Exit(runPublicBuildURLs(os.Args[1:]))
+	}
+	if os.Getenv(dependencyInputsHelperEnv) == nextStandaloneHelperValue && os.Getpid() != 1 {
+		os.Exit(runNextStandalone(os.Args[1:]))
 	}
 	// A re-executed copy-out child (ADR-1037) never boots.
 	if len(os.Args) > 0 && os.Args[0] == appTaskCopyOutHelperArg0 && os.Getpid() != 1 {
@@ -2120,6 +2124,11 @@ func buildArgv(m api.BuildManifest) []string {
 	}, " ")
 	goCommand, goCommandEnv := railpackGoCommand(m)
 	prepare += goCommand
+	if nextStandaloneBuild(m) {
+		// Never fails the build; see runNextStandalone.
+		prepare += " && { " + dependencyInputsHelperEnv + "=" + nextStandaloneHelperValue + " /proc/1/exe " +
+			shellQuote(planPath) + " " + shellQuote(m.Workdir) + " " + strconv.Itoa(m.AppLayerMaxMB) + " || true; }"
+	}
 	if len(m.PublicBuildURLs) > 0 || m.BuildDependencyDigest != "" {
 		prepare += " && " + dependencyInputsHelperEnv + "=" + publicBuildURLsHelperValue + " /proc/1/exe " + shellQuote(planPath)
 	}

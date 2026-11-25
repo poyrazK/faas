@@ -46,6 +46,7 @@ func TestMCP401KeepsServerErrorCode(t *testing.T) {
 		{"no token", meta, `{"error":"authentication_required"}`, false, "authentication_required", "authentication required", "--token-env"},
 		{"bad token", meta + `, error="invalid_token"`, `{"error":"invalid_token"}`, true, "invalid_token", "rejected the token (HTTP 401 invalid_token)", "audience"},
 		{"keys unavailable", meta + `, error="invalid_token", error_description="signing keys unavailable"`, `{}`, true, "invalid_token", "could not check the token (HTTP 401 invalid_token: signing keys unavailable)", "JWKS"},
+		{"keys refused", meta + `, error="invalid_token", error_description="signing keys refused"`, `{}`, true, "invalid_token", "its JWKS URL refused the request (HTTP 401 invalid_token: signing keys refused)", "--public-auth open"},
 		{"code only in body", `Bearer realm="x"`, `{"error":"invalid_token"}`, true, "invalid_token", "rejected the token", "audience"},
 		{"hostile description dropped", meta + `, error="invalid_token", error_description="a` + "\x1b[2J" + `"`, `{}`, true, "invalid_token", "(HTTP 401 invalid_token)", ""},
 		{"no challenge, non-JSON", "", "<html>", true, "authentication_required", "HTTP 401 authentication_required", ""},

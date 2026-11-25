@@ -211,6 +211,8 @@ New project image deployments also capture their accepted Compose CMD contract;
 queued images and retries retain it after app configuration changes. Historical deployments without
 that record keep their existing command behavior.
 
+### Service dependencies and healthchecks
+
 Compose `depends_on: {backend: {condition: service_healthy}}` now holds the
 dependent workload's initial release until the captured backend deployment is
 live with traffic in the same environment. A failed dependency or a fixed
@@ -221,7 +223,7 @@ waiting. Declarations allow at most 100 dependency conditions per workload.
 Optional healthy dependencies and healthy job targets are rejected. A healthy
 gate on a Compose datastore such as `postgres` is accepted as a plain
 dependency, and a `service_completed_successfully` dependency runs as the
-release command of the waiting service that shares its build
+release command of the waiting web service (or, when only workers wait, the worker) that shares its build
 ([multi-service apps](multi-service-apps.md#start-order-and-migrations)).
 
 Compose `healthcheck:` overrides are also retained for prebuilt image workloads:
@@ -292,6 +294,8 @@ app and environment scope. Older in-flight candidates become superseded, and
 GitHub-triggered images recheck their recorded source branch before cutover.
 Explicit rollback retains its existing behavior.
 
+### Override an image's process
+
 Prebuilt image services can also override the image's process:
 
 ```yaml
@@ -328,6 +332,8 @@ service, each name that will have no value in the target environment under
 **Needs a value**: names already configured on the app, supplied by
 `--secrets-file`, or set by Gregale itself (`PORT`, `GREGALE_*`) are left out.
 
+### Gregale keys in a Compose file
+
 Three more Gregale keys shape the apps a Compose file creates:
 
 ```yaml
@@ -357,6 +363,47 @@ services:
 
 The deadline and auth keys apply when an app is created; change an existing
 app with `gregale app update`.
+
+### Compose key reference
+
+Every `x-gregale-*` key a Compose file can carry. Other Compose tools ignore
+them; `gregale project export` writes them back. `gregale guide compose-keys`
+prints this list in the terminal.
+
+| Key | Where | Values | Effect |
+| --- | --- | --- | --- |
+| `x-gregale-access` | service | `public`, `key` | `public`: the URL needs no Gregale API key, on every production deploy ([multi-service apps](multi-service-apps.md)). |
+| `x-gregale-allow-call-scopes` | service | map of caller to `methods`, `path_prefixes` | Methods and path prefixes each caller may call ([internal services](internal-services.md)). |
+| `x-gregale-allow-callers` | service | list of service names | Only these services may call it; `[]` denies all ([internal services](internal-services.md)). |
+| `x-gregale-app-protocol` | service | `http1`, `http2`, `grpc` | Wire protocol the service speaks ([multi-service apps](multi-service-apps.md)). |
+| `x-gregale-env-import` | top level | `true` | Import plain `environment:` values on a reviewed deploy (above). |
+| `x-gregale-platform-tenant-required` | service | `true`, `false` | Refuse traffic without a verified tenant ([platform tenants](platform-tenants.md)). |
+| `x-gregale-preview-calls` | service | `allow`, `deny` | Whether preview apps may call this production service ([internal services](internal-services.md)). |
+| `x-gregale-public-auth` | top level or service | `open`, `bearer` | Public URL auth of a new app (above). |
+| `x-gregale-renamed-from` | service | previous service name | A renamed service keeps its app ([multi-service apps](multi-service-apps.md)). |
+| `x-gregale-service-policy` | top level or service | `project` (default), `declared`, `account` | Which apps this service may call ([internal services](internal-services.md)). |
+| `x-gregale-service-reliability` | service | map of dependency to `timeout_ms`, `max_attempts`, … | Timeout and retries for calls to a `depends_on` target ([internal services](internal-services.md)). |
+| `x-gregale-service-transport` | service | `http`, `https` | Scheme of the service URLs injected into callers ([internal services](internal-services.md)). |
+| `x-gregale-slug-prefix` | top level | a prefix | New apps are named `<prefix><service>` (above). |
+| `x-gregale-startup-deadline` | service | seconds or a duration, ≤ 120 s | How long a new instance may take to become ready (above). |
+| `x-gregale-streaming` | service | `true`, `false` | Response streaming, as `gregale app <app> --streaming-enabled`. |
+| `x-gregale-wake-ahead` | service | `true`, `false` | Wake-ahead, as `gregale app wake-ahead <app> on`. |
+
+Some settings use standard Compose keys instead of an `x-gregale-*` key:
+
+- **RAM and CPU:** `deploy.resources.limits.memory` (or `mem_limit`) and
+  `cpus`; see [Memory and replica counts](#memory-and-replica-counts). A
+  service without `memory` starts with 128 MB.
+- **Instances:** `deploy.replicas` (or `scale`).
+- **A migration before each release:** a service the others wait for with
+  `depends_on: {migrate: {condition: service_completed_successfully}}`, or
+  `release:` in a `Procfile` (or `release.command` in `gregale.yaml`) in the
+  service's own directory
+  ([start order and migrations](multi-service-apps.md#start-order-and-migrations)).
+  The dry run prints it under the service as `release:`.
+- **Readiness:** `healthcheck:`; see [Service dependencies and healthchecks](#service-dependencies-and-healthchecks).
+
+### Import environment values
 
 A Compose file can opt in to importing the plain values of `environment:`:
 
@@ -388,6 +435,8 @@ source (for example a git-ignored `.env`) is a warning, or silent with
 `required: false`. Quoted values, including multi-line double- or
 single-quoted ones, are read to their closing quote; a malformed line is
 reported with its file and line number and skipped.
+
+### Build arguments and targets
 
 Source-built services pass `build.args` and `build.target` to their Dockerfile
 build, as `docker compose build` does:
@@ -421,6 +470,8 @@ same name as an argument wins. Build arguments end up in the image history, so
 keep secrets out of them and set those with `gregale env set`. Plans show the
 target and the argument names, not their values.
 
+### Build-time secrets
+
 Build-time secrets use `build.secrets`:
 
 ```yaml
@@ -446,6 +497,8 @@ opened only inside the builder VM, mounted with BuildKit's secret mount, and
 never stored in the image, its cache or Gregale's records; a build whose
 secret is not set fails with its name. Builds with secrets run on a fresh
 builder. At most 16 secrets per build (`DockerfileBuildSecretsMax`).
+
+### Secret files at runtime
 
 A service's own `secrets` become files in `/run/secrets`:
 
@@ -479,6 +532,8 @@ value; otherwise they change on the next start. A secret that is not set has
 no file. Only the service's main process gets the files, not sidecars, jobs or
 app tasks. At most 16 files per service (`SecretFilesMax`).
 
+### Memory and replica counts
+
 A service's size and count set its app's settings:
 
 ```yaml
@@ -511,6 +566,8 @@ project plan marks such services `memory=128MB (default)` and lists them under
 "Starts with the default 128 MB". Node and Python services often need more, so
 declare `memory`, or raise it with `gregale app <slug> --ram` after the deploy.
 
+### extends, include and profiles
+
 `extends` and top-level `include` are resolved as Compose resolves them:
 
 ```yaml
@@ -539,6 +596,8 @@ A service with `profiles:` is deployed only when one of its profiles is active.
 Activate profiles with `COMPOSE_PROFILES` in the source's `.env`, as Compose
 reads it there: comma-separated names, or `*` for every profile. Other services
 are skipped with a warning naming their profiles.
+
+### Keys Gregale reports instead of applying
 
 The scan reports every other Compose key instead of dropping it silently:
 

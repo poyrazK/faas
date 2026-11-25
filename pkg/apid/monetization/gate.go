@@ -20,6 +20,7 @@ var routes = []string{
 	"/v1/apps/{}/rate-cards",
 	"/v1/apps/{}/consumer-plans",
 	"/v1/apps/{}/consumer-billing-policy",
+	"/v1/apps/{}/consumer-credit-packs",
 	"/v1/apps/{}/consumer-overdue-holds",
 	"/v1/apps/{}/consumer-signup",
 	"/v1/apps/{}/consumer-signups",

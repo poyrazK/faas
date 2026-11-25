@@ -91,6 +91,12 @@ class PlanWorkload:
     depends_on_conditions: PlanWorkloadDependsOnConditions | Unset = UNSET
     """Explicit Compose dependency conditions. service_started retains admission ordering; service_healthy gates
     release on the captured same-project, same-environment dependency deployment."""
+    release_command: str | Unset = UNSET
+    """Command the service runs once before each of its releases goes live (shell string, or exec-form argv joined
+    by spaces). Omitted when it declares none."""
+    release_command_source: str | Unset = UNSET
+    """Where release_command is declared: a Compose service the workload waits for with
+    service_completed_successfully, a Procfile release: process, or gregale.yaml release.command."""
     service_binding_policy: ServiceBindingPolicy | Unset = UNSET
     """Caller-side authorization policy for internal service requests. `account` preserves same-account
     reachability; `declared` permits only targets present in the caller's service bindings; `project` also permits
@@ -218,6 +224,10 @@ class PlanWorkload:
         if not isinstance(self.depends_on_conditions, Unset):
             depends_on_conditions = self.depends_on_conditions.to_dict()
 
+        release_command = self.release_command
+
+        release_command_source = self.release_command_source
+
         service_binding_policy: str | Unset = UNSET
         if not isinstance(self.service_binding_policy, Unset):
             service_binding_policy = self.service_binding_policy
@@ -341,6 +351,10 @@ class PlanWorkload:
             field_dict["depends_on"] = depends_on
         if depends_on_conditions is not UNSET:
             field_dict["depends_on_conditions"] = depends_on_conditions
+        if release_command is not UNSET:
+            field_dict["release_command"] = release_command
+        if release_command_source is not UNSET:
+            field_dict["release_command_source"] = release_command_source
         if service_binding_policy is not UNSET:
             field_dict["service_binding_policy"] = service_binding_policy
         if service_reliability is not UNSET:
@@ -481,6 +495,10 @@ class PlanWorkload:
         else:
             depends_on_conditions = PlanWorkloadDependsOnConditions.from_dict(_depends_on_conditions)
 
+        release_command = d.pop("release_command", UNSET)
+
+        release_command_source = d.pop("release_command_source", UNSET)
+
         _service_binding_policy = d.pop("service_binding_policy", UNSET)
         service_binding_policy: ServiceBindingPolicy | Unset
         if isinstance(_service_binding_policy, Unset):
@@ -604,6 +622,8 @@ class PlanWorkload:
             resources=resources,
             depends_on=depends_on,
             depends_on_conditions=depends_on_conditions,
+            release_command=release_command,
+            release_command_source=release_command_source,
             service_binding_policy=service_binding_policy,
             service_reliability=service_reliability,
             service_binding_transport=service_binding_transport,

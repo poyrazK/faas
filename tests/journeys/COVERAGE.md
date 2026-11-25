@@ -59,10 +59,21 @@ waking, `redis restart`, and `redis resize` to 96 MB (the replication handoff).
 Many back-to-back handoffs under write load stay with the metal soak
 `TestManagedRedisHandoffSoakMetal` (`FAAS_E2E_REDIS_SOAK=1`).
 
+Verification contracts (ADR-20261122220000, row 177) are a preview behind the
+`verification-contracts` capability, so they are not a GA row either.
+`TestVerificationContracts` runs when the account's capabilities do not report
+`verification-contracts` hidden, and skips otherwise. It deploys the probe app
+with a `gregale.verify.yaml` whose checks pass, one sending an app secret in a
+header (`${secret:E2E_VERIFY_TOKEN}`, checked by its SHA-256) and one POST
+that production skips; then a release whose required check fails, which is
+refused while v1 keeps serving; then a release whose header names an unset
+secret, refused with `verify_secret_missing`. MCP and SQL checks, GitHub
+pushes and PR previews stay with the package tests.
+
 | # | GA capability | Journeys and steps | Not covered |
 |---|---|---|---|
 | 1 | Apps: create, update, rename, delete, restore | `TestAppSettingsAndRename` (update, rename), `TestDeleteAndRestore`, every `deployProbe`; `TestAppNameTakenByAnotherAccount` (a deploy under another account's name gets the same `<name>-<suffix>` app twice with a notice; rename onto it answers `app_rename_failed`; needs `GREGALE_E2E_OTHER_TOKEN`), `TestAppNameBlocked` (a blocklisted name: suffixed app, "not available" notice, rename answers `app_name_unavailable`; needs `GREGALE_E2E_BLOCKED_NAME`) | suffixed names for dashboard, MCP and project deploys (only the CLI deploy suffixes) |
-| 2 | Source deploys: local tree, tarball, Dockerfile, resumable uploads | `deployProbe` (local tree), `TestDeploySourceFiles` (offline payload JSON/text, ignore reasons and no API calls), `TestDockerfileTarballAndSecretReload` (tarball + Dockerfile), `TestPythonSourceDeploys` (Python requirements.txt and `uv run` apps on the shared Python runner base) | resumable upload resume after an interrupted upload |
+| 2 | Source deploys: local tree, tarball, Dockerfile, resumable uploads | `deployProbe` (local tree), `TestDeploySourceFiles` (offline payload JSON/text, ignore reasons and no API calls), `TestDockerfileTarballAndSecretReload` (tarball + Dockerfile), `TestPythonSourceDeploys` (Python requirements.txt and `uv run` apps on the shared Python runner base), `TestJSFrameworkSourceDeploys` (ADR-20261124160000: a Next.js 16 app (standalone tree when its full `/app` is over the plan's app layer cap) with `/_next/static` and `public` files, and a Bun app on mise's Bun on the shared Node runtime; each parks and wakes) | resumable upload resume after an interrupted upload |
 | 3 | Builds in builder microVMs, build logs, cache | every source deploy (cache hits reported), `TestBuildsAndProvenance` (list, status, provenance, SBOM, build log) | — |
 | 4 | Container image deploys, image preflight | `TestImageRegistryAndDeployTokens/image_deploy`, `TestImagePreflight` | image-published deployments (`registry published`) need a project workload (preview) |
 | 5 | GitHub: install, push-to-deploy, Checks status | `TestGitHubDeploys` (bind, push_to_deploy, checks_status) | App installation itself (done once for the fixture); push-to-deploy is a known failure (no deployment on push, 2026-10-27; an app bind had no project for the push to find, fixed by ADR-20261101160300 and known until released) |

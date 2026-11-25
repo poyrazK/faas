@@ -12,6 +12,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -44,16 +45,28 @@ type classProfile struct {
 	maximumCU float64
 }
 
+// profiles are the ranges the adapter provisions.
 var profiles = map[managedpostgres.ServiceClass]classProfile{
 	managedpostgres.ClassDevelopment: {minimumCU: 0.25, maximumCU: 1},
 	managedpostgres.ClassBurstable:   {minimumCU: 0.25, maximumCU: 2},
 	managedpostgres.ClassProduction:  {minimumCU: 1, maximumCU: 4},
 }
 
+// acceptedProfiles are further ranges that read as their class without
+// being provisioned. Production moves to 0.5–4 CU in two releases
+// (ADR-20261124221402): this one only accepts 0.5–4, so every neond can read
+// a database at either range before the next release starts creating at
+// 0.5 and keeps 1–4 here for the endpoints already at it.
+var acceptedProfiles = map[managedpostgres.ServiceClass]classProfile{
+	managedpostgres.ClassProduction: {minimumCU: 0.5, maximumCU: 4},
+}
+
 // Provider is a Neon-backed implementation of managedpostgres.Provider.
 // Project IDs and endpoint hosts are treated as opaque/sensitive outside the
 // adapter and are never included in returned errors.
 type Provider struct {
+	// idleTailPageSize overrides operationsPageSize in tests.
+	idleTailPageSize       int
 	baseURL                *url.URL
 	httpClient             *http.Client
 	apiKey                 string
@@ -77,6 +90,9 @@ type Provider struct {
 	// broker, when set, forwards every Neon call to neond, which holds the
 	// key (ADR-20261112160000); apiKey is then empty.
 	broker brokerForwarder
+	// suspendTimeout is the registry's scale-to-zero suspend timeout
+	// (managedpostgres.SuspendTimeoutSetter); 0 is the default.
+	suspendTimeout atomic.Int64
 }
 
 // New constructs the production Neon driver from a provider-neutral backend

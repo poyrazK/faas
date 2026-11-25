@@ -253,6 +253,10 @@ func (s *Service) saveBillingConnection(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 	}
+	if errors.Is(err, state.ErrStripeCreditPurchasesPending) {
+		api.WriteProblem(w, pendingCreditPurchasesProblem())
+		return
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("could not store the "+p.title()+" key"))
 		return
@@ -336,6 +340,10 @@ func (s *Service) DeleteBillingConnection(w http.ResponseWriter, r *http.Request
 		return
 	}
 	err := store.DeleteBillingConnection(r.Context(), acct.ID, name)
+	if errors.Is(err, state.ErrStripeCreditPurchasesPending) {
+		api.WriteProblem(w, pendingCreditPurchasesProblem())
+		return
+	}
 	if errors.Is(err, state.ErrNotFound) {
 		httpkit.NotFound(w, "no "+p.title()+" connection")
 		return
@@ -346,6 +354,11 @@ func (s *Service) DeleteBillingConnection(w http.ResponseWriter, r *http.Request
 	}
 	s.Host.Audit(r.Context(), "billing_connection.deleted", acct.ID, map[string]any{"provider": name})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func pendingCreditPurchasesProblem() *api.Problem {
+	return api.NewProblem(http.StatusConflict, api.CodeConflict, "Stripe credit purchases pending",
+		"wait for open credit purchases to settle or expire before changing the Stripe connection")
 }
 
 // callProblem explains a failed provider call without echoing the key.

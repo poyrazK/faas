@@ -72,6 +72,10 @@ func TestClassifyNode(t *testing.T) {
 		{name: "missing script", plan: platformPlan(t, nil), pkg: `{"scripts":{}}`, wantReason: ReasonMissingScript},
 		{name: "forwarded npm arguments", plan: platformPlan(t, setStart("npm run start -- --port 3000")), pkg: pkg, wantReason: ReasonNPMArguments},
 		{name: "other package manager", plan: platformPlan(t, setStart("yarn start")), pkg: pkg, wantReason: ReasonPackageManagerStart},
+		{name: "bun keeps its own install", plan: platformPlan(t, setStart("bun run start")), pkg: pkg, wantStart: []string{"/bin/sh", "-c", "bun run start"}},
+		{name: "env-prefixed bun", plan: platformPlan(t, setStart("PORT=3000 bun run start")), pkg: pkg, wantStart: []string{"/bin/sh", "-c", "PORT=3000 bun run start"}},
+		{name: "bun script calling npm", plan: platformPlan(t, setStart("bun run --bun start")), pkg: `{"scripts":{"start":"npm run serve"}}`, wantReason: ReasonPackageManagerStart},
+		{name: "npm script running bun", plan: platformPlan(t, setStart("npm start")), pkg: `{"scripts":{"start":"bun index.ts"}}`, wantReason: ReasonBunInScript},
 		{name: "no start command", plan: platformPlan(t, setStart("")), pkg: pkg, wantReason: ReasonNoStartCommand},
 		{name: "unreadable plan", plan: []byte("{"), pkg: pkg, wantReason: ReasonPlanUnreadable},
 	}
@@ -84,7 +88,11 @@ func TestClassifyNode(t *testing.T) {
 			if !slices.Equal(got.Start, tt.wantStart) {
 				t.Fatalf("start = %q, want %q", got.Start, tt.wantStart)
 			}
-			if got.Eligible && (got.Env["PATH"] != runnerPath || got.Env["NODE_ENV"] != "production") {
+			wantPath := runnerPath
+			if len(tt.wantStart) > 0 && UsesBun(tt.wantStart[len(tt.wantStart)-1]) {
+				wantPath = "" // imaged sets it from the artifact's Bun install
+			}
+			if got.Eligible && (got.Env["PATH"] != wantPath || got.Env["NODE_ENV"] != "production") {
 				t.Fatalf("env = %v, want the runner PATH and the plan's variables", got.Env)
 			}
 		})

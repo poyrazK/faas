@@ -2205,7 +2205,7 @@ func (e deployExecution) notifyQueued(dep api.DeploymentResponse) {
 // dev` has already reserved its preview app, so it skips the create-or-fetch
 // probe; this also avoids incorrectly tripping the app-count quota while
 // redeploying an existing developer environment.
-func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp bool, executions ...deployExecution) int {
+func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp bool, executions ...deployExecution) (exitCode int) {
 	// The preflight flag is package-global because the packer lives in a
 	// separate file. Reset it per invocation so a previous strict deploy
 	// cannot suppress scans in the next CLI command or test.
@@ -2221,12 +2221,19 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
 	developerSync := execution.developerSource
+	anonymousDeploySession = nil
+	defer func() {
+		if exitCode == 0 {
+			printAnonymousClaimNotice(osStderr)
+		}
+	}()
 	fs := newFlagSet("deploy", flag.ContinueOnError)
 	image := fs.String("image", "", "digest-pinned image reference")
 	tarball := fs.String("tarball", "", "path to source archive (tar.gz)")
 	sourcePath := fs.String("path", "", "deploy this source directory (relative to the current directory)")
 	sourceMode := fs.String("source", "auto", "local source to deploy: auto, head, or worktree")
 	worktree := fs.Bool("worktree", false, "deploy the selected source directory from the working tree, including local changes")
+	anonymous := fs.Bool("anonymous", false, "deploy without an account when not logged in; prints a link a person opens to claim the app")
 	// Issue #739 / ADR-092: --repo pairs with --ref to drive the
 	// headless source-ref deploy (server-side foundation lives in
 	// cmd/apid/handlers_source_ref.go). The previous M7.5 dashboard
@@ -3514,7 +3521,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	var err error
 	if !*simplePlan && (localZeroConfig || explicitTarball) {
 		var authErr error
-		client, authErr = authedClientWithDeployTimeout(5 * time.Minute)
+		client, authErr = deployClientOrAnonymous(ctx, 5*time.Minute, *anonymous, projectRequested)
 		if authErr != nil {
 			return printErr("Not logged in", authErr)
 		}
@@ -4035,7 +4042,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 
 	if client == nil {
 		var authErr error
-		client, authErr = authedClientWithDeployTimeout(5 * time.Minute)
+		client, authErr = deployClientOrAnonymous(ctx, 5*time.Minute, *anonymous, projectRequested)
 		if authErr != nil {
 			return printErr("Not logged in", authErr)
 		}
@@ -5875,7 +5882,7 @@ func cmdDomains(args []string) int {
 		}
 		if *slug == "" {
 			// Prod hunt r35: a linked checkout printed only the usage line.
-			*slug, *environment = linkedDomainTarget(*environment)
+			*slug, *environment = linkedAppAndEnvironment(*environment)
 		}
 		if *domain == "" || *slug == "" {
 			PrintUsage(os.Stderr, "usage: gregale domain create <domain> --app <slug> [--env <environment>]", "domains")
@@ -6058,7 +6065,7 @@ func cmdCrons(args []string) int {
 		}
 		fs := newFlagSet("crons-add", flag.ContinueOnError)
 		interactive := fs.Bool("interactive", false, "choose and review a scheduled HTTP task")
-		slug := fs.String("app", "", "app slug (required)")
+		slug := fs.String("app", "", "app slug (defaults to the linked app)")
 		schedule := fs.String("schedule", "", "cron expression (required)")
 		path := fs.String("path", "", "path the cron sends a POST to (HTTP cron only; default: /)")
 		command := fs.String("command", "", "executable for a deployment-attached command cron")
@@ -6101,8 +6108,13 @@ func cmdCrons(args []string) int {
 			}
 			return cmdCronsAddInteractive(selected)
 		}
+		if *slug == "" {
+			// Prod hunt r36: a linked checkout printed only the usage line;
+			// `cron list` already reads the link (prod hunt r33).
+			*slug, *environment = linkedAppAndEnvironment(*environment)
+		}
 		if *slug == "" || *schedule == "" {
-			PrintUsage(os.Stderr, "usage: gregale cron create --app <slug> --schedule '*/5 * * * *' (--path / | --command EXEC [--arg ARG...]) [--timezone UTC] [--skip-if-running] [--retry-max N --retry-backoff-seconds N] [--environment ENV]", "crons")
+			PrintUsage(os.Stderr, "usage: gregale cron create [--app <slug>] --schedule '*/5 * * * *' (--path / | --command EXEC [--arg ARG...]) [--timezone UTC] [--skip-if-running] [--retry-max N --retry-backoff-seconds N] [--environment ENV]", "crons")
 			return 1
 		}
 		pathSet := false
@@ -8091,12 +8103,18 @@ type streamDeployOptions struct {
 	// detaches with exit 0 because the rollout runs on Gregale.
 	followRollout bool
 	darkDeploy    bool
+	// streamIdleTimeout overrides defaultDeployStreamIdleTimeout (tests).
+	streamIdleTimeout time.Duration
 }
 
 func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.DeploymentResponse, appSlug string, opts streamDeployOptions) (exit int) {
 	waitTimeout := opts.waitTimeout
 	if waitTimeout <= 0 {
 		waitTimeout = defaultDeployWaitTimeout
+	}
+	streamIdleTimeout := opts.streamIdleTimeout
+	if streamIdleTimeout <= 0 {
+		streamIdleTimeout = defaultDeployStreamIdleTimeout
 	}
 	recoveryStage := "deployment"
 	defer func() {
@@ -8245,6 +8263,7 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 		warnWaitStopped("stream unreachable; follow manually: gregale logs %s --deployment %s --follow", appSlug, dep.ID)
 		return 3
 	}
+	body = newIdleWatchdogReader(body, streamIdleTimeout)
 	defer func() { _ = body.Close() }()
 	dec := api.NewDecoder(body)
 	dec.SetCloseFn(body.Close)
@@ -8276,7 +8295,7 @@ streamLoop:
 					streamErr = <-streamErrors
 				}
 				if waitCtx.Err() == nil && streamErr != nil && !errors.Is(streamErr, io.EOF) {
-					warnDeployStreamInterrupted(opts.quiet)
+					warnDeployStreamInterrupted(opts.quiet, streamErr)
 				}
 				break streamLoop
 			}
@@ -8356,7 +8375,7 @@ streamLoop:
 				}
 				break streamLoop
 			case streamEventError:
-				warnDeployStreamInterrupted(opts.quiet)
+				warnDeployStreamInterrupted(opts.quiet, nil)
 				break streamLoop
 			default:
 				// Unknown frame shape — print raw so the customer can see it.
@@ -9084,10 +9103,17 @@ func renderSecretScanWarnings(findings []secretscan.Finding, w io.Writer) {
 // closed; follow manually") although the deployment went live. The caller now
 // falls through to the build/deployment status poll, so the exit code is the
 // deployment's own outcome.
-func warnDeployStreamInterrupted(quiet bool) {
-	if !quiet {
-		PrintWarn(os.Stderr, "build log stream interrupted; following deployment status…")
+func warnDeployStreamInterrupted(quiet bool, err error) {
+	if quiet {
+		return
 	}
+	if errors.Is(err, errDeployStreamIdle) {
+		// The idle watchdog closed it: say so, so a silent connection is
+		// not mistaken for a server error.
+		PrintWarn(os.Stderr, "build log stream interrupted (%v); following deployment status…", err)
+		return
+	}
+	PrintWarn(os.Stderr, "build log stream interrupted; following deployment status…")
 }
 
 // cmdDomainsList lists the account's custom domains, or one app's with --app.

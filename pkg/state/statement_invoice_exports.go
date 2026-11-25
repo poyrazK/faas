@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // Statement invoice export constants (ADR-1502, ADR-1507).
@@ -258,6 +259,9 @@ func (m *MemStore) putBillingConnection(c BillingConnection, expected *time.Time
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if c.Provider == BillingProviderStripe && m.hasPendingLiveCreditPurchaseLocked(c.AccountID) {
+		return BillingConnection{}, ErrStripeCreditPurchasesPending
+	}
 	if m.billingConnections == nil {
 		m.billingConnections = map[string]BillingConnection{}
 	}
@@ -297,6 +301,9 @@ func (m *MemStore) DeleteBillingConnection(_ context.Context, accountID, provide
 	key := accountID + "/" + provider
 	if _, ok := m.billingConnections[key]; !ok {
 		return ErrNotFound
+	}
+	if provider == BillingProviderStripe && m.hasPendingLiveCreditPurchaseLocked(accountID) {
+		return ErrStripeCreditPurchasesPending
 	}
 	delete(m.billingConnections, key)
 	return nil
@@ -493,7 +500,9 @@ func (s *PgStore) putBillingConnection(ctx context.Context, c BillingConnection,
 	}
 	args := append([]any{c.AccountID, c.Provider, c.SealedSecret, c.KeyLast4, c.Livemode, c.APIURL,
 		c.Collection, c.DaysUntilDue, c.AutomaticTax, c.StripeAccountID}, extra...)
-	err := s.pool.QueryRow(ctx, query+` returning created_at, updated_at`, args...).Scan(&c.CreatedAt, &c.UpdatedAt)
+	err := s.mutateBillingConnection(ctx, c.AccountID, c.Provider, func(db sqlc.DBTX) error {
+		return db.QueryRow(ctx, query+` returning created_at, updated_at`, args...).Scan(&c.CreatedAt, &c.UpdatedAt)
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return BillingConnection{}, ErrConflict
 	}
@@ -522,14 +531,43 @@ func (s *PgStore) GetBillingConnection(ctx context.Context, accountID, provider 
 }
 
 func (s *PgStore) DeleteBillingConnection(ctx context.Context, accountID, provider string) error {
-	tag, err := s.pool.Exec(ctx, `delete from account_billing_connections where account_id = $1::uuid and provider = $2`, accountID, provider)
+	return s.mutateBillingConnection(ctx, accountID, provider, func(db sqlc.DBTX) error {
+		tag, err := db.Exec(ctx, `delete from account_billing_connections where account_id = $1::uuid and provider = $2`, accountID, provider)
+		if err != nil {
+			return fmt.Errorf("delete billing connection: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
+}
+
+func (s *PgStore) mutateBillingConnection(ctx context.Context, accountID, provider string, mutate func(sqlc.DBTX) error) error {
+	if provider != BillingProviderStripe {
+		return mutate(s.pool)
+	}
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("delete billing connection: %w", err)
+		return err
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockStripeCreditPurchases(ctx, tx, accountID); err != nil {
+		return err
 	}
-	return nil
+	var pending bool
+	err = tx.QueryRow(ctx, `select exists (select 1 from api_consumer_credit_purchases
+		where account_id = $1::uuid and status = 'pending' and livemode)`, accountID).Scan(&pending)
+	if err != nil {
+		return fmt.Errorf("check for pending Stripe credit purchases: %w", err)
+	}
+	if pending {
+		return ErrStripeCreditPurchasesPending
+	}
+	if err := mutate(tx); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 const statementInvoiceExportCols = `id, account_id, source_kind, statement_id, provider, customer, status,
