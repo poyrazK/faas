@@ -145,7 +145,14 @@ var Names = []string{
 // application Auth, a dark launch (ADR-1190) that `gregale auth create`
 // materializes. agent-stateless-node and agent-infinity-rust scaffold a
 // stateless agent, behind the internal agents capability (ADR-20261030125501).
-var unlisted = map[string]bool{"durable-entity-node": true, "auth": true, "agent-stateless-node": true, "agent-infinity-rust": true}
+// The customer-operation-* starters depend on @gregale/sdk-node from a local
+// gregale-js checkout (packages/gregale-sdk.tgz); the package is not on npm,
+// so a customer who picked one from --list could not install it (prod hunt
+// r47). List them again once the SDK is published.
+var unlisted = map[string]bool{
+	"durable-entity-node": true, "auth": true, "agent-stateless-node": true, "agent-infinity-rust": true,
+	"customer-operation-export": true, "customer-operation-job-export": true, "customer-operation-workflow-export": true,
+}
 
 // ListedNames returns Names without unlisted templates, in catalog order.
 func ListedNames() []string {

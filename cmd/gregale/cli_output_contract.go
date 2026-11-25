@@ -165,7 +165,7 @@ func listOutputErrorContract() cliOutputErrorContract {
 	errors := cliOutputErrorContract{Stream: "stderr", Encoding: "json", Shape: "problem", ExitCodeField: "exit_code", CodeField: "code",
 		RequestIDField: "request_id", RequestIDOptional: true, ServerErrorExit: exitCodeForStatus(500), OtherAPIErrorExit: exitCodeForStatus(400),
 		LocalErrorExit: 1, TransportExit: 3, NativeSignalExits: true}
-	for _, statuses := range [][]int{{401}, {403}, {404, 410}, {409, 412}, {408, 429}} {
+	for _, statuses := range [][]int{{401}, {403}, {404, 410}, {409, 412}, {408, 429}, {501}} {
 		errors.StatusExits = append(errors.StatusExits, cliOutputHTTPExit{Statuses: statuses, ExitCode: exitCodeForStatus(statuses[0])})
 	}
 	return errors

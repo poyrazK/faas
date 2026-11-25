@@ -292,16 +292,16 @@ func cmdStatus(args []string) int {
 func cmdEnv(args []string) int {
 	if len(args) == 0 || args[0] == "clone-status" && !fullEnvironmentCloneCLI() ||
 		args[0] == "resume-automation" && !fullEnvironmentCloneCLI() && !environmentBranchCLI() {
-		usage := "usage: gregale env <create|pull|push|diff|history|rollback>"
+		usage := "usage: gregale env <set|unset|list|create|pull|push|diff|history|rollback>"
 		switch {
 		case fullEnvironmentCloneCLI():
-			usage = "usage: gregale env <create|clone-status|resume-automation|pull|push|diff|history|rollback>"
+			usage = "usage: gregale env <set|unset|list|create|clone-status|resume-automation|pull|push|diff|history|rollback>"
 		case environmentBranchCLI():
 			// Branches copy their parent's automation paused too
 			// (ADR-20261031193635 amendment 2026-11-17).
-			usage = "usage: gregale env <create|resume-automation|pull|push|diff|history|rollback>"
+			usage = "usage: gregale env <set|unset|list|create|resume-automation|pull|push|diff|history|rollback>"
 		}
-		PrintUsage(os.Stderr, usage, "env")
+		PrintUsage(osStderr, usage, "env")
 		return 1
 	}
 	switch args[0] {
@@ -1183,6 +1183,27 @@ func followRenameInSavedContext(dir, oldSlug, newSlug string) (string, bool) {
 // subcommand form (scale / rename / exec / security / routes / tcp) or the legacy
 // flag-form (`gregale app <slug> --ram N`, `gregale app <slug>`).
 // Pulled out of main.go so the switch stays small.
+// linkedAppBeforeSettingsFlags puts the linked app in front of a settings
+// change that names none: `gregale app --min 1` in a linked checkout took
+// --min as the slug and refused "1" as a stray argument (prod hunt r40).
+func linkedAppBeforeSettingsFlags(args []string) []string {
+	if len(args) == 0 || !strings.HasPrefix(args[0], "-") || hasHelpFlag(args) {
+		return args
+	}
+	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
+		if arg == "--app" || strings.HasPrefix(arg, "--app=") || arg == "-app" || strings.HasPrefix(arg, "-app=") {
+			return args
+		}
+	}
+	if linked := linkedAppForMissingSlug(); linked != "" {
+		return append([]string{linked}, args...)
+	}
+	return args
+}
+
 func cmdAppDispatch(args []string) int {
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale app <slug> [scale|costs [--month YYYY-MM] [--json]|rename <new>|restart|exec -- <command> [args...]|security [--posture|--require-signed=true|false|--security-policy=off|warn|enforce]|egress-allowlist {show|add <cidr>|remove <cidr>|clear}|egress-ports {show|add <port>|remove <port>|clear}|network {show|doctor|attach <network-id> --region REGION --cidrs CIDR[,CIDR...]|detach}|traffic-status|routes|tcp|streaming-cap|--ram N|--max-concurrency N|--idle SEC|--min N|--maintenance|--no-maintenance|--streaming-enabled|--no-streaming-enabled|--websocket-enabled|--no-websocket|--route-metrics|--no-route-metrics|--consumer-auth-mode optional|required|--platform-tenant-required|--no-platform-tenant-required]", "apps")
@@ -1194,6 +1215,7 @@ func cmdAppDispatch(args []string) int {
 	if isAppProjectCommand(args) {
 		return cmdAppProject(args)
 	}
+	args = linkedAppBeforeSettingsFlags(args)
 	slug := args[0]
 	if code, ok := cmdAppConditions(slug, args[1:]); ok {
 		return code
@@ -2460,15 +2482,52 @@ func openCustomerDirectoryForSync(path string) (*os.File, error) {
 // value wrapped in double quotes loses them and has \n, \" and \\ unescaped;
 // one in single quotes loses them and stays literal. prod 2026-11-20:
 // API_URL="https://…" reached the app with the quotes, so every quoted URL
-// or token in a pushed .env was wrong. Other values are unchanged.
+// or token in a pushed .env was wrong. A ` # comment` after a quoted value,
+// or after an unquoted one, is dropped as those tools drop it:
+// `PORT=3000 # web` reached the app as "3000 # web" and `URL="x" # c` kept
+// its quotes (prod hunt r48). A # with no space before it is part of the
+// value. Other values are unchanged.
 func dotenvValue(v string) string {
-	if len(v) >= 2 && v[0] == '\'' && v[len(v)-1] == '\'' {
-		return v[1 : len(v)-1]
+	if len(v) > 0 && (v[0] == '\'' || v[0] == '"') {
+		unquote := func(inner string) string {
+			if v[0] == '"' {
+				return strings.NewReplacer(`\n`, "\n", `\"`, `"`, `\\`, `\`).Replace(inner)
+			}
+			return inner
+		}
+		// The quote that closes the opening one ends the value when only a
+		// comment follows it; checked first so a comment that itself ends in
+		// a quote (`"x" # see "docs"`) is not read as part of the value.
+		if end := dotenvClosingQuote(v); end > 0 {
+			if rest := strings.TrimSpace(v[end+1:]); rest == "" || strings.HasPrefix(rest, "#") {
+				return unquote(v[1:end])
+			}
+		}
+		if len(v) >= 2 && v[len(v)-1] == v[0] {
+			return unquote(v[1 : len(v)-1])
+		}
+		return v
 	}
-	if len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' {
-		return strings.NewReplacer(`\n`, "\n", `\"`, `"`, `\\`, `\`).Replace(v[1 : len(v)-1])
+	for i := 1; i < len(v); i++ {
+		if v[i] == '#' && (v[i-1] == ' ' || v[i-1] == '\t') {
+			return strings.TrimRight(v[:i], " \t")
+		}
 	}
 	return v
+}
+
+// dotenvClosingQuote returns the index of the quote that closes v's opening
+// quote, or -1. Inside double quotes a backslash escapes the next byte.
+func dotenvClosingQuote(v string) int {
+	for i := 1; i < len(v); i++ {
+		switch {
+		case v[0] == '"' && v[i] == '\\':
+			i++
+		case v[i] == v[0]:
+			return i
+		}
+	}
+	return -1
 }
 
 // parseDotenvLine parses one line of a .env file or KEY=VALUE stdin: an

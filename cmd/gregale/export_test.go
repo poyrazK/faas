@@ -3182,6 +3182,9 @@ var InitDeployArgs = initDeployArgs
 // TemplatesPublicOnPurpose lists the templates that deploy public.
 var TemplatesPublicOnPurpose = templatesPublicOnPurpose
 
+// DotenvValue reads one .env value (prod hunt r48).
+var DotenvValue = dotenvValue
+
 // NewIdleWatchdogReader wraps rc in the deploy log stream's idle watchdog.
 func NewIdleWatchdogReader(rc io.ReadCloser, idle time.Duration) io.ReadCloser {
 	return newIdleWatchdogReader(rc, idle)

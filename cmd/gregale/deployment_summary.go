@@ -6,6 +6,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"reflect"
+	"slices"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -92,6 +95,93 @@ func renderDeploymentSummary(summary api.DeploymentSummaryResponse) int {
 			formatSummaryValue(change.Before), formatSummaryValue(change.After))
 	}
 	return 0
+}
+
+// releaseChangeLines renders the post-deploy "Changes since vN" list. The
+// API compares the two rows as they stand now, so the list after every deploy
+// led with `status "superseded" -> "live"` and `traffic_percent 0 -> 100`,
+// named the internal upload URL, and printed the whole build_plan twice to
+// show one changed hash (prod hunt r49). Lifecycle fields and upload URLs are
+// left out here (`release summary` keeps every field), and build_plan shows
+// only its keys that changed and are not listed already.
+func releaseChangeLines(changes []api.DeploymentChange) []string {
+	listed := map[string]bool{}
+	for _, change := range changes {
+		listed[change.Field] = true
+	}
+	lines := make([]string, 0, len(changes))
+	for _, change := range changes {
+		switch change.Field {
+		case "status", "traffic_percent", "rollout_state":
+			continue
+		case "source_url":
+			if internalSourceURL(change.Before) && internalSourceURL(change.After) {
+				continue
+			}
+			lines = append(lines, fmt.Sprintf("%-18s %s -> %s", change.Field, sourceURLLabel(change.Before), sourceURLLabel(change.After)))
+			continue
+		case "build_plan":
+			lines = append(lines, buildPlanChangeLines(change.Before, change.After, listed)...)
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("%-18s %s -> %s", change.Field, formatSummaryValue(change.Before), formatSummaryValue(change.After)))
+	}
+	return lines
+}
+
+// internalSourceURL reports an upload-session URL or no URL: neither names
+// a source a person can recognise.
+func internalSourceURL(value any) bool {
+	s, _ := value.(string)
+	return s == "" || strings.HasPrefix(s, "local-tar://")
+}
+
+// sourceURLLabel names one side of a source_url change: an upload reads as
+// "local upload" so a switch between git and a local deploy stays visible.
+func sourceURLLabel(value any) string {
+	if s, _ := value.(string); strings.HasPrefix(s, "local-tar://") {
+		return "local upload"
+	}
+	return formatSummaryValue(value)
+}
+
+// buildPlanChangeLines lists the build_plan keys whose values differ.
+func buildPlanChangeLines(before, after any, listed map[string]bool) []string {
+	b, a := summaryObject(before), summaryObject(after)
+	if b == nil && a == nil {
+		return []string{fmt.Sprintf("%-18s changed", "build_plan")}
+	}
+	keys := make([]string, 0, len(a)+len(b))
+	for key := range a {
+		keys = append(keys, key)
+	}
+	for key := range b {
+		if _, ok := a[key]; !ok {
+			keys = append(keys, key)
+		}
+	}
+	slices.Sort(keys)
+	var lines []string
+	for _, key := range keys {
+		if listed[key] || reflect.DeepEqual(b[key], a[key]) {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("%-18s %s -> %s", "build_plan."+key, formatSummaryValue(b[key]), formatSummaryValue(a[key])))
+	}
+	return lines
+}
+
+// summaryObject reads a change value as a JSON object, or nil.
+func summaryObject(value any) map[string]any {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	var out map[string]any
+	if json.Unmarshal(encoded, &out) != nil {
+		return nil
+	}
+	return out
 }
 
 func formatSummaryValue(value any) string {
