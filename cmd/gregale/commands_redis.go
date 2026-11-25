@@ -130,7 +130,7 @@ func cmdRedisGet(args []string) int {
 }
 
 func cmdRedisBind(args []string) int {
-	const usage = "usage: gregale redis bind NAME --app APP [--env KEY]"
+	const usage = "usage: gregale redis bind NAME [--app APP] [--env KEY]"
 	flags, positional := splitArgsForFlags(args)
 	fs := newFlagSet("redis bind", flag.ContinueOnError)
 	app := fs.String("app", "", "app that receives the connection URL")
@@ -138,6 +138,9 @@ func cmdRedisBind(args []string) int {
 	if err := fs.Parse(append(flags, positional...)); err != nil {
 		return 1
 	}
+	// In a linked checkout --app defaults to the linked app, like the other
+	// app-scoped commands; bind printed usage there (prod hunt r50).
+	fillLinkedApp(app)
 	if fs.NArg() != 1 || *app == "" {
 		PrintUsage(os.Stderr, usage, "redis")
 		return 1
@@ -159,13 +162,16 @@ func cmdRedisBind(args []string) int {
 }
 
 func cmdRedisUnbind(args []string) int {
-	const usage = "usage: gregale redis unbind NAME --app APP"
+	const usage = "usage: gregale redis unbind NAME [--app APP]"
 	flags, positional := splitArgsForFlags(args)
 	fs := newFlagSet("redis unbind", flag.ContinueOnError)
 	app := fs.String("app", "", "app that loses access to the cache")
 	if err := fs.Parse(append(flags, positional...)); err != nil {
 		return 1
 	}
+	// In a linked checkout --app defaults to the linked app, like the other
+	// app-scoped commands; bind printed usage there (prod hunt r50).
+	fillLinkedApp(app)
 	if fs.NArg() != 1 || *app == "" {
 		PrintUsage(os.Stderr, usage, "redis")
 		return 1

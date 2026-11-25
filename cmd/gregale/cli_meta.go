@@ -6410,11 +6410,11 @@ var cliCommands = []cliCommand{
 			}, Examples: []string{"gregale redis create sessions --memory 128"}},
 			{Name: "get", Short: "Show one managed Redis cache", Positionals: []string{"<name>"}},
 			{Name: "bind", Short: "Let an app call the cache and set its connection URL", Positionals: []string{"<name>"}, Flags: []cliFlag{
-				{Name: "app", Short: "app that receives the URL", Req: true, Value: "APP"},
+				{Name: "app", Short: "app that receives the URL (defaults to the linked app)", Value: "APP"},
 				{Name: "env", Short: "environment variable (default REDIS_URL)", Value: "KEY"},
 			}, Examples: []string{"gregale redis bind sessions --app web"}},
 			{Name: "unbind", Short: "Stop an app from calling the cache", Positionals: []string{"<name>"}, Flags: []cliFlag{
-				{Name: "app", Short: "app that loses access", Req: true, Value: "APP"},
+				{Name: "app", Short: "app that loses access (defaults to the linked app)", Value: "APP"},
 			}, Notes: []string{"The app's connection variable stays set; unset it with `gregale env unset`."}, Examples: []string{"gregale redis unbind sessions --app web"}},
 			{Name: "resize", Short: "Change a cache's size or eviction policy; its data is kept", Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "memory", Short: "new data size in MB", Value: "MB"},
