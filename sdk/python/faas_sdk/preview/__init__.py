@@ -425,9 +425,11 @@ from ._event_deadline_policy import (
     EventDeadlineTarget,
 )
 from ._event_outbox_protocol import EVENT_OUTBOX_SCHEMA
+from ._outbound_action_protocol import OUTBOUND_ACTION_SCHEMA
 from ._pipeline_compensation_protocol import PIPELINE_COMPENSATION_SCHEMA
 from ._pipeline_tool_protocol import PIPELINE_TOOL_SCHEMA
 from ._stripe_webhook_protocol import STRIPE_WEBHOOK_SCHEMA
+from ._work_inbox_protocol import WORK_INBOX_SCHEMA
 from ._wrapper import FaaSClient as FaaSClient
 from .ai_gateway import (
     AI_CALL_HEADER,
@@ -445,6 +447,13 @@ from .ai_gateway import (
     ai_prompt,
     is_valid_ai_user_id,
     opaque_ai_user_id,
+)
+from .application_toolkit import (
+    ApplicationToolkit,
+    ApplicationToolkitError,
+    ToolkitAccess,
+    ToolkitAdapter,
+    ToolkitMount,
 )
 from .commit import CommitEventRouting, ainsert_commit_event, insert_commit_event
 from .commit_delivery_report import CommitDeliveryReportError, aget_commit_delivery_report
@@ -747,6 +756,21 @@ from .live_jobs import (
     LiveJobWaiting,
     realtime_live_job_source,
 )
+from .live_work_inbox import (
+    LiveWorkInboxCode,
+    LiveWorkInboxError,
+    LiveWorkInboxSink,
+    LiveWorkInboxSnapshot,
+    LiveWorkInboxSource,
+    WorkInboxInvalidation,
+    WorkInboxWatchTarget,
+    parse_live_work_inbox_snapshot,
+    read_work_inbox_snapshot,
+    realtime_live_work_inbox_source,
+    watch_work_inbox,
+    work_inbox_invalidation,
+    work_inbox_watch_target,
+)
 from .operations import (
     CustomerOperationRequest,
     OperationCommitUnknownError,
@@ -767,6 +791,27 @@ from .operations import (
     with_operation_transaction,
 )
 from .operations_runtime import GregaleOperations, OperationExecutionContext, OperationHTTPError
+from .outbound_action_mcp import OutboundActionMCP
+from .outbound_action_state import ActionOperation as OutboundActionOperation
+from .outbound_action_state import ActionState as OutboundActionState
+from .outbound_action_state import (
+    OutboundActionActor,
+    OutboundActionError,
+    OutboundActionIntent,
+    OutboundActionObservation,
+    OutboundActionRecord,
+    OutboundActionReference,
+    OutboundActionRequest,
+    OutboundActionResult,
+    OutboundActionReview,
+    OutboundActionStore,
+    OutboundActionView,
+    PostgresOutboundActionStore,
+    outbound_action_contracts,
+    outbound_action_identity,
+    parse_outbound_action_record,
+)
+from .outbound_actions import OutboundAction, OutboundActionProvider, OutboundActionReader, OutboundActionResponse
 from .pipeline_children import (
     NativePipelineChildrenTransport,
     PipelineBatchResult,
@@ -823,6 +868,7 @@ from .pipeline_gates import (
     PostgresPipelineGateStore,
     pipeline_gate_intent,
 )
+from .pipeline_output_resources import PipelineOutputResource
 from .pipeline_schedule_state import (
     PipelineSchedule,
     PipelineScheduleCatchUp,
@@ -837,8 +883,11 @@ from .pipeline_schedule_state import (
     PipelineScheduleReplayOutcome,
 )
 from .pipeline_schedules import PipelineScheduleAction, PipelineScheduleClient, ScheduledPipelineRun
+from .pipeline_start_preview import PipelineStartPreview, PipelineStartPreviewPolicy, PipelineStartPreviewSource
 from .pipeline_state import (
     PIPELINE_JOB_SCHEMA,
+    PinnedPipelineSource,
+    PinnedPipelineSourceFailure,
     PipelineError,
     PipelineFailure,
     PipelineJobReceipt,
@@ -847,7 +896,75 @@ from .pipeline_state import (
     PostgresPipelineJobStore,
     pipeline_failure,
     pipeline_job_identity,
+    read_pinned_pipeline_source,
     read_pipeline_artifact,
+)
+from .pipeline_task_approvals import (
+    PipelineTaskApproval,
+    PipelineTaskApprovalChoice,
+    PipelineTaskApprovalReceipt,
+    PipelineTaskApprovalView,
+)
+from .pipeline_task_client import (
+    PipelineTaskApprovalClient,
+    PipelineTaskArtifactLink,
+    PipelineTaskCheckpoint,
+    PipelineTaskClarification,
+    PipelineTaskClient,
+    PipelineTaskClientCode,
+    PipelineTaskClientError,
+    PipelineTaskClientMethod,
+    PipelineTaskCompletion,
+    PipelineTaskHandoffClient,
+    PipelineTaskObservation,
+    PipelineTaskReader,
+    PipelineTaskResource,
+    PipelineTaskReviewerInbox,
+    PipelineTaskStatusObservation,
+    PipelineTaskTransport,
+    read_pipeline_task_manifest,
+)
+from .pipeline_task_handoffs import (
+    PIPELINE_TASK_HANDOFF_SCHEMA,
+    PipelineTaskHandoff,
+    PipelineTaskHandoffCandidate,
+    PipelineTaskHandoffPage,
+    PipelineTaskHandoffRecord,
+    PipelineTaskHandoffSettings,
+    PipelineTaskHandoffSnapshot,
+    PipelineTaskHandoffStore,
+    PipelineTaskHandoffSummary,
+    PipelineTaskHandoffView,
+    PostgresPipelineTaskHandoffStore,
+)
+from .pipeline_task_http import PipelineTaskHttpTransport
+from .pipeline_task_input import PipelineTaskFormRequest, PipelineTaskInputForm
+from .pipeline_task_manifest import (
+    PIPELINE_TASK_MANIFEST_URI,
+    PipelineTaskArtifactDescriptor,
+    PipelineTaskManifest,
+    PipelineTaskManifestEntry,
+    PipelineTaskManifestError,
+    PipelineTaskRevision,
+    parse_pipeline_task_manifest,
+)
+from .pipeline_task_recovery import (
+    PipelineTaskRecoveryInput,
+    PipelineTaskRecoveryPolicy,
+    PipelineTaskRecoveryPreview,
+    PipelineTaskRecoverySource,
+)
+from .pipeline_tasks import (
+    PIPELINE_TASK_RECOVERY_SCHEMA,
+    PIPELINE_TASK_SCHEMA,
+    PipelineTaskBinding,
+    PipelineTaskCaller,
+    PipelineTaskHandle,
+    PipelineTaskProgress,
+    PipelineTasks,
+    PipelineTaskSnapshot,
+    PipelineTaskStore,
+    PostgresPipelineTaskStore,
 )
 from .pipeline_tool_mcp import PipelineToolMCP, PipelineToolMCPError
 from .pipeline_tool_state import (
@@ -862,8 +979,24 @@ from .pipeline_tools import (
     PipelineTool,
     PipelineToolApproval,
     PipelineToolRequest,
+    PipelineToolResult,
     PipelineToolStart,
+    PipelineToolStartMatch,
     PipelineToolStatus,
+)
+from .query_tool_mcp import QueryMCPError, QueryResourceReference, QueryToolMCP
+from .query_tools import (
+    QueryActor,
+    QueryAuthorizedLoadContext,
+    QueryCode,
+    QueryLoadContext,
+    QueryLoadPage,
+    QueryPage,
+    QueryResource,
+    QueryResourceContent,
+    QueryResourceLink,
+    QueryTool,
+    QueryToolError,
 )
 from .realtime_activity import RealtimeActivity, RealtimeActivityTracker
 from .realtime_backpressure import RealtimeBackpressureMonitor, RealtimeBackpressureStatus, RealtimeProcessingStatus
@@ -952,6 +1085,12 @@ from .realtime_workers import (
     consume_realtime_consumer_group,
     consume_realtime_consumer_group_with_credential,
 )
+from .stripe_refund_actions import (
+    StripeRefundActionProvider,
+    StripeRefundInput,
+    StripeRefundResult,
+    stripe_refund_contract,
+)
 from .stripe_webhook_state import (
     StripeDeliveryContext,
     StripeWebhookDecision,
@@ -976,8 +1115,122 @@ from .tasks import (
     TaskRun,
     TaskSubmissionError,
 )
+from .work_inbox import (
+    PostgresWorkInboxStore,
+    WorkInbox,
+    WorkInboxCandidate,
+    WorkInboxEntry,
+    WorkInboxExactLookup,
+    WorkInboxFilter,
+    WorkInboxKind,
+    WorkInboxNextStep,
+    WorkInboxReference,
+    WorkInboxReview,
+    WorkInboxScan,
+    WorkInboxSelector,
+    WorkInboxSource,
+    WorkInboxState,
+    WorkInboxStore,
+    create_work_inbox,
+    outbound_work_inbox_source,
+    pipeline_work_inbox_source,
+    work_inbox_position,
+)
+from .work_inbox_follow_up import (
+    WorkInboxFollowUp,
+    WorkInboxFollowUpOptions,
+    WorkInboxHumanReview,
+    WorkInboxNoAction,
+    WorkInboxToolCall,
+)
 
 __all__ = (
+    "ApplicationToolkit",
+    "ApplicationToolkitError",
+    "ToolkitAccess",
+    "ToolkitAdapter",
+    "ToolkitMount",
+    "LiveWorkInboxCode",
+    "LiveWorkInboxError",
+    "LiveWorkInboxSink",
+    "LiveWorkInboxSnapshot",
+    "LiveWorkInboxSource",
+    "WorkInboxInvalidation",
+    "WorkInboxWatchTarget",
+    "parse_live_work_inbox_snapshot",
+    "read_work_inbox_snapshot",
+    "realtime_live_work_inbox_source",
+    "watch_work_inbox",
+    "work_inbox_invalidation",
+    "work_inbox_watch_target",
+    "WorkInbox",
+    "WorkInboxExactLookup",
+    "WorkInboxReference",
+    "WorkInboxFollowUp",
+    "WorkInboxFollowUpOptions",
+    "WorkInboxHumanReview",
+    "WorkInboxNoAction",
+    "WorkInboxToolCall",
+    "WORK_INBOX_SCHEMA",
+    "PostgresWorkInboxStore",
+    "WorkInboxCandidate",
+    "WorkInboxEntry",
+    "WorkInboxFilter",
+    "WorkInboxKind",
+    "WorkInboxNextStep",
+    "WorkInboxReview",
+    "WorkInboxScan",
+    "WorkInboxSelector",
+    "WorkInboxSource",
+    "WorkInboxState",
+    "WorkInboxStore",
+    "create_work_inbox",
+    "outbound_work_inbox_source",
+    "pipeline_work_inbox_source",
+    "work_inbox_position",
+    "QueryAuthorizedLoadContext",
+    "QueryActor",
+    "QueryCode",
+    "QueryLoadContext",
+    "QueryLoadPage",
+    "QueryPage",
+    "QueryResource",
+    "QueryResourceContent",
+    "QueryResourceLink",
+    "QueryTool",
+    "QueryToolError",
+    "QueryMCPError",
+    "QueryResourceReference",
+    "QueryToolMCP",
+
+    "OUTBOUND_ACTION_SCHEMA",
+    "OutboundActionState",
+    "OutboundActionOperation",
+    "OutboundActionActor",
+    "OutboundActionError",
+    "OutboundActionIntent",
+    "OutboundActionObservation",
+    "OutboundActionRecord",
+    "OutboundActionReference",
+    "OutboundActionRequest",
+    "OutboundActionResult",
+    "OutboundActionReview",
+    "OutboundActionStore",
+    "OutboundActionView",
+    "PostgresOutboundActionStore",
+    "outbound_action_contracts",
+    "outbound_action_identity",
+    "parse_outbound_action_record",
+    "OutboundAction",
+    "OutboundActionProvider",
+    "OutboundActionReader",
+    "OutboundActionResponse",
+    "OutboundActionMCP",
+    "StripeRefundActionProvider",
+    "StripeRefundInput",
+    "StripeRefundResult",
+    "stripe_refund_contract",
+
     "PIPELINE_COMPENSATION_SCHEMA",
     "CompensationActor",
     "CompensationAction",
@@ -1005,9 +1258,71 @@ __all__ = (
     'PipelineToolReceipt',
     'PipelineToolStore',
     'PostgresPipelineToolStore',
+    "PipelineOutputResource",
+    "PipelineToolResult",
+    "PipelineTaskArtifactLink",
+    "PipelineTaskCheckpoint",
+    "PipelineTaskClarification",
+    "PipelineTaskClient",
+    "PipelineTaskClientCode",
+    "PipelineTaskClientError",
+    "PipelineTaskClientMethod",
+    "PipelineTaskCompletion",
+    "PipelineTaskObservation",
+    "PipelineTaskReader",
+    "PipelineTaskResource",
+    "PipelineTaskStatusObservation",
+    "PipelineTaskTransport",
+    "PipelineTaskHttpTransport",
+    "PIPELINE_TASK_MANIFEST_URI",
+    "PipelineTaskArtifactDescriptor",
+    "PipelineTaskManifest",
+    "PipelineStartPreview",
+    "PipelineStartPreviewPolicy",
+    "PipelineStartPreviewSource",
+    "PipelineTaskManifestEntry",
+    "PipelineTaskRevision",
+    "PipelineTaskManifestError",
+    "parse_pipeline_task_manifest",
+    "read_pipeline_task_manifest",
+    "PIPELINE_TASK_HANDOFF_SCHEMA",
+    "PipelineTaskHandoff",
+    "PipelineTaskApproval",
+    "PipelineTaskApprovalChoice",
+    "PipelineTaskApprovalClient",
+    "PipelineTaskApprovalReceipt",
+    "PipelineTaskApprovalView",
+    "PipelineTaskHandoffClient",
+    "PipelineTaskHandoffCandidate",
+    "PipelineTaskHandoffPage",
+    "PipelineTaskHandoffSnapshot",
+    "PipelineTaskHandoffSummary",
+    "PipelineTaskReviewerInbox",
+    "PipelineTaskHandoffRecord",
+    "PipelineTaskHandoffSettings",
+    "PipelineTaskHandoffStore",
+    "PipelineTaskHandoffView",
+    "PostgresPipelineTaskHandoffStore",
+    "PipelineTaskFormRequest",
+    "PipelineTaskInputForm",
+    "PIPELINE_TASK_RECOVERY_SCHEMA",
+    "PipelineTaskRecoveryInput",
+    "PipelineTaskRecoveryPolicy",
+    "PipelineTaskRecoveryPreview",
+    "PipelineTaskRecoverySource",
+    "PIPELINE_TASK_SCHEMA",
+    "PipelineTaskBinding",
+    "PipelineTaskCaller",
+    "PipelineTaskHandle",
+    "PipelineTaskProgress",
+    "PipelineTaskSnapshot",
+    "PipelineTaskStore",
+    "PipelineTasks",
+    "PostgresPipelineTaskStore",
     'PipelineTool',
     'PipelineToolRequest',
     'PipelineToolStart',
+    'PipelineToolStartMatch',
     'PipelineToolStatus',
     'PipelineToolApproval',
     'PipelineToolMCP',
@@ -1064,7 +1379,7 @@ __all__ = (
     'EventContract', 'EventPipeline', 'EventPipelineAction', 'EventPipelineDelivery', 'EventPipelineOutcome', 'PipelineEvent', 'EVENT_PIPELINE_SCHEMA', 'EventPipelineError', 'EventPipelineReceipt', 'EventPipelineStore', 'PostgresEventPipelineStore', 'event_pipeline_identity',
     'PipelineChildren', 'PipelineChild', 'PipelineChildOptions', 'PipelineChildView', 'PipelineBatchResult', 'PipelineChildrenTransport', 'NativePipelineChildrenTransport', 'pipeline_children_live_snapshot', 'PIPELINE_CHILDREN_SCHEMA', 'PipelineChildrenError', 'PipelineChildrenReceipt', 'PipelineChildrenStore', 'PostgresPipelineChildrenStore', 'pipeline_children_identity', 'pipeline_children_intent',
     'LiveJobWaiting', 'PIPELINE_GATE_SCHEMA', 'NativePipelineGateTransport', 'PipelineGateActor', 'PipelineGateError', 'PipelineGateOptions', 'PipelineGateOutcome', 'PipelineGateRecord', 'PipelineGateService', 'PipelineGateStore', 'PipelineGateTransport', 'PipelineGateView', 'PostgresPipelineGateStore', 'pipeline_gate_intent',
-    'PipelineFailure', 'pipeline_failure', 'job_pipeline_live_snapshot', 'PIPELINE_JOB_SCHEMA', 'PipelineError', 'PipelineJobReceipt', 'PipelineJobStore', 'PipelineScope', 'PostgresPipelineJobStore', 'pipeline_job_identity', 'read_pipeline_artifact', 'JobPipeline', 'JobPipelineContext', 'JobPipelineOptions', 'PipelineItem', 'PipelineJob', 'PipelineJobResult', 'JobPipelineClient', 'PipelineCheckpoint', 'PipelineInspection', 'PipelineStepInspection', 'TypedPipelineRun',
+    'PipelineFailure', 'pipeline_failure', 'job_pipeline_live_snapshot', 'PIPELINE_JOB_SCHEMA', 'PipelineError', 'PipelineJobReceipt', 'PipelineJobStore', 'PipelineScope', 'PostgresPipelineJobStore', 'pipeline_job_identity', 'read_pipeline_artifact', 'PinnedPipelineSource', 'PinnedPipelineSourceFailure', 'read_pinned_pipeline_source', 'JobPipeline', 'JobPipelineContext', 'JobPipelineOptions', 'PipelineItem', 'PipelineJob', 'PipelineJobResult', 'JobPipelineClient', 'PipelineCheckpoint', 'PipelineInspection', 'PipelineStepInspection', 'TypedPipelineRun',
     'LiveJob', 'LiveJobError', 'LiveJobFailure', 'LiveJobSink', 'LiveJobSnapshot', 'LiveJobSource', 'LiveJobStatus', 'realtime_live_job_source',
     "BytesFileSource", "FileBucket", "FileCheckpoint", "FileCode", "FileError", "FileMetadata", "FileObject", "FileOptions", "FilePage", "FilePart", "FileProgress", "FileSource", "FileUploadResult", "PathFileSource", "file_source_digest",
     'FILE_PIPELINE_SCHEMA', 'FileCreatedEvent', 'FileDelivery', 'FilePipeline', 'FilePipelineError', 'FilePipelineInput', 'FilePipelineIntent', 'FilePipelineOptions', 'FilePipelineOutcome', 'FilePipelineOwner', 'FilePipelineReceipt', 'FilePipelineScope', 'FilePipelineStore', 'NativeFileVerifier', 'PostgresFilePipelineStore', 'file_event_invocation_id', 'file_pipeline_identity', 'parse_file_created_event',

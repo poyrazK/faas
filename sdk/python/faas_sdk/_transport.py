@@ -354,7 +354,7 @@ class AsyncRfc7807Layer(httpx.AsyncBaseTransport):
         content_type = response.headers.get("Content-Type", "")
         problem = parse_problem(body, content_type, response.status_code)
         if problem is not None:
-            response.close()
+            await response.aclose()
             raise_for_problem(problem)
         return response
 

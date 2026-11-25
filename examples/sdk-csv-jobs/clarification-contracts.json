@@ -1,0 +1,253 @@
+{
+  "revision2": {
+    "tool": "clarify_csv_columns_v2",
+    "workflow": "clarify-csv-columns-v2",
+    "sourceSystem": { "type": "string", "enum": ["crm", "billing"] },
+    "emailColumns": ["contact"],
+    "artifact": "mapping_report_v2",
+    "reportJob": "csv-column-mapping-report-v2"
+  },
+  "startPreview": {
+    "version": 1,
+    "name": "pipeline-start-preview",
+    "input": { "type": "null" },
+    "output": {
+      "type": "object",
+      "properties": {
+        "source_sha256": { "type": "string", "minLength": 64, "maxLength": 64 },
+        "email_columns": { "type": "array", "items": { "type": "string", "enum": ["contact", "alternate_contact"] }, "maxItems": 2 },
+        "action": { "type": "string", "enum": ["write_mapping_report"] },
+        "requires_clarification": { "type": "boolean" }
+      },
+      "required": ["source_sha256", "email_columns", "action", "requires_clarification"],
+      "additionalProperties": false
+    }
+  },
+  "pipeline": {
+    "version": 1,
+    "name": "clarify-csv-columns",
+    "input": {
+      "type": "object",
+      "properties": {
+        "import_id": {
+          "type": "string",
+          "minLength": 36,
+          "maxLength": 36
+        },
+        "contact": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "alternate_contact": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": ["import_id", "contact", "alternate_contact"],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": ["mapped", "expired", "cancelled"]
+        },
+        "email": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "report": {
+          "type": "object",
+          "properties": {
+            "version": {
+              "type": "integer",
+              "enum": [1]
+            },
+            "scope": {
+              "type": "object",
+              "properties": {
+                "base_url": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024
+                },
+                "app_slug": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 63
+                },
+                "bucket": {
+                  "type": "string",
+                  "minLength": 36,
+                  "maxLength": 36
+                }
+              },
+              "required": ["base_url", "app_slug", "bucket"],
+              "additionalProperties": false
+            },
+            "owner_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "version_id": {
+              "type": "string",
+              "minLength": 36,
+              "maxLength": 36
+            },
+            "size_bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "sha256": {
+              "type": "string",
+              "minLength": 64,
+              "maxLength": 64
+            }
+          },
+          "required": [
+            "version",
+            "scope",
+            "owner_id",
+            "key",
+            "size_bytes",
+            "sha256"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": ["state"],
+      "additionalProperties": false
+    }
+  },
+  "inputGate": {
+    "version": 1,
+    "name": "csv-email-column",
+    "input": {
+      "type": "object",
+      "properties": {
+        "import_id": {
+          "type": "string",
+          "minLength": 36,
+          "maxLength": 36
+        }
+      },
+      "required": ["import_id"],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "email_column": {
+          "type": "string",
+          "enum": ["contact", "alternate_contact"]
+        }
+      },
+      "required": ["email_column"],
+      "additionalProperties": false
+    }
+  },
+  "reportJob": {
+    "version": 1,
+    "name": "csv-column-report",
+    "input": {
+      "type": "object",
+      "properties": {
+        "import_id": {
+          "type": "string",
+          "minLength": 36,
+          "maxLength": 36
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 36,
+          "maxLength": 36
+        },
+        "owner_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "email_column": {
+          "type": "string",
+          "enum": ["contact", "alternate_contact"]
+        }
+      },
+      "required": ["import_id", "run_id", "owner_id", "email_column"],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "integer",
+          "enum": [1]
+        },
+        "scope": {
+          "type": "object",
+          "properties": {
+            "base_url": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "app_slug": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 63
+            },
+            "bucket": {
+              "type": "string",
+              "minLength": 36,
+              "maxLength": 36
+            }
+          },
+          "required": ["base_url", "app_slug", "bucket"],
+          "additionalProperties": false
+        },
+        "owner_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "version_id": {
+          "type": "string",
+          "minLength": 36,
+          "maxLength": 36
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "version",
+        "scope",
+        "owner_id",
+        "key",
+        "size_bytes",
+        "sha256"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

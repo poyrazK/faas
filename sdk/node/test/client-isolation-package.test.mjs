@@ -7,11 +7,17 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const exec = promisify(execFile);
+const run = promisify(execFile);
 const sdk = fileURLToPath(new URL('..', import.meta.url));
 
-// Packing and installing thousands of generated modules can exceed a minute on a busy filesystem.
-test('packed SDK exposes isolated clients, pagination, waiters and the legacy migration API', { timeout: 120_000 }, async t => {
+// Packing/installing the generated modules can take several minutes on a busy filesystem.
+// Bound the whole journey and stop its subprocesses before temporary-directory cleanup.
+test('packed SDK exposes isolated clients, pagination, waiters and the legacy migration API', { timeout: 600_000 }, async t => {
+  const exec = async (command, args, options) => {
+    const started = Date.now();
+    try { return await run(command, args, { ...options, signal: t.signal }); }
+    finally { t.diagnostic(`${command} phase: ${Date.now() - started}ms`); }
+  };
   const root = await mkdtemp(join(tmpdir(), 'gregale-client-isolation-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   // npm's JSON output lists thousands of generated files and can exceed the
@@ -61,6 +67,8 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
     assert.equal(sourceSdk.createEventOutbox,undefined);assert.equal(publicBrowser.createEventPublisher,undefined);
     assert.ok(previewSdk.eventOutboxSchema.includes('gregale_event_outbox'));
     assert.equal(typeof previewSdk.createStripeWebhookAdapter,'function');assert.equal(typeof previewSdk.stripeDeliveryContextFromHeaders,'function');
+    assert.equal(typeof previewSdk.defineQueryTool,'function');assert.equal(typeof previewSdk.defineQueryResource,'function');assert.equal(typeof previewSdk.createQueryToolMCP,'function');assert.equal(sourceSdk.defineQueryTool,undefined);assert.equal(fileBrowser.defineQueryTool,undefined);
+    assert.equal(typeof previewSdk.defineOutboundAction,'function');assert.equal(typeof previewSdk.createOutboundActionMCP,'function');assert.ok(previewSdk.outboundActionSchema.includes('gregale_outbound_actions'));assert.equal(sourceSdk.defineOutboundAction,undefined);assert.equal(fileBrowser.createOutboundActionMCP,undefined);
     assert.equal(typeof previewSdk.definePipelineCompensation,'function');assert.equal(typeof previewSdk.createCompensationMCP,'function');assert.ok(previewSdk.pipelineCompensationSchema.includes('gregale_compensation_effects'));assert.equal(sourceSdk.definePipelineCompensation,undefined);assert.equal(fileBrowser.createCompensationMCP,undefined);
     assert.equal(typeof previewSdk.definePipelineTool,'function');assert.equal(typeof previewSdk.createPipelineToolMCP,'function');assert.ok(previewSdk.pipelineToolSchema.includes('gregale_pipeline_tool_starts'));assert.equal(sourceSdk.definePipelineTool,undefined);assert.equal(fileBrowser.createPipelineToolMCP,undefined);
     assert.ok(previewSdk.stripeWebhookSchema.includes('gregale_stripe_webhook_receipts'));assert.equal(sourceSdk.createStripeWebhookAdapter,undefined);assert.equal(fileBrowser.createStripeWebhookAdapter,undefined);
@@ -261,6 +269,38 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
       const adapter=createPipelineToolMCP(pipelineTool);await adapter.call('tool',{}, {id:'alice'},{timeoutMs:1000});
     }
     import {definePipelineCompensation,createCompensationMCP,type PipelineCompensationDefinition,type CompensationResult,type CompensationPlan} from '@gregale/sdk-node/preview';
+    import {defineOutboundAction,createOutboundActionMCP,type OutboundActionDefinition,type OutboundActionView} from '@gregale/sdk-node/preview';
+    import {defineQueryTool,defineQueryResource,createQueryToolMCP,type QueryToolDefinition,type QueryPage,type QueryResourceDefinition} from '@gregale/sdk-node/preview';
+    declare const queryDefinition:QueryToolDefinition<string,number,{id:string}>;
+    declare const resourceDefinition:QueryResourceDefinition<{id:string}>;
+    const queryTool=defineQueryTool(jobContract,queryDefinition);
+    async function typedQuery(){
+      const page:QueryPage<number>=await queryTool.page('input',{id:'alice'},{timeoutMs:1});
+      const item:number|undefined=page.items[0];
+      await createQueryToolMCP(queryTool).call('query',{}, {id:'alice'},{timeoutMs:1});
+      await defineQueryResource(resourceDefinition).link('id',{id:'alice'},{timeoutMs:1});
+      // @ts-expect-error query input is preserved
+      await queryTool.page(7,{id:'alice'},{timeoutMs:1});
+      // @ts-expect-error query principal is preserved
+      await queryTool.page('input','alice',{timeoutMs:1});
+      // @ts-expect-error result rows keep their generated type
+      const wrong:string=page.items[0];
+      void [item,wrong];
+    }
+    declare const outboundDefinition:OutboundActionDefinition<string,number,{id:string}>;
+    const outbound=defineOutboundAction(jobContract,outboundDefinition);
+    async function typedOutbound(){
+      const view:OutboundActionView<number>=await outbound.prepare('input','request',{id:'alice'},{timeoutMs:1});
+      const result:number|undefined=view.outcome.result;
+      await createOutboundActionMCP(outbound).call('tool',{}, {id:'alice'},{timeoutMs:1});
+      // @ts-expect-error outbound action input is preserved
+      await outbound.prepare(7,'request',{id:'alice'},{timeoutMs:1});
+      // @ts-expect-error outbound action access is preserved
+      await outbound.inspect('action','alice',{timeoutMs:1});
+      // @ts-expect-error typed provider results cannot become strings
+      const wrong:string=view.outcome.result;
+      void [result,wrong];
+    }
     declare const recoveryDefinition:PipelineCompensationDefinition<string,number,{id:string}>;
     const recovery=definePipelineCompensation(jobContract,recoveryDefinition);
     async function useRecovery():Promise<void>{
