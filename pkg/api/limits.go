@@ -305,6 +305,28 @@ const (
 	ObsGatewayTrafficLongWindowBudget = 10 * time.Second
 )
 
+// Operator disk pressure report (ADR-20261124150000). Filesystems are graded
+// with the FaasHostDisk* alert thresholds: free space under
+// ObsDiskCriticalFreePercent is critical, under ObsDiskFillingFreePercent
+// and predicted full within ObsDiskFillingHorizonHours (deriv over
+// ObsDiskGrowthWindow) is filling, under ObsDiskLowFreePercent is low, and
+// inodes under ObsDiskInodesLowFreePercent are inodes_low. A predicted time
+// to full beyond ObsDiskHoursToFullMax is not shown. The report lists up to
+// ObsDiskFilesystemsMax filesystems and the ObsDiskGuestsMax fullest guest
+// disks, read under ObsDiskPrometheusBudget.
+const (
+	ObsDiskCriticalFreePercent  = 5
+	ObsDiskLowFreePercent       = 15
+	ObsDiskFillingFreePercent   = 25
+	ObsDiskFillingHorizonHours  = 4
+	ObsDiskInodesLowFreePercent = 10
+	ObsDiskHoursToFullMax       = 7 * 24
+	ObsDiskGrowthWindow         = 6 * time.Hour
+	ObsDiskFilesystemsMax       = 500
+	ObsDiskGuestsMax            = 25
+	ObsDiskPrometheusBudget     = 3 * time.Second
+)
+
 // Customer attention signals (ADR-20261113123000): when a customer is
 // probably stuck. Thresholds are platform-wide, not per plan.
 const (
@@ -1312,6 +1334,9 @@ const (
 // ManagedPostgresSuspendTimeoutDocsURL is cited by the out-of-range error.
 const ManagedPostgresSuspendTimeoutDocsURL = "https://gregale.dev/docs/postgres#plans"
 
+// ManagedPostgresWakeWithAppDocsURL is cited by wake-with-app refusals.
+const ManagedPostgresWakeWithAppDocsURL = "https://gregale.dev/docs/postgres#plans"
+
 // ManagedPostgresNeonScaleMillicentsPerComputeUnitHour is what Neon's Scale
 // plan charges Gregale per CU-hour ($0.222, neon.com/pricing on 2026-11-02),
 // and ManagedPostgresOverageMarkupPercent what Gregale adds to the
@@ -1963,6 +1988,12 @@ const (
 	ConsumerUpgradeLinkCacheTTL = 10 * time.Minute
 	// The owner's sign-up list shows at most this many.
 	ConsumerSignupListMax = 100
+	// A consumer may call the gateway's MCP account tools this many times a
+	// minute (ADR-20261125194510); the calls are not metered or billed.
+	MCPAccountToolCallsPerMinute = 30
+	// The gateway edits a tools/list answer for account tools only up to
+	// this size; a larger answer passes through unchanged.
+	MCPAccountToolsListMaxBytes = 1 << 20
 )
 
 // Consumer and platform tenant controls (ADR-1314, ADR-1315, ADR-1322,
@@ -11972,6 +12003,9 @@ var (
 	// AgentRunConcurrentPerAccount and AgentRunQueuedPerAccount together with
 	// runs. SandboxMaxLifetimeSec is a session's longest life.
 	SandboxMaxLifetimeSec = [4]int{0, 3600, 14_400, 86_400}
+	// SandboxCodeContextsMax bounds a session's code contexts, each its own
+	// Jupyter kernel, the default one included (ADR-20261027090013 step 14).
+	SandboxCodeContextsMax = 8
 	// SandboxBrowserRAMMBMin is the least RAM a session created with
 	// browser: true may have (ADR-20261116182615 §1): Chromium needs about
 	// 1 GB for ordinary pages.
@@ -12805,11 +12839,12 @@ const AgentBudgetHoursPerMonth = 730
 // class's smallest compute size, in quarter compute units: what a database
 // that never scales to zero keeps running, so what an agent's budget pays
 // for it (ADR-20261111114059 slice 3). It mirrors the Neon class profiles
-// (pkg/managedpostgres/neon/config.go; a test there keeps them equal).
+// (pkg/managedpostgres/neon/config.go; a test there keeps them equal), not the
+// older accepted ranges (ADR-20261124221402).
 var ManagedPostgresMinimumQuarterComputeUnits = map[string]int64{
 	"development": 1,
 	"burstable":   1,
-	"production":  4,
+	"production":  2,
 }
 
 // Self-service spend cap ceilings per paid plan, in cents (ADR-20261105120000,

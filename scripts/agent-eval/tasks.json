@@ -89,8 +89,8 @@
     "checks": [
       {"kind": "apps_created", "min": 3},
       {"kind": "apps_serving"},
-      {"kind": "app_http", "match": "vote", "path": "/", "status": 200},
-      {"kind": "app_http", "match": "result", "path": "/", "status": 200},
+      {"kind": "app_http", "match": "(^|-)vote(-[a-z0-9]{5})?$", "path": "/", "status": 200},
+      {"kind": "app_http", "match": "(^|-)result(-[a-z0-9]{5})?$", "path": "/", "status": 200},
       {"kind": "vote_counted"},
       {"kind": "no_traps"}
     ],

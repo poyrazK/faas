@@ -33212,6 +33212,7 @@ CREATE TABLE public.api_consumer_signup_settings (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     oauth_consumers boolean DEFAULT false NOT NULL,
     free_plan_id uuid,
+    account_tools boolean DEFAULT false NOT NULL,
     CONSTRAINT api_consumer_signup_settings_limit_chk CHECK (((daily_limit >= 1) AND (daily_limit <= 1000))),
     CONSTRAINT api_consumer_signup_settings_name_chk CHECK (((char_length(display_name) >= 1) AND (char_length(display_name) <= 80))),
     CONSTRAINT api_consumer_signup_settings_plans_chk CHECK ((cardinality(plan_ids) <= 20)),
@@ -33241,6 +33242,13 @@ COMMENT ON COLUMN public.api_consumer_signup_settings.oauth_consumers IS 'Caller
 --
 
 COMMENT ON COLUMN public.api_consumer_signup_settings.free_plan_id IS 'Offered plan that charges nothing: joining it skips Checkout (ADR-20261124094745).';
+
+
+--
+-- Name: COLUMN api_consumer_signup_settings.account_tools; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.api_consumer_signup_settings.account_tools IS 'The gateway adds account_usage and account_plans tools to the app''s MCP server for OAuth consumers (ADR-20261125194510).';
 
 
 --
@@ -49414,6 +49422,26 @@ CREATE TABLE public.managed_postgres_usage_waivers (
     waived_until timestamp with time zone,
     CONSTRAINT managed_postgres_usage_waivers_check CHECK (((waived_until IS NULL) OR (waived_until >= waived_from)))
 );
+
+
+--
+-- Name: managed_postgres_wake_with_app; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_wake_with_app (
+    database_id uuid NOT NULL,
+    enabled_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_started_at timestamp with time zone,
+    CONSTRAINT managed_postgres_wake_with_app_enabled_at_check CHECK (isfinite(enabled_at)),
+    CONSTRAINT managed_postgres_wake_with_app_last_started_at_check CHECK (((last_started_at IS NULL) OR isfinite(last_started_at)))
+);
+
+
+--
+-- Name: TABLE managed_postgres_wake_with_app; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.managed_postgres_wake_with_app IS 'Managed PostgreSQL databases that start when a bound app wakes (opt-in); no row is off; written only by apid.';
 
 
 --
@@ -65790,6 +65818,14 @@ ALTER TABLE ONLY public.api_consumer_route_usage_minutes
 
 
 --
+-- Name: api_consumer_signup_settings api_consumer_signup_settings_account_tools_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.api_consumer_signup_settings
+    ADD CONSTRAINT api_consumer_signup_settings_account_tools_chk CHECK (((NOT account_tools) OR oauth_consumers)) NOT VALID;
+
+
+--
 -- Name: api_consumer_signup_settings api_consumer_signup_settings_oauth_free_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -73179,6 +73215,14 @@ ALTER TABLE ONLY public.managed_postgres_usage
 
 ALTER TABLE ONLY public.managed_postgres_usage_waivers
     ADD CONSTRAINT managed_postgres_usage_waivers_pkey PRIMARY KEY (database_id, waived_from);
+
+
+--
+-- Name: managed_postgres_wake_with_app managed_postgres_wake_with_app_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_wake_with_app
+    ADD CONSTRAINT managed_postgres_wake_with_app_pkey PRIMARY KEY (database_id);
 
 
 --
@@ -109743,6 +109787,14 @@ ALTER TABLE ONLY public.managed_postgres_usage_imports
 
 ALTER TABLE ONLY public.managed_postgres_usage_waivers
     ADD CONSTRAINT managed_postgres_usage_waivers_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_wake_with_app managed_postgres_wake_with_app_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_wake_with_app
+    ADD CONSTRAINT managed_postgres_wake_with_app_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
 
 
 --

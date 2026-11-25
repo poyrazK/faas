@@ -669,6 +669,7 @@ export type { ManagedPostgresResize } from './ManagedPostgresResize.js';
 export type { ManagedPostgresRestoreRange } from './ManagedPostgresRestoreRange.js';
 export type { ManagedPostgresSuspendTimeout } from './ManagedPostgresSuspendTimeout.js';
 export type { ManagedPostgresUsageResponse } from './ManagedPostgresUsageResponse.js';
+export type { ManagedPostgresWakeWithApp } from './ManagedPostgresWakeWithApp.js';
 export type { ManagedRealtimeCloseRequest } from './ManagedRealtimeCloseRequest.js';
 export type { ManagedRealtimeConnectionListResponse } from './ManagedRealtimeConnectionListResponse.js';
 export type { ManagedRealtimeConnectionResponse } from './ManagedRealtimeConnectionResponse.js';
@@ -1383,6 +1384,7 @@ export type { SetMCPReadinessPagerDutyRequest } from './SetMCPReadinessPagerDuty
 export type { SetMCPReadinessPolicyRequest } from './SetMCPReadinessPolicyRequest.js';
 export type { SetMCPReadinessReminderDefaultsRequest } from './SetMCPReadinessReminderDefaultsRequest.js';
 export type { SetManagedPostgresSuspendTimeoutRequest } from './SetManagedPostgresSuspendTimeoutRequest.js';
+export type { SetManagedPostgresWakeWithAppRequest } from './SetManagedPostgresWakeWithAppRequest.js';
 export type { SetObjectS3CopySourceRequest } from './SetObjectS3CopySourceRequest.js';
 export type { SetObjectStorageBindingReleasePolicyRequest } from './SetObjectStorageBindingReleasePolicyRequest.js';
 export type { SetPasswordRequest } from './SetPasswordRequest.js';

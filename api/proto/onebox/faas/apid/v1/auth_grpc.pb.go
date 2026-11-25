@@ -46,6 +46,7 @@ const (
 	Auth_EnrollOAuthConsumer_FullMethodName    = "/onebox.faas.apid.v1.Auth/EnrollOAuthConsumer"
 	Auth_ConsumerUpgradeLink_FullMethodName    = "/onebox.faas.apid.v1.Auth/ConsumerUpgradeLink"
 	Auth_LinkOAuthConsumer_FullMethodName      = "/onebox.faas.apid.v1.Auth/LinkOAuthConsumer"
+	Auth_ConsumerAccountTool_FullMethodName    = "/onebox.faas.apid.v1.Auth/ConsumerAccountTool"
 )
 
 // AuthClient is the client API for Auth service.
@@ -138,6 +139,13 @@ type AuthClient interface {
 	// AlreadyExists (the identity is linked to another key's consumer; the
 	// owner unlinks it first) and Unavailable.
 	LinkOAuthConsumer(ctx context.Context, in *LinkOAuthConsumerRequest, opts ...grpc.CallOption) (*LinkOAuthConsumerResponse, error)
+	// ConsumerAccountTool answers one of the account tools the gateway adds
+	// to an MCP server for its OAuth consumers (ADR-20261125194510):
+	// account_usage or account_plans. The result is the tool's JSON. Errors
+	// are InvalidArgument (an unknown tool or bad IDs), NotFound (no such app
+	// or consumer on the account), FailedPrecondition (the app's account
+	// tools are off) and Unavailable.
+	ConsumerAccountTool(ctx context.Context, in *ConsumerAccountToolRequest, opts ...grpc.CallOption) (*ConsumerAccountToolResponse, error)
 }
 
 type authClient struct {
@@ -248,6 +256,16 @@ func (c *authClient) LinkOAuthConsumer(ctx context.Context, in *LinkOAuthConsume
 	return out, nil
 }
 
+func (c *authClient) ConsumerAccountTool(ctx context.Context, in *ConsumerAccountToolRequest, opts ...grpc.CallOption) (*ConsumerAccountToolResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ConsumerAccountToolResponse)
+	err := c.cc.Invoke(ctx, Auth_ConsumerAccountTool_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AuthServer is the server API for Auth service.
 // All implementations must embed UnimplementedAuthServer
 // for forward compatibility.
@@ -338,6 +356,13 @@ type AuthServer interface {
 	// AlreadyExists (the identity is linked to another key's consumer; the
 	// owner unlinks it first) and Unavailable.
 	LinkOAuthConsumer(context.Context, *LinkOAuthConsumerRequest) (*LinkOAuthConsumerResponse, error)
+	// ConsumerAccountTool answers one of the account tools the gateway adds
+	// to an MCP server for its OAuth consumers (ADR-20261125194510):
+	// account_usage or account_plans. The result is the tool's JSON. Errors
+	// are InvalidArgument (an unknown tool or bad IDs), NotFound (no such app
+	// or consumer on the account), FailedPrecondition (the app's account
+	// tools are off) and Unavailable.
+	ConsumerAccountTool(context.Context, *ConsumerAccountToolRequest) (*ConsumerAccountToolResponse, error)
 	mustEmbedUnimplementedAuthServer()
 }
 
@@ -377,6 +402,9 @@ func (UnimplementedAuthServer) ConsumerUpgradeLink(context.Context, *ConsumerUpg
 }
 func (UnimplementedAuthServer) LinkOAuthConsumer(context.Context, *LinkOAuthConsumerRequest) (*LinkOAuthConsumerResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method LinkOAuthConsumer not implemented")
+}
+func (UnimplementedAuthServer) ConsumerAccountTool(context.Context, *ConsumerAccountToolRequest) (*ConsumerAccountToolResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ConsumerAccountTool not implemented")
 }
 func (UnimplementedAuthServer) mustEmbedUnimplementedAuthServer() {}
 func (UnimplementedAuthServer) testEmbeddedByValue()              {}
@@ -579,6 +607,24 @@ func _Auth_LinkOAuthConsumer_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Auth_ConsumerAccountTool_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ConsumerAccountToolRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AuthServer).ConsumerAccountTool(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Auth_ConsumerAccountTool_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AuthServer).ConsumerAccountTool(ctx, req.(*ConsumerAccountToolRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Auth_ServiceDesc is the grpc.ServiceDesc for Auth service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -625,6 +671,10 @@ var Auth_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "LinkOAuthConsumer",
 			Handler:    _Auth_LinkOAuthConsumer_Handler,
+		},
+		{
+			MethodName: "ConsumerAccountTool",
+			Handler:    _Auth_ConsumerAccountTool_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -1073,8 +1073,12 @@ type Handler struct {
 	oauthLinks OAuthConsumerLinker
 	// upgradeLinks adds upgrade_url to plan-limit refusals
 	// (ADR-20261124094745); nil leaves it out.
-	upgradeLinks               ConsumerUpgradeLinker
-	upgradeLinkCache           *upgradeLinkCache
+	upgradeLinks     ConsumerUpgradeLinker
+	upgradeLinkCache *upgradeLinkCache
+	// mcpAccountTools answers the MCP account tools of OAuth consumers
+	// (ADR-20261125194510); nil leaves tool lists and calls to the app.
+	mcpAccountTools            MCPAccountToolAnswerer
+	mcpAccountToolLimiter      *mcpAccountToolLimiter
 	tenantRequestBudgetEnabled bool
 	// apiMonetization is the API monetization release gate
 	// (ADR-20261018090210); nil keeps monetization off.
@@ -3263,6 +3267,15 @@ func corsResponseOps(rule *EdgeRuleCORSResolved, allowedOrigin string) []EdgeRul
 // A missing matcher means the feature is disabled. Once a JWT rule matches,
 // a missing verifier is a 503 rather than an authentication bypass.
 func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app App) bool {
+	if h.applyEdgeRuleJWTGates(w, r, app) {
+		return true
+	}
+	// ADR-20261125194510: an MCP account tool call admitted by every
+	// matching rule is answered here, never by the app.
+	return h.answerMCPAccountTool(w, r, app)
+}
+
+func (h *Handler) applyEdgeRuleJWTGates(w http.ResponseWriter, r *http.Request, app App) bool {
 	if h.edgeRules == nil {
 		return false
 	}
@@ -8379,6 +8392,14 @@ haveApp:
 	//     wrap below.
 	decision, isStreaming := decideStreaming(h, r, app)
 
+	// ADR-20261125194510: an opted-in OAuth consumer's tools/list answer
+	// gets the MCP account tools. The wrapper sits under the streaming and
+	// cap writers, so it sees the app's bytes as they reach the client.
+	// finishAccountTools runs once the app answered; the defer covers the
+	// early returns and is a no-op after it.
+	w, finishAccountTools := wrapMCPAccountToolsList(w, r)
+	defer finishAccountTools()
+
 	// Streaming-Status header stamp (ADR-102 D2). UNCONDITIONAL —
 	// the header must land on EVERY response (streaming AND
 	// buffered) so customers can self-diagnose. Precedent:
@@ -8621,6 +8642,9 @@ haveApp:
 				h.proxyFor(tgt.NodeID, planCap).ServeHTTP(w, req)
 			}, app)
 	}
+	// The held-back tools/list answer reaches the client before the
+	// request's bytes and latency are recorded.
+	finishAccountTools()
 	identity = platformIdentityForTarget(r.Context(), r, app, completionTarget)
 	r = r.WithContext(wire.WithPlatformIdentity(r.Context(), identity))
 	requestAttrs.addTarget(completionTarget)

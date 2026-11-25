@@ -64890,13 +64890,13 @@ func (q *Queries) LockRouteMonitorRollbackIncident(ctx context.Context, db DBTX,
 
 const lockRoutePolicyAccount = `-- name: LockRoutePolicyAccount :one
 WITH namespace AS MATERIALIZED (
- SELECT id FROM resource_namespaces WHERE id=$2::text::uuid FOR UPDATE
+ SELECT id FROM resource_namespaces WHERE id=$2::text::uuid FOR NO KEY UPDATE
 ), owner AS MATERIALIZED (
  SELECT o.id,o.personal_org,o.resource_ownership_enabled FROM orgs o JOIN apps a ON a.org_id=o.id
  JOIN namespace n ON n.id=a.account_id WHERE a.id=$1::text::uuid FOR SHARE OF o
 ), legacy AS MATERIALIZED (
  SELECT ac.id FROM accounts ac JOIN namespace n ON n.id=ac.id
- JOIN owner o ON o.personal_org OR NOT o.resource_ownership_enabled FOR UPDATE OF ac
+ JOIN owner o ON o.personal_org OR NOT o.resource_ownership_enabled FOR NO KEY UPDATE OF ac
 )
 SELECT jsonb_build_object('ID', a.id, 'Plan', a.plan, 'Status', a.status, 'AbuseHoldAt', a.abuse_hold_at) AS snapshot
 FROM app_resource_accounts a JOIN namespace n ON n.id=a.id JOIN owner o ON true
@@ -64909,6 +64909,10 @@ type LockRoutePolicyAccountParams struct {
 	AccountID string
 }
 
+// FOR NO KEY UPDATE, not FOR UPDATE: the snapshot then locks the app row, and
+// a child insert's foreign-key checks take KEY SHARE on the app before the
+// namespace (request_id_journal), so FOR UPDATE here deadlocked them. Route
+// policy writers, plan/status updates and deletes still conflict with it.
 func (q *Queries) LockRoutePolicyAccount(ctx context.Context, db DBTX, arg LockRoutePolicyAccountParams) ([]byte, error) {
 	row := db.QueryRow(ctx, lockRoutePolicyAccount, arg.AppID, arg.AccountID)
 	var snapshot []byte
@@ -86361,7 +86365,10 @@ SELECT (jsonb_build_object(
     'project_environment_branch_deployments_deployment_id_fkey', (SELECT count(*) FROM project_environment_branch_deployments WHERE deployment_id = $1::uuid),
     'environment_branch_captures_deployment_id_fkey', (SELECT count(*) FROM environment_branch_captures WHERE deployment_id = $1::uuid),
     -- Project deploy rollbacks (#7923) record each deployment's deploy group.
-    'project_deploy_rollback_members_deployment_id_fkey', (SELECT count(*) FROM project_deploy_rollback_members WHERE deployment_id = $1::uuid)
+    'project_deploy_rollback_members_deployment_id_fkey', (SELECT count(*) FROM project_deploy_rollback_members WHERE deployment_id = $1::uuid),
+    -- Verification leases (ADR-20261122220000 amendment 2) hold a deployment
+    -- only while unexpired; an expired one opens no secrets.
+    'deployment_verification_leases_deployment_id_fkey', (SELECT count(*) FROM deployment_verification_leases WHERE deployment_id = $1::uuid AND expires_at > now())
 ))::jsonb AS borrowers
 `
 

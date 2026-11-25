@@ -25,11 +25,11 @@ func TestOrgPostgresOwnershipMigration(t *testing.T) {
 			// Roll back dependent inspections first, as a real version-ordered
 			// rollback would, before exercising the older ownership migration.
 			inspectionMigrations := []string{
-				"20261125140936500_data_api_inspection_evidence_immutable.sql",
-				"20261125140936400_data_api_inspection_revision_validation.sql",
-				"20261125140936300_data_api_inspection_admissions.sql",
-				"20261125140936200_data_api_inspection_trust_version.sql",
-				"20261125140936100_data_api_inspection_execution.sql",
+				"20261125214804500_data_api_inspection_evidence_immutable.sql",
+				"20261125214804400_data_api_inspection_revision_validation.sql",
+				"20261125214804300_data_api_inspection_admissions.sql",
+				"20261125214804200_data_api_inspection_trust_version.sql",
+				"20261125214804100_data_api_inspection_execution.sql",
 			}
 			for _, name := range inspectionMigrations {
 				migration, err := migrations.FS.ReadFile(name)

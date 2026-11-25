@@ -32,3 +32,27 @@ func (s *server) setManagedPostgresSuspendTimeout(w http.ResponseWriter, r *http
 	}
 	st.Put(w, r, account)
 }
+
+// managedPostgresWakeWithAppOrLog reads which databases start with their
+// apps; a failed read leaves the field out of the view.
+func (s *server) managedPostgresWakeWithAppOrLog(ctx context.Context, databases []managedpostgres.Database) map[string]bool {
+	if s.managedPostgres == nil {
+		return nil
+	}
+	enabled, err := s.managedPostgres.WakeWithApp(ctx, databases)
+	if err != nil {
+		s.log.Warn("managed postgres wake with app: read", "err", err)
+		return nil
+	}
+	return enabled
+}
+
+// setManagedPostgresWakeWithApp serves PUT .../wake-with-app with the
+// service as configured when the request arrives.
+func (s *server) setManagedPostgresWakeWithApp(w http.ResponseWriter, r *http.Request, account state.Account) {
+	h := managedpg.WakeWithApp{Problem: managedPostgresProblem, NotConfigured: managedPostgresNotConfiguredProblem, Audit: s.audit}
+	if s.managedPostgres != nil {
+		h.Service = s.managedPostgres
+	}
+	h.Put(w, r, account)
+}

@@ -1811,6 +1811,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid managed postgres configuration: %w", err)
 	}
 	srv.WithManagedPostgres(managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector)
+	// ADR-20261125105038: opted-in managed Postgres databases start when a
+	// bound app's instance starts waking.
+	if deps.pool != nil {
+		go func() {
+			if err := runManagedPostgresWakeStarter(ctx, deps.pool, srv, log); err != nil && ctx.Err() == nil {
+				log.Error("managed postgres wake starter exited", "err", err)
+			}
+		}()
+	}
 	// ADR-1027 major-upgrade and storage-growth previews: nobody sees them
 	// unless listed.
 	if srv.postgresUpgrades, err = managedpg.ParseRollout("FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS", deps.getenv("FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS")); err != nil {
@@ -2732,7 +2741,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// The tracing capability gates span ingest as it gates trace reads.
 	tracing := receivers.TracingReleased(srv.tracingReleased)
 	spans := spansIngest{limiter: spansLimiter, tracing: tracing, sessions: sessions, agents: srv.agentRequestsForGateways(),
-		consumers: srv.oauthConsumersForGateways(), upgrades: &srv.consumerSignup, links: &srv.consumerSignup}
+		consumers: srv.oauthConsumersForGateways(), upgrades: &srv.consumerSignup, links: &srv.consumerSignup,
+		accountTools: &srv.consumerSignup}
 	// ADR-958: one in-guest span ingester shared by both SpansWriter listeners.
 	// Its flush loop writes back through WriteSpansSummary so guest spans share
 	// that path's validation, rate cap and outcome metrics.
@@ -3617,4 +3627,7 @@ type spansIngest struct {
 	// links links gateways' OAuth callers to key consumers
 	// (ADR-20261124094745).
 	links receivers.OAuthLinks
+	// accountTools answers the MCP account tools gateways add for OAuth
+	// consumers (ADR-20261125194510).
+	accountTools receivers.AccountTools
 }

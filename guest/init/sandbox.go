@@ -112,6 +112,8 @@ type sandboxServer struct {
 	// env is the session's environment (session_env), in memory only.
 	envMu sync.Mutex
 	env   map[string]string
+	// code is the code interpreter's driver (step 14).
+	code *codeDriver
 }
 
 func newSandboxServer(workspace, home string, owner int, runner sandboxRunner, log *slog.Logger) *sandboxServer {
@@ -119,7 +121,8 @@ func newSandboxServer(workspace, home string, owner int, runner sandboxRunner, l
 		log = slog.Default()
 	}
 	s := &sandboxServer{workspace: workspace, home: home, owner: owner, runner: runner, ops: make(chan struct{}, sandboxMaxOperations),
-		now: time.Now, log: log, startLog: sandboxStartLog}
+		now: time.Now, log: log, startLog: sandboxStartLog,
+		code: &codeDriver{path: sandboxCodeDriver, runtimeDir: sandboxCodeRuntimeDir}}
 	s.commands = newSandboxCommands(runner, sandboxproto.MaxBackgroundCommands, s.now)
 	return s
 }
@@ -155,6 +158,10 @@ func (s *sandboxServer) handle(ctx context.Context, req sandboxproto.Request, ca
 		return s.commands.input(req)
 	case sandboxproto.OpSessionEnv:
 		return s.setSessionEnv(req.Env), nil
+	case sandboxproto.OpCodeRun:
+		return s.codeRun(ctx, req, call)
+	case sandboxproto.OpCodeContext:
+		return s.codeContext(ctx, req)
 	case sandboxproto.OpArchiveCreate:
 		return s.archiveCreate(req, call)
 	case sandboxproto.OpArchiveExtract:

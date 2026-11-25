@@ -614,7 +614,26 @@ def attribute(gregale: "Gregale", touched: dict, evidence: str, slug: str | None
         for name in touched.get(kind, []):
             named = name == slug or _named(name, evidence) or (kind == "apps" and name.startswith(prefixes))
             (mine if named else others)[kind].append(name)
+    for app in _members_of(gregale, mine["projects"], others["apps"]):
+        others["apps"].remove(app)
+        mine["apps"].append(app)
+    mine["apps"].sort()
     return mine, others
+
+
+def _members_of(gregale: "Gregale", projects: list[str], apps: list[str]) -> list[str]:
+    """The apps among `apps` that belong to one of `projects`. A Compose
+    deploy names a project's apps from its services, names the agent never
+    typed (rc.381 retail-store: retail-catalog and retail-carts went
+    unattributed, failed apps_created and were left behind)."""
+    if not projects or not apps:
+        return []
+    try:
+        ids = {row.get("id") for row in _rows(gregale.get("/v1/projects")) if row.get("slug") in projects}
+        members = {row.get("slug") for row in _rows(gregale.get("/v1/apps")) if row.get("project_id") in ids - {None, ""}}
+    except (OSError, ValueError, AttributeError, urllib.error.URLError, subprocess.TimeoutExpired):
+        return []
+    return [app for app in apps if app in members]
 
 
 def _slug_prefixes(evidence: str) -> tuple:
@@ -850,8 +869,10 @@ def vote_counted_check(gregale, created_apps: list[str], check: dict, http=_http
     vote is the likeliest change; a total that grows still cannot prove which
     vote was counted. Both apps must be public: the grader has no session to
     vote or read scores as the owner."""
-    result_app, result_url = _created_public_app(gregale, created_apps, check.get("result_match", r"(^|-)result$"))
-    vote_app, vote_url = _created_public_app(gregale, created_apps, check.get("vote_match", r"(^|-)vote$"), exclude=result_app)
+    # A taken name gets the project's prefix (<project>-vote) or, when another
+    # account holds it, a 5-character suffix (vote-k3x7q, pkg/api SuffixedAppSlugs).
+    result_app, result_url = _created_public_app(gregale, created_apps, check.get("result_match", r"(^|-)result(-[a-z0-9]{5})?$"))
+    vote_app, vote_url = _created_public_app(gregale, created_apps, check.get("vote_match", r"(^|-)vote(-[a-z0-9]{5})?$"), exclude=result_app)
     if not vote_url or not result_url:
         return False, f"no public vote ({vote_app or '-'}) or result ({result_app or '-'}) app among {','.join(created_apps)}"
     deadline = time.monotonic() + max(deadline_s, 0)

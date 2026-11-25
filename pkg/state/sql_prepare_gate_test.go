@@ -177,7 +177,9 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 			target = customerConn
 			query = s.sql
 			customerStatements++
-		} else if strings.HasPrefix(pos, "../../cmd/gregale/templates/mcp-go-tasks/") {
+		} else if strings.HasPrefix(pos, "../../cmd/gregale/templates/mcp-go-tasks/") || strings.HasPrefix(pos, "../../cmd/gregale/commands_mcp_native_gate.go:") {
+			// The built-in Task release gate (ADR-20261123160000) reads the
+			// same worker registry in the customer's Task database.
 			target = mcpConn
 			query = s.sql
 			mcpStatements++

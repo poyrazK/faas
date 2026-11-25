@@ -11295,6 +11295,59 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+  /v1/postgres/databases/{id}/wake-with-app:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    put:
+      operationId: setManagedPostgresWakeWithApp
+      summary: Start a database when its app wakes
+      description: Turns on or off starting a scale-to-zero database when an app bound to it wakes, so the database's cold start overlaps the app's instead of following it. Off by default. A wake that never queries the database still starts it, and the compute bills at least one suspend timeout. Repeating the same value is harmless. An always-on database, or one on a backend that cannot start its compute, answers 409 wake_with_app_unsupported; one with a change in progress answers a conflict. While operations are closed, only turning it off is taken.
+      tags: [managed_postgres]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetManagedPostgresWakeWithAppRequest' }
+      responses:
+        '200':
+          description: The setting in force
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresWakeWithApp' }
+        default:
+          description: Invalid setting, unsupported database, conflict, entitlement or admission failure
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/orgs/{organization}/postgres/databases/{id}/wake-with-app:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to set whether a company database starts with its app."
+        schema: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$' }
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    put:
+      operationId: setOrgManagedPostgresWakeWithApp
+      summary: "Start a company database when its app wakes."
+      description: "An owner or admin turns on or off starting a scale-to-zero company database when an app bound to it wakes. A wake that never queries the database still starts it."
+      tags: [managed_postgres]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetManagedPostgresWakeWithAppRequest' }
+      responses:
+        '200':
+          description: "Whether the company database starts with its app."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresWakeWithApp' }
+        default:
+          description: "Problem while setting whether the company database starts with its app."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/postgres/databases/{id}/suspend-timeout:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -96669,6 +96722,20 @@ components:
         last_error_code: { type: string, description: "Safe policy-change diagnostic. A confirmed rejection retains the source policy; uncertain outcomes remain pending." }
         created_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time }
+    SetManagedPostgresWakeWithAppRequest:
+      description: Whether a scale-to-zero database starts when an app bound to it wakes.
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled: { type: boolean, description: "True starts the database with its app; false leaves it to start on the app's first query." }
+    ManagedPostgresWakeWithApp:
+      description: Whether a database starts when an app bound to it wakes.
+      type: object
+      required: [database_id, enabled]
+      properties:
+        database_id: { type: string }
+        enabled: { type: boolean }
     SetManagedPostgresSuspendTimeoutRequest:
       description: How long a scale-to-zero database stays up after its last activity before it suspends.
       type: object
@@ -96728,6 +96795,7 @@ components:
         scale_to_zero: { type: boolean }
         suspend_timeout_seconds: { type: integer, format: int64, description: "Seconds a scale-to-zero database stays up after its last activity; absent for an always-on database." }
         suspend_timeout_custom: { type: boolean, description: "True when the database has its own suspend timeout rather than the platform default." }
+        wake_with_app: { type: boolean, description: "True when the database starts when an app bound to it wakes." }
         storage_limit_bytes: { type: integer, format: int64, minimum: 0 }
         restore_window_seconds: { type: integer, format: int64, minimum: 0 }
         restore_source_database_id: { type: [string, "null"], minLength: 1, maxLength: 128 }
@@ -137967,6 +138035,7 @@ components:
         customer_closing: { type: boolean, description: "Let customers close their account with their own key." }
         free_plan_id: { type: string, format: uuid, description: "One of plan_ids whose rate cards charge nothing; joining it needs no card." }
         oauth_consumers: { type: boolean, description: "People signed in through the app's MCP oauth-proxy issuer become consumers on free_plan_id; needs free_plan_id." }
+        account_tools: { type: boolean, description: "Add the account_usage and account_plans tools to the app's MCP server for people signed in through it; needs oauth_consumers." }
 
     ConsumerSignupSettingsResponse:
       description: "An app's sign-up settings."
@@ -137992,6 +138061,7 @@ components:
         customer_closing: { type: boolean }
         free_plan_id: { type: string, format: uuid }
         oauth_consumers: { type: boolean }
+        account_tools: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
