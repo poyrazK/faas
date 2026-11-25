@@ -11331,6 +11331,15 @@
     "kind": "operational"
   },
   {
+    "table": "managed_postgres_wake_with_app",
+    "columns": [
+      "database_id",
+      "enabled_at",
+      "last_started_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_postgres_usage",
     "columns": [
       "account_id",
