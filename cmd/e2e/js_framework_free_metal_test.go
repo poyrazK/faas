@@ -8,8 +8,9 @@
 //     full /app (about 340 MB of node_modules) is over the cap, so the build
 //     keeps the standalone tree and imaged ships only it. The server runs from
 //     /app/.next/standalone and serves its static assets and public files.
-//   - The same app on Hobby (512 MB): the full /app fits, so the build drops
-//     the tree and the app ships whole, as before the ADR.
+//   - The same app on Pro (1 GB): the full /app fits, so the build drops the
+//     tree and the app ships whole, as before the ADR. (On Hobby it does not:
+//     its full layer needs 545 MB of the 512 MB cap, so Hobby gets the tree.)
 //   - Bun on Free: imaged keeps mise's Bun install and drops mise's Node.
 //
 // Each serves when deployed and again after a park and a snapshot restore.
@@ -103,9 +104,9 @@ func TestJSFrameworksFitFreeMetal(t *testing.T) {
 		return
 	}
 	h, pool := seed.h, seed.pool
-	// newSharedRuntimeApp seeds Hobby; the Free apps get their own accounts.
+	// newSharedRuntimeApp seeds Hobby; each app below gets its own account.
 	nextFree := addSharedRuntimeApp(t, h, pool, api.PlanFree, "next-free")
-	nextHobby := addSharedRuntimeApp(t, h, pool, api.PlanHobby, "next-hobby")
+	nextPro := addSharedRuntimeApp(t, h, pool, api.PlanPro, "next-pro")
 	bunFree := addSharedRuntimeApp(t, h, pool, api.PlanFree, "bun-free")
 
 	guestInit, err := os.Stat(os.Getenv("FAAS_GUEST_INIT"))
@@ -147,21 +148,21 @@ func TestJSFrameworksFitFreeMetal(t *testing.T) {
 		nextFree.park(t)
 	})
 
-	t.Run("nextjs-hobby-full-app", func(t *testing.T) {
-		dep := nextHobby.deploy(t, journeyFixture(t, "nextjs-standalone"), "cccccccc-0000-4000-8000-000000000002", sharedBaseStallWindow, sharedBaseCeiling)
-		t.Logf("next hobby: runtime_base=%q app layer=%d bytes", dep.RuntimeBase, dep.RootfsBytes)
+	t.Run("nextjs-pro-full-app", func(t *testing.T) {
+		dep := nextPro.deploy(t, journeyFixture(t, "nextjs-standalone"), "cccccccc-0000-4000-8000-000000000002", sharedBaseStallWindow, sharedBaseCeiling)
+		t.Logf("next pro: runtime_base=%q app layer=%d bytes", dep.RuntimeBase, dep.RootfsBytes)
 		if dep.RuntimeBase != "node24" {
 			t.Fatalf("runtime_base = %q, want node24", dep.RuntimeBase)
 		}
-		// The full /app is over the Free cap; Hobby's fits it.
+		// The full /app is over the Free cap; Pro's fits it.
 		if dep.RootfsBytes <= freeCap {
 			t.Fatalf("app layer = %d bytes, want the full /app (over %d)", dep.RootfsBytes, freeCap)
 		}
-		if cwd := nextHobby.getJSON(t, "/api/runtime")["cwd"]; cwd != "/app" {
+		if cwd := nextPro.getJSON(t, "/api/runtime")["cwd"]; cwd != "/app" {
 			t.Fatalf("server cwd = %v, want /app", cwd)
 		}
-		nextHobby.get(t, "/hello.txt")
-		nextHobby.park(t)
+		nextPro.get(t, "/hello.txt")
+		nextPro.park(t)
 	})
 
 	t.Run("bun-free", func(t *testing.T) {

@@ -117,8 +117,9 @@ with the rest of the shared runtime.
 ## Consequences
 
 - A small Next.js 16 app's layer drops from ~340 MB to ~40–45 MB on Free,
-  where its full `/app` does not fit. On a paid plan the same app fits and
-  ships all of `/app` as before. A small Bun app's layer drops from
+  where its full `/app` does not fit. A `create-next-app` app's full layer
+  needs 545 MB, so it gets the standalone tree on Hobby too. On Pro and
+  Scale it fits and ships all of `/app` as before. A small Bun app's layer drops from
   ~420 MB to ~95 MB on every plan. Both fit the Free plan with room for
   dependencies.
 - A Next.js app that customizes its start (`next start -p 3000`, a custom
