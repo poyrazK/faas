@@ -37,6 +37,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -46,7 +47,8 @@ AGENTS = ("claude", "codex", "gemini", "cursor")
 AGENT_BINARIES = {"claude": "claude", "codex": "codex", "gemini": "gemini", "cursor": "cursor-agent"}
 TOOLSETS = ("core", "release", "diagnose", "all", "none")
 SETUP_KINDS = ("deploy", "replace")
-CHECK_KINDS = ("http", "serving", "file_contains", "answer", "apps_created", "apps_serving", "app_http", "no_traps", "owner_response")
+CHECK_KINDS = ("http", "serving", "file_contains", "answer", "apps_created", "apps_serving", "app_http", "no_traps", "owner_response",
+               "vote_counted")
 FEATURE_KINDS = ("command", "file", "state")
 FEATURE_STATES = ("project_created",)
 DEFAULT_API = "https://api.gregale.dev"
@@ -742,6 +744,85 @@ def _fetch(url: str) -> tuple[int, str]:
         return 0, str(error)
 
 
+def _http(method: str, url: str, data: bytes | None = None, headers: dict | None = None) -> tuple[int, str]:
+    request = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.status, response.read(65536).decode("utf-8", "replace")
+    except urllib.error.HTTPError as error:
+        return error.code, error.read(65536).decode("utf-8", "replace")
+    except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+        return 0, str(error)
+
+
+def socketio_event(base: str, event: str, http=_http, timeout_s: float = 30) -> list:
+    """The arguments of the next `event` a Socket.IO v4 server emits, read
+    over the plain HTTP long-polling transport (no websocket client needed)."""
+    status, body = http("GET", f"{base}/socket.io/?EIO=4&transport=polling")
+    if status != 200 or not body.startswith("0"):
+        raise ValueError(f"socket.io handshake {status}: {body[:80]!r}")
+    poll = f"{base}/socket.io/?EIO=4&transport=polling&sid={urllib.parse.quote(json.loads(body[1:])['sid'])}"
+    status, body = http("POST", poll, b"40", {"Content-Type": "text/plain;charset=UTF-8"})
+    if status != 200:
+        raise ValueError(f"socket.io connect {status}: {body[:80]!r}")
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        status, body = http("GET", poll)
+        if status != 200:
+            raise ValueError(f"socket.io poll {status}: {body[:80]!r}")
+        for packet in body.split("\x1e"):
+            if packet == "2":
+                http("POST", poll, b"3", {"Content-Type": "text/plain;charset=UTF-8"})
+            elif packet.startswith("42"):
+                name, *args = json.loads(packet[2:])
+                if name == event:
+                    return args
+    raise TimeoutError(f"no socket.io {event!r} event within {timeout_s:.0f}s")
+
+
+def _vote_scores(result_url: str, http) -> dict:
+    (scores,) = socketio_event(result_url, "scores", http=http)[:1]
+    return json.loads(scores) if isinstance(scores, str) else scores
+
+
+def vote_counted_check(gregale, created_apps: list[str], check: dict, http=_http, deadline_s: float = 120) -> tuple[bool, str]:
+    """End to end for the voting app: cast a vote on the vote app and wait for
+    the result app to count it. GETs of both pages passed on rc.380 while every
+    vote POST returned 500 (Redis unreachable) and the votes table was never
+    created, so serving pages alone said nothing about the app working."""
+    def public(pattern: str) -> str:
+        for app in created_apps:
+            if re.search(pattern, app):
+                url = _app_url(gregale.get(f"/v1/apps/{app}"))
+                if url:
+                    return url
+        return ""
+    vote_url, result_url = public(check.get("vote_match", "vote")), public(check.get("result_match", "result"))
+    if not vote_url or not result_url:
+        return False, f"no public vote ({vote_url or '-'}) or result ({result_url or '-'}) app"
+    option = check.get("option", "a")
+    try:
+        before = _vote_scores(result_url, http).get(option, 0)
+    except (ValueError, TimeoutError, KeyError, TypeError) as error:
+        return False, f"result scores unreadable: {error}"
+    voter = "agent-eval-" + secrets.token_hex(8)
+    status, body = http("POST", vote_url + check.get("path", "/"), urllib.parse.urlencode({"vote": option}).encode(),
+                        {"Content-Type": "application/x-www-form-urlencoded", "Cookie": f"voter_id={voter}"})
+    if status != 200:
+        return False, f"vote POST {status}: {body[:120]!r}"
+    deadline, after, last = time.monotonic() + deadline_s, before, ""
+    while True:
+        try:
+            after = _vote_scores(result_url, http).get(option, 0)
+            if after > before:
+                return True, f"{option}: {before} -> {after}"
+        except (ValueError, TimeoutError, KeyError, TypeError) as error:
+            last = f" ({error})"
+        if time.monotonic() >= deadline:
+            return False, f"vote accepted but not counted: {option} stayed {after}{last}"
+        time.sleep(5)
+
+
 def _app_is_serving(gregale, slug: str) -> bool:
     """An app serves when health names a serving deployment. Health does not
     assess workers or jobs unless app_health_workers is on (phase
@@ -795,7 +876,7 @@ def first_deploy_live(gregale, apps: list[str], since: str = "") -> bool:
 
 
 def run_checks(task: dict, slug: str, project: Path, answer: str, gregale, fetch=None, http_deadline_s: float = 120, created: dict | None = None,
-               since: str = "", expected_app_id: str | None = None) -> list[dict]:
+               since: str = "", expected_app_id: str | None = None, http=None) -> list[dict]:
     created_apps = (created or {}).get("apps", [])
     results = []
     for check in task["checks"]:
@@ -831,6 +912,8 @@ def run_checks(task: dict, slug: str, project: Path, answer: str, gregale, fetch
                 else:
                     app, url = pairs[0]
                     ok, detail = _http_or_private(gregale, app, url + check.get("path", "/"), check, http_deadline_s, fetch)
+            elif kind == "vote_counted":
+                ok, detail = vote_counted_check(gregale, created_apps, check, http=http or _http, deadline_s=http_deadline_s)
             elif kind == "no_traps":
                 codes = check.get("codes") or list(DEFAULT_TRAPS)
                 hit = sorted({f"{app}:{code}" for app in created_apps for code in codes if code in _app_final_evidence(gregale, app, since)})
