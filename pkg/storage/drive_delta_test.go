@@ -359,3 +359,46 @@ func TestCacheIgnoresDeltaBaseOutsideSnapshotDrives(t *testing.T) {
 		t.Fatal("a layer was uploaded as a delta")
 	}
 }
+
+// A local parent (one-box storage) hands out its own files by path. For a
+// snapshot drive uploaded as a delta that file is the encoded payload, and a
+// VM restored from it booted a 1.6 MB "disk" (desktop metal test,
+// 2026-11-24). LocalPath and Get must give the whole drive.
+func TestCacheNeverHandsOutALocalParentsDelta(t *testing.T) {
+	dir := t.TempDir()
+	layerPath, drivePath := layerAndDrive(t, dir, 600*driveDeltaBlock+1234)
+	shared, err := NewLocalStorageBackend(filepath.Join(dir, "shared"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache, err := NewLocalCacheBackend(shared, filepath.Join(dir, "cache"), 1<<30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache.SetDriveDeltas(true)
+	putDeltaFile(t, cache, testLayerKey, layerPath, "")
+	putDeltaFile(t, cache, testDriveKey, drivePath, testLayerKey)
+	if !bytes.HasPrefix(parentBytes(t, shared, testDriveKey), []byte(driveDeltaMagic)) {
+		t.Fatal("the parent holds the whole drive, not a delta")
+	}
+	other, err := NewLocalCacheBackend(shared, filepath.Join(dir, "other-cache"), 1<<30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := readAll(t, drivePath)
+	for name, c := range map[string]*LocalCacheBackend{"capturing node": cache, "another node": other} {
+		if got, err := getBytes(t, c, testDriveKey); err != nil || !bytes.Equal(got, want) {
+			t.Fatalf("%s: Get differs from the drive (err %v)", name, err)
+		}
+		path, local, err := c.LocalPath(testDriveKey)
+		if err != nil || !local {
+			t.Fatalf("%s: LocalPath = %q %v %v", name, path, local, err)
+		}
+		if !bytes.Equal(readAll(t, path), want) {
+			t.Fatalf("%s: LocalPath %s is not the drive", name, path)
+		}
+		if path, local, _ := LocalPathWithoutTouch(c, testDriveKey); !local || !bytes.Equal(readAll(t, path), want) {
+			t.Fatalf("%s: LocalPathWithoutTouch %s is not the drive", name, path)
+		}
+	}
+}
