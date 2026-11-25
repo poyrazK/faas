@@ -65083,6 +65083,47 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/flags/notifications:
+    parameters:
+      - { $ref: '#/components/parameters/FlagsProjectSlug' }
+      - { $ref: '#/components/parameters/FlagsEnvironment' }
+    get:
+      tags: [flags]
+      operationId: getProjectFlagNotifications
+      summary: Read the channels an environment's flag notifications go to.
+      description: "Experiment decisions (ship a variant, keep control) and problems (guardrail rollback, sample ratio mismatch) of experiments without their own channels, a weekly digest of flags that need a decision and flag expiries go to these notification channels. Needs the flag_notifications release."
+      responses:
+        '200':
+          description: The environment's flag notification channels; empty when off.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagNotificationSettings' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [flags]
+      operationId: setProjectFlagNotifications
+      summary: Replace the channels an environment's flag notifications go to.
+      description: "Up to 5 of the account's notification channels; an empty list turns the environment's flag notifications off. Queued notifications keep the channels they were queued with."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FlagNotificationSettingsRequest' }
+      responses:
+        '200':
+          description: The environment's new flag notification channels.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagNotificationSettings' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments/{environment}/flags/rollback:
     parameters:
       - { $ref: '#/components/parameters/FlagsProjectSlug' }
@@ -93376,6 +93417,7 @@ components:
         allocation: { type: string, enum: [fixed, bandit], description: "fixed (default) or bandit: Thompson sampling re-weights the flag's variants hourly, keeping 10% per arm; needs a binary metric and the flag's only weighted rule." }
         denominator_event: { type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$', description: "A ratio metric's denominator event." }
         percentile: { type: integer, minimum: 50, maximum: 99, description: "A percentile metric's percentile." }
+        notify_channel_ids: { type: array, maxItems: 5, items: { type: string, format: uuid }, description: "Notification channels for the experiment's decisions and problems; omitted uses the environment's. Needs the flag_notifications release." }
     FlagExperimentFunnel:
       description: "A funnel metric: a customer converts when it completes the steps in order within the window after its first exposure."
       type: object
@@ -93489,6 +93531,22 @@ components:
         latency_threshold_ms: { type: integer, description: "Control's p95 latency, fixed once control has enough requests." }
         stop_reason: { type: string, enum: [manual, guardrail_breach, shipped] }
         breach: { type: object, additionalProperties: true, description: The guardrail breach that stopped the experiment. }
+        notify_channel_ids: { type: array, items: { type: string, format: uuid }, description: "The experiment's own notification channels for its decisions and problems; absent uses the environment's." }
+    FlagNotificationSettings:
+      description: An environment's flag notification channels.
+      type: object
+      required: [channel_ids]
+      properties:
+        channel_ids: { type: array, maxItems: 5, items: { type: string, format: uuid }, description: "Notification channel IDs; empty when the environment's flag notifications are off." }
+        updated_by: { type: string, description: The account that last changed them. }
+        updated_at: { type: string, format: date-time }
+    FlagNotificationSettingsRequest:
+      description: New flag notification channels for an environment.
+      type: object
+      additionalProperties: false
+      required: [channel_ids]
+      properties:
+        channel_ids: { type: array, maxItems: 5, items: { type: string, format: uuid }, description: "Up to 5 of the account's notification channels; empty turns notifications off." }
     FlagExperimentList:
       description: An environment's flag experiments.
       type: object

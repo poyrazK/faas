@@ -19,6 +19,8 @@ import type { FlagExperimentResults } from '../models/FlagExperimentResults.js';
 import type { FlagExperimentShipRequest } from '../models/FlagExperimentShipRequest.js';
 import type { FlagExperimentShipResponse } from '../models/FlagExperimentShipResponse.js';
 import type { FlagLifecycleReport } from '../models/FlagLifecycleReport.js';
+import type { FlagNotificationSettings } from '../models/FlagNotificationSettings.js';
+import type { FlagNotificationSettingsRequest } from '../models/FlagNotificationSettingsRequest.js';
 import type { FlagOutcomesResponse } from '../models/FlagOutcomesResponse.js';
 import type { FlagRolloutPromotion } from '../models/FlagRolloutPromotion.js';
 import type { FlagRolloutPromotionRequest } from '../models/FlagRolloutPromotionRequest.js';
@@ -212,6 +214,87 @@ export class FlagsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the channels an environment's flag notifications go to.
+   * Experiment decisions (ship a variant, keep control) and problems (guardrail rollback, sample ratio mismatch) of experiments without their own channels, a weekly digest of flags that need a decision and flag expiries go to these notification channels. Needs the flag_notifications release.
+   * @returns FlagNotificationSettings The environment's flag notification channels; empty when off.
+   * @throws ApiError
+   */
+  public static getProjectFlagNotifications({
+    slug,
+    environment,
+  }: {
+    /**
+     * Project that owns this environment flag configuration.
+     */
+    slug: string,
+    /**
+     * Named environment whose flag configuration is selected.
+     */
+    environment: string,
+  }): CancelablePromise<FlagNotificationSettings> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/flags/notifications',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Replace the channels an environment's flag notifications go to.
+   * Up to 5 of the account's notification channels; an empty list turns the environment's flag notifications off. Queued notifications keep the channels they were queued with.
+   * @returns FlagNotificationSettings The environment's new flag notification channels.
+   * @throws ApiError
+   */
+  public static setProjectFlagNotifications({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Project that owns this environment flag configuration.
+     */
+    slug: string,
+    /**
+     * Named environment whose flag configuration is selected.
+     */
+    environment: string,
+    requestBody: FlagNotificationSettingsRequest,
+  }): CancelablePromise<FlagNotificationSettings> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/projects/{slug}/environments/{environment}/flags/notifications',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | env_var_invalid_key`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
