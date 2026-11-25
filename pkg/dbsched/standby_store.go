@@ -37,7 +37,7 @@ func claimStandbyOn(node Node, usage nodeUsage, memMiB int) error {
 // canFailover reports whether a database's standby may take over.
 func canFailover(vm VM) bool {
 	switch vm.State {
-	case StateParked, StateRunning, StateParking, StateFailed:
+	case StateParked, StateRunning, StateParking, stateMaintenanceHandoff, StateFailed:
 		return vm.StandbySynced && vm.StandbyNode != ""
 	}
 	return false

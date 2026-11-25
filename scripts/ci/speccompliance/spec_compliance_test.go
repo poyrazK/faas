@@ -416,6 +416,8 @@ var routeExclude = map[string]bool{
 	"GET /v1/consumer-signup/{slug}/page":                                          true, // hosted HTML sign-up page over the public sign-up API (ADR-20261021143000)
 	"GET /v1/consumer-signup/{slug}/signup.js":                                     true,
 	"GET /v1/consumer-signup/{slug}/signup.css":                                    true,
+	"GET /v1/consumer-signup/{slug}/upgrade":                                       true, // hosted HTML upgrade page over the documented upgrade API (ADR-20261124094745)
+	"GET /v1/consumer-signup/{slug}/upgrade.js":                                    true,
 	"POST /v1/platform-tenant-self/product/submissions/lookup":                     true,
 	"POST /v1/product-control/customer/{slug}/session":                             true,
 	"GET /v1/product-control/customer/{slug}/account-recovery":                     true,
@@ -862,7 +864,11 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
-	"RunHistoryFilter": true, // Go-only URL query options; selectors are declared on the route.
+	// ADR-20261124094745: bodies of the consumer link path the gateway
+	// serves on an app's own host, not an apid route.
+	"LinkConsumerRequest":  true,
+	"LinkConsumerResponse": true,
+	"RunHistoryFilter":     true, // Go-only URL query options; selectors are declared on the route.
 	// ADR-20261117215858: a query result column, declared inline in the
 	// ManagedPostgresQueryResponse schema.
 	"ManagedPostgresQueryColumn":     true,
@@ -1259,7 +1265,7 @@ var schemaSpecOnly = map[string]bool{
 	// including their flattened embedded fields, against the OpenAPI schemas.
 	"FlagRule": true, "FlagCondition": true, "FlagLifecycle": true, "FlagLifecycleReport": true, "FlagVariant": true, "ProgressiveRollout": true, "FeatureFlag": true, "FlagsConfig": true,
 	"FlagsBundle": true, "FeatureFlagVersion": true, "FlagEvent": true, "FlagEventsRequest": true, "FlagEventsResponse": true, "FlagExperimentCreateRequest": true, "FlagExperiment": true, "FlagExperimentList": true, "FlagExperimentArm": true, "FlagExperimentVariantResult": true, "FlagExperimentResults": true, "FlagExperimentGuardrail": true, "FlagExperimentGuardrailRequest": true, "FlagExperimentGuardrailSetting": true, "FlagExperimentGuardrailSettings": true, "FlagExperimentGuardrailVariant": true, "FlagExperimentGuardrailsRequest": true, "FlagExperimentLatency": true, "FlagExperimentRecommendation": true, "FlagExperimentShipRequest": true, "FlagExperimentShipResponse": true,
-	"InsightEventPoint": true, "InsightEventSeries": true, "InsightStepRequest": true, "InsightFunnelRequest": true, "InsightFunnelStep": true, "InsightFunnelBreakdown": true, "InsightFunnel": true, "InsightRetentionRequest": true, "InsightRetentionRow": true, "InsightRetention": true, "InsightRequestVariant": true, "InsightRequests": true, "InsightCohortRequest": true, "InsightCohort": true, "InsightCohortList": true, "InsightEventsQuery": true, "SavedInsightAlert": true, "SavedInsightRequest": true, "SavedInsight": true, "SavedInsightList": true, "SavedInsightResult": true, "FlagEdge": true, "FlagEdgeAction": true, "FlagEdgeRoute": true, "FlagExperimentFunnel": true, "FlagExperimentRetention": true, "FlagExperimentCuped": true, "FlagExperimentComparison": true,
+	"InsightEventPoint": true, "InsightEventSeries": true, "InsightStepRequest": true, "InsightFunnelRequest": true, "InsightFunnelStep": true, "InsightFunnelBreakdown": true, "InsightFunnel": true, "InsightRetentionRequest": true, "InsightRetentionRow": true, "InsightRetention": true, "InsightRequestVariant": true, "InsightRequests": true, "InsightCohortRequest": true, "InsightCohort": true, "InsightCohortList": true, "InsightEventsQuery": true, "SavedInsightAlert": true, "SavedInsightRequest": true, "SavedInsight": true, "SavedInsightList": true, "SavedInsightResult": true, "FlagNotificationSettings": true, "FlagNotificationSettingsRequest": true, "FlagEdge": true, "FlagEdgeAction": true, "FlagEdgeRoute": true, "FlagExperimentFunnel": true, "FlagExperimentRetention": true, "FlagExperimentCuped": true, "FlagExperimentComparison": true,
 	"FlagExperimentBandit": true, "FlagExperimentBanditArm": true, "FlagExperimentHoldout": true, "FlagExperimentHoldoutReport": true, "FlagExperimentLayer": true, "FlagExperimentLayerList": true, "FlagExperimentLayerRequest": true, "FlagExperimentLayerSlice": true, "FlagExperimentSegment": true, "FlagExposure": true, "FlagHoldout": true, "FlagLayer": true, "FlagRolloutMetric": true, "FlagRuleExperiment": true,
 	"FlagDecision": true, "FlagEvidence": true,
 	"UpdateFeatureFlagsRequest": true, "RollbackFeatureFlagsRequest": true,

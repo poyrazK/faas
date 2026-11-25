@@ -189,6 +189,9 @@ func TestArchiveRestoreCheck(t *testing.T) {
 		if got := s.checkRestore(ctx, dbA, target, 16); got.Outcome != RestoreUnverified || got.Reason != "timeline_unverified" {
 			t.Fatalf("competing branches were treated as one lineage: %+v", got)
 		}
+		if got := s.inspectRestore(ctx, dbA, target, 16, false, 2); got.Outcome != RestoreCovered || got.Timeline != 2 {
+			t.Fatalf("archived timeline changed after reservation: %+v", got)
+		}
 		drop("00000003.history")
 		drop(history)
 		if got := s.checkRestore(ctx, dbA, target, 16); got.Outcome != RestoreUnverified || got.MissingHistory != history {
@@ -338,7 +341,7 @@ func TestRestoreCheckWithPostgresWAL(t *testing.T) {
 	if check.Outcome != RestoreCovered {
 		t.Fatalf("actual PostgreSQL WAL check = %+v", check)
 	}
-	latest := server.inspectRestore(t.Context(), dbA, target.Add(time.Minute), 16, true)
+	latest := server.inspectRestore(t.Context(), dbA, target.Add(time.Minute), 16, true, 0)
 	if latest.Outcome != RestoreCovered || latest.RecoveryPoint == nil || latest.RecoveryPoint.Before(target) {
 		t.Fatalf("latest point in actual PostgreSQL WAL = %+v", latest)
 	}
@@ -412,7 +415,7 @@ func TestRestoreCheckWithPromotedPostgres(t *testing.T) {
 			t.Fatalf("%s promotion check at %v: %+v", name, target, got)
 		}
 	}
-	latest := server.inspectRestore(ctx, dbA, targets["after"].Add(time.Minute), 16, true)
+	latest := server.inspectRestore(ctx, dbA, targets["after"].Add(time.Minute), 16, true, 0)
 	if latest.Outcome != RestoreCovered || latest.Timeline != 2 || latest.RecoveryPoint == nil || !latest.RecoveryPoint.After(targets["after"]) {
 		t.Fatalf("latest recovery point after promotion: %+v", latest)
 	}

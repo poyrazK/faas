@@ -57,14 +57,17 @@ func (l restoreLineage) contains(timeline uint32) bool {
 	return false
 }
 
-func resolveRestoreLineage(ctx context.Context, store Store, id string, names map[string]bool, backupTimeline int, start, end uint64) (restoreLineage, uint32, string, string) {
+func resolveRestoreLineage(ctx context.Context, store Store, id string, names map[string]bool, backupTimeline int, start, end uint64, pinned uint32) (restoreLineage, uint32, string, string) {
 	if backupTimeline < 1 || uint64(backupTimeline) > uint64(^uint32(0)) || names["00000001.history"] {
 		return nil, 0, "", "timeline_unverified"
 	}
 	base := uint32(backupTimeline)
-	target := base
-	for name := range names {
-		target = max(target, archivedTimeline(name))
+	target := pinned
+	if target == 0 {
+		target = base
+		for name := range names {
+			target = max(target, archivedTimeline(name))
+		}
 	}
 	lineage := restoreLineage{{id: 1}}
 	if target != 1 {
@@ -88,10 +91,12 @@ func resolveRestoreLineage(ctx context.Context, store Store, id string, names ma
 	if lineage.at(start) != base || lineage.at(end-1) != base {
 		return nil, target, "", "timeline_unverified"
 	}
-	for name := range names {
-		if !lineage.contains(archivedTimeline(name)) {
-			// Competing branches need an authoritative choice of primary.
-			return nil, target, "", "timeline_unverified"
+	if pinned == 0 {
+		for name := range names {
+			if !lineage.contains(archivedTimeline(name)) {
+				// Competing branches need an authoritative choice of primary.
+				return nil, target, "", "timeline_unverified"
+			}
 		}
 	}
 	return lineage, target, "", ""

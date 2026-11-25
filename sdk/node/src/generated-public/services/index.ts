@@ -7,6 +7,7 @@ export { AppsService } from './AppsService.js';
 export { AuditService } from './AuditService.js';
 export { AuthService } from './AuthService.js';
 export { BillingService } from './BillingService.js';
+export { ConsumersService } from './ConsumersService.js';
 export { CorsPresetsService } from './CorsPresetsService.js';
 export { CronsService } from './CronsService.js';
 export { DefaultService } from './DefaultService.js';

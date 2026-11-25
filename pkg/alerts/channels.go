@@ -104,6 +104,28 @@ func (e *Evaluator) SendToChannels(ctx context.Context, chans []state.Notificati
 	return e.sendToChannels(ctx, chans, msg, now, nil)
 }
 
+// SendToChannelsFailed sends msg like SendToChannels and returns the IDs of
+// the channels that did not accept it, so a caller can retry only those
+// (ADR-20261125085913). With channels off every channel is returned.
+func (e *Evaluator) SendToChannelsFailed(ctx context.Context, chans []state.NotificationChannel, msg alertchannels.Message, now time.Time) []string {
+	var mu sync.Mutex
+	accepted := map[string]bool{}
+	e.sendToChannels(ctx, chans, msg, now, func(ch state.NotificationChannel, errMsg string) {
+		if errMsg == "" {
+			mu.Lock()
+			accepted[ch.ID] = true
+			mu.Unlock()
+		}
+	})
+	var failed []string
+	for _, ch := range chans {
+		if !accepted[ch.ID] {
+			failed = append(failed, ch.ID)
+		}
+	}
+	return failed
+}
+
 // sendToChannels is SendToChannels with an optional hook run after each
 // channel's outcome is recorded; rule notifications use it to track resolve
 // retries and audit failures (ADR-20261104142830).

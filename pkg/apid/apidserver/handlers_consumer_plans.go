@@ -196,6 +196,9 @@ func (s *server) assignAPIConsumerPlan(w http.ResponseWriter, r *http.Request, a
 	if problem == nil {
 		problem = s.planPricedProblem(r, acct.ID, app.ID, req.PlanID, effectiveFrom)
 	}
+	if problem == nil {
+		problem = s.consumerSignup.CardlessAssignmentProblem(r.Context(), app, consumer, req.PlanID)
+	}
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return

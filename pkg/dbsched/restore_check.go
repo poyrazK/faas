@@ -60,25 +60,25 @@ func (s *Scheduler) CheckRestoreTarget(ctx context.Context, id string, target ti
 }
 
 func (g *GRPCVMM) CheckLatestArchiveRestore(ctx context.Context, node Node, id string, target time.Time, major int) (dbarchive.RestoreCheck, error) {
-	return g.checkArchive(ctx, node, id, target, major, false, true)
+	return g.checkArchive(ctx, node, id, target, major, false, true, 0)
 }
 
 func (g *GRPCVMM) CheckArchiveRestore(ctx context.Context, node Node, id string, target time.Time, major int) (dbarchive.RestoreCheck, error) {
-	return g.checkArchive(ctx, node, id, target, major, false, false)
+	return g.checkArchive(ctx, node, id, target, major, false, false, 0)
 }
 
-func (g *GRPCVMM) CheckRecoveryArchive(ctx context.Context, node Node, id string, target time.Time, major int, latest bool) (dbarchive.RestoreCheck, error) {
-	return g.checkArchive(ctx, node, id, target, major, true, latest)
+func (g *GRPCVMM) CheckRecoveryArchive(ctx context.Context, node Node, id string, target time.Time, major int, latest bool, timeline uint32) (dbarchive.RestoreCheck, error) {
+	return g.checkArchive(ctx, node, id, target, major, true, latest, timeline)
 }
 
-func (g *GRPCVMM) checkArchive(ctx context.Context, node Node, id string, target time.Time, major int, recovery, latest bool) (dbarchive.RestoreCheck, error) {
+func (g *GRPCVMM) checkArchive(ctx context.Context, node Node, id string, target time.Time, major int, recovery, latest bool, timeline uint32) (dbarchive.RestoreCheck, error) {
 	c, err := g.client(ctx, node)
 	if err != nil {
 		return dbarchive.RestoreCheck{}, err
 	}
 	resp, err := c.DatabaseArchiveRestoreCheck(ctx, &vmmdpb.DatabaseArchiveRestoreCheckRequest{
 		DatabaseId: id, PointInTime: timestamppb.New(target), PostgresMajor: int32(major),
-		FromRecoveryArchive: recovery, Latest: latest,
+		FromRecoveryArchive: recovery, Latest: latest, RecoveryTimeline: timeline,
 	})
 	if err != nil {
 		return dbarchive.RestoreCheck{}, err

@@ -3,6 +3,7 @@ package dbsched
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -12,14 +13,23 @@ import (
 
 type recoveryFixtureVMM struct {
 	*fakeVMM
-	answer string
+	answer           string
+	archiveTimeline  uint32
+	checkedTimelines []uint32
 }
 
-func (v *recoveryFixtureVMM) CheckRecoveryArchive(_ context.Context, n Node, _ string, _ time.Time, _ int, _ bool) (dbarchive.RestoreCheck, error) {
+func (v *recoveryFixtureVMM) CheckRecoveryArchive(_ context.Context, n Node, _ string, _ time.Time, _ int, _ bool, timeline uint32) (dbarchive.RestoreCheck, error) {
 	if n.RecoveryRegion != "eu-west-1" {
 		return dbarchive.RestoreCheck{}, errors.New("recovery used a node outside the destination fleet")
 	}
-	return dbarchive.RestoreCheck{Outcome: v.answer, Reason: "fixture"}, nil
+	v.checkedTimelines = append(v.checkedTimelines, timeline)
+	if timeline == 0 {
+		timeline = max(1, v.archiveTimeline)
+	}
+	if v.archiveTimeline != 0 {
+		v.archiveTimeline++
+	}
+	return dbarchive.RestoreCheck{Outcome: v.answer, Reason: "fixture", Timeline: timeline}, nil
 }
 
 func TestRegionalRestoreDoesNotContactTheSource(t *testing.T) {
@@ -60,5 +70,27 @@ func TestRegionalRestoreDoesNotContactTheSource(t *testing.T) {
 	}
 	if _, err := s.Move(ctx, got.DatabaseID, "other"); !errors.Is(err, ErrNoCapacity) {
 		t.Fatalf("move escaped the recovery fleet: %v", err)
+	}
+}
+
+func TestRegionalRestoreRechecksReservedTimeline(t *testing.T) {
+	ctx := t.Context()
+	store := NewMemStore()
+	vmm := &recoveryFixtureVMM{fakeVMM: newFakeVMM(), answer: dbarchive.RestoreCovered, archiveTimeline: 2}
+	vmm.archive = true
+	seedNodes(t, store, Node{ID: "recovery", TargetURL: "unix:///recovery", Lifecycle: NodeActive,
+		RecoveryRegion: "eu-west-1", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 10 << 30})
+	s := New(store, vmm, Config{SharedArchive: true}, nil)
+	source := VM{DatabaseID: uuid.NewString(), Major: 17, VolumeBytes: 1 << 30}
+	req := restoreRequest(source, time.Now().Add(-time.Minute))
+	req.RecoveryRegion = "eu-west-1"
+	reserved, err := s.Restore(ctx, req)
+	if err != nil || reserved.RestoreTimeline != 2 {
+		t.Fatalf("reserve timeline: %+v, %v", reserved, err)
+	}
+	s.restoreWG.Wait()
+	after, err := store.Get(ctx, req.DatabaseID)
+	if err != nil || after.State != StateParked || !slices.Equal(vmm.checkedTimelines, []uint32{0, 2}) {
+		t.Fatalf("replay on reserved timeline: %+v, %v, checks %v", after, err, vmm.checkedTimelines)
 	}
 }

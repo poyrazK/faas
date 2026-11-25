@@ -1237,6 +1237,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	go runAlertTestSends(ctx, evaluator, log)
 	startAgentApprovalNotifications(ctx, store, mailer, evaluator, ops.Registry(), log)
 	startSavedInsights(ctx, store, evaluator, release, ops.Registry(), log)
+	startFlagNotifications(ctx, store, evaluator, release, ops.Registry(), log)
 	startPlatformAlerts(ctx, store, mailer, promClient, ops.Registry(), log, dashboardURL, release)
 	evaluator.SetRuleRelease(release.ForAccount)
 	evaluator.SetRuleLimits(release.RuleLimits)

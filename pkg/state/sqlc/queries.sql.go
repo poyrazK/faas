@@ -14941,9 +14941,9 @@ func (q *Queries) DatabaseHasUsage(ctx context.Context, db DBTX, databaseID pgty
 const databaseNodeUsage = `-- name: DatabaseNodeUsage :many
 SELECT n.id AS node_id,
     COALESCE(sum(greatest(v.volume_bytes, a.target_volume_bytes)), 0)::bigint AS volume_bytes,
-    COALESCE(sum(v.mem_mib) FILTER (WHERE (v.node_id = n.id AND v.state IN ('waking', 'running', 'parking', 'upgrading'))
+    COALESCE(sum(v.mem_mib) FILTER (WHERE (v.node_id = n.id AND v.state IN ('waking', 'running', 'parking', 'maintenance_handoff', 'upgrading'))
         OR (v.standby_node = n.id AND v.standby_running)), 0)::bigint AS active_mem_mib,
-    count(v.database_id) FILTER (WHERE (v.node_id = n.id AND v.state IN ('waking', 'running', 'parking', 'upgrading'))
+    count(v.database_id) FILTER (WHERE (v.node_id = n.id AND v.state IN ('waking', 'running', 'parking', 'maintenance_handoff', 'upgrading'))
         OR (v.standby_node = n.id AND v.standby_running))::bigint AS active_vms,
     count(v.database_id) FILTER (WHERE v.node_id = n.id AND v.state = 'waking')::bigint AS waking_vms
 FROM database_nodes n LEFT JOIN database_vms v ON v.node_id = n.id OR v.move_node = n.id OR v.standby_node = n.id
@@ -23444,7 +23444,7 @@ UPDATE database_vms SET node_id = standby_node, standby_node = NULL, standby_run
     state = CASE WHEN standby_running THEN 'running' ELSE 'parked' END,
     last_error = 'failed_over', state_changed_at = now()
 WHERE database_id = $1 AND standby_synced
-    AND state IN ('parked', 'running', 'parking', 'failed')
+    AND state IN ('parked', 'running', 'parking', 'maintenance_handoff', 'failed')
 `
 
 // A synchronized standby's node becomes the database's: running if its

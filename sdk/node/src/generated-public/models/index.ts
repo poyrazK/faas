@@ -204,6 +204,8 @@ export type { ConnectionBudgetCapacity } from './ConnectionBudgetCapacity.js';
 export type { ConnectionBudgetDemand } from './ConnectionBudgetDemand.js';
 export type { ConnectionBudgetInventory } from './ConnectionBudgetInventory.js';
 export type { ConnectionBudgetRuntimeObservations } from './ConnectionBudgetRuntimeObservations.js';
+export type { ConsumerIdentity } from './ConsumerIdentity.js';
+export type { ConsumerIdentityListResponse } from './ConsumerIdentityListResponse.js';
 export type { ControlWorkflowRecoveryPolicyRequest } from './ControlWorkflowRecoveryPolicyRequest.js';
 export type { CookieSession } from './CookieSession.js';
 export type { CorsPresetListResponse } from './CorsPresetListResponse.js';

@@ -26,6 +26,7 @@ type baseRefresh struct {
 	StandbyNode      string
 	Phase            string
 	StandbyRestarted bool
+	HandoffStarted   bool
 	Image            string
 }
 

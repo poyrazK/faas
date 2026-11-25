@@ -156,6 +156,8 @@ type Request struct {
 	Major int `json:"major,omitempty"`
 	// Latest asks OpCheckRecovery for the newest proven point at or before Target.
 	Latest bool `json:"latest,omitempty"`
+	// Timeline limits OpCheckRecovery to an already reserved timeline.
+	Timeline uint32 `json:"timeline,omitempty"`
 	// WindowSeconds is OpPrune's restore window.
 	WindowSeconds int64 `json:"window_seconds,omitempty"`
 }

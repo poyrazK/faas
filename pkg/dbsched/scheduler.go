@@ -1231,6 +1231,9 @@ func (s *Scheduler) SettleLostNodes(ctx context.Context) (int, error) {
 	}
 	settled := 0
 	for _, vm := range vms {
+		if vm.State == stateMaintenanceHandoff {
+			continue // The rolling worker owns the fenced handoff.
+		}
 		if _, ok := known[vm.NodeID]; ok && !lost[vm.NodeID] {
 			continue
 		}

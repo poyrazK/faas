@@ -40,10 +40,10 @@ type restoreCheckCatalog interface {
 var backupStopLSN = regexp.MustCompile(`(?m)^STOP WAL LOCATION: ([0-9A-F]+/[0-9A-F]+)(?:[ \t]|$)`)
 
 func (s *Server) checkRestore(ctx context.Context, id string, target time.Time, major int) RestoreCheck {
-	return s.inspectRestore(ctx, id, target, major, false)
+	return s.inspectRestore(ctx, id, target, major, false, 0)
 }
 
-func (s *Server) inspectRestore(ctx context.Context, id string, target time.Time, major int, latest bool) RestoreCheck {
+func (s *Server) inspectRestore(ctx context.Context, id string, target time.Time, major int, latest bool, pinned uint32) RestoreCheck {
 	check := RestoreCheck{Outcome: RestoreUnverified, Reason: "archive_unavailable"}
 	catalog, ok := s.Backups.(restoreCheckCatalog)
 	if !ok || s.Store == nil {
@@ -92,7 +92,7 @@ func (s *Server) inspectRestore(ctx context.Context, id string, target time.Time
 	if err != nil {
 		return check
 	}
-	lineage, timeline, missingHistory, reason := resolveRestoreLineage(ctx, s.Store, id, names, backup.Timeline, start, end)
+	lineage, timeline, missingHistory, reason := resolveRestoreLineage(ctx, s.Store, id, names, backup.Timeline, start, end, pinned)
 	check.MissingHistory = missingHistory
 	if reason != "" || backup.StartWAL != timelineWALName(uint32(backup.Timeline), start/walSegmentBytes) {
 		check.Reason = "timeline_unverified"
@@ -246,7 +246,7 @@ func parseRestoreLSN(raw string) (uint64, bool) {
 
 func (s *Server) handleRestoreCheck(ctx context.Context, conn io.Writer, id string, req Request) {
 	target, err := time.Parse(time.RFC3339Nano, req.Target)
-	if err != nil || req.Major < 12 || req.Major > 99 {
+	if err != nil || req.Major < 12 || req.Major > 99 || (req.Timeline != 0 && (req.Op != OpCheckRecovery || req.Latest)) {
 		_ = WriteLine(conn, Response{Error: ErrCodeInvalid})
 		return
 	}
@@ -263,10 +263,10 @@ func (s *Server) handleRestoreCheck(ctx context.Context, conn io.Writer, id stri
 			result = RestoreCheck{Outcome: RestoreUnverified, Reason: "recovery_archive_unconfigured"}
 		} else {
 			recovery := Server{Store: s.Recovery, Backups: s.Recovery}
-			result = recovery.inspectRestore(ctx, id, target, req.Major, req.Latest)
+			result = recovery.inspectRestore(ctx, id, target, req.Major, req.Latest, req.Timeline)
 		}
 	} else {
-		result = s.inspectRestore(ctx, id, target, req.Major, req.Latest)
+		result = s.inspectRestore(ctx, id, target, req.Major, req.Latest, req.Timeline)
 	}
 	_ = WriteLine(conn, Response{RestoreCheck: &result})
 }
@@ -281,8 +281,8 @@ func CheckLatestArchiveRestore(ctx context.Context, socket, id string, target ti
 	return checkArchive(ctx, socket, id, Request{Op: OpCheckRestore, Target: target.UTC().Format(time.RFC3339Nano), Major: major, Latest: true})
 }
 
-func CheckRecoveryArchive(ctx context.Context, socket, id string, target time.Time, major int, latest bool) (RestoreCheck, error) {
-	return checkArchive(ctx, socket, id, Request{Op: OpCheckRecovery, Target: target.UTC().Format(time.RFC3339Nano), Major: major, Latest: latest})
+func CheckRecoveryArchive(ctx context.Context, socket, id string, target time.Time, major int, latest bool, timeline uint32) (RestoreCheck, error) {
+	return checkArchive(ctx, socket, id, Request{Op: OpCheckRecovery, Target: target.UTC().Format(time.RFC3339Nano), Major: major, Latest: latest, Timeline: timeline})
 }
 
 func checkArchive(ctx context.Context, socket, id string, req Request) (RestoreCheck, error) {

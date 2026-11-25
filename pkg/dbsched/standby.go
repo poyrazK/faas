@@ -738,7 +738,7 @@ func (s *Scheduler) failoverLocked(ctx context.Context, id string, lost Node, tr
 	if vm.NodeID != lost.ID || !canFailover(vm) {
 		return ErrConflict // already failed over, or nothing to promote
 	}
-	if store, ok := s.store.(*PgStore); ok && vm.State == StateParking {
+	if store, ok := s.store.(*PgStore); ok && (vm.State == StateParking || vm.State == stateMaintenanceHandoff) {
 		armed, err := rollingSwitchArmed(ctx, store.pool, id)
 		if err != nil {
 			return err

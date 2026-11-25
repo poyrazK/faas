@@ -367,7 +367,7 @@ func (p *Provider) observed(rt *scheddpb.DatabaseRuntime) managedpostgres.Observ
 		obs.Status, obs.ComputeState = managedpostgres.ProviderStatusReady, managedpostgres.ComputeStateSuspended
 	case rt.GetState() == "running":
 		obs.Status, obs.ComputeState = managedpostgres.ProviderStatusReady, managedpostgres.ComputeStateActive
-	case rt.GetState() == "waking", rt.GetState() == "parking":
+	case rt.GetState() == "waking", rt.GetState() == "parking", rt.GetState() == "maintenance_handoff":
 		obs.Status, obs.ComputeState = managedpostgres.ProviderStatusReady, managedpostgres.ComputeStateWaking
 	case rt.GetState() == "moving", rt.GetState() == "upgrading":
 		obs.Status = managedpostgres.ProviderStatusPending

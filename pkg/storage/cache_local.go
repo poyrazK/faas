@@ -44,7 +44,7 @@ func LocalPathWithoutTouch(root StorageBackend, key string) (string, bool, error
 // localPathWithoutTouch is LocalPathWithSource without the LRU touch.
 func (c *LocalCacheBackend) localPathWithoutTouch(key string) (string, bool) {
 	if resolver, ok := c.parent.(LocalPathResolver); ok {
-		if path, local, err := resolver.LocalPath(key); err == nil && local {
+		if path, local, err := resolver.LocalPath(key); err == nil && local && !isDriveDeltaPayload(key, path) {
 			return path, true
 		}
 	}

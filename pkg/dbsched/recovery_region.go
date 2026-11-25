@@ -30,7 +30,7 @@ func (s *Scheduler) CheckRecoveryTarget(ctx context.Context, source, region stri
 		if node.RecoveryRegion != region || node.Lifecycle != NodeActive || !node.offers(major) {
 			continue
 		}
-		check, err := s.probeRecoveryArchive(ctx, node, source, target, major, latest)
+		check, err := s.probeRecoveryArchive(ctx, node, source, target, major, latest, 0)
 		if err == nil && check.Reason != "recovery_archive_unconfigured" {
 			return check, nil
 		}
@@ -38,16 +38,16 @@ func (s *Scheduler) CheckRecoveryTarget(ctx context.Context, source, region stri
 	return unverified, nil
 }
 
-func (s *Scheduler) probeRecoveryArchive(ctx context.Context, node Node, source string, target time.Time, major int, latest bool) (dbarchive.RestoreCheck, error) {
+func (s *Scheduler) probeRecoveryArchive(ctx context.Context, node Node, source string, target time.Time, major int, latest bool, timeline uint32) (dbarchive.RestoreCheck, error) {
 	checker, ok := s.vmm.(interface {
-		CheckRecoveryArchive(context.Context, Node, string, time.Time, int, bool) (dbarchive.RestoreCheck, error)
+		CheckRecoveryArchive(context.Context, Node, string, time.Time, int, bool, uint32) (dbarchive.RestoreCheck, error)
 	})
 	if !ok {
 		return dbarchive.RestoreCheck{}, ErrNodeUnavailable
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	return checker.CheckRecoveryArchive(ctx, node, source, target, major, latest)
+	return checker.CheckRecoveryArchive(ctx, node, source, target, major, latest, timeline)
 }
 
 func (s *Scheduler) restoreFromRecovery(ctx context.Context, req RestoreRequest) (VM, error) {
@@ -72,18 +72,14 @@ func (s *Scheduler) restoreFromRecovery(ctx context.Context, req RestoreRequest)
 	if err != nil {
 		return VM{}, err
 	}
-	if check.Outcome != dbarchive.RestoreCovered {
+	if check.Outcome != dbarchive.RestoreCovered || check.Timeline == 0 {
 		return VM{}, fmt.Errorf("%w: recovery archive cannot reach the requested point", ErrConflict)
-	}
-	var timeline uint32
-	if check.Timeline > 1 {
-		timeline = check.Timeline
 	}
 	vm, err := s.store.Place(ctx, VM{
 		DatabaseID: req.DatabaseID, RecoveryRegion: req.RecoveryRegion, RestoreFromRecovery: true,
 		Major: req.Major, VcpuCount: req.VcpuCount, MemMiB: req.MemMiB, VolumeBytes: req.VolumeBytes,
 		AlwaysOn: req.AlwaysOn, RestoreWindowSeconds: req.RestoreWindowSeconds, Replicated: req.Replicated,
-		RestoreSource: req.Source, RestoreTarget: req.Target, RestoreTimeline: timeline,
+		RestoreSource: req.Source, RestoreTarget: req.Target, RestoreTimeline: check.Timeline,
 	})
 	if err != nil {
 		return vm, err

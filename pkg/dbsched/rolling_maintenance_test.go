@@ -159,6 +159,12 @@ func TestRollingMaintenanceResumesUnconfirmedHandoff(t *testing.T) {
 	if _, err := s.Wake(ctx, vm.DatabaseID); !errors.Is(err, ErrConflict) {
 		t.Fatalf("old primary reopened during handoff: %v", err)
 	}
+	// These are the states the previous scheduler recovers as interrupted
+	// wake/park operations. A restart there must leave both placements alone.
+	legacyCandidates, err := store.List(ctx, StateWaking, StateParking)
+	if err != nil || len(legacyCandidates) != 0 {
+		t.Fatalf("previous scheduler could recover the fenced primary: %+v, %v", legacyCandidates, err)
+	}
 	if err := s.Park(ctx, vm.DatabaseID); !errors.Is(err, ErrConflict) {
 		t.Fatalf("ordinary park superseded the rolling fence: %v", err)
 	}
@@ -169,7 +175,7 @@ func TestRollingMaintenanceResumesUnconfirmedHandoff(t *testing.T) {
 	if phase != switchingOver || outcome != "" || reason != "standby_promotion_unconfirmed" || vmm.callCount("promote") != 1 {
 		t.Fatalf("after an unconfirmed promotion: %s, %s, %s", phase, outcome, reason)
 	}
-	if parked, err := store.Get(ctx, vm.DatabaseID); err != nil || parked.State != StateParking || parked.NodeID != vm.NodeID {
+	if parked, err := store.Get(ctx, vm.DatabaseID); err != nil || parked.State != stateMaintenanceHandoff || parked.NodeID != vm.NodeID {
 		t.Fatalf("old routing fence lost: %+v, %v", parked, err)
 	}
 
@@ -231,5 +237,27 @@ func TestRollingMaintenanceRejectsStandbyStillOnOldImage(t *testing.T) {
 	}
 	if _, err := s.SampleStorage(ctx); err != nil || vmm.callCount("promote") != 0 {
 		t.Fatalf("same window retried failed attempt: %v, %s", err, vmm.nodeCalls())
+	}
+}
+
+func TestRollingMaintenanceReopensPrimaryBeforeStoppingIt(t *testing.T) {
+	store, s, vmm, vm := rollingMaintenanceFixture(t)
+	ctx := t.Context()
+	vmm.stale[vm.NodeID+"/"+vm.DatabaseID] = true
+	setRollingFixtureWindow(t, store, vm, -5*time.Minute)
+	if admitted, err := store.beginRollingRefresh(ctx, vm); err != nil || !admitted {
+		t.Fatalf("admit handoff: %v, %v", admitted, err)
+	}
+	if armed, err := s.advanceRollingRefresh(ctx, store, vm.DatabaseID); err != nil || !armed {
+		t.Fatalf("arm handoff: %v, %v", armed, err)
+	}
+	vmm.stale[vm.StandbyNode+"/"+vm.DatabaseID] = true
+	s.resumeRollingRefreshes(ctx, store)
+	phase, outcome, reason := rollingFixtureOutcome(t, store, vm)
+	after, err := s.Wake(ctx, vm.DatabaseID)
+	if err != nil || after.NodeID != vm.NodeID || after.State != StateRunning ||
+		phase != switchingOver || outcome != "still_stale" || reason != "standby_image_changed_during_handoff" ||
+		vmm.callCount("stop") != 0 || vmm.callCount("promote") != 0 {
+		t.Fatalf("cancel handoff: %+v, %v, %s, %s, %s, events %s", after, err, phase, outcome, reason, vmm.nodeCalls())
 	}
 }

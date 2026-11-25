@@ -22,7 +22,7 @@ func TestStorageSamplesFollowPlacementAndFreshness(t *testing.T) {
 	}
 	defer pool.Close()
 
-	migration, err := os.ReadFile("../../migrations/20261125124349101_native_postgres_storage_samples.sql")
+	migration, err := os.ReadFile("../../migrations/20261125145126764_native_postgres_storage_samples.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

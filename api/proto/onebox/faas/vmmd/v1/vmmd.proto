@@ -4771,6 +4771,8 @@ message DatabaseArchiveRestoreCheckRequest {
   int32 postgres_major = 3;
   bool from_recovery_archive = 4;
   bool latest = 5;
+  // Recheck coverage on this reserved timeline. Zero selects a timeline.
+  uint32 recovery_timeline = 6;
 }
 
 message DatabaseArchiveRestoreCheckResponse {

@@ -25,6 +25,8 @@ const (
 	StateWaking           State = "waking"
 	StateRunning          State = "running"
 	StateParking          State = "parking"
+	// This fence must be distinct from parking so older schedulers cannot recover it as an interrupted stop.
+	stateMaintenanceHandoff State = "maintenance_handoff"
 	// StateMoving: the parked database's volume is being copied to
 	// VM.MoveNode (move.go). It cannot wake, park or be deleted meanwhile.
 	StateMoving State = "moving"
@@ -436,7 +438,7 @@ func replicationChange(vm *VM, shape Shape, standby string) {
 }
 
 // activeStates hold RAM on their node.
-var activeStates = []State{StateWaking, StateRunning, StateParking}
+var activeStates = []State{StateWaking, StateRunning, StateParking, stateMaintenanceHandoff}
 
 // holdsMemory reports whether a database in state has its VM admitted
 // against its node's RAM ceiling: the active states, whose compute is

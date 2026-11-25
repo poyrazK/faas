@@ -775,6 +775,7 @@ from .commit_source_response_destination import CommitSourceResponseDestination
 from .compare_platform_tenant_self_workflow_readiness_body import ComparePlatformTenantSelfWorkflowReadinessBody
 from .complete_consumer_signup_request import CompleteConsumerSignupRequest
 from .complete_consumer_signup_response import CompleteConsumerSignupResponse
+from .complete_consumer_upgrade_request import CompleteConsumerUpgradeRequest
 from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
 from .complete_workflow_callback_response_status import CompleteWorkflowCallbackResponseStatus
@@ -835,6 +836,8 @@ from .consumer_credit_pack_settings import ConsumerCreditPackSettings
 from .consumer_credit_packs_response import ConsumerCreditPacksResponse
 from .consumer_credit_purchase_response import ConsumerCreditPurchaseResponse
 from .consumer_credit_purchase_response_status import ConsumerCreditPurchaseResponseStatus
+from .consumer_identity import ConsumerIdentity
+from .consumer_identity_list_response import ConsumerIdentityListResponse
 from .consumer_key_list_response import ConsumerKeyListResponse
 from .consumer_key_response import ConsumerKeyResponse
 from .consumer_key_response_scopes_item import ConsumerKeyResponseScopesItem
@@ -846,6 +849,8 @@ from .consumer_signup_response import ConsumerSignupResponse
 from .consumer_signup_response_status import ConsumerSignupResponseStatus
 from .consumer_signup_settings_response import ConsumerSignupSettingsResponse
 from .consumer_signup_settings_response_provider import ConsumerSignupSettingsResponseProvider
+from .consumer_upgrade_response import ConsumerUpgradeResponse
+from .consumer_upgrade_result import ConsumerUpgradeResult
 from .control_application_standard_operation_request import ControlApplicationStandardOperationRequest
 from .control_data_pipeline_request import ControlDataPipelineRequest
 from .control_data_pipeline_request_action import ControlDataPipelineRequestAction
@@ -2413,6 +2418,8 @@ from .flag_lifecycle import FlagLifecycle
 from .flag_lifecycle_attention_item import FlagLifecycleAttentionItem
 from .flag_lifecycle_evidence import FlagLifecycleEvidence
 from .flag_lifecycle_report import FlagLifecycleReport
+from .flag_notification_settings import FlagNotificationSettings
+from .flag_notification_settings_request import FlagNotificationSettingsRequest
 from .flag_outcome import FlagOutcome
 from .flag_outcome_type import FlagOutcomeType
 from .flag_outcomes_response import FlagOutcomesResponse
@@ -6641,6 +6648,7 @@ from .source_review_response import SourceReviewResponse
 from .source_tarball_deploy_request import SourceTarballDeployRequest
 from .source_tarball_deploy_request_tag import SourceTarballDeployRequestTag
 from .stage_project_release_request import StageProjectReleaseRequest
+from .start_consumer_upgrade_request import StartConsumerUpgradeRequest
 from .start_durable_entity_quota_migration_body import StartDurableEntityQuotaMigrationBody
 from .start_durable_entity_quota_migration_response_200 import StartDurableEntityQuotaMigrationResponse200
 from .start_durable_entity_registry_cleanup_body import StartDurableEntityRegistryCleanupBody
@@ -8162,6 +8170,7 @@ __all__ = (
     "ComparePlatformTenantSelfWorkflowReadinessBody",
     "CompleteConsumerSignupRequest",
     "CompleteConsumerSignupResponse",
+    "CompleteConsumerUpgradeRequest",
     "CompleteObjectMultipartUploadRequest",
     "CompleteWorkflowCallbackResponse",
     "CompleteWorkflowCallbackResponseStatus",
@@ -8220,6 +8229,8 @@ __all__ = (
     "ConsumerCreditPacksResponse",
     "ConsumerCreditPurchaseResponse",
     "ConsumerCreditPurchaseResponseStatus",
+    "ConsumerIdentity",
+    "ConsumerIdentityListResponse",
     "ConsumerKeyListResponse",
     "ConsumerKeyResponse",
     "ConsumerKeyResponseScopesItem",
@@ -8231,6 +8242,8 @@ __all__ = (
     "ConsumerSignupResponseStatus",
     "ConsumerSignupSettingsResponse",
     "ConsumerSignupSettingsResponseProvider",
+    "ConsumerUpgradeResponse",
+    "ConsumerUpgradeResult",
     "ControlApplicationStandardOperationRequest",
     "ControlDataPipelineRequest",
     "ControlDataPipelineRequestAction",
@@ -9738,6 +9751,8 @@ __all__ = (
     "FlagLifecycleAttentionItem",
     "FlagLifecycleEvidence",
     "FlagLifecycleReport",
+    "FlagNotificationSettings",
+    "FlagNotificationSettingsRequest",
     "FlagOutcome",
     "FlagOutcomesResponse",
     "FlagOutcomeType",
@@ -13712,6 +13727,7 @@ __all__ = (
     "SourceTarballDeployRequest",
     "SourceTarballDeployRequestTag",
     "StageProjectReleaseRequest",
+    "StartConsumerUpgradeRequest",
     "StartDurableEntityQuotaMigrationBody",
     "StartDurableEntityQuotaMigrationResponse200",
     "StartDurableEntityRegistryCleanupBody",

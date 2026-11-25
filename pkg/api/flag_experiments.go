@@ -109,6 +109,10 @@ type FlagExperimentCreateRequest struct {
 	Allocation       string `json:"allocation,omitempty"`
 	DenominatorEvent string `json:"denominator_event,omitempty"`
 	Percentile       int    `json:"percentile,omitempty"`
+	// NotifyChannelIDs are the notification channels the experiment's
+	// decisions and problems go to; omitted uses the environment's
+	// (ADR-20261125085913).
+	NotifyChannelIDs []string `json:"notify_channel_ids,omitempty"`
 }
 
 // FlagExperimentFunnel is a funnel metric: 2 to 6 steps completed within
@@ -224,6 +228,9 @@ type FlagExperiment struct {
 	LayerTo          *int   `json:"layer_to,omitempty"`
 	DenominatorEvent string `json:"denominator_event,omitempty"`
 	Percentile       int    `json:"percentile,omitempty"`
+	// NotifyChannelIDs are the experiment's own notification channels
+	// (ADR-20261125085913).
+	NotifyChannelIDs []string `json:"notify_channel_ids,omitempty"`
 }
 
 // FlagExperimentList is the experiments of an environment.
@@ -411,4 +418,18 @@ type FlagEventsResponse struct {
 	Exposures int               `json:"exposures,omitempty"`
 	Dropped   FlagEventsDropped `json:"dropped"`
 	Month     FlagEventsMonth   `json:"month"`
+}
+
+// FlagNotificationSettings are an environment's notification channels for
+// its experiments and flag lifecycle (ADR-20261125085913).
+type FlagNotificationSettings struct {
+	ChannelIDs []string   `json:"channel_ids"`
+	UpdatedBy  string     `json:"updated_by,omitempty"`
+	UpdatedAt  *time.Time `json:"updated_at,omitempty"`
+}
+
+// FlagNotificationSettingsRequest replaces an environment's channels; an
+// empty list turns its notifications off.
+type FlagNotificationSettingsRequest struct {
+	ChannelIDs []string `json:"channel_ids"`
 }

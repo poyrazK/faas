@@ -24530,8 +24530,10 @@ type DatabaseArchiveRestoreCheckRequest struct {
 	PostgresMajor       int32                  `protobuf:"varint,3,opt,name=postgres_major,json=postgresMajor,proto3" json:"postgres_major,omitempty"`
 	FromRecoveryArchive bool                   `protobuf:"varint,4,opt,name=from_recovery_archive,json=fromRecoveryArchive,proto3" json:"from_recovery_archive,omitempty"`
 	Latest              bool                   `protobuf:"varint,5,opt,name=latest,proto3" json:"latest,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// Recheck coverage on this reserved timeline. Zero selects a timeline.
+	RecoveryTimeline uint32 `protobuf:"varint,6,opt,name=recovery_timeline,json=recoveryTimeline,proto3" json:"recovery_timeline,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *DatabaseArchiveRestoreCheckRequest) Reset() {
@@ -24597,6 +24599,13 @@ func (x *DatabaseArchiveRestoreCheckRequest) GetLatest() bool {
 		return x.Latest
 	}
 	return false
+}
+
+func (x *DatabaseArchiveRestoreCheckRequest) GetRecoveryTimeline() uint32 {
+	if x != nil {
+		return x.RecoveryTimeline
+	}
+	return 0
 }
 
 type DatabaseArchiveRestoreCheckResponse struct {
@@ -27069,14 +27078,15 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"baseDigest\"\x85\x01\n" +
 	" CaptureExecutionTemplateResponse\x12<\n" +
 	"\bsnapshot\x18\x01 \x01(\v2 .onebox.faas.vmmd.v1.SnapshotRefR\bsnapshot\x12#\n" +
-	"\rvmstate_bytes\x18\x02 \x01(\x03R\fvmstateBytes\"\xf8\x01\n" +
+	"\rvmstate_bytes\x18\x02 \x01(\x03R\fvmstateBytes\"\xa5\x02\n" +
 	"\"DatabaseArchiveRestoreCheckRequest\x12\x1f\n" +
 	"\vdatabase_id\x18\x01 \x01(\tR\n" +
 	"databaseId\x12>\n" +
 	"\rpoint_in_time\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\vpointInTime\x12%\n" +
 	"\x0epostgres_major\x18\x03 \x01(\x05R\rpostgresMajor\x122\n" +
 	"\x15from_recovery_archive\x18\x04 \x01(\bR\x13fromRecoveryArchive\x12\x16\n" +
-	"\x06latest\x18\x05 \x01(\bR\x06latest\"\xed\x03\n" +
+	"\x06latest\x18\x05 \x01(\bR\x06latest\x12+\n" +
+	"\x11recovery_timeline\x18\x06 \x01(\rR\x10recoveryTimeline\"\xed\x03\n" +
 	"#DatabaseArchiveRestoreCheckResponse\x12\x18\n" +
 	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\x12J\n" +

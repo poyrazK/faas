@@ -52,6 +52,7 @@ func cloneFlagExperiment(x *FlagExperiment) FlagExperiment {
 		out.MinCupedPValues[k] = v
 	}
 	out.Bandit = slices.Clone(x.Bandit)
+	out.NotifyChannelIDs = slices.Clone(x.NotifyChannelIDs)
 	if x.Breach != nil {
 		out.Breach = map[string]any{}
 		for k, v := range x.Breach {
@@ -235,6 +236,11 @@ func (m *MemStore) ListRunningFlagExperiments(_ context.Context, afterID string,
 			c := cloneFlagExperiment(x)
 			if acct, ok := m.accounts[x.AccountID]; ok {
 				c.Plan = string(acct.Plan)
+			}
+			for _, env := range m.projectEnvironments {
+				if env.ID == x.EnvironmentID {
+					c.EnvironmentSlug = env.Slug
+				}
 			}
 			out = append(out, c)
 		}

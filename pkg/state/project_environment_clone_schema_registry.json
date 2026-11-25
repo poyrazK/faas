@@ -1048,6 +1048,21 @@
     "kind": "operational"
   },
   {
+    "table": "api_consumer_identities",
+    "columns": [
+      "account_id",
+      "app_id",
+      "consumer_id",
+      "created_at",
+      "email",
+      "id",
+      "issuer",
+      "subject",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "api_consumer_meter_usage_minutes",
     "columns": [
       "account_id",
@@ -1216,7 +1231,9 @@
       "daily_limit",
       "display_name",
       "enabled",
+      "free_plan_id",
       "key_scopes",
+      "oauth_consumers",
       "plan_ids",
       "provider",
       "return_url",
@@ -22791,6 +22808,7 @@
       "min_cuped_p_values",
       "min_p_values",
       "mixing_lift",
+      "notify_channel_ids",
       "percentile",
       "project_id",
       "rule_id",
@@ -22877,6 +22895,48 @@
     "columns": [
       "cohort_id",
       "customer_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "flag_notification_keys",
+    "columns": [
+      "created_at",
+      "environment_id",
+      "key",
+      "kind"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "flag_notification_settings",
+    "columns": [
+      "account_id",
+      "channel_ids",
+      "environment_id",
+      "updated_at",
+      "updated_by"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "flag_notifications",
+    "columns": [
+      "account_id",
+      "attempts",
+      "channel_ids",
+      "created_at",
+      "environment_id",
+      "id",
+      "key",
+      "kind",
+      "last_error",
+      "next_attempt_at",
+      "org_id",
+      "settled_at",
+      "status",
+      "subject",
+      "summary"
     ],
     "kind": "operational"
   },

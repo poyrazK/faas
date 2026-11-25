@@ -209,10 +209,10 @@ func (s *Scheduler) advanceRollingRefresh(ctx context.Context, store *PgStore, i
 		r.DatabaseID = id
 		err = tx.QueryRow(ctx, `
 			SELECT node_id, rolling_standby_node, source_running_at, window_start, window_end,
-				recover_after, phase, standby_restarted, COALESCE(rolling_image, '')
+				recover_after, phase, standby_restarted, handoff_started, COALESCE(rolling_image, '')
 			FROM native_postgres_base_refreshes WHERE database_id = $1
 				AND rolling_standby_node IS NOT NULL AND finished_at IS NULL`, mustUUID(id)).
-			Scan(&r.NodeID, &r.StandbyNode, &r.SourceAt, &r.Window.Start, &r.Window.End, &r.RecoverAt, &r.Phase, &r.StandbyRestarted, &r.Image)
+			Scan(&r.NodeID, &r.StandbyNode, &r.SourceAt, &r.Window.Start, &r.Window.End, &r.RecoverAt, &r.Phase, &r.StandbyRestarted, &r.HandoffStarted, &r.Image)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return VM{}, nil
 		}
@@ -225,7 +225,11 @@ func (s *Scheduler) advanceRollingRefresh(ctx context.Context, store *PgStore, i
 		case refreshingStandby:
 			progressed, attach, err = s.refreshRollingStandby(ctx, store, tx, r, vm, currentPrimary, currentStandby)
 		case switchingOver:
-			attach, err = s.handoffRollingRefresh(ctx, store, tx, r, vm, currentPrimary, currentStandby)
+			if r.HandoffStarted {
+				attach, err = s.handoffRollingRefresh(ctx, store, tx, r, vm, currentPrimary, currentStandby)
+			} else {
+				progressed, err = s.prepareRollingHandoff(ctx, store, tx, r, vm, currentPrimary, currentStandby)
+			}
 		case restoringRedundancy:
 			err = s.finishRollingRedundancy(ctx, tx, r, vm, currentPrimary, currentStandby)
 		}
@@ -303,15 +307,15 @@ func (s *Scheduler) refreshRollingStandby(ctx context.Context, store *PgStore, t
 	if !p.Stale && p.RunningImage == p.DesiredImage {
 		return false, false, finishRollingRefresh(ctx, tx, r, "succeeded", "")
 	}
-	// Moving to parking closes admission on the old primary before any
-	// external promotion. Both phase and fence survive a worker crash.
+	// Close admission before any external promotion. Older schedulers do
+	// not treat this state as an interrupted park during recovery.
 	if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
 		return false, false, err
 	}
 	if !window.Contains(now) {
 		return false, false, finishRollingRefresh(ctx, tx, r, "window_closed", "standby_validation_incomplete")
 	}
-	if err := store.transition(ctx, tx, id, []State{StateRunning}, StateParking, TransitionOptions{}); err != nil {
+	if err := store.transition(ctx, tx, id, []State{StateRunning}, stateMaintenanceHandoff, TransitionOptions{}); err != nil {
 		return false, false, err
 	}
 	_, err = tx.Exec(ctx, `UPDATE native_postgres_base_refreshes SET phase = $3, reason = '', rolling_image = $4
@@ -319,9 +323,53 @@ func (s *Scheduler) refreshRollingStandby(ctx context.Context, store *PgStore, t
 	return err == nil, false, err
 }
 
+// Commit the intent to stop the primary before issuing any VM calls that
+// change authority. Until then the original primary can safely serve again.
+func (s *Scheduler) prepareRollingHandoff(ctx context.Context, store *PgStore, tx pgx.Tx, r baseRefresh, vm VM, primary, standby Node) (bool, error) {
+	id := vm.DatabaseID
+	if vm.NodeID != r.NodeID || vm.State != stateMaintenanceHandoff {
+		return false, finishRollingRefresh(ctx, tx, r, "interrupted", "database_placement_changed")
+	}
+	abort := func(outcome, reason string) (bool, error) {
+		if err := store.transition(ctx, tx, id, []State{stateMaintenanceHandoff}, StateRunning, TransitionOptions{}); err != nil {
+			return false, err
+		}
+		return false, finishRollingRefresh(ctx, tx, r, outcome, reason)
+	}
+	if vm.StandbyNode != r.StandbyNode || !canFailover(vm) || !vm.StandbyRunning {
+		return abort("interrupted", "synchronized_standby_unconfirmed")
+	}
+	if primary.Lifecycle != NodeActive || standby.Lifecycle != NodeActive {
+		return abort("interrupted", "database_node_unavailable")
+	}
+	window, now, err := rollingWindow(ctx, tx, id)
+	if err != nil {
+		return false, err
+	}
+	if !window.Contains(now) || !window.Start.Equal(r.Window.Start) {
+		return abort("window_closed", "handoff_not_started")
+	}
+	st, err := s.rollingStatus(ctx, standby, id, dbguest.OpStatus)
+	if err != nil || st.Error != "" || st.Major != vm.Major || st.State != dbguest.StateStandby {
+		return abort("interrupted", "standby_health_unverified_during_handoff")
+	}
+	if st.RunningImage != r.Image || st.Stale {
+		return abort("still_stale", "standby_image_changed_during_handoff")
+	}
+	tag, err := tx.Exec(ctx, `UPDATE native_postgres_base_refreshes SET handoff_started = true
+		WHERE database_id = $1 AND window_start = $2 AND clock_timestamp() < window_end`, mustUUID(id), r.Window.Start)
+	if err != nil {
+		return false, err
+	}
+	if tag.RowsAffected() == 0 {
+		return abort("window_closed", "handoff_not_started")
+	}
+	return true, nil
+}
+
 func (s *Scheduler) handoffRollingRefresh(ctx context.Context, store *PgStore, tx pgx.Tx, r baseRefresh, vm VM, primary, standby Node) (bool, error) {
 	id := vm.DatabaseID
-	if vm.NodeID != r.NodeID || vm.State != StateParking {
+	if vm.NodeID != r.NodeID || vm.State != stateMaintenanceHandoff {
 		return false, finishRollingRefresh(ctx, tx, r, "interrupted", "database_placement_changed")
 	}
 	if vm.StandbyNode != r.StandbyNode || !canFailover(vm) {
@@ -337,9 +385,6 @@ func (s *Scheduler) handoffRollingRefresh(ctx context.Context, store *PgStore, t
 	if !missing && (stErr != nil || st.Error != "" || st.Major != vm.Major ||
 		(st.State != dbguest.StateStandby && st.State != dbguest.StateReady)) {
 		return false, saveRollingPhase(ctx, tx, r, r.Phase, "standby_health_unverified_during_handoff")
-	}
-	if !missing && (st.RunningImage != r.Image || st.State == dbguest.StateStandby && st.Stale) {
-		return false, saveRollingPhase(ctx, tx, r, r.Phase, "standby_image_changed_during_handoff")
 	}
 	if err := s.stopRollingVM(ctx, primary, id); err != nil {
 		return false, saveRollingPhase(ctx, tx, r, r.Phase, "primary_stop_unconfirmed")
@@ -413,15 +458,18 @@ func (s *Scheduler) stopRollingVM(ctx context.Context, node Node, id string) err
 	return s.vmm.Stop(stop, node, id)
 }
 
-// A verified standby can be handed off in the same sweep. Waiting phases
-// are reconciled by the regular scheduler sweep and startup recovery.
+// A verified standby can be fenced, prepared and promoted in one sweep.
+// Each step commits before the next step can change guest state.
 func (s *Scheduler) runRollingRefresh(ctx context.Context, store *PgStore, id string) {
-	armed, err := s.advanceRollingRefresh(ctx, store, id)
-	if err == nil && armed {
-		_, err = s.advanceRollingRefresh(ctx, store, id)
-	}
-	if err != nil {
-		s.log.Warn("dbsched: could not advance rolling maintenance", "database_id", id, "err", err)
+	for range 3 {
+		progressed, err := s.advanceRollingRefresh(ctx, store, id)
+		if err != nil {
+			s.log.Warn("dbsched: could not advance rolling maintenance", "database_id", id, "err", err)
+			return
+		}
+		if !progressed {
+			return
+		}
 	}
 }
 

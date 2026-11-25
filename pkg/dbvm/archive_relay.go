@@ -233,11 +233,11 @@ func (r *Runtime) relayArchive(guest net.Conn, header dbarchive.Header) {
 const archiveStreamsPerVM = 4
 
 // CheckArchiveRestore reads archived recovery evidence through dbbackupd.
-func (r *Runtime) CheckRecoveryArchive(ctx context.Context, id string, target time.Time, major int, latest bool) (dbarchive.RestoreCheck, error) {
+func (r *Runtime) CheckRecoveryArchive(ctx context.Context, id string, target time.Time, major int, latest bool, timeline uint32) (dbarchive.RestoreCheck, error) {
 	if r.cfg.ArchiveSocket == "" {
 		return dbarchive.RestoreCheck{}, ErrNoArchive
 	}
-	return dbarchive.CheckRecoveryArchive(ctx, r.cfg.ArchiveSocket, id, target, major, latest)
+	return dbarchive.CheckRecoveryArchive(ctx, r.cfg.ArchiveSocket, id, target, major, latest, timeline)
 }
 
 func (r *Runtime) CheckLatestArchiveRestore(ctx context.Context, id string, target time.Time, major int) (dbarchive.RestoreCheck, error) {

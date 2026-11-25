@@ -157,7 +157,11 @@
       </ol>
       <p class="fine">If your terminal is already signed in, you can continue there. If you started with <code>gregale start</code>, run it again after signing in.</p>
     {{else if index .Data "Error"}}
-      {{if index .Data "MCP"}}
+      {{if index .Data "Expired"}}
+      <p>Approval links last {{index .Data "TTLMinutes"}} minutes. Start the connection again from your agent to get a fresh approval page.</p>
+      {{with index .Data "AccountEmail"}}<p class="identity">This browser is signed in as <strong>{{.}}</strong>.</p>{{end}}
+      <p class="fine"><a href="{{index .Data "DashboardURL"}}">Go to the dashboard</a></p>
+      {{else if index .Data "MCP"}}
       <p>Start the connection again from your agent to get a fresh approval page.</p>
       <p class="fine">Signing in to Gregale does not finish the MCP connection. Return to your agent after completing approval.</p>
       {{end}}

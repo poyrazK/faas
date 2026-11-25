@@ -226,7 +226,7 @@ func standbyStatus(vm VM) string {
 }
 
 // allStates are every database state, so each is reported, zero or not.
-var allStates = []State{StateProvisioning, StateParked, StateWaking, StateRunning, StateParking, StateMoving, StateUpgrading, StateDeleting, StateFailed}
+var allStates = []State{StateProvisioning, StateParked, StateWaking, StateRunning, StateParking, stateMaintenanceHandoff, StateMoving, StateUpgrading, StateDeleting, StateFailed}
 
 // Observe refreshes the catalog gauges from the store. The idle sweep calls
 // it; without metrics it does nothing.

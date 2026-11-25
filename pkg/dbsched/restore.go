@@ -325,11 +325,11 @@ func (s *Scheduler) restore(ctx context.Context, node Node, vm VM) error {
 		if node.RecoveryRegion != vm.RecoveryRegion {
 			return ErrConflict
 		}
-		probe, err := s.probeRecoveryArchive(ctx, node, vm.RestoreSource, vm.RestoreTarget, vm.Major, false)
+		probe, err := s.probeRecoveryArchive(ctx, node, vm.RestoreSource, vm.RestoreTarget, vm.Major, false, vm.RestoreTimeline)
 		if err != nil {
 			return err
 		}
-		if probe.Outcome != dbarchive.RestoreCovered || (vm.RestoreTimeline != 0 && probe.Timeline != vm.RestoreTimeline) {
+		if probe.Outcome != dbarchive.RestoreCovered || probe.Timeline == 0 || (vm.RestoreTimeline != 0 && probe.Timeline != vm.RestoreTimeline) {
 			return fmt.Errorf("%w: recovery archive cannot reach the reserved point", ErrConflict)
 		}
 		vm, err = s.pinRestoreTimeline(ctx, vm, probe)
@@ -400,10 +400,10 @@ func (s *Scheduler) restore(ctx context.Context, node Node, vm VM) error {
 	return s.replayRestore(ctx, node, vm)
 }
 
-// Persist the evidence before the guest starts. Timeline 1 uses the
-// ordinary restore boot, including when replay starts on older images.
+// Persist the evidence before the guest starts. Ordinary restores on timeline 1
+// can still use older images. Regional restores always pin a timeline.
 func (s *Scheduler) pinRestoreTimeline(ctx context.Context, vm VM, check dbarchive.RestoreCheck) (VM, error) {
-	if check.Outcome == dbarchive.RestoreCovered && check.Timeline > 1 && vm.RestoreTimeline == 0 {
+	if check.Outcome == dbarchive.RestoreCovered && check.Timeline > 0 && (vm.RestoreFromRecovery || check.Timeline > 1) && vm.RestoreTimeline == 0 {
 		if err := s.store.PinRestoreTimeline(ctx, vm.DatabaseID, check.Timeline); err != nil {
 			return vm, err
 		}

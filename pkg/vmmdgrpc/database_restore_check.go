@@ -19,18 +19,19 @@ func (s *Server) DatabaseArchiveRestoreCheck(ctx context.Context, req *vmmdpb.Da
 	}
 	point := req.GetPointInTime()
 	if point == nil || !point.IsValid() || !dbarchive.ValidDatabaseID(req.GetDatabaseId()) ||
-		req.GetPostgresMajor() < 12 || req.GetPostgresMajor() > 99 {
+		req.GetPostgresMajor() < 12 || req.GetPostgresMajor() > 99 ||
+		(req.GetRecoveryTimeline() != 0 && (!req.GetFromRecoveryArchive() || req.GetLatest())) {
 		return nil, status.Error(codes.InvalidArgument, "a database, point in time, and PostgreSQL major are required")
 	}
 	var check dbarchive.RestoreCheck
 	if req.GetFromRecoveryArchive() {
 		checker, ok := rt.(interface {
-			CheckRecoveryArchive(context.Context, string, time.Time, int, bool) (dbarchive.RestoreCheck, error)
+			CheckRecoveryArchive(context.Context, string, time.Time, int, bool, uint32) (dbarchive.RestoreCheck, error)
 		})
 		if !ok {
 			return nil, status.Error(codes.Unimplemented, "regional archive checks are unavailable")
 		}
-		check, err = checker.CheckRecoveryArchive(ctx, req.GetDatabaseId(), point.AsTime(), int(req.GetPostgresMajor()), req.GetLatest())
+		check, err = checker.CheckRecoveryArchive(ctx, req.GetDatabaseId(), point.AsTime(), int(req.GetPostgresMajor()), req.GetLatest(), req.GetRecoveryTimeline())
 	} else if req.GetLatest() {
 		checker, ok := rt.(interface {
 			CheckLatestArchiveRestore(context.Context, string, time.Time, int) (dbarchive.RestoreCheck, error)
