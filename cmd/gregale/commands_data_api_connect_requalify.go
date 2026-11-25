@@ -43,11 +43,11 @@ func observeRequalificationCandidate(ctx context.Context, client dataAPIConnectR
 		return old, "", errors.New("a verified original receipt is required")
 	}
 	review, err := client.GetAppReleaseReview(ctx, old.App)
-	if err != nil || review.LatestDeploymentID == "" {
+	if err != nil || len(review.ServingDeploymentIDs) != 1 || review.ServingDeploymentIDs[0] == "" {
 		return old, "", errors.New("cannot observe a stable candidate deployment")
 	}
 	candidate := old
-	candidate.DeploymentID = review.LatestDeploymentID
+	candidate.DeploymentID = review.ServingDeploymentIDs[0]
 	if err := dataAPIConnectSnapshot(ctx, client, &candidate, true); err != nil {
 		return old, "", err
 	}

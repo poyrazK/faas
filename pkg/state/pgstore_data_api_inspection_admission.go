@@ -23,7 +23,7 @@ const dataAPIInspectionCurrentSelection = `
  WHERE a.id=$2::uuid AND a.account_id=$1::uuid AND a.status <> 'deleted'
  AND COALESCE(NULLIF(p.scope,''),'default')='default' AND p.status='live' AND p.traffic_percent > 0
  AND p.rootfs_key <> '' AND p.image_digest <> ''
- AND p.id=(SELECT x.id FROM deployments x WHERE x.app_id=a.id AND COALESCE(NULLIF(x.scope,''),'default')='default' ORDER BY x.created_at DESC,x.id DESC LIMIT 1)
+
  AND NOT EXISTS (SELECT 1 FROM deployments x WHERE x.app_id=a.id AND x.id<>p.id AND COALESCE(NULLIF(x.scope,''),'default')='default' AND x.status='live' AND x.traffic_percent>0)
  AND b.scope='default' AND b.environment_key='DATABASE_URL' AND b.access='data_api' AND b.state='ready' AND b.deleted_at IS NULL AND b.rotation_previous_generation IS NULL
  AND d.state='ready' AND d.deleted_at IS NULL AND d.desired_generation=d.observed_generation AND d.desired_generation>0`
@@ -108,7 +108,7 @@ func (s *PgStore) ReadDataAPIInspectionRecord(ctx context.Context, accountID, ap
 	err := s.pool.QueryRow(ctx, `SELECT t.id::text,t.app_id::text,t.deployment_id::text,i.database_id::text,i.binding_id::text,t.command,t.status,t.stdout_tail,t.output_truncated,t.exit_code,t.finished_at,i.credential_generation,i.target_digest,i.trust_digest,
 		t.account_id=i.account_id AND t.app_id=i.app_id AND t.deployment_id=i.deployment_id AND t.kind='manual' AND NOT t.command_shell AND t.command=ARRAY['__gregale_data_api_write_inspection_v1__',i.table_name,i.nonce] AND
 		b.data_api_inspection_revision=i.binding_revision AND d.data_api_inspection_revision=i.database_revision AND g.generation=i.runtime_generation AND p.status='live' AND p.traffic_percent>0 AND COALESCE(NULLIF(p.scope,''),'default')='default' AND a.status<>'deleted'
-        AND p.id=(SELECT x.id FROM deployments x WHERE x.app_id=a.id AND COALESCE(NULLIF(x.scope,''),'default')='default' ORDER BY x.created_at DESC,x.id DESC LIMIT 1)
+
         AND NOT EXISTS(SELECT 1 FROM deployments x WHERE x.app_id=a.id AND x.id<>p.id AND COALESCE(NULLIF(x.scope,''),'default')='default' AND x.status='live' AND x.traffic_percent>0),
         e.protocol_version,e.stdout_sha256,COALESCE(e.finished_at=t.finished_at,false)
         FROM data_api_inspection_admissions i JOIN app_tasks t ON t.id=i.task_id JOIN apps a ON a.id=t.app_id JOIN deployments p ON p.id=t.deployment_id

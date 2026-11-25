@@ -109,9 +109,9 @@ func (s *Service) PreviewDataAPICatalog(ctx context.Context, database Database) 
 	started := time.Now()
 	var result ReadOnlyQueryResult
 	if previewOK {
-		result, err = previewer.PreviewDataAPICatalog(callCtx, database.ProviderResourceID)
+		result, err = previewer.PreviewDataAPICatalog(callCtx, databaseDataResource(database))
 	} else {
-		result, err = query.QueryReadOnly(callCtx, ReadOnlyQueryRequest{ProviderResourceID: database.ProviderResourceID, SQL: api.DataAPICatalogPreviewSQL, MaxRows: QueryMaxRows, MaxBytes: QueryMaxValueBytes})
+		result, err = query.QueryReadOnly(callCtx, ReadOnlyQueryRequest{ProviderResourceID: databaseDataResource(database), SQL: api.DataAPICatalogPreviewSQL, MaxRows: QueryMaxRows, MaxBytes: QueryMaxValueBytes})
 	}
 	result.Duration = time.Since(started)
 	return result, err

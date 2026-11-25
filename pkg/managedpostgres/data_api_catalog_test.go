@@ -44,6 +44,23 @@ func TestCatalogPreviewUsesFixedOperationAndSharesQueryLimit(t *testing.T) {
 			}
 			service := testService(t, registry, NewMemoryStore())
 			db := Database{ID: "database", BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, ProviderResourceID: "provider-database", State: StateReady}
+			for _, resource := range []string{"", "provider-database/branch-1"} {
+				db.DataResourceID = resource
+				want := resource
+				if want == "" {
+					want = db.ProviderResourceID
+				}
+				if _, err := service.PreviewDataAPICatalog(context.Background(), db); err != nil {
+					t.Fatal(err)
+				}
+				if tc.name == "fixed endpoint" && preview.resource != want {
+					t.Fatalf("preview resource = %q, want %q", preview.resource, want)
+				}
+				if tc.name == "query fallback" && query.request.ProviderResourceID != want {
+					t.Fatalf("query resource = %q, want %q", query.request.ProviderResourceID, want)
+				}
+			}
+			db.DataResourceID = ""
 			if _, err := service.PreviewDataAPICatalog(context.Background(), db); err != nil {
 				t.Fatal(err)
 			}

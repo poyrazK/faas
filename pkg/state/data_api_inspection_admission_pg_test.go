@@ -33,6 +33,14 @@ func TestDataAPIInspectionAdmissionFencePG(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE managed_postgres_bindings SET state='ready',provider_identity_id='login',credential_ref='ref' WHERE id=$1`, bindingID); err != nil {
 		t.Fatal(err)
 	}
+	// A newer deployment that never served traffic must not replace the live target.
+	newer, err := store.CreateDeployment(ctx, state.Deployment{AppID: appID, Kind: state.DeploymentKindImage, Status: state.DeployPending, Scope: "default", TrafficPercentExplicit: true, ImageDigest: "sha256:" + strings.Repeat("2", 64), CreatedAt: time.Now().UTC().Add(time.Minute)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateDeploymentStatus(ctx, newer.ID, state.DeployFailed, ""); err != nil {
+		t.Fatal(err)
+	}
 	var bindingTime, databaseTime time.Time
 	if err := pool.QueryRow(ctx, `SELECT b.updated_at,d.updated_at FROM managed_postgres_bindings b JOIN managed_postgres_databases d ON d.id=b.database_id WHERE b.id=$1`, bindingID).Scan(&bindingTime, &databaseTime); err != nil {
 		t.Fatal(err)

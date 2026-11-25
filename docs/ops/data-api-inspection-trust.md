@@ -2,10 +2,11 @@
 
 The platform task for hosted Data API write inspection requires a dedicated
 PostgreSQL trust bundle on the VM host. Configure
-`data_api_inspection_ca_path` in `/etc/faas/vmmd.toml` with an operator-owned PEM file
-containing the public CA certificates that validate the native PostgreSQL
-proxy's server certificate. The file is limited to 32 KiB and must contain
-only CA certificates. An empty setting disables this inspection; an invalid
+`daemons.vmmd.data_api_inspection_ca_path` in the deployment manifest to the
+path of an operator-owned PEM file containing the public CA certificates that
+validate the native PostgreSQL proxy's server certificate. Provision the file
+on each VM host, then render and roll out the vmmd configuration. The file is
+limited to 32 KiB and must contain only CA certificates. An empty setting disables this inspection; an invalid
 configured file prevents vmmd startup. Restart vmmd to load a changed bundle.
 
 The host attaches the validated bundle to the versioned task request over the

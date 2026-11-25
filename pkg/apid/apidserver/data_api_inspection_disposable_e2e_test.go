@@ -225,6 +225,13 @@ func TestDataAPIInspectionDisposableCLIIntegration(t *testing.T) {
 	if err = st.MarkDeploymentLive(ctx, dep.ID); err != nil {
 		t.Fatal(err)
 	}
+	newer, err := st.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Status: state.DeployPending, Scope: "default", TrafficPercentExplicit: true, ImageDigest: "sha256:" + strings.Repeat("2", 64), CreatedAt: time.Now().UTC().Add(time.Minute)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = st.UpdateDeploymentStatus(ctx, newer.ID, state.DeployFailed, ""); err != nil {
+		t.Fatal(err)
+	}
 	trust, err := dataapiinspectioncommand.TrustBundleFingerprint(ca)
 	if err != nil {
 		t.Fatal(err)

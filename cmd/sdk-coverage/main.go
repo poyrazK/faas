@@ -1823,7 +1823,10 @@ var methodRouteMap = map[string]string{
 	"POST /v1/postgres/databases":                                                     "CreateManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}":                                                 "GetManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}/status":                                          "GetManagedPostgresDatabaseStatus", // ADR-20261030151810
-	"POST /v1/postgres/databases/{id}/query":                                          "QueryManagedPostgresDatabase",     // ADR-20261117215858
+	"POST /v1/postgres/databases/{id}/data-api-catalog-preview":                       "PreviewDataAPICatalog",
+	"POST /v1/apps/{slug}/data-api-inspections":                                       "CreateDataAPIInspection",
+	"GET /v1/apps/{slug}/data-api-inspections/{id}":                                   "GetDataAPIInspection",
+	"POST /v1/postgres/databases/{id}/query":                                          "QueryManagedPostgresDatabase", // ADR-20261117215858
 	"DELETE /v1/postgres/databases/{id}":                                              "DeleteManagedPostgresDatabase",
 	"POST /v1/postgres/databases/{id}/restore":                                        "RestoreManagedPostgresDatabase",
 	"POST /v1/postgres/databases/{id}/undelete":                                       "UndeleteManagedPostgresDatabase",

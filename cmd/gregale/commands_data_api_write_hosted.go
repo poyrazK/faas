@@ -253,10 +253,10 @@ func observeDataAPIWriteBinding(ctx context.Context, client dataAPIWriteHostedCl
 		return snapshot, errors.New("writable binding unavailable")
 	}
 	review, err := client.GetAppReleaseReview(ctx, appSlug)
-	if err != nil || review.AppID != app.ID || review.Scope != api.DefaultEnvScope || !dataAPIApprovalFingerprint(review.ConfigurationHash) || review.LatestDeploymentID == "" || len(review.ServingDeploymentIDs) != 1 || review.ServingDeploymentIDs[0] != review.LatestDeploymentID {
+	if err != nil || review.AppID != app.ID || review.Scope != api.DefaultEnvScope || !dataAPIApprovalFingerprint(review.ConfigurationHash) || len(review.ServingDeploymentIDs) != 1 || review.ServingDeploymentIDs[0] == "" {
 		return snapshot, errors.New("stable app deployment unavailable")
 	}
-	return dataAPIWriteHostedSnapshot{app.ID, databaseID, bindingID, review.LatestDeploymentID, review.ConfigurationHash, b.CredentialGeneration}, nil
+	return dataAPIWriteHostedSnapshot{app.ID, databaseID, bindingID, review.ServingDeploymentIDs[0], review.ConfigurationHash, b.CredentialGeneration}, nil
 }
 
 func inspectDataAPIWriteHosted(ctx context.Context, client dataAPIWriteHostedClient, appSlug, databaseID, bindingID string, scope dataAPIWriteQualification) (dataAPIWriteHostedReport, error) {

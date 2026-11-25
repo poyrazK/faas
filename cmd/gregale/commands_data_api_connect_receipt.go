@@ -153,10 +153,10 @@ func dataAPIConnectSnapshot(ctx context.Context, client dataAPIConnectRemote, r 
 	if err != nil {
 		return fmt.Errorf("deployment review: %w", err)
 	}
-	if review.AppID != app.ID || review.Scope != api.DefaultEnvScope || !dataAPIApprovalFingerprint(review.ConfigurationHash) || review.LatestDeploymentID == "" || len(review.ServingDeploymentIDs) != 1 || review.ServingDeploymentIDs[0] != review.LatestDeploymentID {
+	if review.AppID != app.ID || review.Scope != api.DefaultEnvScope || !dataAPIApprovalFingerprint(review.ConfigurationHash) || len(review.ServingDeploymentIDs) != 1 || review.ServingDeploymentIDs[0] == "" {
 		return errors.New("app does not have one stable serving deployment")
 	}
-	if review.LatestDeploymentID != r.DeploymentID || (!capture && review.ConfigurationHash != r.ConfigurationHash) {
+	if review.ServingDeploymentIDs[0] != r.DeploymentID || (!capture && review.ConfigurationHash != r.ConfigurationHash) {
 		return errors.New("app configuration or deployment changed")
 	}
 	if capture {

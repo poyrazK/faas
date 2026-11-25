@@ -45,11 +45,11 @@ func (s *server) createDataAPIInspection(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	review, err := reviews.ReadReleaseReview(r.Context(), app.ID, api.DefaultEnvScope)
-	if err != nil || review.AppID != app.ID || review.Scope != api.DefaultEnvScope || review.LatestDeploymentID == "" || !slices.Equal(review.ServingDeploymentIDs, []string{review.LatestDeploymentID}) {
+	if err != nil || review.AppID != app.ID || review.Scope != api.DefaultEnvScope || len(review.ServingDeploymentIDs) != 1 || review.ServingDeploymentIDs[0] == "" {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Inspection unavailable", "A single current live deployment is required."))
 		return
 	}
-	fence, err := admissions.ReadDataAPIInspectionFence(r.Context(), acct.ID, app.ID, review.LatestDeploymentID, req.DatabaseID, req.BindingID)
+	fence, err := admissions.ReadDataAPIInspectionFence(r.Context(), acct.ID, app.ID, review.ServingDeploymentIDs[0], req.DatabaseID, req.BindingID)
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Inspection unavailable", "The selected binding, database or deployment is unavailable."))
 		return
@@ -71,7 +71,7 @@ func (s *server) createDataAPIInspection(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	taskID, err := admissions.AdmitDataAPIInspection(r.Context(), state.DataAPIInspectionAdmission{
-		AccountID: acct.ID, AppID: app.ID, DeploymentID: review.LatestDeploymentID, DatabaseID: req.DatabaseID, BindingID: req.BindingID, Table: req.Table, Nonce: nonce,
+		AccountID: acct.ID, AppID: app.ID, DeploymentID: review.ServingDeploymentIDs[0], DatabaseID: req.DatabaseID, BindingID: req.BindingID, Table: req.Table, Nonce: nonce,
 		TargetDigest: target, TrustDigest: expectation.Target.TrustBundleSHA256, Fence: fence, CreatedAt: time.Now().UTC(),
 		CredentialGeneration: expectation.CredentialGeneration, CredentialRef: expectation.CredentialRef, ProviderIdentityID: expectation.ProviderIdentityID,
 		DatabaseResourceID: expectation.DatabaseResourceID, BackendID: expectation.BackendID, BackendFingerprint: expectation.BackendFingerprint,
@@ -82,7 +82,7 @@ func (s *server) createDataAPIInspection(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusAccepted, api.DataAPIInspectionResponse{TaskID: taskID, AppID: app.ID, DeploymentID: review.LatestDeploymentID, DatabaseID: req.DatabaseID, BindingID: req.BindingID, CredentialGeneration: expectation.CredentialGeneration, TaskStatus: api.AppTaskStatusQueued, BindingIdentity: api.DataAPIInspectionIdentity{Status: "unknown", Reason: "inspection_pending"}})
+	writeJSON(w, http.StatusAccepted, api.DataAPIInspectionResponse{TaskID: taskID, AppID: app.ID, DeploymentID: review.ServingDeploymentIDs[0], DatabaseID: req.DatabaseID, BindingID: req.BindingID, CredentialGeneration: expectation.CredentialGeneration, TaskStatus: api.AppTaskStatusQueued, BindingIdentity: api.DataAPIInspectionIdentity{Status: "unknown", Reason: "inspection_pending"}})
 }
 
 func (s *server) getDataAPIInspection(w http.ResponseWriter, r *http.Request, acct state.Account) {

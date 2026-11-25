@@ -177,3 +177,12 @@ func TestRequalificationRejectsIncompleteOrConflictingOptions(t *testing.T) {
 		}
 	}
 }
+
+func TestRequalificationIgnoresNewerNonServingDeployment(t *testing.T) {
+	old, remote, plan, _, _ := requalificationFixture(t)
+	remote.review.LatestDeploymentID = "newer-failed"
+	candidate, _, err := observeRequalificationCandidate(context.Background(), remote, old)
+	if err != nil || candidate.DeploymentID != plan.Candidate.DeploymentID {
+		t.Fatalf("candidate = %+v, %v", candidate, err)
+	}
+}

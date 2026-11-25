@@ -251,3 +251,12 @@ func TestDataAPIWriteReadinessCLIInspectsSelectedBinding(t *testing.T) {
 		})
 	}
 }
+
+func TestDataAPIWriteHostedUsesServingDeployment(t *testing.T) {
+	f := newWriteHostedFixture()
+	f.review.LatestDeploymentID = "newer-failed"
+	scope, _ := dataAPIWriteScope("api", "notes", "insert")
+	if _, err := inspectDataAPIWriteHosted(context.Background(), f, "notes", "db-1", "binding-1", scope); err != nil {
+		t.Fatal(err)
+	}
+}

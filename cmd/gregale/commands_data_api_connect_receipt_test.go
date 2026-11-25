@@ -179,3 +179,14 @@ func TestConnectedAuthorizationDoesNotReplayStaleResources(t *testing.T) {
 		t.Fatalf("status=%s", status)
 	}
 }
+
+func TestDataAPIConnectSnapshotUsesServingDeployment(t *testing.T) {
+	receipt, remote := connectReceiptFixture(t)
+	remote.review.LatestDeploymentID = "newer-failed"
+	if err := dataAPIConnectSnapshot(context.Background(), remote, &receipt, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := dataAPIConnectSnapshot(context.Background(), remote, &receipt, false); err != nil {
+		t.Fatal(err)
+	}
+}
