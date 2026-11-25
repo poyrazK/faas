@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -25,6 +26,7 @@ func cmdRealtime(args []string) int {
 		printCommandValidation(os.Stderr, "unknown realtime subcommand %q\n", args[0])
 		return unknownSubcommandChoices(os.Stderr, "realtime", nestedCliCommand("realtime"), args[0])
 	}
+	args = realtimeArgsWithLinkedApp(args)
 	switch args[0] {
 	case "push":
 		return cmdRealtimePush(args[1:])
@@ -80,10 +82,38 @@ func cmdRealtime(args []string) int {
 	}
 }
 
+// realtimeArgsWithLinkedApp fills a linked checkout's app into a realtime
+// command that left it out. Every endpoint verb takes APP_SLUG and then an
+// ENDPOINT_ID, which is a UUID, so a UUID right after the verb (after `auth
+// <verb>` for auth) means the app is missing; `realtime get <id>` printed
+// usage in a linked checkout (prod hunt r50). list and create, which take
+// only the app, fill it themselves.
+func realtimeArgsWithLinkedApp(args []string) []string {
+	at := 1
+	if args[0] == "auth" {
+		at = 2
+	}
+	if args[0] == "usage" || args[0] == "push" || len(args) <= at || uuid.Validate(args[at]) != nil {
+		return args
+	}
+	app := linkedAppForMissingSlug()
+	if app == "" {
+		return args
+	}
+	out := append(append([]string{}, args[:at]...), app)
+	return append(out, args[at:]...)
+}
+
 func cmdRealtimeList(args []string) int {
 	fs := newFlagSet("realtime list", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil || fs.NArg() != 1 || strings.TrimSpace(fs.Arg(0)) == "" {
-		PrintUsage(os.Stderr, "usage: gregale realtime list APP_SLUG", "realtime")
+	err := fs.Parse(args)
+	if err == nil && fs.NArg() == 0 {
+		if app := linkedAppForMissingSlug(); app != "" {
+			err = fs.Parse([]string{app})
+		}
+	}
+	if err != nil || fs.NArg() != 1 || strings.TrimSpace(fs.Arg(0)) == "" {
+		PrintUsage(os.Stderr, "usage: gregale realtime list [APP_SLUG]", "realtime")
 		return 1
 	}
 	client, err := authedClient()

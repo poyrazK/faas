@@ -526,6 +526,8 @@ func TestPackDirToTarGz_Excludes(t *testing.T) {
 	writeFile(t, dir, "app/__pycache__/mod.cpython-312.pyc", "bytecode")
 	writeFile(t, dir, "app/mod.pyc", "bytecode")
 	writeFile(t, dir, ".DS_Store", "junk")
+	writeFile(t, dir, ".gregale/project.json", `{"version":2,"app":"web"}`)
+	writeFile(t, dir, ".gregale/accepted-runs/r1.json", "{}")
 
 	dest := filepath.Join(t.TempDir(), "out.tar.gz")
 	n, err := packDirToTarGz(dir, dest, defaultZeroConfigSourceCapMB, nil)
@@ -545,7 +547,7 @@ func TestPackDirToTarGz_Excludes(t *testing.T) {
 		t.Errorf("fileCount = %d, want 3 (only kept files); entries: %v", n, got)
 	}
 	for name := range got {
-		for _, bad := range []string{"/.git/", "/node_modules/", "/vendor/", "/__pycache__/", ".pyc", ".DS_Store"} {
+		for _, bad := range []string{"/.git/", "/node_modules/", "/vendor/", "/__pycache__/", ".pyc", ".DS_Store", "/.gregale/"} {
 			if strings.Contains(name, bad) {
 				t.Errorf("archive should not contain %q (matched %q)", name, bad)
 			}

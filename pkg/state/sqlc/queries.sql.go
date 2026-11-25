@@ -54596,6 +54596,35 @@ func (q *Queries) ListManagedPostgresUsageResources(ctx context.Context, db DBTX
 	return items, nil
 }
 
+const listManagedValkeyCacheGrantees = `-- name: ListManagedValkeyCacheGrantees :many
+SELECT a.slug FROM managed_valkey_cache_grants g
+JOIN apps a ON a.id = g.app_id
+WHERE g.cache_app_id = $1::uuid
+  AND a.status <> 'deleted' AND a.deleted_at IS NULL
+ORDER BY a.slug
+`
+
+// The live apps bound to a cache, so deleting it can name them.
+func (q *Queries) ListManagedValkeyCacheGrantees(ctx context.Context, db DBTX, cacheAppID pgtype.UUID) ([]string, error) {
+	rows, err := db.Query(ctx, listManagedValkeyCacheGrantees, cacheAppID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var slug string
+		if err := rows.Scan(&slug); err != nil {
+			return nil, err
+		}
+		items = append(items, slug)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listMatchingEventSubscriptionsForAccount = `-- name: ListMatchingEventSubscriptionsForAccount :many
 select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions, s.acknowledgment_lease_seconds, s.deployment_scope, s.environment_id, s.clone_paused
 from event_subscriptions s

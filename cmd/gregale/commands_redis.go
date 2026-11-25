@@ -259,7 +259,7 @@ func printRedisChange(out api.RedisCacheChange, verb string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
 	}
-	_, _ = fmt.Fprintf(osStdout, "%s Redis cache %s (%d MB, %s). The new VM copies the data before it serves; writes pause for a moment at the switch. Deployment %s.\n",
+	_, _ = fmt.Fprintf(osStdout, "%s Redis cache %s (%d MB, %s). The new VM copies the data before it serves; open connections are closed at the switch, so clients reconnect. Deployment %s.\n",
 		verb, out.Cache.Name, out.Cache.MemoryMB, out.Cache.EvictionPolicy, out.DeploymentID)
 	return 0
 }

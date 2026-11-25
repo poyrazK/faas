@@ -6742,7 +6742,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "realtime",
 		Short:   "Manage realtime endpoints, policies, connections, channels, and auth",
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List managed realtime endpoints", Positionals: []string{"<app>"}},
+			{Name: "list", Short: "List managed realtime endpoints", Positionals: []string{"[<app>]"}},
 			{Name: "usage", Short: "Show open connections against the fair-use limit and usage", Notes: []string{"Includes recent hourly usage."}, Flags: []cliFlag{
 				{Name: "hours", Short: "UTC hours of usage to show (1-744, default 24)", Value: "N"},
 			}},

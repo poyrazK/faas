@@ -5519,7 +5519,7 @@ Show or wait for a durable realtime drain
 
 List managed realtime endpoints
 
-`gregale realtime list <app>`
+`gregale realtime list [<app>]`
 
 ### realtime get
 

@@ -126,6 +126,11 @@ var defaultExcludeDirs = map[string]bool{
 	".pytest_cache": true,
 	".mypy_cache":   true,
 	".ruff_cache":   true,
+	// The CLI's local context: the link deploy writes, accepted-run
+	// receipts, env declarations. MCP uploads drop it too (pkg/mcpmanagement
+	// localContextPath). Packed, every `workflow run` changed the source
+	// hash, so the next deploy rebuilt unchanged code (prod hunt r50).
+	".gregale": true,
 }
 
 // defaultExcludeFiles are basenames dropped anywhere in the tree (OS/VCS

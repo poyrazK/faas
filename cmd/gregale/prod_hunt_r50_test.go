@@ -7,9 +7,33 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	main "github.com/onebox-faas/faas/cmd/gregale"
 )
+
+// Prod hunt r50: realtime verbs take APP_SLUG first and printed usage in a
+// linked checkout; a UUID right after the verb means the app was left out.
+func TestRealtimeArgsWithLinkedApp(t *testing.T) {
+	dir := t.TempDir()
+	linkCheckoutTo(t, dir, "web")
+	t.Chdir(dir)
+	const id = "a27b45f5-2a74-7583-e32a-eabe239d529b"
+	for _, tc := range []struct{ in, want []string }{
+		{[]string{"get", id}, []string{"get", "web", id}},
+		{[]string{"delete", id, "--yes"}, []string{"delete", "web", id, "--yes"}},
+		{[]string{"auth", "status", id}, []string{"auth", "status", "web", id}},
+		{[]string{"get", "other", id}, []string{"get", "other", id}},
+		{[]string{"usage"}, []string{"usage"}},
+		{[]string{"list"}, []string{"list"}},
+	} {
+		if got := main.RealtimeArgsWithLinkedApp(tc.in); !slices.Equal(got, tc.want) {
+			t.Errorf("RealtimeArgsWithLinkedApp(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
 
 // linkCheckoutTo saves dir's standalone link to app, the file deploy writes.
 func linkCheckoutTo(t *testing.T, dir, app string) {
