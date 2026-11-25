@@ -36,7 +36,13 @@ func TestClaimableDeployFlowOnPostgres(t *testing.T) {
 	if rec := claimBearer(h, http.MethodPost, "/v1/apps", sess.APIKey, `{"slug":"pg-agent-app","warm_pool_size":2}`); rec.Code != http.StatusForbidden {
 		t.Fatalf("create with warm_pool_size = %d %s, want 403", rec.Code, rec.Body.String())
 	}
-	if rec := claimBearer(h, http.MethodPost, "/v1/apps", sess.APIKey, `{"slug":"pg-agent-app","require_authn":false}`); rec.Code != http.StatusCreated && rec.Code != http.StatusOK {
+	// Its app takes the account's suffix, so it never holds a short name.
+	appSlug := api.AnonymousAppSlug(sess.AccountID, "pg-agent-app")
+	if rec := claimBearer(h, http.MethodPost, "/v1/apps", sess.APIKey, `{"slug":"pg-agent-app","require_authn":false}`); rec.Code != http.StatusForbidden ||
+		!strings.Contains(rec.Body.String(), appSlug) {
+		t.Fatalf("create without the suffix = %d %s, want 403 naming %s", rec.Code, rec.Body.String(), appSlug)
+	}
+	if rec := claimBearer(h, http.MethodPost, "/v1/apps", sess.APIKey, `{"slug":"`+appSlug+`","require_authn":false}`); rec.Code != http.StatusCreated && rec.Code != http.StatusOK {
 		t.Fatalf("create app = %d %s", rec.Code, rec.Body.String())
 	}
 	if rec := claimBearer(h, http.MethodGet, "/v1/keys", sess.APIKey, ""); rec.Code != http.StatusForbidden {
@@ -56,7 +62,7 @@ func TestClaimableDeployFlowOnPostgres(t *testing.T) {
 		t.Errorf("replaced claim link = %d, want 410", rec.Code)
 	}
 	path := claimPath(link.ClaimURL)
-	if page := claimGet(h, path); page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "pg-agent-app") {
+	if page := claimGet(h, path); page.Code != http.StatusOK || !strings.Contains(page.Body.String(), appSlug) {
 		t.Fatalf("claim page = %d: %s", page.Code, page.Body.String())
 	}
 

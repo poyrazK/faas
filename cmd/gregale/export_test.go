@@ -3123,6 +3123,13 @@ var SaveAnonymousSession = saveAnonymousSession
 
 func LoadStoredToken() string { return loadStoredToken(io.Discard) }
 
+// UseAnonymousDeploySession makes this invocation's deploy run without an
+// account for accountID until the test ends.
+func UseAnonymousDeploySession(t interface{ Cleanup(func()) }, accountID string) {
+	anonymousDeploySession = &api.AnonymousSessionResponse{AccountID: accountID}
+	t.Cleanup(func() { anonymousDeploySession = nil })
+}
+
 // LoadAnonymousSessionToken exposes the saved anonymous deploy key.
 var LoadAnonymousSessionToken = loadAnonymousSessionToken
 

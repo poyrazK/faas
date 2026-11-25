@@ -35,3 +35,27 @@ func SuffixedAppSlugs(owner, base string, n int) []string {
 	}
 	return out
 }
+
+// AnonymousAppSlugSuffix is the suffix every app of an unclaimed account ends
+// with (ADR-20261124080000): "-" and five characters derived from the account
+// id. An agent deploying without an account therefore never takes a short,
+// generic name such as "app" or "api" for the whole platform.
+func AnonymousAppSlugSuffix(accountID string) string {
+	sum := sha256.Sum256([]byte("gregale-anonymous-app-slug\x00" + accountID))
+	return "-" + appSlugSuffixEncoding.EncodeToString(sum[:])[:appSlugSuffixLen]
+}
+
+// AnonymousAppSlug is base with the account's AnonymousAppSlugSuffix, base
+// shortened to fit. A base that already ends with the suffix is unchanged, so
+// a redeploy of the suffixed app keeps its name.
+func AnonymousAppSlug(accountID, base string) string {
+	suffix := AnonymousAppSlugSuffix(accountID)
+	if strings.HasSuffix(base, suffix) {
+		return base
+	}
+	stem := base
+	if limit := 40 - len(suffix); len(stem) > limit {
+		stem = stem[:limit]
+	}
+	return strings.TrimRight(stem, "-") + suffix
+}

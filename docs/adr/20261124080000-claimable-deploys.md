@@ -74,6 +74,14 @@ apid keeps the route table, the middleware and a `claim.Host` adapter.
   replicas and restart behaviour. Any other field, such as an egress allow
   list, service bindings or minimum instances, answers `403
   claim_required` naming the field.
+- A new app's name must end with the account's suffix
+  (`api.AnonymousAppSlug`: "-" and five characters derived from the account
+  id). Otherwise `POST /v1/apps` answers `403 claim_required` naming the
+  name to use, and `gregale deploy` adds the suffix itself. Amended
+  2026-11-25 after the first production canary took the name `app`: an
+  agent deploys from a directory with a generic name, and without the
+  suffix an unowned account held that name for the whole platform for up
+  to the claim window. The name stays after the claim.
 - Project deploys (`/v1/projects` scan and apply) are refused: they create
   databases and several apps. The CLI refuses `gregale deploy --project`
   (and the other project flags) without a login before it starts a
