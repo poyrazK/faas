@@ -1088,6 +1088,8 @@ from .create_release_gate_request import CreateReleaseGateRequest
 from .create_release_gate_request_comparison import CreateReleaseGateRequestComparison
 from .create_release_gate_request_kind import CreateReleaseGateRequestKind
 from .create_release_gate_request_labels import CreateReleaseGateRequestLabels
+from .create_route_split_request import CreateRouteSplitRequest
+from .create_route_split_request_kind import CreateRouteSplitRequestKind
 from .create_scenario_objects_request import CreateScenarioObjectsRequest
 from .create_scenario_postgres_request import CreateScenarioPostgresRequest
 from .create_slo_request import CreateSLORequest
@@ -6165,6 +6167,10 @@ from .route_resource_split import RouteResourceSplit
 from .route_resource_split_kind import RouteResourceSplitKind
 from .route_resources_response import RouteResourcesResponse
 from .route_row import RouteRow
+from .route_split import RouteSplit
+from .route_split_kind import RouteSplitKind
+from .route_split_phase import RouteSplitPhase
+from .route_splits_response import RouteSplitsResponse
 from .route_throttle_requirement import RouteThrottleRequirement
 from .route_throttle_requirement_key_by import RouteThrottleRequirementKeyBy
 from .route_throttle_requirement_missing_key_policy import RouteThrottleRequirementMissingKeyPolicy
@@ -8378,6 +8384,8 @@ __all__ = (
     "CreateReleaseGateRequestComparison",
     "CreateReleaseGateRequestKind",
     "CreateReleaseGateRequestLabels",
+    "CreateRouteSplitRequest",
+    "CreateRouteSplitRequestKind",
     "CreateScenarioObjectsRequest",
     "CreateScenarioPostgresRequest",
     "CreateSLORequest",
@@ -13166,6 +13174,10 @@ __all__ = (
     "RouteResourceSplitKind",
     "RouteResourcesResponse",
     "RouteRow",
+    "RouteSplit",
+    "RouteSplitKind",
+    "RouteSplitPhase",
+    "RouteSplitsResponse",
     "RouteThrottleRequirement",
     "RouteThrottleRequirementKeyBy",
     "RouteThrottleRequirementMissingKeyPolicy",

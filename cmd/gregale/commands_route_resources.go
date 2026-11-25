@@ -110,32 +110,60 @@ func renderRouteResources(w io.Writer, r api.RouteResourcesResponse) {
 	}
 }
 
+const appScaleSuggestUsage = "usage: gregale app scale <slug> --suggest [--since 24h] [--apply-split] | --split-status | --undo-split ID"
+
+// isAppScaleSplitArg reports whether an app scale argument selects the
+// route split mode.
+func isAppScaleSplitArg(arg string) bool {
+	name := strings.TrimLeft(arg, "-")
+	if i := strings.IndexByte(name, '='); i >= 0 {
+		name = name[:i]
+	}
+	return strings.HasPrefix(arg, "-") && (name == "suggest" || name == "apply-split" || name == "split-status" || name == "undo-split")
+}
+
 // cmdAppScaleSuggest is `gregale app scale <slug> --suggest`: the split the
 // route resource report suggests, as commands (ADR-20261121170000
-// amendment 1).
+// amendment 1). --apply-split applies it on the server, --split-status
+// follows it and --undo-split reverses it (amendment 2).
 func cmdAppScaleSuggest(slug string, args []string) int {
 	fs := newFlagSet("app scale --suggest", flag.ContinueOnError)
 	_ = fs.Bool("suggest", true, "suggest moving a heavy route to its own app")
 	since := fs.String("since", "24h", "lookback window, at most 336h")
+	apply := fs.Bool("apply-split", false, "apply the suggested split on the server")
+	status := fs.Bool("split-status", false, "show the app's route splits")
+	undo := fs.String("undo-split", "", "reverse a finished split by ID")
 	if err := fs.Parse(args); err != nil || fs.NArg() > 0 {
-		PrintUsage(os.Stderr, "usage: gregale app scale <slug> --suggest [--since 24h]", analyticsCmdDocsTopic)
+		PrintUsage(os.Stderr, appScaleSuggestUsage, analyticsCmdDocsTopic)
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	switch {
+	case *status:
+		return appRouteSplitStatus(client, slug)
+	case *undo != "":
+		return appRouteSplitUndo(client, slug, *undo)
+	}
 	response, err := client.GetAppRouteResources(context.Background(), slug, api.RouteResourcesOptions{Since: *since})
 	if err != nil {
 		return printErr("Could not fetch route resource peaks", err)
+	}
+	if response.Split != nil && *apply {
+		return appRouteSplitApply(client, slug, *since, response.Split)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(response))
 	}
 	if response.Split == nil {
-		_, _ = fmt.Fprintf(osStdout, "No split suggested for %s over the last %s: no route holds most of its memory peaks while running in few minutes.\n", slug, *since)
-		_, _ = fmt.Fprintf(osStdout, "Peaks: %d memory, p95 %d MB of %d MB. Details: gregale metric resources %s --since %s\n",
-			response.HighMemoryMinutes, response.MemPeakP95MB, response.MemLimitMB, slug, *since)
+		_, _ = fmt.Fprintf(osStdout, "No split suggested for %s over the last %s: no route holds most of its memory or CPU peaks while running in few minutes.\n", slug, *since)
+		_, _ = fmt.Fprintf(osStdout, "Peaks: %d memory, p95 %d MB of %d MB; %d CPU. Details: gregale metric resources %s --since %s\n",
+			response.HighMemoryMinutes, response.MemPeakP95MB, response.MemLimitMB, response.HighCPUMinutes, slug, *since)
+		if *apply {
+			return 1
+		}
 		return 0
 	}
 	host := ""
@@ -145,6 +173,85 @@ func cmdAppScaleSuggest(slug string, args []string) int {
 		}
 	}
 	renderRouteSplit(osStdout, slug, host, response.Split)
+	_, _ = fmt.Fprintf(osStdout, "\nOr let Gregale do all of it: gregale app scale %s --suggest --since %s --apply-split\n", slug, *since)
+	return 0
+}
+
+// appRouteSplitApply applies the suggestion the read returned; the server
+// refuses with route_split_changed when it moved since.
+func appRouteSplitApply(client *api.Client, slug, since string, s *routeresources.Split) int {
+	kind := s.Kind
+	if kind == "" {
+		kind = routeresources.SplitMemory
+	}
+	split, err := client.CreateAppRouteSplit(context.Background(), slug, api.CreateRouteSplitRequest{
+		Kind: kind, Route: s.Route, Method: s.Method, RouteRAMMB: s.RouteRAMMB, MainRAMMB: s.MainRAMMB, Since: since,
+	})
+	if err != nil {
+		return printErr("Could not apply the split", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(split))
+	}
+	_, _ = fmt.Fprintf(osStdout, "Split %s started: %s moves to %s.\n", split.ID, split.Route, split.TargetSlug)
+	_, _ = fmt.Fprintf(osStdout, "  %s gets the app's live build, variables and secrets; once it is live, an edge rule sends %s %s to it.\n",
+		split.TargetSlug, orAny(split.Method), split.PathGlob)
+	if split.Kind == routeresources.SplitMemory {
+		_, _ = fmt.Fprintf(osStdout, "  Then %s is sized down from %d MB to %d MB.\n", slug, split.PreviousRAMMB, split.MainRAMMB)
+	}
+	_, _ = fmt.Fprintf(osStdout, "Follow it: gregale app scale %s --split-status\nUndo it once done: gregale app scale %s --undo-split %s\n", slug, slug, split.ID)
+	return 0
+}
+
+func orAny(method string) string {
+	if method == "" {
+		return "requests to"
+	}
+	return method
+}
+
+func appRouteSplitStatus(client *api.Client, slug string) int {
+	out, err := client.ListAppRouteSplits(context.Background(), slug)
+	if err != nil {
+		return printErr("Could not read route splits", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(out))
+	}
+	renderRouteSplits(osStdout, slug, out.Splits)
+	return 0
+}
+
+func renderRouteSplits(w io.Writer, slug string, splits []api.RouteSplitResponse) {
+	if len(splits) == 0 {
+		_, _ = fmt.Fprintf(w, "%s has no route splits. Suggest one: gregale app scale %s --suggest\n", slug, slug)
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "ID\tROUTE\tAPP\tKIND\tPHASE\tNOTE")
+	for _, s := range splits {
+		note := s.Error
+		if note == "" {
+			note = s.Warning
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", s.ID, s.Route, s.TargetSlug, s.Kind, s.Phase, note)
+	}
+	_ = tw.Flush()
+}
+
+func appRouteSplitUndo(client *api.Client, slug, id string) int {
+	out, err := client.UndoAppRouteSplit(context.Background(), slug, id)
+	if err != nil {
+		return printErr("Could not undo the split", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(out))
+	}
+	_, _ = fmt.Fprintf(osStdout, "Split %s is %s: %s serves %s again", out.ID, out.Phase, slug, out.Route)
+	if out.MainResized {
+		_, _ = fmt.Fprintf(osStdout, " at %d MB", out.PreviousRAMMB)
+	}
+	_, _ = fmt.Fprintf(osStdout, ", and %s is deleted.\n", out.TargetSlug)
 	return 0
 }
 

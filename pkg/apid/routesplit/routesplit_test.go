@@ -1,0 +1,329 @@
+package routesplit_test
+
+import (
+	"context"
+	"net/http"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/routesplit"
+	"github.com/onebox-faas/faas/pkg/routeresources"
+	"github.com/onebox-faas/faas/pkg/state"
+)
+
+// fakeHost records what the split asked apid to do and acts on the store.
+type fakeHost struct {
+	store   *state.MemStore
+	split   *routeresources.Split
+	resized map[string]int
+	deleted map[string]bool
+	ruleErr *api.Problem
+}
+
+func (h *fakeHost) Suggest(context.Context, state.Account, state.App, time.Duration) (*routeresources.Split, error) {
+	return h.split, nil
+}
+
+func (h *fakeHost) CreateApp(ctx context.Context, acct state.Account, source state.App, slug string, ramMB int) (state.App, *api.Problem) {
+	app, err := h.store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: slug, Status: state.AppActive, Type: source.Type, RAMMB: ramMB, MaxConcurrency: 1})
+	if err != nil {
+		return state.App{}, api.ErrCapacity(err.Error())
+	}
+	return app, nil
+}
+
+func (h *fakeHost) ResizeApp(_ context.Context, _ state.Account, app state.App, ramMB int) *api.Problem {
+	h.resized[app.ID] = ramMB
+	return nil
+}
+
+func (h *fakeHost) DeleteApp(ctx context.Context, _ state.Account, app state.App) *api.Problem {
+	h.deleted[app.ID] = true
+	if err := h.store.DeleteApp(ctx, app.ID); err != nil {
+		return api.ErrCapacity(err.Error())
+	}
+	return nil
+}
+
+func (h *fakeHost) AppHosts(_ context.Context, app state.App) []string {
+	return []string{app.Slug + ".gregale.dev", "shop.example.com"}
+}
+
+func (h *fakeHost) CreateRule(ctx context.Context, acct state.Account, app state.App, req api.CreateEdgeRuleRequest) (string, *api.Problem) {
+	if h.ruleErr != nil {
+		return "", h.ruleErr
+	}
+	rule, err := h.store.CreateEdgeRule(ctx, state.CreateEdgeRuleParams{
+		AccountID: acct.ID, AppID: app.ID, MatchHost: req.MatchHost, MatchPath: req.MatchPath, MatchMethods: req.MatchMethods,
+		Enabled: true, Kind: state.EdgeRuleKind(req.Kind), Name: req.Name,
+	})
+	if err != nil {
+		return "", api.ErrCapacity(err.Error())
+	}
+	return rule.ID, nil
+}
+
+func (h *fakeHost) DeleteRule(ctx context.Context, _ state.Account, ruleID string) *api.Problem {
+	if err := h.store.DeleteEdgeRule(ctx, ruleID); err != nil {
+		return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", err.Error())
+	}
+	return nil
+}
+
+type fixture struct {
+	ctx    context.Context
+	store  *state.MemStore
+	host   *fakeHost
+	svc    *routesplit.Service
+	acct   state.Account
+	source state.App
+	clock  time.Time
+}
+
+func newFixture(t *testing.T) *fixture {
+	t.Helper()
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(ctx, "split-"+uuid.NewString()[:8]+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "shop", Status: state.AppActive, Type: state.AppTypeApp, RAMMB: 1024, MaxConcurrency: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, err := store.CreateDeployment(ctx, state.Deployment{AppID: source.ID, Scope: "default", Kind: state.DeploymentKindImage, ImageDigest: "sha256:shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetDeploymentRootfs(ctx, live.ID, "/shop.ext4", "layers/shop.ext4", 4096); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, live.ID); err != nil {
+		t.Fatal(err)
+	}
+	f := &fixture{ctx: ctx, store: store, acct: acct, source: source, clock: time.Now()}
+	f.host = &fakeHost{store: store, resized: map[string]int{}, deleted: map[string]bool{},
+		split: &routeresources.Split{Kind: routeresources.SplitMemory, Route: "GET /exports/{id}", Method: "GET", PathGlob: "/exports/*",
+			RouteRAMMB: 1920, CurrentRAMMB: 1024, MainRAMMB: 256}}
+	f.svc = &routesplit.Service{Store: store, Host: f.host, Now: func() time.Time { return f.clock }}
+	return f
+}
+
+func (f *fixture) request() api.CreateRouteSplitRequest {
+	s := f.host.split
+	return api.CreateRouteSplitRequest{Kind: s.Kind, Route: s.Route, Method: s.Method, RouteRAMMB: s.RouteRAMMB, MainRAMMB: s.MainRAMMB}
+}
+
+func (f *fixture) read(t *testing.T, id string) state.RouteSplit {
+	t.Helper()
+	split, err := f.store.RouteSplit(f.ctx, f.acct.ID, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return split
+}
+
+func TestApplyRunsToDoneAndUndoes(t *testing.T) {
+	f := newFixture(t)
+	split, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request())
+	if prob != nil {
+		t.Fatalf("apply: %+v", prob)
+	}
+	if split.Phase != state.RouteSplitDeploying || split.TargetSlug != "shop-exports" || split.PreviousRAMMB != 1024 {
+		t.Fatalf("applied split = %+v", split)
+	}
+	target, err := f.store.AppByID(f.ctx, split.TargetAppID)
+	if err != nil || target.RAMMB != 1920 {
+		t.Fatalf("route's app = %+v, %v", target, err)
+	}
+
+	f.svc.Step(f.ctx)
+	if got := f.read(t, split.ID); got.Phase != state.RouteSplitDeploying {
+		t.Fatalf("before the deployment is live the split is %s", got.Phase)
+	}
+	if err := f.store.MarkDeploymentLive(f.ctx, split.TargetDeploymentID); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.Step(f.ctx)
+	got := f.read(t, split.ID)
+	if got.Phase != state.RouteSplitRuleLive || len(got.EdgeRuleIDs) != 2 {
+		t.Fatalf("after go-live the split is %+v", got)
+	}
+	rules, _ := f.store.ListEdgeRulesForApp(f.ctx, f.source.ID)
+	for _, rule := range rules {
+		if rule.MatchPath != "/exports/*" || len(rule.MatchMethods) != 1 || rule.MatchMethods[0] != "GET" || rule.Name != routesplit.RuleName(split.ID) {
+			t.Fatalf("rule = %+v", rule)
+		}
+	}
+	f.svc.Step(f.ctx)
+	got = f.read(t, split.ID)
+	if got.Phase != state.RouteSplitDone || !got.MainResized || f.host.resized[f.source.ID] != 256 {
+		t.Fatalf("finished split = %+v, resized %v", got, f.host.resized)
+	}
+
+	undone, prob := f.svc.Undo(f.ctx, f.acct, f.source, got)
+	if prob != nil {
+		t.Fatalf("undo: %+v", prob)
+	}
+	if undone.Phase != state.RouteSplitUndone || f.host.resized[f.source.ID] != 1024 || !f.host.deleted[target.ID] {
+		t.Fatalf("undone = %+v, resized %v, deleted %v", undone, f.host.resized, f.host.deleted)
+	}
+	if rules, _ := f.store.ListEdgeRulesForApp(f.ctx, f.source.ID); len(rules) != 0 {
+		t.Fatalf("rules left after undo: %+v", rules)
+	}
+}
+
+func TestCPUSplitKeepsTheAppsSize(t *testing.T) {
+	f := newFixture(t)
+	f.host.split = &routeresources.Split{Kind: routeresources.SplitCPU, Route: "POST /render", Method: "POST", PathGlob: "/render",
+		RouteRAMMB: 1024, CurrentRAMMB: 1024, MainRAMMB: 1024}
+	split, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request())
+	if prob != nil {
+		t.Fatalf("apply: %+v", prob)
+	}
+	if err := f.store.MarkDeploymentLive(f.ctx, split.TargetDeploymentID); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.Step(f.ctx)
+	f.svc.Step(f.ctx)
+	got := f.read(t, split.ID)
+	if got.Phase != state.RouteSplitDone || got.MainResized || len(f.host.resized) != 0 {
+		t.Fatalf("cpu split = %+v, resized %v", got, f.host.resized)
+	}
+}
+
+func TestApplyRefuses(t *testing.T) {
+	f := newFixture(t)
+	changed := f.request()
+	changed.MainRAMMB = 512
+	if _, prob := f.svc.Apply(f.ctx, f.acct, f.source, changed); prob == nil || prob.Code != api.CodeRouteSplitChanged {
+		t.Fatalf("changed suggestion: %+v", prob)
+	}
+	if _, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request()); prob != nil {
+		t.Fatalf("apply: %+v", prob)
+	}
+	if _, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request()); prob == nil || prob.Code != api.CodeRouteSplitInFlight {
+		t.Fatalf("second apply: %+v", prob)
+	}
+	project := f.source
+	project.ProjectID = uuid.NewString()
+	if _, prob := f.svc.Apply(f.ctx, f.acct, project, f.request()); prob == nil || prob.Code != api.CodeRouteSplitUnsupported {
+		t.Fatalf("project app: %+v", prob)
+	}
+}
+
+func TestManagedBindingsAreRefused(t *testing.T) {
+	f := newFixture(t)
+	secret := state.AppSecret{AccountID: f.acct.ID, AppID: f.source.ID, Key: "DATABASE_URL", ManagedPostgresBindingID: uuid.NewString()}
+	f.svc.Store = bindingStore{Mem: f.store, secrets: []state.AppSecret{secret}}
+	if _, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request()); prob == nil || prob.Code != api.CodeRouteSplitUnsupported {
+		t.Fatalf("managed binding: %+v", prob)
+	}
+}
+
+// bindingStore reports a managed binding the MemStore cannot set up here and
+// forwards the rest of routesplit.Store.
+type bindingStore struct {
+	Mem     *state.MemStore
+	secrets []state.AppSecret
+}
+
+func (s bindingStore) ListAppSecrets(context.Context, string, string) ([]state.AppSecret, error) {
+	return s.secrets, nil
+}
+
+func (s bindingStore) CreateRouteSplit(ctx context.Context, split state.RouteSplit) (state.RouteSplit, error) {
+	return s.Mem.CreateRouteSplit(ctx, split)
+}
+
+func (s bindingStore) RouteSplit(ctx context.Context, accountID, id string) (state.RouteSplit, error) {
+	return s.Mem.RouteSplit(ctx, accountID, id)
+}
+
+func (s bindingStore) RouteSplitsForApp(ctx context.Context, accountID, appID string, limit int) ([]state.RouteSplit, error) {
+	return s.Mem.RouteSplitsForApp(ctx, accountID, appID, limit)
+}
+
+func (s bindingStore) InFlightRouteSplits(ctx context.Context, limit int) ([]state.RouteSplit, error) {
+	return s.Mem.InFlightRouteSplits(ctx, limit)
+}
+
+func (s bindingStore) AdvanceRouteSplit(ctx context.Context, split state.RouteSplit, from string) (state.RouteSplit, error) {
+	return s.Mem.AdvanceRouteSplit(ctx, split, from)
+}
+
+func (s bindingStore) SeedRouteSplitTarget(ctx context.Context, seed state.RouteSplitSeed) (state.Deployment, error) {
+	return s.Mem.SeedRouteSplitTarget(ctx, seed)
+}
+
+func (s bindingStore) AccountByID(ctx context.Context, id string) (state.Account, error) {
+	return s.Mem.AccountByID(ctx, id)
+}
+
+func (s bindingStore) AppByID(ctx context.Context, id string) (state.App, error) {
+	return s.Mem.AppByID(ctx, id)
+}
+
+func (s bindingStore) AppBySlug(ctx context.Context, slug string) (state.App, error) {
+	return s.Mem.AppBySlug(ctx, slug)
+}
+
+func (s bindingStore) DeploymentByID(ctx context.Context, id string) (state.Deployment, error) {
+	return s.Mem.DeploymentByID(ctx, id)
+}
+
+func (s bindingStore) ListEdgeRulesForApp(ctx context.Context, appID string) ([]state.EdgeRule, error) {
+	return s.Mem.ListEdgeRulesForApp(ctx, appID)
+}
+
+func TestDeployTimeoutRollsBack(t *testing.T) {
+	f := newFixture(t)
+	split, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request())
+	if prob != nil {
+		t.Fatalf("apply: %+v", prob)
+	}
+	f.clock = f.clock.Add(api.RouteSplitDeployTimeout + time.Minute)
+	f.svc.Step(f.ctx)
+	got := f.read(t, split.ID)
+	if got.Phase != state.RouteSplitRolledBack || got.Error == "" || !f.host.deleted[split.TargetAppID] {
+		t.Fatalf("timed-out split = %+v, deleted %v", got, f.host.deleted)
+	}
+	if _, prob := f.svc.Undo(f.ctx, f.acct, f.source, got); prob != nil {
+		t.Fatalf("undo of a rolled-back split: %+v", prob)
+	}
+}
+
+func TestRuleFailureRollsBack(t *testing.T) {
+	f := newFixture(t)
+	split, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request())
+	if prob != nil {
+		t.Fatalf("apply: %+v", prob)
+	}
+	if err := f.store.MarkDeploymentLive(f.ctx, split.TargetDeploymentID); err != nil {
+		t.Fatal(err)
+	}
+	f.host.ruleErr = api.ErrValidation("quota")
+	f.svc.Step(f.ctx)
+	got := f.read(t, split.ID)
+	if got.Phase != state.RouteSplitRolledBack || !f.host.deleted[split.TargetAppID] || len(f.host.resized) != 0 {
+		t.Fatalf("split after a rule failure = %+v", got)
+	}
+}
+
+func TestTargetSlug(t *testing.T) {
+	for glob, want := range map[string]string{
+		"/exports/*":                             "shop-exports",
+		"/v1/exports/*/pdf":                      "shop-pdf",
+		"/*":                                     "shop-heavy",
+		"/Reports_2024/*":                        "shop-reports2024",
+		"/a-very-long-segment-name-that-goes-on": "shop-a-very-long-segment-name-that-goes",
+	} {
+		if got := routesplit.TargetSlug("shop", glob); got != want {
+			t.Errorf("TargetSlug(shop, %s) = %q, want %q", glob, got, want)
+		}
+	}
+}

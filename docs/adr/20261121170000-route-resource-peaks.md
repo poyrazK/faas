@@ -117,7 +117,8 @@ resize goes through `app scale --plan`.
 ## Amendment 2 (2026-11-26): apply the split; CPU splits
 
 Owner decisions (2026-11-26): the split runs server-side; the route's app
-inherits variables, secrets and bindings; CPU-heavy routes are split too.
+inherits variables, secrets and bindings (bindings in a second slice, below);
+CPU-heavy routes are split too.
 
 ### CPU splits
 
@@ -132,46 +133,60 @@ resized later. `kind: "memory"` splits keep amendment 1's sizing.
 ### Applying a split
 
 `POST /v1/apps/{slug}/route-splits` applies the suggestion the read route
-returns. The body names the route, method and the suggestion's
-`suggestion_digest`; apid recomputes the suggestion and refuses with 409
+returns. The body repeats the suggestion (kind, route, method, both sizes,
+window); apid recomputes it over the same window and refuses with 409
 `route_split_changed` when it no longer matches, so nobody applies a split
-they did not see. One split per app runs at a time.
+they did not see. One split per app is in flight at a time (409
+`route_split_in_flight`, a partial unique index). Splitting takes the
+strictest permission of what it does (owner or admin: it writes edge rules
+and may delete the app it made).
 
 The split is a durable row (`route_splits`, CHECKed phase) that apid's
-`pkg/apid/routesplit` worker advances idempotently. apid is the only writer
-of apps, deployments and edge rules, so no other owner is bypassed:
+`pkg/apid/routesplit` worker advances, every step fenced by a
+compare-and-set on the phase so replicas and restarts are safe. apid is the
+only writer of apps, deployments and edge rules, and it acts through its
+own create-app, scale, delete-app and edge-rule handlers in process (as the
+dashboard does), so the route's app gets the same validation, quotas,
+budget charge, audit and notifications as one a customer makes:
 
-1. `target_created`: a standalone app in the source's account, org and
-   project, named `<slug>-<last static path segment>` (a taken name gets
-   the deploy conflict suffix), sized `route_ram_mb` (CPU splits: the
-   source's RAM), with the source's CPU, idle timeout and authn policy.
-   It inherits the source's plain variables and secret references, and its
-   sealed secret rows by ciphertext: secrets are sealed to the host
-   identity, not to the app, so apid copies them without opening them.
-2. `target_deploying` → `target_live`: one deployment of the source's live
-   artifact (the environment clone's artifact copy: same image, rootfs
-   layer and overrides, no rebuild), reason `route-split:<id>`. Only the
-   request workload is copied: never crons, workers, queue consumers,
-   event subscriptions or schedules, which would run twice.
-3. `rule_live`: a `kind=route` edge rule on each of the source's hosts for
-   the method and path glob, pointing at the target, created enabled only
-   after the target is live.
-4. `main_resized` (memory splits): the source app is resized to
-   `main_ram_mb` through the same path as `app scale --plan`.
-5. `done`.
+1. `creating`: the row reserves the target name, `<slug>-<last static path
+   segment>` (a random five-character suffix when taken). apid creates a
+   standalone app in the source's account and org, sized `route_ram_mb`
+   (CPU splits: the source's RAM), with the source's type, runtime, CPU,
+   idle timeout and visibility.
+2. `deploying`: in the same request apid creates one deployment of the
+   source's live artifact (the environment branch's artifact copy: same
+   image, rootfs layer, sidecar layers and overrides, no rebuild), reason
+   `route-split:<id>`, and copies the source's default-scope variables and
+   non-managed secret rows by ciphertext (secrets are sealed to the host
+   identity, not to the app). Only the request workload is copied: never
+   the release command, workflows, crons, workers, queue consumers, event
+   subscriptions or schedules, which would run twice.
+3. `rule_live`: once the deployment is live, a `kind=route` edge rule on
+   each of the source's hosts (its platform host and verified app-wide
+   custom domains) for the method and path glob, pointing at the target.
+   The rules are named `route-split:<id>` so a retried pass reuses them and
+   undo finds them.
+4. `done`: a memory split sizes the source to `main_ram_mb` first.
 
-A failure before step 3 rolls back: the target app is deleted and the row
-ends `rolled_back` with the error. After step 3 the split is serving, so a
-failed resize ends `done` with a warning and the resize command to retry.
-`DELETE /v1/apps/{slug}/route-splits/{id}` undoes a finished split in
-reverse: rule off, source size restored, target deleted.
+A failure before the rules are live rolls back: the rules made so far and
+the target app are deleted and the row ends `rolled_back` with the error.
+A deployment that is not live after 15 minutes, or a row left in
+`creating` for 5 minutes, rolls back the same way. After the rules are live
+the split is serving, so a failed resize ends `done` with a warning.
+`DELETE /v1/apps/{slug}/route-splits/{id}` undoes a finished split: the
+source gets its previous size back first (it serves the route again once
+the rules go), then the rules and the target app are deleted. A failed step
+leaves the split `done`, so undo can be retried.
 
-Bindings ship in a second slice. Until then a source app with managed
-bindings (Postgres, Redis, buckets, queues, service bindings) is refused up
-front with `route_split_bindings_unsupported` and the binding list, so no
-split ever serves a route without the data it needs. The second slice
-copies request-path bindings with the environment clone's binding
-definitions and still never copies consumers.
+The first slice splits standalone apps only. Apps in a project (their
+workloads are source-managed), previews, and apps with managed bindings
+(Postgres, object storage) or service bindings are refused up front with
+422 `route_split_unsupported` and what blocks them, so no split ever serves
+a route without the data it needs. A second slice copies request-path
+bindings with the environment clone's binding definitions and still never
+copies consumers.
 
-`gregale app scale <slug> --suggest --apply` posts the split and follows
-its phases; `gregale app scale <slug> --split-undo <id>` reverts it.
+`gregale app scale <slug> --suggest --apply-split` applies the suggestion it
+read, `--split-status` lists the app's splits and `--undo-split <id>`
+reverses one. (`--apply` already applies a saved scale plan.)

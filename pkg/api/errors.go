@@ -806,6 +806,15 @@ const (
 	CodeRealtimeEntityVersionConflict   = "realtime_entity_version_conflict"
 	CodeRealtimeSequenceConflict        = "realtime_sequence_conflict"
 	CodeConflict                        = "conflict"
+	// CodeRouteSplitChanged (409, ADR-20261121170000 amendment 2): the
+	// split suggestion is no longer the one the request repeats; read the
+	// route resources again.
+	CodeRouteSplitChanged = "route_split_changed"
+	// CodeRouteSplitInFlight (409): the app already has a split in flight.
+	CodeRouteSplitInFlight = "route_split_in_flight"
+	// CodeRouteSplitUnsupported (422): the app has something a split does
+	// not carry yet (managed bindings, service bindings, a project).
+	CodeRouteSplitUnsupported = "route_split_unsupported"
 	// CodeProjectServicesCallEachOther (409, ADR-20261104221217): deleting the
 	// project would detach services that still call each other by service
 	// name. Pass detach_services=true once they no longer do.
