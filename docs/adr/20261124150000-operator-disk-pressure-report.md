@@ -55,10 +55,19 @@ looks up the app of each listed guest (at most 25) by instance ID.
   - `inodes_low`: under 10% of inodes free;
   - `ok`.
 
-  tmpfs mounts are dropped except the jail mount, which is marked
-  `jail_tmpfs` because its use is RAM.
+  The grade compares the unrounded ratios, so it matches the alerts even
+  where the rounded `free_percent` crosses a threshold. A mount whose free
+  space was not read is `unknown`, with no free figures, never graded
+  from a missing value. tmpfs mounts are dropped except the jail mount,
+  which is marked `jail_tmpfs` with state `ram`: its use is RAM, the
+  alerts exclude tmpfs, so it is shown but not graded and not part of its
+  node's state.
 - **Nodes:** each host's worst state and mount, jail tmpfs in use, journal
-  size, and guests whose writable disk is near full or full.
+  size, and guests whose writable disk is near full or full. A host seen
+  only through vmmd (no filesystem read) is `unknown`, not healthy. The
+  control plane's static node-exporter target scrapes loopback, so its
+  host is named `control-plane`; vmmd rows take their role from their job
+  (`vmmd` or `vmmd-database`).
 - **Guests:** the 25 fullest guest writable disks with their app and
   account. vmmd's `instance` label arrives as `exported_instance`, because
   the scrape target has its own `instance`; only instance UUIDs are used.

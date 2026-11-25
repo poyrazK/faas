@@ -35,8 +35,18 @@ const (
 	StateFilling   = "filling"
 	StateLow       = "low"
 	StateInodesLow = "inodes_low"
-	StateOK        = "ok"
+	// StateUnknown: the filesystem's free space, or any filesystem of the
+	// node, was not read.
+	StateUnknown = "unknown"
+	StateOK      = "ok"
+	// StateRAM marks the jail tmpfs: shown, not graded as a disk and not
+	// part of its node's state, as the disk alerts exclude tmpfs.
+	StateRAM = "ram"
 )
+
+// ControlPlaneNode names the control plane's static node-exporter target,
+// which has no discovery node label.
+const ControlPlaneNode = "control-plane"
 
 // Node roles, from the scrape job.
 const (
@@ -75,10 +85,10 @@ func Queries() map[string]string {
 		qFiles:         "node_filesystem_files" + fsSelector,
 		qFilesFree:     "node_filesystem_files_free" + fsSelector,
 		qDeriv:         "deriv(node_filesystem_avail_bytes" + fsSelector + "[" + growth + "])",
-		qGuestPressure: `count by (node, level) (vmmd_guest_disk_pressure{level=~"near_full|full"} == 1)`,
+		qGuestPressure: `count by (node, job, level) (vmmd_guest_disk_pressure{level=~"near_full|full"} == 1)`,
 		qGuestRatio:    ratio,
 		qGuestCapacity: "vmmd_guest_disk_capacity_bytes and " + ratio,
-		qJournal:       "max by (node) (vmmd_journal_disk_usage_bytes)",
+		qJournal:       "max by (node, job) (vmmd_journal_disk_usage_bytes)",
 	}
 }
 
@@ -181,25 +191,35 @@ func Build(in Input) api.ObsDiskPressureReport {
 	}
 	for _, f := range fss {
 		n := node(f.Node, f.Role)
+		if f.JailTmpfs {
+			// RAM, not disk: counted on its own, outside the node's state.
+			if f.AvailBytes != nil {
+				used := f.SizeBytes - *f.AvailBytes
+				n.JailTmpfsUsedBytes += used
+				out.Totals.JailTmpfsUsedBytes += used
+			}
+			continue
+		}
 		n.Filesystems++
 		if stateRank(f.State) < stateRank(n.State) {
 			n.State = f.State
 		}
-		if n.WorstMountpoint == "" || f.FreePercent < n.WorstFreePercent {
-			n.WorstMountpoint, n.WorstFreePercent = f.Mountpoint, f.FreePercent
-		}
-		if f.JailTmpfs {
-			used := f.SizeBytes - f.AvailBytes
-			n.JailTmpfsUsedBytes += used
-			out.Totals.JailTmpfsUsedBytes += used
+		if f.FreePercent != nil && (n.WorstMountpoint == "" || *f.FreePercent < n.WorstFreePercent) {
+			n.WorstMountpoint, n.WorstFreePercent = f.Mountpoint, *f.FreePercent
 		}
 	}
 	for _, r := range s[qJournal] {
+		if r.Labels["node"] == "" {
+			continue
+		}
 		v := int64(r.Value)
-		node(r.Labels["node"], RoleCompute).JournalBytes = &v
+		node(r.Labels["node"], vmmdRole(r.Labels["job"])).JournalBytes = &v
 	}
 	for _, r := range s[qGuestPressure] {
-		n, v := node(r.Labels["node"], RoleCompute), int(math.Round(r.Value))
+		if r.Labels["node"] == "" {
+			continue
+		}
+		n, v := node(r.Labels["node"], vmmdRole(r.Labels["job"])), int(math.Round(r.Value))
 		switch r.Labels["level"] {
 		case "near_full":
 			n.GuestsNearFull += v
@@ -210,6 +230,10 @@ func Build(in Input) api.ObsDiskPressureReport {
 		}
 	}
 	for _, n := range nodes {
+		if n.Filesystems == 0 {
+			// Seen only through vmmd: no disk was read, so it is not healthy.
+			n.State = StateUnknown
+		}
 		out.Nodes = append(out.Nodes, *n)
 		out.Totals.Nodes++
 		switch n.State {
@@ -221,6 +245,8 @@ func Build(in Input) api.ObsDiskPressureReport {
 			out.Totals.NodesLow++
 		case StateInodesLow:
 			out.Totals.NodesInodesLow++
+		case StateUnknown:
+			out.Totals.NodesUnknown++
 		}
 	}
 	sort.Slice(out.Nodes, func(i, j int) bool {
@@ -264,32 +290,47 @@ func filesystems(s map[string][]promql.VectorSample) []api.ObsDiskFilesystem {
 			inodes[k] = r.Value
 		}
 	}
+	// raw keeps the unrounded ratios the grade compares, so it matches the
+	// alerts exactly; only the response is rounded.
+	raw := map[fsKey]*rawFS{}
+	for k := range rows {
+		raw[k] = &rawFS{}
+	}
 	for _, r := range s[qAvail] {
-		if k, ok := keyOf(r); ok && rows[k] != nil {
-			rows[k].AvailBytes = int64(r.Value)
+		if k, ok := keyOf(r); ok && rows[k] != nil && !math.IsNaN(r.Value) {
+			avail := int64(r.Value)
+			rows[k].AvailBytes = &avail
+			free := r.Value / float64(rows[k].SizeBytes)
+			raw[k].free = &free
 		}
 	}
 	for _, r := range s[qFilesFree] {
 		if k, ok := keyOf(r); ok && rows[k] != nil && inodes[k] > 0 {
-			free := pct(r.Value, inodes[k])
-			rows[k].InodesFreePercent = &free
+			free := r.Value / inodes[k]
+			raw[k].inodesFree = &free
+			rounded := round1(free * 100)
+			rows[k].InodesFreePercent = &rounded
 		}
 	}
 	for _, r := range s[qDeriv] {
 		k, ok := keyOf(r)
-		if !ok || rows[k] == nil || r.Value >= 0 || math.IsNaN(r.Value) {
+		if !ok || rows[k] == nil || rows[k].AvailBytes == nil || r.Value >= 0 || math.IsNaN(r.Value) {
 			continue
 		}
-		hours := float64(rows[k].AvailBytes) / -r.Value / 3600
+		hours := float64(*rows[k].AvailBytes) / -r.Value / 3600
+		raw[k].hoursToFull = &hours
 		if hours <= api.ObsDiskHoursToFullMax {
-			h := math.Round(hours*10) / 10
+			h := round1(hours)
 			rows[k].HoursToFull = &h
 		}
 	}
 	out := make([]api.ObsDiskFilesystem, 0, len(rows))
-	for _, f := range rows {
-		f.FreePercent = pct(float64(f.AvailBytes), float64(f.SizeBytes))
-		f.State = grade(*f)
+	for k, f := range rows {
+		if raw[k].free != nil {
+			free := round1(*raw[k].free * 100)
+			f.FreePercent = &free
+		}
+		f.State = grade(*f, *raw[k])
 		out = append(out, *f)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -297,25 +338,45 @@ func filesystems(s map[string][]promql.VectorSample) []api.ObsDiskFilesystem {
 		if ra, rb := stateRank(a.State), stateRank(b.State); ra != rb {
 			return ra < rb
 		}
-		if a.FreePercent != b.FreePercent {
-			return a.FreePercent < b.FreePercent
+		if fa, fb := freeOrMax(a), freeOrMax(b); fa != fb {
+			return fa < fb
 		}
 		return a.Node+a.Mountpoint < b.Node+b.Mountpoint
 	})
 	return out
 }
 
-// grade mirrors FaasHostDiskSpaceCritical, FaasHostDiskFillingFast,
-// FaasHostDiskSpaceLow and FaasHostInodesLow, worst first.
-func grade(f api.ObsDiskFilesystem) string {
+// rawFS is a filesystem's unrounded free ratios and time to full.
+type rawFS struct {
+	free, inodesFree, hoursToFull *float64
+}
+
+func freeOrMax(f api.ObsDiskFilesystem) float64 {
+	if f.FreePercent == nil {
+		return math.MaxFloat64
+	}
+	return *f.FreePercent
+}
+
+// grade mirrors FaasHostDiskSpaceCritical (free < 0.05),
+// FaasHostDiskFillingFast (free < 0.25 and full within 4 h),
+// FaasHostDiskSpaceLow (free < 0.15) and FaasHostInodesLow (inodes free <
+// 0.10), worst first, on the unrounded ratios. Without a free-space reading
+// the state is unknown; the jail tmpfs is not graded.
+func grade(f api.ObsDiskFilesystem, r rawFS) string {
+	const pc = 100.0
 	switch {
-	case f.FreePercent < api.ObsDiskCriticalFreePercent:
+	case f.JailTmpfs:
+		return StateRAM
+	case r.free == nil:
+		return StateUnknown
+	case *r.free*pc < api.ObsDiskCriticalFreePercent:
 		return StateCritical
-	case f.FreePercent < api.ObsDiskFillingFreePercent && f.HoursToFull != nil && *f.HoursToFull <= api.ObsDiskFillingHorizonHours:
+	case *r.free*pc < api.ObsDiskFillingFreePercent && r.hoursToFull != nil && *r.hoursToFull <= api.ObsDiskFillingHorizonHours:
 		return StateFilling
-	case f.FreePercent < api.ObsDiskLowFreePercent:
+	case *r.free*pc < api.ObsDiskLowFreePercent:
 		return StateLow
-	case f.InodesFreePercent != nil && *f.InodesFreePercent < api.ObsDiskInodesLowFreePercent:
+	case r.inodesFree != nil && *r.inodesFree*pc < api.ObsDiskInodesLowFreePercent:
 		return StateInodesLow
 	default:
 		return StateOK
@@ -375,15 +436,31 @@ func guests(s map[string][]promql.VectorSample, lookup func(string) (GuestInfo, 
 	return out
 }
 
-// nodeName is the discovery node label, else the scrape target's host.
+// nodeName is the discovery node label, else the scrape target's host. The
+// control plane's static target scrapes loopback, which names no host, so
+// it is reported as ControlPlaneNode.
 func nodeName(l map[string]string) string {
 	if n := l["node"]; n != "" {
 		return n
 	}
-	if host, _, err := net.SplitHostPort(l["instance"]); err == nil {
-		return host
+	host := l["instance"]
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
 	}
-	return l["instance"]
+	if ip := net.ParseIP(host); host == "localhost" || ip != nil && ip.IsLoopback() || host == "" {
+		if role(l["job"]) == RoleControlPlane {
+			return ControlPlaneNode
+		}
+	}
+	return host
+}
+
+// vmmdRole is the node role of a vmmd series, from its scrape job.
+func vmmdRole(job string) string {
+	if job == "vmmd-database" {
+		return RoleDatabase
+	}
+	return RoleCompute
 }
 
 func role(job string) string {
@@ -407,15 +484,12 @@ func stateRank(s string) int {
 		return 2
 	case StateInodesLow:
 		return 3
-	default:
+	case StateUnknown:
 		return 4
+	default:
+		return 5
 	}
 }
 
-// pct is part of whole as a percentage with one decimal.
-func pct(part, whole float64) float64 {
-	if whole <= 0 {
-		return 0
-	}
-	return math.Round(part*1000/whole) / 10
-}
+// round1 rounds to one decimal for the response.
+func round1(v float64) float64 { return math.Round(v*10) / 10 }

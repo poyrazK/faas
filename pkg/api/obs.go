@@ -1760,23 +1760,26 @@ type ObsDiskPressureReport struct {
 	Guests               []ObsDiskGuest      `json:"guests"`
 }
 
-// ObsDiskTotals sums the fleet; nodes are counted by their worst
-// filesystem's state.
+// ObsDiskTotals sums the fleet; nodes are counted by their worst disk
+// filesystem's state, and as unknown when no disk of theirs was read.
+// Filesystems counts disks, not the jail tmpfs.
 type ObsDiskTotals struct {
 	Nodes              int   `json:"nodes"`
 	NodesCritical      int   `json:"nodes_critical"`
 	NodesFilling       int   `json:"nodes_filling"`
 	NodesLow           int   `json:"nodes_low"`
 	NodesInodesLow     int   `json:"nodes_inodes_low"`
+	NodesUnknown       int   `json:"nodes_unknown"`
 	Filesystems        int   `json:"filesystems"`
 	JailTmpfsUsedBytes int64 `json:"jail_tmpfs_used_bytes"`
 	GuestsNearFull     int   `json:"guests_near_full"`
 	GuestsFull         int   `json:"guests_full"`
 }
 
-// ObsDiskNode is one host: its worst filesystem's state and free space, the
-// jail tmpfs in use, the journal size (compute nodes, from vmmd) and guests
-// whose writable disk is near full or full.
+// ObsDiskNode is one host: its worst disk filesystem's state and free space
+// (unknown when none was read), the jail tmpfs in use (RAM, not part of the
+// state), the journal size (from vmmd) and guests whose writable disk is
+// near full or full. The control plane's host is named control-plane.
 type ObsDiskNode struct {
 	Node               string  `json:"node"`
 	Role               string  `json:"role"`
@@ -1791,9 +1794,12 @@ type ObsDiskNode struct {
 }
 
 // ObsDiskFilesystem is one host mount. State is critical, filling, low,
-// inodes_low or ok. HoursToFull is set when free space is falling and would
-// run out within ObsDiskHoursToFullMax at the growth window's rate.
-// JailTmpfs marks the jailer chroot tmpfs, which holds RAM.
+// inodes_low, ok, unknown (free space was not read; AvailBytes and
+// FreePercent are absent) or ram (the jailer chroot tmpfs, JailTmpfs, which
+// holds RAM and is not graded). The grade uses unrounded ratios, so it
+// matches the FaasHostDisk* alerts even where FreePercent rounds across a
+// threshold. HoursToFull is set when free space is falling and would run
+// out within ObsDiskHoursToFullMax at the growth window's rate.
 type ObsDiskFilesystem struct {
 	Node              string   `json:"node"`
 	Role              string   `json:"role"`
@@ -1801,8 +1807,8 @@ type ObsDiskFilesystem struct {
 	Device            string   `json:"device"`
 	FSType            string   `json:"fstype"`
 	SizeBytes         int64    `json:"size_bytes"`
-	AvailBytes        int64    `json:"avail_bytes"`
-	FreePercent       float64  `json:"free_percent"`
+	AvailBytes        *int64   `json:"avail_bytes,omitempty"`
+	FreePercent       *float64 `json:"free_percent,omitempty"`
 	InodesFreePercent *float64 `json:"inodes_free_percent,omitempty"`
 	HoursToFull       *float64 `json:"hours_to_full,omitempty"`
 	JailTmpfs         bool     `json:"jail_tmpfs,omitempty"`
