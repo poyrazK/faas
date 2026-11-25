@@ -54,7 +54,7 @@ func TestPgBillingRunSkipsStageConsumers(t *testing.T) {
 	}
 
 	run, err := store.CreateBillingRun(ctx, state.BillingRun{AccountID: account.ID, PeriodStart: sept, PeriodEnd: sept.AddDate(0, 1, 0),
-		BillingRunOptions: state.BillingRunOptions{Sources: []string{state.BillingRunSourceAppConsumers}}, Trigger: state.BillingRunTriggerAPI})
+		BillingRunOptions: state.BillingRunOptions{Sources: []string{state.BillingRunSourceAppConsumers}, Export: state.BillingRunExportNone}, Trigger: state.BillingRunTriggerAPI})
 	if err != nil {
 		t.Fatal(err)
 	}
