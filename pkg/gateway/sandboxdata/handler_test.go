@@ -282,6 +282,7 @@ func TestExecRefusals(t *testing.T) {
 		{"terminal in the foreground", `{"cmd":"bash","tty":true}`, api.CodeSandboxUnsupported, http.StatusUnprocessableEntity},
 		{"no command", `{"cmd":[]}`, api.CodeValidation, http.StatusBadRequest},
 		{"guest validation", `{"cmd":"true","run_as":"nobody"}`, api.CodeValidation, http.StatusBadRequest},
+		{"a size without a terminal", `{"cmd":"bash","background":true,"rows":24,"cols":80}`, api.CodeValidation, http.StatusBadRequest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)

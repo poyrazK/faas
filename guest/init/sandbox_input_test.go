@@ -72,6 +72,21 @@ func TestSandboxBackgroundInput(t *testing.T) {
 	}
 }
 
+func TestTerminalEOF(t *testing.T) {
+	for in, want := range map[string]string{
+		"":         "\x04",
+		"ls\n":     "ls\n\x04",
+		"hi":       "hi\x04\x04",
+		"a\r":      "a\r\x04",
+		"\x04":     "\x04\x04",
+		"part\x04": "part\x04\x04",
+	} {
+		if got := string(terminalEOF([]byte(in))); got != want {
+			t.Errorf("terminalEOF(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestExecInputValidation(t *testing.T) {
 	const handle = "c0123456789abcdef"
 	for name, req := range map[string]sandboxproto.Request{

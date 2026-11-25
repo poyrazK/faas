@@ -43,8 +43,8 @@ type backgroundCommand struct {
 }
 
 // sandboxInputWriteTimeout bounds one exec_input write, so a command that
-// stops reading its input cannot hold an operation open.
-const sandboxInputWriteTimeout = 5 * time.Second
+// stops reading its input cannot hold an operation open. Tests shorten it.
+var sandboxInputWriteTimeout = 5 * time.Second
 
 func newSandboxCommands(runner sandboxRunner, max int, now func() time.Time) *sandboxCommands {
 	return &sandboxCommands{runner: runner, max: max, now: now, byID: map[string]*backgroundCommand{}}
@@ -212,7 +212,8 @@ func (c *sandboxCommands) kill(req sandboxproto.Request) (any, error) {
 
 // input resizes a background command's terminal, writes to its stdin and
 // ends its input (exec_input). A terminal's input ends with ^D, since
-// closing it would also close its output.
+// closing it would also close its output; the terminal itself stays open
+// for input until its command exits.
 func (c *sandboxCommands) input(req sandboxproto.Request) (any, error) {
 	cmd, err := c.find(req.Handle)
 	if err != nil {
@@ -233,18 +234,29 @@ func (c *sandboxCommands) input(req sandboxproto.Request) (any, error) {
 	}
 	data := req.Input
 	if req.CloseInput && cmd.tty {
-		data = append(append([]byte(nil), data...), 4)
+		data = terminalEOF(data)
 	}
 	if err := writeInput(cmd.proc.stdin(), data); err != nil {
 		return nil, inputError(cmd.handle, err)
 	}
-	if req.CloseInput {
+	// A terminal outlives the program that read its ^D (a shell returns to
+	// its prompt), so only a pipe's input ends here.
+	if req.CloseInput && !cmd.tty {
 		cmd.inputEnded = true
-		if !cmd.tty {
-			_ = cmd.proc.stdin().Close()
-		}
+		_ = cmd.proc.stdin().Close()
 	}
 	return cmd.info(), nil
+}
+
+// terminalEOF appends ^D to data. A canonical terminal reads ^D as end of
+// input only at the start of a line; elsewhere it just hands over the
+// pending line, so a second ^D follows a partial one.
+func terminalEOF(data []byte) []byte {
+	out := append([]byte(nil), data...)
+	if n := len(out); n > 0 && out[n-1] != '\n' && out[n-1] != '\r' && out[n-1] != 4 {
+		out = append(out, 4)
+	}
+	return append(out, 4)
 }
 
 // writeInput writes data within sandboxInputWriteTimeout when the stream
@@ -265,7 +277,7 @@ func writeInput(w interface{ Write([]byte) (int, error) }, data []byte) error {
 func inputError(handle string, err error) error {
 	switch {
 	case errors.Is(err, os.ErrDeadlineExceeded):
-		return sandboxError(sandboxproto.CodeLimit, "command %s is not reading its input; some of it may have been written", handle)
+		return sandboxError(sandboxproto.CodeInputStalled, "command %s is not reading its input; some of it may have been written", handle)
 	case errors.Is(err, os.ErrClosed), errors.Is(err, syscall.EPIPE), errors.Is(err, syscall.EIO):
 		return sandboxError(sandboxproto.CodeCommandEnded, "command %s no longer reads its input", handle)
 	}

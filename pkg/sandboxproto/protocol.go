@@ -113,10 +113,13 @@ const (
 // Limits of one operation. The plan's own limits (pkg/api/limits.go
 // SandboxExec*) are applied by the host and are never above these.
 const (
-	MaxArgv           = 1024
-	MaxCommandBytes   = 256 << 10
-	MaxEnvEntries     = 128
-	MaxEnvValueBytes  = 32 << 10
+	MaxArgv          = 1024
+	MaxCommandBytes  = 256 << 10
+	MaxEnvEntries    = 128
+	MaxEnvValueBytes = 32 << 10
+	// MaxEnvBytes bounds one env (names and values together), so a
+	// command's env under the session's stays well inside execve's limit.
+	MaxEnvBytes       = 256 << 10
 	MaxPathBytes      = 4096
 	MaxTimeoutMillis  = 3600 * 1000
 	MaxOutputBytes    = 16 << 20
@@ -155,6 +158,10 @@ const (
 	// CodeCommandEnded: exec_input named a command that has exited, or
 	// whose input was already ended.
 	CodeCommandEnded = "command_ended"
+	// CodeInputStalled: exec_input's write timed out because the command
+	// stopped reading. Part of the input may have been written, so a
+	// client must not resend it whole.
+	CodeInputStalled = "input_stalled"
 )
 
 var (
@@ -266,10 +273,15 @@ func validEnv(env map[string]string) error {
 	if len(env) > MaxEnvEntries {
 		return fmt.Errorf("env takes at most %d entries", MaxEnvEntries)
 	}
+	total := 0
 	for k, v := range env {
 		if !envNameRE.MatchString(k) || len(v) > MaxEnvValueBytes || strings.IndexByte(v, 0) >= 0 {
 			return fmt.Errorf("env %q is not a valid variable", k)
 		}
+		total += len(k) + len(v) + 2
+	}
+	if total > MaxEnvBytes {
+		return fmt.Errorf("env takes at most %d bytes, got %d", MaxEnvBytes, total)
 	}
 	return nil
 }
@@ -414,13 +426,13 @@ func firstError(errs ...error) error {
 	return nil
 }
 
-// ExecResult ends a command run in the foreground, or names a background
-// one by its Handle.
 // SessionEnvResult answers session_env: the names now set, sorted.
 type SessionEnvResult struct {
 	Names []string `json:"names"`
 }
 
+// ExecResult ends a command run in the foreground, or names a background
+// one by its Handle.
 type ExecResult struct {
 	Handle          string `json:"handle,omitempty"`
 	ExitCode        int    `json:"exit_code"`

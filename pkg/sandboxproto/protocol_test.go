@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"strings"
 	"testing"
@@ -43,6 +44,11 @@ func TestRequestValidate(t *testing.T) {
 	rows.Rows = 24
 	badEnv := exec("sh")
 	badEnv.Env = map[string]string{"1BAD": "x"}
+	bigEnv := exec("sh")
+	bigEnv.Env = map[string]string{}
+	for i := range sandboxproto.MaxEnvBytes/sandboxproto.MaxEnvValueBytes + 1 {
+		bigEnv.Env[fmt.Sprintf("V%d", i)] = strings.Repeat("x", sandboxproto.MaxEnvValueBytes)
+	}
 	root := exec("sh")
 	root.RunAs = "admin"
 	noTimeout := exec("sh")
@@ -55,6 +61,7 @@ func TestRequestValidate(t *testing.T) {
 		"input without a handle":  noHandle,
 		"rows without a terminal": rows,
 		"a bad env name":          badEnv,
+		"too large an env":        bigEnv,
 		"an unknown user":         root,
 		"no timeout":              noTimeout,
 		"a bad handle":            {Op: sandboxproto.OpExecOutput, Handle: "cmd-1"},

@@ -137,9 +137,8 @@ func execRequest(c sandboxtoken.Claims, body execBody) (sandboxproto.Request, *a
 	if body.TTY && !body.Background {
 		return req, api.ErrSandboxUnsupported("tty", "a terminal command must run with background: true; send its input to /exec/{handle}/input")
 	}
-	if body.TTY {
-		req.TTY, req.Rows, req.Cols = true, body.Rows, body.Cols
-	}
+	// rows and cols without tty reach the guest, which refuses them.
+	req.TTY, req.Rows, req.Cols = body.TTY, body.Rows, body.Cols
 	req.TimeoutMillis, req.MaxOutputBytes = min(defaultExecTimeoutMillis, c.ExecTimeoutMaxMillis), c.ExecOutputMaxBytes
 	if body.TimeoutMillis > 0 {
 		req.TimeoutMillis = body.TimeoutMillis

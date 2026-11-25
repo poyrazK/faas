@@ -149,6 +149,9 @@ const (
 	// CodeSandboxCommandEnded: input for a background command that has
 	// exited, or whose input was already ended.
 	CodeSandboxCommandEnded = "sandbox_command_ended"
+	// CodeSandboxInputStalled: a background command stopped reading its
+	// input; part of it may have been written, so it is not safe to resend.
+	CodeSandboxInputStalled = "sandbox_input_stalled"
 
 	// Persisted workspaces (ADR-20261027090013 step 7).
 	// CodeSandboxSnapshotNotFound: no such snapshot, or one not ready,
