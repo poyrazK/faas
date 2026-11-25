@@ -60,6 +60,10 @@ const (
 	requestMaxBytes = 512 << 10
 	// inputRequestMaxBytes holds sandboxproto.MaxInputBytes in base64.
 	inputRequestMaxBytes = sandboxproto.MaxInputBytes*4/3 + 4<<10
+	// envRequestMaxBytes holds an env of sandboxproto.MaxEnvBytes even when
+	// every byte is escaped in JSON (\u00XX), so the guest's validation,
+	// not the body cap, refuses one too large.
+	envRequestMaxBytes = sandboxproto.MaxEnvBytes*6 + 64<<10
 )
 
 // Routes registers the data-plane routes.

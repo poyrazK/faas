@@ -73,16 +73,24 @@ func TestSandboxBackgroundInput(t *testing.T) {
 }
 
 func TestTerminalEOF(t *testing.T) {
-	for in, want := range map[string]string{
-		"":         "\x04",
-		"ls\n":     "ls\n\x04",
-		"hi":       "hi\x04\x04",
-		"a\r":      "a\r\x04",
-		"\x04":     "\x04\x04",
-		"part\x04": "part\x04\x04",
+	for _, tc := range []struct {
+		pending  bool
+		in, want string
+	}{
+		{false, "", "\x04"},
+		{false, "ls\n", "ls\n\x04"},
+		{false, "hi", "hi\x04\x04"},
+		{false, "a\r", "a\r\x04"},
+		{false, "\x04", "\x04"},
+		{false, "part\x04", "part\x04\x04"},
+		{false, "part\x04\x04", "part\x04\x04"},
+		{true, "", "\x04\x04"},
+		{true, "\x04", "\x04\x04"},
+		{true, "more", "more\x04\x04"},
+		{true, "\n", "\n\x04"},
 	} {
-		if got := string(terminalEOF([]byte(in))); got != want {
-			t.Errorf("terminalEOF(%q) = %q, want %q", in, got, want)
+		if got := string(terminalEOF(tc.pending, []byte(tc.in))); got != tc.want {
+			t.Errorf("terminalEOF(%v, %q) = %q, want %q", tc.pending, tc.in, got, tc.want)
 		}
 	}
 }

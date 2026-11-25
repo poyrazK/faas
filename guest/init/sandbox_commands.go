@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -36,10 +37,15 @@ type backgroundCommand struct {
 	done    chan struct{}
 	exit    sandboxExit
 
-	// inMu orders exec_input calls and the close of stdin when the command
-	// exits; inputEnded is set by either.
-	inMu       sync.Mutex
-	inputEnded bool
+	// inTurn admits one exec_input at a time; a call waits for its turn no
+	// longer than one write may take. linePending is guarded by it.
+	inTurn chan struct{}
+	// inputEnded is set when the command exits or its pipe is closed. The
+	// exit never waits for an input write: closing the pipe ends it.
+	inputEnded atomic.Bool
+	// linePending: the terminal holds a partial line, so a ^D would only
+	// hand it over rather than end the input.
+	linePending bool
 }
 
 // sandboxInputWriteTimeout bounds one exec_input write, so a command that
@@ -63,7 +69,8 @@ func (c *sandboxCommands) start(spec sandboxCommandSpec, req sandboxproto.Reques
 		return nil, sandboxError(sandboxproto.CodeStartFailed, "%s", err.Error())
 	}
 	cmd := &backgroundCommand{handle: newCommandHandle(), argv: append([]string(nil), spec.argv...), tty: spec.tty, started: c.now(), proc: proc,
-		stdout: newOutputRing(req.MaxOutputBytes), stderr: newOutputRing(req.MaxOutputBytes), done: make(chan struct{})}
+		stdout: newOutputRing(req.MaxOutputBytes), stderr: newOutputRing(req.MaxOutputBytes), done: make(chan struct{}),
+		inTurn: make(chan struct{}, 1)}
 	c.byID[cmd.handle] = cmd
 	c.order = append(c.order, cmd.handle)
 	go cmd.run(time.Duration(req.TimeoutMillis) * time.Millisecond)
@@ -125,12 +132,10 @@ func (b *backgroundCommand) run(timeout time.Duration) {
 	}
 	// A terminal's input is its output too: closeOutput closes it once the
 	// output is drained.
-	b.inMu.Lock()
-	b.inputEnded = true
+	b.inputEnded.Store(true)
 	if !b.tty {
 		_ = b.proc.stdin().Close()
 	}
-	b.inMu.Unlock()
 	drained := make(chan struct{})
 	go func() { pumps.Wait(); close(drained) }()
 	select {
@@ -219,9 +224,13 @@ func (c *sandboxCommands) input(req sandboxproto.Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	cmd.inMu.Lock()
-	defer cmd.inMu.Unlock()
-	if cmd.inputEnded {
+	select {
+	case cmd.inTurn <- struct{}{}:
+		defer func() { <-cmd.inTurn }()
+	case <-time.After(sandboxInputWriteTimeout):
+		return nil, sandboxError(sandboxproto.CodeInputStalled, "command %s is not reading its input; an earlier input is still waiting", cmd.handle)
+	}
+	if cmd.inputEnded.Load() {
 		return nil, sandboxError(sandboxproto.CodeCommandEnded, "command %s has ended or its input was closed", cmd.handle)
 	}
 	if req.Rows > 0 {
@@ -233,8 +242,14 @@ func (c *sandboxCommands) input(req sandboxproto.Request) (any, error) {
 		}
 	}
 	data := req.Input
-	if req.CloseInput && cmd.tty {
-		data = terminalEOF(data)
+	if cmd.tty {
+		if req.CloseInput {
+			data = terminalEOF(cmd.linePending, data)
+		}
+		// The line state follows what was written, even in part: a stalled
+		// write leaves it unknown, and assuming a pending line at worst
+		// hands over an empty one.
+		cmd.linePending, _ = terminalLine(cmd.linePending, data)
 	}
 	if err := writeInput(cmd.proc.stdin(), data); err != nil {
 		return nil, inputError(cmd.handle, err)
@@ -242,18 +257,43 @@ func (c *sandboxCommands) input(req sandboxproto.Request) (any, error) {
 	// A terminal outlives the program that read its ^D (a shell returns to
 	// its prompt), so only a pipe's input ends here.
 	if req.CloseInput && !cmd.tty {
-		cmd.inputEnded = true
+		cmd.inputEnded.Store(true)
 		_ = cmd.proc.stdin().Close()
 	}
 	return cmd.info(), nil
 }
 
-// terminalEOF appends ^D to data. A canonical terminal reads ^D as end of
-// input only at the start of a line; elsewhere it just hands over the
-// pending line, so a second ^D follows a partial one.
-func terminalEOF(data []byte) []byte {
+// terminalLine follows a canonical terminal's line through data: whether a
+// partial line is pending afterwards, and whether data ended in a ^D that
+// ended input (one at the start of a line).
+func terminalLine(pending bool, data []byte) (bool, bool) {
+	endedInput := false
+	for _, b := range data {
+		endedInput = false
+		switch b {
+		case '\n', '\r':
+			pending = false
+		case 4:
+			endedInput, pending = !pending, false
+		default:
+			pending = true
+		}
+	}
+	return pending, endedInput
+}
+
+// terminalEOF makes data end the terminal program's input. A canonical
+// terminal reads ^D as end of input only at the start of a line; after a
+// partial line, written now or by an earlier call, ^D just hands the line
+// over, so a second one follows. Data that already ends input gets none:
+// another ^D would reach the shell behind the program.
+func terminalEOF(pending bool, data []byte) []byte {
+	pending, ended := terminalLine(pending, data)
+	if ended && len(data) > 0 {
+		return data
+	}
 	out := append([]byte(nil), data...)
-	if n := len(out); n > 0 && out[n-1] != '\n' && out[n-1] != '\r' && out[n-1] != 4 {
+	if pending {
 		out = append(out, 4)
 	}
 	return append(out, 4)

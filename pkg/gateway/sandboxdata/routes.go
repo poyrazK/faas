@@ -240,7 +240,7 @@ func (h *Handler) sessionEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body sessionEnvBody
-	if !httpkit.DecodeJSONLimit(w, r, &body, inputRequestMaxBytes) {
+	if !httpkit.DecodeJSONLimit(w, r, &body, envRequestMaxBytes) {
 		return
 	}
 	h.run(w, r, c, sandboxproto.Request{Op: sandboxproto.OpSessionEnv, Env: body.Env})

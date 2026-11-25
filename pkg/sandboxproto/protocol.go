@@ -289,7 +289,7 @@ func validEnv(env map[string]string) error {
 func (r Request) validateInput() error {
 	switch {
 	case len(r.Input) > MaxInputBytes:
-		return fmt.Errorf("input must be at most %d bytes", MaxInputBytes)
+		return fmt.Errorf("input must be at most %d bytes, got %d", MaxInputBytes, len(r.Input))
 	case (r.Rows == 0) != (r.Cols == 0):
 		return errors.New("rows and cols go together")
 	case len(r.Input) == 0 && !r.CloseInput && r.Rows == 0:
@@ -336,6 +336,9 @@ func (r Request) validateExec() error {
 	// drives it between output polls.
 	if !r.TTY && (r.Rows != 0 || r.Cols != 0) {
 		return errors.New("rows and cols need tty")
+	}
+	if (r.Rows == 0) != (r.Cols == 0) {
+		return errors.New("rows and cols go together")
 	}
 	return firstError(positive("timeout_ms", r.TimeoutMillis, MaxTimeoutMillis), positive("max_output_bytes", r.MaxOutputBytes, MaxOutputBytes))
 }

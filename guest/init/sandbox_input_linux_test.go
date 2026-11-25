@@ -8,6 +8,7 @@ package main
 import (
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -61,7 +62,9 @@ func TestSandboxTerminalEOFAfterAPartialLine(t *testing.T) {
 		var cmd sandboxproto.Command
 		f.call(t, r, nil, nil).decode(t, &cmd)
 	}
-	input(sandboxproto.Request{Input: []byte("partial"), CloseInput: true})
+	// The partial line and the end of input come in separate calls.
+	input(sandboxproto.Request{Input: []byte("partial")})
+	input(sandboxproto.Request{CloseInput: true})
 	input(sandboxproto.Request{Input: []byte("more\n")})
 	out := pollUntilExit(t, f, handle)
 	text := strings.ReplaceAll(string(out.Stdout), "\r", "")
@@ -89,6 +92,28 @@ func TestSandboxTerminalInputStalls(t *testing.T) {
 	}
 	if took := time.Since(started); took > 1500*time.Millisecond {
 		t.Fatalf("the stalled write took %s", took)
+	}
+	// A call queued behind the stalled one gives up as quickly, so a
+	// stalled command cannot hold the session's operations.
+	var wg sync.WaitGroup
+	codes := make([]string, 4)
+	started = time.Now()
+	for i := range codes {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			codes[i] = f.call(t, sandboxproto.Request{Op: sandboxproto.OpExecInput, Handle: handle,
+				Input: make([]byte, sandboxproto.MaxInputBytes)}, nil, nil).code()
+		}()
+	}
+	wg.Wait()
+	for _, code := range codes {
+		if code != sandboxproto.CodeInputStalled {
+			t.Fatalf("concurrent stalled inputs answered %v", codes)
+		}
+	}
+	if took := time.Since(started); took > 1500*time.Millisecond {
+		t.Fatalf("queued stalled writes took %s", took)
 	}
 	if out := pollUntilExit(t, f, handle); out.Running {
 		t.Fatalf("the command did not end: %+v", out)

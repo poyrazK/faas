@@ -42,6 +42,8 @@ func TestRequestValidate(t *testing.T) {
 	noHandle := sandboxproto.Request{Op: sandboxproto.OpExecInput, Input: []byte("x")}
 	rows := exec("sh")
 	rows.Rows = 24
+	halfSize := exec("sh")
+	halfSize.TTY, halfSize.Background, halfSize.Rows = true, true, 30
 	badEnv := exec("sh")
 	badEnv.Env = map[string]string{"1BAD": "x"}
 	bigEnv := exec("sh")
@@ -60,6 +62,7 @@ func TestRequestValidate(t *testing.T) {
 		"NUL in argv":             exec("sh", "a\x00b"),
 		"input without a handle":  noHandle,
 		"rows without a terminal": rows,
+		"rows without cols":       halfSize,
 		"a bad env name":          badEnv,
 		"too large an env":        bigEnv,
 		"an unknown user":         root,
