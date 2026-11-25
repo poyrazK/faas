@@ -1062,8 +1062,19 @@ type Handler struct {
 	// WithTenantRequestBudgetStore arms the gate; nil then fails closed.
 	tenantRequestBudgetStore TenantRequestBudgetStore
 	// consumerPlanStore and its policy cache enforce consumer plans (ADR-953).
-	consumerPlanStore          ConsumerPlanStore
-	consumerPlanPolicies       *consumerPlanPolicyCache
+	consumerPlanStore    ConsumerPlanStore
+	consumerPlanPolicies *consumerPlanPolicyCache
+	// oauthConsumers enrolls MCP OAuth callers as API consumers through
+	// apid (ADR-20261124094745); nil leaves them unattributed.
+	oauthConsumers     OAuthConsumerEnroller
+	oauthConsumerCache *oauthConsumerCache
+	// oauthLinks links signed-in MCP callers to consumer keys they hold
+	// (ADR-20261124094745); nil answers the link path 404.
+	oauthLinks OAuthConsumerLinker
+	// upgradeLinks adds upgrade_url to plan-limit refusals
+	// (ADR-20261124094745); nil leaves it out.
+	upgradeLinks               ConsumerUpgradeLinker
+	upgradeLinkCache           *upgradeLinkCache
 	tenantRequestBudgetEnabled bool
 	// apiMonetization is the API monetization release gate
 	// (ADR-20261018090210); nil keeps monetization off.

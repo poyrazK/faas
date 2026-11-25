@@ -44,6 +44,11 @@ class PutConsumerSignupRequest:
     """Let customers switch between plan_ids with their own key."""
     customer_closing: bool | Unset = UNSET
     """Let customers close their account with their own key."""
+    free_plan_id: UUID | Unset = UNSET
+    """One of plan_ids whose rate cards charge nothing; joining it needs no card."""
+    oauth_consumers: bool | Unset = UNSET
+    """People signed in through the app's MCP oauth-proxy issuer become consumers on free_plan_id; needs
+    free_plan_id."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -81,6 +86,12 @@ class PutConsumerSignupRequest:
 
         customer_closing = self.customer_closing
 
+        free_plan_id: str | Unset = UNSET
+        if not isinstance(self.free_plan_id, Unset):
+            free_plan_id = str(self.free_plan_id)
+
+        oauth_consumers = self.oauth_consumers
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -108,6 +119,10 @@ class PutConsumerSignupRequest:
             field_dict["customer_plan_changes"] = customer_plan_changes
         if customer_closing is not UNSET:
             field_dict["customer_closing"] = customer_closing
+        if free_plan_id is not UNSET:
+            field_dict["free_plan_id"] = free_plan_id
+        if oauth_consumers is not UNSET:
+            field_dict["oauth_consumers"] = oauth_consumers
 
         return field_dict
 
@@ -155,6 +170,15 @@ class PutConsumerSignupRequest:
 
         customer_closing = d.pop("customer_closing", UNSET)
 
+        _free_plan_id = d.pop("free_plan_id", UNSET)
+        free_plan_id: UUID | Unset
+        if isinstance(_free_plan_id, Unset):
+            free_plan_id = UNSET
+        else:
+            free_plan_id = UUID(_free_plan_id)
+
+        oauth_consumers = d.pop("oauth_consumers", UNSET)
+
         put_consumer_signup_request = cls(
             display_name=display_name,
             enabled=enabled,
@@ -167,6 +191,8 @@ class PutConsumerSignupRequest:
             daily_limit=daily_limit,
             customer_plan_changes=customer_plan_changes,
             customer_closing=customer_closing,
+            free_plan_id=free_plan_id,
+            oauth_consumers=oauth_consumers,
         )
 
         put_consumer_signup_request.additional_properties = d

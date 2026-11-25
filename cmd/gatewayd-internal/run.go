@@ -1205,6 +1205,13 @@ type runDeps struct {
 	// stored hashes through apid (ADR 20261029202403). Nil compares plain
 	// hashes locally (unit tests).
 	credentialMatcher gateway.CredentialMatcher
+	// oauthConsumers enrolls MCP OAuth callers as API consumers through
+	// apid (ADR-20261124094745); nil leaves them unattributed.
+	oauthConsumers gateway.OAuthConsumerEnroller
+	// oauthLinks links signed-in MCP callers to consumer keys they hold.
+	oauthLinks gateway.OAuthConsumerLinker
+	// upgradeLinks adds apid's upgrade links to plan-limit refusals.
+	upgradeLinks gateway.ConsumerUpgradeLinker
 	// apiMonetization is the API monetization release gate
 	// (ADR-20261018090210), following the api_monetization_enabled runtime
 	// setting. Nil keeps monetization off.
@@ -2463,6 +2470,11 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// only writer of approval requests and the activity log.
 	agentGate := apidgrpc.AgentGate{Auth: credentialAuth}
 	deps.authMw.RemoteAgentGate, deps.authMw.ActivityRecorder = agentGate, agentGate
+	// ADR-20261124094745: apid, the only writer of consumers, enrolls a
+	// verified MCP OAuth caller as the app's consumer.
+	deps.oauthConsumers = apidgrpc.OAuthConsumers{Auth: credentialAuth}
+	deps.upgradeLinks = apidgrpc.OAuthConsumers{Auth: credentialAuth}
+	deps.oauthLinks = apidgrpc.OAuthConsumers{Auth: credentialAuth}
 	// Issue #560: per-deployment require_authn (pro/Scale opt-in).
 	// Build the narrow gateway.RequireAuthnAuthenticator
 	// adapter around the production middleware and the
@@ -3158,6 +3170,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	handler.WithConsumerAuth(newConsumerAuthStore(deps.pgStore))
 	if deps.credentialMatcher != nil {
 		handler.WithCredentialMatcher(deps.credentialMatcher)
+	}
+	if deps.oauthConsumers != nil {
+		handler.WithOAuthConsumers(deps.oauthConsumers)
+	}
+	if deps.oauthLinks != nil {
+		handler.WithOAuthConsumerLinks(deps.oauthLinks)
+	}
+	if deps.upgradeLinks != nil {
+		handler.WithUpgradeLinks(deps.upgradeLinks)
 	}
 	handler.WithTenantRequestBudgetStore(newTenantRequestBudgetStore(deps.pgStore))
 	handler.WithAPIMonetization(deps.apiMonetization)
