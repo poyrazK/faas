@@ -44,7 +44,7 @@ The owner chose before this record:
   account's channels) sets an environment's channels; an empty list turns
   them off. `GET` reads them. CLI: `gregale flag notify set --channel ID...`,
   `flag notify clear`, `flag notify show`.
-- `POST .../flags/experiments` takes `notify_channel_ids`; CLI
+- `POST .../experiments` takes `notify_channel_ids`; CLI
   `flag experiment create --notify ID`.
 
 Channels are captured when a notification is queued, so a later settings
@@ -91,7 +91,7 @@ deleted since queueing is skipped.
 
 Dark behind the `flag_notifications` platform flag (by plan), checked when
 apid queues and when meterd sends: off, nothing is queued, queued rows wait,
-and the settings endpoints answer 404 like other unreleased routes.
+the settings endpoints and an experiment with its own channels answer 403.
 
 ## Consequences
 

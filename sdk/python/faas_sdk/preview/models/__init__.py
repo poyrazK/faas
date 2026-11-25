@@ -2408,6 +2408,8 @@ from .flag_lifecycle import FlagLifecycle
 from .flag_lifecycle_attention_item import FlagLifecycleAttentionItem
 from .flag_lifecycle_evidence import FlagLifecycleEvidence
 from .flag_lifecycle_report import FlagLifecycleReport
+from .flag_notification_settings import FlagNotificationSettings
+from .flag_notification_settings_request import FlagNotificationSettingsRequest
 from .flag_outcome import FlagOutcome
 from .flag_outcome_type import FlagOutcomeType
 from .flag_outcomes_response import FlagOutcomesResponse
@@ -9641,6 +9643,8 @@ __all__ = (
     "FlagLifecycleAttentionItem",
     "FlagLifecycleEvidence",
     "FlagLifecycleReport",
+    "FlagNotificationSettings",
+    "FlagNotificationSettingsRequest",
     "FlagOutcome",
     "FlagOutcomesResponse",
     "FlagOutcomeType",

@@ -21,6 +21,9 @@ func cmdFlags(args []string) int {
 	if args[0] == "experiments" {
 		return cmdFlagsExperiments(args[1:])
 	}
+	if args[0] == "notifications" {
+		return cmdFlagsNotifications(args[1:])
+	}
 	if _, ok := flagsEditVerbs[args[0]]; ok {
 		return cmdFlagsEdit(args[0], args[1:])
 	}

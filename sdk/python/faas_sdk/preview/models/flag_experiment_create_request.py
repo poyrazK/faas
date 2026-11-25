@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
+from uuid import UUID
 
 from attrs import define as _attrs_define
 
@@ -75,6 +76,9 @@ class FlagExperimentCreateRequest:
     """A ratio metric's denominator event."""
     percentile: int | Unset = UNSET
     """A percentile metric's percentile."""
+    notify_channel_ids: list[UUID] | Unset = UNSET
+    """Notification channels for the experiment's decisions and problems; omitted uses the environment's. Needs the
+    flag_notifications release."""
 
     def to_dict(self) -> dict[str, Any]:
         key = self.key
@@ -125,6 +129,13 @@ class FlagExperimentCreateRequest:
 
         percentile = self.percentile
 
+        notify_channel_ids: list[str] | Unset = UNSET
+        if not isinstance(self.notify_channel_ids, Unset):
+            notify_channel_ids = []
+            for notify_channel_ids_item_data in self.notify_channel_ids:
+                notify_channel_ids_item = str(notify_channel_ids_item_data)
+                notify_channel_ids.append(notify_channel_ids_item)
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -163,6 +174,8 @@ class FlagExperimentCreateRequest:
             field_dict["denominator_event"] = denominator_event
         if percentile is not UNSET:
             field_dict["percentile"] = percentile
+        if notify_channel_ids is not UNSET:
+            field_dict["notify_channel_ids"] = notify_channel_ids
 
         return field_dict
 
@@ -239,6 +252,15 @@ class FlagExperimentCreateRequest:
 
         percentile = d.pop("percentile", UNSET)
 
+        _notify_channel_ids = d.pop("notify_channel_ids", UNSET)
+        notify_channel_ids: list[UUID] | Unset = UNSET
+        if _notify_channel_ids is not UNSET:
+            notify_channel_ids = []
+            for notify_channel_ids_item_data in _notify_channel_ids:
+                notify_channel_ids_item = UUID(notify_channel_ids_item_data)
+
+                notify_channel_ids.append(notify_channel_ids_item)
+
         flag_experiment_create_request = cls(
             key=key,
             flag=flag,
@@ -258,6 +280,7 @@ class FlagExperimentCreateRequest:
             allocation=allocation,
             denominator_event=denominator_event,
             percentile=percentile,
+            notify_channel_ids=notify_channel_ids,
         )
 
         return flag_experiment_create_request

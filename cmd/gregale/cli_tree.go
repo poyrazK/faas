@@ -219,6 +219,10 @@ var cliTreeAliases = []cliTreeAlias{
 	{"flag edge delete", "flags edge-rm"},
 	{"flag edge list", "flags edge-list"},
 	{"flag stale list", "flags stale"},
+	// ADR-20261125085913: flag notifications.
+	{"flag notify get", "flags notifications get"},
+	{"flag notify set", "flags notifications set"},
+	{"flag notify clear", "flags notifications clear"},
 	{"flag experiment list", "flags experiments list"},
 	{"flag experiment create", "flags experiments create"},
 	{"flag experiment get", "flags experiments get"},
