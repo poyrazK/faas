@@ -146,6 +146,7 @@ func TestRuntimeBuildV2BuildAndImageEvidence(t *testing.T) {
 }
 
 func TestRuntimeBuildV2ExactComputeInventoryBeyondPreview(t *testing.T) {
+	lengthenRuntimeCollectionBudget(t)
 	now := time.Now().UTC().Truncate(time.Second)
 	f, selected, registry := runtimeFixture("control-plane-v2", now, 50)
 	for query, rows := range f {

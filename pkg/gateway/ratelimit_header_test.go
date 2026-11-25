@@ -160,6 +160,10 @@ func TestAppRateLimitHeaders_DecrementAcrossCalls(t *testing.T) {
 	h, b, _ := newTestHandler(t)
 	b.setLegacyHot()
 	b.app.Plan = api.PlanHobby
+	// A frozen clock: on the wall clock a slow runner refills a token
+	// between requests and Remaining rises (nightly 2026-11-25).
+	fixed := time.Now()
+	h.WithLimiter(NewLimiterWithClock(func() time.Time { return fixed }))
 
 	var prevRemaining = -1
 	for i := 0; i < 5; i++ {

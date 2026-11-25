@@ -2,7 +2,7 @@
 
 `.github/workflows/mcp-canary.yml` probes customer MCP hosting and the hosted
 management MCP every hour from a GitHub-hosted runner
-([ADR-20261123100000](../adr/20261123100000-mcp-hosting-synthetic-canary.md)).
+([ADR-20261123100100](../adr/20261123100100-mcp-hosting-synthetic-canary.md)).
 
 ## Activate
 

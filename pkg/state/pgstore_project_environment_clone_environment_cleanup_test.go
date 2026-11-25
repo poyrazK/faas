@@ -335,6 +335,9 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"flag_conversion_daily.environment_id",              // Flag experiment telemetry and definitions cascade with the environment row.
 		"flag_event_names.environment_id",
 		"flag_experiments.environment_id",
+		"flag_notification_keys.environment_id", // Flag notification settings, outbox and key history cascade with the environment row.
+		"flag_notification_settings.environment_id",
+		"flag_notifications.environment_id",
 		"github_deploy_branches.scope",
 		"hosting_oidc_trusts.environment", // GitHub Actions OIDC environment claim, not a Gregale environment; its site FK is classified.
 		"hosting_sites.environment",       // Sites reference the environment through a composite foreign key.
@@ -406,6 +409,7 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"runtime_environment_scaling_states.scope",
 		"runtime_instance_config_proofs.environment_id",
 		"runtime_instance_config_proofs.scope",
+		"saved_insights.environment_id", // Saved insights cascade with the environment row, like analytics cohorts.
 		"snapshot_runtime_config_receipts.scope",
 		"triggers.queue_binding_environment_id",
 		"triggers.queue_binding_scope",
