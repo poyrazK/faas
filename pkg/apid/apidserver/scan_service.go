@@ -2311,6 +2311,13 @@ func (s *server) scanService(
 		if w.ServiceBindingPolicy == "" && existing != nil {
 			pw.ServiceBindingPolicy = existing.Manifest.EffectiveServiceBindingPolicy()
 		}
+		// The release command the apply runs, including one the service
+		// declares in its own directory.
+		var releaseNote string
+		pw.ReleaseCommand, pw.ReleaseCommandSource, releaseNote = s.planWorkloadReleaseCommand(req.ScanDir, filteredW, w)
+		if releaseNote != "" {
+			warnings = append(warnings, releaseNote)
+		}
 		respWorkloads[i] = pw
 	}
 	if shortfall := s.projectDeployRateShortfall(r.Context(), acct, len(filteredW), timeNow().UTC()); shortfall != "" {

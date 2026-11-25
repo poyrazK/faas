@@ -208,8 +208,13 @@ the next push deploys them.
   `api` source declares its own `release.command` or Procfile `release:`. Other
   services that waited for `migrate` no longer wait; the plan names them. The
   step must use the same `build:` (context, Dockerfile, args) or `image:` as a
-  waiting service that serves requests, must have a `command:` and must not
-  publish ports; chained steps and two steps for one service fail the plan.
+  waiting service, must have a `command:` and must not publish ports; chained
+  steps and two steps for one service fail the plan. A waiting web service
+  that shares the build owns the step first; otherwise a waiting worker (a
+  service without `ports:`, such as a queue consumer) owns it, and the
+  command runs before each worker release starts consuming. The dry run
+  prints the command under its owner as `release: <command>` with where it
+  is declared.
 
   The step's environment declarations become defaults for its owner. With
   `x-gregale-env-import: true`, eligible plain values are imported there;
