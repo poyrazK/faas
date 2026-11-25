@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "sha256": "05a22ed0a3be992f35b022848b5db01fc339a8de5b73d8f85eab50f19771f412",
+  "pipelines": [
+    {
+      "tool": "csv_import",
+      "contract": {
+        "version": 1,
+        "name": "csv-import",
+        "input": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "rows": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "rows"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "contract_sha256": "ae9cfddaf43a5dcadeab65cdafb2ed301829a22925f620e3ba8dc860b01e7211",
+      "clarification": {
+        "message": "Choose a column",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "email_column": {
+              "type": "string",
+              "enum": [
+                "contact",
+                "alternate_contact"
+              ]
+            }
+          },
+          "required": [
+            "email_column"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "artifacts": [
+        {
+          "name": "report",
+          "mimeType": "text/csv",
+          "description": "CSV report"
+        }
+      ]
+    }
+  ]
+}

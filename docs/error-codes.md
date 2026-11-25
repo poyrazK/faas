@@ -1502,6 +1502,12 @@ HTTP 422 Unprocessable Entity · Invalid traffic_percent
 
 See [Progressive rollouts](rollouts.md).
 
+### `invalid_wake_with_app`
+
+HTTP 422 Unprocessable Entity · Invalid wake-with-app setting
+
+See [Managed PostgreSQL](postgres.md#plans).
+
 ### `invalid_warm_pool_size`
 
 HTTP 422 Unprocessable Entity · Invalid warm_pool_size; Invalid max_concurrency for warm_pool_size
@@ -4011,6 +4017,12 @@ The response's `title` and `detail` describe the failure.
 ### `wake_queue_full`
 
 The response's `title` and `detail` describe the failure.
+
+### `wake_with_app_unsupported`
+
+HTTP 409 Conflict · Database cannot start with its app
+
+See [Managed PostgreSQL](postgres.md#plans).
 
 ### `webhook_outbox_full`
 

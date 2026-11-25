@@ -120,8 +120,8 @@ The adapter advertises PostgreSQL 14–18, pooled connections, scale-to-zero,
 single-zone availability, and operator-configured storage and restore ceilings.
 It deliberately does not translate Neon's internal redundancy into Gregale's
 portable high-availability promise. Service classes map only inside the adapter
-to 0.25–1 CU (`development`), 0.25–2 CU (`burstable`), and 1–4 CU
-(`production`; moving to 0.5–4 CU in
+to 0.25–1 CU (`development`), 0.25–2 CU (`burstable`), and 0.5–4 CU
+(`production`, 1–4 CU before
 [ADR-20261124221402](20261124221402-neon-production-class-half-cu-floor.md)).
 Updates remain unsupported until the neutral lifecycle has a
 durable multi-step update state machine.

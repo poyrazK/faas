@@ -1105,7 +1105,9 @@ jobs:
             gitops_acceptance: true
             state_coverage: true
             test_timeout: 30m
-            job_timeout_minutes: 45
+            # Tests plus the operation-policy and UDP contract steps took
+            # 31-39 min on the 11-24/25 nightlies and 45 min on a slow runner.
+            job_timeout_minutes: 60
           - id: b
             label: gregalectl/daemons
             # Packages with pgtest-backed tests must run in a Postgres shard:
@@ -1148,9 +1150,13 @@ jobs:
           # 2982-3600+ s on 2026-11-18..24; the second hit the 60m bound on
           # 2026-11-21 (run 44891844876) and 2026-11-24 (run 45295470659),
           # so they split into thirds of about equal count (~1,900-2,100).
-          # The last pattern catches every name the first two do not.
+          # The D-O third then took 3,370 s and passed 60m on 2026-11-25 (run
+          # 45551154186) while A-C and the rest took ~1,900-2,000 s: D holds
+          # most of the subprocess and multi-second-sleep tests, so D runs
+          # alone and E-O becomes a fourth shard.
+          # The last pattern catches every name the others do not.
           - id: d1
-            label: gregale CLI 1/3
+            label: gregale CLI 1/4
             package_pattern: '/cmd/gregale(/|$)'
             test_run: '^Test[A-C]'
             coverage_file: cover-shard2d1.out
@@ -1159,19 +1165,28 @@ jobs:
             test_timeout: 60m
             job_timeout_minutes: 90
           - id: d2
-            label: gregale CLI 2/3
+            label: gregale CLI 2/4
             package_pattern: '/cmd/gregale(/|$)'
-            test_run: '^Test[D-O]'
+            test_run: '^TestD'
             coverage_file: cover-shard2d2.out
             gitops_acceptance: false
             state_coverage: false
             test_timeout: 60m
             job_timeout_minutes: 90
           - id: d3
-            label: gregale CLI 3/3
+            label: gregale CLI 3/4
+            package_pattern: '/cmd/gregale(/|$)'
+            test_run: '^Test[E-O]'
+            coverage_file: cover-shard2d3.out
+            gitops_acceptance: false
+            state_coverage: false
+            test_timeout: 60m
+            job_timeout_minutes: 90
+          - id: d4
+            label: gregale CLI 4/4
             package_pattern: '/cmd/gregale(/|$)'
             test_run: '^(Test[^A-O]|Example|Fuzz)'
-            coverage_file: cover-shard2d3.out
+            coverage_file: cover-shard2d4.out
             gitops_acceptance: false
             state_coverage: false
             test_timeout: 60m
@@ -2395,7 +2410,9 @@ jobs:
   sdk-node:
     name: sdk-node (gen-check + smoke + unit)
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    # The suite alone takes ~4 min (1,489 unit tests plus packed-SDK installs);
+    # 5 minutes cancelled nightly runs at 314-316 s on 2026-11-23 and -24.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7

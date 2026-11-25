@@ -1,7 +1,9 @@
 import { createClient } from './isolated-client-preview.js';
 import { JobContract, jobScope, jobSnapshot, jobValueHash } from './job-runtime.js';
-import { PipelineError, pipelineScope, pipelineName, pipelineFailure, parsePipelineLineage, parsePipelineTrigger, type PipelineTrigger, type PipelineLineage, type PipelineScope, type PipelineEnvelope } from './pipeline-state.js';
-import { fileEventUUID } from './file-events.js';
+import { PipelineError, pipelineScope, pipelineName, pipelineFailure, parsePipelineLineage, parsePipelineTrigger, parsePinnedPipelineSource, type PinnedPipelineSource, type PipelineTrigger, type PipelineLineage, type PipelineScope, type PipelineEnvelope } from './pipeline-state.js';
+import { fileEventHash, fileEventUUID } from './file-events.js';
+import { ApiError } from './generated/core/ApiError.js';
+import { isFaasError } from './errors.js';
 
 export interface PipelineRunOptions { timeoutMs: number; signal?: AbortSignal; }
 export interface PipelineCheckpoint {
@@ -24,7 +26,7 @@ export interface TypedPipelineRun<O> {
   cancel(options: PipelineRunOptions): Promise<PipelineInspection>;
 }
 export interface TypedJobPipeline<I, O> {
-  start(input: I, options: PipelineRunOptions & { idempotencyKey: string; lineage?: PipelineLineage; trigger?: PipelineTrigger }): Promise<TypedPipelineRun<O>>;
+  start(input: I, options: PipelineRunOptions & { idempotencyKey: string; lineage?: PipelineLineage; trigger?: PipelineTrigger; pinnedSource?: PinnedPipelineSource }): Promise<TypedPipelineRun<O>>;
   /** Attach to an existing run. Does not resume a failed native code workflow. */
   resumeById(runId: string, options: PipelineRunOptions): Promise<TypedPipelineRun<O>>;
   resume(checkpoint: PipelineCheckpoint): TypedPipelineRun<O>;
@@ -34,7 +36,9 @@ export interface TypedJobPipeline<I, O> {
  */
 export function createJobPipelineClient<I, O>(options: {
   baseURL: string; token: string; scope: PipelineScope; ownerId: string; contract: JobContract<I, O>; fetch?: typeof fetch;
-}): TypedJobPipeline<I, O> {
+}): TypedJobPipeline<I, O> & {
+  findToolStart(identity: string, options: PipelineRunOptions): Promise<PipelineCheckpoint | null>;
+} {
   const scope = pipelineScope(options.scope), owner = options.ownerId, contract = options.contract;
   if (options.baseURL !== scope.base_url || !pipelineName(owner)) throw new PipelineError('scope_mismatch');
   const client = createClient(options.baseURL, { token: options.token, ...(options.fetch ? { fetch: options.fetch } : {}) });
@@ -56,7 +60,7 @@ export function createJobPipelineClient<I, O>(options: {
   function envelope(value: unknown): PipelineEnvelope<I> {
     const v = value as PipelineEnvelope<I>;
     if (!v || v.version !== 1 || v.owner_id !== owner || v.contract_sha256 !== contract.sha256 || jobValueHash(v.scope) !== jobValueHash(scope)) throw new PipelineError('scope_mismatch');
-    return jobSnapshot({ ...(v.lineage !== undefined ? { lineage: parsePipelineLineage(v.lineage) } : {}), ...(v.trigger !== undefined ? { trigger: parsePipelineTrigger(v.trigger) } : {}), version: 1, scope, owner_id: owner, contract_sha256: contract.sha256, input: contract.input(v.input) });
+    return jobSnapshot({ ...(v.lineage !== undefined ? { lineage: parsePipelineLineage(v.lineage) } : {}), ...(v.trigger !== undefined ? { trigger: parsePipelineTrigger(v.trigger) } : {}), ...(v.pinned_source !== undefined ? { pinned_source: parsePinnedPipelineSource(v.pinned_source, scope, owner) } : {}), version: 1, scope, owner_id: owner, contract_sha256: contract.sha256, input: contract.input(v.input) });
   }
   function checkpoint(runId: string, input: unknown): PipelineCheckpoint {
     if (!fileEventUUID(runId)) throw new PipelineError('receipt_conflict');
@@ -97,13 +101,16 @@ export function createJobPipelineClient<I, O>(options: {
       }),
     } satisfies TypedPipelineRun<O>);
   }
-  return Object.freeze({
+  return Object.freeze<TypedJobPipeline<I, O> & {
+    findToolStart(identity: string, options: PipelineRunOptions): Promise<PipelineCheckpoint | null>;
+  }>({
     start(input, settings) {
       const captured = contract.input(input), key = settings.idempotencyKey, lineage = settings.lineage === undefined ? undefined : parsePipelineLineage(settings.lineage), trigger = settings.trigger === undefined ? undefined : parsePipelineTrigger(settings.trigger);
+      const pinned = settings.pinnedSource === undefined ? undefined : parsePinnedPipelineSource(settings.pinnedSource, scope, owner);
       if (typeof key !== 'string' || !/^[!-~]{1,128}$/.test(key)) throw new PipelineError('invalid_input');
       return execute(settings, async (signal, check) => {
         await verify(signal, check); check();
-        const value: PipelineEnvelope<I> = { ...(lineage !== undefined ? { lineage } : {}), ...(trigger !== undefined ? { trigger } : {}), version: 1, contract_sha256: contract.sha256, scope, owner_id: owner, input: captured };
+        const value: PipelineEnvelope<I> = { ...(lineage !== undefined ? { lineage } : {}), ...(trigger !== undefined ? { trigger } : {}), ...(pinned ? { pinned_source: pinned } : {}), version: 1, contract_sha256: contract.sha256, scope, owner_id: owner, input: captured };
         let accepted;
         try { accepted = await client.workflows.createWorkflowRun({ slug: scope.app_slug, name: contract.spec.name, idempotencyKey: key, requestBody: value }, { timeoutMs: 0, signal, retry: false }); }
         catch { signal.throwIfAborted(); throw new PipelineError('acceptance_unknown'); }
@@ -116,6 +123,32 @@ export function createJobPipelineClient<I, O>(options: {
       if (!fileEventUUID(runId)) throw new PipelineError('invalid_input');
       return execute(settings, async (signal, check) => { await verify(signal, check); const r = validateRun(await client.workflows.getWorkflowRun({ id: runId }, { timeoutMs: 0, signal, retry: false })); check(); if (r.id !== runId) throw new PipelineError('receipt_conflict'); return make(checkpoint(r.id, r.input)); });
     },
+    findToolStart(identity, settings) {
+      if (!fileEventHash(identity)) throw new PipelineError('invalid_input');
+      return execute(settings, async (signal, check) => {
+        await verify(signal, check);
+        const policy = { timeoutMs: 0, signal, retry: false as const };
+        let match;
+        try {
+          match = await client.workflows.lookupWorkflowRunStart({
+            slug: scope.app_slug, name: contract.spec.name, idempotencyKey: 'pipeline-tool:' + identity,
+          }, policy);
+        } catch (error) {
+          check();
+          if ((isFaasError(error) || error instanceof ApiError) && error.status === 404) return null;
+          throw error;
+        }
+        check();
+        if (!match || Object.keys(match).join() !== 'run_id' || !fileEventUUID(match.run_id))
+          throw new PipelineError('receipt_conflict');
+        const run = validateRun(await client.workflows.getWorkflowRun({ id: match.run_id }, policy));
+        check();
+        const input = envelope(run.input);
+        if (run.id !== match.run_id || input.trigger?.kind !== 'tool' || input.trigger.identity !== identity)
+          throw new PipelineError('receipt_conflict');
+        return checkpoint(run.id, input);
+      });
+    },
     resume: make,
-  } satisfies TypedJobPipeline<I, O>);
+  });
 }

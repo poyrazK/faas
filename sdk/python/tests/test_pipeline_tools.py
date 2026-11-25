@@ -1,6 +1,7 @@
 import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx
@@ -9,13 +10,20 @@ import pytest
 from faas_sdk.job_runtime import JobContract
 from faas_sdk.preview import (
     PIPELINE_TOOL_SCHEMA,
+    FileError,
+    FileOptions,
+    PipelineError,
     PipelineScope,
+    PipelineStartPreviewPolicy,
+    PipelineStartPreviewSource,
     PipelineTool,
     PipelineToolActor,
     PipelineToolError,
     PipelineToolMCP,
     PipelineToolMCPError,
     PipelineToolReceipt,
+    pipeline_start_preview,
+    read_pinned_pipeline_source,
 )
 from faas_sdk.preview.pipeline_gates import PipelineGateRecord, pipeline_gate_intent
 
@@ -57,10 +65,15 @@ class Store:
         return receipt
 
 
+class _MissingStartBody(httpx.AsyncByteStream):
+    async def __aiter__(self):
+        yield b'{"status":404,"code":"workflow_run_not_found"}'
+
+
 class Native:
     def __init__(self):
         self.records, self.keys = {}, {}
-        self.posts = 0
+        self.posts = self.lookups = 0
         self.lose_start = self.wrong_account = False
 
     async def send(self, request):
@@ -70,6 +83,17 @@ class Native:
             return httpx.Response(200, json=dict(id=str(uuid4()) if self.wrong_account else SCOPE.account_id))
         if path == "/v1/apps/imports":
             return httpx.Response(200, json=dict(id=SCOPE.app_id))
+        if "/workflows/run-starts/" in path:
+            assert request.method == "GET"
+            self.lookups += 1
+            found = self.keys.get(request.headers["idempotency-key"])
+            return (
+                httpx.Response(200, json={"run_id": found})
+                if found
+                else httpx.Response(
+                    404, headers={"content-type": "application/problem+json"}, stream=_MissingStartBody()
+                )
+            )
         if path.endswith("/steps"):
             return httpx.Response(200, json=dict(steps=[dict(step_name="validate", status="succeeded", attempt=1)]))
         if path.endswith("/cancel"):
@@ -418,3 +442,233 @@ async def test_mcp_snapshots_args_and_enforces_complete_frame_budget():
         F["name"] + "_result", dict(request_id=F["request_id"]), "alice", timeout=1
     )
     assert response["isError"] and json.loads(response["content"][0]["text"])["code"] == "limit"
+
+
+@pytest.mark.asyncio
+async def test_lost_start_lookup_verifies_the_original_trigger_and_input_without_attaching_or_starting():
+    tool, _, _, native, *_ = setup()
+    request, expected = F["request_id"], F["receipt"]["checkpoint"]["run_id"]
+    native.lose_start = True
+    unknown = await tool.start(F["input"], request, "alice", timeout=1)
+    assert unknown.state == "start_unknown"
+    key = unknown.receipt.intent["idempotency_key"]
+    assert await tool.find_accepted_run(request, "alice", timeout=1) == {
+        "state": "found",
+        "request_id": request,
+        "run_id": expected,
+    }
+    assert (await tool.inspect(request, "alice", timeout=1)).state == "start_unknown"
+    with pytest.raises(PipelineToolError, match="unauthorized"):
+        await tool.find_accepted_run(request, "bob", timeout=1)
+    assert native.lookups == 1
+
+    record = native.records[expected]
+    native.records[expected] = record | {"input": record["input"] | {"input": {"n": 19}}}
+    with pytest.raises(PipelineToolError, match="receipt_conflict"):
+        await tool.find_accepted_run(request, "alice", timeout=1)
+    native.records[expected] = record
+    native.lose_start = False
+    decoy = await tool.start(F["input"], str(uuid4()), "alice", timeout=1)
+    native.keys[key] = decoy.receipt.checkpoint.run_id
+    with pytest.raises(PipelineToolError, match="receipt_conflict"):
+        await tool.find_accepted_run(request, "alice", timeout=1)
+
+    del native.keys[key]
+    assert await tool.find_accepted_run(request, "alice", timeout=1) == {
+        "state": "start_unknown",
+        "request_id": request,
+    }
+    assert (await tool.inspect(request, "alice", timeout=1)).state == "start_unknown"
+    native.keys[key] = expected
+    matches = await asyncio.gather(*(tool.find_accepted_run(request, "alice", timeout=1) for _ in range(2)))
+    assert all(match["state"] == "found" and match["run_id"] == expected for match in matches)
+    outcomes = await asyncio.gather(
+        *(tool.reconcile(request, match["run_id"], "alice", timeout=1) for match in matches)
+    )
+    assert [result.receipt.to_dict() for result in outcomes] == [F["receipt"], F["receipt"]]
+    assert native.posts == 2  # The original start and the deliberate decoy.
+
+
+@pytest.mark.asyncio
+async def test_retaining_revision_replays_authorized_receipt_and_fences_new_work():
+    _, _, store, native, _, state, definition = setup()
+    start = F["name"] + "_start"
+    args = dict(request_id=F["request_id"], input=F["input"], expected_contract_sha256=CONTRACT.sha256)
+
+    def publish(starts):
+        return PipelineToolMCP(PipelineTool(CONTRACT, **definition), revision={"family": "imports", "starts": starts})
+
+    async def failure(adapter, args, code, actor="alice"):
+        result = await adapter.call(start, args, actor, timeout=1)
+        assert result["isError"] is True
+        assert json.loads(result["content"][0]["text"]) == {"code": code}
+
+    current = publish("default")
+    await failure(current, args | {"expected_contract_sha256": "0" * 64}, "revision_unavailable")
+    assert store.reserves == 0
+    native.lose_start = True
+    first = await current.call(start, args, "alice", timeout=1)
+    assert first["structuredContent"]["state"] == "start_unknown"
+    retained = publish("retained")
+    replay = await retained.call(start, args, "alice", timeout=1)
+    assert replay["structuredContent"] == first["structuredContent"] | {"replayed": True}
+    await failure(retained, args | {"request_id": str(uuid4())}, "revision_unavailable")
+    await failure(retained, args | {"input": args["input"] | {"n": 18}}, "receipt_conflict")
+    await failure(retained, args, "unauthorized", "bob")
+    state["revoked"] = True
+    await failure(retained, args, "unauthorized")
+    assert store.reserves == native.posts == 1
+
+
+@pytest.mark.asyncio
+async def test_pipeline_preview_binds_current_input_caller_and_source_before_reserving(monkeypatch):
+    fixture = json.loads((ROOT / "pipeline-start-preview.json").read_text())
+    source, reads, revoked = fixture["source_version"], 0, False
+    now, expire_during_authorization, source_read = 1_750_000_000, False, False
+    monkeypatch.setattr(pipeline_start_preview, "time", SimpleNamespace(time=lambda: now))
+
+    async def authorize(_request, actor, _action):
+        nonlocal now
+        if expire_during_authorization and source_read:
+            now += 301
+        return None if revoked else PipelineToolActor(owner_id=actor, subject_id=actor)
+
+    async def read(_input, _access, _timeout):
+        nonlocal reads, source_read
+        reads += 1
+        source_read = True
+        return PipelineStartPreviewSource(source_version=source, summary=fixture["summary"])
+
+    tool, _, store, native, *_ = setup(authorize=authorize)
+    mcp = PipelineToolMCP(tool, preview=PipelineStartPreviewPolicy(
+        contract=JobContract(fixture["contract"]), signing_key="local-preview-test-key" * 2, read=read,
+    ))
+    args = dict(request_id=F["request_id"], input=F["input"], expected_contract_sha256=CONTRACT.sha256)
+
+    async def call(op, arguments, actor="alice"):
+        return await mcp.call(F["name"] + "_" + op, arguments, actor, timeout=2)
+
+    async def rejected(arguments, code, actor="alice"):
+        response = await call("start", arguments, actor)
+        assert response["isError"] is True
+        assert json.loads(response["content"][0]["text"]) == {"code": code}
+
+    assert next(item for item in mcp.tools if item["name"].endswith("_preview"))["annotations"]["readOnlyHint"]
+    shown = (await call("preview", args))["structuredContent"]
+    assert shown["summary"] == fixture["summary"]
+    assert store.reserves == 0
+    await rejected(args, "preview_required")
+    confirmed = args | {"preview_token": shown["preview_token"]}
+    await rejected(confirmed, "preview_stale", "bob")
+    await rejected(confirmed | {"input": F["input"] | {"n": 18}}, "preview_stale")
+    await rejected(confirmed | {"request_id": str(uuid4())}, "preview_stale")
+    source = fixture["changed_version"]
+    await rejected(confirmed, "preview_stale")
+    await rejected(confirmed | {"preview_token": "1." + "a" * 64}, "preview_stale")
+    assert store.reserves == 0
+    expiring = (await call("preview", args))["structuredContent"]
+    source_read = False
+    expire_during_authorization = True
+    await rejected(args | {"preview_token": expiring["preview_token"]}, "preview_stale")
+    expire_during_authorization = False
+    assert store.reserves == 0
+    refreshed = (await call("preview", args))["structuredContent"]
+    accepted = await call("start", args | {"preview_token": refreshed["preview_token"]})
+    assert accepted["structuredContent"]["state"] == "started"
+    source = fixture["source_version"]
+    snapshots = reads
+    replayed = await call("start", confirmed)
+    assert replayed["structuredContent"] == accepted["structuredContent"] | {"replayed": True}
+    assert reads == snapshots
+    revoked = True
+    await rejected(confirmed, "unauthorized")
+    assert store.reserves == native.posts == 1
+
+
+@pytest.mark.asyncio
+async def test_confirmation_pins_a_file_version_in_native_envelope_and_recovery_checks_it():
+    fixture = json.loads((ROOT / "pipeline-start-preview.json").read_text())
+    tool, _, store, native, *_ = setup()
+    source = fixture["pinned_source"]
+
+    async def read(_input, _access, _timeout):
+        return PipelineStartPreviewSource(
+            source_version=source["sha256"], summary=fixture["summary"], pinned_source=source,
+        )
+
+    adapter = PipelineToolMCP(tool, preview=PipelineStartPreviewPolicy(
+        contract=JobContract(fixture["contract"]), signing_key="fixture-pinned-preview-key" * 2, read=read,
+    ))
+    args = dict(request_id=F["request_id"], input=F["input"])
+
+    async def preview():
+        return (await adapter.call(F["name"] + "_preview", args, "alice", timeout=2))["structuredContent"]
+
+    async def confirm(shown):
+        return await adapter.call(
+            F["name"] + "_start", args | {"preview_token": shown["preview_token"]}, "alice", timeout=2,
+        )
+
+    original = await preview()
+    assert "pinned_source" not in original
+    source = source | {"version_id": fixture["replacement_version_id"]}
+    stale = await confirm(original)
+    assert json.loads(stale["content"][0]["text"]) == {"code": "preview_stale"}
+    assert store.reserves == 0
+    native.lose_start = True
+    assert (await confirm(await preview()))["structuredContent"]["state"] == "start_unknown"
+    run = native.records[F["receipt"]["checkpoint"]["run_id"]]
+    assert run["input"]["pinned_source"] == source
+    adopted = await tool.reconcile(F["request_id"], run["id"], "alice", timeout=2)
+    assert adopted.receipt.intent["request_sha256"] == F["receipt"]["intent"]["input_sha256"]
+    assert adopted.receipt.intent["request_sha256"] != adopted.receipt.intent["input_sha256"]
+    assert (await confirm(original))["structuredContent"]["replayed"] is True
+    with pytest.raises(PipelineToolError, match="receipt_conflict"):
+        await tool.start(F["input"] | {"n": 18}, F["request_id"], "alice", timeout=2)
+    run["input"]["pinned_source"] = fixture["pinned_source"]
+    with pytest.raises(PipelineToolError, match="receipt_conflict"):
+        await tool.inspect(F["request_id"], "alice", timeout=2)
+    assert native.posts == 1
+
+
+@pytest.mark.asyncio
+async def test_pinned_reads_verify_version_and_current_authority():
+    fixture = json.loads((ROOT / "pipeline-start-preview.json").read_text())
+    pinned = fixture["pinned_source"]
+    downloads, authorized, revoke, missing = 0, True, False, False
+
+    async def download(key, *, version_id, options):
+        nonlocal downloads, authorized
+        downloads += 1
+        assert key == pinned["key"]
+        assert version_id == pinned["version_id"]
+        if missing:
+            raise FileError("request_failed", 404)
+        if revoke:
+            authorized = False
+        return fixture["pinned_bytes"].encode()
+
+    files = SimpleNamespace(**pinned["scope"], download=download)
+
+    async def authorize(_source):
+        return authorized
+
+    async def read(source=pinned):
+        return await read_pinned_pipeline_source(
+            files, source, "alice", options=FileOptions(timeout=2), authorize=authorize,
+        )
+
+    assert await read() == fixture["pinned_bytes"].encode()
+    with pytest.raises(PipelineError, match="source_unavailable"):
+        await read(pinned | {"owner_id": "bob"})
+    assert downloads == 1
+    revoke = True
+    with pytest.raises(PipelineError, match="source_forbidden"):
+        await read()
+    with pytest.raises(PipelineError, match="source_forbidden"):
+        await read()
+    assert downloads == 2
+    authorized, missing = True, True
+    with pytest.raises(PipelineError, match="source_unavailable"):
+        await read()
+    assert downloads == 3

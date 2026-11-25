@@ -1,0 +1,20 @@
+{
+  "authorized_tools": {
+    "support": ["query_records", "recover_status"],
+    "operator": ["query_records", "recover_start", "recover_status", "refund_prepare"],
+    "no_access": []
+  },
+  "scope_sets": {
+    "support": ["records:read"],
+    "operator": ["records:read", "reports:read", "recovery:write", "refund:write"],
+    "no_access": []
+  },
+  "policies": {
+    "query_records": ["records:read"],
+    "recover_status": ["records:read"],
+    "recover_start": ["records:read", "recovery:write"],
+    "refund_prepare": ["refund:write"]
+  },
+  "uri_prefix": "gregale-query://1234567890123456789012345678901234567890123456789012345678901234/report/",
+  "resource_scopes": ["reports:read"]
+}

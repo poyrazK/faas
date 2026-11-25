@@ -13,7 +13,7 @@ import (
 func TestCommitReceiptUsageReplayPreservesReconciliation(t *testing.T) {
 	// Replaying the entire tail can mask an earlier migration replacing newer
 	// triggers, because the later migration reinstalls them in that same run.
-	const receiptUsageVersion = 20261125150005600
+	const receiptUsageVersion = 20261125203916600
 	ctx := t.Context()
 	pool := newMigrationReplayPool(t, []int64{receiptUsageVersion})
 	if err := db.MigrateUp(ctx, pool); err != nil {

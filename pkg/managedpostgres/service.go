@@ -69,6 +69,10 @@ type Service struct {
 	maxDatabasesPerAccount func(context.Context, string) (int, error)
 	maxBranchesPerAccount  func(context.Context, string) (int, error)
 	freePlan               func(context.Context, string) (bool, error)
+
+	// wakeStarter, when running, re-reads its app list after a database
+	// opts in here.
+	wakeStarter *WakeStarter
 }
 
 // Registry is the provider registry the service places databases with; apid

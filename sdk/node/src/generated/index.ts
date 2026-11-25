@@ -1555,6 +1555,7 @@ export type { ManagedPostgresUsageImportWindow } from './models/ManagedPostgresU
 export type { ManagedPostgresUsageLineItem } from './models/ManagedPostgresUsageLineItem.js';
 export type { ManagedPostgresUsageOperatorResponse } from './models/ManagedPostgresUsageOperatorResponse.js';
 export type { ManagedPostgresUsageResponse } from './models/ManagedPostgresUsageResponse.js';
+export type { ManagedPostgresWakeWithApp } from './models/ManagedPostgresWakeWithApp.js';
 export type { ManagedRealtimeAccessRequest } from './models/ManagedRealtimeAccessRequest.js';
 export type { ManagedRealtimeAccessResponse } from './models/ManagedRealtimeAccessResponse.js';
 export type { ManagedRealtimeActivityScopePath } from './models/ManagedRealtimeActivityScopePath.js';
@@ -3440,6 +3441,7 @@ export type { SetEnvironmentRouteBudgetsRequest } from './models/SetEnvironmentR
 export type { SetFinancialBudgetChannelsRequest } from './models/SetFinancialBudgetChannelsRequest.js';
 export type { SetGraceWindowRequest } from './models/SetGraceWindowRequest.js';
 export type { SetManagedPostgresSuspendTimeoutRequest } from './models/SetManagedPostgresSuspendTimeoutRequest.js';
+export type { SetManagedPostgresWakeWithAppRequest } from './models/SetManagedPostgresWakeWithAppRequest.js';
 export type { SetMCPReadinessFallbackRequest } from './models/SetMCPReadinessFallbackRequest.js';
 export type { SetMCPReadinessPagerDutyAcknowledgementsRequest } from './models/SetMCPReadinessPagerDutyAcknowledgementsRequest.js';
 export type { SetMCPReadinessPagerDutyRequest } from './models/SetMCPReadinessPagerDutyRequest.js';
@@ -3820,6 +3822,7 @@ export type { WorkflowRunDiagnosticsResponse } from './models/WorkflowRunDiagnos
 export type { WorkflowRunRecoveryPlan } from './models/WorkflowRunRecoveryPlan.js';
 export type { WorkflowRunRecoveryTarget } from './models/WorkflowRunRecoveryTarget.js';
 export type { WorkflowRunResponse } from './models/WorkflowRunResponse.js';
+export type { WorkflowRunStartLookupResponse } from './models/WorkflowRunStartLookupResponse.js';
 export type { WorkflowScheduleCatchUpPreview } from './models/WorkflowScheduleCatchUpPreview.js';
 export type { WorkflowScheduleDSTBehavior } from './models/WorkflowScheduleDSTBehavior.js';
 export type { WorkflowScheduleFirePreview } from './models/WorkflowScheduleFirePreview.js';

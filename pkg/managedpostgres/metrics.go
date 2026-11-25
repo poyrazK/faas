@@ -36,6 +36,8 @@ type Metrics struct {
 	idleTailComputeTotal *prometheus.CounterVec
 	idleTailSuspends     *prometheus.CounterVec
 	idleTailTotal        *prometheus.CounterVec
+	// Databases started because a bound app woke (ADR-20261125105038).
+	wakeStartsTotal *prometheus.CounterVec
 }
 
 const (
@@ -83,6 +85,10 @@ func NewMetrics(reg prometheus.Registerer, prefix string, usageEnabled bool) (*M
 		return nil, ErrInvalid
 	}
 	m := &Metrics{
+		wakeStartsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_managed_postgres_wake_starts_total",
+			Help: "Managed PostgreSQL computes started because an app bound to them woke (opt-in wake with app), by outcome.",
+		}, []string{"outcome"}),
 		idleTailReadsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: prefix + "_managed_postgres_idle_tail_reads_total",
 			Help: "Scale-to-zero managed PostgreSQL usage windows by idle tail read outcome.",
@@ -167,6 +173,7 @@ func NewMetrics(reg prometheus.Registerer, prefix string, usageEnabled bool) (*M
 		m.admissionDeniedTotal, m.fleetDatabases, m.fleetCost, m.fleetMaxDatabases,
 		m.fleetMaxCost, m.productionApproval,
 		m.idleTailReadsTotal, m.idleTailComputeTotal, m.idleTailSuspends, m.idleTailTotal,
+		m.wakeStartsTotal,
 	}
 	for _, collector := range collectors {
 		if err := reg.Register(collector); err != nil {
@@ -195,6 +202,9 @@ func NewMetrics(reg prometheus.Registerer, prefix string, usageEnabled bool) (*M
 	}
 	for _, reason := range []string{metricsDenialInvalid, metricsDenialUnavailable, metricsDenialQuota, metricsDenialStale, metricsDenialUnsupported, metricsDenialConflict} {
 		m.admissionDeniedTotal.WithLabelValues(reason).Add(0)
+	}
+	for _, outcome := range []WakeStartOutcome{WakeStartStarted, WakeStartRunning, WakeStartFailed, WakeStartUnsupported} {
+		m.wakeStartsTotal.WithLabelValues(string(outcome)).Add(0)
 	}
 	for _, outcome := range []string{IdleTailRead, IdleTailNoCompute, IdleTailUnsupported, IdleTailUnavailable, IdleTailSkipped} {
 		m.idleTailReadsTotal.WithLabelValues(outcome).Add(0)
@@ -389,4 +399,12 @@ func (m *Metrics) SetProductionApprovalUntil(until time.Time) {
 		return
 	}
 	m.productionApproval.Set(float64(until.Unix()))
+}
+
+// ObserveWakeStart counts one start of a database for a waking app.
+func (m *Metrics) ObserveWakeStart(outcome WakeStartOutcome) {
+	if m == nil {
+		return
+	}
+	m.wakeStartsTotal.WithLabelValues(string(outcome)).Inc()
 }

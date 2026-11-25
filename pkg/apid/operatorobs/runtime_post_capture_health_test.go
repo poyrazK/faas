@@ -145,6 +145,7 @@ func TestRuntimePostCaptureClassesAndFreshness(t *testing.T) {
 }
 
 func TestRuntimePostCaptureFramesProfilesAndPreview(t *testing.T) {
+	lengthenRuntimeCollectionBudget(t)
 	now := time.Now().UTC().Truncate(time.Second)
 	for _, role := range RuntimeBuildRoles() {
 		f, s, registry := runtimeFixture(role, now, 45)

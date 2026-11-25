@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import asdict, dataclass
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol, TypedDict, TypeGuard, cast
 from urllib.parse import urlsplit
 
 from .._typed_jobs import JobCheckpoint
 from ..job_runtime import JobError, _scope, job_hash, job_value_hash
 from ..workflows import NonRetryableError
-from .files import FileBucket, FileOptions
+from .files import FileBucket, FileError, FileOptions
 
 
 def _parse_pipeline_trigger(value: Any) -> dict[str, Any]:
@@ -57,6 +58,8 @@ def pipeline_failure(value: Any) -> PipelineFailure | None:
         "operation_limit",
         "journal_limit",
         "artifact_changed",
+        "source_unavailable",
+        "source_forbidden",
         "request_failed",
         "acceptance_unknown",
         "deadline",
@@ -272,11 +275,14 @@ class PostgresPipelineJobStore:
         return PipelineJobReceipt.from_dict(rows[0]["receipt"])
 
 
-async def read_pipeline_artifact(
-    files: FileBucket, artifact: dict[str, Any], owner_id: str, *, options: FileOptions
-) -> bytes:
-    a = copy.deepcopy(artifact)
-    scope = {"base_url": files.base_url, "app_slug": files.app_slug, "bucket": files.bucket}
+def parse_pipeline_artifact(files: FileBucket, artifact: Mapping[str, Any], owner_id: str) -> dict[str, Any]:
+    return _artifact_in_scope(artifact, {"base_url": files.base_url, "app_slug": files.app_slug, "bucket": files.bucket}, owner_id)
+
+
+def _artifact_in_scope(artifact: Mapping[str, Any], scope: dict[str, str], owner_id: str) -> dict[str, Any]:
+    if not isinstance(artifact, Mapping):
+        raise PipelineError("artifact_changed")
+    a = copy.deepcopy(dict(artifact))
     if (
         type(a.get("version")) is not int
         or a["version"] != 1
@@ -288,12 +294,23 @@ async def read_pipeline_artifact(
         or len(a["key"].encode()) > 1024
         or re.search(r"[\x00-\x1f]", a["key"])
         or type(a.get("size_bytes")) is not int
-        or a["size_bytes"] < 0
+        or not 0 <= a["size_bytes"] <= 9007199254740991
         or not _hash(a.get("sha256"))
         or a.get("version_id") is not None
         and not _uuid(a["version_id"])
     ):
         raise PipelineError("artifact_changed")
+    return {
+        "version": 1, "scope": scope, "owner_id": owner_id, "key": a["key"],
+        **({"version_id": a["version_id"]} if a.get("version_id") else {}),
+        "size_bytes": a["size_bytes"], "sha256": a["sha256"],
+    }
+
+
+async def read_pipeline_artifact(
+    files: FileBucket, artifact: Mapping[str, Any], owner_id: str, *, options: FileOptions
+) -> bytes:
+    a = parse_pipeline_artifact(files, artifact, owner_id)
     if a["size_bytes"] > options.max_bytes:
         raise PipelineError("journal_limit")
 
@@ -306,6 +323,82 @@ async def read_pipeline_artifact(
         check()
         if len(data) != a["size_bytes"] or job_hash(data) != a["sha256"]:
             raise PipelineError("artifact_changed")
+        return data
+
+    return await _scope(options.timeout, read)
+
+
+class _PinnedSourceScope(TypedDict):
+    base_url: str
+    app_slug: str
+    bucket: str
+
+
+class PinnedPipelineSource(TypedDict):
+    version: Literal[1]
+    scope: _PinnedSourceScope
+    owner_id: str
+    key: str
+    version_id: str
+    size_bytes: int
+    sha256: str
+
+
+PinnedPipelineSourceFailure = Literal["source_unavailable", "source_forbidden"]
+
+
+def _is_pinned_source_failure(value: Any) -> TypeGuard[PinnedPipelineSourceFailure]:
+    return isinstance(value, str) and value in ("source_unavailable", "source_forbidden")
+
+
+def _parse_pinned_source(value: Any, base_url: str, app_slug: str, owner_id: str) -> PinnedPipelineSource:
+    raw_scope = value.get("scope") if isinstance(value, dict) else None
+    if (
+        not isinstance(raw_scope, dict) or not _uuid(raw_scope.get("bucket")) or not _uuid(value.get("version_id"))
+        or set(value) != {"key", "owner_id", "scope", "sha256", "size_bytes", "version", "version_id"}
+    ):
+        raise PipelineError("source_unavailable")
+    try:
+        return cast(PinnedPipelineSource, _artifact_in_scope(
+            value, {"base_url": base_url, "app_slug": app_slug, "bucket": raw_scope["bucket"]}, owner_id,
+        ))
+    except PipelineError:
+        raise PipelineError("source_unavailable") from None
+
+
+async def read_pinned_pipeline_source(
+    files: FileBucket, source: PinnedPipelineSource, owner_id: str, *,
+    authorize: Callable[[PinnedPipelineSource], Awaitable[bool]], options: FileOptions,
+) -> bytes:
+    """Verify current authority and bytes for the pinned managed-file version."""
+    artifact = _parse_pinned_source(source, files.base_url, files.app_slug, owner_id)
+    if artifact["scope"]["bucket"] != files.bucket:
+        raise PipelineError("source_unavailable")
+    end = asyncio.get_running_loop().time() + options.timeout
+
+    async def read(check: Callable[[], None]) -> bytes:
+        async def check_access() -> None:
+            if await authorize(copy.deepcopy(artifact)) is not True:
+                raise PipelineError("source_forbidden")
+            check()
+
+        await check_access()
+        try:
+            data = await read_pipeline_artifact(
+                files, artifact, owner_id,
+                options=FileOptions(timeout=max(0.000001, end - asyncio.get_running_loop().time()), max_bytes=options.max_bytes),
+            )
+        except FileError as error:
+            check()
+            if error.status == 403:
+                raise PipelineError("source_forbidden") from None
+            if error.code == "deadline":
+                raise PipelineError("deadline") from None
+            raise PipelineError("source_unavailable") from None
+        except PipelineError:
+            check()
+            raise PipelineError("source_unavailable") from None
+        await check_access()
         return data
 
     return await _scope(options.timeout, read)

@@ -57,6 +57,7 @@ import type { WorkflowQueuedRunCancelRequest } from '../models/WorkflowQueuedRun
 import type { WorkflowQueuedRunCancelResponse } from '../models/WorkflowQueuedRunCancelResponse.js';
 import type { WorkflowRunDiagnosticsResponse } from '../models/WorkflowRunDiagnosticsResponse.js';
 import type { WorkflowRunResponse } from '../models/WorkflowRunResponse.js';
+import type { WorkflowRunStartLookupResponse } from '../models/WorkflowRunStartLookupResponse.js';
 import type { WorkflowSchedulePreviewResponse } from '../models/WorkflowSchedulePreviewResponse.js';
 import type { WorkflowScheduleReplayRequest } from '../models/WorkflowScheduleReplayRequest.js';
 import type { WorkflowScheduleReplayResponse } from '../models/WorkflowScheduleReplayResponse.js';
@@ -1274,6 +1275,57 @@ export class WorkflowsService {
         403: `code: plan_workflows_quota | forbidden — the concurrent-run cap is exhausted or the caller lacks scope.`,
         404: `code: workflow_definition_not_found | app_not_found — the app or named live workflow definition does not exist.`,
         409: `Tenant-required apps need a tenant-scoped run route, or the Idempotency-Key was already used with different workflow input.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Find a retained workflow run by its original pipeline-tool start key.
+   * Reads the existing workflow admission binding for this app and workflow.
+   * A successful response contains only the native run ID. This operation
+   * applies to non-tenant pipeline-tool starts while the run is retained.
+   *
+   * @returns WorkflowRunStartLookupResponse An accepted run for this key.
+   * @throws ApiError
+   */
+  public static lookupWorkflowRunStart({
+    slug,
+    name,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Workflow name used for the original start.
+     */
+    name: string,
+    /**
+     * The pipeline tool start receipt's original native idempotency key.
+     */
+    idempotencyKey: string,
+  }): CancelablePromise<WorkflowRunStartLookupResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflows/run-starts/{name}',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: workflow_run_not_found | app_not_found — no retained scoped start matches this key.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

@@ -81,3 +81,39 @@ func (m *MemStore) WorkflowRunStarter(_ context.Context, runID string) (string, 
 	}
 	return starter, nil
 }
+
+// WorkflowRunStartLookup reads the account-app start binding for a retained run.
+type WorkflowRunStartLookup interface {
+	LookupWorkflowRunIDByStartKey(ctx context.Context, appID, workflowName, key string) (string, error)
+}
+
+// LookupWorkflowRunIDByStartKey returns only the ID in the non-tenant binding.
+func (s *PgStore) LookupWorkflowRunIDByStartKey(ctx context.Context, appID, workflowName, key string) (string, error) {
+	var id string
+	err := s.pool.QueryRow(ctx, `
+		SELECT id::text
+		FROM workflow_runs
+		WHERE app_id=$1 AND workflow_name=$2 AND platform_tenant_id IS NULL AND create_idempotency_key=$3
+	`, appID, workflowName, key).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrWorkflowRunNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("state: look up workflow start key: %w", err)
+	}
+	return id, nil
+}
+
+// LookupWorkflowRunIDByStartKey mirrors the PostgreSQL non-tenant lookup.
+func (m *MemStore) LookupWorkflowRunIDByStartKey(_ context.Context, appID, workflowName, key string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	entry, ok := m.workflowRunCreateKeys[workflowRunCreateKey{appID: appID, workflowName: workflowName, key: key}]
+	if !ok {
+		return "", ErrWorkflowRunNotFound
+	}
+	if _, ok = m.workflowRuns[entry.runID]; !ok {
+		return "", ErrWorkflowRunNotFound
+	}
+	return entry.runID, nil
+}

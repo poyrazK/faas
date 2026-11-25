@@ -5,6 +5,8 @@ import { NonRetryableError, type WorkflowContext } from './workflows.js';
 import { fileEventHash, fileEventUUID } from './file-events.js';
 import { createJobPipelineClient } from './job-pipeline-client.js';
 import { createClient } from './isolated-client-preview.js';
+import type { PipelineGateHandoff } from './pipeline-task-handoffs.js';
+import { pipelineToolSQL } from './pipeline-tool-protocol.js';
 import type { PipelineGateActor, PipelineGateChoice, PipelineGateIntent, PipelineGateKind, PipelineGateOutcome, PipelineGateRecord, PipelineGateView } from './pipeline-gate-types.js';
 export type * from './pipeline-gate-types.js';
 
@@ -12,12 +14,15 @@ export class PipelineGateError extends NonRetryableError {
   constructor(readonly code: 'invalid_input' | 'conflict' | 'forbidden' | 'inactive' | 'pending' | 'blocked' | 'wake_limit' | 'request_failed') { super('pipeline-gate:' + code); }
 }
 export interface PipelineGateOptions { readonly timeoutMs: number; readonly requiredRoles: readonly string[]; }
+type GateProposal = { state: PipelineGateChoice; actor_id: string | null; payload: unknown };
+
 export interface PipelineGateStore {
   open(intent: PipelineGateIntent, signal: AbortSignal): Promise<PipelineGateRecord>;
   /** Atomically expire using the database clock, then read. */
   resolve(id: string, signal: AbortSignal): Promise<PipelineGateRecord | null>;
   /** First decision wins; expiry and decision are one atomic statement. */
-  decide(id: string, binding: string, proposal: { state: PipelineGateChoice; actor_id: string | null; payload: unknown }, signal: AbortSignal): Promise<PipelineGateRecord>;
+  decide(id: string, binding: string, proposal: GateProposal, signal: AbortSignal): Promise<PipelineGateRecord>;
+  decideHandoff?(id: string, binding: string, proposal: GateProposal, handoff: PipelineGateHandoff, signal: AbortSignal): Promise<PipelineGateRecord>;
   mark(id: string, decision: PipelineGateOutcome<unknown>, delivery: 'delivered' | 'closed', signal: AbortSignal): Promise<void>;
   pending(limit: number, scope: PipelineScope, pipeline: string, contract: string, signal: AbortSignal): Promise<readonly PipelineGateRecord[]>;
   list(runId: string, ownerId: string, signal: AbortSignal): Promise<readonly PipelineGateRecord[]>;
@@ -74,6 +79,14 @@ export function postgresPipelineGateStore(query: PipelineQuery): PipelineGateSto
     async decide(id, binding, proposal, signal) {
       const values = await rows(`UPDATE public.gregale_pipeline_gates SET decision=CASE WHEN expires_at<=clock_timestamp() THEN ${expiry} ELSE $3::jsonb || jsonb_build_object('decided_at',${dateSQL('clock_timestamp()')}) END WHERE id=$1 AND intent->>'binding_sha256'=$2 AND decision IS NULL RETURNING ${returning}`, [id, binding, JSON.stringify(proposal)], signal);
       const r = values[0] ?? await resolve(id, signal); if (!r || r.intent.binding_sha256 !== binding) throw new PipelineGateError('conflict'); return r;
+    },
+    async decideHandoff(id, binding, proposal, handoff, signal) {
+      if (!['submitted', 'approved', 'rejected'].includes(proposal.state)) throw new PipelineGateError('forbidden');
+      const values = await rows(pipelineToolSQL.task_handoff_decide, [
+        id, binding, JSON.stringify(proposal), handoff.namespace, handoff.id, handoff.reviewer_hash, handoff.run_id,
+      ], signal);
+      if (values.length !== 1) throw new PipelineGateError('forbidden');
+      return values[0]!;
     },
     async mark(id, decision, delivery, signal) {
       const values = await rows(`UPDATE public.gregale_pipeline_gates SET delivery=$3 WHERE id=$1 AND decision=$2::jsonb RETURNING ${returning}`, [id, JSON.stringify(decision), delivery], signal);
@@ -146,20 +159,29 @@ export function createPipelineGateService<R, D, A>(options: {
     try { const value = await fn(signal); signal.throwIfAborted(); return value; }
     catch (e) { signal.throwIfAborted(); if (e instanceof PipelineGateError) throw e; throw new PipelineGateError('request_failed'); }
   });
-  return Object.freeze({
-    inspect: (id: string, auth: A, settings: { timeoutMs: number; signal?: AbortSignal }) => execute(settings, async signal => { const { r, actor, active } = await access(id, 'inspect', auth, signal); return view(r, active ? actor : undefined); }),
-    decide: (id: string, request: { binding_sha256: string; state: 'approved' | 'rejected' | 'submitted' | 'cancelled'; payload?: D }, auth: A, settings: { timeoutMs: number; signal?: AbortSignal }) => execute(settings, async signal => {
+  type GateRequest = { binding_sha256: string; state: 'approved' | 'rejected' | 'submitted' | 'cancelled'; payload?: D };
+  type GateSettings = { timeoutMs: number; signal?: AbortSignal };
+  const decide = (id: string, request: GateRequest, auth: A, settings: GateSettings, handoff?: PipelineGateHandoff) => execute(settings, async signal => {
       const { r, actor } = await access(id, 'decide', auth, signal);
       if (request.binding_sha256 !== r.intent.binding_sha256 || !['approved', 'rejected', 'submitted', 'cancelled'].includes(request.state) || request.state !== 'cancelled' && (r.intent.kind === 'approval' ? request.state === 'submitted' : request.state !== 'submitted')) throw new PipelineGateError('conflict');
       const proposal = { state: request.state, actor_id: actor.actor_id, payload: request.state === 'cancelled' ? null : contract.output(request.payload) };
       if (Buffer.byteLength(JSON.stringify(proposal.payload)) > 16384) throw new PipelineGateError('invalid_input');
-      const saved = owned(await store.decide(id, request.binding_sha256, proposal, signal)); signal.throwIfAborted();
+      if (handoff && (!store.decideHandoff || request.state === 'cancelled')) throw new PipelineGateError('forbidden');
+      const saved = owned(await (handoff
+        ? store.decideHandoff!(id, request.binding_sha256, proposal, handoff, signal)
+        : store.decide(id, request.binding_sha256, proposal, signal)));
+      signal.throwIfAborted();
       const d = saved.decision;
       if (!d || d.state !== proposal.state || d.actor_id !== proposal.actor_id || jobValueHash(d.payload) !== jobValueHash(proposal.payload)) throw new PipelineGateError('conflict');
       // A durable decision survives uncertain event delivery. drain() recovers it.
       try { await deliver(saved, signal); } catch { signal.throwIfAborted(); }
       return view(owned((await store.resolve(id, signal))!));
-    }),
+    });
+  return Object.freeze({
+    inspect: (id: string, auth: A, settings: { timeoutMs: number; signal?: AbortSignal }) => execute(settings, async signal => { const { r, actor, active } = await access(id, 'inspect', auth, signal); return view(r, active ? actor : undefined); }),
+    decide: (id: string, request: GateRequest, auth: A, settings: GateSettings) => decide(id, request, auth, settings),
+    decideHandoff: (id: string, request: GateRequest, auth: A, handoff: PipelineGateHandoff, settings: GateSettings) =>
+      decide(id, request, auth, settings, handoff),
     drain: (limit: number, settings: { timeoutMs: number; signal?: AbortSignal }) => execute(settings, async signal => {
       let delivered = 0;
       for (const raw of await store.pending(limit, scope, options.pipelineSha256, contract.sha256, signal)) {
