@@ -458,6 +458,7 @@ from .create_binding_verification_run_request_service_targets import CreateBindi
 from .create_cors_preset_request import CreateCorsPresetRequest
 from .create_cron_request import CreateCronRequest
 from .create_custom_domain_request import CreateCustomDomainRequest
+from .create_data_api_inspection_request import CreateDataAPIInspectionRequest
 from .create_database_switch_request import CreateDatabaseSwitchRequest
 from .create_deploy_token_request import CreateDeployTokenRequest
 from .create_deploy_token_request_scopes_item import CreateDeployTokenRequestScopesItem
@@ -552,6 +553,11 @@ from .custom_stage import CustomStage
 from .daily_usage_list_response import DailyUsageListResponse
 from .daily_usage_point import DailyUsagePoint
 from .daily_usage_response import DailyUsageResponse
+from .data_api_inspection_response import DataAPIInspectionResponse
+from .data_api_inspection_response_binding_identity import DataAPIInspectionResponseBindingIdentity
+from .data_api_inspection_response_binding_identity_status import DataAPIInspectionResponseBindingIdentityStatus
+from .data_api_inspection_response_observation import DataAPIInspectionResponseObservation
+from .data_api_inspection_response_task_status import DataAPIInspectionResponseTaskStatus
 from .database_switch import DatabaseSwitch
 from .database_switch_drain import DatabaseSwitchDrain
 from .database_switch_list import DatabaseSwitchList
@@ -3665,6 +3671,7 @@ __all__ = (
     "CreateCorsPresetRequest",
     "CreateCronRequest",
     "CreateCustomDomainRequest",
+    "CreateDataAPIInspectionRequest",
     "CreateDatabaseSwitchRequest",
     "CreateDeploymentFilesBody",
     "CreateDeploymentFilesBodyKind",
@@ -3753,6 +3760,11 @@ __all__ = (
     "DailyUsageListResponse",
     "DailyUsagePoint",
     "DailyUsageResponse",
+    "DataAPIInspectionResponse",
+    "DataAPIInspectionResponseBindingIdentity",
+    "DataAPIInspectionResponseBindingIdentityStatus",
+    "DataAPIInspectionResponseObservation",
+    "DataAPIInspectionResponseTaskStatus",
     "DatabaseSwitch",
     "DatabaseSwitchDrain",
     "DatabaseSwitchList",

@@ -231,6 +231,37 @@ export class ManagedPostgresService {
     });
   }
   /**
+   * Inspect public-schema metadata for a Data API connection.
+   * Requires data:read (or admin) and MFA. Runs a fixed catalog-only
+   * statement as the provider-managed read-only query identity, in a
+   * bounded read-only transaction. No request body, customer table rows,
+   * SQL expressions or credentials are returned. The query identity may
+   * be created or refreshed and a suspended database can wake. Results
+   * describe that identity, not a future Data API binding. At most 1000
+   * rows and 1 MiB of values are returned; truncated marks partial results.
+   * Cache-Control no-store.
+   *
+   * @returns ManagedPostgresQueryResponse Bounded public-schema catalog metadata.
+   * @returns Problem Invalid request, unavailable database, insufficient access, unsupported backend or rate limit.
+   * @throws ApiError
+   */
+  public static previewManagedPostgresDataApiCatalog({
+    id,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ManagedPostgresQueryResponse | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/data-api-catalog-preview',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
    * Undelete a managed PostgreSQL database
    * Returns a database whose delete is scheduled to ready, with its data, spec and restore history, while restorable_until is in the future. The plan must still allow the database's spec. After the window the database is gone and the request returns 404.
    * @returns ManagedPostgresDatabase Database returned to ready
