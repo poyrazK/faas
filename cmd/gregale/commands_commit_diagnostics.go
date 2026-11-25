@@ -84,22 +84,22 @@ func diagnoseCommitSource(source api.CommitSourceResponse, now time.Time) commit
 	if !source.Enabled {
 		enabled.State, enabled.Code, enabled.Action = "fail", "paused", "Resume the source when its destination is ready."
 	}
-	policy := commitwork.DiagnosticCheck{Name: "operation_policy", State: "pass", Code: "bound"}
-	if source.OperationPolicy == "" && source.Destination != "event" {
-		policy.State, policy.Code, policy.Action = "fail", "legacy_source", "Create a source bound to an active account-scoped queue policy."
+	report.Checks = append(report.Checks, enabled)
+	if source.PollIntervalMS == 0 {
+		policy := commitwork.DiagnosticCheck{Name: "operation_policy", State: "pass", Code: "bound"}
+		if source.OperationPolicy == "" && source.Destination != "event" {
+			policy.State, policy.Code, policy.Action = "fail", "legacy_source", "Create a source bound to an active account-scoped queue policy."
+		}
+		report.Checks = append(report.Checks, policy)
 	}
 	health := commitwork.DiagnosticCheck{Name: "scheduler_observation", State: "pass", Code: source.RelayStatus}
-	if !commitObservationFresh(source.LastCheckedAt, now) {
+	if !commitwork.ObservationFresh(source.LastCheckedAt, now, source.PollIntervalMS) {
 		health.State, health.Code, health.Action = "unknown", "observation_stale", "Check that the scheduler relay is enabled and visiting this source; wait for a fresh observation."
 	} else if source.RelayStatus != "healthy" {
 		health.State, health.Action = "fail", commitRecoveryAction(source.RelayStatus)
 	}
-	report.Checks = []commitwork.DiagnosticCheck{enabled, policy, health}
+	report.Checks = append(report.Checks, health)
 	return report
-}
-
-func commitObservationFresh(checked *time.Time, now time.Time) bool {
-	return checked != nil && !checked.After(now.Add(time.Minute)) && now.Sub(*checked) <= commitwork.ObservationMaxAge
 }
 
 func commitRecoveryAction(code string) string {
@@ -114,6 +114,8 @@ func commitRecoveryAction(code string) string {
 		return "Check the owner-controlled source binding; each database supports one source."
 	case "blocked_events":
 		return "Inspect blocked events, correct unaccepted rows and request replay."
+	case "replay_pending":
+		return "Inspect pending replays and event leases. The relay retries deferred replays on later source polls."
 	case "handoff_pending":
 		return "Check destination readiness, Operations capacity and platform database health."
 	case "healthy":
@@ -207,14 +209,20 @@ func inspectCommitEvent(ctx context.Context, client commitReadClient, sourceID, 
 	if err != nil {
 		return out, err
 	}
+	sourceFresh := commitwork.ObservationFresh(source.LastCheckedAt, now, source.PollIntervalMS)
+	blockedObserved := source.RelayStatus == "blocked_events" ||
+		(source.RelayStatus == "replay_pending" && source.BlockedEvents != nil && *source.BlockedEvents > 0)
 	for _, item := range blocked.Items {
 		if item.EventID == event {
 			out.Blocked = &item
 			out.DatabaseCommit = "observed"
 			out.Observation = "The relay previously observed this committed row; the blocked snapshot may be stale."
-			if commitObservationFresh(&item.ObservedAt, now) && commitObservationFresh(source.LastCheckedAt, now) && source.RelayStatus == "blocked_events" {
+			if sourceFresh && blockedObserved && commitwork.ObservationFresh(&item.ObservedAt, now, source.PollIntervalMS) {
 				out.Acceptance = "blocked"
 				out.Action = "Correct the unaccepted source row and request replay with the same event ID."
+				if item.Code == "event_schema_rejected" {
+					out.Action = "Check the event's registered schema version and payload, correct the unaccepted row or schema configuration, and request replay with the same event ID."
+				}
 				return out, nil
 			}
 		}
@@ -222,7 +230,7 @@ func inspectCommitEvent(ctx context.Context, client commitReadClient, sourceID, 
 	out.Action = commitRecoveryAction(source.RelayStatus)
 	if !source.Enabled {
 		out.Action = "The source is paused; resume it when the destination is ready."
-	} else if !commitObservationFresh(source.LastCheckedAt, now) {
+	} else if !sourceFresh {
 		out.Action = "Source observation is stale or absent; check scheduler relay health."
 	}
 	return out, nil

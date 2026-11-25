@@ -4198,6 +4198,23 @@
     "kind": "operational"
   },
   {
+    "table": "commit_receipt_usage",
+    "columns": [
+      "initialized",
+      "payload_json_bytes",
+      "receipt_count",
+      "reconcile_token",
+      "reconciled_at",
+      "retry_at",
+      "scan_count",
+      "scan_cursor",
+      "scan_in_progress",
+      "scan_payload_json_bytes",
+      "shard"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "commit_receipts",
     "columns": [
       "accepted_at",
@@ -4225,6 +4242,7 @@
       "account_id",
       "event_id",
       "generation",
+      "next_attempt_at",
       "requested_at",
       "source_id",
       "state"
@@ -4239,6 +4257,8 @@
       "app_id",
       "blocked_events",
       "changes_feeds",
+      "cleanup_eligible_events",
+      "cleanup_observed_at",
       "contract_version",
       "created_at",
       "credential_revision",
@@ -4253,6 +4273,12 @@
       "pending_events",
       "poll_interval_ms",
       "queue_name",
+      "relay_connect_ms",
+      "relay_connect_observed_at",
+      "relay_next_poll_at",
+      "relay_poll_backoff_ms",
+      "relay_poll_token",
+      "relay_reserved_deferred_check_at",
       "relay_status",
       "sealed_connection"
     ],

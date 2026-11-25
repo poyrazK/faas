@@ -123,7 +123,12 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 	// keeps its own toolchain on the app's base even with the shared runtime
 	// on (ADR-20261029103512); TestSharedRuntimeRollbackMetal covers the
 	// shared runner base.
-	h := e2etest.Start(t, pool, e2etest.All, commitOperationEnvironment(t, "FAAS_COMMIT_API_ENABLED=true")...)
+	env := commitOperationEnvironment(t, "FAAS_COMMIT_API_ENABLED=true")
+	consumerSQLIP := os.Getenv("GREGALE_COMMIT_NATIVE_SQL_IP")
+	if consumerSQLIP != "" {
+		env = append(env, secretSealingEnv(t)...)
+	}
+	h := e2etest.Start(t, pool, e2etest.All, env...)
 	key := h.SeedAccount(context.Background(), api.PlanHobby)
 
 	// Hobby defaults to require_authn=true post #695 / ADR-080. The wake
@@ -513,49 +518,22 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 			t.Errorf("vmmd log missing 'restore failed, falling back to cold boot' line; the warn at pkg/fcvm/manager.go:2368 didn't fire — fallback path regressed")
 		}
 
-		// The failed capture is quarantined immediately. A healthy replacement
-		// is captured at the next park, rather than during the serving wake.
-		mctx, mcancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer mcancel()
+		// The failed capture is quarantined immediately.
+		store := state.NewPgStore(pool)
 		var badStale bool
-		if err := pool.QueryRow(mctx, `select stale from snapshots where id=$1`, snapshot.ID).Scan(&badStale); err != nil || !badStale {
+		if err := pool.QueryRow(t.Context(), `select stale from snapshots where id=$1`, snapshot.ID).Scan(&badStale); err != nil || !badStale {
 			t.Fatalf("failed capture was not marked stale: stale=%v err=%v", badStale, err)
 		}
-		// Parking the replacement captures a fresh snapshot. When that outlasts
-		// apid's 5 s drain wait (6 s for 512 MB on n2), park answers a
-		// retryable 503 while the capture finishes.
-		raw, status := doReq(t, h, key, http.MethodPost, "/v1/apps/srcdeploy/park", nil)
-		if status == http.StatusServiceUnavailable {
-			t.Logf("park replacement: status=%d body=%s; retrying once", status, raw)
-			time.Sleep(5 * time.Second)
-			raw, status = doReq(t, h, key, http.MethodPost, "/v1/apps/srcdeploy/park", nil)
+		// Idle parking keeps the app active, so schedd can discard the used
+		// VM and boot a clean replacement for capture (ADR-20261115113000).
+		// Wait for publication before checking that the refresh VM has parked.
+		freshID := waitAfterRestoreSnapshot(t, store, depID, snapshot.ID)
+		parkCtx, cancelPark := context.WithTimeout(t.Context(), 30*time.Second)
+		defer cancelPark()
+		if _, err := waitForSourceAppParked(parkCtx, h, appID, 25*time.Second); err != nil {
+			t.Fatalf("clean recapture %s did not park: %v", freshID, err)
 		}
-		if status != http.StatusNoContent {
-			t.Fatalf("park replacement: status=%d body=%s", status, raw)
-		}
-		if _, err := waitForSourceAppParked(mctx, h, appID, 25*time.Second); err != nil {
-			t.Fatalf("replacement did not park: %v", err)
-		}
-		// Snapshot publication follows the PARKED transition asynchronously.
-		waitAfterRestoreSnapshot(t, state.NewPgStore(pool), depID, snapshot.ID)
-		var staleAfter, freshAfter int
-		if err := pool.QueryRow(mctx,
-			`select count(*) from snapshots where deployment_id = $1 and stale = true`, depID,
-		).Scan(&staleAfter); err != nil {
-			t.Fatalf("count stale snapshots: %v", err)
-		}
-		if err := pool.QueryRow(mctx,
-			`select count(*) from snapshots where deployment_id = $1 and stale = false`, depID,
-		).Scan(&freshAfter); err != nil {
-			t.Fatalf("count non-stale snapshots: %v", err)
-		}
-		if staleAfter == 0 {
-			t.Errorf("no stale snapshot rows after restore-fail wake; schedd's MarkSnapshotStale branch at engine.go:1568-1578 didn't fire")
-		}
-		if freshAfter == 0 {
-			t.Error("no fresh non-stale snapshot rows after parking the replacement")
-		}
-		t.Logf("vmmd-restore-fail-fallback: snapshots stale=%d fresh=%d", staleAfter, freshAfter)
+		t.Logf("vmmd-restore-fail-fallback: replaced stale snapshot %s with %s", snapshot.ID, freshID)
 		body, repairedWakeID, status := doGetWithHostCapturingWakeID(t, client, url, "srcdeploy.apps.test.example", 60*time.Second)
 		if status != http.StatusOK || strings.TrimSpace(string(body)) != sourceDeployHelloBody || repairedWakeID == "" || repairedWakeID == wakeID {
 			t.Fatalf("replacement snapshot wake: status=%d wake_id=%q body=%s", status, repairedWakeID, body)
@@ -636,41 +614,86 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 		t.Logf("idempotent-replay: same dep=%s; deployments=%d before, %d after", depID, beforeCount, afterCount)
 	})
 
-	// Commit must wake the actual deployed microVM after the customer producer
-	// dies. Exercise both runtime paths independently of public HTTP probes.
+	// Each Commit profile starts with a separately deployed Node app and its
+	// own init snapshot, independent of the earlier corruption and each other.
 	for _, profile := range []struct {
 		name, method string
-		stale        bool
+		coldBoot     bool
 	}{
 		{"commit-snapshot-wake", "restore", false},
 		{"commit-cold-boot-wake", "cold_boot", true},
 	} {
 		t.Run(profile.name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-			defer cancel()
-			if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/srcdeploy/park", nil); status != http.StatusNoContent {
-				t.Fatalf("park: %d", status)
+			defer h.DumpLogs(t)
+			if got := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: profile.name, Type: "app", RequireAuthn: &falsy}); got != http.StatusCreated {
+				t.Fatalf("create Commit wake app: status=%d", got)
 			}
-			if _, err := waitForSourceAppParked(ctx, h, appID, 30*time.Second); err != nil {
+			commitAppID := mustGetAppID(t, h, key, profile.name)
+			setAppIdleTimeout(t, h, key, profile.name, api.IdleTimeoutFloorSeconds)
+			parkURL := "/v1/apps/" + profile.name + "/park"
+			t.Cleanup(func() {
+				if _, status := doReq(t, h, key, http.MethodPost, parkURL, nil); status != http.StatusNoContent {
+					t.Errorf("cleanup Commit wake app: park status=%d", status)
+				}
+			})
+			body, status := postMultipartDeployment(t, h, key, profile.name, sourceTar, false, "")
+			if status != http.StatusAccepted {
+				t.Fatalf("create Commit wake deployment: status=%d body=%s", status, body)
+			}
+			commitDepID, commitBuildID := parseQueuedDeployment(t, body)
+			deployCtx, cancelDeploy := context.WithTimeout(t.Context(), sourceDeployCtxTimeout())
+			defer cancelDeploy()
+			dep, build, err := e2etest.WaitForSourceDeployment(deployCtx, t, pool, commitDepID, e2etest.DefaultBuildStallWindow, e2etest.DefaultBuildCeiling)
+			if err != nil {
+				t.Fatalf("Commit wake deployment %s did not reach live: %v", commitDepID, err)
+			}
+			if dep.AppID != commitAppID || build.ID != commitBuildID {
+				t.Fatalf("Commit wake deployment %s has app %s and build %s, want %s and %s", commitDepID, dep.AppID, build.ID, commitAppID, commitBuildID)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			if _, err := waitForSourceAppParked(ctx, h, commitAppID, 25*time.Second); err != nil {
 				t.Fatal(err)
 			}
-			if profile.stale {
-				tag, err := pool.Exec(ctx, `UPDATE snapshots SET fc_version='commit-incompatible-version' WHERE deployment_id=$1 AND NOT stale`, depID)
+			store := state.NewPgStore(pool)
+			snapshot, err := store.LatestSnapshotForTier(ctx, commitDepID, state.SnapshotTierInit)
+			if err != nil {
+				t.Fatalf("Commit wake precondition: no usable init snapshot for %s: %v", commitDepID, err)
+			}
+			if version := os.Getenv("FAAS_TEST_FC_VERSION"); version != "" && snapshot.FCVersion != version {
+				t.Fatalf("Commit wake precondition: snapshot %s has Firecracker version %q, want %q", snapshot.ID, snapshot.FCVersion, version)
+			}
+			if profile.coldBoot {
+				const incompatibleVersion = "commit-incompatible-version"
+				tag, err := pool.Exec(ctx, `UPDATE snapshots SET fc_version=$2 WHERE id=$1 AND NOT stale`, snapshot.ID, incompatibleVersion)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if tag.RowsAffected() == 0 {
-					t.Fatal("no usable snapshot to force incompatible for Commit cold boot")
+				if tag.RowsAffected() != 1 {
+					t.Fatalf("could not make snapshot %s incompatible for Commit cold boot", snapshot.ID)
 				}
+				t.Cleanup(func() {
+					if _, err := pool.Exec(context.Background(), `UPDATE snapshots SET fc_version=$2 WHERE id=$1 AND fc_version=$3`, snapshot.ID, snapshot.FCVersion, incompatibleVersion); err != nil {
+						t.Error(err)
+					}
+				})
 			}
-			completed := runCommitProducerHandoff(t, h, state.NewPgStore(pool), key, appID, profile.name)
+			completed := runCommitProducerHandoff(t, h, store, key, commitAppID, profile.name)
+			wakeCtx, cancelWake := context.WithTimeout(t.Context(), 15*time.Second)
+			defer cancelWake()
 			var wakeID string
-			if err := pool.QueryRow(ctx, `SELECT wake_id::text FROM instances WHERE id=$1`, commitOperationInstance(t, completed)).Scan(&wakeID); err != nil {
+			if err := pool.QueryRow(wakeCtx, `SELECT wake_id::text FROM instances WHERE id=$1 AND app_id=$2 AND deployment_id=$3`, commitOperationInstance(t, completed), commitAppID, commitDepID).Scan(&wakeID); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := e2etest.WaitForWakeMethod(ctx, t, pool, wakeID, profile.method, 10*time.Second); err != nil {
+			if _, err := e2etest.WaitForWakeMethod(wakeCtx, t, pool, wakeID, profile.method, 10*time.Second); err != nil {
 				t.Fatalf("Commit wake method: %v", err)
 			}
+		})
+	}
+
+	if consumerSQLIP != "" {
+		t.Run("commit-consumer-crash-recovery", func(t *testing.T) {
+			runNativeCommitConsumerCrashRecovery(t, h, consumerSQLIP)
 		})
 	}
 
@@ -799,8 +822,8 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 	// deprecated multipart endpoint the chain above uses. Redeploy the same
 	// fixture through it and require the new deployment to go live and serve
 	// through the gateway, so the CLI's default source path is covered on a
-	// real builder microVM and wake. It runs last because the commit wake
-	// subtests above pin snapshots to the first deployment.
+	// real builder microVM and wake. Run it after the checks on the original
+	// deployment because it replaces that deployment.
 	t.Run("resumable-upload-redeploy", func(t *testing.T) {
 		defer h.DumpLogs(t)
 		body, status := uploadSourceDeployment(t, h, key, "srcdeploy", sourceTar)

@@ -162,6 +162,28 @@ groups:
           summary: "Commit relay observations are unavailable"
           description: "No reporting scheduler can read the shared Commit health ledger. Check the platform PostgreSQL connection and scheduler health; backlog totals are unavailable."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
+      - alert: FaasCommitReceiptUsageReconciliationStalled
+        expr: max(schedd_commit_receipt_usage_reconciliation_current) == 0
+        for: 1h
+        labels:
+          severity: warn
+          component: schedd
+          family: commit
+        annotations:
+          summary: "Commit receipt usage reconciliation is incomplete"
+          description: "Receipt usage backfill is incomplete, a reconciliation is overdue, or the usage ledger cannot be sampled. Check scheduler health and PostgreSQL before trusting receipt usage metrics."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
+      - alert: FaasCommitReceiptStorageGrowing
+        expr: (max(delta(schedd_commit_receipt_payload_json_bytes[6h])) > 10485760) and (max(min_over_time(schedd_commit_receipt_storage_sample_success[6h])) == 1)
+        for: 1h
+        labels:
+          severity: warn
+          component: schedd
+          family: commit
+        annotations:
+          summary: "Commit receipt payload storage is growing"
+          description: "Receipt payload JSON text grew by more than 10 MiB over six hours. Review receipt growth and capacity. The measurement excludes other columns and indexes."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
   - name: faas_realtime_callbacks
     interval: 30s
     rules:

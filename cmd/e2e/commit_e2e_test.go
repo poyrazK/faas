@@ -10,12 +10,16 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -53,6 +57,9 @@ func TestE2E_CommitProducerDeathReachesCompletedOperation(t *testing.T) {
 type commitHandoffOptions struct {
 	SourceRecovery, RelayFaults bool
 	RepairPoison                *func(context.Context, string) error
+	LoadFixture                 *commitConsumerLoadFixture
+	StopFixturePeer             *func()
+	TrackCommitTimestamps       bool
 }
 
 func runCommitProducerHandoff(t *testing.T, h *e2etest.Harness, store *state.PgStore, key, appID, sourceName string, options ...commitHandoffOptions) state.ExclusiveOperation {
@@ -69,6 +76,14 @@ func runCommitProducerHandoff(t *testing.T, h *e2etest.Harness, store *state.PgS
 	cluster := pgtest.OpenTLSCluster(t)
 	customer := cluster.Admin
 	ctx := context.Background()
+	if len(options) > 0 && options[0].TrackCommitTimestamps {
+		if _, err := customer.Exec(ctx, `ALTER SYSTEM SET track_commit_timestamp = 'on'`); err != nil {
+			t.Fatal(err)
+		}
+		cluster.Stop()
+		customer.Reset()
+		cluster.Start()
+	}
 	if _, err := customer.Exec(ctx, commitwork.Schema); err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +118,24 @@ func runCommitProducerHandoff(t *testing.T, h *e2etest.Harness, store *state.PgS
 	if err != nil {
 		t.Fatal(err)
 	}
-	blob, err := commitwork.SealConnection(identity.Recipient(), src.ID, cluster.URL("relay", "producer-death-fixture"))
+	relayPassword := "producer-death-fixture"
+	if len(options) > 0 && options[0].LoadFixture != nil {
+		*options[0].LoadFixture = commitConsumerLoadFixture{
+			customer: customer, source: src, relayLog: cluster.Log,
+			sealRelay: func(sourceID, database string, port uint16) ([]byte, error) {
+				dsn, err := url.Parse(cluster.URL("relay", relayPassword))
+				if err != nil {
+					return nil, err
+				}
+				dsn.Path = "/" + database
+				if port != 0 {
+					dsn.Host = net.JoinHostPort(dsn.Hostname(), strconv.Itoa(int(port)))
+				}
+				return commitwork.SealConnection(identity.Recipient(), sourceID, dsn.String())
+			},
+		}
+	}
+	blob, err := commitwork.SealConnection(identity.Recipient(), src.ID, cluster.URL("relay", relayPassword))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,6 +284,7 @@ func runCommitProducerHandoff(t *testing.T, h *e2etest.Harness, store *state.PgS
 		if _, err := customer.Exec(ctx, `ALTER ROLE relay PASSWORD 'rotated-producer-death-fixture'`); err != nil {
 			t.Fatal(err)
 		}
+		relayPassword = "rotated-producer-death-fixture"
 		cluster.Stop()
 	}
 	body, status := doReq(t, h, key, http.MethodPatch, "/v1/commit-sources/"+src.ID, map[string]bool{"enabled": true})
@@ -259,8 +292,8 @@ func runCommitProducerHandoff(t *testing.T, h *e2etest.Harness, store *state.PgS
 		t.Fatalf("resume source: %d %s", status, body)
 	}
 	if recoverSource {
-		first := waitCommitSourceHealth(t, h, key, src.ID, "database_unavailable", time.Time{})
-		second := waitCommitSourceHealth(t, h, key, src.ID, "database_unavailable", *first.LastCheckedAt)
+		first := waitCommitSourceHealth(t, ctx, h, key, src.ID, "database_unavailable", time.Time{})
+		second := waitCommitSourceHealth(t, ctx, h, key, src.ID, "database_unavailable", *first.LastCheckedAt)
 		if second.PendingEvents != nil || second.BlockedEvents != nil || second.OldestPendingAt != nil {
 			t.Fatalf("source outage reported a known backlog: %+v", second)
 		}
@@ -271,11 +304,11 @@ func runCommitProducerHandoff(t *testing.T, h *e2etest.Harness, store *state.PgS
 		customer.Reset()
 		// The old sealed password remains configured. A fresh source pass must
 		// still fail after the database recovers, rather than skipping TLS/auth.
-		waitCommitSourceHealth(t, h, key, src.ID, "database_unavailable", *second.LastCheckedAt)
+		waitCommitSourceHealth(t, ctx, h, key, src.ID, "database_unavailable", *second.LastCheckedAt)
 		if _, err := store.CommitReceiptByEvent(ctx, src.AccountID, src.ID, eventID); !errors.Is(err, state.ErrNotFound) {
 			t.Fatalf("retired source credential accepted work: %v", err)
 		}
-		rotated, err := commitwork.SealConnection(identity.Recipient(), src.ID, cluster.URL("relay", "rotated-producer-death-fixture"))
+		rotated, err := commitwork.SealConnection(identity.Recipient(), src.ID, cluster.URL("relay", relayPassword))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -295,7 +328,15 @@ func runCommitProducerHandoff(t *testing.T, h *e2etest.Harness, store *state.PgS
 			break
 		}
 		if !errors.Is(err, state.ErrNotFound) || time.Now().After(deadline) {
-			t.Fatalf("scheduler did not accept committed event: %v", err)
+			probeCtx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			health, healthErr := store.CommitSourceByID(probeCtx, src.AccountID, src.ID)
+			var attempts int
+			var blockedCode string
+			outboxErr := customer.QueryRow(probeCtx, `SELECT attempts, COALESCE(blocked_code,'')
+ FROM public.gregale_outbox WHERE event_id=$1::uuid`, eventID).Scan(&attempts, &blockedCode)
+			cancel()
+			t.Fatalf("scheduler did not accept committed event: %v (source status=%q, observed=%t, source error=%T, outbox attempts=%d, blocked code=%q, outbox error=%T)",
+				err, health.RelayStatus, health.LastCheckedAt != nil, healthErr, attempts, blockedCode, outboxErr)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -336,6 +377,12 @@ func runCommitProducerHandoff(t *testing.T, h *e2etest.Harness, store *state.PgS
 		if _, err := customer.Exec(ctx, `UPDATE public.gregale_outbox SET lease_until=clock_timestamp()-interval '1 second' WHERE accepted_at IS NULL`); err != nil {
 			t.Fatal(err)
 		}
+		// Expire the killed scheduler's source lease as well, so competing
+		// schedulers can exercise recovery within this fixture's deadline.
+		if _, err := h.Pool.Exec(ctx, `UPDATE commit_sources SET relay_next_poll_at=clock_timestamp()-interval '1 second',
+ last_checked_at=clock_timestamp()-interval '1 minute' WHERE id=$1::uuid`, src.ID); err != nil {
+			t.Fatal(err)
+		}
 		t.Setenv("PGSSLROOTCERT", cluster.CAPath)
 		peer := &commitmanaged.Manager{Store: store, Identities: []*age.X25519Identity{identity}, Policy: commitwork.NetworkPolicy{
 			Hosts: map[string]bool{"localhost": true}, Prefixes: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")},
@@ -343,7 +390,11 @@ func runCommitProducerHandoff(t *testing.T, h *e2etest.Harness, store *state.PgS
 		peerCtx, cancelPeer := context.WithCancel(t.Context())
 		peerDone := make(chan error, 1)
 		go func() { peerDone <- peer.Run(peerCtx) }()
-		t.Cleanup(func() { cancelPeer(); <-peerDone })
+		stopPeer := sync.OnceFunc(func() { cancelPeer(); <-peerDone })
+		t.Cleanup(stopPeer)
+		if options[0].StopFixturePeer != nil {
+			*options[0].StopFixturePeer = stopPeer
+		}
 		if err := h.RestartSchedd(); err != nil {
 			t.Fatal(err)
 		}
@@ -477,11 +528,11 @@ func commitOperationInstance(t *testing.T, operation state.ExclusiveOperation) s
 	return parts[0]
 }
 
-func waitCommitSourceHealth(t *testing.T, h *e2etest.Harness, key, source, want string, after time.Time) api.CommitSourceResponse {
+func waitCommitSourceHealth(t *testing.T, ctx context.Context, h *e2etest.Harness, key, source, want string, after time.Time) api.CommitSourceResponse {
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
 	for {
-		body, code := doReq(t, h, key, http.MethodGet, "/v1/commit-sources/"+source, nil)
+		body, code := doReqContext(t, ctx, h, key, http.MethodGet, "/v1/commit-sources/"+source, nil)
 		var health api.CommitSourceResponse
 		if code != http.StatusOK || json.Unmarshal(body, &health) != nil {
 			t.Fatalf("source health API: %d %s", code, body)
