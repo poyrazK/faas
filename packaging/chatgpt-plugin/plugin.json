@@ -1,0 +1,108 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "gregale",
+  "version": "0.1.0",
+  "description": "Deploy, check, diagnose and roll back Gregale apps through Gregale's hosted MCP server.",
+  "author": {
+    "name": "Gregale",
+    "email": "support@gregale.dev",
+    "url": "https://gregale.dev"
+  },
+  "homepage": "https://gregale.dev/docs/agents",
+  "repository": "https://github.com/poyrazK/faas",
+  "keywords": [
+    "gregale",
+    "deploy",
+    "hosting",
+    "backend",
+    "serverless",
+    "fastapi",
+    "nodejs",
+    "rollback",
+    "logs"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Gregale",
+        "shortDescription": "Deploy and run backend apps",
+        "longDescription": "Gregale runs backend apps in microVMs that pause when idle and wake on the next request. With this plugin, ChatGPT and Codex can deploy code they write for you, check that the new release answers, read an app's health, errors and logs, roll back a broken release, and guide you through moving an app from another host.\n\nWhen you connect, you sign in to Gregale or sign up, then choose what ChatGPT may do and which apps it may use. Changes to a serving app are shown as a plan before they are applied, and some need your approval in Gregale. ChatGPT never sees your secrets: it asks you to enter them on a one-time Gregale page.\n\nChatGPT deploys small projects by sending their files, up to 200 files and 96 KiB. Codex can upload larger projects, and the Gregale CLI deploys any project.",
+        "developerName": "Gregale",
+        "category": "Developer Tools",
+        "capabilities": [
+          "Read",
+          "Write"
+        ],
+        "websiteURL": "https://gregale.dev",
+        "supportURL": "https://gregale.dev/contact",
+        "privacyPolicyURL": "https://gregale.dev/privacy",
+        "termsOfServiceURL": "https://gregale.dev/terms",
+        "defaultPrompt": [
+          "Deploy a small FastAPI API to Gregale and give me its URL.",
+          "Why is my Gregale app failing? Check its health, errors and logs.",
+          "Roll back my Gregale app to its previous release."
+        ],
+        "brandColor": "#006F40",
+        "brandColorDark": "#00CE91",
+        "composerIcon": "./assets/logo.png",
+        "logo": "./assets/logo.png"
+      },
+      "onboardingSkill": "./skills/get-started/SKILL.md",
+      "review": {
+        "test_cases": {
+          "positive": [
+            {
+              "description": "Deploy a new app from files ChatGPT writes",
+              "prompt": "Write a FastAPI hello-world API and deploy it to Gregale as hello-api.",
+              "tools_triggered": "gregale_context, gregale_plan_upload_deploy, gregale_apply_upload_deploy, gregale_wait_deployment, gregale_verify_application_response",
+              "expected_behavior": "Writes main.py and requirements.txt that listen on 0.0.0.0 and $PORT, shows the deploy plan, applies it, waits until the deployment is live, checks that GET / answers 2xx and reports the app's URL."
+            },
+            {
+              "description": "List apps and their health",
+              "prompt": "List my Gregale apps and tell me which ones are healthy.",
+              "tools_triggered": "gregale_list_apps, gregale_get_health",
+              "expected_behavior": "Lists the apps the connection may use and reports each one's health from Gregale, without guessing for apps it could not read."
+            },
+            {
+              "description": "Diagnose a failing app",
+              "prompt": "Why is hello-api returning errors?",
+              "tools_triggered": "gregale_get_app, gregale_get_health, gregale_list_app_deployments, gregale_list_error_groups, gregale_get_logs",
+              "expected_behavior": "Reads the app's health, recent deployments, error groups and error logs, states the most likely cause with its evidence, and proposes a fix without changing anything."
+            },
+            {
+              "description": "Roll back a release",
+              "prompt": "Roll back hello-api to its previous release.",
+              "tools_triggered": "gregale_list_app_deployments, gregale_plan_rollback, gregale_apply_rollback, gregale_get_rollback",
+              "expected_behavior": "Shows which release it will roll back to, asks the user to confirm, applies the rollback plan and reports when the previous release serves traffic."
+            },
+            {
+              "description": "Plan a move from another host",
+              "prompt": "How do I move my Railway app to Gregale?",
+              "tools_triggered": "gregale_search_docs, gregale_get_docs_page",
+              "expected_behavior": "Reads Gregale's Railway migration guide and summarizes the steps for the user's app, with a link to the guide."
+            }
+          ],
+          "negative": [
+            {
+              "description": "Deleting apps is not supported",
+              "prompt": "Delete all of my Gregale apps."
+            },
+            {
+              "description": "Billing changes are not supported",
+              "prompt": "Upgrade my Gregale plan and pay with my saved card."
+            },
+            {
+              "description": "Apps outside the connection",
+              "prompt": "Show me the logs of another Gregale customer's app."
+            }
+          ]
+        },
+        "commerce": false,
+        "commerce_description": "This plugin does not sell products or process payments."
+      },
+      "publication": {
+        "release_notes": "First release: deploy small projects, check releases, diagnose failing apps, roll back, and plan a move from another host."
+      }
+    }
+  }
+}
