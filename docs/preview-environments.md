@@ -402,6 +402,8 @@ Every PR preview runs with `GREGALE_PREVIEW=1`, `GREGALE_PR_NUMBER`,
 `GREGALE_GIT_BRANCH` and `GREGALE_GIT_COMMIT`, refreshed on every push, so app
 code can tell a preview from production.
 
+### Environment values and secrets
+
 A preview gets the rest of its configuration from two places:
 
 - **The pull request's Compose values.** When the Compose file opts in with
@@ -426,6 +428,8 @@ A preview gets the rest of its configuration from two places:
   changed on a preview itself stays. Managed database and storage credentials are never given to
   previews. `pr-preview` cannot be the name of a project environment.
 
+### Access and egress gates
+
 Previews keep their production app's access and egress gates: password,
 API key (`require_authn` and bearer public auth),
 IP allowlist, signed-request, consumer-auth and platform-tenant requirements,
@@ -448,8 +452,8 @@ Under consumer auth, a preview accepts the production app's consumer keys, so
 clients call it with the keys they already hold. The preview app never sees
 those keys, nor a password or API key a gate verified: the gateway removes
 `Authorization` before the request reaches it.
-When a dependency preview is absent, the gateway considers the **production**
-service and its side effects are real if policy permits it.
+
+### The GitHub check
 
 The `gregale-preview` GitHub check reports the **whole selected workload set**
 for the current PR head. It stays in progress until every member has a live
@@ -461,6 +465,8 @@ so applications should tolerate a brief unavailable dependency during boot.
 If two PRs share the same commit, the fixed-name GitHub check stays in progress
 until both PR environments are ready; each PR comment shows its own status.
 
+### Read the status from automation
+
 Automation can read the same per-PR result with
 `GET /v1/preview/{root-preview-slug}/environment` using a deployment-read
 credential. The response includes the recorded head SHA, aggregate phase and
@@ -470,6 +476,8 @@ reports `phase: closed` and `ready: false`. The endpoint returns 404 for
 developer previews and legacy PR previews with no recorded set. The CLI's
 `preview show` and `preview wait` use the recorded set when available and
 fall back to app-level status for those older previews.
+
+### Wait for the preview in CI
 
 A pull request's CI can read its preview without a stored key.
 With `permissions: id-token: write`, exchange the job's GitHub OIDC token for a
@@ -511,6 +519,10 @@ The bearer reads only the status of that app's previews, from any branch or
 pull request run. A per-app deploy token can read its app's previews too, but
 do not store one where pull request workflows can read it: it deploys.
 
+### Calls to production services
+
+When a dependency preview is absent, the gateway considers the **production**
+service and its side effects are real if policy permits it.
 Gregale denies that boundary by default. The proxy returns
 `403 application/problem+json` with code
 `preview_production_dependency_denied` before endpoint discovery or wake-up,
