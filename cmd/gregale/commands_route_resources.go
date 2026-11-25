@@ -154,15 +154,24 @@ func renderRouteSplit(w io.Writer, slug, host string, s *routeresources.Split) {
 		host = "<" + slug + " host>"
 	}
 	_, _ = fmt.Fprintf(w, "Suggested split: %s\n", s.Reason)
-	_, _ = fmt.Fprintf(w, "  %s now: %d MB. Without the route: %d MB. The route on its own: %d MB.\n", slug, s.CurrentRAMMB, s.MainRAMMB, s.RouteRAMMB)
+	cpu := s.Kind == routeresources.SplitCPU
+	if cpu {
+		_, _ = fmt.Fprintf(w, "  Both apps keep %d MB; billing is by RAM, so this split isolates the route rather than saving money.\n", s.CurrentRAMMB)
+	} else {
+		_, _ = fmt.Fprintf(w, "  %s now: %d MB. Without the route: %d MB. The route on its own: %d MB.\n", slug, s.CurrentRAMMB, s.MainRAMMB, s.RouteRAMMB)
+	}
 	if s.RouteRAMOverPlan {
 		_, _ = fmt.Fprintf(w, "  The route needs more memory than your plan's largest app; upgrade the plan or send it with --kind async to a job.\n")
 	}
 	_, _ = fmt.Fprintln(w, "\n  1. Deploy the same code as a second app:")
 	_, _ = fmt.Fprintf(w, "     gregale deploy --name %s\n", target)
-	_, _ = fmt.Fprintln(w, "  2. Size it for the route:")
-	_, _ = fmt.Fprintf(w, "     gregale app scale %s --plan --ram %d\n", target, s.RouteRAMMB)
-	_, _ = fmt.Fprintln(w, "  3. Send the route to it:")
+	step := 2
+	if !cpu {
+		_, _ = fmt.Fprintln(w, "  2. Size it for the route:")
+		_, _ = fmt.Fprintf(w, "     gregale app scale %s --plan --ram %d\n", target, s.RouteRAMMB)
+		step++
+	}
+	_, _ = fmt.Fprintf(w, "  %d. Send the route to it:\n", step)
 	method := ""
 	if s.Method != "" {
 		// Only the method the peaks came with moves; the path's other
@@ -171,7 +180,10 @@ func renderRouteSplit(w io.Writer, slug, host string, s *routeresources.Split) {
 	}
 	_, _ = fmt.Fprintf(w, "     gregale edge rule create --app %s --kind route --match-host %s --match-path '%s'%s --route-target-slug %s --enabled\n",
 		slug, host, s.PathGlob, method, target)
-	_, _ = fmt.Fprintln(w, "  4. Size the app down once the rule is live:")
+	if cpu {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "  %d. Size the app down once the rule is live:\n", step+1)
 	_, _ = fmt.Fprintf(w, "     gregale app scale %s --plan --ram %d\n", slug, s.MainRAMMB)
 }
 

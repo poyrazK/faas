@@ -6162,6 +6162,7 @@ from .route_requirements_report import RouteRequirementsReport
 from .route_requirements_result import RouteRequirementsResult
 from .route_resource_attribution import RouteResourceAttribution
 from .route_resource_split import RouteResourceSplit
+from .route_resource_split_kind import RouteResourceSplitKind
 from .route_resources_response import RouteResourcesResponse
 from .route_row import RouteRow
 from .route_throttle_requirement import RouteThrottleRequirement
@@ -13162,6 +13163,7 @@ __all__ = (
     "RouteRequirementsResult",
     "RouteResourceAttribution",
     "RouteResourceSplit",
+    "RouteResourceSplitKind",
     "RouteResourcesResponse",
     "RouteRow",
     "RouteThrottleRequirement",

@@ -85,3 +85,21 @@ func TestRenderRouteSplitPrintsCommands(t *testing.T) {
 		t.Fatalf("over-plan note without RouteRAMOverPlan:\n%s", got)
 	}
 }
+
+func TestRenderRouteSplitCPUSkipsResizing(t *testing.T) {
+	var out bytes.Buffer
+	main.RenderRouteSplit(&out, "shop", "shop.gregale.dev", &routeresources.Split{
+		Kind: routeresources.SplitCPU, Route: "POST /v1/render", Method: "POST", PathGlob: "/v1/render",
+		RouteRAMMB: 512, CurrentRAMMB: 512, MainRAMMB: 512,
+		Reason: "POST /v1/render was in flight for 5 of the app's 5 CPU peaks (100%)",
+	})
+	got := out.String()
+	for _, want := range []string{"Both apps keep 512 MB", "gregale deploy --name shop-render", "2. Send the route to it"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "app scale") {
+		t.Fatalf("cpu split must not resize:\n%s", got)
+	}
+}

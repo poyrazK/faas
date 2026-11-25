@@ -131801,9 +131801,10 @@ components:
         split: { $ref: '#/components/schemas/RouteResourceSplit' }
     RouteResourceSplit:
       type: object
-      description: "Present when one route holds at least 80% of at least 3 memory peaks while running in at most 30% of minutes, and the rest of the app would fit in less memory: move that route to its own app and size the app down."
-      required: [route, path_glob, route_ram_mb, current_ram_mb, main_ram_mb, high_memory_share, presence_share, high_memory_minutes, reason]
+      description: "Present when one route holds at least 80% of at least 3 memory peaks while running in at most 30% of minutes, and the rest of the app would fit in less memory: move that route to its own app and size the app down (kind memory). When no memory split qualifies, the same rule over CPU peaks suggests moving the route for isolation; both apps keep the current size (kind cpu)."
+      required: [kind, route, path_glob, route_ram_mb, current_ram_mb, main_ram_mb, high_memory_share, presence_share, high_memory_minutes, reason]
       properties:
+        kind: { type: string, enum: [memory, cpu], description: "memory sizes both apps for what they need; cpu isolates a route whose CPU bursts slow the app's other routes." }
         route: { type: string }
         method: { type: string }
         path_glob: { type: string, description: "Edge-rule path match for the route; path parameters become one-segment wildcards." }
@@ -131814,6 +131815,8 @@ components:
         high_memory_share: { type: number }
         presence_share: { type: number }
         high_memory_minutes: { type: integer }
+        high_cpu_share: { type: number, description: "Share of attributed CPU peaks the route was in flight for; set on cpu splits." }
+        high_cpu_minutes: { type: integer, description: "CPU peaks the route was in flight for; set on cpu splits." }
         reason: { type: string }
     RouteResourceAttribution:
       type: object
