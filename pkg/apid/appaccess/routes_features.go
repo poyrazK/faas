@@ -128,9 +128,6 @@ var featureRouteActions = map[string]authz.OrgAction{
 	"GET /v1/apps/{slug}/consumer-plans":           authz.OrgActionManageAppSecurity,
 	"POST /v1/apps/{slug}/consumer-plans":          authz.OrgActionManageAppSecurity,
 	"PUT /v1/apps/{slug}/consumer-plans/{plan_id}": authz.OrgActionManageAppSecurity,
-	// consumer-identities
-	"DELETE /v1/apps/{slug}/consumer-identities/{id}": authz.OrgActionManageAppSecurity,
-	"GET /v1/apps/{slug}/consumer-identities":         authz.OrgActionManageAppSecurity,
 	// consumer-signup
 	"DELETE /v1/apps/{slug}/consumer-signup": authz.OrgActionManageAppSecurity,
 	"GET /v1/apps/{slug}/consumer-signup":    authz.OrgActionManageAppSecurity,
@@ -138,8 +135,6 @@ var featureRouteActions = map[string]authz.OrgAction{
 	// consumer-signups
 	"GET /v1/apps/{slug}/consumer-signups": authz.OrgActionReadApp,
 	// consumers
-	"GET /v1/apps/{slug}/consumer-credit-packs":                                             authz.OrgActionManageAppSecurity,
-	"PUT /v1/apps/{slug}/consumer-credit-packs":                                             authz.OrgActionManageAppSecurity,
 	"POST /v1/apps/{slug}/consumers":                                                        authz.OrgActionManageAppSecurity,
 	"GET /v1/apps/{slug}/consumers/{consumer_id}/credits":                                   authz.OrgActionManageAppSecurity,
 	"POST /v1/apps/{slug}/consumers/{consumer_id}/credits":                                  authz.OrgActionManageAppSecurity,
