@@ -2342,6 +2342,10 @@ from .flag_decision_inherited_from import FlagDecisionInheritedFrom
 from .flag_decision_reason import FlagDecisionReason
 from .flag_decision_source import FlagDecisionSource
 from .flag_decision_type import FlagDecisionType
+from .flag_edge import FlagEdge
+from .flag_edge_action import FlagEdgeAction
+from .flag_edge_route import FlagEdgeRoute
+from .flag_edge_route_variants import FlagEdgeRouteVariants
 from .flag_event import FlagEvent
 from .flag_event_flags import FlagEventFlags
 from .flag_event_properties import FlagEventProperties
@@ -9571,6 +9575,10 @@ __all__ = (
     "FlagDecisionReason",
     "FlagDecisionSource",
     "FlagDecisionType",
+    "FlagEdge",
+    "FlagEdgeAction",
+    "FlagEdgeRoute",
+    "FlagEdgeRouteVariants",
     "FlagEvent",
     "FlagEventFlags",
     "FlagEventProperties",

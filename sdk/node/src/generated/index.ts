@@ -1224,6 +1224,9 @@ export type { FireCronRequestResponse } from './models/FireCronRequestResponse.j
 export type { FireCronResponse } from './models/FireCronResponse.js';
 export type { FlagCondition } from './models/FlagCondition.js';
 export type { FlagDecision } from './models/FlagDecision.js';
+export type { FlagEdge } from './models/FlagEdge.js';
+export type { FlagEdgeAction } from './models/FlagEdgeAction.js';
+export type { FlagEdgeRoute } from './models/FlagEdgeRoute.js';
 export type { FlagEvent } from './models/FlagEvent.js';
 export type { FlagEventsRequest } from './models/FlagEventsRequest.js';
 export type { FlagEventsResponse } from './models/FlagEventsResponse.js';

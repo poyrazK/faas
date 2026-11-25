@@ -84,6 +84,7 @@ func TestFlagsAndExperiments(t *testing.T) {
 		return
 	}
 	s.check("sdk_matches_inspector", j.sdkMatchesInspector)
+	s.check("edge_routes_variants", j.edgeRoutes)
 	if !s.step("start_experiment", j.startExperiment) {
 		return
 	}
@@ -247,6 +248,55 @@ func (j *flagsJourney) sdkMatchesInspector(t *testing.T) {
 		})
 		if str(doc, "variant") != want {
 			t.Errorf("customer %s: the SDK served %q, the inspector explains %q (%s)", c.tenant, str(doc, "variant"), want, compact(inspect))
+		}
+	}
+}
+
+// edgeRoutes routes /page at the edge (ADR-20261124212701): each verified
+// customer gets the page of the variant `flag inspect` explains, without any
+// flag code in the app, and an anonymous visitor keeps its page through its
+// visitor cookie. It skips when edge routing is not released to the account.
+func (j *flagsJourney) edgeRoutes(t *testing.T) {
+	res := j.tg.run(t, time.Minute, "flag", "edge", "set", "checkout", "--path", "/page", "--variant", "new", "--rewrite", "/page-b", "--project", j.project)
+	if res.exit != 0 {
+		if strings.Contains(res.problem(), "Edge flags unavailable") || strings.Contains(res.problem(), "edge flag routing is not enabled") {
+			t.Skipf("edge flag routing is not enabled for this account: %s", res.problem())
+		}
+		t.Fatalf("flag edge set failed (exit %d): %s", res.exit, res.problem())
+	}
+	t.Cleanup(func() { j.tg.run(t, time.Minute, "flag", "edge", "delete", "checkout", "--project", j.project) })
+	for _, c := range j.customers {
+		inspect := object(t, j.flag(t, "inspect", "--key", "checkout", "--customer-id", c.tenant, "--fallback-variant", "legacy").stdout)
+		want := "a"
+		if str(inspect, "value") == "new" {
+			want = "b"
+		}
+		eventually(t, "the edge serves "+c.tenant+" page "+want, 2*time.Minute, 3*time.Second, func() (bool, string) {
+			r := j.call(c, "/page")
+			if r.status != http.StatusOK {
+				return false, r.String()
+			}
+			return str(jsonBody(t, r), "page") == want, r.String()
+		})
+	}
+	first := get(j.base + "/page")
+	if first.status != http.StatusOK {
+		t.Fatalf("anonymous /page: %s", first.String())
+	}
+	var visitor string
+	for _, raw := range first.header.Values("Set-Cookie") {
+		if name, rest, ok := strings.Cut(raw, "="); ok && name == "__Host-gregale_vid" {
+			visitor, _, _ = strings.Cut(rest, ";")
+		}
+	}
+	if visitor == "" {
+		t.Fatalf("anonymous /page set no visitor cookie: %v", first.header.Values("Set-Cookie"))
+	}
+	page := str(jsonBody(t, first), "page")
+	for i := 0; i < 3; i++ {
+		again := fetch(http.MethodGet, j.base+"/page", map[string]string{"Cookie": "__Host-gregale_vid=" + visitor})
+		if again.status != http.StatusOK || str(jsonBody(t, again), "page") != page {
+			t.Fatalf("returning visitor got %s; first visit got page %s", again.String(), page)
 		}
 	}
 }
