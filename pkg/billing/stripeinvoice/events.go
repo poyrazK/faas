@@ -9,9 +9,12 @@ import (
 	"time"
 )
 
-// FindInvoiceSentAt looks for Stripe's delivery event after issuance. Some
-// events have no request key, but when Stripe supplies one it must match.
-func (c *Client) FindInvoiceSentAt(ctx context.Context, key, invoiceID, sendKey string, livemode bool, issuedAt, until time.Time) (*time.Time, error) {
+// FindInvoiceSentAt checks a bounded run of pages for Stripe's delivery event.
+// A nonempty cursor resumes after the last completed page, including when
+// a later request fails. A match or an exhausted list clears the cursor.
+// When Stripe supplies a request key, it must match the reviewed send.
+func (c *Client) FindInvoiceSentAt(ctx context.Context, key, invoiceID, sendKey string, livemode bool,
+	issuedAt, until time.Time, after string) (sentAt *time.Time, nextCursor string, err error) {
 	q := url.Values{
 		"type":         {"invoice.sent"},
 		"created[gte]": {strconv.FormatInt(issuedAt.Unix(), 10)},
@@ -19,6 +22,9 @@ func (c *Client) FindInvoiceSentAt(ctx context.Context, key, invoiceID, sendKey 
 		"limit":        {"10"},
 	}
 	for range 10 {
+		if after != "" {
+			q.Set("starting_after", after)
+		}
 		var result struct {
 			Data []struct {
 				ID       string `json:"id"`
@@ -37,7 +43,14 @@ func (c *Client) FindInvoiceSentAt(ctx context.Context, key, invoiceID, sendKey 
 			HasMore bool `json:"has_more"`
 		}
 		if err := c.do(ctx, key, http.MethodGet, "/v1/events?"+q.Encode(), "", nil, &result); err != nil {
-			return nil, err
+			var stripeErr *Error
+			if after != "" && errors.As(err, &stripeErr) && stripeErr.Status == http.StatusBadRequest &&
+				(stripeErr.Param == "starting_after" || stripeErr.Code == "resource_missing") {
+				// A saved event can expire or belong to an old connection.
+				// Restart from the newest events on the next check.
+				return nil, "", err
+			}
+			return nil, after, err
 		}
 		for _, event := range result.Data {
 			if event.Type == "invoice.sent" && event.Data.Object.ID == invoiceID &&
@@ -45,20 +58,20 @@ func (c *Client) FindInvoiceSentAt(ctx context.Context, key, invoiceID, sendKey 
 				event.Created >= issuedAt.Unix() && event.Created <= until.Unix() &&
 				(event.Request.IdempotencyKey == "" || event.Request.IdempotencyKey == sendKey) {
 				at := time.Unix(event.Created, 0).UTC()
-				return &at, nil
+				return &at, "", nil
 			}
 		}
 		if !result.HasMore {
-			return nil, nil
+			return nil, "", nil
 		}
-		if len(result.Data) == 0 {
-			break
+		var cursor string
+		if len(result.Data) > 0 {
+			cursor = result.Data[len(result.Data)-1].ID
 		}
-		after := result.Data[len(result.Data)-1].ID
-		if after == "" || after == q.Get("starting_after") {
-			break
+		if cursor == "" || cursor == after {
+			return nil, after, errors.New("stripe invoice delivery search returned an invalid cursor")
 		}
-		q.Set("starting_after", after)
+		after = cursor
 	}
-	return nil, errors.New("stripe invoice delivery search did not finish")
+	return nil, after, nil
 }

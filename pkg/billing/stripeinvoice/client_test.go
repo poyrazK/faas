@@ -59,6 +59,42 @@ func TestVerifyCustomerIdentity(t *testing.T) {
 }
 
 // adr: 1502
+func TestInvoiceSentSearchPreservesProgressAndResetsAnExpiredCursor(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Query().Get("starting_after") {
+		case "":
+			_, _ = fmt.Fprint(w, `{"data":[{"id":"evt_PageOne"}],"has_more":true}`)
+		case "evt_PageOne":
+			w.WriteHeader(http.StatusTooManyRequests)
+		case "evt_Expired":
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = fmt.Fprint(w, `{"error":{"code":"resource_missing","param":"starting_after"}}`)
+		default:
+			t.Errorf("unexpected Stripe event cursor")
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+	c := &Client{BaseURL: server.URL, HTTP: server.Client()}
+	now := time.Now()
+	for _, tc := range []struct {
+		after string
+		want  string
+		code  int
+	}{
+		{after: "", want: "evt_PageOne", code: http.StatusTooManyRequests},
+		{after: "evt_Expired", want: "", code: http.StatusBadRequest},
+	} {
+		sentAt, cursor, err := c.FindInvoiceSentAt(context.Background(), "rk_test_fixture", "in_Target", "target-send",
+			false, now.Add(-time.Hour), now, tc.after)
+		var stripeErr *Error
+		if sentAt != nil || cursor != tc.want || !errors.As(err, &stripeErr) || stripeErr.Status != tc.code {
+			t.Errorf("search after %q: receipt=%v cursor=%q error=%v", tc.after, sentAt, cursor, err)
+		}
+	}
+}
+
+// adr: 1502
 func TestClientRequestsAndErrors(t *testing.T) {
 	var gotForm map[string]string
 	var gotHeaders http.Header

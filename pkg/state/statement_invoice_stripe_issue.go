@@ -15,6 +15,7 @@ type StripeInvoiceIssue struct {
 	FinalizationStarted bool       `json:"finalization_started"`
 	IssuedAt            *time.Time `json:"issued_at,omitempty"`
 	SentAt              *time.Time `json:"sent_at,omitempty"`
+	DeliveryEventCursor string     `json:"delivery_event_cursor,omitempty"`
 }
 
 type StripeInvoiceIssueStore interface {

@@ -324,17 +324,21 @@ func (s *Service) reconcileStripeInvoiceSend(ctx context.Context, export state.S
 	}
 	lookupCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	sentAt, err := s.stripeInvoiceClient().FindInvoiceSentAt(lookupCtx, key, export.ProviderInvoiceID,
-		stripeIdempotencyKey(&export, "manual-send"), export.Livemode, *issue.IssuedAt, issue.ApprovedAt.Add(stripeIssueRetryWindow))
-	if err != nil || sentAt == nil {
-		return export, err
+	sentAt, cursor, lookupErr := s.stripeInvoiceClient().FindInvoiceSentAt(lookupCtx, key, export.ProviderInvoiceID,
+		stripeIdempotencyKey(&export, "manual-send"), export.Livemode, *issue.IssuedAt, issue.ApprovedAt.Add(stripeIssueRetryWindow), issue.DeliveryEventCursor)
+	if sentAt == nil && cursor == issue.DeliveryEventCursor {
+		return export, lookupErr
 	}
 	checkpoint := *issue
 	checkpoint.SentAt = sentAt
+	checkpoint.DeliveryEventCursor = cursor
 	if err := issues.SaveStripeInvoiceIssue(ctx, export.AccountID, export.ID, claim, checkpoint); err != nil {
 		return export, err
 	}
 	export.StripeIssue = &checkpoint
+	if sentAt == nil {
+		return export, lookupErr
+	}
 	s.Host.Audit(ctx, "statement_invoice.stripe_sent", export.AccountID, map[string]any{
 		"statement_id": export.StatementID, "invoice_id": export.ProviderInvoiceID, "livemode": export.Livemode,
 		"currency": export.Currency, "due_at": issue.DueAt, "exported_at": export.CompletedAt,
@@ -361,6 +365,9 @@ func (s *Service) recoverPaidStripeInvoiceSend(ctx context.Context, store state.
 	case err != nil:
 		return current, providerProblem(http.StatusBadGateway, "Could not confirm Stripe invoice delivery", "try checking the invoice again")
 	case pendingStripeInvoiceDelivery(current) != nil:
+		if current.StripeIssue.DeliveryEventCursor != "" {
+			return current, exportConflict("Stripe delivery search is still in progress; check the invoice again to continue")
+		}
 		return current, exportConflict("Stripe shows a payment but has no matching send receipt; check delivery in Stripe")
 	}
 	if payment, known, _ := stripeInvoicePayment(invoice); known {

@@ -66,7 +66,28 @@ func (f *issueStripeFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(f.eventStatus)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"data": f.sendEvents, "has_more": false})
+		query := r.URL.Query()
+		limit, err := strconv.Atoi(query.Get("limit"))
+		if err != nil || limit <= 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		start := 0
+		if cursor := query.Get("starting_after"); cursor != "" {
+			for i, event := range f.sendEvents {
+				if event["id"] == cursor {
+					start = i + 1
+					break
+				}
+			}
+			if start == 0 {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":{"code":"resource_missing","param":"starting_after"}}`))
+				return
+			}
+		}
+		end := min(start+limit, len(f.sendEvents))
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": f.sendEvents[start:end], "has_more": end < len(f.sendEvents)})
 		return
 	case r.Method == http.MethodPost && r.URL.Path == path && key != "" &&
 		r.FormValue("collection_method") == "send_invoice" && r.FormValue("auto_advance") == "false" && f.doc["status"] == "draft":
@@ -407,6 +428,95 @@ func TestPaidStripeInvoiceKeepsCheckingForItsDeliveryReceipt(t *testing.T) {
 			defer f.stripe.mu.Unlock()
 			if f.stripe.sends != 1 || f.stripe.writes != 3 {
 				t.Fatalf("receipt check caused another provider write: %d sends, %d writes", f.stripe.sends, f.stripe.writes)
+			}
+		})
+	}
+}
+
+func TestPaidStripeInvoiceResumesDeliverySearch(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		receiptOnPage bool
+	}{
+		{name: "receipt on page eleven", receiptOnPage: true},
+		{name: "receipt appears after the scan is exhausted"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			f := newIssueFixture(t)
+			f.stripe.loseSend = true
+			review := f.review(t)
+			if w := f.request(http.MethodPost, review.ReviewToken, f.account); w.Code != http.StatusBadGateway {
+				t.Fatalf("lost send response: %d %s", w.Code, w.Body)
+			}
+			sentAt := f.now.Add(time.Minute)
+			f.now = f.now.Add(2 * time.Hour)
+			f.stripe.mu.Lock()
+			f.stripe.doc["status"], f.stripe.doc["amount_paid"], f.stripe.doc["amount_remaining"] = "paid", 1500, 0
+			f.stripe.doc["status_transitions"] = map[string]int64{"finalized_at": f.stripe.now.Unix(), "paid_at": f.now.Unix()}
+			event := func(id, invoiceID, sendKey string, created time.Time) map[string]any {
+				return map[string]any{
+					"id": id, "type": "invoice.sent", "created": created.Unix(), "livemode": false,
+					"data":    map[string]any{"object": map[string]string{"id": invoiceID}},
+					"request": map[string]string{"idempotency_key": sendKey},
+				}
+			}
+			for i := range 101 {
+				f.stripe.sendEvents = append(f.stripe.sendEvents,
+					event("evt_"+strconv.Itoa(i), "in_unrelated", "another-send", sentAt.Add(time.Minute)))
+			}
+			if !tc.receiptOnPage {
+				sentAt = sentAt.Add(time.Hour)
+			}
+			receipt := event("evt_Receipt", issueInvoiceID, f.stripe.sendKey, sentAt)
+			if tc.receiptOnPage {
+				f.stripe.sendEvents[100] = receipt
+			}
+			f.stripe.mu.Unlock()
+			load := func() state.StatementInvoiceExport {
+				t.Helper()
+				export, err := f.store.GetStatementInvoiceExport(ctx, f.account.ID, state.StatementSourceAppConsumer, f.statement)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return export
+			}
+			sync := func() state.StatementInvoiceExport {
+				t.Helper()
+				if err := f.service.SyncOnce(ctx); err != nil {
+					t.Fatal(err)
+				}
+				return load()
+			}
+			if err := f.store.SetStatementInvoiceNextSync(ctx, load().ID, &f.now); err != nil {
+				t.Fatal(err)
+			}
+			paid := sync()
+			if paid.PaymentStatus != state.InvoicePaymentPaid || paid.NextStatusSyncAt == nil || paid.StripeIssue == nil ||
+				paid.StripeIssue.SentAt != nil || paid.StripeIssue.DeliveryEventCursor != "evt_99" {
+				t.Fatalf("first search did not checkpoint its cursor: %+v", paid.StripeIssue)
+			}
+			f.now = *paid.NextStatusSyncAt
+			if !tc.receiptOnPage {
+				exhausted := sync()
+				if exhausted.NextStatusSyncAt == nil || exhausted.StripeIssue == nil || exhausted.StripeIssue.SentAt != nil ||
+					exhausted.StripeIssue.DeliveryEventCursor != "" {
+					t.Fatalf("exhausted search did not reset its cursor: %+v", exhausted.StripeIssue)
+				}
+				f.stripe.mu.Lock()
+				f.stripe.sendEvents = append([]map[string]any{receipt}, f.stripe.sendEvents...)
+				f.stripe.mu.Unlock()
+				f.now = *exhausted.NextStatusSyncAt
+			}
+			recovered := sync()
+			if recovered.NextStatusSyncAt != nil || recovered.StripeIssue == nil || recovered.StripeIssue.SentAt == nil ||
+				!recovered.StripeIssue.SentAt.Equal(sentAt) || recovered.StripeIssue.DeliveryEventCursor != "" {
+				t.Fatalf("worker did not recover the receipt and stop: %+v", recovered.StripeIssue)
+			}
+			f.stripe.mu.Lock()
+			defer f.stripe.mu.Unlock()
+			if f.stripe.sends != 1 || f.stripe.writes != 3 {
+				t.Fatalf("receipt search caused another provider write: %d sends, %d writes", f.stripe.sends, f.stripe.writes)
 			}
 		})
 	}
