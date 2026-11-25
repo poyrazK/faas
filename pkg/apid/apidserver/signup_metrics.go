@@ -6,6 +6,8 @@ import (
 	"net/url"
 
 	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/onebox-faas/faas/pkg/apid/claim"
 )
 
 // Sign-up methods and sources (ADR-20261028205920). The source says where a
@@ -16,6 +18,9 @@ const (
 	signupMethodMagicLink = "magic_link"
 	signupMethodGoogle    = "google"
 	signupMethodGitHub    = "github"
+	// signupMethodAnonymous is an anonymous deploy's unclaimed account
+	// (ADR-20261124080000).
+	signupMethodAnonymous = "anonymous"
 
 	signupSourceAgent  = "agent"
 	signupSourceCLI    = "cli"
@@ -36,6 +41,9 @@ type signupMetrics struct {
 	// heldLinks counts new accounts flagged as resembling an abuse-held
 	// account, by signal (ADR-20261114174600); "error" counts failed checks.
 	heldLinks *prometheus.CounterVec
+	// unclaimed counts claimable-deploy account events (ADR-20261124080000):
+	// created, claimed, expired, and refusals by reason.
+	unclaimed *prometheus.CounterVec
 }
 
 const (
@@ -71,9 +79,17 @@ func newSignupMetrics(reg prometheus.Registerer, prefix string) *signupMetrics {
 	for _, signal := range []string{"signup_network", "email_domain", "error"} {
 		m.heldLinks.WithLabelValues(signal).Add(0)
 	}
+	m.unclaimed = registerCounterVec(reg, prometheus.CounterOpts{
+		Name: prefix + "_unclaimed_accounts_total",
+		Help: "Anonymous-deploy accounts by event: created, claimed, expired, or refused (refused_network, refused_live_cap, refused_held_link).",
+	}, []string{"event"})
+	for _, event := range claim.Events {
+		m.unclaimed.WithLabelValues(event).Add(0)
+	}
 	for _, scope := range []string{signupCapNetwork, signupCapFleet} {
 		m.capped.WithLabelValues(scope).Add(0)
 	}
+	m.signups.WithLabelValues(signupMethodAnonymous, signupSourceAgent).Add(0)
 	for _, method := range []string{signupMethodPassword, signupMethodMagicLink, signupMethodGoogle, signupMethodGitHub} {
 		for _, source := range []string{signupSourceAgent, signupSourceCLI, signupSourceDirect} {
 			m.signups.WithLabelValues(method, source).Add(0)
@@ -85,6 +101,12 @@ func newSignupMetrics(reg prometheus.Registerer, prefix string) *signupMetrics {
 func (m *signupMetrics) observeHeldLink(signal string) {
 	if m != nil {
 		m.heldLinks.WithLabelValues(signal).Inc()
+	}
+}
+
+func (m *signupMetrics) observeUnclaimed(event string) {
+	if m != nil && m.unclaimed != nil {
+		m.unclaimed.WithLabelValues(event).Inc()
 	}
 }
 

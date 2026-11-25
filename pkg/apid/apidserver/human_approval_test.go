@@ -40,7 +40,7 @@ func humanOrgLoginHeaders(t *testing.T, store state.Store, orgID, accountID stri
 // which protected-environment approvals trust (bug hunt H70).
 func TestCreateKeyRefusesInteractiveSignInLabels(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
-	for _, label := range []string{"cli-login", "signup", "mcp-login", " cli-login "} {
+	for _, label := range []string{"cli-login", "signup", "mcp-login", " cli-login ", "anonymous-deploy", " anonymous-deploy "} {
 		rec := e.Do(t, http.MethodPost, "/v1/keys", api.CreateKeyRequest{Label: label, Scopes: []string{api.ScopeDeployWrite}}, nil)
 		apidserver.AssertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
 	}

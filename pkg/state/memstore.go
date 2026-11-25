@@ -1215,6 +1215,9 @@ type MemStore struct {
 	// signal that an OAuth-only flow is required to mint a session.
 	accountPasswords map[string]AccountPassword
 	legalAcceptances map[string][]LegalAcceptance
+	// unclaimedAccounts marks accounts created by an anonymous deploy
+	// (ADR-20261124080000), keyed by account_id. Lazily initialised.
+	unclaimedAccounts map[string]UnclaimedAccount
 	// oauthLinks is keyed by (provider + "\x00" + provider_subject)
 	// so the §11 anti-takeover invariant (one OAuth subject per
 	// account) is enforceable in-memory the same way the composite
@@ -2347,6 +2350,11 @@ func (m *MemStore) CreateAccountWithPersonalOrg(ctx context.Context, params Crea
 	if params.InitialPasswordHash != "" {
 		if err := m.setAccountPasswordLocked(acct.ID, params.InitialPasswordHash); err != nil {
 			delete(m.accountPasswords, acct.ID)
+			return CreateAccountWithPersonalOrgResult{}, err
+		}
+	}
+	if u := params.Unclaimed; u != nil {
+		if err := m.insertUnclaimedLocked(acct.ID, *u, now); err != nil {
 			return CreateAccountWithPersonalOrgResult{}, err
 		}
 	}

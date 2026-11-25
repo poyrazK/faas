@@ -399,6 +399,7 @@ var cliTreeAliases = []cliTreeAlias{
 
 	// Account.
 	{"account mfa", "mfa"},
+	{"account claim create", "claim"}, // claimable deploys (ADR-20261124080000)
 	{"account", "account"},
 	{"org agent policy", "orgs agent-policy"},
 	{"org support", "orgs support-access"},

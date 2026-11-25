@@ -271,6 +271,7 @@ func cmdLogout() int {
 	// Best-effort: a stuck keychain must not block logout, and a
 	// missing file is not an error. Issue #293.
 	deleteToken()
+	deleteAnonymousSession()
 	clearManagedSession()
 	if revokeErr != nil {
 		return printErr("Logged out locally, but server revocation failed", revokeErr)

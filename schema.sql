@@ -63758,6 +63758,33 @@ CREATE TABLE public.triggers (
 
 
 --
+-- Name: unclaimed_accounts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.unclaimed_accounts (
+    account_id uuid NOT NULL,
+    claim_token_sha256 bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    claimed_at timestamp with time zone,
+    expired_at timestamp with time zone,
+    created_ip inet,
+    user_agent text DEFAULT ''::text NOT NULL,
+    CONSTRAINT unclaimed_accounts_check CHECK ((expires_at > created_at)),
+    CONSTRAINT unclaimed_accounts_check1 CHECK (((claimed_at IS NULL) OR (expired_at IS NULL))),
+    CONSTRAINT unclaimed_accounts_claim_token_sha256_check CHECK ((octet_length(claim_token_sha256) = 32)),
+    CONSTRAINT unclaimed_accounts_user_agent_check CHECK ((char_length(user_agent) <= 512))
+);
+
+
+--
+-- Name: TABLE unclaimed_accounts; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.unclaimed_accounts IS 'Accounts created by an anonymous agent deploy, until a human claims them or they expire; written by apid (ADR-20261124080000).';
+
+
+--
 -- Name: upload_commit_outcomes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -79307,6 +79334,22 @@ ALTER TABLE ONLY public.triggers
 
 
 --
+-- Name: unclaimed_accounts unclaimed_accounts_claim_token_sha256_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.unclaimed_accounts
+    ADD CONSTRAINT unclaimed_accounts_claim_token_sha256_key UNIQUE (claim_token_sha256);
+
+
+--
+-- Name: unclaimed_accounts unclaimed_accounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.unclaimed_accounts
+    ADD CONSTRAINT unclaimed_accounts_pkey PRIMARY KEY (account_id);
+
+
+--
 -- Name: upload_commit_outcomes upload_commit_outcomes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -91216,6 +91259,13 @@ CREATE UNIQUE INDEX triggers_one_enabled_queue_source ON public.triggers USING b
 --
 
 CREATE UNIQUE INDEX triggers_queue_binding_identity_unique ON public.triggers USING btree (queue_binding_id) WHERE (queue_binding_id IS NOT NULL);
+
+
+--
+-- Name: unclaimed_accounts_open_expires_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX unclaimed_accounts_open_expires_idx ON public.unclaimed_accounts USING btree (expires_at) WHERE ((claimed_at IS NULL) AND (expired_at IS NULL));
 
 
 --
@@ -116904,6 +116954,14 @@ ALTER TABLE ONLY public.triggers
 
 ALTER TABLE ONLY public.triggers
     ADD CONSTRAINT triggers_queue_binding_identity_fk FOREIGN KEY (queue_binding_id, app_id, account_id) REFERENCES public.queue_bindings(id, app_id, account_id) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: unclaimed_accounts unclaimed_accounts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.unclaimed_accounts
+    ADD CONSTRAINT unclaimed_accounts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

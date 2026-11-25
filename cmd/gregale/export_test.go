@@ -3117,6 +3117,26 @@ func RunMCPReplayGateForTest(ctx context.Context, endpoint, candidate, serving s
 	return report.Skipped, ok
 }
 
+// SaveAnonymousSession and LoadStoredToken expose the anonymous deploy key
+// file and the login store (ADR-20261124080000).
+var SaveAnonymousSession = saveAnonymousSession
+
+func LoadStoredToken() string { return loadStoredToken(io.Discard) }
+
+// LoadAnonymousSessionToken exposes the saved anonymous deploy key.
+var LoadAnonymousSessionToken = loadAnonymousSessionToken
+
+// LoadAnonymousSessionURL returns the saved anonymous deploy's claim link.
+func LoadAnonymousSessionURL() string {
+	saved, _ := loadAnonymousSession()
+	return saved.ClaimURL
+}
+
+// AnonymousDeployByDefault exposes the no-credential deploy default (ADR-20261124080000).
+func AnonymousDeployByDefault(getenv func(string) string) bool {
+	return anonymousDeployByDefault(getenv)
+}
+
 // MCPDiscoverJWKS is mcpDiscoverJWKS.
 var MCPDiscoverJWKS = mcpDiscoverJWKS
 
