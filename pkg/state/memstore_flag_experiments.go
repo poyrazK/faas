@@ -237,6 +237,11 @@ func (m *MemStore) ListRunningFlagExperiments(_ context.Context, afterID string,
 			if acct, ok := m.accounts[x.AccountID]; ok {
 				c.Plan = string(acct.Plan)
 			}
+			for _, env := range m.projectEnvironments {
+				if env.ID == x.EnvironmentID {
+					c.EnvironmentSlug = env.Slug
+				}
+			}
 			out = append(out, c)
 		}
 	}

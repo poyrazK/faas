@@ -106,6 +106,9 @@ func (r *flagExperimentReconciler) runPass(ctx context.Context, now time.Time) {
 		if err := r.banditStep(xCtx, x, now); err != nil {
 			r.warn(ctx, "flag experiments: bandit step failed", err, "experiment", x.ID)
 		}
+		if err := r.notify(xCtx, x, now); err != nil {
+			r.warn(ctx, "flag experiments: notification failed", err, "experiment", x.ID)
+		}
 		cancel()
 	}
 }

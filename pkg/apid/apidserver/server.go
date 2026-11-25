@@ -2524,6 +2524,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/flags/versions", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listFeatureFlagVersions)))
 	// ADR 20261114150000 §4: owner, expiry, staleness and evaluation per flag.
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/flags/lifecycle", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getFeatureFlagLifecycle)))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/flags/notifications", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getFlagNotifications)))
+	mux.HandleFunc("PUT /v1/projects/{slug}/environments/{environment}/flags/notifications", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setFlagNotifications))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/experiments", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listFlagExperiments)))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/experiments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createFlagExperiment))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/experiments/{key}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getFlagExperiment)))
