@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getMcpTask, waitForMcpTask, type McpTaskConnection } from '../src/preview.js';
+import {
+  cancelMcpTask, getMcpTask, waitForMcpTask, type McpTaskCancellationConnection, type McpTaskConnection,
+} from '../src/preview.js';
 
 const taskId = 'durable task fixture';
 const timestamp = '2026-11-24T01:00:00.123456789Z';
@@ -154,4 +156,109 @@ test('cancelling a wait aborts the in-flight read and sends no mutation', async 
   controller.abort();
   await assert.rejects(waiting, { name: 'AbortError' });
   assert.deepEqual(called, ['tasks/get']);
+});
+
+function cancellationConnection(request: McpTaskCancellationConnection['request']): McpTaskCancellationConnection {
+  return { ...connection(request), request };
+}
+
+test('Task cancellation returns an observed terminal state without sending a mutation', async () => {
+  for (const [status, nextAction] of [['completed', 'read_result'], ['failed', 'none'], ['cancelled', 'none']] as const) {
+    const calls: string[] = [];
+    const client = cancellationConnection(async ({ method, params }) => {
+      calls.push(method);
+      assert.deepEqual(params, { taskId });
+      return snapshot(status, { result: { private: true }, error: { private: true }, statusMessage: 'private' });
+    });
+    assert.deepEqual(await cancelMcpTask(client, taskId), {
+      outcome: 'terminal', task: { ...snapshot(status), nextAction },
+    });
+    assert.deepEqual(calls, ['tasks/get']);
+  }
+});
+
+test('a cancellation acknowledgement reports requested using one shared deadline', async () => {
+  const calls: string[] = [];
+  const signals = new Set<AbortSignal>();
+  const client = cancellationConnection(async ({ method, params }, _, options) => {
+    calls.push(method);
+    signals.add(options.signal);
+    assert.deepEqual(params, { taskId });
+    assert.equal(options.allowInputRequired, true);
+    assert.equal(options.timeout, 2_500);
+    if (method === 'tasks/get') return snapshot('input_required', { inputRequests: { private: true } });
+    return { _meta: { acknowledgement: 'private transport metadata' } };
+  });
+  assert.deepEqual(await cancelMcpTask(client, taskId, { timeoutMs: 2_500 }), { outcome: 'requested', taskId });
+  assert.deepEqual(calls, ['tasks/get', 'tasks/cancel']);
+  assert.equal(signals.size, 1);
+});
+
+test('an ambiguous cancellation performs one read and reports the actual observed state', async () => {
+  for (const [status, failure] of [
+    ['cancelled', new TypeError('reply lost')],
+    ['completed', Object.assign(new Error('internal error'), { code: -32603 })],
+    ['input_required', Object.assign(new Error('server error'), { code: -32000 })],
+  ] as const) {
+    const calls: string[] = [];
+    const client = cancellationConnection(async ({ method }) => {
+      calls.push(method);
+      if (method === 'tasks/cancel') throw failure;
+      if (calls.length === 1) return snapshot('input_required');
+      return snapshot(status, { result: { private: true }, inputRequests: { private: true } });
+    });
+    const result = await cancelMcpTask(client, taskId);
+    assert.equal(result.outcome, status === 'input_required' ? 'unconfirmed' : 'terminal');
+    assert.ok(result.outcome === 'unconfirmed' || result.outcome === 'terminal');
+    assert.equal(result.task?.status, status);
+    assert.equal(Object.hasOwn(result.task ?? {}, 'result'), false);
+    assert.equal(Object.hasOwn(result.task ?? {}, 'inputRequests'), false);
+    assert.deepEqual(calls, ['tasks/get', 'tasks/cancel', 'tasks/get']);
+  }
+});
+
+test('an invalid acknowledgement and unverified reconciliation remain unconfirmed', async () => {
+  const calls: string[] = [];
+  const client = cancellationConnection(async ({ method }) => {
+    calls.push(method);
+    if (method === 'tasks/cancel') return { resultType: 'input_required', inputRequests: {} };
+    if (calls.length === 1) return snapshot('working');
+    return snapshot('cancelled', { taskId: 'other Task' });
+  });
+  assert.deepEqual(await cancelMcpTask(client, taskId), { outcome: 'unconfirmed', taskId });
+  assert.deepEqual(calls, ['tasks/get', 'tasks/cancel', 'tasks/get']);
+});
+
+test('denied reads and rejected cancellation requests never trigger a retry', async () => {
+  const denied = cancellationConnection(async ({ method }) => {
+    assert.equal(method, 'tasks/get');
+    throw Object.assign(new Error('private response'), { status: 403 });
+  });
+  await assert.rejects(cancelMcpTask(denied, taskId), { code: 'request_failed', status: 403 });
+
+  const calls: string[] = [];
+  const rejected = cancellationConnection(async ({ method }) => {
+    calls.push(method);
+    if (method === 'tasks/get') return snapshot('working');
+    throw Object.assign(new Error('private response'), { code: -32602 });
+  });
+  await assert.rejects(cancelMcpTask(rejected, taskId), {
+    name: 'McpTaskCancellationError', code: 'request_rejected', message: 'MCP Task cancellation request was rejected',
+  });
+  assert.deepEqual(calls, ['tasks/get', 'tasks/cancel']);
+});
+
+test('aborting an in-flight cancellation leaves it unconfirmed without a follow-up read', async () => {
+  const controller = new AbortController();
+  const calls: string[] = [];
+  const client = cancellationConnection(async ({ method }, _, { signal }) => {
+    calls.push(method);
+    if (method === 'tasks/get') return snapshot('working');
+    controller.abort();
+    signal.throwIfAborted();
+  });
+  assert.deepEqual(await cancelMcpTask(client, taskId, { signal: controller.signal }), {
+    outcome: 'unconfirmed', taskId,
+  });
+  assert.deepEqual(calls, ['tasks/get', 'tasks/cancel']);
 });

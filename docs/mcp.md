@@ -6147,6 +6147,28 @@ wait. Aborting or timing out stops observation while the Task follows
 its existing lifecycle. Expired Tasks and Tasks the caller cannot access
 may report the same `not_found` read error.
 
+#### Cancel a Task from TypeScript
+
+Use `cancelMcpTask(mcp, taskId)` from `@gregale/sdk-node/preview` on the
+authenticated Tasks connection. If you saved only a submission key, resolve
+the ID with `lookupMcpTaskBySubmissionKey` first.
+
+The SDK reads the Task before requesting cancellation. It returns one of
+three outcomes.
+
+- `terminal` includes the observed `cancelled`, `completed`, or `failed`
+  status as Task metadata. Use `getMcpTask` to retrieve a retained result.
+- `requested` means the server acknowledged the request. A running Task may
+  still need time to stop. Check its status with `getMcpTask`.
+- `unconfirmed` means the acknowledgement was lost or unusable and the SDK
+  could not verify a terminal state. If time remains, it checks the status
+  once. Check the same Task before deciding whether to request cancellation
+  again.
+
+The deadline covers the initial read, the cancellation request, and any
+reconciliation. The SDK sends at most one cancellation request per call.
+Aborting a wait still stops observation alone.
+
 ## MCP catalog snapshots
 
 Capture caller-visible definitions before changing a server:

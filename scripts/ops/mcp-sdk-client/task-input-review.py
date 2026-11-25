@@ -27,7 +27,7 @@ import test_task_execution
 class TaskInputReviewJourney(unittest.TestCase):
     setUp = test_task_execution.TaskExecutionPostgresTests.setUp
 
-    def test_sdk_recovers_lost_submission_and_review_replies(self):
+    def test_sdk_recovers_lost_task_replies(self):
         config = {"endpoint": "/mcp", "tasks": {"enabled": True, "poll_interval_ms": 500},
                   "auth": {"mode": "external-oauth", "issuer": "https://issuer.example",
                            "jwks_url": "https://issuer.example/jwks", "resource": "https://mcp.example/mcp",
@@ -60,30 +60,49 @@ class TaskInputReviewJourney(unittest.TestCase):
         # Supply the same form on the initial pause and when the worker resumes.
         self.enterContext(patch.object(TaskExecutionContext, "request_input", numeric_form))
 
-        def pause(report):
-            task_id = runtime.create("build_report", {"report": report, "steps": 1, "request_approval": True},
-                                     identity, {"elicitation": {}})["taskId"]
+        def wait_for_status(task_id, status):
             deadline = time.monotonic() + 8
             while True:
                 with runtime.pool.connection() as connection:
                     row = connection.execute("SELECT status FROM gregale_mcp_tasks WHERE task_id=%s",
                                              (task_id,)).fetchone()
-                if row["status"] == "input_required":
-                    return task_id
-                self.assertLess(time.monotonic(), deadline, "Task did not pause")
+                if row["status"] == status:
+                    return
+                self.assertLess(time.monotonic(), deadline, f"Task did not reach {status}")
                 time.sleep(0.025)
 
+        def pause(report):
+            task_id = runtime.create("build_report", {"report": report, "steps": 1, "request_approval": True},
+                                     identity, {"elicitation": {}})["taskId"]
+            wait_for_status(task_id, "input_required")
+            return task_id
+
         task_id, racing_id = pause("SDK journey"), pause("stale SDK journey")
+        lost_cancel_id = pause("lost cancellation reply")
+        acknowledged_cancel_id = pause("acknowledged cancellation")
+        completed_cancel_id = pause("completion before cancellation")
         revision = runtime.get_input_review(task_id, identity, ["build_report"])["reviewRevision"]
 
         faults = Queue()
         for fault in ("before", "after", "stale"):
             faults.put(fault)
-        observed, submissions, lookups, committed = [], [], [], []
+        cancel_faults = Queue()
+        for fault in ("before", "after", "acknowledged", "race"):
+            cancel_faults.put(fault)
+        observed, submissions, lookups, committed, cancellations = [], [], [], [], []
 
         class ReviewJourneyHandler(MCPHandler):
             def do_POST(self):
                 method = self.headers.get("Mcp-Method")
+                if method == "tasks/cancel":
+                    self.cancel_fault = cancel_faults.get_nowait()
+                    cancellations.append(self.cancel_fault)
+                    if self.cancel_fault == "before":
+                        return self.drop_reply()
+                    if self.cancel_fault == "race":
+                        runtime.update_inputs(completed_cancel_id, {"approval": {"action": "decline"}},
+                                              identity, auth, identity)
+                        wait_for_status(completed_cancel_id, "completed")
                 if method == TASK_SUBMISSION_METHOD:
                     submissions.append(self.headers.get("Mcp-Name"))
                 if method == TASK_SUBMISSION_LOOKUP_METHOD:
@@ -107,6 +126,10 @@ class TaskInputReviewJourney(unittest.TestCase):
                 result = value.get("result", {})
                 if getattr(self, "drop_after", False) and result.get("outcome") == "applied":
                     return self.drop_reply()
+                if status == 200 and result.get("resultType") == "complete" and getattr(
+                    self, "cancel_fault", None
+                ) in {"after", "race"}:
+                    return self.drop_reply()
                 if self.headers.get("Mcp-Method") == TASK_SUBMISSION_METHOD and result.get("resultType") == "task":
                     committed.append(result["taskId"])
                     if len(committed) == 1:
@@ -121,7 +144,8 @@ class TaskInputReviewJourney(unittest.TestCase):
         self.addCleanup(thread.join, 2)
         self.addCleanup(server.shutdown)
         endpoint = f"http://127.0.0.1:{server.server_port}/mcp"
-        result = subprocess.run(["node", str(Path(__file__).with_suffix(".mjs")), endpoint, task_id, racing_id],
+        result = subprocess.run(["node", str(Path(__file__).with_suffix(".mjs")), endpoint, task_id, racing_id,
+                                 lost_cancel_id, acknowledged_cancel_id, completed_cancel_id],
                                 env={**os.environ, "MCP_TASKS_TEST_TOKEN": token}, capture_output=True,
                                 text=True, timeout=25)
         self.assertTrue(token not in result.stdout and token not in result.stderr, "SDK fixture leaked its credential")
@@ -132,17 +156,26 @@ class TaskInputReviewJourney(unittest.TestCase):
         self.assertTrue(faults.empty())
         self.assertEqual(submissions, ["build_report", "build_report", "build_report", None])
         self.assertEqual(lookups, [TASK_SUBMISSION_LOOKUP_METHOD])
+        self.assertTrue(cancel_faults.empty())
+        self.assertEqual(cancellations, ["before", "after", "acknowledged", "race"])
         with runtime.pool.connection() as connection:
             rows = connection.execute(
-                """SELECT task_id::text AS task_id,status,attempt_count,submission_key IS NOT NULL AS keyed
+                """SELECT task_id::text AS task_id,status,attempt_count,submission_key IS NOT NULL AS keyed,
+                          cancel_requested_at IS NOT NULL AS cancel_requested
                    FROM gregale_mcp_tasks WHERE namespace=%s""",
                 (runtime.namespace,),
             ).fetchall()
         self.assertEqual(len(committed), 2)
         self.assertEqual(committed[0], committed[1])
-        self.assertEqual(len(rows), 3)
+        self.assertEqual(len(rows), 6)
         self.assertEqual([row for row in rows if row["keyed"]],
-                         [{"task_id": committed[0], "status": "completed", "attempt_count": 1, "keyed": True}])
+                         [{"task_id": committed[0], "status": "completed", "attempt_count": 1, "keyed": True,
+                           "cancel_requested": False}])
+        by_id = {row["task_id"]: row for row in rows}
+        for cancelled in (lost_cancel_id, acknowledged_cancel_id):
+            self.assertEqual((by_id[cancelled]["status"], by_id[cancelled]["cancel_requested"]), ("cancelled", True))
+        raced = by_id[completed_cancel_id]
+        self.assertEqual((raced["status"], raced["cancel_requested"]), ("completed", False))
 
         def confirm(rate):
             answers = {"approval": {"action": "accept",

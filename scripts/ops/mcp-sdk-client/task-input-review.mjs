@@ -3,11 +3,11 @@ import { randomBytes, randomUUID } from 'node:crypto';
 
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import {
-  createMcpTaskReviewFetch, createMcpTaskSubmissionFetch, getMcpTask, getTaskInputReview, listTaskInbox,
+  cancelMcpTask, createMcpTaskReviewFetch, createMcpTaskSubmissionFetch, getMcpTask, getTaskInputReview, listTaskInbox,
   lookupMcpTaskBySubmissionKey, McpTaskReviewNumber, respondToReviewedTaskInput, submitMcpTask, waitForMcpTask,
 } from '../../../sdk/node/dist/preview.js';
 
-const [endpoint, taskId, racingId] = process.argv.slice(2);
+const [endpoint, taskId, racingId, lostCancelId, acknowledgedCancelId, completedCancelId] = process.argv.slice(2);
 const signal = AbortSignal.timeout(15_000);
 const options = { signal };
 
@@ -27,7 +27,7 @@ async function connect({ keyed = true } = {}) {
 const client = await connect();
 try {
   const inbox = await listTaskInbox(client, { status: 'input_required', signal });
-  assert.deepEqual(new Set(inbox.tasks.map(entry => entry.taskId)), new Set([taskId, racingId]));
+  assert.deepEqual(new Set(inbox.tasks.map(entry => entry.taskId)), new Set([taskId, racingId, lostCancelId, acknowledgedCancelId, completedCancelId]));
 
   const review = await getTaskInputReview(client, taskId, options);
   assert.equal(review.task.nextAction, 'provide_input');
@@ -110,6 +110,30 @@ try {
   const finished = await waitForMcpTask(recovered, found.taskId, options);
   assert.equal(finished.status, 'completed');
   assert.deepEqual(finished.result.content, [{ type: 'text', text: 'Report keyed SDK journey is ready after 1 steps.' }]);
+
+  const completed = await cancelMcpTask(recovered, found.taskId, options);
+  assert.equal(completed.outcome, 'terminal');
+  assert.equal(completed.task.status, 'completed');
+  assert.equal(Object.hasOwn(completed.task, 'result'), false);
+
+  const before = await cancelMcpTask(recovered, lostCancelId, options);
+  assert.equal(before.outcome, 'unconfirmed');
+  assert.equal(before.task.status, 'input_required');
+  const after = await cancelMcpTask(recovered, lostCancelId, options);
+  assert.equal(after.outcome, 'terminal');
+  assert.equal(after.task.taskId, lostCancelId);
+  assert.equal(after.task.status, 'cancelled');
+
+  assert.deepEqual(await cancelMcpTask(recovered, acknowledgedCancelId, options), {
+    outcome: 'requested', taskId: acknowledgedCancelId,
+  });
+  assert.equal((await getMcpTask(recovered, acknowledgedCancelId, options)).status, 'cancelled');
+
+  const raced = await cancelMcpTask(recovered, completedCancelId, options);
+  assert.equal(raced.outcome, 'terminal');
+  assert.equal(raced.task.status, 'completed');
+  const racedResult = await getMcpTask(recovered, completedCancelId, options);
+  assert.deepEqual(racedResult.result.content, [{ type: 'text', text: 'Report was not approved.' }]);
 } finally {
   await recovered.close();
 }

@@ -9,7 +9,8 @@ import { pathToFileURL } from 'node:url';
 
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import {
-  createMcpTaskSubmissionFetch, listTaskInbox, lookupMcpTaskBySubmissionKey, submitMcpTask, watchTaskInbox,
+  cancelMcpTask, createMcpTaskSubmissionFetch, getMcpTask, listTaskInbox,
+  lookupMcpTaskBySubmissionKey, submitMcpTask, watchTaskInbox,
 } from '../../../sdk/node/dist/preview.js';
 
 test('the official SDK watches the authenticated PostgreSQL Task inbox', { timeout: 25_000 }, async t => {
@@ -179,4 +180,6 @@ test('the official SDK watches the authenticated PostgreSQL Task inbox', { timeo
   assert.equal(found.taskId, receipt.task.taskId);
   assert.equal(found.status, 'working');
   await assert.rejects(lookupMcpTaskBySubmissionKey(reduced, submissionKey), { name: 'McpTaskSubmissionError' });
+  assert.deepEqual(await cancelMcpTask(owner, found.taskId), { outcome: 'requested', taskId: found.taskId });
+  assert.equal((await getMcpTask(owner, found.taskId)).status, 'cancelled');
 });

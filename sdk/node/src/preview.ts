@@ -41,9 +41,9 @@ export {
 } from './mcp-task-input-review.js';
 export { createMcpTaskReviewFetch, McpTaskReviewNumber } from './mcp-task-review-json.js';
 export {
-  getMcpTask, waitForMcpTask, McpTaskReadError,
+  getMcpTask, waitForMcpTask, cancelMcpTask, McpTaskReadError, McpTaskCancellationError,
   type McpTaskConnection, type McpTaskReadOptions, type McpTaskReadFailureCode,
-  type McpTaskSnapshot, type McpTaskWaitResult,
+  type McpTaskCancellationConnection, type McpTaskCancellationOutcome, type McpTaskSnapshot, type McpTaskWaitResult,
 } from './mcp-task-result.js';
 export {
   createMcpTaskSubmissionFetch, submitMcpTask, lookupMcpTaskBySubmissionKey, McpTaskSubmissionError,

@@ -1,7 +1,10 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseMcpTaskFields, type McpTaskInboxEntry, type McpTaskInboxStatus } from './mcp-task-inbox.js';
 
-const method = 'tasks/get';
+const readMethod = 'tasks/get';
+const cancelMethod = 'tasks/cancel';
+// JSON-RPC parse, method and parameter rejections, plus Task not found.
+const cancellationRejections = new Set([-32700, -32600, -32601, -32602, -32002]);
 const protocol = '2026-07-28';
 const extension = 'io.modelcontextprotocol/tasks';
 const readTimeoutMs = 30_000;
@@ -19,7 +22,15 @@ export interface McpTaskConnection {
   getNegotiatedProtocolVersion(): string | undefined;
   getServerCapabilities(): unknown;
   request(
-    request: { method: typeof method; params: { taskId: string } },
+    request: { method: typeof readMethod; params: { taskId: string } },
+    resultSchema: typeof taskResultSchema,
+    options: RequestOptions,
+  ): Promise<unknown>;
+}
+
+export interface McpTaskCancellationConnection extends McpTaskConnection {
+  request(
+    request: { method: typeof readMethod | typeof cancelMethod; params: { taskId: string } },
     resultSchema: typeof taskResultSchema,
     options: RequestOptions,
   ): Promise<unknown>;
@@ -38,8 +49,24 @@ export type McpTaskSnapshot = TaskState<'working'> | McpTaskWaitResult;
 
 export interface McpTaskReadOptions {
   readonly signal?: AbortSignal;
-  /** Total deadline in milliseconds. Defaults to 30000 for get and 120000 for wait. */
+  /** Total deadline in milliseconds. Defaults to 30000 for get or cancel and 120000 for wait. */
   readonly timeoutMs?: number;
+}
+
+type TerminalStatus = 'completed' | 'failed' | 'cancelled';
+
+export type McpTaskCancellationOutcome =
+  | { readonly outcome: 'requested'; readonly taskId: string }
+  | { readonly outcome: 'terminal'; readonly task: TaskState<TerminalStatus> }
+  | { readonly outcome: 'unconfirmed'; readonly taskId: string; readonly task?: McpTaskInboxEntry };
+
+export class McpTaskCancellationError extends Error {
+  override readonly name = 'McpTaskCancellationError';
+  readonly code = 'request_rejected' as const;
+
+  constructor(readonly status?: number) {
+    super('MCP Task cancellation request was rejected');
+  }
 }
 
 const messages = {
@@ -64,15 +91,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function requestFailure(error: unknown): { status: number | undefined; code: unknown } {
+  const details = isRecord(error) ? error : undefined;
+  const rawStatus = details?.status;
+  const status = typeof rawStatus === 'number' && Number.isInteger(rawStatus) && rawStatus >= 100 && rawStatus <= 599
+    ? rawStatus : undefined;
+  return { status, code: details?.code };
+}
+
 class McpTaskRequestFailure extends McpTaskReadError {
   readonly retryable: boolean;
 
   constructor(error: unknown) {
-    const details = isRecord(error) ? error : undefined;
-    const rawStatus = details?.status;
-    const status = typeof rawStatus === 'number' && Number.isInteger(rawStatus) && rawStatus >= 100 && rawStatus <= 599
-      ? rawStatus : undefined;
-    const code = details?.code;
+    const { status, code } = requestFailure(error);
     const timeout = code === 'REQUEST_TIMEOUT';
     const failure = status === 404 || code === -32002 ? 'not_found'
       : timeout ? 'timeout' : code === 'INVALID_RESULT' ? 'invalid_task' : 'request_failed';
@@ -84,7 +115,18 @@ class McpTaskRequestFailure extends McpTaskReadError {
   }
 }
 
-function parseTask(value: unknown, taskId: string): McpTaskSnapshot {
+async function readTaskResponse(
+  connection: McpTaskConnection, taskId: string, options: RequestOptions,
+): Promise<{ task: McpTaskInboxEntry; value: Record<string, unknown> }> {
+  options.signal.throwIfAborted();
+  let value: unknown;
+  try {
+    value = await connection.request({ method: readMethod, params: { taskId } }, taskResultSchema, options);
+  } catch (error) {
+    options.signal.throwIfAborted();
+    throw new McpTaskRequestFailure(error);
+  }
+  options.signal.throwIfAborted();
   // The official client unwraps the complete result. Input requirements are
   // part of the stored Task snapshot, so the outer result still says complete.
   if (!isRecord(value) || (value.resultType !== undefined && value.resultType !== 'complete')) {
@@ -97,6 +139,11 @@ function parseTask(value: unknown, taskId: string): McpTaskSnapshot {
     throw new McpTaskReadError('invalid_task');
   }
   if (task.taskId !== taskId) throw new McpTaskReadError('invalid_task');
+  return { task, value };
+}
+
+async function readTask(connection: McpTaskConnection, taskId: string, options: RequestOptions): Promise<McpTaskSnapshot> {
+  const { task, value } = await readTaskResponse(connection, taskId, options);
   switch (task.status) {
     case 'completed':
       if (!isRecord(value.result)) throw new McpTaskReadError('invalid_task');
@@ -109,22 +156,9 @@ function parseTask(value: unknown, taskId: string): McpTaskSnapshot {
   }
 }
 
-async function readTask(connection: McpTaskConnection, taskId: string, options: RequestOptions): Promise<McpTaskSnapshot> {
-  options.signal.throwIfAborted();
-  let value: unknown;
-  try {
-    value = await connection.request({ method, params: { taskId } }, taskResultSchema, options);
-  } catch (error) {
-    options.signal.throwIfAborted();
-    throw new McpTaskRequestFailure(error);
-  }
-  options.signal.throwIfAborted();
-  return parseTask(value, taskId);
-}
-
-async function withTaskRead<Result>(
+async function withTaskScope<Result>(
   connection: McpTaskConnection, taskId: string, options: McpTaskReadOptions, defaultTimeoutMs: number,
-  read: (request: RequestOptions) => Promise<Result>,
+  run: (request: RequestOptions) => Promise<Result>,
 ): Promise<Result> {
   if (typeof taskId !== 'string' || taskId === '' || Buffer.byteLength(taskId) > 256 || /[\r\n\0]/u.test(taskId)) {
     throw new TypeError('Invalid MCP Task ID');
@@ -143,7 +177,7 @@ async function withTaskRead<Result>(
   const deadline = AbortSignal.timeout(timeoutMs);
   const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
   try {
-    return await read({ signal, timeout: Math.min(readTimeoutMs, timeoutMs), allowInputRequired: true });
+    return await run({ signal, timeout: Math.min(readTimeoutMs, timeoutMs), allowInputRequired: true });
   } catch (error) {
     options.signal?.throwIfAborted();
     if (deadline.aborted) throw new McpTaskReadError('timeout');
@@ -155,14 +189,14 @@ async function withTaskRead<Result>(
 export function getMcpTask(
   connection: McpTaskConnection, taskId: string, options: McpTaskReadOptions = {},
 ): Promise<McpTaskSnapshot> {
-  return withTaskRead(connection, taskId, options, readTimeoutMs, request => readTask(connection, taskId, request));
+  return withTaskScope(connection, taskId, options, readTimeoutMs, request => readTask(connection, taskId, request));
 }
 
 /** Observe an existing Task until it finishes or needs reviewed input. */
 export function waitForMcpTask(
   connection: McpTaskConnection, taskId: string, options: McpTaskReadOptions = {},
 ): Promise<McpTaskWaitResult> {
-  return withTaskRead(connection, taskId, options, 120_000, async request => {
+  return withTaskScope(connection, taskId, options, 120_000, async request => {
     let pollMs = initialPollMs;
     let backoffMs = initialPollMs;
     for (;;) {
@@ -180,5 +214,57 @@ export function waitForMcpTask(
       }
       await delay(intervalMs, undefined, { signal: request.signal });
     }
+  });
+}
+
+function terminalObservation(task: McpTaskInboxEntry): McpTaskCancellationOutcome | undefined {
+  switch (task.status) {
+    case 'completed':
+    case 'failed':
+    case 'cancelled':
+      return { outcome: 'terminal', task: { ...task, status: task.status } };
+    default:
+      return undefined;
+  }
+}
+
+function isCancellationAcknowledgement(value: unknown): boolean {
+  return isRecord(value) && (value.resultType === undefined || value.resultType === 'complete') &&
+    Object.keys(value).every(key => key === 'resultType' || key === '_meta') &&
+    (value._meta === undefined || isRecord(value._meta));
+}
+
+/**
+ * Request cooperative cancellation once. The deadline covers the initial read,
+ * the request and at most one reconciliation read after an uncertain reply.
+ */
+export function cancelMcpTask(
+  connection: McpTaskCancellationConnection, taskId: string, options: McpTaskReadOptions = {},
+): Promise<McpTaskCancellationOutcome> {
+  return withTaskScope(connection, taskId, options, readTimeoutMs, async request => {
+    const initial = terminalObservation((await readTaskResponse(connection, taskId, request)).task);
+    if (initial) return initial;
+    request.signal.throwIfAborted();
+
+    try {
+      const value = await connection.request({ method: cancelMethod, params: { taskId } }, taskResultSchema, request);
+      if (isCancellationAcknowledgement(value)) return { outcome: 'requested', taskId };
+    } catch (error) {
+      const { status, code } = requestFailure(error);
+      const rejected = status !== undefined
+        ? status >= 400 && status < 500 && status !== 408
+        : typeof code === 'number' && cancellationRejections.has(code);
+      if (rejected && !request.signal.aborted) throw new McpTaskCancellationError(status);
+    }
+
+    if (!request.signal.aborted) {
+      try {
+        const { task } = await readTaskResponse(connection, taskId, request);
+        return terminalObservation(task) ?? { outcome: 'unconfirmed', taskId, task };
+      } catch {
+        // Failure to read leaves the effect of the cancellation unknown.
+      }
+    }
+    return { outcome: 'unconfirmed', taskId };
   });
 }
