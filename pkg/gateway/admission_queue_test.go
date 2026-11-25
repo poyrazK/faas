@@ -4,6 +4,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -90,6 +91,29 @@ func TestWriteWakeErrorConcurrencyDrop(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), api.CodeConcurrencyThrottled) {
 		t.Fatalf("body missing concurrency code: %s", rec.Body.String())
+	}
+}
+
+// TestWriteWakeErrorAppNotPlaced: an app with no compute node answers 409
+// no_live_deployment, which the platform availability SLO does not count
+// (freeze #8076, 2026-11-25).
+func TestWriteWakeErrorAppNotPlaced(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeWakeError(rec, fmt.Errorf("gatewayd-internal: app app-y: %w", ErrAppNotPlaced))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), api.CodeNoLiveDeployment) {
+		t.Fatalf("body missing %s: %s", api.CodeNoLiveDeployment, rec.Body.String())
+	}
+	if got := rec.Header().Get("Retry-After"); got != "" {
+		t.Fatalf("Retry-After = %q, want none (nothing changes until the owner deploys)", got)
+	}
+	if platformErrorForSLO(httptest.NewRequest(http.MethodGet, "/", nil), rec.Code) {
+		t.Fatal("an unplaced app's 409 counts as a platform error")
+	}
+	if unclassifiedWakeError(fmt.Errorf("wrapped: %w", ErrAppNotPlaced)) {
+		t.Fatal("ErrAppNotPlaced is logged as an unclassified wake failure")
 	}
 }
 
