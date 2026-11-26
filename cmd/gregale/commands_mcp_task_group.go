@@ -35,12 +35,21 @@ func cmdMCPTaskGroup(action string, args []string) int {
 	if action == "status" {
 		fs.BoolVar(&includeResults, "include-results", false, "include retained results and execution errors")
 	}
-	timeout := fs.Duration("timeout", 30*time.Second, "total group operation deadline")
+	defaultTimeout := 30 * time.Second
+	var interval time.Duration
+	if action == "watch" {
+		defaultTimeout = 2 * time.Minute
+		fs.DurationVar(&interval, "interval", 2*time.Second, "polling interval when a stream is unavailable")
+	}
+	timeout := fs.Duration("timeout", defaultTimeout, "total group operation deadline")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 0 || *timeout <= 0 || strings.TrimSpace(*group) == "" || *tokenEnv == "" {
 		return printErr("Invalid MCP Task group flags", errors.New("provide --url, --token-env and --group with a positive --timeout"))
+	}
+	if action == "watch" && (interval < 250*time.Millisecond || interval > time.Hour) {
+		return printErr("Invalid MCP Task group flags", errors.New("--interval must be between 250ms and 1h"))
 	}
 	selected, err := mcpTaskGroupEndpoint(*endpoint)
 	if err != nil {
@@ -59,6 +68,9 @@ func cmdMCPTaskGroup(action string, args []string) int {
 		return printErr("MCP Task group", err)
 	}
 	defer func() { _ = dir.Close() }()
+	if action == "watch" {
+		return runMCPTaskGroupWatch(client, manifest, dir, interval, *timeout)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 	if action == "stop" {

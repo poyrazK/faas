@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFile, fork, spawn } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -136,6 +136,7 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
     if (taskWatch && method === 'subscriptions/listen') {
       taskWatch.stream = res;
       taskWatch.opens++;
+      taskWatch.opened?.[taskWatch.opens - 1]?.resolve(res);
     }
     if (taskWatch?.stream && method === 'tasks/get') {
       if (taskWatch.opens === 2) taskWatch.reconnected?.resolve();
@@ -343,7 +344,7 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
     const { stdout } = await promisify(execFile)(gregale, groupCLIArgs(action, path, flags), {
       env: groupCLIEnv(token), timeout: 5_000,
     });
-    return JSON.parse(stdout);
+    return action === 'watch' ? stdout.trimEnd().split('\n').map(line => JSON.parse(line)) : JSON.parse(stdout);
   }
   async function startAgent({ token, groupPath = group, ...configuration } = {}) {
     token ??= await mint('alice', 'mcp:tools reports:read');
@@ -646,11 +647,69 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
     const [completedResult, pausedResult, privateResult, failedResult] = resultClaims;
     const retained = { content: [{ type: 'text', text: 'Result retained across the agent restart' }], isError: false };
     const retainedError = { code: -32603, message: 'Retained Task execution error' };
-    assert.equal(await store.complete(completedResult.task_id, completedResult.lease_token, retained), 'completed');
-    await requestInput(pausedResult);
     const hiddenPayload = { content: [{ type: 'text', text: 'Other principal secret output' }] };
-    assert.equal(await store.complete(privateResult.task_id, privateResult.lease_token, hiddenPayload), 'completed');
-    assert.equal(await store.fail(failedResult.task_id, failedResult.lease_token, retainedError), 'failed');
+    async function settleGroupMembers() {
+      assert.equal(await store.complete(completedResult.task_id, completedResult.lease_token, retained), 'completed');
+      await requestInput(pausedResult);
+      assert.equal(await store.complete(privateResult.task_id, privateResult.lease_token, hiddenPayload), 'completed');
+    }
+
+    if (gregale) {
+      const before = await readFile(join(resultGroup, 'group.json'));
+      const files = await readdir(resultGroup);
+      const opened = [Promise.withResolvers(), Promise.withResolvers()];
+      taskWatch = { opens: 0, opened, reconciling: Promise.withResolvers(), release: Promise.withResolvers() };
+      const watching = runGroupCLI('watch', resultGroup, await mint('erin', scope, '6m'));
+      const earlyExit = watching.then(() => assert.fail('CLI group watch exited before both streams opened'));
+      async function waitForStream(attempt) {
+        const stream = await Promise.race([opened[attempt].promise, earlyExit]);
+        const signal = AbortSignal.timeout(2_000);
+        while (!stream.headersSent) await delay(5, undefined, { signal });
+        return stream;
+      }
+      try {
+        const stream = await waitForStream(0);
+        // A metadata change on a still-working Task proves that the CLI
+        // consumed the subscription acknowledgement before the disconnect.
+        assert.equal((await pool.query(
+          'UPDATE gregale_mcp_tasks SET updated_at = clock_timestamp() WHERE namespace = $1 AND task_id = $2',
+          [schema, failedResult.task_id],
+        )).rowCount, 1);
+        await Promise.race([taskWatch.reconciling.promise, earlyExit]);
+        const closed = once(stream, 'close');
+        stream.destroy();
+        await closed;
+        await settleGroupMembers();
+        taskWatch.release.resolve();
+        await waitForStream(1);
+        assert.equal(await store.fail(failedResult.task_id, failedResult.lease_token, retainedError), 'failed');
+
+        const events = await watching;
+        assert.equal(taskWatch.opens, 2);
+        assert.deepEqual(events.slice(0, 4).map(event => [event.receiptIndex, event.task?.status ?? event.outcome]), [
+          [0, 'working'], [1, 'working'], [2, 'unavailable'], [3, 'working'],
+        ]);
+        assert.deepEqual(events.slice(4).filter(event => event.task?.status !== 'working')
+          .map(event => [event.receiptIndex, event.task?.status, event.task?.nextAction]), [
+          [0, 'completed', 'read_result'], [1, 'input_required', 'provide_input'], [3, 'failed', 'none'],
+        ]);
+        assert.equal(new Set(events.map(event => JSON.stringify(event))).size, events.length);
+        for (const { task } of events) {
+          if (!task) continue;
+          for (const field of ['result', 'error', 'inputRequests', 'statusMessage']) {
+            assert.equal(Object.hasOwn(task, field), false);
+          }
+        }
+        assert.deepEqual(await readFile(join(resultGroup, 'group.json')), before);
+        assert.deepEqual((await readdir(resultGroup)).sort(), files.sort());
+      } finally {
+        taskWatch.release.resolve();
+        taskWatch = undefined;
+      }
+    } else {
+      await settleGroupMembers();
+      assert.equal(await store.fail(failedResult.task_id, failedResult.lease_token, retainedError), 'failed');
+    }
 
     const restartedReader = await startAgent({
       token: await mint('erin', scope), groupPath: resultGroup, collectResults: true,
@@ -812,6 +871,7 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
         [2, 'unavailable', undefined, undefined],
         [3, 'not_submitted', undefined, undefined],
       ]);
+      assert.deepEqual(await runGroupCLI('watch', renewableGroup, renewed), mixed);
       assert.equal(groupRequests.submissions, beforeRead);
       await assert.rejects(stat(join(renewableGroup, 'member-3.json')), { code: 'ENOENT' });
     }

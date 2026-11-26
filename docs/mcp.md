@@ -6399,6 +6399,34 @@ its status and next action. Members without an admission receipt report
 results for completed Tasks and execution errors for failed Tasks. Pending
 form contents stay private, and inspecting the group leaves its files intact.
 
+#### Watch a saved Task group from the CLI
+
+Use the endpoint the Node SDK group was saved against and a current client
+token.
+
+```sh
+gregale mcp client group watch \
+  --url https://reports.example.com/mcp --token-env MCP_TOKEN \
+  --group ./receipts/weekly-batch
+```
+
+The command streams one JSON object per line. It starts with each receipt in
+group order, then emits changed status and next actions. It follows Tasks
+that are working and reports `provide_input` when a Task pauses for reviewed
+input. Members without a saved receipt report `not_submitted`. Start a new
+watch to pick up members submitted later or to follow Tasks after answering
+their input.
+
+The watch uses one shared subscription when available. It rechecks current
+status after interruptions and uses polling when it cannot keep a stream
+open. The polling interval defaults to two seconds and honors longer Task
+polling hints. Tune it with `--interval`.
+
+Updates include only Task metadata. The watch leaves the saved group and
+its receipts intact. Duplicate observations are suppressed within each run.
+It exits when each watched Task settles or needs input. Use `--timeout` to
+change the two-minute deadline.
+
 #### Stop a Task group from TypeScript
 
 Call `stopMcpTaskGroup` with the saved group path and the current authorized
