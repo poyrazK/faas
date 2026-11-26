@@ -1218,6 +1218,13 @@ from .managed_execution_workflow_response_status import ManagedExecutionWorkflow
 from .managed_operation_effect import ManagedOperationEffect
 from .managed_operation_result import ManagedOperationResult
 from .managed_operation_result_gregale_operation_result import ManagedOperationResultGregaleOperationResult
+from .managed_postgres_activity import ManagedPostgresActivity
+from .managed_postgres_activity_cause import ManagedPostgresActivityCause
+from .managed_postgres_activity_cause_cause import ManagedPostgresActivityCauseCause
+from .managed_postgres_activity_compute_start import ManagedPostgresActivityComputeStart
+from .managed_postgres_activity_compute_start_cause import ManagedPostgresActivityComputeStartCause
+from .managed_postgres_activity_hint import ManagedPostgresActivityHint
+from .managed_postgres_activity_hint_code import ManagedPostgresActivityHintCode
 from .managed_postgres_binding import ManagedPostgresBinding
 from .managed_postgres_binding_access import ManagedPostgresBindingAccess
 from .managed_postgres_binding_list import ManagedPostgresBindingList
@@ -1244,6 +1251,7 @@ from .managed_postgres_database_list import ManagedPostgresDatabaseList
 from .managed_postgres_database_plan_excess import ManagedPostgresDatabasePlanExcess
 from .managed_postgres_database_service_class import ManagedPostgresDatabaseServiceClass
 from .managed_postgres_database_state import ManagedPostgresDatabaseState
+from .managed_postgres_database_usage import ManagedPostgresDatabaseUsage
 from .managed_postgres_health import ManagedPostgresHealth
 from .managed_postgres_health_compute_state import ManagedPostgresHealthComputeState
 from .managed_postgres_health_last_error_code import ManagedPostgresHealthLastErrorCode
@@ -4421,6 +4429,13 @@ __all__ = (
     "ManagedOperationEffect",
     "ManagedOperationResult",
     "ManagedOperationResultGregaleOperationResult",
+    "ManagedPostgresActivity",
+    "ManagedPostgresActivityCause",
+    "ManagedPostgresActivityCauseCause",
+    "ManagedPostgresActivityComputeStart",
+    "ManagedPostgresActivityComputeStartCause",
+    "ManagedPostgresActivityHint",
+    "ManagedPostgresActivityHintCode",
     "ManagedPostgresBinding",
     "ManagedPostgresBindingAccess",
     "ManagedPostgresBindingList",
@@ -4447,6 +4462,7 @@ __all__ = (
     "ManagedPostgresDatabasePlanExcess",
     "ManagedPostgresDatabaseServiceClass",
     "ManagedPostgresDatabaseState",
+    "ManagedPostgresDatabaseUsage",
     "ManagedPostgresHealth",
     "ManagedPostgresHealthComputeState",
     "ManagedPostgresHealthLastErrorCode",

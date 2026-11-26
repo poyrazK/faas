@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -28,6 +28,10 @@ from ..models.managed_postgres_usage_response_hold import (
     check_managed_postgres_usage_response_hold,
 )
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.managed_postgres_database_usage import ManagedPostgresDatabaseUsage
+
 
 T = TypeVar("T", bound="ManagedPostgresUsageResponse")
 
@@ -87,6 +91,9 @@ class ManagedPostgresUsageResponse:
     hold: ManagedPostgresUsageResponseHold | Unset = UNSET
     """Set while every database of the account is held, with the same reason each database reports. Egress holds
     one database at a time, so it is reported on that database, not here."""
+    databases: list[ManagedPostgresDatabaseUsage] | Unset = UNSET
+    """The month's compute by database, most first, with each one's recorded starts and awake time; omitted when it
+    could not be read."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -158,6 +165,13 @@ class ManagedPostgresUsageResponse:
         if not isinstance(self.hold, Unset):
             hold = self.hold
 
+        databases: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.databases, Unset):
+            databases = []
+            for databases_item_data in self.databases:
+                databases_item = databases_item_data.to_dict()
+                databases.append(databases_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -203,11 +217,15 @@ class ManagedPostgresUsageResponse:
             field_dict["egress_state"] = egress_state
         if hold is not UNSET:
             field_dict["hold"] = hold
+        if databases is not UNSET:
+            field_dict["databases"] = databases
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.managed_postgres_database_usage import ManagedPostgresDatabaseUsage
+
         d = dict(src_dict)
         period_start = datetime.datetime.fromisoformat(d.pop("period_start"))
 
@@ -301,6 +319,15 @@ class ManagedPostgresUsageResponse:
         else:
             hold = check_managed_postgres_usage_response_hold(_hold)
 
+        _databases = d.pop("databases", UNSET)
+        databases: list[ManagedPostgresDatabaseUsage] | Unset = UNSET
+        if _databases is not UNSET:
+            databases = []
+            for databases_item_data in _databases:
+                databases_item = ManagedPostgresDatabaseUsage.from_dict(databases_item_data)
+
+                databases.append(databases_item)
+
         managed_postgres_usage_response = cls(
             period_start=period_start,
             policy_enabled=policy_enabled,
@@ -328,6 +355,7 @@ class ManagedPostgresUsageResponse:
             app_egress_bytes=app_egress_bytes,
             egress_state=egress_state,
             hold=hold,
+            databases=databases,
         )
 
         managed_postgres_usage_response.additional_properties = d
