@@ -55,11 +55,15 @@ func (s *Service) ReconcileEnvironment(ctx context.Context, project state.Projec
 	if err != nil {
 		return out, err
 	}
-	scan.Workloads, err = AllocateAppSlugs(ctx, s.Store.AppBySlugIncludingDeleted, scan.Workloads, accountApps, project.AccountID, project.ID, project.Slug)
+	blocklist := AppNameBlocklist(ctx, s.Store)
+	scan.Workloads, err = AllocateAppSlugs(ctx, s.Store.AppBySlugIncludingDeleted, scan.Workloads, accountApps, project.AccountID, project.ID, project.Slug, blocklist)
 	if err != nil {
 		return out, err
 	}
 	if err := validateWorkloadAdmissionWithManaged(scan.Workloads, scan.Managed, accountApps, project.ID, scan.DependencyReferences); err != nil {
+		return out, err
+	}
+	if err := validateAppNameBlocklist(scan.Workloads, accountApps, project.ID, blocklist); err != nil {
 		return out, err
 	}
 	account, err := state.ProjectResourceAccount(ctx, s.Store, project)

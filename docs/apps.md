@@ -293,11 +293,22 @@ Note: the name shop belongs to another account, so this app is shop-x7k2q (https
 ```
 
 The suffix depends only on your account (or organization) and the name, so
-the next deploy of the same name updates the same app. If you deleted that
-app, its name stays held for the restore window and the deploy takes the
-next suffix instead; restore the app (`gregale app restore`) to keep using
-the old one. Pass `--name` to pick another name. A deploy whose `gregale.yaml` names the app keeps failing
-instead, because its routes and bindings would point at the wrong app.
+the next deploy of the same name updates the same app, even from a fresh
+checkout with no link and even after the other account lets the name go. To
+move the app to the plain name once it is free, rename it
+(`gregale app shop-x7k2q rename shop`). If you deleted the suffixed app, its
+name stays held for the restore window and the deploy takes the next suffix
+instead; restore the app (`gregale app restore`) to keep using the old one.
+Pass `--name` to pick another name. A deploy whose `gregale.yaml` names the
+app keeps failing instead, because its routes and bindings would point at the
+wrong app.
+
+The same suffixed name is used when you create an app from the dashboard's
+GitHub wizard or deploy a local directory through the Gregale MCP server, so
+a later `gregale deploy --name shop` finds that app. In a multi-service
+project, a new service whose name is taken or not offered gets the project's
+name in front instead (`<project>-<service>`), as described in
+[Multi-service apps](multi-service-apps.md).
 
 The API and `gregale app rename` do not add a suffix: creating or renaming
 to a name another account holds answers `409` (`app_rename_failed` for a

@@ -21,8 +21,11 @@ import (
 
 // localFixture fakes the customer API and the CLI the local tools run.
 type localFixture struct {
-	mu          sync.Mutex
-	exists      bool
+	mu     sync.Mutex
+	exists bool
+	// suffix, when set, is the suffixed name the app has because another
+	// account holds alpha: alpha answers 404 and the app answers as suffix.
+	suffix      string
 	app         api.AppResponse
 	current     string
 	latest      string
@@ -77,7 +80,17 @@ func (f *localFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(d)
 		return
 	}
-	if !f.exists && strings.HasPrefix(r.URL.Path, "/v1/apps/alpha") {
+	path := r.URL.Path
+	if f.suffix != "" {
+		if path == "/v1/apps/alpha" || strings.HasPrefix(path, "/v1/apps/alpha/") {
+			api.WriteProblem(w, api.NewProblem(404, "app_not_found", "App not found", "No app named alpha"))
+			return
+		}
+		if after, ok := strings.CutPrefix(path, "/v1/apps/"+f.suffix); ok && (after == "" || strings.HasPrefix(after, "/")) {
+			path = "/v1/apps/alpha" + after
+		}
+	}
+	if !f.exists && strings.HasPrefix(path, "/v1/apps/alpha") {
 		api.WriteProblem(w, api.NewProblem(404, "app_not_found", "App not found", "No app named alpha"))
 		return
 	}
@@ -85,7 +98,7 @@ func (f *localFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if f.current != "" {
 		serving = append(serving, f.current)
 	}
-	switch r.URL.Path {
+	switch path {
 	case "/v1/account":
 		_ = json.NewEncoder(w).Encode(api.AccountResponse{ID: "account-one"})
 	case "/v1/apps/alpha":
@@ -135,7 +148,7 @@ func (f *localFixture) cli(_ context.Context, args []string, stdin []byte) (Loca
 			return LocalCLIResult{Stderr: data, ExitCode: 1}, nil
 		}
 		f.exists = true
-		return ok(map[string]any{"slug": "alpha"})
+		return ok(map[string]any{"slug": f.app.Slug})
 	case args[0] == "deploy":
 		key := args[slices.Index(args, "--idempotency-key")+1]
 		id, seen := f.keys[key]
@@ -456,5 +469,49 @@ func TestVerifyPlanBeforeApplyReportsThePlan(t *testing.T) {
 	out := callTool(t, ctx, cs, "gregale_verify_plan", map[string]any{"plan_id": id}, false)
 	if string(out["plan_id"]) != `"`+id+`"` || string(out["status"]) == "" {
 		t.Fatalf("verify before apply = %s", out)
+	}
+}
+
+// suffixedLocalFixture is a fixture whose app has its first suffixed name
+// because another account holds alpha.
+func suffixedLocalFixture(t *testing.T, exists bool) *localFixture {
+	t.Helper()
+	f := newLocalFixture(t, exists, "")
+	f.suffix = api.SuffixedAppSlugs("account-one", "alpha", api.AppSlugAlternatives)[0]
+	f.app.Slug = f.suffix
+	return f
+}
+
+// Another account holds alpha: the CLI creates the app under its suffixed
+// name, and the plan follows the app instead of failing to find alpha.
+func TestLocalDeployTakenNameFollowsSuffixedApp(t *testing.T) {
+	for _, createOnly := range []bool{true, false} {
+		f := suffixedLocalFixture(t, false)
+		cs, ctx := f.connect(t, true)
+		plan := callTool(t, ctx, cs, "gregale_plan_local_deploy", map[string]any{"path": projectDir(t), "app": "alpha", "reason": "first", "create_only": createOnly}, false)
+		var effect string
+		if json.Unmarshal(plan["traffic_effect"], &effect) != nil || !strings.Contains(effect, "alpha-<5 characters>") {
+			t.Fatalf("create_only=%v: traffic effect %q does not say a taken name gets a suffix", createOnly, effect)
+		}
+		out := callTool(t, ctx, cs, "gregale_apply_local_deploy", map[string]any{"plan_id": planID(t, plan)}, false)
+		if !strings.Contains(string(out["app"]), f.suffix) {
+			t.Fatalf("create_only=%v: apply app %s, want %s", createOnly, out["app"], f.suffix)
+		}
+	}
+}
+
+// An earlier deploy took the suffixed name: a new plan for alpha targets that
+// app, says so, and runs the CLI against it.
+func TestLocalDeployTargetsOwnSuffixedApp(t *testing.T) {
+	f := suffixedLocalFixture(t, true)
+	cs, ctx := f.connect(t, true)
+	plan := callTool(t, ctx, cs, "gregale_plan_local_deploy", map[string]any{"path": projectDir(t), "app": "alpha", "reason": "update"}, false)
+	if !strings.Contains(string(plan["app"]), f.suffix) || !strings.Contains(string(plan["traffic_effect"]), "deploys to your app "+f.suffix) {
+		t.Fatalf("plan app %s effect %s, want the app %s and a note", plan["app"], plan["traffic_effect"], f.suffix)
+	}
+	callTool(t, ctx, cs, "gregale_apply_local_deploy", map[string]any{"plan_id": planID(t, plan)}, false)
+	calls := f.deployCalls()
+	if len(calls) != 1 || calls[0][slices.Index(calls[0], "--name")+1] != f.suffix {
+		t.Fatalf("deploy calls %v, want one --name %s", calls, f.suffix)
 	}
 }

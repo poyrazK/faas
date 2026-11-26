@@ -94,27 +94,48 @@ func TestDeployTakesSuffixedNameWhenAnotherOwnerHoldsIt(t *testing.T) {
 	}
 }
 
-// A deploy whose name is free makes no extra calls: no account lookup, no
-// alternative probes.
-func TestDeployFreeNameMakesNoAlternativeCalls(t *testing.T) {
+// A deploy to an app the caller already has under the name makes no extra
+// calls: no account lookup, no alternative probes.
+func TestDeployOwnAppMakesNoAlternativeCalls(t *testing.T) {
 	var paths []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.Method+" "+r.URL.Path)
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps":
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "shop"})
-		default:
-			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", ""))
-		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "shop"})
 	}))
 	defer srv.Close()
 	got, err := main.DeployAppWithAlternatives(context.Background(), main.NewClient(srv.URL, "fp_live_x"), "shop", "")
 	if err != nil || got != "shop" {
 		t.Fatalf("got %q, %v; want shop", got, err)
 	}
-	if strings.Join(paths, ",") != "GET /v1/apps/shop,POST /v1/apps" {
-		t.Fatalf("calls %v; want one lookup and one create", paths)
+	if len(paths) == 0 || paths[0] != "GET /v1/apps/shop" {
+		t.Fatalf("calls %v; want the lookup of shop first", paths)
+	}
+	for _, path := range paths {
+		if path == "GET /v1/account" {
+			t.Fatalf("calls %v; want no account lookup", paths)
+		}
+	}
+}
+
+// A new name the caller holds no suffixed app for is created under the name.
+func TestDeployFreeNameCreatesIt(t *testing.T) {
+	srv, created := slugOwnersServer(t, map[string]bool{}, map[string]bool{})
+	got, err := main.DeployAppWithAlternatives(context.Background(), main.NewClient(srv.URL, "fp_live_x"), "shop", "")
+	if err != nil || got != "shop" || strings.Join(*created, ",") != "shop" {
+		t.Fatalf("got %q, %v, created %v; want shop created", got, err, *created)
+	}
+}
+
+// An earlier deploy took a suffixed name while another account held shop;
+// that account has since let it go. A fresh checkout (no link) keeps
+// deploying to the suffixed app instead of creating a second app as shop.
+func TestDeployKeepsSuffixedAppAfterNameFrees(t *testing.T) {
+	alt := api.SuffixedAppSlugs("acct-1", "shop", 3)[0]
+	srv, created := slugOwnersServer(t, map[string]bool{alt: true}, map[string]bool{})
+	got, err := main.DeployAppWithAlternatives(context.Background(), main.NewClient(srv.URL, "fp_live_x"), "shop", "")
+	if err != nil || got != alt || len(*created) != 0 {
+		t.Fatalf("got %q, %v, created %v; want %q and no create", got, err, *created, alt)
 	}
 }
 

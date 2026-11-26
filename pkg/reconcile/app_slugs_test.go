@@ -2,10 +2,12 @@ package reconcile
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -91,7 +93,7 @@ func TestAllocateAppSlugsPrefixesNamesThatCannotBeSlugs(t *testing.T) {
 		{Name: "api"}, {Name: "ui"}, {Name: "worker"}, {Name: "mine"}, {Name: "tombstone"},
 		{Name: "foreign-x"}, {Name: "old-web"}, {Name: "fresh"}, {Name: "ledger"}, {Name: "billing", AppSlug: "my-billing"},
 	}
-	got, err := AllocateAppSlugs(t.Context(), lookup, workloads, accountApps, "acct-a", "project", "shop")
+	got, err := AllocateAppSlugs(t.Context(), lookup, workloads, accountApps, "acct-a", "project", "shop", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,13 +120,13 @@ func TestAllocateAppSlugsPrefixesNamesThatCannotBeSlugs(t *testing.T) {
 		t.Fatal("allocation mutated the caller's workloads")
 	}
 
-	unscoped, err := AllocateAppSlugs(t.Context(), lookup, []reposcan.Workload{{Name: "api"}}, nil, "acct-a", "", "")
+	unscoped, err := AllocateAppSlugs(t.Context(), lookup, []reposcan.Workload{{Name: "api"}}, nil, "acct-a", "", "", nil)
 	if err != nil || unscoped[0].AppSlug != "" {
 		t.Fatalf("without a project slug: %+v %v", unscoped, err)
 	}
 	boom := errors.New("pool closed")
 	failing := func(context.Context, string) (state.App, error) { return state.App{}, boom }
-	if _, err := AllocateAppSlugs(t.Context(), failing, []reposcan.Workload{{Name: "fresh"}}, nil, "acct-a", "", "shop"); !errors.Is(err, boom) {
+	if _, err := AllocateAppSlugs(t.Context(), failing, []reposcan.Workload{{Name: "fresh"}}, nil, "acct-a", "", "shop", nil); !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want the lookup failure", err)
 	}
 }
@@ -154,5 +156,46 @@ func TestReconcilePrefixesReservedServiceNames(t *testing.T) {
 	updated, err := svc.Reconcile(t.Context(), project, scan, "", "", nil)
 	if err != nil || len(updated.Added)+len(updated.Changed)+len(updated.Removed) != 0 {
 		t.Fatalf("subsequent sync changed allocations: %+v %v", updated, err)
+	}
+}
+
+// setAppNameBlocklist applies the app_name_blocklist runtime setting the way
+// apid does: the row's effective value is what readers act on.
+func setAppNameBlocklist(t *testing.T, store *state.MemStore, list string) {
+	t.Helper()
+	value, _ := json.Marshal(list)
+	row, err := store.UpsertRuntimeConfig(t.Context(), state.RuntimeConfigUpdate{Key: api.AppNameBlocklistConfigKey, Scope: state.RuntimeConfigScopeGlobal, DesiredValue: value, ApplyMode: state.RuntimeConfigApplyHot, Reason: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkRuntimeConfigApplied(t.Context(), row.Key, row.Scope, row.ScopeID, row.Version, value, ""); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A new workload whose bare name app_name_blocklist matches takes the
+// project-prefixed name, as it does when another account holds the name. An
+// explicit name the list matches is refused before anything is created.
+func TestReconcileStepsAroundBlockedAppNames(t *testing.T) {
+	store := newFakeStore()
+	acct, project := seedProject(t, store, state.ProjectScanSourceCompose, "main")
+	if AppNameBlocklist(t.Context(), store) != nil {
+		t.Fatal("unset blocklist read as entries")
+	}
+	setAppNameBlocklist(t, store.MemStore, "paypal *-login")
+	if got := AppNameBlocklist(t.Context(), store); strings.Join(got, ",") != "paypal,*-login" {
+		t.Fatalf("AppNameBlocklist = %v", got)
+	}
+	svc := NewService(store, newFakeAuditor(store), nil)
+	scan := reposcan.Result{Tier: reposcan.TierCompose, Workloads: []reposcan.Workload{
+		{Name: "paypal", Source: "compose.yaml: paypal", Class: reposcan.ClassHTTP, Tier: reposcan.TierCompose},
+	}}
+	created, err := svc.Reconcile(t.Context(), project, scan, "", "", nil)
+	if err != nil || len(created.Added) != 1 || created.Added[0].Slug != SuggestedAppSlug(project.Slug, "paypal") {
+		t.Fatalf("account %s: %+v %v; want %s", acct.ID, created.Added, err, SuggestedAppSlug(project.Slug, "paypal"))
+	}
+	scan.Workloads = append(scan.Workloads, reposcan.Workload{Name: "auth", AppSlug: "shop-login", Source: "compose.yaml: auth", Class: reposcan.ClassHTTP, Tier: reposcan.TierCompose})
+	if _, err := svc.Reconcile(t.Context(), project, scan, "", "", nil); !errors.Is(err, ErrInvalidWorkloadPlan) || !strings.Contains(err.Error(), `"shop-login"`) {
+		t.Fatalf("explicit blocked name: err %v; want ErrInvalidWorkloadPlan naming shop-login", err)
 	}
 }

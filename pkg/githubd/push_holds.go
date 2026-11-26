@@ -133,7 +133,7 @@ func (s *Service) pushServicesWithHeldSlugs(ctx context.Context, project state.P
 		accountApps = visible
 	}
 	lookup := s.Reconcile.Store.AppBySlugIncludingDeleted
-	allocated, err := reconcile.AllocateAppSlugs(ctx, lookup, scan.Workloads, accountApps, project.AccountID, project.ID, project.Slug)
+	allocated, err := reconcile.AllocateAppSlugs(ctx, lookup, scan.Workloads, accountApps, project.AccountID, project.ID, project.Slug, reconcile.AppNameBlocklist(ctx, s.Reconcile.Store))
 	if err != nil {
 		return nil, fmt.Errorf("githubd: allocate app slugs: %w", err)
 	}

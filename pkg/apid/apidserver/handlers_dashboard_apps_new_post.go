@@ -214,6 +214,9 @@ func (s *server) createAppFromGitHubWizard(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		app = created
+		// Another account's name or a blocked one gave the app a suffixed
+		// name (createDashboardWizardApp).
+		slug = created.Slug
 	}
 	bindingID, err := s.githubd.BindAppRepo(r.Context(), app.ID, acct.ID, installationID, repo, branch)
 	if err != nil {
@@ -238,29 +241,65 @@ func (s *server) createAppFromGitHubWizard(w http.ResponseWriter, r *http.Reques
 	http.Redirect(w, r, "/dashboard/apps/"+url.PathEscape(slug)+"?github=connected", http.StatusSeeOther)
 }
 
+// createDashboardWizardApp creates the wizard's app. When another account
+// holds slug, or app_name_blocklist refuses it, the app takes the first free
+// suffixed alternative a CLI deploy of the same name would take
+// (api.SuffixedAppSlugs), so a later `gregale deploy --name slug` from a
+// checkout of the repository finds it. A name the account itself holds,
+// even in a deleted app, keeps the error.
 func (s *server) createDashboardWizardApp(ctx context.Context, r *http.Request, acct state.Account, slug string) (state.App, *api.Problem) {
+	created, problem, taken := s.createDashboardWizardAppNamed(ctx, r, acct, slug)
+	if !taken || s.accountHoldsSlug(ctx, acct.ID, slug) {
+		return created, problem
+	}
+	for _, alt := range api.SuffixedAppSlugs(acct.ID, slug, api.AppSlugAlternatives) {
+		app, altProblem, altTaken := s.createDashboardWizardAppNamed(ctx, r, acct, alt)
+		if !altTaken {
+			if altProblem == nil {
+				s.log.Info("GitHub wizard took a suffixed app name", "app_id", app.ID, "requested", slug, "slug", app.Slug)
+			}
+			return app, altProblem
+		}
+	}
+	return created, problem
+}
+
+// accountHoldsSlug reports whether one of the account's apps, deleted ones
+// included, has slug. A failed lookup counts as held: the wizard then shows
+// the original error instead of picking another name.
+func (s *server) accountHoldsSlug(ctx context.Context, accountID, slug string) bool {
+	app, err := s.store.AppBySlugIncludingDeleted(ctx, slug)
+	if errors.Is(err, state.ErrNotFound) {
+		return false
+	}
+	return err != nil || app.AccountID == accountID
+}
+
+// createDashboardWizardAppNamed creates the wizard's app as slug. taken
+// reports that slug is held by an app or refused by app_name_blocklist.
+func (s *server) createDashboardWizardAppNamed(ctx context.Context, r *http.Request, acct state.Account, slug string) (state.App, *api.Problem, bool) {
 	// POST /v1/apps requires a verified email; this dashboard twin did not.
 	if !acct.EmailVerified() {
-		return state.App{}, api.ErrEmailVerificationRequired()
+		return state.App{}, api.ErrEmailVerificationRequired(), false
 	}
 	limits := api.MustLimitsFor(acct.Plan)
 	app, problem := s.buildApp(acct, api.CreateAppRequest{Slug: slug}, limits)
-	if problem == nil {
-		problem = s.blockedAppNameProblem(acct.ID, app.Slug)
-	}
 	if problem != nil {
-		return state.App{}, problem
+		return state.App{}, problem, false
+	}
+	if problem := s.blockedAppNameProblem(acct.ID, app.Slug); problem != nil {
+		return state.App{}, problem, true
 	}
 	created, err := s.createAppIfUnderQuotaWithActivity(ctx, r, acct, app, limits)
 	if err != nil {
 		var quotaErr *state.QuotaError
 		switch {
 		case errors.As(err, &quotaErr):
-			return state.App{}, api.ErrPlanLimitApps(limits, quotaErr.Observed)
+			return state.App{}, api.ErrPlanLimitApps(limits, quotaErr.Observed), false
 		case errors.Is(err, state.ErrConflict):
-			return state.App{}, api.NewProblem(http.StatusConflict, api.CodeValidation, "Slug taken", fmt.Sprintf("app slug %q is already in use", slug))
+			return state.App{}, api.NewProblem(http.StatusConflict, api.CodeValidation, "Slug taken", fmt.Sprintf("app slug %q is already in use", slug)), true
 		default:
-			return state.App{}, trafficproblem.Policy(err, api.NewProblem(http.StatusInternalServerError, api.CodeCapacity, "Capacity", "could not create app"))
+			return state.App{}, trafficproblem.Policy(err, api.NewProblem(http.StatusInternalServerError, api.CodeCapacity, "Capacity", "could not create app")), false
 		}
 	}
 	s.log.Info("app created from GitHub wizard", "app_id", created.ID, "account_id", acct.ID)
@@ -272,7 +311,7 @@ func (s *server) createDashboardWizardApp(ctx context.Context, r *http.Request, 
 		"surface": "dashboard_wizard",
 	})
 	s.emitAppCreated(ctx, created)
-	return created, nil
+	return created, nil, false
 }
 
 func wizardProblemMessage(problem *api.Problem) string {

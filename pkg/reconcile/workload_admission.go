@@ -253,6 +253,17 @@ func BlockedAppNameReasons(workloads []reposcan.Workload, accountApps []state.Ap
 	return reasons
 }
 
+// validateAppNameBlocklist is BlockedAppNameReasons as an
+// ErrInvalidWorkloadPlan, for the reconcile paths (a GitHub push, an
+// environment apply) that create a project's apps without apid's scan.
+func validateAppNameBlocklist(workloads []reposcan.Workload, accountApps []state.App, projectID string, blocklist []string) error {
+	reasons := BlockedAppNameReasons(workloads, accountApps, projectID, blocklist)
+	if len(reasons) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: %s", ErrInvalidWorkloadPlan, strings.Join(reasons, "; "))
+}
+
 // adoptableFunctionApp reports whether app is a function app of the
 // account outside any project that a function workload takes over: the app
 // `gregale deploy` made under the same slug (ADR-20261108160000 §1).

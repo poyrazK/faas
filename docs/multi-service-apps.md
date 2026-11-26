@@ -250,8 +250,9 @@ the next push deploys them.
   once per service; declare it as a Compose step instead.
 
 Each service keeps its name inside the project. Its app slug is the same name,
-or `<project>-<name>` when the name is reserved (`api`, `admin`, …) or taken by
-another app, for example `shop-api`.
+or `<project>-<name>` when the name is reserved (`api`, `admin`, …), taken by
+another app, or not offered by the platform (brand and look-alike login
+names), for example `shop-api`.
 
 ## Public and internal services
 

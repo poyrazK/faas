@@ -1483,19 +1483,43 @@ func createOrFetchApp(ctx context.Context, client *Client, req api.CreateAppRequ
 // createOrFetchAppWith creates the app from req, or configures an existing
 // one from existingReq, which leaves out defaults meant only for a new app.
 func createOrFetchAppWith(ctx context.Context, client *Client, req, existingReq api.CreateAppRequest, requireAuthnPtr *bool, appProtocolPtr *string, publicAuthPtr *api.PublicAuthBlock, resolved ...*api.AppResponse) error {
+	var out *api.AppResponse
+	if len(resolved) > 0 {
+		out = resolved[0]
+	}
+	_, err := createOrFetchAppAdopting(ctx, client, req, existingReq, nil, requireAuthnPtr, appProtocolPtr, publicAuthPtr, out)
+	return err
+}
+
+// createOrFetchAppAdopting is createOrFetchAppWith where adopt, when set,
+// runs once the caller is known to hold no app named req.Slug, before it is
+// created. An app adopt returns (ok) is configured instead, and its slug
+// returned; an error from adopt stops the deploy.
+func createOrFetchAppAdopting(ctx context.Context, client *Client, req, existingReq api.CreateAppRequest, adopt func() (api.AppResponse, bool, error), requireAuthnPtr *bool, appProtocolPtr *string, publicAuthPtr *api.PublicAuthBlock, resolved *api.AppResponse) (string, error) {
 	setResolved := func(app api.AppResponse) {
-		if len(resolved) > 0 && resolved[0] != nil {
-			*resolved[0] = app
+		if resolved != nil {
+			*resolved = app
 		}
 	}
 	existing, err := client.GetApp(ctx, req.Slug)
 	if err == nil {
 		setResolved(existing)
-		return configureExistingApp(ctx, client, existing, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr)
+		return req.Slug, configureExistingApp(ctx, client, existing, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr)
 	}
 	var ae *APIError
 	if !errors.As(err, &ae) || ae.Problem.Status != http.StatusNotFound {
-		return err
+		return req.Slug, err
+	}
+	if adopt != nil {
+		app, ok, adoptErr := adopt()
+		if adoptErr != nil {
+			return app.Slug, adoptErr
+		}
+		if ok {
+			setResolved(app)
+			existingReq.Slug = app.Slug
+			return app.Slug, configureExistingApp(ctx, client, app, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr)
+		}
 	}
 	created, err := client.CreateApp(ctx, req)
 	if err == nil {
@@ -1503,21 +1527,21 @@ func createOrFetchAppWith(ctx context.Context, client *Client, req, existingReq 
 		if publicAuthPtr != nil {
 			_, err = client.UpdateApp(ctx, req.Slug, api.UpdateAppRequest{PublicAuth: publicAuthPtr})
 		}
-		return err
+		return req.Slug, err
 	}
 	if !errors.As(err, &ae) || ae.Problem.Status != http.StatusConflict {
-		return err
+		return req.Slug, err
 	}
 	if ae.Problem.Code == api.CodeAppNameUnavailable {
 		// app_name_blocklist: nobody holds the name; it is not offered.
-		return &slugTakenError{slug: req.Slug, unavailable: true}
+		return req.Slug, &slugTakenError{slug: req.Slug, unavailable: true}
 	}
 	existing, err = client.GetApp(ctx, req.Slug)
 	if err != nil {
-		return slugInUseError(ctx, client, req.Slug)
+		return req.Slug, slugInUseError(ctx, client, req.Slug)
 	}
 	setResolved(existing)
-	return configureExistingApp(ctx, client, existing, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr)
+	return req.Slug, configureExistingApp(ctx, client, existing, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr)
 }
 
 // slugInUseError explains a CreateApp 409 that the follow-up GetApp cannot
@@ -3541,13 +3565,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			createReq.VCPU = *vcpu
 		}
 		requestedSlug := slug
-		var createErr error
-		var nameUnavailable bool
-		slug, nameUnavailable, createErr = createOrFetchAppWithAlternatives(ctx, client, createReq, createReq, sourceDir, nil, requireAuthnPtr, appProtocolPtr, publicAuthPtr, nil)
+		choice, createErr := createOrFetchAppWithAlternatives(ctx, client, createReq, createReq, sourceDir, nil, requireAuthnPtr, appProtocolPtr, publicAuthPtr, nil)
+		slug = choice.Slug
 		if createErr != nil {
 			return printErr("Could not create or fetch app", createErr)
 		}
-		printSlugAlternativeNotice(requestedSlug, slug, nameUnavailable)
+		printSlugAlternativeNotice(requestedSlug, choice)
 		if jsonOutput {
 			return jsonOut(writeJSON(map[string]any{"slug": slug, "status": "ready"}))
 		}
@@ -4462,13 +4485,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				}
 			}
 			requestedSlug := slug
-			var nameUnavailable bool
-			slug, nameUnavailable, err = createOrFetchAppWithAlternatives(ctx, client, createReq, existingReq, sourceDir, confirmExisting, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
+			var choice appNameChoice
+			choice, err = createOrFetchAppWithAlternatives(ctx, client, createReq, existingReq, sourceDir, confirmExisting, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
+			slug = choice.Slug
 			if errors.Is(err, errDeployToAlternativeDeclined) {
 				return 1
 			}
 			if err == nil {
-				printSlugAlternativeNotice(requestedSlug, slug, nameUnavailable)
+				printSlugAlternativeNotice(requestedSlug, choice)
 			}
 			if err == nil && creating {
 				rememberCreatedApp(contextDir, slug)

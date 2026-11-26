@@ -242,11 +242,15 @@ func (s *Service) Plan(
 		}
 		accountApps = visible
 	}
-	scan.Workloads, err = AllocateAppSlugs(ctx, s.Store.AppBySlugIncludingDeleted, scan.Workloads, accountApps, project.AccountID, project.ID, project.Slug)
+	blocklist := AppNameBlocklist(ctx, s.Store)
+	scan.Workloads, err = AllocateAppSlugs(ctx, s.Store.AppBySlugIncludingDeleted, scan.Workloads, accountApps, project.AccountID, project.ID, project.Slug, blocklist)
 	if err != nil {
 		return Result{}, err
 	}
 	if err := validateWorkloadAdmissionWithManaged(scan.Workloads, scan.Managed, accountApps, project.ID, scan.DependencyReferences); err != nil {
+		return Result{}, err
+	}
+	if err := validateAppNameBlocklist(scan.Workloads, accountApps, project.ID, blocklist); err != nil {
 		return Result{}, err
 	}
 

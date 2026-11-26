@@ -37,7 +37,7 @@ const (
 	// account may newly take: brand and phishing names under the apps
 	// domain. A create answers it like a taken name, so deploys fall back
 	// to a suffixed name; existing apps keep theirs.
-	runtimeConfigAppNameBlocklist                   = "app_name_blocklist"
+	runtimeConfigAppNameBlocklist                   = api.AppNameBlocklistConfigKey
 	runtimeConfigDataPlacement                      = "data_placement_enabled"
 	runtimeConfigAppErrors                          = "app_errors_enabled"
 	runtimeConfigRekey                              = "rekey_enabled"
