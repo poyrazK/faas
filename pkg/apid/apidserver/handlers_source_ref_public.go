@@ -55,7 +55,7 @@ func publicSourceFallback(p *api.Problem) bool {
 // reviewed or branch-pinned source, or an explicitly chosen installation).
 // The public_source_deploys platform flag releases the fallback; off, the
 // account gets the installation path's answer.
-func (s *server) sourceRefAccessFor(acct state.Account, installID int64, installProblem *api.Problem, allowPublic bool) (sourceRefAccess, *api.Problem) {
+func (s *server) sourceRefAccessFor(ctx context.Context, acct state.Account, installID int64, installProblem *api.Problem, allowPublic bool) (sourceRefAccess, *api.Problem) {
 	if installProblem == nil {
 		return sourceRefAccess{installID: installID}, nil
 	}
@@ -68,7 +68,7 @@ func (s *server) sourceRefAccessFor(acct state.Account, installID int64, install
 	if _, ok := s.githubd.(githubdPublicSourceClient); !ok {
 		return sourceRefAccess{}, installProblem
 	}
-	if p := s.takePublicSourceFetch(acct); p != nil {
+	if p := s.takePublicSourceFetch(ctx, acct); p != nil {
 		return sourceRefAccess{}, p
 	}
 	return sourceRefAccess{public: true, installProblem: installProblem}, nil
@@ -85,7 +85,7 @@ func (s *server) resolveSourceRefDeployAccess(ctx context.Context, acct state.Ac
 	if problem != nil && allowPublic && s.appBoundToRepo(ctx, acct, app, req.Repo) {
 		allowPublic = false
 	}
-	return s.sourceRefAccessFor(acct, installID, problem, allowPublic)
+	return s.sourceRefAccessFor(ctx, acct, installID, problem, allowPublic)
 }
 
 // appBoundToRepo reports whether app has a GitHub binding for repo. A lookup
@@ -109,16 +109,25 @@ func (s *server) sourceRefDeployBranch(ctx context.Context, accountID string, ac
 }
 
 // takePublicSourceFetch counts one public read against
-// PublicSourceFetchesPerHour.
-func (s *server) takePublicSourceFetch(acct state.Account) *api.Problem {
-	s.publicSourceFetchesOnce.Do(func() { s.publicSourceFetches = newSecurityMailLimiter() })
+// PublicSourceFetchesPerHour in the database counter every apid shares
+// (ADR 20261108160000), so replicas and restarts do not reset it. When that
+// counter is unavailable it counts in this process instead.
+func (s *server) takePublicSourceFetch(ctx context.Context, acct state.Account) *api.Problem {
 	if acct.ID == "" {
 		return api.ErrInternal("could not count this account's public repository reads")
 	}
-	if s.publicSourceFetches.allowWithin(acct.ID, publicSourceFetchKind, publicSourceFetchSlot) {
+	allowed, shared := s.takeSharedMailSlot(ctx, acct.ID, publicSourceFetchKind, publicSourceFetchSlot)
+	// The shared counter keeps a fixed window, so its wait is the whole
+	// window at most.
+	retry := publicSourceFetchSlot.Window
+	if !shared {
+		s.publicSourceFetchesOnce.Do(func() { s.publicSourceFetches = newSecurityMailLimiter() })
+		allowed = s.publicSourceFetches.allowWithin(acct.ID, publicSourceFetchKind, publicSourceFetchSlot)
+		retry = s.publicSourceFetches.retryAfter(acct.ID, publicSourceFetchKind, publicSourceFetchSlot.Window)
+	}
+	if allowed {
 		return nil
 	}
-	retry := s.publicSourceFetches.retryAfter(acct.ID, publicSourceFetchKind, publicSourceFetchSlot.Window)
 	return api.ErrPublicSourceFetchRateLimited(api.PublicSourceFetchesPerHour, int((retry+time.Second-1)/time.Second))
 }
 

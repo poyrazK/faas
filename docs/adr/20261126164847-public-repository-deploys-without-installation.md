@@ -61,9 +61,11 @@
    `github_installation_id` stay NULL (the existing
    `deployments_github_source_ref_pair_chk` holds, no migration), so
    ADR-316's freshness check does not apply, and there is no binding,
-   webhook, preview or push-to-deploy. Redeploying is a new deploy of a ref.
-   A customer who wants push-to-deploy forks the repository and connects
-   GitHub.
+   webhook, preview or push-to-deploy. A public scan sends no repository,
+   production branch or installation to the plan. Redeploying is a new
+   deploy of a ref; rebuilding a retained commit (which reviews the source
+   through an installation) is refused with a message saying so. A customer
+   who wants push-to-deploy forks the repository and connects GitHub.
 6. **apid tries the installation path first.** Only when no installation of
    the account sees the repository (or the account has none) do
    `POST /v1/apps/{slug}/deployments/source-ref` and
@@ -75,7 +77,8 @@
    public path apid records `access: "public"` on the `deploy.source_ref`
    audit row and counts each public fetch (scan or deploy) against
    `PublicSourceFetchesPerHour` in `pkg/api/limits.go` (30 per account per
-   hour on every plan). A repository githubd does not confirm public, and a
+   hour on every plan), in the per-account counter every apid shares (ADR
+   20261108160000), so replicas and restarts do not reset it. A repository githubd does not confirm public, and a
    githubd without the RPC, get the installation path's refusal unchanged.
    The dashboard wizard stops requiring a GitHub connection for a public
    repository and skips the bind.

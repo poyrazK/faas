@@ -177,3 +177,24 @@ func TestNamedRetainedSourceRollbackPreservesScopeAndProtection(t *testing.T) {
 		})
 	}
 }
+
+// adr: 20261126164847 — a commit deployed from a public repository without an
+// installation cannot be reviewed for a rebuild; the refusal says why.
+func TestRetainedSourceRollbackPublicRepositoryNeedsInstallation(t *testing.T) {
+	for _, code := range []string{api.CodeGitHubInstallNotFound, api.CodeGitHubRepoNotAccessible} {
+		t.Run(code, func(t *testing.T) {
+			f, cs, ctx := newReleaseFixture(t, true)
+			f.app.Manifest.ExecutionMode = api.ExecutionModeWorker
+			old := retainedSource(t, f)
+			f.sourceReviewErr = code
+			result := callTool(t, ctx, cs, "gregale_plan_workload_rollout", map[string]any{"app": "alpha", "retained_deployment_id": old.ID, "reason": "rebuild public commit"}, true)
+			raw, _ := json.Marshal(result)
+			if !strings.Contains(string(raw), "invalid_target") || !strings.Contains(string(raw), "GitHub installation") {
+				t.Fatalf("refusal = %s, want invalid_target naming the missing installation", raw)
+			}
+			if f.writes != 0 {
+				t.Fatal("refused retained source created a build")
+			}
+		})
+	}
+}

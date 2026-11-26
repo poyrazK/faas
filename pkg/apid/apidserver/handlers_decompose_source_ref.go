@@ -33,7 +33,7 @@ func (s *server) scanProjectSourceRef(w http.ResponseWriter, r *http.Request, ac
 	installID, problem := s.projectScanInstallation(r, installOwner, req)
 	// A chosen installation is never swapped for a public read
 	// (ADR-20261126164847).
-	access, problem := s.sourceRefAccessFor(acct, installID, problem, req.InstallID == 0)
+	access, problem := s.sourceRefAccessFor(r.Context(), acct, installID, problem, req.InstallID == 0)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -124,9 +124,10 @@ func (s *server) projectSourceRefMultipart(r *http.Request, acct state.Account, 
 		return nil, func() {}, problem
 	}
 	if access.public {
-		// No installation, so no repository binding: the plan deploys the
-		// scanned commit without push-to-deploy (ADR-20261126164847).
-		req.RepoFullName = ""
+		// No installation, so no repository binding and no production
+		// branch: the plan deploys the scanned commit without push-to-deploy
+		// (ADR-20261126164847).
+		req.RepoFullName, req.ProductionBranch = "", ""
 	}
 	if err = writeProjectSourceRefFields(writer, req, access.installID); err == nil {
 		err = writer.Close()

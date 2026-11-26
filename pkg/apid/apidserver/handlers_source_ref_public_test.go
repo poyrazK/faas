@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/google/uuid"
@@ -244,11 +245,20 @@ func TestSourceRefPublic_NoFallback(t *testing.T) {
 	})
 }
 
+// The limit is counted in the store, so every apid sharing it (another
+// replica, or this one after a restart) sees the same count.
 func TestSourceRefPublic_RateLimitedPerAccount(t *testing.T) {
 	e, gh := newPublicSourceTestEnv(t, 0)
+	ctx := context.Background()
 	acct := state.Account{ID: e.acctID}
+	replica := newServerWithDeps(e.store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev",
+		noopNotifier{}, "", noopMailer{}, gh, nil, nil, 15*60_000_000_000, "")
 	for i := range api.PublicSourceFetchesPerHour {
-		if p := e.srv.takePublicSourceFetch(acct); p != nil {
+		srv := e.srv
+		if i%2 == 1 {
+			srv = replica
+		}
+		if p := srv.takePublicSourceFetch(ctx, acct); p != nil {
 			t.Fatalf("fetch %d refused: %v", i+1, p)
 		}
 	}
@@ -259,8 +269,15 @@ func TestSourceRefPublic_RateLimitedPerAccount(t *testing.T) {
 	if gh.publicCalls != 0 {
 		t.Fatalf("public calls = %d past the limit", gh.publicCalls)
 	}
+	if p := replica.takePublicSourceFetch(ctx, acct); p == nil || p.Code != api.CodePublicSourceFetchRateLimited {
+		t.Fatalf("replica past the limit = %v, want %s", p, api.CodePublicSourceFetchRateLimited)
+	}
 	// Another account has its own budget.
-	if p := e.srv.takePublicSourceFetch(state.Account{ID: "other-account"}); p != nil {
+	other, err := e.store.CreateAccount(ctx, "other-public-src@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("seed other account: %v", err)
+	}
+	if p := e.srv.takePublicSourceFetch(ctx, other); p != nil {
 		t.Fatalf("other account refused: %v", p)
 	}
 }
@@ -280,8 +297,35 @@ func TestProjectSourceRefScanPublicRepository(t *testing.T) {
 	if plan.ProjectSlug != "starter" || plan.RepoFullName != "" {
 		t.Fatalf("plan = slug:%q repo:%q, want starter with no repository binding", plan.ProjectSlug, plan.RepoFullName)
 	}
+
 	if gh.publicCalls != 1 || gh.streamCalls != 0 {
 		t.Fatalf("public calls = %d, installation calls = %d; want 1 and 0", gh.publicCalls, gh.streamCalls)
+	}
+}
+
+// The scan request a public read builds carries no repository, production
+// branch or installation, so the plan binds nothing for push-to-deploy.
+func TestProjectSourceRefMultipartPublicDropsBinding(t *testing.T) {
+	e, _ := newPublicSourceTestEnv(t, 0)
+	acct, err := e.store.AccountByID(context.Background(), e.acctID)
+	if err != nil {
+		t.Fatalf("load account: %v", err)
+	}
+	r := httptest.NewRequest(http.MethodPost, "/v1/projects/scan/source-ref", nil)
+	req := api.ProjectSourceRefScanRequest{Repo: "gregale-dev/starter", Ref: "main", ProjectSlug: "starter", RepoFullName: "gregale-dev/starter", ProductionBranch: "release"}
+	access := sourceRefAccess{public: true, installProblem: api.ErrGitHubInstallNotFound()}
+	scan, cleanup, problem := e.srv.projectSourceRefMultipart(r, acct, acct.ID, req, access)
+	defer cleanup()
+	if problem != nil {
+		t.Fatalf("multipart: %v", problem)
+	}
+	if err := scan.ParseMultipartForm(32 << 20); err != nil {
+		t.Fatalf("parse scan request: %v", err)
+	}
+	for field, want := range map[string]string{"repo_full_name": "", "production_branch": "", "install_id": "0", "project_slug": "starter"} {
+		if got := scan.FormValue(field); got != want {
+			t.Errorf("%s = %q, want %q", field, got, want)
+		}
 	}
 }
 

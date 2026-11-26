@@ -19219,7 +19219,8 @@ const (
 // PublicSourceFetchesPerHour caps the reads of public GitHub repositories one
 // account makes without an installation, scans and deploys together
 // (ADR-20261126164847). Every account shares githubd's one public-read token,
-// 5,000 GitHub calls an hour, so no plan raises it. Counted per apid process.
+// 5,000 GitHub calls an hour, so no plan raises it. Counted in the database
+// counter every apid shares (ADR 20261108160000).
 const PublicSourceFetchesPerHour = 30
 
 // NotificationChannelTestsPerAccountMinute caps test sends to an account's
