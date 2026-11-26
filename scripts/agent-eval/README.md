@@ -66,9 +66,18 @@ measure what a cold agent does with a repository Gregale did not create:
   checkout after the run (`file`), or a fact about what it created
   (`state: project_created`). A command feature also lists its MCP tools
   (`tools`), so an agent that uses the feature through the management MCP
-  server scores the same as one that runs the command; a unit test requires
-  the list and checks each name against `pkg/mcpmanagement/toolsets.go`.
-  `feature_score` is the share used. A feature
+  server scores the same as one that runs the command. A tool counts only
+  when it shows the agent chose and carried out the feature: an explicit
+  check (`gregale_check_plan`, not the plan every MCP deploy makes), a
+  diagnostic read (logs, health, error groups, not the deployment it just
+  made), an applied change. When the apply tool is shared by many features
+  the entry pairs it with the plan (`gregale_plan_cron+gregale_apply_provision`),
+  so a plan never applied does not count. Cron, Postgres and scale tools are
+  only in the `provision`/`operate` toolsets (`all`), so a `core` run reaches
+  those features through the CLI only. A unit test requires the list and checks
+  each name against `pkg/mcpmanagement/toolsets.go`. `feature_score` is the
+  share used; the day-2 tasks have features since 2026-11-26, so earlier
+  result tables show none for them. A feature
   with `"unless": "first_deploy_live"` is a fix the agent needs only when
   Gregale's detection falls short; it counts as used when every app the run
   created went live on its first deployment. Until the

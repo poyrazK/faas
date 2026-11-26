@@ -77,14 +77,29 @@ class TaskTests(unittest.TestCase):
                 if feature["kind"] != "command":
                     continue
                 self.assertTrue(feature.get("tools"), f"{task['id']}/{feature['id']} names no MCP tools")
-                for tool in feature["tools"]:
-                    self.assertIn(tool, served, f"{task['id']}/{feature['id']}: no MCP tool {tool}")
-        task = {"features": [{"id": "env-set", "kind": "command", "pattern": r"\bgregale\b.*\benv\s+set\b", "tools": ["gregale_apply_env_change"]}]}
-        with tempfile.TemporaryDirectory() as d:
-            mcp = ev.grade_features(task, [], Path(d), {}, tools=["mcp__gregale__gregale_apply_env_change"])
-            cli = ev.grade_features(task, ["gregale env set --app a GREETING=x"], Path(d), {}, tools=[])
-            plan_only = ev.grade_features(task, [], Path(d), {}, tools=["mcp__gregale__gregale_plan_env_change"])
-        self.assertEqual((mcp["feature_score"], cli["feature_score"], plan_only["feature_score"]), (1.0, 1.0, 0.0))
+                for entry in feature["tools"]:
+                    for tool in entry.split("+"):
+                        self.assertIn(tool, served, f"{task['id']}/{feature['id']}: no MCP tool {tool}")
+        # Only an applied change counts; a plan the agent never applied does not.
+        tasks = {t["id"]: t for t in ev.load_tasks()}
+
+        def score(task_id, commands=(), tools=()):
+            with tempfile.TemporaryDirectory() as d:
+                return ev.grade_features(tasks[task_id], list(commands), Path(d), {}, tools=[f"mcp__gregale__{t}" for t in tools])["feature_score"]
+
+        self.assertEqual(score("day2-config-change", tools=["gregale_plan_env_change", "gregale_apply_env_change"]), 1.0)
+        self.assertEqual(score("day2-config-change", tools=["gregale_plan_env_change"]), 0.0)
+        self.assertEqual(score("day2-config-change", commands=["gregale env set --app a GREETING=x"]), 1.0)
+        self.assertEqual(score("day2-no-cold-start", tools=["gregale_plan_scale"]), 0.0)
+        self.assertEqual(score("day2-no-cold-start", tools=["gregale_plan_scale", "gregale_apply_operation"]), 1.0)
+        self.assertEqual(score("day2-no-cold-start", commands=["gregale app eval-app --min 1"]), 1.0)
+        self.assertEqual(score("day2-schedule", tools=["gregale_plan_cron"]), 0.0)
+        self.assertEqual(score("day2-schedule", tools=["gregale_plan_cron", "gregale_apply_provision"]), 1.0)
+        # A deploy's own plan, or reading the deployment it made, is not a
+        # preflight or a diagnosis.
+        deploy = ["gregale_plan_local_deploy", "gregale_apply_local_deploy", "gregale_get_deployment", "gregale_list_app_deployments"]
+        self.assertEqual(score("deploy-express-render", tools=deploy), 0.0)
+        self.assertEqual(score("deploy-express-render", tools=deploy + ["gregale_check_plan", "gregale_get_logs"]), 1.0)
 
     def test_framework_tasks_grade_the_fix_not_the_repo(self):
         # The pristine repositories leave these features unused; only the
