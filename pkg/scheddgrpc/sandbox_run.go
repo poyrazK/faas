@@ -53,7 +53,12 @@ func (s *Server) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
 		Network: start.GetNetworkMode(), WorkspaceKey: start.GetWorkspaceKey(), ImageKey: start.GetImageKey(),
 		StartCmd: start.GetStartCmd(), ReadyCmd: start.GetReadyCmd(), ReadyTimeout: time.Duration(start.GetReadyTimeoutMs()) * time.Millisecond,
 		Browser: start.GetBrowser(), Task: sandboxTaskFromProto(start.GetTask()),
-		EgressAllow: start.GetEgressAllow(), EgressDeny: start.GetEgressDeny(), WebDomainLog: start.GetWebDomainLog()}
+		EgressAllow: start.GetEgressAllow(), EgressDeny: start.GetEgressDeny(), WebDomainLog: start.GetWebDomainLog(),
+		Persistent: start.GetPersistent()}
+	if r := start.GetResume(); r != nil {
+		admission.Resume = &sched.SandboxResume{NodeID: r.GetNodeId(), RequireNode: r.GetRequireNode(), Snapshot: sched.AgentRunSnapshot{StorageKey: r.GetStorageKey(),
+			VMStateStorageKey: r.GetVmstateStorageKey(), FCVersion: r.GetFcVersion(), MemBytes: r.GetMemBytes()}}
+	}
 	ctx := stream.Context()
 	var sendMu sync.Mutex
 	send := func(ev *scheddpb.SandboxRunEvent) error {
@@ -117,6 +122,14 @@ func (s *Server) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
 			return send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_TaskDone{TaskDone: &scheddpb.SandboxRunTaskDone{
 				ExitCode: int32(d.ExitCode), Output: d.Output, TimedOut: d.TimedOut, Truncated: d.Truncated, Error: d.Error}}})
 		},
+		Paused: func(_ context.Context, p sched.SandboxPaused) error {
+			return send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Paused{Paused: &scheddpb.SandboxRunPaused{
+				StorageKey: p.Snapshot.StorageKey, VmstateStorageKey: p.Snapshot.VMStateStorageKey, FcVersion: p.Snapshot.FCVersion,
+				MemBytes: p.Snapshot.MemBytes, VmstateBytes: p.VMStateBytes, PauseMs: p.PauseMs, HasBacking: p.HasBacking}}})
+		},
+		PauseRefused: func(_ context.Context, reason string) error {
+			return send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_PauseRefused{PauseRefused: &scheddpb.SandboxRunPauseRefused{Reason: reason}}})
+		},
 		WebDomains: func(_ context.Context, d []sched.SandboxWebDomain) error {
 			frame := &scheddpb.SandboxRunWebDomains{Domains: make([]*scheddpb.SandboxRunWebDomain, 0, len(d))}
 			for _, x := range d {
@@ -179,6 +192,8 @@ func watchSandboxFrames(ctx context.Context, stream scheddpb.Schedd_RunSandboxSe
 					RequestID: r.GetRequestId(), Recorded: r.GetRecorded()}}
 			case frame.GetAction() != nil:
 				req = sched.SandboxControl{Op: sched.SandboxOpAction, Action: sandboxActionFromProto(frame.GetAction())}
+			case frame.GetPause() != nil:
+				req = sched.SandboxControl{Op: sched.SandboxOpPause, CaptureID: frame.GetPause().GetCaptureId()}
 			default:
 				continue
 			}

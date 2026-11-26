@@ -1,4 +1,4 @@
--- filename: 20261126083649453_native_postgres_replica_only_bindings.sql
+-- filename: 20261126195619222_native_postgres_replica_only_bindings.sql
 -- migration-compat: expand
 -- Standby-only bindings preserve their routing mode through rotation, cutover
 -- and candidate qualification.

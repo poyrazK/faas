@@ -115,7 +115,7 @@ func TestScheduledBackupRetryRestoresPortableArchive(t *testing.T) {
 	if _, err := catalog.Exec(ctx, "CREATE TABLE managed_postgres_databases (id uuid PRIMARY KEY, account_id uuid NOT NULL, org_id uuid NOT NULL, state text NOT NULL)"); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"20261126083649234_native_postgres_exports.sql", "20261126083649616_native_postgres_backup_schedules.sql"} {
+	for _, name := range []string{"20261126195619217_native_postgres_exports.sql", "20261126195619232_native_postgres_backup_schedules.sql"} {
 		raw, err := os.ReadFile("../../../migrations/" + name)
 		if err != nil {
 			t.Fatal(err)

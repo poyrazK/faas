@@ -48,15 +48,48 @@ type SandboxClaim struct {
 	Browser bool
 	// Task is the session's sandbox task, if it is one
 	// (ADR-20261116182615 §3).
-	Task       *SandboxTask
+	Task *SandboxTask
+	// Kind is SandboxEphemeral or SandboxPersistent; VCPU is a persistent
+	// session's vCPUs, 0 for the plan's default (ADR-20261122132055 §5).
+	Kind string
+	VCPU int
+	// Resume is the capture a paused persistent session resumes from, when
+	// the claim resumed one (ADR-20261122132055 §2). A resume without a live
+	// capture has Resuming set and Resume nil: it cold-boots.
+	Resuming   bool
+	Resume     *SandboxCapture
 	LeaseToken string
 	SandboxLease
+}
+
+// SandboxCapture is a persistent session's pause capture
+// (ADR-20261122132055 §2): its objects, the Firecracker version and size,
+// and the node it was taken on.
+type SandboxCapture struct {
+	ID                string
+	NodeID            string
+	StorageKey        string
+	VMStateStorageKey string
+	FCVersion         string
+	MemBytes          int64
+	VMStateBytes      int64
+	// HasBacking: the capture's backing identity was written (ADR-510).
+	HasBacking bool
+	// Remote: the shared store holds the whole capture (durability
+	// remote), so any node can restore it; otherwise only NodeID can.
+	Remote bool
+	// SessionID is the capture's session, in a durability check.
+	SessionID string
+	// CreatedAt is when the capture was recorded, in the consumed sweep.
+	CreatedAt time.Time
 }
 
 // SandboxLease is what a renewal reports: the fields apid may change while
 // agentd holds the session.
 type SandboxLease struct {
 	CloseRequested bool
+	// PauseRequested: apid asked to pause a persistent session.
+	PauseRequested bool
 	IdleTimeout    time.Duration
 	ExpiresAt      time.Time
 }
@@ -102,7 +135,13 @@ func (s *Store) ClaimSandbox(ctx context.Context, owner, token string, ttl time.
 	if row.TaskKind != "" {
 		task = &SandboxTask{Kind: row.TaskKind, URL: row.TaskUrl, MaxChars: int(row.TaskMaxChars)}
 	}
-	return SandboxClaim{ID: row.ID, AccountID: row.AccountID, Plan: row.Plan, RAMMB: int(row.RamMb), Network: row.NetworkMode,
+	var resume *SandboxCapture
+	if row.State == SandboxResuming && row.CaptureID != "" {
+		resume = &SandboxCapture{ID: row.CaptureID, NodeID: row.CaptureNodeID, StorageKey: row.CaptureStorageKey,
+			VMStateStorageKey: row.CaptureVmstateStorageKey, FCVersion: row.CaptureFcVersion, MemBytes: row.CaptureMemBytes,
+			Remote: row.Durability == "remote"}
+	}
+	return SandboxClaim{Kind: row.Kind, VCPU: int(row.Vcpu), Resuming: row.State == SandboxResuming, Resume: resume, ID: row.ID, AccountID: row.AccountID, Plan: row.Plan, RAMMB: int(row.RamMb), Network: row.NetworkMode,
 		WorkspaceKey: row.WorkspaceKey, WorkspaceMissing: row.WorkspaceMissing, ImageKey: row.ImageKey,
 		ImageMissing: row.FromImage && row.ImageKey == "", StartCmd: row.StartCmd, ReadyCmd: row.ReadyCmd,
 		ReadyTimeout: time.Duration(row.ReadyTimeoutS) * time.Second, Browser: row.Browser, Task: task, EgressAllow: row.EgressAllow, EgressDeny: row.EgressDeny, LeaseToken: token,
@@ -136,8 +175,128 @@ func (s *Store) RenewSandbox(ctx context.Context, id, token string, ttl time.Dur
 	if err != nil {
 		return SandboxLease{}, fmt.Errorf("renew session lease: %w", err)
 	}
-	return SandboxLease{CloseRequested: row.CloseRequested, IdleTimeout: time.Duration(row.IdleTimeoutSec) * time.Second,
-		ExpiresAt: row.ExpiresAt.Time.UTC()}, nil
+	return SandboxLease{CloseRequested: row.CloseRequested, PauseRequested: row.PauseRequested,
+		IdleTimeout: time.Duration(row.IdleTimeoutSec) * time.Second, ExpiresAt: row.ExpiresAt.Time.UTC()}, nil
+}
+
+// MarkSandboxResumed moves a resumed session to ready on its new VM
+// (ADR-20261122132055 §2), uses up its capture, and sets its next automatic
+// pause run from now. cold reports a resume that could not restore the
+// capture and cold-booted.
+func (s *Store) MarkSandboxResumed(ctx context.Context, id, token, nodeID, instanceID string, cold bool, run time.Duration) error {
+	n, err := s.q.MarkSandboxSessionResumed(ctx, s.pool, sqlc.MarkSandboxSessionResumedParams{SessionID: id, LeaseToken: token,
+		NodeID: nodeID, InstanceID: instanceID, ResumedCold: cold, RunSeconds: run.Seconds()})
+	return fenced(n, err, "mark session resumed")
+}
+
+// BeginSandboxPause moves a running persistent session to pausing.
+func (s *Store) BeginSandboxPause(ctx context.Context, id, token string) error {
+	n, err := s.q.BeginSandboxSessionPause(ctx, s.pool, sqlc.BeginSandboxSessionPauseParams{SessionID: id, LeaseToken: token})
+	return fenced(n, err, "begin session pause")
+}
+
+// CancelSandboxPause returns a pausing session to ready, or frozen: vmmd
+// refused the pause and the VM runs on.
+func (s *Store) CancelSandboxPause(ctx context.Context, id, token string, frozen bool) error {
+	n, err := s.q.CancelSandboxSessionPause(ctx, s.pool, sqlc.CancelSandboxSessionPauseParams{Frozen: frozen, SessionID: id, LeaseToken: token})
+	return fenced(n, err, "cancel session pause")
+}
+
+// ReturnSandboxResume puts a resume that never booted back to paused, its
+// capture kept. retry leaves the resume asked for.
+func (s *Store) ReturnSandboxResume(ctx context.Context, id, token string, retry bool, after time.Duration) error {
+	n, err := s.q.ReturnSandboxSessionResume(ctx, s.pool, sqlc.ReturnSandboxSessionResumeParams{Retry: retry,
+		RetrySeconds: after.Seconds(), SessionID: id, LeaseToken: token})
+	return fenced(n, err, "return session resume")
+}
+
+// TouchSandboxCaptures records that a sweep found these captures not yet
+// uploaded, so the next sweeps look at others first.
+func (s *Store) TouchSandboxCaptures(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	uuids := make([]pgtype.UUID, 0, len(ids))
+	for _, id := range ids {
+		var u pgtype.UUID
+		if err := u.Scan(id); err != nil {
+			return fmt.Errorf("touch session captures: %w", err)
+		}
+		uuids = append(uuids, u)
+	}
+	if err := s.q.TouchSandboxSessionCaptures(ctx, s.pool, uuids); err != nil {
+		return fmt.Errorf("touch session captures: %w", err)
+	}
+	return nil
+}
+
+// RecordAbandonedSandboxCapture records a pause agentd never saw answered
+// as a used capture, so the sweep deletes whatever vmmd wrote under its key.
+func (s *Store) RecordAbandonedSandboxCapture(ctx context.Context, sessionID string, c SandboxCapture) error {
+	if err := s.q.RecordAbandonedSandboxSessionCapture(ctx, s.pool, sqlc.RecordAbandonedSandboxSessionCaptureParams{
+		CaptureID: c.ID, SessionID: sessionID, NodeID: c.NodeID, StorageKey: c.StorageKey, VmstateStorageKey: c.VMStateStorageKey}); err != nil {
+		return fmt.Errorf("record abandoned session capture: %w", err)
+	}
+	return nil
+}
+
+// MarkSandboxPaused records a pausing session's capture and moves it to
+// paused: it holds no lease and no VM, and expires retention from now unless
+// it resumes first.
+func (s *Store) MarkSandboxPaused(ctx context.Context, id, token string, c SandboxCapture, retention time.Duration) error {
+	n, err := s.q.MarkSandboxSessionPaused(ctx, s.pool, sqlc.MarkSandboxSessionPausedParams{SessionID: id, LeaseToken: token,
+		CaptureID: c.ID, NodeID: c.NodeID, StorageKey: c.StorageKey, VmstateStorageKey: c.VMStateStorageKey, FcVersion: c.FCVersion,
+		MemBytes: c.MemBytes, VmstateBytes: c.VMStateBytes, HasBacking: c.HasBacking, RetentionSeconds: retention.Seconds()})
+	return fenced(n, err, "mark session paused")
+}
+
+// ConsumedSandboxCaptures lists at most limit captures whose objects the
+// sweep deletes: used by a resume, or left by a session that ended paused.
+func (s *Store) ConsumedSandboxCaptures(ctx context.Context, limit int) ([]SandboxCapture, error) {
+	rows, err := s.q.ListConsumedSandboxSessionCaptures(ctx, s.pool, int32(limit))
+	if err != nil {
+		return nil, fmt.Errorf("list consumed session captures: %w", err)
+	}
+	out := make([]SandboxCapture, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, SandboxCapture{ID: r.ID, StorageKey: r.StorageKey, VMStateStorageKey: r.VmstateStorageKey,
+			HasBacking: r.HasBacking, CreatedAt: r.CreatedAt.Time.UTC()})
+	}
+	return out, nil
+}
+
+// NodeOnlySandboxCaptures lists at most limit live captures of paused
+// sessions whose durability is still node.
+func (s *Store) NodeOnlySandboxCaptures(ctx context.Context, limit int) ([]SandboxCapture, error) {
+	rows, err := s.q.ListNodeOnlySandboxCaptures(ctx, s.pool, int32(limit))
+	if err != nil {
+		return nil, fmt.Errorf("list node-only session captures: %w", err)
+	}
+	out := make([]SandboxCapture, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, SandboxCapture{ID: r.ID, SessionID: r.SessionID, StorageKey: r.StorageKey,
+			VMStateStorageKey: r.VmstateStorageKey, HasBacking: r.HasBacking})
+	}
+	return out, nil
+}
+
+// MarkSandboxCaptureRemote records that the shared store holds a paused
+// session's whole capture: its durability is remote, and any node resumes
+// it. A session that resumed or ended meanwhile is left alone.
+func (s *Store) MarkSandboxCaptureRemote(ctx context.Context, sessionID, captureID string) error {
+	if _, err := s.q.MarkSandboxCaptureRemote(ctx, s.pool, sqlc.MarkSandboxCaptureRemoteParams{SessionID: sessionID, CaptureID: captureID}); err != nil {
+		return fmt.Errorf("mark session capture remote: %w", err)
+	}
+	return nil
+}
+
+// DeleteSandboxCapture removes a consumed capture's row once its objects are
+// gone.
+func (s *Store) DeleteSandboxCapture(ctx context.Context, id string) error {
+	if _, err := s.q.DeleteSandboxSessionCapture(ctx, s.pool, id); err != nil {
+		return fmt.Errorf("delete session capture: %w", err)
+	}
+	return nil
 }
 
 // SetSandboxFrozen moves a live session between ready and frozen.
@@ -170,12 +329,26 @@ func (s *Store) ExpireSandboxLeases(ctx context.Context) (requeued, failed, expi
 	if requeued, err = s.q.RequeueExpiredStartingSandboxSessions(ctx, s.pool); err != nil {
 		return 0, 0, 0, fmt.Errorf("requeue expired sessions: %w", err)
 	}
+	// A lost resume goes back to paused and resumes on the next claim
+	// (ADR-20261122132055 §2).
+	returned, err := s.q.ReturnExpiredResumingSandboxSessions(ctx, s.pool)
+	if err != nil {
+		return requeued, 0, 0, fmt.Errorf("return expired resumes: %w", err)
+	}
+	requeued += returned
 	if failed, err = s.q.FailExpiredLiveSandboxSessions(ctx, s.pool); err != nil {
 		return requeued, 0, 0, fmt.Errorf("fail expired sessions: %w", err)
 	}
 	if expired, err = s.q.ExpireQueuedSandboxSessions(ctx, s.pool); err != nil {
 		return requeued, failed, 0, fmt.Errorf("expire queued sessions: %w", err)
 	}
+	// A paused session ends without a VM: closed when asked, expired past its
+	// retention; its capture is left for the capture sweep.
+	ended, err := s.q.EndPausedSandboxSessions(ctx, s.pool)
+	if err != nil {
+		return requeued, failed, expired, fmt.Errorf("end paused sessions: %w", err)
+	}
+	expired += int64(len(ended))
 	// A queued session whose seller image cannot be had fails instead of
 	// waiting out its lifetime.
 	unavailable, err := s.q.FailImageUnavailableSandboxSessions(ctx, s.pool)

@@ -1,4 +1,4 @@
--- filename: 20261126083649765_native_postgres_handoff_capacity.sql
+-- filename: 20261126195619241_native_postgres_handoff_capacity.sql
 -- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
