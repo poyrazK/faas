@@ -2017,6 +2017,23 @@ const (
 	// gateway process (ADR-20261125230541).
 	MCPSessionCapabilityTTL      = 24 * time.Hour
 	MCPSessionCapabilitiesPerApp = 1024
+	// Seller stats (ADR-20261126082046): GET /v1/apps/{slug}/mcp-stats reads
+	// at most this many calendar months, prices this month for at most
+	// MCPSellerStatsMaxQuotes customers (most units first) and lists at most
+	// MCPSellerStatsNearLimitMax customers near their limit, those at
+	// MCPSellerStatsNearLimitPercent of their monthly units or more.
+	MCPSellerStatsMaxMonths        = 12
+	MCPSellerStatsMaxQuotes        = 500
+	MCPSellerStatsNearLimitMax     = 50
+	MCPSellerStatsNearLimitPercent = 80
+	// It reads at most MCPSellerStatsMaxSignups sign-ups to tell where
+	// customers came from, and prices MCPSellerStatsQuoteParallelism
+	// customers at a time for at most MCPSellerStatsQuoteBudget, well inside
+	// DefaultClientTimeout; customers left unpriced mark the estimate
+	// incomplete.
+	MCPSellerStatsMaxSignups       = 100_000
+	MCPSellerStatsQuoteParallelism = 8
+	MCPSellerStatsQuoteBudget      = 20 * time.Second
 )
 
 // Consumer and platform tenant controls (ADR-1314, ADR-1315, ADR-1322,
@@ -9710,6 +9727,13 @@ const (
 	// (pkg/fcvm/vmm_lifecycle_metal_test.go). Below it every attempt
 	// cold-boots a VM that cannot start.
 	JobMinRAMMB = 64
+
+	// AppMinRAMMB is the smallest ram_mb an app or function accepts, for the
+	// same reason: `gregale app <slug> --ram 8` was saved on prod and every
+	// later wake would cold-boot a guest that cannot start (prod hunt r53).
+	// Checked only when ram_mb is set, so an older app below it can still
+	// change other settings.
+	AppMinRAMMB = JobMinRAMMB
 
 	// Snapshots / disk (spec §1, §8).
 	FleetSnapshotAvgTargetMB = 130 // business metric; alert >160 warn, >200 page

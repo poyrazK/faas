@@ -43,10 +43,16 @@ var (
 func TestClaudePluginManifestAndMCPServer(t *testing.T) {
 	var manifest struct {
 		Name, Version, Description string
+		PrivacyPolicyURL           string `json:"privacyPolicyUrl"`
 	}
 	readPluginJSON(t, ".claude-plugin/plugin.json", &manifest)
 	if manifest.Name != "gregale" || manifest.Version == "" || manifest.Description == "" {
 		t.Fatalf("plugin.json needs name gregale, a version and a description: %+v", manifest)
+	}
+	// The plugin directory asks for a privacy policy from any plugin that
+	// connects to a remote MCP server.
+	if manifest.PrivacyPolicyURL != "https://gregale.dev/privacy" {
+		t.Fatalf("plugin.json privacyPolicyUrl = %q, want https://gregale.dev/privacy", manifest.PrivacyPolicyURL)
 	}
 
 	// The plugin connects to the hosted server: the person chooses at sign-in

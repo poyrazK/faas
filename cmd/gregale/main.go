@@ -302,7 +302,8 @@ func run(args []string) (status int) {
 	if err != nil {
 		return printErr("Invalid app target", err)
 	}
-	args = rewritten
+	// …and in a linked checkout the app may be left out entirely.
+	args = linkedAppAsArgument(rewritten)
 	// Help and version must remain available when saved configuration is broken.
 	switch args[0] {
 	case "version", "--version", "-v":

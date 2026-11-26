@@ -42,11 +42,11 @@ func TestClassifyPython(t *testing.T) {
 		wantReason string
 		wantStart  []string
 	}{
-		{name: "requirements.txt", plan: pythonPlan(t, "railpack-0.38.0-py-req.json", nil), wantStart: []string{"/bin/sh", "-c", "python app.py"}},
-		{name: "uv project", plan: pythonPlan(t, "railpack-0.38.0-py-uv.json", nil), wantStart: []string{"/bin/sh", "-c", "python app.py"}},
-		{name: "gunicorn", plan: pythonPlan(t, "railpack-0.38.0-py-req.json", setStart("gunicorn --bind 0.0.0.0:8080 app:app")), wantStart: []string{"/bin/sh", "-c", "gunicorn --bind 0.0.0.0:8080 app:app"}},
-		{name: "uv run", plan: pythonPlan(t, "railpack-0.38.0-py-uv.json", setStart("uv run app.py")), wantStart: []string{"/bin/sh", "-c", "python app.py"}},
-		{name: "poetry run", plan: pythonPlan(t, "railpack-0.38.0-py-req.json", setStart("poetry run python app.py")), wantStart: []string{"/bin/sh", "-c", "python app.py"}},
+		{name: "requirements.txt", plan: pythonPlan(t, "railpack-0.38.0-py-req.json", nil), wantStart: []string{"/bin/sh", "-c", "exec python app.py"}},
+		{name: "uv project", plan: pythonPlan(t, "railpack-0.38.0-py-uv.json", nil), wantStart: []string{"/bin/sh", "-c", "exec python app.py"}},
+		{name: "gunicorn", plan: pythonPlan(t, "railpack-0.38.0-py-req.json", setStart("gunicorn --bind 0.0.0.0:8080 app:app")), wantStart: []string{"/bin/sh", "-c", "exec gunicorn --bind 0.0.0.0:8080 app:app"}},
+		{name: "uv run", plan: pythonPlan(t, "railpack-0.38.0-py-uv.json", setStart("uv run app.py")), wantStart: []string{"/bin/sh", "-c", "exec python app.py"}},
+		{name: "poetry run", plan: pythonPlan(t, "railpack-0.38.0-py-req.json", setStart("poetry run python app.py")), wantStart: []string{"/bin/sh", "-c", "exec python app.py"}},
 		{name: "uvx", plan: pythonPlan(t, "railpack-0.38.0-py-uv.json", setStart("uvx gunicorn app:app")), wantReason: ReasonPackageManagerStart},
 		{name: "no start", plan: pythonPlan(t, "railpack-0.38.0-py-req.json", setStart(" ")), wantReason: ReasonNoStartCommand},
 		{name: "system packages", plan: pythonPlan(t, "railpack-0.38.0-py-req.json", func(p map[string]any) {

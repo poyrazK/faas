@@ -68,7 +68,7 @@ func ResolvePythonStart(command string, layer *PythonLayer) ([]string, string) {
 		if mentionsPythonPackageManager(command) {
 			return nil, ReasonPackageManagerStart
 		}
-		return []string{"/bin/sh", "-c", command}, ""
+		return ShellStart(command), ""
 	}
 	var edits []shellEdit
 	for _, words := range commands {
@@ -83,7 +83,7 @@ func ResolvePythonStart(command string, layer *PythonLayer) ([]string, string) {
 	for i := len(edits) - 1; i >= 0; i-- {
 		command = command[:edits[i].start] + edits[i].text + command[edits[i].end:]
 	}
-	return []string{"/bin/sh", "-c", command}, ""
+	return ShellStart(command), ""
 }
 
 // pythonRunEdit drops a package manager's `run` from one simple command, or

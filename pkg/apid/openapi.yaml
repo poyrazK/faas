@@ -25035,6 +25035,43 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/apps/{slug}/mcp-stats:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [consumers]
+      operationId: getMCPSellerStats
+      summary: Customer funnel, revenue, tool usage and near-limit customers of a sold MCP server.
+      description: |
+        Reads the app's consumers over UTC calendar months, the current month
+        to date last. Per month: sign-ups by source (oauth, signup, owner),
+        customers with billable units, paying customers, closures, requests,
+        units and revenue per currency. Closed months report billed revenue
+        from finalized statements before credits; the current month reports
+        an estimate priced as statements are. Tools come from the
+        `MCP /tools/<name>` billing labels: units and distinct customers over
+        the window, and this month's estimated revenue. near_limit lists open
+        customers at 80% or more of their plan's monthly units.
+        estimate_complete is false when the estimate priced only the 500
+        customers with the most units this month, or a customer could not be
+        priced.
+      parameters:
+        - name: months
+          in: query
+          required: false
+          description: Calendar months to read, 1 (this month, the default) to 12.
+          schema: { type: integer, minimum: 1, maximum: 12, default: 1 }
+      responses:
+        '200':
+          description: The app's seller stats.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPSellerStatsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/consumer-identities:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -132824,6 +132861,83 @@ components:
         customers_truncated: { type: boolean, description: "More identity pairs matched than the customer detail limit." }
         other_customer_requests: { type: integer, format: int64, minimum: 0, description: "Identified requests belonging to identity pairs omitted by the detail cap." }
 
+    MCPSellerStatsResponse:
+      description: "A sold MCP server's customers, tools and revenue over UTC calendar months."
+      type: object
+      required: [app, generated_at, months, tools, near_limit, customers, estimate_complete]
+      properties:
+        app: { type: string }
+        generated_at: { type: string, format: date-time }
+        months:
+          type: array
+          description: "Oldest first; the last is the current month to date."
+          items: { $ref: '#/components/schemas/MCPSellerStatsMonth' }
+        tools:
+          type: array
+          items: { $ref: '#/components/schemas/MCPSellerStatsTool' }
+        near_limit:
+          type: array
+          items: { $ref: '#/components/schemas/MCPSellerNearLimit' }
+        customers: { $ref: '#/components/schemas/MCPSellerCustomerTotals' }
+        estimate_complete: { type: boolean, description: "False when the current month's estimate left customers out." }
+    MCPSellerStatsMonth:
+      description: "One UTC calendar month of a sold MCP server's customers, usage and revenue."
+      type: object
+      required: [month, current, signed_up, signed_up_by_source, active, paying, closed, requests, units, revenue]
+      properties:
+        month: { type: string, description: "YYYY-MM (UTC)." }
+        current: { type: boolean }
+        signed_up: { type: integer, format: int64 }
+        signed_up_by_source:
+          type: object
+          description: "Sign-ups by source: oauth, signup or owner."
+          additionalProperties: { type: integer, format: int64 }
+        active: { type: integer, format: int64, description: "Customers with billable units in the month." }
+        paying: { type: integer, format: int64, description: "Customers whose month amounts to more than zero." }
+        closed: { type: integer, format: int64 }
+        requests: { type: integer, format: int64 }
+        units: { type: integer, format: int64 }
+        revenue:
+          type: array
+          items: { $ref: '#/components/schemas/MCPSellerStatsAmount' }
+    MCPSellerStatsAmount:
+      description: "Revenue in one currency, in millicents."
+      type: object
+      required: [currency, billed_millicents, estimated_millicents]
+      properties:
+        currency: { type: string }
+        billed_millicents: { type: integer, format: int64, description: "Finalized statements, before credits." }
+        estimated_millicents: { type: integer, format: int64, description: "The current month priced so far; in a closed month, draft statements the month-end run has not finalized yet." }
+    MCPSellerStatsTool:
+      description: "One MCP tool's units and customers over the window."
+      type: object
+      required: [tool, units, customers]
+      properties:
+        tool: { type: string }
+        units: { type: integer, format: int64 }
+        customers: { type: integer, format: int64 }
+        revenue:
+          type: array
+          description: "This month's estimated revenue for the tool."
+          items: { $ref: '#/components/schemas/MCPSellerStatsAmount' }
+    MCPSellerNearLimit:
+      description: "An open customer at 80% or more of its plan's monthly units this month."
+      type: object
+      required: [consumer_id, name, plan, units, max_units_per_month, percent]
+      properties:
+        consumer_id: { type: string }
+        name: { type: string }
+        plan: { type: string }
+        units: { type: integer, format: int64 }
+        max_units_per_month: { type: integer, format: int64 }
+        percent: { type: integer, format: int64 }
+    MCPSellerCustomerTotals:
+      description: "The app's open and closed customers now."
+      type: object
+      required: [open, closed]
+      properties:
+        open: { type: integer, format: int64 }
+        closed: { type: integer, format: int64 }
     MCPToolInsightsResponse:
       description: "Per-tool MCP usage and estimated compute for one app over the trailing window."
       type: object
