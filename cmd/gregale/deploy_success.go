@@ -431,7 +431,7 @@ func deploymentWaitResumeCommandWithRollout(deploymentID string, deadline time.D
 	if rollout {
 		rolloutFlag = " --rollout"
 	}
-	return fmt.Sprintf("%s release wait %s%s --timeout %d", recoveryCLI(), recoveryArgument(deploymentID), rolloutFlag, seconds)
+	return fmt.Sprintf("%s release wait %s%s --timeout %d", deployRecoveryCLI(), recoveryArgument(deploymentID), rolloutFlag, seconds)
 }
 
 func warnDeploymentWaitTimeout(appSlug, deploymentID string, deadline time.Duration) {
@@ -519,9 +519,8 @@ func writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx context.Context, c *Cli
 		receipt.WaitStage = "rollout"
 	}
 	if receipt.WaitStage != "" {
-		receipt.Recovery = newDeployRecovery(receipt.WaitStage, appSlug, final.ID, "", deadline, waitForRollout)
-		receipt.Recovery.ResumeCommand = ""
-		receipt.Recovery.NextCommand = failedDeploymentRecovery(appSlug, final).NextCommand
+		receipt.Recovery = failedDeploymentRecovery(appSlug, final)
+		receipt.Recovery.Stage = receipt.WaitStage
 		receipt.Recovery.Hint = "The deployment or rollout reached a failed terminal state. Inspect the deployment and its logs before submitting a corrected deployment."
 	}
 	if configurationErr != nil {

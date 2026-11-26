@@ -387,7 +387,7 @@ func projectSubmissionFailure(s *savedDeploySession, err error) int {
 // projectRetryCommand is the copy-paste command that rebuilds a saved project
 // deploy's failed workloads from the current checkout.
 func projectRetryCommand(sessionID string) string {
-	return recoveryCLI() + " release attempt retry " + sessionID + " --yes"
+	return deployRecoveryCLI() + " release attempt retry " + sessionID + " --yes"
 }
 
 // projectBuildsAllLive reports every workload's deployment live, as a wait
