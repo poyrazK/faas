@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RouteSplit } from './RouteSplit.js';
+/**
+ * An app's route splits, newest first.
+ */
 export type RouteSplitsResponse = {
   splits: Array<RouteSplit>;
 };

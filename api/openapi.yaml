@@ -27362,6 +27362,7 @@ paths:
       - name: id
         in: path
         required: true
+        description: The route split's ID.
         schema: { type: string }
     get:
       tags: [apps]
@@ -132094,6 +132095,7 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     RouteSplitsResponse:
+      description: An app's route splits, newest first.
       type: object
       required: [splits]
       properties:

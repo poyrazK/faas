@@ -15,6 +15,8 @@ T = TypeVar("T", bound="RouteSplitsResponse")
 
 @_attrs_define
 class RouteSplitsResponse:
+    """An app's route splits, newest first."""
+
     splits: list[RouteSplit]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

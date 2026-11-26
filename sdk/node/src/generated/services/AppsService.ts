@@ -4015,6 +4015,9 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * The route split's ID.
+     */
     id: string,
   }): CancelablePromise<RouteSplit> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -4058,6 +4061,9 @@ export class AppsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * The route split's ID.
+     */
     id: string,
   }): CancelablePromise<RouteSplit> {
     return __request(this?.clientConfig ?? OpenAPI, {
