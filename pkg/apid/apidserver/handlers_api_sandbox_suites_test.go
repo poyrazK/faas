@@ -28,6 +28,59 @@ func (s *suiteQuotaOnce) CreateAPISandboxApprovalCheck(ctx context.Context, id s
 	return s.APISandboxApprovalCheckStore.CreateAPISandboxApprovalCheck(ctx, id, baseline, candidate, limits, pins)
 }
 
+type sandboxSuiteDeadlineStore struct {
+	state.APISandboxSuiteStore
+	state.APISandboxApprovalCheckStore
+	report api.APISandboxComparisonReport
+}
+
+func (s sandboxSuiteDeadlineStore) GetAPISandboxSuiteScenario(context.Context, string, int) (state.APISandboxSuiteScenario, error) {
+	return state.APISandboxSuiteScenario{ComparisonID: "comparison"}, nil
+}
+
+func (s sandboxSuiteDeadlineStore) GetAPISandboxApprovalCheck(context.Context, string) (state.APISandboxApprovalEvidence, error) {
+	return state.APISandboxApprovalEvidence{Comparison: s.report}, nil
+}
+
+func TestAPISandboxSuiteUsesComparisonCompletionAtDeadline(t *testing.T) {
+	deadline := time.Date(2026, time.November, 26, 12, 0, 0, 0, time.UTC)
+	poll := deadline.Add(time.Second)
+	before, earlier := deadline.Add(-time.Second), deadline.Add(-2*time.Second)
+	for _, tt := range []struct {
+		name          string
+		baseline      time.Time
+		candidate     time.Time
+		scenarioCount int
+		completed     int
+		finished      time.Time
+		failure       string
+	}{
+		{name: "delayed poll", baseline: before, candidate: earlier, scenarioCount: 1, completed: 1, finished: before},
+		{name: "baseline at cutoff", baseline: deadline, candidate: before, scenarioCount: 1, finished: poll, failure: "timed_out"},
+		{name: "candidate after cutoff", baseline: before, candidate: poll, scenarioCount: 1, finished: poll, failure: "timed_out"},
+		{name: "unfinished suite after cutoff", baseline: earlier, candidate: before, scenarioCount: 2, completed: 1, finished: poll, failure: "timed_out"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store := sandboxSuiteDeadlineStore{report: api.APISandboxComparisonReport{
+				Verdict:   api.APISandboxComparisonPassed,
+				Baseline:  api.APISandboxRunReport{FinishedAt: &tt.baseline},
+				Candidate: api.APISandboxRunReport{FinishedAt: &tt.candidate},
+			}}
+			run := state.APISandboxSuiteRun{
+				DeadlineAt:                deadline,
+				APISandboxSuiteRunSummary: api.APISandboxSuiteRunSummary{ScenarioCount: tt.scenarioCount},
+			}
+			if err := (&server{}).tickAPISandboxSuite(t.Context(), store, store, &run, poll); err != nil {
+				t.Fatal(err)
+			}
+			if run.FinishedAt == nil || !run.FinishedAt.Equal(tt.finished) || run.CompletedCount != tt.completed ||
+				run.NextAttemptAt != nil || run.FailureCode != tt.failure {
+				t.Fatalf("suite after deadline = %+v", run)
+			}
+		})
+	}
+}
+
 func TestAPISandboxSuiteQueuesRunsAndReportsAllScenarios(t *testing.T) {
 	e, app, baseline := sandboxReleaseFixture(t)
 	ctx := t.Context()

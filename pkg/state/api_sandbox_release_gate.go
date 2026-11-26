@@ -159,7 +159,7 @@ func readSandboxReleaseGate(ctx context.Context, db sqlc.DBTX, appID, candidateI
 }
 
 func readSandboxReleaseEvidence(ctx context.Context, db sqlc.DBTX, gate *api.APISandboxReleaseGate, suite sqlc.GetAPISandboxSuiteRow,
-	app, target pgtype.UUID, baseline, candidate Deployment, deadline time.Time) (*api.APISandboxReleaseGate, error) {
+	app, target pgtype.UUID, baseline, candidate Deployment, approvalDeadline time.Time) (*api.APISandboxReleaseGate, error) {
 	q := sqlc.New()
 	row, err := q.GetLatestAPISandboxSuiteRun(ctx, db, target)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -183,6 +183,7 @@ func readSandboxReleaseEvidence(ctx context.Context, db sqlc.DBTX, gate *api.API
 		current = current && items[i].ScenarioID == revisions[i].ID && items[i].ScenarioRevision == revisions[i].Revision
 	}
 	gate.SuiteRunID = run.ID
+	deadline := run.evidenceDeadline(approvalDeadline)
 	gate.Status = sandboxSuiteGateStatus(run, pgUUIDString(suite.Revision), baseline, candidate, deadline, current)
 	if gate.Status == "passed" {
 		passed, err := q.APISandboxSuiteRunPassed(ctx, db, sqlc.APISandboxSuiteRunPassedParams{
@@ -198,6 +199,13 @@ func readSandboxReleaseEvidence(ctx context.Context, db sqlc.DBTX, gate *api.API
 		}
 	}
 	return gate, nil
+}
+
+func (run APISandboxSuiteRun) evidenceDeadline(approvalDeadline time.Time) time.Time {
+	if run.DeadlineAt.Before(approvalDeadline) {
+		return run.DeadlineAt
+	}
+	return approvalDeadline
 }
 
 func sandboxSuiteGateStatus(run APISandboxSuiteRun, revision string, baseline, candidate Deployment, deadline time.Time, current bool) string {
@@ -267,7 +275,7 @@ func (m *MemStore) sandboxReleaseGateLocked(appID, candidateID string) *api.APIS
 	}
 	items := m.apiSandboxSuiteScenarios[latest.ID]
 	gate.SuiteRunID = latest.ID
-	deadline := ReleasePhaseStartedAt(candidate).Add(time.Duration(policy.TimeoutMinutes) * time.Minute)
+	deadline := latest.evidenceDeadline(ReleasePhaseStartedAt(candidate).Add(time.Duration(policy.TimeoutMinutes) * time.Minute))
 	gate.Status = sandboxSuiteGateStatus(latest, suite.Revision, baseline, candidate, deadline,
 		len(items) == latest.ScenarioCount && slices.EqualFunc(items, suite.ScenarioIDs, func(item APISandboxSuiteScenario, id string) bool {
 			return item.ScenarioID == id && m.apiSandboxScenarioLibrary[appID][id].revision == item.ScenarioRevision
@@ -276,10 +284,10 @@ func (m *MemStore) sandboxReleaseGateLocked(appID, candidateID string) *api.APIS
 		for _, item := range items {
 			stored := m.apiSandboxComparisons[item.ComparisonID]
 			comparison, ok := m.sandboxComparisonLocked(stored)
+			completed, hasCompletionTime := comparison.CompletedAt()
 			if !ok || stored.approvalPins != latest.Pins || comparison.Verdict != api.APISandboxComparisonPassed ||
 				comparison.BaselineDeploymentID != baseline.ID || comparison.CandidateDeploymentID != candidateID ||
-				comparison.Baseline.FinishedAt == nil || !comparison.Baseline.FinishedAt.Before(deadline) ||
-				comparison.Candidate.FinishedAt == nil || !comparison.Candidate.FinishedAt.Before(deadline) ||
+				!hasCompletionTime || !completed.Before(deadline) ||
 				comparison.Baseline.ScenarioRevision != item.ScenarioRevision || comparison.Candidate.ScenarioRevision != item.ScenarioRevision {
 				gate.Status = "failed"
 				break

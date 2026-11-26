@@ -71,12 +71,18 @@ func (s *server) tickAPISandboxSuite(ctx context.Context, store state.APISandbox
 	// stops after reservation, its replacement finds the same pair here.
 	evidence, err := checks.GetAPISandboxApprovalCheck(ctx, item.ComparisonID)
 	if err == nil && evidence.Comparison.Verdict != api.APISandboxComparisonRunning {
-		run.CompletedCount++
-		run.NextAttemptAt = &now
-		if run.CompletedCount == run.ScenarioCount {
-			finishSandboxSuite(run, now, "")
+		// A delayed poll still accepts evidence that finished in time.
+		if completed, ok := evidence.Comparison.CompletedAt(); ok && completed.Before(run.DeadlineAt) {
+			run.CompletedCount++
+			if run.CompletedCount == run.ScenarioCount {
+				finishSandboxSuite(run, completed, "")
+				return nil
+			}
+			if now.Before(run.DeadlineAt) {
+				run.NextAttemptAt = &now
+				return nil
+			}
 		}
-		return nil
 	}
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
 		return err

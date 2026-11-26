@@ -205,7 +205,7 @@
       text('sandbox-suite-status', message);
     };
     const loadSandboxSuite = async () => {
-      if (!approvalStatus?.require_passing_sandbox_suite || loadingSandboxSuite) return;
+      if (loadingSandboxSuite) return;
       clearTimeout(sandboxSuiteTimer);
       loadingSandboxSuite = true;
       try {
@@ -216,10 +216,11 @@
         renderSandboxSuite();
         renderSummary();
       } catch (_) {
-        text('sandbox-suite-status', 'Could not load the suite status. Retrying.');
+        text('sandbox-suite-status', 'Could not load the suite status.');
       } finally {
         loadingSandboxSuite = false;
-        if (requiredSuiteGate !== 'admitted' && (suiteWindowOpen() || requiredSuiteGate === 'passed')) {
+        if (approvalStatus?.require_passing_sandbox_suite && requiredSuiteGate !== 'admitted' &&
+          (suiteWindowOpen() || requiredSuiteGate === 'passed')) {
           sandboxSuiteTimer = setTimeout(loadSandboxSuite, 3000);
         }
       }

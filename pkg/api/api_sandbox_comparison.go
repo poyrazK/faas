@@ -36,6 +36,18 @@ type APISandboxComparisonReport struct {
 	CreatedAt             time.Time           `json:"created_at"`
 }
 
+// CompletedAt is the time both sandbox runs had finished.
+func (report APISandboxComparisonReport) CompletedAt() (time.Time, bool) {
+	baseline, candidate := report.Baseline.FinishedAt, report.Candidate.FinishedAt
+	if baseline == nil || candidate == nil {
+		return time.Time{}, false
+	}
+	if baseline.After(*candidate) {
+		return *baseline, true
+	}
+	return *candidate, true
+}
+
 type APISandboxComparisonsResponse struct {
 	Comparisons []APISandboxComparisonReport   `json:"comparisons"`
 	Baselines   []APISandboxComparisonBaseline `json:"baselines"`
