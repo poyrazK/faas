@@ -55,8 +55,12 @@ func objectS3BorrowedComputeBindingSuite(t *testing.T, base state.Store) {
 	}
 	request := func(app state.App, prefix string, borrowed bool) state.ObjectS3ComputeBindingCreateRequest {
 		id := uuid.NewString()
+		accessKeyID, _, err := api.GenerateObjectS3Credential()
+		if err != nil {
+			t.Fatal(err)
+		}
 		req := state.ObjectS3ComputeBindingCreateRequest{Credential: state.ObjectS3Credential{
-			ID: id, AccountID: acct.ID, BucketID: bucket.ID, AccessKeyID: "GRG" + strings.ToUpper(strings.ReplaceAll(id, "-", ""))[:17],
+			ID: id, AccountID: acct.ID, BucketID: bucket.ID, AccessKeyID: accessKeyID,
 			SecretSealed: []byte("sealed"), KID: "age1test", Label: "compute", Permission: state.ObjectBucketPermissionRead,
 			Status: state.ObjectS3CredentialStatusActive, ManagedAppID: app.ID, ManagedScope: "default", ManagedPrefix: prefix,
 		}, MaxCredentialsPerBucket: 10, MaxSecretsPerApp: 12, Borrowed: borrowed}
