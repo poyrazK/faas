@@ -146,7 +146,10 @@ type CompleteAppTaskParams struct {
 	FailureCode     *string
 	FailureMessage  *string
 	OutcomeCode     string
-	FinishedAt      time.Time
+	// DataAPIInspectionProtocol is scheduler-owned dispatch evidence. Zero
+	// means no protocol provenance was recorded; it is not supplied by a guest.
+	DataAPIInspectionProtocol uint16
+	FinishedAt                time.Time
 }
 
 // AppTaskSweepResult reports recovery work. Restoring tasks are safe to

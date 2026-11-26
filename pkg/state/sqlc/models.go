@@ -4159,6 +4159,30 @@ type DataApiChangeHookReport struct {
 	LastDroppedAt pgtype.Timestamptz
 }
 
+type DataApiInspectionAdmission struct {
+	TaskID               pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	DeploymentID         pgtype.UUID
+	BindingID            pgtype.UUID
+	DatabaseID           pgtype.UUID
+	TableName            string
+	Nonce                string
+	BindingRevision      int64
+	DatabaseRevision     int64
+	RuntimeGeneration    int64
+	CredentialGeneration int64
+	TargetDigest         string
+	TrustDigest          string
+}
+
+type DataApiInspectionExecution struct {
+	TaskID          pgtype.UUID
+	ProtocolVersion int16
+	StdoutSha256    []byte
+	FinishedAt      pgtype.Timestamptz
+}
+
 type DataApiRuntimeConnectionObservation struct {
 	BindingID            pgtype.UUID
 	InstanceID           pgtype.UUID
@@ -9314,6 +9338,7 @@ type ManagedPostgresBinding struct {
 	CutoverID                  pgtype.UUID
 	ConnectionLimit            int64
 	DatabaseAccountID          pgtype.UUID
+	DataApiInspectionRevision  int64
 }
 
 // Compute cap thresholds a managed PostgreSQL usage subject reached in a UTC month; written only by apid (ADR-20261025094915).
@@ -9582,6 +9607,7 @@ type ManagedPostgresDatabase struct {
 	PreviewEnvironmentID        pgtype.Text
 	PreviewPrNumber             pgtype.Int4
 	ExpiresAt                   pgtype.Timestamptz
+	DataApiInspectionRevision   int64
 }
 
 type ManagedPostgresDatabaseEndpoint struct {

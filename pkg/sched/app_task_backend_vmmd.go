@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/onebox-faas/faas/pkg/apptaskproto"
+	"github.com/onebox-faas/faas/pkg/dataapiinspectioncommand"
 	"github.com/onebox-faas/faas/pkg/rehearsalcommand"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -144,6 +145,9 @@ func (s *routedVmmdAppTaskSession) Execute(ctx context.Context, request AppTaskE
 	if rehearsalcommand.IsCommand(wireReq.Command) {
 		wireReq.Version = apptaskproto.RehearsalVersion
 	}
+	if dataapiinspectioncommand.IsCommand(wireReq.Command) {
+		wireReq.Version = apptaskproto.DataAPIInspectionVersion
+	}
 	if err := wireReq.Validate(); err != nil {
 		return AppTaskOutcome{}, err
 	}
@@ -167,7 +171,11 @@ func (s *routedVmmdAppTaskSession) Execute(ctx context.Context, request AppTaskE
 	if err != nil {
 		return AppTaskOutcome{}, err
 	}
-	return appTaskOutcomeFromProtocol(result), nil
+	outcome := appTaskOutcomeFromProtocol(result)
+	if wireReq.Version == apptaskproto.DataAPIInspectionVersion && result.Status == apptaskproto.StatusSucceeded && result.ExitCode != nil && *result.ExitCode == 0 && !result.OutputTruncated {
+		outcome.DataAPIInspectionProtocol = wireReq.Version
+	}
+	return outcome, nil
 }
 
 // NodeID names the compute node whose vmmd owns the task VM.
