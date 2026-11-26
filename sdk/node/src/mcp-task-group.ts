@@ -4,9 +4,9 @@ import {
 } from './mcp-task-group-file.js';
 import type { McpTaskInboxEntry } from './mcp-task-inbox.js';
 import {
-  mcpTaskReceiptEndpoint, McpTaskReceiptError, type McpTaskReceiptConnection,
+  mcpTaskReceiptEndpoint, McpTaskReceiptError, mcpTaskReceiptScope, type McpTaskReceiptConnection,
 } from './mcp-task-receipt.js';
-import { McpTaskReadError } from './mcp-task-result.js';
+import { getMcpTask, McpTaskReadError, type McpTaskReadOptions, type McpTaskSnapshot } from './mcp-task-result.js';
 import {
   lookupMcpTaskBySubmissionKey, McpTaskSubmissionError, type McpTaskSubmissionConnection,
 } from './mcp-task-submission.js';
@@ -60,6 +60,52 @@ export function groupConnections(connection: McpTaskGroupConnection, endpoint: s
     tasks.listen = (...args) => { check(); return listen(...args); };
   }
   return { lookup, tasks, check };
+}
+
+export type McpTaskGroupResultEntry = { readonly receiptIndex: number } & (
+  | { readonly outcome: 'available'; readonly task: McpTaskSnapshot }
+  | { readonly outcome: 'not_submitted' }
+  | { readonly outcome: 'unavailable'; readonly error: McpTaskReadError | McpTaskSubmissionError | McpTaskReceiptError }
+);
+
+/** Read the current Tasks in receipt order. Results and execution errors are returned in memory. */
+export async function getMcpTaskGroupResults(
+  connection: McpTaskReceiptConnection, path: string, options: McpTaskReadOptions = {},
+): Promise<readonly McpTaskGroupResultEntry[]> {
+  const operation = mcpTaskReceiptScope(options);
+  operation.signal.throwIfAborted();
+  const group = await loadTaskGroup(path);
+  const { tasks, lookup, check } = groupConnections(connection, group.manifest.endpointSha256);
+
+  async function readMember(receiptIndex: number): Promise<McpTaskGroupResultEntry> {
+    operation.signal.throwIfAborted();
+    try {
+      const receipt = await readTaskGroupMemberReference(group.path, group.manifest, receiptIndex);
+      operation.signal.throwIfAborted();
+      check();
+      if (!receipt) return { receiptIndex, outcome: 'not_submitted' };
+      const taskId = receipt.taskId ??
+        (await lookupMcpTaskBySubmissionKey(lookup, receipt.submissionKey, operation)).taskId;
+      const task = await getMcpTask(tasks, taskId, operation);
+      check();
+      return { receiptIndex, outcome: 'available', task };
+    } catch (error) {
+      operation.signal.throwIfAborted();
+      check();
+      if (error instanceof McpTaskReadError || error instanceof McpTaskSubmissionError || error instanceof McpTaskReceiptError) {
+        return { receiptIndex, outcome: 'unavailable', error };
+      }
+      throw error;
+    }
+  }
+
+  const entries: McpTaskGroupResultEntry[] = [];
+  for (let start = 0; start < group.manifest.members.length; start += 4) {
+    const batch = await Promise.all(group.manifest.members.slice(start, start + 4)
+      .map((_, offset) => readMember(start + offset)));
+    entries.push(...batch);
+  }
+  return entries;
 }
 
 function updateId(group: string, index: number, task: McpTaskInboxEntry): string {

@@ -59,8 +59,9 @@ export {
   watchMcpTask, watchMcpTasks, type McpTaskWatchConnection, type McpTaskWatchEvent, type McpTaskWatchOptions,
 } from './mcp-task-watch.js';
 export {
-  createMcpTaskGroup, watchMcpTaskGroup, McpTaskGroupError,
-  type McpTaskGroupConnection, type McpTaskGroupEvent, type McpTaskGroupFailureCode, type McpTaskGroupWatchOptions,
+  createMcpTaskGroup, getMcpTaskGroupResults, watchMcpTaskGroup, McpTaskGroupError,
+  type McpTaskGroupConnection, type McpTaskGroupEvent, type McpTaskGroupFailureCode, type McpTaskGroupResultEntry,
+  type McpTaskGroupWatchOptions,
 } from './mcp-task-group.js';
 export {
   submitMcpTaskGroup, resumeMcpTaskGroupSubmission, continueMcpTaskGroupSubmission, type McpTaskGroupSubmissionEntry,

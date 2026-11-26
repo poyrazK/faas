@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
-  continueMcpTaskGroupSubmission, createMcpTaskGroup, createMcpTaskReceiptTransport,
+  continueMcpTaskGroupSubmission, createMcpTaskGroup, createMcpTaskReceiptTransport, getMcpTaskGroupResults,
   resumeMcpTaskFromReceipt, resumeMcpTaskGroupSubmission, retryMcpTaskFromReceipt,
   stopMcpTaskGroup, submitMcpTaskGroup, submitMcpTaskWithReceipt, watchMcpTaskGroup,
   type McpTaskCancellationConnection, type McpTaskGroupStopConnection, type McpTaskSubmissionConnection,
@@ -677,4 +677,89 @@ test('stop can cancel a saved group and checks endpoint identity before recordin
     return {};
   });
   assert.deepEqual(await stopMcpTaskGroup(current, group), [{ receiptIndex: 0, outcome: 'requested', taskId: task.taskId }]);
+});
+
+test('group results preserve receipt order, retained payloads and per-member failures', async t => {
+  const group = join(await folder(t), 'group');
+  const result = { content: [{ type: 'text', text: 'private completed report' }], isError: false };
+  const error = { code: -32603, message: 'private execution error' };
+  const members: Record<string, { status: string; [key: string]: unknown }> = {
+    completed: { status: 'completed', result },
+    failed: { status: 'failed', error },
+    working: { status: 'working' },
+    paused: { status: 'input_required', inputRequests: { private: true } },
+    cancelled: { status: 'cancelled' },
+    hidden: { status: 'completed', result: { private: true } },
+    malformed: { status: 'completed' },
+    lost: { status: 'completed', result: { content: [], isError: true } },
+  };
+  const submissions = [...Object.keys(members), 'unsent'].map(report => ({ ...submission, arguments: { report } }));
+  let lostKey: unknown;
+  const sender = connection(async ({ method, params }) => {
+    assert.equal(method, 'tools/call');
+    const { report } = params.arguments as { report: string };
+    assert.ok(Object.hasOwn(members, report));
+    if (report === 'lost') {
+      lostKey = (params._meta as Record<string, unknown>)['io.gregale/task-submission-key'];
+      throw new Error('reply lost after admission');
+    }
+    return { resultType: 'task', ...task, taskId: report };
+  });
+  await submitMcpTaskGroup(sender, group, submissions);
+  const localFiles = async () => Promise.all((await readdir(group)).sort().map(async name =>
+    [name, await readFile(join(group, name), 'utf8')]));
+  const before = await localFiles();
+
+  let active = 0, peak = 0;
+  const lookedUp: unknown[] = [];
+  const readIds: string[] = [];
+  const reader = connection(async ({ method, params }) => {
+    if (method === lookup) {
+      lookedUp.push(params.submissionKey);
+      assert.equal(params.submissionKey, lostKey);
+      return { ...task, taskId: 'lost' };
+    }
+    assert.equal(method, 'tasks/get');
+    const id = params.taskId as string;
+    readIds.push(id);
+    peak = Math.max(peak, ++active);
+    try {
+      await new Promise<void>(resolve => setImmediate(resolve));
+      if (id === 'hidden') throw { code: -32002, message: 'private authorization diagnostic' };
+      return { ...task, ...members[id], taskId: id };
+    } finally {
+      active--;
+    }
+  }, endpoint, 'renewed-fixture-credential');
+
+  const entries = await getMcpTaskGroupResults(reader, group);
+  assert.deepEqual(entries.map(entry => entry.receiptIndex), submissions.map((_, index) => index));
+  assert.deepEqual(entries.map(entry => entry.outcome === 'available' ? entry.task.status : entry.outcome), [
+    'completed', 'failed', 'working', 'input_required', 'cancelled', 'unavailable', 'unavailable', 'completed', 'not_submitted',
+  ]);
+  const [completed, failed, , paused, , hidden, malformed, lost] = entries;
+  assert.equal(completed?.outcome, 'available');
+  assert.equal(completed.task.status, 'completed');
+  assert.deepEqual(completed.task.result, result);
+  assert.equal(failed?.outcome, 'available');
+  assert.equal(failed.task.status, 'failed');
+  assert.deepEqual(failed.task.error, error);
+  assert.equal(paused?.outcome, 'available');
+  assert.equal(paused.task.nextAction, 'provide_input');
+  assert.equal(Object.hasOwn(paused.task, 'inputRequests'), false);
+  assert.equal(hidden?.outcome, 'unavailable');
+  assert.equal(hidden.error.code, 'not_found');
+  assert.equal(hidden.error.message, 'MCP Task is unavailable to this caller');
+  assert.equal(malformed?.outcome, 'unavailable');
+  assert.equal(malformed.error.code, 'invalid_task');
+  assert.equal(lost?.outcome, 'available');
+  assert.equal(lost.task.status, 'completed');
+  assert.deepEqual(lost.task.result, members.lost!.result);
+
+  assert.deepEqual(lookedUp, [lostKey]);
+  assert.deepEqual(readIds.sort(), Object.keys(members).sort());
+  assert.ok(peak <= 4);
+  const other = connection(async () => assert.fail('sent to a different endpoint'), endpoint + '/other');
+  await assert.rejects(getMcpTaskGroupResults(other, group), { code: 'endpoint_mismatch' });
+  assert.deepEqual(await localFiles(), before);
 });

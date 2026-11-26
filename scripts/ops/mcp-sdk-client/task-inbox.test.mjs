@@ -560,6 +560,57 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
     const cancelledGroup = (await listTaskInbox(stoppedOwner)).tasks;
     assert.deepEqual(new Set(cancelledGroup.map(task => task.taskId)), new Set([runningId, lostId]));
     assert.ok(cancelledGroup.every(task => task.status === 'cancelled'));
+
+    const resultGroup = join(groupRoot, 'results');
+    const resultReceipts = ['complete', 'paused', 'private', 'failed'].map(name => join(groupRoot, `result-${name}`));
+    const resultOwner = await connect('erin', 'mcp:tools reports:read');
+    const privateOwner = await connect('frank', 'mcp:tools reports:read');
+    const resultClaims = [];
+    for (const [index, receipt] of resultReceipts.entries()) {
+      const submitted = await submitMcpTaskWithReceipt(index === 2 ? privateOwner : resultOwner, receipt, {
+        toolName: 'build_report', arguments: { report: 'Task group result', steps: 1 }, deferFormInput: true,
+      });
+      assert.equal(submitted.outcome, 'accepted');
+      assert.equal(submitted.taskIdRecorded, true);
+      const claim = await store.claim(3, 30_000);
+      assert.equal(claim.task_id, submitted.task.taskId);
+      resultClaims.push(claim);
+    }
+    await createMcpTaskGroup(resultGroup, resultReceipts);
+
+    const scope = 'mcp:tools reports:read';
+    const firstReader = await startAgent({
+      token: await mint('erin', scope), groupPath: resultGroup, collectResults: true,
+    });
+    const [{ results: initialResults }] = await firstReader.waitForEvents(1);
+    assert.deepEqual(await firstReader.exit, [0, null]);
+    assert.deepEqual(initialResults.map(entry => entry.task?.status ?? entry.outcome),
+      ['working', 'working', 'unavailable', 'working']);
+
+    const [completedResult, pausedResult, privateResult, failedResult] = resultClaims;
+    const retained = { content: [{ type: 'text', text: 'Result retained across the agent restart' }], isError: false };
+    const retainedError = { code: -32603, message: 'Retained Task execution error' };
+    assert.equal(await store.complete(completedResult.task_id, completedResult.lease_token, retained), 'completed');
+    await requestInput(pausedResult);
+    const hiddenPayload = { content: [{ type: 'text', text: 'Other principal secret output' }] };
+    assert.equal(await store.complete(privateResult.task_id, privateResult.lease_token, hiddenPayload), 'completed');
+    assert.equal(await store.fail(failedResult.task_id, failedResult.lease_token, retainedError), 'failed');
+
+    const restartedReader = await startAgent({
+      token: await mint('erin', scope), groupPath: resultGroup, collectResults: true,
+    });
+    const [{ results: collected }] = await restartedReader.waitForEvents(1);
+    assert.deepEqual(await restartedReader.exit, [0, null]);
+    assert.deepEqual(collected.map(entry => [entry.receiptIndex, entry.task?.status ?? entry.outcome]), [
+      [0, 'completed'], [1, 'input_required'], [2, 'unavailable'], [3, 'failed'],
+    ]);
+    assert.equal(collected[0].task.taskId, completedResult.task_id);
+    assert.deepEqual(collected[0].task.result, retained);
+    assert.equal(collected[1].task.nextAction, 'provide_input');
+    assert.equal(Object.hasOwn(collected[1].task, 'inputRequests'), false);
+    assert.equal(Object.hasOwn(collected[2], 'task'), false);
+    assert.deepEqual(collected[3].task.error, retainedError);
+    assert.equal(JSON.stringify(collected).includes(hiddenPayload.content[0].text), false);
   } finally {
     admissionProbe?.release.resolve();
     stopProbe?.release.resolve();

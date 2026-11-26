@@ -1,12 +1,12 @@
 import { once } from 'node:events';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import {
-  continueMcpTaskGroupSubmission, createMcpTaskTransport, resumeMcpTaskGroupSubmission, stopMcpTaskGroup,
-  submitMcpTaskGroup, watchMcpTaskGroup,
+  continueMcpTaskGroupSubmission, createMcpTaskTransport, getMcpTaskGroupResults, resumeMcpTaskGroupSubmission,
+  stopMcpTaskGroup, submitMcpTaskGroup, watchMcpTaskGroup,
 } from '../../../sdk/node/dist/preview.js';
 
 const [configuration] = await once(process, 'message');
-const { endpoint, token, group, followInput, submissions, continuation, stopGroup, keyAgeMs = 0 } = configuration;
+const { endpoint, token, group, followInput, submissions, continuation, stopGroup, collectResults, keyAgeMs = 0 } = configuration;
 const client = new Client({ name: 'gregale-task-group-restart', version: '1.0.0' }, {
   versionNegotiation: { mode: { pin: '2026-07-28' } }, enforceStrictCapabilities: true,
 });
@@ -15,7 +15,9 @@ try {
   await client.connect(createMcpTaskTransport(StreamableHTTPClientTransport, endpoint, {
     requestInit: { headers: { Authorization: `Bearer ${token}` } }, onInsufficientScope: 'throw',
   }));
-  if (stopGroup) {
+  if (collectResults) {
+    process.send({ results: await getMcpTaskGroupResults(client, group) });
+  } else if (stopGroup) {
     process.send({ stopped: await stopMcpTaskGroup(client, group) });
   } else if (submissions) {
     const realNow = Date.now;

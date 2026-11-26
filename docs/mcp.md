@@ -6346,6 +6346,31 @@ The private group stores fingerprints and receipts. Keep the original
 requests in your application for explicit continuation. Use
 `watchMcpTaskGroup` on the same path to observe the Tasks already submitted.
 
+#### Collect Task group results from TypeScript
+
+Use `getMcpTaskGroupResults` with the saved group path and the current
+authorized connection. It makes one pass over the group, with at most four
+members being read at a time, and returns entries in the original receipt
+order. It resolves lost submission replies by the saved key.
+
+```ts
+import { getMcpTaskGroupResults } from '@gregale/sdk-node/preview';
+
+const members = await getMcpTaskGroupResults(mcp, './receipts/weekly-batch');
+for (const member of members) {
+  if (member.outcome === 'available' && member.task.status === 'completed') {
+    await useResult(member.receiptIndex, member.task.result);
+  }
+}
+```
+
+Available Tasks contain their current status. Completed and failed Tasks
+also contain the original retained result or execution error. A pending
+input review stays available through `getTaskInputReview`. Unsent members
+report `not_submitted`, and individual read failures report `unavailable`
+with an SDK error code. The group directory holds the existing receipts and
+acknowledgements, while the collector returns payloads in memory.
+
 #### Stop a Task group from TypeScript
 
 Call `stopMcpTaskGroup` with the saved group path and the current authorized
