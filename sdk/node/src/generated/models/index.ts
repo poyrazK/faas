@@ -1554,6 +1554,9 @@ export type { MCPConnectionHealthSnapshot } from './MCPConnectionHealthSnapshot.
 export type { MCPInstanceHealthProbeResponse } from './MCPInstanceHealthProbeResponse.js';
 export type { MCPInstanceProtocolProbeRequest } from './MCPInstanceProtocolProbeRequest.js';
 export type { MCPInstanceProtocolProbeResponse } from './MCPInstanceProtocolProbeResponse.js';
+export type { MCPListingInstall } from './MCPListingInstall.js';
+export type { MCPListingResponse } from './MCPListingResponse.js';
+export type { MCPListingTool } from './MCPListingTool.js';
 export type { MCPOAuthRetirement } from './MCPOAuthRetirement.js';
 export type { MCPOAuthRetirementAction } from './MCPOAuthRetirementAction.js';
 export type { MCPOAuthRetirementEvent } from './MCPOAuthRetirementEvent.js';
@@ -2928,6 +2931,7 @@ export type { PromoteStoredWorkflowLiveBaselineRequest } from './PromoteStoredWo
 export type { ProtectProjectRollbackDeployRequest } from './ProtectProjectRollbackDeployRequest.js';
 export type { PublicAuthBlock } from './PublicAuthBlock.js';
 export type { PublicAuthStatus } from './PublicAuthStatus.js';
+export type { PublicMCPListingResponse } from './PublicMCPListingResponse.js';
 export type { PublicStatusComponent } from './PublicStatusComponent.js';
 export type { PublicStatusDaily } from './PublicStatusDaily.js';
 export type { PublicStatusEvent } from './PublicStatusEvent.js';
@@ -2962,6 +2966,7 @@ export type { PutIssueSavedViewRequest } from './PutIssueSavedViewRequest.js';
 export type { PutIssueTeamRequest } from './PutIssueTeamRequest.js';
 export type { PutIssueTrackerLinkRequest } from './PutIssueTrackerLinkRequest.js';
 export type { PutJobRegistryCredentialRequest } from './PutJobRegistryCredentialRequest.js';
+export type { PutMCPListingRequest } from './PutMCPListingRequest.js';
 export type { PutManagedPostgresCustomRoleRequest } from './PutManagedPostgresCustomRoleRequest.js';
 export type { PutOperationWebhookBindingRequest } from './PutOperationWebhookBindingRequest.js';
 export type { PutOutboundAIFeedbackRequest } from './PutOutboundAIFeedbackRequest.js';

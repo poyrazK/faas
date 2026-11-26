@@ -28,7 +28,7 @@ optional usage badge; Gregale hosts it next to the sign-up page.
    and sends `PUT /v1/apps/{slug}/mcp-listing` with the endpoint, a title,
    a summary, the tools (name, title, description), an optional registry
    name and whether to show the usage badge. Republishing replaces the
-   snapshot; `DELETE` (`listing unpublish`) takes the page down. The owner
+   snapshot; `DELETE` (`listing delete`) takes the page down. The owner
    routes take MFA, deploy-write scope (read scope for `GET`) and the
    app-security permission for organization members, like
    `monetization-funnel`. They are part of the API monetization surface.

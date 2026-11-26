@@ -2503,6 +2503,7 @@ from .get_event_consumer_execution_health_window import GetEventConsumerExecutio
 from .get_event_consumer_health_window import GetEventConsumerHealthWindow
 from .get_exclusive_operation_trigger_binding_source import GetExclusiveOperationTriggerBindingSource
 from .get_github_recovery_status_status import GetGithubRecoveryStatusStatus
+from .get_mcp_listing_server_json_response_200 import GetMCPListingServerJSONResponse200
 from .get_mcp_readiness_pager_duty_acknowledgements_destination import (
     GetMCPReadinessPagerDutyAcknowledgementsDestination,
 )
@@ -3287,6 +3288,10 @@ from .mcp_instance_health_probe_response import MCPInstanceHealthProbeResponse
 from .mcp_instance_protocol_probe_request import MCPInstanceProtocolProbeRequest
 from .mcp_instance_protocol_probe_request_protocol_version import MCPInstanceProtocolProbeRequestProtocolVersion
 from .mcp_instance_protocol_probe_response import MCPInstanceProtocolProbeResponse
+from .mcp_listing_install import MCPListingInstall
+from .mcp_listing_install_client_config import MCPListingInstallClientConfig
+from .mcp_listing_response import MCPListingResponse
+from .mcp_listing_tool import MCPListingTool
 from .mcp_policy_convergence_snapshot import MCPPolicyConvergenceSnapshot
 from .mcp_policy_convergence_snapshot_state import MCPPolicyConvergenceSnapshotState
 from .mcp_probe_rpc_request import MCPProbeRPCRequest
@@ -5544,6 +5549,7 @@ from .public_auth_block import PublicAuthBlock
 from .public_auth_block_mode import PublicAuthBlockMode
 from .public_auth_status import PublicAuthStatus
 from .public_auth_status_mode import PublicAuthStatusMode
+from .public_mcp_listing_response import PublicMCPListingResponse
 from .public_status_component import PublicStatusComponent
 from .public_status_component_id import PublicStatusComponentId
 from .public_status_component_status import PublicStatusComponentStatus
@@ -5608,6 +5614,7 @@ from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
 from .put_managed_postgres_custom_role_request import PutManagedPostgresCustomRoleRequest
 from .put_managed_postgres_custom_role_request_default_for_item import PutManagedPostgresCustomRoleRequestDefaultForItem
 from .put_managed_postgres_custom_role_request_granted_to_item import PutManagedPostgresCustomRoleRequestGrantedToItem
+from .put_mcp_listing_request import PutMCPListingRequest
 from .put_operation_webhook_binding_request import PutOperationWebhookBindingRequest
 from .put_operation_webhook_binding_request_mode import PutOperationWebhookBindingRequestMode
 from .put_outbound_ai_feedback_request import PutOutboundAIFeedbackRequest
@@ -9815,6 +9822,7 @@ __all__ = (
     "GetEventConsumerHealthWindow",
     "GetExclusiveOperationTriggerBindingSource",
     "GetGithubRecoveryStatusStatus",
+    "GetMCPListingServerJSONResponse200",
     "GetMCPReadinessPagerDutyAcknowledgementsDestination",
     "GetMirrorRuleSummaryWindow",
     "GetObsInputHealthExpectedRole",
@@ -10539,6 +10547,10 @@ __all__ = (
     "MCPInstanceProtocolProbeRequest",
     "MCPInstanceProtocolProbeRequestProtocolVersion",
     "MCPInstanceProtocolProbeResponse",
+    "MCPListingInstall",
+    "MCPListingInstallClientConfig",
+    "MCPListingResponse",
+    "MCPListingTool",
     "MCPOAuthRetirement",
     "MCPOAuthRetirementAction",
     "MCPOAuthRetirementActionAction",
@@ -12624,6 +12636,7 @@ __all__ = (
     "PublicAuthBlockMode",
     "PublicAuthStatus",
     "PublicAuthStatusMode",
+    "PublicMCPListingResponse",
     "PublicStatusComponent",
     "PublicStatusComponentId",
     "PublicStatusComponentStatus",
@@ -12688,6 +12701,7 @@ __all__ = (
     "PutManagedPostgresCustomRoleRequest",
     "PutManagedPostgresCustomRoleRequestDefaultForItem",
     "PutManagedPostgresCustomRoleRequestGrantedToItem",
+    "PutMCPListingRequest",
     "PutOperationWebhookBindingRequest",
     "PutOperationWebhookBindingRequestMode",
     "PutOutboundAIFeedbackRequest",

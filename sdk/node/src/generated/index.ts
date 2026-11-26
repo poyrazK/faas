@@ -1685,6 +1685,9 @@ export type { MCPConnectionHealthSnapshot } from './models/MCPConnectionHealthSn
 export type { MCPInstanceHealthProbeResponse } from './models/MCPInstanceHealthProbeResponse.js';
 export type { MCPInstanceProtocolProbeRequest } from './models/MCPInstanceProtocolProbeRequest.js';
 export type { MCPInstanceProtocolProbeResponse } from './models/MCPInstanceProtocolProbeResponse.js';
+export type { MCPListingInstall } from './models/MCPListingInstall.js';
+export type { MCPListingResponse } from './models/MCPListingResponse.js';
+export type { MCPListingTool } from './models/MCPListingTool.js';
 export type { MCPOAuthRetirement } from './models/MCPOAuthRetirement.js';
 export type { MCPOAuthRetirementAction } from './models/MCPOAuthRetirementAction.js';
 export type { MCPOAuthRetirementEvent } from './models/MCPOAuthRetirementEvent.js';
@@ -2934,6 +2937,7 @@ export type { PromoteStoredWorkflowLiveBaselineRequest } from './models/PromoteS
 export type { ProtectProjectRollbackDeployRequest } from './models/ProtectProjectRollbackDeployRequest.js';
 export type { PublicAuthBlock } from './models/PublicAuthBlock.js';
 export type { PublicAuthStatus } from './models/PublicAuthStatus.js';
+export type { PublicMCPListingResponse } from './models/PublicMCPListingResponse.js';
 export type { PublicStatusComponent } from './models/PublicStatusComponent.js';
 export type { PublicStatusDaily } from './models/PublicStatusDaily.js';
 export type { PublicStatusEvent } from './models/PublicStatusEvent.js';
@@ -2969,6 +2973,7 @@ export type { PutIssueTeamRequest } from './models/PutIssueTeamRequest.js';
 export type { PutIssueTrackerLinkRequest } from './models/PutIssueTrackerLinkRequest.js';
 export type { PutJobRegistryCredentialRequest } from './models/PutJobRegistryCredentialRequest.js';
 export type { PutManagedPostgresCustomRoleRequest } from './models/PutManagedPostgresCustomRoleRequest.js';
+export type { PutMCPListingRequest } from './models/PutMCPListingRequest.js';
 export type { PutOperationWebhookBindingRequest } from './models/PutOperationWebhookBindingRequest.js';
 export type { PutOutboundAIFeedbackRequest } from './models/PutOutboundAIFeedbackRequest.js';
 export type { PutOutboundAIPolicyRequest } from './models/PutOutboundAIPolicyRequest.js';

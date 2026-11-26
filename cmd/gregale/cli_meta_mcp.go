@@ -276,6 +276,23 @@ func mcpCLICommand() cliCommand {
 				{Name: "timeout", Short: "API deadline (default 30s)", Value: "DURATION"},
 			}},
 		}},
+		{Name: "listing", Short: "Publish a sold server's public page: tools, plans, sign-up and install links", Subcommands: []cliSub{
+			{Name: "publish", Short: "List the live server's tools and publish or refresh the page", Notes: []string{
+				"Republish after changing tools: the page shows the tools as of the last publish.",
+				"The app needs sign-up set up (gregale api consumer signup set) and API monetization on the account.",
+			}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "SLUG", Req: true},
+				{Name: "title", Short: "page title (default the app slug)", Value: "TEXT"},
+				{Name: "summary", Short: "one or two sentences on what the server does", Value: "TEXT"},
+				{Name: "registry-name", Short: "MCP registry name, such as io.github.<user>/<server>; serves server.json", Value: "NAME"},
+				{Name: "show-usage", Short: "show the open customer count on the page"},
+				{Name: "token-env", Short: "environment variable holding a client credential for a gateway-auth server", Value: "ENV"},
+				{Name: "path", Short: "MCP source directory (default .)", Value: "DIR"},
+			}, Examples: []string{"gregale mcp server listing publish --app my-mcp --title \"Web search\" --summary \"Search the web from your agent.\"", "gregale mcp server listing publish --app my-mcp --registry-name io.github.acme/search --token-env MCP_TOKEN"}},
+			{Name: "get", Short: "Show the published listing", Flags: []cliFlag{{Name: "app", Short: "app slug", Value: "SLUG", Req: true}}},
+			{Name: "delete", Short: "Unpublish: take the page down", Flags: []cliFlag{{Name: "app", Short: "app slug", Value: "SLUG", Req: true}}},
+			{Name: "export", Short: "Print the MCP registry server.json to submit with mcp-publisher", Flags: []cliFlag{{Name: "app", Short: "app slug", Value: "SLUG", Req: true}}},
+		}},
 		{Name: "access", Short: "Audit MCP access-policy drift and admission evidence", Subcommands: []cliSub{{Name: "audit", Short: "Compare source and role policy with stored account gateway rules", Flags: []cliFlag{
 			{Name: "app", Short: "MCP application slug", Value: "SLUG", Req: true},
 			{Name: "path", Short: "reviewed source directory (default .)", Value: "DIR"},
