@@ -27,9 +27,6 @@ CREATE TABLE IF NOT EXISTS sandbox_session_captures (
  -- has_backing: vmmd wrote the capture's ADR-510 backing identity, so the
  -- shared store's copy is complete (durability remote) only with it.
  has_backing boolean NOT NULL DEFAULT false,
- -- volume_backup_id is the session's volume backup as the capture left it
- -- (ADR-20261122132055 §4); NULL for a session without a volume.
- volume_backup_id uuid,
  state text NOT NULL DEFAULT 'live' CHECK (state IN ('live','consumed')),
  created_at timestamptz NOT NULL DEFAULT now(),
  consumed_at timestamptz,

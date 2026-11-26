@@ -3,9 +3,13 @@
 -- their backups. agentd records where a session's newest volume copy is
 -- (sandbox_volumes.node_id) and its newest backup, one row per backup vmmd
 -- reported, and deletes superseded backups' manifests and an ended session's
--- volume and backups. The previous release never reads these tables.
+-- volume and backups. The previous release never reads these tables, nor
+-- the captures' new volume_backup_id.
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
+-- volume_backup_id is the session's volume backup as the capture left it
+-- (ADR-20261122132055 §4); NULL for a session without a volume.
+ALTER TABLE sandbox_session_captures ADD COLUMN IF NOT EXISTS volume_backup_id uuid;
 CREATE TABLE IF NOT EXISTS sandbox_volumes (
  session_id uuid PRIMARY KEY REFERENCES sandbox_sessions(id) ON DELETE CASCADE,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -37,3 +41,4 @@ CREATE INDEX IF NOT EXISTS sandbox_volume_backups_session ON sandbox_volume_back
 -- +goose Down
 DROP TABLE IF EXISTS sandbox_volume_backups;
 DROP TABLE IF EXISTS sandbox_volumes;
+ALTER TABLE sandbox_session_captures DROP COLUMN IF EXISTS volume_backup_id;
