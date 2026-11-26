@@ -10,6 +10,20 @@ import (
 // scores (ADR-831 amendment 20).
 const EdgeWAFCategoryUninspectedHeaders = "uninspected-headers"
 
+// EdgeWAFCategoryUninspectedURI is the detection category a warn or block
+// WAF rule reports for a request URI longer than EdgeWAFMaxInspectURIBytes
+// (ADR-831 amendment 21).
+const EdgeWAFCategoryUninspectedURI = "uninspected-uri"
+
+// EdgeWAFURIExceedsInspection reports whether a WAF check would leave part of
+// the request URI unscored. A check's cost grows faster than its input and
+// the app's budget is charged after the check, so an unbounded URI let a few
+// long requests a second empty an app's check budget and turn its block
+// rules off (ADR-831 amendment 21).
+func EdgeWAFURIExceedsInspection(uri string) bool {
+	return len(uri) > EdgeWAFMaxInspectURIBytes
+}
+
 // EdgeWAFHeadersExceedInspection reports whether a WAF check would leave part
 // of h unscored: a value longer than EdgeWAFMaxInspectHeaderValueBytes, or
 // names and values past EdgeWAFMaxInspectHeaderBytes in all (ADR-831

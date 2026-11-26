@@ -39,12 +39,15 @@ gregale edge-rules waf-review --app <slug> --since 7d
 Each group is one WAF rule's detections by one CRS rule on one path:
 
 - **likely_false_positive**: a documented false positive (the table in
-  `docs/security.md`), or at least 3 clients flagged on one path with none
-  sending most of the detections. Open the example requests
+  `docs/security.md`). Open the example requests
   (`gregale edge-rules events --app <slug> --request-id <id>`) and confirm.
 - **likely_attack**: most detections came from clients flagged on 5 or more
   paths. Spot-check one example; scanners send the same probes everywhere.
-- **review**: too few clients to tell; open the examples.
+- **review**: everything else; open the examples. When the reason says at
+  least 3 clients were flagged on the path with none sending most of the
+  detections, the group looks like a false positive, but a few addresses
+  probing one endpoint look the same (ADR-831 amendment 21): exclude only
+  once the example requests are ordinary traffic.
 - **excluded**: the rule already excludes it.
 
 If `truncated` is set, narrow with `--since` or `--rule`.
