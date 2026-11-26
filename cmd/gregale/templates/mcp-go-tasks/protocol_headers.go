@@ -19,6 +19,10 @@ const (
 	taskSubmissionKeyMeta         = "io.gregale/task-submission-key"
 	taskSubmissionMethod          = "gregale/tasks/submit"
 	taskSubmissionLookupMethod    = "gregale/tasks/lookup"
+	taskInboxMethod               = "gregale/tasks/inbox"
+	taskInputReviewMethod         = "gregale/tasks/input-review"
+	taskRespondReviewedMethod     = "gregale/tasks/respond-reviewed"
+	taskCheckReviewedMethod       = "gregale/tasks/check-reviewed-response"
 )
 
 func taskSubmissionIssuedAt(key string) (time.Time, bool) {

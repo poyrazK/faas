@@ -211,6 +211,7 @@ type mcpTaskRuntime struct {
 	pool                     *pgxpool.Pool
 	role                     string
 	taskSubmissionReady      bool
+	taskInboxReady           bool
 	namespace                string
 	notificationChannel      string
 	ttl                      time.Duration
@@ -458,6 +459,11 @@ func startMCPTaskRuntime(config mcpConfig, role string) (*mcpTaskRuntime, error)
 				pool.Close()
 				return nil, errors.New("could not check MCP Task submission schema")
 			}
+			runtime.taskInboxReady, err = checkTaskInboxIndex(ctx, pool)
+			if err != nil {
+				pool.Close()
+				return nil, errors.New("could not check MCP Task inbox schema")
+			}
 		}
 		if err := runtime.checkTaskPayloadKeys(ctx); err != nil {
 			pool.Close()
@@ -651,6 +657,8 @@ func migrateTaskSchema(ctx context.Context, pool *pgxpool.Pool) error {
 		`ALTER TABLE gregale_mcp_tasks ADD COLUMN IF NOT EXISTS submission_key uuid`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS gregale_mcp_tasks_submission_key_idx
 			ON gregale_mcp_tasks(namespace,submission_key) WHERE submission_key IS NOT NULL`,
+		`CREATE INDEX IF NOT EXISTS gregale_mcp_tasks_inbox_idx
+			ON gregale_mcp_tasks(namespace,owner_hash,expires_at DESC,task_id DESC)`,
 		`ALTER TABLE gregale_mcp_tasks DROP CONSTRAINT IF EXISTS gregale_mcp_tasks_status_check`,
 		`ALTER TABLE gregale_mcp_tasks ADD CONSTRAINT gregale_mcp_tasks_status_check
 			CHECK (status IN ('queued','running','input_required','completed','cancelled','failed'))`,
@@ -1278,12 +1286,8 @@ func (runtime *mcpTaskRuntime) updateInputs(ctx context.Context, id string, iden
 			return fmt.Errorf("%w: response keys must contain between 1 and 128 characters", errInvalidMCPTaskInput)
 		}
 	}
-	responseJSON, err := json.Marshal(responses)
-	if err != nil {
-		return fmt.Errorf("%w: responses must be JSON values", errInvalidMCPTaskInput)
-	}
-	if len(responseJSON) > maxTaskInputStateBytes {
-		return fmt.Errorf("%w: response payload exceeds 256 KiB", errInvalidMCPTaskInput)
+	if err := validateTaskResponseSize(responses); err != nil {
+		return err
 	}
 	tx, err := runtime.pool.Begin(ctx)
 	if err != nil {
@@ -1326,19 +1330,43 @@ func (runtime *mcpTaskRuntime) updateInputs(ctx context.Context, id string, iden
 	if !changed {
 		return tx.Commit(ctx)
 	}
+	if _, err := runtime.persistTaskResponses(ctx, tx, id, state); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func validateTaskResponseSize(responses map[string]any) error {
+	encoded, err := json.Marshal(responses)
+	if err != nil {
+		return fmt.Errorf("%w: responses must be JSON values", errInvalidMCPTaskInput)
+	}
+	if len(encoded) > maxTaskInputStateBytes {
+		return fmt.Errorf("%w: response payload exceeds 256 KiB", errInvalidMCPTaskInput)
+	}
+	return nil
+}
+
+func (runtime *mcpTaskRuntime) persistTaskResponses(ctx context.Context, tx pgx.Tx, id string, state taskInputState) (durableMCPTask, error) {
 	pending := len(outstandingTaskInputRequests(state)) > 0
 	updated, err := runtime.encrypt(state, id, "input-state", maxTaskInputStateBytes)
 	if err != nil {
 		if strings.Contains(err.Error(), "too large") {
-			return fmt.Errorf("%w: accumulated input state exceeds 256 KiB", errInvalidMCPTaskInput)
+			return durableMCPTask{}, fmt.Errorf("%w: accumulated input state exceeds 256 KiB", errInvalidMCPTaskInput)
 		}
-		return err
+		return durableMCPTask{}, err
 	}
-	_, err = tx.Exec(ctx, `UPDATE gregale_mcp_tasks SET input_state_encrypted=$3,status=CASE WHEN $4::boolean THEN 'input_required' ELSE 'queued' END,resume_pending=NOT $4::boolean,updated_at=clock_timestamp() WHERE namespace=$1 AND task_id=$2::uuid AND status='input_required'`, runtime.namespace, id, updated, pending)
-	if err != nil {
-		return err
+	var task durableMCPTask
+	err = tx.QueryRow(ctx, `UPDATE gregale_mcp_tasks SET input_state_encrypted=$3,
+		status=CASE WHEN $4::boolean THEN 'input_required' ELSE 'queued' END,
+		resume_pending=NOT $4::boolean,updated_at=clock_timestamp()
+		WHERE namespace=$1 AND task_id=$2::uuid AND status='input_required' AND expires_at>clock_timestamp()
+		RETURNING task_id::text,status,created_at,updated_at,expires_at`, runtime.namespace, id, updated, pending).
+		Scan(&task.ID, &task.Status, &task.CreatedAt, &task.UpdatedAt, &task.ExpiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = errMCPTaskNotFound
 	}
-	return tx.Commit(ctx)
+	return task, err
 }
 
 func (runtime *mcpTaskRuntime) cancelTask(ctx context.Context, id string, identity *authContext) error {
