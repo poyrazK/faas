@@ -135,7 +135,7 @@ func (s *PgStore) ApplyPlatformTenantSelfConsumers(ctx context.Context, in Apply
 		consumer, err := scanAPIConsumerRow(tx.QueryRow(ctx, `insert into api_consumers
 			(account_id, app_id, external_ref, name, platform_tenant_id)
 			values ($1::uuid, $2::uuid, $3, $4, $5::uuid)
-			on conflict (app_id, external_ref) do nothing
+			on conflict (app_id, (coalesce(environment_id, '00000000-0000-0000-0000-000000000000'::uuid)), external_ref) do nothing
 			returning `+apiConsumerSelectCols, in.AccountID, result.Consumers[index].Consumer.AppID,
 			in.ExternalRef, in.Name, in.TenantID))
 		if errors.Is(err, pgx.ErrNoRows) {
