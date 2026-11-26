@@ -36,9 +36,11 @@ type Member = { submissionKey: string; taskId?: string };
 type ManifestBase = { id: string; endpointSha256: string };
 type SavedGroupManifest = ManifestBase & { version: 1; members: Member[] };
 export type TaskGroupSubmissionMember = { submissionKey: string; requestSha256: string; taskId?: never };
-export type TaskGroupSubmissionManifest = ManifestBase & { version: 2; members: TaskGroupSubmissionMember[] };
+type BearerSubmissionManifest = ManifestBase & { version: 2; members: TaskGroupSubmissionMember[] };
+type OwnerSubmissionManifest = ManifestBase & { version: 3; members: TaskGroupSubmissionMember[]; ownerBinding: string };
+export type TaskGroupSubmissionManifest = BearerSubmissionManifest | OwnerSubmissionManifest;
 export type TaskGroupManifest = SavedGroupManifest | TaskGroupSubmissionManifest;
-type TaskGroupInput = Omit<SavedGroupManifest, 'id'> | Omit<TaskGroupSubmissionManifest, 'id'>;
+type TaskGroupInput = Omit<SavedGroupManifest, 'id'> | Omit<BearerSubmissionManifest, 'id'> | Omit<OwnerSubmissionManifest, 'id'>;
 
 function validDigest(value: unknown): value is string {
   return typeof value === 'string' && digestPattern.test(value);
@@ -63,17 +65,22 @@ function decodeManifest(bytes: Uint8Array): TaskGroupManifest {
   } catch {
     return invalid();
   }
-  if (!record(value) || Object.keys(value).length !== 4 || (value.version !== 1 && value.version !== 2) ||
+  if (!record(value) || (value.version !== 1 && value.version !== 2 && value.version !== 3) ||
+      Object.keys(value).length !== (value.version === 3 ? 5 : 4) ||
       !validDigest(value.id) || !validDigest(value.endpointSha256) ||
       !Array.isArray(value.members) || value.members.length === 0 || value.members.length > maxTaskGroupMembers) invalid();
   const { id, endpointSha256 } = value;
-  if (value.version === 2) {
+  if (value.version !== 1) {
     const members = value.members.map((member): TaskGroupSubmissionMember => {
       if (!record(member) || Object.keys(member).length !== 2 ||
           !isSubmissionKey(member.submissionKey) || !validDigest(member.requestSha256)) return invalid();
       return { submissionKey: member.submissionKey, requestSha256: member.requestSha256 };
     });
     if (!uniqueMembers(members)) invalid();
+    if (value.version === 3) {
+      if (!validDigest(value.ownerBinding)) invalid();
+      return { version: 3, id, endpointSha256, members, ownerBinding: value.ownerBinding };
+    }
     return { version: 2, id, endpointSha256, members };
   }
   const members: Member[] = value.members.map(member => {
@@ -181,10 +188,14 @@ export async function createMcpTaskGroup(path: string, receiptPaths: readonly st
   await createTaskGroupFile(path, { version: 1, endpointSha256, members });
 }
 
+export function newTaskGroupId(): string {
+  return randomBytes(32).toString('hex');
+}
+
 export function createTaskGroupFile<Input extends TaskGroupInput>(
-  path: string, input: Input,
+  path: string, input: Input, id = newTaskGroupId(),
 ): Promise<{ path: string; manifest: Input & { id: string } }> {
-  const manifest = { ...input, id: randomBytes(32).toString('hex') };
+  const manifest = { ...input, id };
   return groupIo(async () => {
     const file = await canonicalGroupPath(path);
     const parent = await open(dirname(file), directoryFlags);
@@ -215,7 +226,7 @@ export function loadTaskGroup(path: string): Promise<{ path: string; manifest: T
 
 export async function loadTaskGroupSubmission(path: string): Promise<{ path: string; manifest: TaskGroupSubmissionManifest }> {
   const group = await loadTaskGroup(path);
-  if (group.manifest.version !== 2) throw new McpTaskGroupError('submission_unavailable');
+  if (group.manifest.version === 1) throw new McpTaskGroupError('submission_unavailable');
   return { path: group.path, manifest: group.manifest };
 }
 

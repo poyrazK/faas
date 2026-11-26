@@ -6340,7 +6340,15 @@ that key's issuance. If a prepared member's unused key has expired,
 continuation records a fresh key in the member receipt before sending.
 Concurrent callers use the key recorded by the first attempt. A caller can
 receive `unconfirmed` while another caller's send is still in progress.
-Sends use the original group bearer.
+An attempted member uses the bearer recorded for that send.
+
+On Node Task starters that advertise `io.gregale/task-group-owner`, new
+plans save an opaque binding issued by the endpoint. An agent can reconnect
+with a renewed OAuth token and explicitly continue an unsent member. The
+endpoint checks the same issuer, resource, subject, and OAuth client, and
+applies the current tool scope both before the SDK records the attempt and
+on the admission request. Groups created without this capability use the
+original group bearer for sends.
 
 The private group stores fingerprints and receipts. Keep the original
 requests in your application for explicit continuation. Use

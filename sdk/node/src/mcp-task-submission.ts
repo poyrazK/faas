@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { parseMcpTaskFields, parseMcpTaskMetadata, type McpTaskInboxEntry } from './mcp-task-inbox.js';
 import { streamSse } from './sse.js';
 
@@ -5,6 +6,12 @@ const protocol = '2026-07-28';
 const protocolMeta = 'io.modelcontextprotocol/protocolVersion';
 const tasksExtension = 'io.modelcontextprotocol/tasks';
 const submitMethod = 'gregale/tasks/submit';
+export const boundSubmitMethod = 'gregale/tasks/submit-bound';
+export const groupOwnerMethod = 'gregale/tasks/group-owner';
+export const groupOwnerExtension = 'io.gregale/task-group-owner';
+const groupDigest = /^[0-9a-f]{64}(?![\s\S])/u;
+
+export type TaskGroupOwnerBinding = { groupId: string; binding: string };
 const lookupMethod = 'gregale/tasks/lookup';
 export const submissionKeyMeta = 'io.gregale/task-submission-key';
 export const localReceiptMeta = 'io.gregale/local-task-receipt-operation';
@@ -14,9 +21,13 @@ const resultSchema = {
   '~standard': { version: 1 as const, vendor: 'gregale', validate: (value: unknown) => ({ value }) },
 };
 
-type TaskRequest =
-  | { method: typeof submitMethod; params: { name: string; arguments: McpTaskArguments; _meta: Record<string, unknown> } }
-  | { method: typeof lookupMethod; params: { submissionKey: string } };
+type TaskSubmissionRequest = {
+  method: typeof submitMethod | typeof boundSubmitMethod;
+  params: { name: string; arguments: McpTaskArguments; _meta: Record<string, unknown> };
+};
+type TaskRequest = TaskSubmissionRequest
+  | { method: typeof lookupMethod; params: { submissionKey: string } }
+  | { method: typeof groupOwnerMethod; params: { groupId: string } };
 
 export interface McpTaskSubmissionConnection {
   getNegotiatedProtocolVersion(): string | undefined;
@@ -80,6 +91,19 @@ function requireSubmissionKey(key: unknown): void {
   if (!isSubmissionKey(key)) throw new TypeError('MCP Task submission key must be a lowercase UUIDv7');
 }
 
+export function supportsTaskGroupOwnerBinding(connection: McpTaskSubmissionConnection): boolean {
+  const capabilities = connection.getServerCapabilities();
+  return connection.getNegotiatedProtocolVersion() === protocol && record(capabilities) &&
+    record(capabilities.extensions) && Object.hasOwn(capabilities.extensions, groupOwnerExtension) &&
+    record(capabilities.extensions[groupOwnerExtension]);
+}
+
+export function isTaskGroupOwnerBinding(value: unknown): value is TaskGroupOwnerBinding {
+  return record(value) && Object.keys(value).length === 2 &&
+    typeof value.groupId === 'string' && groupDigest.test(value.groupId) &&
+    typeof value.binding === 'string' && groupDigest.test(value.binding);
+}
+
 function requireCapability(connection: McpTaskSubmissionConnection, extension: string): void {
   const capabilities = connection.getServerCapabilities();
   const extensions = record(capabilities) ? capabilities.extensions : undefined;
@@ -124,7 +148,7 @@ class AcceptedHandle {
 
 export function prepareMcpTaskSubmission(
   connection: McpTaskSubmissionConnection, submission: McpTaskSubmission,
-): Extract<TaskRequest, { method: typeof submitMethod }> {
+): TaskSubmissionRequest {
   requireSubmissionKey(submission.submissionKey);
   if (typeof submission.toolName !== 'string' || !submission.toolName.trim() ||
       (submission.arguments !== undefined && !record(submission.arguments)) ||
@@ -203,6 +227,75 @@ export async function lookupMcpTaskBySubmissionKey(
   }
 }
 
+function parseGroupOwnerProof(value: unknown): string {
+  if (!record(value) || (value.resultType !== undefined && value.resultType !== 'complete') ||
+      typeof value.binding !== 'string' || !groupDigest.test(value.binding)) {
+    throw new McpTaskSubmissionError('invalid_response');
+  }
+  return value.binding;
+}
+
+export async function requestTaskGroupOwnerBinding(
+  connection: McpTaskSubmissionConnection, groupId: string, options: McpTaskSubmissionOptions,
+): Promise<string> {
+  requireCapability(connection, groupOwnerExtension);
+  const scope = requestOptions(options);
+  scope.signal.throwIfAborted();
+  let result: unknown;
+  try {
+    result = await connection.request({ method: groupOwnerMethod, params: { groupId } }, resultSchema, scope);
+  } catch (error) {
+    scope.signal.throwIfAborted();
+    const { status } = requestFailure(error);
+    throw new McpTaskSubmissionError('request_failed', status);
+  }
+  scope.signal.throwIfAborted();
+  return parseGroupOwnerProof(result);
+}
+
+/** Check the exact bearer on the pending HTTP request before journaling its first send. */
+export async function verifyTaskGroupOwnerForSend(
+  fetcher: typeof globalThis.fetch, endpoint: string, originalHeaders: Headers,
+  owner: TaskGroupOwnerBinding, toolName: string, signal: AbortSignal,
+): Promise<void> {
+  const headers = new Headers(originalHeaders);
+  headers.set('mcp-method', groupOwnerMethod);
+  headers.delete('mcp-name');
+  headers.delete('content-length');
+  headers.set('accept', 'application/json');
+  headers.set('content-type', 'application/json');
+  const id = randomUUID();
+  try {
+    const response = await fetcher(endpoint, {
+      method: 'POST', headers, redirect: 'manual', signal,
+      body: JSON.stringify({ jsonrpc: '2.0', id, method: groupOwnerMethod, params: {
+        ...owner, toolName, _meta: { [protocolMeta]: protocol },
+      } }),
+    });
+    if (!response.ok) {
+      void response.body?.cancel().catch(() => undefined);
+      throw new McpTaskSubmissionError('rejected', response.status);
+    }
+    let size = 0;
+    const body = response.body?.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, output) {
+        size += chunk.byteLength;
+        if (size > 4096) throw new McpTaskSubmissionError('invalid_response');
+        output.enqueue(chunk);
+      },
+    }));
+    const reply: unknown = await new Response(body).json();
+    signal.throwIfAborted();
+    if (!isReplyFor(reply, id) || Object.hasOwn(reply, 'error') || parseGroupOwnerProof(reply.result) !== owner.binding) {
+      throw new McpTaskSubmissionError('invalid_response');
+    }
+  } catch (error) {
+    signal.throwIfAborted();
+    if (error instanceof McpTaskSubmissionError) throw error;
+    throw new McpTaskSubmissionError('request_failed');
+  }
+}
+
 function nameHeader(name: string): string {
   if (name.trim() === name && !/[^\x20-\x7e]/u.test(name) && !(name.startsWith('=?base64?') && name.endsWith('?='))) {
     return name;
@@ -273,13 +366,14 @@ export function createGuardedMcpTaskSubmissionFetch(
   return async (input, init) => {
     const request = input instanceof Request ? input : undefined;
     const headers = new Headers(init?.headers ?? request?.headers);
-    if ((init?.method ?? request?.method)?.toUpperCase() !== 'POST' || headers.get('mcp-method') !== submitMethod) {
+    const method = headers.get('mcp-method');
+    if ((init?.method ?? request?.method)?.toUpperCase() !== 'POST' || (method !== submitMethod && method !== boundSubmitMethod)) {
       return fetcher(input, init);
     }
 
     const body = init?.body ?? await request?.clone().text();
     const message: unknown = typeof body === 'string' ? JSON.parse(body) : undefined;
-    if (!record(message) || message.jsonrpc !== '2.0' || message.method !== submitMethod ||
+    if (!record(message) || message.jsonrpc !== '2.0' || message.method !== method ||
         (typeof message.id !== 'number' && typeof message.id !== 'string') ||
         !record(message.params) || typeof message.params.name !== 'string' || !message.params.name.trim() ||
         !record(message.params._meta) || !isSubmissionKey(message.params._meta[submissionKeyMeta]) ||
@@ -287,6 +381,10 @@ export function createGuardedMcpTaskSubmissionFetch(
       throw new TypeError('Invalid keyed MCP Task request envelope');
     }
     const metadata = message.params._meta;
+    const owner = metadata[groupOwnerExtension];
+    if (method === boundSubmitMethod ? !isTaskGroupOwnerBinding(owner) : owner !== undefined) {
+      throw new TypeError('Invalid MCP Task group owner binding');
+    }
     if (Object.hasOwn(metadata, localReceiptMeta)) {
       const operationId = metadata[localReceiptMeta];
       if (!guard || typeof operationId !== 'string') throw new TypeError('Unbound MCP Task receipt operation');
@@ -296,7 +394,9 @@ export function createGuardedMcpTaskSubmissionFetch(
     (init?.signal ?? request?.signal)?.throwIfAborted();
     headers.set('mcp-name', nameHeader(message.params.name));
     headers.delete('content-length');
-    const response = await fetcher(input, { ...init, headers, body: JSON.stringify({ ...message, method: 'tools/call' }) });
+    const response = await fetcher(input, { ...init, headers,
+      body: JSON.stringify({ ...message, method: method === boundSubmitMethod ? method : 'tools/call' }),
+    });
     return adaptSubmissionReply(response, message.id, init?.signal ?? request?.signal);
   };
 }

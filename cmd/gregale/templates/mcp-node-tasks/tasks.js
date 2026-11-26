@@ -494,6 +494,8 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
       return stopping;
     },
     supportsTaskSubmission: () => store.supportsTaskSubmission === true,
+    supportsTaskGroupOwnerBinding: () => typeof store.taskGroupOwnerBinding === 'function',
+    taskGroupOwnerBinding: (...args) => store.taskGroupOwnerBinding(...args),
     supportsTaskInbox: () => store.supportsTaskInbox === true,
     supportsReviewedInput: () => typeof store.getInputReview === 'function' && typeof store.reviewedInputResponse === 'function',
     async inputReview(taskID, authInfo, authMode, canAccessTool) {

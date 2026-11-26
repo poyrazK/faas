@@ -318,8 +318,18 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
 
   validateRunningLimits(maxRunning, maxRunningPerOwner);
 
-  const ownerKeyBytes = [...new Set([ownerKey, ...nativeOwnerKeys.map(item => item.key)])].map(key => createHmac('sha256', key).update('gregale-mcp-task-owner:v1').digest());
+  const ownerKeys = [...new Set([ownerKey, ...nativeOwnerKeys.map(item => item.key)])];
+  const ownerKeyBytes = ownerKeys.map(key => createHmac('sha256', key).update('gregale-mcp-task-owner:v1').digest());
+  const groupOwnerKeys = ownerKeys.map(key => createHmac('sha256', key).update('gregale-mcp-task-group-owner:v1').digest());
   const payloadKey = createMcpTaskPayloadCipher(ownerKey, encryptionKeys, nativeOwnerKeys);
+  function taskGroupOwnerBinding(authInfo, issuer, groupId, expected) {
+    const subject = JSON.stringify([namespace, issuer, groupId, principalFor(authInfo, 'external-oauth')]);
+    const proof = key => createHmac('sha256', key).update(subject).digest();
+    if (expected === undefined) return proof(groupOwnerKeys[0]).toString('hex');
+    if (typeof expected !== 'string' || !/^[0-9a-f]{64}(?![\s\S])/u.test(expected)) return undefined;
+    const pin = Buffer.from(expected, 'hex');
+    return groupOwnerKeys.some(key => timingSafeEqual(proof(key), pin)) ? expected : undefined;
+  }
   const ownerHashes = (authInfo, authMode) => {
     const principal = principalFor(authInfo, authMode);
     // Retain access to identities written with extra quotes by older Go starters.
@@ -713,6 +723,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
       `, [namespace, taskID, ownerHashes(authInfo, authMode)]);
       return result.rows?.[0] ? rowTask(result.rows[0], payloadKey, namespace) : null;
     },
+    taskGroupOwnerBinding,
     async getBySubmissionKey({ submissionKey, authInfo, authMode }) {
       if (!supportsTaskSubmission || authMode !== 'external-oauth' || !isSubmissionKey(submissionKey)) return null;
       const result = await pool.query(`SELECT task_id::text, tool_name, status, created_at, updated_at, expires_at

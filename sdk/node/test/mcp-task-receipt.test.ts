@@ -31,15 +31,15 @@ type Request = Parameters<McpTaskCancellationConnection['request']>[0] | Paramet
 type Wire = { id: number; method: string; params: Record<string, unknown> };
 
 function connection(
-  reply: (request: Wire) => Promise<object>, url = endpoint,
-  credential: string | (() => string) = 'private-fixture-credential',
+  reply: (request: Wire, headers: Headers) => Promise<object>, url = endpoint,
+  credential: string | (() => string) = 'private-fixture-credential', ownerGroups = false,
 ): McpTaskGroupStopConnection {
   let id = 0;
   const transport = createMcpTaskReceiptTransport(FixtureTransport, url, {
     onInsufficientScope: 'throw',
     fetch: async (_, init) => {
       const message = JSON.parse(String(init?.body)) as Wire;
-      const result = await reply(message);
+      const result = await reply(message, new Headers(init?.headers));
       if (result instanceof Response) return result;
       return Response.json({ jsonrpc: '2.0', id: message.id, result });
     },
@@ -48,7 +48,9 @@ function connection(
     transport,
     getNegotiatedProtocolVersion: () => protocol,
     getServerCapabilities: () => ({ extensions: { 'io.modelcontextprotocol/tasks': {},
-      'io.gregale/task-submission': {}, 'io.gregale/task-submission-lookup': {} } }),
+      'io.gregale/task-submission': {}, 'io.gregale/task-submission-lookup': {},
+      ...(ownerGroups ? { 'io.gregale/task-group-owner': {} } : {}),
+    } }),
     async request({ method, params }: Request, _, { signal }) {
       const body = JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params: {
         ...params, _meta: { ...('_meta' in params ? params._meta : {}), 'io.modelcontextprotocol/protocolVersion': protocol },
@@ -762,4 +764,64 @@ test('group results preserve receipt order, retained payloads and per-member fai
   const other = connection(async () => assert.fail('sent to a different endpoint'), endpoint + '/other');
   await assert.rejects(getMcpTaskGroupResults(other, group), { code: 'endpoint_mismatch' });
   assert.deepEqual(await localFiles(), before);
+});
+
+test('an owner-bound group admits a prepared member with a renewed bearer and keeps attempted bearer proofs', async t => {
+  const group = join(await folder(t), 'group');
+  const submissions = ['attempted', 'prepared'].map(report => ({ ...submission, arguments: { report } }));
+  const ownerExtension = 'io.gregale/task-group-owner';
+  const ownerMethod = 'gregale/tasks/group-owner';
+  const boundSubmit = 'gregale/tasks/submit-bound';
+  const proof = 'e'.repeat(64);
+  let groupId: unknown;
+  const writes: string[] = [];
+  const connect = (credential: string, ownerGroups = true) => connection(async ({ method, params }, headers) => {
+    const bearer = headers.get('authorization')?.replace(/^Bearer /, '');
+    if (method === ownerMethod) {
+      if (params.binding === undefined) {
+        assert.equal(bearer, 'original');
+        groupId = params.groupId;
+      } else {
+        assert.equal(params.groupId, groupId);
+        assert.equal(params.binding, proof);
+        assert.equal(params.toolName, 'build_report');
+        if (bearer !== 'original' && bearer !== 'renewed') return new Response(null, { status: 403 });
+      }
+      return { resultType: 'complete', binding: proof };
+    }
+    if (method === lookup) throw { code: -32002 };
+    assert.equal(method, boundSubmit);
+    assert.equal(headers.get('mcp-method'), boundSubmit);
+    assert.deepEqual((params._meta as Record<string, unknown>)[ownerExtension], { groupId, binding: proof });
+    const report = (params.arguments as { report: string }).report;
+    writes.push(report);
+    if (report === 'attempted') throw new Error('lost admission reply');
+    assert.equal(bearer, 'renewed');
+    return { resultType: 'task', ...task, taskId: 'newly admitted' };
+  }, endpoint, credential, ownerGroups);
+
+  const started = await submitMcpTaskGroup(connect('original'), group, submissions);
+  assert.deepEqual(started.map(entry => entry.outcome), ['unconfirmed', 'prepared']);
+  const manifest = JSON.parse(await readFile(join(group, 'group.json'), 'utf8'));
+  assert.equal(manifest.version, 3);
+  assert.equal(manifest.id, groupId);
+  assert.equal(manifest.ownerBinding, proof);
+  await assert.rejects(continueMcpTaskGroupSubmission(connect('different-owner'), group, 1, submissions[1]!),
+    { code: 'rejected', status: 403 });
+  await assert.rejects(continueMcpTaskGroupSubmission(connect('missing-scope'), group, 1, submissions[1]!),
+    { code: 'rejected', status: 403 });
+  await assert.rejects(continueMcpTaskGroupSubmission(connect('renewed', false), group, 1, submissions[1]!),
+    { code: 'unavailable' });
+  await assert.rejects(stat(join(group, 'member-1.json')), { code: 'ENOENT' });
+  await assert.rejects(continueMcpTaskGroupSubmission(connect('renewed'), group, 0, submissions[0]!),
+    { code: 'credential_mismatch' });
+  assert.deepEqual(writes, ['attempted']);
+
+  const continued = await continueMcpTaskGroupSubmission(connect('renewed'), group, 1, submissions[1]!);
+  assert.equal(continued.outcome, 'accepted');
+  assert.equal(continued.task.taskId, 'newly admitted');
+  assert.deepEqual(writes, ['attempted', 'prepared']);
+  const saved = await readFile(join(group, 'member-1.json'), 'utf8');
+  assert.equal(saved.includes('renewed'), false);
+  await assert.rejects(stat(join(group, 'credential')), { code: 'ENOENT' });
 });

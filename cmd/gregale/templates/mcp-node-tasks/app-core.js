@@ -20,6 +20,10 @@ const NO_TASKS = Object.freeze({ clientSupportsMcpTasks: () => false, installMcp
 const MCP_CLIENT_CAPABILITIES_META_KEY = 'io.modelcontextprotocol/clientCapabilities';
 const TASK_SUBMISSION_KEY_META = 'io.gregale/task-submission-key';
 const TASK_SUBMISSION_METHOD_HEADER = 'gregale/tasks/submit';
+const BOUND_TASK_SUBMISSION = 'gregale/tasks/submit-bound';
+const TASK_GROUP_OWNER_METHOD = 'gregale/tasks/group-owner';
+const TASK_GROUP_OWNER_EXTENSION = 'io.gregale/task-group-owner';
+const TASK_GROUP_DIGEST = /^[0-9a-f]{64}(?![\s\S])/u;
 const MCP_SUBSCRIPTION_ID_META_KEY = 'io.modelcontextprotocol/subscriptionId';
 const MCP_SERVER_INFO_META_KEY = 'io.modelcontextprotocol/serverInfo';
 const MCP_SERVER_INFO = { name: 'gregale-mcp-server', version: '1.0.0' };
@@ -176,6 +180,7 @@ export function createApp(suppliedConfig, { keyResolver, log = console.log, task
   if (config.tasks !== undefined && (typeof config.tasks !== 'object' || config.tasks === null || typeof config.tasks.enabled !== 'boolean')) throw new Error('tasks.enabled must be explicitly true or false when task settings are present');
   if (tasksEnabled !== !!taskRuntime) throw new Error('MCP Tasks require an enabled durable task runtime');
   const supportsTaskSubmission = () => config.auth?.mode === 'external-oauth' && taskRuntime?.supportsTaskSubmission?.();
+  const supportsGroupOwner = () => supportsTaskSubmission() && taskRuntime?.supportsTaskGroupOwnerBinding?.();
   const resourceUpdateAdapter = suppliedResourceUpdateAdapter || createResourceUpdateHub();
   if (typeof resourceUpdateAdapter.publish !== 'function' || typeof resourceUpdateAdapter.subscribe !== 'function') {
     throw new Error('resourceUpdateAdapter must implement publish(uri) and subscribe(uri, listener)');
@@ -250,6 +255,7 @@ export function createApp(suppliedConfig, { keyResolver, log = console.log, task
         tools: { listChanged: true }, resources: { listChanged: true, ...(era === 'modern' ? { subscribe: true } : {}) }, prompts: { listChanged: true }, completions: {},
         ...(taskRuntime ? { extensions: { [MCP_TASKS_EXTENSION_ID]: {},
           ...(keyedTasks ? { 'io.gregale/task-submission': {}, 'io.gregale/task-submission-lookup': {} } : {}),
+          ...(keyedTasks && supportsGroupOwner() ? { [TASK_GROUP_OWNER_EXTENSION]: {} } : {}),
           ...(taskInbox ? { [TASK_INBOX_EXTENSION]: {} } : {}),
           ...(reviewedInput ? { [MCP_TASK_INPUT_REVIEW_EXTENSION_ID]: {} } : {}),
         } } : {}),
@@ -665,6 +671,48 @@ export function createApp(suppliedConfig, { keyResolver, log = console.log, task
     });
   });
   if (auth.metadata) app.get(`/.well-known/oauth-protected-resource${config.endpoint}`, (_req, res) => res.json(auth.metadata));
+  function validGroupOwnerRequest(req, method) {
+    const rpc = req.body;
+    return req.method === 'POST' && req.headers['mcp-method'] === method && rpc?.method === method &&
+      rpc.jsonrpc === '2.0' && (typeof rpc.id === 'string' || typeof rpc.id === 'number') &&
+      req.headers['mcp-protocol-version'] === CURRENT_PROTOCOL_VERSION &&
+      rpc.params?._meta?.[MCP_PROTOCOL_VERSION_META_KEY] === CURRENT_PROTOCOL_VERSION;
+  }
+
+  function groupOwnerBinding(req, groupId, expected) {
+    if (!supportsGroupOwner() || typeof groupId !== 'string' || !TASK_GROUP_DIGEST.test(groupId)) return undefined;
+    return taskRuntime.taskGroupOwnerBinding(req.auth, config.auth.issuer, groupId, expected);
+  }
+
+  function authorizeBoundTask(req, res, next) {
+    const body = req.body;
+    const pin = body?.params?._meta?.[TASK_GROUP_OWNER_EXTENSION];
+    if (body?.method !== BOUND_TASK_SUBMISSION && req.headers['mcp-method'] !== BOUND_TASK_SUBMISSION && pin === undefined) return next();
+    if (!validGroupOwnerRequest(req, BOUND_TASK_SUBMISSION) || !pin || typeof pin !== 'object' || Array.isArray(pin) ||
+      Object.keys(pin).length !== 2 || typeof pin.binding !== 'string' || !groupOwnerBinding(req, pin.groupId, pin.binding)) {
+      return jsonRpcError(res, body?.id ?? null, -32002, 'Task group owner is unavailable for this request', 403);
+    }
+    // Keep older servers fail-closed by requiring the bound method on the
+    // wire. The ordinary tool policy and schemas run after normalization.
+    body.method = 'tools/call';
+    delete body.params._meta[TASK_GROUP_OWNER_EXTENSION];
+    req.headers['mcp-method'] = TASK_SUBMISSION_METHOD_HEADER;
+    return next();
+  }
+
+  function serveGroupOwner(req, res) {
+    const { groupId, binding, toolName } = req.body?.params ?? {};
+    if (!validGroupOwnerRequest(req, TASK_GROUP_OWNER_METHOD) ||
+      (binding !== undefined && (typeof binding !== 'string' || typeof toolName !== 'string')) ||
+      (toolName !== undefined && (typeof toolName !== 'string' || !taskRuntime?.canCreate?.(toolName) ||
+        !auth.toolPolicy.canAccess(toolName, req.auth)))) {
+      return jsonRpcError(res, req.body?.id ?? null, -32002, 'Task group owner is unavailable for this request', 403);
+    }
+    const pin = groupOwnerBinding(req, groupId, binding);
+    if (!pin) return jsonRpcError(res, req.body.id, -32002, 'Task group owner is unavailable for this request', 403);
+    return res.json({ jsonrpc: '2.0', id: req.body.id, result: { resultType: 'complete', binding: pin } });
+  }
+
   app.use(config.endpoint, (req, res, next) => {
     // api-key and oauth-proxy servers trust only requests Gregale's gateway
     // admitted (it removes any caller-supplied value); without its policy
@@ -672,7 +720,7 @@ export function createApp(suppliedConfig, { keyResolver, log = console.log, task
     if (gatewayOnly && !String(req.headers['gregale-mcp-gateway-authorized'] ?? '').trim()) return res.status(401).json({ error: 'gateway_policy_required' });
     if (!catalogStatus().ready) return res.status(503).set('Retry-After', '5').json({ error: 'catalog_contract_mismatch' });
     next();
-  }, auth.middleware, express.json({ limit: '1mb' }), auth.authorizeCall);
+  }, auth.middleware, express.json({ limit: '1mb' }), authorizeBoundTask, auth.authorizeCall);
   app.all(config.endpoint, (req, res, next) => {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Accel-Buffering', 'no');
@@ -682,6 +730,9 @@ export function createApp(suppliedConfig, { keyResolver, log = console.log, task
     const protocolVersion = req.headers['mcp-protocol-version'];
     if (typeof protocolVersion === 'string' && (protocolVersion === CURRENT_PROTOCOL_VERSION || (config.legacy && protocolVersion === LEGACY_PROTOCOL_VERSION))) {
       res.setHeader('MCP-Protocol-Version', protocolVersion);
+    }
+    if (req.body?.method === TASK_GROUP_OWNER_METHOD || req.headers['mcp-method'] === TASK_GROUP_OWNER_METHOD) {
+      return serveGroupOwner(req, res);
     }
     const observation = observeProtocolRequest(req, res, log);
     res.protocolObservation = observation;

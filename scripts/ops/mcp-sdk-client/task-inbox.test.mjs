@@ -59,8 +59,9 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
   };
   const { publicKey, privateKey } = await generateKeyPair('ES256');
   const clientId = 'sdk-inbox-fixture';
-  const mint = (subject, scope) => new SignJWT({ scope, client_id: clientId }).setProtectedHeader({ alg: 'ES256' })
-    .setIssuer(auth.issuer).setAudience(auth.resource).setSubject(subject).setExpirationTime('5m').sign(privateKey);
+  const mint = (subject, scope, expiration = '5m', oauthClient = clientId) =>
+    new SignJWT({ scope, client_id: oauthClient }).setProtectedHeader({ alg: 'ES256' })
+      .setIssuer(auth.issuer).setAudience(auth.resource).setSubject(subject).setExpirationTime(expiration).sign(privateKey);
   const authInfo = subject => ({ clientId, resource: new URL(auth.resource), extra: { subject } });
   const { app } = createApp({
     version: 1, endpoint: '/mcp', transport: 'streamable-http', mode: 'stateless',
@@ -120,7 +121,9 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
   const server = createServer((req, res) => {
     const method = req.headers['mcp-method'];
     if (groupRequests) {
-      if (method === 'gregale/tasks/submit' || method === 'tools/call') groupRequests.submissions++;
+      if (method === 'gregale/tasks/submit' || method === 'gregale/tasks/submit-bound' || method === 'tools/call') {
+        groupRequests.submissions++;
+      }
       if (method === 'gregale/tasks/input-review') groupRequests.reviews++;
       if (method === 'gregale/tasks/respond-reviewed') groupRequests.responses++;
     }
@@ -611,6 +614,91 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
     assert.equal(Object.hasOwn(collected[2], 'task'), false);
     assert.deepEqual(collected[3].task.error, retainedError);
     assert.equal(JSON.stringify(collected).includes(hiddenPayload.content[0].text), false);
+
+    const renewableGroup = join(groupRoot, 'renewed-credential');
+    const renewable = ['one', 'two', 'three'].map(name => ({
+      toolName: 'build_report', arguments: { report: `group credential renewal ${name}`, steps: 1 },
+    }));
+    const expiresAt = Math.floor(Date.now() / 1_000) + 5;
+    const expiring = await mint('gina', scope, expiresAt);
+    admissionProbe = {
+      report: 'group credential renewal', committed: Promise.withResolvers(), release: Promise.withResolvers(),
+      thirdKeys: new Set(),
+    };
+    const originalSender = await startAgent({ token: expiring, groupPath: renewableGroup, submissions: renewable });
+    const lostOnRenewal = await originalSender.running(admissionProbe.committed.promise);
+    originalSender.child.kill('SIGKILL');
+    assert.deepEqual(await originalSender.exit, [null, 'SIGKILL']);
+    admissionProbe.release.resolve();
+
+    const ownerPlan = JSON.parse(await readFile(join(renewableGroup, 'group.json'), 'utf8'));
+    assert.equal(ownerPlan.version, 3);
+    assert.match(ownerPlan.ownerBinding, /^[0-9a-f]{64}$/);
+    const confirmed = JSON.parse(await readFile(join(renewableGroup, 'member-0.json'), 'utf8'));
+    await assert.rejects(stat(join(renewableGroup, 'member-2.json')), { code: 'ENOENT' });
+    await delay(Math.max(0, expiresAt * 1_000 + 25 - Date.now()));
+    const expired = await fetch(endpoint, {
+      method: 'POST', headers: { Authorization: `Bearer ${expiring}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 'expired-token', method: 'ping' }),
+    });
+    assert.equal(expired.status, 401);
+    await expired.body?.cancel();
+
+    const differentOwner = await connect('henry', scope);
+    const reducedScope = await connect('gina', 'mcp:tools');
+    const beforeRejected = groupRequests.submissions;
+    for (const invalid of [differentOwner, reducedScope]) {
+      await assert.rejects(continueMcpTaskGroupSubmission(invalid, renewableGroup, 2, renewable[2]),
+        { code: 'rejected', status: 403 });
+    }
+    assert.equal(groupRequests.submissions, beforeRejected);
+    await assert.rejects(stat(join(renewableGroup, 'member-2.json')), { code: 'ENOENT' });
+
+    // The admission endpoint itself must reject the copied proof even when
+    // a caller skips the SDK's credential-and-tool preflight.
+    const wrongClient = await mint('gina', scope, '5m', 'a-different-oauth-client');
+    const wrongs = [await mint('henry', scope), await mint('gina', 'mcp:tools'), wrongClient];
+    for (const bearer of wrongs) {
+      const method = 'gregale/tasks/submit-bound';
+      const rejected = await fetch(endpoint, {
+        method: 'POST', headers: {
+          Authorization: `Bearer ${bearer}`, 'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream', 'Mcp-Method': method,
+          'Mcp-Name': renewable[2].toolName, 'Mcp-Protocol-Version': '2026-07-28',
+        },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 'bound-owner-rejection', method, params: {
+          name: renewable[2].toolName, arguments: renewable[2].arguments, _meta: {
+            'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+            'io.modelcontextprotocol/clientCapabilities': { extensions: { 'io.modelcontextprotocol/tasks': {} } },
+            'io.gregale/task-submission-key': ownerPlan.members[2].submissionKey,
+            'io.gregale/task-group-owner': { groupId: ownerPlan.id, binding: ownerPlan.ownerBinding },
+          },
+        } }),
+      });
+      assert.equal(rejected.status, 403);
+      await rejected.body?.cancel();
+    }
+
+    const renewed = await mint('gina', scope);
+    assert.notEqual(renewed, expiring);
+    const resumedRenewal = await startAgent({
+      token: renewed, groupPath: renewableGroup, continuation: { receiptIndex: 2, submission: renewable[2] },
+    });
+    const [{ recovered: afterRenewal }] = await resumedRenewal.waitForEvents(1);
+    assert.deepEqual(afterRenewal.map(entry => [entry.outcome, entry.task?.taskId]), [
+      ['accepted', confirmed.taskId], ['accepted', lostOnRenewal], ['prepared', undefined],
+    ]);
+    resumedRenewal.child.send('continue');
+    const [, { continued: admittedAfterRenewal }] = await resumedRenewal.waitForEvents(2);
+    assert.deepEqual(await resumedRenewal.exit, [0, null]);
+    assert.equal(admittedAfterRenewal.outcome, 'accepted');
+    const renewedOwner = await connect('gina', scope);
+    const replay = await continueMcpTaskGroupSubmission(renewedOwner, renewableGroup, 2, renewable[2]);
+    assert.equal(replay.task.taskId, admittedAfterRenewal.task.taskId);
+    const renewedTasks = (await listTaskInbox(renewedOwner)).tasks.map(task => task.taskId);
+    assert.equal(renewedTasks.length, 3);
+    assert.deepEqual(new Set(renewedTasks), new Set([confirmed.taskId, lostOnRenewal, replay.task.taskId]));
+    assert.equal(admissionProbe.thirdKeys.size, 1);
   } finally {
     admissionProbe?.release.resolve();
     stopProbe?.release.resolve();

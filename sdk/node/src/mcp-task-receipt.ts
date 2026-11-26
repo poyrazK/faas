@@ -7,8 +7,9 @@ import { isMcpTaskId } from './mcp-task-inbox.js';
 import { taskWatchTransport } from './mcp-task-watch-transport.js';
 import { getMcpTask, type McpTaskConnection, type McpTaskSnapshot } from './mcp-task-result.js';
 import {
-  createGuardedMcpTaskSubmissionFetch, isSubmissionKey, localReceiptMeta, lookupMcpTaskBySubmissionKey,
-  prepareMcpTaskSubmission, sendMcpTaskSubmission, submissionKeyMeta,
+  boundSubmitMethod, createGuardedMcpTaskSubmissionFetch, groupOwnerExtension, groupOwnerMethod, isSubmissionKey,
+  isTaskGroupOwnerBinding, localReceiptMeta, lookupMcpTaskBySubmissionKey, prepareMcpTaskSubmission,
+  sendMcpTaskSubmission, submissionKeyMeta, verifyTaskGroupOwnerForSend, type TaskGroupOwnerBinding,
   type McpTaskSubmission, type McpTaskSubmissionConnection, type McpTaskSubmissionOptions, type McpTaskSubmissionOutcome,
 } from './mcp-task-submission.js';
 
@@ -17,11 +18,13 @@ type SubmissionGuard = NonNullable<Parameters<typeof createGuardedMcpTaskSubmiss
 type TransportBinding = {
   endpointSha256: string;
   operations: Map<string, SubmissionGuard>;
+  verifyGroupOwner(owner: TaskGroupOwnerBinding, toolName: string, headers: Headers, signal: AbortSignal): Promise<void>;
 };
 
 const transports = new WeakMap<object, TransportBinding>();
 const submissionWindowMs = 60_000;
-const receiptMethods = new Set(['gregale/tasks/submit', 'gregale/tasks/lookup', 'tasks/get', 'tasks/cancel']);
+const receiptMethods = new Set(['gregale/tasks/submit', boundSubmitMethod, groupOwnerMethod,
+  'gregale/tasks/lookup', 'tasks/get', 'tasks/cancel']);
 const sha256Pattern = /^[0-9a-f]{64}(?![\s\S])/u;
 
 export type McpTaskReceiptConnection = McpTaskConnection & McpTaskSubmissionConnection & {
@@ -85,7 +88,11 @@ export function createMcpTaskTransport<Transport extends TransportConstructor>(
   TransportClass: Transport, endpoint: string | URL, options?: ConstructorParameters<Transport>[1],
 ): InstanceType<Transport> {
   const href = endpointURL(endpoint).href;
-  const binding: TransportBinding = { endpointSha256: createHash('sha256').update(href).digest('hex'), operations: new Map() };
+  const binding: TransportBinding = {
+    endpointSha256: createHash('sha256').update(href).digest('hex'),
+    operations: new Map(),
+    verifyGroupOwner: (owner, toolName, headers, signal) => verifyTaskGroupOwnerForSend(fetch, href, headers, owner, toolName, signal),
+  };
   const fetcher = createGuardedMcpTaskSubmissionFetch(options?.fetch, async (operationId, params, metadata, headers) => {
     const guard = binding.operations.get(operationId);
     if (!guard) throw new McpTaskReceiptError('unbound_connection');
@@ -338,6 +345,7 @@ type GroupAdmission = {
   authorize(credential: string | undefined): Promise<void>;
   ensureOpen(): Promise<void>;
   plannedSubmissionKey?: string;
+  owner?: TaskGroupOwnerBinding;
 };
 
 async function runReceiptSubmission(
@@ -350,6 +358,10 @@ async function runReceiptSubmission(
   const { request, requestSha256 } = prepared;
   if (seed.version !== 1 && seed.requestSha256 !== requestSha256) throw new McpTaskReceiptError('request_mismatch');
   request.params._meta[submissionKeyMeta] = seed.submissionKey;
+  if (group?.owner) {
+    request.method = boundSubmitMethod;
+    request.params._meta[groupOwnerExtension] = group.owner;
+  }
 
   let receipt = retry ? seed : undefined;
   let guardError: unknown;
@@ -364,7 +376,13 @@ async function runReceiptSubmission(
       if (retry || group) requireRetryWindow(seed.submissionKey);
       const credential = bearerCredential(headers);
       if (group) await group.authorize(credential);
+      const owner = metadata[groupOwnerExtension];
+      if (group?.owner && (!isTaskGroupOwnerBinding(owner) ||
+          owner.groupId !== group.owner.groupId || owner.binding !== group.owner.binding)) {
+        throw new McpTaskReceiptError('request_mismatch');
+      }
       if (!receipt) {
+        if (group?.owner) await binding.verifyGroupOwner(group.owner, request.params.name, headers, operation.signal);
         // Capture the bearer on the prepared HTTP request before allowing it to leave.
         let initial = seed;
         if (credential) {
@@ -447,9 +465,10 @@ export async function retryMcpTaskFromReceipt(
 export function sendPlannedMcpTaskReceipt(
   connection: McpTaskReceiptConnection, path: string, plan: PlannedMcpTaskReceipt, prepared: PreparedMcpTaskReceipt,
   operation: Required<McpTaskSubmissionOptions>,
-  { authorize, ensureOpen, receipt, refreshExpired = false }: {
+  { authorize, ensureOpen, owner, receipt, refreshExpired = false }: {
     authorize: GroupAdmission['authorize'];
     ensureOpen: GroupAdmission['ensureOpen'];
+    owner?: TaskGroupOwnerBinding | undefined;
     receipt?: RetryReceipt | undefined;
     refreshExpired?: boolean;
   },
@@ -467,7 +486,8 @@ export function sendPlannedMcpTaskReceipt(
   requireRetryWindow(seed.submissionKey);
   // The member receipt links the new key to the immutable plan. Its exclusive
   // creation also fences competing first sends before either can reach the wire.
-  const group = { authorize, ensureOpen, ...(renew ? { plannedSubmissionKey: plan.submissionKey } : {}) };
+  const group = { authorize, ensureOpen, ...(owner ? { owner } : {}),
+    ...(renew ? { plannedSubmissionKey: plan.submissionKey } : {}) };
   return runReceiptSubmission(connection, path, seed, prepared, operation, receipt !== undefined, group);
 }
 

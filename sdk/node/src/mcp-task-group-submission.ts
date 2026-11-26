@@ -1,6 +1,6 @@
 import {
   bindTaskGroupCredential, createTaskGroupFile, loadTaskGroupSubmission, maxTaskGroupMembers,
-  McpTaskGroupError, requireTaskGroupOpen, taskGroupReceiptPath, type TaskGroupSubmissionManifest,
+  McpTaskGroupError, newTaskGroupId, requireTaskGroupOpen, taskGroupReceiptPath, type TaskGroupSubmissionManifest,
 } from './mcp-task-group-file.js';
 import { groupConnections } from './mcp-task-group.js';
 import type { McpTaskInboxEntry } from './mcp-task-inbox.js';
@@ -11,7 +11,8 @@ import {
 } from './mcp-task-receipt.js';
 import { McpTaskReadError, readMcpTaskMetadata } from './mcp-task-result.js';
 import {
-  lookupMcpTaskBySubmissionKey, McpTaskSubmissionError, type McpTaskSubmissionOptions,
+  lookupMcpTaskBySubmissionKey, McpTaskSubmissionError, requestTaskGroupOwnerBinding,
+  supportsTaskGroupOwnerBinding, type McpTaskSubmissionOptions,
 } from './mcp-task-submission.js';
 
 type SentMember = { readonly receiptIndex: number } & (
@@ -68,10 +69,18 @@ async function sendMember(
   prepared: PreparedMcpTaskReceipt, operation: Required<McpTaskSubmissionOptions>, receipt?: Receipt, refreshExpired = false,
 ): Promise<SentMember> {
   const { path, plan } = plannedMember(group, receiptIndex);
+  const { manifest } = group;
+  const owner = manifest.version === 3 ? { groupId: manifest.id, binding: manifest.ownerBinding } : undefined;
+  if (owner && !supportsTaskGroupOwnerBinding(connection)) throw new McpTaskSubmissionError('unavailable');
+  const ensureOpen = () => requireTaskGroupOpen(group.path, manifest.id);
   const result = await sendPlannedMcpTaskReceipt(connection, path, plan, prepared, operation, {
-    authorize: credential => bindTaskGroupCredential(group.path, group.manifest, credential),
-    ensureOpen: () => requireTaskGroupOpen(group.path, group.manifest.id),
-    receipt, refreshExpired,
+    authorize: credential => {
+      if (!owner) return bindTaskGroupCredential(group.path, manifest, credential);
+      if (!credential) throw new McpTaskGroupError('credential_mismatch');
+      return ensureOpen();
+    },
+    ensureOpen,
+    owner, receipt, refreshExpired,
   });
   return result.outcome === 'accepted' ? { receiptIndex, outcome: 'accepted', task: result.task }
     : { receiptIndex, outcome: 'unconfirmed' };
@@ -91,7 +100,13 @@ export async function submitMcpTaskGroup(
   const clients = groupConnections(connection, endpointSha256);
   const prepared = Array.from(submissions, submission => prepareMcpTaskReceiptSubmission(connection, submission));
   const members = prepared.map(({ submissionKey, requestSha256 }) => ({ submissionKey, requestSha256 }));
-  const group = await createTaskGroupFile(path, { version: 2, endpointSha256, members });
+  const groupId = newTaskGroupId();
+  const ownerBinding = supportsTaskGroupOwnerBinding(clients.lookup)
+    ? await requestTaskGroupOwnerBinding(clients.lookup, groupId, operation) : undefined;
+  clients.check();
+  const group = ownerBinding === undefined
+    ? await createTaskGroupFile(path, { version: 2, endpointSha256, members }, groupId)
+    : await createTaskGroupFile(path, { version: 3, endpointSha256, members, ownerBinding }, groupId);
   const entries: McpTaskGroupSubmissionEntry[] = [];
   for (const [receiptIndex, submission] of prepared.entries()) {
     clients.check();
