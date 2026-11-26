@@ -201,10 +201,10 @@ func TestAPISandboxReleaseInviteAndRevocation(t *testing.T) {
 	}
 }
 
-type dueSandboxOperations struct{ *state.MemStore }
+type dueSandboxOperations struct{ state.APISandboxOperationStore }
 
 func (o dueSandboxOperations) ClaimAPISandboxOperation(ctx context.Context, now time.Time, lease time.Duration) (state.APISandboxOperation, error) {
-	return o.MemStore.ClaimAPISandboxOperation(ctx, now.Add(apiSandboxRetryInterval), lease)
+	return o.APISandboxOperationStore.ClaimAPISandboxOperation(ctx, now.Add(apiSandboxRetryInterval), lease)
 }
 
 type sandboxRoundTripper func(*http.Request) (*http.Response, error)

@@ -192,6 +192,7 @@ var registry = []Spec{
 	{Domain: Delivery, Readers: []string{"schedd", "secretd"}, Roles: bothRoles, Wired: true, Columns: join(
 		cols("execution_payloads", "sealed_payload"),
 		cols("app_webhooks", "secret_sealed", "previous_secret_sealed"),
+		cols("api_sandbox_webhook_partners", "signing_secret_sealed"),
 		cols("commit_sources", "sealed_connection"),
 	)},
 	// ADR-20261110210000 slice 3k: the control plane's secretd also opens the

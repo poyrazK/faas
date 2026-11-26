@@ -12,19 +12,20 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func TestAPISandboxScenarioLibraryReusesDebuggerFixturesAcrossReleases(t *testing.T) {
 	e, app, baseline := sandboxReleaseFixture(t)
 	ctx := t.Context()
 	requestID := uuid.NewString()
-	e.s.store = &debugSandboxScenarioStore{
+	e.s.store = statetest.NewMem(&debugSandboxScenarioStore{
 		MemStore: e.store, appID: app.ID,
 		row: sqlc.GetRequestTelemetryByAppAndIdentifierRow{
 			ID: stringToPgUUID(requestID), DeploymentID: stringToPgUUID(baseline.ID),
 			Method: "GET", Route: "GET /exports/{id}", Count: 1, Status: 500,
 		},
-	}
+	})
 	appURL := "/v1/apps/" + app.Slug
 	library := appURL + "/api-sandbox-scenarios"
 	firstID, secondID := uuid.NewString(), uuid.NewString()

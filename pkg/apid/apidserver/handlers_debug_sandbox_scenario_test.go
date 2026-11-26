@@ -13,12 +13,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type debugSandboxScenarioStore struct {
-	*state.MemStore
-	appID string
-	row   sqlc.GetRequestTelemetryByAppAndIdentifierRow
+	MemStore *state.MemStore
+	appID    string
+	row      sqlc.GetRequestTelemetryByAppAndIdentifierRow
 }
 
 func (s *debugSandboxScenarioStore) GetRequestTelemetryByAppAndIdentifier(_ context.Context, q sqlc.GetRequestTelemetryByAppAndIdentifierParams) (sqlc.GetRequestTelemetryByAppAndIdentifierRow, error) {
@@ -43,7 +44,7 @@ func TestDebugSandboxScenarioDraftAndPrivateSave(t *testing.T) {
 			SpansSummary: []byte(`[{"private":"production-fixture"}]`),
 		},
 	}
-	e.s.store = store
+	e.s.store = statetest.NewMem(store)
 	base := "/v1/apps/" + app.Slug
 	draftURL := base + "/debug/requests/" + requestID + "/sandbox-scenario-draft"
 	releaseURL := base + "/deployments/" + release.ID
