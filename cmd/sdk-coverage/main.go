@@ -831,6 +831,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/orgs/{organization}/postgres/databases/{id}/compute-policy":                                              "ChangeOrgManagedPostgresComputePolicy",
 	"PUT /v1/orgs/{organization}/postgres/databases/{id}/suspend-timeout":                                              "SetOrgManagedPostgresSuspendTimeout",
 	"PUT /v1/orgs/{organization}/postgres/databases/{id}/wake-with-app":                                                "SetOrgManagedPostgresWakeWithApp",
+	"GET /v1/orgs/{organization}/postgres/databases/{id}/activity":                                                     "GetOrgManagedPostgresActivity",
 	"POST /v1/orgs/{organization}/postgres/bindings/{id}/rotate":                                                       "RotateOrgManagedPostgresBinding",
 	"GET /v1/orgs/{organization}/postgres/usage":                                                                       "GetOrgManagedPostgresUsage",
 
@@ -1794,6 +1795,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/postgres/databases/{id}/compute-policy":                                 "ChangeManagedPostgresComputePolicy",
 	"PUT /v1/postgres/databases/{id}/suspend-timeout":                                 "SetManagedPostgresSuspendTimeout",
 	"PUT /v1/postgres/databases/{id}/wake-with-app":                                   "SetManagedPostgresWakeWithApp",
+	"GET /v1/postgres/databases/{id}/activity":                                        "GetManagedPostgresActivity",
 	"GET /v1/postgres/databases/{id}/compute-policy-changes/{change_id}":              "GetManagedPostgresComputePolicyChange",
 	"POST /v1/postgres/databases/{id}/resize":                                         "ResizeManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}/resizes/{resize_id}":                             "GetManagedPostgresResize",

@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -21,7 +22,7 @@ import (
 
 func cmdPostgres(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|create|get|status|wait|delete|recover|resize|resize-status|compute-policy|compute-policy-status|suspend-timeout|app-wake|restore|branch|bindings|attach|connect|cutover|live>", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|create|get|status|wait|delete|recover|resize|resize-status|compute-policy|compute-policy-status|suspend-timeout|app-wake|activity|restore|branch|bindings|attach|connect|cutover|live>", "postgres")
 		return 1
 	}
 	switch args[0] {
@@ -64,6 +65,8 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresComputePolicyStatus(args[1:])
 	case "app-wake":
 		return cmdPostgresWakeWithApp(args[1:])
+	case "activity":
+		return cmdPostgresActivity(args[1:])
 	case "suspend-timeout":
 		return cmdPostgresSuspendTimeout(args[1:])
 	case "resize":
@@ -309,7 +312,30 @@ func cmdPostgresUsage(args []string) int {
 	if note := postgresHoldNote(result.Hold); note != "" {
 		_, _ = fmt.Fprintf(osStdout, "  hold:                         %s (every database is %s)\n", result.Hold, note)
 	}
+	_, _ = fmt.Fprint(osStdout, renderPostgresDatabaseUsage(result.Databases))
 	return 0
+}
+
+// renderPostgresDatabaseUsage is the month's compute by database
+// (ADR-20261125231222); a deleted database keeps its compute.
+func renderPostgresDatabaseUsage(databases []api.ManagedPostgresDatabaseUsage) string {
+	if len(databases) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nby database (this month; starts and awake time from the last 30 days)\n")
+	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "  DATABASE\tCOMPUTE\tSTARTS\tAWAKE")
+	for _, d := range databases {
+		name := d.Name
+		if name == "" {
+			name = "(deleted) " + d.DatabaseID
+		}
+		_, _ = fmt.Fprintf(tw, "  %s\t%s\t%d\t%s\n", name, formatComputeUnitHours(d.ComputeUnitSeconds), d.Starts, formatAwake(d.AwakeSeconds))
+	}
+	_ = tw.Flush()
+	b.WriteString("Run `gregale postgres activity DATABASE` to see what kept one awake.\n")
+	return b.String()
 }
 
 // postgresBillingMonthSeconds matches the 31-day month apid uses to turn the

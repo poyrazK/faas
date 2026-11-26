@@ -19,6 +19,7 @@ var actions = map[string]authz.OrgAction{
 	"POST /v1/postgres/databases/{id}/resize":                            authz.OrgActionManagePostgres,
 	"POST /v1/postgres/databases/{id}/compute-policy":                    authz.OrgActionManagePostgres,
 	"PUT /v1/postgres/databases/{id}/suspend-timeout":                    authz.OrgActionManagePostgres,
+	"PUT /v1/postgres/databases/{id}/wake-with-app":                      authz.OrgActionManagePostgres,
 	"PUT /v1/postgres/databases/{id}/previews":                           authz.OrgActionManagePostgres,
 	"GET /v1/postgres/databases/{id}/roles":                              authz.OrgActionReadPostgres,
 	"PUT /v1/postgres/databases/{id}/roles/{name}":                       authz.OrgActionManagePostgres,
@@ -32,6 +33,7 @@ var actions = map[string]authz.OrgAction{
 	// organization, owners included, was refused them.
 	"GET /v1/postgres/databases/{id}/status":                authz.OrgActionReadPostgres,
 	"GET /v1/postgres/databases/{id}/connection-budget":     authz.OrgActionReadPostgres,
+	"GET /v1/postgres/databases/{id}/activity":              authz.OrgActionReadPostgres,
 	"GET /v1/postgres/databases/{id}/upgrades/{upgrade_id}": authz.OrgActionReadPostgres,
 	"GET /v1/postgres/overage":                              authz.OrgActionReadPostgresUsage,
 	"PUT /v1/postgres/overage":                              authz.OrgActionManagePostgres,

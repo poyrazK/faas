@@ -2,31 +2,36 @@ package managedpostgres
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 type idleTailTestProvider struct {
 	*usageTestProvider
 	tail    IdleTail
+	events  []ComputeEvent
 	err     error
 	windows []UsageWindow
 	// background counts reads made under WithBackgroundRequests.
 	background int
 }
 
-func (p *idleTailTestProvider) IdleTail(ctx context.Context, providerResourceID string, window UsageWindow, maxRequests int) (IdleTail, error) {
+func (p *idleTailTestProvider) IdleTail(ctx context.Context, providerResourceID string, window UsageWindow, maxRequests int) (IdleTail, []ComputeEvent, error) {
 	if providerResourceID != "provider-db" || maxRequests != idleTailRequestsPerRead {
-		return IdleTail{}, ErrInvalid
+		return IdleTail{}, nil, ErrInvalid
 	}
 	if BackgroundRequests(ctx) {
 		p.background++
 	}
 	p.windows = append(p.windows, window)
-	return p.tail, p.err
+	return p.tail, p.events, p.err
 }
 
 func idleTailFixture(t *testing.T, now time.Time, provider Provider, spec Spec, databases int) (*MemoryStore, *Registry) {
@@ -170,4 +175,74 @@ func TestMetricsIdleTailSharesWindowsWithCompute(t *testing.T) {
 	}
 	var nilMetrics *Metrics
 	nilMetrics.ObserveIdleTail(IdleTailObservation{})
+}
+
+// activityTestStore records what the sweep hands a ComputeActivityStore.
+type activityTestStore struct {
+	*MemoryStore
+	recorded map[string][]ComputeEvent
+	prunes   []time.Time
+	err      error
+}
+
+func (s *activityTestStore) RecordComputeEvents(_ context.Context, databaseID string, events []ComputeEvent) (int, error) {
+	s.recorded[databaseID] = append(s.recorded[databaseID], events...)
+	return len(events), s.err
+}
+
+func (s *activityTestStore) PruneComputeStarts(_ context.Context, before time.Time, _ int) (int64, error) {
+	s.prunes = append(s.prunes, before)
+	return 0, s.err
+}
+
+func (s *activityTestStore) ComputeStarts(context.Context, string, time.Time, int) ([]ComputeStart, error) {
+	return nil, nil
+}
+
+func (s *activityTestStore) ComputeStartCauses(context.Context, string, time.Time, time.Time) ([]ComputeStartCause, error) {
+	return nil, nil
+}
+
+func (s *activityTestStore) AccountActivityTotals(context.Context, string, time.Time, time.Time) (map[string]DatabaseActivityTotals, error) {
+	return nil, nil
+}
+
+// The sweep records each read's starts and suspends, also from a read it
+// cannot price and with no idle-tail observer, and prunes at most hourly.
+func TestUsageCollectorRecordsComputeActivity(t *testing.T) {
+	for _, readErr := range []error{nil, ErrUnsupported} {
+		t.Run(fmt.Sprint(readErr), func(t *testing.T) {
+			ctx := context.Background()
+			now := time.Date(2026, 11, 24, 12, 17, 0, 0, time.UTC)
+			start := now.Truncate(time.Hour).Add(-50 * time.Minute)
+			events := []ComputeEvent{{OperationID: "op-2", Kind: ComputeEventSuspend, At: start.Add(5 * time.Minute)},
+				{OperationID: "op-1", Kind: ComputeEventStart, At: start}}
+			usage := &usageTestProvider{fakeProvider: &fakeProvider{capabilities: testCapabilities()},
+				readings: []MeterReading{{Meter: MeterComputeUnitSeconds, Quantity: 600}}}
+			tailing := &idleTailTestProvider{usageTestProvider: usage, events: events, err: readErr}
+			memory, registry := idleTailFixture(t, now, tailing, testSpec(), 2)
+			// A failing store is logged, never fails collection.
+			store := &activityTestStore{MemoryStore: memory, recorded: map[string][]ComputeEvent{}, err: readErr}
+			collector, err := NewUsageCollector(registry, store, UsageCollectorOptions{Now: func() time.Time { return now }})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				if _, err := collector.Collect(ctx); err != nil {
+					t.Fatal(err)
+				}
+				collector.readIdleTails(ctx)
+				now = now.Add(time.Minute)
+			}
+			for _, id := range []string{"dba", "dbb"} {
+				if got := store.recorded[id]; !slices.Equal(got, events) {
+					t.Fatalf("%s recorded %+v, want %+v", id, got, events)
+				}
+			}
+			want := time.Date(2026, 11, 24, 12, 17, 0, 0, time.UTC).Add(-api.ManagedPostgresActivityRetention)
+			if len(store.prunes) != 1 || !store.prunes[0].Equal(want) {
+				t.Fatalf("prunes = %v, want one before %s", store.prunes, want)
+			}
+		})
+	}
 }

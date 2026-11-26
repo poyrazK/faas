@@ -48452,6 +48452,39 @@ CREATE TABLE public.managed_postgres_accounting_reconciliations (
 
 
 --
+-- Name: managed_postgres_awake_notices; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_awake_notices (
+    database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    week_start date NOT NULL,
+    awake_seconds bigint NOT NULL,
+    starts integer NOT NULL,
+    cause text NOT NULL,
+    cause_app_id uuid,
+    cause_detail text DEFAULT ''::text NOT NULL,
+    cause_starts integer NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    mailed_at timestamp with time zone,
+    CONSTRAINT managed_postgres_awake_notices_awake_seconds_check CHECK ((awake_seconds >= 0)),
+    CONSTRAINT managed_postgres_awake_notices_cause_check CHECK ((cause = ANY (ARRAY['app_wake'::text, 'cron'::text, 'request'::text, 'app_start'::text, 'running_app'::text, 'external'::text]))),
+    CONSTRAINT managed_postgres_awake_notices_cause_detail_check CHECK ((length(cause_detail) <= 512)),
+    CONSTRAINT managed_postgres_awake_notices_check CHECK (((cause_starts >= 0) AND (cause_starts <= starts))),
+    CONSTRAINT managed_postgres_awake_notices_mailed_at_check CHECK (((mailed_at IS NULL) OR isfinite(mailed_at))),
+    CONSTRAINT managed_postgres_awake_notices_recorded_at_check CHECK (isfinite(recorded_at)),
+    CONSTRAINT managed_postgres_awake_notices_starts_check CHECK ((starts >= 0))
+);
+
+
+--
+-- Name: TABLE managed_postgres_awake_notices; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.managed_postgres_awake_notices IS 'Weekly notices that one cause kept a managed PostgreSQL database awake; mailed once; written only by apid.';
+
+
+--
 -- Name: managed_postgres_bindings; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -48558,6 +48591,37 @@ CREATE TABLE public.managed_postgres_checkpoint_maintenance (
     CONSTRAINT managed_postgres_checkpoint_maintenance_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'role_requested'::text, 'role_reserved'::text, 'database_requested'::text, 'database_created'::text, 'activation_requested'::text, 'ready'::text]))),
     CONSTRAINT managed_postgres_maintenance_original_owner CHECK (((((reserved_by_operation_id IS NOT NULL))::integer + ((reserved_by_cutover_id IS NOT NULL))::integer) = 1))
 );
+
+
+--
+-- Name: managed_postgres_compute_starts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_compute_starts (
+    database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    provider_operation_id text NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    suspended_at timestamp with time zone,
+    cause text NOT NULL,
+    cause_app_id uuid,
+    cause_detail text DEFAULT ''::text NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT managed_postgres_compute_starts_cause_check CHECK ((cause = ANY (ARRAY['app_wake'::text, 'cron'::text, 'request'::text, 'app_start'::text, 'running_app'::text, 'external'::text]))),
+    CONSTRAINT managed_postgres_compute_starts_cause_detail_check CHECK ((length(cause_detail) <= 512)),
+    CONSTRAINT managed_postgres_compute_starts_check CHECK (((suspended_at IS NULL) OR (isfinite(suspended_at) AND (suspended_at >= started_at)))),
+    CONSTRAINT managed_postgres_compute_starts_check1 CHECK (((cause = ANY (ARRAY['app_wake'::text, 'external'::text])) OR (cause_app_id IS NOT NULL))),
+    CONSTRAINT managed_postgres_compute_starts_provider_operation_id_check CHECK ((provider_operation_id ~ '^[A-Za-z0-9_-]{1,128}$'::text)),
+    CONSTRAINT managed_postgres_compute_starts_recorded_at_check CHECK (isfinite(recorded_at)),
+    CONSTRAINT managed_postgres_compute_starts_started_at_check CHECK (isfinite(started_at))
+);
+
+
+--
+-- Name: TABLE managed_postgres_compute_starts; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.managed_postgres_compute_starts IS 'Starts of a managed PostgreSQL database''s compute with their likely cause (diagnosis, never billing); pruned after 30 days; written only by apid.';
 
 
 --
@@ -72847,6 +72911,14 @@ ALTER TABLE ONLY public.managed_postgres_accounting_reconciliations
 
 
 --
+-- Name: managed_postgres_awake_notices managed_postgres_awake_notices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_awake_notices
+    ADD CONSTRAINT managed_postgres_awake_notices_pkey PRIMARY KEY (database_id, week_start);
+
+
+--
 -- Name: managed_postgres_bindings managed_postgres_bindings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -72884,6 +72956,14 @@ ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
 
 ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
     ADD CONSTRAINT managed_postgres_checkpoint_maintenance_source_database_id_key UNIQUE (source_database_id);
+
+
+--
+-- Name: managed_postgres_compute_starts managed_postgres_compute_starts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_compute_starts
+    ADD CONSTRAINT managed_postgres_compute_starts_pkey PRIMARY KEY (database_id, provider_operation_id);
 
 
 --
@@ -86777,6 +86857,20 @@ CREATE INDEX managed_postgres_clone_owner_idx ON public.managed_postgres_databas
 --
 
 CREATE UNIQUE INDEX managed_postgres_clone_reservation_key ON public.managed_postgres_databases USING btree (environment_clone_operation_id, restore_source_database_id) WHERE ((environment_clone_operation_id IS NOT NULL) AND (clone_resource_role = 'target'::text));
+
+
+--
+-- Name: managed_postgres_compute_starts_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_compute_starts_account_idx ON public.managed_postgres_compute_starts USING btree (account_id, started_at DESC);
+
+
+--
+-- Name: managed_postgres_compute_starts_started_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_compute_starts_started_idx ON public.managed_postgres_compute_starts USING btree (database_id, started_at DESC);
 
 
 --
@@ -109346,6 +109440,14 @@ ALTER TABLE ONLY public.managed_postgres_accounting_reconciliations
 
 
 --
+-- Name: managed_postgres_awake_notices managed_postgres_awake_notices_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_awake_notices
+    ADD CONSTRAINT managed_postgres_awake_notices_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
 -- Name: managed_postgres_bindings managed_postgres_bindings_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -109415,6 +109517,14 @@ ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
 
 ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
     ADD CONSTRAINT managed_postgres_checkpoint_maintenance_source_database_id_fkey FOREIGN KEY (source_database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: managed_postgres_compute_starts managed_postgres_compute_starts_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_compute_starts
+    ADD CONSTRAINT managed_postgres_compute_starts_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
 
 
 --

@@ -4395,6 +4395,8 @@ type Querier interface {
 	// first, so restore descendants are deleted before their sources.
 	ListManagedPostgresAccountErasureDatabases(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ManagedPostgresDatabase, error)
 	ListManagedPostgresAccountingCoverage(ctx context.Context, db DBTX, arg ListManagedPostgresAccountingCoverageParams) ([]ListManagedPostgresAccountingCoverageRow, error)
+	// The database's starts at or after since, newest first.
+	ListManagedPostgresComputeStarts(ctx context.Context, db DBTX, arg ListManagedPostgresComputeStartsParams) ([]ListManagedPostgresComputeStartsRow, error)
 	ListManagedPostgresCustomerDatabases(ctx context.Context, db DBTX, arg ListManagedPostgresCustomerDatabasesParams) ([]ManagedPostgresDatabase, error)
 	ListManagedPostgresCutoverCredentials(ctx context.Context, db DBTX, id string) ([]ManagedPostgresCutoverCredential, error)
 	ListManagedPostgresDrainPlanInventory(ctx context.Context, db DBTX, arg ListManagedPostgresDrainPlanInventoryParams) ([]ListManagedPostgresDrainPlanInventoryRow, error)
@@ -5289,6 +5291,8 @@ type Querier interface {
 	MCPOAuthRetirementBindingBusy(ctx context.Context, db DBTX, arg MCPOAuthRetirementBindingBusyParams) (bool, error)
 	MCPOAuthRetirementClientCiphertext(ctx context.Context, db DBTX, arg MCPOAuthRetirementClientCiphertextParams) ([]byte, error)
 	MCPOAuthRetirementFlowCurrent(ctx context.Context, db DBTX, arg MCPOAuthRetirementFlowCurrentParams) (bool, error)
+	// Each of the account's databases' starts and awake seconds since a time.
+	ManagedPostgresAccountComputeStarts(ctx context.Context, db DBTX, arg ManagedPostgresAccountComputeStartsParams) ([]ManagedPostgresAccountComputeStartsRow, error)
 	ManagedPostgresAccountDeletionIncluded(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error)
 	// ADR-20261112160000 slice 2c: the accounts whose managed PostgreSQL
 	// databases, in any state, name a Neon project. neond counts a destructive
@@ -5302,11 +5306,18 @@ type Querier interface {
 	// mailed through it, apart from the compute thresholds ranked above.
 	ManagedPostgresCapEvent(ctx context.Context, db DBTX, arg ManagedPostgresCapEventParams) (ManagedPostgresCapEventRow, error)
 	ManagedPostgresCapSuspendedAt(ctx context.Context, db DBTX, arg ManagedPostgresCapSuspendedAtParams) (pgtype.Timestamptz, error)
+	// The database's starts at or after since grouped by cause, with the awake
+	// seconds inside [since, now] (an open start counts to now), most starts
+	// first.
+	ManagedPostgresComputeStartCauses(ctx context.Context, db DBTX, arg ManagedPostgresComputeStartCausesParams) ([]ManagedPostgresComputeStartCausesRow, error)
 	// ADR-20261023181931: a rollback database switch activates its cutover.
 	// Every query runs inside the activation or resume transaction, after the
 	// account, app and cutover locks.
 	ManagedPostgresCutoverDrainPlanForFence(ctx context.Context, db DBTX, arg ManagedPostgresCutoverDrainPlanForFenceParams) (string, error)
 	ManagedPostgresCutoverUnreleasedSourceFences(ctx context.Context, db DBTX, cutoverID string) (int64, error)
+	// Each of the account's databases' compute unit seconds in usage windows
+	// starting at or after since.
+	ManagedPostgresDatabaseComputeUnitSeconds(ctx context.Context, db DBTX, arg ManagedPostgresDatabaseComputeUnitSecondsParams) ([]ManagedPostgresDatabaseComputeUnitSecondsRow, error)
 	ManagedPostgresDrainPlanHasUnplannedInstances(ctx context.Context, db DBTX, arg ManagedPostgresDrainPlanHasUnplannedInstancesParams) (bool, error)
 	ManagedPostgresDueBindings(ctx context.Context, db DBTX, arg ManagedPostgresDueBindingsParams) ([]ManagedPostgresBinding, error)
 	// ADR-20261110160000 amendment 2026-11-11: each database's egress this month,
@@ -6509,6 +6520,8 @@ type Querier interface {
 	PruneGitHubTransportRecoveries(ctx context.Context, db DBTX) error
 	PruneInvocationAttemptHistory(ctx context.Context, db DBTX, arg PruneInvocationAttemptHistoryParams) (int64, error)
 	PruneMCPOAuthRetirementMetadata(ctx context.Context, db DBTX) error
+	// Deletes up to batch_size starts recorded before the cutoff.
+	PruneManagedPostgresComputeStarts(ctx context.Context, db DBTX, arg PruneManagedPostgresComputeStartsParams) (int64, error)
 	PruneMigrationCutovers(ctx context.Context, db DBTX, arg PruneMigrationCutoversParams) error
 	PruneMigrationVerifications(ctx context.Context, db DBTX, arg PruneMigrationVerificationsParams) error
 	PruneProfileCanaryChecks(ctx context.Context, db DBTX, arg PruneProfileCanaryChecksParams) error
@@ -7529,6 +7542,16 @@ type Querier interface {
 	// UTC month. One row per subject, month and threshold; the first sweep to
 	// see a threshold records it and later sweeps leave it alone.
 	RecordManagedPostgresCapEvent(ctx context.Context, db DBTX, arg RecordManagedPostgresCapEventParams) (bool, error)
+	// Why a managed PostgreSQL database is awake (gregale postgres activity,
+	// ADR-20261125231222). apid is the only writer.
+	// Records one start of the database's compute with its likely cause: the
+	// first match of app_wake, cron, request, app_start, running_app over the
+	// apps bound to the database at the start, else external. A start already
+	// recorded is left alone; it reports whether it recorded this one.
+	RecordManagedPostgresComputeStart(ctx context.Context, db DBTX, arg RecordManagedPostgresComputeStartParams) (bool, error)
+	// Closes the database's latest start at or before the suspend, if it is
+	// still open.
+	RecordManagedPostgresComputeSuspend(ctx context.Context, db DBTX, arg RecordManagedPostgresComputeSuspendParams) (int64, error)
 	RecordManagedPostgresCreationReceipt(ctx context.Context, db DBTX, arg RecordManagedPostgresCreationReceiptParams) (ManagedPostgresCreationReceipt, error)
 	// ADR-20261026150000: managed database endpoints, recorded when a credential
 	// is sealed, and the bound apps that may reach them.
