@@ -2,15 +2,12 @@ package apidserver_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"sort"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -19,87 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/billing/paddleinvoice"
 	"github.com/onebox-faas/faas/pkg/state"
-	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
-
-// productStatementFake serves finalized Product Control documents for a
-// closed month, which a MemStore cannot backdate admissions into; the
-// export itself, its connection and its export rows are the MemStore's.
-type productStatementFake struct {
-	MemStore *state.MemStore
-	mu       sync.Mutex
-	docs     map[string]api.ProductBillingDocument
-	handoffs map[string]api.ProductInvoiceHandoff
-}
-
-func (f *productStatementFake) GetProductBillingDocument(_ context.Context, scope state.ProductBillingScope, id string) (api.ProductBillingDocument, error) {
-	if _, err := uuid.Parse(id); err != nil {
-		return api.ProductBillingDocument{}, state.ErrInvalidArgument
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	doc, ok := f.docs[id]
-	if !ok || doc.TenantID != scope.TenantID || doc.Period != scope.Period {
-		return api.ProductBillingDocument{}, state.ErrNotFound
-	}
-	return doc, nil
-}
-
-func (f *productStatementFake) ListProductBillingDocuments(_ context.Context, scope state.ProductBillingScope, _ string) (api.ProductBillingDocuments, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	var page api.ProductBillingDocuments
-	for _, doc := range f.docs {
-		if doc.TenantID == scope.TenantID && doc.Period == scope.Period {
-			page.Documents = append(page.Documents, doc)
-		}
-	}
-	sort.Slice(page.Documents, func(i, j int) bool { return page.Documents[i].ID < page.Documents[j].ID })
-	return page, nil
-}
-
-func (f *productStatementFake) GetProductBillingHandoff(ctx context.Context, scope state.ProductBillingScope, id string) (api.ProductInvoiceHandoff, error) {
-	if _, err := f.GetProductBillingDocument(ctx, scope, id); err != nil {
-		return api.ProductInvoiceHandoff{}, err
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	handoff, ok := f.handoffs[id]
-	if !ok {
-		return handoff, state.ErrNotFound
-	}
-	return handoff, nil
-}
-
-func (f *productStatementFake) HandoffProductBilling(ctx context.Context, scope state.ProductBillingScope, id, external string) (api.ProductInvoiceHandoff, error) {
-	doc, err := f.GetProductBillingDocument(ctx, scope, id)
-	if err != nil {
-		return api.ProductInvoiceHandoff{}, err
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if existing, ok := f.handoffs[id]; ok {
-		if existing.ExternalInvoiceID != external {
-			return existing, state.ErrConflict
-		}
-		return existing, nil
-	}
-	handoff := api.ProductInvoiceHandoff{DocumentID: id, ExternalInvoiceID: external, Currency: doc.Currency, AmountMillicents: doc.AmountMillicents, CreatedAt: time.Now().UTC()}
-	f.handoffs[id] = handoff
-	return handoff, nil
-}
-
-func (f *productStatementFake) StatementHandoffBlocked(ctx context.Context, accountID, kind, id string) (bool, error) {
-	if kind != state.StatementSourceProductControl {
-		return f.MemStore.StatementHandoffBlocked(ctx, accountID, kind, id)
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if doc, ok := f.docs[id]; !ok || doc.Kind != "statement" {
-		return false, state.ErrNotFound
-	}
-	return false, nil
-}
 
 // adr: 20261018212918 — a finalized Product Control statement exports to
 // the owner's own provider: the tenant's external reference is the default
@@ -141,20 +58,21 @@ func TestProductControlStatementExport(t *testing.T) {
 		}
 	}
 	now := time.Now().UTC()
-	period := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -1, 0).Format("2006-01")
-	statement := func(tenant string) api.ProductBillingDocument {
+	closed := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -1, 0)
+	period := closed.Format("2006-01")
+	statement := func(tenant, period string) api.ProductBillingDocument {
 		return api.ProductBillingDocument{ID: uuid.NewString(), Kind: "statement", TenantID: tenant, Period: period, Currency: "EUR", AmountMillicents: 50000,
 			Snapshot: &api.ProductBillingReview{TenantID: tenant, Period: period, Currency: "EUR", Closed: true, Starts: 3, AmountMillicents: 50000,
 				Lines: []api.ProductBillingLine{{Feature: "export", Plan: "starter", UnitPriceMillicents: 25000, Starts: 3, Succeeded: 2, Failed: 1, AmountMillicents: 50000}}}}
 	}
-	paid, manual, bobs := statement(alice.ID), statement(alice.ID), statement(bob.ID)
+	paid, bobs := statement(alice.ID, period), statement(bob.ID, period)
+	manual := statement(alice.ID, closed.AddDate(0, -1, 0).Format("2006-01"))
 	credit := api.ProductBillingDocument{ID: uuid.NewString(), Kind: "credit_note", TenantID: alice.ID, Period: period, Currency: "EUR", StatementID: paid.ID, AmountMillicents: -5000}
-	fake := &productStatementFake{MemStore: mem, docs: map[string]api.ProductBillingDocument{}, handoffs: map[string]api.ProductInvoiceHandoff{}}
 	for _, doc := range []api.ProductBillingDocument{paid, manual, bobs, credit} {
-		fake.docs[doc.ID] = doc
+		mem.SeedProductBillingDocumentForTest(account.ID, app.ID, doc)
 	}
 
-	srv := apidserver.NewServer(statetest.NewMem(fake), slog.New(slog.NewTextHandler(io.Discard, nil)), "example.test", apidserver.NoopNotifier{})
+	srv := apidserver.NewServer(mem, slog.New(slog.NewTextHandler(io.Discard, nil)), "example.test", apidserver.NoopNotifier{})
 	paddle := &fakePaddle{status: map[string]string{}}
 	paddleSrv := httptest.NewServer(paddle)
 	defer paddleSrv.Close()
@@ -176,7 +94,7 @@ func TestProductControlStatementExport(t *testing.T) {
 		return w
 	}
 	invoice := func(doc api.ProductBillingDocument) string {
-		return "/v1/apps/" + app.Slug + "/product/billing/documents/" + doc.ID + "/invoice?period=" + period
+		return "/v1/apps/" + app.Slug + "/product/billing/documents/" + doc.ID + "/invoice?period=" + doc.Period
 	}
 	exportReq := api.ProductInvoiceExportRequest{TenantID: alice.ID, Provider: "paddle"}
 
@@ -202,9 +120,15 @@ func TestProductControlStatementExport(t *testing.T) {
 		txn["custom_data"].(map[string]any)["gregale_source"] != state.StatementSourceProductControl {
 		t.Fatalf("paddle transaction = %v", txn)
 	}
-	if fake.handoffs[paid.ID].ExternalInvoiceID != "txn_1" {
-		t.Fatalf("handoff = %+v", fake.handoffs[paid.ID])
+	paidScope := state.ProductBillingScope{AccountID: account.ID, AppID: app.ID, TenantID: alice.ID, Period: period}
+	assertPaidHandoff := func() {
+		t.Helper()
+		handoff, err := mem.GetProductBillingHandoff(ctx, paidScope, paid.ID)
+		if err != nil || handoff.ExternalInvoiceID != "txn_1" {
+			t.Fatalf("handoff = %+v, %v", handoff, err)
+		}
 	}
+	assertPaidHandoff()
 	if replay := call("POST", invoice(paid), exportReq, http.StatusOK); !strings.Contains(replay.Body.String(), `"invoice_id":"txn_1"`) || len(paddle.created) != 1 {
 		t.Fatalf("replay = %s, transactions = %d", replay.Body, len(paddle.created))
 	}
@@ -216,13 +140,13 @@ func TestProductControlStatementExport(t *testing.T) {
 	call("GET", invoice(manual)+"&tenant_id="+alice.ID, nil, http.StatusNotFound) // not exported
 
 	call("POST", invoice(credit), exportReq, http.StatusUnprocessableEntity)
-	call("POST", "/v1/apps/"+app.Slug+"/product/billing/documents/"+manual.ID+"/handoff?period="+period,
+	call("POST", "/v1/apps/"+app.Slug+"/product/billing/documents/"+manual.ID+"/handoff?period="+manual.Period,
 		api.ProductHandoffRequest{TenantID: alice.ID, ExternalInvoiceID: "internal-invoice-7"}, http.StatusOK)
 	if w := call("POST", "/v1/apps/"+app.Slug+"/product/billing/documents/"+paid.ID+"/handoff?period="+period,
-		api.ProductHandoffRequest{TenantID: alice.ID, ExternalInvoiceID: "internal-invoice-8"}, http.StatusConflict); !strings.Contains(w.Body.String(), "product_billing_exported") ||
-		fake.handoffs[paid.ID].ExternalInvoiceID != "txn_1" {
+		api.ProductHandoffRequest{TenantID: alice.ID, ExternalInvoiceID: "internal-invoice-8"}, http.StatusConflict); !strings.Contains(w.Body.String(), "product_billing_exported") {
 		t.Fatalf("manual handoff of an exported statement: %s", w.Body)
 	}
+	assertPaidHandoff()
 	invoices := func(body []byte) map[string]map[string]any {
 		t.Helper()
 		var page struct {
@@ -242,8 +166,12 @@ func TestProductControlStatementExport(t *testing.T) {
 	}
 	owned := invoices(call("GET", "/v1/apps/"+app.Slug+"/product/billing/documents?period="+period+"&tenant_id="+alice.ID, nil, http.StatusOK).Body.Bytes())
 	if got := owned[paid.ID]; got["provider"] != "paddle" || got["invoice_id"] != "txn_1" || got["export_status"] != state.StatementInvoiceExportCompleted ||
-		got["payment_status"] != "draft" || got["amount_minor"] != float64(50) || len(owned) != 3 || owned[manual.ID] != nil || owned[credit.ID] != nil {
+		got["payment_status"] != "draft" || got["amount_minor"] != float64(50) || len(owned) != 2 || owned[credit.ID] != nil {
 		t.Fatalf("owner documents = %v", owned)
+	}
+	manualDocs := invoices(call("GET", "/v1/apps/"+app.Slug+"/product/billing/documents?period="+manual.Period+"&tenant_id="+alice.ID, nil, http.StatusOK).Body.Bytes())
+	if details, ok := manualDocs[manual.ID]; !ok || details != nil || len(manualDocs) != 1 {
+		t.Fatalf("manual document invoice details = %v", manualDocs)
 	}
 	var access api.CreatePlatformTenantAccessTokenResponse
 	if err := json.Unmarshal(call("POST", "/v1/account/platform-tenants/"+alice.ID+"/access-tokens",

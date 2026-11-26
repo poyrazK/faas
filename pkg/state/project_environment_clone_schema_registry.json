@@ -16268,6 +16268,8 @@
       "fingerprint",
       "id",
       "receipt",
+      "schedule_status",
+      "scheduled_for",
       "tenant_id"
     ],
     "kind": "operational"
@@ -16515,6 +16517,23 @@
       "id",
       "receipt",
       "tenant_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "product_control_stripe_invoice_sends",
+    "columns": [
+      "due_at",
+      "export_id",
+      "reminder_hash",
+      "reminder_sent_at",
+      "reminder_started_at",
+      "review_hash",
+      "send_event_at",
+      "send_event_id",
+      "send_started_at",
+      "stage",
+      "terms_hash"
     ],
     "kind": "operational"
   },

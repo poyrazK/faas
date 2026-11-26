@@ -91,20 +91,30 @@
       for (const label of ['Feature', 'Current plan', 'Proposed plan']) head.append(node('th', label)); table.append(head);
       const before = new Map(preview.before.features.map(feature => [feature.name, feature]));
       const after = new Map(preview.after.features.map(feature => [feature.name, feature]));
+      const pricing = preview.pricing;
+      const runs = new Map((pricing?.runs || []).map(run => [run.feature, run]));
+      const runPrice = (price, currency) => price === null ? 'No start under these terms' : `${this.host.amount(price, currency)} on success`;
       // Included starts come first at no charge (ADR-20261021154511).
       const included = feature => feature.included_starts > 0 ? `${feature.included_starts} included, then ` : '';
       const describe = (feature, currency) => feature ? `${included(feature)}${this.host.amount(feature.unit_price_millicents, currency)} per successful run · ${feature.monthly_starts} starts/month · ${feature.starts} used · ${feature.remaining_starts} remaining` : 'Not included';
       for (const name of [...new Set([...before.keys(), ...after.keys()])].sort()) {
         const row = node('tr'); row.append(node('th', (after.get(name) || before.get(name)).label), node('td', describe(before.get(name), preview.before.currency)), node('td', describe(after.get(name), preview.after.currency))); table.append(row);
+        const run = runs.get(name);
+        if (run) {
+          const next = node('tr'); next.append(node('th', `${(after.get(name) || before.get(name)).label} next run`), node('td', runPrice(run.before_millicents, preview.before.currency)), node('td', runPrice(run.after_millicents, preview.after.currency))); table.append(next);
+        }
       }
-      // A month owes the highest fee among the plans held in it (ADR-20261021154511).
       const fee = terms => terms.monthly_fee_millicents > 0 ? `${this.host.amount(terms.monthly_fee_millicents, terms.currency)} per month` : 'No monthly fee';
-      const fees = node('tr'); fees.append(node('th', 'Monthly fee'), node('td', fee(preview.before)), node('td', fee(preview.after))); table.append(fees);
+      const fees = node('tr'); fees.append(node('th', 'Recurring plan fee'), node('td', fee(preview.before)), node('td', fee(preview.after))); table.append(fees);
+      if (pricing) {
+        const currentMonth = node('tr'); currentMonth.append(node('th', `Plan fee for ${preview.period} UTC`), node('td', this.host.amount(pricing.this_month_before_millicents, preview.before.currency)), node('td', this.host.amount(pricing.this_month_after_millicents, preview.after.currency))); table.append(currentMonth);
+        const nextMonth = node('tr'); nextMonth.append(node('th', `Projected plan fee for ${pricing.next_period} UTC`), node('td', '—'), node('td', this.host.amount(pricing.next_month_after_millicents, preview.after.currency))); table.append(nextMonth);
+      }
       // A workspace gets one free trial (ADR-20261021195901).
       if (preview.after.trial_days > 0) { const trial = node('tr'); trial.append(node('th', 'Free trial'), node('td', ''), node('td', `${preview.after.trial_days} days free if this workspace has not had a trial`)); table.append(trial); }
       // A card on file keeps such a plan after its trial (ADR-20261022180921).
       if (preview.after.requires_payment_method) { const card = node('tr'); card.append(node('th', 'Card on file'), node('td', ''), node('td', `Needed to keep this plan after the trial; without one, the ${preview.after.fallback_plan} plan follows`)); table.append(card); }
-      const feeNote = preview.before.monthly_fee_millicents > 0 || preview.after.monthly_fee_millicents > 0 ? ' This month is charged the higher of the two monthly fees; a lower fee applies from next month.' : '';
+      const feeNote = pricing ? ' Plan fees exclude run charges. Next month’s fee assumes the proposed plan stays assigned.' : '';
       container.append(table, node('p', `The change applies immediately to future starts. Existing runs retain their agreed prices. A lower allowance can leave no starts remaining until the next UTC month.${feeNote}`));
     }
     async confirm() {

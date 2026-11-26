@@ -4,8 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
-	"sort"
 	"strconv"
 	"time"
 
@@ -31,6 +31,7 @@ func (s *Service) OwnerReview(w http.ResponseWriter, r *http.Request, acct state
 		err = s.ownerVerify(r, c, "review", acct.ID+"/"+c.app.ID)
 	}
 	if err == nil {
+		setOwnerInvoiceReturn(c, a)
 		err = s.reviewOwnerAction(r, c, &a)
 	}
 	if err == nil {
@@ -59,13 +60,24 @@ func (s *Service) OwnerConfirm(w http.ResponseWriter, r *http.Request, acct stat
 		err = s.ownerVerify(r, c, "confirm_"+a.Action, ownerConfirmationSubject(c, f.Get("payload")))
 	}
 	if err == nil {
+		setOwnerInvoiceReturn(c, a)
 		err = s.applyOwnerAction(r, c, a)
+		if (a.Action == "issue_invoice" || a.Action == "send_stripe_invoice" || a.Action == "send_stripe_reminder") && s.renderOwnerIssueRetry(w, r, c, a.Action, f.Get("payload"), f.Get("csrf_token"), err) {
+			return
+		}
 	}
 	if err != nil {
 		s.ownerFormError(w, r, c, err)
 		return
 	}
 	c.data.TenantID, c.data.Period = a.Tenant, a.Period
+	if a.Action == "waive" {
+		c.data.ReviewRunsURL = ownerReviewRunsURL(c.data.BaseURL, a.Tenant, a.Period)
+		// Confirmation already succeeded. A failed refresh must not obscure it.
+		if review, err := c.billing.ReviewProductBilling(r.Context(), a.scope(c)); err == nil {
+			c.data.Billing = &review
+		}
+	}
 	s.OwnerRender(w, r, acct, c.data)
 }
 
@@ -93,6 +105,24 @@ func (s *Service) reviewOwnerAction(r *http.Request, c *ownerContext, a *ownerAc
 	switch a.Action {
 	case "plan":
 		return s.reviewOwnerPlan(r, c, a)
+	case "cancel_schedule":
+		store, ok := s.Host.Store().(state.ProductPlanScheduleStore)
+		if !ok {
+			return state.ErrNotFound
+		}
+		schedule, err := store.GetProductPlanSchedule(r.Context(), a.scope(c))
+		if err != nil {
+			return err
+		}
+		if schedule.ID != a.ID || schedule.Status != "pending" {
+			return state.ErrConflict
+		}
+		confirmation.Title = "Cancel scheduled plan change"
+		confirmation.Description = "Cancel the pending change for this workspace."
+		confirmation.Details = []dashboard.ProductControlComparison{
+			{Feature: "Scheduled plan", After: schedule.After.Plan},
+			{Feature: "Scheduled start", After: schedule.EffectiveAt.UTC().Format(time.RFC3339)},
+		}
 	case "finalize":
 		review, err := c.billing.ReviewProductBilling(r.Context(), a.scope(c))
 		if err != nil {
@@ -112,6 +142,14 @@ func (s *Service) reviewOwnerAction(r *http.Request, c *ownerContext, a *ownerAc
 		confirmation.Details = []dashboard.ProductControlComparison{{Feature: "Starts", After: strconv.FormatInt(review.Starts, 10)}, {Feature: "Total", After: c.data.BillingAmount}, {Feature: "Review hash", After: review.ReviewHash}}
 	case "waive", "credit":
 		return s.reviewOwnerReceipt(r, c, a)
+	case "issue_invoice":
+		return s.reviewOwnerIssue(r, c, a)
+	case "send_stripe_invoice":
+		return s.reviewOwnerStripeSend(r, c, a)
+	case "send_stripe_reminder":
+		return s.reviewOwnerStripeReminder(r, c, a)
+	case "export_invoice":
+		return s.reviewOwnerInvoice(r, c, a)
 	case "handoff":
 		doc, err := c.owner.GetProductOwnerDocument(r.Context(), a.scope(c), a.Document)
 		if err != nil {
@@ -125,7 +163,15 @@ func (s *Service) reviewOwnerAction(r *http.Request, c *ownerContext, a *ownerAc
 }
 
 func (s *Service) reviewOwnerPlan(r *http.Request, c *ownerContext, a *ownerAction) error {
-	p, err := c.owner.PreviewProductCustomerChange(r.Context(), c.account.ID, c.app.ID, a.customer())
+	preview := c.owner.PreviewProductCustomerChange
+	if a.NextMonth {
+		store, ok := s.Host.Store().(state.ProductPlanScheduleStore)
+		if !ok {
+			return state.ErrNotFound
+		}
+		preview = store.PreviewScheduledProductCustomerChange
+	}
+	p, err := preview(r.Context(), c.account.ID, c.app.ID, a.customer())
 	if err != nil {
 		return err
 	}
@@ -134,7 +180,11 @@ func (s *Service) reviewOwnerPlan(r *http.Request, c *ownerContext, a *ownerActi
 	a.ID, a.Hash, a.Revision, a.Organization = uuid.NewString(), p.Hash, p.After.Revision, p.After.AuthOrganizationID
 	confirmation := c.data.Confirmation
 	confirmation.Title = "Confirm customer plan"
-	confirmation.Description = "Apply these terms immediately to future admissions. Monthly starts already used do not reset. Accepted runs retain their original prices and access. This month's fee is the highest of the plans held this month, so a lower fee applies from next month."
+	confirmation.Description = "Apply these terms immediately to future admissions. Monthly starts already used do not reset. Accepted runs retain their original prices and access. Plan fees exclude run charges. Next month's fee assumes the proposed plan stays assigned."
+	if p.StartsNextMonthAt != nil {
+		confirmation.Title = "Confirm scheduled plan change"
+		confirmation.Description = "Apply the reviewed plan at the start of next month UTC. An intervening assignment change will require a fresh review. Accepted runs retain their original prices and access."
+	}
 	beforePlan, beforeRevision, beforeAccess := "Unassigned", "—", "No access"
 	if p.Before != nil {
 		beforePlan = p.Before.Plan
@@ -152,46 +202,64 @@ func (s *Service) reviewOwnerPlan(r *http.Request, c *ownerContext, a *ownerActi
 	if p.Before != nil && p.BeforeCatalog != nil {
 		beforeFee = ownerPlanFee(*p.BeforeCatalog, p.Before.Plan)
 	}
+	trialDays := p.Catalog.Spec.Plans[p.After.Plan].TrialDays
+	trial := ownerTrial(p.Before, trialDays)
+	if p.StartsNextMonthAt != nil && p.Before.TrialStartsAt == nil && trialDays > 0 {
+		trial = "Starts on " + p.StartsNextMonthAt.UTC().Format(time.DateOnly) + " for " + strconv.FormatInt(trialDays, 10) + " days"
+	}
 	confirmation.Details = []dashboard.ProductControlComparison{{Feature: "Plan", Before: beforePlan, After: p.After.Plan}, {Feature: "Revision", Before: beforeRevision, After: p.After.Revision},
-		{Feature: "Monthly fee", Before: beforeFee, After: ownerPlanFee(p.Catalog, p.After.Plan)},
-		{Feature: "Free trial", Before: ownerTrial(p.Before, 0), After: ownerTrial(p.Before, p.Catalog.Spec.Plans[p.After.Plan].TrialDays)},
+		{Feature: "Recurring plan fee", Before: beforeFee, After: ownerPlanFee(p.Catalog, p.After.Plan)},
+		{Feature: "Free trial", Before: ownerTrial(p.Before, 0), After: trial},
 		{Feature: "Product access", Before: beforeAccess, After: afterAccess}, {Feature: "Auth organization (preserved for existing customers)", After: p.After.AuthOrganizationID}}
 	if plan := p.Catalog.Spec.Plans[p.After.Plan]; plan.RequiresPaymentMethod {
 		confirmation.Details = append(confirmation.Details, dashboard.ProductControlComparison{Feature: "After the trial", After: ownerTrialConversion(plan, p.Before)})
 	}
-	names := map[string]bool{}
-	for name := range p.Catalog.Spec.Features {
-		names[name] = true
+	if p.StartsNextMonthAt != nil {
+		confirmation.Details = append(confirmation.Details, dashboard.ProductControlComparison{
+			Feature: "Scheduled start", After: p.StartsNextMonthAt.UTC().Format(time.RFC3339),
+		})
 	}
-	if p.BeforeCatalog != nil {
-		for name := range p.BeforeCatalog.Spec.Features {
-			names[name] = true
-		}
+	confirmation.Details = append(confirmation.Details, ownerPlanPricingDetails(p)...)
+	return nil
+}
+
+func ownerPlanPricingDetails(p api.ProductCustomerChangePreview) []dashboard.ProductControlComparison {
+	currency := p.Catalog.Spec.Currency
+	details := []dashboard.ProductControlComparison{
+		{Feature: "Plan fee for " + p.Period + " UTC", Before: ownerMoney(currency, p.Pricing.ThisMonthBeforeMillicents), After: ownerMoney(currency, p.Pricing.ThisMonthAfterMillicents)},
+		{Feature: "Projected plan fee for " + p.Pricing.NextPeriod + " UTC", After: ownerMoney(currency, p.Pricing.NextMonthAfterMillicents)},
 	}
-	ordered := []string{}
-	for name := range names {
-		ordered = append(ordered, name)
+	runPeriod := p.Period
+	if p.StartsNextMonthAt != nil {
+		runPeriod = p.Pricing.NextPeriod
 	}
-	sort.Strings(ordered)
-	usage, err := c.products.GetProductUsage(r.Context(), c.account.ID, c.app.ID, a.Tenant, p.Period)
-	if err != nil {
-		return err
-	}
-	for _, name := range ordered {
+	for _, run := range p.Pricing.Runs {
 		before := "No access"
 		if p.Before != nil && p.BeforeCatalog != nil {
-			before = ownerGrantDescription(*p.BeforeCatalog, *p.Before, name)
+			before = ownerPlanFeatureDetails(*p.BeforeCatalog, *p.Before, run, runPeriod)
 		}
-		used := int64(0)
-		for _, line := range usage.Lines {
-			if line.Feature == name {
-				used += line.Starts
-			}
-		}
-		after := ownerGrantDescription(p.Catalog, p.After, name) + "; " + strconv.FormatInt(used, 10) + " starts already used in " + p.Period
-		confirmation.Details = append(confirmation.Details, dashboard.ProductControlComparison{Feature: name, Before: before, After: after})
+		after := ownerPlanFeatureDetails(p.Catalog, p.After, run, runPeriod)
+		details = append(details,
+			dashboard.ProductControlComparison{Feature: run.Feature, Before: before, After: after},
+			dashboard.ProductControlComparison{Feature: run.Feature + " next run", Before: ownerNextRunPrice(currency, run.BeforeMillicents), After: ownerNextRunPrice(currency, run.AfterMillicents)})
 	}
-	return nil
+	return details
+}
+
+func ownerPlanFeatureDetails(catalog api.ProductCatalog, customer api.ProductCustomer, run api.ProductPlanRunPrice, period string) string {
+	grant, allowed := catalog.Spec.Plans[customer.Plan].Features[run.Feature]
+	var remaining int64
+	if allowed && !customer.Suspended {
+		remaining = max(0, grant.MonthlyStarts-run.Starts)
+	}
+	return fmt.Sprintf("%s · %d used · %d remaining in %s", ownerGrantDescription(catalog, customer, run.Feature), run.Starts, remaining, period)
+}
+
+func ownerNextRunPrice(currency string, price *int64) string {
+	if price == nil {
+		return "No start under these terms"
+	}
+	return ownerMoney(currency, *price) + " on success"
 }
 
 // ownerTrial describes a customer's trial, or the one an assignment to a plan
@@ -283,10 +351,23 @@ func (s *Service) applyOwnerAction(r *http.Request, c *ownerContext, a ownerActi
 	switch a.Action {
 	case "plan":
 		var receipt api.ProductCustomerChangeReceipt
-		receipt, err = c.owner.ApplyProductCustomerChange(r.Context(), c.account.ID, c.app.ID, api.ProductCustomerChangeRequest{ID: a.ID, ExpectedHash: a.Hash, Customer: a.customer()})
+		receipt, err = c.owner.ApplyProductCustomerChange(r.Context(), c.account.ID, c.app.ID, api.ProductCustomerChangeRequest{ID: a.ID, ExpectedHash: a.Hash, Customer: a.customer(), NextMonth: a.NextMonth})
 		id = receipt.ID
-		if err == nil {
+		if err == nil && a.NextMonth {
+			c.data.Notice = "Scheduled plan change " + id + " for " + receipt.EffectiveAt.UTC().Format(time.RFC3339) + "."
+		} else if err == nil {
 			c.data.Notice = "Customer plan confirmed. Change " + id + " took effect at " + receipt.EffectiveAt.UTC().Format(time.RFC3339) + ". Retrying this confirmation returns this same receipt and cannot overwrite a later change."
+		}
+	case "cancel_schedule":
+		store, ok := s.Host.Store().(state.ProductPlanScheduleStore)
+		if !ok {
+			return state.ErrNotFound
+		}
+		var schedule api.ProductPlanSchedule
+		schedule, err = store.CancelProductPlanSchedule(r.Context(), scope, a.ID)
+		id = schedule.ID
+		if err == nil {
+			c.data.Notice = "Scheduled plan change " + id + " was cancelled."
 		}
 	case "finalize":
 		var doc api.ProductBillingDocument
@@ -301,6 +382,44 @@ func (s *Service) applyOwnerAction(r *http.Request, c *ownerContext, a ownerActi
 		amount, _ := strconv.ParseInt(a.Amount, 10, 64)
 		doc, err = c.billing.CreditProductReceipt(r.Context(), scope, api.ProductCreditRequest{ID: a.ID, TenantID: a.Tenant, OperationID: a.Operation, AmountMillicents: amount, Reason: a.Reason})
 		id = doc.ID
+	case "issue_invoice":
+		if !s.canIssueInvoice() {
+			return state.ErrNotFound
+		}
+		value, problem := s.IssueInvoice(r.Context(), c.account, scope, a.Document, a.Hash)
+		if problem != nil {
+			return problem
+		}
+		id = value.StatementID
+		c.data.Notice = "Paddle invoice " + value.InvoiceID + " is issued."
+	case "send_stripe_invoice":
+		if !s.canSendStripeInvoice() {
+			return state.ErrNotFound
+		}
+		dueAt, _ := time.Parse(time.RFC3339, a.DueAt)
+		value, problem := s.SendStripeInvoice(r.Context(), c.account, scope, a.Document, a.Hash, dueAt)
+		if problem != nil {
+			return problem
+		}
+		id = value.StatementID
+		c.data.Notice = "Stripe accepted the send for invoice " + value.InvoiceID + "."
+	case "send_stripe_reminder":
+		if !s.canSendStripeReminder() {
+			return state.ErrNotFound
+		}
+		invoice, problem := s.SendStripeInvoiceReminder(r.Context(), c.account, scope, a.Document, a.Hash)
+		if problem != nil {
+			return problem
+		}
+		id = a.Document
+		c.data.Notice = "Stripe accepted the reminder for invoice " + invoice + "."
+	case "export_invoice":
+		value, problem := s.exportStatement(r.Context(), c.account, scope, a.Document, a.Provider, a.InvoiceCustomer, a.Hash)
+		if problem != nil {
+			return problem
+		}
+		id = value.StatementID
+		c.data.Notice = "Invoice " + value.InvoiceID + " recorded for this statement."
 	case "handoff":
 		var handoff api.ProductInvoiceHandoff
 		handoff, err = s.handoffManually(r.Context(), c.billing, c.account.ID, scope, a.Document, a.Reference)

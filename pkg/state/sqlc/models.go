@@ -13568,13 +13568,15 @@ type ProductControlCustomer struct {
 }
 
 type ProductControlCustomerChange struct {
-	ID          pgtype.UUID
-	AccountID   pgtype.UUID
-	AppID       pgtype.UUID
-	TenantID    pgtype.UUID
-	Fingerprint string
-	Receipt     []byte
-	CreatedAt   pgtype.Timestamptz
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	TenantID       pgtype.UUID
+	Fingerprint    string
+	Receipt        []byte
+	CreatedAt      pgtype.Timestamptz
+	ScheduledFor   pgtype.Timestamptz
+	ScheduleStatus pgtype.Text
 }
 
 type ProductControlEmailDelivery struct {
@@ -13786,6 +13788,20 @@ type ProductControlRevision struct {
 	AppID     pgtype.UUID
 	Revision  string
 	Spec      []byte
+}
+
+type ProductControlStripeInvoiceSend struct {
+	ExportID          pgtype.UUID
+	ReviewHash        string
+	TermsHash         string
+	DueAt             pgtype.Timestamptz
+	Stage             string
+	SendStartedAt     pgtype.Timestamptz
+	SendEventID       pgtype.Text
+	SendEventAt       pgtype.Timestamptz
+	ReminderHash      pgtype.Text
+	ReminderStartedAt pgtype.Timestamptz
+	ReminderSentAt    pgtype.Timestamptz
 }
 
 type ProductControlWaiver struct {

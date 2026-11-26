@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
+	"github.com/onebox-faas/faas/pkg/apid/statementinvoices"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/productcontrol"
@@ -45,8 +46,20 @@ type Service struct {
 	OperationDoctor    func(context.Context, state.Account, state.OperationDefinition, state.PlatformTenant) (api.OperationDoctorResponse, error)
 	// ExportInvoice and InvoiceExport reach statement invoice exports
 	// (ADR-20261018212918): document, provider and customer, or document.
-	ExportInvoice func(context.Context, state.Account, state.ProductBillingScope, string, string, string) (api.StatementInvoiceExportResponse, *api.Problem)
-	InvoiceExport func(context.Context, state.Account, state.ProductBillingScope, string) (api.StatementInvoiceExportResponse, *api.Problem)
+	ExportInvoice               func(context.Context, state.Account, state.ProductBillingScope, string, string, string) (api.StatementInvoiceExportResponse, *api.Problem)
+	ReviewInvoice               func(context.Context, state.Account, state.ProductBillingScope, string, string, string) (statementinvoices.ProductInvoiceExportReview, *api.Problem)
+	ConfirmInvoice              func(context.Context, state.Account, state.ProductBillingScope, string, string, string, string) (api.StatementInvoiceExportResponse, *api.Problem)
+	InvoiceExport               func(context.Context, state.Account, state.ProductBillingScope, string) (api.StatementInvoiceExportResponse, *api.Problem)
+	ReviewInvoiceIssue          func(context.Context, state.Account, state.ProductBillingScope, string) (statementinvoices.ProductPaddleInvoiceIssueReview, *api.Problem)
+	ReviewStripeInvoiceReminder func(context.Context, state.Account, state.ProductBillingScope, string) (statementinvoices.ProductStripeInvoiceReminderReview, *api.Problem)
+	SendStripeInvoiceReminder   func(context.Context, state.Account, state.ProductBillingScope, string, string) (string, *api.Problem)
+	ReviewStripeDraftSend       func(context.Context, state.Account, state.ProductBillingScope, string) (statementinvoices.ProductStripeInvoiceSendReview, *api.Problem)
+	ReviewStripeInvoiceSend     func(context.Context, state.Account, state.ProductBillingScope, string) (statementinvoices.ProductStripeInvoiceSendReview, *api.Problem)
+	CheckStripeInvoiceSend      func(context.Context, state.Account, state.ProductBillingScope, string) (statementinvoices.ProductStripeInvoiceSendCheck, *api.Problem)
+	SendStripeInvoice           func(context.Context, state.Account, state.ProductBillingScope, string, string, time.Time) (api.StatementInvoiceExportResponse, *api.Problem)
+	IssueInvoice                func(context.Context, state.Account, state.ProductBillingScope, string, string) (api.StatementInvoiceExportResponse, *api.Problem)
+	RefreshInvoicePayment       func(context.Context, state.Account, state.ProductBillingScope, string) (api.StatementInvoiceExportResponse, *api.Problem)
+	RefreshHeldInvoicePayment   func(context.Context, state.Account, string, string, string) *api.Problem
 	// DocumentInvoice reads a scoped statement's export by account and
 	// document, nil before one starts.
 	DocumentInvoice func(context.Context, string, string) (*api.StatementInvoiceExportResponse, error)
@@ -262,6 +275,9 @@ func (s *Service) Portal(w http.ResponseWriter, r *http.Request, acct state.Acco
 		access = &identity.Access
 	}
 	view, err := customerView(r.Context(), store, acct.ID, app.ID, tenant, requestPeriod(r), access)
+	if view.OverdueHold != nil && s.RefreshHeldInvoicePayment == nil {
+		view.OverdueHold.PaymentCheckID = ""
+	}
 	respond(w, view, err)
 }
 
