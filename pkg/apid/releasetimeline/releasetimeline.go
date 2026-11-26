@@ -141,6 +141,13 @@ func phase(in Inputs, approval *api.ReleaseApprovalStatus, watchUntil time.Time,
 	case "pending", "building", "imaging", "snapshotting":
 		return api.ReleasePhaseBuilding, "Building"
 	case "failed":
+		// An image means the build finished: snapshot prime, scan or
+		// readiness failed after it. "Build failed:
+		// stage_snapshot_prepare_timeout" sent customers to their build
+		// (prod hunt r60).
+		if d.ImageDigest != "" && d.ErrorCode != "" {
+			return api.ReleasePhaseFailed, "Failed before release: " + d.ErrorCode
+		}
 		if d.ErrorCode != "" {
 			return api.ReleasePhaseFailed, "Build failed: " + d.ErrorCode
 		}
