@@ -364,6 +364,9 @@ type cliFlag struct {
 	// them); the marker exists for the man-page SYNOPSIS section
 	// to render the required marker `(<name>|<placeholder>)`.
 	Req bool
+	// RequiredWithoutCapability marks a flag as required while the capability
+	// providing an alternative form is hidden.
+	RequiredWithoutCapability string
 	// Bool marks a switch that takes no value, including when it is
 	// required. Use it for explicit confirmation flags such as --yes.
 	Bool bool
@@ -6687,8 +6690,8 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "restore", Short: "Restore a database to a new database", Positionals: []string{"<database>"}, Flags: []cliFlag{
 				{Name: "check", Short: "inspect archive coverage for the requested time", Bool: true, Capability: "native-postgres-operations"},
-				{Name: "name", Short: "name for the restored database when creating a copy", Value: "NAME"},
-				{Name: "point-in-time", Short: "RFC3339 restore timestamp", Value: "TIMESTAMP"},
+				{Name: "name", Short: "name for the restored database when creating a copy", Value: "NAME", RequiredWithoutCapability: "native-postgres-operations"},
+				{Name: "point-in-time", Short: "RFC3339 restore timestamp", Value: "TIMESTAMP", RequiredWithoutCapability: "native-postgres-operations"},
 				{Name: "region", Short: "restore in the database's configured recovery region", Value: "REGION", Capability: "native-postgres-operations"},
 				{Name: "latest", Short: "with --region: use the latest verified point", Bool: true, Capability: "native-postgres-operations"},
 				{Name: "switch", Short: "move this app to the copy, keeping its code", Value: "APP"},

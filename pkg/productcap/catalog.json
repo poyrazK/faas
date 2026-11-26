@@ -412,8 +412,6 @@
         "/v1/apps/{}/consumer-plans",
         "/v1/apps/{}/consumer-signup",
         "/v1/apps/{}/consumer-signups",
-        "/v1/apps/{}/mcp-stats",
-        "/v1/apps/{}/monetization-funnel",
         "/v1/apps/{}/rate-cards",
         "/v1/consumer-billing",
         "/v1/consumer-signup"

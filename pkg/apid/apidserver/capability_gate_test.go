@@ -75,6 +75,28 @@ func TestExistingDataAPIRoutesRemainReachableWithPreviewDisabled(t *testing.T) {
 	}
 }
 
+func TestExistingMonetizationRoutesHonorGlobalRelease(t *testing.T) {
+	for _, tc := range []struct {
+		switchValue string
+		released    bool
+	}{
+		{switchValue: "0", released: false},
+		{switchValue: "1", released: true},
+	} {
+		t.Run(tc.switchValue, func(t *testing.T) {
+			t.Setenv("FAAS_API_MONETIZATION_ENABLED", tc.switchValue)
+			srv, do, _ := gatedServer(t)
+			srv.SeedPlatformFlag(platformflags.APIMonetization, platformflags.Definition{Enabled: false})
+
+			for _, path := range []string{"/v1/apps/shop/mcp-stats", "/v1/apps/shop/monetization-funnel"} {
+				if r := do(http.MethodGet, path); missingRoute(r) == tc.released {
+					t.Errorf("%s = %d %s, want released=%v", path, r.Code, r.Body, tc.released)
+				}
+			}
+		})
+	}
+}
+
 func TestCapabilityGateAccountRuleRevealsPreview(t *testing.T) {
 	srv, do, acct := gatedServer(t)
 	allow := true

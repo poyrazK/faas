@@ -5108,12 +5108,12 @@ Causes are best guesses from timing: wake-with-app, a cron, a request, an app co
 
 Restore a database to a new database
 
-`gregale postgres restore [--name <NAME>] [--point-in-time <TIMESTAMP>] [--switch <APP>] [--env <SCOPE>] [--yes] [--no-wait] [--timeout <DURATION>] [--poll-interval <DURATION>] <database>`
+`gregale postgres restore --name <NAME> --point-in-time <TIMESTAMP> [--switch <APP>] [--env <SCOPE>] [--yes] [--no-wait] [--timeout <DURATION>] [--poll-interval <DURATION>] <database>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--name <NAME>` | name for the restored database when creating a copy |  |
-| `--point-in-time <TIMESTAMP>` | RFC3339 restore timestamp |  |
+| `--name <NAME>` | name for the restored database when creating a copy | required |
+| `--point-in-time <TIMESTAMP>` | RFC3339 restore timestamp | required |
 | `--switch <APP>` | move this app to the copy, keeping its code |  |
 | `--env <SCOPE>` | with --switch: environment whose bindings move |  |
 | `--yes` | with --switch: switch without prompting |  |

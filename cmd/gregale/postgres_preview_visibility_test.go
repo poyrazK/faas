@@ -23,8 +23,18 @@ func TestNativePostgresOperationsRequireOptInForDiscovery(t *testing.T) {
 			t.Fatal("the existing postgres command is missing")
 		}
 		subs := tc.commands[index].Subcommands
-		if !slices.ContainsFunc(subs, func(s cliSub) bool { return s.Name == "restore" }) {
+		restore, ok := findCliSubcommand(subs, "restore")
+		if !ok {
 			t.Fatal("the existing restore command is missing")
+		}
+		for _, name := range []string{"name", "point-in-time"} {
+			i := slices.IndexFunc(restore.Flags, func(f cliFlag) bool { return f.Name == name })
+			if i < 0 {
+				t.Fatalf("postgres restore --%s is missing", name)
+			}
+			if got := restore.Flags[i].Req; got != !tc.enabled {
+				t.Errorf("postgres restore --%s required = %v, want %v", name, got, !tc.enabled)
+			}
 		}
 		for _, name := range preview {
 			if got := slices.ContainsFunc(subs, func(s cliSub) bool { return s.Name == name }); got != tc.enabled {

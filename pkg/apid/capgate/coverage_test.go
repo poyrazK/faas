@@ -19,13 +19,13 @@ var subMuxRoutes = map[string]string{
 	"GET /app.css": "pkg/apid/datarepair serves its review assets under /v1/apps/{slug}/data-repair",
 }
 
-// These existing routes use their own authentication and scope checks.
-// Keep the exact registrations available to existing clients regardless of
-// the Data API preview flag.
-var legacyDataAPIRoutes = []string{
+// These existing routes retain their own access or release policies.
+var legacyPolicyRoutes = []string{
 	"POST /v1/apps/{slug}/data-api-inspections",
 	"GET /v1/apps/{slug}/data-api-inspections/{id}",
 	"POST /v1/postgres/databases/{id}/data-api-catalog-preview",
+	"GET /v1/apps/{slug}/mcp-stats",
+	"GET /v1/apps/{slug}/monetization-funnel",
 }
 
 var (
@@ -105,7 +105,7 @@ func TestEveryApidRouteHasACapability(t *testing.T) {
 					patterns = append(patterns, m[1])
 				}
 				for _, pattern := range patterns {
-					if _, sub := subMuxRoutes[pattern]; sub || slices.Contains(legacyDataAPIRoutes, pattern) {
+					if _, sub := subMuxRoutes[pattern]; sub || slices.Contains(legacyPolicyRoutes, pattern) {
 						continue
 					}
 					if g.owner(pattern) == "" {
