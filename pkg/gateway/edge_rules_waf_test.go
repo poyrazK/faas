@@ -134,10 +134,12 @@ func TestBeginEdgeRuleWAFDisabledWithoutInspector(t *testing.T) {
 type fakeWAFInline struct {
 	result WAFInlineResult
 	calls  int
+	last   WAFSample
 }
 
 func (f *fakeWAFInline) CheckInline(s WAFSample) WAFInlineResult {
 	f.calls++
+	f.last = s
 	return f.result
 }
 
