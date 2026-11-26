@@ -18653,6 +18653,7 @@
       "placed_node_id",
       "preset",
       "ram_mb",
+      "resume_not_before",
       "resume_requested_at",
       "resumed_cold",
       "state",
@@ -18674,6 +18675,7 @@
     "table": "sandbox_session_captures",
     "columns": [
       "account_id",
+      "checked_at",
       "consumed_at",
       "created_at",
       "fc_version",
