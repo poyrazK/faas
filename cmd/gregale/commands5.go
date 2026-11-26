@@ -1157,6 +1157,12 @@ func cmdAppRename(slug, newSlug string) int {
 	// "old" from "new". The leading glyph goes through PrintOK so the
 	// §3.2 NO_COLOR rule still applies to the status-indicator half.
 	PrintOK(osStdout, "Renamed %s → %s", slug, updated.Slug)
+	// The old hostname answers 404 at once (prod hunt r58); help said so,
+	// the result did not, so clients kept the dead URL.
+	if newURL := canonicalAppURL(updated); strings.Contains(newURL, "://"+updated.Slug+".") {
+		oldURL := strings.Replace(newURL, "://"+updated.Slug+".", "://"+slug+".", 1)
+		_, _ = fmt.Fprintf(osStdout, "Now serving at %s; %s no longer routes.\n", newURL, oldURL)
+	}
 	if path, ok := followRenameInSavedContext(".", slug, updated.Slug); ok {
 		PrintOK(osStdout, "Updated %s to the new name", path)
 	}
