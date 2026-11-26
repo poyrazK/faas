@@ -6,8 +6,29 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/claim"
 )
+
+// Only an app created without the account's suffix is refused, with the name
+// to use; other routes and unreadable bodies are left to the handler.
+func TestRefusedAppSlug(t *testing.T) {
+	const acct = "8b0c9f5e-1d2a-4f61-9a3b-2c7d5e6f7a80"
+	want := api.AnonymousAppSlug(acct, "app")
+	for _, tt := range []struct {
+		pattern, body, want string
+	}{
+		{"POST /v1/apps", `{"slug":"app"}`, want},
+		{"POST /v1/apps", `{"slug":"` + want + `"}`, ""},
+		{"POST /v1/apps", `{}`, ""},
+		{"POST /v1/apps", `not json`, ""},
+		{"PATCH /v1/apps/{slug}", `{"slug":"app"}`, ""},
+	} {
+		if got := claim.RefusedAppSlug(tt.pattern, acct, []byte(tt.body)); got != tt.want {
+			t.Errorf("RefusedAppSlug(%s, %s) = %q, want %q", tt.pattern, tt.body, got, tt.want)
+		}
+	}
+}
 
 func TestRefusedField(t *testing.T) {
 	const patch = "PATCH /v1/apps/{slug}"

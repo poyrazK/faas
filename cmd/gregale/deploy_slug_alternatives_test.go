@@ -94,6 +94,25 @@ func TestDeployTakesSuffixedNameWhenAnotherOwnerHoldsIt(t *testing.T) {
 	}
 }
 
+// A deploy without an account names its app with the account's suffix,
+// which apid requires, and a redeploy of that app keeps the name.
+func TestAnonymousDeployTakesSuffixedName(t *testing.T) {
+	ctx := context.Background()
+	main.UseAnonymousDeploySession(t, "acct-anon")
+	srv, created := slugOwnersServer(t, map[string]bool{}, map[string]bool{})
+	client := main.NewClient(srv.URL, "fp_live_x")
+	want := api.AnonymousAppSlug("acct-anon", "app")
+
+	got, err := main.DeployAppWithAlternatives(ctx, client, "app", "")
+	if err != nil || got != want {
+		t.Fatalf("anonymous deploy = %q, %v; want %q", got, err, want)
+	}
+	got, err = main.DeployAppWithAlternatives(ctx, client, want, "")
+	if err != nil || got != want || strings.Join(*created, ",") != want {
+		t.Fatalf("redeploy = %q, %v, created %v; want %q created once", got, err, *created, want)
+	}
+}
+
 // A deploy whose name is free makes no extra calls: no account lookup, no
 // alternative probes.
 func TestDeployFreeNameMakesNoAlternativeCalls(t *testing.T) {
