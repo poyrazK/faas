@@ -133,7 +133,7 @@ func (s *server) unclaimedAllowed(next accountHandler) accountHandler {
 				return
 			}
 			if claim.FieldGated(r.Pattern) {
-				if prob := refusedUnclaimedField(r); prob != nil {
+				if prob := refusedUnclaimedField(r, actor.ID); prob != nil {
 					api.WriteProblem(w, prob)
 					return
 				}
@@ -151,18 +151,24 @@ func (s *server) unclaimedAllowed(next accountHandler) accountHandler {
 const unclaimedFieldBodyMax = 1 << 20
 
 // refusedUnclaimedField reads the body of a field-gated route, puts it back
-// for the handler and refuses a field an unclaimed account may not set.
-func refusedUnclaimedField(r *http.Request) *api.Problem {
+// for the handler and refuses a field an unclaimed account may not set, or a
+// new app named without the account's suffix (claim.RefusedAppSlug).
+func refusedUnclaimedField(r *http.Request, accountID string) *api.Problem {
 	body, err := io.ReadAll(io.LimitReader(r.Body, unclaimedFieldBodyMax+1))
 	if err != nil || len(body) > unclaimedFieldBodyMax {
 		return api.ErrValidation("request body is unreadable or too large")
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
-	field := claim.RefusedField(r.Pattern, body)
-	if field == "" {
-		return nil
+	if field := claim.RefusedField(r.Pattern, body); field != "" {
+		prob := api.ErrClaimRequired()
+		prob.Detail = "setting " + field + " needs a claimed account. Open the claim link (gregale account claim create prints it) to sign up; until then a deploy may change only public access, protocol, size and restart settings."
+		return prob
 	}
-	prob := api.ErrClaimRequired()
-	prob.Detail = "setting " + field + " needs a claimed account. Open the claim link (gregale account claim create prints it) to sign up; until then a deploy may change only public access, protocol, size and restart settings."
-	return prob
+	if want := claim.RefusedAppSlug(r.Pattern, accountID, body); want != "" {
+		prob := api.ErrClaimRequired()
+		prob.Title = "Name this app " + want
+		prob.Detail = "an app deployed without an account takes a suffixed name, so it never holds a short name for the whole platform: deploy again with --name " + want + ". The name stays after the app is claimed."
+		return prob
+	}
+	return nil
 }
