@@ -106,6 +106,14 @@ func cmdInsights(args []string) int {
 }
 
 func runInsights(verb string, positionals []string, f *insightsFlags, from, until *time.Time) int {
+	// An unknown verb fails before any call: with --project set, `insight
+	// list` reached the API and answered "Not found" (prod hunt r61).
+	switch verb {
+	case "events", "funnel", "retention", "requests":
+	default:
+		printCommandValidation(os.Stderr, "gregale insight: unknown subcommand %q (%s)\n", verb, insightsVerbs)
+		return 1
+	}
 	// Literal counts, so the positional guard sees the check before any call.
 	if *f.project == "" || (verb == "events" && len(positionals) != 1) || (verb == "funnel" && len(positionals) < 2) ||
 		(verb == "retention" && len(positionals) != 2) || (verb == "requests" && (len(positionals) != 0 || *f.flag == "")) {

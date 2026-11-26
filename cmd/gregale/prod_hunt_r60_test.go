@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	main "github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -53,12 +54,17 @@ func TestUnknownVerbErrorsSpellHelpNames(t *testing.T) {
 		args       []string
 		want, deny []string
 	}{
-		{[]string{"org", "agent", "x"}, []string{"gregale org: unknown subcommand", "agent"}, []string{"ls,", "info,", "agent-policy", "seat-usage", "gregale orgs:"}},
-		{[]string{"insight", "list", "--project", "p"}, []string{"event|funnel|retention|request|cohorts|saved"}, []string{"events|", "requests"}},
+		{[]string{"org", "agent", "x"}, []string{"gregale org: unknown subcommand", "Subcommands:", "agent"}, []string{"ls,", "info,", "agent-policy", "seat-usage", "gregale orgs:", `Did you mean "agent"`}},
+		// r61: with --project set, the unknown verb reached the API.
+		{[]string{"insight", "list", "--project", "p"}, []string{"event|funnel|retention|request|cohorts|saved"}, []string{"events|", "requests", "Not found"}},
 		{[]string{"pipeline", "bogus"}, []string{"index, evolution, work"}, []string{"indexes", "evolve", "operations"}},
 	} {
-		code, stdout, stderr := runCLI(t, tc.args...)
-		out := stdout + stderr
+		// These dispatchers write to os.Stderr, which runCLI does not see.
+		main.ResetJSONOut(t)
+		stdoutBuf, stderr, restore := main.SwapIO(t)
+		code := main.Run(tc.args)
+		restore()
+		out := stdoutBuf.String() + stderr()
 		if code == 0 {
 			t.Fatalf("%v succeeded:\n%s", tc.args, out)
 		}

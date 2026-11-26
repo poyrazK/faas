@@ -293,6 +293,9 @@ func printUnknownSubcommand(w io.Writer, path string, command cliCommand, got st
 	}
 	detail := fmt.Sprintf("gregale %s: unknown subcommand %q", shown, got)
 	suggestion, ok := suggestSubcommand(got, command)
+	// The word typed is never its own suggestion (`org agent x` offered
+	// "Did you mean agent?"): list the verbs instead.
+	ok = ok && suggestion != got
 	if ok && jsonOutput && !jsonUsageHelp {
 		detail += fmt.Sprintf("; did you mean %q?", "gregale "+shown+" "+suggestion)
 	}
