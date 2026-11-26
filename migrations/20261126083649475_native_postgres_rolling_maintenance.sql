@@ -21,7 +21,7 @@ BEGIN
                 AND refresh_base AND resize_id IS NULL
                 AND (phase = 'refreshing_standby' OR
                     (phase IN ('switching_over', 'restoring_redundancy') AND COALESCE(rolling_image, '') <> '')))
-        );
+        ) NOT VALID;
     END IF;
 END;
 $$;

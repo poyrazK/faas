@@ -68,6 +68,11 @@ func ValidateCustomDomainName(domain string) error {
 	if strings.Contains(domain, "*") && !strings.HasPrefix(domain, "*.") {
 		return errors.New("wildcard must be the left-most label")
 	}
+	// No top-level label is all digits (RFC 3696 §2), so this refuses IPv4
+	// addresses: prod hunt r55 bound 10.0.0.1 and printed DNS records for it.
+	if strings.Trim(labels[len(labels)-1], "0123456789") == "" {
+		return errors.New("an IP address is not a domain: attach a DNS name you own (its top-level label must not be all digits)")
+	}
 	return nil
 }
 

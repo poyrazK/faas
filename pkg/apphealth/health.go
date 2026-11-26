@@ -287,9 +287,22 @@ func assessBootFailures(out *api.AppHealthResponse, e Evidence, live []state.Dep
 	for _, d := range live {
 		serving[d.ID] = true
 	}
+	// A boot of a serving release that came up after the failures supersedes
+	// them: once a fix is applied, health said "unhealthy" for the rest of the
+	// window and `app restart --wait` waited out its timeout on a replica that
+	// was serving (prod hunt r52, rc.381). An older replica that kept serving
+	// does not: that is the crash loop #43 reports. A good boot covers only
+	// its own deployment: during a split, one release's healthy scale-out
+	// must not hide the other's crash loop.
+	lastGoodBoot := make(map[string]time.Time, len(live))
+	for _, i := range e.RecentInstances {
+		if serving[i.DeploymentID] && i.Kind == "" && bootedState(state.State(i.State)) && !e.LivenessFailed[i.ID] && i.StartedAt.After(lastGoodBoot[i.DeploymentID]) {
+			lastGoodBoot[i.DeploymentID] = i.StartedAt
+		}
+	}
 	failed, deploymentID := 0, ""
 	for _, i := range e.RecentInstances {
-		if !serving[i.DeploymentID] || i.Kind != "" {
+		if !serving[i.DeploymentID] || i.Kind != "" || i.StartedAt.Before(lastGoodBoot[i.DeploymentID]) {
 			continue
 		}
 		bootFailed := state.State(i.State) == state.StateFailed && !i.StartedAt.Before(e.Now.Add(-BootFailureWindow))
@@ -331,6 +344,17 @@ func assessBootFailures(out *api.AppHealthResponse, e Evidence, live []state.Dep
 		return
 	}
 	add(out, "readiness", severity, detail, "logs", deploymentID)
+}
+
+// bootedState reports a state an instance reaches only after its boot
+// succeeded. STOPPED is left out: a liveness kill ends there too.
+func bootedState(s state.State) bool {
+	switch s {
+	case state.StateRunning, state.StateWarm, state.StateDraining, state.StateSnapshotting,
+		state.StateParked, state.StateFrozen, state.StateMigrating:
+		return true
+	}
+	return false
 }
 
 // Match the gateway's independent primary-app and primary-ingress gates.

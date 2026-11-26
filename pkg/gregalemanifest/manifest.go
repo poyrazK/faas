@@ -2167,6 +2167,10 @@ func humanizeYAMLLine(raw string) string {
 		msg := fmt.Sprintf("line %s: unknown key %q%s", m[1], m[2], where)
 		if near := nearestKey(m[2], keys); near != "" {
 			msg += fmt.Sprintf("; did you mean %q?", near)
+		} else if where == "" && (m[2] == "name" || m[2] == "app" || m[2] == "slug") {
+			// Prod hunt r57: `name: my-worker` was refused with no way
+			// forward; the app name is not a gregale.yaml key.
+			msg += "; the app name is not set in gregale.yaml: deploy with --name SLUG, or `gregale link --app SLUG` once in this directory"
 		}
 		return msg
 	}

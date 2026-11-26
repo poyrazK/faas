@@ -18,18 +18,25 @@ type addPostgresCapabilities interface {
 // addPostgresUnsupported checks the requested access mode (and, when creating,
 // availability) against what the region actually offers, before a database
 // is created. Production advertised data_api and high_availability in the
-// CLI's choices while its region offered neither. An unreadable capability
-// response never blocks: the server still validates, as before.
-func addPostgresUnsupported(ctx context.Context, client addPostgresCapabilities, region, access, availability string, creating bool) error {
+// CLI's choices while its region offered neither. Replica-only creation
+// requires explicit support before reserving a database.
+func addPostgresUnsupported(ctx context.Context, client addPostgresCapabilities, region, access, availability, serviceClass string, creating bool) error {
+	replicaOnlyCreate := creating && access == "replica_only"
+	if replicaOnlyCreate && serviceClass != "production" {
+		return fmt.Errorf("--access replica_only requires --class production when creating a database")
+	}
 	region = strings.TrimSpace(region)
 	if region == "" {
 		return nil
 	}
 	capabilities, err := client.GetManagedPostgresCapabilities(ctx, region)
 	if err != nil {
-		return nil //nolint:nilerr // unreadable capabilities never block; the server still refuses unsupported modes
+		if replicaOnlyCreate {
+			return fmt.Errorf("could not verify --access replica_only in region %s: %w", region, err)
+		}
+		return nil //nolint:nilerr // Preserve the server-side validation fallback for existing modes.
 	}
-	if len(capabilities.CredentialAccess) > 0 && !slices.Contains(capabilities.CredentialAccess, access) {
+	if (len(capabilities.CredentialAccess) > 0 || replicaOnlyCreate) && !slices.Contains(capabilities.CredentialAccess, access) {
 		return fmt.Errorf("--access %s is not available in region %s; available: %s", access, region, strings.Join(capabilities.CredentialAccess, ", "))
 	}
 	if creating && len(capabilities.Availability) > 0 && !slices.Contains(capabilities.Availability, availability) {

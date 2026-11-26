@@ -69,6 +69,13 @@ func TestRedisCacheCreateBindDelete(t *testing.T) {
 	if granted, err := e.store.ManagedValkeyCacheGranted(ctx, app.ID, web.ID); err != nil || !granted {
 		t.Fatalf("grant after bind = %v, %v; want true", granted, err)
 	}
+	// Prod hunt r50: deleting a bound cache left web's REDIS_URL pointing at
+	// a deleted cache; it is refused with the unbind step instead.
+	if bound := e.do(t, "DELETE", "/v1/redis/sessions", nil, nil); bound.Code != http.StatusConflict ||
+		!strings.Contains(bound.Body.String(), "redis_cache_bound") ||
+		!strings.Contains(bound.Body.String(), "gregale redis unbind sessions --app web") {
+		t.Fatalf("delete while bound: %d %s, want 409 naming the unbind", bound.Code, bound.Body.String())
+	}
 	if unbind := e.do(t, "DELETE", "/v1/redis/sessions/bindings/web", nil, nil); unbind.Code != http.StatusOK ||
 		!strings.Contains(unbind.Body.String(), `"app":"web"`) {
 		t.Fatalf("unbind: %d %s", unbind.Code, unbind.Body.String())

@@ -17,7 +17,7 @@ app = Flask(__name__)
 
 @app.get("/")
 def root():
-    # This URL is public: do not echo environment variable names here
+    # This URL may be made public (access: public): do not echo env names
     # (secret names reveal integrations). `gregale secrets list --app
     # <slug>` shows which keys the app has.
     return jsonify(

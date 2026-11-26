@@ -42,7 +42,12 @@ rate-limited per plan.
 
 ## Public WebSockets
 
-Enable WebSockets on an app with `gregale app APP_SLUG --websocket-enabled`.
+To serve WebSockets from your own app, enable WebSocket upgrades on it:
+
+```bash
+gregale app my-api --websocket-enabled
+```
+
 An open WebSocket counts as an in-flight request, so its instance stays
 running past the idle timeout for as long as the connection is open. For long
 connections with sparse messages, [managed realtime](realtime.md#long-lived-connections-and-scale-to-zero)

@@ -65,6 +65,7 @@
     {"query": "install the Python SDK", "want": ["sdks#python"]},
     {"query": "liveness probe health check path", "want": ["deploy-overrides", "companions#startup-liveness-and-readiness-probes"]},
     {"query": "queue worker that pulls messages", "want": ["queue-pull-leases"]},
+    {"query": "run a background worker that processes a queue", "want": ["queue-pull-leases#run-a-background-worker-that-processes-the-queue", "queue-pull-leases"]},
     {"query": "invite a teammate to my organization", "want": ["account#invitations", "account#members-roles-and-invitations"]},
     {"query": "what can the viewer role do", "want": ["account#roles"]},
     {"query": "transfer organization ownership", "want": ["account#changing-roles-removing-members-and-ownership"]},

@@ -1,17 +1,23 @@
 name: Commit acceptance
 
+# The gate is a ~27-minute cold build and test of pkg/state,
+# pkg/apid/apidserver, pkg/sched and cmd/e2e and is not a required check, so
+# it does not run on pull requests or merges to main. ci.yml runs it nightly.
+# To run it on a branch before merging:
+#   gh workflow run commit-acceptance.yml --ref <branch>
 on:
-  pull_request:
-  push:
-    branches: [main]
+  # Nightly: ci.yml calls this workflow.
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
+  # A literal name: when ci.yml calls this workflow, github.workflow is the
+  # caller's name.
   group: commit-acceptance-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 jobs:
   postgres-and-process:

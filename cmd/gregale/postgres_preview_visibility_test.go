@@ -34,6 +34,74 @@ func TestNativePostgresOperationsRequireOptInForDiscovery(t *testing.T) {
 	}
 }
 
+func TestSharedPostgresHelpFiltersNativeOptions(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		view := accountCapabilityView(nil)
+		if !enabled {
+			view = accountCapabilityView([]string{"native-postgres-operations"})
+		}
+		commands := map[string]cliCommand{}
+		for _, command := range view.discoverableCommands(visibleCliCommands()) {
+			commands[command.Name] = command
+		}
+		postgres, ok := commands["postgres"]
+		if !ok {
+			t.Fatal("postgres command is missing")
+		}
+		previews, ok := findCliSubcommand(postgres.Subcommands, "previews")
+		if !ok {
+			t.Fatal("existing previews command is missing")
+		}
+		if got := strings.Contains(strings.Join(previews.Notes, "\n"), "masked"); got != enabled {
+			t.Errorf("masked preview help = %v, want %v", got, enabled)
+		}
+		bindings, ok := findCliSubcommand(postgres.Subcommands, "bindings")
+		if !ok {
+			t.Fatal("existing bindings command is missing")
+		}
+		if _, got := findCliSubcommand(bindings.Subcommands, "timeouts"); got != enabled {
+			t.Errorf("binding timeouts help = %v, want %v", got, enabled)
+		}
+		rollback, ok := commands["rollback"]
+		if !ok {
+			t.Fatal("existing rollback command is missing")
+		}
+		for _, name := range []string{"switch", "switches"} {
+			sub, ok := findCliSubcommand(rollback.Subcommands, name)
+			if !ok {
+				t.Fatalf("existing rollback %s command is missing", name)
+			}
+			if got := slices.ContainsFunc(sub.Flags, func(f cliFlag) bool { return f.Name == "migration" }); got != enabled {
+				t.Errorf("rollback %s --migration help = %v, want %v", name, got, enabled)
+			}
+		}
+	}
+}
+
+func TestSharedPostgresUsageOmitsNativeOptions(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func() int
+		want string
+		hide string
+	}{
+		{"bindings", func() int { return cmdPostgresBindings(nil) }, "rotate", "timeouts"},
+		{"bindings create", func() int { return cmdPostgresBindingsCreate([]string{"--access", "invalid"}) }, "read_only", "replica_only"},
+		{"add postgres", func() int { return cmdAddPostgres([]string{"--access", "invalid"}) }, "read_only", "replica_only"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stderr bytes.Buffer
+			_ = captureStderrSwap(t, &stderr, tc.run)
+			if got := stderr.String(); !strings.Contains(got, tc.want) || strings.Contains(got, tc.hide) {
+				t.Errorf("usage = %q, want %q and no %q", got, tc.want, tc.hide)
+			}
+		})
+	}
+	if !postgresAccessOK("replica_only") {
+		t.Error("explicit replica-only access no longer reaches the provider check")
+	}
+}
+
 // adr: 1027 — in-place major upgrades are a preview until launch: `gregale
 // postgres upgrade` stays callable but out of customer help, completions,
 // the usage line and the published CLI reference.

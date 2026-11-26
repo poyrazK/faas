@@ -455,10 +455,14 @@ func cmdPostgresList(args []string) int {
 		_, _ = fmt.Fprintln(osStdout, "No managed PostgreSQL databases.")
 		return 0
 	}
-	_, _ = fmt.Fprintln(osStdout, "ID                                      NAME                 REGION           CLASS        STATE         STORAGE")
+	// A tabwriter keeps names longer than 20 characters
+	// (python-getting-started-db) from shifting their row (prod hunt r52).
+	tw := tabwriter.NewWriter(osStdout, 0, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "ID\tNAME\tREGION\tCLASS\tSTATE\tSTORAGE")
 	for _, database := range resp.Items {
-		_, _ = fmt.Fprintf(osStdout, "%-39s %-20s %-16s %-12s %-13s %s\n", database.ID, database.Name, database.Region, database.ServiceClass, database.State, formatPostgresStorage(database.StorageLimitBytes))
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", database.ID, database.Name, database.Region, database.ServiceClass, database.State, formatPostgresStorage(database.StorageLimitBytes))
 	}
+	_ = tw.Flush()
 	for _, database := range resp.Items {
 		if database.RestorableUntil != "" {
 			_, _ = fmt.Fprintf(osStdout, "%s is scheduled for deletion; undo before %s with: gregale postgres recover %s\n", database.Name, database.RestorableUntil, database.Name)
@@ -727,7 +731,7 @@ func cmdPostgresRestore(args []string) int {
 
 func cmdPostgresBindings(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale postgres bindings <list|create|get|rotate|timeouts|delete> ...", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres bindings <list|create|get|rotate|delete> ...", "postgres")
 		return 1
 	}
 	switch args[0] {
@@ -785,7 +789,7 @@ func cmdPostgresBindingsCreate(args []string) int {
 	app := fs.String("app", "", "app ID (required)")
 	scope := fs.String("scope", "", "environment scope (required)")
 	environmentKey := fs.String("environment-key", "", "environment variable name (required)")
-	access := fs.String("access", "read_write", "backend-supported credential access: read_write|read_only|migration|data_api|session|replica_only|auth")
+	access := fs.String("access", "read_write", "backend-supported credential access: read_write|read_only|migration|data_api|session|auth")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -793,7 +797,7 @@ func cmdPostgresBindingsCreate(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 || *app == "" || *scope == "" || *environmentKey == "" || !postgresAccessOK(*access) {
-		PrintUsage(os.Stderr, "usage: gregale postgres bindings create DATABASE_ID --app APP_ID --env SCOPE --environment-key KEY [--access read_write|read_only|migration|data_api|session|replica_only|auth]", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres bindings create DATABASE_ID --app APP_ID --env SCOPE --environment-key KEY [--access read_write|read_only|migration|data_api|session|auth]", "postgres")
 		return 1
 	}
 	client, err := authedClient()
@@ -931,7 +935,7 @@ func normalizePostgresArgs(args []string) []string {
 var postgresFlagVocab = map[string][]string{
 	"class":        {"development", "burstable", "production"},
 	"availability": {"single_zone", "high_availability"},
-	"access":       {"read_write", "read_only", "migration", "data_api", "session", "replica_only"},
+	"access":       {"read_write", "read_only", "migration", "data_api", "session"},
 }
 
 // postgresVocab is a flag's vocabulary. The access mode of application Auth,
@@ -952,7 +956,9 @@ func postgresAvailabilityOK(value string) bool {
 }
 
 func postgresAccessOK(value string) bool {
-	return slices.Contains(postgresVocab("access"), value)
+	// The API checks the account flag and target provider for this mode.
+	// Keep it out of shared hints, where the target provider is unknown.
+	return value == "replica_only" || slices.Contains(postgresVocab("access"), value)
 }
 
 // invalidPostgresChoice names the first enumerated flag whose value is outside
@@ -961,6 +967,9 @@ func postgresAccessOK(value string) bool {
 func invalidPostgresChoice(command string, flagValues ...string) bool {
 	for i := 0; i+1 < len(flagValues); i += 2 {
 		name, value := flagValues[i], flagValues[i+1]
+		if name == "access" && postgresAccessOK(value) {
+			continue
+		}
 		if vocab := postgresVocab(name); !slices.Contains(vocab, value) {
 			printCommandValidation(os.Stderr, "gregale %s: invalid --%s %q (want %s)\n", command, name, value, strings.Join(vocab, "|"))
 			return true

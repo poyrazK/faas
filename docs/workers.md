@@ -144,7 +144,7 @@ To hear when a worker falls behind, alert on `queue_backlog` or
 | How long a message waits for a worker | 1 day | 4 days | 14 days |
 
 A message that waits longer than its plan allows moves to the dead-letter queue,
-where `gregale dlq <app>` lists it for replay. See
+where `gregale dlq list <app>` lists it for replay. See
 [queue limits](event-driven.md#queue-limits) for message size, delivery
 attempts and the errors a send returns at a limit.
 

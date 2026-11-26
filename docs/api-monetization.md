@@ -990,6 +990,39 @@ Gregale's: a tool of yours with either name is hidden from these customers.
 Only the first page of a paginated tool list gets them. Customers who use a
 consumer key keep the key's [self-service API](#customers-manage-their-own-account).
 
+### Seller stats
+
+See how a sold MCP server is doing, by UTC calendar month:
+
+```bash
+gregale mcp server stats --app my-mcp              # this month so far
+gregale mcp server stats --app my-mcp --months 6   # the last six months
+```
+
+`GET /v1/apps/my-mcp/mcp-stats?months=6` returns the same as JSON, and
+agents connected to Gregale's MCP server can call
+`gregale_get_mcp_seller_stats`.
+
+- **Per month:** sign-ups by how the customer was created (`oauth` for MCP
+  sign-ins, `signup` for the hosted sign-up page, `owner` for customers you
+  created; linking a sign-in to an existing customer later does not change
+  it), customers with billable units (active; anonymous traffic counts
+  toward units only), customers whose month amounts to more than
+  zero (paying), closed customers, requests, units and revenue per
+  currency.
+- **Revenue:** a closed month shows what finalized statements billed,
+  before credits; until the month-end run finalizes a customer's month,
+  its draft statement counts as an estimate. The current month shows an
+  estimate priced exactly as its statement will be. Past 500 customers,
+  the estimate covers the 500 with the most units, and pricing stops after
+  20 seconds; either way `estimate_complete` is `false`.
+- **Tools:** units and distinct customers per MCP tool over the window,
+  and this month's estimated revenue per tool. Closed months have no
+  per-tool revenue because statements do not split by tool.
+- **Near limit:** open customers at 80% or more of their plan's monthly
+  units this month, most used first: the customers an upgrade prompt is
+  about to reach.
+
 ### Know when customers sign up or change
 
 Subscribe an app webhook to these events to provision accounts, send
