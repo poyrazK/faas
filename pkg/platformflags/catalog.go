@@ -413,6 +413,8 @@ var catalog = []Spec{
 		Consumers:   []string{"apid"},
 		Attributes:  []Attribute{AttributePlan, AttributeOrg},
 		RetireBy:    "2027-06-30",
+		// Beta (ADR-20261125232048): on for every account until an operator writes it.
+		Default: Definition{Enabled: true, Default: true},
 	},
 	{
 		Key:         QueueMessageGroups,

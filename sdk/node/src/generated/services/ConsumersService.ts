@@ -643,17 +643,25 @@ export class ConsumersService {
    */
   public static listApiConsumers({
     slug,
+    environment,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Project environment slug. Omitted or production lists production's consumers; a stage's consumers are its own.
+     */
+    environment?: string,
   }): CancelablePromise<APIConsumerListResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/consumers',
       path: {
         'slug': slug,
+      },
+      query: {
+        'environment': environment,
       },
       errors: {
         401: `code: unauthorized`,
@@ -663,24 +671,40 @@ export class ConsumersService {
   }
   /**
    * Register a stable API consumer identity.
+   * With `environment` set to a stage, the consumer and its keys belong
+   * to that stage: the stage's hosts accept only its own consumers once it
+   * has any, and production's until then. Plan assignments follow the
+   * consumer; trials and billing apply to production consumers only. Until
+   * the release after this one, a stage consumer's `external_ref` and key
+   * names must differ from production's. Creating a stage's consumer
+   * answers 501 `not_implemented` until the platform enables it.
+   *
    * @returns APIConsumerResponse The created consumer identity.
    * @throws ApiError
    */
   public static createApiConsumer({
     slug,
     requestBody,
+    environment,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
     requestBody: CreateAPIConsumerRequest,
+    /**
+     * Project environment slug. Omitted or production creates a production consumer.
+     */
+    environment?: string,
   }): CancelablePromise<APIConsumerResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/consumers',
       path: {
         'slug': slug,
+      },
+      query: {
+        'environment': environment,
       },
       body: requestBody,
       mediaType: 'application/json',

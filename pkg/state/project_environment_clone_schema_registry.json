@@ -1381,6 +1381,7 @@
       "account_id",
       "app_id",
       "created_at",
+      "environment_id",
       "external_ref",
       "id",
       "name",
@@ -2201,7 +2202,8 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "strategy": "derived"
     }
   },
   {
@@ -4396,6 +4398,7 @@
       "app_id",
       "consumer_id",
       "created_at",
+      "environment_id",
       "expires_at",
       "hashed_secret",
       "id",

@@ -1226,6 +1226,11 @@ from .managed_postgres_connection_budget import ManagedPostgresConnectionBudget
 from .managed_postgres_connection_budget_model import ManagedPostgresConnectionBudgetModel
 from .managed_postgres_connection_budget_state import ManagedPostgresConnectionBudgetState
 from .managed_postgres_connection_budget_version import ManagedPostgresConnectionBudgetVersion
+from .managed_postgres_custom_role import ManagedPostgresCustomRole
+from .managed_postgres_custom_role_default_for_item import ManagedPostgresCustomRoleDefaultForItem
+from .managed_postgres_custom_role_granted_to_item import ManagedPostgresCustomRoleGrantedToItem
+from .managed_postgres_custom_role_list import ManagedPostgresCustomRoleList
+from .managed_postgres_custom_role_state import ManagedPostgresCustomRoleState
 from .managed_postgres_database import ManagedPostgresDatabase
 from .managed_postgres_database_availability import ManagedPostgresDatabaseAvailability
 from .managed_postgres_database_hold import ManagedPostgresDatabaseHold
@@ -2398,6 +2403,9 @@ from .put_app_secret_reference_request import PutAppSecretReferenceRequest
 from .put_app_secret_request import PutAppSecretRequest
 from .put_app_secret_request_secret_class import PutAppSecretRequestSecretClass
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
+from .put_managed_postgres_custom_role_request import PutManagedPostgresCustomRoleRequest
+from .put_managed_postgres_custom_role_request_default_for_item import PutManagedPostgresCustomRoleRequestDefaultForItem
+from .put_managed_postgres_custom_role_request_granted_to_item import PutManagedPostgresCustomRoleRequestGrantedToItem
 from .put_outbound_binding_ai_budget_request import PutOutboundBindingAIBudgetRequest
 from .put_outbound_binding_daily_request_budget_request import PutOutboundBindingDailyRequestBudgetRequest
 from .put_outbound_credential_request import PutOutboundCredentialRequest
@@ -4410,6 +4418,11 @@ __all__ = (
     "ManagedPostgresConnectionBudgetModel",
     "ManagedPostgresConnectionBudgetState",
     "ManagedPostgresConnectionBudgetVersion",
+    "ManagedPostgresCustomRole",
+    "ManagedPostgresCustomRoleDefaultForItem",
+    "ManagedPostgresCustomRoleGrantedToItem",
+    "ManagedPostgresCustomRoleList",
+    "ManagedPostgresCustomRoleState",
     "ManagedPostgresDatabase",
     "ManagedPostgresDatabaseAvailability",
     "ManagedPostgresDatabaseHold",
@@ -5448,6 +5461,9 @@ __all__ = (
     "PutAppSecretRequest",
     "PutAppSecretRequestSecretClass",
     "PutJobRegistryCredentialRequest",
+    "PutManagedPostgresCustomRoleRequest",
+    "PutManagedPostgresCustomRoleRequestDefaultForItem",
+    "PutManagedPostgresCustomRoleRequestGrantedToItem",
     "PutOutboundBindingAIBudgetRequest",
     "PutOutboundBindingDailyRequestBudgetRequest",
     "PutOutboundCredentialRequest",

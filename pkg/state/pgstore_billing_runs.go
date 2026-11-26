@@ -288,8 +288,10 @@ func discoverBillingRunUsageItems(ctx context.Context, tx pgx.Tx, run BillingRun
 				union
 				-- A card with a base fee or minimum bills consumers without
 				-- usage too (ADR-1316).
+				-- A stage's consumers are never billed (ADR-20261104120000).
 				select c.app_id, c.id::text from api_consumers c
-				 where c.account_id = $2::uuid and c.created_at < $4 and (c.revoked_at is null or c.revoked_at >= $3)
+				 where c.account_id = $2::uuid and c.environment_id is null
+				   and c.created_at < $4 and (c.revoked_at is null or c.revoked_at >= $3)
 				   and exists (select 1 from api_consumer_rate_cards r
 				                where r.app_id = c.app_id and r.effective_from < $4
 				                  and (r.base_fee_millicents_per_month > 0 or r.minimum_millicents_per_month > 0)))
@@ -299,6 +301,7 @@ func discoverBillingRunUsageItems(ctx context.Context, tx pgx.Tx, run BillingRun
 			       case when $5::boolean and a.app_id is not null then $6::text end, $7::timestamptz, $7::timestamptz
 			  from billed b
 			  join api_consumers c on c.account_id = $2::uuid and c.app_id = b.app_id and c.id::text = b.consumer_key
+			                      and c.environment_id is null
 			  -- A company app keeps its creator's account_id; its customers
 			  -- are billed on that account only while it is a member of the
 			  -- company (ADR-20261026151103 amendment 2).
