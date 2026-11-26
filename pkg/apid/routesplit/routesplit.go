@@ -54,6 +54,12 @@ type Host interface {
 	DeleteApp(ctx context.Context, acct state.Account, app state.App) *api.Problem
 	// AppHosts lists the hostnames the app serves on.
 	AppHosts(ctx context.Context, app state.App) []string
+	// DirectHosts are the match_host patterns that reach app on its own,
+	// not through another app's route rule: its platform host and its
+	// port-selector hosts. A split blocks them on the route's app.
+	DirectHosts(ctx context.Context, app state.App) []string
+	// RuleKindProblem is why acct may not create rules of kind, or nil.
+	RuleKindProblem(acct state.Account, kind string) *api.Problem
 	// CreateRule and DeleteRule mutate edge rules.
 	CreateRule(ctx context.Context, acct state.Account, app state.App, req api.CreateEdgeRuleRequest) (string, *api.Problem)
 	DeleteRule(ctx context.Context, acct state.Account, app state.App, ruleID string) *api.Problem
@@ -104,12 +110,22 @@ func (s *Service) Apply(ctx context.Context, acct state.Account, app state.App, 
 	if prob := s.unsupported(ctx, app); prob != nil {
 		return state.RouteSplit{}, prob
 	}
+	// The block on the route's app's own hosts is an ip rule: check the
+	// account may make one before anything is created.
+	if prob := s.Host.RuleKindProblem(acct, string(state.EdgeRuleKindIP)); prob != nil {
+		refused := *prob
+		refused.Detail = "a split blocks direct access to the route's app with an ip edge rule: " + prob.Detail
+		return state.RouteSplit{}, &refused
+	}
 	suggestion, err := s.Host.Suggest(ctx, acct, app, window)
 	if err != nil {
 		return state.RouteSplit{}, api.ErrCapacity("could not read the app's route resources")
 	}
 	if !Matches(suggestion, req) {
 		return state.RouteSplit{}, changedProblem(suggestion)
+	}
+	if prob := s.overlapping(ctx, app, suggestion.PathGlob); prob != nil {
+		return state.RouteSplit{}, prob
 	}
 	if suggestion.RouteRAMOverPlan {
 		limits, _ := api.LimitsFor(acct.Plan)
@@ -147,16 +163,23 @@ func (s *Service) Apply(ctx context.Context, acct state.Account, app state.App, 
 	split.TargetAppID = created.ID
 	recorded, err := s.Store.AdvanceRouteSplit(ctx, split, state.RouteSplitCreating)
 	if err != nil {
-		s.deleteTarget(ctx, acct, created)
+		s.deleteTarget(ctx, acct, created, split)
 		s.finish(ctx, split, state.RouteSplitCreating, state.RouteSplitRolledBack, "could not record the route's app")
 		return state.RouteSplit{}, api.ErrCapacity("could not record the route's app")
 	}
 	split = recorded
+	// Block the route's app's own hosts before it has a deployment, so it
+	// never answers there.
+	if prob := s.ensureBlock(ctx, acct, app, created, split); prob != nil {
+		s.deleteTarget(ctx, acct, created, split)
+		s.finish(ctx, split, state.RouteSplitCreating, state.RouteSplitRolledBack, "could not block direct access to the route's app: "+prob.Detail)
+		return state.RouteSplit{}, prob
+	}
 	dep, err := s.Store.SeedRouteSplitTarget(ctx, state.RouteSplitSeed{
 		AccountID: app.AccountID, SplitID: split.ID, SourceAppID: app.ID, TargetAppID: created.ID,
 	})
 	if err != nil {
-		s.deleteTarget(ctx, acct, created)
+		s.deleteTarget(ctx, acct, created, split)
 		s.finish(ctx, split, state.RouteSplitCreating, state.RouteSplitRolledBack, "could not deploy the app's build to the route's app")
 		if errors.Is(err, state.ErrNotFound) {
 			return state.RouteSplit{}, api.NewProblem(409, api.CodeRouteSplitUnsupported, "No live build",
@@ -168,7 +191,7 @@ func (s *Service) Apply(ctx context.Context, acct state.Account, app state.App, 
 	deploying.TargetDeploymentID, deploying.Phase = dep.ID, state.RouteSplitDeploying
 	recorded, err = s.Store.AdvanceRouteSplit(ctx, deploying, state.RouteSplitCreating)
 	if err != nil {
-		s.deleteTarget(ctx, acct, created)
+		s.deleteTarget(ctx, acct, created, split)
 		s.finish(ctx, split, state.RouteSplitCreating, state.RouteSplitRolledBack, "could not record the route's deployment")
 		return state.RouteSplit{}, api.ErrCapacity("could not record the route's deployment")
 	}
@@ -242,16 +265,17 @@ func (s *Service) unsupported(ctx context.Context, app state.App) *api.Problem {
 	case app.StaticEgressIP != nil:
 		return refuse("the app has a static egress IP, which belongs to one app; the route would call out from another address")
 	}
-	// The route's app answers on its own hostname, where the app's edge
-	// rules (deny, auth, IP, rate limit) do not run. Until splits copy them,
-	// only an app whose sole rules are earlier splits' can be split.
+	// Routed requests keep the app's host, so its host rules (deny, auth,
+	// IP, rate limit) still run on them, and the split blocks the route's
+	// app's own hostnames. App-wide ("@app") rules follow the serving app,
+	// which for a routed request is the route's app, so they would not run.
 	rules, err := s.Store.ListEdgeRulesForApp(ctx, app.ID)
 	if err != nil {
 		return api.ErrCapacity("could not read the app's edge rules")
 	}
 	for _, rule := range rules {
-		if rule.Kind != state.EdgeRuleKind("route") || !strings.HasPrefix(rule.Name, RuleNamePrefix) {
-			return refuse("the app has edge rules (" + rule.Name + "), which would not protect the route's app on its own hostname")
+		if api.IsEdgeRuleAppHosts(rule.MatchHost) {
+			return refuse("the app has app-wide edge rules (" + ruleLabel(rule) + "), which would not run on the route once it moves; give them the app's hosts instead of @app")
 		}
 	}
 	secrets, err := s.Store.ListAppSecrets(ctx, app.AccountID, app.ID)
@@ -268,6 +292,70 @@ func (s *Service) unsupported(ctx context.Context, app state.App) *api.Problem {
 		return refuse("the app has managed bindings (" + strings.Join(managed, ", ") + "), which the route's app would not have yet")
 	}
 	return nil
+}
+
+// overlapping refuses a split whose path another rule on the app could
+// already decide: a rule that sends the request elsewhere or answers it
+// (route, rewrite, redirect, respond, async) would shadow or reshape the
+// split's route rule, and a throttle's bucket is kept per serving app, so
+// the moved path would get a second, separate allowance. Rules of earlier
+// splits are the app's own routes and are kept.
+func (s *Service) overlapping(ctx context.Context, app state.App, glob string) *api.Problem {
+	rules, err := s.Store.ListEdgeRulesForApp(ctx, app.ID)
+	if err != nil {
+		return api.ErrCapacity("could not read the app's edge rules")
+	}
+	for _, rule := range rules {
+		if !rule.Enabled || strings.HasPrefix(rule.Name, RuleNamePrefix) || !globsMayOverlap(rule.MatchPath, glob) {
+			continue
+		}
+		switch rule.Kind {
+		case state.EdgeRuleKindRoute, state.EdgeRuleKindRewrite, state.EdgeRuleKindRedirect,
+			state.EdgeRuleKindRespond, state.EdgeRuleKindAsync:
+			return api.NewProblem(422, api.CodeRouteSplitUnsupported, "Split not supported for this app",
+				"the edge rule "+ruleLabel(rule)+" already decides where "+glob+" goes; remove it or narrow its path before splitting")
+		case state.EdgeRuleKindThrottle:
+			return api.NewProblem(422, api.CodeRouteSplitUnsupported, "Split not supported for this app",
+				"the rate limit "+ruleLabel(rule)+" covers "+glob+", and the route's app would count its requests separately; narrow its path to exclude "+glob+" before splitting")
+		}
+	}
+	return nil
+}
+
+// globsMayOverlap reports whether two path globs could match one path. It
+// compares the literal text before the first wildcard (without a trailing
+// slash, since "/a/**" may match "/a"), so it may say yes for globs that
+// never meet, but never no for ones that do.
+func globsMayOverlap(a, b string) bool {
+	if a == "" || b == "" {
+		return true
+	}
+	pa, wildA := literalPrefix(a)
+	pb, wildB := literalPrefix(b)
+	switch {
+	case !wildA && !wildB:
+		return a == b
+	case !wildA:
+		return strings.HasPrefix(a, pb)
+	case !wildB:
+		return strings.HasPrefix(b, pa)
+	}
+	return strings.HasPrefix(pa, pb) || strings.HasPrefix(pb, pa)
+}
+
+func literalPrefix(glob string) (string, bool) {
+	i := strings.IndexAny(glob, "*?[{")
+	if i < 0 {
+		return glob, false
+	}
+	return strings.TrimSuffix(glob[:i], "/"), true
+}
+
+func ruleLabel(rule state.EdgeRule) string {
+	if rule.Name != "" {
+		return rule.Name
+	}
+	return string(rule.Kind) + " " + rule.MatchPath
 }
 
 func windowFor(since string) (time.Duration, error) {
@@ -368,7 +456,12 @@ func truncate(s string) string {
 	return s
 }
 
-func (s *Service) deleteTarget(ctx context.Context, acct state.Account, app state.App) {
+// deleteTarget removes the split's rules on the route's app (deleting an
+// app keeps its rules) and then the app, best-effort.
+func (s *Service) deleteTarget(ctx context.Context, acct state.Account, app state.App, split state.RouteSplit) {
+	if prob := s.removeRules(ctx, acct, app, split); prob != nil {
+		s.log().Warn("route split: could not remove the route's app's rules", "app", app.ID, "detail", prob.Detail)
+	}
 	if prob := s.deleteApp(ctx, acct, app); prob != nil {
 		s.log().Warn("route split: could not delete the route's app", "app", app.ID, "detail", prob.Detail)
 	}
