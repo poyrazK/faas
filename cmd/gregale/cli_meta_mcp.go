@@ -326,6 +326,13 @@ func mcpCLICommand() cliCommand {
 			{Name: "group", Short: "private group directory saved by the Node SDK", Value: "DIR", Req: true},
 			{Name: "update-id", Short: "updateId from a Task group watch event", Value: "ID", Req: true},
 		}, Examples: []string{"gregale mcp client group ack --group ./reports --update-id UPDATE_ID"}},
+		{Name: "task-group-submit", Short: "Submit or continue a recoverable group of owner-bound Tasks", Flags: []cliFlag{
+			{Name: "url", Short: "MCP endpoint URL for the group", Value: "URL", Req: true},
+			{Name: "token-env", Short: "environment variable containing a current MCP client token", Value: "ENV", Req: true},
+			{Name: "group", Short: "private interoperable Task group directory", Value: "DIR", Req: true},
+			{Name: "plan", Short: "JSON file with the original tool calls in order", Value: "FILE", Req: true},
+			{Name: "timeout", Short: "total group submission deadline (default 30s)", Value: "DURATION"},
+		}, Examples: []string{"gregale mcp client group submit --url https://reports.example.com/mcp --token-env MCP_TOKEN --group ./reports --plan ./calls.json"}},
 		{Name: "task-inbox", Short: "List your retained Task metadata on a server", Flags: taskInboxFlags, Examples: []string{"gregale mcp client inbox --app my-mcp --token-env MCP_TOKEN --status input_required", "gregale mcp client inbox --app my-mcp --token-env MCP_TOKEN --status input_required --watch"}},
 		{Name: "task-get", Short: "Read the status or result of a previously returned task handle", Positionals: []string{"[<slug>]"}, Flags: taskStatusFlags, Examples: []string{"gregale mcp client status --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840"}},
 		{Name: "task-wait", Short: "Resume waiting for a task to finish", Positionals: []string{"[<slug>]"}, Flags: taskWaitFlags, Examples: []string{"gregale mcp client wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840", "gregale mcp client wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840 --interactive"}},

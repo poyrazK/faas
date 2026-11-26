@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFile, fork, spawn } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -16,11 +16,11 @@ import { promisify } from 'node:util';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import {
   cancelMcpTask, continueMcpTaskGroupSubmission, createMcpTaskGroup, createMcpTaskReviewFetch, createMcpTaskTransport,
-  getMcpTask, getTaskInputReview, listTaskInbox, lookupMcpTaskBySubmissionKey, respondToReviewedTaskInput,
+  getMcpTask, getTaskInputReview, listTaskInbox, lookupMcpTaskBySubmissionKey, respondToReviewedTaskInput, resumeMcpTaskGroupSubmission,
   stopMcpTaskGroup, submitMcpTask, submitMcpTaskWithReceipt, watchMcpTask, watchMcpTaskGroup, watchMcpTasks, watchTaskInbox,
 } from '../../../sdk/node/dist/preview.js';
 
-test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { timeout: 40_000 }, async t => {
+test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { timeout: 45_000 }, async t => {
   const starterDir = process.env.MCP_TASKS_TEST_NODE_STARTER;
   const connectionString = process.env.MCP_TASKS_TEST_DATABASE_URL;
   assert.ok(starterDir && connectionString, 'set MCP_TASKS_TEST_NODE_STARTER and MCP_TASKS_TEST_DATABASE_URL');
@@ -939,6 +939,69 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
       assert.deepEqual(watched.map(({ updateId, ...entry }) => entry), mixed);
       assert.equal(groupRequests.submissions, beforeRead);
       await assert.rejects(stat(join(renewableGroup, 'member-3.json')), { code: 'ENOENT' });
+
+      const cliGroup = join(groupRoot, 'cli-submission');
+      const cliPlan = join(groupRoot, 'cli-submission.json');
+      const submissions = ['one', 'two', 'three'].map(name => ({
+        toolName: 'build_report', arguments: { report: 'CLI Task group ' + name, steps: 1 },
+        deferFormInput: name !== 'two',
+      }));
+      await writeFile(cliPlan, JSON.stringify(submissions), { mode: 0o600 });
+      const originalToken = await mint('iris', scope);
+      const renewedToken = await mint('iris', scope, '6m');
+      assert.notEqual(originalToken, renewedToken);
+      const beforeSubmit = groupRequests.submissions;
+      admissionProbe = {
+        report: 'CLI Task group', committed: Promise.withResolvers(), release: Promise.withResolvers(), thirdKeys: new Set(),
+      };
+      const sender = spawn(gregale, groupCLIArgs('submit', cliGroup, ['--plan', cliPlan]), {
+        env: groupCLIEnv(originalToken), stdio: ['ignore', 'ignore', 'inherit'],
+      });
+      const senderExit = once(sender, 'exit');
+      agents.push({ child: sender, exit: senderExit });
+      const admittedWithoutReply = await Promise.race([
+        admissionProbe.committed.promise,
+        senderExit.then(([code, signal]) => assert.fail(`CLI exited before admission: ${code ?? signal}`)),
+      ]);
+      sender.kill('SIGKILL');
+      assert.deepEqual(await senderExit, [null, 'SIGKILL']);
+      admissionProbe.release.resolve();
+
+      const manifestBytes = await readFile(join(cliGroup, 'group.json'));
+      const manifest = JSON.parse(manifestBytes);
+      assert.equal(manifest.version, 3);
+      assert.match(manifest.ownerBinding, /^[0-9a-f]{64}$/);
+      assert.equal(manifest.members.length, 3);
+      const lostAttempt = await readFile(join(cliGroup, 'member-1.json'));
+      assert.equal(JSON.parse(lostAttempt).submissionKey, manifest.members[1].submissionKey);
+      assert.equal(JSON.parse(lostAttempt).taskId, undefined);
+      assert.equal(lostAttempt.includes(originalToken), false);
+      assert.equal(manifestBytes.includes(submissions[1].arguments.report), false);
+      await assert.rejects(stat(join(cliGroup, 'member-2.json')), { code: 'ENOENT' });
+      assert.equal(groupRequests.submissions, beforeSubmit + 2);
+
+      const cliOwner = await connect('iris', scope);
+      const beforeContinue = await resumeMcpTaskGroupSubmission(cliOwner, cliGroup);
+      assert.deepEqual(beforeContinue.map(entry => entry.outcome), ['accepted', 'accepted', 'prepared']);
+      assert.equal(beforeContinue[1].task.taskId, admittedWithoutReply);
+      const continued = await runGroupCLI('submit', cliGroup, renewedToken, '--plan', cliPlan);
+      assert.deepEqual(continued.map(entry => entry.outcome), ['accepted', 'accepted', 'accepted']);
+      assert.equal(continued[1].task.taskId, admittedWithoutReply);
+      assert.deepEqual(await readFile(join(cliGroup, 'member-1.json')), lostAttempt);
+      assert.deepEqual(await readFile(join(cliGroup, 'group.json')), manifestBytes);
+      assert.equal(groupRequests.submissions, beforeSubmit + 3);
+
+      // The SDK verifies the original request fingerprint before returning a
+      // confirmed admission, even with a different current bearer.
+      const alreadyAdmitted = await continueMcpTaskGroupSubmission(cliOwner, cliGroup, 0, submissions[0]);
+      assert.equal(alreadyAdmitted.task.taskId, continued[0].task.taskId);
+      const retainedTasks = (await listTaskInbox(cliOwner)).tasks;
+      assert.equal(retainedTasks.length, 3);
+      assert.deepEqual(new Set(retainedTasks.map(task => task.taskId)),
+        new Set(continued.map(entry => entry.task.taskId)));
+      const repeated = await runGroupCLI('submit', cliGroup, renewedToken, '--plan', cliPlan);
+      assert.deepEqual(repeated, continued);
+      assert.equal(groupRequests.submissions, beforeSubmit + 3);
     }
   } finally {
     admissionProbe?.release.resolve();

@@ -485,6 +485,7 @@ touch them. The tables below map each earlier name.
 | `gregale mcp task-group-ack` | `gregale mcp client group ack` |
 | `gregale mcp task-group-status` | `gregale mcp client group status` |
 | `gregale mcp task-group-stop` | `gregale mcp client group stop` |
+| `gregale mcp task-group-submit` | `gregale mcp client group submit` |
 | `gregale mcp task-group-watch` | `gregale mcp client group watch` |
 | `gregale mcp task-inbox` | `gregale mcp client inbox` |
 | `gregale mcp task-respond` | `gregale mcp client respond` |

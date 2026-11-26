@@ -6354,6 +6354,39 @@ The private group stores fingerprints and receipts. Keep the original
 requests in your application for explicit continuation. Use
 `watchMcpTaskGroup` on the same path to observe the Tasks already submitted.
 
+#### Submit a Task group from the CLI
+
+On an MCP endpoint that advertises owner-bound admission, save one to 64 tool
+calls in a JSON array. Each call has a `toolName`, optional object `arguments`,
+and optional boolean `deferFormInput`.
+
+```json
+[
+  {"toolName":"build_report","arguments":{"report":"weekly","steps":2}},
+  {"toolName":"build_report","arguments":{"report":"monthly","steps":3},"deferFormInput":true}
+]
+```
+
+```sh
+gregale mcp client group submit \
+  --url https://reports.example.com/mcp --token-env MCP_TOKEN \
+  --group ./receipts/weekly-batch --plan ./calls.json
+```
+
+Choose a group path inside an existing directory and keep the original plan
+file, which can be up to 1 MiB. The group directory contains fingerprints,
+submission keys, the owner binding, and receipt metadata. The CLI saves the
+entire group plan before admitting any Task, and saves each attempt before
+sending it. A stopped group blocks new admissions.
+
+Rerun the same command with the original plan and a current token for the
+same owner. The CLI checks the recorded attempts first and submits prepared
+members in order after it confirms the preceding admissions. A receipt
+with no confirmed Task reports `unconfirmed` and keeps its saved key. Its
+status can be checked again by repeating the command. Outcomes are returned
+in receipt order. The same directory works with the Node SDK and the CLI's
+`group status`, `group watch`, and `group stop` commands.
+
 #### Collect Task group results from TypeScript
 
 Use `getMcpTaskGroupResults` with the saved group path and the current

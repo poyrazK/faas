@@ -63,32 +63,50 @@ func loadMCPTaskGroup(path, endpoint string) (*os.Root, mcpTaskGroupManifest, er
 }
 
 func openMCPTaskGroup(path string) (*os.Root, mcpTaskGroupManifest, error) {
-	var manifest mcpTaskGroupManifest
 	path = filepath.Clean(path)
-	info, err := os.Lstat(path)
-	if err != nil || !info.IsDir() || !privateMCPTaskGroupFile(info) {
+	parent, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return nil, mcpTaskGroupManifest{}, errInvalidMCPTaskGroup
+	}
+	defer func() { _ = parent.Close() }()
+	dir, err := openMCPTaskGroupDirectory(parent, filepath.Base(path))
+	if err != nil {
+		return nil, mcpTaskGroupManifest{}, errInvalidMCPTaskGroup
+	}
+	manifest, err := readMCPTaskGroupManifest(dir)
+	if err != nil {
+		_ = dir.Close()
 		return nil, manifest, errInvalidMCPTaskGroup
 	}
-	dir, err := os.OpenRoot(path)
+	return dir, manifest, nil
+}
+
+func openMCPTaskGroupDirectory(parent *os.Root, name string) (*os.Root, error) {
+	info, err := parent.Lstat(name)
 	if err != nil {
-		return nil, manifest, errInvalidMCPTaskGroup
+		return nil, err
+	}
+	if !info.IsDir() || !privateMCPTaskGroupFile(info) {
+		return nil, errInvalidMCPTaskGroup
+	}
+	dir, err := parent.OpenRoot(name)
+	if err != nil {
+		return nil, errInvalidMCPTaskGroup
 	}
 	opened, err := dir.Stat(".")
 	if err != nil || !os.SameFile(info, opened) || !privateMCPTaskGroupFile(opened) {
 		_ = dir.Close()
-		return nil, manifest, errInvalidMCPTaskGroup
+		return nil, errInvalidMCPTaskGroup
 	}
-	manifest, err = readMCPTaskGroupManifest(dir)
-	if err != nil {
-		_ = dir.Close()
-		return nil, manifest, err
-	}
-	return dir, manifest, nil
+	return dir, nil
 }
 
 func readMCPTaskGroupManifest(dir *os.Root) (mcpTaskGroupManifest, error) {
 	var manifest mcpTaskGroupManifest
 	body, err := readMCPTaskGroupFile(dir, "group.json", maxMCPTaskGroupManifest)
+	if errors.Is(err, fs.ErrNotExist) {
+		return manifest, fs.ErrNotExist
+	}
 	if err != nil || decodeCustomerOperationReceipt(body, &manifest) != nil || !manifest.valid() {
 		return mcpTaskGroupManifest{}, errInvalidMCPTaskGroup
 	}
@@ -194,7 +212,7 @@ func (manifest mcpTaskGroupManifest) readMember(dir *os.Root, index int) (mcpTas
 		return planned.mcpTaskGroupReference, nil
 	}
 	var receipt mcpTaskGroupReceipt
-	body, err := readMCPTaskGroupFile(dir, fmt.Sprintf("member-%d.json", index), maxMCPTaskGroupReceipt)
+	body, err := readMCPTaskGroupFile(dir, mcpTaskGroupReceiptName(index), maxMCPTaskGroupReceipt)
 	if err != nil {
 		return mcpTaskGroupReference{}, err
 	}
@@ -214,4 +232,8 @@ func (manifest mcpTaskGroupManifest) readMember(dir *os.Root, index int) (mcpTas
 		}
 	}
 	return mcpTaskGroupReference{}, errInvalidMCPTaskGroup
+}
+
+func mcpTaskGroupReceiptName(index int) string {
+	return fmt.Sprintf("member-%d.json", index)
 }
