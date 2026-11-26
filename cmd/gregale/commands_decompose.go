@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/capgrant"
 	"gopkg.in/yaml.v3"
 )
 
@@ -675,11 +676,16 @@ func printPlanText(w io.Writer, plan api.PlanResponse, excludeSet []string, show
 //
 //nolint:errcheck // a failed write is handled like printPlanTextWithExplain's
 func printManagedServices(w io.Writer, managed []api.PlanManaged) {
-	var provided, buckets, listed []api.PlanManaged
+	var provided, caches, buckets, listed []api.PlanManaged
 	for _, m := range managed {
 		switch {
 		case m.Provision != nil && m.Kind == "bucket":
 			buckets = append(buckets, m)
+		case m.Provision != nil && m.Kind == "redis":
+			// A Compose redis service becomes a managed Redis cache
+			// (ADR-20261116192126); it was listed under "Managed PostgreSQL"
+			// (prod hunt r52).
+			caches = append(caches, m)
 		case m.Provision != nil:
 			provided = append(provided, m)
 		default:
@@ -716,6 +722,20 @@ func printManagedServices(w io.Writer, managed []api.PlanManaged) {
 				version = fmt.Sprintf(" (PostgreSQL %d)", m.Provision.PostgresMajor)
 			}
 			fmt.Fprintf(w, "  - %-20s %s %s%s, bound to %s\n", m.Name, verb, m.Provision.Database, version, strings.Join(bindings, ", "))
+		}
+	}
+	if len(caches) > 0 {
+		fmt.Fprintln(w, "\nManaged Redis (provided by this deploy):")
+		for _, m := range caches {
+			verb := "creates cache"
+			if m.Provision.Existing {
+				verb = "reuses cache"
+			}
+			bindings := make([]string, 0, len(m.Provision.Bindings))
+			for _, b := range m.Provision.Bindings {
+				bindings = append(bindings, b.Workload+"."+b.EnvKey)
+			}
+			fmt.Fprintf(w, "  - %-20s %s %s, bound to %s\n", m.Name, verb, m.Provision.Database, strings.Join(bindings, ", "))
 		}
 	}
 	if len(listed) > 0 {
@@ -1033,6 +1053,20 @@ func printPreparedPlanText(w io.Writer, plan api.PlanResponse, excludeSet []stri
 			// needed here. The show-affected branch (printAffectedText)
 			// renders the partition including Skipped.
 			fmt.Fprintf(w, "  - %-20s root=%-20s%s%s%s%s%s%s%s%s%s%s\n", wl.Name, wl.RootDir, schedSuffix, classSuffix, memorySuffix, servicePolicySuffix, serviceTransportSuffix, previewPolicySuffix, tenantPolicySuffix, visibilitySuffix, planWorkloadProtocolSuffix(wl), imageSuffix)
+			if wl.ReleaseCommand != "" {
+				// Runs once before each release of this service goes live.
+				source := ""
+				if wl.ReleaseCommandSource != "" {
+					source = "   (" + wl.ReleaseCommandSource + ")"
+				}
+				// A multi-line shell command (command: |) stays on one line.
+				lines := strings.FieldsFunc(wl.ReleaseCommand, func(r rune) bool { return r == '\n' || r == '\r' })
+				fmt.Fprintf(w, "      release: %s%s\n", strings.Join(lines, "; "), source)
+			}
+			if grants := planUsesSummary(wl.Uses); grants != "" {
+				// Cross-app grants the service's workload token carries.
+				fmt.Fprintf(w, "      uses: %s\n", grants)
+			}
 			if explain {
 				printWorkloadDetectionTrace(w, wl)
 			}
@@ -1409,4 +1443,31 @@ func planWorkloadProtocolSuffix(wl api.PlanWorkload) string {
 		out += fmt.Sprintf("  wake_ahead=%t", *wl.WakeAhead)
 	}
 	return out
+}
+
+// planUsesSummary renders a service's uses: grants on one plan line, or ""
+// when it declares none.
+func planUsesSummary(u *capgrant.Uses) string {
+	if u == nil || u.IsZero() {
+		return ""
+	}
+	n := u.Normalized()
+	var parts []string
+	for _, g := range n.Queues {
+		parts = append(parts, "queue "+g.App+"/"+g.Queue)
+	}
+	for _, g := range n.Realtime {
+		parts = append(parts, "realtime "+g.App+" "+g.Channels)
+	}
+	for _, app := range n.DelayedTasks {
+		parts = append(parts, "delayed_tasks "+app)
+	}
+	for _, g := range n.Buckets {
+		part := "bucket " + g.Bucket + " of " + g.App
+		if g.Prefix != "" {
+			part += " " + g.Prefix
+		}
+		parts = append(parts, part+" ("+g.Access+")")
+	}
+	return strings.Join(parts, "; ")
 }

@@ -1,6 +1,6 @@
 # ADR-20261116213000: Custom Postgres group roles
 
-Status: Proposed
+Status: Accepted (beta since ADR-20261125232048)
 Amends: ADR-1027 (customer role attributes)
 
 ## Context

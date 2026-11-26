@@ -312,15 +312,21 @@ func readCustomerOperationPrivateReceiptBound(path string, maxBytes int64) ([]by
 		return nil, err
 	}
 	defer func() { _ = root.Close() }()
-	info, err := root.Lstat(filepath.Base(path))
+	return readCustomerOperationPrivateReceiptAt(root, filepath.Base(path), maxBytes)
+}
+
+func readCustomerOperationPrivateReceiptAt(root *os.Root, name string, maxBytes int64) ([]byte, error) {
+	info, err := root.Lstat(name)
 	if err != nil {
 		return nil, err
 	}
 	if info.Mode().Perm()&0077 != 0 {
 		return nil, fmt.Errorf("receipt must be private to its owner (0600)")
 	}
-	return readCustomerOperationSourceFile(root, filepath.Base(path), maxBytes)
+	return readCustomerOperationSourceFile(root, name, maxBytes)
 }
+
+const customerOperationReceiptTempPrefix = ".gregale-submission-"
 
 // Request and acknowledgement files are immutable. Exclusive publication plus
 // file/directory fsync completes before any POST; interruption cannot erase the key.
@@ -330,7 +336,7 @@ func publishCustomerOperationReceipt(path string, body []byte) error {
 		return err
 	}
 	defer func() { _ = root.Close() }()
-	name := ".gregale-submission-" + uuid.NewString()
+	name := customerOperationReceiptTempPrefix + uuid.NewString()
 	file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err

@@ -61,7 +61,7 @@ func regionalOrigin(format string) func(string) (string, error) {
 	}
 }
 
-const addAIUsage = "usage: gregale add ai --app <slug> --provider <openai|anthropic|gemini|azure_openai|bedrock|vertex> " +
+const addAIUsage = "usage: gregale add ai [--app <slug>] --provider <openai|anthropic|gemini|azure_openai|bedrock|vertex> " +
 	"[--integration <id>] [--name NAME] [--origin URL] [--region REGION] [--key-env NAME|--key-stdin|--key-file PATH] [--no-env] [--scope SCOPE]"
 
 // cmdAddAI sets up the AI gateway for an app in one step (ADR
@@ -82,7 +82,11 @@ func cmdAddAI(args []string) int {
 	keyFile := fs.String("key-file", "", "file holding the provider key, such as a Vertex service-account key")
 	noEnv := fs.Bool("no-env", false, "do not set the app's SDK settings")
 	scope := fs.String("scope", "", "environment scope for the app's SDK settings")
-	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 0 || *app == "" {
+	parseErr := parseInterspersed(fs, args)
+	// In the app's checkout --app defaults to the linked app, like the
+	// other app-scoped commands; add printed usage there (prod hunt r51).
+	fillLinkedApp(app)
+	if parseErr != nil || fs.NArg() != 0 || *app == "" {
 		return printErr("Invalid add ai arguments", errors.New(addAIUsage))
 	}
 	setup, ok := addAIProviders[*provider]

@@ -86,6 +86,23 @@ func grantCustomRoleSet(ctx context.Context, tx pgx.Tx, role, member string, inh
 	return err
 }
 
+// grantCustomRoleExecute lets a custom role run the schema owner's functions
+// in public, those the migrations made and those they make later. Stock
+// PostgreSQL gives them to PUBLIC; Gregale revokes that, so tools written
+// for it (Windmill's set_session_context) need it granted
+// (ADR-20261123112326). DROP OWNED in dropCustomRole removes both grants.
+func grantCustomRoleExecute(ctx context.Context, tx pgx.Tx, owner, role string) error {
+	for _, query := range []string{
+		"GRANT EXECUTE ON ALL ROUTINES IN SCHEMA public TO " + roleIdentifier(role),
+		"ALTER DEFAULT PRIVILEGES FOR ROLE " + roleIdentifier(owner) + " IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO " + roleIdentifier(role),
+	} {
+		if _, err := tx.Exec(ctx, query); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type customRoleRow struct {
 	name, marker string
 	login        bool
@@ -251,6 +268,9 @@ func (m *sqlCredentialRoles) ApplyCustomRoles(ctx context.Context, material mana
 			}
 		}
 		if _, err := tx.Exec(ctx, "COMMENT ON ROLE "+name+" IS '"+marker+"'"); err != nil {
+			return err
+		}
+		if err := grantCustomRoleExecute(ctx, tx, scope.schemaOwner, spec.Name); err != nil {
 			return err
 		}
 	}

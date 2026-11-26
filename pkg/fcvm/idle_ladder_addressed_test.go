@@ -1,6 +1,6 @@
-// adr: 20261107122928 amendment 4 — the guard's addressed ingress is the
-// instance network namespace's Ip InReceives, read through its Firecracker
-// process.
+// adr: 20261107122928 amendments 4 and 5 — the guard's addressed ingress is
+// the instance network namespace's Ip InReceives less Icmp InDestUnreachs,
+// read through its Firecracker process.
 package fcvm
 
 import (
@@ -36,10 +36,13 @@ func fakeNetnsProc(t *testing.T, root string, pid int, instance, netns string, i
 	setInReceives(t, root, pid, inReceives)
 }
 
+// setInReceives writes a net/snmp whose addressed reading is inReceives: its
+// Ip InReceives counts three ICMP destination unreachable messages on top.
 func setInReceives(t *testing.T, root string, pid int, inReceives uint64) {
 	t.Helper()
-	snmp := "Ip: Forwarding DefaultTTL InReceives InHdrErrors\nIp: 1 64 " + strconv.FormatUint(inReceives, 10) + " 0\n" +
-		"Icmp: InMsgs InErrors\nIcmp: 3 0\n"
+	snmp := "Ip: Forwarding DefaultTTL InReceives InHdrErrors\nIp: 1 64 " + strconv.FormatUint(inReceives+3, 10) + " 0\n" +
+		"Icmp: InMsgs InErrors InCsumErrors InDestUnreachs\nIcmp: 5 0 0 3\n" +
+		"IcmpMsg: InType3\nIcmpMsg: 3\n"
 	if err := os.WriteFile(filepath.Join(root, strconv.Itoa(pid), "net", "snmp"), []byte(snmp), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -72,6 +75,28 @@ func TestNetnsIngressReaderReadsInReceives(t *testing.T) {
 	now = now.Add(netnsIngressMaxAge + time.Second)
 	if _, ok := r.AddressedIngress(testInstanceA); ok {
 		t.Fatal("stale reading served")
+	}
+}
+
+// A host unreachable the namespace delivers to its own socket, as when a
+// paused guest never answers its neighbour probes, moves Ip InReceives and Icmp
+// InDestUnreachs together and leaves the reading where it was.
+func TestNetnsIngressReaderLeavesOutTheNamespacesOwnUnreachables(t *testing.T) {
+	root := t.TempDir()
+	fakeNetnsProc(t, root, 4242, testInstanceA, "net:[4026532001]", 17)
+	now := time.Unix(1000, 0)
+	r := newTestNetnsIngressReader(root, &now)
+	live := map[string]string{testInstanceA: "vh1"}
+	r.Poll(live)
+
+	snmp := "Ip: Forwarding DefaultTTL InReceives\nIp: 1 64 21\nIcmp: InMsgs InDestUnreachs\nIcmp: 4 4\n"
+	if err := os.WriteFile(filepath.Join(root, "4242", "net", "snmp"), []byte(snmp), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(250 * time.Millisecond)
+	r.Poll(live)
+	if got, ok := r.AddressedIngress(testInstanceA); !ok || got != 17 {
+		t.Fatalf("AddressedIngress = %d, %v; want 17, true", got, ok)
 	}
 }
 
@@ -138,23 +163,32 @@ func TestNetnsIngressReaderRescansAtMostEveryInterval(t *testing.T) {
 	}
 }
 
-func TestParseIPInReceives(t *testing.T) {
+func TestParseAddressedIngress(t *testing.T) {
+	const kernel = "Ip: Forwarding DefaultTTL InReceives InHdrErrors InAddrErrors ForwDatagrams\nIp: 1 64 123456 0 0 40\n" +
+		"Icmp: InMsgs InErrors InCsumErrors InDestUnreachs InTimeExcds\nIcmp: 20 0 0 6 1\n" +
+		"IcmpMsg: InType3 OutType3\nIcmpMsg: 6 6\n"
 	for _, tc := range []struct {
 		name    string
 		raw     string
 		want    uint64
 		wantErr bool
 	}{
-		{name: "kernel layout", raw: "Ip: Forwarding DefaultTTL InReceives InHdrErrors\nIp: 1 64 123456 0\nIcmp: InMsgs\nIcmp: 0\n", want: 123456},
-		{name: "field order from the header", raw: "Ip: InReceives Forwarding\nIp: 9 1\n", want: 9},
-		{name: "no Ip lines", raw: "Icmp: InMsgs\nIcmp: 0\n", wantErr: true},
-		{name: "no InReceives", raw: "Ip: Forwarding\nIp: 1\n", wantErr: true},
-		{name: "not a number", raw: "Ip: InReceives\nIp: x\n", wantErr: true},
+		// The namespace's own host-unreachable reports to its sockets
+		// (a neighbour that failed while the guest was paused) are not
+		// traffic for the instance.
+		{name: "kernel layout less destination unreachable", raw: kernel, want: 123450},
+		{name: "field order from the header", raw: "Icmp: InDestUnreachs InMsgs\nIcmp: 2 2\nIp: InReceives Forwarding\nIp: 9 1\n", want: 7},
+		{name: "no Ip lines", raw: "Icmp: InMsgs InDestUnreachs\nIcmp: 0 0\n", wantErr: true},
+		{name: "no InReceives", raw: "Ip: Forwarding\nIp: 1\nIcmp: InDestUnreachs\nIcmp: 0\n", wantErr: true},
+		{name: "no Icmp lines", raw: "Ip: InReceives\nIp: 9\n", wantErr: true},
+		{name: "IcmpMsg is not Icmp", raw: "Ip: InReceives\nIp: 9\nIcmpMsg: InDestUnreachs\nIcmpMsg: 1\n", wantErr: true},
+		{name: "not a number", raw: "Ip: InReceives\nIp: x\nIcmp: InDestUnreachs\nIcmp: 0\n", wantErr: true},
+		{name: "more unreachable than received", raw: "Ip: InReceives\nIp: 1\nIcmp: InDestUnreachs\nIcmp: 2\n", wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := parseIPInReceives([]byte(tc.raw))
+			got, err := parseAddressedIngress([]byte(tc.raw))
 			if (err != nil) != tc.wantErr || got != tc.want {
-				t.Fatalf("parseIPInReceives = %d, %v; want %d, err %v", got, err, tc.want, tc.wantErr)
+				t.Fatalf("parseAddressedIngress = %d, %v; want %d, err %v", got, err, tc.want, tc.wantErr)
 			}
 		})
 	}

@@ -56,6 +56,8 @@ func cmdFlagsExperiments(args []string) int {
 	maxSlow := fs.String("max-slow-increase", "", "create: p95 latency guardrail tolerance, as the share of requests slower than control's p95 (default 0.02)")
 	noGuardrails := fs.Bool("no-guardrails", false, "create: turn both guardrails off")
 	start := fs.Bool("start", false, "create: start at once")
+	var notify repeatedFlag
+	fs.Var(&notify, "notify", "create: notification channel ID for the experiment's decisions and problems (repeatable; default: the environment's, see gregale flag notify)")
 	positionals, err := parseInterleaved(fs, args)
 	if err != nil {
 		return 1
@@ -85,7 +87,8 @@ func cmdFlagsExperiments(args []string) int {
 		return flagsExperimentsList(ctx, client, *project, *environment)
 	case "create":
 		req := api.FlagExperimentCreateRequest{Key: key, Flag: *flagKey, RuleID: *rule, Control: *control, MetricEvent: *metric,
-			MetricKind: *kind, Start: *start, Unit: *unit, Layer: *layer, Allocation: *allocation, DenominatorEvent: *denominator, Percentile: *percentile}
+			MetricKind: *kind, Start: *start, Unit: *unit, Layer: *layer, Allocation: *allocation, DenominatorEvent: *denominator, Percentile: *percentile,
+			NotifyChannelIDs: notify}
 		if *traffic != "" {
 			pct, err := strconv.ParseFloat(*traffic, 64)
 			if err != nil || pct <= 0 || pct > 100 {

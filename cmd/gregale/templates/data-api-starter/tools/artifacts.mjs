@@ -57,7 +57,7 @@ export async function main(args, root = fileURLToPath(new URL('../', import.meta
   const sdkTarget = join(vendor, 'gregale-data.tgz')
   const pinTarget = join(root, 'data-api-artifacts.json')
   const mode = args.shift()
-  let source, base = null, withCLI = false, sdkOnly = false
+  let source, base = null, withCLI = false, sdkOnly = false, workspaceDirectory = ''
   if (mode === 'pin') source = args.shift()
   if (!['pin', 'restore'].includes(mode) || (mode === 'pin' && !source)) throw new Error('Usage: node tools/artifacts.mjs pin MANIFEST [--base-url HTTPS_URL] | restore [--from BUNDLE_DIR] [--cli]')
   while (args.length) {
@@ -66,7 +66,16 @@ export async function main(args, root = fileURLToPath(new URL('../', import.meta
     else if (flag === '--sdk-only') sdkOnly = true
     else if (flag === '--from' && mode === 'restore' && args.length) source = args.shift()
     else if (flag === '--base-url' && mode === 'pin' && args.length) base = validateBaseURL(args.shift())
+    else if (flag === '--workspace-root' && args.length) workspaceDirectory = args.shift()
     else throw new Error('Unknown or incomplete artifact option')
+  }
+  let workspaceRoot = client, workspace = ''
+  if (workspaceDirectory) {
+    workspaceRoot = await realpath(resolve(root, workspaceDirectory))
+    const rootRelative = relative(root, workspaceRoot)
+    workspace = relative(workspaceRoot, client).split(sep).join('/')
+    if (isAbsolute(workspaceDirectory) || rootRelative === '..' || rootRelative.startsWith('..' + sep) ||
+        !workspace || workspace === '..' || workspace.startsWith('../') || isAbsolute(workspace)) throw new Error('Invalid npm workspace root')
   }
   const pin = mode === 'pin'
     ? { format: 1, base_url: base, bundle: validateBundle(await readJSON(resolve(source))) }
@@ -74,7 +83,7 @@ export async function main(args, root = fileURLToPath(new URL('../', import.meta
   const from = source ? mode === 'pin' ? dirname(resolve(source)) : resolve(source) : null
   const work = await mkdtemp(join(tmpdir(), 'gregale-artifacts-'))
   try {
-    if (mode === 'restore') await verifyLock(client, pin.bundle.sdk)
+    if (mode === 'restore') await verifyLock(client, pin.bundle.sdk, workspaceRoot, workspace)
     const archive = !sdkOnly && (mode === 'pin' || withCLI) ? hostArchive(pin.bundle) : null
     // Fetch and verify every requested artifact before changing the client.
     const sdk = mode === 'restore' && await exists(sdkTarget)
@@ -84,12 +93,13 @@ export async function main(args, root = fileURLToPath(new URL('../', import.meta
     if (cli) await installCLI(cli, pin.bundle, work, root)
     if (sdk !== sdkTarget) await atomicCopy(sdk, sdkTarget)
     if (mode === 'pin') {
-      run('npm', ['install', '--save-exact', '--ignore-scripts', '--no-audit', '--no-fund', './vendor/gregale-data.tgz'], { cwd: client, stdio: 'inherit' })
-      await verifyLock(client, pin.bundle.sdk)
+      const target = workspace ? `./${workspace}/vendor/gregale-data.tgz` : './vendor/gregale-data.tgz'
+      run('npm', ['install', ...(workspace ? ['--workspace', workspace] : []), '--save-exact', '--ignore-scripts', '--no-audit', '--no-fund', target], { cwd: workspaceRoot, stdio: 'inherit' })
+      await verifyLock(client, pin.bundle.sdk, workspaceRoot, workspace)
       const temp = `${pinTarget}.new-${process.pid}`
       try { await writeFile(temp, `${JSON.stringify(pin, null, 2)}\n`); await rename(temp, pinTarget) } finally { await rm(temp, { force: true }) }
     }
-    if (mode === 'restore' && sdkOnly) run('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: client, stdio: 'inherit' })
+    if (mode === 'restore' && sdkOnly) run('npm', ['ci', ...(workspace ? ['--workspace', workspace] : []), '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: workspaceRoot, stdio: 'inherit' })
     console.log(mode === 'pin' ? `Pinned and installed Data API ${sdkOnly ? 'SDK' : 'CLI/SDK'} artifacts; commit data-api-artifacts.json and the client package.json and package-lock.json.` : 'Verified and restored pinned Data API artifacts.')
   } finally { await rm(work, { recursive: true, force: true }) }
 }

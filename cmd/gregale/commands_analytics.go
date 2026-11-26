@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -138,7 +139,9 @@ func renderRequestAnalytics(w io.Writer, response api.RequestAnalyticsResponse) 
 	// http_status_gte_400); alerts, SLOs and app health count only 5xx, so
 	// the label says which one this is (ADR-20261110090000).
 	_, _ = fmt.Fprintf(w, "Errors:     %d (%.2f%%, 4xx+5xx)\n", response.ErrorRequests, response.ErrorRatePct)
-	_, _ = fmt.Fprintf(w, "Cold boots: %d\n", response.ColdBoots)
+	// cold_boots counts requests served by a cold start, not boots: every
+	// request held during one wake counts (2026-11-24 telemetry audit).
+	_, _ = fmt.Fprintf(w, "Cold starts: %d requests served by a cold start\n", response.ColdBoots)
 	_, _ = fmt.Fprintf(w, "Latency:    p50=%dms p95=%dms p99=%dms\n", response.P50MS, response.P95MS, response.P99MS)
 	if len(response.Groups) == 0 {
 		_, _ = fmt.Fprintln(w, "Groups:     (none)")
@@ -147,10 +150,21 @@ func renderRequestAnalytics(w io.Writer, response api.RequestAnalyticsResponse) 
 		renderRequestAnalyticsClampNote(w, response)
 		return
 	}
-	_, _ = fmt.Fprintln(w, "\nValue\tMethod\tRequests\tErrors (4xx+5xx)\tp50\tp95\tp99")
+	// Only route groups carry a method; by status, country or referrer the
+	// column printed empty on every row (prod hunt r46).
+	withMethod := slices.ContainsFunc(response.Groups, func(g api.RequestAnalyticsGroup) bool { return g.Method != "" })
+	if withMethod {
+		_, _ = fmt.Fprintln(w, "\nValue\tMethod\tRequests\tErrors (4xx+5xx)\tp50\tp95\tp99")
+	} else {
+		_, _ = fmt.Fprintln(w, "\nValue\tRequests\tErrors (4xx+5xx)\tp50\tp95\tp99")
+	}
 	for _, group := range response.Groups {
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%d (%.2f%%)\t%dms\t%dms\t%dms\n",
-			group.Value, group.Method, group.Requests, group.ErrorRequests,
+		value := group.Value
+		if withMethod {
+			value += "\t" + group.Method
+		}
+		_, _ = fmt.Fprintf(w, "%s\t%d\t%d (%.2f%%)\t%dms\t%dms\t%dms\n",
+			value, group.Requests, group.ErrorRequests,
 			group.ErrorRatePct, group.P50MS, group.P95MS, group.P99MS)
 	}
 	if response.GroupsTruncated {

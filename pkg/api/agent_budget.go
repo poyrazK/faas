@@ -16,7 +16,9 @@ func AgentStandingMillicents(floor, ramMB int) int64 {
 // month: one that never scales to zero runs its class's smallest compute all
 // month at the Postgres overage rate. A database that scales to zero commits
 // nothing; its compute, storage and egress follow use. An unknown class is
-// priced as the largest known minimum, so the estimate never understates.
+// priced as the largest known minimum. A production database created at 1 CU
+// before ADR-20261124221402 is priced at the 0.5 CU floor new ones get, half
+// its cost; always-on compute is in no plan, so no customer database is one.
 func AgentPostgresStandingMillicents(class string, scaleToZero bool) int64 {
 	if scaleToZero {
 		return 0

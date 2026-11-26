@@ -366,7 +366,13 @@ func (v capabilityView) withoutHiddenFlags(lines []string, flags []cliFlag) []st
 // discoverableCliCommands is the manifest discovery surfaces read: the
 // released commands without those, or the verbs, the capability view hides.
 func discoverableCliCommands() []cliCommand {
-	view := discoveryCapabilityView()
+	return discoverableCliCommandsContext(context.Background())
+}
+
+// discoverableCliCommandsContext is discoverableCliCommands for a caller
+// with a request context, which bounds the capability read.
+func discoverableCliCommandsContext(ctx context.Context) []cliCommand {
+	view := discoveryCapabilityViewContext(ctx)
 	return view.discoverableCommands(visibleCliCommandsWith(realtimePreviewInView(view)))
 }
 

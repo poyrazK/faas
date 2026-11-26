@@ -159,6 +159,19 @@ snapshot-population-by-tier stat panel. UID `faas-warm-snapshot-pr-c`;
 land via `dashboards/warm-snapshot.json` import after the ansible role
 provisions the fleet dashboard (PR #141, ADR-031).
 
+## `managed-postgres-scale-to-zero.json`
+
+Four-panel dashboard for managed PostgreSQL (Neon) scale-to-zero cost:
+the day's idle tail share per service class
+(`faas_managed_postgres_idle_tail_share:ratio24h`), idle suspends per hour
+(`apid_managed_postgres_idle_suspends_total{class}`), compute used against
+idle tail in CU-hours (`apid_managed_postgres_scale_to_zero_compute_unit_seconds_total`,
+`apid_managed_postgres_idle_tail_compute_unit_seconds_total`), and idle tail
+read outcomes (`apid_managed_postgres_idle_tail_reads_total{outcome}`). The
+idle tail is suspend timeout × minimum CU per suspend, read from Neon's
+operation list in the usage sweep; it tunes the suspend timeout and class
+minimums and is never billed. UID `faas-managed-postgres-s2z`.
+
 ## `edge-rules.json` (issue #561 / PR B / ADR-091)
 
 Four-panel dashboard for the edge-rules observability cluster: match

@@ -147,8 +147,13 @@ func (e *Evaluator) deliverChannelStandDowns(ctx context.Context, now time.Time)
 			e.log.Warn("alerts: read channel for a stand-down", "channel", s.ChannelID, "err", err)
 			continue
 		}
+		destination := ch
+		if s.PagerDutyTargetSealed != nil {
+			destination.TargetSealed = s.PagerDutyTargetSealed
+			destination.PagerDutyRegion = s.PagerDutyRegion
+		}
 		errMsg := ""
-		if target, ok := openTarget(ids, ch); !ok {
+		if target, ok := openTarget(ids, destination); !ok {
 			errMsg = "could not open the channel destination; recreate the channel"
 		} else {
 			sctx, cancel := context.WithTimeout(ctx, channelSendBudget)

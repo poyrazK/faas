@@ -40,6 +40,8 @@ class RollbackOperation:
     reason: str | Unset = UNSET
     code: str | Unset = UNSET
     blockers: list[BindingCheckFinding] | Unset = UNSET
+    project_rollback_id: UUID | Unset = UNSET
+    """Project operation holding this exact rollback for coordinated cutover."""
     completed_at: datetime.datetime | None | Unset = UNSET
     audit_id: str | Unset = UNSET
     trigger: RollbackOperationTrigger | Unset = UNSET
@@ -81,6 +83,10 @@ class RollbackOperation:
                 blockers_item = blockers_item_data.to_dict()
                 blockers.append(blockers_item)
 
+        project_rollback_id: str | Unset = UNSET
+        if not isinstance(self.project_rollback_id, Unset):
+            project_rollback_id = str(self.project_rollback_id)
+
         completed_at: None | str | Unset
         if isinstance(self.completed_at, Unset):
             completed_at = UNSET
@@ -120,6 +126,8 @@ class RollbackOperation:
             field_dict["code"] = code
         if blockers is not UNSET:
             field_dict["blockers"] = blockers
+        if project_rollback_id is not UNSET:
+            field_dict["project_rollback_id"] = project_rollback_id
         if completed_at is not UNSET:
             field_dict["completed_at"] = completed_at
         if audit_id is not UNSET:
@@ -169,6 +177,13 @@ class RollbackOperation:
 
                 blockers.append(blockers_item)
 
+        _project_rollback_id = d.pop("project_rollback_id", UNSET)
+        project_rollback_id: UUID | Unset
+        if isinstance(_project_rollback_id, Unset):
+            project_rollback_id = UNSET
+        else:
+            project_rollback_id = UUID(_project_rollback_id)
+
         def _parse_completed_at(data: object) -> datetime.datetime | None | Unset:
             if data is None:
                 return data
@@ -212,6 +227,7 @@ class RollbackOperation:
             reason=reason,
             code=code,
             blockers=blockers,
+            project_rollback_id=project_rollback_id,
             completed_at=completed_at,
             audit_id=audit_id,
             trigger=trigger,

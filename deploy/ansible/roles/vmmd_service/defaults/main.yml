@@ -10,6 +10,14 @@ vmmd_apid_client_tls_cert_path: /etc/faas/tls/vmmd/apid-client.crt
 vmmd_apid_client_tls_key_path: /etc/faas/tls/vmmd/apid-client.key
 vmmd_apid_client_tls_ca_path: /etc/faas/tls/ca/ca.crt
 
+# ADR-20261114100000 amendment 2026-11-23: public destinations (IPv4 CIDRs or
+# addresses, and hostnames vmmd re-resolves) whose guest traffic is counted as
+# internal and left out of billed app egress, on top of the manifest's entry
+# addresses (99-faas-egress.conf). Production sets them in
+# group_vars/compute_nodes/internal_egress_destinations.yml.
+faas_vmmd_internal_egress_cidrs: []
+faas_vmmd_internal_egress_hosts: []
+
 # ADR-989 app outbound relay. The manifest sets the split-box target to
 # tcp://outboundd.faas:8096; single-box hosts may set
 # unix:///run/faas/outboundd-relay.sock to match outboundd's relay_listen.

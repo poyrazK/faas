@@ -1166,6 +1166,24 @@ deploy needs `dns.origin_pull` set in the manifest, and for `required` the
 origin-pull CA installed first (docs/runbooks/EdgeDirectEntry.md, "The
 control plane's Caddy").
 
+2026-11-26: a WAF review found that long URIs emptied an app's check budget
+and turned its `block` rules off, that the in-path rule set passed Log4Shell
+in a header, Spring4Shell, prototype pollution and Node.js and PHP injection,
+and that the false-positive review called a few addresses probing one
+endpoint a false positive. A check now scores at most 8 KiB of URI for every account. Behind the new
+`edge_waf_strict_inspection` flag (off by default), `warn`/`block` count a
+longer one as a detection and the in-path set adds CRS 911, 933, 934, 943
+and 944. The review calls only catalogued rules
+likely false positives, leaving groups spread across clients for review
+(ADR-831 amendment 21). Open before turning
+`edge_waf_strict_inspection` on for an account: check its `observe`
+detections for long URIs and other methods. Criterion W1 holds with the
+wider set: in-path p95 1.02–1.34 ms at 100–500 req/s on a 4-vCPU host
+(baseline 0.96–0.98 ms), nothing skipped (ADR-831 amendment 21). Separately,
+the load test saw about 19% of requests at 500 req/s refused with 404 at
+the host-ownership step (`ownership_response`) whichever set ran; this is not
+the WAF and is still open.
+
 ## Event substrate benchmark (V12) — 2026-10-23
 
 `make bench-event-substrate` measures event publish, fanout routing, the

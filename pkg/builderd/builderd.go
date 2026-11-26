@@ -1244,6 +1244,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		IssueSourceMaps:        sourceMaps,
 		Function:               app.Type == state.AppTypeFunction,
 		SharedRuntime:          sharedRuntime != "",
+		NextStandalone:         nextStandaloneBuild(sharedRuntime, os.Getenv),
 		DevWatchCommand:        watch.Command,
 		DevWatchHost:           watch.Host,
 		DependencyCacheKey:     dependencyCacheKey,
@@ -1602,8 +1603,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.markFailed(ctx, build, state.FailureInfra, "validate produced layer: "+statErr.Error(), buildStart)
 		return BuildResult{}, statErr
 	}
-	if sizeMB := (artifactBytes + (1 << 20) - 1) >> 20; sizeMB > int64(lim.AppLayerMaxMB) {
-		msg := fmt.Sprintf("app layer %d MB exceeds plan cap %d MB", sizeMB, lim.AppLayerMaxMB)
+	if msg := artifactOverPlanCap(lim, artifactBytes, sharedRuntime); msg != "" {
 		b.markFailed(ctx, build, state.FailureUserError, msg, buildStart)
 		return BuildResult{}, errors.New("builderd: " + msg)
 	}

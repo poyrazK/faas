@@ -84,7 +84,7 @@ func validateAcceptedAPIBase(raw string) (string, error) {
 }
 
 // displayAPIBase drops URL credentials, query and fragment so an API base
-// can be printed. FAAS_API is not validated like saved config and may carry
+// can be printed. GREGALE_API_URL / FAAS_API is not validated like saved config and may carry
 // user:password@ (or a token as the user name).
 func displayAPIBase(raw string) string {
 	u, err := url.Parse(raw)
@@ -131,7 +131,7 @@ var connectionPreflightExempt = map[string]bool{
 }
 
 // connectionPreflight runs once per invocation, before dispatch. It refuses
-// an insecure API base and says when FAAS_TOKEN shadows a selected profile
+// an insecure API base and says when a token variable shadows a selected profile
 // or a saved login.
 func connectionPreflight(command string) (int, bool) {
 	if connectionPreflightExempt[command] {
@@ -142,7 +142,7 @@ func connectionPreflight(command string) (int, bool) {
 	}
 	switch command {
 	case "login", "logout", "start", dispatchSignup:
-		// These commands handle FAAS_TOKEN themselves.
+		// These commands handle the token variable themselves.
 	default:
 		warnEnvTokenOverride()
 	}

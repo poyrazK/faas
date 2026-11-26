@@ -169,6 +169,16 @@ func cmdAppCopy(slug string, args []string) int {
 		if ctx.Err() != nil {
 			return appCopyInterrupted()
 		}
+		// Prod hunt r56: with sessions off, cp answered with the generic
+		// refusal and its database-schema advice; a plain exec still runs.
+		var apiErr *api.APIError
+		if errors.As(err, &apiErr) && apiErr.Problem.Title == api.InteractiveSessionsUnavailableTitle {
+			fallback := "gregale app exec " + quoteCLIArg(slug) + " -- cat " + quoteCLIArg(remote)
+			if local != "-" {
+				fallback += " > " + quoteCLIArg(local)
+			}
+			return printErr("Could not start the copy", fmt.Errorf("app cp needs an interactive session, which this installation does not offer; a text file can be read without one: %s", fallback))
+		}
 		return printErr("Could not start the copy", err)
 	}
 	defer closeSession()

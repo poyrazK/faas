@@ -185,13 +185,6 @@ func mcpNativeFingerprint(p mcpNativeReleasePlan) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func requireMCPNativeNodeWorker(workerPath string) error {
-	info, err := os.Lstat(filepath.Join(workerPath, "tasks-release.js"))
-	if err != nil || !info.Mode().IsRegular() {
-		return errors.New("native MCP Task releases require a Node worker project with tasks-release.js (start from `gregale init mcp-node-tasks`); use a manual rollout for Go/Python workers as described in docs/mcp.md")
-	}
-	return nil
-}
 func loadMCPNativeState(path, fingerprint string) (mcpNativeReleaseState, error) {
 	s := mcpNativeReleaseState{Version: 1, Fingerprint: fingerprint, Stage: "prepared", PreviousDeployments: map[string]string{}, Parked: map[string]bool{}}
 	b, err := os.ReadFile(path)
@@ -241,7 +234,13 @@ func cmdMCPTaskRelease(args []string) int {
 		return printErr("MCP release plan", err)
 	}
 	if action != "status" && (action != "recover" || *resume) {
-		if err := requireMCPNativeNodeWorker(p.WorkerPath); err != nil {
+		// run and the start/drain adapters it drives work for every Tasks
+		// starter; recovery and retirement still need the Node gate.
+		check := requireMCPNativeNodeWorker
+		if action == "run" || action == "start" || action == "drain" {
+			check = func(path string) error { _, err := mcpNativeWorkerRuntime(path); return err }
+		}
+		if err := check(p.WorkerPath); err != nil {
 			return printErr("MCP release runtime", err)
 		}
 	}
@@ -339,8 +338,12 @@ func runMCPNativeReleaseContext(ctx context.Context, p mcpNativeReleasePlan, s m
 		}
 		return jsonOut(writeJSON(s))
 	}
-	if err := requireMCPNativeNodeWorker(p.WorkerPath); err != nil {
+	runtime, err := mcpNativeWorkerRuntime(p.WorkerPath)
+	if err != nil {
 		return printErr("MCP release runtime", err)
+	}
+	if runtime != mcpWorkerRuntimeNode && s.TaskIntentID != "" {
+		return printErr("MCP release runtime", errors.New("hosted Task execution releases need a Node worker (mcp-node-tasks)"))
 	}
 	if err := preflightMCPControlPlaneContext(ctx); err != nil {
 		return printErr("MCP control-plane compatibility", err)
@@ -390,6 +393,10 @@ func runMCPNativeReleaseContext(ctx context.Context, p mcpNativeReleasePlan, s m
 	// Each adapter and each wait has its own deadline; bound the entire invocation too.
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(p.TimeoutSeconds*5+120)*time.Second)
 	defer cancel()
+	if runtime != mcpWorkerRuntimeNode {
+		return finishMCPNativeRelease(ctx, s, state, quiet, runMCPBuiltinTaskGate(ctx, runtime, p, state, s.Fingerprint,
+			gatePlan["start"].([]string), gatePlan["drain"].([]string)), nil)
+	}
 	command := exec.CommandContext(ctx, "node", "tasks-release.js", f.Name())
 	command.Dir = p.WorkerPath
 	if s.TaskIntentID != "" {
@@ -423,24 +430,30 @@ func runMCPNativeReleaseContext(ctx context.Context, p mcpNativeReleasePlan, s m
 			*s.executorSettled = true
 		}
 	}
+	return finishMCPNativeRelease(ctx, s, state, quiet, output, runErr)
+}
+
+// finishMCPNativeRelease records a gate's report, Node's or the built-in one.
+func finishMCPNativeRelease(ctx context.Context, s mcpNativeReleaseState, state string, quiet bool, output []byte, runErr error) int {
 	var report struct {
 		OK     bool   `json:"ok"`
 		Stage  string `json:"stage"`
 		Detail string `json:"detail,omitempty"`
 	}
 	if json.Unmarshal(output, &report) != nil {
-		return printErr("MCP Task release", errors.New("gate failed; check Node dependencies and deployment bindings"))
+		return printErr("MCP Task release", errors.New("gate failed; check the worker's dependencies and deployment bindings"))
 	}
 	if !report.OK {
 		report.Detail = "Inspect the release journal and recorded deployments, then rerun with unchanged sources and plan"
 	}
 	if report.OK {
+		var err error
 		s, err = loadMCPNativeState(state, s.Fingerprint)
 		if err != nil {
 			return printErr("MCP release journal", err)
 		}
 		s.Stage = "complete"
-		if err = saveMCPNativeStateContext(ctx, state, &s); err != nil {
+		if err := saveMCPNativeStateContext(ctx, state, &s); err != nil {
 			return printErr("MCP release journal", err)
 		}
 	}
@@ -843,7 +856,9 @@ func startMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 		return err
 	}
 	if !isWorkerApp(candidate) || candidate.Manifest.WorkerReplicas == nil || candidate.Manifest.WorkerReplicas.Min < 1 {
-		return errors.New("candidate must be a worker app with at least one replica")
+		// A candidate created with `deploy --create-only` has no replica
+		// setting until its first deploy; the operator sets it explicitly.
+		return fmt.Errorf("candidate must be a worker app with at least one replica; run `gregale workers scale %s --min 1` before the release", p.WorkerApp)
 	}
 	if !s.ServingCaptured {
 		instances, err := c.ListInstances(ctx, p.WorkerApp)
@@ -915,19 +930,31 @@ func startMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 			return err
 		}
 	}
-	s.Stage = "deploying_worker"
-	if err := saveMCPNativeStateContext(ctx, state, s); err != nil {
-		return err
+	// The gate already required a starter worker; an unknown one keeps the
+	// Node order.
+	runtime, _ := mcpNativeWorkerRuntime(p.WorkerPath)
+	worker := func() error {
+		s.Stage = "deploying_worker"
+		if err := saveMCPNativeStateContext(ctx, state, s); err != nil {
+			return err
+		}
+		return mcpNativeDeploy(ctx, c, p.WorkerPath, p.WorkerApp, false, s, state)
 	}
-	if err := mcpNativeDeploy(ctx, c, p.WorkerPath, p.WorkerApp, false, s, state); err != nil {
-		return err
+	web := func() error {
+		s.Stage = "deploying_web"
+		if err := saveMCPNativeStateContext(ctx, state, s); err != nil {
+			return err
+		}
+		return mcpNativeDeploy(ctx, c, p.WebPath, p.WebApp, true, s, state)
 	}
-	s.Stage = "deploying_web"
-	if err := saveMCPNativeStateContext(ctx, state, s); err != nil {
-		return err
-	}
-	if err := mcpNativeDeploy(ctx, c, p.WebPath, p.WebApp, true, s, state); err != nil {
-		return err
+	for _, role := range mcpNativeDeployOrder(runtime) {
+		step := worker
+		if role == "web" {
+			step = web
+		}
+		if err := step(); err != nil {
+			return err
+		}
 	}
 	if err := mcpNativeVerifyEndpoint(ctx, c, p, s); err != nil {
 		return err
@@ -948,6 +975,18 @@ func startMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 		case <-time.After(time.Second):
 		}
 	}
+}
+
+// mcpNativeDeployOrder names the roles a release deploys, in order. The Node
+// gate migrates before it starts replacements. A Go or Python release migrates
+// in the web release command (ADR-20261123160000 amendment 1), so the staged
+// web deployment goes first and the candidate worker starts against the
+// migrated schema.
+func mcpNativeDeployOrder(runtime string) []string {
+	if runtime == mcpWorkerRuntimeGo || runtime == mcpWorkerRuntimePython {
+		return []string{"web", "worker"}
+	}
+	return []string{"worker", "web"}
 }
 
 var mcpNativeCheckWorkers = checkMCPNativeWorkers
@@ -971,6 +1010,11 @@ func checkMCPNativeWorkers(ctx context.Context, c *Client, p mcpNativeReleasePla
 	input, _ := json.Marshal(map[string]any{"replacementWorkerIDs": s.WorkerIDs})
 	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+	if runtime, err := mcpNativeWorkerRuntime(p.WorkerPath); err != nil {
+		return err
+	} else if runtime != mcpWorkerRuntimeNode {
+		return mcpBuiltinReplacementsReady(probeCtx, c, p, s)
+	}
 	command := exec.CommandContext(probeCtx, "node", "tasks-release-readiness.js")
 	command.Dir = p.WorkerPath
 	env := []string{}

@@ -46,6 +46,8 @@ changed intent or configuration. Unreadable required state has no comparison has
 A ready result covers the declared inputs and current control-plane prerequisites;
 deployment still validates source bytes, capacity and runtime health.
 
+### Release a push-queue worker with the project
+
 Verified atomic project deploys can opt into one existing push-queue worker with
 `gregale deploy --project --atomic --verify --workers`. The first milestone
 requires HTTP workloads plus exactly one production worker, one enabled push
@@ -58,6 +60,8 @@ shutdown (default 30 seconds, maximum accepted 60 seconds).
 Rollback restores the prior graph and paired variables. Completed jobs and
 external or database effects remain. Post-cutover jobs retain normal retry/lease
 semantics. This is not enabled for every account yet; contact support to use it.
+
+### Verify real queue health
 
 For real queue health verification, add `--worker-health`:
 
@@ -74,6 +78,8 @@ effects remain committed. The existing ten-minute verification deadline applies.
 The baseline needs real delivery evidence before opting in. Worker health
 verification is not enabled for every account yet.
 
+### Jobs keep their release across cutovers
+
 Named production project worker jobs now persist their release graph at the first
 claimed delivery. Retries and operator queue replays retain that graph across
 cutovers and gateway restarts. New jobs select the current graph independently.
@@ -85,7 +91,10 @@ separate retained worker pool and can restart a missing worker from that deploym
 It protects the last worker while draining excess replicas, then drains the pool
 after the last job finishes. Existing worker/account/concurrency limits still apply;
 insufficient capacity delays recovery rather than changing the job's release.
-Progressive canaries are now available through an explicit opt-in contract:
+
+### Progressive canaries
+
+Progressive canaries are available through an explicit opt-in contract:
 
 ```sh
 gregale deploy --project --atomic --verify --progressive --config-file release.json
@@ -110,6 +119,8 @@ work until recovery. Public receipts show `verification.percent` and `generation
 Progressive project canaries are not enabled for every account yet; contact
 support to use them. Workers additionally need atomic worker releases enabled.
 
+### Inspect or control a progressive attempt
+
 Inspect or control a progressive attempt using its durable submission ID:
 
 ```sh
@@ -131,6 +142,8 @@ Control commands return when their decision is durably accepted. Use `status`
 to distinguish pending recovery from completed restoration. For an ambiguous
 response, retry with the printed `--request-id ID --generation N`; the same
 most recent decision is idempotent.
+
+### Watch for regressions after success
 
 For failures that appear after initial rollout success, opt into stabilization:
 

@@ -35,6 +35,26 @@ func TestFunctionRunnerBootArg(t *testing.T) {
 	}
 }
 
+// A raw TCP server (a managed Valkey cache) boots with
+// api.RawTCPListenerBootArg so guest-init sends it no HTTP or gRPC probes
+// (agent eval 2026-11-23, P8: Valkey logged them as a cross-protocol attack).
+// adr: 122 — characterization L7 probes; adr: 576 — raw TCP service ports.
+func TestRawTCPListenerBootArg(t *testing.T) {
+	for _, rawTCP := range []bool{true, false} {
+		m := &Manager{}
+		spec := m.coldBootSpecForWake(netns.Config{}, WakeRequest{RoutedPortRawTCP: rawTCP}, "")
+		if spec.RawTCPListener != rawTCP {
+			t.Fatalf("RoutedPortRawTCP=%v: spec RawTCPListener = %v", rawTCP, spec.RawTCPListener)
+		}
+		cold := validColdSpec()
+		cold.RawTCPListener = rawTCP
+		args := strings.Fields(BuildColdBootConfig(cold, 0).BootSource.BootArgs)
+		if got := slices.Contains(args, api.RawTCPListenerBootArg); got != rawTCP {
+			t.Fatalf("boot args %q contain %s = %v, want %v", args, api.RawTCPListenerBootArg, got, rawTCP)
+		}
+	}
+}
+
 // WakeRequest.Runtime is set only for functions (the runner id).
 func TestColdBootSpecForWakeMarksFunctionRunners(t *testing.T) {
 	m := &Manager{}

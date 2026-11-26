@@ -60,6 +60,12 @@ func cmdAppEgressPorts(slug string, args []string) int {
 		}
 		if action == "add" {
 			if slices.Contains(current, port) || slices.Contains(basePortsInt(), port) {
+				// Prod hunt r42: an already allowed port exited 0 with no
+				// output, which read as a failed or skipped step.
+				if jsonOutput {
+					return jsonOut(writeJSON(app))
+				}
+				PrintOK(osStdout, "App %s already allows TCP %d; nothing changed.", slug, port)
 				return 0
 			}
 			current = append(current, port)

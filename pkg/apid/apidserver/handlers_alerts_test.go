@@ -184,7 +184,7 @@ func TestListAlertDeliveriesUsesSavedAnomalyEvidence(t *testing.T) {
 		"threshold":3, "window":"15m", "baseline":1.1, "baseline_days":6,
 		"ratio":3.818181818, "observed":4.2, "log_context":{"note":"excluded from response"}
 	}`)
-	_, won, err := e.store.ClaimAlertFire(t.Context(), rule.ID, rule.ID+":first", payload, 4.2, time.Now())
+	_, won, _, err := e.store.ClaimAlertFire(t.Context(), rule.ID, rule.ID+":first", payload, 4.2, time.Now())
 	if err != nil || !won {
 		t.Fatalf("claim delivery: won=%v err=%v", won, err)
 	}

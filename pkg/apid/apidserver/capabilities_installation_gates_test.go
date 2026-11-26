@@ -2,6 +2,7 @@ package apidserver_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -63,6 +64,13 @@ func TestCapabilitiesFollowRuntimeGates(t *testing.T) {
 			}
 			if !on && capability.UnavailableReason != api.CapabilityUnavailableRuntime {
 				t.Errorf("%s reason = %q, want runtime", capability.Key, capability.UnavailableReason)
+			}
+			// Agent eval 2026-11-24: "tcp-listeners unavailable" was read
+			// as "private TCP is off". The detail names public ports and
+			// says private TCP between apps does not depend on them.
+			if !on && (capability.Key == "tcp-listeners" || capability.Key == "udp-listeners") &&
+				(!strings.Contains(capability.UnavailableDetail, "Public ") || !strings.Contains(capability.UnavailableDetail, "is not about")) {
+				t.Errorf("%s detail = %q, want public ports named and private TCP ruled out", capability.Key, capability.UnavailableDetail)
 			}
 		}
 		if len(want) != 0 {

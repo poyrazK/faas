@@ -100,6 +100,8 @@ func TestCustomRolesRunWindmillStyleMigrations(t *testing.T) {
 	if err := f.manager.Ensure(ctx, f.material, f.runtime); err != nil {
 		t.Fatal(err)
 	}
+	// A function from before the roles were declared (ADR-20261123112326).
+	executeSQL(t, f.connect(t, f.migration.name), `CREATE FUNCTION earlier() RETURNS int LANGUAGE sql AS 'SELECT 1'`)
 	if err := f.apply(t, f.windmillRoles()); err != nil {
 		t.Fatal(err)
 	}
@@ -130,6 +132,10 @@ func TestCustomRolesRunWindmillStyleMigrations(t *testing.T) {
 	executeSQL(t, migration, `CREATE FUNCTION pg_temp.wrap_session_gucs(expr text) RETURNS text AS $fn$ BEGIN RETURN expr; END $fn$ LANGUAGE plpgsql`)
 	executeSQL(t, migration, `SELECT pg_temp.wrap_session_gucs('x')`)
 	executeSQL(t, migration, `DROP FUNCTION pg_temp.wrap_session_gucs(text)`)
+	// Windmill's user_db transactions call set_session_context(), which
+	// migration 20250412144540 defines without granting it: stock PostgreSQL
+	// gives EXECUTE to PUBLIC, which Gregale revokes (ADR-20261123112326).
+	executeSQL(t, migration, `CREATE FUNCTION set_session_context(username text) RETURNS void LANGUAGE sql AS $fn$ SELECT set_config('session.user', username, true) $fn$`)
 
 	runtime := f.connect(t, f.runtime.name)
 	if !sqlPermissionDenied(ctx, runtime, "CREATE TEMP TABLE runtime_temp (id integer)") {
@@ -145,8 +151,11 @@ func TestCustomRolesRunWindmillStyleMigrations(t *testing.T) {
 		if _, err := tx.Exec(ctx, "SET LOCAL ROLE "+role); err != nil {
 			t.Fatalf("SET LOCAL ROLE %s: %v", role, err)
 		}
-		if _, err := tx.Exec(ctx, "SELECT set_config('session.user', 'alice', true)"); err != nil {
-			t.Fatal(err)
+		if _, err := tx.Exec(ctx, "SELECT set_session_context('alice')"); err != nil {
+			t.Fatalf("set_session_context as %s: %v", role, err)
+		}
+		if _, err := tx.Exec(ctx, "SELECT earlier()"); err != nil {
+			t.Fatalf("earlier() as %s: %v", role, err)
 		}
 		var n int
 		if err := tx.QueryRow(ctx, "SELECT count(*) FROM job").Scan(&n); err != nil {
@@ -159,6 +168,10 @@ func TestCustomRolesRunWindmillStyleMigrations(t *testing.T) {
 	}
 	if n := count(f.wmAdmin); n != 2 {
 		t.Fatalf("windmill_admin saw %d rows, want 2 (BYPASSRLS)", n)
+	}
+	// The app's own login runs its functions too.
+	if _, err := runtime.Exec(ctx, "SELECT set_session_context('alice'), earlier()"); err != nil {
+		t.Fatalf("runtime login cannot run the migrations' functions: %v", err)
 	}
 	// The login inherits nothing from the roles: RLS has no policy for it.
 	var direct int
@@ -191,6 +204,10 @@ func TestCustomRolesRunWindmillStyleMigrations(t *testing.T) {
 	reader := f.connect(t, f.readonly.name)
 	if _, err := reader.Exec(ctx, "SET ROLE "+f.wmAdmin); err == nil {
 		t.Fatal("read-only login could SET ROLE to a role granted only to migration and read_write")
+	}
+	// PUBLIC stays without EXECUTE: the read-only login gets none.
+	if !sqlPermissionDenied(ctx, reader, "SELECT earlier()") {
+		t.Fatal("read-only login ran a function of the schema owner")
 	}
 }
 

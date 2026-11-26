@@ -15,6 +15,28 @@ const path = pathModule.default || pathModule;
 // response envelopes consumed by faas-runner.
 console.log = console.error;
 console.info = console.error;
+// A customer stack names the customer's frames: the adapter's own frames
+// (invoke, handleOne, inGregaleRequestContext) and node internals followed
+// every handler error (prod hunt r31), as the Python adapter already trims.
+const fsModule = await import("node:fs");
+// An ES module's frames name it by file URL and a CommonJS one's by plain
+// path; either may be the real path behind a symlinked directory.
+const adapterNames = [process.argv[1]];
+try {
+  adapterNames.push(fsModule.realpathSync(process.argv[1]));
+} catch {}
+for (const name of adapterNames.slice()) {
+  adapterNames.push(urlModule.pathToFileURL(name).href);
+}
+function customerStack(err) {
+  if (!(err && err.stack)) return err;
+  const lines = String(err.stack).split("\n");
+  const frame = (line) => line.trimStart().startsWith("at ");
+  const platform = (line) => line.includes("node:internal/") ||
+    adapterNames.some((name) => line.includes("(" + name + ":") || line.includes("at " + name + ":"));
+  const kept = lines.filter((line) => !frame(line) || !platform(line));
+  return kept.some(frame) ? kept.join("\n") : err.stack;
+}
 ` + NodeResources + `
 const postgresResources = installPostgresLifecycle();
 const handlerFile = path.join(path.dirname(process.argv[1]), "handler.js");
@@ -45,7 +67,7 @@ if (functionHooks.init) {
   try {
     await functionHooks.init({ signal: new AbortController().signal });
   } catch (err) {
-    console.error("gregale: function init failed: " + (err && err.stack ? err.stack : err));
+    console.error("gregale: function init failed: " + customerStack(err));
     throw err;
   }
 }
@@ -165,7 +187,7 @@ async function runFunctionHook(env, out) {
     try {
       await hook({ signal: out.controller.signal, hook: env.function_hook });
     } catch (err) {
-      console.error("gregale: function " + env.function_hook + " hook failed: " + (err && err.stack ? err.stack : err));
+      console.error("gregale: function " + env.function_hook + " hook failed: " + customerStack(err));
       emitWhole(out, 500, {}, Buffer.from("function hook failed"));
       return;
     }
@@ -283,10 +305,20 @@ async function handleOne(input, out) {
   let status = 200;
   let responseHeaders = {};
   let responseBody = value;
-  if (value && typeof value === "object" && !Buffer.isBuffer(value)) {
-    status = Number(value.statusCode ?? value.status ?? 200);
+  // An object's HTTP status (100-599, a number or digit string) is its
+  // status; any other status value is data, so { status: "ok" } answers 200
+  // where it sent status NaN. An object holding only a status and headers has
+  // an empty body; { status: 201, headers } was sent as its own JSON (prod
+  // hunt r32). An object without a body is otherwise sent whole, as before.
+  const isObject = value && typeof value === "object" && !Buffer.isBuffer(value) && !(value instanceof Uint8Array);
+  if (isObject) {
+    const code = [value.statusCode, value.status]
+      .map((item) => (Number.isInteger(item) ? item : typeof item === "string" && /^[0-9]{3}$/.test(item) ? Number(item) : undefined))
+      .find((item) => item !== undefined && item >= 100 && item <= 599);
+    status = code ?? 200;
     responseHeaders = value.headers || {};
     if (Object.prototype.hasOwnProperty.call(value, "body")) responseBody = value.body;
+    else if (code !== undefined && Object.keys(value).every((key) => ["status", "statusCode", "headers"].includes(key))) responseBody = "";
   }
   // A header value may be a list, one line per element (ADR-999).
   const normalizedHeaders = {};
@@ -299,8 +331,17 @@ async function handleOne(input, out) {
     return;
   }
   if (responseBody === undefined || responseBody === null) responseBody = "";
-  if (typeof responseBody !== "string" && !Buffer.isBuffer(responseBody)) {
+  // A body the adapter encodes says what it is; without this the runner's
+  // binary default made browsers download JSON (prod hunt r32).
+  let defaultType = "";
+  if (typeof responseBody !== "string" && !Buffer.isBuffer(responseBody) && !(responseBody instanceof Uint8Array)) {
     responseBody = JSON.stringify(responseBody);
+    defaultType = "application/json; charset=utf-8";
+  } else if (typeof responseBody === "string" && responseBody !== "") {
+    defaultType = "text/plain; charset=utf-8";
+  }
+  if (defaultType && !Object.keys(normalizedHeaders).some((key) => key.toLowerCase() === "content-type")) {
+    normalizedHeaders["content-type"] = defaultType;
   }
   emitWhole(out, status, normalizedHeaders, Buffer.from(responseBody));
   });
@@ -308,7 +349,7 @@ async function handleOne(input, out) {
     if (out.cancelled) return;
     const rawMessage = err instanceof Error ? err.message : String(err);
     const message = rawMessage.length > 256 ? rawMessage.slice(0, 256) + "…" : rawMessage;
-    console.error(err && err.stack ? err.stack : err);
+    console.error(customerStack(err));
     // The status is already sent once a stream has started; the error
     // frame tells the runner to abort the response.
     if (out.streaming) {

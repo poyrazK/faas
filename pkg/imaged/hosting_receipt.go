@@ -85,6 +85,9 @@ func hostingReceiptProfile(app state.App, dep state.Deployment) frameworkprofile
 // listener gate, so the public smoke still uses the conventional root path
 // instead of falling back to the nonexistent /healthz endpoint.
 func HostingHealthPath(app state.App, dep state.Deployment) string {
+	if runnerFunctionHealth(app, dep) {
+		return defaultHealthzPath
+	}
 	path := hostingReceiptProfile(app, dep).HealthPath
 	if path == "" && isDirectOCIImage(app, dep) {
 		return "/"
@@ -97,6 +100,10 @@ func HostingHealthPath(app state.App, dep state.Deployment) string {
 // connectivity.
 func VerifyHostingDeployment(ctx context.Context, verifier apihostingreceipt.Verifier, app state.App, dep state.Deployment) (apihostingreceipt.SmokeResult, error) {
 	if routeConnectivitySmoke(app, dep) {
+		if runnerFunctionHealth(app, dep) {
+			// The same lenient route check, on the runner's own path.
+			return verifier.VerifyDeploymentRouteAt(ctx, app.Slug, defaultHealthzPath, dep.ID)
+		}
 		return verifier.VerifyDeploymentRoute(ctx, app.Slug, dep.ID)
 	}
 	return verifier.VerifyDeployment(ctx, app.Slug, HostingHealthPath(app, dep), dep.ID)
@@ -181,6 +188,10 @@ func hostingSmokeFailure(smoke apihostingreceipt.SmokeResult) error {
 // by the gRPC health check inside the VM. The public smoke only has to show
 // that the route reaches the candidate.
 func routeConnectivitySmoke(app state.App, dep state.Deployment) bool {
+	if runnerFunctionHealth(app, dep) {
+		// Checked on the runner's /healthz (VerifyHostingDeployment).
+		return true
+	}
 	profile := hostingReceiptProfile(app, dep)
 	if isDirectOCIImage(app, dep) && profile.HealthPath == "" || profile.HealthDefaulted {
 		// TCP readiness: the app never promised an HTTP health route.
@@ -206,4 +217,28 @@ func grpcReadiness(dep state.Deployment) bool {
 	}
 	var hc api.DeploymentHealthcheck
 	return json.Unmarshal(dep.OverrideHealthcheck, &hc) == nil && hc.GRPC != nil
+}
+
+// runnerFunctionHealth reports a function whose deploy check must not reach
+// its handler. Every path of a function is its handler, so the route check's
+// GET / ran a queue consumer on a message nobody sent and a cron job outside
+// its schedule on every deploy (prod hunt r31). The runner answers /healthz
+// itself (guest/runners/*), which proves the same candidate is up and routed.
+// A function's own health path stays the customer's choice; workflow and gRPC
+// functions keep their checks.
+func runnerFunctionHealth(app state.App, dep state.Deployment) bool {
+	if app.Type != state.AppTypeFunction || isWorkflowFunction(app, dep) || strings.EqualFold(app.AppProtocol, "grpc") || grpcReadiness(dep) {
+		return false
+	}
+	// An image-kind function may serve /healthz itself rather than through a
+	// runner shim, and a health route the customer named (gregale.yaml or a
+	// deploy override) is theirs: both keep the strict HTTP health check.
+	if dep.Kind == state.DeploymentKindImage || len(dep.OverrideHealthcheck) > 0 {
+		return false
+	}
+	profile := hostingReceiptProfile(app, dep)
+	if profile.HealthFromConfig {
+		return false
+	}
+	return profile.HealthPath == "" || profile.HealthDefaulted || profile.HealthPath == defaultHealthzPath
 }

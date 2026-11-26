@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"sort"
@@ -29,6 +30,8 @@ type AlertChannelStandDown struct {
 	RuleName, RuleMetric, Reason string
 	QueuedAt                     time.Time
 	Attempts                     int
+	PagerDutyTargetSealed        []byte
+	PagerDutyRegion              string
 }
 
 // AlertChannelStandDownStore queues and drains those notices. Optional on
@@ -89,6 +92,7 @@ func (s *PgStore) DueAlertChannelStandDowns(ctx context.Context, now time.Time, 
 			RuleID: row.RuleID, ChannelID: row.ChannelID, AccountID: row.AccountID, AppID: row.AppID,
 			RuleName: row.RuleName, RuleMetric: row.RuleMetric, Reason: row.Reason,
 			QueuedAt: row.QueuedAt.Time.UTC(), Attempts: int(row.Attempts),
+			PagerDutyTargetSealed: row.PagerdutyTargetSealed, PagerDutyRegion: row.PagerdutyRegion,
 		})
 	}
 	return out, nil
@@ -141,7 +145,10 @@ func (s *PgStore) ListPagerDutyObservationStandDownChannels(ctx context.Context,
 	}
 	out := make([]NotificationChannel, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, channelFromRow(row))
+		channel := channelFromRow(row.NotificationChannel)
+		channel.TargetSealed = row.StandDownTargetSealed
+		channel.PagerDutyRegion = row.StandDownRegion
+		out = append(out, channel)
 	}
 	return out, nil
 }
@@ -217,34 +224,39 @@ func (m *MemStore) queueAlertChannelStandDownsLocked(rule AlertRule, reason stri
 		}
 	}
 	m.clearAlertChannelResolveRetriesLocked(func(k alertChannelRetryKey) bool { return k.rule == rule.ID })
-	live := map[string]bool{}
+	live := make(map[string]NotificationChannel)
 	for _, c := range m.notificationChannels[rule.AccountID] {
-		live[c.ID] = true
+		live[c.ID] = c
 	}
 	if m.alertChannelStandDowns == nil {
 		m.alertChannelStandDowns = map[alertChannelRetryKey]memStandDown{}
 	}
 	var queued int64
 	for channelID := range owed {
+		ch, exists := live[channelID]
+		if !exists {
+			continue
+		}
 		key := alertChannelRetryKey{rule.ID, channelID}
-		if prior, exists := m.alertChannelStandDowns[key]; exists {
-			if observationTransition {
-				prior.observationTransition = true
-				m.alertChannelStandDowns[key] = prior
+		notice, exists := m.alertChannelStandDowns[key]
+		if !exists {
+			notice = memStandDown{
+				AlertChannelStandDown: AlertChannelStandDown{
+					RuleID: rule.ID, ChannelID: channelID, AccountID: rule.AccountID, AppID: rule.AppID,
+					RuleName: rule.Name, RuleMetric: string(rule.Metric), Reason: reason, QueuedAt: at,
+				},
+				nextAttemptAt: at,
 			}
-			continue
+			queued++
 		}
-		if !live[channelID] {
-			continue
+		if observationTransition && !notice.observationTransition {
+			notice.observationTransition = true
+			if ch.Kind == "pagerduty" {
+				notice.PagerDutyTargetSealed = bytes.Clone(ch.TargetSealed)
+				notice.PagerDutyRegion = ch.PagerDutyRegion
+			}
 		}
-		m.alertChannelStandDowns[key] = memStandDown{
-			AlertChannelStandDown: AlertChannelStandDown{
-				RuleID: rule.ID, ChannelID: channelID, AccountID: rule.AccountID, AppID: rule.AppID,
-				RuleName: rule.Name, RuleMetric: string(rule.Metric), Reason: reason, QueuedAt: at,
-			},
-			nextAttemptAt: at, observationTransition: observationTransition,
-		}
-		queued++
+		m.alertChannelStandDowns[key] = notice
 	}
 	return queued
 }
@@ -331,7 +343,12 @@ func (m *MemStore) ListPagerDutyObservationStandDownChannels(_ context.Context, 
 func (m *MemStore) pagerDutyObservationStandDownChannelsLocked(rule AlertRule) []NotificationChannel {
 	var channels []NotificationChannel
 	for _, ch := range m.notificationChannels[rule.AccountID] {
-		if ch.Kind == "pagerduty" && m.alertChannelStandDowns[alertChannelRetryKey{rule.ID, ch.ID}].observationTransition {
+		notice := m.alertChannelStandDowns[alertChannelRetryKey{rule.ID, ch.ID}]
+		if ch.Kind == "pagerduty" && notice.observationTransition {
+			if notice.PagerDutyTargetSealed != nil {
+				ch.TargetSealed = bytes.Clone(notice.PagerDutyTargetSealed)
+				ch.PagerDutyRegion = notice.PagerDutyRegion
+			}
 			channels = append(channels, ch)
 		}
 	}

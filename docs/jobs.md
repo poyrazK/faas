@@ -5,6 +5,8 @@ workflows: [code-first](code-workflows.md) (ordinary async functions) or
 [declarative](event-driven.md#durable-workflow-waits) (steps in
 `gregale.yaml`).
 
+## How jobs run
+
 Jobs are bounded run-to-completion workloads. Create a job from an OCI image
 reference, then dispatch one or more tasks; each run retains task status and
 logs ([log retention](#log-retention)). A newly created or image-updated job is `pending` until Gregale has
@@ -30,24 +32,45 @@ The first execution on a host can take longer while the image fills that
 host's cache. Job tasks use their own timeout during this phase, not the
 shorter app cold-boot limit.
 
+## Common commands
+
+Each command is explained in the sections below.
+
 ```bash
+# Create a job, then run it as 10 tasks, 3 at a time
 gregale job create nightly --image registry.example/nightly@sha256:DIGEST --timeout 900 --retries 2
 gregale job run nightly --tasks 10 --parallelism 3
+
+# Replace the command's arguments for one run
 gregale job run nightly --tasks 10 --parallelism 3 --arg=--dataset --arg=2026-09
+
+# One task per input, inline or from a manifest in object storage
 gregale job run nightly --parallelism 2 --input=shard-a=s3://my-bucket/a --input=shard-b=s3://my-bucket/b
 gregale job run nightly --parallelism 2 --input-manifest-uri=obj://APP_ID/BUCKET_ID/inputs.json --input-manifest-sha256=sha256:DIGEST
+
+# Start any time inside a window, when capacity is free
 gregale job run nightly --tasks 20 --flexible --eligible-at=2026-10-01T00:00:00Z --latest-start-at=2026-10-01T04:00:00Z
+
+# Run on a schedule, change it, or stop scheduling
 gregale job create nightly-export --image registry.example/exporter:v1 --schedule "0 3 * * *" --timezone Europe/Istanbul
 gregale job update nightly-export --schedule "30 3 * * *"
 gregale job update nightly-export --unschedule
+
+# Inspect runs, tasks and attempts
 gregale job runs nightly
 gregale job tasks nightly RUN_ID
 gregale job attempts nightly RUN_ID 0
+
+# Retry one failed task, or rerun every failed input as a new run
 gregale job retry nightly RUN_ID 0
 gregale job replay nightly RUN_ID
+
+# Get a task's artifact and output
 gregale job artifact get nightly RUN_ID 0 result
 gregale job logs nightly RUN_ID 0 [--max-bytes N]
 ```
+
+## Schedules
 
 `--schedule` makes a job recurring: Gregale creates one single-task run at
 each matching cron boundary, using UTC unless `--timezone` names an IANA
@@ -55,6 +78,7 @@ timezone. A scheduled run snapshots the job's image, command, environment,
 retry/resource settings, and failure rules when it fires. Pausing a job stops
 new scheduled runs without cancelling existing runs. Editing the schedule or
 schedule policy starts a new schedule revision.
+`--unschedule` returns the job to batch-only operation.
 
 Use `--schedule-policy` to set the per-schedule overlap, first-start deadline,
 and recovery behavior for recurring Jobs and deployment-command Crons. For
@@ -65,6 +89,8 @@ gregale job create customer-sync --image registry.example/sync:v1 \
   --schedule '*/5 * * * *' --timezone UTC \
   --schedule-policy '{"version":1,"overlap":"skip","start_deadline_seconds":120,"missed_runs":"skip"}'
 ```
+
+### Overlap, start deadline and missed runs
 
 `overlap` is scoped to occurrences from this job. `allow` admits another run,
 `skip` durably records the nominal time and skips it while an earlier scheduled
@@ -85,6 +111,12 @@ configured code mapping and does not infer business retry safety from HTTP
 status. A missing completion receipt follows `uncertain_outcome`, and an
 explicit retry uses the account plan's finite durable invocation retry budget.
 Occurrence history includes the last `outcome_code` and `work_decision`.
+
+## Failure rules and outcome codes
+
+Failure rules classify how a task or Cron occurrence ended (a failed exit, or a mapped outcome code even when the command exits zero) and decide whether to retry it, fail it for good, or hold it when the outcome is unknown. They apply to Jobs, command Crons and HTTP request Crons.
+
+### HTTP request Crons
 
 For example, retry an explicitly reported transient result, stop on invalid
 customer data, and hold a request whose completion receipt was lost:
@@ -112,6 +144,8 @@ Configure these rules with `gregale cron create --failure-rules JSON` or
 `gregale cron update --failure-rules JSON`. Exit-code matchers remain
 specific to command Crons and Jobs.
 
+### Command Crons
+
 Command Crons use one task per occurrence and select the app's live deployment
 when the occurrence is admitted. Their result manifest can also carry a
 structured `outcome_code`, which is evaluated with the same explicit failure
@@ -135,6 +169,8 @@ budget is per occurrence. Set the retry budget and classifier on the Cron:
 gregale cron update CRON_ID --retry-max 3 --failure-rules \
   '{"version":1,"rules":[{"exit_codes":[65],"action":"fail_partition"}],"unmatched_failure":"retry","uncertain_outcome":"hold"}'
 ```
+
+### Job failure rules
 
 Retry classification can be explicit and run-scoped. Define exit-code
 mappings or structured application outcome codes, plus the action for
@@ -171,6 +207,8 @@ printf '%s\n' '{"version":1,"artifacts":[],"outcome_code":"invalid_record"}' > "
 mv "$tmp" "$GREGALE_OUTPUT_MANIFEST_PATH"
 ```
 
+### Unmapped and uncertain outcomes
+
 An unmapped outcome code does not change a successful exit; on a failed exit,
 the exit-code rule or `unmatched_failure` decides. HTTP status matchers are not
 available on the scheduled-work execution path.
@@ -186,12 +224,14 @@ creates work only for unsuccessful partitions. Tasks still need idempotent
 side effects because a lost completion receipt cannot establish whether the
 external operation committed.
 
-`--unschedule` returns the job to batch-only operation.
+## Tasks and parallelism
 
 `--tasks` is the total queued batch size; it may exceed `--parallelism` and
 the account live-job limit. Only claimed tasks create VMs. Each claim checks
 the run parallelism and account live limit atomically across scheduler replicas;
 remaining tasks stay queued until capacity opens.
+
+### Arguments and task environment
 
 `--arg` may be repeated to replace the job command's arguments for one run.
 The executable stays the same. The API accepts `arguments: []` to remove all
@@ -208,6 +248,8 @@ Run environment overrides must use valid customer variable names and fit the
 account plan's variable count and value size limits; the `GREGALE_` prefix is
 reserved for platform identity.
 
+### One task per input
+
 An ordered `inputs` array in `POST /v1/jobs/{name}/runs`, or repeated CLI
 `--input ID=REF`, creates one task per entry. The stable zero-based task index
 and unique `input_id` are retained on the task record across retries.
@@ -217,6 +259,8 @@ array; numeric fan-out runs use version `0`.
 the guest. Gregale treats the reference as an opaque string; the image must
 have its own access to the referenced data. Numeric `--tasks` runs remain
 available when input binding is unnecessary.
+
+### Input manifests
 
 For larger input sets, the runs API accepts `input_manifest_uri` and
 `input_manifest_sha256` instead of an inline `inputs` array. The URI must be
@@ -229,6 +273,8 @@ For the CLI digest, use `sha256:` followed by the lowercase hex SHA-256 of the
 manifest file's exact bytes. `--input-manifest-uri` and
 `--input-manifest-sha256` must be supplied together and cannot be combined
 with `--tasks` or inline `--input` values.
+
+## Flexible start windows
 
 `--flexible` accepts a start window of at most 24 hours. `--eligible-at`
 defaults to the time the run is accepted; `--latest-start-at` is required.
@@ -243,10 +289,14 @@ use the same pricing as standard runs. Scheduler metrics record starts,
 deferrals, expiry, and queue duration; usage minutes retain run ID and
 execution class so billing can be reviewed before any rate change.
 
+## Continue or fail fast
+
 Runs use `continue` failure policy by default: other eligible tasks continue
 after one task exhausts its retries. `--fail-fast` cancels tasks that have not
 started once a task fails permanently; tasks already running may finish. The
 run and task records retain each successful or failed input outcome.
+
+## Results and artifacts
 
 For structured results, the task writes a JSON manifest to the path in
 `GREGALE_OUTPUT_MANIFEST_PATH` before exiting:
@@ -274,10 +324,14 @@ Missing objects return 404; an object whose current bytes disagree with the
 manifest returns 422.
 External `s3://` and `gs://` artifacts remain customer-managed references.
 
+## Editing a job during a run
+
 Job definitions cannot be edited or deleted while a run has queued or claimed
 tasks. This prevents customer edits from changing the image reference, command,
 environment, resource limits, or retry policy mid-run. Cancel the run or wait
 for it to finish before updating the job.
+
+## Retries and replay
 
 Keep tasks idempotent and write checkpoints outside the VM if a retry must
 resume work. Set a timeout and retry budget that match the downstream service,
@@ -290,10 +344,15 @@ outcome of each completed attempt; its output follows the
 inputs from a terminal run, call
 `POST /v1/jobs/{name}/runs/{id}/replay-failed`. This creates a linked standard
 run with a fresh attempt budget. Each replay task includes `source_task_index`
-so its original input can be traced. Replay requires the current ready job
+so its original input can be traced. Replay runs the source run's captured command and settings, not
+the job's current ones: after `gregale job update --command` fixes a failing
+command, start a new run with `gregale job run`. `gregale job replay --dry-run`
+shows the command a replay runs. Replay requires the current ready job
 image to match the source image reference and resolved digest. A legacy run
 without a captured digest cannot be replayed. Cancel a run
 when its work is no longer useful.
+
+### Boot failures and expired leases
 
 A VM boot failure before your command starts also consumes one configured
 retry. The next attempt waits for the same capped backoff; when retries are
@@ -303,6 +362,8 @@ fails after its first unsuccessful boot instead of creating VMs indefinitely.
 An expired task lease follows the same bounded retry policy and becomes a
 dead-lettered timeout if no attempts remain; it is never counted as a
 customer cancellation.
+
+## Waiting from scripts
 
 For scripts, `gregale --json job wait JOB RUN_ID` and `job run JOB --tasks 1
 --wait` preserve their run receipts on stdout and report local wait failures as
@@ -318,6 +379,8 @@ the image-wait phase and reports `submitted: false`; following its commands
 only reads readiness and never submits the deferred run. Compare the recorded
 image selection with the current Job before starting a fresh readiness wait.
 See [image-readiness recovery](cli-config.md#job-image-readiness-recovery).
+
+## Task output
 
 `jobs logs` returns a 64 KiB tail by default. Pass `--max-bytes N` (up to
 1 MiB) to retrieve a larger tail when the response is truncated. Pass

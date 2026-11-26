@@ -35,7 +35,7 @@ A rule applies to a request when every selector it sets matches.
 | `match_headers` | Up to 10 request headers that must be present with an exact value. Names compare case-insensitively; any value of a repeated header can match. |
 | `match` | An optional condition over more request fields, ANDed with the selectors above. |
 
-Your app is always served at its own `<slug>.gregale.dev` address, and at any
+Your app is always served at its own `<slug>.gregale.app` address, and at any
 companion hostnames, as well as at its custom domains. A rule that protects
 the app (`jwt`, `ip`, `geo`, `waf`, `challenge` and the other gates) should
 use `@app`: one that names a single host leaves the app's other hosts open,

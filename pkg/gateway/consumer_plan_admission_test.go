@@ -15,6 +15,7 @@ type fakeConsumerPlanStore struct {
 	decision    ConsumerPlanDecision
 	policyCalls int
 	admitUnits  []int64
+	admitRoutes []string
 }
 
 func (f *fakeConsumerPlanStore) ConsumerPlanPolicy(context.Context, string, string, string) (ConsumerPlanPolicy, error) {
@@ -22,8 +23,9 @@ func (f *fakeConsumerPlanStore) ConsumerPlanPolicy(context.Context, string, stri
 	return f.policy, f.policyErr
 }
 
-func (f *fakeConsumerPlanStore) AdmitConsumerPlanRequest(_ context.Context, _, _ string, _ ConsumerPlanPolicy, units int64) (ConsumerPlanDecision, error) {
+func (f *fakeConsumerPlanStore) AdmitConsumerPlanRequest(_ context.Context, _, _ string, _ ConsumerPlanPolicy, route string, units int64) (ConsumerPlanDecision, error) {
 	f.admitUnits = append(f.admitUnits, units)
+	f.admitRoutes = append(f.admitRoutes, route)
 	return f.decision, nil
 }
 

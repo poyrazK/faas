@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 const apiConsumerCreditGrantCols = `id, account_id, app_id, consumer_id, currency, amount_millicents,
@@ -46,16 +47,19 @@ func (s *PgStore) CreateAPIConsumerCreditGrant(ctx context.Context, g APIConsume
 		return APIConsumerCreditGrant{}, fmt.Errorf("begin credit grant: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var open int
-	err = tx.QueryRow(ctx, `select (select count(*) from api_consumer_credit_grants
-			where consumer_id = c.id and remaining_millicents > 0)
-		from api_consumers c where c.id = $1::uuid and c.account_id = $2::uuid and c.app_id = $3::uuid for update`,
-		g.ConsumerID, g.AccountID, g.AppID).Scan(&open)
+	q := sqlc.New()
+	consumer, err := q.LockAPIConsumerCreditBuyer(ctx, tx, sqlc.LockAPIConsumerCreditBuyerParams{
+		AccountID: uuidToPgtype(g.AccountID), AppID: uuidToPgtype(g.AppID), ID: uuidToPgtype(g.ConsumerID),
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return APIConsumerCreditGrant{}, ErrNotFound
 	}
 	if err != nil {
 		return APIConsumerCreditGrant{}, fmt.Errorf("lock consumer for credit grant: %w", err)
+	}
+	open, err := q.CountReservedAPIConsumerCreditGrants(ctx, tx, consumer)
+	if err != nil {
+		return APIConsumerCreditGrant{}, fmt.Errorf("count reserved consumer credit grants: %w", err)
 	}
 	if open >= api.ConsumerCreditOpenGrantsMax {
 		return APIConsumerCreditGrant{}, ErrConflict

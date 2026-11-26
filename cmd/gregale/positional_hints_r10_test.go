@@ -18,6 +18,17 @@ func TestPositionalMistakesNameTheWorkingForm(t *testing.T) {
 		{"cron runs with app", func() int {
 			return main.CmdCronsRuns([]string{"my-app", "5a470eed-f718-48a2-b3fa-1ad6a6b10c18"})
 		}, "gregale cron runs 5a470eed-f718-48a2-b3fa-1ad6a6b10c18"},
+		// Prod hunt r31: `cron runs APP` printed only the usage line and
+		// `--app` alone answered "--app requires --interactive".
+		{"cron runs app only", func() int {
+			return main.CmdCronsRuns([]string{"my-app"})
+		}, "gregale cron list my-app"},
+		{"cron runs short id is not an app", func() int {
+			return main.CmdCronsRuns([]string{"5a470eed"})
+		}, "usage: gregale cron runs <id>"},
+		{"cron runs --app without id", func() int {
+			return main.CmdCronsRuns([]string{"--app", "my-app"})
+		}, "gregale cron list my-app"},
 		{"domain add app first", func() int {
 			return main.Run([]string{"domain", "add", "my-app", "shop.example.com"})
 		}, "gregale domain create shop.example.com --app my-app"},

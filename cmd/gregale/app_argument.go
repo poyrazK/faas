@@ -81,10 +81,26 @@ func appArgumentPosition(args []string, target string) (int, bool) {
 	if at >= len(args) || !takesAppArgument(flags, positionals, children, target) {
 		return 0, false
 	}
-	if token := args[at]; strings.HasPrefix(token, "-") || !api.ValidAppSlug(token) {
+	if token := args[at]; strings.HasPrefix(token, "-") || !api.ValidAppSlug(token) || isUUIDArgument(token) && namesTarget(args[at+1:], target) {
 		return 0, false
 	}
 	return at, true
+}
+
+// namesTarget reports whether rest already passes --<target>. A UUID before
+// it is then the command's id, not a second app: `release traffic promote
+// <id> --app web` became `--app <id> --app web` and was refused as two apps
+// (prod hunt r36). Without --app a UUID still names the app by its ID.
+func namesTarget(rest []string, target string) bool {
+	for i := range rest {
+		if rest[i] == "--" {
+			return false
+		}
+		if _, ok := targetFlagValue(rest, i, target); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // takesAppArgument reports whether a leaf names its app only with --app.
@@ -163,32 +179,133 @@ func targetFlagAsArgument(args []string, flag string) ([]string, error) {
 // appPositionalPosition reports where the app argument sits for args when the
 // addressed leaf takes its app only as its first positional.
 func appPositionalPosition(args []string, target string) (int, bool) {
+	at, _, ok := appPositionalLeaf(args, target)
+	return at, ok
+}
+
+// appPositionalLeaf is appPositionalPosition that also returns the addressed
+// leaf, so a caller can read its flags and positionals.
+func appPositionalLeaf(args []string, target string) (int, cliSub, bool) {
 	if !appArgumentEnabled || len(args) < 2 {
-		return 0, false
+		return 0, cliSub{}, false
 	}
 	command, ok := lookupCliCommand(args[0])
 	if !ok || command.SubcommandsAfterPositionals {
-		return 0, false
+		return 0, cliSub{}, false
 	}
-	flags, positionals, children := command.Flags, command.Positionals, command.Subcommands
+	leaf := cliSub{Flags: command.Flags, Positionals: command.Positionals, Subcommands: command.Subcommands}
 	at := 1
-	for at < len(args) && len(children) > 0 {
-		sub, ok := findCliSubcommand(children, args[at])
+	for at < len(args) && len(leaf.Subcommands) > 0 {
+		sub, ok := findCliSubcommand(leaf.Subcommands, args[at])
 		if !ok || sub.SubcommandsAfterPositionals {
-			return 0, false
+			return 0, cliSub{}, false
 		}
-		flags, positionals, children = sub.Flags, sub.Positionals, sub.Subcommands
+		leaf = sub
 		at++
 	}
-	if len(children) > 0 || len(positionals) == 0 || !targetPositional(command.Name, positionals[0], target) {
-		return 0, false
+	if len(leaf.Subcommands) > 0 || len(leaf.Positionals) == 0 || !targetPositional(command.Name, leaf.Positionals[0], target) {
+		return 0, cliSub{}, false
 	}
-	for _, flag := range flags {
+	for _, flag := range leaf.Flags {
 		if flag.Name == target {
-			return 0, false
+			return 0, cliSub{}, false
 		}
 	}
-	return at, true
+	return at, leaf, true
+}
+
+// linkedAppAsArgument fills a linked checkout's app into a command whose
+// first positional is the app when that is the one positional missing: a
+// command run in the app's checkout no longer needs the app spelled out, as
+// `gregale logs` and `gregale rollback` already did. Prod hunts r34–r51 found
+// command after command printing its usage there (queue, redis, realtime,
+// api consumer); this rule covers every such leaf in the manifest.
+//
+// It is deliberately narrow, like withLinkedApp: the positionals given must
+// all be ids (UUIDs, which no app slug is), so a lone word is never shifted
+// behind a guessed app; every flag must be one the leaf declares, so a flag
+// value is never mistaken for a positional; and an optional or variadic
+// positional list is left alone.
+func linkedAppAsArgument(args []string) []string {
+	at, leaf, ok := appPositionalLeaf(args, "app")
+	if !ok {
+		return args
+	}
+	required := 0
+	for _, p := range leaf.Positionals {
+		if strings.Contains(p, "...") {
+			return args
+		}
+		if !strings.HasPrefix(p, "[") {
+			required++
+		}
+	}
+	if required == 0 || strings.HasPrefix(leaf.Positionals[0], "[") {
+		return args
+	}
+	// With nothing named at all, a destructive verb would act on the linked
+	// app unasked (`app protection off` deleted its SLOs and gates; code
+	// review of r51): it keeps printing usage. A UUID the user typed names
+	// the target, so the app is only its context there.
+	if required == 1 && destructiveLeafVerbs[leaf.Name] {
+		return args
+	}
+	given, ok := leafPositionalArguments(args[at:], leaf.Flags)
+	if !ok || len(given) != required-1 {
+		return args
+	}
+	for _, arg := range given {
+		if !isUUIDArgument(arg) {
+			return args
+		}
+	}
+	app := linkedAppForMissingSlug()
+	if app == "" {
+		return args
+	}
+	return append(append(append([]string{}, args[:at]...), app), args[at:]...)
+}
+
+// leafPositionalArguments returns the positional arguments in rest, skipping
+// the leaf's flags and their values. ok is false when rest holds a flag the
+// leaf does not declare, help, or a "--": then which tokens are positionals
+// is not known.
+func leafPositionalArguments(rest []string, flags []cliFlag) ([]string, bool) {
+	var positional []string
+	for i := 0; i < len(rest); i++ {
+		arg := rest[i]
+		if arg == "--" || arg == "-h" || arg == "--help" || arg == "-help" {
+			return nil, false
+		}
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			positional = append(positional, arg)
+			continue
+		}
+		name, _, hasValue := strings.Cut(strings.TrimLeft(arg, "-"), "=")
+		flag, known := leafFlag(flags, name)
+		if !known {
+			return nil, false
+		}
+		if !hasValue && !cliFlagIsBool(flag) {
+			i++
+		}
+	}
+	return positional, true
+}
+
+// leafFlag finds a leaf flag by its name or short name.
+func leafFlag(flags []cliFlag, name string) (cliFlag, bool) {
+	for _, flag := range flags {
+		if flag.Name == name || (flag.ShortName != "" && flag.ShortName == name) {
+			return flag, true
+		}
+	}
+	return cliFlag{}, false
+}
+
+// cliFlagIsBool reports a switch that takes no value (see cliFlag.Value).
+func cliFlagIsBool(flag cliFlag) bool {
+	return flag.Bool || (flag.Value == "" && !flag.Req && len(flag.ClosedSet) == 0)
 }
 
 // targetPositional reports whether a leaf's first positional names the
@@ -213,6 +330,7 @@ func targetPositional(command, placeholder, target string) bool {
 var appSlugCommands = map[string]bool{
 	"github": true, "cors": true, "traffic": true, "debug": true, "rollback": true,
 	"queue": true, "realtime": true, "dlq": true, "bucket": true, "logs": true,
+	"consumers": true,
 }
 
 // appFlagValue reads an --app flag at rest[i] in any spelling the flag
@@ -255,4 +373,13 @@ func targetFlagValue(rest []string, i int, target string) (string, bool) {
 func isUUIDArgument(arg string) bool {
 	_, err := uuid.Parse(arg)
 	return err == nil && len(arg) == 36
+}
+
+// destructiveLeafVerbs are leaf names that remove or reset what the app has;
+// linkedAppAsArgument never fills the app into one that names nothing.
+var destructiveLeafVerbs = map[string]bool{
+	"delete": true, "rm": true, "remove": true, "destroy": true, "purge": true,
+	"off": true, "disable": true, "reset": true, "revoke": true, "unbind": true,
+	"detach": true, "clear": true, "drop": true, "prune": true, "wipe": true,
+	"rollback": true, "restore": true, "replay-retryable": true,
 }

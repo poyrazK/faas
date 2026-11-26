@@ -11,7 +11,9 @@ import (
 // 24-hour window return the same customer.
 func (c *Client) CreateCustomer(ctx context.Context, key, idempotencyKey, email, name string, metadata map[string]string) (string, error) {
 	form := url.Values{}
-	form.Set("email", email)
+	if email != "" {
+		form.Set("email", email)
+	}
 	form.Set("name", name)
 	for k, v := range metadata {
 		form.Set("metadata["+k+"]", v)

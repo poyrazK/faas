@@ -25,13 +25,15 @@ func (h *Handler) applyMCPConsumerKeyPolicy(w http.ResponseWriter, r *http.Reque
 	if !api.MCPHasScopes(p.Scopes, granted) {
 		return mcpPolicyReject(w, http.StatusForbidden, p, "Required endpoint scope is missing")
 	}
-	status, reason, tool := mcpPolicyRequest(r, p, granted)
+	status, reason, call := mcpPolicyRequest(r, p, granted)
 	if status != 0 {
 		return mcpPolicyReject(w, status, p, reason)
 	}
-	if h.mcpToolLimited(w, r, app, rule, tool, "consumer\x00"+identity.ID) {
+	if h.mcpToolLimited(w, r, app, rule, call.tool(), "consumer\x00"+identity.ID) {
 		return true
 	}
+	h.applyMCPBilling(r, app, p, call)
+	h.markMCPRequest(r, app)
 	r.Header.Set(api.MCPGatewayAuthorizedHeader, rule.ID)
 	h.jwtEmit(r.Context(), "jwt", "match", rule.ID, r.Host, nil, nil)
 	return false

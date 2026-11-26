@@ -18,10 +18,17 @@ import (
 // releases on-demand captures to an account (ADR-1155, ADR-20261023115741).
 const profileCapturesCapability = "profile-captures"
 
+// verificationContractsCapability releases verification contracts to an
+// account (ADR-20261122220000).
+const verificationContractsCapability = "verification-contracts"
+
 // platformReleases are imaged's per-account platform-flag decisions.
 type platformReleases struct {
 	profileCaptures    func(platformflags.Subject) bool
 	postgresPoolSizing func(platformflags.Subject) bool
+	// verificationContracts releases gregale.verify.yaml checks
+	// (ADR-20261122220000).
+	verificationContracts func(platformflags.Subject) bool
 }
 
 // startPlatformReleases keeps the platform flags current through the
@@ -54,6 +61,9 @@ func startPlatformReleases(ctx context.Context, getenv func(string) string, stor
 		},
 		postgresPoolSizing: func(subject platformflags.Subject) bool {
 			return flags.Enabled(platformflags.PostgresPoolSizing, subject)
+		},
+		verificationContracts: func(subject platformflags.Subject) bool {
+			return decider.Enabled(verificationContractsCapability, subject)
 		},
 	}, nil
 }

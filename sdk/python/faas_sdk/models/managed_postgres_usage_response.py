@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -19,11 +19,19 @@ from ..models.managed_postgres_usage_response_guardrail_state import (
     ManagedPostgresUsageResponseGuardrailState,
     check_managed_postgres_usage_response_guardrail_state,
 )
+from ..models.managed_postgres_usage_response_history_state import (
+    ManagedPostgresUsageResponseHistoryState,
+    check_managed_postgres_usage_response_history_state,
+)
 from ..models.managed_postgres_usage_response_hold import (
     ManagedPostgresUsageResponseHold,
     check_managed_postgres_usage_response_hold,
 )
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.managed_postgres_database_usage import ManagedPostgresDatabaseUsage
+
 
 T = TypeVar("T", bound="ManagedPostgresUsageResponse")
 
@@ -52,6 +60,10 @@ class ManagedPostgresUsageResponse:
     included_history_bytes: int | Unset = UNSET
     """Restore history and snapshot storage the plan includes, held for the whole month. Restore history uses it
     first. With overage on, history past it is billed per GB-month."""
+    history_state: ManagedPostgresUsageResponseHistoryState | Unset = UNSET
+    """limited while restore history and snapshots passed twice the included history this month with overage off:
+    the databases keep a 24-hour restore window until the 1st of next month, or until overage is turned on. Absent
+    while the history limit is not enforced."""
     compute_allowance_unit_seconds: int | Unset = UNSET
     """The plan's monthly compute allowance in compute-unit seconds, pooled across the account's databases."""
     compute_ceiling_unit_seconds: int | Unset = UNSET
@@ -79,6 +91,9 @@ class ManagedPostgresUsageResponse:
     hold: ManagedPostgresUsageResponseHold | Unset = UNSET
     """Set while every database of the account is held, with the same reason each database reports. Egress holds
     one database at a time, so it is reported on that database, not here."""
+    databases: list[ManagedPostgresDatabaseUsage] | Unset = UNSET
+    """The month's compute by database, most first, with each one's recorded starts and awake time; omitted when it
+    could not be read."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -120,6 +135,10 @@ class ManagedPostgresUsageResponse:
 
         included_history_bytes = self.included_history_bytes
 
+        history_state: str | Unset = UNSET
+        if not isinstance(self.history_state, Unset):
+            history_state = self.history_state
+
         compute_allowance_unit_seconds = self.compute_allowance_unit_seconds
 
         compute_ceiling_unit_seconds = self.compute_ceiling_unit_seconds
@@ -146,6 +165,13 @@ class ManagedPostgresUsageResponse:
         if not isinstance(self.hold, Unset):
             hold = self.hold
 
+        databases: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.databases, Unset):
+            databases = []
+            for databases_item_data in self.databases:
+                databases_item = databases_item_data.to_dict()
+                databases.append(databases_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -171,6 +197,8 @@ class ManagedPostgresUsageResponse:
             field_dict["snapshot_byte_seconds"] = snapshot_byte_seconds
         if included_history_bytes is not UNSET:
             field_dict["included_history_bytes"] = included_history_bytes
+        if history_state is not UNSET:
+            field_dict["history_state"] = history_state
         if compute_allowance_unit_seconds is not UNSET:
             field_dict["compute_allowance_unit_seconds"] = compute_allowance_unit_seconds
         if compute_ceiling_unit_seconds is not UNSET:
@@ -189,11 +217,15 @@ class ManagedPostgresUsageResponse:
             field_dict["egress_state"] = egress_state
         if hold is not UNSET:
             field_dict["hold"] = hold
+        if databases is not UNSET:
+            field_dict["databases"] = databases
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.managed_postgres_database_usage import ManagedPostgresDatabaseUsage
+
         d = dict(src_dict)
         period_start = datetime.datetime.fromisoformat(d.pop("period_start"))
 
@@ -242,6 +274,13 @@ class ManagedPostgresUsageResponse:
 
         included_history_bytes = d.pop("included_history_bytes", UNSET)
 
+        _history_state = d.pop("history_state", UNSET)
+        history_state: ManagedPostgresUsageResponseHistoryState | Unset
+        if isinstance(_history_state, Unset):
+            history_state = UNSET
+        else:
+            history_state = check_managed_postgres_usage_response_history_state(_history_state)
+
         compute_allowance_unit_seconds = d.pop("compute_allowance_unit_seconds", UNSET)
 
         compute_ceiling_unit_seconds = d.pop("compute_ceiling_unit_seconds", UNSET)
@@ -280,6 +319,15 @@ class ManagedPostgresUsageResponse:
         else:
             hold = check_managed_postgres_usage_response_hold(_hold)
 
+        _databases = d.pop("databases", UNSET)
+        databases: list[ManagedPostgresDatabaseUsage] | Unset = UNSET
+        if _databases is not UNSET:
+            databases = []
+            for databases_item_data in _databases:
+                databases_item = ManagedPostgresDatabaseUsage.from_dict(databases_item_data)
+
+                databases.append(databases_item)
+
         managed_postgres_usage_response = cls(
             period_start=period_start,
             policy_enabled=policy_enabled,
@@ -297,6 +345,7 @@ class ManagedPostgresUsageResponse:
             observed_at=observed_at,
             snapshot_byte_seconds=snapshot_byte_seconds,
             included_history_bytes=included_history_bytes,
+            history_state=history_state,
             compute_allowance_unit_seconds=compute_allowance_unit_seconds,
             compute_ceiling_unit_seconds=compute_ceiling_unit_seconds,
             compute_cap_state=compute_cap_state,
@@ -306,6 +355,7 @@ class ManagedPostgresUsageResponse:
             app_egress_bytes=app_egress_bytes,
             egress_state=egress_state,
             hold=hold,
+            databases=databases,
         )
 
         managed_postgres_usage_response.additional_properties = d

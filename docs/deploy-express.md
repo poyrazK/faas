@@ -60,6 +60,9 @@ With no declaration the app builds on Node 24. `"engines": {"node": "22"}` or
 
 ## Deploy
 
+From the project root, preview what Gregale detects, then deploy the
+Express API:
+
 ```bash
 gregale deploy --dry-run
 gregale deploy --name my-api
@@ -79,7 +82,7 @@ gregale logs my-api
 gregale env set --app my-api SESSION_SECRET="$SESSION_SECRET"
 ```
 
-Values arrive in `process.env`. See [Delivered secrets](secrets.md).
+Values arrive in `process.env`. See [Secrets](secrets.md).
 
 ## Add PostgreSQL
 
@@ -110,3 +113,12 @@ release: npm run migrate
 
 The migration script should connect with `MIGRATION_DATABASE_URL`, which only
 the release command receives. See [Managed PostgreSQL](postgres.md#connect-an-app).
+
+## Example repository
+
+[gregale-dev/node-api-worker](https://github.com/gregale-dev/node-api-worker)
+is an Express API and a private worker with a durable job queue in
+PostgreSQL, deployed as one project from its Compose file with
+`gregale deploy --project`. The API wakes the worker only when there's work,
+so both stop when idle. See [Multi-service apps](multi-service-apps.md) for
+how the Compose file maps to Gregale.

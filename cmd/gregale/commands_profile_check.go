@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -61,9 +62,9 @@ func cmdProfileCheck(args []string) int {
 		PrintUsage(osStderr, "usage: gregale [--profile NAME] profile check [--timeout 10s] (timeout must be positive)", "config")
 		return profileCheckFailure
 	}
-	// Validate before rendering the endpoint: FAAS_API may contain embedded secrets.
+	// Validate before rendering the endpoint: the API variable may contain embedded secrets.
 	if _, err := validateConfigAPIBase(apiBase()); err != nil {
-		return printErr("Invalid API endpoint", errors.New("set api-base to an http(s) URL without credentials, query parameters, or fragments; FAAS_API overrides profile settings"))
+		return printErr("Invalid API endpoint", errors.New("set api-base to an http(s) URL without credentials, query parameters, or fragments; "+envAPIName()+" overrides profile settings"))
 	}
 	if err := checkAPIBaseTransport(apiBase()); err != nil {
 		return printErr("Insecure API connection", err)
@@ -77,8 +78,8 @@ func cmdProfileCheck(args []string) int {
 	if token != "" {
 		source = "profile:" + connection.Profile
 	}
-	if os.Getenv("FAAS_TOKEN") != "" {
-		source = "env:FAAS_TOKEN"
+	if name := envTokenName(); name != "" {
+		source = "env:" + name
 	}
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -104,8 +105,8 @@ func checkProfileConnection(ctx context.Context, client *Client, connection *con
 		report.Authentication = "missing"
 	}
 	authHint := "Run gregale --profile " + connection.Profile + " login."
-	if source == "env:FAAS_TOKEN" {
-		authHint = "Replace or unset FAAS_TOKEN; it overrides this profile's stored credential."
+	if name, ok := strings.CutPrefix(source, "env:"); ok {
+		authHint = "Replace or unset " + name + "; it overrides this profile's stored credential."
 	}
 	account, err := client.Whoami(ctx)
 	if err == nil {
@@ -198,11 +199,11 @@ func (r *profileCheckReport) fail(exit int, code, message, hint string, status i
 func renderProfileCheck(report profileCheckReport) {
 	c := report.Connection
 	_, _ = fmt.Fprintf(osStdout, "Profile: %s (source=%s)\nAPI: %s (source=%s)\nCredential source: %s\n", c.Profile, c.ProfileSource, c.APIBase, c.APISource, report.CredentialSource)
-	if c.APISource == "env:FAAS_API" {
-		_, _ = fmt.Fprintln(osStdout, "FAAS_API overrides this profile's saved endpoint.")
+	if name, ok := strings.CutPrefix(c.APISource, "env:"); ok {
+		_, _ = fmt.Fprintln(osStdout, name+" overrides this profile's saved endpoint.")
 	}
-	if report.CredentialSource == "env:FAAS_TOKEN" {
-		_, _ = fmt.Fprintln(osStdout, "FAAS_TOKEN overrides this profile's stored credential.")
+	if name, ok := strings.CutPrefix(report.CredentialSource, "env:"); ok {
+		_, _ = fmt.Fprintln(osStdout, name+" overrides this profile's stored credential.")
 	}
 	if report.OK {
 		a := report.Account

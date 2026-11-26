@@ -175,6 +175,8 @@ var toolsetOf = map[string]string{
 	"gregale_get_insight_retention":       ToolsetDiagnose,
 	"gregale_get_insight_requests":        ToolsetDiagnose,
 	"gregale_list_insight_cohorts":        ToolsetDiagnose,
+	"gregale_list_saved_insights":         ToolsetDiagnose,
+	"gregale_run_saved_insight":           ToolsetDiagnose,
 	"gregale_get_environment":             ToolsetRelease,
 	"gregale_plan_environment_promotion":  ToolsetRelease,
 	"gregale_apply_environment_promotion": ToolsetRelease,
@@ -220,6 +222,7 @@ var toolsetOf = map[string]string{
 	"gregale_get_incident":                     ToolsetDiagnose,
 	"gregale_get_postgres_schema":              ToolsetDiagnose,
 	"gregale_query_postgres":                   ToolsetDiagnose,
+	"gregale_get_postgres_activity":            ToolsetDiagnose,
 	"gregale_list_edge_rules":                  ToolsetDiagnose,
 	"gregale_get_edge_activity":                ToolsetDiagnose,
 	"gregale_list_objects":                     ToolsetDiagnose,
@@ -237,6 +240,7 @@ var toolsetOf = map[string]string{
 	"gregale_list_audit_events":                ToolsetDiagnose,
 	"gregale_plan_event_change":                ToolsetOperate,
 	"gregale_list_api_consumers":               ToolsetOperate,
+	"gregale_get_mcp_seller_stats":             ToolsetOperate,
 	"gregale_get_api_consumer":                 ToolsetOperate,
 	"gregale_plan_api_consumer_change":         ToolsetOperate,
 	"gregale_get_spend_forecast":               ToolsetOperate,
@@ -264,6 +268,11 @@ var toolsetOf = map[string]string{
 	"gregale_plan_cron":       ToolsetProvision,
 	"gregale_check_domain":    ToolsetProvision,
 	"gregale_apply_provision": ToolsetProvision,
+
+	// ADR-20261122220000 verification contracts.
+	"gregale_validate_verification_contract":    ToolsetRelease,
+	"gregale_get_verification_contract":         ToolsetRelease,
+	"gregale_plan_verification_contract_change": ToolsetRelease,
 }
 
 func toolsetIncludes(name, selected string) bool {

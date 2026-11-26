@@ -17,7 +17,7 @@ const usage = `Usage (run locally, never in the guest):
   node tools/customer.js resume <tenant-id>`;
 
 async function run(command, args) {
-  const api = apiClient(process.env.FAAS_API, process.env.FAAS_TOKEN);
+  const api = apiClient(process.env.GREGALE_API_URL || process.env.FAAS_API, process.env.GREGALE_TOKEN || process.env.FAAS_TOKEN);
   switch (command) {
     case "onboard":
       if (args.length === 3) return onboard(api, ...args);

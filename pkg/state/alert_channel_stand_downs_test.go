@@ -303,22 +303,22 @@ func TestPgStore_AlertScopeDeliveryGuard(t *testing.T) {
 		`, rule.ID, key, payload, test)
 		return err
 	}
-	reject := func(key, payload string) {
+	reject := func(key, payload, constraint string) {
 		t.Helper()
 		err := insert(key, payload, false)
 		var pgErr *pgconn.PgError
-		if !errors.As(err, &pgErr) || pgErr.ConstraintName != "alert_deliveries_live_scope" {
-			t.Fatalf("live insert %s: got %v, want the database scope guard", key, err)
+		if !errors.As(err, &pgErr) || pgErr.ConstraintName != constraint {
+			t.Fatalf("live insert %s: got %v, want constraint %s", key, err, constraint)
 		}
 	}
-	reject("legacy", `{}`)
-	reject("other-scope", `{"environment_scope":"production"}`)
+	reject("legacy", `{}`, "alert_deliveries_live_scope")
+	reject("other-scope", `{"environment_scope":"production"}`, "alert_deliveries_live_scope")
 	if err := insert("explicit-test", `{}`, true); err != nil {
 		t.Fatal(err)
 	}
 	payload := []byte(`{"environment_scope":"staging","event":"alert.fired"}`)
 	first := rule.UpdatedAt.Add(time.Minute)
-	if _, won, err := s.ClaimAlertFire(ctx, rule.ID, "scoped-fire", payload, 100, first); err != nil || !won {
+	if _, won, _, err := s.ClaimAlertFire(ctx, rule.ID, "scoped-fire", payload, 100, first); err != nil || !won {
 		t.Fatalf("scoped fire: won=%v err=%v", won, err)
 	}
 	if open, err := s.AlertRuleEpisodeOpen(ctx, rule.ID); err != nil || !open {
@@ -330,25 +330,31 @@ func TestPgStore_AlertScopeDeliveryGuard(t *testing.T) {
 	if _, err := s.UpdateAlertRule(ctx, rule.ID, state.UpdateAlertRuleParams{ObserveOnly: new(true)}); err != nil {
 		t.Fatal(err)
 	}
-	reject("observe-only", string(payload))
+	reject("observe-only", string(payload), "alert_deliveries_live_scope")
+	if _, err := s.UpdateNotificationChannel(ctx, acct, original.ID, state.UpdateNotificationChannelParams{
+		TargetSealed: []byte("rotated"), PagerDutyRegion: new("eu"),
+	}); err != nil {
+		t.Fatal(err)
+	}
 	alias := pagerDutyChannel("alias")
 	if err := s.SetAlertRuleChannels(ctx, rule.ID, []string{alias.ID}); err != nil {
 		t.Fatal(err)
 	}
 	older, err := s.ListPagerDutyObservationStandDownChannels(ctx, rule.ID)
-	if err != nil || len(older) != 1 || older[0].ID != original.ID {
+	if err != nil || len(older) != 1 || older[0].ID != original.ID || string(older[0].TargetSealed) != "original" || older[0].PagerDutyRegion != "us" {
 		t.Fatalf("expected the old unbound stand-down channel, got %d channels and %v", len(older), err)
 	}
 	if _, err := s.UpdateAlertRule(ctx, rule.ID, state.UpdateAlertRuleParams{ObserveOnly: new(false)}); err != nil {
 		t.Fatal(err)
 	}
 	second := first.Add(time.Minute)
-	if _, won, err := s.ClaimAlertFire(ctx, rule.ID, "new-episode", payload, 100, second); err != nil || !won {
+	_, won, recipients, err := s.ClaimAlertFire(ctx, rule.ID, "new-episode", payload, 100, second)
+	if err != nil || !won {
 		t.Fatalf("new scoped fire: won=%v err=%v", won, err)
 	}
-	held, err := s.AlertDeferredFireRecipients(ctx, rule.ID, second)
-	if err != nil || held.WebhookURL != rule.WebhookURL || !held.ChannelIDs[alias.ID] {
-		t.Fatalf("the webhook and possible PagerDuty alias should be deferred, err=%v", err)
+	if recipients.Held.WebhookURL != rule.WebhookURL || !recipients.Held.ChannelIDs[alias.ID] ||
+		len(recipients.Channels) != 1 || recipients.Channels[0].ID != alias.ID {
+		t.Fatal("the claim should return the alias and defer it and the webhook")
 	}
 	fires, err := s.DueDeferredAlertFires(ctx, second, 10)
 	webhook := slices.IndexFunc(fires, func(fire state.AlertDeferredFire) bool { return fire.WebhookURL != "" })
@@ -375,4 +381,20 @@ func TestPgStore_AlertScopeDeliveryGuard(t *testing.T) {
 	if err != nil || len(notices) != 1 {
 		t.Fatalf("stand-down notices after dispatch starts=%d err=%v", len(notices), err)
 	}
+	// App-wide rules match a legacy claim's empty payload. Even then, the
+	// evaluator must understand the pending handoff before claiming a fire.
+	if _, err := s.UpdateAlertRule(ctx, rule.ID, state.UpdateAlertRuleParams{EnvironmentScope: new("")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateAlertRule(ctx, rule.ID, state.UpdateAlertRuleParams{ObserveOnly: new(false)}); err != nil {
+		t.Fatal(err)
+	}
+	reject("legacy-unscoped", "{}", "alert_deliveries_live_handoff")
+	if err := insert("unscoped-explicit-test", "{}", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, won, _, err := s.ClaimAlertFire(ctx, rule.ID, "handoff-aware-unscoped", nil, 100, second.Add(time.Minute)); err != nil || !won {
+		t.Fatalf("handoff-aware app-wide fire: won=%v err=%v", won, err)
+	}
+
 }

@@ -270,10 +270,11 @@ func (l *Limiter) AllowWithCentralConsumerKey(
 	return admitted
 }
 
-// dimensionalCentralSubjectID maps a request concept into one of cap stable
-// UUID rows for the rule. FNV-1a selects the non-security shard and derives
-// its stable row identifier; version 8 marks that UUID as application-defined.
-func dimensionalCentralSubjectID(ruleID, dimensionKind, consumerID string, cap int) string {
+// DimensionalThrottleShard is the counter shard, in [0, cap), that central
+// mode charges for one value of a dimensional throttle rule. Values that
+// land in one shard share a bucket by design; tests use this to pick values
+// that do not.
+func DimensionalThrottleShard(dimensionKind, value string, cap int) uint64 {
 	// This hash only selects a bounded counter shard; it is neither a
 	// credential digest nor a security boundary. FNV-1a is deliberately used
 	// to make that non-cryptographic purpose explicit and avoid suggesting
@@ -282,8 +283,15 @@ func dimensionalCentralSubjectID(ruleID, dimensionKind, consumerID string, cap i
 	shardHash := fnv.New64a()
 	_, _ = shardHash.Write([]byte(dimensionKind))
 	_, _ = shardHash.Write([]byte{0})
-	_, _ = shardHash.Write([]byte(consumerID))
-	shard := shardHash.Sum64() % uint64(cap)
+	_, _ = shardHash.Write([]byte(value))
+	return shardHash.Sum64() % uint64(cap)
+}
+
+// dimensionalCentralSubjectID maps a request concept into one of cap stable
+// UUID rows for the rule. FNV-1a selects the non-security shard and derives
+// its stable row identifier; version 8 marks that UUID as application-defined.
+func dimensionalCentralSubjectID(ruleID, dimensionKind, consumerID string, cap int) string {
+	shard := DimensionalThrottleShard(dimensionKind, consumerID, cap)
 	name := ruleID + "\x00" + dimensionKind + "\x00" + strconv.FormatUint(shard, 10)
 	rowHash := fnv.New128a()
 	_, _ = rowHash.Write([]byte(name))

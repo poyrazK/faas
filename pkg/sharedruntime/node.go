@@ -75,15 +75,32 @@ func ClassifyNode(planJSON, packageJSON []byte) api.SharedRuntimeVerdict {
 	if reason := checkDeployInputs(p.Deploy.Inputs); reason != "" {
 		return ineligible(reason)
 	}
-	start, reason := resolveStart(p.Deploy.StartCommand, packageJSON)
-	if reason != "" {
+	command := p.Deploy.StartCommand
+	bun := UsesBun(command)
+	start, reason := resolveStart(command, packageJSON)
+	switch {
+	case bun && BunStartNeedsNodePackageManager(command, packageJSON):
+		return ineligible(ReasonPackageManagerStart)
+	case bun:
+		// ADR-20261124160000: the layer keeps Bun's own install, if the
+		// artifact has one (imaged decides).
+		start = ShellStart(command)
+	case reason != "":
 		return ineligible(reason)
+	case StartReachesBun(command, packageJSON):
+		// A package manager script runs Bun; the runner base has neither.
+		return ineligible(ReasonBunInScript)
 	}
 	env := make(map[string]string, len(p.Deploy.Variables)+1)
 	for k, v := range p.Deploy.Variables {
 		env[k] = v
 	}
 	env["PATH"] = runnerPath
+	if bun {
+		// Bun's bin directory is known only from the artifact; imaged sets
+		// PATH with BunRunnerPath.
+		delete(env, "PATH")
+	}
 	return api.SharedRuntimeVerdict{Eligible: true, Start: start, Env: env}
 }
 
@@ -172,10 +189,10 @@ func resolveStart(command string, packageJSON []byte) ([]string, string) {
 	fields := strings.Fields(command)
 	switch fields[0] {
 	case "npm":
-	case "npx", "yarn", "pnpm", "bun", "corepack":
+	case "npx", "yarn", "pnpm", "bun", "bunx", "corepack":
 		return nil, ReasonPackageManagerStart
 	default:
-		return []string{"/bin/sh", "-c", command}, ""
+		return ShellStart(command), ""
 	}
 	var script string
 	switch {
@@ -201,7 +218,7 @@ func resolveStart(command string, packageJSON []byte) ([]string, string) {
 	if pkg.Scripts["pre"+script] != "" || pkg.Scripts["post"+script] != "" {
 		return nil, ReasonNPMLifecycleHooks
 	}
-	return []string{"/bin/sh", "-c", body}, ""
+	return ShellStart(body), ""
 }
 
 // RunnerPath is the PATH a shared-runtime app runs with on the runner base.

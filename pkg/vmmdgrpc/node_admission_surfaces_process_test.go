@@ -127,7 +127,10 @@ func nodeAdmissionSurfaceRequest(ctx context.Context, process *nodeAdmissionProc
 
 func nodeAdmissionSurfaceRefusal(t *testing.T, f nodeAdmissionProcessFixture, process *nodeAdmissionProcess, surface string, untrusted, upgrade bool) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	// A trusted refusal is re-forwarded for the Scale app's whole warm-queue
+	// wait before the gateway relays it, so the client must outlast that
+	// wait; a 2 s client against the 2 s wait timed out under -race.
+	ctx, cancel := context.WithTimeout(t.Context(), api.ConcurrencyQueuePaidDefaultWait+5*time.Second)
 	defer cancel()
 	request, err := nodeAdmissionSurfaceRequest(ctx, process, surface, "/work", untrusted, upgrade)
 	if err != nil {

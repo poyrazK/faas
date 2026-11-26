@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -97,20 +98,21 @@ func (g *signupGeo) signupFacts(accountID, email, method, ip, userAgent string, 
 }
 
 // recordSignupFacts stores the sign-up record. It is best effort: the account
-// already exists, so a failure is logged and counted, never returned.
-func (s *server) recordSignupFacts(ctx context.Context, r *http.Request, accountID, email, method string) {
+// already exists, so a failure is logged and counted, never returned. It
+// returns how many abuse-held accounts the new one was linked to.
+func (s *server) recordSignupFacts(ctx context.Context, r *http.Request, accountID, email, method string) int {
 	store, ok := s.store.(state.AccountSignupFactsStore)
 	if !ok {
-		return
+		return 0
 	}
 	facts := s.signupGeo.signupFacts(accountID, email, method, clientIPFromRequest(r), r.UserAgent(), timeNow())
 	ctx = context.WithoutCancel(ctx)
 	if err := store.RecordAccountSignupFacts(ctx, facts); err != nil {
 		s.log.Warn("apid: signup facts not recorded", "account", accountID, "err", err)
 		s.signupMetrics.observeFactsFailed()
-		return
+		return 0
 	}
-	s.linkSignupToHeld(ctx, accountID, facts.EmailDomain)
+	return s.linkSignupToHeld(ctx, accountID, facts.EmailDomain)
 }
 
 // linkSignupToHeld flags a new account that resembles an abuse-held one
@@ -118,17 +120,21 @@ func (s *server) recordSignupFacts(ctx context.Context, r *http.Request, account
 // sign-in within api.SignupFactsPersonalRetention, or the same private email
 // domain. Flag only: each link is audited as accounts.linked_to_held and
 // counted, and the new account is not held or refused.
-func (s *server) linkSignupToHeld(ctx context.Context, accountID, emailDomain string) {
+func (s *server) linkSignupToHeld(ctx context.Context, accountID, emailDomain string) int {
 	store, ok := s.store.(state.AccountHeldLinkStore)
 	if !ok {
-		return
+		return 0
 	}
 	now := timeNow()
-	links, err := store.LinkAccountToHeld(ctx, accountID, disposableemail.Linkable(emailDomain), now.Add(-api.SignupFactsPersonalRetention), now)
+	// Every unclaimed anonymous-deploy account shares the placeholder
+	// domain (ADR-20261124080000): linking on it would tie each new one to
+	// any held one, so only the network signals apply to them.
+	domainLinkable := disposableemail.Linkable(emailDomain) && !strings.EqualFold(emailDomain, api.UnclaimedEmailDomain)
+	links, err := store.LinkAccountToHeld(ctx, accountID, domainLinkable, now.Add(-api.SignupFactsPersonalRetention), now)
 	if err != nil {
 		s.log.Warn("apid: held-account linking failed", "account", accountID, "err", err)
 		s.signupMetrics.observeHeldLink("error")
-		return
+		return 0
 	}
 	for _, l := range links {
 		detail := map[string]any{"held_account": l.HeldAccountID, "held_reason": l.HeldReason, "signal": l.Signal}
@@ -142,4 +148,5 @@ func (s *server) linkSignupToHeld(ctx context.Context, accountID, emailDomain st
 		s.log.Warn("apid: new account resembles an abuse-held account; flagged for review",
 			"account", accountID, "links", len(links), "first_held_account", links[0].HeldAccountID, "first_signal", links[0].Signal)
 	}
+	return len(links)
 }

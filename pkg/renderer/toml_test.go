@@ -455,9 +455,13 @@ func TestRenderTOML_VmmdDerivesIdentityAndTargetFromHost(t *testing.T) {
 func TestRenderTOML_OptInServiceProxyHTTPS(t *testing.T) {
 	vmmd := fixtureTOML("vmmd")
 	vmmd.ServiceProxyCAPath = "/etc/faas/tls/service-proxy/ca.crt"
+	vmmd.DataAPIInspectionCAPath = "/etc/faas/pgproxy/inspection-ca.crt"
 	vmmdBody, _, err := renderTOML(tomlRenderCtx{Daemon: "vmmd", DC: vmmd})
 	if err != nil || !strings.Contains(string(vmmdBody), `service_proxy_ca_path = "/etc/faas/tls/service-proxy/ca.crt"`) {
 		t.Fatalf("vmmd CA render: %v\n%s", err, vmmdBody)
+	}
+	if !strings.Contains(string(vmmdBody), `data_api_inspection_ca_path = "/etc/faas/pgproxy/inspection-ca.crt"`) {
+		t.Fatalf("inspection CA missing: %s", vmmdBody)
 	}
 	gateway := fixtureTOML("gatewayd-internal")
 	gateway.ServiceProxyHTTPSListen = "10.100.0.1:443"
@@ -475,6 +479,72 @@ func TestRenderTOML_OptInServiceProxyHTTPS(t *testing.T) {
 		if !strings.Contains(string(body), want) {
 			t.Errorf("gateway HTTPS render missing %q:\n%s", want, body)
 		}
+	}
+}
+
+// Release rollouts re-render gatewayd-internal.toml with this renderer, so a
+// service_tcp stage it did not render was dropped on every rollout: prod's
+// listener and DNS answers vanished and managed Redis caches went
+// unreachable (2026-11-23).
+func TestRenderTOML_GatewaydInternalServiceTCP(t *testing.T) {
+	all := &manifest.ServiceTCP{Node: true, Listener: true, DNS: true}
+	tests := []struct {
+		name    string
+		role    string
+		stages  *manifest.ServiceTCP
+		bridge  string
+		want    []string
+		noTCP   bool
+		noProxy bool
+		wantErr bool
+	}{
+		{name: "every stage on a compute host", role: "compute-only", stages: all,
+			want: []string{`service_proxy_listen = "10.100.0.1:10080"`, `service_tcp_listen = "10.100.0.1:10082"`, `service_tcp_dns = true`}},
+		{name: "listener without dns", role: "compute-only", stages: &manifest.ServiceTCP{Node: true, Listener: true},
+			want: []string{`service_tcp_listen = "10.100.0.1:10082"`, `service_tcp_dns = false`}},
+		{name: "bridge override moves both listeners", role: "compute-only", stages: all, bridge: "10.42.0.0/16",
+			want: []string{`service_proxy_listen = "10.42.0.1:10080"`, `service_tcp_listen = "10.42.0.1:10082"`}},
+		{name: "node stage only", role: "compute-only", stages: &manifest.ServiceTCP{Node: true},
+			want: []string{`service_proxy_listen = "10.100.0.1:10080"`}, noTCP: true},
+		{name: "not configured", role: "compute-only", want: []string{`service_proxy_listen = "10.100.0.1:10080"`}, noTCP: true},
+		{name: "control plane gets nothing", role: "control-plane", stages: all, noTCP: true, noProxy: true},
+		{name: "invalid bridge", role: "compute-only", stages: all, bridge: "not-a-cidr", wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body, flat, err := renderTOML(tomlRenderCtx{
+				Daemon: "gatewayd-internal", DC: fixtureTOML("gatewayd-internal"),
+				HostRole: tc.role, ServiceTCP: tc.stages, HostBridgeCIDR: tc.bridge,
+			})
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("invalid host_bridge_cidr rendered:\n%s", body)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.noTCP && strings.Contains(string(body), "service_tcp") {
+				t.Fatalf("rendered service_tcp keys:\n%s", body)
+			}
+			if tc.noProxy && strings.Contains(string(body), "service_proxy_listen") {
+				t.Fatalf("rendered service_proxy_listen:\n%s", body)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(string(body), want) {
+					t.Errorf("missing %q:\n%s", want, body)
+				}
+			}
+			// gatewayd refuses a service_tcp_listen that is not on the
+			// service proxy's bridge address (validateServiceTCPListen).
+			if tcp := flat["service_tcp_listen"]; tcp != "" {
+				proxy := flat["service_proxy_listen"]
+				if proxy == "" || strings.Split(tcp, ":")[0] != strings.Split(proxy, ":")[0] {
+					t.Fatalf("service_tcp_listen %q not on service_proxy_listen %q", tcp, proxy)
+				}
+			}
+		})
 	}
 }
 

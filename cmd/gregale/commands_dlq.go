@@ -16,11 +16,11 @@ import (
 func cmdDLQ(args []string) int {
 	parent, _ := lookupCliCommand("dlq")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale dlq <list|inspect|replay|purge>", "dlq")
+		PrintUsage(os.Stderr, "usage: gregale dlq <list|get|replay|purge>", "dlq")
 		return 1
 	}
 	if args[0] == "--help" || args[0] == "-h" {
-		PrintUsage(os.Stdout, "usage: gregale dlq <list|inspect|replay|purge>", "dlq")
+		PrintUsage(os.Stdout, "usage: gregale dlq <list|get|replay|purge>", "dlq")
 		return 0
 	}
 	switch args[0] {
@@ -82,6 +82,9 @@ func cmdDLQList(args []string) int {
 		}
 	}
 	pos, mergeErr := mergeAppFlag(pos, *app, 1)
+	if mergeErr == nil {
+		pos = withLinkedApp(pos, 1)
+	}
 	if mergeErr != nil || len(pos) != 1 {
 		PrintUsage(os.Stderr, usage, "dlq")
 		return 1
@@ -139,6 +142,7 @@ func cmdDLQInspect(args []string) int {
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
+	pos = withLinkedApp(pos, 2)
 	if len(pos) != 2 {
 		PrintUsage(os.Stderr, usage, "dlq")
 		return 1
@@ -147,7 +151,12 @@ func cmdDLQInspect(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	event, err := client.GetDeadLetterEvent(context.Background(), pos[0], pos[1])
+	ctx := context.Background()
+	id, err := deadLetterEventID(ctx, client, pos[0], pos[1])
+	if err != nil {
+		return printErr("Could not inspect dead-letter event", err)
+	}
+	event, err := client.GetDeadLetterEvent(ctx, pos[0], id)
 	if err != nil {
 		return printErr("Could not inspect dead-letter event", err)
 	}
@@ -179,11 +188,12 @@ func cmdDLQReplay(args []string) int {
 		return 1
 	}
 	if *all {
+		pos = withLinkedApp(pos, 1)
 		if len(pos) != 1 {
 			PrintUsage(os.Stderr, usage, "dlq")
 			return 1
 		}
-	} else if len(pos) != 2 {
+	} else if pos = withLinkedApp(pos, 2); len(pos) != 2 {
 		PrintUsage(os.Stderr, usage, "dlq")
 		return 1
 	}
@@ -207,7 +217,11 @@ func cmdDLQReplay(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "replayed %d dead-letter events\n", resp.Replayed)
 		return 0
 	}
-	event, err := client.ReplayDeadLetterEvent(ctx, pos[0], pos[1])
+	id, err := deadLetterEventID(ctx, client, pos[0], pos[1])
+	if err != nil {
+		return printErr("Could not replay dead-letter event", err)
+	}
+	event, err := client.ReplayDeadLetterEvent(ctx, pos[0], id)
 	if err != nil {
 		return printErr("Could not replay dead-letter event", err)
 	}
@@ -232,11 +246,12 @@ func cmdDLQPurge(args []string) int {
 		return 1
 	}
 	if *all {
+		pos = withLinkedApp(pos, 1)
 		if len(pos) != 1 {
 			PrintUsage(os.Stderr, usage, "dlq")
 			return 1
 		}
-	} else if len(pos) != 2 {
+	} else if pos = withLinkedApp(pos, 2); len(pos) != 2 {
 		PrintUsage(os.Stderr, usage, "dlq")
 		return 1
 	}
@@ -261,7 +276,11 @@ func cmdDLQPurge(args []string) int {
 	}
 	ctx := context.Background()
 	if !*all {
-		if err := client.DeleteDeadLetterEvent(ctx, pos[0], pos[1]); err != nil {
+		id, err := deadLetterEventID(ctx, client, pos[0], pos[1])
+		if err == nil {
+			err = client.DeleteDeadLetterEvent(ctx, pos[0], id)
+		}
+		if err != nil {
 			return printErr("Could not purge dead-letter event", err)
 		}
 		if jsonOutput {
@@ -286,4 +305,33 @@ func cmdDLQPurge(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "purged %d dead-letter events\n", count)
 	return 0
+}
+
+// deadLetterEventID returns id when it names one of app's dead-letter events,
+// else the event whose source is id. `queue dlq list` and `invocation get`
+// show a failed queue message's invocation ID, and `dlq get/replay/purge`
+// took only the event ID (prod hunt r55: replaying the listed ID answered
+// "no dead-letter event"). The 404 for id stands when no event matches.
+func deadLetterEventID(ctx context.Context, client *Client, app, id string) (string, error) {
+	_, err := client.GetDeadLetterEvent(ctx, app, id)
+	if !isNotFound(err) {
+		return id, err
+	}
+	before := ""
+	for range 50 {
+		page, listErr := client.ListDeadLetterEvents(ctx, app, 200, before)
+		if listErr != nil {
+			return id, err
+		}
+		for _, event := range page.Events {
+			if event.SourceID == id {
+				return event.ID, nil
+			}
+		}
+		if page.NextBefore == "" {
+			break
+		}
+		before = page.NextBefore
+	}
+	return id, err
 }

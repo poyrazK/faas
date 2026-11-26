@@ -274,12 +274,16 @@ func (s *targetSet) routableCount() int {
 // deployments but does not deadlock the request. PR-C ships
 // wake-fan-out to remove this fallback.
 type PGBackend struct {
-	trafficRevocations atomic.Pointer[trafficrevocation.Registry]
-	publicRoutingView  atomic.Pointer[publicrouting.Registry]
-	workloadAdmissions workloadAdmissionCache
+	projectRollbackWatches sync.Map // app ID -> *projectRollbackWatch
+	trafficRevocations     atomic.Pointer[trafficrevocation.Registry]
+	publicRoutingView      atomic.Pointer[publicrouting.Registry]
+	workloadAdmissions     workloadAdmissionCache
 	// flagKills caches each deployment's X-Faas-Flag-Kills value
 	// (ADR 20261114150000 §3); nil until WithFlagKillLoader.
 	flagKills *FlagKillCache
+	// edgeFlags caches each app environment's edge-routed flags
+	// (ADR-20261124212701); nil until WithEdgeFlagLoader.
+	edgeFlags *EdgeFlagCache
 	// flagCohorts caches each deployment and customer's
 	// X-Faas-Flag-Cohorts value (ADR 20261119102741 §4); nil until
 	// WithFlagCohortLoader.
@@ -2386,9 +2390,10 @@ func (b *PGBackend) admitSynchronous(ctx context.Context, appID, deploymentID, s
 	b.recordScope(appID, scope)
 	// Cheap fast path: refuse before we spend a gRPC round-trip.
 	// Σ over all per-deployment targetSets (issue #556 acceptance #3).
+	// A deployment smoke always asks schedd (skipsAdmitFastPath).
 	b.tgtMu.Lock()
 	picker := b.appsPicker[appID]
-	if picker != nil {
+	if picker != nil && !skipsAdmitFastPath(trigger) {
 		total := 0
 		for _, set := range picker.sets {
 			total += len(set.entries)
@@ -3546,7 +3551,12 @@ func (b *PGBackend) resolveSched(ctx context.Context, appID string) (Scheduler, 
 			b.putApp(app)
 		}
 		if app.NodeID == "" {
-			return nil, fmt.Errorf("gatewayd-internal: app %s has empty NodeID (pre-migration row; legacy single-box fallback removed in PR-7)", appID)
+			if !app.HasLiveDeployment {
+				return nil, fmt.Errorf("gatewayd-internal: app %s: %w", appID, ErrAppNotPlaced)
+			}
+			// Deployed but unplaced: the claim failed (capacity, no schedd
+			// claiming). A platform fault; the SLO counts its 503.
+			return nil, fmt.Errorf("gatewayd-internal: app %s has a live deployment but no compute node (placement claim pending or failing)", appID)
 		}
 		cli, ok, err := b.clientForApp(ctx, app)
 		if err != nil {

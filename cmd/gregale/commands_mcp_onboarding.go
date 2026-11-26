@@ -173,8 +173,8 @@ func writeMCPStackRole(root, role string, options mcpInitOptions) error {
 		// The web release applies the Task schema with the migration
 		// binding before any role serves; nothing else can reach the
 		// database before the first deploy (MCP Tasks prod probe
-		// 2026-11-22). It calls node/python directly: the shared runner
-		// bases ship no npm.
+		// 2026-11-22). It calls node/python or the compiled Go binary
+		// directly: the shared runner bases ship no npm or Go toolchain.
 		manifest += "release:\n  command: " + migrate + "\n"
 	}
 	if role != "web" {
@@ -196,10 +196,11 @@ func writeMCPStackRole(root, role string, options mcpInitOptions) error {
 }
 
 // mcpStackMigrationCommand is the web role's release command that applies the
-// Task schema, or "" for a runtime whose image cannot run it by name (a Go
-// build ships only its compiled binary).
+// Task schema, or "" for an unknown runtime. A Go source build ships only its
+// compiled binary, which Railpack writes to /app/out (the path pkg/imaged
+// reads); the binary answers `tasks-migrate apply` itself.
 func mcpStackMigrationCommand(runtime string) string {
-	return map[string]string{"node": "node tasks-migrate.js apply", "python": "python task_schema.py apply"}[runtime]
+	return map[string]string{"node": "node tasks-migrate.js apply", "python": "python task_schema.py apply", "go": "/app/out tasks-migrate apply"}[runtime]
 }
 
 func mcpStackReadme(options mcpInitOptions) string {
@@ -245,10 +246,10 @@ func mcpStackReadme(options mcpInitOptions) string {
 	guide.WriteString("Verify the observer and queue before requesting scale-to-zero:\n\n```sh\n")
 	fmt.Fprintf(&guide, "gregale mcp observer setup --app %s-observer --worker-app %s-worker --config ./observer/gregale-mcp.json\ngregale mcp tasks setup --app %s-worker --observer-app %s-observer --min 0\n# Apply only after the preview reports a ready observer and fresh heartbeat:\ngregale mcp tasks setup --app %s-worker --observer-app %s-observer --min 0 --apply\n", options.Name, options.Name, options.Name, options.Name, options.Name, options.Name)
 	guide.WriteString("```\n\nThe observer and database remain running when workers reach zero. ")
-	if options.Runtime == "node" {
-		guide.WriteString("For later worker replacements, use `gregale mcp server tasks deploy` with a separate candidate worker application and the previous worker apps in the release plan. Keep its journal outside the source directories. ")
-	} else {
-		guide.WriteString("Go/Python worker replacements require a manual rollout; the automated Task release gate supports Node workers only. Run explicit migrations first, retain the keys and handler versions needed by existing Tasks, and deploy replacement workers into a separate application with at least one replica. Verify fresh worker-handler registrations, queue progress and the observer heartbeat before gracefully retiring previous workers. See the runtime README for upgrade details. ")
+	guide.WriteString("For later worker replacements, use `gregale mcp server tasks deploy` with a separate candidate worker application and the previous worker apps in the release plan. Keep its journal outside the source directories. ")
+	if options.Runtime != "node" {
+		// ADR-20261123160000: the CLI gates Go/Python releases itself.
+		guide.WriteString("For Go/Python workers the CLI runs the release gate itself: it drains previous workers only after each replacement registers every handler version that unfinished Tasks need. Recovery, quarantine and retirement of a failed Go/Python release stay manual; see the runtime README. ")
 	}
 	guide.WriteString("Handlers with external side effects must be idempotent by Task ID.\n\nMCP hosting remains preview until native lifecycle and real provider/client qualification evidence is recorded.\n")
 	return guide.String()
@@ -264,7 +265,4 @@ func mcpStackDatabaseGuide(guide *strings.Builder, options mcpInitOptions) {
 	fmt.Fprintf(guide, "gregale postgres attach %s-db %s-web --env MCP_TASK_MIGRATION_DATABASE_URL --access migration\n", options.Name, options.Name)
 	fmt.Fprintf(guide, "gregale postgres attach %s-db %s-worker --env DATABASE_URL --access read_write\n", options.Name, options.Name)
 	fmt.Fprintf(guide, "gregale postgres attach %s-db %s-observer --env DATABASE_URL --access read_only\n```\n\n", options.Name, options.Name)
-	if mcpStackMigrationCommand(options.Runtime) == "" {
-		guide.WriteString("The Go starter has no release command: its image holds only the compiled binary. Run its `tasks-migrate apply` command with `MCP_TASK_MIGRATION_DATABASE_URL` as the runtime README describes before deploying the worker.\n\n")
-	}
 }

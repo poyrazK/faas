@@ -25,11 +25,13 @@ CONFIG = {
     "binaries": {
         "apid": {"lane": "control-plane", "services": [{"name": "apid"}]},
         "meterd": {"lane": "control-plane", "services": [{"name": "meterd"}]},
-        "schedd": {"lane": "shared"},
+        "schedd": {"lane": "shared", "services": [{"name": "schedd", "host": "control-plane"},
+                                                  {"name": "schedd", "host": "compute-only"}]},
         "gatewayd-internal": {"lane": "edge", "services": [{"name": "gatewayd-internal", "host": "compute-only"}]},
-        "vmmd": {"lane": "compute"},
+        "vmmd": {"lane": "compute", "services": [{"name": "vmmd", "host": "compute-only"}]},
         "gregalectl": {"lane": "tool"},
     },
+    "compute_lane": {"enabled": True, "helpers": [], "held": []},
     "global_inputs": ["go.mod", "go.sum"],
     "blocking_paths": {
         "migrations": ["migrations/"],
@@ -102,8 +104,13 @@ class AnalyzeTest(unittest.TestCase):
          [("c1", ["pkg/state/store.go"])],
          {"apid": "c1", "meterd": "c1", "schedd": "c1", "gatewayd-internal": "c1", "gregalectl": "c1"},
          ["apid", "gatewayd-internal", "meterd"], [], True),
-        ("compute-only change has no control-plane unit",
-         [("c1", ["pkg/fcvm/vm_linux.go"])], {"vmmd": "c1"}, [], [], False),
+        ("compute-only change rides the compute lane",
+         [("c1", ["pkg/fcvm/vm_linux.go"])], {"vmmd": "c1"}, ["vmmd"], [], True),
+        ("shared-only change ships schedd on both host roles",
+         [("c1", ["pkg/sched/sched.go"])], {"schedd": "c1"}, ["schedd"], [], True),
+        ("compute role change holds a compute-only change at base",
+         [("c1", ["pkg/fcvm/vm_linux.go", "deploy/ansible/roles/vmmd_service/tasks/main.yml"])],
+         {"vmmd": "c1"}, [], [], False),
         ("constrained-out file is not an input", [("c1", ["pkg/fcvm/vm_darwin.go"])], {}, [], [], False),
         ("deleted file under a closure package",
          [("c1", ["pkg/apid/removed.go"])], {"apid": "c1"}, ["apid"], [], True),
@@ -161,7 +168,7 @@ class AnalyzeTest(unittest.TestCase):
         ("unit version is the newest commit that touched the unit",
          [("c3", ["pkg/sched/sched.go"]), ("c2", ["pkg/apid/server.go"]), ("c1", ["pkg/state/store.go"])],
          {"apid": "c2", "meterd": "c1", "schedd": "c3", "gatewayd-internal": "c1", "gregalectl": "c1"},
-         ["apid", "gatewayd-internal", "meterd"], [], True),
+         ["apid", "gatewayd-internal", "meterd", "schedd"], [], True),
         ("edge-only change deploys through the edge lane",
          [("c1", ["pkg/gateway/proxy.go"])], {"gatewayd-internal": "c1"}, ["gatewayd-internal"], [], True),
     ]
@@ -182,9 +189,60 @@ class AnalyzeTest(unittest.TestCase):
         self.assertIsNone(rep["binaries"]["vmmd"]["version"])
 
     def test_pending_lists_units_left_at_base(self):
-        rep = au.analyze([("c2", ["pkg/fcvm/vm_linux.go"]), ("c1", ["pkg/state/store.go"])], CLOSURES, CONFIG, EXISTS)
+        # go.mod changes every binary, but no commit changed code only the
+        # compute lane's binaries read: they stay at base (N±1), and a
+        # control-plane commit never restarts vmmd for a shared input.
+        rep = au.analyze([("c1", ["go.mod"])], CLOSURES, CONFIG, EXISTS)
         self.assertEqual(rep["pending"], {"shared": ["schedd"], "compute": ["vmmd"], "tool": ["gregalectl"],
                                           "control-plane": [], "edge": []})
+        self.assertFalse(rep["lanes"]["compute"]["eligible"])
+
+    def test_compute_lane_carries_every_closure_binary_once_needed(self):
+        # c2 changes code only vmmd reads, so the compute lane runs and
+        # carries schedd too, whose input c1 changed (the plan restarts
+        # what each host runs other code for).
+        rep = au.analyze([("c2", ["pkg/fcvm/vm_linux.go"]), ("c1", ["pkg/state/store.go"])], CLOSURES, CONFIG, EXISTS)
+        self.assertEqual(rep["lanes"]["compute"]["carried"], ["schedd", "vmmd"])
+        self.assertIn("schedd", rep["lanes"]["control-plane"]["carried"])
+        self.assertEqual(rep["pending"], {"shared": [], "compute": [], "tool": ["gregalectl"],
+                                          "control-plane": [], "edge": []})
+
+    def test_held_binaries_wait_without_blocking(self):
+        # Database-node daemons (ADR 20261123122457, owner decision): a
+        # commit that changes one with a control-plane daemon ships the
+        # control-plane half and leaves the held binary for the full release.
+        config = json.loads(json.dumps(CONFIG))
+        config["binaries"]["pgproxyd"] = {"lane": "compute"}
+        config["compute_lane"]["held"] = ["pgproxyd"]
+        closures = dict(CLOSURES, pgproxyd=({"cmd/pgproxyd", "pkg/pgproxy"}, {"pkg/pgproxy/proxy.go"}))
+        exists = EXISTS | {"pkg/pgproxy/proxy.go"}
+        rep = au.analyze([("c1", ["pkg/apid/server.go", "pkg/pgproxy/proxy.go"])], closures, config, exists)
+        self.assertEqual(rep["blocked_by"], [])
+        self.assertFalse(rep["flags"]["cross_lane"]["blocking"])
+        self.assertEqual(rep["deployable"], ["apid"])
+        self.assertEqual(rep["pending"]["compute"], ["pgproxyd"])
+        self.assertFalse(rep["lanes"]["compute"]["eligible"])
+
+    def test_off_compute_lane_keeps_the_old_rules(self):
+        config = json.loads(json.dumps(CONFIG))
+        config["compute_lane"]["enabled"] = False
+        alone = au.analyze([("c1", ["pkg/fcvm/vm_linux.go"])], CLOSURES, config, EXISTS)
+        self.assertEqual(alone["deployable"], [])
+        self.assertEqual(alone["pending"]["compute"], ["vmmd"])
+        crossing = au.analyze([("c1", ["pkg/apid/server.go", "pkg/fcvm/vm_linux.go"])], CLOSURES, config, EXISTS)
+        self.assertEqual(crossing["blocked_by"], ["cross_lane"])
+        self.assertFalse(crossing["lanes"]["compute"]["eligible"])
+
+    def test_helpers_ride_the_compute_lane(self):
+        config = json.loads(json.dumps(CONFIG))
+        config["binaries"]["vmmd-tcp-bridge"] = {"lane": "compute"}
+        config["compute_lane"]["helpers"] = ["vmmd-tcp-bridge"]
+        closures = dict(CLOSURES, **{"vmmd-tcp-bridge": ({"cmd/vmmd-tcp-bridge"}, {"cmd/vmmd-tcp-bridge/main.go"})})
+        exists = EXISTS | {"cmd/vmmd-tcp-bridge/main.go"}
+        rep = au.analyze([("c1", ["cmd/vmmd-tcp-bridge/main.go"])], closures, config, exists)
+        self.assertTrue(rep["lanes"]["compute"]["eligible"])
+        self.assertEqual(rep["lanes"]["compute"]["helpers"], ["vmmd-tcp-bridge"])
+        self.assertEqual(rep["deployable"], ["vmmd-tcp-bridge"])
 
     def test_compute_only_role_blocks_the_edge_lane_only(self):
         # The edge lane lands on compute hosts without converging their
@@ -222,6 +280,7 @@ class AnalyzeTest(unittest.TestCase):
             "no control-plane daemon changed since base",
             "migrations changed since base (1 paths, e.g. migrations/00002_add.sql)",
             "no edge daemon changed since base",
+            "no commit changed code only compute or shared daemons read",
         ])
 
     def test_lane_table_and_loaded_binaries_must_agree(self):
@@ -236,17 +295,25 @@ class AnalyzeTest(unittest.TestCase):
 
 class CrossLaneTest(unittest.TestCase):
     """A commit that changes a lane daemon and an input only daemons outside
-    the lanes read is one change the lane would split: it blocks."""
+    the control-plane and edge lanes read is one change the lanes would
+    split. The compute lane ships its compute half with it
+    (docs/adr/20261123122457-compute-unit-lane.md); it blocks only when the
+    compute lane cannot, for example while a compute role changed."""
+
+    ROLE = "deploy/ansible/roles/vmmd_service/tasks/main.yml"
 
     def test_cases(self):
         cases = [
-            ("control-plane and compute-only inputs", ["pkg/apid/server.go", "pkg/fcvm/vm_linux.go"], True),
-            ("control-plane and shared-only inputs", ["pkg/apid/server.go", "pkg/sched/sched.go"], True),
-            ("edge and compute-only inputs", ["pkg/gateway/proxy.go", "cmd/vmmd/main.go"], True),
+            ("control-plane and compute-only inputs", ["pkg/apid/server.go", "pkg/fcvm/vm_linux.go"], False),
+            ("control-plane and shared-only inputs", ["pkg/apid/server.go", "pkg/sched/sched.go"], False),
+            ("edge and compute-only inputs", ["pkg/gateway/proxy.go", "cmd/vmmd/main.go"], False),
+            ("compute role holds the compute half", ["pkg/apid/server.go", "pkg/fcvm/vm_linux.go", self.ROLE], True),
+            ("compute role holds the shared half", ["pkg/apid/server.go", "pkg/sched/sched.go", self.ROLE], True),
             ("shared package every lane reads", ["pkg/state/store.go"], False),
-            ("shared package and a compute-only input", ["pkg/state/store.go", "pkg/fcvm/vm_linux.go"], True),
+            ("shared package and a compute-only input", ["pkg/state/store.go", "pkg/fcvm/vm_linux.go"], False),
             ("global input", ["go.mod", "pkg/fcvm/vm_linux.go"], False),
-            ("compute-only alone is pending", ["pkg/fcvm/vm_linux.go"], False),
+            ("compute-only alone does not cross", ["pkg/fcvm/vm_linux.go"], False),
+            ("compute-only alone under a role change waits", ["pkg/fcvm/vm_linux.go", self.ROLE], False),
             ("tool alone is not a host daemon", ["pkg/apid/server.go", "cmd/gregalectl/main.go"], False),
             ("test file is not an input", ["pkg/apid/server.go", "pkg/fcvm/vm_linux_test.go"], False),
         ]
@@ -257,13 +324,18 @@ class CrossLaneTest(unittest.TestCase):
                 if blocks:
                     self.assertFalse(rep["eligible"])
                     self.assertEqual(rep["flags"]["cross_lane"]["commits"], ["c1"])
+                elif "cross_lane" in rep["flags"]:
+                    # Not split: the compute lane ships the compute half.
+                    self.assertTrue(rep["lanes"]["compute"]["eligible"])
+                    self.assertTrue(rep["lanes"]["control-plane"]["eligible"] or rep["lanes"]["edge"]["eligible"])
 
     def test_separate_commits_do_not_cross(self):
         rep = au.analyze([("c2", ["pkg/fcvm/vm_linux.go"]), ("c1", ["pkg/apid/server.go"])],
                          CLOSURES, CONFIG, EXISTS, host=HOST)
         self.assertNotIn("cross_lane", rep["flags"])
         self.assertTrue(rep["eligible"])
-        self.assertEqual(rep["pending"]["compute"], ["vmmd"])
+        self.assertEqual(rep["deployable"], ["apid", "vmmd"])
+        self.assertEqual(rep["pending"]["compute"], [])
 
 
 class LanePrefixTest(unittest.TestCase):
@@ -289,7 +361,8 @@ class LanePrefixTest(unittest.TestCase):
 
     def test_first_commit_blocked_leaves_nothing(self):
         got = self.prefix([("c2", ["pkg/apid/server.go"]),
-                           ("c1", ["pkg/apid/server.go", "pkg/fcvm/vm_linux.go"])])
+                           ("c1", ["pkg/apid/server.go", "pkg/fcvm/vm_linux.go",
+                                   "deploy/ansible/roles/vmmd_service/tasks/main.yml"])])
         self.assertIsNone(got["head"])
         self.assertEqual(got["behind"], 2)
         self.assertEqual(got["stalled_by"]["blocked_by"], ["cross_lane"])
@@ -984,6 +1057,32 @@ class RepositoryContractTest(unittest.TestCase):
         edge = sorted(n for n, e in self.config["binaries"].items() if e["lane"] == "edge")
         self.assertEqual(edge, ["gatewayd-internal", "gatewayd-public"])
 
+    def test_compute_lane_names_every_shared_and_compute_binary(self):
+        # docs/adr/20261123122457-compute-unit-lane.md: each shared or
+        # compute binary is a daemon the lane restarts (services on the
+        # compute role, and the control plane for shared ones), a helper
+        # the overlay replaces with no restart, or held for the full release.
+        compute = self.config["compute_lane"]
+        helpers, held = set(compute["helpers"]), set(compute["held"])
+        self.assertFalse(helpers & held)
+        for name, entry in self.config["binaries"].items():
+            if entry["lane"] not in ("shared", "compute"):
+                self.assertNotIn(name, helpers | held)
+                continue
+            hosts = {s.get("host", "control-plane") for s in entry.get("services") or []}
+            with self.subTest(name):
+                if name in helpers or name in held:
+                    self.assertEqual(hosts, set(), "helpers and held binaries restart nothing")
+                else:
+                    self.assertIn("compute-only", hosts)
+                    self.assertEqual("control-plane" in hosts, entry["lane"] == "shared")
+        # vmmd starts the bridges from the release it runs in, and the jail
+        # helper and guest-disk tool beside its executable.
+        self.assertTrue({"vmmd-raw-bridge", "vmmd-tcp-bridge", "vmmd-udp-bridge", "vmmd-stream-bridge",
+                         "vmmd-jail-helper", "vmmd-guestdisk"} <= helpers)
+        # Database nodes and the agent egress host (owner decision 2026-11-23).
+        self.assertTrue({"pgproxyd", "dbbackupd", "agentproxyd"} <= held)
+
 
 @unittest.skipUnless(shutil.which(os.environ.get("GO", "go")), "go toolchain not available")
 class EndToEndTest(unittest.TestCase):
@@ -1044,6 +1143,7 @@ class EndToEndTest(unittest.TestCase):
         self.commit("unrelated make target")
         rep = au.report(self.base, "HEAD", self.config, root=self.root)
         self.assertEqual(changed(rep), {"apid": apid, "vmmd": vmmd})
+        # This lane table has no compute lane: vmmd stays at base.
         self.assertEqual(rep["deployable"], ["apid"])
         self.assertTrue(rep["eligible"])
 

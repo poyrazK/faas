@@ -565,6 +565,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if caErr != nil {
 		return caErr
 	}
+	dataAPIInspectionCAPEM, caErr := loadDataAPIInspectionCA(cfg.DataAPIInspectionCAPath)
+	if caErr != nil {
+		return caErr
+	}
 	// Keep the :443 admission rule coupled to trust delivery. Both remain
 	// disabled unless the operator explicitly configures the private CA.
 	netns.SetDefaultServiceProxyHTTPS(len(serviceProxyCAPEM) > 0)
@@ -580,6 +584,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		netns.SetDefaultDatabaseRouteAddress(api.DatabaseRouteAddress())
 	} else {
 		netns.SetDefaultDatabaseRouteAddress(netip.Addr{})
+	}
+	// ADR-20261114100000 amendment 2026-11-23: public destinations that are
+	// Gregale's own count as internal egress in every namespace from here on.
+	if err := seedInternalEgressDestinations(ctx, cfg.ComputeNode, log); err != nil {
+		return err
 	}
 	// Runtime policy rebuilds happen after every VM cache mutation. Seed the
 	// mutable policy from this host's deployment-owned network values before
@@ -1077,6 +1086,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	jailer := fcvm.NewJailerVMM(fcvm.JailChrootBase, 30*time.Second).
 		WithRuntimeSourceRoot(vmmdRuntimeSourceRoot(storageBackend)).
 		WithServiceProxyCA(serviceProxyCAPEM).
+		WithDataAPIInspectionCA(dataAPIInspectionCAPEM).
 		WithLogCommitCallback(func(appID string, line logbuf.Line) { protocolMetrics.Observe(appID, line.Line, line.WrittenAt) }).
 		WithInstanceLogObserver(protocolCoverage.Start).
 		WithInstancePauseObserver(protocolCoverage.Pause).
@@ -2260,6 +2270,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// whose successor adopts the guests.
 	impl.WithInstanceBridgeHandoff(cfg.AdoptRunningVMs && cfg.AdoptionRecord)
 	impl.ReconcileInstanceBridgeUnits(ctx)
+	// Bridge activity counters in shadow (connection-survival ADR P1d):
+	// returns at once unless FAAS_INSTANCE_BRIDGE_CONTROL=1.
+	go impl.RunInstanceBridgeActivityShadow(ctx)
 	if err := enableDatabaseVMs(ctx, impl, cfg.DatabaseVMs, mgr.JailLeases(), log); err != nil {
 		return err
 	}

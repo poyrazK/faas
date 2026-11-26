@@ -1,5 +1,6 @@
 """Publish privacy-safe MCP task queue gauges to the Gregale API."""
 
+from urllib.error import HTTPError
 from urllib.parse import quote, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 import json
@@ -83,6 +84,7 @@ def _publish_loop(runtime, settings, observer, stopped):
     opener = build_opener(_NoRedirect())
     event_name = "mcp_task_observer_health_check_failed" if observer else "mcp_task_metrics_publish_failed"
     while not stopped.is_set():
+        step = "queue_metrics"
         try:
             metrics = runtime.queue_metrics()
             deadline = time.monotonic() + 5
@@ -94,15 +96,43 @@ def _publish_loop(runtime, settings, observer, stopped):
                 return value
 
             for name, field in QUEUE_GAUGES:
+                step = f"metric:{name}"
                 _push(opener, settings, name, metrics[field], timeout=remaining())
             if observer:
+                step = "compatibility_report"
                 _push_compatibility_report(opener, settings, metrics["handler_compatibility"], metrics["compatibility_truncated"], timeout=remaining())
+                step = "metric:mcp_tasks_observer_heartbeat"
                 _push(opener, settings, "mcp_tasks_observer_heartbeat", 1, timeout=remaining())
-        except Exception:
-            # Avoid logging exception details: database URLs and API tokens are
-            # configured secrets and do not belong in application logs.
-            logging.error(json.dumps({"event": event_name}, separators=(",", ":")))
+        except Exception as error:
+            # Log only the failed step and an HTTP status: exception details can
+            # quote database URLs or API tokens, which are configured secrets.
+            entry = {"event": event_name, "step": step}
+            status = getattr(error, "status", None)
+            if isinstance(status, int):
+                entry["status"] = status
+            logging.error(json.dumps(entry, separators=(",", ":")))
         stopped.wait(15)
+
+
+class _PublishFailed(RuntimeError):
+    """A refused or failed publish; carries an HTTP status and nothing else."""
+
+    def __init__(self, message, status=None):
+        super().__init__(message)
+        self.status = status
+
+
+def _put_json(opener, request, timeout, message):
+    try:
+        with opener.open(request, timeout=timeout) as response:
+            status = response.status
+    except HTTPError as error:
+        status = error.code
+        error.close()
+    except Exception:
+        raise _PublishFailed(message) from None
+    if status != 204:
+        raise _PublishFailed(message, status)
 
 
 def _push(opener, settings, name, value, timeout=5):
@@ -119,12 +149,7 @@ def _push(opener, settings, name, value, timeout=5):
         },
         method="PUT",
     )
-    try:
-        with opener.open(request, timeout=timeout) as response:
-            if response.status != 204:
-                raise RuntimeError("Gregale custom metric push failed")
-    except Exception:
-        raise RuntimeError("Gregale custom metric push failed") from None
+    _put_json(opener, request, timeout, "Gregale custom metric push failed")
 
 
 def _push_compatibility_report(opener, settings, handlers, truncated, timeout=5):
@@ -138,9 +163,4 @@ def _push_compatibility_report(opener, settings, handlers, truncated, timeout=5)
         },
         method="PUT",
     )
-    try:
-        with opener.open(request, timeout=timeout) as response:
-            if response.status != 204:
-                raise RuntimeError("Gregale MCP task compatibility report failed")
-    except Exception:
-        raise RuntimeError("Gregale MCP task compatibility report failed") from None
+    _put_json(opener, request, timeout, "Gregale MCP task compatibility report failed")

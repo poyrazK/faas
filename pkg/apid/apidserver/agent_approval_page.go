@@ -49,7 +49,8 @@ var approvalNeedsFreshSignIn = map[string]bool{
 	api.AgentApprovalBilling:     true,
 }
 
-// staleApprover sends a session too old to approve approval to sign in again,
+// staleApprover sends a session too old to approve approval to sign in again
+// (or, with two-factor authentication, to the authenticator challenge),
 // coming back to the same review page. It reports whether it answered.
 func (h *cliAuthHandlers) staleApprover(w http.ResponseWriter, r *http.Request, acct state.Account, approval state.AgentApproval) bool {
 	if !approvalNeedsFreshSignIn[approval.Category] || cliApprovalFresh(r, acct) {
@@ -61,7 +62,7 @@ func (h *cliAuthHandlers) staleApprover(w http.ResponseWriter, r *http.Request, 
 		"window_sec": int(api.RecentSignInWindow.Seconds()),
 	})
 	next := cliAuthPath + "?agent_approval=" + url.QueryEscape(approval.ID)
-	http.Redirect(w, r, loginPath+"?reauth=1&next="+url.QueryEscape(next), http.StatusSeeOther)
+	http.Redirect(w, r, cliApprovalFreshnessURL(acct, next), http.StatusSeeOther)
 	return true
 }
 

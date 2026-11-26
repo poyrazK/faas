@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -150,6 +151,13 @@ func TestProjectDeployCompletionExitCodes(t *testing.T) {
 						t.Error("completion issued a mutation")
 					}
 					_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "dep", AppID: "app", Status: statusLive, Configuration: &config})
+				case "/v1/apps/demo/logs":
+					// A failed workload shows its last log lines; reads only.
+					if r.Method != http.MethodGet {
+						t.Error("completion issued a mutation")
+					}
+					w.Header().Set("Content-Type", "text/event-stream")
+					_, _ = io.WriteString(w, "event: end\ndata: {}\n\n")
 				default:
 					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 					http.NotFound(w, r)

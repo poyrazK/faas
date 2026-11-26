@@ -21,7 +21,7 @@ func mcpVerificationCredential(mode string) string {
 	case mcphosting.AuthAPIKey:
 		return "consumer key (ck_…) with the server's mcp: scopes"
 	case mcphosting.AuthOAuthProxy:
-		return "Gregale Auth client access token for this server"
+		return "client access token for this server from its OAuth issuer"
 	default:
 		return "client access token"
 	}
@@ -67,7 +67,7 @@ func requireMCPGatewayPolicy(ctx context.Context, c *Client, slug string, cfg mc
 // cmdMCPAuth is `gregale mcp server auth enable` (ADR-20261122194324).
 func cmdMCPAuth(args []string) int {
 	if len(args) == 0 || args[0] != "enable" {
-		PrintUsage(os.Stderr, "usage: gregale mcp server auth enable --mode api-key|oauth-proxy --app SLUG [--path DIR] [--scopes A,B] [--auth-app NAME] [--dry-run]", "mcp")
+		PrintUsage(os.Stderr, "usage: gregale mcp server auth enable --mode api-key|oauth-proxy --app SLUG [--path DIR] [--scopes A,B] [--auth-app NAME | --issuer URL [--audience AUD]] [--dry-run]", "mcp")
 		return 2
 	}
 	fs := newFlagSet("mcp-auth-enable", flag.ContinueOnError)
@@ -76,6 +76,8 @@ func cmdMCPAuth(args []string) int {
 	path := fs.String("path", ".", "MCP source directory")
 	scopes := fs.String("scopes", "", "comma-separated endpoint scopes")
 	authApp := fs.String("auth-app", "", "Gregale Auth app that signs callers in (oauth-proxy)")
+	issuerURL := fs.String("issuer", "", "OpenID Connect issuer that signs callers in, instead of a Gregale Auth app (oauth-proxy)")
+	audience := fs.String("audience", "", "aud claim the issuer puts in access tokens when it is not the endpoint URL (oauth-proxy with --issuer)")
 	dryRun := fs.Bool("dry-run", false, "print the change without writing it")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
@@ -83,8 +85,11 @@ func cmdMCPAuth(args []string) int {
 	if fs.NArg() != 0 || *slug == "" {
 		return printErr("MCP auth", errors.New("--app is required and positional arguments are not accepted"))
 	}
-	if (*mode == mcphosting.AuthOAuthProxy) != (*authApp != "") {
-		return printErr("MCP auth", errors.New("--auth-app is required with --mode oauth-proxy and not accepted otherwise"))
+	if (*mode == mcphosting.AuthOAuthProxy) != (*authApp != "" || *issuerURL != "") || (*authApp != "" && *issuerURL != "") {
+		return printErr("MCP auth", errors.New("--mode oauth-proxy needs exactly one of --auth-app or --issuer; other modes take neither"))
+	}
+	if *audience != "" && *issuerURL == "" {
+		return printErr("MCP auth", errors.New("--audience goes with --issuer"))
 	}
 	dir, err := filepath.Abs(*path)
 	if err != nil {
@@ -108,13 +113,20 @@ func cmdMCPAuth(args []string) int {
 	if err != nil {
 		return printErr("MCP auth", err)
 	}
-	var issuer string
-	if *mode == mcphosting.AuthOAuthProxy {
+	var issuer mcpAuthIssuer
+	switch {
+	case *authApp != "":
 		resolved, required, err := mcpAuthApp(*authApp, *scopes)
 		if err != nil {
 			return printErr("MCP auth", err)
 		}
-		issuer, *scopes = resolved.Issuer, required
+		issuer.url, *scopes = resolved.Issuer, required
+	case *issuerURL != "":
+		jwks, err := mcpDiscoverJWKS(ctx, *issuerURL)
+		if err != nil {
+			return printErr("MCP auth", err)
+		}
+		issuer = mcpAuthIssuer{url: *issuerURL, jwksURL: jwks, audience: *audience}
 	}
 	if err := mcpAuthEnableConfig(&cfg, *mode, endpoint, issuer, *scopes); err != nil {
 		return printErr("MCP auth", err)
@@ -149,9 +161,16 @@ func cmdMCPAuth(args []string) int {
 	return 0
 }
 
+// mcpAuthIssuer is the issuer of an oauth-proxy server: a Gregale Auth app
+// (jwksURL empty) or an external OpenID Connect issuer.
+type mcpAuthIssuer struct {
+	url, jwksURL, audience string
+}
+
 // mcpAuthEnableConfig rewrites cfg.Auth for mode, keeping the reviewed tool,
-// resource and prompt allowlists of api-key servers.
-func mcpAuthEnableConfig(cfg *mcphosting.Config, mode, endpoint, issuer, scopes string) error {
+// resource and prompt allowlists of api-key servers and of oauth-proxy
+// servers with an external issuer, which can issue any scope.
+func mcpAuthEnableConfig(cfg *mcphosting.Config, mode, endpoint string, issuer mcpAuthIssuer, scopes string) error {
 	if cfg.Tasks != nil && cfg.Tasks.Enabled != nil && *cfg.Tasks.Enabled {
 		return errors.New("servers with durable Tasks need per-caller ownership; keep external-oauth")
 	}
@@ -167,7 +186,14 @@ func mcpAuthEnableConfig(cfg *mcphosting.Config, mode, endpoint, issuer, scopes 
 		}
 		auth.ToolScopes, auth.ResourceScopes, auth.PromptScopes = cfg.Auth.ToolScopes, cfg.Auth.ResourceScopes, cfg.Auth.PromptScopes
 	case mcphosting.AuthOAuthProxy:
-		auth.Issuer = issuer
+		auth.Issuer, auth.JWKSURL, auth.Audience = issuer.url, issuer.jwksURL, issuer.audience
+		if issuer.jwksURL != "" {
+			if len(list) == 0 {
+				list = cfg.Auth.Scopes
+			}
+			auth.ToolScopes, auth.ResourceScopes, auth.PromptScopes = cfg.Auth.ToolScopes, cfg.Auth.ResourceScopes, cfg.Auth.PromptScopes
+			break
+		}
 		if len(cfg.Auth.ToolScopes)+len(cfg.Auth.ResourceScopes)+len(cfg.Auth.PromptScopes) > 0 {
 			return errors.New("oauth-proxy cannot keep tool, resource or prompt scopes: Gregale Auth issues only OpenID scopes; remove them first")
 		}
@@ -192,14 +218,17 @@ func splitMCPScopes(value string) []string {
 // mcpAuthNext lists what the owner does after enabling a mode.
 func mcpAuthNext(cfg mcphosting.Config, slug string) []string {
 	if cfg.Auth.Mode == mcphosting.AuthAPIKey {
-		grants := make([]string, 0, len(cfg.Auth.Scopes))
-		for _, scope := range cfg.Auth.Scopes {
-			grants = append(grants, api.ConsumerKeyMCPScopePrefix+scope)
-		}
 		return []string{
-			fmt.Sprintf("Give a caller a key: gregale api consumer key create %s CONSUMER_ID --name NAME --scopes %s", slug, strings.Join(grants, ",")),
+			fmt.Sprintf("Give a caller a key: gregale mcp server keys create --app %s --new-consumer CALLER --name NAME", slug),
 			"Callers send it as Authorization: Bearer ck_…",
 			fmt.Sprintf("Deploy: gregale mcp server deploy --name %s --token-env MCP_CONSUMER_KEY", slug),
+		}
+	}
+	if cfg.Auth.ExternalIssuer() {
+		return []string{
+			fmt.Sprintf("At %s, issue access tokens with aud %q and the scopes %s.", cfg.Auth.Issuer, cfg.Auth.TokenAudience(), strings.Join(cfg.Auth.Scopes, ", ")),
+			"Clients discover the issuer from the server's protected-resource metadata and sign in there.",
+			fmt.Sprintf("Deploy: gregale mcp server deploy --name %s --token-env MCP_ACCESS_TOKEN", slug),
 		}
 	}
 	return []string{

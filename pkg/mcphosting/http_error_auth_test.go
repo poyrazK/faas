@@ -46,6 +46,7 @@ func TestMCP401KeepsServerErrorCode(t *testing.T) {
 		{"no token", meta, `{"error":"authentication_required"}`, false, "authentication_required", "authentication required", "--token-env"},
 		{"bad token", meta + `, error="invalid_token"`, `{"error":"invalid_token"}`, true, "invalid_token", "rejected the token (HTTP 401 invalid_token)", "audience"},
 		{"keys unavailable", meta + `, error="invalid_token", error_description="signing keys unavailable"`, `{}`, true, "invalid_token", "could not check the token (HTTP 401 invalid_token: signing keys unavailable)", "JWKS"},
+		{"keys refused", meta + `, error="invalid_token", error_description="signing keys refused"`, `{}`, true, "invalid_token", "its JWKS URL refused the request (HTTP 401 invalid_token: signing keys refused)", "--public-auth open"},
 		{"code only in body", `Bearer realm="x"`, `{"error":"invalid_token"}`, true, "invalid_token", "rejected the token", "audience"},
 		{"hostile description dropped", meta + `, error="invalid_token", error_description="a` + "\x1b[2J" + `"`, `{}`, true, "invalid_token", "(HTTP 401 invalid_token)", ""},
 		{"no challenge, non-JSON", "", "<html>", true, "authentication_required", "HTTP 401 authentication_required", ""},
@@ -109,16 +110,18 @@ func TestBearerChallengeParamsInChallengeList(t *testing.T) {
 }
 
 // A fresh deploy candidate's first JWKS fetch can fail; the server answers
-// 401 invalid_token with Retry-After. The doctor retries that once only.
-func TestDoctorRetriesSigningKeysUnavailableOnce(t *testing.T) {
-	old := doctorGatewayRetryDelay
-	doctorGatewayRetryDelay = time.Millisecond
-	t.Cleanup(func() { doctorGatewayRetryDelay = old })
+// 401 invalid_token with Retry-After. The doctor retries that a bounded number
+// of times: a provider still unreachable a second later failed the release
+// (prod 2026-11-22).
+func TestDoctorRetriesSigningKeysUnavailableBounded(t *testing.T) {
+	old := doctorSigningKeyRetryDelay
+	doctorSigningKeyRetryDelay = time.Millisecond
+	t.Cleanup(func() { doctorSigningKeyRetryDelay = old })
 	for _, tc := range []struct {
 		failures int32
 		ok       bool
 		calls    int32
-	}{{1, true, 2}, {10, false, 2}} {
+	}{{1, true, 2}, {doctorSigningKeyRetries, true, doctorSigningKeyRetries + 1}, {10, false, doctorSigningKeyRetries + 1}} {
 		inner, discovers := discoverOnlyHandler(t, 0, 0)
 		var refused atomic.Int32
 		h := func(w http.ResponseWriter, r *http.Request) {

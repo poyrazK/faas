@@ -12,7 +12,7 @@ Deploy, diagnose and roll back Gregale apps from Claude Code. The plugin adds:
 ## Install
 
 The skills deploy with the `gregale` CLI, so install it and log in (or set
-`FAAS_TOKEN`), then:
+`GREGALE_TOKEN`), then:
 
 ```sh
 claude plugin marketplace add poyrazK/faas-web

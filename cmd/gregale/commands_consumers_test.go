@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -84,6 +86,66 @@ func TestCmdConsumersMonetizationLifecycle(t *testing.T) {
 	}
 	if code := main.CmdConsumers([]string{"statement-handoff", "my-api", "c1", "s3", "--invoice-id", "INV-1001"}); code != 0 || claim.ExternalInvoiceID != "INV-1001" {
 		t.Fatalf("handoff exit=%d body=%+v", code, claim)
+	}
+}
+
+func TestCmdConsumersModelMetering(t *testing.T) {
+	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "1")
+	start := time.Date(2026, 11, 1, 14, 20, 0, 0, time.UTC)
+	waiver := api.APIConsumerUsageWaiverRequest{SourceStatementID: "s1", Unit: "app:output_tokens", Model: "preview",
+		Since: start, Until: start.Add(time.Minute), Units: 17, Reason: "Launch trial"}
+	data, err := json.Marshal(waiver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(t.TempDir(), "waiver.json")
+	if err := os.WriteFile(file, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	base := "/v1/apps/my-api/consumers/c1"
+	stdout := withConsumersTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "POST /v1/apps/my-api/rate-cards":
+			var card api.CreateAPIConsumerRateCardRequest
+			if err := json.NewDecoder(r.Body).Decode(&card); err != nil || card.Unit != waiver.Unit || card.ModelPrices["premium"] != 5 {
+				t.Errorf("rate card = %+v, err = %v", card, err)
+			}
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(api.APIConsumerRateCardResponse{ID: "rc1", Currency: card.Currency, ModelPrices: card.ModelPrices})
+		case "GET " + base + "/usage/quote":
+			if r.URL.Query().Get("breakdown") != "true" {
+				t.Errorf("quote query = %s", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(api.APIConsumerUsageQuoteResponse{ConsumerID: "c1", Currency: "USD", UnpricedUnits: 3,
+				MeterBreakdown: []api.APIConsumerQuoteBreakdown{{Unit: waiver.Unit, Model: waiver.Model, BillableUnits: 20, WaivedUnits: 17}}})
+		case "POST " + base + "/usage-statements":
+			var req api.CreateAPIConsumerUsageStatementRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Waiver == nil || *req.Waiver != waiver {
+				t.Errorf("draft request = %+v, err = %v", req, err)
+			}
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(api.APIConsumerUsageStatementResponse{ID: "s2", Revision: 2, Status: "draft",
+				Waiver: &api.APIConsumerUsageWaiverResponse{APIConsumerUsageWaiverRequest: waiver}})
+		case "GET " + base + "/usage-completeness":
+			_ = json.NewEncoder(w).Encode(api.APIConsumerUsageCompletenessResponse{Status: "verified"})
+		default:
+			t.Errorf("unexpected route %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	})
+	for _, args := range [][]string{
+		{"rate-card-create", "my-api", "--currency", "USD", "--price-millicents", "3", "--unit", waiver.Unit, "--model-price", "premium=5"},
+		{"quote", "my-api", "c1", "--breakdown"},
+		{"statement-draft", "my-api", "c1", "--month", "2026-11", "--waiver-file", file},
+	} {
+		if code := main.CmdConsumers(args); code != 0 {
+			t.Fatalf("%s exit = %d", args[0], code)
+		}
+	}
+	for _, text := range []string{"17 waived units, 3 unpriced units", waiver.Reason} {
+		if !strings.Contains(stdout.String(), text) {
+			t.Fatalf("missing %q in output %q", text, stdout.String())
+		}
 	}
 }
 

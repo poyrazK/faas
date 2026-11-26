@@ -27,6 +27,11 @@ func (a usageAttribution) financial() bool { return a.ConsumerID != "" || a.Plat
 
 func requestUsageAttribution(r *http.Request) usageAttribution {
 	var a usageAttribution
+	auth := authenticatedFrom(r.Context())
+	if auth.StageConsumer {
+		// A stage's consumers are never billed (ADR-20261104120000).
+		return a
+	}
 	if identity, ok := authmw.ConsumerFromContext(r); ok {
 		// Consumer IDs are UUIDs in the control-plane store. Keep
 		// malformed/legacy context stamps out of the nullable DB
@@ -35,7 +40,6 @@ func requestUsageAttribution(r *http.Request) usageAttribution {
 			a.ConsumerID = parsed.String()
 		}
 	}
-	auth := authenticatedFrom(r.Context())
 	if parsed, err := uuid.Parse(auth.PlatformTenantID); err == nil &&
 		(a.ConsumerID != "" || auth.PlatformTenantSurfaceID != "" || auth.PlatformTenantJWTAuthorizationRuleID != "") {
 		a.PlatformTenantID = parsed.String()

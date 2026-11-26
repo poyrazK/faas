@@ -4,8 +4,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-
-	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // applyEdgeRuleCache (ADR-122 §Decision) is the kind=cache serve
@@ -61,14 +59,8 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 	if app.PinnedDeploymentID != "" || hasDevBridgeScope(r.Context()) {
 		return false, nil
 	}
-	// Method gate is a cheap pre-flight: only {GET, HEAD} are
-	// cacheable per ADR-122 D3. We DO NOT count this as
-	// bypass_uncacheable here — that label only fires when a
-	// cache rule actually matched the path AND the verb is
-	// outside {GET, HEAD}, otherwise every POST-heavy app with
-	// no cache rule would inflate the counter (the
-	// counter's load-bearing meaning is "rule matched, wrong
-	// verb mix").
+	// Only GET and HEAD can use shared response caching. Count bypasses
+	// after matching a rule so unrelated traffic doesn't inflate the metric.
 	method := r.Method
 	if method != "GET" && method != "HEAD" {
 		return false, nil
@@ -107,6 +99,12 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 		h.metricsIncCacheOutcome(app.ID, "bypass_authed")
 		return false, nil
 	}
+	if rule.DataAPIPublicRead && !dataAPIAllowsCacheLookup(r.Header) {
+		recordTrafficCache(r.Context(), "bypass_uncacheable")
+		h.metricsIncCacheOutcome(app.ID, "bypass_uncacheable")
+		// A nil rule also skips capture and stale responses later in ServeHTTP.
+		return false, nil
+	}
 	// Snapshot routing partitions every request by its admitted deployment
 	// before cache access. Legacy adapters without a routing snapshot retain
 	// the empty dimension for requests that have no version pin.
@@ -129,7 +127,7 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 		// can add it via kind=headers.
 		recordTrafficCache(r.Context(), "hit")
 		h.metricsIncCacheOutcome(app.ID, "hit")
-		w.Header().Del(wire.WakeHeader)
+		w.Header().Del(canonicalWakeHeader)
 		for k, vs := range entry.header {
 			// Skip hop-by-hop headers that don't survive
 			// into the stored body anyway; mirroring
@@ -145,7 +143,7 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 				w.Header().Add(k, v)
 			}
 		}
-		w.Header().Set("x-faas-cache", "hit")
+		w.Header().Set("X-Faas-Cache", "hit")
 		w.Header().Set("Age", strconv.FormatInt(h.responseCache.ageSeconds(entry), 10))
 		w.Header().Set("Content-Length", itoaLen(entry.body))
 		h.applyCachedRouteLifecycle(w, r, app, entry)
@@ -178,7 +176,7 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 		// callers do not stampede the origin.
 		recordTrafficCache(r.Context(), "stale_while_revalidate_served")
 		h.metricsIncCacheOutcome(app.ID, "stale_while_revalidate_served")
-		w.Header().Del(wire.WakeHeader)
+		w.Header().Del(canonicalWakeHeader)
 		for k, vs := range entry.header {
 			if isHopByHopHeader(k) || isPerRequestPlatformHeader(k) || cachedHeaderSuperseded(w, k) {
 				continue
@@ -190,7 +188,7 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 				w.Header().Add(k, v)
 			}
 		}
-		w.Header().Set("x-faas-cache", "stale-while-revalidate")
+		w.Header().Set("X-Faas-Cache", "stale-while-revalidate")
 		w.Header().Set("Age", strconv.FormatInt(h.responseCache.ageSeconds(entry), 10))
 		w.Header().Set("X-From-Cache", "stale")
 		w.Header().Add("Warning", `110 - "Response is Stale"`)
@@ -254,7 +252,7 @@ func hasCacheCredentials(r *http.Request) bool {
 	// authenticates with Proxy-Authorization). The key was not part of the
 	// cache key, so a keyed caller's response was served to anonymous ones
 	// unless the app marked it private (ADR-20261103090000).
-	for _, name := range []string{"Authorization", "Proxy-Authorization", "X-API-Key"} {
+	for _, name := range []string{"Authorization", "Proxy-Authorization", "X-Api-Key"} {
 		if len(r.Header.Values(name)) != 0 {
 			return true
 		}

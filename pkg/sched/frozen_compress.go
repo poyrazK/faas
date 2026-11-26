@@ -12,21 +12,35 @@ import (
 // parks as before.
 const minFrozenCompressFreedBytes = 16 << 20
 
-// EvictUnderPressure is Evict for RAM pressure. A frozen instance is first
-// compressed into memory-only swap (ADR-906 decision 6): when that frees at
-// least half its memory it stays frozen and thawable, otherwise it parks.
-// Any other instance is evicted as by Evict.
-func (e *Engine) EvictUnderPressure(ctx context.Context, instanceID string) error {
+// Memory pressure eviction (ADR-20261123190507). A running instance evicted
+// under RAM pressure records a MemoryEvictionEventKind transition whose reason
+// names the trigger, so the operator memory pressure report can tell it from
+// an ordinary stop; a frozen one keeps its frozen_park row with reason
+// memory_pressure.
+const (
+	MemoryEvictionEventKind = state.MemoryPressureKindEviction
+	// EvictionReasonMeasuredMemory: the node's measured memory went over
+	// its admission ceiling (ADR-909).
+	EvictionReasonMeasuredMemory = "measured_memory"
+	// EvictionReasonRAMPressure: reservations went over the node's ceiling.
+	EvictionReasonRAMPressure = "ram_pressure"
+)
+
+// EvictUnderPressure is Evict for RAM pressure; reason names the trigger. A
+// frozen instance is first compressed into memory-only swap (ADR-906
+// decision 6): when that frees at least half its memory it stays frozen and
+// thawable, otherwise it parks. Any other instance is evicted as by Evict.
+func (e *Engine) EvictUnderPressure(ctx context.Context, instanceID, reason string) error {
 	frozen, err := e.lockedInStates(ctx, instanceID, state.StateFrozen)
 	if err != nil {
 		return err
 	}
 	if frozen == nil {
-		return e.Evict(ctx, instanceID)
+		return e.evict(ctx, instanceID, MemoryEvictionEventKind, reason, state.MemoryPressureParkReason)
 	}
 	defer e.unlockApp(frozen.AppID)
 	if e.compressFrozenLocked(ctx, *frozen, frozenCompressPressure) != frozenCompressed {
-		e.parkFrozenLocked(ctx, *frozen, "memory_pressure")
+		e.parkFrozenLocked(ctx, *frozen, state.MemoryPressureParkReason)
 	}
 	return nil
 }

@@ -116,12 +116,21 @@ class ControlPlaneLaneTest(unittest.TestCase):
         got = pud.plan(release(), full_host(), "edge", CP, ancestor)
         self.assertEqual(got["action"], "none")
 
+    def test_a_host_ahead_of_the_release_plans_nothing(self):
+        # An owner-dispatched compute-lane canary released a later commit
+        # (ADR-20261123122457); a lane-off run stalled behind it must
+        # neither downgrade the host nor fail.
+        host = overlay_host({"apid": APID["version"]}, commit=T2)
+        got = cp_plan(release(commit=T1, apid=APID), host)
+        self.assertEqual(got["action"], "none")
+        self.assertEqual((got["only"], got["ahead"]), ([], T2))
+
     def test_refusals(self):
         cases = [
             ("N±1: base is not the previous release", release(), full_host(), {"previous_release": "8" * 40},
              "N±1"),
             ("another full release", release(), full_host() | {"base_git_sha": "9" * 40}, {}, "host runs full release"),
-            ("newer unit release on host", release(commit=T1), overlay_host({"apid": APID["version"]}, commit=T2),
+            ("diverged unit release on host", release(commit=T2), overlay_host({"apid": APID["version"]}, commit="3" * 40),
              {}, "not an ancestor"),
             ("host carries a unit this release lacks", release(apid=APID),
              overlay_host({"meterd": METERD["version"]}), {}, "does not carry: meterd"),
@@ -182,6 +191,55 @@ class EdgeLaneTest(unittest.TestCase):
         self.assertEqual(got["unit_versions"]["units"]["gatewayd-public"], PUBLIC["version"])
         with self.assertRaises(pud.Refused):
             pud.plan(release(apid=APID), host, "edge", CP, ancestor)
+
+
+SCHEDD = {"lane": "shared", "version": "unit-" + "5" * 40, "services": [
+    {"name": "schedd", "host": CP, "readyz": "http://127.0.0.1:9103/readyz"},
+    {"name": "schedd", "host": NODE, "readyz": "http://127.0.0.1:9103/readyz"}]}
+VMMD = {"lane": "compute", "version": "unit-" + "6" * 40, "services": [
+    {"name": "vmmd", "host": NODE, "readyz": "http://127.0.0.1:9104/readyz"}]}
+BRIDGE = {"lane": "compute", "version": "unit-" + "7" * 40, "services": [], "helper": True}
+
+
+class ComputeLaneTest(unittest.TestCase):
+    """docs/adr/20261123122457-compute-unit-lane.md: compute-lane units ride
+    the lane that already reaches their host."""
+    REL = release(apid=APID, schedd=SCHEDD, vmmd=VMMD, **{"gatewayd-internal": INTERNAL,
+                                                          "vmmd-tcp-bridge": BRIDGE})
+
+    def test_control_plane_lane_restarts_schedd_on_the_control_plane(self):
+        got = cp_plan(self.REL, full_host())
+        self.assertEqual(got["units"], ["apid", "schedd"])
+        self.assertEqual(got["only"], ["apid", "schedd"])
+        self.assertEqual(got["unit_versions"]["unit_lanes"], {"apid": CP, "schedd": "shared"})
+
+    def test_edge_on_a_compute_node_carries_the_compute_units(self):
+        got = pud.plan(self.REL, full_host(), "edge", NODE, ancestor)
+        self.assertEqual(got["units"], ["gatewayd-internal", "schedd", "vmmd", "vmmd-tcp-bridge"])
+        self.assertEqual(got["only"], ["gatewayd-internal", "schedd", "vmmd"])
+        # The helper is replaced, never restarted or gated.
+        self.assertIn("bin/vmmd-tcp-bridge", got["replace"])
+        self.assertNotIn(["--unit", "vmmd-tcp-bridge", "--component", "vmmd-tcp-bridge"], got["gate"])
+        self.assertEqual(got["unit_versions"]["unit_lanes"],
+                         {"gatewayd-internal": "edge", "schedd": "shared", "vmmd": "compute",
+                          "vmmd-tcp-bridge": "compute"})
+
+    def test_edge_on_the_control_plane_leaves_compute_units(self):
+        host = overlay_host({"apid": APID["version"], "schedd": SCHEDD["version"]}, commit=T2,
+                            lanes={"apid": CP, "schedd": "shared"})
+        got = pud.plan(self.REL, host, "edge", CP, ancestor)
+        self.assertEqual(got["action"], "none")
+
+    def test_a_held_compute_lane_keeps_what_the_node_runs(self):
+        # A later release whose compute lane a role change holds carries no
+        # vmmd: the node keeps its vmmd and record, and the edge lane goes on.
+        host = overlay_host({"vmmd": VMMD["version"], "gatewayd-internal": INTERNAL["version"]},
+                            lanes={"vmmd": "compute", "gatewayd-internal": "edge"}, replaced=("vmmd",))
+        newer = dict(INTERNAL, version="unit-" + "8" * 40)
+        got = pud.plan(release(**{"gatewayd-internal": newer}), host, "edge", NODE, ancestor)
+        self.assertEqual(got["units"], ["gatewayd-internal"])
+        self.assertEqual(got["unit_versions"]["units"]["vmmd"], VMMD["version"])
+        self.assertNotIn("bin/vmmd", got["replace"])
 
 
 DATA_V1, DATA_V2 = "data-" + "3" * 40, "data-" + "4" * 40

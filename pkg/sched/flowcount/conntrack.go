@@ -74,6 +74,15 @@ func WithBinPath(p string) Option {
 	return func(r *Reader) { r.binPath = p }
 }
 
+// WithClock replaces time.Now for the cache TTL (tests).
+func WithClock(now func() time.Time) Option {
+	return func(r *Reader) {
+		if now != nil {
+			r.now = now
+		}
+	}
+}
+
 // WithTTL overrides the cache lifetime. Tests use a tiny value to exercise
 // the refresh path without sleeping.
 func WithTTL(d time.Duration) Option {
@@ -116,6 +125,8 @@ type Reader struct {
 	cacheAt   time.Time                // when the cache was last successfully filled
 	cachedOut []byte                   // last successful conntrack output, reused on cache-fresh Warm
 	failed    bool                     // latch: true after a failed Warm, cleared on next successful Warm
+	now       func() time.Time         // clock; time.Now unless WithClock
+	readGen   uint64                   // bumped by every stored conntrack read
 }
 
 // NewReader constructs a Reader with sensible defaults (DefaultBinPath,
@@ -129,6 +140,7 @@ func NewReader(runner Runner, opts ...Option) *Reader {
 		binPath:      DefaultBinPath,
 		ttl:          DefaultTTL,
 		maxSummaries: DefaultMaxSummaries,
+		now:          time.Now,
 	}
 	for _, opt := range opts {
 		opt(r)
@@ -168,9 +180,12 @@ func (r *Reader) Warm(ctx context.Context, instances []state.Instance) error {
 		return nil
 	}
 	r.mu.Lock()
-	cacheFresh := !r.failed && !r.cacheAt.IsZero() && time.Since(r.cacheAt) < r.ttl
+	cacheFresh := !r.failed && !r.cacheAt.IsZero() && r.now().Sub(r.cacheAt) < r.ttl
 	var out []byte
+	reused := false
+	gen := r.readGen
 	if cacheFresh && r.cachedOut != nil {
+		reused = true
 		// Cache is fresh: re-parse the cached conntrack output against the
 		// new warm list. This is the load-bearing bit — re-using `out` but
 		// recomputing counts means a re-used IP slot (pkg/fcvm/alloc.go
@@ -202,10 +217,25 @@ func (r *Reader) Warm(ctx context.Context, instances []state.Instance) error {
 	summaries := parseFlowSummaries(out, hostIndex, r.maxSummaries)
 
 	r.mu.Lock()
+	if reused && r.readGen != gen {
+		// A concurrent Warm stored a fresher read while this one re-parsed
+		// the old output; keep the fresher state.
+		r.mu.Unlock()
+		return nil
+	}
 	r.hostIndex = hostIndex
 	r.counts = counts
 	r.summaries = summaries
-	r.cacheAt = time.Now()
+	// cacheAt is when the conntrack table was read, not when it was last
+	// re-parsed. Refreshing it on a cache hit kept the snapshot fresh forever
+	// for any caller that warms more often than the TTL: vmmd's capacity
+	// publisher warms every second, so one conntrack read served a vmmd's
+	// whole lifetime and stale flows kept idle instances from parking until
+	// vmmd restarted (metering review 2026-11-23).
+	if !reused {
+		r.cacheAt = r.now()
+		r.readGen++
+	}
 	r.cachedOut = out
 	r.failed = false
 	r.mu.Unlock()

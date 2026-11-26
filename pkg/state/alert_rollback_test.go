@@ -27,7 +27,7 @@ func alertRollbackRule(ctx context.Context, t *testing.T, s state.Store, acct st
 }
 func claimAlertRollback(ctx context.Context, t *testing.T, s state.Store, rule state.AlertRule) api.AlertRollback {
 	t.Helper()
-	id, won, err := s.ClaimAlertFire(ctx, rule.ID, rule.ID+":fire", []byte(`{"metric":"error_rate_pct"}`), 42, time.Now().UTC())
+	id, won, _, err := s.ClaimAlertFire(ctx, rule.ID, rule.ID+":fire", []byte(`{"metric":"error_rate_pct"}`), 42, time.Now().UTC())
 	if err != nil || !won {
 		t.Fatalf("claim %s %v %v", id, won, err)
 	}
@@ -45,7 +45,7 @@ func alertRollbackSuite(t *testing.T, s state.Store) {
 		acct, app, _, _ := bindingReleaseRecoveryFixtureCtx(ctx, t, s)
 		rule := alertRollbackRule(ctx, t, s, acct, app)
 		for _, observed := range []float64{math.Inf(1), math.NaN()} {
-			id, won, err := s.ClaimAlertFire(ctx, rule.ID, rule.ID+":invalid", nil, observed, time.Now())
+			id, won, _, err := s.ClaimAlertFire(ctx, rule.ID, rule.ID+":invalid", nil, observed, time.Now())
 			if !errors.Is(err, state.ErrInvalidArgument) || won || id != "" {
 				t.Fatalf("nonfinite fire %s %v %v", id, won, err)
 			}
@@ -66,7 +66,7 @@ func alertRollbackSuite(t *testing.T, s state.Store) {
 		if r.Status != "pending" || r.CandidateDeploymentID != candidate.ID || r.PredecessorDeploymentID != predecessor.ID {
 			t.Fatalf("unpinned fire %+v", r)
 		}
-		_, won, err := s.ClaimAlertFire(ctx, rule.ID, rule.ID+":fire", nil, 45, time.Now().Add(time.Second))
+		_, won, _, err := s.ClaimAlertFire(ctx, rule.ID, rule.ID+":fire", nil, 45, time.Now().Add(time.Second))
 		if err != nil || won {
 			t.Fatalf("duplicate fire %v %v", won, err)
 		}

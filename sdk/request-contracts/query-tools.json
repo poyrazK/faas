@@ -1,0 +1,207 @@
+{
+  "version": 1,
+  "scope": {
+    "base_url": "https://control.test",
+    "account_id": "11111111-1111-4111-8111-111111111111",
+    "app_id": "22222222-2222-4222-8222-222222222222",
+    "app_slug": "imports"
+  },
+  "contract": {
+    "version": 1,
+    "name": "query-rows",
+    "input": {
+      "type": "object",
+      "properties": {
+        "search": {
+          "type": "string",
+          "maxLength": 100
+        }
+      },
+      "required": [
+        "search"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "value": {
+          "type": "string",
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "id",
+        "value"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "key": "fixture-only-query-cursor-key-32-bytes",
+  "input": {
+    "search": "café"
+  },
+  "rows": [
+    {
+      "id": "9007199254740993",
+      "value": "café first"
+    },
+    {
+      "id": "9007199254740995",
+      "value": "café second"
+    },
+    {
+      "id": "9007199254740997",
+      "value": "café third"
+    }
+  ],
+  "first_page": {
+    "items": [
+      {
+        "id": "9007199254740993",
+        "value": "café first"
+      }
+    ],
+    "next_cursor": "eyJ2IjoxLCJiIjoiYTA1OWNiYWUyNDg1YmNiNzZmNzExMjc5M2UzMmY3N2Y5YTZhMDc4ODI5NDE2YjJhYjc1YzhhMWM2ZDNhNzVhMiIsImEiOiI5MDA3MTk5MjU0NzQwOTkzIn0.PcYvidn-3_twB-1hP0Blnp8sgXiKrodcoQzUMmv8RlQ"
+  },
+  "tools": [
+    {
+      "name": "csv_rows",
+      "description": "Search imported rows.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "type": "object",
+            "properties": {
+              "search": {
+                "type": "string",
+                "maxLength": 100
+              }
+            },
+            "required": [
+              "search"
+            ],
+            "additionalProperties": false
+          },
+          "after": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "required": [
+          "input"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                "value": {
+                  "type": "string",
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "id",
+                "value"
+              ],
+              "additionalProperties": false
+            },
+            "maxItems": 100
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 8192
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    }
+  ],
+  "resource_templates": [
+    {
+      "uriTemplate": "gregale-query://013abdabb87763aba4cc6aaee1d12770bdd1280d48aebb833684c37c19969aa7/csv_report/{id}",
+      "name": "csv_report",
+      "description": "Read an authorized CSV report.",
+      "mimeType": "text/csv"
+    }
+  ],
+  "resource_link": {
+    "type": "resource_link",
+    "uri": "gregale-query://013abdabb87763aba4cc6aaee1d12770bdd1280d48aebb833684c37c19969aa7/csv_report/report_1",
+    "name": "csv_report/report_1",
+    "description": "Read an authorized CSV report.",
+    "mimeType": "text/csv"
+  },
+  "invalid_pages": [
+    {
+      "items": [],
+      "after": "next"
+    },
+    {
+      "items": [
+        {
+          "id": "9007199254740993",
+          "value": "café first"
+        },
+        {
+          "id": "9007199254740995",
+          "value": "café second"
+        }
+      ],
+      "after": null
+    },
+    {
+      "items": [
+        {
+          "id": 1,
+          "value": "bad"
+        }
+      ],
+      "after": null
+    },
+    {
+      "items": [
+        {
+          "id": "9007199254740993",
+          "value": "café first"
+        }
+      ],
+      "after": "9007199254740993",
+      "extra": true
+    }
+  ]
+}

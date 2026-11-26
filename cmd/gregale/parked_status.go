@@ -33,7 +33,26 @@ func appParkedLabel(app api.AppResponse) string {
 	if app.Status != appStatusParked {
 		return ""
 	}
-	return parkedStatusLabel(inspectParkedReason(app))
+	reason := inspectParkedReason(app)
+	if reason == "liveness_exhausted" && appIsWorker(app) {
+		return "parked: crash-looped"
+	}
+	return parkedStatusLabel(reason)
+}
+
+// appIsWorker reports a background worker: declared (execution_mode) or a
+// portless Compose service (workload_class). A worker gets no HTTP liveness
+// probe, so its liveness park means its process kept exiting, and no request
+// ever starts it again: "parked: liveness failed ... the next request starts
+// it again" sent an agent to add a /healthz server to a worker (agent eval
+// 2026-11-23, voting-app P3).
+func appIsWorker(app api.AppResponse) bool {
+	return isWorker(app.Manifest.ExecutionMode, app.WorkloadClass)
+}
+
+// isWorker is appIsWorker for callers that hold only the two fields.
+func isWorker(executionMode, workloadClass string) bool {
+	return executionMode == api.ExecutionModeWorker || workloadClass == api.ExecutionModeWorker
 }
 
 // parkedDeploymentID is the deployment the app is parked on, or "" when the
@@ -96,6 +115,10 @@ func writeParkedNotice(w io.Writer, app api.AppResponse) {
 	}
 	switch inspectParkedReason(app) {
 	case "liveness_exhausted":
+		if appIsWorker(app) {
+			_, _ = fmt.Fprintf(w, "! %s is parked: the worker's process kept exiting (workers get no HTTP health check). Read `gregale logs %s --since 1h`, fix the crash and deploy (a new release starts it), or run `gregale app wake %s`.\n", app.Slug, app.Slug, app.Slug)
+			return
+		}
 		_, _ = fmt.Fprintf(w, "! %s is parked: its instances repeatedly failed liveness checks or crashed, so callers get errors or timeouts. Run `gregale app health %s --explain`.\n", app.Slug, app.Slug)
 	case "security_scan_regressed":
 		_, _ = fmt.Fprintf(w, "! %s is parked: its image failed a security re-scan. Run `gregale app health %s --explain`.\n", app.Slug, app.Slug)

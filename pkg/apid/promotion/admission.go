@@ -20,7 +20,7 @@ func WriteAdmissionError(w http.ResponseWriter, err error) bool {
 		w.Header().Set("Retry-After", strconv.Itoa(api.ProjectPromotionAdmissionRetryAfterSeconds))
 		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeProjectPromotionQueueFull,
 			"Promotion queue is full", "No promotion was accepted; retry the same request after capacity becomes available.").
-			WithLimit(full.Limit, full.Observed).WithDocs("https://gregale.dev/docs/deploys#promotion-admission"))
+			WithLimit(full.Limit, full.Observed).WithDocs("https://gregale.dev/docs/environment-promotion#promotion-admission"))
 		return true
 	}
 	var approval *state.PromotionApprovalError

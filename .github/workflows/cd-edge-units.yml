@@ -156,9 +156,13 @@ jobs:
         run: |
           set -euo pipefail
           manifest="$UNITS_DIR/units-manifest.json"
-          edge="$(jq -r '.lanes.edge.eligible' "$manifest")"
+          # The compute lane's node units ride this lane's per-node jobs
+          # (docs/adr/20261123122457-compute-unit-lane.md): vmmd behind its
+          # adoption proof, schedd and the leaf daemons, helpers replaced.
+          edge="$(jq -r '.lanes.edge.eligible or (.lanes.compute.eligible // false)' "$manifest")"
           echo "edge=$edge" >> "$GITHUB_OUTPUT"
           echo "edge lane: eligible=$edge ($(jq -r '[.units | to_entries[] | select(.value.lane == "edge") | .key] | join(", ")' "$manifest"))"
+          echo "compute lane: eligible=$(jq -r '.lanes.compute.eligible // false' "$manifest") ($(jq -r '[.units | to_entries[] | select(.value.lane == "shared" or .value.lane == "compute") | .key] | join(", ")' "$manifest"))"
 
       - name: Set up SSH
         if: steps.lanes.outputs.edge == 'true'

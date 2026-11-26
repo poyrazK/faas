@@ -71,7 +71,7 @@ func TestPgStore_ClaimAlertFire_StampsPayload(t *testing.T) {
 	}
 
 	payload := []byte(`{"metric":"error_rate_pct","observed":12.5,"threshold":5,"comparison":"gt"}`)
-	deliveryID, won, err := s.ClaimAlertFire(ctx, rule.ID, rule.ID+":bucket-1", payload, 12.5, time.Now())
+	deliveryID, won, _, err := s.ClaimAlertFire(ctx, rule.ID, rule.ID+":bucket-1", payload, 12.5, time.Now())
 	if err != nil || !won || deliveryID == "" {
 		t.Fatalf("ClaimAlertFire: (%q, %v, %v); want (nonempty, true, nil)", deliveryID, won, err)
 	}
@@ -129,11 +129,11 @@ func TestPgStore_ClaimAlertFire_DuplicateBucket(t *testing.T) {
 	}
 
 	t0 := time.Now()
-	id1, won1, err := s.ClaimAlertFire(ctx, rule.ID, rule.ID+":bucket-1", []byte(`{}`), 10.5, t0)
+	id1, won1, _, err := s.ClaimAlertFire(ctx, rule.ID, rule.ID+":bucket-1", []byte(`{}`), 10.5, t0)
 	if err != nil || !won1 || id1 == "" {
 		t.Fatalf("first claim: (%q, %v, %v); want (nonempty, true, nil)", id1, won1, err)
 	}
-	id2, won2, err := s.ClaimAlertFire(ctx, rule.ID, rule.ID+":bucket-1", []byte(`{}`), 10.5, t0.Add(time.Second))
+	id2, won2, _, err := s.ClaimAlertFire(ctx, rule.ID, rule.ID+":bucket-1", []byte(`{}`), 10.5, t0.Add(time.Second))
 	if err != nil || won2 || id2 != "" {
 		t.Fatalf("duplicate claim: (%q, %v, %v); want (\"\", false, nil)", id2, won2, err)
 	}
@@ -179,7 +179,7 @@ func TestPgStore_DeleteAccount_CascadesAlertRules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateAlertRule: %v", err)
 	}
-	deliveryID, won, err := s.ClaimAlertFire(ctx, rule.ID, rule.ID+":bucket-1", []byte(`{}`), 10.5, time.Now())
+	deliveryID, won, _, err := s.ClaimAlertFire(ctx, rule.ID, rule.ID+":bucket-1", []byte(`{}`), 10.5, time.Now())
 	if err != nil || !won || deliveryID == "" {
 		t.Fatalf("ClaimAlertFire: (%q, %v, %v); want (nonempty, true, nil)", deliveryID, won, err)
 	}

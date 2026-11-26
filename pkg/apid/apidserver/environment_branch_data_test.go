@@ -120,7 +120,16 @@ func TestEnvironmentBranchCopiesParentDatabases(t *testing.T) {
 		t.Fatalf("the parent's credential was copied into the branch: %+v", secret)
 	}
 
+	// A pass right after create waits for the provider to archive the branch
+	// point instead of asking for a point it refuses (prod 2026-11-24).
 	if err := srv.reconcileEnvironmentBranchData(ctx, store, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if waiting, err := store.ProjectEnvironmentBranchBySlug(ctx, acct.ID, project.ID, "pr-9"); err != nil ||
+		waiting.DataState != state.EnvironmentBranchDataPending || waiting.DataAttempts != 0 || waiting.DataError != "" || len(provider.restores) != 0 {
+		t.Fatalf("branch inside the restore lag = %+v, restores=%d, %v", waiting, len(provider.restores), err)
+	}
+	if err := srv.reconcileEnvironmentBranchData(ctx, store, pastRestoreLag()); err != nil {
 		t.Fatal(err)
 	}
 	branch, err := store.ProjectEnvironmentBranchBySlug(ctx, acct.ID, project.ID, "pr-9")
@@ -178,11 +187,35 @@ func TestEnvironmentBranchCopiesParentDatabases(t *testing.T) {
 	if !primedDeployment(notifier, branchDeployment) {
 		t.Fatalf("ready data did not prime the branch's workload: %+v", notifier.notif)
 	}
-	if err := srv.reconcileEnvironmentBranchData(ctx, store, time.Now().UTC()); err != nil || len(provider.restores) != 1 {
+	if err := srv.reconcileEnvironmentBranchData(ctx, store, pastRestoreLag()); err != nil || len(provider.restores) != 1 {
 		t.Fatalf("a ready branch was copied again: restores=%d err=%v", len(provider.restores), err)
 	}
 	if original, err := service.Get(ctx, acct.ID, source.ID); err != nil || original.State != managedpostgres.StateReady {
 		t.Fatalf("source database = %+v, %v", original, err)
+	}
+
+	// Resetting the branch makes it again from production under the same
+	// slug: the old copy's credential leaves the scope at once (a scope still
+	// holding it refused the new branch), and the new branch gets a fresh copy.
+	req, rec = projectRequest(http.MethodPost, "/v1/projects/shop/environments/pr-9/branch/reset", "shop", nil)
+	req.SetPathValue("environment", "pr-9")
+	srv.resetProjectEnvironmentBranch(rec, req, acct)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reset: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if b, err := bindings.Get(ctx, acct.ID, binding.ID); err == nil && b.State == managedpostgres.BindingStateReady {
+		t.Fatalf("the old branch's binding survived the reset: %+v", b)
+	}
+	if err := srv.reconcileEnvironmentBranchData(ctx, store, pastRestoreLag()); err != nil {
+		t.Fatal(err)
+	}
+	reset, err := store.ProjectEnvironmentBranchBySlug(ctx, acct.ID, project.ID, "pr-9")
+	if err != nil || reset.EnvironmentID == branch.EnvironmentID || reset.DataState != state.EnvironmentBranchDataReady {
+		t.Fatalf("branch after reset = %+v, %v; want a new branch with its data ready", reset, err)
+	}
+	resetSecret, err := store.GetAppSecretInScope(ctx, acct.ID, app.ID, "pr-9", "DATABASE_URL")
+	if err != nil || resetSecret.ManagedPostgresBindingID == "" || resetSecret.ManagedPostgresBindingID == binding.ID {
+		t.Fatalf("branch credential after reset = %+v, %v; want the new copy's", resetSecret, err)
 	}
 
 	// Deleting the branch leaves its copy to the reconciler, which deletes it.
@@ -192,7 +225,7 @@ func TestEnvironmentBranchCopiesParentDatabases(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("delete: status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if err := srv.reconcileEnvironmentBranchData(ctx, store, time.Now().UTC()); err != nil {
+	if err := srv.reconcileEnvironmentBranchData(ctx, store, pastRestoreLag()); err != nil {
 		t.Fatal(err)
 	}
 	copied, err := service.Get(ctx, acct.ID, binding.DatabaseID)
@@ -208,4 +241,10 @@ func TestEnvironmentBranchCopiesParentDatabases(t *testing.T) {
 	if original, err := service.Get(ctx, acct.ID, source.ID); err != nil || original.State != managedpostgres.StateReady {
 		t.Fatalf("source database after branch delete = %+v, %v", original, err)
 	}
+}
+
+// pastRestoreLag is a reconcile time by which a branch created just now has
+// a branch point the provider can restore.
+func pastRestoreLag() time.Time {
+	return time.Now().UTC().Add(managedpostgres.LatestRestoreLag + time.Second)
 }

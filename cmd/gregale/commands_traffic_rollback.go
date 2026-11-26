@@ -137,6 +137,9 @@ func cmdTrafficRollback(args []string) int {
 	if err != nil {
 		return printErr("Invalid arguments", err)
 	}
+	// In the app's checkout the app may be left out, as with `rollback`
+	// (prod hunt r54: it printed usage there mid-split).
+	positional = withLinkedApp(positional, 1)
 	if len(positional) != 1 || strings.TrimSpace(positional[0]) == "" {
 		PrintUsage(os.Stderr, usage, "traffic")
 		return 1

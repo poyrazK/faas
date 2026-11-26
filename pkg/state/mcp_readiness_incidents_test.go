@@ -51,7 +51,7 @@ func TestMCPReadinessIncidentTimelineStore(t *testing.T) {
 		if _, err = s.RecordAlertDelivery(ctx, state.AlertDelivery{RuleID: rule.ID, AccountID: a.ID, AppID: app.ID, IdempotencyKey: key, Payload: []byte(`{}`), FiredAt: at}); err != nil {
 			t.Fatal(err)
 		}
-		if _, won, err := s.ClaimAlertFire(ctx, rule.ID, key, []byte(`{}`), 1, at.Add(time.Second)); err != nil || won {
+		if _, won, _, err := s.ClaimAlertFire(ctx, rule.ID, key, []byte(`{}`), 1, at.Add(time.Second)); err != nil || won {
 			t.Fatal("fire overwrote journal successor", won, err)
 		}
 		source := s.(state.MCPReadinessIncidentStore)

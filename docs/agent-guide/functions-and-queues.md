@@ -14,8 +14,10 @@ A function is a handler(event, ctx) in functions/<name>/; its config in code nam
     gregale queue status <app>
 - List and replay dead letters:
     gregale dlq list <app>
-- List an app's crons, then one cron's runs:
+- List an app's crons:
     gregale cron list <app>
+- Show one cron's runs (its ID is in the list):
+    gregale cron runs <cron-id>
 
 Notes:
 - A handler that answers 4xx (other than 408 or 429) dead-letters the message at once; 5xx, 408 and 429 are retried up to max_attempts.

@@ -115,8 +115,12 @@ func (m *MemStore) ListAlertRuleChannels(_ context.Context, ruleID string) ([]No
 	if !ok {
 		return nil, nil
 	}
+	return m.listAlertRuleChannelsLocked(rule), nil
+}
+
+func (m *MemStore) listAlertRuleChannelsLocked(rule AlertRule) []NotificationChannel {
 	bound := map[string]bool{}
-	for _, id := range m.alertRuleChannels[ruleID] {
+	for _, id := range m.alertRuleChannels[rule.ID] {
 		bound[id] = true
 	}
 	var out []NotificationChannel
@@ -126,7 +130,7 @@ func (m *MemStore) ListAlertRuleChannels(_ context.Context, ruleID string) ([]No
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out, nil
+	return out
 }
 
 var (

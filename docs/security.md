@@ -286,13 +286,33 @@ policy keep it until it expires (up to a year after their last visit).
 
 A `kind=waf` edge rule (Pro and above) checks matched requests against the
 OWASP Core Rule Set for SQL injection, cross-site scripting, path traversal,
-command injection, scanners, and header injection. It works the same on
+remote file inclusion, command injection, PHP, Node.js and Java injection
+(Log4Shell, Spring4Shell), prototype pollution, SSRF, session fixation,
+disallowed methods, scanners, and header injection. In `warn` and `block`
+these check the URL, query and headers on every request. Protocol
+enforcement (malformed requests) runs only on sampled requests, which under
+`warn` and `block` means requests with a body or whose in-path check was
+skipped, since the edge itself refuses most malformed requests. Methods other
+than GET, HEAD, POST, OPTIONS, PUT, PATCH and DELETE (WebDAV's `PROPFIND`,
+`PURGE`, `QUERY`) score as rule 911100, which `block` refuses: exclude 911100
+on rules for apps that use them. It works the same on
 `*.gregale.dev` and on your custom domains. `observe`, `warn` and `block` at
 paranoia level 1 are generally available; paranoia level 2 is in preview and
 runs in `observe` only. Warn and block reach accounts one by one as they
 launch: until they reach yours, creating a rule in either mode, or switching
 one to it, returns `422` with code `edge_feature_unavailable`, and existing
 warn and block rules only observe.
+
+Strict inspection reaches accounts one by one too. It covers the in-path
+PHP, Node.js, Java, prototype pollution, session fixation and method checks,
+and URLs over 8 KiB counting as a detection (below). Until it reaches yours,
+`warn` and `block` check SQL injection, cross-site scripting, path traversal,
+remote file inclusion, command injection, scanners and header injection
+in-path, on the first 8 KiB of the URL. The other families are still
+sampled and reported. Once it does, a `block` rule may start refusing long
+URLs and methods it passed before, so check your rule's `observe`
+detections first.
+
 The rule's `mode` decides what happens to a detection:
 
 | Mode | Headers and URL | Request body |
@@ -308,7 +328,17 @@ way is blocked by a `block` rule like any other. A detection found only in
 cookies never puts the client in a penalty box. Apps on a custom domain are
 not affected.
 
-A check scores the whole URL and query, and up to 16 KiB of request headers:
+A check scores up to 8 KiB of URL and query. A check's cost grows faster
+than its input, so a longer one would let a few long requests a second use
+up your app's check budget; `warn` and `block` count a URL over 8 KiB as a
+detection (category `uninspected-uri`) without checking it, and it never puts
+the client in a penalty box. Sampled checks, `observe` included, score its
+first 8 KiB and report the URL as `uninspected-uri` too, so `observe` shows
+what `block` would refuse. If your
+app legitimately receives longer URLs, keep the rule in `observe` for those
+paths, or send the data in a body.
+
+A check also scores up to 16 KiB of request headers:
 each header value up to 4 KiB, and headers in name order until the total is
 reached. Header content past that is not inspected, which keeps one client's
 oversized headers from slowing every other app's checks. Because a client
@@ -321,11 +351,15 @@ refused: `block` answers
 a penalty box. If your app legitimately receives larger headers (very large
 cookies or tokens), keep the rule in `observe` for those paths.
 
-Request bodies are never blocked: checking them costs tens to hundreds of
-milliseconds, so they are inspected off the request path, and only a sample
-of them under load. In `warn` and `block`, a request without a body is
-checked in-path only; it is not also sampled. To reject bad bodies, declare their shape with a
-`kind=validate` rule. Checks on headers and the URL take about 1 ms of CPU
+**`block` does not protect request bodies.** An attack sent in a JSON or form
+body (how most API injection arrives) reaches your app even under `block`:
+checking bodies costs tens to hundreds of milliseconds, so they are inspected
+off the request path, after the request is served, and only a sample of them
+under load. Body detections are reported, never blocked. Protect body
+fields in your app (parameterized queries, output encoding) and declare their
+shape with a `kind=validate` rule, which the edge does enforce. In `warn` and
+`block`, a request without a body is checked in-path only; it is not also
+sampled. Checks on headers and the URL take about 1 ms of CPU
 per matched request, and can add several milliseconds when the node is busy.
 A node runs several checks at once, one per processor but one, and a check
 that finds them all busy waits up to 1 ms for a free one. When your app's
@@ -334,7 +368,7 @@ within that wait, the rest pass unchecked and are counted as
 `inline_skipped`; the WAF never slows your app down to keep up.
 
 Start in `observe`, look for false positives, then switch to `block`. Use
-`--match-host @app`: your app is always served at its own `<slug>.gregale.dev`
+`--match-host @app`: your app is always served at its own `<slug>.gregale.app`
 address (and any companion hostnames) as well as its custom domains, and a
 security rule that names one host leaves the others open. The CLI warns when a
 WAF, challenge, IP, geo, JWT or other gate names a single host.
@@ -349,9 +383,12 @@ gregale edge rule update <rule-id> --kind waf --waf-mode block --waf-exclude-rul
 `edge-rules waf-review` groups the last 7 days of detections (your plan's
 event window caps it) by WAF rule, CRS rule and path, with IDs in paths
 grouped together (`/orders/{id}`). Each group says `likely_false_positive`
-(a known false positive from the table below, or several unrelated clients
-flagged on one path), `likely_attack` (clients flagged across many paths, as
-scanners are), `excluded`, or `review` (too few clients to tell), with an
+(a known false positive from the table below), `likely_attack` (clients
+flagged across many paths, as scanners are), `excluded`, or `review`. A
+`review` group's reason says when several unrelated clients were flagged on
+one path, which is how a false positive usually looks, but a few addresses
+probing one endpoint look the same, so open its example requests before
+excluding the rule. Each group comes with an
 example request ID to look up. The dashboard's Edge rules page shows the same
 review with an Exclude button. `edge-rules waf-exclude` adds or removes CRS
 rule IDs and keeps the rest of the rule; `edge-rules update --kind waf`
@@ -380,8 +417,9 @@ Exclude these rule IDs on rules that match such routes, or narrow the rule's
 | Content that is SQL, HTML or code: a docs search, a CMS editor, a snippet tool | 942100, 941160 | URL and body |
 
 The WAF accepts any `Content-Type`, or none, and the methods GET, HEAD,
-POST, OPTIONS, PUT, PATCH and DELETE; other methods are reported (rule
-911100).
+POST, OPTIONS, PUT, PATCH and DELETE; other methods score as rule 911100,
+which `warn` and `block` check in-path (exclude it if your app serves
+WebDAV or other methods).
 
 `warn` and `block` run at paranoia level 1. Level 2 detects more and
 produces more false positives; it is available in `observe` only. The

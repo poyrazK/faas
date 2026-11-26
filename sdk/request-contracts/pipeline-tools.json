@@ -255,6 +255,13 @@
           },
           "replayed": {
             "type": "boolean"
+          },
+          "source_failure": {
+            "type": "string",
+            "enum": [
+              "source_unavailable",
+              "source_forbidden"
+            ]
           }
         },
         "required": [
@@ -412,6 +419,13 @@
           },
           "replayed": {
             "type": "boolean"
+          },
+          "source_failure": {
+            "type": "string",
+            "enum": [
+              "source_unavailable",
+              "source_forbidden"
+            ]
           }
         },
         "required": [
@@ -581,6 +595,13 @@
               "n"
             ],
             "additionalProperties": false
+          },
+          "source_failure": {
+            "type": "string",
+            "enum": [
+              "source_unavailable",
+              "source_forbidden"
+            ]
           }
         },
         "required": [
@@ -738,6 +759,13 @@
           },
           "replayed": {
             "type": "boolean"
+          },
+          "source_failure": {
+            "type": "string",
+            "enum": [
+              "source_unavailable",
+              "source_forbidden"
+            ]
           }
         },
         "required": [
@@ -900,6 +928,13 @@
           },
           "replayed": {
             "type": "boolean"
+          },
+          "source_failure": {
+            "type": "string",
+            "enum": [
+              "source_unavailable",
+              "source_forbidden"
+            ]
           }
         },
         "required": [

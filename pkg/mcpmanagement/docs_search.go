@@ -62,7 +62,10 @@ type docsHit struct {
 	Title   string `json:"title"`
 	Section string `json:"section,omitempty"`
 	Heading string `json:"heading,omitempty"`
-	URL     string `json:"url"`
+	// URL is the page on the docs site; empty for a preview page, which the
+	// site does not serve: read it with gregale_get_docs_page.
+	URL     string `json:"url,omitempty"`
+	Preview bool   `json:"preview,omitempty"`
 	Snippet string `json:"snippet"`
 }
 
@@ -84,7 +87,8 @@ type docsPageView struct {
 	Page        string            `json:"page"`
 	Title       string            `json:"title"`
 	Summary     string            `json:"summary,omitempty"`
-	URL         string            `json:"url"`
+	URL         string            `json:"url,omitempty"`
+	Preview     bool              `json:"preview,omitempty"`
 	Section     string            `json:"section,omitempty"`
 	Markdown    string            `json:"markdown"`
 	Headings    []docsHeadingView `json:"headings"`
@@ -110,7 +114,7 @@ func (m *management) searchDocs(ctx context.Context, args docsSearchArgs) (any, 
 	if err != nil {
 		return nil, err
 	}
-	view := docsSearchView{Query: query, Results: corpus.search(query, limit), RetrievedAt: corpus.fetchedAt.UTC(), Stale: corpus.stale}
+	view := docsSearchView{Query: query, Results: corpus.search(query, limit, m.docsVisibility(ctx, corpus)), RetrievedAt: corpus.fetchedAt.UTC(), Stale: corpus.stale}
 	view.Next = "Read a result with gregale_get_docs_page using its page and section."
 	if len(view.Results) == 0 {
 		view.Next = "No published page matched; try other words, or browse " + corpus.site + "/docs."
@@ -135,10 +139,13 @@ func (m *management) getDocsPage(ctx context.Context, args docsPageArgs) (any, e
 		return nil, err
 	}
 	page := corpus.bySlug[slug]
+	if page != nil && len(page.capabilities) > 0 && !m.docsVisibility(ctx, corpus)(page) {
+		page = nil
+	}
 	if page == nil {
 		return nil, invalid("docs_page_not_found", fmt.Sprintf("no published docs page %q; find pages with gregale_search_docs", slug))
 	}
-	view := docsPageView{Page: page.slug, Title: page.title, Summary: page.summary, URL: corpus.pageURL(page.slug, ""), RetrievedAt: corpus.fetchedAt.UTC(), Stale: corpus.stale, Headings: []docsHeadingView{}}
+	view := docsPageView{Page: page.slug, Title: page.title, Summary: page.summary, URL: corpus.pageURL(page, ""), Preview: len(page.capabilities) > 0, RetrievedAt: corpus.fetchedAt.UTC(), Stale: corpus.stale, Headings: []docsHeadingView{}}
 	for _, s := range page.sections[1:] {
 		view.Headings = append(view.Headings, docsHeadingView{Section: s.anchor, Heading: s.heading, Level: s.level})
 	}
@@ -148,7 +155,7 @@ func (m *management) getDocsPage(ctx context.Context, args docsPageArgs) (any, e
 		if s == nil {
 			return nil, invalid("docs_section_not_found", fmt.Sprintf("page %q has no section %q; read the page without section to list its headings", page.slug, section))
 		}
-		view.Section, view.URL = s.anchor, corpus.pageURL(page.slug, s.anchor)
+		view.Section, view.URL = s.anchor, corpus.pageURL(page, s.anchor)
 		markdown = page.sectionMarkdown(s)
 	}
 	view.Markdown, view.Truncated = truncateDocsMarkdown(markdown, docsPageMaxBytes)
@@ -208,11 +215,17 @@ type docsLibrary struct {
 	site   string
 	client *http.Client
 	now    func() time.Time
+	// embedded supplies the pages shipped in this binary; nil searches the
+	// site alone.
+	embedded func() []*docsPage
 
 	mu         sync.Mutex
 	corpus     *docsCorpus
 	failedAt   time.Time
 	lastFailed error
+	// offline is the embedded corpus built once for site outages; the index
+	// never changes within a process.
+	offline *docsCorpus
 }
 
 func newDocsLibrary(site string, client *http.Client) *docsLibrary {
@@ -258,6 +271,15 @@ func (l *docsLibrary) load(ctx context.Context) (*docsCorpus, error) {
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, ctxErr
 	}
+	// The site is out of reach: the index shipped in this binary stands in.
+	if l.offline == nil {
+		if l.offline = embeddedDocsCorpus(l.site, l.embedded, now); l.offline != nil {
+			l.offline.stale = true
+		}
+	}
+	if l.offline != nil {
+		return l.offline, nil
+	}
 	return nil, invalid("docs_unavailable", fmt.Sprintf("the Gregale docs could not be fetched (%v); retry in a minute or read %s/docs", err, l.site))
 }
 
@@ -270,7 +292,11 @@ func (l *docsLibrary) fetch(ctx context.Context) (*docsCorpus, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parseDocsCorpus(l.site, index, full, l.now())
+	live, err := parseDocsPages(l.site, index, full)
+	if err != nil {
+		return nil, err
+	}
+	return buildDocsCorpus(l.site, mergeDocsPages(live, l.embedded), l.now()), nil
 }
 
 func (l *docsLibrary) get(ctx context.Context, path string, limit int64) (string, error) {
@@ -315,7 +341,13 @@ type docsCorpus struct {
 type docsPage struct {
 	slug, title, summary, group string
 	lines                       []string
-	titleTerms                  map[string]bool
+	// capabilities is set on a preview page from the embedded index: it is
+	// shown only to an account for which one of them is available.
+	capabilities []string
+	// weight scales the page's scores; zero means 1. Command search uses it
+	// to favour curated and common entries.
+	weight     float64
+	titleTerms map[string]bool
 	// sections[0] is the introduction above the first heading.
 	sections []*docsSection
 }
@@ -348,7 +380,16 @@ var (
 // llms-full.txt stays searchable by its title and summary; a corpus whose
 // pages mostly fail to match is refused, because the format changed.
 func parseDocsCorpus(site, index, full string, fetchedAt time.Time) (*docsCorpus, error) {
-	c := &docsCorpus{site: site, bySlug: map[string]*docsPage{}, docFreq: map[string]int{}, fetchedAt: fetchedAt}
+	pages, err := parseDocsPages(site, index, full)
+	if err != nil {
+		return nil, err
+	}
+	return buildDocsCorpus(site, pages, fetchedAt), nil
+}
+
+// parseDocsPages reads the site's agent files into pages.
+func parseDocsPages(site, index, full string) ([]*docsPage, error) {
+	c := &docsCorpus{site: site, bySlug: map[string]*docsPage{}}
 	prefix, group := site+"/docs/", ""
 	for _, line := range strings.Split(index, "\n") {
 		if strings.HasPrefix(line, "## ") {
@@ -386,6 +427,19 @@ func parseDocsCorpus(site, index, full string, fetchedAt time.Time) (*docsCorpus
 	if matched*2 < len(c.pages) {
 		return nil, fmt.Errorf("llms-full.txt matches %d of the %d pages llms.txt names", matched, len(c.pages))
 	}
+	return c.pages, nil
+}
+
+// buildDocsCorpus indexes pages for search. A slug seen twice keeps its
+// first page.
+func buildDocsCorpus(site string, pages []*docsPage, fetchedAt time.Time) *docsCorpus {
+	c := &docsCorpus{site: site, bySlug: map[string]*docsPage{}, docFreq: map[string]int{}, fetchedAt: fetchedAt}
+	for _, page := range pages {
+		if c.bySlug[page.slug] == nil {
+			c.pages = append(c.pages, page)
+			c.bySlug[page.slug] = page
+		}
+	}
 	total := 0
 	for _, page := range c.pages {
 		page.titleTerms = docsTermSet(page.title)
@@ -409,8 +463,8 @@ func parseDocsCorpus(site, index, full string, fetchedAt time.Time) (*docsCorpus
 			}
 		}
 	}
-	c.avgLength = math.Max(1, float64(total)/float64(len(c.sections)))
-	return c, nil
+	c.avgLength = math.Max(1, float64(total)/float64(max(1, len(c.sections))))
+	return c
 }
 
 // docsPageBody drops what precedes the page's "# Title" and "> summary"
@@ -551,8 +605,13 @@ func docsTermSet(text string) map[string]bool {
 	return set
 }
 
-func (c *docsCorpus) pageURL(slug, anchor string) string {
-	u := c.site + "/docs/" + slug
+// pageURL is the page on the docs site, or empty for a preview page: those
+// come only from the index shipped in this binary and the site serves none.
+func (c *docsCorpus) pageURL(page *docsPage, anchor string) string {
+	if len(page.capabilities) > 0 {
+		return ""
+	}
+	u := c.site + "/docs/" + page.slug
 	if anchor != "" {
 		u += "#" + anchor
 	}
@@ -577,7 +636,7 @@ type docsScored struct {
 // heading and page-title matches, favouring sections that contain every
 // query word and the query as a phrase. Two adjacent words also match their
 // joined form, so "roll back" finds "rollback". At most two sections per page.
-func (c *docsCorpus) search(query string, limit int) []docsHit {
+func (c *docsCorpus) search(query string, limit int, visible func(*docsPage) bool) []docsHit {
 	var words, terms []string
 	covers := map[string]int{}
 	for _, term := range docsTerms(query) {
@@ -601,6 +660,9 @@ func (c *docsCorpus) search(query string, limit int) []docsHit {
 	const k1, b = 1.2, 0.75
 	var scored []docsScored
 	for _, s := range c.sections {
+		if visible != nil && !visible(s.page) {
+			continue
+		}
 		matched, score := 0, 0.0
 		for _, term := range terms {
 			idf := c.idf(term)
@@ -624,6 +686,9 @@ func (c *docsCorpus) search(query string, limit int) []docsHit {
 		}
 		coverage := math.Min(1, float64(matched)/float64(len(words)))
 		score *= coverage * coverage
+		if s.page.weight > 0 {
+			score *= s.page.weight
+		}
 		if len(words) > 1 && (strings.Contains(s.lower, phrase) || strings.Contains(strings.ToLower(s.heading), phrase)) {
 			score *= 1.5
 		}
@@ -653,7 +718,7 @@ func (c *docsCorpus) search(query string, limit int) []docsHit {
 			continue
 		}
 		perPage[s.page.slug]++
-		hits = append(hits, docsHit{Page: s.page.slug, Title: s.page.title, Section: s.anchor, Heading: s.heading, URL: c.pageURL(s.page.slug, s.anchor), Snippet: c.snippet(s, terms)})
+		hits = append(hits, docsHit{Page: s.page.slug, Title: s.page.title, Section: s.anchor, Heading: s.heading, URL: c.pageURL(s.page, s.anchor), Preview: len(s.page.capabilities) > 0, Snippet: c.snippet(s, terms)})
 	}
 	return hits
 }

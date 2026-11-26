@@ -16,6 +16,18 @@ export type ManagedPostgresDatabase = {
   service_class: 'development' | 'burstable' | 'production';
   availability: 'single_zone' | 'high_availability';
   scale_to_zero: boolean;
+  /**
+   * Seconds a scale-to-zero database stays up after its last activity; absent for an always-on database.
+   */
+  suspend_timeout_seconds?: number;
+  /**
+   * True when the database has its own suspend timeout rather than the platform default.
+   */
+  suspend_timeout_custom?: boolean;
+  /**
+   * True when the database starts when an app bound to it wakes.
+   */
+  wake_with_app?: boolean;
   storage_limit_bytes: number;
   restore_window_seconds: number;
   restore_source_database_id?: string | null;

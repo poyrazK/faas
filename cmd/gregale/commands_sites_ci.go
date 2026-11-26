@@ -67,8 +67,8 @@ func cmdSitesCI(args []string) int {
 	client := api.NewHostingAutomationClient(strings.TrimSuffix(base, "/"), token)
 	if *trust != "" {
 		enabled := os.Getenv("FAAS_FRONTEND_HOSTING_OIDC_ENABLED")
-		if (enabled != "1" && enabled != "true") || os.Getenv("FAAS_TOKEN") != "" {
-			return printErr("OIDC is disabled or credentials are mixed", errors.New("explicitly enable hosting OIDC and omit FAAS_TOKEN"))
+		if (enabled != "1" && enabled != "true") || envTokenName() != "" {
+			return printErr("OIDC is disabled or credentials are mixed", errors.New("explicitly enable hosting OIDC and omit GREGALE_TOKEN and FAAS_TOKEN"))
 		}
 		client, err = api.NewGitHubHostingOIDCClient(base, *site, *trust, os.Getenv("ACTIONS_ID_TOKEN_REQUEST_URL"), os.Getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN"))
 		if err != nil {

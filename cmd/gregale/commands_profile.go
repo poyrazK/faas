@@ -237,7 +237,7 @@ func effectiveConnectionContext() *connectionContext {
 }
 
 // displayConnectionContext is effectiveConnectionContext for printing: the
-// API address loses credentials an FAAS_API URL may embed.
+// API address loses credentials a GREGALE_API_URL or FAAS_API URL may embed.
 func displayConnectionContext() *connectionContext {
 	return configuredDisplayConnection().connectionContext
 }

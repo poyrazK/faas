@@ -30,6 +30,14 @@ type Metrics struct {
 	fleetMaxDatabases  prometheus.Gauge
 	fleetMaxCost       prometheus.Gauge
 	productionApproval prometheus.Gauge
+	// Scale-to-zero idle tail by service class: compute used, idle suspends
+	// and the compute those suspends' timeouts held (IdleTail).
+	idleTailReadsTotal   *prometheus.CounterVec
+	idleTailComputeTotal *prometheus.CounterVec
+	idleTailSuspends     *prometheus.CounterVec
+	idleTailTotal        *prometheus.CounterVec
+	// Databases started because a bound app woke (ADR-20261125105038).
+	wakeStartsTotal *prometheus.CounterVec
 }
 
 const (
@@ -77,6 +85,26 @@ func NewMetrics(reg prometheus.Registerer, prefix string, usageEnabled bool) (*M
 		return nil, ErrInvalid
 	}
 	m := &Metrics{
+		wakeStartsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_managed_postgres_wake_starts_total",
+			Help: "Managed PostgreSQL computes started because an app bound to them woke (opt-in wake with app), by outcome.",
+		}, []string{"outcome"}),
+		idleTailReadsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_managed_postgres_idle_tail_reads_total",
+			Help: "Scale-to-zero managed PostgreSQL usage windows by idle tail read outcome.",
+		}, []string{"outcome"}),
+		idleTailComputeTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_managed_postgres_scale_to_zero_compute_unit_seconds_total",
+			Help: "Compute unit seconds used by scale-to-zero managed PostgreSQL databases, by service class.",
+		}, []string{"class"}),
+		idleTailSuspends: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_managed_postgres_idle_suspends_total",
+			Help: "Idle suspends of scale-to-zero managed PostgreSQL computes (restarts excluded), by service class.",
+		}, []string{"class"}),
+		idleTailTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_managed_postgres_idle_tail_compute_unit_seconds_total",
+			Help: "Estimated compute unit seconds scale-to-zero managed PostgreSQL databases held idle before suspending (suspend timeout x minimum CU per idle suspend; restarts excluded), by service class.",
+		}, []string{"class"}),
 		reconcileTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: prefix + "_managed_postgres_reconcile_total",
 			Help: "Managed PostgreSQL lifecycle reconciliation attempts by resource, operation, and outcome.",
@@ -144,6 +172,8 @@ func NewMetrics(reg prometheus.Registerer, prefix string, usageEnabled bool) (*M
 		m.usagePolicyEnabled, m.provisioningEnabled, m.canaryAdmissionTotal,
 		m.admissionDeniedTotal, m.fleetDatabases, m.fleetCost, m.fleetMaxDatabases,
 		m.fleetMaxCost, m.productionApproval,
+		m.idleTailReadsTotal, m.idleTailComputeTotal, m.idleTailSuspends, m.idleTailTotal,
+		m.wakeStartsTotal,
 	}
 	for _, collector := range collectors {
 		if err := reg.Register(collector); err != nil {
@@ -172,6 +202,17 @@ func NewMetrics(reg prometheus.Registerer, prefix string, usageEnabled bool) (*M
 	}
 	for _, reason := range []string{metricsDenialInvalid, metricsDenialUnavailable, metricsDenialQuota, metricsDenialStale, metricsDenialUnsupported, metricsDenialConflict} {
 		m.admissionDeniedTotal.WithLabelValues(reason).Add(0)
+	}
+	for _, outcome := range []WakeStartOutcome{WakeStartStarted, WakeStartRunning, WakeStartFailed, WakeStartUnsupported} {
+		m.wakeStartsTotal.WithLabelValues(string(outcome)).Add(0)
+	}
+	for _, outcome := range []string{IdleTailRead, IdleTailNoCompute, IdleTailUnsupported, IdleTailUnavailable, IdleTailSkipped} {
+		m.idleTailReadsTotal.WithLabelValues(outcome).Add(0)
+	}
+	for _, class := range []ServiceClass{ClassDevelopment, ClassBurstable, ClassProduction} {
+		m.idleTailComputeTotal.WithLabelValues(string(class)).Add(0)
+		m.idleTailSuspends.WithLabelValues(string(class)).Add(0)
+		m.idleTailTotal.WithLabelValues(string(class)).Add(0)
 	}
 	m.usagePolicyEnabled.Set(boolGauge(usageEnabled))
 	m.usageLastSuccess.Set(0)
@@ -284,6 +325,31 @@ func (m *Metrics) ObserveUsage(observation UsageCollectionObservation) {
 	}
 }
 
+// ObserveIdleTail records one scale-to-zero window. Compute counts only with
+// a successful read (or none needed), so the idle share's two series cover
+// the same windows.
+func (m *Metrics) ObserveIdleTail(observation IdleTailObservation) {
+	if m == nil {
+		return
+	}
+	switch observation.Class {
+	case ClassDevelopment, ClassBurstable, ClassProduction:
+	default:
+		return
+	}
+	switch observation.Outcome {
+	case IdleTailRead, IdleTailNoCompute:
+		class := string(observation.Class)
+		m.idleTailComputeTotal.WithLabelValues(class).Add(float64(observation.ComputeUnitSeconds))
+		m.idleTailSuspends.WithLabelValues(class).Add(float64(observation.Tail.Suspends))
+		m.idleTailTotal.WithLabelValues(class).Add(float64(observation.Tail.ComputeUnitSeconds))
+	case IdleTailUnsupported, IdleTailUnavailable, IdleTailSkipped:
+	default:
+		return
+	}
+	m.idleTailReadsTotal.WithLabelValues(observation.Outcome).Inc()
+}
+
 // ObserveUsageSweep records the latest usage sweep and its freshness point.
 func (m *Metrics) ObserveUsageSweep(summary UsageCollectionSummary, sweepErr error) {
 	if m == nil {
@@ -333,4 +399,12 @@ func (m *Metrics) SetProductionApprovalUntil(until time.Time) {
 		return
 	}
 	m.productionApproval.Set(float64(until.Unix()))
+}
+
+// ObserveWakeStart counts one start of a database for a waking app.
+func (m *Metrics) ObserveWakeStart(outcome WakeStartOutcome) {
+	if m == nil {
+		return
+	}
+	m.wakeStartsTotal.WithLabelValues(string(outcome)).Inc()
 }

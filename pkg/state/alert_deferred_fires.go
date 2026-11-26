@@ -3,6 +3,7 @@ package state
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"slices"
 	"sort"
 	"time"
@@ -12,6 +13,39 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
+
+// AlertFireRecipients is the binding snapshot and handoff decisions committed
+// with a live fire claim.
+type AlertFireRecipients struct {
+	Channels []NotificationChannel
+	Held     AlertDeferredRecipients
+}
+
+func claimAlertFireRecipients(ctx context.Context, tx sqlc.DBTX, ruleID, deliveryID string) (AlertFireRecipients, error) {
+	var recipients AlertFireRecipients
+	q := sqlc.New()
+	rows, err := q.ListAlertRuleChannels(ctx, tx, mustPgUUID(ruleID))
+	if err != nil {
+		return recipients, fmt.Errorf("state: read claimed alert channels: %w", err)
+	}
+	ids := make([]pgtype.UUID, 0, len(rows))
+	regions := make([]string, 0, len(rows))
+	for _, row := range rows {
+		recipients.Channels = append(recipients.Channels, channelFromRow(row))
+		ids = append(ids, row.ID)
+		regions = append(regions, row.PagerdutyRegion.String)
+	}
+	held, err := q.QueueDeferredAlertFires(ctx, tx, sqlc.QueueDeferredAlertFiresParams{
+		DeliveryID: mustPgUUID(deliveryID), ChannelIds: ids, PagerdutyRegions: regions,
+	})
+	if err != nil {
+		return AlertFireRecipients{}, fmt.Errorf("state: queue claimed deferred alert fires: %w", err)
+	}
+	for _, row := range held {
+		recipients.Held.add(row.ChannelID, row.WebhookUrl)
+	}
+	return recipients, nil
+}
 
 type AlertDeferredRecipients struct {
 	ChannelIDs map[string]bool
@@ -120,11 +154,13 @@ type memDeferredAlertFire struct {
 	started     bool
 }
 
-func (m *MemStore) queueDeferredAlertFiresLocked(rule AlertRule, delivery AlertDelivery) {
+func (m *MemStore) queueDeferredAlertFiresLocked(rule AlertRule, delivery AlertDelivery) AlertFireRecipients {
+	var recipients AlertFireRecipients
 	if m.alertDeferredFires == nil {
 		m.alertDeferredFires = make(map[string]memDeferredAlertFire)
 	}
 	add := func(channelID, webhookURL string) {
+		recipients.Held.add(channelID, webhookURL)
 		id := uuid.NewString()
 		m.alertDeferredFires[id] = memDeferredAlertFire{
 			AlertDeferredFire: AlertDeferredFire{
@@ -135,11 +171,8 @@ func (m *MemStore) queueDeferredAlertFiresLocked(rule AlertRule, delivery AlertD
 		}
 	}
 	standDowns := m.pagerDutyObservationStandDownChannelsLocked(rule)
-	bound := m.alertRuleChannels[rule.ID]
-	for _, ch := range m.notificationChannels[rule.AccountID] {
-		if !slices.Contains(bound, ch.ID) {
-			continue
-		}
+	recipients.Channels = m.listAlertRuleChannelsLocked(rule)
+	for _, ch := range recipients.Channels {
 		alias := ch.Kind == "pagerduty" && slices.ContainsFunc(standDowns, func(older NotificationChannel) bool {
 			return older.PagerDutyRegion == ch.PagerDutyRegion
 		})
@@ -150,6 +183,7 @@ func (m *MemStore) queueDeferredAlertFiresLocked(rule AlertRule, delivery AlertD
 	if rule.WebhookURL != "" && m.alertWebhookStandDownPendingLocked(rule.ID, rule.WebhookURL) {
 		add("", rule.WebhookURL)
 	}
+	return recipients
 }
 
 func (m *MemStore) alertWebhookStandDownPendingLocked(ruleID, url string) bool {

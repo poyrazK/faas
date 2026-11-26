@@ -1001,6 +1001,13 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 	if safe {
 		environment = "production"
 	}
+	var deployGroup string
+	if !safe && reconcileProductionEnvironment(environment) {
+		deployGroup = uuid.NewString()
+		if tracker != nil {
+			deployGroup = uuid.MustParse(tracker.Receipt.AttemptID).String()
+		}
+	}
 	if environment == "production" && !safe {
 		environment = state.DefaultEnvScope
 	}
@@ -1115,7 +1122,14 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// build context is staged as the archive root (H10-25).
 		sourceApp := app
 		composeContext := composeDockerBuildContext(scanDir, workload, app)
+		// A release-phase-off installation keeps ignoring a build
+		// context's Procfile, as before it counted: honoring it there would
+		// refuse redeploys of projects that deployed fine.
+		var buildContext composeReleaseContext
 		if composeContext {
+			if !s.releasePhaseOff {
+				buildContext = composeReleaseContext{root: app.RootDir, archiveNarrowed: true}
+			}
 			sourceApp.RootDir = ""
 		}
 		staged, bytes, stageErr := s.stageApplyTarball(ctx, scanDir, acct.ID, project.ID, app, composeContext)
@@ -1176,7 +1190,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// release: in its own directory) applies as on a single-app deploy
 		// unless another service builds from the same directory
 		// (ADR-20261019120007 amendment 1).
-		releaseCommand, releaseProblem := projectWorkloadReleaseCommand(staged, workloads, workload, sourceApp, manifest)
+		releaseCommand, releaseProblem := projectWorkloadReleaseCommand(staged, workloads, workload, sourceApp, buildContext, manifest)
 		if releaseProblem != nil {
 			_ = os.Remove(staged)
 			res.Error = "release declaration invalid (server logs carry the detail)"
@@ -1271,6 +1285,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		}
 		readinessCheck, livenessCheck := projectReadinessOverrides(app.Manifest, acct.Plan)
 		enqParams := apidsource.EnqueueParams{
+			ProjectDeployGroupID:      deployGroup,
 			TrafficPercentExplicit:    safe,
 			OperationID:               operationID,
 			BuildDependencies:         buildDependencies,
@@ -1479,7 +1494,9 @@ func (s *server) stageApplyTarball(
 //
 // Returns (response, project, added, changed, removedSlugs, builds, problem).
 // project/added/changed/removedSlugs/builds are valid only when
-// problem == nil and apply==true.
+// problem == nil and apply==true, with one exception: a problem raised
+// after reconcile committed still returns project and added (the app
+// rows that now exist), so the caller can send kind=created for them.
 //
 // added is the post-insert state.App slice for newly-created apps;
 // changed is the post-update slice for workloads whose RootDir /
@@ -2111,6 +2128,8 @@ func (s *server) scanService(
 	preAdmissionReasons := reconcile.WorkloadAdmissionReasonsWithManaged(result.Workloads, result.Managed, acctApps, projectID)
 	preAdmissionReasons = append(preAdmissionReasons, reconcile.ProjectImageLifecycleAdmissionReasons(acct.Plan, result.Workloads)...)
 	preAdmissionReasons = append(preAdmissionReasons, reconcile.SlugHolderReasons(acct.ID, projectID, result.Workloads, slugHolders)...)
+	appNameBlocklist := s.runtimeConfig.appNameBlocklist()
+	preAdmissionReasons = append(preAdmissionReasons, reconcile.BlockedAppNameReasons(result.Workloads, acctApps, projectID, appNameBlocklist)...)
 	var admissionReasons []string
 	if len(filteredW) > 0 || len(result.Workloads) == 0 {
 		// An actually empty scan is unsafe and must carry the reconcile
@@ -2120,6 +2139,7 @@ func (s *server) scanService(
 		admissionReasons = reconcile.WorkloadAdmissionReasonsWithManaged(filteredW, filteredMc, acctApps, projectID, dependencyReferences)
 		admissionReasons = append(admissionReasons, reconcile.ProjectImageLifecycleAdmissionReasons(acct.Plan, filteredW)...)
 		admissionReasons = append(admissionReasons, reconcile.SlugHolderReasons(acct.ID, projectID, filteredW, slugHolders)...)
+		admissionReasons = append(admissionReasons, reconcile.BlockedAppNameReasons(filteredW, acctApps, projectID, appNameBlocklist)...)
 	}
 	if !reconcileProductionEnvironment(req.Environment) {
 		stageReasons := reconcile.EnvironmentWorkloadAdmissionReasons(filteredW, projectApps)
@@ -2249,6 +2269,9 @@ func (s *server) scanService(
 			if note := projectVisibilityNote(w, *existing, req.Environment == ""); note != "" {
 				warnings = append(warnings, note)
 			}
+			if note := projectAccessNote(w, *existing, acct.Plan, req.Environment == ""); note != "" {
+				warnings = append(warnings, note)
+			}
 		}
 		if s.domain != "" && pw.Visibility != api.AppVisibilityInternal && (string(w.Class) == "http" || string(w.Class) == "graphql") {
 			slug := w.AppSlug
@@ -2257,6 +2280,9 @@ func (s *server) scanService(
 			}
 			pw.PublicURL = "https://" + slug + "." + strings.TrimPrefix(s.domain, ".")
 			pw.PublicAuthMode = planWorkloadPublicAuthMode(existing, acct.Plan)
+			if w.Access != "" && (existing == nil || req.Environment == "") {
+				pw.PublicAuthMode = planWorkloadAccessAuthMode(w, existing, acct.Plan)
+			}
 			if nonProductionEnvironment {
 				// A new app's environment host is known only once it exists.
 				pw.PublicURL = ""
@@ -2286,6 +2312,14 @@ func (s *server) scanService(
 		warnings = append(warnings, projectsetup.IngressNotes(w.Name, slug, w.IngressSettings, acct.Plan, limits)...)
 		if w.ServiceBindingPolicy == "" && existing != nil {
 			pw.ServiceBindingPolicy = existing.Manifest.EffectiveServiceBindingPolicy()
+		}
+		// The release command the apply runs, including one the service
+		// declares in its own directory.
+		var releaseNote string
+		pw.ReleaseCommand, pw.ReleaseCommandSource, releaseNote = s.planWorkloadReleaseCommand(req.ScanDir, filteredW, w)
+		// Two services sharing a directory each report the same refusal.
+		if releaseNote != "" && !slices.Contains(warnings, releaseNote) {
+			warnings = append(warnings, releaseNote)
 		}
 		respWorkloads[i] = pw
 	}
@@ -2746,6 +2780,15 @@ func (s *server) scanService(
 		capturedProb = prob
 		return resp, state.Project{}, nil, nil, nil, nil, prob
 	}
+	s.reconcileWorkloadCredentials(r.Context(), rec.Changed)
+	// Reconcile has committed the rows in rec.Added. Every step below can
+	// still fail, so those failures return the project and rec.Added with
+	// the problem: the caller must still send kind=created, the only live
+	// event on which schedd claims a node. Without it apps.node_id stays
+	// NULL and every gateway wake fails (2026-11-25, project 8624ac80).
+	postReconcileProblem := func(prob *api.Problem) (*scanPlanResponse, state.Project, []state.App, []state.App, []string, []appliedBuild, *api.Problem) {
+		return resp, project, rec.Added, nil, nil, nil, prob
+	}
 
 	// Compute removed slugs. rec.Removed is a list of IDs; the
 	// handler needs slugs to soft-delete the corresponding crons
@@ -2774,33 +2817,33 @@ func (s *server) scanService(
 			prob := customerInternalProblem(s.log, "load workloads for project manifest reconciliation",
 				"Gregale could not load this project's workloads to apply its manifest.",
 				"Retry the deployment in a moment; if it continues, contact support.", appsErr)
-			return resp, state.Project{}, nil, nil, nil, nil, prob
+			return postReconcileProblem(prob)
 		}
 		currentProjectApps = apps
 		if !reconcileProductionEnvironment(req.Environment) {
 			for i := range currentProjectApps {
 				currentProjectApps[i], appsErr = state.ResolveAppForEnvironment(r.Context(), s.store, currentProjectApps[i], req.Environment)
 				if appsErr != nil {
-					return resp, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not load environment workload settings")
+					return postReconcileProblem(api.ErrCapacity("could not load environment workload settings"))
 				}
 			}
 		}
 	}
 	if len(resolvedManifest.PostgresBindings) > 0 {
 		if _, prob := s.bindResolvedManagedPostgresBindings(r.Context(), acct, resolvedManifest.PostgresBindings, currentProjectApps); prob != nil {
-			return resp, state.Project{}, nil, nil, nil, nil, prob
+			return postReconcileProblem(prob)
 		}
 	}
 	if resolvedManifest.AsyncRoutesPresent && !noTriggers {
 		selectedApps := selectedProjectManifestApps(filteredW, currentProjectApps)
 		if prob := s.applyProjectManifestAsyncRoutes(r.Context(), acct, resolvedManifest.AsyncRoutes, true, false, selectedApps); prob != nil {
-			return resp, state.Project{}, nil, nil, nil, nil, prob
+			return postReconcileProblem(prob)
 		}
 	}
 	if resolvedManifest.RoutesPresent && !noTriggers {
 		selectedApps := selectedProjectManifestApps(filteredW, currentProjectApps)
 		if prob := s.applyProjectManifestPathRoutes(r.Context(), acct, resolvedManifest.Routes, true, false, selectedApps); prob != nil {
-			return resp, state.Project{}, nil, nil, nil, nil, prob
+			return postReconcileProblem(prob)
 		}
 	}
 
@@ -2850,14 +2893,14 @@ func (s *server) scanService(
 			prob := customerInternalProblem(s.log, "load workloads for production deployment",
 				"Gregale could not load this project's workloads to deploy.",
 				"Retry the deployment in a moment; if it continues, contact support.", appsErr)
-			return resp, state.Project{}, nil, nil, nil, nil, prob
+			return postReconcileProblem(prob)
 		}
 		down, downErr := productionAppsWithoutRelease(r.Context(), s.store, selectedProjectManifestApps(filteredW, apps), rec.Added, buildChanged)
 		if downErr != nil {
 			prob := customerInternalProblem(s.log, "inspect production deployments",
 				"Gregale could not check which workloads still need a release.",
 				"Retry the deployment in a moment; if it continues, contact support.", downErr)
-			return resp, state.Project{}, nil, nil, nil, nil, prob
+			return postReconcileProblem(prob)
 		}
 		buildChanged = append(append([]state.App(nil), buildChanged...), down...)
 	}
@@ -2867,14 +2910,14 @@ func (s *server) scanService(
 			prob := customerInternalProblem(s.log, "load workloads for environment deployment",
 				"Gregale could not load this project's workloads to deploy the environment.",
 				"Retry the deployment in a moment; if it continues, contact support.", appsErr)
-			return resp, state.Project{}, nil, nil, nil, nil, prob
+			return postReconcileProblem(prob)
 		}
 		firstBuilds, firstErr := environmentAppsWithoutLiveDeployment(r.Context(), s.store, selectedProjectManifestApps(filteredW, apps), req.Environment, rec.Added, buildChanged)
 		if firstErr != nil {
 			prob := customerInternalProblem(s.log, "inspect environment deployments",
 				"Gregale could not check which workloads this environment still needs to deploy.",
 				"Retry the deployment in a moment; if it continues, contact support.", firstErr)
-			return resp, state.Project{}, nil, nil, nil, nil, prob
+			return postReconcileProblem(prob)
 		}
 		buildChanged = append(append([]state.App(nil), buildChanged...), firstBuilds...)
 	}
@@ -2885,7 +2928,7 @@ func (s *server) scanService(
 		// service's, and must not land on the selected ones (boa
 		// multi-service deploy, 2026-11-21).
 		if prob := s.applyProjectDeploySecrets(r, acct, selectedApps, result.Workloads, req.Environment, req.Secrets); prob != nil {
-			return resp, state.Project{}, nil, nil, nil, nil, prob
+			return postReconcileProblem(prob)
 		}
 		// Secret-only redeploys also need a build, even if source reconciliation
 		// left app metadata unchanged. Avoid duplicating newly added/changed apps.
@@ -2906,7 +2949,7 @@ func (s *server) scanService(
 	if len(req.InitialSecrets) > 0 {
 		apps, err := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
 		if err != nil {
-			return resp, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not load project configuration targets")
+			return postReconcileProblem(api.ErrCapacity("could not load project configuration targets"))
 		}
 		scope := req.Environment
 		if scope == "" {
@@ -2917,7 +2960,7 @@ func (s *server) scanService(
 				return s.persistProjectInitialSecret(ctx, acct, app, scope, key, value, limits)
 			})
 		if problem != nil {
-			return resp, state.Project{}, nil, nil, nil, nil, problem
+			return postReconcileProblem(problem)
 		}
 	}
 	// Opted-in Compose values fill what is still unset, after the secrets
@@ -2927,53 +2970,56 @@ func (s *server) scanService(
 		importScope = api.DefaultEnvScope
 	}
 	if problem := s.importComposeEnv(r, acct, project.ID, importScope, composeEnv, filteredW, limits); problem != nil {
-		return resp, state.Project{}, nil, nil, nil, nil, problem
+		return postReconcileProblem(problem)
 	}
 	if req.Environment == "" {
 		if problem := s.applyComposeInternalVisibility(r, acct, project.ID, filteredW); problem != nil {
-			return resp, state.Project{}, nil, nil, nil, nil, problem
+			return postReconcileProblem(problem)
+		}
+		if problem := s.applyProjectServiceAccess(r, acct, preRemoveApps, filteredW); problem != nil {
+			return postReconcileProblem(problem)
 		}
 	}
 	if len(composePostgres) > 0 {
 		apps, err := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
 		if err != nil {
-			return resp, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not load project database targets")
+			return postReconcileProblem(api.ErrCapacity("could not load project database targets"))
 		}
 		if problem := s.applyComposePostgres(r.Context(), acct, importScope, composePostgres, apps); problem != nil {
-			return resp, state.Project{}, nil, nil, nil, nil, problem
+			return postReconcileProblem(problem)
 		}
 	}
 	if len(composeRedis) > 0 {
 		apps, err := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
 		if err != nil {
-			return resp, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not load project cache targets")
+			return postReconcileProblem(api.ErrCapacity("could not load project cache targets"))
 		}
 		if problem := s.applyComposeRedis(r, acct, importScope, composeRedis, apps); problem != nil {
-			return resp, state.Project{}, nil, nil, nil, nil, problem
+			return postReconcileProblem(problem)
 		}
 	}
 	if len(manifestBuckets) > 0 {
 		apps, err := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
 		if err != nil {
-			return resp, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not load project bucket targets")
+			return postReconcileProblem(api.ErrCapacity("could not load project bucket targets"))
 		}
 		if problem := s.applyProjectManifestBuckets(r.Context(), acct, manifestBuckets, apps); problem != nil {
-			return resp, state.Project{}, nil, nil, nil, nil, problem
+			return postReconcileProblem(problem)
 		}
 	}
 	buildAdded := rec.Added
 	if run := projectmigration.FromContext(r.Context()); run != nil {
 		apps, err := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
 		if err != nil {
-			return resp, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not journal migration services")
+			return postReconcileProblem(api.ErrCapacity("could not journal migration services"))
 		}
 		buildChanged, err = run.Prepare(r.Context(), project.ID, apps)
 		if err != nil {
 			var problem *api.Problem
 			if errors.As(err, &problem) {
-				return resp, state.Project{}, nil, nil, nil, nil, problem
+				return postReconcileProblem(problem)
 			}
-			return resp, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not journal deployment identities; reload migration progress")
+			return postReconcileProblem(api.ErrCapacity("could not journal deployment identities; reload migration progress"))
 		}
 		buildAdded = nil
 	}

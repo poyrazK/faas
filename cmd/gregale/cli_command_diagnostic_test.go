@@ -42,7 +42,7 @@ func TestCLICommandCorrectionsJSON(t *testing.T) {
 		{"help alias", "invalid_request", "unknown_help_topic", []string{"help", "invocations", "lsit"}, []string{"invocation", "list"}, []string{"gregale", "--json", "help", "invocation", "list"}},
 		{"ambiguous", "invalid_request", "unknown_command", []string{"lo"}, nil, nil},
 		{"unrelated", "invalid_request", "unknown_command", []string{"zzzzzzzzzzzz"}, nil, nil},
-		{"hidden", "invalid_request", "unknown_command", []string{"realtim"}, nil, nil},
+		{"hidden", "invalid_request", "unknown_command", []string{"eventt"}, nil, nil},
 		{"unknown nested", "validation_failed", "unknown_command", []string{"invocation", "zzzzzzzzzzzz"}, []string{"invocation"}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

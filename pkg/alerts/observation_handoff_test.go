@@ -28,12 +28,12 @@ type fireClaimHook struct {
 	after    func()
 }
 
-func (s fireClaimHook) ClaimAlertFire(ctx context.Context, ruleID, key string, payload []byte, observed float64, at time.Time) (string, bool, error) {
-	id, won, err := s.MemStore.ClaimAlertFire(ctx, ruleID, key, payload, observed, at)
+func (s fireClaimHook) ClaimAlertFire(ctx context.Context, ruleID, key string, payload []byte, observed float64, at time.Time) (string, bool, state.AlertFireRecipients, error) {
+	id, won, recipients, err := s.MemStore.ClaimAlertFire(ctx, ruleID, key, payload, observed, at)
 	if won && err == nil {
 		s.after()
 	}
-	return id, won, err
+	return id, won, recipients, err
 }
 
 func updateHandoffRule(t *testing.T, store *state.MemStore, ruleID string, change state.UpdateAlertRuleParams) state.AlertRule {
@@ -43,6 +43,28 @@ func updateHandoffRule(t *testing.T, store *state.MemStore, ruleID string, chang
 		t.Fatal(err)
 	}
 	return rule
+}
+
+type unavailableHandoffLookup struct{ MemStore *state.MemStore }
+
+func (unavailableHandoffLookup) AlertDeferredFireRecipients(context.Context, string, time.Time) (state.AlertDeferredRecipients, error) {
+	return state.AlertDeferredRecipients{}, errors.New("recipient lookup unavailable")
+}
+
+func TestAlertFireDispatchUsesCommittedRecipients(t *testing.T) {
+	store := state.NewMemStore()
+	rule, ident, _ := seedRule(t, store, state.AlertMetricRequestCount, state.AlertAboveBaseline, 3)
+	dispatch := &recordingDispatcher{result: webhookout.Result{StatusCode: 200}}
+	ev := alerts.NewEvaluator(alerts.EvaluatorOptions{
+		Store:      statetest.NewMem(unavailableHandoffLookup{MemStore: store}),
+		Identity:   func() *age.X25519Identity { return ident },
+		PromQL:     &anomalyProm{currentSamples: 400, pastSamples: 100, trafficDays: 7},
+		Dispatcher: dispatch, Now: func() time.Time { return rule.UpdatedAt.Add(time.Minute) }, Log: discardLog(),
+	})
+	stats, err := ev.RunOnce(t.Context())
+	if err != nil || stats.Fired != 1 || dispatch.callCount() != 1 {
+		t.Fatalf("claimed fire must dispatch during a recipient lookup failure: stats=%+v calls=%d err=%v", stats, dispatch.callCount(), err)
+	}
 }
 
 func TestObserveOnlySettlesFireClaimedDuringModeChange(t *testing.T) {

@@ -58,6 +58,12 @@ const (
 	defaultExecTimeoutMillis = 60_000
 	// requestMaxBytes bounds a JSON request body.
 	requestMaxBytes = 512 << 10
+	// inputRequestMaxBytes holds sandboxproto.MaxInputBytes in base64.
+	inputRequestMaxBytes = sandboxproto.MaxInputBytes*4/3 + 4<<10
+	// envRequestMaxBytes holds an env of sandboxproto.MaxEnvBytes even when
+	// every byte is escaped in JSON (\u00XX), so the guest's validation,
+	// not the body cap, refuses one too large.
+	envRequestMaxBytes = sandboxproto.MaxEnvBytes*6 + 64<<10
 )
 
 // Routes registers the data-plane routes.
@@ -66,6 +72,13 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/sandboxes/{id}/exec", h.execList)
 	mux.HandleFunc("GET /v1/sandboxes/{id}/exec/{handle}", h.execOutput)
 	mux.HandleFunc("DELETE /v1/sandboxes/{id}/exec/{handle}", h.execKill)
+	mux.HandleFunc("POST /v1/sandboxes/{id}/exec/{handle}/input", h.execInput)
+	mux.HandleFunc("PUT /v1/sandboxes/{id}/env", h.sessionEnv)
+	mux.HandleFunc("POST /v1/sandboxes/{id}/code", h.codeRun)
+	mux.HandleFunc("POST /v1/sandboxes/{id}/code/contexts", h.codeContextCreate)
+	mux.HandleFunc("GET /v1/sandboxes/{id}/code/contexts", h.codeContextList)
+	mux.HandleFunc("POST /v1/sandboxes/{id}/code/contexts/{context}/restart", h.codeContextAction(sandboxproto.CodeActionRestart))
+	mux.HandleFunc("DELETE /v1/sandboxes/{id}/code/contexts/{context}", h.codeContextAction(sandboxproto.CodeActionRemove))
 	mux.HandleFunc("GET /v1/sandboxes/{id}/files", h.fileRead)
 	mux.HandleFunc("PUT /v1/sandboxes/{id}/files", h.fileWrite)
 	mux.HandleFunc("GET /v1/sandboxes/{id}/files:list", h.fileList)

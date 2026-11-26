@@ -8,6 +8,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
+// DataAPIPublicReadCacheRule names the edge rule managed by data-api configure.
+const DataAPIPublicReadCacheRule = "data-api-public-read-cache"
+
 // DataAPIAccessConfig is what a Data API runtime reports about access
 // (ADR-20261016151947, ADR-20261019102108): its exposed schemas, the issuer
 // whose user tokens it accepts, its public-read allowlist and server-key

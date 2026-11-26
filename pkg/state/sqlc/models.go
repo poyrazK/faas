@@ -118,17 +118,18 @@ type AccountAsyncQuotum struct {
 
 // Sealed credentials for exporting usage statements to the account's own payment provider; only key_last4 and livemode are ever returned.
 type AccountBillingConnection struct {
-	AccountID    pgtype.UUID
-	Provider     string
-	SealedSecret []byte
-	KeyLast4     string
-	Livemode     bool
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
-	ApiUrl       pgtype.Text
-	Collection   string
-	DaysUntilDue int32
-	AutomaticTax bool
+	AccountID       pgtype.UUID
+	Provider        string
+	SealedSecret    []byte
+	KeyLast4        string
+	Livemode        bool
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	ApiUrl          pgtype.Text
+	Collection      string
+	DaysUntilDue    int32
+	AutomaticTax    bool
+	StripeAccountID pgtype.Text
 }
 
 // Operator-issued EUR-cent credits; one credit cent offsets one GB-RAM-hour of overage at the current public rate.
@@ -645,6 +646,8 @@ type AlertChannelStandDown struct {
 	NextAttemptAt         pgtype.Timestamptz
 	LastError             string
 	ObservationTransition bool
+	PagerdutyTargetSealed []byte
+	PagerdutyRegion       pgtype.Text
 }
 
 type AlertDeferredFire struct {
@@ -854,6 +857,7 @@ type ApiConsumer struct {
 	RevokedAt             pgtype.Timestamptz
 	PlatformTenantID      pgtype.UUID
 	PlatformTenantManaged bool
+	EnvironmentID         pgtype.UUID
 }
 
 // Per-app rule blocking API consumers whose exported invoice is unpaid that many days after its due date (ADR-1315).
@@ -886,6 +890,45 @@ type ApiConsumerCreditGrant struct {
 	ExpiresAt           pgtype.Timestamptz
 	VoidedAt            pgtype.Timestamptz
 	CreatedAt           pgtype.Timestamptz
+}
+
+type ApiConsumerCreditPackSetting struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	ReturnUrl string
+	Packs     []byte
+}
+
+type ApiConsumerCreditPurchase struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	ConsumerID       pgtype.UUID
+	PackID           string
+	Label            string
+	Currency         string
+	AmountMillicents int64
+	AmountMinor      int64
+	ReturnUrl        string
+	StripeCustomer   string
+	StripeSession    pgtype.Text
+	Livemode         bool
+	Status           string
+	ExpiresAt        pgtype.Timestamptz
+	NextCheckAt      pgtype.Timestamptz
+}
+
+// OAuth identities (issuer + subject) of an app's API consumers: MCP oauth-proxy sign-ins enroll as consumers (ADR-20261124094745).
+type ApiConsumerIdentity struct {
+	ID         pgtype.UUID
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+	ConsumerID pgtype.UUID
+	Issuer     string
+	Subject    string
+	Email      string
+	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
 }
 
 // Units an app reported per consumer, meter and UTC minute for billable requests (ADR-1318).
@@ -921,6 +964,8 @@ type ApiConsumerPlan struct {
 	UpdatedAt            pgtype.Timestamptz
 	// Percentages of max_units_per_month at which a consumer.usage_threshold webhook fires, once per consumer per UTC month.
 	AlertThresholdsPercent []int32
+	// Per-route caps keyed by billing route label: {"MCP /tools/search": {"max_requests_per_minute": n, "max_requests_per_month": n}}.
+	RouteLimits []byte
 }
 
 // Cross-replica admission counters for plan limits: requests this minute and weighted units this UTC month.
@@ -944,6 +989,17 @@ type ApiConsumerPlanAssignment struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+// Cross-replica admission counters for plan route limits: requests on one route this minute and this UTC month.
+type ApiConsumerPlanRouteAdmission struct {
+	ConsumerID  pgtype.UUID
+	AccountID   pgtype.UUID
+	Route       string
+	MinuteStart pgtype.Timestamptz
+	MinuteUsed  int64
+	MonthStart  pgtype.Timestamptz
+	MonthUsed   int64
+}
+
 type ApiConsumerRateCard struct {
 	ID                     pgtype.UUID
 	AccountID              pgtype.UUID
@@ -965,6 +1021,7 @@ type ApiConsumerRateCard struct {
 	BaseFeeMillicentsPerMonth int64
 	MinimumMillicentsPerMonth int64
 	ProrateMonthlyFees        bool
+	ModelPrices               []byte
 }
 
 // Billable units per consumer, bounded route label, and UTC minute; per-minute totals stay in api_consumer_usage_minutes.
@@ -1016,6 +1073,12 @@ type ApiConsumerSignupSetting struct {
 	CustomerClosing     bool
 	CreatedAt           pgtype.Timestamptz
 	UpdatedAt           pgtype.Timestamptz
+	// Callers signed in through the app's MCP oauth-proxy issuer become consumers on free_plan_id (ADR-20261124094745).
+	OauthConsumers bool
+	// Offered plan that charges nothing: joining it skips Checkout (ADR-20261124094745).
+	FreePlanID pgtype.UUID
+	// The gateway adds account_usage and account_plans tools to the app's MCP server for OAuth consumers (ADR-20261125194510).
+	AccountTools bool
 }
 
 // Monthly spend cap per API consumer; apid checks the month to date and the gateway denies capped consumers (ADR-1306).
@@ -1032,6 +1095,14 @@ type ApiConsumerSpendCap struct {
 	NextCheckAt          pgtype.Timestamptz
 	CreatedAt            pgtype.Timestamptz
 	UpdatedAt            pgtype.Timestamptz
+}
+
+type ApiConsumerStripeLink struct {
+	ConsumerID       pgtype.UUID
+	StripeAccountID  string
+	Livemode         bool
+	StripeCustomerID string
+	CreatedAt        pgtype.Timestamptz
 }
 
 // One free trial per API consumer (ADR-1314): usage in [starts_at, ends_at) is priced at zero.
@@ -1109,6 +1180,7 @@ type ApiConsumerUsageStatement struct {
 	Revision                int32
 	CreditAppliedMillicents int64
 	Fees                    []byte
+	Waiver                  []byte
 }
 
 type ApiConsumerUsageStatementHandoff struct {
@@ -2229,6 +2301,19 @@ type AppUdpListener struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
+// Per-app gregale.verify.yaml contract (validated JSON) run against deployment candidates before promotion (ADR-20261122220000).
+type AppVerificationContract struct {
+	AppID          pgtype.UUID
+	AccountID      pgtype.UUID
+	Contract       []byte
+	ContractSha256 string
+	ByteSize       int32
+	CheckCount     int32
+	Revision       int64
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
 type AppWakeTransition struct {
 	ID           pgtype.UUID
 	AppID        pgtype.UUID
@@ -2775,6 +2860,9 @@ type BillingRunItem struct {
 	Attempts         int32
 	NextAttemptAt    pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+	UsageGapHours    []byte
+	UsageHeldAt      pgtype.Timestamptz
+	UsageRecoveredAt pgtype.Timestamptz
 }
 
 // One Product Control customer (app and platform tenant) of a billing run (ADR-20261018212918).
@@ -3322,37 +3410,60 @@ type CommitReceipt struct {
 	SchemaVersion           string
 }
 
+type CommitReceiptUsage struct {
+	Shard                int16
+	ReceiptCount         int64
+	PayloadJsonBytes     int64
+	Initialized          bool
+	ReconciledAt         pgtype.Timestamptz
+	ScanInProgress       bool
+	ScanCursor           pgtype.UUID
+	ScanCount            int64
+	ScanPayloadJsonBytes int64
+	ReconcileToken       pgtype.UUID
+	RetryAt              pgtype.Timestamptz
+}
+
 type CommitReplayRequest struct {
-	AccountID   pgtype.UUID
-	SourceID    pgtype.UUID
-	EventID     pgtype.UUID
-	State       string
-	Generation  int64
-	RequestedAt pgtype.Timestamptz
+	AccountID     pgtype.UUID
+	SourceID      pgtype.UUID
+	EventID       pgtype.UUID
+	State         string
+	Generation    int64
+	RequestedAt   pgtype.Timestamptz
+	NextAttemptAt pgtype.Timestamptz
 }
 
 type CommitSource struct {
-	ID                   pgtype.UUID
-	AccountID            pgtype.UUID
-	AppID                pgtype.UUID
-	Name                 string
-	Enabled              bool
-	SealedConnection     []byte
-	CredentialRevision   int64
-	RelayStatus          string
-	LastCheckedAt        pgtype.Timestamptz
-	PendingEvents        pgtype.Int8
-	BlockedEvents        pgtype.Int8
-	OldestPendingAt      pgtype.Timestamptz
-	CreatedAt            pgtype.Timestamptz
-	OperationPolicy      pgtype.Text
-	ContractVersion      int32
-	AllowTenantSelection bool
-	Destination          string
-	QueueName            pgtype.Text
-	ChangesFeeds         []byte
-	ManagedDatabaseID    pgtype.UUID
-	PollIntervalMs       int32
+	ID                           pgtype.UUID
+	AccountID                    pgtype.UUID
+	AppID                        pgtype.UUID
+	Name                         string
+	Enabled                      bool
+	SealedConnection             []byte
+	CredentialRevision           int64
+	RelayStatus                  string
+	LastCheckedAt                pgtype.Timestamptz
+	PendingEvents                pgtype.Int8
+	BlockedEvents                pgtype.Int8
+	OldestPendingAt              pgtype.Timestamptz
+	CreatedAt                    pgtype.Timestamptz
+	OperationPolicy              pgtype.Text
+	ContractVersion              int32
+	AllowTenantSelection         bool
+	Destination                  string
+	QueueName                    pgtype.Text
+	ChangesFeeds                 []byte
+	ManagedDatabaseID            pgtype.UUID
+	PollIntervalMs               int32
+	RelayNextPollAt              pgtype.Timestamptz
+	RelayPollToken               pgtype.UUID
+	RelayPollBackoffMs           int32
+	CleanupEligibleEvents        pgtype.Int8
+	CleanupObservedAt            pgtype.Timestamptz
+	RelayReservedDeferredCheckAt pgtype.Timestamptz
+	RelayConnectMs               pgtype.Int4
+	RelayConnectObservedAt       pgtype.Timestamptz
 }
 
 // Accounts given a paid plan without a subscription; not billed, held to the plan allowance; written only by apid (ADR-20261111140000).
@@ -3464,19 +3575,20 @@ type ComputeNodeKey struct {
 }
 
 type ConsumerKey struct {
-	ID           pgtype.UUID
-	AccountID    pgtype.UUID
-	AppID        pgtype.UUID
-	Name         string
-	Prefix       string
-	HashedSecret []byte
-	Scopes       []string
-	ExpiresAt    pgtype.Timestamptz
-	LastUsedAt   pgtype.Timestamptz
-	RevokedAt    pgtype.Timestamptz
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
-	ConsumerID   pgtype.UUID
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	Name          string
+	Prefix        string
+	HashedSecret  []byte
+	Scopes        []string
+	ExpiresAt     pgtype.Timestamptz
+	LastUsedAt    pgtype.Timestamptz
+	RevokedAt     pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+	ConsumerID    pgtype.UUID
+	EnvironmentID pgtype.UUID
 }
 
 type ContainerHostPortLease struct {
@@ -4086,6 +4198,30 @@ type DataApiChangeHookReport struct {
 	Publishing      string
 	// ADR-20261022121642 amendment 3: when capture last left a change out at the backlog bound, as the runtime last reported.
 	LastDroppedAt pgtype.Timestamptz
+}
+
+type DataApiInspectionAdmission struct {
+	TaskID               pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	DeploymentID         pgtype.UUID
+	BindingID            pgtype.UUID
+	DatabaseID           pgtype.UUID
+	TableName            string
+	Nonce                string
+	BindingRevision      int64
+	DatabaseRevision     int64
+	RuntimeGeneration    int64
+	CredentialGeneration int64
+	TargetDigest         string
+	TrustDigest          string
+}
+
+type DataApiInspectionExecution struct {
+	TaskID          pgtype.UUID
+	ProtocolVersion int16
+	StdoutSha256    []byte
+	FinishedAt      pgtype.Timestamptz
 }
 
 type DataApiRuntimeConnectionObservation struct {
@@ -4883,6 +5019,7 @@ type DeploymentRollbackOperation struct {
 	Status              string
 	Receipt             []byte
 	UpdatedAt           pgtype.Timestamptz
+	ProjectRollbackID   pgtype.UUID
 }
 
 type DeploymentRoutePolicySnapshot struct {
@@ -5004,6 +5141,36 @@ type DeploymentSubmissionReceipt struct {
 	AttemptID    string
 	DeploymentID pgtype.UUID
 	AcceptedAt   pgtype.Timestamptz
+}
+
+// Node verifying a deployment candidate; secretd opens contract-referenced app secrets only for it (ADR-20261122220000 amendment 2).
+type DeploymentVerificationLease struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	NodeName     string
+	ExpiresAt    pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+}
+
+// Read-only SQL checks imaged hands to apid during candidate verification; result is row count and first value only (ADR-20261122220000).
+type DeploymentVerificationQuery struct {
+	ID           pgtype.UUID
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	CheckName    string
+	DatabaseName string
+	Query        string
+	Status       string
+	RowCount     pgtype.Int4
+	HasFirst     pgtype.Bool
+	FirstValue   pgtype.Text
+	ErrorCode    pgtype.Text
+	Error        pgtype.Text
+	CreatedAt    pgtype.Timestamptz
+	ClaimedAt    pgtype.Timestamptz
+	CompletedAt  pgtype.Timestamptz
+	ExpiresAt    pgtype.Timestamptz
 }
 
 type DevBridgeSession struct {
@@ -7047,6 +7214,7 @@ type FlagExperiment struct {
 	BanditWeightedAt   pgtype.Timestamptz
 	DenominatorEvent   string
 	Percentile         int32
+	NotifyChannelIds   []pgtype.UUID
 }
 
 type FlagExperimentLatency struct {
@@ -7072,6 +7240,42 @@ type FlagExperimentUnit struct {
 	UnitCustomerID  pgtype.UUID
 	SubjectHash     []byte
 	DenSum          int64
+}
+
+// Outbox of flag notifications queued by apid and delivered by meterd (ADR-20261125085913).
+type FlagNotification struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	OrgID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+	Kind          string
+	Key           string
+	Subject       string
+	Summary       string
+	ChannelIds    []pgtype.UUID
+	Status        string
+	Attempts      int32
+	NextAttemptAt pgtype.Timestamptz
+	LastError     string
+	CreatedAt     pgtype.Timestamptz
+	SettledAt     pgtype.Timestamptz
+}
+
+// Every flag notification key queued, so a swept notification is never queued again (ADR-20261125085913).
+type FlagNotificationKey struct {
+	Key           string
+	EnvironmentID pgtype.UUID
+	Kind          string
+	CreatedAt     pgtype.Timestamptz
+}
+
+// Notification channels for an environment's experiments and flag lifecycle (ADR-20261125085913).
+type FlagNotificationSetting struct {
+	EnvironmentID pgtype.UUID
+	AccountID     pgtype.UUID
+	ChannelIds    []pgtype.UUID
+	UpdatedBy     string
+	UpdatedAt     pgtype.Timestamptz
 }
 
 // Singleton non-secret secretbox probe proving every admitted node shares the fleet.age unseal domain.
@@ -9149,6 +9353,27 @@ type ManagedPostgresAccountingReconciliation struct {
 	CreatedAt          pgtype.Timestamptz
 }
 
+// Wake-with-app start claims, matched to recorded compute starts; pruned with them after 30 days; written only by apid.
+type ManagedPostgresAppWakeStart struct {
+	DatabaseID pgtype.UUID
+	ClaimedAt  pgtype.Timestamptz
+}
+
+// Weekly notices that one cause kept a managed PostgreSQL database awake; mailed once; written only by apid.
+type ManagedPostgresAwakeNotice struct {
+	DatabaseID   pgtype.UUID
+	AccountID    pgtype.UUID
+	WeekStart    pgtype.Date
+	AwakeSeconds int64
+	Starts       int32
+	Cause        string
+	CauseAppID   pgtype.UUID
+	CauseDetail  string
+	CauseStarts  int32
+	RecordedAt   pgtype.Timestamptz
+	MailedAt     pgtype.Timestamptz
+}
+
 type ManagedPostgresBinding struct {
 	ID                         pgtype.UUID
 	AccountID                  pgtype.UUID
@@ -9175,6 +9400,7 @@ type ManagedPostgresBinding struct {
 	CutoverID                  pgtype.UUID
 	ConnectionLimit            int64
 	DatabaseAccountID          pgtype.UUID
+	DataApiInspectionRevision  int64
 }
 
 // Compute cap thresholds a managed PostgreSQL usage subject reached in a UTC month; written only by apid (ADR-20261025094915).
@@ -9208,6 +9434,19 @@ type ManagedPostgresCheckpointMaintenance struct {
 	CreatedAt                pgtype.Timestamptz
 	UpdatedAt                pgtype.Timestamptz
 	ReservedByCutoverID      pgtype.UUID
+}
+
+// Starts of a managed PostgreSQL database's compute with their likely cause (diagnosis, never billing); pruned after 30 days; written only by apid.
+type ManagedPostgresComputeStart struct {
+	DatabaseID          pgtype.UUID
+	AccountID           pgtype.UUID
+	ProviderOperationID string
+	StartedAt           pgtype.Timestamptz
+	SuspendedAt         pgtype.Timestamptz
+	Cause               string
+	CauseAppID          pgtype.UUID
+	CauseDetail         string
+	RecordedAt          pgtype.Timestamptz
 }
 
 type ManagedPostgresConnectionCapacity struct {
@@ -9443,6 +9682,7 @@ type ManagedPostgresDatabase struct {
 	PreviewEnvironmentID        pgtype.Text
 	PreviewPrNumber             pgtype.Int4
 	ExpiresAt                   pgtype.Timestamptz
+	DataApiInspectionRevision   int64
 }
 
 type ManagedPostgresDatabaseEndpoint struct {
@@ -9628,6 +9868,13 @@ type ManagedPostgresRestoreVerification struct {
 	VerifiedAt         pgtype.Timestamptz
 }
 
+// Customer-chosen scale-to-zero suspend timeout per managed PostgreSQL database; no row is the platform default; written only by apid.
+type ManagedPostgresSuspendTimeout struct {
+	DatabaseID pgtype.UUID
+	Seconds    int32
+	UpdatedAt  pgtype.Timestamptz
+}
+
 type ManagedPostgresUsage struct {
 	AccountID          pgtype.UUID
 	DatabaseID         pgtype.UUID
@@ -9673,6 +9920,13 @@ type ManagedPostgresUsageWaiver struct {
 	DatabaseID  pgtype.UUID
 	WaivedFrom  pgtype.Timestamptz
 	WaivedUntil pgtype.Timestamptz
+}
+
+// Managed PostgreSQL databases that start when a bound app wakes (opt-in); no row is off; written only by apid.
+type ManagedPostgresWakeWithApp struct {
+	DatabaseID    pgtype.UUID
+	EnabledAt     pgtype.Timestamptz
+	LastStartedAt pgtype.Timestamptz
 }
 
 type ManagedRealtimeChannelBatch struct {
@@ -10357,6 +10611,13 @@ type ManagedValkeyCach struct {
 	MemoryMb       int32
 	EvictionPolicy string
 	CreatedAt      pgtype.Timestamptz
+}
+
+type ManagedValkeyCacheGrant struct {
+	CacheAppID pgtype.UUID
+	AppID      pgtype.UUID
+	AccountID  pgtype.UUID
+	CreatedAt  pgtype.Timestamptz
 }
 
 type McpBridgeLease struct {
@@ -11436,6 +11697,22 @@ type ObjectStorageVersionInventoryEntry struct {
 	JobID        pgtype.UUID
 	IdentityHash string
 	Bytes        int64
+}
+
+// Short-lived per-instance S3 credentials for buckets granted by gregale.yaml uses:; written by apid, resolved by s3-gatewayd, swept by apid after expiry (ADR-20261122191423).
+type ObjectStorageWorkloadCredential struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	BucketID     pgtype.UUID
+	CallerAppID  pgtype.UUID
+	InstanceID   string
+	AccessKeyID  string
+	SecretSealed []byte
+	Kid          string
+	Permission   string
+	KeyPrefix    pgtype.Text
+	CreatedAt    pgtype.Timestamptz
+	ExpiresAt    pgtype.Timestamptz
 }
 
 type ObjectStorageWriteAdmission struct {
@@ -13545,6 +13822,12 @@ type ProjectBindingVerificationRun struct {
 	ExpiresAt       pgtype.Timestamptz
 }
 
+type ProjectDeployRollbackMember struct {
+	DeploymentID  pgtype.UUID
+	ProjectID     pgtype.UUID
+	DeployGroupID pgtype.UUID
+}
+
 type ProjectEnvironment struct {
 	ID                     pgtype.UUID
 	AccountID              pgtype.UUID
@@ -14924,6 +15207,50 @@ type ProjectReleaseWorkerDrain struct {
 	RequestedAt pgtype.Timestamptz
 }
 
+type ProjectRollbackDeployProtection struct {
+	ProjectID     pgtype.UUID
+	DeployGroupID pgtype.UUID
+	ManifestHash  string
+	DeploymentIds []string
+	StorageKeys   []string
+	ExpiresAt     pgtype.Timestamptz
+	LayerBytes    int64
+}
+
+type ProjectRollbackHttpRecovery struct {
+	RollbackID           pgtype.UUID
+	OperationID          pgtype.UUID
+	AppID                pgtype.UUID
+	TargetID             pgtype.UUID
+	Service              bool
+	Generation           pgtype.Int8
+	RoutingCommittedAt   pgtype.Timestamptz
+	ExpectedGateways     []string
+	AcknowledgedGateways []string
+	GatewaysAppliedAt    pgtype.Timestamptz
+	FirstSuccessAt       pgtype.Timestamptz
+	ExpiresAt            pgtype.Timestamptz
+	NextNotifyAt         pgtype.Timestamptz
+}
+
+type ProjectRollbackOperation struct {
+	ID                  pgtype.UUID
+	ProjectID           pgtype.UUID
+	Status              string
+	Version             int64
+	NextRunAt           pgtype.Timestamptz
+	Receipt             []byte
+	StartRequestID      pgtype.UUID
+	StartRequestOptions []byte
+}
+
+type ProjectRollbackUndoArtifactHold struct {
+	OperationID  pgtype.UUID
+	DeploymentID pgtype.UUID
+	StorageKeys  []string
+	ExpiresAt    pgtype.Timestamptz
+}
+
 type ProjectSubmission struct {
 	AccountID   pgtype.UUID
 	AttemptID   string
@@ -15221,6 +15548,8 @@ type RequestAnalyticsAppGap struct {
 	LastGapAt    pgtype.Timestamptz
 	PendingCount int32
 	UpdatedAt    pgtype.Timestamptz
+	DroppedTotal int64
+	PendingSince pgtype.Timestamptz
 }
 
 type RequestAnalyticsCoverageGap struct {
@@ -15530,6 +15859,7 @@ type RequestTelemetryAppGap struct {
 	PendingCount int32
 	DroppedTotal int64
 	UpdatedAt    pgtype.Timestamptz
+	PendingSince pgtype.Timestamptz
 }
 
 type RequestTelemetryCoverage struct {
@@ -15546,6 +15876,7 @@ type RequestTelemetryCoverage struct {
 	AppScoped                bool
 	UnattributedDroppedTotal int64
 	UnattributedPendingCount int32
+	CleanStopAt              pgtype.Timestamptz
 }
 
 type RequestTelemetryDefault struct {
@@ -15788,6 +16119,30 @@ type RouteRemovalPolicyHistory struct {
 	ChangedBy string
 	ChangedAt pgtype.Timestamptz
 	Policy    []byte
+}
+
+type RouteSplit struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	SourceAppID        pgtype.UUID
+	TargetSlug         string
+	TargetAppID        pgtype.UUID
+	TargetDeploymentID pgtype.UUID
+	Kind               string
+	Route              string
+	Method             string
+	PathGlob           string
+	RouteRamMb         int32
+	MainRamMb          int32
+	PreviousRamMb      int32
+	MainResized        bool
+	EdgeRuleIds        []pgtype.UUID
+	Phase              string
+	Warning            string
+	Error              string
+	LeaseUntil         pgtype.Timestamptz
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
 }
 
 type RuntimeArtifactBinding struct {
@@ -16458,6 +16813,32 @@ type SandboxWorkspaceSnapshot struct {
 	DeleteRequestedAt pgtype.Timestamptz
 	CreatedAt         pgtype.Timestamptz
 	ReadyAt           pgtype.Timestamptz
+}
+
+// Named analytics queries per environment; digests and threshold alerts run by meterd (ADR-20261122190000).
+type SavedInsight struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	EnvironmentID   pgtype.UUID
+	Key             string
+	Name            string
+	Kind            string
+	Query           []byte
+	RangeDays       int32
+	Digest          string
+	AlertComparison string
+	AlertThreshold  float64
+	ChannelIds      []pgtype.UUID
+	AlertState      string
+	LastValue       pgtype.Float8
+	LastRunAt       pgtype.Timestamptz
+	LastError       string
+	NextDigestAt    pgtype.Timestamptz
+	NextCheckAt     pgtype.Timestamptz
+	LeaseUntil      pgtype.Timestamptz
+	CreatedBy       string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
 }
 
 type SavedRouteRequirement struct {
@@ -17503,6 +17884,18 @@ type TriggerWorkBinding struct {
 	FairnessKeySelector string
 }
 
+// Accounts created by an anonymous agent deploy, until a human claims them or they expire; written by apid (ADR-20261124080000).
+type UnclaimedAccount struct {
+	AccountID        pgtype.UUID
+	ClaimTokenSha256 []byte
+	CreatedAt        pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+	ClaimedAt        pgtype.Timestamptz
+	ExpiredAt        pgtype.Timestamptz
+	CreatedIp        *netip.Addr
+	UserAgent        string
+}
+
 type UploadCommitOutcome struct {
 	UploadID     string
 	DeploymentID string
@@ -17649,6 +18042,7 @@ type UsageStatementInvoiceExport struct {
 	ClaimToken           pgtype.UUID
 	ClaimedUntil         pgtype.Timestamptz
 	HandoffReserved      bool
+	StripeIssue          []byte
 }
 
 type WarmHint struct {

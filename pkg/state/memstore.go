@@ -273,6 +273,9 @@ type MemStore struct {
 	invocationAttemptHistory             map[int64]retainedInvocationAttempt
 	nextInvocationAttemptID              int64
 	checkedRollbacks                     map[string]api.RollbackOperation
+	projectRollbackOperations            map[string]ProjectRollbackRecord
+	projectRollbackProtections           map[projectRollbackProtectionKey]projectRollbackProtectionRecord
+	projectRollbackUndoArtifactHolds     map[string]map[string]projectRollbackUndoArtifactHold
 	checkedRollbackReleaseReviews        map[string][]ReleaseRun
 	plainRollbackReleaseReviews          map[string][]ReleaseRun
 	alertRollbacks                       map[string]api.AlertRollback
@@ -548,6 +551,7 @@ type MemStore struct {
 	objectGatewayStorage          map[string]*memGatewayStorage
 	objectAccessGrants            map[string]ObjectBucketAccessGrant
 	objectS3Credentials           map[string]ObjectS3Credential
+	objectWorkloadCredentials     map[string]ObjectWorkloadCredential
 	objectS3CopySources           map[string]ObjectS3CopySource
 	objectMultipartUploads        map[string]ObjectMultipartUpload
 	objectMultipartInitiations    map[string]ObjectMultipartInitiation
@@ -578,9 +582,13 @@ type MemStore struct {
 	outboundAIQualityAlerts       map[string][]OutboundAIQualityAlert
 	outboundAppBindings           map[string]OutboundAppBinding
 	outboundCredentials           map[string][]byte
-	mu                            sync.Mutex
-	outboundProbePolicies         map[string]api.OutboundBindingProbePolicy
-	outboundCredentialRevisions   map[string]int64
+	// ADR-20261122220000 verification contracts and their SQL handoff.
+	verificationContracts       map[string]VerificationContract
+	verificationQueries         map[string]VerificationQuery
+	verificationLeases          map[string]VerificationLease
+	mu                          sync.Mutex
+	outboundProbePolicies       map[string]api.OutboundBindingProbePolicy
+	outboundCredentialRevisions map[string]int64
 	// egressFlows is the ADR-371 egress flow log.
 	egressFlows               []EgressFlowRecord
 	accounts                  map[string]Account
@@ -597,6 +605,7 @@ type MemStore struct {
 	apps                      map[string]App
 	appOwnerHome              map[string]string
 	managedValkeyCaches       sync.Map               // app id -> ManagedValkeyCache (ADR-20261116192126)
+	managedValkeyCacheGrants  sync.Map               // cache app id + "\x00" + app id -> account id (ADR-20261124174500)
 	appSlugHolds              map[string]appSlugHold // mirrors app_slug_holds (H80)
 	scenarioTestMembers       map[string]ScenarioTestMember
 	scenarioPostgres          map[string]rehearsalpg.Resource
@@ -634,8 +643,10 @@ type MemStore struct {
 	// apiConsumers is keyed by APIConsumer.ID. A separate map keeps the
 	// stable customer identity independent from rotatable credentials.
 	apiConsumers                         map[string]APIConsumer
+	apiConsumerStripeLinks               map[string]map[stripeConsumerScope]string
 	apiConsumerTrials                    map[string]APIConsumerTrial               // ADR-1314
 	apiConsumerSignupSettings            map[string]APIConsumerSignupSettings      // ADR-20261021143000, by app ID
+	apiConsumerIdentities                map[string]APIConsumerIdentity            // ADR-20261124094745, by identity ID
 	apiConsumerSignups                   map[string]APIConsumerSignup              // ADR-20261021143000
 	apiConsumerMeterUsage                map[string]APIConsumerMeterUsageBucket    // ADR-1318
 	platformTenantMeterUsage             map[string]PlatformTenantMeterUsageBucket // ADR-1319
@@ -645,7 +656,12 @@ type MemStore struct {
 	apiConsumerBillingPolicies           map[string]APIConsumerBillingPolicy       // ADR-1315, by app
 	apiConsumerOverdueHolds              map[string]APIConsumerOverdueHold         // ADR-1315, by consumer
 	platformTenants                      map[string]PlatformTenant
-	flagEvents                           *memFlagEvents // ADR 20261115163113, lazily made
+	flagEvents                           *memFlagEvents                      // ADR 20261115163113, lazily made
+	savedInsights                        map[string]*memSavedInsightRow      // ADR-20261122190000, by ID, lazily made
+	flagNotificationSettings             map[string]FlagNotificationSettings // ADR-20261125085913, by environment ID, lazily made
+	flagNotifications                    []FlagNotification                  // ADR-20261125085913
+	flagNotificationKeys                 map[string]flagNotificationKey      // ADR-20261125085913
+	routeSplits                          map[string]RouteSplit               // ADR-20261121170000 amendment 2, by ID, lazily made
 	platformTenantReconciliationReceipts map[string]api.PlatformTenantReconciliationReceiptResponse
 	platformTenantOffboardingReceipts    map[string]api.PlatformTenantOffboardingReceiptResponse
 	platformTenantAccessTokens           map[string]PlatformTenantAccessToken
@@ -744,6 +760,11 @@ type MemStore struct {
 	// buildPreemptions counts the times borrowed builder slots gave a build
 	// back to the queue (builds.preemptions, ADR-20261118154632).
 	buildPreemptions map[string]int
+	// buildNodeName records the node that claimed a running build
+	// (builds.builder_node_name, ADR-20261110210000) with that claim's start,
+	// so a requeued and reclaimed build names none until recorded again;
+	// allocated on first use.
+	buildNodeName map[string]memBuildNode
 	// ADR-740 developer live patches; allocated on first use.
 	devSourceManifests   map[string]DevSourceManifest
 	devSourceManifestSeq int64
@@ -1149,7 +1170,8 @@ type MemStore struct {
 	nextExecutionEventID        int64
 	// appTasks are deployment-attached command intents (ADR-230). Unlike
 	// disposable executions they reference an app artifact and scope.
-	appTasks map[string]AppTask
+	appTasks                    map[string]AppTask
+	dataAPIInspectionExecutions map[string]DataAPIInspectionExecution
 	// appTaskNetworks mirrors app_task_networks (ADR-20261118070000), keyed
 	// by task id; created on first use.
 	appTaskNetworks map[string]appTaskNetwork
@@ -1202,6 +1224,9 @@ type MemStore struct {
 	// signal that an OAuth-only flow is required to mint a session.
 	accountPasswords map[string]AccountPassword
 	legalAcceptances map[string][]LegalAcceptance
+	// unclaimedAccounts marks accounts created by an anonymous deploy
+	// (ADR-20261124080000), keyed by account_id. Lazily initialised.
+	unclaimedAccounts map[string]UnclaimedAccount
 	// oauthLinks is keyed by (provider + "\x00" + provider_subject)
 	// so the §11 anti-takeover invariant (one OAuth subject per
 	// account) is enforceable in-memory the same way the composite
@@ -1331,9 +1356,10 @@ type MemStore struct {
 	platformTenantSourceRouteUsage map[string]PlatformTenantSourceRouteUsageBucket
 	// Consumer plans (ADR-953): plans by ID, assignments by ID, and admission
 	// counters by consumer ID.
-	apiConsumerPlans           map[string]APIConsumerPlan
-	apiConsumerPlanAssignments map[string]APIConsumerPlanAssignment
-	apiConsumerPlanAdmissions  map[string]planAdmissionCounter
+	apiConsumerPlans               map[string]APIConsumerPlan
+	apiConsumerPlanAssignments     map[string]APIConsumerPlanAssignment
+	apiConsumerPlanAdmissions      map[string]planAdmissionCounter
+	apiConsumerPlanRouteAdmissions map[string]planAdmissionCounter // consumerID + "\x00" + route
 	// apiConsumerTelemetryHours is seeded by tests; the in-memory store keeps
 	// no request telemetry of its own (ADR-954).
 	apiConsumerTelemetryHours map[string]APIConsumerTelemetryHour
@@ -1343,6 +1369,8 @@ type MemStore struct {
 	// apiConsumerSpendCaps (by consumer ID) back prepaid credits and spend
 	// caps (ADR-1306).
 	apiConsumerCreditGrants       map[string]APIConsumerCreditGrant
+	apiConsumerCreditPackSettings map[string]api.ConsumerCreditPackSettings
+	apiConsumerCreditPurchases    map[string]APIConsumerCreditPurchase
 	apiConsumerCreditApplications []apiConsumerCreditApplication
 	apiConsumerSpendCaps          map[string]APIConsumerSpendCap
 	// platformTenantCreditGrants (by ID), platformTenantCreditApplications
@@ -1357,10 +1385,11 @@ type MemStore struct {
 	statementInvoiceExports map[string]StatementInvoiceExport
 	// billingRuns, billingRunItems (run ID → item key) and
 	// billingRunSchedules (account ID) back billing runs (ADR-1503).
-	billingRuns            map[string]BillingRun
-	billingRunItems        map[string]map[string]BillingRunItem
-	billingRunSchedules    map[string]BillingRunSchedule
-	apiConsumerUsageEvents map[string]usageEventIdentity
+	billingRuns             map[string]BillingRun
+	billingRunItems         map[string]map[string]BillingRunItem
+	billingRunUsageRechecks map[string]bool
+	billingRunSchedules     map[string]BillingRunSchedule
+	apiConsumerUsageEvents  map[string]usageEventIdentity
 	// apiConsumerRateCards is keyed by card ID. The production table is
 	// append-only and unique on (app_id, effective_from); MemStore mirrors
 	// both invariants for handler tests.
@@ -1949,6 +1978,7 @@ func NewMemStore(options ...StoreOption) *MemStore {
 		workflowEvents:                  map[string][]WorkflowEvent{},
 		workflowEventApps:               map[string]string{},
 		appTasks:                        map[string]AppTask{},
+		dataAPIInspectionExecutions:     map[string]DataAPIInspectionExecution{},
 		fireNowRequests:                 map[string]FireNowRequest{},
 		operatorIntents:                 map[string]OperatorIntent{},
 		runtimeConfigs:                  map[string]RuntimeConfig{},
@@ -2107,6 +2137,7 @@ func NewMemStore(options ...StoreOption) *MemStore {
 		apiConsumerPlans:                  map[string]APIConsumerPlan{},
 		apiConsumerPlanAssignments:        map[string]APIConsumerPlanAssignment{},
 		apiConsumerPlanAdmissions:         map[string]planAdmissionCounter{},
+		apiConsumerPlanRouteAdmissions:    map[string]planAdmissionCounter{},
 		apiConsumerUsageEvents:            map[string]usageEventIdentity{},
 		requestAuditEvents:                map[string]RequestAuditRecord{},
 		discoveredAPIRoutes:               map[string]DiscoveredAPIRoute{},
@@ -2330,6 +2361,11 @@ func (m *MemStore) CreateAccountWithPersonalOrg(ctx context.Context, params Crea
 	if params.InitialPasswordHash != "" {
 		if err := m.setAccountPasswordLocked(acct.ID, params.InitialPasswordHash); err != nil {
 			delete(m.accountPasswords, acct.ID)
+			return CreateAccountWithPersonalOrgResult{}, err
+		}
+	}
+	if u := params.Unclaimed; u != nil {
+		if err := m.insertUnclaimedLocked(acct.ID, *u, now); err != nil {
 			return CreateAccountWithPersonalOrgResult{}, err
 		}
 	}
@@ -4256,6 +4292,12 @@ func (m *MemStore) deleteProjectLocked(projectID string) error {
 		}
 	}
 	delete(m.projects, projectID)
+	for id, operation := range m.projectRollbackOperations {
+		if operation.ProjectID == projectID {
+			delete(m.projectRollbackOperations, id)
+			delete(m.projectRollbackUndoArtifactHolds, id)
+		}
+	}
 	for id, receipt := range m.environmentRollbackReceipts {
 		if receipt.ProjectID == projectID {
 			delete(m.environmentRollbackReceipts, id)
@@ -8157,6 +8199,7 @@ func (m *MemStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	for key, task := range m.appTasks {
 		if task.AppID == id {
 			delete(m.appTasks, key)
+			delete(m.dataAPIInspectionExecutions, key)
 		}
 	}
 	for key, fork := range m.appForks {
@@ -9180,6 +9223,13 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 	proposed[d.ID] = d
 	if err := appTrafficBindingError(m.checkMemTrafficBindingLocked(ctx, app.AccountID, nil, app.ID, memTrafficPolicyChange{Deployments: proposed})); err != nil {
 		return Deployment{}, 0, err
+	}
+	if d.ProjectDeployGroupID != "" {
+		if app.ProjectID == "" || !projectRollbackGroupEligible(d.ProjectDeployGroupID, normalizedDeploymentScope(d.Scope)) {
+			return Deployment{}, 0, ErrInvalidArgument
+		}
+		d.projectDeployProjectID = app.ProjectID
+		proposed[d.ID] = d
 	}
 	m.recordRecoveryPredecessorLocked(d)
 	if reviewedSpec.ID != "" {
@@ -21734,8 +21784,8 @@ func (m *MemStore) SetOverageCapCentsForTest(accountID string, cents int64) {
 	m.overageCapCents[accountID] = cents
 }
 
-// SetClockForTest replaces the wall-clock source
-// CurrentMonthOverageCents uses to compute the UTC month-start
+// SetClockForTest replaces the clock used by time-sensitive MemStore paths.
+// CurrentMonthOverageCents uses it to compute the UTC month-start
 // cutoff. Tests that pin a fixture time for AppendUsage (so the
 // derived overage is computable at a deterministic monthly bucket)
 // MUST also pin the same fixture here, otherwise real wall-clock
@@ -23131,7 +23181,9 @@ func (m *MemStore) PeekCliAuthCode(_ context.Context, tokenHash []byte) (api.Cli
 	if !row.ExpiresAt.After(time.Now()) {
 		return api.CliAuthStatusExpired, "", ErrNotFound
 	}
-	if row.ConsumedAt != nil {
+	// PgStore's claim sets status = 'consumed' before the CLI exchanges the
+	// code, so a claimed row is consumed here too.
+	if row.ConsumedAt != nil || row.AccountID != "" {
 		return api.CliAuthStatusConsumed, row.AccountID, nil
 	}
 	return api.CliAuthStatusPending, row.AccountID, nil
@@ -25111,6 +25163,7 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 	for taskID, task := range m.appTasks {
 		if task.AccountID == id && personalApps[task.AppID] {
 			delete(m.appTasks, taskID)
+			delete(m.dataAPIInspectionExecutions, taskID)
 		}
 	}
 	// Snapshots + builds are keyed by deployment_id; resolve the
@@ -25134,6 +25187,7 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 	for cid, c := range m.apiConsumers {
 		if c.AccountID == id {
 			delete(m.apiConsumers, cid)
+			delete(m.apiConsumerStripeLinks, cid)
 			delete(m.platformTenantByConsumer, cid)
 		}
 	}
@@ -27159,29 +27213,29 @@ func matchHostPattern(pattern, host string) bool {
 //
 // On won=true the returned deliveryID is the new row's UUID; on
 // won=false it is "".
-func (m *MemStore) ClaimAlertFire(_ context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (string, bool, error) {
+func (m *MemStore) ClaimAlertFire(_ context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (string, bool, AlertFireRecipients, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	r, ok := m.alertRules[ruleID]
 	if !ok {
-		return "", false, ErrNotFound
+		return "", false, AlertFireRecipients{}, ErrNotFound
 	}
 	if r.ObserveOnly {
-		return "", false, nil
+		return "", false, AlertFireRecipients{}, nil
 	}
 	if !alertFireMatchesScope(payload, r.EnvironmentScope) {
-		return "", false, ErrConflict
+		return "", false, AlertFireRecipients{}, ErrConflict
 	}
 	// Fire and recovery/retry writers share the journal's unique key.
 	if _, exists := m.alertDeliveries[idempotencyKey]; exists {
-		return "", false, nil
+		return "", false, AlertFireRecipients{}, nil
 	}
 	cacheKey := ruleID + "\x00" + idempotencyKey
 	if _, dup := m.alertClaimKeys[cacheKey]; dup {
-		return "", false, nil
+		return "", false, AlertFireRecipients{}, nil
 	}
 	if r.Action == AlertActionRollback && alertRollbackMetricAllowed(r.Metric) && !api.IsFiniteFloat(observed) {
-		return "", false, ErrInvalidArgument
+		return "", false, AlertFireRecipients{}, ErrInvalidArgument
 	}
 	if r.LastFiredAt.Before(at) || r.LastFiredAt.IsZero() {
 		r.LastFiredAt = at.UTC()
@@ -27215,11 +27269,11 @@ func (m *MemStore) ClaimAlertFire(_ context.Context, ruleID, idempotencyKey stri
 			m.alertRules[ruleID] = r
 			m.recordAlertEpisodeLocked(r, at.UTC())
 		}
-		m.queueDeferredAlertFiresLocked(r, m.alertDeliveries[idempotencyKey])
+		recipients := m.queueDeferredAlertFiresLocked(r, m.alertDeliveries[idempotencyKey])
 		m.captureAlertRollbackLocked(id, r, observed, at)
-		return id, true, nil
+		return id, true, recipients, nil
 	}
-	return "", false, nil
+	return "", false, AlertFireRecipients{}, nil
 }
 
 func (m *MemStore) SetAlertRuleState(_ context.Context, ruleID string, to AlertState, at time.Time) (bool, error) {
@@ -29343,7 +29397,7 @@ func (m *MemStore) ListConsumerKeysForApp(ctx context.Context, accountID, appID 
 	defer m.mu.Unlock()
 	var out []ConsumerKey
 	for _, k := range m.consumerKeys {
-		if k.AccountID == accountID && k.AppID == appID {
+		if k.AccountID == accountID && k.AppID == appID && k.EnvironmentID == "" {
 			out = append(out, k)
 		}
 	}
@@ -29410,7 +29464,7 @@ func (m *MemStore) ConsumerKeyByAppAndPrefix(ctx context.Context, accountID, app
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, k := range m.consumerKeys {
-		if k.AccountID == accountID && k.AppID == appID && k.Prefix == prefix {
+		if k.AccountID == accountID && k.AppID == appID && k.Prefix == prefix && k.EnvironmentID == "" {
 			if tenantID := m.platformTenantByConsumer[k.ConsumerID]; tenantID != "" {
 				if tenant, ok := m.platformTenants[tenantID]; ok && tenant.Status == PlatformTenantSuspended {
 					return ConsumerKey{}, ErrNotFound

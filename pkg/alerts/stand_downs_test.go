@@ -19,6 +19,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/promql"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/webhookout"
 )
 
@@ -87,19 +88,24 @@ func TestEvaluator_ObserveOnlyStandsDownLiveAlert(t *testing.T) {
 	}
 }
 
+type pagerDutyHandoffCase struct {
+	name, replacementKey string
+	telemetryGap         bool
+	rebindAfterClaim     bool
+	rotateOriginal       bool
+}
+
 func TestEvaluator_ObserveOnlyRepromotionResolvesPagerDutyBeforeRefiring(t *testing.T) {
 	const originalKey = "0123456789abcdef0123456789abcdef"
-	for _, tc := range []struct {
-		name           string
-		replacementKey string
-		telemetryGap   bool
-	}{
+	for _, tc := range []pagerDutyHandoffCase{
 		{name: "same channel"},
 		{name: "alias with a telemetry gap", replacementKey: originalKey, telemetryGap: true},
 		{name: "independent destination", replacementKey: "fedcba9876543210fedcba9876543210"},
+		{name: "alias rebound after the claim", replacementKey: originalKey, rebindAfterClaim: true},
+		{name: "original destination rotated after queueing", replacementKey: originalKey, rotateOriginal: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			checkPagerDutyRepromotion(t, originalKey, tc.replacementKey, tc.telemetryGap)
+			checkPagerDutyRepromotion(t, originalKey, tc)
 		})
 	}
 }
@@ -116,7 +122,7 @@ func (p *pagerDutyHandoffProm) QueryVectorStrictAt(ctx context.Context, query st
 	return p.anomalyProm.QueryVectorStrictAt(ctx, query, at)
 }
 
-func checkPagerDutyRepromotion(t *testing.T, originalKey, replacementKey string, telemetryGap bool) {
+func checkPagerDutyRepromotion(t *testing.T, originalKey string, tc pagerDutyHandoffCase) {
 	t.Helper()
 	ctx := t.Context()
 	store := state.NewMemStore()
@@ -147,9 +153,14 @@ func checkPagerDutyRepromotion(t *testing.T, originalKey, replacementKey string,
 	now := live.UpdatedAt.Add(time.Minute)
 	channels := &recordingChannels{fail: map[string]error{}}
 	prom := &pagerDutyHandoffProm{anomalyProm: &anomalyProm{currentSamples: 400, pastSamples: 100, trafficDays: 7}}
+	var afterClaim func()
 	newEvaluator := func() *alerts.Evaluator {
 		return alerts.NewEvaluator(alerts.EvaluatorOptions{
-			Store: store, PromQL: prom,
+			Store: statetest.NewMem(fireClaimHook{MemStore: store, after: func() {
+				if afterClaim != nil {
+					afterClaim()
+				}
+			}}), PromQL: prom,
 			Identity: func() *age.X25519Identity { return ident }, Now: func() time.Time { return now },
 			Channels: channels, Log: discardLog(), Dispatcher: &recordingDispatcher{result: webhookout.Result{StatusCode: 200}},
 		})
@@ -159,8 +170,19 @@ func checkPagerDutyRepromotion(t *testing.T, originalKey, replacementKey string,
 		t.Fatalf("initial PagerDuty fire: stats=%+v sent=%+v err=%v", stats, channels.sent, err)
 	}
 	edit(true, new("staging"))
-	if replacementKey != "" {
-		sealed, err := secretbox.SealBytes(ident.Recipient(), alertchannels.SealNamespace, []byte(replacementKey), 256)
+	if tc.rotateOriginal {
+		rotated, err := secretbox.SealBytes(ident.Recipient(), alertchannels.SealNamespace, []byte("fedcba9876543210fedcba9876543210"), 256)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.UpdateNotificationChannel(ctx, rule.AccountID, channel.ID, state.UpdateNotificationChannelParams{
+			TargetSealed: rotated, PagerDutyRegion: new("eu"),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if tc.replacementKey != "" {
+		sealed, err := secretbox.SealBytes(ident.Recipient(), alertchannels.SealNamespace, []byte(tc.replacementKey), 256)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -170,8 +192,15 @@ func checkPagerDutyRepromotion(t *testing.T, originalKey, replacementKey string,
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := store.SetAlertRuleChannels(ctx, rule.ID, []string{alias.ID}); err != nil {
-			t.Fatal(err)
+		bind := func() {
+			if err := store.SetAlertRuleChannels(ctx, rule.ID, []string{alias.ID}); err != nil {
+				t.Error(err)
+			}
+		}
+		if tc.rebindAfterClaim {
+			afterClaim = bind
+		} else {
+			bind()
 		}
 	}
 	live = edit(false, nil)
@@ -182,8 +211,14 @@ func checkPagerDutyRepromotion(t *testing.T, originalKey, replacementKey string,
 	now = now.Add(time.Minute)
 	channels.fail[alertchannels.KindPagerDuty] = errors.New("PagerDuty unavailable")
 	stats, err := ev.RunOnce(ctx)
-	if replacementKey != "" && replacementKey != originalKey {
-		if err != nil || len(channels.sent) != 3 || channels.sent[2].msg.Event != alertchannels.EventFire || channels.sent[2].target.RoutingKey != replacementKey {
+	if tc.rebindAfterClaim {
+		if err != nil || stats.Fired != 1 || len(channels.sent) != 2 || channels.sent[1].msg.Event != alertchannels.EventResolve {
+			t.Fatalf("a binding added after the claim must not overtake the old resolve: stats=%+v attempts=%d err=%v", stats, len(channels.sent), err)
+		}
+		return
+	}
+	if tc.replacementKey != "" && tc.replacementKey != originalKey {
+		if err != nil || len(channels.sent) != 3 || channels.sent[2].msg.Event != alertchannels.EventFire || channels.sent[2].target.RoutingKey != tc.replacementKey {
 			t.Fatalf("the distinct destination should still attempt its fire: stats=%+v attempts=%d err=%v", stats, len(channels.sent), err)
 		}
 		return
@@ -193,7 +228,7 @@ func checkPagerDutyRepromotion(t *testing.T, originalKey, replacementKey string,
 	}
 	channels.fail[alertchannels.KindPagerDuty] = nil
 	now = now.Add(time.Minute)
-	if telemetryGap {
+	if tc.telemetryGap {
 		prom.unavailable = true
 		stats, err := newEvaluator().RunOnce(ctx)
 		if err != nil || stats.ChannelStandDownsDelivered != 1 || len(channels.sent) != 3 {
@@ -205,6 +240,9 @@ func checkPagerDutyRepromotion(t *testing.T, originalKey, replacementKey string,
 	stats, err = newEvaluator().RunOnce(ctx)
 	if err != nil || len(channels.sent) != 4 || stats.ChannelFiresRetried != 1 {
 		t.Fatalf("the deferred trigger should be delivered: stats=%+v attempts=%d err=%v", stats, len(channels.sent), err)
+	}
+	if got := channels.sent[2].target; got.RoutingKey != originalKey || got.Region != "us" {
+		t.Fatal("the resolve must use the original PagerDuty routing key and region")
 	}
 	resolved, fired := channels.sent[2].msg, channels.sent[3].msg
 	if resolved.Event != alertchannels.EventResolve || fired.Event != alertchannels.EventFire ||

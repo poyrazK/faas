@@ -97,7 +97,7 @@ func (f fixture) setState(t *testing.T, to state.AlertState, at time.Time) {
 
 func (f fixture) fire(t *testing.T, at time.Time, payload string) {
 	t.Helper()
-	if _, won, err := f.store.ClaimAlertFire(context.Background(), f.rule.ID, f.rule.ID+at.String(), []byte(payload), 9.5, at); err != nil || !won {
+	if _, won, _, err := f.store.ClaimAlertFire(context.Background(), f.rule.ID, f.rule.ID+at.String(), []byte(payload), 9.5, at); err != nil || !won {
 		t.Fatalf("ClaimAlertFire = %v, %v", won, err)
 	}
 }

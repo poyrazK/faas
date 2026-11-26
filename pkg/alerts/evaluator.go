@@ -97,7 +97,7 @@ type Store interface {
 	DailyCostCents(ctx context.Context, accountID, appID string, day time.Time) (int64, error)
 	CountFailedCertIssuancesSince(ctx context.Context, accountID, appID string, since time.Time) (int, error)
 	ListCustomMetrics(ctx context.Context, appID string) ([]state.CustomMetric, error)
-	ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (deliveryID string, won bool, err error)
+	ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (deliveryID string, won bool, recipients state.AlertFireRecipients, err error)
 	SetAlertRuleState(ctx context.Context, ruleID string, to state.AlertState, at time.Time) (changed bool, err error)
 	SetAlertRuleLastEvaluated(ctx context.Context, ruleID string, at time.Time) error
 	RecordAlertDelivery(ctx context.Context, d state.AlertDelivery) (state.AlertDelivery, error)
@@ -723,7 +723,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 				}
 				// ADR-749: channels hear the recovery so PagerDuty can
 				// close the incident the fire opened.
-				e.notifyChannels(ctx, rule, alertchannels.EventResolve, observed, now, held.ChannelIDs)
+				e.notifyChannels(ctx, rule, alertchannels.EventResolve, observed, now, held.ChannelIDs, nil)
 				if rule.NotifyResolved && rule.WebhookURL != "" && held.WebhookURL != rule.WebhookURL {
 					e.deliverResolve(ctx, rule, &observed, "", now, stats)
 				}
@@ -804,7 +804,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 		return
 	}
 
-	deliveryID, won, err := e.store.ClaimAlertFire(ctx, rule.ID, idempotencyKey, payloadBytes, observed, now)
+	deliveryID, won, recipients, err := e.store.ClaimAlertFire(ctx, rule.ID, idempotencyKey, payloadBytes, observed, now)
 	if errors.Is(err, state.ErrConflict) {
 		return // The rule's environment changed during this evaluation.
 	}
@@ -831,13 +831,9 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 		e.ops.AlertEvalFiredTotal()()
 	}
 
-	// The claim has opened the episode and recorded which recipients must
-	// wait for the previous episode. Other recipients and actions proceed.
-	held, ok := e.deferredFireRecipients(ctx, rule.ID, now)
-	if !ok {
-		return
-	}
-	attempted, delivered := e.notifyChannels(ctx, rule, alertchannels.EventFire, observed, now, held.ChannelIDs)
+	// Use the bindings and handoff decisions from the committed claim.
+	held := recipients.Held
+	attempted, delivered := e.notifyChannels(ctx, rule, alertchannels.EventFire, observed, now, held.ChannelIDs, recipients.Channels)
 	if rule.WebhookURL == "" {
 		if delivered == 0 && len(held.ChannelIDs) != 0 {
 			e.runAction(ctx, rule, deliveryID, observed, now, stats)

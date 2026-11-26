@@ -53,5 +53,7 @@ func runtimeConfigRestartProgress(r RuntimeConfigRestartStatusResponse) (string,
 }
 
 // startupCrashNextStep points at the change that most often causes a crash on
-// restart: the env or secret values the restart applies.
-const startupCrashNextStep = "Check the startup error with gregale logs, then review recent config changes with gregale env history and revert one with gregale env rollback <rev>."
+// restart: the env or secret values the restart applies. env rollback
+// restores variables only; `env set` writes secrets, which it leaves as they
+// are (prod hunt r52), so the step names unset and set too.
+const startupCrashNextStep = "Check the startup error with gregale logs, then review recent config changes with gregale env history: revert variables with gregale env rollback <rev>, and a secret with gregale env unset <KEY> or gregale env set <KEY>=<previous value>."

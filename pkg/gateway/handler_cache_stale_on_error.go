@@ -129,7 +129,7 @@ func (h *Handler) serveStaleWhileWaking(w http.ResponseWriter, r *http.Request, 
 			w.Header().Add(k, v)
 		}
 	}
-	w.Header().Set("x-faas-cache", "stale-while-waking")
+	w.Header().Set("X-Faas-Cache", "stale-while-waking")
 	recordTrafficCache(r.Context(), "stale_while_waking")
 	w.Header().Set("Age", strconv.FormatInt(h.responseCache.ageSeconds(entry), 10))
 	w.Header().Add("Warning", `110 - "Response is Stale"`)
@@ -251,7 +251,7 @@ func (h *Handler) refreshCacheFromWarmTarget(ctx context.Context, r *http.Reques
 		identity.AppID = app.ID
 	}
 	identity.ApplyGuestHeaders(request.Header)
-	request.Header.Set("x-faas-protocol", decideProtocol(app))
+	request.Header.Set("X-Faas-Protocol", decideProtocol(app))
 	// Refresh runs outside net/http's handler goroutine. A transport abort
 	// must leave the stale entry intact instead of crashing the process.
 	defer func() {

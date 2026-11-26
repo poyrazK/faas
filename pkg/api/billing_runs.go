@@ -73,7 +73,24 @@ type BillingRunItemResponse struct {
 	UpdatedAt        time.Time `json:"updated_at"`
 	// PaymentStatus is the Stripe invoice status of the item's statement
 	// (ADR-1504).
-	PaymentStatus string `json:"payment_status,omitempty"`
+	PaymentStatus    string     `json:"payment_status,omitempty"`
+	UsageRecoveredAt *time.Time `json:"usage_recovered_at,omitempty"`
+}
+
+// BillingRunUsageHold shows captured request evidence and the current ledger.
+type BillingRunUsageHold struct {
+	Item            BillingRunItemResponse    `json:"item"`
+	Hours           []BillingRunUsageHoldHour `json:"hours"`
+	MissingRequests int64                     `json:"missing_requests"`
+	HeldAt          *time.Time                `json:"held_at,omitempty"`
+}
+
+type BillingRunUsageHoldHour struct {
+	Hour                    time.Time `json:"hour"`
+	LedgerRequestsAtHold    int64     `json:"ledger_requests_at_hold"`
+	TelemetryRequestsAtHold int64     `json:"telemetry_requests_at_hold"`
+	RequiredRequests        int64     `json:"required_requests"`
+	LedgerRequests          int64     `json:"ledger_requests"`
 }
 
 // BillingRunItemListResponse pages a run's items; NextCursor continues it.
@@ -90,6 +107,13 @@ type PutBillingRunScheduleRequest struct {
 	Export     string   `json:"export,omitempty"`
 	HoldOnGaps *bool    `json:"hold_on_gaps,omitempty"`
 	DelayHours *int     `json:"delay_hours,omitempty"`
+}
+
+// PutDraftBillingRunScheduleRequest creates a draft-only schedule, or
+// changes the delay of the reviewed draft schedule.
+type PutDraftBillingRunScheduleRequest struct {
+	DelayHours        *int       `json:"delay_hours,omitempty"`
+	ExpectedUpdatedAt *time.Time `json:"expected_updated_at,omitempty"`
 }
 
 // BillingRunScheduleResponse is the account's billing run schedule.

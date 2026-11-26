@@ -48,6 +48,14 @@ type Grant struct {
 	Fence state.OrgAccessFence
 }
 
+// WithBindingGrant records that a workload-identity binding token was
+// authorized for app (ADR-20261122191423): the handler acts on app as its
+// resource account owner, exactly as an API key of that account would. The
+// caller app's grants were checked before this is called.
+func WithBindingGrant(ctx context.Context, app state.App, owner state.Account) context.Context {
+	return context.WithValue(ctx, grantKey{}, Grant{App: app, Actor: owner, Owner: owner})
+}
+
 func From(r *http.Request) (Grant, bool) {
 	return FromContext(r.Context())
 }

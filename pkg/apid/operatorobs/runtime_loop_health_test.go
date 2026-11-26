@@ -116,6 +116,7 @@ func TestLoopHealthReportedStallsAndEvidenceGaps(t *testing.T) {
 }
 
 func TestLoopHealthAllProfilesAndStallBeyondPreview(t *testing.T) {
+	lengthenRuntimeCollectionBudget(t)
 	now := time.Now().UTC().Truncate(time.Second)
 	expected := map[string]int{"single-box-v1": 6, "single-box-v2": 8, "control-plane-v1": 14, "control-plane-v2": 18}
 	for _, role := range RuntimeBuildRoles() {

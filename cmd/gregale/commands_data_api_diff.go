@@ -177,7 +177,7 @@ func readDataAPIContractFile(path string) (dataAPIContract, error) {
 		return dataAPIContract{}, err
 	}
 	defer func() { _ = file.Close() }()
-	content, err := io.ReadAll(io.LimitReader(file, api.AppTaskDefaultMaxOutputBytes+1))
+	content, err := io.ReadAll(io.LimitReader(file, api.DataAPIContractArtifactBytes+1))
 	if err != nil {
 		return dataAPIContract{}, err
 	}

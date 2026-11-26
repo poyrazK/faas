@@ -39,6 +39,8 @@ class CommitSourceResponse:
     blocked_events: int | Unset = UNSET
     oldest_pending_at: datetime.datetime | Unset = UNSET
     destination: CommitSourceResponseDestination | Unset = "operation"
+    poll_interval_ms: int | Unset = UNSET
+    """Configured poll interval in milliseconds for Postgres row-change sources."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -74,6 +76,8 @@ class CommitSourceResponse:
         if not isinstance(self.destination, Unset):
             destination = self.destination
 
+        poll_interval_ms = self.poll_interval_ms
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -100,6 +104,8 @@ class CommitSourceResponse:
             field_dict["oldest_pending_at"] = oldest_pending_at
         if destination is not UNSET:
             field_dict["destination"] = destination
+        if poll_interval_ms is not UNSET:
+            field_dict["poll_interval_ms"] = poll_interval_ms
 
         return field_dict
 
@@ -147,6 +153,8 @@ class CommitSourceResponse:
         else:
             destination = check_commit_source_response_destination(_destination)
 
+        poll_interval_ms = d.pop("poll_interval_ms", UNSET)
+
         commit_source_response = cls(
             id=id,
             app_id=app_id,
@@ -161,6 +169,7 @@ class CommitSourceResponse:
             blocked_events=blocked_events,
             oldest_pending_at=oldest_pending_at,
             destination=destination,
+            poll_interval_ms=poll_interval_ms,
         )
 
         commit_source_response.additional_properties = d

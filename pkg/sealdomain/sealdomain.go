@@ -170,6 +170,7 @@ var registry = []Spec{
 	{Domain: Alerting, Readers: []string{"meterd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("alert_rules", "webhook_secret_sealed"),
 		cols("alert_webhook_stand_downs", "webhook_secret_sealed"),
+		cols("alert_channel_stand_downs", "pagerduty_target_sealed"),
 		cols("notification_channels", "target_sealed"),
 		cols("mcp_readiness_pagerduty_policies", "integration_key_sealed"),
 		cols("mcp_readiness_fallback_policies", "integration_key_sealed", "webhook_secret_sealed"),
@@ -182,6 +183,9 @@ var registry = []Spec{
 	)},
 	{Domain: Storage, Readers: []string{"s3-gatewayd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("object_storage_s3_credentials", "secret_sealed"),
+		// Short-lived workload credentials (ADR-20261122191423); new
+		// table, so there is no fleet copy.
+		cols("object_storage_workload_credentials", "secret_sealed"),
 	)},
 	// Trigger config envelopes (jsonb leaves, not listed here) belong to
 	// delivery too. apid merges an update without opening the stored config

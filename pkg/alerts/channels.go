@@ -55,18 +55,21 @@ func (e *Evaluator) SetChannels(sender ChannelSender, outcome func(kind, outcome
 // concurrently and best effort: one failing channel never blocks another,
 // the webhook, or the rule's action. Each outcome is recorded on its
 // channel. It returns how many channels were attempted and delivered.
-func (e *Evaluator) notifyChannels(ctx context.Context, rule state.AlertRule, event string, observed float64, now time.Time, held map[string]bool) (attempted, delivered int) {
+func (e *Evaluator) notifyChannels(ctx context.Context, rule state.AlertRule, event string, observed float64, now time.Time, held map[string]bool, chans []state.NotificationChannel) (attempted, delivered int) {
 	if e.channels == nil || channelsOff(ctx) {
 		return 0, 0
 	}
-	bindings, ok := e.store.(state.AlertRuleChannelStore)
-	if !ok {
-		return 0, 0
-	}
-	chans, err := bindings.ListAlertRuleChannels(ctx, rule.ID)
-	if err != nil {
-		e.log.Warn("alerts: list rule channels", "rule", rule.ID, "err", err)
-		return 0, 0
+	if event != alertchannels.EventFire {
+		bindings, ok := e.store.(state.AlertRuleChannelStore)
+		if !ok {
+			return 0, 0
+		}
+		var err error
+		chans, err = bindings.ListAlertRuleChannels(ctx, rule.ID)
+		if err != nil {
+			e.log.Warn("alerts: list rule channels", "rule", rule.ID, "err", err)
+			return 0, 0
+		}
 	}
 	if len(chans) == 0 {
 		return 0, 0
@@ -109,6 +112,28 @@ func (e *Evaluator) notifyChannels(ctx context.Context, rule state.AlertRule, ev
 // delivered.
 func (e *Evaluator) SendToChannels(ctx context.Context, chans []state.NotificationChannel, msg alertchannels.Message, now time.Time) (attempted, delivered int) {
 	return e.sendToChannels(ctx, chans, msg, now, nil)
+}
+
+// SendToChannelsFailed sends msg like SendToChannels and returns the IDs of
+// the channels that did not accept it, so a caller can retry only those
+// (ADR-20261125085913). With channels off every channel is returned.
+func (e *Evaluator) SendToChannelsFailed(ctx context.Context, chans []state.NotificationChannel, msg alertchannels.Message, now time.Time) []string {
+	var mu sync.Mutex
+	accepted := map[string]bool{}
+	e.sendToChannels(ctx, chans, msg, now, func(ch state.NotificationChannel, errMsg string) {
+		if errMsg == "" {
+			mu.Lock()
+			accepted[ch.ID] = true
+			mu.Unlock()
+		}
+	})
+	var failed []string
+	for _, ch := range chans {
+		if !accepted[ch.ID] {
+			failed = append(failed, ch.ID)
+		}
+	}
+	return failed
 }
 
 // sendToChannels is SendToChannels with an optional hook run after each

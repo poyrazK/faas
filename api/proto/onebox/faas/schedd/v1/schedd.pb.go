@@ -656,7 +656,12 @@ type WakeResponse struct {
 	DeploymentId string `protobuf:"bytes,7,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
 	// identity carries the scheduler-authored deployment and placement
 	// metadata for the selected instance. Empty on failure.
-	Identity      *PlatformIdentity `protobuf:"bytes,8,opt,name=identity,proto3" json:"identity,omitempty"`
+	Identity *PlatformIdentity `protobuf:"bytes,8,opt,name=identity,proto3" json:"identity,omitempty"`
+	// startup_oom mirrors vmmd WakeResponse.startup_oom for the instance this
+	// response admitted: the app ran out of memory while it booted, so the
+	// gateway files the wake as an app fault, not platform wake latency.
+	// Older schedd never sets it.
+	StartupOom    bool `protobuf:"varint,9,opt,name=startup_oom,json=startupOom,proto3" json:"startup_oom,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -745,6 +750,13 @@ func (x *WakeResponse) GetIdentity() *PlatformIdentity {
 		return x.Identity
 	}
 	return nil
+}
+
+func (x *WakeResponse) GetStartupOom() bool {
+	if x != nil {
+		return x.StartupOom
+	}
+	return false
 }
 
 // AdmitInstanceRequest mirrors WakeRequest for the schedule scale-out
@@ -934,7 +946,12 @@ type AdmitInstanceResponse struct {
 	RequestCount int32 `protobuf:"varint,9,opt,name=request_count,json=requestCount,proto3" json:"request_count,omitempty"`
 	// identity carries the scheduler-authored deployment and placement
 	// metadata for the admitted instance. Empty on at-capacity.
-	Identity      *PlatformIdentity `protobuf:"bytes,10,opt,name=identity,proto3" json:"identity,omitempty"`
+	Identity *PlatformIdentity `protobuf:"bytes,10,opt,name=identity,proto3" json:"identity,omitempty"`
+	// startup_oom mirrors vmmd WakeResponse.startup_oom for the instance this
+	// response admitted: the app ran out of memory while it booted, so the
+	// gateway files the wake as an app fault, not platform wake latency.
+	// Older schedd never sets it.
+	StartupOom    bool `protobuf:"varint,11,opt,name=startup_oom,json=startupOom,proto3" json:"startup_oom,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1037,6 +1054,13 @@ func (x *AdmitInstanceResponse) GetIdentity() *PlatformIdentity {
 		return x.Identity
 	}
 	return nil
+}
+
+func (x *AdmitInstanceResponse) GetStartupOom() bool {
+	if x != nil {
+		return x.StartupOom
+	}
+	return false
 }
 
 // Touch is one instance's most-recent request time.
@@ -2957,7 +2981,12 @@ type EnsureWakeResponse struct {
 	AdditionalInstances []*AdmitInstanceResponse `protobuf:"bytes,8,rep,name=additional_instances,json=additionalInstances,proto3" json:"additional_instances,omitempty"`
 	// identity carries the scheduler-authored deployment and placement
 	// metadata for the primary instance. Empty on failure.
-	Identity      *PlatformIdentity `protobuf:"bytes,9,opt,name=identity,proto3" json:"identity,omitempty"`
+	Identity *PlatformIdentity `protobuf:"bytes,9,opt,name=identity,proto3" json:"identity,omitempty"`
+	// startup_oom mirrors vmmd WakeResponse.startup_oom for the instance this
+	// response admitted: the app ran out of memory while it booted, so the
+	// gateway files the wake as an app fault, not platform wake latency.
+	// Older schedd never sets it.
+	StartupOom    bool `protobuf:"varint,10,opt,name=startup_oom,json=startupOom,proto3" json:"startup_oom,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3053,6 +3082,13 @@ func (x *EnsureWakeResponse) GetIdentity() *PlatformIdentity {
 		return x.Identity
 	}
 	return nil
+}
+
+func (x *EnsureWakeResponse) GetStartupOom() bool {
+	if x != nil {
+		return x.StartupOom
+	}
+	return false
 }
 
 type FrameworkReadyReport struct {
@@ -7982,7 +8018,7 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x0edeployment_tag\x18\b \x01(\tR\rdeploymentTag\x122\n" +
 	"\x15deployment_created_at\x18\t \x01(\tR\x13deploymentCreatedAt\x12!\n" +
 	"\fimage_digest\x18\n" +
-	" \x01(\tR\vimageDigest\"\xcd\x02\n" +
+	" \x01(\tR\vimageDigest\"\xee\x02\n" +
 	"\fWakeResponse\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12\x17\n" +
@@ -7992,7 +8028,9 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\awake_id\x18\x05 \x01(\tR\x06wakeId\x12\x12\n" +
 	"\x04port\x18\x06 \x01(\x05R\x04port\x12#\n" +
 	"\rdeployment_id\x18\a \x01(\tR\fdeploymentId\x12C\n" +
-	"\bidentity\x18\b \x01(\v2'.onebox.faas.schedd.v1.PlatformIdentityR\bidentity\"\xa0\x02\n" +
+	"\bidentity\x18\b \x01(\v2'.onebox.faas.schedd.v1.PlatformIdentityR\bidentity\x12\x1f\n" +
+	"\vstartup_oom\x18\t \x01(\bR\n" +
+	"startupOom\"\xa0\x02\n" +
 	"\x14AdmitInstanceRequest\x12\x15\n" +
 	"\x06app_id\x18\x01 \x01(\tR\x05appId\x12#\n" +
 	"\rdeployment_id\x18\x02 \x01(\tR\fdeploymentId\x12\x14\n" +
@@ -8001,7 +8039,7 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\tis_mirror\x18\x05 \x01(\bR\bisMirror\x12$\n" +
 	"\x0emirror_rule_id\x18\x06 \x01(\tR\fmirrorRuleId\x12-\n" +
 	"\x12burst_continuation\x18\a \x01(\bR\x11burstContinuation\x12*\n" +
-	"\x11stale_instance_id\x18\b \x01(\tR\x0fstaleInstanceId\"\x9c\x03\n" +
+	"\x11stale_instance_id\x18\b \x01(\tR\x0fstaleInstanceId\"\xbd\x03\n" +
 	"\x15AdmitInstanceResponse\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12\x17\n" +
@@ -8015,7 +8053,9 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\rdeployment_id\x18\b \x01(\tR\fdeploymentId\x12#\n" +
 	"\rrequest_count\x18\t \x01(\x05R\frequestCount\x12C\n" +
 	"\bidentity\x18\n" +
-	" \x01(\v2'.onebox.faas.schedd.v1.PlatformIdentityR\bidentity\"f\n" +
+	" \x01(\v2'.onebox.faas.schedd.v1.PlatformIdentityR\bidentity\x12\x1f\n" +
+	"\vstartup_oom\x18\v \x01(\bR\n" +
+	"startupOom\"f\n" +
 	"\x05Touch\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12\x17\n" +
@@ -8153,7 +8193,7 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x11EnsureWakeRequest\x12\x15\n" +
 	"\x06app_id\x18\x01 \x01(\tR\x05appId\x12\x18\n" +
 	"\atrigger\x18\x02 \x01(\tR\atrigger\x12+\n" +
-	"\x11desired_instances\x18\x03 \x01(\x05R\x10desiredInstances\"\xb4\x03\n" +
+	"\x11desired_instances\x18\x03 \x01(\x05R\x10desiredInstances\"\xd5\x03\n" +
 	"\x12EnsureWakeResponse\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12\x17\n" +
@@ -8164,7 +8204,10 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x04port\x18\x06 \x01(\x05R\x04port\x12#\n" +
 	"\rdeployment_id\x18\a \x01(\tR\fdeploymentId\x12_\n" +
 	"\x14additional_instances\x18\b \x03(\v2,.onebox.faas.schedd.v1.AdmitInstanceResponseR\x13additionalInstances\x12C\n" +
-	"\bidentity\x18\t \x01(\v2'.onebox.faas.schedd.v1.PlatformIdentityR\bidentity\"7\n" +
+	"\bidentity\x18\t \x01(\v2'.onebox.faas.schedd.v1.PlatformIdentityR\bidentity\x12\x1f\n" +
+	"\vstartup_oom\x18\n" +
+	" \x01(\bR\n" +
+	"startupOom\"7\n" +
 	"\x14FrameworkReadyReport\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\"\x13\n" +

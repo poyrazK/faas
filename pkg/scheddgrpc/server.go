@@ -505,6 +505,7 @@ func (s *Server) Wake(ctx context.Context, req *scheddpb.WakeRequest) (*scheddpb
 		Port:         int32(res.Port),
 		DeploymentId: res.DeploymentID,
 		Identity:     platformIdentityToProto(wakeResultIdentity(res)),
+		StartupOom:   res.StartupOOM,
 	}, nil
 }
 
@@ -590,6 +591,7 @@ func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceR
 			DeploymentId: res.DeploymentID,
 			Port:         int32(res.Port),
 			Identity:     platformIdentityToProto(wakeResultIdentity(res)),
+			StartupOom:   res.StartupOOM,
 		}, nil
 	}
 	// PR-B (issue #272): scope threaded through AdmitInstance the
@@ -637,6 +639,7 @@ func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceR
 		// wire for the gateway's per-instance cache.
 		RequestCount: int32(res.RequestCount),
 		Identity:     platformIdentityToProto(wakeResultIdentity(res)),
+		StartupOom:   res.StartupOOM,
 	}, nil
 }
 
@@ -709,6 +712,7 @@ func (s *Server) EnsureWake(ctx context.Context, req *scheddpb.EnsureWakeRequest
 		Port:         out.Instance.Port,
 		DeploymentId: out.Instance.DeploymentID,
 		Identity:     platformIdentityToProto(out.Instance.Identity),
+		StartupOom:   out.Instance.StartupOOM,
 	}
 	for _, instance := range out.Additional {
 		if instance != nil {
@@ -716,7 +720,8 @@ func (s *Server) EnsureWake(ctx context.Context, req *scheddpb.EnsureWakeRequest
 				InstanceId: instance.InstanceID, NodeId: instance.NodeID,
 				DeploymentId: instance.DeploymentID, WakeId: instance.WakeID,
 				Port: instance.Port, Method: coordMethodToWakeMethod(instance),
-				Identity: platformIdentityToProto(instance.Identity),
+				Identity:   platformIdentityToProto(instance.Identity),
+				StartupOom: instance.StartupOOM,
 			})
 		}
 	}

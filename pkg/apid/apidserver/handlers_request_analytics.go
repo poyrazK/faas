@@ -112,7 +112,20 @@ func (s *server) requestAnalyticsCompleteness(ctx context.Context, appID string,
 		reader = raw
 	}
 	complete, gaps := requestAnalyticsCompletenessFrom(ctx, reader, s.log, appID, window)
-	return analyticsrollup.WithRollupGaps(ctx, s.store, s.log, appID, window.From, window.Until, complete, gaps)
+	return coverageUnknownVerdict(analyticsrollup.WithRollupGaps(ctx, s.store, s.log, appID, window.From, window.Until, complete, gaps))
+}
+
+// coverageUnknownVerdict leaves the verdict unknown when the only reason is
+// telemetry_coverage_unknown: no gateway reported a gap, the platform just
+// cannot prove coverage for the whole window (a gateway restart, a node that
+// joined mid-window). Reporting that as incomplete told every customer that
+// request records were missing (2026-11-24 telemetry audit). The reason stays
+// listed for clients that read it.
+func coverageUnknownVerdict(complete *bool, gaps []string) (*bool, []string) {
+	if complete != nil && !*complete && len(gaps) == 1 && gaps[0] == "telemetry_coverage_unknown" {
+		return nil, gaps
+	}
+	return complete, gaps
 }
 
 func requestAnalyticsCompletenessFrom(ctx context.Context, reader requestAnalyticsCompletenessReader, log *slog.Logger, appID string, window requestAnalyticsWindow) (*bool, []string) {

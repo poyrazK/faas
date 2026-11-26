@@ -29,7 +29,7 @@ type alertAnomalyTestStore interface {
 	CreateAlertRule(context.Context, state.AlertRule) (state.AlertRule, error)
 	AlertRuleByID(context.Context, string) (state.AlertRule, error)
 	UpdateAlertRule(context.Context, string, state.UpdateAlertRuleParams) (state.AlertRule, error)
-	ClaimAlertFire(context.Context, string, string, []byte, float64, time.Time) (string, bool, error)
+	ClaimAlertFire(context.Context, string, string, []byte, float64, time.Time) (string, bool, AlertFireRecipients, error)
 	SetAlertRuleState(context.Context, string, state.AlertState, time.Time) (bool, error)
 }
 
@@ -292,10 +292,10 @@ func checkAlertObservationEnvironment(t *testing.T, s alertAnomalyTestStore, ctx
 		t.Fatalf("live scope edit unexpectedly succeeded: %v", err)
 	}
 	fireAt := at.Add(2 * time.Minute)
-	if _, won, err := s.ClaimAlertFire(ctx, rule.ID, "scoped-fire", []byte(`{"environment_scope":"default"}`), 10, fireAt); !errors.Is(err, state.ErrConflict) || won {
+	if _, won, _, err := s.ClaimAlertFire(ctx, rule.ID, "scoped-fire", []byte(`{"environment_scope":"default"}`), 10, fireAt); !errors.Is(err, state.ErrConflict) || won {
 		t.Fatalf("stale scope claimed a notification: won=%v err=%v", won, err)
 	}
-	if _, won, err := s.ClaimAlertFire(ctx, rule.ID, "scoped-fire", []byte(`{"environment_scope":"staging"}`), 10, fireAt); err != nil || !won {
+	if _, won, _, err := s.ClaimAlertFire(ctx, rule.ID, "scoped-fire", []byte(`{"environment_scope":"staging"}`), 10, fireAt); err != nil || !won {
 		t.Fatalf("current scope failed to claim: won=%v err=%v", won, err)
 	}
 }

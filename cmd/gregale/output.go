@@ -427,7 +427,8 @@ func listAppForm(list cliSub, slug string) string {
 // is a mistyped verb, not an app slug in the verb position.
 func commonVerbWord(word string) bool {
 	switch word {
-	case "get", "show", "describe", "view", "ls", "delete", "del", "remove", "create", "new", "edit", "set", "help", "status", "logs":
+	case "get", "show", "describe", "view", "ls", "delete", "del", "remove", "create", "new", "edit", "set", "help", "status", "logs",
+		"revoke", "update", "rotate", "enable", "disable":
 		return true
 	}
 	return false

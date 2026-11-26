@@ -97,7 +97,7 @@
           test -x /usr/local/bin/gregalectl
           test -s /etc/faas/manifest.yaml
           test -s /etc/faas/storage.env
-          test -s /etc/faas/imaged-storage.env
+          test -f /etc/faas/imaged-storage.env
           test -s /etc/faas/runtime-bases.env
           for service in faas-vmmd faas-schedd faas-gatewayd-internal faas-builderd faas-imaged; do
             systemctl is-enabled --quiet "$service.service"
@@ -264,10 +264,13 @@
             regex_search('(?m)^FAAS_S3_ENDPOINT=https://\S+$')) is not none) and
             ((lookup('ansible.builtin.file', faas_join_storage_env_source) |
             regex_search('(?m)^FAAS_S3_REGION=\S+$')) is not none) and
-            ((lookup('ansible.builtin.file', faas_join_storage_env_source) |
+            ((((lookup('ansible.builtin.file', faas_join_storage_env_source) |
             regex_search('(?m)^FAAS_S3_ACCESS_KEY_ID=\S+$')) is not none) and
             ((lookup('ansible.builtin.file', faas_join_storage_env_source) |
-            regex_search('(?m)^FAAS_S3_SECRET_ACCESS_KEY=\S+$')) is not none))
+            regex_search('(?m)^FAAS_S3_SECRET_ACCESS_KEY=\S+$')) is not none)) or
+            ((faas_storage_grants | default(false) | bool) and
+            ((lookup('ansible.builtin.file', faas_join_storage_env_source) |
+            regex_search('(?m)^FAAS_S3_(ACCESS_KEY_ID|SECRET_ACCESS_KEY)=')) is none))))
           - >-
             (((lookup('ansible.builtin.file', faas_join_storage_env_source) |
             regex_search('(?m)^FAAS_STORAGE_BACKEND=oci\s*$')) is none) and
@@ -289,7 +292,8 @@
             regex_search('(?m)^FAAS_STORAGE_LOCAL_PREFIXES=.*snap/')) is none
         fail_msg: >-
           storage.env must select OCI, GCS or S3 remote storage and configure its
-          endpoint, set FAAS_STORAGE_LOCAL_PREFIXES=none,
+          endpoint (for S3 a key pair, or none with faas_storage_grants),
+          set FAAS_STORAGE_LOCAL_PREFIXES=none,
           FAAS_REQUIRE_SHARED_ARTIFACTS=1, and set
           FAAS_STORAGE_CACHE_SERVE_STALE=0. It must not route snap/ through
           FAAS_STORAGE_LOCAL_PREFIXES for a multi-box compute node.
@@ -310,12 +314,19 @@
             ((lookup('ansible.builtin.file', faas_join_imaged_storage_env_source) |
             regex_search('(?m)^FAAS_S3_SECRET_ACCESS_KEY=.+$')) is not none) and
             ((lookup('ansible.builtin.file', faas_join_imaged_storage_env_source) |
-            regex_search('(?m)^FAAS_(?!S3_(ACCESS_KEY_ID|SECRET_ACCESS_KEY)=)')) is none))
+            regex_search('(?m)^FAAS_(?!S3_(ACCESS_KEY_ID|SECRET_ACCESS_KEY)=)')) is none)) or
+            ((faas_storage_grants | default(false) | bool) and
+            ((lookup('ansible.builtin.file', faas_join_storage_env_source) |
+            regex_search('(?m)^FAAS_STORAGE_BACKEND=(gcs|s3)$')) is not none) and
+            ((lookup('ansible.builtin.file', faas_join_imaged_storage_env_source) |
+            regex_search('(?m)^[ \t]*(export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*=')) is none))
         fail_msg: >-
           imaged-storage.env must contain only one non-empty credential pair:
           FAAS_OCI_USERNAME and FAAS_OCI_PASSWORD, or FAAS_S3_ACCESS_KEY_ID and
-          FAAS_S3_SECRET_ACCESS_KEY. Storage topology remains owned by the
-          shared storage.env contract.
+          FAAS_S3_SECRET_ACCESS_KEY; on an S3 or GCS node with
+          faas_storage_grants it may hold no
+          assignment at all (ADR-20261117190000 slice 5). Storage topology
+          remains owned by the shared storage.env contract.
       no_log: true
 
     - name: Create the shared daemon group before staging group-readable keys
@@ -829,23 +840,6 @@
         group: root
         mode: "0644"
 
-    - name: Stage the release-pinned Firecracker guest kernel
-      ansible.builtin.shell:
-        cmd: >-
-          set -euo pipefail;
-          umask 077;
-          tmp=$(mktemp /var/lib/faas/bootstrap/vmlinux.XXXXXX);
-          trap 'rm -f "$tmp"' EXIT;
-          tar --extract --gzip --file /var/lib/faas/bootstrap/release.tar.gz
-          --to-stdout vmlinux > "$tmp";
-          test -s "$tmp";
-          install -o root -g root -m 0644 "$tmp"
-          /var/lib/faas/bootstrap/vmlinux;
-          rm -f "$tmp";
-          trap - EXIT
-        executable: /bin/bash
-      changed_when: true
-
     - name: Stage the release signature bundle
       ansible.builtin.copy:
         src: "{{ faas_join_release_signature_source }}"
@@ -871,49 +865,86 @@
           - /var/lib/faas/bootstrap/release.tar.gz
       changed_when: false
 
+    # ADR-20261123150000: the guest kernel, the release-built Firecracker VMM
+    # and the operator CLI promoted below come out of the verified bundle in
+    # ONE decompression (three before, 26 s per run). A stamp records the
+    # bundle's sha256 and each staged file's; a rerun on the same bundle (an
+    # activation that converges roles after preparation staged them) keeps the
+    # files while their hashes still match.
+    #
     # Releases carry the patched Firecracker as firecracker-vmm. The firecracker
     # role installs it under the upstream basename and checks it against
     # release.firecracker_digest. A release without it (built before the patch,
     # or a rollback to one) removes any staged copy so the role keeps upstream's
     # binary, which that release's manifest digest names.
-    - name: Stage the release-built Firecracker VMM
+    - name: Stage the release-pinned kernel, Firecracker VMM and operator CLI
       ansible.builtin.shell:
-        cmd: >-
-          set -euo pipefail;
-          umask 077;
-          if ! tar --list --gzip --file /var/lib/faas/bootstrap/release.tar.gz
-          firecracker-vmm > /dev/null 2>&1; then
-          rm -f /var/lib/faas/bootstrap/firecracker-vmm;
-          echo absent;
-          exit 0;
-          fi;
-          tmp=$(mktemp /var/lib/faas/bootstrap/firecracker-vmm.XXXXXX);
-          trap 'rm -f "$tmp"' EXIT;
-          tar --extract --gzip --file /var/lib/faas/bootstrap/release.tar.gz
-          --to-stdout firecracker-vmm > "$tmp";
-          test -s "$tmp";
-          install -o root -g root -m 0755 "$tmp"
-          /var/lib/faas/bootstrap/firecracker-vmm;
-          rm -f "$tmp";
-          trap - EXIT;
+        cmd: |
+          set -euo pipefail
+          umask 077
+          dir=/var/lib/faas/bootstrap
+          bundle="$dir/release.tar.gz"
+          stamp="$dir/release-members.stamp"
+          want="$(sha256sum "$bundle" | cut -d' ' -f1)"
+          current() {
+            [[ -s "$stamp" && "$(sed -n 1p "$stamp")" == "$want" ]] || return 1
+            [[ "$(sed -n '2,$p' "$stamp" | wc -l)" -eq 3 ]] || return 1
+            while read -r name sum; do
+              if [[ "$sum" == absent ]]; then
+                [[ ! -e "$dir/$name" ]] || return 1
+              else
+                [[ -s "$dir/$name" && "$(sha256sum "$dir/$name" | cut -d' ' -f1)" == "$sum" ]] || return 1
+              fi
+            done < <(sed -n '2,$p' "$stamp")
+          }
+          if current; then
+            echo current
+            exit 0
+          fi
+          rm -f "$stamp"
+          tmp="$(mktemp -d "$dir/members.XXXXXX")"
+          trap 'rm -rf "$tmp"' EXIT
+          if ! tar --extract --gzip --file "$bundle" --directory "$tmp" \
+              -- vmlinux gregalectl firecracker-vmm 2> "$tmp/.tar-errors"; then
+            # Only a release without firecracker-vmm may leave a member out.
+            if grep -v -x -E -e '[^ :]*tar: firecracker-vmm: Not found in archive' \
+                -e '[^ :]*tar: Exiting with failure status due to previous errors' \
+                "$tmp/.tar-errors" | grep -q .; then
+              cat "$tmp/.tar-errors" >&2
+              exit 1
+            fi
+          fi
+          test -s "$tmp/vmlinux"
+          test -s "$tmp/gregalectl"
+          install -o root -g root -m 0644 "$tmp/vmlinux" "$dir/vmlinux"
+          install -o root -g root -m 0755 "$tmp/gregalectl" "$dir/gregalectl-release"
+          vmm=absent
+          if [[ -s "$tmp/firecracker-vmm" ]]; then
+            install -o root -g root -m 0755 "$tmp/firecracker-vmm" "$dir/firecracker-vmm"
+            vmm="$(sha256sum "$dir/firecracker-vmm" | cut -d' ' -f1)"
+          else
+            rm -f "$dir/firecracker-vmm"
+          fi
+          {
+            echo "$want"
+            echo "vmlinux $(sha256sum "$dir/vmlinux" | cut -d' ' -f1)"
+            echo "gregalectl-release $(sha256sum "$dir/gregalectl-release" | cut -d' ' -f1)"
+            echo "firecracker-vmm $vmm"
+          } > "$tmp/stamp"
+          install -o root -g root -m 0600 "$tmp/stamp" "$stamp"
           echo staged
         executable: /bin/bash
-      register: faas_join_firecracker_stage
-      changed_when: (faas_join_firecracker_stage.stdout | trim) == 'staged'
+      register: faas_join_release_members_stage
+      changed_when: (faas_join_release_members_stage.stdout | trim) == 'staged'
 
-    - name: Delete kernel temporaries left by interrupted or older rollouts
-      ansible.builtin.command:
-        argv:
-          - find
-          - /var/lib/faas/bootstrap
-          - -maxdepth
-          - "1"
-          - -type
-          - f
-          - -name
-          - vmlinux.*
-          - -print
-          - -delete
+    - name: Delete staging temporaries left by interrupted or older rollouts
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          find /var/lib/faas/bootstrap -maxdepth 1 \
+            \( -type f -name 'vmlinux.*' -o -type f -name 'firecracker-vmm.*' -o -type d -name 'members.*' \) \
+            -print -exec rm -rf {} +
+        executable: /bin/bash
       register: faas_join_kernel_temp_cleanup
       changed_when: (faas_join_kernel_temp_cleanup.stdout | trim) != ''
 
@@ -1019,21 +1050,42 @@
           - /var/lib/faas/bootstrap/release.tar.gz
       changed_when: false
 
+    # ADR-20261123150000: the first play staged this exact bundle's gregalectl
+    # (gregalectl-release, hashed in release-members.stamp); copy it instead of
+    # decompressing the bundle again. Without a matching stamp, extract as
+    # before.
     - name: Promote the catalog-aware gregalectl from the verified release
       ansible.builtin.shell:
-        cmd: >-
-          set -eu -o pipefail;
-          umask 077;
-          tmp=$(mktemp /var/lib/faas/bootstrap/gregalectl.XXXXXX);
-          trap 'rm -f "$tmp"' EXIT;
-          tar --extract --gzip --file /var/lib/faas/bootstrap/release.tar.gz
-          --to-stdout gregalectl > "$tmp";
-          test -s "$tmp";
-          chmod 0755 "$tmp";
-          mv -f "$tmp" /usr/local/bin/gregalectl;
+        cmd: |
+          set -euo pipefail
+          umask 077
+          dir=/var/lib/faas/bootstrap
+          stamp="$dir/release-members.stamp"
+          staged="$dir/gregalectl-release"
+          tmp="$(mktemp "$dir/gregalectl.XXXXXX")"
+          trap 'rm -f "$tmp"' EXIT
+          want=""
+          if [[ -s "$stamp" && -s "$staged" ]] &&
+              [[ "$(sed -n 1p "$stamp")" == "$(sha256sum "$dir/release.tar.gz" | cut -d' ' -f1)" ]]; then
+            want="$(awk '$1 == "gregalectl-release" { print $2 }' "$stamp")"
+          fi
+          if [[ -n "$want" && "$(sha256sum "$staged" | cut -d' ' -f1)" == "$want" ]]; then
+            if [[ "$(sha256sum /usr/local/bin/gregalectl | cut -d' ' -f1)" == "$want" ]]; then
+              echo current
+              exit 0
+            fi
+            cp "$staged" "$tmp"
+          else
+            tar --extract --gzip --file "$dir/release.tar.gz" --to-stdout gregalectl > "$tmp"
+          fi
+          test -s "$tmp"
+          chmod 0755 "$tmp"
+          mv -f "$tmp" /usr/local/bin/gregalectl
           trap - EXIT
+          echo promoted
         executable: /bin/bash
-      changed_when: true
+      register: faas_join_gregalectl_promote
+      changed_when: (faas_join_gregalectl_promote.stdout | trim) == 'promoted'
 
 - name: Install, render, start, and activate the adopted node
   hosts: compute_nodes
@@ -1641,6 +1693,44 @@
         mode: "0755"
       when: (faas_join_rollout_phase | default('full')) != 'activate'
 
+    # ADR-20261123150000: verify and extract the release for activation while
+    # the node still serves, alongside the runtime-base pre-stage. Activation's
+    # install reuses the tree after re-checking its bytes and cosign (32 s per
+    # node on the serialized path before). Best effort: an older operator CLI
+    # (a rollback) or any failure leaves activation's full install in charge.
+    # The node still serves tenants here, so the stage runs in a transient
+    # unit capped at 2 GiB (it holds the 489 MB bundle in memory) with low CPU
+    # and IO weight; hitting the cap only costs the reuse.
+    - name: Stage the verified release for activation in the background
+      ansible.builtin.command:
+        argv:
+          - systemd-run
+          - --quiet
+          - --wait
+          - --pipe
+          - --collect
+          # Ends before async gives up and well before activation's
+          # bounded wait on the install lock.
+          - --property=RuntimeMaxSec=840
+          - --property=MemoryMax=2G
+          - --property=MemorySwapMax=0
+          - --property=CPUWeight=20
+          - --property=IOWeight=20
+          - --
+          - /usr/local/bin/gregalectl
+          - release
+          - install
+          - --git-sha
+          - "{{ faas_join_release_git_sha }}"
+          - --tarball-path
+          - /var/lib/faas/bootstrap/release.tar.gz
+          - --stage-only
+      async: 900
+      poll: 0
+      register: faas_join_release_stage_job
+      changed_when: false
+      when: (faas_join_rollout_phase | default('full')) == 'prepare'
+
     - name: Extract the signed candidate for runtime-base pre-staging
       ansible.builtin.unarchive:
         src: /var/lib/faas/bootstrap/release.tar.gz
@@ -1870,6 +1960,31 @@
         - name: Reload systemd after fresh-host vmmd bootstrap cleanup
           ansible.builtin.systemd:
             daemon_reload: true
+
+    - name: Wait for the background release stage
+      ansible.builtin.async_status:
+        jid: "{{ faas_join_release_stage_job.ansible_job_id }}"
+      register: faas_join_release_stage
+      until: faas_join_release_stage.finished | default(false) | bool
+      retries: 180
+      delay: 5
+      failed_when: false
+      changed_when: (faas_join_release_stage.rc | default(1)) == 0
+      when:
+        - (faas_join_rollout_phase | default('full')) == 'prepare'
+        - faas_join_release_stage_job.ansible_job_id is defined
+
+    - name: Report a release stage activation will redo
+      ansible.builtin.debug:
+        msg: >-
+          The release was not staged for reuse (rc
+          {{ faas_join_release_stage.rc | default('unknown') }}):
+          {{ (faas_join_release_stage.stderr | default('') | trim)[-600:] }}.
+          Activation installs from the tarball instead.
+      when:
+        - (faas_join_rollout_phase | default('full')) == 'prepare'
+        - faas_join_release_stage_job.ansible_job_id is defined
+        - (faas_join_release_stage.rc | default(1)) != 0
 
     - name: Record completed non-disruptive rollout preparation
       ansible.builtin.copy:
@@ -2535,7 +2650,17 @@
     # The release-only fast path intentionally skips role templates. Keep the
     # tenant-bridge service proxy converged anyway: guest DNS resolves through
     # this listener, and an omitted key leaves every microVM without egress
-    # name resolution even though gatewayd itself is healthy.
+    # name resolution even though gatewayd itself is healthy. The renderer
+    # writes it on the vmmd bridge, beside the ADR-576 service_tcp_listen that
+    # gatewayd requires on the same address, so only an explicit operator
+    # address or a render without the key (an older gregalectl) is applied.
+    - name: Check whether the rendered gateway config names the guest service proxy
+      ansible.builtin.command:
+        argv: [grep, -Eq, '^service_proxy_listen\s*=', /etc/faas/gatewayd-internal.toml]
+      register: faas_join_service_proxy_rendered
+      changed_when: false
+      failed_when: faas_join_service_proxy_rendered.rc not in [0, 1]
+
     - name: Converge the guest service proxy listener on managed compute nodes
       ansible.builtin.lineinfile:
         path: /etc/faas/gatewayd-internal.toml
@@ -2547,6 +2672,21 @@
         owner: root
         group: faas
         mode: "0640"
+      when: >-
+        (faas_gatewayd_service_proxy_listen | default('', true) | length > 0) or
+        faas_join_service_proxy_rendered.rc != 0
+
+    - name: Keep the service TCP listener on the guest service proxy address
+      ansible.builtin.lineinfile:
+        path: /etc/faas/gatewayd-internal.toml
+        regexp: '^service_tcp_listen\s*='
+        backrefs: true
+        line: >-
+          service_tcp_listen = "{{ (faas_gatewayd_service_proxy_listen | regex_replace(':[0-9]+$', '')) }}:10082"
+        owner: root
+        group: faas
+        mode: "0640"
+      when: faas_gatewayd_service_proxy_listen | default('', true) | length > 0
 
     - name: Remove the legacy vmmd schedd target override
       ansible.builtin.file:

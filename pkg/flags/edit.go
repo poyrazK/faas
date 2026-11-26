@@ -322,3 +322,61 @@ func EditRemove(key string) Edit {
 		return fmt.Sprintf("Removed %s", key), nil
 	}
 }
+
+// EditEdgeSet routes path at the edge: requests the flag decides as variant
+// are rewritten to rewrite (ADR-20261124212701). It adds the route, or the
+// variant's action to an existing route of the flag.
+func EditEdgeSet(key, path, variant, rewrite string) Edit {
+	return func(cfg *Config) (string, error) {
+		f, err := FindFlag(cfg, key)
+		if err != nil {
+			return "", err
+		}
+		if !IsVariant(f) {
+			return "", fmt.Errorf("flag %q is boolean; only variant flags route at the edge", key)
+		}
+		if !slices.ContainsFunc(f.Variants, func(v FlagVariant) bool { return v.Key == variant }) {
+			return "", fmt.Errorf("flag %q has no variant %q", key, variant)
+		}
+		if f.Edge == nil {
+			f.Edge = &Edge{}
+		}
+		at := slices.IndexFunc(f.Edge.Routes, func(r EdgeRoute) bool { return r.Path == path })
+		if at < 0 {
+			f.Edge.Routes = append(f.Edge.Routes, EdgeRoute{Path: path, Variants: map[string]EdgeAction{}})
+			at = len(f.Edge.Routes) - 1
+		}
+		if f.Edge.Routes[at].Variants == nil {
+			f.Edge.Routes[at].Variants = map[string]EdgeAction{}
+		}
+		f.Edge.Routes[at].Variants[variant] = EdgeAction{Rewrite: rewrite}
+		return fmt.Sprintf("%s routes %s: variant %s serves %s at the edge", key, path, variant, rewrite), nil
+	}
+}
+
+// EditEdgeRemove stops routing path at the edge, or every path of the flag
+// when path is empty.
+func EditEdgeRemove(key, path string) Edit {
+	return func(cfg *Config) (string, error) {
+		f, err := FindFlag(cfg, key)
+		if err != nil {
+			return "", err
+		}
+		if f.Edge == nil {
+			return fmt.Sprintf("%s routes nothing at the edge", key), nil
+		}
+		if path == "" {
+			f.Edge = nil
+			return fmt.Sprintf("%s no longer routes at the edge", key), nil
+		}
+		at := slices.IndexFunc(f.Edge.Routes, func(r EdgeRoute) bool { return r.Path == path })
+		if at < 0 {
+			return "", fmt.Errorf("flag %q does not route %s at the edge", key, path)
+		}
+		f.Edge.Routes = slices.Delete(f.Edge.Routes, at, at+1)
+		if len(f.Edge.Routes) == 0 {
+			f.Edge = nil
+		}
+		return fmt.Sprintf("%s no longer routes %s at the edge", key, path), nil
+	}
+}

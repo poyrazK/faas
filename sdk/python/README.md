@@ -33,7 +33,7 @@ calls answer `404 no such API route`.
 
 ## Usage
 Read the account through the default client. Supply your existing credential
-through `FAAS_TOKEN`, never a literal in source:
+through `GREGALE_TOKEN`, never a literal in source:
 
 <!-- sdk-install-quickstart:start -->
 ```python
@@ -44,8 +44,8 @@ from faas_sdk.api.account import get_account
 from faas_sdk.models.account_response import AccountResponse
 
 client = FaaSClient(
-    base_url=os.environ.get("FAAS_API", "https://api.gregale.dev"),
-    token=os.environ["FAAS_TOKEN"],
+    base_url=os.environ.get("GREGALE_API_URL", "https://api.gregale.dev"),
+    token=os.environ["GREGALE_TOKEN"],
 )
 try:
     account = get_account.sync(client=client.inner)
@@ -62,7 +62,7 @@ wrapper's async client and close it when finished:
 
 ```python
 async def read_account():
-    client = FaaSClient(base_url="https://api.gregale.dev", token=os.environ["FAAS_TOKEN"])
+    client = FaaSClient(base_url="https://api.gregale.dev", token=os.environ["GREGALE_TOKEN"])
     try:
         return await get_account.asyncio(client=client.inner)
     finally:
@@ -85,7 +85,7 @@ from faas_sdk.api.deployments import get_build
 async def read_build(build_id: str):
     client = FaaSClient(
         base_url="https://api.gregale.dev",
-        token=os.environ["FAAS_TOKEN"],
+        token=os.environ["GREGALE_TOKEN"],
         options=FaaSClientOptions(
             on_response=lambda info: print(info.request_id, info.status),
         ),
@@ -3901,3 +3901,35 @@ SQL handlers atomically commit business changes and typed effect receipts, with
 current authorization and application row-version guards. See
 [setup, limits and recovery](../../docs/sdk-pipeline-compensations.md) and the
 [CSV cleanup journey](../../examples/sdk-csv-jobs/README.md#reviewed-cleanup-after-report-failure).
+
+`OutboundAction[Input, Output, Access]`, `OutboundActionMCP` and
+`PostgresOutboundActionStore` in `faas_sdk.preview` compose immutable intents,
+exact human approval and a single acknowledged external dispatch claim.
+`StripeRefundActionProvider` uses the managed credential relay and reconciles
+uncertain refund responses through provider reads. See
+[setup, authorization and recovery](../../docs/sdk-outbound-actions.md) and the
+[paid CSV refund journey](../../examples/sdk-csv-jobs/README.md#approved-refunds-after-paid-import-failure).
+
+## Typed query tools and resources (preview)
+
+`QueryTool[Input, Row, Access]` provides current authorization, signed portable
+cursors and lazy bounded reads with deadlines/cancellation. `QueryResource` and
+`QueryToolMCP` expose the same read handlers and authorized text resources to an
+existing MCP host. See [setup and limits](../../docs/sdk-query-tools.md) and the
+[CSV recovery context](../../examples/sdk-csv-jobs/README.md#query-context-before-recovery).
+
+## Deployable application toolkits (preview)
+
+`ApplicationToolkit` publishes selected typed queries, resources, pipelines, and approved
+actions under per-operation OAuth scopes. Register the resulting catalog with
+the existing MCP starter. See the [application toolkit guide](../../docs/sdk-application-toolkits.md).
+
+## Resumable work inbox (preview)
+
+`create_work_inbox` finds currently authorized pipeline receipts and external action
+results without saved request IDs. Use it directly or mount its typed query
+adapter as `work_inbox`. See [setup and recovery](../../docs/sdk-work-inbox.md).
+Use `watch_work_inbox` to follow one owned business record over a private
+realtime subscription. See [watcher setup](../../docs/sdk-live-work-inbox.md).
+Use `resolve_work_inbox_follow_up` to get the current review or tool call for an entry.
+See [typed inbox follow-ups](../../docs/sdk-work-inbox-follow-ups.md).

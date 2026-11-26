@@ -21,6 +21,51 @@ const (
 	MaxAppMeterUnitsPerRequest = int64(1_000_000_000_000)
 )
 
+// MaxAPIConsumerModelPrices bounds the number of overrides in a model-priced card.
+const MaxAPIConsumerModelPrices = 16
+
+// ModelMeterName is the reported meter name for one configured model. Keeping
+// model-specific reports in the existing wire format makes them replayable by
+// all gateway and receiver versions that support app meters.
+func ModelMeterName(meter, model string) string { return meter + "__" + model }
+
+func ValidateAPIConsumerModelPrices(unit string, prices map[string]int64, tierCount int) error {
+	if len(prices) == 0 {
+		return nil
+	}
+	meter, ok := AppMeterOfUnit(unit)
+	if !ok || strings.Contains(meter, "__") || tierCount != 0 || len(prices) > MaxAPIConsumerModelPrices {
+		return fmt.Errorf("%w: model_prices requires a flat app meter with at most %d model overrides", ErrInvalidArgument, MaxAPIConsumerModelPrices)
+	}
+	for model, price := range prices {
+		if !ValidAppMeter(model) || strings.Contains(model, "__") || !ValidAppMeter(ModelMeterName(meter, model)) || price < 0 {
+			return fmt.Errorf("%w: model %q must form a valid reported meter and have a non-negative price", ErrInvalidArgument, model)
+		}
+	}
+	return nil
+}
+
+// CheckModelMeterOverlap keeps a report from being rated both as a standalone
+// meter and as a model override in the same app.
+func CheckModelMeterOverlap(unit string, prices map[string]int64, existingUnit string, existingPrices map[string]int64) error {
+	meter, ok := AppMeterOfUnit(unit)
+	existingMeter, existingOK := AppMeterOfUnit(existingUnit)
+	if !ok || !existingOK || meter == existingMeter {
+		return nil
+	}
+	for model := range prices {
+		if ModelMeterName(meter, model) == existingMeter {
+			return fmt.Errorf("%w: model meter %q already has a standalone rate card", ErrInvalidArgument, existingMeter)
+		}
+	}
+	for model := range existingPrices {
+		if ModelMeterName(existingMeter, model) == meter {
+			return fmt.Errorf("%w: meter %q already belongs to %q", ErrInvalidArgument, meter, existingMeter)
+		}
+	}
+	return nil
+}
+
 var appMeterRE = lazyregexp.New(`^[a-z][a-z0-9_]{0,31}$`)
 
 // ValidAppMeter reports whether name is a meter an app can report.
@@ -102,14 +147,22 @@ func (m *MemStore) ListAPIConsumerMeterUsage(_ context.Context, accountID, appID
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	prefix := accountID + "\x00" + appID + "\x00" + consumerKey + "\x00" + meter + "\x00"
+	prefix := accountID + "\x00" + appID + "\x00" + consumerKey + "\x00"
+	if meter != "" {
+		prefix += meter + "\x00"
+	}
 	var out []APIConsumerMeterUsageBucket
 	for key, bucket := range m.apiConsumerMeterUsage {
 		if strings.HasPrefix(key, prefix) && !bucket.WindowStart.Before(since) && bucket.WindowStart.Before(until) {
 			out = append(out, bucket)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].WindowStart.Before(out[j].WindowStart) })
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].WindowStart.Equal(out[j].WindowStart) {
+			return out[i].Meter < out[j].Meter
+		}
+		return out[i].WindowStart.Before(out[j].WindowStart)
+	})
 	return out, nil
 }
 
@@ -117,10 +170,15 @@ func (s *PgStore) ListAPIConsumerMeterUsage(ctx context.Context, accountID, appI
 	if accountID == "" || appID == "" || consumerKey == "" || !until.After(since) {
 		return nil, ErrNotFound
 	}
-	rows, err := s.pool.Query(ctx, `select window_start, meter, units from api_consumer_meter_usage_minutes
-		where account_id = $1::uuid and app_id = $2::uuid and consumer_key = $3 and meter = $4
-		  and window_start >= $5 and window_start < $6
-		order by window_start`, accountID, appID, consumerKey, meter, since.UTC(), until.UTC())
+	query := `select window_start, meter, units from api_consumer_meter_usage_minutes
+		where account_id = $1::uuid and app_id = $2::uuid and consumer_key = $3
+		  and window_start >= $4 and window_start < $5`
+	args := []any{accountID, appID, consumerKey, since.UTC(), until.UTC()}
+	if meter != "" {
+		query += ` and meter = $6`
+		args = append(args, meter)
+	}
+	rows, err := s.pool.Query(ctx, query+` order by window_start, meter`, args...)
 	if err != nil {
 		return nil, err
 	}

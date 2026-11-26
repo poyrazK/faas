@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -101,5 +102,31 @@ func TestTaskQueueMetricsPostgresStatesAndWorkerDrain(t *testing.T) {
 	metrics, err = runtime.queueMetrics(ctx)
 	if err != nil || metrics.activeWorkers != 0 || metrics.drainingWorkers != 2 || metrics.unsupportedHandlerTasks != 0 || metrics.withoutCompatibleWorkerTasks != 3 {
 		t.Fatalf("draining worker reactivated: metrics=%+v err=%v", metrics, err)
+	}
+}
+
+// A failed publish logs the step and, for an HTTP refusal, the status, never
+// the URL, token or error text, so an operator can tell a rejected gauge from
+// a broken queue query (parity with the Node starter).
+func TestTaskMetricsPublishFailureNamesStepAndStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/mcp_tasks_running") {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	settings := mcpTaskMetricsSettings{appSlug: "test", token: "secret-token", apiURL: server.URL}
+	err := publishMCPTaskGauges(t.Context(), server.Client(), settings, mcpTaskQueueMetrics{})
+	if got, want := mcpTaskPublishFailureLog("mcp_task_metrics_publish_failed", err), `{"event":"mcp_task_metrics_publish_failed","step":"metric:mcp_tasks_running","status":403}`; got != want {
+		t.Fatalf("log = %s, want %s", got, want)
+	}
+	server.Close()
+	err = pushMCPTaskCompatibilityReport(t.Context(), server.Client(), settings, nil, false)
+	if got, want := mcpTaskPublishFailureLog("mcp_task_observer_health_check_failed", err), `{"event":"mcp_task_observer_health_check_failed","step":"compatibility_report"}`; got != want {
+		t.Fatalf("log = %s, want %s", got, want)
+	}
+	if got := mcpTaskPublishFailureLog("mcp_task_metrics_publish_failed", errors.New("dial postgres://u:p@h")); got != `{"event":"mcp_task_metrics_publish_failed","step":"queue_metrics"}` {
+		t.Fatalf("log = %s", got)
 	}
 }

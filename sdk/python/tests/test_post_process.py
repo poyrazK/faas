@@ -182,12 +182,31 @@ def _fixture_generator(tmp_path, monkeypatch):
         "faas_sdk/preview/stripe_webhook_state.py": b"# uncommitted Stripe adapter\n",
         "faas_sdk/preview/_pipeline_tool_protocol.py": b"# uncommitted pipeline tools\n",
         "faas_sdk/preview/pipeline_tool_state.py": b"# uncommitted pipeline tools\n",
+        "faas_sdk/preview/_outbound_action_protocol.py": b"# uncommitted action wrapper\n",
+        "faas_sdk/preview/outbound_action_state.py": b"# uncommitted action wrapper\n",
+        "faas_sdk/preview/work_inbox.py": b"# uncommitted inbox wrapper\n",
+        "faas_sdk/preview/pipeline_tasks.py": b"# uncommitted pipeline Task wrapper\n",
+        "faas_sdk/preview/pipeline_task_client.py": b"# uncommitted pipeline Task client\n",
+        "faas_sdk/preview/pipeline_task_http.py": b"# uncommitted pipeline Task HTTP transport\n",
+        "faas_sdk/preview/pipeline_task_manifest.py": b"# uncommitted pipeline Task manifest\n",
+        "faas_sdk/preview/pipeline_task_types.py": b"# uncommitted pipeline Task generator\n",
+        "faas_sdk/preview/pipeline_task_input.py": b"# uncommitted pipeline Task form wrapper\n",
+        "faas_sdk/preview/live_work_inbox.py": b"# uncommitted live inbox wrapper\n",
+        "faas_sdk/preview/work_inbox_follow_up.py": b"# uncommitted follow-up wrapper\n",
+        "faas_sdk/preview/_work_inbox_protocol.py": b"# uncommitted inbox protocol\n",
+        "faas_sdk/preview/application_toolkit.py": b"# uncommitted application toolkit wrapper\n",
+        "faas_sdk/preview/query_tools.py": b"# uncommitted query wrapper\n",
+        "faas_sdk/preview/query_tool_mcp.py": b"# uncommitted query wrapper\n",
+        "faas_sdk/preview/outbound_actions.py": b"# uncommitted action wrapper\n",
+        "faas_sdk/preview/outbound_action_mcp.py": b"# uncommitted action wrapper\n",
+        "faas_sdk/preview/stripe_refund_actions.py": b"# uncommitted action wrapper\n",
         "faas_sdk/preview/_pipeline_compensation_protocol.py": b"# uncommitted compensation\n",
         "faas_sdk/preview/pipeline_compensation_state.py": b"# uncommitted compensation\n",
         "faas_sdk/preview/pipeline_compensations.py": b"# uncommitted compensation\n",
         "faas_sdk/preview/pipeline_compensation_mcp.py": b"# uncommitted compensation\n",
         "faas_sdk/preview/pipeline_tools.py": b"# uncommitted pipeline tools\n",
         "faas_sdk/preview/pipeline_tool_mcp.py": b"# uncommitted pipeline tools\n",
+        "faas_sdk/preview/pipeline_output_resources.py": b"# uncommitted pipeline output resources\n",
         "faas_sdk/preview/stripe_webhooks.py": b"# uncommitted Stripe adapter\n",
         "faas_sdk/preview/event_pipelines.py": b"# uncommitted event adapters\n",
         "faas_sdk/preview/pipeline_children.py": b"# uncommitted child runtime\n",
@@ -452,9 +471,9 @@ def test_regenerated_preview_preserves_stripe_webhooks(tmp_path, monkeypatch):
 
 def test_regenerated_preview_preserves_pipeline_tools(tmp_path, monkeypatch):
     generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
-    for module in ("_pipeline_tool_protocol.py", "pipeline_tool_state.py", "pipeline_tools.py", "pipeline_tool_mcp.py"):
+    for module in ("_pipeline_tool_protocol.py", "pipeline_tool_state.py", "pipeline_tools.py", "pipeline_tool_mcp.py", "pipeline_output_resources.py"):
         assert module in generator.PREVIEW_WRAPPER_MODULES
-    for name in ("PipelineTool", "PipelineToolMCP", "PipelineToolActor", "PIPELINE_TOOL_SCHEMA"):
+    for name in ("PipelineTool", "PipelineToolMCP", "PipelineToolActor", "PipelineOutputResource", "PipelineToolResult", "PIPELINE_TOOL_SCHEMA"):
         assert name in generator._PREVIEW_INIT_PY_TEMPLATE
         assert name not in generator._INIT_PY_TEMPLATE
     compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
@@ -473,3 +492,52 @@ def test_regenerated_preview_preserves_compensation(tmp_path, monkeypatch):
         assert name in generator._PREVIEW_INIT_PY_TEMPLATE
         assert name not in generator._INIT_PY_TEMPLATE
     compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
+
+
+def test_regenerated_preview_preserves_outbound_actions(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    for module in ("_outbound_action_protocol.py", "outbound_action_state.py", "outbound_actions.py", "outbound_action_mcp.py", "stripe_refund_actions.py"):
+        assert module in generator.PREVIEW_WRAPPER_MODULES
+    for name in ("OutboundAction", "OutboundActionMCP", "StripeRefundActionProvider", "OUTBOUND_ACTION_SCHEMA"):
+        assert name in generator._PREVIEW_INIT_PY_TEMPLATE
+        assert name not in generator._INIT_PY_TEMPLATE
+    compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
+
+
+def test_regenerated_preview_preserves_query_tools(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    for module in ("query_tools.py", "query_tool_mcp.py"):
+        assert module in generator.PREVIEW_WRAPPER_MODULES
+    for name in ("QueryTool", "QueryToolMCP", "QueryResource", "QueryActor", "QueryPage"):
+        assert name in generator._PREVIEW_INIT_PY_TEMPLATE
+        assert name not in generator._INIT_PY_TEMPLATE
+    compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
+
+
+def test_regenerated_preview_preserves_application_toolkit(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    assert "application_toolkit.py" in generator.PREVIEW_WRAPPER_MODULES
+    assert "ApplicationToolkit" in generator._PREVIEW_INIT_PY_TEMPLATE
+    assert "ApplicationToolkit" not in generator._INIT_PY_TEMPLATE
+
+
+def test_regenerated_preview_preserves_work_inbox(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    assert {"work_inbox.py", "_work_inbox_protocol.py"}.issubset(generator.PREVIEW_WRAPPER_MODULES)
+    assert "create_work_inbox" in generator._PREVIEW_INIT_PY_TEMPLATE
+    assert "create_work_inbox" not in generator._INIT_PY_TEMPLATE
+    assert "live_work_inbox.py" in generator.PREVIEW_WRAPPER_MODULES
+    assert "pipeline_tasks.py" in generator.PREVIEW_WRAPPER_MODULES
+    assert '"PipelineTasks"' in generator._PREVIEW_INIT_PY_TEMPLATE
+    assert {"pipeline_task_client.py", "pipeline_task_http.py"}.issubset(generator.PREVIEW_WRAPPER_MODULES)
+    assert '"PipelineTaskClient"' in generator._PREVIEW_INIT_PY_TEMPLATE
+    assert '"PipelineTaskHttpTransport"' in generator._PREVIEW_INIT_PY_TEMPLATE
+    assert {"pipeline_task_manifest.py", "pipeline_task_types.py"}.issubset(generator.PREVIEW_WRAPPER_MODULES)
+    assert '"read_pipeline_task_manifest"' in generator._PREVIEW_INIT_PY_TEMPLATE
+    assert '"PipelineStartPreviewPolicy"' in generator._PREVIEW_INIT_PY_TEMPLATE
+    assert "pipeline_task_input.py" in generator.PREVIEW_WRAPPER_MODULES
+    assert '"PipelineTaskInputForm"' in generator._PREVIEW_INIT_PY_TEMPLATE
+    assert "work_inbox_follow_up.py" in generator.PREVIEW_WRAPPER_MODULES
+    assert '"WorkInboxFollowUpOptions"' in generator._PREVIEW_INIT_PY_TEMPLATE
+    assert '"watch_work_inbox"' in generator._PREVIEW_INIT_PY_TEMPLATE
+    assert "watch_work_inbox" not in generator._INIT_PY_TEMPLATE

@@ -194,6 +194,7 @@ func TestRuntimeHTTPCronDeliveryComparisons(t *testing.T) {
 	}
 }
 func TestRuntimeHTTPCronDeliveryProfilesAndBounds(t *testing.T) {
+	lengthenRuntimeCollectionBudget(t)
 	now := time.Now().UTC().Truncate(time.Second)
 	for _, role := range RuntimeBuildRoles() {
 		f, s, r := runtimeFixture(role, now, 1)

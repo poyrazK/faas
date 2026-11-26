@@ -75,6 +75,12 @@ func TestRealtimeTriggersInTheManifestFollowRealtime(t *testing.T) {
 		t.Fatal(err)
 	}
 	manifest := &gregalemanifest.Manifest{Triggers: []gregalemanifest.Trigger{{Kind: gregalemanifest.TriggerKindRealtime}}}
+	// Core realtime is beta (ADR-20261123074615): released by default, and
+	// a realtime trigger is refused once realtime is switched off.
+	if prob := srv.CheckManifestSettings(*e.Acct(), manifest); prob != nil {
+		t.Fatalf("a realtime trigger with realtime at its beta default = %+v", prob)
+	}
+	srv.SeedPlatformFlag(capabilityFlag(t, "realtime"), platformflags.Definition{Enabled: true, Default: false})
 	if prob := srv.CheckManifestSettings(*e.Acct(), manifest); prob == nil || prob.Code != api.CodeCapabilityNotReleased {
 		t.Fatalf("a realtime trigger with realtime off = %+v, want capability_not_released", prob)
 	}

@@ -45,7 +45,7 @@ gregale queue send --app my-worker --queue-name jobs --payload '{"image":"cat.pn
 ```
 
 ```bash
-curl -X POST "$GREGALE_API/v1/apps/my-worker/queues/send" \
+curl -X POST "$GREGALE_API_URL/v1/apps/my-worker/queues/send" \
   -H "Authorization: Bearer $KEY" \
   -d '{"queue_name":"jobs","payload":{"image":"cat.png"}}'
 ```
@@ -55,7 +55,7 @@ Each send is an API request, and an account makes at most 1,200 (Hobby), 3,000
 once:
 
 ```bash
-curl -X POST "$GREGALE_API/v1/apps/my-worker/queues/send-batch" \
+curl -X POST "$GREGALE_API_URL/v1/apps/my-worker/queues/send-batch" \
   -H "Authorization: Bearer $KEY" \
   -d '{"queue_name":"jobs","messages":[{"payload":{"image":"a.png"}},{"payload":{"image":"b.png"}}]}'
 ```
@@ -144,7 +144,7 @@ To hear when a worker falls behind, alert on `queue_backlog` or
 | How long a message waits for a worker | 1 day | 4 days | 14 days |
 
 A message that waits longer than its plan allows moves to the dead-letter queue,
-where `gregale dlq <app>` lists it for replay. See
+where `gregale dlq list <app>` lists it for replay. See
 [queue limits](event-driven.md#queue-limits) for message size, delivery
 attempts and the errors a send returns at a limit.
 

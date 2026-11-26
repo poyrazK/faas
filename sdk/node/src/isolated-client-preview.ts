@@ -5,8 +5,8 @@ import { bindExecutionHelpers } from './execution-client.js';
 import type { ExecutionHelpers } from './executions.js';
 
 /** Full service surface; preview operations still require server eligibility. */
-export type GregaleClient = BoundClient<typeof services> & ExecutionHelpers;
+export type GregaleClient = BoundClient<typeof services, true> & ExecutionHelpers;
 
 export function createClient(baseURL: string, options: FaaSClientOptions = {}): GregaleClient {
-  return bindClient(services, baseURL, options, bindExecutionHelpers);
+  return bindClient(services, baseURL, options, bindExecutionHelpers, true);
 }

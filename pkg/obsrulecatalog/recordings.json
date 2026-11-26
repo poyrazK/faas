@@ -3,10 +3,10 @@
   "fingerprint_algorithm": "promql_ast_v1",
   "sets": [
     {
-      "revision": "80eb0019fdcc12998ae2aa0277f1a9da53ee54e71af6e51bd8dcb81442b395c6",
+      "revision": "9878b1e99a34f62d1046474556d7b049c3114a32ad8bd626fc2eac78f361985d",
       "expected": {
         "id": "gregale-core-v1",
-        "revision": "f461cc424714a661fbba58efb94f25cacd8c902fac1f06876269aa06db449693",
+        "revision": "3cd1c5474fa31ca40da18321d6005a300d20c18dac826f9399bde91b8b84f56a",
         "files": [
           "faas.rules.yml"
         ],
@@ -1325,6 +1325,19 @@
             }
           },
           {
+            "id": "b7a956f938e5969ff613804440dae00060c431af92521a6b7a77ceba5030cd8c",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_managed_postgres",
+            "rule_name": "faas_managed_postgres_idle_tail_share:ratio24h",
+            "definition": {
+              "expression_hash": "01d919f88aac522f62a6947f1a357857b5c36f82774f2e4e689b2425e1ecfa55",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "ce547314f8fd3af7182869ae7c2b49e7048836bfded898f954904047533528f2"
+            }
+          },
+          {
             "id": "b9638d40c81c7d80c2c08fa484abf494434ae4a4dda6a7a4591dd4d6548923c3",
             "file_name": "faas.rules.yml",
             "group_name": "faas_billing",
@@ -1603,11 +1616,11 @@
             "group_name": "faas_slo_monthly",
             "rule_name": "faas_slo_api_eligible_requests:rate5m",
             "definition": {
-              "expression_hash": "93b4532eff7f14adddf68dd62d34f71b45e503b9cfef927a1400577f0e6d68bc",
+              "expression_hash": "51099e2575857147aa7141c7a332ba4deb21677a7c36f34dc89abc71b816bf1b",
               "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
               "for_seconds": 0,
               "keep_firing_for_seconds": 0,
-              "fingerprint": "0c5b6b231b3ff54e997a5c710304c9517f49581112f741e7cab97725e1ea41db"
+              "fingerprint": "4ba24891465fb207c5e2a4e95e789cf59a222065b98f73d6eb37c721a5f4acbc"
             }
           },
           {
@@ -1924,8 +1937,8 @@
           }
         ]
       },
-      "alert_set_revision": "d1dd6994eb8e358e698808d533c52b4de89b0deb9f6f643d928a1f66c908d597",
-      "alert_count": 577,
+      "alert_set_revision": "013bb067b3e7c67a4a3bf5152b81be6943191e8236105054af1e70fe94c4f63c",
+      "alert_count": 579,
       "dependents": [
         {
           "rule_id": "0334e9dd652d8034eae35eed898be3ec03fb7548b2af3a4479360eee5f146041",
@@ -3454,6 +3467,10 @@
           ]
         },
         {
+          "rule_id": "b7a956f938e5969ff613804440dae00060c431af92521a6b7a77ceba5030cd8c",
+          "alerts": []
+        },
+        {
           "rule_id": "b9638d40c81c7d80c2c08fa484abf494434ae4a4dda6a7a4591dd4d6548923c3",
           "alerts": [
             {
@@ -4285,10 +4302,10 @@
       ]
     },
     {
-      "revision": "cd940b212f412b8441c8b0530635d2d6eb47a264ac908921a47dcce0f76b8f9e",
+      "revision": "d1ebc825a844546324128d160b4dff2bed45c5b6b4d9973df28c8463b3adf102",
       "expected": {
         "id": "gregale-full-v1",
-        "revision": "e168e65b33710a28c740898e5c7eda129f8567bdc90f44057f0bc510dc70e1d6",
+        "revision": "f31956cc04fcdd4bf3fd9311b1a086a8b442ecd4f16cb9b4c4879ddfeacc711b",
         "files": [
           "bridge.rules.yml",
           "data_placement.yaml",
@@ -5611,6 +5628,19 @@
             }
           },
           {
+            "id": "b7a956f938e5969ff613804440dae00060c431af92521a6b7a77ceba5030cd8c",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_managed_postgres",
+            "rule_name": "faas_managed_postgres_idle_tail_share:ratio24h",
+            "definition": {
+              "expression_hash": "01d919f88aac522f62a6947f1a357857b5c36f82774f2e4e689b2425e1ecfa55",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "ce547314f8fd3af7182869ae7c2b49e7048836bfded898f954904047533528f2"
+            }
+          },
+          {
             "id": "b9638d40c81c7d80c2c08fa484abf494434ae4a4dda6a7a4591dd4d6548923c3",
             "file_name": "faas.rules.yml",
             "group_name": "faas_billing",
@@ -5889,11 +5919,11 @@
             "group_name": "faas_slo_monthly",
             "rule_name": "faas_slo_api_eligible_requests:rate5m",
             "definition": {
-              "expression_hash": "93b4532eff7f14adddf68dd62d34f71b45e503b9cfef927a1400577f0e6d68bc",
+              "expression_hash": "51099e2575857147aa7141c7a332ba4deb21677a7c36f34dc89abc71b816bf1b",
               "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
               "for_seconds": 0,
               "keep_firing_for_seconds": 0,
-              "fingerprint": "0c5b6b231b3ff54e997a5c710304c9517f49581112f741e7cab97725e1ea41db"
+              "fingerprint": "4ba24891465fb207c5e2a4e95e789cf59a222065b98f73d6eb37c721a5f4acbc"
             }
           },
           {
@@ -6210,8 +6240,8 @@
           }
         ]
       },
-      "alert_set_revision": "f1c5fdca7aa6bc91f5038366ae17f422a3dbbd0e854dd74cf1a38514509373f5",
-      "alert_count": 601,
+      "alert_set_revision": "73b530814e1140d0f02578a6f94c26a643741202bdb4ded5ffed81408da1ec36",
+      "alert_count": 603,
       "dependents": [
         {
           "rule_id": "0334e9dd652d8034eae35eed898be3ec03fb7548b2af3a4479360eee5f146041",
@@ -7738,6 +7768,10 @@
               "rule_name": "FaasMonthlyWakeLatencyBelowSLO"
             }
           ]
+        },
+        {
+          "rule_id": "b7a956f938e5969ff613804440dae00060c431af92521a6b7a77ceba5030cd8c",
+          "alerts": []
         },
         {
           "rule_id": "b9638d40c81c7d80c2c08fa484abf494434ae4a4dda6a7a4591dd4d6548923c3",

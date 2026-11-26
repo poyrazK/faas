@@ -8,12 +8,12 @@ for messages when it has capacity, and acks or nacks each one.
 [Organization queues](organization-queues.md) use the same lease contract and
 keep their backlog and receipts through creator departure or erasure.
 
-## Set up
+## Bind the queue to your worker app
 
 Give the app a **pull** binding for the queue:
 
 ```bash
-curl -X POST "$GREGALE_API/v1/apps/my-worker/queue-bindings" \
+curl -X POST "$GREGALE_API_URL/v1/apps/my-worker/queue-bindings" \
   -H "Authorization: Bearer $KEY" \
   -d '{"name":"jobs","queue_name":"jobs","mode":"pull","workload_class":"worker","max_concurrency":4}'
 ```
@@ -22,7 +22,7 @@ curl -X POST "$GREGALE_API/v1/apps/my-worker/queue-bindings" \
 the app's workers. Pair the binding with a `queue_depth` scaling target to
 scale the worker pool on the backlog.
 
-## Consume with the SDK
+## Run a background worker that processes the queue
 
 The SDK consumers lease with `wait_seconds`, run your handler, ack on success
 and nack (retry under the binding's policy) when it throws. While a handler
@@ -53,26 +53,26 @@ Outside Gregale, pass `apiKey` / `api_key` (a key with `queues:consume`).
 `concurrency` is per process; the binding's `max_concurrency` still caps the
 whole app.
 
-## Consume over HTTP
+## Process queue messages over HTTP from any language
 
 ```bash
 # Lease up to 10 messages, hidden from other consumers for 60 seconds.
 # wait_seconds holds the call until a message arrives (at most 20 s).
-curl -X POST "$GREGALE_API/v1/apps/my-worker/queues/jobs/leases" \
+curl -X POST "$GREGALE_API_URL/v1/apps/my-worker/queues/jobs/leases" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{"max_messages":10,"visibility_timeout_seconds":60,"wait_seconds":20}'
 
 # Done: complete them.
-curl -X POST "$GREGALE_API/v1/apps/my-worker/queues/jobs/leases:ack" \
+curl -X POST "$GREGALE_API_URL/v1/apps/my-worker/queues/jobs/leases:ack" \
   -H "Authorization: Bearer $TOKEN" -d '{"receipts":["<receipt>"]}'
 
 # Failed: retry under the binding's retry policy (or dead-letter when the
 # attempt budget is spent). delay_seconds can push the retry later.
-curl -X POST "$GREGALE_API/v1/apps/my-worker/queues/jobs/leases:nack" \
+curl -X POST "$GREGALE_API_URL/v1/apps/my-worker/queues/jobs/leases:nack" \
   -H "Authorization: Bearer $TOKEN" -d '{"receipts":["<receipt>"],"error":"upstream timeout"}'
 
 # Still working: keep the message hidden for another 5 minutes.
-curl -X POST "$GREGALE_API/v1/apps/my-worker/queues/jobs/leases:extend" \
+curl -X POST "$GREGALE_API_URL/v1/apps/my-worker/queues/jobs/leases:extend" \
   -H "Authorization: Bearer $TOKEN" -d '{"receipts":["<receipt>"],"visibility_timeout_seconds":300}'
 ```
 

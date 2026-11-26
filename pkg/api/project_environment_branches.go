@@ -220,7 +220,14 @@ type ProjectEnvironmentBranchWorkload struct {
 	// EnvironmentURL is the address of this incarnation of the branch: a
 	// reset gives it a new one. Empty when it is the same as URL.
 	EnvironmentURL string `json:"environment_url,omitempty"`
+	// Error explains a workload that is not serving: its branch deployment
+	// failed, or has not gone live within EnvironmentBranchActivationStall.
+	Error string `json:"error,omitempty"`
 }
+
+// EnvironmentBranchActivationStall is how long a branch workload may stay
+// unactivated, its data ready, before the branch status reports it.
+const EnvironmentBranchActivationStall = 5 * time.Minute
 
 // ProjectEnvironmentBranchListResponse lists a project's branches.
 type ProjectEnvironmentBranchListResponse struct {

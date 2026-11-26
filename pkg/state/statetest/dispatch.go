@@ -323,9 +323,18 @@ func (s *Mem) UpdateAlertDeliveryStatus(ctx context.Context, id string, status s
 	return s.MemStore.UpdateAlertDeliveryStatus(ctx, id, status, attempts, code, detail, deliveredAt)
 }
 
-func (s *Mem) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (string, bool, error) {
+func (s *Mem) AlertDeferredFireRecipients(ctx context.Context, ruleID string, firedAt time.Time) (state.AlertDeferredRecipients, error) {
 	if override, ok := s.over.(interface {
-		ClaimAlertFire(context.Context, string, string, []byte, float64, time.Time) (string, bool, error)
+		AlertDeferredFireRecipients(context.Context, string, time.Time) (state.AlertDeferredRecipients, error)
+	}); ok {
+		return override.AlertDeferredFireRecipients(ctx, ruleID, firedAt)
+	}
+	return s.MemStore.AlertDeferredFireRecipients(ctx, ruleID, firedAt)
+}
+
+func (s *Mem) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (string, bool, state.AlertFireRecipients, error) {
+	if override, ok := s.over.(interface {
+		ClaimAlertFire(context.Context, string, string, []byte, float64, time.Time) (string, bool, state.AlertFireRecipients, error)
 	}); ok {
 		return override.ClaimAlertFire(ctx, ruleID, idempotencyKey, payload, observed, at)
 	}

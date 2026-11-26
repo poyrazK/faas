@@ -1,0 +1,25 @@
+# ADR-20261114100000 amendment 2026-11-23 (metering review r10): public
+# destinations that are still Gregale's own. vmmd adds them to every instance
+# namespace's faas_internal_tx counter, so meterd leaves the guest's traffic to
+# them out of billed app egress (meterd_internal_egress_unbilled).
+#
+# - Gregale's public entry: every compute edge's entry address, behind
+#   *.gregale.app, storage.gregale.dev, objects.gregale.dev and
+#   otel.gregale.dev (DNS-only records). vmmd_service's 99-faas-egress.conf
+#   adds them from the manifest's faas_public_entry_addrs and
+#   faas_peer_entry_addrs, so a new node is covered without editing this
+#   file. An app calling another app or those endpoints over its public name
+#   is platform traffic; the receiving side bills it where due.
+#   Cloudflare-proxied names (s3.gregale.dev, api.gregale.dev) resolve to
+#   shared Cloudflare anycast addresses and must never be listed: every other
+#   Cloudflare-fronted site on them would become unbilled egress.
+# - Managed Postgres (Neon): Neon already includes 500 GB of egress per
+#   database, so app→database bytes are not billed again. Apps connect to
+#   <endpoint>.<region>.aws.neon.tech, a CNAME of the regional host below;
+#   vmmd resolves it every 5 minutes and keeps each address internal for 24 h.
+#   The regional addresses are shared by every Neon project in the region, so
+#   a customer's own Neon database there is exempt too (amendment, accepted
+#   trade-off).
+faas_vmmd_internal_egress_cidrs: []
+faas_vmmd_internal_egress_hosts:
+  - us-east-2.aws.neon.tech

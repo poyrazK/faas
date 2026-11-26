@@ -168,6 +168,7 @@ func secretsList(args []string) int {
 		return jsonOut(writeJSON(resp))
 	}
 	code := renderSecretListHuman(*app, *scope, *secretClass, *olderThan, *deliveryStatus, &resp, keys...)
+	printRecentConfigGuardVerdict(context.Background(), client, *app, *scope)
 	printSecretKeyHints(*app, *scope, secretKeyHints(keys, availableKeys, secretMetadataKeys(&resp)))
 	if *scope != api.EnvScopeAllSentinel && *secretClass == "" && *deliveryStatus == "" && age == 0 {
 		printPlainVariables(osStdout, client, *app, *scope, keys)
@@ -216,16 +217,32 @@ func renderSecretsByScope(w io.Writer, app string, resp *api.AppSecretListRespon
 		}
 	}
 	sort.Strings(scopes)
-	_, _ = fmt.Fprintf(w, "%s: %d/%d secrets (across %d scopes)\n",
-		app, resp.Count, resp.Quota, len(scopes))
+	listed := 0
+	for _, s := range scopes {
+		listed += len(resp.SecretsByScope[s])
+	}
+	_, _ = fmt.Fprintf(w, "%s: %d/%d secrets (across %d scopes)%s\n",
+		app, resp.Count, resp.Quota, len(scopes), uncountedSecretsNote(listed, resp.Count))
 	for _, s := range scopes {
 		for _, row := range resp.SecretsByScope[s] {
 			_, _ = fmt.Fprintf(w, "  %-48s %-10s · %s · %s%s\n", s+"/"+row.Key, secretClassLabel(row.SecretClass),
-				secretDeliveryLabel(row.DeliveryStatus), secretRuntimeReloadLabel(row.DeliveryVersion,
+				secretDeliveryRowLabel(row.DeliveryStatus, row.RuntimeReloadTargetsComplete, row.RuntimeReloadObservations), secretRuntimeReloadLabel(row.DeliveryVersion,
 					row.LastRuntimeReloadVersion, row.LastRuntimeReloadProjection, row.LastRuntimeReloadSignal, row.LastRuntimeReloadInstanceID,
 					row.RuntimeReloadObservations, row.RuntimeReloadTargetsComplete), secretUpdatedAtSuffix(row.UpdatedAt))
 		}
 	}
+}
+
+// uncountedSecretsNote explains rows the plan quota does not count: keys a
+// bucket or database binding manages. `env list` printed "0/100 secrets"
+// above six GREGALE_S3_* rows (prod hunt r53). More listed rows than the
+// cross-scope count can only come from such keys; the count is cross-scope
+// and a flat list one scope, so the note names no number.
+func uncountedSecretsNote(listed, counted int) string {
+	if listed > counted {
+		return " (keys set by bucket and database bindings do not count toward the quota)"
+	}
+	return ""
 }
 
 // renderFlatSecrets emits the per-scope arm of the secrets-list
@@ -238,10 +255,10 @@ func renderSecretsByScope(w io.Writer, app string, resp *api.AppSecretListRespon
 // Extracted from secretsList (commands3.go:85) so the routing
 // function stays under the 50-line cap (CLAUDE.md).
 func renderFlatSecrets(w io.Writer, app string, resp *api.AppSecretListResponse) {
-	_, _ = fmt.Fprintf(w, "%s: %d/%d secrets\n", app, resp.Count, resp.Quota)
+	_, _ = fmt.Fprintf(w, "%s: %d/%d secrets%s\n", app, resp.Count, resp.Quota, uncountedSecretsNote(len(resp.Secrets), resp.Count))
 	for _, s := range resp.Secrets {
 		_, _ = fmt.Fprintf(w, "  %-48s %-10s · %s · %s%s\n", scopeOrDefault(s.Scope)+"/"+s.Key, secretClassLabel(s.SecretClass),
-			secretDeliveryLabel(s.DeliveryStatus), secretRuntimeReloadLabel(s.DeliveryVersion,
+			secretDeliveryRowLabel(s.DeliveryStatus, s.RuntimeReloadTargetsComplete, s.RuntimeReloadObservations), secretRuntimeReloadLabel(s.DeliveryVersion,
 				s.LastRuntimeReloadVersion, s.LastRuntimeReloadProjection, s.LastRuntimeReloadSignal, s.LastRuntimeReloadInstanceID,
 				s.RuntimeReloadObservations, s.RuntimeReloadTargetsComplete), secretUpdatedAtSuffix(s.UpdatedAt))
 	}
@@ -365,6 +382,23 @@ func filterAppSecretListByClass(resp *api.AppSecretListResponse, class string) {
 	}
 	resp.Secrets = filtered
 	resp.Count = len(filtered)
+}
+
+// secretDeliveryRowLabel is secretDeliveryLabel for a listed row. A failure
+// with no instance running was recorded by a boot that never started, often a
+// crashing first deploy; "delivery failed" alone read as a broken secret on a
+// worker that later connected fine (agent eval 2026-11-23, voting-app P10).
+func secretDeliveryRowLabel(status string, targetsComplete bool, targets []api.SecretRuntimeReloadObservation) string {
+	if secretFailedWithoutInstance(status, targetsComplete, targets) {
+		return "delivery failed on a boot that did not start (none running now)"
+	}
+	return secretDeliveryLabel(status)
+}
+
+// secretFailedWithoutInstance reports a failed delivery while the complete
+// list of active instances is empty.
+func secretFailedWithoutInstance(status string, targetsComplete bool, targets []api.SecretRuntimeReloadObservation) bool {
+	return status == "failed" && targetsComplete && len(targets) == 0
 }
 
 func secretDeliveryLabel(status string) string {
@@ -634,6 +668,14 @@ func secretsSet(args []string) int {
 			// JSON consumers route on the same code (#6662).
 			return printErr(problem.Title, &APIError{Problem: *problem})
 		}
+		// An empty value failed only at its own PUT, after the keys before it
+		// were saved: `env set A=1 B= C=2` saved A, never C, and reported an
+		// unconfirmed partial write (prod hunt r48). The size cap stays with
+		// the server, which knows the plan.
+		if problem := (api.PutAppSecretRequest{Value: p.Value}).Validate(0); problem != nil {
+			problem.Detail = p.Key + ": " + problem.Detail
+			return printErr(problem.Title, &APIError{Problem: *problem})
+		}
 	}
 
 	if *dryRun {
@@ -875,6 +917,34 @@ func parseSecretsPair(s string) (secretsPair, error) {
 	return secretsPair{Key: key, Value: value}, nil
 }
 
+// joinDotenvQuotedLines reads the rest of a quoted value that spans lines, as
+// dotenv allows: a PEM key pasted as KEY="-----BEGIN ...\n...\n-----END ..."
+// was refused at its second line, so RSA keys had to be set one by one (boa
+// multi-service deploy, 2026-11-21); `env push -f` still refused it (prod
+// hunt r53). lineNo advances past the lines read; errors name the first.
+func joinDotenvQuotedLines(scanner *bufio.Scanner, line string, lineNo *int) (string, error) {
+	quote, open := dotenvOpenQuote(line)
+	if !open {
+		return line, nil
+	}
+	startLine := *lineNo
+	var value strings.Builder
+	value.WriteString(line)
+	for scanner.Scan() {
+		*lineNo++
+		next := strings.TrimRight(scanner.Text(), "\r")
+		value.WriteByte('\n')
+		value.WriteString(next)
+		if dotenvContinuationCloses(next, quote) {
+			return strings.TrimRight(value.String(), " \t"), nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", keyValueScanErr(err)
+	}
+	return "", fmt.Errorf("line %d: quoted value has no closing %c", startLine, quote)
+}
+
 // readSecretsFile loads the KEY=VALUE input used by deploy's
 // --secrets-file flag. The file is deliberately parsed before any network
 // mutation so a typo cannot create an app and leave the first deploy without
@@ -896,32 +966,10 @@ func readSecretsFile(path string) ([]secretsPair, error) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		// A quoted value may span lines, as dotenv allows: a PEM key pasted
-		// as KEY="-----BEGIN ...\n...\n-----END ..." was refused at its
-		// second line, so RSA keys had to be set one by one (boa
-		// multi-service deploy, 2026-11-21).
 		startLine := lineNo
-		if quote, open := dotenvOpenQuote(line); open {
-			var value strings.Builder
-			value.WriteString(line)
-			closed := false
-			for scanner.Scan() {
-				lineNo++
-				next := strings.TrimRight(scanner.Text(), "\r")
-				value.WriteByte('\n')
-				value.WriteString(next)
-				if dotenvClosesQuote(strings.TrimRight(next, " \t"), quote) {
-					closed = true
-					break
-				}
-			}
-			if err := scanner.Err(); err != nil {
-				return nil, keyValueScanErr(err)
-			}
-			if !closed {
-				return nil, fmt.Errorf("line %d: quoted value has no closing %c", startLine, quote)
-			}
-			line = strings.TrimRight(value.String(), " \t")
+		line, err := joinDotenvQuotedLines(scanner, line, &lineNo)
+		if err != nil {
+			return nil, err
 		}
 		pair, parseErr := parseDotenvLine(line)
 		if parseErr != nil {
@@ -956,8 +1004,22 @@ func dotenvOpenQuote(line string) (byte, bool) {
 	if value == "" || value[0] != '"' && value[0] != '\'' {
 		return 0, false
 	}
-	quote := value[0]
-	return quote, !dotenvClosesQuote(value[1:], quote)
+	// A quote closed before a trailing ` # comment` closes the value on this
+	// line: `URL="x" # note` was read as an unterminated multi-line value
+	// (prod hunt r48).
+	return value[0], dotenvClosingQuote(value) < 0
+}
+
+// dotenvContinuationCloses reports whether a continuation line of a
+// multi-line quoted value closes it: it ends in the closing quote, or the
+// closing quote is followed only by a ` # comment` (a PEM whose last line is
+// `-----END KEY-----" # prod key` was refused as unclosed).
+func dotenvContinuationCloses(line string, quote byte) bool {
+	if dotenvClosesQuote(strings.TrimRight(line, " \t"), quote) {
+		return true
+	}
+	end := dotenvClosingQuote(string(quote) + line)
+	return end > 0 && strings.HasPrefix(strings.TrimSpace(line[end:]), "#")
 }
 
 // dotenvClosesQuote reports whether s ends with an unescaped closing quote.
@@ -1109,6 +1171,10 @@ func secretsUnset(args []string) int {
 	timeout := fs.Duration("timeout", 2*time.Minute, "maximum time to wait for runtime acknowledgements")
 	restart := fs.Bool("restart", false, "restart the app so running instances drop the removed secret now")
 	noGuard := fs.Bool("no-guard", false, "do not open a config guard for this change (ADR-1451)")
+	// Unset names its keys and does not prompt; --yes, which scripts and
+	// agents pass to every removal, used to fail as an unknown flag (prod
+	// hunt r54/r55).
+	_ = fs.Bool("yes", false, "accepted for scripts; removing named keys does not prompt")
 	orderedArgs, err := reorderSecretsSetArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "secret unset:", err)

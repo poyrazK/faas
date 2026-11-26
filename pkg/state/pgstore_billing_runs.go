@@ -28,19 +28,30 @@ const billingRunItemCols = `run_id::text, source_kind, source_id::text, coalesce
 	coalesce(statement_id::text, ''), coalesce(revision, 0), coalesce(currency, ''), coalesce(amount_millicents, 0),
 	coalesce(completeness, ''), coalesce(invoice_id, ''), exported_count, coalesce(reason, ''), attempts, next_attempt_at, updated_at,
 	coalesce((select e.payment_status from usage_statement_invoice_exports e
-	           where e.source_kind = billing_run_items.source_kind and e.statement_id = billing_run_items.statement_id), '')`
+	           where e.source_kind = billing_run_items.source_kind and e.statement_id = billing_run_items.statement_id), ''),
+	usage_gap_hours, usage_held_at, usage_recovered_at`
+
+func scanBillingRunItem(row pgx.Row) (BillingRunItem, error) {
+	var item BillingRunItem
+	err := row.Scan(&item.RunID, &item.SourceKind, &item.SourceID, &item.AppID, &item.ExternalRef, &item.Outcome,
+		&item.StatementID, &item.Revision, &item.Currency, &item.AmountMillicents, &item.Completeness, &item.InvoiceID,
+		&item.ExportedCount, &item.Reason, &item.Attempts, &item.NextAttemptAt, &item.UpdatedAt, &item.PaymentStatus,
+		&item.UsageGapHours, &item.UsageHeldAt, &item.UsageRecoveredAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return BillingRunItem{}, ErrNotFound
+	}
+	return item, err
+}
 
 func scanBillingRunItems(rows pgx.Rows) ([]BillingRunItem, error) {
 	defer rows.Close()
 	out := []BillingRunItem{}
 	for rows.Next() {
-		var i BillingRunItem
-		if err := rows.Scan(&i.RunID, &i.SourceKind, &i.SourceID, &i.AppID, &i.ExternalRef, &i.Outcome, &i.StatementID, &i.Revision,
-			&i.Currency, &i.AmountMillicents, &i.Completeness, &i.InvoiceID, &i.ExportedCount, &i.Reason, &i.Attempts,
-			&i.NextAttemptAt, &i.UpdatedAt, &i.PaymentStatus); err != nil {
+		item, err := scanBillingRunItem(rows)
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, i)
+		out = append(out, item)
 	}
 	return out, rows.Err()
 }
@@ -172,6 +183,42 @@ func (s *PgStore) ListBillingRunItems(ctx context.Context, accountID, runID, out
 	return append(items, products...), err
 }
 
+func (s *PgStore) GetBillingRunAppConsumerItem(ctx context.Context, accountID, runID, consumerID string) (BillingRunItem, error) {
+	return scanBillingRunItem(s.pool.QueryRow(ctx, `select `+billingRunItemCols+` from billing_run_items
+		where run_id = (select id from billing_runs where id = $1::uuid and account_id = $2::uuid)
+		  and source_kind = 'app_consumer' and source_id = $3::uuid`, runID, accountID, consumerID))
+}
+
+func (s *PgStore) TryLockBillingRunUsageRecheck(ctx context.Context, runID, consumerID string) (func(context.Context), bool, error) {
+	return s.tryAcquireSessionAdvisoryLock(ctx, sessionAdvisoryLock{
+		what:    "billing run usage recheck",
+		tryLock: `select pg_try_advisory_lock(hashtextextended($1, 0))`,
+		unlock:  `select pg_advisory_unlock(hashtextextended($1, 0))`,
+		keyArg:  "billing-run-usage-recheck:" + runID + "/" + consumerID,
+	})
+}
+
+func (s *PgStore) SaveBillingRunUsageRecheck(ctx context.Context, accountID string, item BillingRunItem) error {
+	tag, err := s.pool.Exec(ctx, `update billing_run_items i
+		   set usage_gap_hours = $5, outcome = $6, statement_id = nullif($7, '')::uuid, revision = nullif($8, 0), currency = nullif($9, ''),
+		       amount_millicents = $10, completeness = $11, reason = nullif($12, ''),
+		       usage_recovered_at = $13, updated_at = clock_timestamp()
+		  from billing_runs r
+		 where r.id = i.run_id and r.account_id = $1::uuid and r.status = 'completed'
+		   and not r.finalize and r.export_provider = 'none'
+		   and i.run_id = $2::uuid and i.source_kind = 'app_consumer' and i.source_id = $3::uuid
+		   and i.updated_at = $4 and i.outcome = 'held' and i.completeness = 'gaps_detected'`,
+		accountID, item.RunID, item.SourceID, item.UpdatedAt, item.UsageGapHours, item.Outcome, item.StatementID,
+		item.Revision, item.Currency, item.AmountMillicents, item.Completeness, item.Reason, item.UsageRecoveredAt)
+	if err != nil {
+		return fmt.Errorf("save billing run usage recheck: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
 func (s *PgStore) ClaimBillingRun(ctx context.Context, owner string, now time.Time, ttl time.Duration) (BillingRun, error) {
 	run, err := scanBillingRun(s.pool.QueryRow(ctx, `update billing_runs
 		   set status = 'running', lease_owner = $1, lease_until = $3, started_at = coalesce(started_at, $2)
@@ -241,8 +288,10 @@ func discoverBillingRunUsageItems(ctx context.Context, tx pgx.Tx, run BillingRun
 				union
 				-- A card with a base fee or minimum bills consumers without
 				-- usage too (ADR-1316).
+				-- A stage's consumers are never billed (ADR-20261104120000).
 				select c.app_id, c.id::text from api_consumers c
-				 where c.account_id = $2::uuid and c.created_at < $4 and (c.revoked_at is null or c.revoked_at >= $3)
+				 where c.account_id = $2::uuid and c.environment_id is null
+				   and c.created_at < $4 and (c.revoked_at is null or c.revoked_at >= $3)
 				   and exists (select 1 from api_consumer_rate_cards r
 				                where r.app_id = c.app_id and r.effective_from < $4
 				                  and (r.base_fee_millicents_per_month > 0 or r.minimum_millicents_per_month > 0)))
@@ -252,6 +301,7 @@ func discoverBillingRunUsageItems(ctx context.Context, tx pgx.Tx, run BillingRun
 			       case when $5::boolean and a.app_id is not null then $6::text end, $7::timestamptz, $7::timestamptz
 			  from billed b
 			  join api_consumers c on c.account_id = $2::uuid and c.app_id = b.app_id and c.id::text = b.consumer_key
+			                      and c.environment_id is null
 			  -- A company app keeps its creator's account_id; its customers
 			  -- are billed on that account only while it is a member of the
 			  -- company (ADR-20261026151103 amendment 2).
@@ -333,13 +383,13 @@ func (s *PgStore) UpdateBillingRunItem(ctx context.Context, owner string, item B
 		   set outcome = $4, statement_id = nullif($5, '')::uuid, revision = nullif($6, 0), currency = nullif($7, ''),
 		       amount_millicents = case when $5::text = '' then null else $8::bigint end, completeness = nullif($9, ''),
 		       invoice_id = nullif($10, ''), exported_count = $11, reason = nullif($12, ''), attempts = $13,
-		       next_attempt_at = $14, updated_at = now()
+		       next_attempt_at = $14, updated_at = now(), usage_gap_hours = $16, usage_held_at = $17
 		  from billing_runs r
 		 where r.id = i.run_id and r.lease_owner = $15 and r.status <> 'completed'
 		   and i.run_id = $1::uuid and i.source_kind = $2 and i.source_id = $3::uuid`,
 		item.RunID, item.SourceKind, item.SourceID, item.Outcome, item.StatementID, item.Revision, item.Currency,
 		item.AmountMillicents, item.Completeness, item.InvoiceID, item.ExportedCount, item.Reason, item.Attempts,
-		item.NextAttemptAt, owner)
+		item.NextAttemptAt, owner, item.UsageGapHours, item.UsageHeldAt)
 	if err != nil {
 		return fmt.Errorf("update billing run item: %w", err)
 	}
@@ -393,21 +443,52 @@ func scanBillingRunSchedule(row pgx.Row) (BillingRunSchedule, error) {
 	return s, err
 }
 
+const insertBillingRunScheduleSQL = `insert into billing_run_schedules
+	(account_id, sources, finalize, export_provider, hold_on_gaps, delay_hours, next_period_start, next_run_at)
+	values ($1::uuid, $2, $3, $4, $5, $6, $7, $8)`
+
 func (s *PgStore) PutBillingRunSchedule(ctx context.Context, sched BillingRunSchedule) (BillingRunSchedule, error) {
 	if err := validateBillingRunSchedule(sched); err != nil {
 		return BillingRunSchedule{}, err
 	}
-	out, err := scanBillingRunSchedule(s.pool.QueryRow(ctx, `insert into billing_run_schedules
-			(account_id, sources, finalize, export_provider, hold_on_gaps, delay_hours, next_period_start, next_run_at)
-		values ($1::uuid, $2, $3, $4, $5, $6, $7, $8)
+	out, err := scanBillingRunSchedule(s.pool.QueryRow(ctx, insertBillingRunScheduleSQL+`
 		on conflict (account_id) do update set sources = excluded.sources, finalize = excluded.finalize,
 			export_provider = excluded.export_provider, hold_on_gaps = excluded.hold_on_gaps,
 			delay_hours = excluded.delay_hours, next_period_start = excluded.next_period_start,
-			next_run_at = excluded.next_run_at, updated_at = now()
+			next_run_at = excluded.next_run_at, updated_at = greatest(now(), billing_run_schedules.updated_at + interval '1 microsecond')
 		returning `+billingRunScheduleCols,
 		sched.AccountID, sched.Sources, sched.Finalize, sched.Export, sched.HoldOnGaps, sched.DelayHours, sched.NextPeriodStart, sched.NextRunAt))
 	if err != nil {
 		return BillingRunSchedule{}, fmt.Errorf("put billing run schedule: %w", err)
+	}
+	return out, nil
+}
+
+func (s *PgStore) PutDraftBillingRunSchedule(ctx context.Context, sched BillingRunSchedule, expected time.Time) (BillingRunSchedule, error) {
+	if !sched.DraftOnly() {
+		return BillingRunSchedule{}, ErrInvalidArgument
+	}
+	if err := validateBillingRunSchedule(sched); err != nil {
+		return BillingRunSchedule{}, err
+	}
+	var row pgx.Row
+	if expected.IsZero() {
+		row = s.pool.QueryRow(ctx, insertBillingRunScheduleSQL+
+			` on conflict (account_id) do nothing returning `+billingRunScheduleCols,
+			sched.AccountID, sched.Sources, sched.Finalize, sched.Export, sched.HoldOnGaps, sched.DelayHours, sched.NextPeriodStart, sched.NextRunAt)
+	} else {
+		row = s.pool.QueryRow(ctx, `update billing_run_schedules
+			set delay_hours = $2, next_run_at = $3,
+			    updated_at = greatest(now(), updated_at + interval '1 microsecond')
+			where account_id = $1::uuid and not finalize and export_provider = 'none' and updated_at = $4
+			returning `+billingRunScheduleCols, sched.AccountID, sched.DelayHours, sched.NextRunAt, expected)
+	}
+	out, err := scanBillingRunSchedule(row)
+	if errors.Is(err, ErrNotFound) {
+		return BillingRunSchedule{}, ErrConflict
+	}
+	if err != nil {
+		return BillingRunSchedule{}, fmt.Errorf("put draft billing run schedule: %w", err)
 	}
 	return out, nil
 }
@@ -424,6 +505,18 @@ func (s *PgStore) DeleteBillingRunSchedule(ctx context.Context, accountID string
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *PgStore) DeleteDraftBillingRunSchedule(ctx context.Context, accountID string, expected time.Time) error {
+	tag, err := s.pool.Exec(ctx, `delete from billing_run_schedules
+		where account_id = $1::uuid and not finalize and export_provider = 'none' and updated_at = $2`, accountID, expected)
+	if err != nil {
+		return fmt.Errorf("delete draft billing run schedule: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrConflict
 	}
 	return nil
 }
@@ -458,9 +551,9 @@ func (s *PgStore) StartScheduledBillingRun(ctx context.Context, sched BillingRun
 		return BillingRun{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var current time.Time
-	err = tx.QueryRow(ctx, `select next_period_start from billing_run_schedules where account_id = $1::uuid for update`, sched.AccountID).Scan(&current)
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !current.Equal(sched.NextPeriodStart)) {
+	var current, version time.Time
+	err = tx.QueryRow(ctx, `select next_period_start, updated_at from billing_run_schedules where account_id = $1::uuid for update`, sched.AccountID).Scan(&current, &version)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && (!current.Equal(sched.NextPeriodStart) || !version.Equal(sched.UpdatedAt))) {
 		return BillingRun{}, ErrConflict
 	}
 	if err != nil {
@@ -478,7 +571,7 @@ func (s *PgStore) StartScheduledBillingRun(ctx context.Context, sched BillingRun
 		return BillingRun{}, fmt.Errorf("start scheduled billing run: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `update billing_run_schedules
-		   set last_period_start = $2, next_period_start = $3, next_run_at = $4, updated_at = now()
+		   set last_period_start = $2, next_period_start = $3, next_run_at = $4, updated_at = greatest(now(), updated_at + interval '1 microsecond')
 		 where account_id = $1::uuid`, sched.AccountID, sched.NextPeriodStart, next.NextPeriodStart, next.NextRunAt); err != nil {
 		return BillingRun{}, fmt.Errorf("advance billing run schedule: %w", err)
 	}

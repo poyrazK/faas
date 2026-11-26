@@ -411,6 +411,11 @@ func (s *PgStore) CreateAccountWithPersonalOrg(ctx context.Context, params Creat
 			return CreateAccountWithPersonalOrgResult{}, err
 		}
 	}
+	if u := params.Unclaimed; u != nil {
+		if err := insertUnclaimedAccountTx(ctx, tx, acct.ID, *u); err != nil {
+			return CreateAccountWithPersonalOrgResult{}, err
+		}
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return CreateAccountWithPersonalOrgResult{}, fmt.Errorf("state: commit: %w", err)
@@ -8412,6 +8417,11 @@ func (s *PgStore) createDeploymentOnce(ctx context.Context, d Deployment, activi
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, 0, err
+	}
+	if d.ProjectDeployGroupID != "" {
+		if err := recordProjectDeployGroup(ctx, tx, created, d.ProjectDeployGroupID); err != nil {
+			return Deployment{}, 0, err
+		}
 	}
 	if d.submissionAttemptID != "" {
 		if _, err := attachDeploymentSubmission(ctx, tx, created.AppID, d.submissionAttemptID, created.ID); err != nil {
@@ -17247,7 +17257,7 @@ func (s *PgStore) MatchEdgeRulesForHost(ctx context.Context, host string) ([]Edg
 // regression used returning col = $2; that's always true post-update
 // and silently breaks the entire dedupe gate. The two-return form
 // (old + won) is the load-bearing detail.
-func (s *PgStore) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (deliveryID string, won bool, err error) {
+func (s *PgStore) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (deliveryID string, won bool, recipients AlertFireRecipients, err error) {
 	// The bucket-level dedupe primitive is
 	// `alert_deliveries.idempotency_key` UNIQUE: the FIRST claim
 	// inside a cool-down bucket inserts the delivery row with
@@ -17283,26 +17293,31 @@ func (s *PgStore) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey str
 	// pkg-state-usage-monthly-tz-compare.md).
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return "", false, fmt.Errorf("state: begin tx: %w", err)
+		return "", false, AlertFireRecipients{}, fmt.Errorf("state: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 
 	if _, err := sqlc.New().LockAlertRollbackFireApp(ctx, tx, mustPgUUID(ruleID)); err != nil {
-		return "", false, fmt.Errorf("state: lock alert rollback app: %w", err)
+		return "", false, AlertFireRecipients{}, fmt.Errorf("state: lock alert rollback app: %w", err)
 	}
 
 	mode, err := sqlc.New().LockAlertRuleObservationMode(ctx, tx, mustPgUUID(ruleID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return "", false, ErrNotFound
+			return "", false, AlertFireRecipients{}, ErrNotFound
 		}
-		return "", false, fmt.Errorf("state: claim alert fire lookup %s: %w", ruleID, err)
+		return "", false, AlertFireRecipients{}, fmt.Errorf("state: claim alert fire lookup %s: %w", ruleID, err)
 	}
 	if mode.ObserveOnly {
-		return "", false, nil
+		return "", false, AlertFireRecipients{}, nil
 	}
 	if !alertFireMatchesScope(payload, mode.EnvironmentScope) {
-		return "", false, ErrConflict
+		return "", false, AlertFireRecipients{}, ErrConflict
+	}
+
+	// Older evaluators cannot defer notifications during an observation handoff.
+	if _, err := tx.Exec(ctx, "SELECT set_config('faas.alert_handoff_claim', 'on', true)"); err != nil {
+		return "", false, AlertFireRecipients{}, fmt.Errorf("state: enable alert fire handoff: %w", err)
 	}
 
 	// Insert pending delivery as the dedupe gate. UNIQUE on
@@ -17326,13 +17341,13 @@ func (s *PgStore) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey str
 		// 23505 = unique_violation; the per-bucket dedupe hit.
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return "", false, nil
+			return "", false, AlertFireRecipients{}, nil
 		}
-		return "", false, fmt.Errorf("state: claim alert fire insert %s: %w", ruleID, err)
+		return "", false, AlertFireRecipients{}, fmt.Errorf("state: claim alert fire insert %s: %w", ruleID, err)
 	}
 
 	if err := s.captureAlertRollbackTx(ctx, tx, ruleID, deliveryID, observed, at); err != nil {
-		return "", false, fmt.Errorf("state: capture alert rollback: %w", err)
+		return "", false, AlertFireRecipients{}, fmt.Errorf("state: capture alert rollback: %w", err)
 	}
 
 	// Stamp last_fired_at alongside the INSERT. The stamp is a
@@ -17342,24 +17357,24 @@ func (s *PgStore) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey str
 		`update alert_rules set last_fired_at = $2 where id = $1`,
 		ruleID, at.UTC(),
 	); err != nil {
-		return "", false, fmt.Errorf("state: claim alert fire stamp write %s: %w", ruleID, err)
+		return "", false, AlertFireRecipients{}, fmt.Errorf("state: claim alert fire stamp write %s: %w", ruleID, err)
 	}
 	// The mode edit locks the same row. It either sees this open episode
 	// and queues its terminal events, or it wins before this fire is claimed.
 	var changed int
 	if err := tx.QueryRow(ctx, setAlertRuleStateSQL, ruleID, string(AlertStateFiring), at.UTC(),
 		uuid.NewString(), alertEpisodeKeep, nil).Scan(&changed); err != nil {
-		return "", false, fmt.Errorf("state: open claimed alert episode: %w", err)
+		return "", false, AlertFireRecipients{}, fmt.Errorf("state: open claimed alert episode: %w", err)
 	}
-	if err := sqlc.New().QueueDeferredAlertFires(ctx, tx, mustPgUUID(deliveryID)); err != nil {
-		return "", false, fmt.Errorf("state: queue deferred alert fires: %w", err)
+	recipients, err = claimAlertFireRecipients(ctx, tx, ruleID, deliveryID)
+	if err != nil {
+		return "", false, AlertFireRecipients{}, err
 	}
-	won = true
 
 	if err := tx.Commit(ctx); err != nil {
-		return "", false, fmt.Errorf("state: claim alert fire commit: %w", err)
+		return "", false, AlertFireRecipients{}, fmt.Errorf("state: claim alert fire commit: %w", err)
 	}
-	return deliveryID, won, nil
+	return deliveryID, true, recipients, nil
 }
 
 func (s *PgStore) SetAlertRuleState(ctx context.Context, ruleID string, to AlertState, at time.Time) (bool, error) {
@@ -34107,6 +34122,7 @@ func scanConsumerKeyRow(row pgx.Row) (ConsumerKey, error) {
 		&expiresAt,
 		&lastUsedAt,
 		&revokedAt,
+		&k.EnvironmentID,
 	); err != nil {
 		return ConsumerKey{}, err
 	}
@@ -34123,7 +34139,7 @@ func scanConsumerKeyRow(row pgx.Row) (ConsumerKey, error) {
 // consumerKeySelectCols is the column list every read uses. Keeping
 // the order stable means scanConsumerKeyRow above is the single scan
 // helper, not five copies.
-const consumerKeySelectCols = `id, account_id, app_id, consumer_id, name, prefix, hashed_secret, scopes, created_at, expires_at, last_used_at, revoked_at`
+const consumerKeySelectCols = `id, account_id, app_id, consumer_id, name, prefix, hashed_secret, scopes, created_at, expires_at, last_used_at, revoked_at, coalesce(environment_id::text, '')`
 
 func (s *PgStore) CreateConsumerKey(ctx context.Context, accountID, appID, name, prefix string, hash []byte, scopes []string, expiresAt *time.Time) (ConsumerKey, error) {
 	if accountID == "" || appID == "" {
@@ -34183,7 +34199,7 @@ func (s *PgStore) ListConsumerKeysForApp(ctx context.Context, accountID, appID s
 	rows, err := s.pool.Query(ctx,
 		`select `+consumerKeySelectCols+`
 		   from consumer_keys
-		  where account_id = $1::uuid and app_id = $2::uuid
+		  where account_id = $1::uuid and app_id = $2::uuid and environment_id is null
 		  order by created_at desc`,
 		accountID, appID)
 	if err != nil {
@@ -34266,6 +34282,7 @@ func (s *PgStore) ConsumerKeyByAppAndPrefix(ctx context.Context, accountID, appI
 		  where app_id = $1::uuid
 		    and account_id = $2::uuid
 		    and prefix = $3
+		    and environment_id is null
 		    and not exists (
 		        select 1 from api_consumers c
 		        join platform_tenants t on t.id = c.platform_tenant_id

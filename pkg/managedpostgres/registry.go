@@ -120,6 +120,10 @@ type BackendConfig struct {
 	SecretEnv        map[string]string   `json:"secret_env,omitempty"`
 	// DataAPIEnabled changes the qualified credential contract, not placement.
 	DataAPIEnabled bool `json:"data_api_enabled,omitempty"`
+	// DataAPIInspectionTrustSHA256 pins the CA set used for hosted Data API
+	// inspection. It is public trust configuration, not database placement.
+	// Inspection verification must fence changes to it explicitly.
+	DataAPIInspectionTrustSHA256 string `json:"data_api_inspection_trust_sha256,omitempty"`
 	// AuthEnabled advertises the ADR-1190 auth credential mode under the same
 	// rule: a fresh qualification report must carry its evidence.
 	AuthEnabled bool `json:"auth_enabled,omitempty"`
@@ -310,6 +314,7 @@ func NewRegistry(config Config, getenv func(string) string, factories map[string
 	if _, ok := registry.defaults[registry.DefaultRegion]; !ok {
 		return nil, errors.New("managed postgres: default_region is not configured")
 	}
+	registry.pushSuspendTimeout(registry.SuspendTimeoutSeconds())
 	return registry, nil
 }
 

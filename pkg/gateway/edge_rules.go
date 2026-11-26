@@ -57,7 +57,15 @@ type edgeRuleRequestHeadersContextKey struct{}
 // edge-rule selector evaluation. Later header-rewrite actions cannot change
 // which rules matched the original request.
 func WithEdgeRuleRequestHeaders(ctx context.Context, headers http.Header) context.Context {
-	return context.WithValue(ctx, edgeRuleRequestHeadersContextKey{}, headers.Clone())
+	return withEdgeRuleRequestHeaderSnapshot(ctx, headers.Clone())
+}
+
+// withEdgeRuleRequestHeaderSnapshot stores a snapshot the caller already
+// cloned and will never modify. The handler shares one snapshot between this
+// and its EdgeRuleMatchContext: both only read it, and a second clone of
+// every request's headers was ~5 allocations per request.
+func withEdgeRuleRequestHeaderSnapshot(ctx context.Context, snapshot http.Header) context.Context {
+	return context.WithValue(ctx, edgeRuleRequestHeadersContextKey{}, snapshot)
 }
 
 // EdgeRuleRequestHeaders returns the immutable inbound-header snapshot put in

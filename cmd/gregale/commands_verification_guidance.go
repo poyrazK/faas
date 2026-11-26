@@ -24,7 +24,12 @@ func renderAppHealthVerification(w io.Writer, slug string, health api.AppHealthR
 		_, _ = fmt.Fprintf(w, "Request evidence as of: %s\n", compactInspectFailureText(health.MetricsAsOf))
 	}
 	_, _ = fmt.Fprintln(w, "This read uses recorded evidence and does not wake the app or prove every route and workload is healthy.")
-	if health.Status != "healthy" {
-		_, _ = fmt.Fprintf(w, "Next investigation (POSIX shells):\n  %s inspect %s\n", recoveryCLI(), recoveryArgument(slug))
+	switch {
+	case health.Phase == "unsupported":
+		// A worker or job serves no HTTP; --explain repeated that (prod
+		// hunt r57). Its pool status is where a worker's health shows.
+		_, _ = fmt.Fprintf(w, "Next investigation (POSIX shells):\n  %s worker status %s\n", recoveryCLI(), recoveryArgument(slug))
+	case health.Status != "healthy":
+		_, _ = fmt.Fprintf(w, "Next investigation (POSIX shells):\n  %s app health %s --explain\n", recoveryCLI(), recoveryArgument(slug))
 	}
 }

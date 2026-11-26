@@ -40,7 +40,7 @@ func (s *server) checkedRollbackCheck(ctx context.Context, operation api.Rollbac
 		}
 	}
 
-	if operation.Status == "preparing" {
+	if operation.Status == "preparing" && operation.ProjectRollbackID == "" {
 		return "preparing", "", nil, nil
 	}
 	if operation.Status == "routing" {
@@ -59,6 +59,12 @@ func (s *server) checkedRollbackCheck(ctx context.Context, operation api.Rollbac
 	app, err := s.store.AppByID(ctx, operation.AppID)
 	if err != nil {
 		return "", "", nil, err
+	}
+	if operation.ProjectRollbackID != "" && app.ProjectID == "" {
+		return "failed", api.CodeProjectRollbackPreparationReleased, operation.Blockers, nil
+	}
+	if operation.Status == "preparing" {
+		return "preparing", "", nil, nil
 	}
 	if operation.Service != (app.Manifest.ExecutionMode == api.ExecutionModeService) {
 		return "failed", "rollback_execution_mode_changed", nil, nil
@@ -109,6 +115,18 @@ func (s *server) checkedRollbackCheck(ctx context.Context, operation api.Rollbac
 	})
 	if problem != nil {
 		return rollbackProblemStatus(problem)
+	}
+	if errors.Is(err, state.ErrProjectRollbackHeld) {
+		return "ready", api.CodeProjectRollbackPrepared, nil, nil
+	}
+	if errors.Is(err, state.ErrProjectRollbackPaused) {
+		return "failed", api.CodeProjectRollbackPaused, operation.Blockers, nil
+	}
+	if errors.Is(err, state.ErrProjectRollbackPreparationEnded) {
+		return "failed", api.CodeProjectRollbackPreparationExpired, operation.Blockers, nil
+	}
+	if errors.Is(err, state.ErrProjectRollbackUndoArtifactsUnavailable) {
+		return "failed", api.CodeProjectRollbackUndoArtifactsUnavailable, nil, nil
 	}
 	if errors.Is(err, state.ErrRollbackCrossesRelease) {
 		return "failed", api.CodeRollbackCrossesRelease, nil, nil
