@@ -6379,6 +6379,26 @@ report `not_submitted`, and individual read failures report `unavailable`
 with an SDK error code. The group directory holds the existing receipts and
 acknowledgements, while the collector returns payloads in memory.
 
+#### Inspect a saved Task group from the CLI
+
+Use the endpoint the Node SDK group was saved against and a current MCP
+client token. A renewed token can read Tasks that its principal is still
+authorized to access.
+
+```sh
+gregale mcp client group status \
+  --url https://reports.example.com/mcp --token-env MCP_TOKEN \
+  --group ./receipts/weekly-batch
+```
+
+The JSON array follows the saved receipt order. Each available Task includes
+its status and next action. Members without an admission receipt report
+`not_submitted`. A present receipt that cannot be read reports
+`invalid_receipt`, and a read the server cannot confirm reports
+`unavailable` or `retry`. Add `--include-results` to include retained
+results for completed Tasks and execution errors for failed Tasks. Pending
+form contents stay private, and inspecting the group leaves its files intact.
+
 #### Stop a Task group from TypeScript
 
 Call `stopMcpTaskGroup` with the saved group path and the current authorized

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { fork } from 'node:child_process';
+import { execFile, fork } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
@@ -10,6 +10,7 @@ import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
 
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import {
@@ -582,6 +583,14 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
     await createMcpTaskGroup(resultGroup, resultReceipts);
 
     const scope = 'mcp:tools reports:read';
+    const gregale = process.env.MCP_TASKS_TEST_GREGALE;
+    async function readGroupCLI(path, token, ...flags) {
+      const { stdout } = await promisify(execFile)(gregale, [
+        'mcp', 'client', 'group', 'status', '--url', endpoint.href, '--group', path,
+        '--token-env', 'MCP_TASK_GROUP_FIXTURE_TOKEN', '--timeout', '4s', ...flags,
+      ], { env: { ...process.env, MCP_TASK_GROUP_FIXTURE_TOKEN: token }, timeout: 5_000 });
+      return JSON.parse(stdout);
+    }
     const firstReader = await startAgent({
       token: await mint('erin', scope), groupPath: resultGroup, collectResults: true,
     });
@@ -615,8 +624,35 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
     assert.deepEqual(collected[3].task.error, retainedError);
     assert.equal(JSON.stringify(collected).includes(hiddenPayload.content[0].text), false);
 
+    if (gregale) {
+      const groupToken = await mint('erin', scope, '6m');
+      const before = await readFile(join(resultGroup, 'group.json'));
+      const metadata = await readGroupCLI(resultGroup, groupToken);
+      assert.deepEqual(metadata.map(({ receiptIndex, outcome, task }) =>
+        [receiptIndex, outcome, task?.status, task?.nextAction]), [
+        [0, 'available', 'completed', 'read_result'],
+        [1, 'available', 'input_required', 'provide_input'],
+        [2, 'unavailable', undefined, undefined],
+        [3, 'available', 'failed', 'none'],
+      ]);
+      assert.equal(metadata[0].task.taskId, completedResult.task_id);
+      assert.deepEqual(metadata[2], { receiptIndex: 2, outcome: 'unavailable' });
+      for (const { task } of metadata) {
+        if (!task) continue;
+        for (const field of ['result', 'error', 'inputRequests', 'statusMessage']) {
+          assert.equal(Object.hasOwn(task, field), false);
+        }
+      }
+      const payloads = await readGroupCLI(resultGroup, groupToken, '--include-results');
+      assert.deepEqual(payloads[0].task.result, retained);
+      assert.deepEqual(payloads[1], metadata[1]);
+      assert.deepEqual(payloads[2], metadata[2]);
+      assert.deepEqual(payloads[3].task.error, retainedError);
+      assert.deepEqual(await readFile(join(resultGroup, 'group.json')), before);
+    }
+
     const renewableGroup = join(groupRoot, 'renewed-credential');
-    const renewable = ['one', 'two', 'three'].map(name => ({
+    const renewable = ['one', 'two', 'three', 'four'].map(name => ({
       toolName: 'build_report', arguments: { report: `group credential renewal ${name}`, steps: 1 },
     }));
     const expiresAt = Math.floor(Date.now() / 1_000) + 5;
@@ -681,12 +717,23 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
 
     const renewed = await mint('gina', scope);
     assert.notEqual(renewed, expiring);
+    if (gregale) {
+      const metadata = await readGroupCLI(renewableGroup, renewed);
+      assert.deepEqual(metadata.map(entry => [entry.receiptIndex, entry.outcome, entry.task?.taskId]), [
+        [0, 'available', confirmed.taskId],
+        [1, 'available', lostOnRenewal],
+        [2, 'not_submitted', undefined],
+        [3, 'not_submitted', undefined],
+      ]);
+      await assert.rejects(stat(join(renewableGroup, 'member-2.json')), { code: 'ENOENT' });
+    }
     const resumedRenewal = await startAgent({
       token: renewed, groupPath: renewableGroup, continuation: { receiptIndex: 2, submission: renewable[2] },
     });
     const [{ recovered: afterRenewal }] = await resumedRenewal.waitForEvents(1);
     assert.deepEqual(afterRenewal.map(entry => [entry.outcome, entry.task?.taskId]), [
       ['accepted', confirmed.taskId], ['accepted', lostOnRenewal], ['prepared', undefined],
+      ['prepared', undefined],
     ]);
     resumedRenewal.child.send('continue');
     const [, { continued: admittedAfterRenewal }] = await resumedRenewal.waitForEvents(2);
@@ -699,6 +746,31 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
     assert.equal(renewedTasks.length, 3);
     assert.deepEqual(new Set(renewedTasks), new Set([confirmed.taskId, lostOnRenewal, replay.task.taskId]));
     assert.equal(admissionProbe.thirdKeys.size, 1);
+
+    if (gregale) {
+      const completed = await store.claim(3, 30_000);
+      const paused = await store.claim(3, 30_000);
+      assert.equal(completed.task_id, confirmed.taskId);
+      assert.equal(paused.task_id, lostOnRenewal);
+      assert.equal(await store.complete(completed.task_id, completed.lease_token, retained), 'completed');
+      await requestInput(paused);
+      const expiredMember = await pool.query(
+        'UPDATE gregale_mcp_tasks SET expires_at = clock_timestamp() WHERE namespace = $1 AND task_id = $2',
+        [schema, replay.task.taskId],
+      );
+      assert.equal(expiredMember.rowCount, 1);
+      const beforeRead = groupRequests.submissions;
+      const mixed = await readGroupCLI(renewableGroup, renewed);
+      assert.deepEqual(mixed.map(({ receiptIndex, outcome, task }) =>
+        [receiptIndex, outcome, task?.status, task?.nextAction]), [
+        [0, 'available', 'completed', 'read_result'],
+        [1, 'available', 'input_required', 'provide_input'],
+        [2, 'unavailable', undefined, undefined],
+        [3, 'not_submitted', undefined, undefined],
+      ]);
+      assert.equal(groupRequests.submissions, beforeRead);
+      await assert.rejects(stat(join(renewableGroup, 'member-3.json')), { code: 'ENOENT' });
+    }
   } finally {
     admissionProbe?.release.resolve();
     stopProbe?.release.resolve();

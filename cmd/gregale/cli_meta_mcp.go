@@ -301,6 +301,13 @@ func mcpCLICommand() cliCommand {
 		{Name: "prompt-get", Short: "Render one explicitly selected prompt", Positionals: []string{"[<slug>]"}, Flags: remote, Examples: []string{`gregale mcp client render --app my-mcp --prompt summarize --arguments '{"text":"weekly report"}'`}},
 		{Name: "complete", Short: "Request bounded suggestions for a prompt or resource-template argument", Flags: completionFlags, Examples: []string{"gregale mcp client complete --app my-mcp --prompt summarize --argument style --value exec", "gregale mcp client complete --app my-mcp --resource-template 'customer://records/{recordId}' --argument recordId --value example-"}},
 		{Name: "call", Short: "Execute one discovered tool; opt in to input requests or durable tasks", Positionals: []string{"[<slug>]"}, Flags: callFlags, Examples: []string{`gregale mcp client call --app my-mcp --tool add --arguments '{"a":7,"b":5}'`, `gregale mcp client call --app my-mcp --tool report_preview --wait`, `gregale mcp client call --app my-mcp --tool report_preview --tasks`}},
+		{Name: "task-group-status", Short: "Read the current status of a saved Node SDK Task group", Flags: []cliFlag{
+			{Name: "url", Short: "MCP endpoint URL used to save the group", Value: "URL", Req: true},
+			{Name: "token-env", Short: "environment variable containing a current MCP client token", Value: "ENV", Req: true},
+			{Name: "group", Short: "private group directory saved by the Node SDK", Value: "DIR", Req: true},
+			{Name: "include-results", Short: "include retained results and execution errors", Bool: true},
+			{Name: "timeout", Short: "total Task read deadline (default 30s)", Value: "DURATION"},
+		}, Examples: []string{"gregale mcp client group status --url https://reports.example.com/mcp --token-env MCP_TOKEN --group ./reports"}},
 		{Name: "task-inbox", Short: "List your retained Task metadata on a server", Flags: taskInboxFlags, Examples: []string{"gregale mcp client inbox --app my-mcp --token-env MCP_TOKEN --status input_required", "gregale mcp client inbox --app my-mcp --token-env MCP_TOKEN --status input_required --watch"}},
 		{Name: "task-get", Short: "Read the status or result of a previously returned task handle", Positionals: []string{"[<slug>]"}, Flags: taskStatusFlags, Examples: []string{"gregale mcp client status --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840"}},
 		{Name: "task-wait", Short: "Resume waiting for a task to finish", Positionals: []string{"[<slug>]"}, Flags: taskWaitFlags, Examples: []string{"gregale mcp client wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840", "gregale mcp client wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840 --interactive"}},

@@ -476,7 +476,8 @@ jobs:
         run: |
           npm ci --prefix sdk/node --ignore-scripts --no-audit --no-fund
           npm --prefix sdk/node run build
-          MCP_TASKS_TEST_NODE_STARTER="$RUNNER_TEMP/mcp-starter" node --test scripts/ops/mcp-sdk-client/task-inbox.test.mjs
+          MCP_TASKS_TEST_GREGALE="$RUNNER_TEMP/gregale" MCP_TASKS_TEST_NODE_STARTER="$RUNNER_TEMP/mcp-starter" \
+            node --test scripts/ops/mcp-sdk-client/task-inbox.test.mjs
           PYTHONPATH="$RUNNER_TEMP/mcp-python-tasks" "$RUNNER_TEMP/mcp-python-venv/bin/python" scripts/ops/mcp-sdk-client/task-input-review.py
       - name: Qualify all starter runtimes with the official MCP SDK
         shell: bash

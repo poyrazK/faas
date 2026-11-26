@@ -97,6 +97,8 @@ func cmdMCP(args []string) int {
 		return cmdMCPComplete(args[1:])
 	case "task-inbox":
 		return cmdMCPTaskInbox(args[1:])
+	case "task-group-status":
+		return cmdMCPTaskGroupStatus(args[1:])
 	case "doctor":
 		for i, arg := range args[1:] {
 			if arg == "--stack" {

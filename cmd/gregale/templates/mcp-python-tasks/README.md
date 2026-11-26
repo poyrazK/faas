@@ -360,7 +360,7 @@ subject and client ID can now find the pending Task from a fresh profile.
 Use a token with the current scope for the tool.
 
 ```sh
-gregale mcp client inbox --url "$MCP_URL" --token-env MCP_TOKEN --status input_required --watch
+gregale mcp client inbox --url "$MCP_URL" --token-env MCP_TOKEN --status input_required --follow
 gregale mcp client status --url "$MCP_URL" --token-env MCP_TOKEN --task-id TASK_ID --write-input-template ./review.json
 ```
 

@@ -4305,12 +4305,12 @@ Add an edge rule
 Examples:
 
 ```sh
-gregale edge rule create --app my-api --kind throttle --match-host my-api.gregale.app --match-path /search --throttle-requests-per-second 5 --throttle-burst 10
-gregale edge rule create --app my-api --kind throttle --match-host my-api.gregale.app --match-path /login --throttle-requests-per-second 0.1 --throttle-burst 5 --throttle-key-by composite --throttle-key-field ip --throttle-key-field header:x-username --throttle-count-status 401
-gregale edge rule create --app my-api --kind redirect --match-host my-api.gregale.app --match-path /old --redirect-status 308 --redirect-to https://my-api.gregale.app/new
-gregale edge rule create --app my-api --kind cache --match-host my-api.gregale.app --match-path /catalog --cache-max-age-seconds 60
+gregale edge rule create --app my-api --kind throttle --match-host my-api.gregale.dev --match-path /search --throttle-requests-per-second 5 --throttle-burst 10
+gregale edge rule create --app my-api --kind throttle --match-host my-api.gregale.dev --match-path /login --throttle-requests-per-second 0.1 --throttle-burst 5 --throttle-key-by composite --throttle-key-field ip --throttle-key-field header:x-username --throttle-count-status 401
+gregale edge rule create --app my-api --kind redirect --match-host my-api.gregale.dev --match-path /old --redirect-status 308 --redirect-to https://my-api.gregale.dev/new
+gregale edge rule create --app my-api --kind cache --match-host my-api.gregale.dev --match-path /catalog --cache-max-age-seconds 60
 gregale edge rule create --app my-site --kind challenge --match-host @app --match-path '/*' --match '{"field":"verified_bot","op":"missing"}'
-gregale edge rule create --app my-api --kind budget --match-host my-api.gregale.app --match-path /reports --budget-ms 20000
+gregale edge rule create --app my-api --kind budget --match-host my-api.gregale.dev --match-path /reports --budget-ms 20000
 gregale edge rule create --app my-api --kind validate --match-host api.example.com --validate-schema @schema.json --validate-content-type application/json --validate-mode block
 cat schema.json | gregale edge rule create --app my-api --kind validate --match-host api.example.com --validate-schema -
 gregale edge rule create --app my-api --kind validate --match-host api.example.com --match-path '/users/?*' --match-method GET --validate-path-template '/users/{id}' --validate-path-schema '{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}' --validate-query-schema @query.json
