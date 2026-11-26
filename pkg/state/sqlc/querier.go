@@ -7564,7 +7564,10 @@ type Querier interface {
 	// Records the week's notices (ADR-20261125231222): each ready scale-to-zero
 	// database awake at least min_awake_seconds over [week_start, week_start+7d)
 	// whose most frequent cause holds at least min_cause_percent of its starts.
-	// A database already noticed for the week is left alone.
+	// A database already noticed for the week is left alone. A start ends at
+	// its suspend or else the database's next start; one with neither (its
+	// suspend not read yet) counts no awake time, so a notice never claims time
+	// it cannot show.
 	RecordManagedPostgresAwakeNotices(ctx context.Context, db DBTX, arg RecordManagedPostgresAwakeNoticesParams) (int64, error)
 	// ADR-20261025094915: compute cap thresholds a usage subject reached in a
 	// UTC month. One row per subject, month and threshold; the first sweep to

@@ -3191,9 +3191,9 @@ longer active or is being deleted.
 gates the weekly awake emails of
 [ADR-20261125231222](../adr/20261125231222-managed-postgres-activity.md) in
 apid, maild and private reconciliation. Units and examples keep it off. Apply
-[`20261125231222100_managed_postgres_activity.sql`](../../migrations/20261125231222100_managed_postgres_activity.sql)
+[`20261126134203100_managed_postgres_activity.sql`](../../migrations/20261126134203100_managed_postgres_activity.sql)
 and
-[`20261126120000100_platform_mail_managed_postgres_awake.sql`](../../migrations/20261126120000100_platform_mail_managed_postgres_awake.sql)
+[`20261126141506100_platform_mail_managed_postgres_awake.sql`](../../migrations/20261126141506100_platform_mail_managed_postgres_awake.sql)
 before opting in. It has the same gate, transport and reader requirements as
 the compute cap notices above. With the gate off apid still records notices but
 mails none; turning it on mails those recorded within the email's lifetime.

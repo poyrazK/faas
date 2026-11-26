@@ -238,6 +238,12 @@ type MailSuppression struct {
 	ExpiresAt pgtype.Timestamptz
 }
 
+// Wake-with-app start claims, matched to recorded compute starts; pruned with them after 30 days; written only by apid.
+type ManagedPostgresAppWakeStart struct {
+	DatabaseID pgtype.UUID
+	ClaimedAt  pgtype.Timestamptz
+}
+
 // Weekly notices that one cause kept a managed PostgreSQL database awake; mailed once; written only by apid.
 type ManagedPostgresAwakeNotice struct {
 	DatabaseID   pgtype.UUID

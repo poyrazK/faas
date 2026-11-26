@@ -1413,7 +1413,20 @@ CREATE INDEX IF NOT EXISTS managed_postgres_compute_starts_started_idx
     ON managed_postgres_compute_starts (database_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS managed_postgres_compute_starts_account_idx
     ON managed_postgres_compute_starts (account_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS managed_postgres_compute_starts_prune_idx
+    ON managed_postgres_compute_starts (started_at);
 COMMENT ON TABLE managed_postgres_compute_starts IS 'Starts of a managed PostgreSQL database''s compute with their likely cause (diagnosis, never billing); pruned after 30 days; written only by apid.';
+
+-- One row per wake-with-app claim, so a start read an hour later still finds
+-- the claim that caused it after later claims moved last_started_at.
+CREATE TABLE IF NOT EXISTS managed_postgres_app_wake_starts (
+    database_id uuid NOT NULL REFERENCES managed_postgres_databases(id) ON DELETE CASCADE,
+    claimed_at timestamptz NOT NULL CHECK (isfinite(claimed_at)),
+    PRIMARY KEY (database_id, claimed_at)
+);
+CREATE INDEX IF NOT EXISTS managed_postgres_app_wake_starts_prune_idx
+    ON managed_postgres_app_wake_starts (claimed_at);
+COMMENT ON TABLE managed_postgres_app_wake_starts IS 'Wake-with-app start claims, matched to recorded compute starts; pruned with them after 30 days; written only by apid.';
 
 CREATE TABLE IF NOT EXISTS managed_postgres_awake_notices (
     database_id uuid NOT NULL REFERENCES managed_postgres_databases(id) ON DELETE CASCADE,

@@ -1,4 +1,4 @@
--- filename: 20261126120000100_platform_mail_managed_postgres_awake.sql
+-- filename: 20261126141506100_platform_mail_managed_postgres_awake.sql
 -- migration-compat: contract
 -- migration-lint: allow dynamic-ddl: each DROP is followed in the same transaction by the same-named CHECK with one more template, so the previous release's writes stay admitted; no table, column or name it reads goes away
 

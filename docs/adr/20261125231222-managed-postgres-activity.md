@@ -120,6 +120,6 @@ with no suspend and no later start counts no time in a notice.
 - Nothing new is billed and no plan changes. The table is operational data
   (not cloned into environments).
 - Rollout: the migration, then apid. An older apid ignores the table. The
-  email adds `20261126120000100_platform_mail_managed_postgres_awake.sql`
+  email adds `20261126141506100_platform_mail_managed_postgres_awake.sql`
   (widens the outbox template CHECKs; marked contract, so a full release
   applies it); deploy maild with apid, then turn the gate on for both.

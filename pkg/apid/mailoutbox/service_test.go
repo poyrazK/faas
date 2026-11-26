@@ -84,8 +84,8 @@ func migrationParts(t *testing.T) (string, string) {
 	egressHeldUp, egressHeldDown := migrationSectionParts(t, "20261111160000418_managed_postgres_cap_events_egress_held.sql")
 	reminderUp, reminderDown := migrationSectionParts(t, "20261112120000312_managed_postgres_plan_excess_reminder.sql")
 	egressNoticeUp, egressNoticeDown := migrationSectionParts(t, "20261113170412214_managed_postgres_egress_hold_notices.sql")
-	activityUp, activityDown := migrationSectionParts(t, "20261125231222100_managed_postgres_activity.sql")
-	awakeUp, awakeDown := migrationSectionParts(t, "20261126120000100_platform_mail_managed_postgres_awake.sql")
+	activityUp, activityDown := migrationSectionParts(t, "20261126134203100_managed_postgres_activity.sql")
+	awakeUp, awakeDown := migrationSectionParts(t, "20261126141506100_platform_mail_managed_postgres_awake.sql")
 	return up + "\n" + reconcileUp + "\n" + verificationUp + "\n" + resetUp + "\n" + magicUp + "\n" + alertUp + "\n" + disableUp + "\n" + disabledUp + "\n" + changedUp + "\n" + enabledUp + "\n" + paymentUp + "\n" + restoredUp + "\n" + suspendedUp + "\n" + nonpaymentUp + "\n" + quotaUp + "\n" + endedUp + "\n" + deployUp + "\n" + scopeShapeUp + "\n" + capUp + "\n" + agentUp + "\n" + slotUp + "\n" + planUp + "\n" + planDeleteUp + "\n" + egressHeldUp + "\n" + reminderUp + "\n" + egressNoticeUp + "\n" + activityUp + "\n" + awakeUp, awakeDown + "\n" + activityDown + "\n" + egressNoticeDown + "\n" + reminderDown + "\n" + egressHeldDown + "\n" + planDeleteDown + "\n" + planDown + "\n" + slotDown + "\n" + agentDown + "\n" + capDown + "\n" + scopeShapeDown + "\n" + deployDown + "\n" + endedDown + "\n" + quotaDown + "\n" + nonpaymentDown + "\n" + suspendedDown + "\n" + restoredDown + "\n" + paymentDown + "\n" + enabledDown + "\n" + changedDown + "\n" + disabledDown + "\n" + disableDown + "\n" + alertDown + "\n" + magicDown + "\n" + resetDown + "\n" + verificationDown + "\n" + reconcileDown + "\n" + down
 }
 
