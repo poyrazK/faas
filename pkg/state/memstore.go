@@ -25963,7 +25963,7 @@ func (m *MemStore) AlertRuleByAccountAppAndPresetName(_ context.Context, account
 	prefix := preset.DisplayName + " ("
 	var matched []AlertRule
 	for _, r := range m.alertRules {
-		if r.AccountID == accountID && r.AppID == appID && strings.HasPrefix(r.Name, prefix) {
+		if r.AccountID == accountID && r.AppID == appID && r.EnvironmentID == "" && strings.HasPrefix(r.Name, prefix) {
 			matched = append(matched, r)
 		}
 	}

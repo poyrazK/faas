@@ -106,6 +106,12 @@ func TestPgAlertRuleEnvironments(t *testing.T) {
 	if n, err := store.CountFailedInvocationsInEnvironmentSince(ctx, account.ID, app.ID, stage.ID, state.InvocationQueue, now.Add(-time.Hour)); err != nil || n != 0 {
 		t.Fatalf("stage queue failures = %d, %v; want 0", n, err)
 	}
+	// Production's rules count only production's failure, app or account wide.
+	for _, appID := range []string{app.ID, ""} {
+		if n, err := store.CountFailedProductionInvocationsSince(ctx, account.ID, appID, "", now.Add(-time.Hour)); err != nil || n != 1 {
+			t.Fatalf("production failures (app %q) = %d, %v; want 1", appID, n, err)
+		}
+	}
 
 	// Deleting the stage removes its rules.
 	if _, err := pool.Exec(ctx, `delete from invocations where environment_id = $1::uuid`, stage.ID); err != nil {

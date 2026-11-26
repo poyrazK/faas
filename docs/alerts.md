@@ -116,6 +116,18 @@ Add `--notify-resolved` (`notify_resolved` in the API) to also receive a signed 
 
 For dashboards and SLOs, use the app metrics endpoint and correlate alert event ids with deployment ids. Never put credentials in an alert URL.
 
+## Alerts in a stage
+
+A stage (a project environment other than production) can have its own
+rules: `gregale alert add --environment staging ...` and `gregale alert list
+--environment staging` (`?environment=staging` in the API). A stage's rule
+watches only the requests its host served (`request_count`,
+`error_rate_pct`, `latency_p50_ms`/`p95`/`p99`, `cold_start_pct`) or its own
+`failed_invocations`, with `gt`, `gte`, `lt` or `lte` and a webhook action.
+Production's rules leave every stage's traffic out. A stage's deliveries
+carry `app_id` and `environment_id`. Stage rules are rolling out and may
+answer 501 until they are available on your deployment.
+
 ## Notification channels
 
 Channels deliver alerts to Slack, PagerDuty or email without a webhook

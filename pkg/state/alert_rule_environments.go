@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // Stage alert rules (ADR-20261104120000 amendment 2026-11-22). A rule with an
@@ -13,11 +17,10 @@ import (
 // alert_rules_environment_enabled_chk constraint holds the same rule.
 
 // stageAlertRuleMetrics are the metrics a stage rule can run on: request
-// metrics the gateway counts per environment host, and failed invocations,
-// which carry their environment.
-var stageAlertRuleMetrics = map[AlertMetric]bool{
-	"request_count": true, "error_rate_pct": true, "latency_p50_ms": true, "latency_p95_ms": true,
-	"latency_p99_ms": true, "cold_start_pct": true, "failed_invocations": true,
+// metrics the gateway counts per stage host, and failed invocations, which
+// carry their environment.
+var stageAlertRuleMetrics = []AlertMetric{
+	"request_count", "error_rate_pct", "latency_p50_ms", "latency_p95_ms", "latency_p99_ms", "cold_start_pct", "failed_invocations",
 }
 
 // ErrStageAlertRuleNotRunnable refuses enabling a stage rule that reads a
@@ -33,26 +36,39 @@ func StageAlertRuleRunnable(r AlertRule) bool {
 	default:
 		return false
 	}
-	return stageAlertRuleMetrics[r.Metric] && (r.Action == "" || r.Action == "webhook") && r.AppID != ""
+	if r.AppID == "" || r.Action != "" && r.Action != "webhook" {
+		return false
+	}
+	for _, m := range stageAlertRuleMetrics {
+		if r.Metric == m {
+			return true
+		}
+	}
+	return false
 }
 
 // StageAlertRuleMetrics lists the metrics StageAlertRuleRunnable accepts.
 func StageAlertRuleMetrics() []AlertMetric {
-	out := make([]AlertMetric, 0, len(stageAlertRuleMetrics))
-	for _, m := range []AlertMetric{"request_count", "error_rate_pct", "latency_p50_ms", "latency_p95_ms", "latency_p99_ms", "cold_start_pct", "failed_invocations"} {
-		if stageAlertRuleMetrics[m] {
-			out = append(out, m)
-		}
-	}
-	return out
+	return append([]AlertMetric(nil), stageAlertRuleMetrics...)
 }
 
-// AlertRuleEnvironmentStore reads a stage's own failed invocations for its
-// alert rules.
+// AlertRuleEnvironmentStore keeps production's and each stage's alert rules
+// to their own failed invocations.
 type AlertRuleEnvironmentStore interface {
+	// CountFailedProductionInvocationsSince is CountFailedInvocationsSince
+	// over production's invocations only; appID "" counts every app.
+	CountFailedProductionInvocationsSince(ctx context.Context, accountID, appID string, source InvocationSource, since time.Time) (int, error)
 	// CountFailedInvocationsInEnvironmentSince is CountFailedInvocationsSince
 	// over one app's invocations owned by environmentID.
 	CountFailedInvocationsInEnvironmentSince(ctx context.Context, accountID, appID, environmentID string, source InvocationSource, since time.Time) (int, error)
+}
+
+func (m *MemStore) CountFailedProductionInvocationsSince(_ context.Context, accountID, appID string, source InvocationSource, since time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.countFailedInvocationsLocked(accountID, appID, since, func(inv Invocation) bool {
+		return inv.EnvironmentID == "" && (source == "" || inv.Source == source) && !m.rehearsalAlertExcludedLocked(appID, inv.AppID)
+	}), nil
 }
 
 func (m *MemStore) CountFailedInvocationsInEnvironmentSince(_ context.Context, accountID, appID, environmentID string, source InvocationSource, since time.Time) (int, error) {
@@ -61,9 +77,17 @@ func (m *MemStore) CountFailedInvocationsInEnvironmentSince(_ context.Context, a
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.countFailedInvocationsLocked(accountID, appID, since, func(inv Invocation) bool {
+		return inv.EnvironmentID == environmentID && (source == "" || inv.Source == source)
+	}), nil
+}
+
+// countFailedInvocationsLocked counts the account's terminal failures since
+// since, of appID ("" = every app), that keep accepts.
+func (m *MemStore) countFailedInvocationsLocked(accountID, appID string, since time.Time, keep func(Invocation) bool) int {
 	n := 0
 	for _, inv := range m.invocations {
-		if inv.AccountID != accountID || inv.AppID != appID || inv.EnvironmentID != environmentID {
+		if inv.AccountID != accountID || appID != "" && inv.AppID != appID {
 			continue
 		}
 		if inv.State != InvocationFailed && inv.State != InvocationDeadLetter {
@@ -73,31 +97,44 @@ func (m *MemStore) CountFailedInvocationsInEnvironmentSince(_ context.Context, a
 		if inv.CompletedAt != nil {
 			failedAt = *inv.CompletedAt
 		}
-		if failedAt.Before(since) || source != "" && inv.Source != source {
+		if failedAt.Before(since) || !keep(inv) {
 			continue
 		}
 		n++
 	}
-	return n, nil
+	return n
+}
+
+func (s *PgStore) CountFailedProductionInvocationsSince(ctx context.Context, accountID, appID string, source InvocationSource, since time.Time) (int, error) {
+	account, accountErr := alertPgUUID(accountID)
+	app, appErr := alertPgUUID(appID)
+	if accountErr != nil || appErr != nil || !account.Valid {
+		return 0, ErrInvalidArgument
+	}
+	n, err := sqlc.New().CountFailedProductionInvocationsSince(ctx, s.pool, sqlc.CountFailedProductionInvocationsSinceParams{
+		AccountID: account, AppID: app, Source: invocationSourceText(source), Since: pgtype.Timestamptz{Time: since.UTC(), Valid: true}})
+	if err != nil {
+		return 0, mapErr(err)
+	}
+	return int(n), nil
 }
 
 func (s *PgStore) CountFailedInvocationsInEnvironmentSince(ctx context.Context, accountID, appID, environmentID string, source InvocationSource, since time.Time) (int, error) {
-	if appID == "" || environmentID == "" {
+	account, accountErr := alertPgUUID(accountID)
+	app, appErr := alertPgUUID(appID)
+	environment, envErr := alertPgUUID(environmentID)
+	if accountErr != nil || appErr != nil || envErr != nil || !account.Valid || !app.Valid || !environment.Valid {
 		return 0, ErrInvalidArgument
 	}
-	var sourceArg any
-	if source != "" {
-		sourceArg = string(source)
-	}
-	var n int
-	if err := s.pool.QueryRow(ctx, `
-		select count(*) from invocations
-		 where account_id = $1::uuid and app_id = $2::uuid and environment_id = $3::uuid
-		   and state in ('failed', 'dead_letter')
-		   and coalesce(completed_at, created_at) >= $4
-		   and ($5::text is null or source = $5::text)`,
-		accountID, appID, environmentID, since.UTC(), sourceArg).Scan(&n); err != nil {
+	n, err := sqlc.New().CountFailedInvocationsInEnvironmentSince(ctx, s.pool, sqlc.CountFailedInvocationsInEnvironmentSinceParams{
+		AccountID: account, AppID: app, EnvironmentID: environment, Source: invocationSourceText(source),
+		Since: pgtype.Timestamptz{Time: since.UTC(), Valid: true}})
+	if err != nil {
 		return 0, mapErr(err)
 	}
-	return n, nil
+	return int(n), nil
+}
+
+func invocationSourceText(source InvocationSource) pgtype.Text {
+	return pgtype.Text{String: string(source), Valid: source != ""}
 }

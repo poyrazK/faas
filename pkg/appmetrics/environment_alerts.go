@@ -84,3 +84,43 @@ func environmentAlertQuery(appID, environmentID, rng, metric string) (string, fu
 	}
 	return "", nil, false
 }
+
+// productionAlertQuery is a production rule's request metric: the app's
+// requests minus those its stages' hosts served (gateway_environment_*), so
+// a stage's traffic fires only the stage's rules (ADR-20261104120000). It
+// returns false for a metric the request series do not back.
+func productionAlertQuery(appID, rng, metric string) (string, func(float64) float64, bool) {
+	app := fmt.Sprintf(`app=%q`, appID)
+	// minus subtracts the stages' scalar, which is absent when no stage
+	// served a request.
+	minus := func(all, stages string) string { return fmt.Sprintf(`(%s - (%s or vector(0)))`, all, stages) }
+	count := func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
+	switch metric {
+	case "request_count":
+		return fmt.Sprintf(`%s or vector(0)`, minus(
+			fmt.Sprintf(`sum(increase(gateway_request_duration_seconds_count{%s}[%s]))`, app, rng),
+			fmt.Sprintf(`sum(increase(gateway_environment_request_duration_seconds_count{%s}[%s]))`, app, rng))), count, true
+	case "error_rate_pct":
+		failed := minus(FailedRequestsQuery("rate", appID, rng),
+			fmt.Sprintf(`sum(rate(gateway_environment_request_duration_seconds_count{%[1]s,class="5xx"}[%[2]s]) or rate(gateway_environment_capacity_refusals_total{%[1]s}[%[2]s]))`, app, rng))
+		eligible := minus(EligibleRequestsQuery("rate", appID, rng),
+			fmt.Sprintf(`sum(rate(gateway_environment_request_duration_seconds_count{%[1]s,class=~"2xx|5xx"}[%[2]s]) or rate(gateway_environment_capacity_refusals_total{%[1]s}[%[2]s]))`, app, rng))
+		return fmt.Sprintf(`(%s) or vector(0)`, PercentRatioQuery(failed, eligible)), SafePercent, true
+	case "latency_p50_ms", "latency_p95_ms", "latency_p99_ms":
+		quantile := map[string]float64{"latency_p50_ms": .50, "latency_p95_ms": .95, "latency_p99_ms": .99}[metric]
+		all := fmt.Sprintf(`sum by (le) (rate(gateway_request_duration_seconds_bucket{%s,class="2xx"}[%s]))`, app, rng)
+		stages := fmt.Sprintf(`sum by (le) (rate(gateway_environment_request_duration_seconds_bucket{%s,class="2xx"}[%s]))`, app, rng)
+		// Buckets the stages never reached subtract zero.
+		buckets := fmt.Sprintf(`(%s - (%s or (%s * 0)))`, all, stages, all)
+		return HistogramQuantileMSQuery(quantile, buckets, minus(
+			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{%s,class="2xx"}[%s]))`, app, rng),
+			fmt.Sprintf(`sum(rate(gateway_environment_request_duration_seconds_count{%s,class="2xx"}[%s]))`, app, rng))), SafeFloat, true
+	case "cold_start_pct":
+		return fmt.Sprintf(`(%s) or vector(0)`, PercentRatioQuery(
+			minus(fmt.Sprintf(`sum(rate(gateway_cold_boot_total{%s}[%s]))`, app, rng),
+				fmt.Sprintf(`sum(rate(gateway_environment_cold_boot_total{%s}[%s]))`, app, rng)),
+			minus(fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{%s}[%s]))`, app, rng),
+				fmt.Sprintf(`sum(rate(gateway_environment_request_duration_seconds_count{%s}[%s]))`, app, rng)))), SafePercent, true
+	}
+	return "", nil, false
+}

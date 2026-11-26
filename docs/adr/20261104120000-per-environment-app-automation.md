@@ -444,13 +444,25 @@ app-wide indexes and full clones copy consumers, keys and plan assignments.
   environment's deletion removes its rules. Account-wide rules are
   production's.
 - **What a stage rule reads.** Prometheus request series carry only the app,
-  so the gateway also counts requests on an environment host per
-  environment: `gateway_environment_request_duration_seconds{app,
+  so the gateway also counts requests on a stage's host (its URL or a
+  scoped domain; not a production environment's host) per stage:
+  `gateway_environment_request_duration_seconds{app,
   environment,class}`, `gateway_environment_cold_boot_total` and
   `gateway_environment_capacity_refusals_total`. These are added beside the
-  app-wide series, which keep their labels, so existing dashboards and
-  production rules are unchanged (production rules keep reading the whole
-  app, as before). Failed invocations already carry their environment.
+  app-wide series, which keep their labels, so existing dashboards are
+  unchanged. Each gateway counts at most
+  `api.GatewayStageMetricEnvironmentsPerApp` (20) stages per app and
+  `api.GatewayStageMetricEnvironmentsMax` (5,000) in all; a stage past the
+  cap is not counted per stage. Failed invocations already carry their
+  environment.
+- **Production rules leave stages out.** A production rule's request
+  metrics are the app-wide series minus the per-stage ones, and its
+  failed-invocation counts take only invocations without an environment, so
+  a stage's traffic fires only the stage's rules. Production's other
+  readers of the account's rules (the app's dashboard alerts and preset
+  cards, preset lookup, the platform outage notice's "owner already has an
+  error-rate rule" check) skip stage rules. A stage rule's webhook payloads
+  carry `app_id` and `environment_id`.
 - **A stage rule can run** on `request_count`, `error_rate_pct`,
   `latency_p50_ms`, `latency_p95_ms`, `latency_p99_ms`, `cold_start_pct` or
   `failed_invocations`, with `gt`, `gte`, `lt` or `lte` and a webhook action

@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -11,16 +12,48 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// Requests served on an environment host (a stage URL or an environment's
-// scoped domain) are also counted per environment, so a stage's alert rules
-// read the stage's own traffic (ADR-20261104120000 amendment 2026-11-22).
-// The app-wide series stay as they are; these add one series set per
-// environment host an app serves.
+// Requests served on a stage's host (its URL or a scoped domain) are also
+// counted per stage, so a stage's alert rules read the stage's own traffic
+// and production's leave it out (ADR-20261104120000 amendment 2026-11-22).
+// The app-wide series stay as they are; these add one series set per stage
+// an app serves, bounded by stageMetricEnvironments.
+
+// stageMetricEnvironments admits (app, stage) label pairs up to
+// api.GatewayStageMetricEnvironmentsPerApp per app and
+// api.GatewayStageMetricEnvironmentsMax in all. A pair once admitted stays
+// for the life of the process; a refused one is not counted per stage.
+type stageMetricEnvironments struct {
+	mu    sync.Mutex
+	byApp map[string]map[string]struct{}
+	total int
+}
+
+func (s *stageMetricEnvironments) admit(appID, environmentID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.byApp == nil {
+		s.byApp = make(map[string]map[string]struct{})
+	}
+	envs := s.byApp[appID]
+	if _, ok := envs[environmentID]; ok {
+		return true
+	}
+	if len(envs) >= api.GatewayStageMetricEnvironmentsPerApp || s.total >= api.GatewayStageMetricEnvironmentsMax {
+		return false
+	}
+	if envs == nil {
+		envs = make(map[string]struct{})
+		s.byApp[appID] = envs
+	}
+	envs[environmentID] = struct{}{}
+	s.total++
+	return true
+}
 
 func newEnvironmentRequestDuration() *prometheus.HistogramVec {
 	return prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: "gateway_environment_request_duration_seconds",
-		Help: "Full request duration of requests served on an environment host, labelled by app, environment ID and HTTP status class (2xx/3xx/4xx/5xx). The same requests are also in gateway_request_duration_seconds.",
+		Help: "Full request duration of requests served on a stage's host, labelled by app, environment ID and HTTP status class (2xx/3xx/4xx/5xx). The same requests are also in gateway_request_duration_seconds.",
 		Buckets: []float64{
 			0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, api.RequestDurationTopBucketSeconds,
 		},
@@ -30,21 +63,21 @@ func newEnvironmentRequestDuration() *prometheus.HistogramVec {
 func newEnvironmentColdBoot() *prometheus.CounterVec {
 	return prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "gateway_environment_cold_boot_total",
-		Help: "Cold boots triggered by requests on an environment host, labelled by app and environment ID. The same boots are also in gateway_cold_boot_total.",
+		Help: "Cold boots triggered by requests on a stage's host, labelled by app and environment ID. The same boots are also in gateway_cold_boot_total.",
 	}, []string{"app", "environment"})
 }
 
 func newEnvironmentCapacityRefusals() *prometheus.CounterVec {
 	return prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "gateway_environment_capacity_refusals_total",
-		Help: "Capacity refusals (see gateway_capacity_refusals_total) of requests on an environment host, labelled by app and environment ID.",
+		Help: "Capacity refusals (see gateway_capacity_refusals_total) of requests on a stage's host, labelled by app and environment ID.",
 	}, []string{"app", "environment"})
 }
 
 // ObserveEnvironmentCapacityRefusal records a capacity refusal on an
 // environment host. An empty environment records nothing.
 func (m *Metrics) ObserveEnvironmentCapacityRefusal(appID, environmentID string) {
-	if m == nil || m.environmentCapacityRefusals == nil || appID == "" || environmentID == "" {
+	if m == nil || m.environmentCapacityRefusals == nil || appID == "" || environmentID == "" || !m.stageEnvironments.admit(appID, environmentID) {
 		return
 	}
 	m.environmentCapacityRefusals.WithLabelValues(appID, environmentID).Inc()
@@ -53,7 +86,7 @@ func (m *Metrics) ObserveEnvironmentCapacityRefusal(appID, environmentID string)
 // ObserveEnvironmentRequestDuration records a request served on an
 // environment host. An empty environment records nothing.
 func (m *Metrics) ObserveEnvironmentRequestDuration(appID, environmentID, class string, d time.Duration) {
-	if m == nil || m.environmentRequestDuration == nil || appID == "" || environmentID == "" {
+	if m == nil || m.environmentRequestDuration == nil || appID == "" || environmentID == "" || !m.stageEnvironments.admit(appID, environmentID) {
 		return
 	}
 	m.environmentRequestDuration.WithLabelValues(appID, environmentID, class).Observe(d.Seconds())
@@ -62,7 +95,7 @@ func (m *Metrics) ObserveEnvironmentRequestDuration(appID, environmentID, class 
 // ObserveEnvironmentColdBoot records a cold boot on an environment host. An
 // empty environment records nothing.
 func (m *Metrics) ObserveEnvironmentColdBoot(appID, environmentID string) {
-	if m == nil || m.environmentColdBoot == nil || appID == "" || environmentID == "" {
+	if m == nil || m.environmentColdBoot == nil || appID == "" || environmentID == "" || !m.stageEnvironments.admit(appID, environmentID) {
 		return
 	}
 	m.environmentColdBoot.WithLabelValues(appID, environmentID).Inc()

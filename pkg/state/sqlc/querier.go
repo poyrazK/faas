@@ -908,6 +908,12 @@ type Querier interface {
 	CountEnabledEventSubscriptionsForQuota(ctx context.Context, db DBTX, appID pgtype.UUID) (CountEnabledEventSubscriptionsForQuotaRow, error)
 	CountEnvironmentQueueProducerDepth(ctx context.Context, db DBTX, arg CountEnvironmentQueueProducerDepthParams) (int64, error)
 	CountExclusiveWorkPending(ctx context.Context, db DBTX, accountID string) (int64, error)
+	// One stage's failed invocations of one app, for the stage's alert rules.
+	CountFailedInvocationsInEnvironmentSince(ctx context.Context, db DBTX, arg CountFailedInvocationsInEnvironmentSinceParams) (int64, error)
+	// CountFailedInvocationsSince over production's invocations only: a stage's
+	// failures are its own alert rules' (ADR-20261104120000 amendment
+	// 2026-11-22). A NULL app_id counts every app of the account.
+	CountFailedProductionInvocationsSince(ctx context.Context, db DBTX, arg CountFailedProductionInvocationsSinceParams) (int64, error)
 	// ADR-20261110120000: the plan's PostgresBindingsPerAppMax counts every
 	// binding of the app that is not deleted.
 	CountLiveManagedPostgresBindingsForApp(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)

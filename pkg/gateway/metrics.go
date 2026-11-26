@@ -704,6 +704,7 @@ type Metrics struct {
 	environmentRequestDuration  *prometheus.HistogramVec
 	environmentColdBoot         *prometheus.CounterVec
 	environmentCapacityRefusals *prometheus.CounterVec
+	stageEnvironments           stageMetricEnvironments
 	// topTenantRPS is the gateway-side mirror of apid's
 	// apid_top_tenant_rps gauge (issue #300). It shares the
 	// label name `account_id` with apid so a single Grafana

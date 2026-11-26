@@ -36,4 +36,10 @@ func TestMemCountFailedInvocationsInEnvironmentSince(t *testing.T) {
 	if _, err := m.CountFailedInvocationsInEnvironmentSince(context.Background(), "acct", "app", "", "", now); err == nil {
 		t.Fatal("production is not an environment here")
 	}
+	// Production's rules count production's one failure, app or account wide.
+	for _, appID := range []string{"app", ""} {
+		if n, err := m.CountFailedProductionInvocationsSince(context.Background(), "acct", appID, "", now.Add(-time.Hour)); err != nil || n != 1 {
+			t.Fatalf("production failures (app %q) = %d, %v; want 1", appID, n, err)
+		}
+	}
 }

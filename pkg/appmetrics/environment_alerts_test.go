@@ -41,3 +41,23 @@ func TestFetchEnvironmentAlertMetric(t *testing.T) {
 		}
 	}
 }
+
+// adr: 20261104120000 — a production rule's request metrics leave out the
+// requests its stages' hosts served.
+func TestFetchAlertMetricLeavesOutStages(t *testing.T) {
+	for _, metric := range appmetrics.EnvironmentAlertMetrics {
+		t.Run(metric, func(t *testing.T) {
+			var queries []string
+			stub := &stubPromQL{fn: func(q string) (float64, error) {
+				queries = append(queries, q)
+				return 3, nil
+			}}
+			if _, source := appmetrics.FetchAlertMetric(context.Background(), stub, nil, "app-1", "5m", metric); source != appmetrics.SourcePrometheus {
+				t.Fatalf("source = %q", source)
+			}
+			if len(queries) != 1 || !strings.Contains(queries[0], `- (sum`) || !strings.Contains(queries[0], `gateway_environment_`) {
+				t.Fatalf("query %q does not subtract the stages' series", queries)
+			}
+		})
+	}
+}

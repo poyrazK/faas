@@ -2654,6 +2654,15 @@ const QueueLeaseMaxWaitSeconds = 20
 const QueueBindingRetryMaxBaseSeconds = 3600
 const QueueBindingRetryMaxSeconds = 86400
 
+// GatewayStageMetricEnvironmentsPerApp and GatewayStageMetricEnvironmentsMax
+// bound the per-stage request series one gatewayd-internal process keeps
+// (gateway_environment_*; ADR-20261104120000): stages past either cap are
+// not counted per environment, and their alert rules read no traffic.
+const (
+	GatewayStageMetricEnvironmentsPerApp = 20
+	GatewayStageMetricEnvironmentsMax    = 5000
+)
+
 // EnvironmentGitOpsMaxDefinitionBytes bounds one complete environment graph,
 // independently of the smaller non-secret configuration object it may contain.
 const EnvironmentGitOpsMaxDefinitionBytes = 1 << 20

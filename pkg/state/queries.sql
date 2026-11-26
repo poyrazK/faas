@@ -22450,7 +22450,7 @@ SELECT * FROM alert_rules r WHERE r.enabled=true
  ORDER BY r.account_id;
 
 -- name: ListCustomerAlertRulesByPreset :many
-SELECT r.* FROM alert_rules r WHERE r.account_id=sqlc.arg(account_id) AND r.app_id=sqlc.arg(app_id)
+SELECT r.* FROM alert_rules r WHERE r.account_id=sqlc.arg(account_id) AND r.app_id=sqlc.arg(app_id) AND r.environment_id IS NULL
  AND r.name LIKE (SELECT p.display_name||' (%' FROM alert_presets p WHERE p.name=sqlc.arg(preset_name))
  ORDER BY r.created_at DESC LIMIT 2;
 
@@ -31054,3 +31054,25 @@ WHERE caller_app_id = sqlc.arg(caller_app_id) AND id = ANY(sqlc.arg(ids)::uuid[]
 -- name: ObjectWorkloadCredentialCountLive :one
 SELECT count(*)::int FROM object_storage_workload_credentials
 WHERE instance_id = sqlc.arg(instance_id) AND bucket_id = sqlc.arg(bucket_id) AND expires_at > now();
+
+-- name: CountFailedProductionInvocationsSince :one
+-- CountFailedInvocationsSince over production's invocations only: a stage's
+-- failures are its own alert rules' (ADR-20261104120000 amendment
+-- 2026-11-22). A NULL app_id counts every app of the account.
+SELECT count(*)::bigint FROM invocations v
+ WHERE v.account_id = sqlc.arg(account_id)::uuid
+   AND v.state IN ('failed', 'dead_letter')
+   AND v.environment_id IS NULL
+   AND coalesce(v.completed_at, v.created_at) >= sqlc.arg(since)::timestamptz
+   AND (sqlc.narg(app_id)::uuid IS NULL OR v.app_id IS NOT DISTINCT FROM sqlc.narg(app_id)::uuid)
+   AND (sqlc.narg(app_id)::uuid IS NOT NULL OR NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id = v.app_id))
+   AND (sqlc.narg(source)::text IS NULL OR v.source = sqlc.narg(source)::text);
+
+-- name: CountFailedInvocationsInEnvironmentSince :one
+-- One stage's failed invocations of one app, for the stage's alert rules.
+SELECT count(*)::bigint FROM invocations
+ WHERE account_id = sqlc.arg(account_id)::uuid AND app_id = sqlc.arg(app_id)::uuid
+   AND environment_id = sqlc.arg(environment_id)::uuid
+   AND state IN ('failed', 'dead_letter')
+   AND coalesce(completed_at, created_at) >= sqlc.arg(since)::timestamptz
+   AND (sqlc.narg(source)::text IS NULL OR source = sqlc.narg(source)::text);

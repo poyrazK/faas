@@ -2,6 +2,7 @@ package alerts
 
 import (
 	"context"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
@@ -62,4 +63,25 @@ func (e *Evaluator) observeEnvironmentFailedInvocations(ctx context.Context, rul
 		total += n
 	}
 	return float64(total), compareFloat(float64(total), rule.Comparison, rule.Threshold), ""
+}
+
+// countProductionFailures counts a production rule's failed invocations,
+// leaving out every stage's: those are the stage's own rules'. A store that
+// cannot tell them apart counts them all, as before.
+func (e *Evaluator) countProductionFailures(ctx context.Context, rule state.AlertRule, source state.InvocationSource, since time.Time) (int, error) {
+	if store, ok := e.store.(state.AlertRuleEnvironmentStore); ok {
+		return store.CountFailedProductionInvocationsSince(ctx, rule.AccountID, rule.AppID, source, since)
+	}
+	return e.store.CountFailedInvocationsSince(ctx, rule.AccountID, rule.AppID, source, since)
+}
+
+// addEnvironment names the stage a stage's rule watches in its webhook
+// payloads, so a receiver can tell a stage's alert from production's
+// (ADR-20261104120000). A production rule's payload is unchanged.
+func addEnvironment(payload map[string]any, rule state.AlertRule) {
+	if rule.EnvironmentID == "" {
+		return
+	}
+	payload["app_id"] = rule.AppID
+	payload["environment_id"] = rule.EnvironmentID
 }

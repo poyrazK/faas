@@ -65,6 +65,11 @@ func TestEvaluatorStageRuleReadsEnvironmentSeries(t *testing.T) {
 	if stats.Fired != 1 {
 		t.Fatalf("stats = %+v, want the stage rule to fire", stats)
 	}
+	dispatch.mu.Lock()
+	if len(dispatch.calls) != 1 || dispatch.calls[0].Payload["environment_id"] != "env-1" || dispatch.calls[0].Payload["app_id"] != rule.AppID {
+		t.Fatalf("payload does not name the stage: %+v", dispatch.calls)
+	}
+	dispatch.mu.Unlock()
 	mu.Lock()
 	defer mu.Unlock()
 	if len(queries) == 0 {

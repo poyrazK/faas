@@ -242,7 +242,7 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 			return gateway.App{}, false, scopeErr
 		}
 		return gateway.App{ID: app.ID, AccountID: acct.ID, ResourceOwnerID: acct.ResourceOrgID, EdgeRuleScope: edgeRuleScope, Plan: acct.Plan, AccountStatus: string(acct.Status),
-			AccountAbuseHeld: acct.AbuseHeld(), EnvironmentNotReady: true, DynamicRoute: true}, true, nil
+			AccountAbuseHeld: acct.AbuseHeld(), EnvironmentNotReady: true, DynamicRoute: true, StageEnvironmentID: stageEnvironmentID(environment)}, true, nil
 	}
 	if err != nil || !found {
 		return gateway.App{}, found, err
@@ -266,7 +266,18 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 		resolved.PinnedDeploymentScope = deployment.Scope
 	}
 	resolved.PublicEnvironmentID = environment.ID
+	resolved.StageEnvironmentID = stageEnvironmentID(environment)
 	return resolved, true, nil
+}
+
+// stageEnvironmentID is the environment's ID when it is a stage, the
+// environments whose requests the gateway also counts per environment
+// (ADR-20261104120000).
+func stageEnvironmentID(environment state.ProjectEnvironment) string {
+	if state.IsProductionScope(environment.Slug) {
+		return ""
+	}
+	return environment.ID
 }
 
 // cloneTargetNotReady returns errProjectEnvironmentCloneNotReady while a clone

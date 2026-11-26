@@ -363,6 +363,10 @@ type App struct {
 	// PublicEnvironmentID identifies a stable environment URL or a verified
 	// scoped domain. Exact revision/alias URLs keep their own policy semantics.
 	PublicEnvironmentID string
+	// StageEnvironmentID is PublicEnvironmentID when the environment is not
+	// production: requests on a stage's host are also counted per stage
+	// (gateway_environment_*), and production's alert rules leave them out.
+	StageEnvironmentID string
 	// CustomDomainRoute records that the resolved host is a verified custom
 	// domain, so its cache entry can revalidate current domain ownership.
 	CustomDomainRoute bool
@@ -6603,6 +6607,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if ok && lookedApp.EnvironmentNotReady {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 			"Environment is not ready", "the stage clone has not published all of its workloads and resources"))
+		markEnvironmentHost(r, lookedApp.StageEnvironmentID)
 		h.observe(r, rec.status, lookedApp.ID, string(lookedApp.Plan), false, Target{})
 		return
 	}
@@ -6631,7 +6636,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	app = lookedApp
 haveApp:
-	markEnvironmentHost(r, app.PublicEnvironmentID)
+	markEnvironmentHost(r, app.StageEnvironmentID)
 	// Previews serve unreleased code on guessable hosts; every answer for
 	// one, proxied or from the edge, tells search engines not to index it.
 	if app.IsPreview {
@@ -8777,7 +8782,7 @@ haveApp:
 		// behind a wake rather than by how long the wake took.
 		if cold && wakeMethod != WakeMethodUnspecified {
 			h.metrics.ObserveColdBootWithTrace(app.ID, firstByteAt.Sub(wakeStart), target.NodeID, traceID)
-			h.metrics.ObserveEnvironmentColdBoot(app.ID, app.PublicEnvironmentID)
+			h.metrics.ObserveEnvironmentColdBoot(app.ID, app.StageEnvironmentID)
 			if !platformWakeStart.IsZero() {
 				switch {
 				case startupOOM.Any():
