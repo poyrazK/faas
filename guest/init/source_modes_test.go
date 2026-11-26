@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestBuildSourceModesPreserveExecutablesAndSkipSymlinks(t *testing.T) {
@@ -76,8 +78,24 @@ func TestBuildSourceModesMoveEpochTimes(t *testing.T) {
 	if err := os.Chtimes(kept, recent, recent); err != nil {
 		t.Fatal(err)
 	}
+	link := filepath.Join(root, "current")
+	if err := os.Symlink("pom.xml", link); err != nil {
+		t.Fatal(err)
+	}
+	zeroTV := unix.NsecToTimeval(0)
+	if err := unix.Lutimes(link, []unix.Timeval{zeroTV, zeroTV}); err != nil {
+		t.Fatal(err)
+	}
 	if err := prepareBuildSourceModes(root); err != nil {
 		t.Fatal(err)
+	}
+	if info, err := os.Lstat(link); err != nil {
+		t.Fatal(err)
+	} else if !info.ModTime().Equal(buildSourceStableTime) {
+		t.Errorf("symlink mtime %s, want %s", info.ModTime().UTC(), buildSourceStableTime)
+	}
+	if buildSourceStableTime.In(time.FixedZone("UTC-12", -12*3600)).Year() < 1980 {
+		t.Errorf("stable time %s is before 1980 west of UTC; ZIP writers reject it", buildSourceStableTime)
 	}
 	for path, want := range map[string]time.Time{epoch: buildSourceStableTime, filepath.Dir(epoch): buildSourceStableTime, kept: recent} {
 		info, err := os.Stat(path)
