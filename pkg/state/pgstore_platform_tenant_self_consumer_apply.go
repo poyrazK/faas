@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -115,7 +116,8 @@ func (s *PgStore) ApplyPlatformTenantSelfConsumers(ctx context.Context, in Apply
 	}
 	var active int
 	if err := tx.QueryRow(ctx, `select count(*) from api_consumers
-		where account_id = $1::uuid and platform_tenant_id = $2::uuid and status = 'active' and revoked_at is null`,
+		where account_id = $1::uuid and platform_tenant_id = $2::uuid and status = 'active' and revoked_at is null
+		  and environment_id is null`,
 		in.AccountID, in.TenantID).Scan(&active); err != nil {
 		return PlatformTenantSelfConsumersResult{}, err
 	}
@@ -144,8 +146,12 @@ func (s *PgStore) ApplyPlatformTenantSelfConsumers(ctx context.Context, in Apply
 			consumer, err = scanAPIConsumerRow(tx.QueryRow(ctx, `select `+apiConsumerSelectCols+`
 				from api_consumers where account_id = $1::uuid and app_id = $2::uuid and external_ref = $3 and environment_id is null for update`,
 				in.AccountID, result.Consumers[index].Consumer.AppID, in.ExternalRef))
+			if errors.Is(err, pgx.ErrNoRows) {
+				// The conflicting row is not this account's production consumer.
+				return PlatformTenantSelfConsumersResult{}, ErrConflict
+			}
 			if err != nil {
-				return PlatformTenantSelfConsumersResult{}, err
+				return PlatformTenantSelfConsumersResult{}, fmt.Errorf("state: read conflicting tenant consumer: %w", err)
 			}
 			if !samePlatformTenantSelfConsumer(consumer, in.TenantID, in.Name) {
 				return PlatformTenantSelfConsumersResult{}, ErrConflict
