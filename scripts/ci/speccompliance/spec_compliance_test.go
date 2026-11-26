@@ -1257,6 +1257,7 @@ var schemaSpecOnly = map[string]bool{
 	"DevBridgeRequestRecord":                true,
 	"DevBridgeCredentials":                  true,
 	"DevBridgeWebhookReplay":                true,
+	"WorkloadUses":                          true, // ADR-20261122191423 wire type is capgrant.Uses in pkg/capgrant
 	"EdgeRuleMatchExpr":                     true, // ADR-962 condition type lives in pkg/api/edge_rule_match.go with its compiler
 	"ObjectStorageReleaseRequirements":      true, // Bounded prefix map, validated by pkg/api.ValidateObjectStorageRequirements; not a struct.
 	"BulkIssueLifecycleAction":              true, // restricted SDK shape of IssueActionRequest for the four supported bulk lifecycle operations
@@ -2365,6 +2366,15 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	dtos["RouteResourcesResponse"] = routePeaksResponse
 	dtos["RouteResourceAttribution"] = routePeakDTOs["RouteReport"]
 	dtos["RouteResourceSplit"] = routePeakDTOs["Split"]
+
+	// ADR-20261121170000 amendment 2: applied route splits.
+	routeSplitDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "api", "route_splits.go")})
+	if err != nil {
+		t.Fatalf("scan route split DTOs: %v", err)
+	}
+	dtos["CreateRouteSplitRequest"] = routeSplitDTOs["CreateRouteSplitRequest"]
+	dtos["RouteSplit"] = routeSplitDTOs["RouteSplitResponse"]
+	dtos["RouteSplitsResponse"] = routeSplitDTOs["RouteSplitsResponse"]
 
 	// ADR-20261123110137: per-tool MCP insights.
 	mcpInsightDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "api", "mcp_tool_insights.go")})

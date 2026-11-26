@@ -3474,6 +3474,18 @@ See [Progressive rollouts](rollouts.md#why-a-rollout-advanced-waits-or-stopped).
 
 HTTP 409 Conflict · Route health gate blocked
 
+### `route_split_changed`
+
+HTTP 409 Conflict · Suggestion changed
+
+### `route_split_in_flight`
+
+HTTP 409 Conflict · Split in flight; Undo in progress
+
+### `route_split_unsupported`
+
+HTTP 409 Conflict or 422 Unprocessable Entity · No live build; Split not supported for this app
+
 ### `run_artifact_destination_limit`
 
 HTTP 413 Request Entity Too Large · Artifact exceeds destination limit
@@ -4171,6 +4183,10 @@ See [CLI guide](cli-setup.md).
 ### `workload_bucket_not_found`
 
 HTTP 404 Not Found · Granted bucket not found
+
+### `workload_bucket_required`
+
+HTTP 400 Bad Request · Bucket required
 
 ### `workload_credential_limit`
 

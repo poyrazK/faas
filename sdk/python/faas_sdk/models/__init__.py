@@ -3228,6 +3228,11 @@ from .workload_dependency import WorkloadDependency
 from .workload_dependency_condition import WorkloadDependencyCondition
 from .workload_port import WorkloadPort
 from .workload_port_protocol import WorkloadPortProtocol
+from .workload_uses import WorkloadUses
+from .workload_uses_buckets_item import WorkloadUsesBucketsItem
+from .workload_uses_buckets_item_access import WorkloadUsesBucketsItemAccess
+from .workload_uses_queues_item import WorkloadUsesQueuesItem
+from .workload_uses_realtime_item import WorkloadUsesRealtimeItem
 
 __all__ = (
     "AccountAbuseHold",
@@ -6258,4 +6263,9 @@ __all__ = (
     "WorkloadDependencyCondition",
     "WorkloadPort",
     "WorkloadPortProtocol",
+    "WorkloadUses",
+    "WorkloadUsesBucketsItem",
+    "WorkloadUsesBucketsItemAccess",
+    "WorkloadUsesQueuesItem",
+    "WorkloadUsesRealtimeItem",
 )

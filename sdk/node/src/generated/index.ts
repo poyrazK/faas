@@ -588,6 +588,7 @@ export type { CreateQueueBindingCanaryRequest } from './models/CreateQueueBindin
 export type { CreateQueueBindingRequest } from './models/CreateQueueBindingRequest.js';
 export type { CreateReleaseFreezeRequest } from './models/CreateReleaseFreezeRequest.js';
 export type { CreateReleaseGateRequest } from './models/CreateReleaseGateRequest.js';
+export type { CreateRouteSplitRequest } from './models/CreateRouteSplitRequest.js';
 export type { CreateScenarioObjectsRequest } from './models/CreateScenarioObjectsRequest.js';
 export type { CreateScenarioPostgresRequest } from './models/CreateScenarioPostgresRequest.js';
 export type { CreateSLORequest } from './models/CreateSLORequest.js';
@@ -3310,6 +3311,8 @@ export type { RouteResourceAttribution } from './models/RouteResourceAttribution
 export type { RouteResourceSplit } from './models/RouteResourceSplit.js';
 export type { RouteResourcesResponse } from './models/RouteResourcesResponse.js';
 export type { RouteRow } from './models/RouteRow.js';
+export type { RouteSplit } from './models/RouteSplit.js';
+export type { RouteSplitsResponse } from './models/RouteSplitsResponse.js';
 export type { RouteThrottleRequirement } from './models/RouteThrottleRequirement.js';
 export type { RunArtifactDelivery } from './models/RunArtifactDelivery.js';
 export type { RunArtifactObject } from './models/RunArtifactObject.js';
@@ -3862,6 +3865,7 @@ export type { WorkflowStepSpec } from './models/WorkflowStepSpec.js';
 export type { WorkflowTriggerSpec } from './models/WorkflowTriggerSpec.js';
 export type { WorkloadDependency } from './models/WorkloadDependency.js';
 export type { WorkloadPort } from './models/WorkloadPort.js';
+export type { WorkloadUses } from './models/WorkloadUses.js';
 export type { WorkPolicyListResponse } from './models/WorkPolicyListResponse.js';
 export type { WorkPolicyResponse } from './models/WorkPolicyResponse.js';
 

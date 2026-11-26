@@ -152,3 +152,28 @@ func (rewriteToHTTP) RoundTrip(r *http.Request) (*http.Response, error) {
 	r.URL.Scheme = "http"
 	return http.DefaultTransport.RoundTrip(r)
 }
+
+// Each apid refusal reaches the app with its own code and apid's
+// explanation, so an SDK error says what to change.
+func TestObjectCredentialRefusalNamesTheCause(t *testing.T) {
+	problem := func(code, detail string) []byte {
+		body, _ := json.Marshal(api.Problem{Code: code, Detail: detail})
+		return body
+	}
+	for name, tc := range map[string]struct {
+		status     int
+		body       []byte
+		code, hint string
+	}{
+		"bindings off":   {http.StatusNotFound, problem(api.CodeNotFound, "no such API route"), "bindings_disabled", "not enabled"},
+		"stage caller":   {http.StatusForbidden, problem(api.CodeForbidden, "stage"), "binding_not_allowed", "stage"},
+		"several grants": {http.StatusBadRequest, problem(api.CodeWorkloadBucketRequired, "name one: a, b"), "bucket_required", "a, b"},
+		"missing bucket": {http.StatusNotFound, problem(api.CodeWorkloadBucketNotFound, "gone"), "bucket_not_found", "gone"},
+		"not granted":    {http.StatusForbidden, problem("binding_not_granted", "add it"), "bucket_not_granted", "add it"},
+	} {
+		code, detail := objectCredentialRefusal(tc.status, tc.body)
+		if code != tc.code || !strings.Contains(detail, tc.hint) {
+			t.Errorf("%s: %q %q, want %q containing %q", name, code, detail, tc.code, tc.hint)
+		}
+	}
+}
