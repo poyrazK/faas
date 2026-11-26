@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFile, fork } from 'node:child_process';
+import { execFile, fork, spawn } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
@@ -332,6 +332,19 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
   const groupRoot = await mkdtemp(join(tmpdir(), 'gregale-sdk-task-group-'));
   const group = join(groupRoot, 'saved');
   const agents = [];
+  const scope = 'mcp:tools reports:read';
+  const gregale = process.env.MCP_TASKS_TEST_GREGALE;
+  const groupCLIArgs = (action, path, flags = []) => [
+    'mcp', 'client', 'group', action, '--url', endpoint.href, '--group', path,
+    '--token-env', 'MCP_TASK_GROUP_FIXTURE_TOKEN', '--timeout', '4s', ...flags,
+  ];
+  const groupCLIEnv = token => ({ ...process.env, MCP_TASK_GROUP_FIXTURE_TOKEN: token });
+  async function runGroupCLI(action, path, token, ...flags) {
+    const { stdout } = await promisify(execFile)(gregale, groupCLIArgs(action, path, flags), {
+      env: groupCLIEnv(token), timeout: 5_000,
+    });
+    return JSON.parse(stdout);
+  }
   async function startAgent({ token, groupPath = group, ...configuration } = {}) {
     token ??= await mint('alice', 'mcp:tools reports:read');
     const child = fork(new URL('./task-group-agent.mjs', import.meta.url), [], {
@@ -511,59 +524,99 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
 
     // Empty the prior fixture's queued work before claiming a worker lease.
     for (const id of created) await cancelMcpTask(creator, id);
-    const stoppedGroup = join(groupRoot, 'stopped-group');
-    const stoppable = ['one', 'two', 'three'].map(name => ({
-      toolName: 'build_report', arguments: { report: `group stop ${name}`, steps: 1 },
-    }));
-    const stopToken = await mint('dana', 'mcp:tools reports:read');
-    groupRequests.submissions = 0;
-    admissionProbe = {
-      report: 'group stop', committed: Promise.withResolvers(), release: Promise.withResolvers(), thirdKeys: new Set(),
-    };
-    const sending = await startAgent({ token: stopToken, groupPath: stoppedGroup, submissions: stoppable });
-    const lostId = await sending.running(admissionProbe.committed.promise);
-    sending.child.kill('SIGKILL');
-    assert.deepEqual(await sending.exit, [null, 'SIGKILL']);
-    admissionProbe.release.resolve();
-    const { taskId: runningId } = JSON.parse(await readFile(join(stoppedGroup, 'member-0.json'), 'utf8'));
-    const { taskId: lostReceiptId } = JSON.parse(await readFile(join(stoppedGroup, 'member-1.json'), 'utf8'));
-    assert.equal(lostReceiptId, undefined);
-    const running = await store.claim(3, 30_000);
-    assert.equal(running.task_id, runningId);
+    for (const throughCLI of gregale ? [false, true] : [false]) {
+      const stoppedGroup = join(groupRoot, throughCLI ? 'stopped-by-cli' : 'stopped-by-sdk');
+      const subject = throughCLI ? 'dana-cli' : 'dana';
+      const stoppable = ['one', 'two', 'three'].map(name => ({
+        toolName: 'build_report', arguments: { report: `group stop ${name}`, steps: 1 },
+      }));
+      const stopToken = await mint(subject, scope);
+      groupRequests.submissions = 0;
+      admissionProbe = {
+        report: 'group stop', committed: Promise.withResolvers(), release: Promise.withResolvers(), thirdKeys: new Set(),
+      };
+      const sending = await startAgent({ token: stopToken, groupPath: stoppedGroup, submissions: stoppable });
+      const lostId = await sending.running(admissionProbe.committed.promise);
+      sending.child.kill('SIGKILL');
+      assert.deepEqual(await sending.exit, [null, 'SIGKILL']);
+      admissionProbe.release.resolve();
+      const { taskId: runningId } = JSON.parse(await readFile(join(stoppedGroup, 'member-0.json'), 'utf8'));
+      const { taskId: lostReceiptId } = JSON.parse(await readFile(join(stoppedGroup, 'member-1.json'), 'utf8'));
+      assert.equal(lostReceiptId, undefined);
+      const running = await store.claim(3, 30_000);
+      assert.equal(running.task_id, runningId);
 
-    stopProbe = {
-      ids: new Set([runningId, lostId]), firstId: runningId, hold: true, cancellations: [],
-      committed: Promise.withResolvers(), release: Promise.withResolvers(),
-    };
-    const stopping = await startAgent({ token: stopToken, groupPath: stoppedGroup, stopGroup: true });
-    await stopping.running(stopProbe.committed.promise);
-    assert.deepEqual(stopProbe.cancellations, [runningId]);
-    const stoppedManifest = JSON.parse(await readFile(join(stoppedGroup, 'group.json'), 'utf8'));
-    assert.equal(await readFile(join(stoppedGroup, 'stopped'), 'utf8'), stoppedManifest.id);
-    const stoppedOwner = await connect('dana', 'mcp:tools reports:read');
-    await assert.rejects(continueMcpTaskGroupSubmission(stoppedOwner, stoppedGroup, 2, stoppable[2]), { code: 'group_stopped' });
+      const stoppedOwner = await connect(subject, scope);
+      let witnessId;
+      if (throughCLI) {
+        const witnessReceipt = join(groupRoot, 'unrelated-cli-receipt');
+        const witness = await submitMcpTaskWithReceipt(stoppedOwner, witnessReceipt, {
+          toolName: 'build_report', arguments: { report: 'Unrelated group', steps: 1 },
+        });
+        assert.equal(witness.outcome, 'accepted');
+        witnessId = witness.task.taskId;
+        await createMcpTaskGroup(join(groupRoot, 'unrelated-cli-group'), [witnessReceipt]);
+      }
 
-    stopping.child.kill('SIGKILL');
-    assert.deepEqual(await stopping.exit, [null, 'SIGKILL']);
-    stopProbe.hold = false;
-    stopProbe.release.resolve();
-    assert.equal(await store.complete(runningId, running.lease_token, result), 'cancelled');
+      stopProbe = {
+        ids: new Set([runningId, lostId]), firstId: runningId, hold: true, cancellations: [],
+        committed: Promise.withResolvers(), release: Promise.withResolvers(),
+      };
+      let stopping;
+      if (throughCLI) {
+        const child = spawn(gregale, groupCLIArgs('stop', stoppedGroup), {
+          env: groupCLIEnv(stopToken), stdio: ['ignore', 'ignore', 'inherit'],
+        });
+        stopping = { child, exit: once(child, 'exit') };
+        agents.push(stopping);
+        await Promise.race([
+          stopProbe.committed.promise,
+          stopping.exit.then(() => assert.fail('CLI exited before requesting cancellation')),
+        ]);
+      } else {
+        stopping = await startAgent({ token: stopToken, groupPath: stoppedGroup, stopGroup: true });
+        await stopping.running(stopProbe.committed.promise);
+      }
+      assert.deepEqual(stopProbe.cancellations, [runningId]);
+      const stoppedManifest = JSON.parse(await readFile(join(stoppedGroup, 'group.json'), 'utf8'));
+      assert.equal(await readFile(join(stoppedGroup, 'stopped'), 'utf8'), stoppedManifest.id);
+      await assert.rejects(continueMcpTaskGroupSubmission(stoppedOwner, stoppedGroup, 2, stoppable[2]), { code: 'group_stopped' });
 
-    const retryStop = await startAgent({ token: stopToken, groupPath: stoppedGroup, stopGroup: true });
-    const [{ stopped }] = await retryStop.waitForEvents(1);
-    assert.deepEqual(await retryStop.exit, [0, null]);
-    assert.deepEqual(stopped.map(entry => entry.outcome), ['terminal', 'requested', 'not_submitted']);
-    assert.equal(stopped[0].task.taskId, runningId);
-    assert.equal(stopped[0].task.status, 'cancelled');
-    assert.equal(stopped[1].taskId, lostId);
-    assert.deepEqual((await stopMcpTaskGroup(stoppedOwner, stoppedGroup)).map(entry => entry.outcome),
-      ['terminal', 'terminal', 'not_submitted']);
-    assert.deepEqual(stopProbe.cancellations, [runningId, lostId]);
-    await assert.rejects(stat(join(stoppedGroup, 'member-2.json')), { code: 'ENOENT' });
-    assert.equal(groupRequests.submissions, 2);
-    const cancelledGroup = (await listTaskInbox(stoppedOwner)).tasks;
-    assert.deepEqual(new Set(cancelledGroup.map(task => task.taskId)), new Set([runningId, lostId]));
-    assert.ok(cancelledGroup.every(task => task.status === 'cancelled'));
+      stopping.child.kill('SIGKILL');
+      assert.deepEqual(await stopping.exit, [null, 'SIGKILL']);
+      stopProbe.hold = false;
+      stopProbe.release.resolve();
+      assert.equal(await store.complete(runningId, running.lease_token, result), 'cancelled');
+
+      let stopped;
+      if (throughCLI) {
+        const renewed = await mint(subject, scope, '6m');
+        assert.notEqual(renewed, stopToken);
+        stopped = await runGroupCLI('stop', stoppedGroup, renewed);
+      } else {
+        const retryStop = await startAgent({ token: stopToken, groupPath: stoppedGroup, stopGroup: true });
+        [{ stopped }] = await retryStop.waitForEvents(1);
+        assert.deepEqual(await retryStop.exit, [0, null]);
+      }
+      assert.deepEqual(stopped.map(entry => entry.outcome), ['terminal', 'requested', 'not_submitted']);
+      assert.equal(stopped[0].task.taskId, runningId);
+      assert.equal(stopped[0].task.status, 'cancelled');
+      assert.equal(stopped[1].taskId, lostId);
+      assert.deepEqual((await stopMcpTaskGroup(stoppedOwner, stoppedGroup)).map(entry => entry.outcome),
+        ['terminal', 'terminal', 'not_submitted']);
+      assert.deepEqual(stopProbe.cancellations, [runningId, lostId]);
+      await assert.rejects(stat(join(stoppedGroup, 'member-2.json')), { code: 'ENOENT' });
+      assert.equal(groupRequests.submissions, throughCLI ? 3 : 2);
+      if (witnessId) {
+        assert.equal((await getMcpTask(stoppedOwner, witnessId)).status, 'working');
+        const witnessStatus = await runGroupCLI('status', join(groupRoot, 'unrelated-cli-group'), stopToken);
+        assert.equal(witnessStatus[0].task.status, 'working');
+        await cancelMcpTask(stoppedOwner, witnessId);
+      }
+      const cancelledGroup = (await listTaskInbox(stoppedOwner)).tasks.filter(task => task.taskId !== witnessId);
+      assert.deepEqual(new Set(cancelledGroup.map(task => task.taskId)), new Set([runningId, lostId]));
+      assert.ok(cancelledGroup.every(task => task.status === 'cancelled'));
+    }
 
     const resultGroup = join(groupRoot, 'results');
     const resultReceipts = ['complete', 'paused', 'private', 'failed'].map(name => join(groupRoot, `result-${name}`));
@@ -582,15 +635,6 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
     }
     await createMcpTaskGroup(resultGroup, resultReceipts);
 
-    const scope = 'mcp:tools reports:read';
-    const gregale = process.env.MCP_TASKS_TEST_GREGALE;
-    async function readGroupCLI(path, token, ...flags) {
-      const { stdout } = await promisify(execFile)(gregale, [
-        'mcp', 'client', 'group', 'status', '--url', endpoint.href, '--group', path,
-        '--token-env', 'MCP_TASK_GROUP_FIXTURE_TOKEN', '--timeout', '4s', ...flags,
-      ], { env: { ...process.env, MCP_TASK_GROUP_FIXTURE_TOKEN: token }, timeout: 5_000 });
-      return JSON.parse(stdout);
-    }
     const firstReader = await startAgent({
       token: await mint('erin', scope), groupPath: resultGroup, collectResults: true,
     });
@@ -627,7 +671,7 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
     if (gregale) {
       const groupToken = await mint('erin', scope, '6m');
       const before = await readFile(join(resultGroup, 'group.json'));
-      const metadata = await readGroupCLI(resultGroup, groupToken);
+      const metadata = await runGroupCLI('status', resultGroup, groupToken);
       assert.deepEqual(metadata.map(({ receiptIndex, outcome, task }) =>
         [receiptIndex, outcome, task?.status, task?.nextAction]), [
         [0, 'available', 'completed', 'read_result'],
@@ -643,7 +687,7 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
           assert.equal(Object.hasOwn(task, field), false);
         }
       }
-      const payloads = await readGroupCLI(resultGroup, groupToken, '--include-results');
+      const payloads = await runGroupCLI('status', resultGroup, groupToken, '--include-results');
       assert.deepEqual(payloads[0].task.result, retained);
       assert.deepEqual(payloads[1], metadata[1]);
       assert.deepEqual(payloads[2], metadata[2]);
@@ -718,7 +762,7 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
     const renewed = await mint('gina', scope);
     assert.notEqual(renewed, expiring);
     if (gregale) {
-      const metadata = await readGroupCLI(renewableGroup, renewed);
+      const metadata = await runGroupCLI('status', renewableGroup, renewed);
       assert.deepEqual(metadata.map(entry => [entry.receiptIndex, entry.outcome, entry.task?.taskId]), [
         [0, 'available', confirmed.taskId],
         [1, 'available', lostOnRenewal],
@@ -760,7 +804,7 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
       );
       assert.equal(expiredMember.rowCount, 1);
       const beforeRead = groupRequests.submissions;
-      const mixed = await readGroupCLI(renewableGroup, renewed);
+      const mixed = await runGroupCLI('status', renewableGroup, renewed);
       assert.deepEqual(mixed.map(({ receiptIndex, outcome, task }) =>
         [receiptIndex, outcome, task?.status, task?.nextAction]), [
         [0, 'available', 'completed', 'read_result'],

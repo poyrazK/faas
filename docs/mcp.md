@@ -6427,6 +6427,32 @@ pending admissions and cancellations. An admission already in flight can
 commit during the stop. Its receipt stays available for the next pass.
 Use the same group directory to keep the stop in effect across restarts.
 
+#### Stop a saved Task group from the CLI
+
+Use the same Node SDK group directory, its original endpoint URL, and a
+current client token.
+
+```sh
+gregale mcp client group stop \
+  --url https://reports.example.com/mcp --token-env MCP_TOKEN \
+  --group ./receipts/weekly-batch
+```
+
+The CLI records the same durable stop marker as the SDK before reaching the
+endpoint. Each cancellation still requires the caller to have access to the
+Task. The JSON array preserves receipt order. A `requested` entry confirms
+that the server acknowledged a cancellation request. A `terminal` entry
+reports an observed final state. An `unconfirmed` cancellation or
+`admission_unconfirmed` receipt can be checked by running the command again.
+Members without a receipt report `not_submitted`. Unreadable receipts and
+Tasks the server cannot confirm report `invalid_receipt` and `unavailable`,
+respectively.
+
+After an interruption, rerun the command against the same directory. The CLI
+rechecks retained Tasks and skips those already in a terminal state. The
+marker remains active across CLI and SDK restarts, including when a
+cancellation fails or the endpoint is unavailable.
+
 #### Cancel a Task from TypeScript
 
 Use `cancelMcpTask(mcp, taskId)` from `@gregale/sdk-node/preview` on the

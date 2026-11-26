@@ -66,16 +66,51 @@ func loadMCPTaskGroup(path, endpoint string) (*os.Root, mcpTaskGroupManifest, er
 		_ = dir.Close()
 		return nil, manifest, errInvalidMCPTaskGroup
 	}
-	body, err := readMCPTaskGroupFile(dir, "group.json", maxMCPTaskGroupManifest)
-	if err != nil || decodeCustomerOperationReceipt(body, &manifest) != nil || !manifest.valid() {
+	manifest, err = readMCPTaskGroupManifest(dir)
+	if err != nil {
 		_ = dir.Close()
-		return nil, manifest, errInvalidMCPTaskGroup
+		return nil, manifest, err
 	}
 	if manifest.EndpointSHA256 != mcpTaskReceiptEndpoint(endpoint) {
 		_ = dir.Close()
 		return nil, manifest, errors.New("MCP Task group does not match the selected endpoint")
 	}
 	return dir, manifest, nil
+}
+
+func readMCPTaskGroupManifest(dir *os.Root) (mcpTaskGroupManifest, error) {
+	var manifest mcpTaskGroupManifest
+	body, err := readMCPTaskGroupFile(dir, "group.json", maxMCPTaskGroupManifest)
+	if err != nil || decodeCustomerOperationReceipt(body, &manifest) != nil || !manifest.valid() {
+		return mcpTaskGroupManifest{}, errInvalidMCPTaskGroup
+	}
+	return manifest, nil
+}
+
+// The Node SDK uses the exact manifest ID as the marker, with no newline.
+func recordMCPTaskGroupStop(dir *os.Root, manifest mcpTaskGroupManifest) error {
+	current, err := readMCPTaskGroupManifest(dir)
+	if err != nil {
+		return err
+	}
+	if current.ID != manifest.ID || current.EndpointSHA256 != manifest.EndpointSHA256 {
+		return errors.New("MCP Task group changed")
+	}
+	const name = "stopped"
+	marker, err := readMCPTaskGroupFile(dir, name, 64)
+	if errors.Is(err, fs.ErrNotExist) {
+		if err := linkPrivateReceiptAt(dir, name, []byte(manifest.ID)); err != nil && !errors.Is(err, fs.ErrExist) {
+			return errors.New("could not record MCP Task group stop")
+		}
+		marker, err = readMCPTaskGroupFile(dir, name, 64)
+	}
+	if err != nil || string(marker) != manifest.ID {
+		return errors.New("invalid MCP Task group stop marker")
+	}
+	if err := syncPrivateReceiptDirectory(dir); err != nil {
+		return errors.New("could not sync MCP Task group stop")
+	}
+	return nil
 }
 
 func (manifest mcpTaskGroupManifest) valid() bool {

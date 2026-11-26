@@ -26,13 +26,16 @@ type mcpTaskGroupTaskStatus struct {
 	Error  json.RawMessage `json:"error,omitempty"`
 }
 
-func cmdMCPTaskGroupStatus(args []string) int {
-	fs := newFlagSet("mcp-task-group-status", flag.ContinueOnError)
+func cmdMCPTaskGroup(action string, args []string) int {
+	fs := newFlagSet("mcp-task-group-"+action, flag.ContinueOnError)
 	endpoint := fs.String("url", "", "full MCP endpoint URL used to save the group")
 	tokenEnv := fs.String("token-env", "", "environment variable containing a current MCP client token")
 	group := fs.String("group", "", "private group directory saved by the Node SDK")
-	includeResults := fs.Bool("include-results", false, "include retained results and execution errors")
-	timeout := fs.Duration("timeout", 30*time.Second, "total Task read deadline")
+	var includeResults bool
+	if action == "status" {
+		fs.BoolVar(&includeResults, "include-results", false, "include retained results and execution errors")
+	}
+	timeout := fs.Duration("timeout", 30*time.Second, "total group operation deadline")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -58,9 +61,12 @@ func cmdMCPTaskGroupStatus(args []string) int {
 	defer func() { _ = dir.Close() }()
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
+	if action == "stop" {
+		return runMCPTaskGroupStop(ctx, client, manifest, dir)
+	}
 	entries := make([]mcpTaskGroupStatusEntry, len(manifest.Members))
 	for i := range entries {
-		entries[i] = mcpTaskGroupMemberStatus(ctx, client, manifest, dir, i, *includeResults)
+		entries[i] = mcpTaskGroupMemberStatus(ctx, client, manifest, dir, i, includeResults)
 	}
 	return jsonOut(writeJSON(entries))
 }
@@ -97,19 +103,9 @@ func mcpTaskGroupMemberStatus(ctx context.Context, client *mcphosting.Client, ma
 }
 
 func readMCPTaskGroupStatus(ctx context.Context, client *mcphosting.Client, receipt mcpTaskGroupReference, includeResults bool) (*mcpTaskGroupTaskStatus, string) {
-	var task mcphosting.Task
-	var exchange mcphosting.Exchange
-	var err error
-	switch {
-	case ctx.Err() != nil:
-		err = ctx.Err()
-	case receipt.TaskID != "":
-		task, exchange, err = client.GetTask(ctx, receipt.TaskID)
-	default:
-		task, exchange, err = client.GetTaskBySubmissionKey(ctx, receipt.SubmissionKey)
-		if err == nil && includeResults && (task.Status == "completed" || task.Status == "failed") {
-			task, exchange, err = client.GetTask(ctx, task.TaskID)
-		}
+	task, exchange, err := readMCPTaskGroupReference(ctx, client, receipt)
+	if err == nil && receipt.TaskID == "" && includeResults && (task.Status == "completed" || task.Status == "failed") {
+		task, exchange, err = client.GetTask(ctx, task.TaskID)
 	}
 	if err != nil {
 		outcome, _ := mcpTaskReceiptLookupOutcome(task, exchange, err)
@@ -128,4 +124,11 @@ func readMCPTaskGroupStatus(ctx context.Context, client *mcphosting.Client, rece
 		}
 	}
 	return status, "available"
+}
+
+func readMCPTaskGroupReference(ctx context.Context, client *mcphosting.Client, receipt mcpTaskGroupReference) (mcphosting.Task, mcphosting.Exchange, error) {
+	if receipt.TaskID != "" {
+		return client.GetTask(ctx, receipt.TaskID)
+	}
+	return client.GetTaskBySubmissionKey(ctx, receipt.SubmissionKey)
 }

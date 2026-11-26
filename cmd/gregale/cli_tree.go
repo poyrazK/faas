@@ -385,6 +385,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"mcp client status", "mcp task-get"},
 	{"mcp client inbox", "mcp task-inbox"},
 	{"mcp client group status", "mcp task-group-status"},
+	{"mcp client group stop", "mcp task-group-stop"},
 	{"mcp client wait", "mcp task-wait"},
 	{"mcp client respond", "mcp task-respond"},
 	{"mcp client cancel", "mcp task-cancel"},
