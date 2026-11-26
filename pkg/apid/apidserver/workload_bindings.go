@@ -24,6 +24,10 @@ import (
 // does not declare the grant the call needs (ADR-20261122191423).
 const CodeBindingNotGranted = "binding_not_granted"
 
+// bindingApplyCommand is the CLI command that applies a gregale.yaml's uses:
+// grants, named in binding refusals.
+const bindingApplyCommand = "gregale deploy"
+
 // bindingCall is an authorized binding-token call: the caller app and the
 // grants it declared, and the target the route acts on.
 type bindingCall struct {
@@ -125,8 +129,24 @@ func (s *server) authorizeBindingCall(r *http.Request, kind capgrant.Kind, resou
 		return bindingCall{}, state.Account{}, problem
 	}
 	ctx := r.Context()
-	missing := api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such app")
-	target, err := s.store.AppBySlug(ctx, r.PathValue("slug"))
+	var uses capgrant.Uses
+	if caller.Manifest.Uses != nil {
+		uses = caller.Manifest.Uses.Normalized()
+	}
+	// A target that does not exist, or is another account's, answers by the
+	// caller's own grants alone: "no such app" only when uses: names it, and
+	// otherwise the refusal an existing ungranted app gets, so a workload
+	// cannot probe which slugs exist.
+	slug := r.PathValue("slug")
+	missing := bindingNotGranted(caller, kind, state.App{Slug: slug}, "")
+	switch {
+	case !s.platformFlagFor(platformflags.CrossAppBindings, appFlagSubject(callerAcct, caller)):
+		// With bindings off the caller's account sees no binding route at all.
+		missing = bindingRoutesDisabled()
+	case uses.PermitsAny(kind, capgrant.Target{Slug: slug}):
+		missing = api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such app")
+	}
+	target, err := s.store.AppBySlug(ctx, slug)
 	if errors.Is(err, state.ErrNotFound) || err == nil && target.Status == state.AppDeleted {
 		return bindingCall{}, state.Account{}, missing
 	}
@@ -159,9 +179,7 @@ func (s *server) authorizeBindingCall(r *http.Request, kind capgrant.Kind, resou
 			SameProject:  caller.ProjectID != "" && caller.ProjectID == target.ProjectID,
 		},
 	}
-	if caller.Manifest.Uses != nil {
-		call.Uses = caller.Manifest.Uses.Normalized()
-	}
+	call.Uses = uses
 	name := ""
 	if resource != nil {
 		name = resource(r)
@@ -248,7 +266,7 @@ func bindingNotGranted(caller state.App, kind capgrant.Kind, target state.App, r
 		service = caller.Slug
 	}
 	return api.NewProblem(http.StatusForbidden, CodeBindingNotGranted, "Binding not granted",
-		fmt.Sprintf("app %q does not declare %s; add it to project.services.%s.uses in gregale.yaml and run `gregale project apply`", caller.Slug, what, service))
+		fmt.Sprintf("app %q does not declare %s; add it to project.services.%s.uses in gregale.yaml and run `%s`", caller.Slug, what, service, bindingApplyCommand))
 }
 
 // bindingQueueAllowed is the queue-name check for send routes, which read the
