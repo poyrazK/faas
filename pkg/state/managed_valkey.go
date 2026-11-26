@@ -48,6 +48,9 @@ type ManagedValkeyGrantStore interface {
 	GrantManagedValkeyCache(ctx context.Context, cacheAppID, appID, accountID string) error
 	// RevokeManagedValkeyCacheGrant reports whether a grant existed.
 	RevokeManagedValkeyCacheGrant(ctx context.Context, cacheAppID, appID string) (bool, error)
+	// ListManagedValkeyCacheGrantees lists the slugs of the live apps bound
+	// to the cache, sorted.
+	ListManagedValkeyCacheGrantees(ctx context.Context, cacheAppID string) ([]string, error)
 	ManagedValkeyCacheGrantReader
 }
 
@@ -77,6 +80,16 @@ func (s *PgStore) RevokeManagedValkeyCacheGrant(ctx context.Context, cacheAppID,
 		return false, mapErr(err)
 	}
 	return n > 0, nil
+}
+
+// ListManagedValkeyCacheGrantees lists the slugs of live apps bound to the
+// cache, sorted.
+func (s *PgStore) ListManagedValkeyCacheGrantees(ctx context.Context, cacheAppID string) ([]string, error) {
+	slugs, err := sqlc.New().ListManagedValkeyCacheGrantees(ctx, s.pool, uuidToPgtype(cacheAppID))
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	return slugs, nil
 }
 
 // ManagedValkeyCacheGranted reads a grant outside a policy snapshot.
@@ -114,6 +127,26 @@ func (m *MemStore) GrantManagedValkeyCache(ctx context.Context, cacheAppID, appI
 func (m *MemStore) RevokeManagedValkeyCacheGrant(ctx context.Context, cacheAppID, appID string) (bool, error) {
 	_, existed := m.managedValkeyCacheGrants.LoadAndDelete(managedValkeyGrantKey(cacheAppID, appID))
 	return existed, nil
+}
+
+// ListManagedValkeyCacheGrantees lists the slugs of live apps bound to the
+// cache, sorted.
+func (m *MemStore) ListManagedValkeyCacheGrantees(ctx context.Context, cacheAppID string) ([]string, error) {
+	prefix := managedValkeyGrantKey(cacheAppID, "")
+	var slugs []string
+	m.managedValkeyCacheGrants.Range(func(key, _ any) bool {
+		k, _ := key.(string)
+		if !strings.HasPrefix(k, prefix) {
+			return true
+		}
+		app, err := m.AppByID(ctx, strings.TrimPrefix(k, prefix))
+		if err == nil && app.Status != "deleted" && app.DeletedAt == nil {
+			slugs = append(slugs, app.Slug)
+		}
+		return true
+	})
+	slices.Sort(slugs)
+	return slugs, nil
 }
 
 // ManagedValkeyCacheGranted reports a grant to a cache that still exists.

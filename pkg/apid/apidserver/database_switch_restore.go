@@ -96,7 +96,7 @@ func (s *server) keepReleaseSwitchFor(r *http.Request, acct state.Account, app s
 	if split, ok := s.trafficSplitEarlierRelease(ctx, app.ID, scope); ok {
 		return state.DatabaseSwitch{}, api.ErrDatabaseSwitchUnavailable(
 			"More than one release serves this scope, so the app cannot be switched as one.",
-			fmt.Sprintf("Return all traffic to one release (gregale traffic promote --app %s --deployment %s), then switch.", app.Slug, split.earlier))
+			fmt.Sprintf("Return all traffic to one release (gregale release traffic rollback %s --to %s), then switch.", app.Slug, split.earlier))
 	}
 	source, problem := s.keepReleaseSwitchSource(ctx, acct, app, scope, strings.TrimSpace(req.DatabaseID), point)
 	if problem != nil {

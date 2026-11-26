@@ -175,6 +175,9 @@ func addFunctionDiscovery(o addFunctionOptions) (bool, string, string, error) {
 	if err != nil {
 		return false, "", "", err
 	}
+	if !found && rootAppLeftOut(o.ProjectDir) {
+		return true, "", rootAppLeftOutNote, nil
+	}
 	if !found || gregalemanifest.AllowsFunctionDiscovery(m) {
 		return true, "", "", nil
 	}

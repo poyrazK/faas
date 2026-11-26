@@ -63,6 +63,10 @@ func linkStandaloneApp(slug string, noGitignore bool) int {
 	if err != nil {
 		return printErr("Could not locate project context root", err)
 	}
+	nested := otherAppLinkedAbove(cwd, slug)
+	if nested {
+		root = cwd
+	}
 	previous, _, previousErr := linkedProjectContext(cwd)
 	if previousErr != nil && !errors.Is(previousErr, errProjectContextNotFound) {
 		return printErr("Could not read existing project context", previousErr)
@@ -81,8 +85,11 @@ func linkStandaloneApp(slug string, noGitignore bool) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(receipt))
 	}
-	if previousErr == nil && previous.Project != "" {
+	switch {
+	case previousErr == nil && previous.Project != "":
 		PrintProgress(osStdout, "Re-linked from project %s.", previous.Project)
+	case previousErr == nil && previous.App != "" && previous.App != slug && !nested:
+		PrintProgress(osStdout, "Re-linked from app %s.", previous.App)
 	}
 	PrintOK(osStdout, "Linked to app %s.", slug)
 	renderProjectContext(osStdout, receipt)

@@ -9728,6 +9728,13 @@ const (
 	// cold-boots a VM that cannot start.
 	JobMinRAMMB = 64
 
+	// AppMinRAMMB is the smallest ram_mb an app or function accepts, for the
+	// same reason: `gregale app <slug> --ram 8` was saved on prod and every
+	// later wake would cold-boot a guest that cannot start (prod hunt r53).
+	// Checked only when ram_mb is set, so an older app below it can still
+	// change other settings.
+	AppMinRAMMB = JobMinRAMMB
+
 	// Snapshots / disk (spec §1, §8).
 	FleetSnapshotAvgTargetMB = 130 // business metric; alert >160 warn, >200 page
 	SnapshotBudgetGB         = 452
