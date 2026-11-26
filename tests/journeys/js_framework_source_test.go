@@ -11,12 +11,14 @@ import (
 // nextStaticAsset finds a /_next/static file the page links.
 var nextStaticAsset = regexp.MustCompile(`/_next/static/[^"' ]+\.(?:css|js)`)
 
-// TestJSFrameworkSourceDeploys deploys a Next.js 16 app and a Bun app from
-// source (ADR-20261124160000). Both must fit the Free plan's 256 MB app
-// layer: on Free the Next.js app serves from its standalone tree, with its static
-// assets and public files copied beside the server, and the Bun app runs
-// from mise's Bun on the shared Node runtime. Each then parks and wakes on a
-// request.
+// TestJSFrameworkSourceDeploys deploys a Next.js 16 app, a Bun app, and
+// pnpm and yarn apps from source (ADR-20261124160000, ADR-20261125170000).
+// All must fit the Free plan's 256 MB app layer: on Free the Next.js app
+// serves from its standalone tree, with its static assets and public files
+// copied beside the server; the Bun app runs from mise's Bun on the shared
+// Node runtime; and the pnpm and yarn apps run their start script on the
+// runner base's Node, without the package manager. Each then parks and
+// wakes on a request.
 func TestJSFrameworkSourceDeploys(t *testing.T) {
 	tg := needs(t, tierFull, true)
 	t.Parallel()
@@ -61,6 +63,34 @@ func TestJSFrameworkSourceDeploys(t *testing.T) {
 			expectNextStandalone(t, base, time.Minute)
 		})
 	})
+	for _, pm := range []string{"pnpm", "yarn"} {
+		t.Run(pm, func(t *testing.T) {
+			t.Parallel()
+			fixture := pm + "-hello"
+			slug := tg.app(t, fixture)
+			s := newStory(t)
+			var base string
+			if !s.step("deploy", func(t *testing.T) {
+				receipt := tg.deploy(t, slug, "--path", fixtureSource(t, fixture))
+				if base = strings.TrimRight(str(receipt, "app_url"), "/"); base == "" {
+					base = tg.appURL(slug)
+				}
+			}) {
+				return
+			}
+			s.check("runs_on_runner_node", func(t *testing.T) {
+				expectRunnerNode(t, base, 2*time.Minute)
+			})
+			s.check("park_and_wake_on_request", func(t *testing.T) {
+				tg.ok(t, 2*time.Minute, "app", "park", slug)
+				waitParked(t, tg, slug)
+				if r := get(base + "/"); r.status != http.StatusOK {
+					t.Fatalf("first request after park: %s", r)
+				}
+				expectRunnerNode(t, base, time.Minute)
+			})
+		})
+	}
 	t.Run("bun", func(t *testing.T) {
 		t.Parallel()
 		slug := tg.app(t, "bun-hello")
@@ -104,6 +134,22 @@ func expectNextStandalone(t *testing.T, base string, timeout time.Duration) {
 		return cwd == "/app/.next/standalone" || cwd == "/app", "serving " + compact(doc)
 	})
 	t.Logf("metric nextjs_standalone=%t", cwd == "/app/.next/standalone")
+}
+
+// expectRunnerNode waits for a pnpm or yarn app at base to report that its
+// start script runs on the runner base's Node, without the package manager
+// (which would set npm_config_user_agent), and that its dependency loads.
+func expectRunnerNode(t *testing.T, base string, timeout time.Duration) {
+	t.Helper()
+	eventually(t, "GET / reports the runner base's Node", timeout, 2*time.Second, func() (bool, string) {
+		r := get(base + "/")
+		if r.status != http.StatusOK {
+			return false, r.String()
+		}
+		doc := jsonBody(t, r)
+		return str(doc, "exec") == "/usr/local/bin/node" && str(doc, "packageManager") == "" && doc["dep"] == float64(172800000),
+			"serving " + compact(doc)
+	})
 }
 
 // expectMiseBun waits for the Bun app at base to report that it runs from

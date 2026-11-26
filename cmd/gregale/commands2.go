@@ -4355,7 +4355,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			apply, projectWaitTimeouts = waitForProjectApplyTimeouts(withProjectWaitProgress(ctx, osStderr, jsonOutput), client, apply,
 				time.Duration(*waitTimeoutSeconds)*time.Second)
 		}
-		code := renderProjectDeployReceiptAfterWait(plan, apply, projectSession, projectWaitTimeouts)
+		code := renderProjectDeployReceiptAfterWait(plan, apply, projectSession, projectWaitTimeouts, time.Duration(*waitTimeoutSeconds)*time.Second)
 		if !jsonOutput {
 			renderProjectEndpointsFor(ctx, osStdout, client, apply, *projectSlug, *environment)
 		}
@@ -8168,7 +8168,7 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 		finishWaiting()
 		if !jsonOutput {
 			if session := sessionFromContext(ctx); session != nil {
-				PrintWarn(osStderr, "deployment wait timed out after %s; server continues processing; resume with: %s", waitTimeout, session.resumeCommand())
+				PrintWarn(osStderr, "deployment wait timed out after %s; server continues processing; resume with: %s", waitTimeout, session.resumeCommandWithTimeout(waitTimeout))
 			} else {
 				warnDeploymentTimeoutForMode(appSlug, dep.ID, waitTimeout, opts.waitForRollout)
 			}

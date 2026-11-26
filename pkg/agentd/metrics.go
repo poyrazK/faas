@@ -33,7 +33,19 @@ type Metrics struct {
 	// deadlineCredit is approval-wait credit sent to vmmd
 	// (ADR-20261027090016 amendment 3).
 	deadlineCredit prometheus.Counter
+	// Persistent session pauses and resumes (ADR-20261122132055, Metrics).
+	sandboxPause       prometheus.Histogram
+	sandboxResume      *prometheus.HistogramVec
+	sandboxResumedCold *prometheus.CounterVec
 }
+
+// Sources of sandbox_session_resume_seconds: the capture restored on its
+// own node or another, or the session cold-booted without it.
+const (
+	resumeNode   = "node"
+	resumeRemote = "remote"
+	resumeCold   = "cold"
+)
 
 // Measures of agent_run_memory_gb_seconds_total (ADR-20261027090011).
 const (
@@ -117,12 +129,30 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name: "agent_run_deadline_credit_seconds_total",
 			Help: "Seconds agent run deadlines grew by while a person decided an approval (ADR-20261027090016 amendment 3).",
 		}),
+		sandboxPause: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "sandbox_session_pause_seconds",
+			Help:    "Time vmmd took to capture a persistent sandbox session and end its VM (ADR-20261122132055 §2).",
+			Buckets: []float64{.25, .5, 1, 2, 5, 10, 30, 60, 120},
+		}),
+		sandboxResume: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "sandbox_session_resume_seconds",
+			Help:    "Time from a paused sandbox session's claim to its VM up, by source: node (its capture on its own node), remote (another node) or cold (no capture restored).",
+			Buckets: []float64{.25, .5, 1, 2, 5, 10, 30, 60, 120},
+		}, []string{"source"}),
+		sandboxResumedCold: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "sandbox_resumed_cold_total",
+			Help: "Paused sandbox sessions that resumed by cold boot, losing their memory state, by reason: no_capture or restore_failed (ADR-20261122132055 §2).",
+		}, []string{"reason"}),
+	}
+	for _, source := range []string{resumeNode, resumeRemote, resumeCold} {
+		m.sandboxResume.WithLabelValues(source)
 	}
 	for _, measure := range []string{measurePrivate, measureUnpausedPrivate, measureBillable, measureConfigured} {
 		m.memory.WithLabelValues(measure)
 	}
 	for _, c := range []prometheus.Collector{m.runs, m.requeues, m.startSeconds, m.runSeconds, m.queueDepth, m.queueOldest,
-		m.deliveries, m.deliveryAttempts, m.attemptSeconds, m.memory, m.sampleGap, m.sandboxBilled, m.sandboxPaused, m.deadlineCredit} {
+		m.deliveries, m.deliveryAttempts, m.attemptSeconds, m.memory, m.sampleGap, m.sandboxBilled, m.sandboxPaused, m.deadlineCredit,
+		m.sandboxPause, m.sandboxResume, m.sandboxResumedCold} {
 		if err := reg.Register(c); err != nil {
 			return nil, err
 		}
@@ -238,6 +268,27 @@ func (m *Metrics) sandboxUsed(prev, next agentstore.SandboxUsage) {
 	}
 	if d := next.PausedMillis - prev.PausedMillis; d > 0 {
 		m.sandboxPaused.Add(float64(d) / 1000)
+	}
+}
+
+// sandboxPausedIn records one pause's capture time.
+func (m *Metrics) sandboxPausedIn(took time.Duration) {
+	if m == nil || took < 0 {
+		return
+	}
+	m.sandboxPause.Observe(took.Seconds())
+}
+
+// sandboxResumed records one resume by its source, and why a cold one was.
+func (m *Metrics) sandboxResumed(source, coldReason string, took time.Duration) {
+	if m == nil {
+		return
+	}
+	if took >= 0 {
+		m.sandboxResume.WithLabelValues(source).Observe(took.Seconds())
+	}
+	if source == resumeCold {
+		m.sandboxResumedCold.WithLabelValues(coldReason).Inc()
 	}
 }
 

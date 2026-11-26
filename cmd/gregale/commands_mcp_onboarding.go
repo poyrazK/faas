@@ -260,7 +260,7 @@ func mcpStackReadme(options mcpInitOptions) string {
 // for its release migration, and a read-only binding for the observer.
 func mcpStackDatabaseGuide(guide *strings.Builder, options mcpInitOptions) {
 	guide.WriteString("Create the queue database and bind it to each role. Web and worker share a read-write binding; only web gets the schema-owner binding, which its release command uses; the observer gets read-only access:\n\n```sh\n")
-	fmt.Fprintf(guide, "gregale postgres create %s-db --region <region>\n", options.Name)
+	fmt.Fprintf(guide, "gregale postgres create %s-db\n", options.Name)
 	fmt.Fprintf(guide, "gregale postgres attach %s-db %s-web --env DATABASE_URL --access read_write\n", options.Name, options.Name)
 	fmt.Fprintf(guide, "gregale postgres attach %s-db %s-web --env MCP_TASK_MIGRATION_DATABASE_URL --access migration\n", options.Name, options.Name)
 	fmt.Fprintf(guide, "gregale postgres attach %s-db %s-worker --env DATABASE_URL --access read_write\n", options.Name, options.Name)

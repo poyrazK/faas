@@ -144,3 +144,19 @@ func TestManagedPostgresCreatePlanRefusalsNameTheEntitlement(t *testing.T) {
 		}
 	}
 }
+
+// Placement is the operator's choice: a create that names no region lands in
+// the platform default instead of failing validation.
+func TestManagedPostgresCreateWithoutRegionUsesDefault(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	service, _, _ := resizeAPIService(t, (*e.Acct()).ID)
+	(*(*e.S()).ManagedPostgres()) = service
+	rec := e.Do(t, http.MethodPost, "/v1/postgres/databases", map[string]any{"name": "no-region", "storage_limit_bytes": int64(1) << 30, "restore_window_seconds": 3600}, nil)
+	if rec.Code != http.StatusCreated && rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
+		t.Fatal("create without region", rec.Code, rec.Body.String())
+	}
+	var created api.ManagedPostgresDatabase
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil || created.Region != service.DefaultRegion() {
+		t.Fatalf("created in %q (err %v); want the default %q", created.Region, err, service.DefaultRegion())
+	}
+}

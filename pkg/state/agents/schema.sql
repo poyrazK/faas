@@ -257,7 +257,33 @@ CREATE TABLE sandbox_sessions (
  task_url text,
  task_max_chars integer,
  task_exit_code integer,
- task_output bytea
+ task_output bytea,
+ vcpu smallint,
+ volume_gb integer,
+ pause_requested_at timestamptz,
+ resume_requested_at timestamptz,
+ paused_at timestamptz,
+ durability text,
+ resumed_cold boolean NOT NULL DEFAULT false,
+ forked_from uuid,
+ resume_not_before timestamptz
+);
+
+CREATE TABLE sandbox_session_captures (
+ id uuid PRIMARY KEY,
+ session_id uuid NOT NULL,
+ account_id uuid NOT NULL,
+ node_id text NOT NULL,
+ storage_key text NOT NULL,
+ vmstate_storage_key text NOT NULL,
+ fc_version text NOT NULL,
+ mem_bytes bigint NOT NULL,
+ vmstate_bytes bigint NOT NULL DEFAULT 0,
+ has_backing boolean NOT NULL DEFAULT false,
+ state text NOT NULL DEFAULT 'live',
+ created_at timestamptz NOT NULL DEFAULT now(),
+ consumed_at timestamptz,
+ checked_at timestamptz
 );
 CREATE TABLE agent_sandbox_task_calls (
  sandbox_id uuid PRIMARY KEY,
@@ -306,7 +332,16 @@ CREATE TABLE sandbox_session_usage (
  cold_boot boolean NOT NULL,
  final boolean NOT NULL DEFAULT false,
  recorded_at timestamptz NOT NULL DEFAULT now(),
- updated_at timestamptz NOT NULL DEFAULT now()
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ lease_token text,
+ base_samples integer NOT NULL DEFAULT 0,
+ base_expected_samples integer NOT NULL DEFAULT 0,
+ base_measured_ms bigint NOT NULL DEFAULT 0,
+ base_paused_ms bigint NOT NULL DEFAULT 0,
+ base_frozen_ms bigint NOT NULL DEFAULT 0,
+ base_private_mb_ms bigint NOT NULL DEFAULT 0,
+ base_unpaused_private_mb_ms bigint NOT NULL DEFAULT 0,
+ base_billable_mb_ms bigint NOT NULL DEFAULT 0
 );
 CREATE TABLE sandbox_session_domains (
  sandbox_id uuid NOT NULL,
