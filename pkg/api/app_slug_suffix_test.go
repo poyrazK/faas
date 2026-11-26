@@ -35,3 +35,22 @@ func TestSuffixedAppSlugs(t *testing.T) {
 		}
 	}
 }
+
+// An unclaimed account's app always carries the account's suffix, fits the
+// slug rules and keeps its name on a redeploy.
+func TestAnonymousAppSlug(t *testing.T) {
+	const acct = "8b0c9f5e-1d2a-4f61-9a3b-2c7d5e6f7a80"
+	suffix := AnonymousAppSlugSuffix(acct)
+	if len(suffix) != 1+appSlugSuffixLen || suffix == AnonymousAppSlugSuffix("other-account") {
+		t.Fatalf("suffix = %q, want six characters that differ per account", suffix)
+	}
+	for _, base := range []string{"app", "my-api", strings.Repeat("a", 40), strings.Repeat("b", 33) + "-c"} {
+		got := AnonymousAppSlug(acct, base)
+		if !strings.HasSuffix(got, suffix) || !ValidAppSlug(got) || strings.Contains(got, "--") {
+			t.Errorf("AnonymousAppSlug(%q) = %q, want a valid name ending %s", base, got, suffix)
+		}
+		if again := AnonymousAppSlug(acct, got); again != got {
+			t.Errorf("redeploy of %q renamed it to %q", got, again)
+		}
+	}
+}

@@ -46,6 +46,11 @@ Use the key as a bearer token.
 Until someone claims it, the account:
 
 - has the Free plan's limits: one app and the Free memory size;
+- names its app with a five-character suffix that belongs to the account,
+  such as `my-app-k3x7q`, so it never holds a short name like `app` for
+  everyone. `gregale deploy` adds the suffix; through the API, a create
+  without it answers `403 claim_required` with the name to use. The name
+  stays after the claim;
 - can create, deploy, roll back, restart and delete its app, set
   environment variables and secrets, change the app's public access,
   protocol, size and restart settings, and read logs, status and usage;
