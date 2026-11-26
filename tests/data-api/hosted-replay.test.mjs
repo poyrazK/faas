@@ -1,13 +1,28 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, writeFile, rm, symlink } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { pathToFileURL, fileURLToPath } from 'node:url'
 const runtime = process.env.DATA_API_RUNTIME_DIR
 const { runHostedReplay, prepareHostedReplay } = await import(runtime ? pathToFileURL(join(runtime, 'hosted-replay.mjs')) : '../../cmd/gregale/templates/data-api/hosted-replay.mjs')
 const token = subject => 'a.' + Buffer.from(JSON.stringify({ sub: subject })).toString('base64url') + '.signature'
 const fp = 'f'.repeat(64), refresh = 'b'.repeat(64)
+test('hosted replay executes when invoked through a symlinked directory', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'gregale-hosted-entrypoint-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const source = runtime || fileURLToPath(new URL('../../cmd/gregale/templates/data-api/', import.meta.url))
+  await symlink(source, join(root, 'runtime'), 'dir')
+  for (const flags of [[], ['--preserve-symlinks-main']]) {
+    await assert.rejects(promisify(execFile)(process.execPath, [...flags, join(root, 'runtime/hosted-replay.mjs'), join(root, 'missing.json')]), error => {
+      assert.equal(error.code, 1)
+      assert.match(error.stderr, /Hosted replay failed/)
+      return true
+    })
+  }
+})
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'gregale-hosted-replay-')); t.after(() => rm(root,{recursive:true,force:true}))
   const collection = join(root,'requests.json')

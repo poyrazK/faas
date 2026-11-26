@@ -135,8 +135,10 @@ func TestBindingTokensFollowUsesGrants(t *testing.T) {
 	if code, _ := send("assetforge-worker", "transforms", bearer(live, "", workloadidentity.QueuesAudience)); code != http.StatusUnauthorized {
 		t.Fatalf("queues audience: %d", code)
 	}
-	if code, _ := send("no-such-app", "transforms", token); code != http.StatusNotFound {
-		t.Fatalf("missing target: %d", code)
+	// A slug that does not exist answers like an existing app the caller has
+	// no grant on, so a workload cannot probe which slugs exist.
+	if code, p := send("no-such-app", "transforms", token); code != http.StatusForbidden || p.Code != apidserver.CodeBindingNotGranted {
+		t.Fatalf("missing target: %d %+v", code, p)
 	}
 
 	batch := e.Do(t, http.MethodPost, "/v1/apps/assetforge-worker/queues/send-batch", api.QueueSendBatchRequest{QueueName: "other",

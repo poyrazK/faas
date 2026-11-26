@@ -153,6 +153,7 @@ var HostKeys = map[string]HostBlock{
 			"advisory_client_key_path",
 			"advisory_client_ca_path",
 			"service_proxy_ca_path",
+			"data_api_inspection_ca_path",
 		},
 		ComputeNodeBlock: []TableKey{
 			// Self-registration identity — the vmmd box tells

@@ -2780,7 +2780,7 @@ func (s *server) scanService(
 		capturedProb = prob
 		return resp, state.Project{}, nil, nil, nil, nil, prob
 	}
-	s.revokeUngrantedWorkloadCredentials(r.Context(), rec.Changed)
+	s.reconcileWorkloadCredentials(r.Context(), rec.Changed)
 	// Reconcile has committed the rows in rec.Added. Every step below can
 	// still fail, so those failures return the project and rec.Added with
 	// the problem: the caller must still send kind=created, the only live

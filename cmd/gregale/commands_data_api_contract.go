@@ -12,6 +12,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 var dataAPIAccessTokenShape = regexp.MustCompile(`^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$`)
@@ -35,7 +37,7 @@ type dataAPIServingContract struct {
 func readDataAPIServingContract(ctx context.Context, healthURL, token, refreshToken string) (dataAPIServingContract, error) {
 	var contract dataAPIServingContract
 	u, err := url.Parse(healthURL)
-	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "/healthz" || !validDataAPIAccessToken(token) {
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != api.DataAPIReadinessPath || !validDataAPIAccessToken(token) {
 		return contract, errors.New("invalid serving contract URL or application JWT")
 	}
 	u.Path = "/__gregale/schema"

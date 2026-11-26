@@ -7,6 +7,9 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.app_task_response import AppTaskResponse
+from ...models.create_data_api_contract_task_output import (
+    CreateDataAPIContractTaskOutput,
+)
 from ...models.create_data_api_contract_task_request import CreateDataAPIContractTaskRequest
 from ...models.problem import Problem
 from ...types import UNSET, Response, Unset
@@ -16,17 +19,29 @@ def _get_kwargs(
     slug: str,
     *,
     body: CreateDataAPIContractTaskRequest,
+    output: CreateDataAPIContractTaskOutput | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(idempotency_key, Unset):
         headers["Idempotency-Key"] = idempotency_key
 
+    params: dict[str, Any] = {}
+
+    json_output: str | Unset = UNSET
+    if not isinstance(output, Unset):
+        json_output = output
+
+    params["output"] = json_output
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
+
     _kwargs: dict[str, Any] = {
         "method": "post",
         "url": "/v1/apps/{slug}/data-api/contract-tasks".format(
             slug=quote(str(slug), safe=""),
         ),
+        "params": params,
     }
 
     _kwargs["json"] = body.to_dict()
@@ -102,6 +117,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient,
     body: CreateDataAPIContractTaskRequest,
+    output: CreateDataAPIContractTaskOutput | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[AppTaskResponse | Problem]:
     """Inspect a Data API app's database contract
@@ -109,12 +125,14 @@ def sync_detailed(
      Runs one fixed schema inspection inside a fresh task VM from the app's
     live deployment: `types` renders the TypeScript contract, `validators`
     the table and RPC input validators, and `schema` the JSON contract
-    snapshot. The receipt is an ordinary app task receipt and the output
-    arrives in `stdout_tail`. Belongs to the Data API, so it works without
-    the general app-task API.
+    snapshot. By default the output arrives in `stdout_tail`. With
+    `output=artifact`, the receipt omits the generated output and the
+    owner can download up to 8 MiB while the task's deployment is live.
+    Belongs to the Data API, so it works without the general app-task API.
 
     Args:
         slug (str):
+        output (CreateDataAPIContractTaskOutput | Unset):
         idempotency_key (str | Unset):
         body (CreateDataAPIContractTaskRequest): The contract inspection to run.
 
@@ -129,6 +147,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         body=body,
+        output=output,
         idempotency_key=idempotency_key,
     )
 
@@ -144,6 +163,7 @@ def sync(
     *,
     client: AuthenticatedClient,
     body: CreateDataAPIContractTaskRequest,
+    output: CreateDataAPIContractTaskOutput | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> AppTaskResponse | Problem | None:
     """Inspect a Data API app's database contract
@@ -151,12 +171,14 @@ def sync(
      Runs one fixed schema inspection inside a fresh task VM from the app's
     live deployment: `types` renders the TypeScript contract, `validators`
     the table and RPC input validators, and `schema` the JSON contract
-    snapshot. The receipt is an ordinary app task receipt and the output
-    arrives in `stdout_tail`. Belongs to the Data API, so it works without
-    the general app-task API.
+    snapshot. By default the output arrives in `stdout_tail`. With
+    `output=artifact`, the receipt omits the generated output and the
+    owner can download up to 8 MiB while the task's deployment is live.
+    Belongs to the Data API, so it works without the general app-task API.
 
     Args:
         slug (str):
+        output (CreateDataAPIContractTaskOutput | Unset):
         idempotency_key (str | Unset):
         body (CreateDataAPIContractTaskRequest): The contract inspection to run.
 
@@ -172,6 +194,7 @@ def sync(
         slug=slug,
         client=client,
         body=body,
+        output=output,
         idempotency_key=idempotency_key,
     ).parsed
 
@@ -181,6 +204,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient,
     body: CreateDataAPIContractTaskRequest,
+    output: CreateDataAPIContractTaskOutput | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[AppTaskResponse | Problem]:
     """Inspect a Data API app's database contract
@@ -188,12 +212,14 @@ async def asyncio_detailed(
      Runs one fixed schema inspection inside a fresh task VM from the app's
     live deployment: `types` renders the TypeScript contract, `validators`
     the table and RPC input validators, and `schema` the JSON contract
-    snapshot. The receipt is an ordinary app task receipt and the output
-    arrives in `stdout_tail`. Belongs to the Data API, so it works without
-    the general app-task API.
+    snapshot. By default the output arrives in `stdout_tail`. With
+    `output=artifact`, the receipt omits the generated output and the
+    owner can download up to 8 MiB while the task's deployment is live.
+    Belongs to the Data API, so it works without the general app-task API.
 
     Args:
         slug (str):
+        output (CreateDataAPIContractTaskOutput | Unset):
         idempotency_key (str | Unset):
         body (CreateDataAPIContractTaskRequest): The contract inspection to run.
 
@@ -208,6 +234,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         body=body,
+        output=output,
         idempotency_key=idempotency_key,
     )
 
@@ -221,6 +248,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient,
     body: CreateDataAPIContractTaskRequest,
+    output: CreateDataAPIContractTaskOutput | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> AppTaskResponse | Problem | None:
     """Inspect a Data API app's database contract
@@ -228,12 +256,14 @@ async def asyncio(
      Runs one fixed schema inspection inside a fresh task VM from the app's
     live deployment: `types` renders the TypeScript contract, `validators`
     the table and RPC input validators, and `schema` the JSON contract
-    snapshot. The receipt is an ordinary app task receipt and the output
-    arrives in `stdout_tail`. Belongs to the Data API, so it works without
-    the general app-task API.
+    snapshot. By default the output arrives in `stdout_tail`. With
+    `output=artifact`, the receipt omits the generated output and the
+    owner can download up to 8 MiB while the task's deployment is live.
+    Belongs to the Data API, so it works without the general app-task API.
 
     Args:
         slug (str):
+        output (CreateDataAPIContractTaskOutput | Unset):
         idempotency_key (str | Unset):
         body (CreateDataAPIContractTaskRequest): The contract inspection to run.
 
@@ -250,6 +280,7 @@ async def asyncio(
             slug=slug,
             client=client,
             body=body,
+            output=output,
             idempotency_key=idempotency_key,
         )
     ).parsed

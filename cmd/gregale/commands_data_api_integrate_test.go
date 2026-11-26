@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	main "github.com/onebox-faas/faas/cmd/gregale"
+	"github.com/onebox-faas/faas/pkg/dataapi/integration"
 )
 
 func TestDataAPIIntegratePreviewUsesExistingProjectWithoutRunningTools(t *testing.T) {
@@ -26,6 +27,80 @@ func TestDataAPIIntegratePreviewUsesExistingProjectWithoutRunningTools(t *testin
 	}
 	if _, err := os.Stat(filepath.Join(root, "gregale-data")); !os.IsNotExist(err) {
 		t.Fatal("preview wrote integration files")
+	}
+}
+
+func TestDataAPIIntegrateWorkspacePreviewAndResume(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "apps/web"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"private":true,"workspaces":["apps/*"],"devDependencies":{"typescript":"5.9.3"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "apps/web/package.json"), []byte(`{"name":"web","private":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", t.TempDir())
+	args := []string{"--directory", root, "--client-directory", "apps/web", "--sdk-version", "0.1.0", "--dry-run"}
+	if code := main.CmdDataAPIIntegrate(args); code != 0 {
+		t.Fatalf("workspace preview exited %d", code)
+	}
+	plan, err := integration.Build(root, "apps/web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := plan.Apply(); err != nil {
+		t.Fatal(err)
+	}
+	if code := main.CmdDataAPIIntegrate(append(args, "--resume")); code != 0 {
+		t.Fatalf("workspace resume preview exited %d", code)
+	}
+}
+
+func TestDataAPIIntegrateWorkspaceRetriesAfterVerificationFailure(t *testing.T) {
+	root, tools := t.TempDir(), t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "apps/web"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for path, content := range map[string]string{
+		"package.json":          `{"private":true,"workspaces":["apps/*"],"devDependencies":{"typescript":"5.9.3"}}`,
+		"apps/web/package.json": `{"name":"web","private":true}`,
+	} {
+		if err := os.WriteFile(filepath.Join(root, path), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, content := range map[string]string{
+		"docker": "#!/bin/sh\nexit 0\n",
+		"npm":    "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$TEST_NPM_LOG\"\nexit 0\n",
+		"node":   "#!/bin/sh\nexit 1\n",
+	} {
+		if err := os.WriteFile(filepath.Join(tools, name), []byte(content), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	log := filepath.Join(root, "npm.log")
+	t.Setenv("PATH", tools)
+	t.Setenv("TEST_NPM_LOG", log)
+	args := []string{"--directory", root, "--client-directory", "apps/web", "--sdk-version", "0.1.0"}
+	if code := main.CmdDataAPIIntegrate(args); code == 0 {
+		t.Fatal("verification unexpectedly passed")
+	}
+	client := filepath.Join(root, "apps/web", integration.ClientSource, "client.ts")
+	if err := os.WriteFile(client, []byte("// developer edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code := main.CmdDataAPIIntegrate(append(args, "--resume")); code == 0 {
+		t.Fatal("verification unexpectedly passed on resume")
+	}
+	content, err := os.ReadFile(client)
+	if err != nil || string(content) != "// developer edit\n" {
+		t.Fatal("resume rewrote the client")
+	}
+	calls, err := os.ReadFile(log)
+	if err != nil || bytes.Count(calls, []byte("install --prefix ")) != 2 || bytes.Count(calls, []byte("--workspace apps/web")) != 4 {
+		t.Fatalf("workspace installations = %q, %v", calls, err)
 	}
 }
 

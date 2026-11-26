@@ -2646,6 +2646,36 @@
     "kind": "operational"
   },
   {
+    "table": "data_api_inspection_admissions",
+    "columns": [
+      "account_id",
+      "app_id",
+      "binding_id",
+      "binding_revision",
+      "credential_generation",
+      "database_id",
+      "database_revision",
+      "deployment_id",
+      "nonce",
+      "runtime_generation",
+      "table_name",
+      "target_digest",
+      "task_id",
+      "trust_digest"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "data_api_inspection_executions",
+    "columns": [
+      "finished_at",
+      "protocol_version",
+      "stdout_sha256",
+      "task_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_tcp_listener_tls_observations",
     "columns": [
       "edge_id",
@@ -10855,6 +10885,7 @@
       "credential_generation",
       "credential_ref",
       "cutover_id",
+      "data_api_inspection_revision",
       "database_account_id",
       "database_id",
       "deleted_at",
@@ -11166,6 +11197,7 @@
       "clone_resource_role",
       "created_at",
       "cutover_id",
+      "data_api_inspection_revision",
       "data_resource_id",
       "deleted_at",
       "desired_generation",

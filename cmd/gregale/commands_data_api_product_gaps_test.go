@@ -428,7 +428,7 @@ func TestDataAPITypesRendersClientsFromSnapshotFile(t *testing.T) {
 var publicReadSecret = api.AppSecretResponse{Key: "DATA_API_PUBLIC_READ", Scope: api.DefaultEnvScope}
 
 func ownedCacheRule(id string) api.EdgeRuleResponse {
-	return api.EdgeRuleResponse{ID: id, Name: dataAPIPublicReadCacheRule, Kind: "cache"}
+	return api.EdgeRuleResponse{ID: id, Name: api.DataAPIPublicReadCacheRule, Kind: "cache"}
 }
 
 func TestDataAPIConfigurePublicReadCacheCreatesTheRule(t *testing.T) {
@@ -453,7 +453,7 @@ func TestDataAPIConfigurePublicReadCacheCreatesTheRule(t *testing.T) {
 	}
 	var action api.EdgeRuleCacheAction
 	_ = json.Unmarshal(rule.Action, &action)
-	if rule.Name != dataAPIPublicReadCacheRule || rule.Kind != "cache" || rule.MatchPath != "/rest/v1/*" || rule.MatchHost != "shop-data.example.com" || strings.Join(rule.MatchMethods, ",") != "GET" || action.MaxAgeSeconds != 30 || action.StaleIfErrorSeconds != api.ResponseCacheStaleIfErrorMaxSeconds {
+	if rule.Name != api.DataAPIPublicReadCacheRule || rule.Kind != "cache" || rule.MatchPath != "/rest/v1/*" || rule.MatchHost != "shop-data.example.com" || strings.Join(rule.MatchMethods, ",") != "GET" || action.MaxAgeSeconds != 30 || action.StaleIfErrorSeconds != api.ResponseCacheStaleIfErrorMaxSeconds {
 		t.Fatalf("rule = %+v action = %+v", rule, action)
 	}
 }

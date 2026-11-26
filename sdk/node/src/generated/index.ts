@@ -517,6 +517,7 @@ export type { CreateCorsPresetRequest } from './models/CreateCorsPresetRequest.j
 export type { CreateCronRequest } from './models/CreateCronRequest.js';
 export type { CreateCustomDomainRequest } from './models/CreateCustomDomainRequest.js';
 export type { CreateDataAPIContractTaskRequest } from './models/CreateDataAPIContractTaskRequest.js';
+export type { CreateDataAPIInspectionRequest } from './models/CreateDataAPIInspectionRequest.js';
 export type { CreateDatabaseSwitchRequest } from './models/CreateDatabaseSwitchRequest.js';
 export type { CreateDataConnectionRequest } from './models/CreateDataConnectionRequest.js';
 export type { CreateDataPipelineRequest } from './models/CreateDataPipelineRequest.js';
@@ -631,6 +632,7 @@ export type { DataAPIChangeEventBatchResponse } from './models/DataAPIChangeEven
 export type { DataAPIChangeHookReport } from './models/DataAPIChangeHookReport.js';
 export type { DataAPIChangeHookStatus } from './models/DataAPIChangeHookStatus.js';
 export type { DataAPIConnectionBudgets } from './models/DataAPIConnectionBudgets.js';
+export type { DataAPIInspectionResponse } from './models/DataAPIInspectionResponse.js';
 export type { DataAPIRuntime } from './models/DataAPIRuntime.js';
 export type { DataAPIRuntimeConnectionReport } from './models/DataAPIRuntimeConnectionReport.js';
 export type { DataAPIServerKey } from './models/DataAPIServerKey.js';
@@ -3863,6 +3865,7 @@ export type { WorkflowStepSpec } from './models/WorkflowStepSpec.js';
 export type { WorkflowTriggerSpec } from './models/WorkflowTriggerSpec.js';
 export type { WorkloadDependency } from './models/WorkloadDependency.js';
 export type { WorkloadPort } from './models/WorkloadPort.js';
+export type { WorkloadUses } from './models/WorkloadUses.js';
 export type { WorkPolicyListResponse } from './models/WorkPolicyListResponse.js';
 export type { WorkPolicyResponse } from './models/WorkPolicyResponse.js';
 

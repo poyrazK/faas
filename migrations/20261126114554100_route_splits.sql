@@ -1,4 +1,4 @@
--- filename: 20261125231958466_route_splits.sql
+-- filename: 20261126114554100_route_splits.sql
 -- migration-compat: expand
 
 -- +goose Up

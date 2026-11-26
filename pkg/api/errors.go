@@ -768,6 +768,13 @@ const (
 	// CodeUnauthorized so a customer can tell "I need to log in" from
 	// "my key does not have permission for this endpoint".
 	CodeForbidden = "insufficient_scope"
+	// CodeWorkloadBucketRequired refuses a workload credential request that
+	// names no bucket from an app holding several bucket grants
+	// (ADR-20261122191423); the detail lists the buckets it may name.
+	CodeWorkloadBucketRequired = "workload_bucket_required"
+	// CodeWorkloadBucketNotFound refuses a workload credential for a granted
+	// bucket that does not exist, or is not ready, in its owner's production.
+	CodeWorkloadBucketNotFound = "workload_bucket_not_found"
 	// CodeChallengeRequired is returned by gatewayd for a request on a
 	// kind=challenge route that carries no valid pass and is not a browser
 	// navigation (ADR-831 amendment 7). A browser earns the pass by loading

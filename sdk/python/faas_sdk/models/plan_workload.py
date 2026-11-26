@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from ..models.secret_file import SecretFile
     from ..models.service_caller_scopes import ServiceCallerScopes
     from ..models.service_reliability_policies import ServiceReliabilityPolicies
+    from ..models.workload_uses import WorkloadUses
 
 
 T = TypeVar("T", bound="PlanWorkload")
@@ -91,6 +92,9 @@ class PlanWorkload:
     depends_on_conditions: PlanWorkloadDependsOnConditions | Unset = UNSET
     """Explicit Compose dependency conditions. service_started retains admission ordering; service_healthy gates
     release on the captured same-project, same-environment dependency deployment."""
+    uses: WorkloadUses | Unset = UNSET
+    """A service's cross-app grants from gregale.yaml: what its workload token may call on other apps of the same
+    account."""
     release_command: str | Unset = UNSET
     """Command the service runs once before each of its releases goes live (shell string, or exec-form argv joined
     by spaces). Omitted when it declares none."""
@@ -224,6 +228,10 @@ class PlanWorkload:
         if not isinstance(self.depends_on_conditions, Unset):
             depends_on_conditions = self.depends_on_conditions.to_dict()
 
+        uses: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.uses, Unset):
+            uses = self.uses.to_dict()
+
         release_command = self.release_command
 
         release_command_source = self.release_command_source
@@ -351,6 +359,8 @@ class PlanWorkload:
             field_dict["depends_on"] = depends_on
         if depends_on_conditions is not UNSET:
             field_dict["depends_on_conditions"] = depends_on_conditions
+        if uses is not UNSET:
+            field_dict["uses"] = uses
         if release_command is not UNSET:
             field_dict["release_command"] = release_command
         if release_command_source is not UNSET:
@@ -414,6 +424,7 @@ class PlanWorkload:
         from ..models.secret_file import SecretFile
         from ..models.service_caller_scopes import ServiceCallerScopes
         from ..models.service_reliability_policies import ServiceReliabilityPolicies
+        from ..models.workload_uses import WorkloadUses
 
         d = dict(src_dict)
         name = d.pop("name")
@@ -494,6 +505,13 @@ class PlanWorkload:
             depends_on_conditions = UNSET
         else:
             depends_on_conditions = PlanWorkloadDependsOnConditions.from_dict(_depends_on_conditions)
+
+        _uses = d.pop("uses", UNSET)
+        uses: WorkloadUses | Unset
+        if isinstance(_uses, Unset):
+            uses = UNSET
+        else:
+            uses = WorkloadUses.from_dict(_uses)
 
         release_command = d.pop("release_command", UNSET)
 
@@ -622,6 +640,7 @@ class PlanWorkload:
             resources=resources,
             depends_on=depends_on,
             depends_on_conditions=depends_on_conditions,
+            uses=uses,
             release_command=release_command,
             release_command_source=release_command_source,
             service_binding_policy=service_binding_policy,

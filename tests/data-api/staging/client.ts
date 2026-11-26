@@ -1,11 +1,11 @@
-import { createDataClient } from '@gregale/data'
+import { createDataClient, type NumericMode } from '@gregale/data'
 import type { Database } from './database.types.js'
 
 const ensure = (value: unknown, code: string): void => { if (!value) throw new Error(code) }
 
-export async function exercise(url: string, aliceToken: string, bobToken: string, fetchImpl: typeof globalThis.fetch = globalThis.fetch) {
-  const alice = createDataClient<Database>({ url, accessToken: aliceToken, fetch: fetchImpl }).schema('api')
-  const bob = createDataClient<Database>({ url, accessToken: bobToken, fetch: fetchImpl }).schema('api')
+export async function exercise(url: string, aliceToken: string, bobToken: string, fetchImpl: typeof globalThis.fetch = globalThis.fetch, numericMode?: NumericMode) {
+  const alice = createDataClient<Database>({ url, accessToken: aliceToken, fetch: fetchImpl, numericMode }).schema('api')
+  const bob = createDataClient<Database>({ url, accessToken: bobToken, fetch: fetchImpl, numericMode }).schema('api')
   const inserted = await alice.from('notes').insert({ subject: 'alice', body: 'canary' }).select('id,body').single()
   ensure(!inserted.error && inserted.data?.body === 'canary', 'typed_insert_failed')
   const id = inserted.data!.id
