@@ -45,7 +45,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/meter"
-	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -1047,9 +1046,9 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 // egressAllowlistBlockedRange reports the platform deny range that holds
 // every address of p, if any.
 func egressAllowlistBlockedRange(p netip.Prefix) (netip.Prefix, bool) {
-	deny := netns.NewDefaultDenySet()
-	for _, d := range append(append([]netip.Prefix{}, deny.V4DenyCIDRs...), deny.V6DenyCIDRs...) {
-		if d.Bits() <= p.Bits() && d.Contains(p.Addr()) {
+	for _, cidr := range api.TenantEgressDenyCIDRs {
+		d := netip.MustParsePrefix(cidr)
+		if d.Addr().Is4() == p.Addr().Is4() && d.Bits() <= p.Bits() && d.Contains(p.Addr()) {
 			return d, true
 		}
 	}
