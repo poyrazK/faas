@@ -112,7 +112,7 @@ func (s *savedDeploySession) applySettings(ctx context.Context, c deploySettings
 			return err
 		}
 		if s.record.AppID != "" && app.ID != s.record.AppID {
-			return fmt.Errorf("app identity changed; saved settings remain pending")
+			return deployRecoveryConflict("app identity changed; saved settings remain pending")
 		}
 		current := api.DeploySettingsSnapshot(app)
 		patch := map[string]json.RawMessage{}
@@ -121,7 +121,7 @@ func (s *savedDeploySession) applySettings(ctx context.Context, c deploySettings
 				continue
 			}
 			if s.resuming && !api.DeploySettingEqual(key, current[key], step.Before[key]) {
-				return fmt.Errorf("saved %s settings conflict with the current %s; inspect the app before continuing", step.Name, key)
+				return deployRecoveryConflict(fmt.Sprintf("saved %s settings conflict with the current %s; inspect the app before continuing", step.Name, key))
 			}
 			patch[key] = desired
 		}

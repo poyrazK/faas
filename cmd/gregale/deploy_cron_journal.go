@@ -177,7 +177,7 @@ func (s *savedDeploySession) refreshCronActivation(ctx context.Context, c deploy
 		return fmt.Errorf("check pending cron activation: %w", err)
 	}
 	if receipt.SessionID != s.record.ID || receipt.AppID != s.record.AppID || receipt.Revision != j.Intent.ExpectedRevision+1 {
-		return fmt.Errorf("cron activation receipt does not match saved deploy")
+		return deployRecoveryConflict("cron activation receipt does not match saved deploy")
 	}
 	switch receipt.Status {
 	case "prepared", "activated", "conflict", "discarded":
@@ -189,7 +189,7 @@ func (s *savedDeploySession) refreshCronActivation(ctx context.Context, c deploy
 		return err
 	}
 	if receipt.Status == "conflict" || receipt.Status == "discarded" {
-		return fmt.Errorf("cron activation %s; active schedules were preserved; inspect current crons and rerun deploy", receipt.Status)
+		return deployRecoveryConflict(fmt.Sprintf("cron activation %s; active schedules were preserved; inspect current crons and rerun deploy", receipt.Status))
 	}
 	return nil
 }
