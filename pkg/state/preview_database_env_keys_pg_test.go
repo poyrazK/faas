@@ -37,9 +37,11 @@ func TestPgAppPreviewDatabaseEnvKeys(t *testing.T) {
 	}
 	copied := database("copied", "copy")
 	empty := database("empty", "empty")
+	masked := database("masked", "masked")
 	off := database("off", "off")
 	bind(copied, "default", "DATABASE_URL")
 	bind(empty, "production", "EVENTS_URL")
+	bind(masked, "production", "PEOPLE_URL")
 	bind(copied, "staging", "STAGING_URL") // not a scope production serves
 	bind(off, "default", "LEGACY_URL")     // previews off
 	removed := bind(empty, "default", "REMOVED_URL")
@@ -55,7 +57,7 @@ func TestPgAppPreviewDatabaseEnvKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"DATABASE_URL", "EVENTS_URL"}; !reflect.DeepEqual(got, want) {
+	if want := []string{"DATABASE_URL", "EVENTS_URL", "PEOPLE_URL"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("preview database keys = %v, want %v", got, want)
 	}
 	if got, err := st.AppPreviewDatabaseEnvKeys(ctx, acct.ID, uuid.NewString()); err != nil || len(got) != 0 {

@@ -63,35 +63,105 @@ func (r *Runtime) importUDSPath(vm *databaseVM) string {
 	return r.udsPath(vm) + "_" + strconv.FormatUint(uint64(dbguest.ImportPort), 10)
 }
 
-// SetImportSource lets a running database's import reach src. The relay
-// listens from the first call until the VM stops; a later call changes
-// where new connections go.
-func (r *Runtime) SetImportSource(id string, src ImportSource) error {
+// ErrImportBusy indicates another request is checking or starting the import.
+var ErrImportBusy = errors.New("dbvm: import request is still being resolved")
+
+// ControlImport serializes checks and starts with setup of their source relay.
+// A retry observes a running or completed copy without changing its endpoint.
+func (r *Runtime) ControlImport(ctx context.Context, id string, src ImportSource, req dbguest.Request) (dbguest.Response, error) {
 	if err := src.Validate(); err != nil {
-		return err
+		return dbguest.Response{}, err
+	}
+	if err := req.Validate(); err != nil || (req.Op != dbguest.OpImport && req.Op != dbguest.OpCustomerImport && !importProbe(req.Op)) {
+		return dbguest.Response{}, ErrInvalidImportSource
 	}
 	vm, err := r.running(id)
 	if err != nil {
-		return err
+		return dbguest.Response{}, err
+	}
+	if !vm.importMu.TryLock() {
+		return dbguest.Response{}, ErrImportBusy
+	}
+	defer vm.importMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return dbguest.Response{}, err
+	}
+	// Finish observing the local guest even when the caller stops waiting.
+	probe, cancel := context.WithTimeout(context.WithoutCancel(ctx), 35*time.Second)
+	defer cancel()
+	socket := r.udsPath(vm)
+	status, err := Control(probe, socket, dbguest.Request{Op: dbguest.OpImportStatus})
+	if err != nil {
+		return status, err
+	}
+	if status.Error != "" || status.Import == nil || status.MigrationFenced {
+		return dbguest.Response{}, ErrImportBusy
+	}
+	if resp, handled := existingImport(status, req); handled {
+		return resp, nil
+	}
+	if time.Now().Before(vm.importUncertainUntil) {
+		return dbguest.Response{}, ErrImportBusy
+	}
+	if err := r.serveImportRelay(ctx, vm); err != nil {
+		return dbguest.Response{}, err
 	}
 	vm.importSrc.Store(&src)
+	resp, err := Control(probe, socket, req)
+	if err != nil {
+		// The check may still be reading from this relay, or the start may
+		// have been accepted. Keep its source pinned until we can observe it.
+		vm.importUncertainUntil = time.Now().Add(35 * time.Second)
+		return resp, err
+	}
+	if importProbe(req.Op) || resp.Error != "" || resp.Import == nil || resp.Import.State != dbguest.ImportRunning {
+		vm.importSrc.Store(nil)
+	}
+	return resp, nil
+}
+
+func importProbe(op dbguest.Op) bool {
+	return op == dbguest.OpImportCheck || op == dbguest.OpMigrationCheck
+}
+
+func existingImport(status dbguest.Response, req dbguest.Request) (dbguest.Response, bool) {
+	current := status.Import
+	if current.State != dbguest.ImportRunning && (current.State != dbguest.ImportDone || importProbe(req.Op)) {
+		return dbguest.Response{}, false
+	}
+	if importProbe(req.Op) || current.OperationID != req.Import.OperationID {
+		status.Error = dbguest.ErrCodeImportOperationMismatch
+	}
+	return status, true
+}
+
+// serveImportRelay listens for source connections from this guest only.
+func (r *Runtime) serveImportRelay(ctx context.Context, vm *databaseVM) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if vm.importLn != nil {
 		return nil
 	}
-	path := r.importUDSPath(vm)
+	ln, err := r.listenSourceRelay(ctx, vm, r.importUDSPath(vm), vm.importSrc.Load)
+	if err == nil {
+		vm.importLn = ln
+	}
+	return err
+}
+
+func (r *Runtime) listenSourceRelay(ctx context.Context, vm *databaseVM, path string, source func() *ImportSource) (net.Listener, error) {
 	_ = os.Remove(path)
 	ln, err := net.Listen("unix", path)
 	if err != nil {
-		return fmt.Errorf("dbvm: import relay: %w", err)
+		return nil, fmt.Errorf("dbvm: import relay: %w", err)
 	}
 	// Firecracker runs as the jail's uid and connects to this socket.
 	if err := os.Chown(path, vm.lease.UID, vm.lease.GID); err != nil {
 		_ = ln.Close()
-		return fmt.Errorf("dbvm: import relay: %w", err)
+		return nil, fmt.Errorf("dbvm: import relay: %w", err)
 	}
-	vm.importLn = ln
+	// The listener follows the VM lifetime. Each connection gets its own dial deadline.
+	work := context.WithoutCancel(ctx)
 	slots := make(chan struct{}, importStreamsPerVM)
 	go func() {
 		for {
@@ -105,19 +175,25 @@ func (r *Runtime) SetImportSource(id string, src ImportSource) error {
 				_ = conn.Close()
 				continue
 			}
+			src := source()
+			if src == nil {
+				<-slots
+				_ = conn.Close()
+				continue
+			}
 			go func() {
 				defer func() { <-slots }()
-				r.relayImport(conn, *vm.importSrc.Load())
+				r.relayImport(work, conn, *src)
 			}()
 		}
 	}()
-	return nil
+	return ln, nil
 }
 
-func (r *Runtime) relayImport(guest net.Conn, src ImportSource) {
+func (r *Runtime) relayImport(ctx context.Context, guest net.Conn, src ImportSource) {
 	defer func() { _ = guest.Close() }()
-	ctx, cancel := context.WithTimeout(context.Background(), importDialTimeout)
-	remote, err := r.dialImportSource(ctx, src)
+	dialCtx, cancel := context.WithTimeout(ctx, importDialTimeout)
+	remote, err := r.dialImportSource(dialCtx, src)
 	cancel()
 	if err != nil {
 		return

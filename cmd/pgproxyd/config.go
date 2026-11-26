@@ -49,9 +49,10 @@ type Config struct {
 	// (default 10; a native database allows 25), pool_wait bounds a
 	// transaction's wait for one (default 30s), pool_server_idle closes
 	// servers idle that long (default 1m) so idle databases can park.
-	PoolMaxServers int           `toml:"pool_max_servers"`
-	PoolWait       time.Duration `toml:"pool_wait"`
-	PoolServerIdle time.Duration `toml:"pool_server_idle"`
+	PoolMaxServers           int           `toml:"pool_max_servers"`
+	PoolWait                 time.Duration `toml:"pool_wait"`
+	PoolServerIdle           time.Duration `toml:"pool_server_idle"`
+	ReplicaMaxReplayLagBytes *int64        `toml:"replica_max_replay_lag_bytes"`
 	// Query cancellation: instance_id (0-255, unique among the fleet's
 	// pgproxyd) tags the cancel keys this instance issues; cancel_peers
 	// maps the other instances' ids to their listeners on the overlay
@@ -108,6 +109,9 @@ func (c *Config) validate() error {
 	// three of them the superuser's.
 	if c.PoolMaxServers < 0 || c.PoolMaxServers > 20 {
 		return errors.New("pgproxyd: pool_max_servers must be between 0 (default) and 20")
+	}
+	if c.ReplicaMaxReplayLagBytes != nil && *c.ReplicaMaxReplayLagBytes < 0 {
+		return errors.New("pgproxyd: replica_max_replay_lag_bytes must be non-negative")
 	}
 	if c.PoolWait < 0 || c.PoolWait > 5*time.Minute || c.PoolServerIdle < 0 || c.PoolServerIdle > time.Hour {
 		return errors.New("pgproxyd: pool_wait must be at most 5m and pool_server_idle at most 1h")

@@ -105,12 +105,17 @@ func dialUnix(_ context.Context, target string, _ *tls.Config) (*grpc.ClientConn
 
 func proxyTLS(t *testing.T, suffix string) *tls.Config {
 	t.Helper()
+	return metalServerTLS(t, "*."+suffix)
+}
+
+func metalServerTLS(t *testing.T, hostname string) *tls.Config {
+	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "*." + suffix},
-		DNSNames: []string{"*." + suffix}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour)}
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: hostname},
+		DNSNames: []string{hostname}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour)}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	if err != nil {
 		t.Fatal(err)
@@ -322,7 +327,7 @@ func newMetalStack(t *testing.T, workdir, base string) *metalStack {
 }
 
 // newMetalStackWith is newMetalStack with a base per major.
-func newMetalStackWith(t *testing.T, workdir string, bases map[int]string) *metalStack {
+func newMetalStackWith(t *testing.T, workdir string, bases map[int]string, configure ...func(*dbvm.RuntimeConfig)) *metalStack {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -352,12 +357,16 @@ func newMetalStackWith(t *testing.T, workdir string, bases map[int]string) *meta
 	go func() {
 		_ = (&dbarchive.Server{Store: tiered, Backups: tiered, Retention: tiered}).Serve(ctx, archiveLn)
 	}()
-	rt, err := dbvm.NewRuntime(dbvm.RuntimeConfig{
+	runtime := dbvm.RuntimeConfig{
 		JailBase: filepath.Join(workdir, "djail"), VolumeRoot: filepath.Join(workdir, "drivervolumes"),
 		KernelPath: "/srv/fc/kernel/1.7.0", Bases: bases, ParentCgroup: parent,
 		JailerBin: "/usr/local/bin/jailer", FirecrackerBin: "/usr/local/bin/firecracker", Leases: &driverLeaser{},
 		ArchiveSocket: archiveSock,
-	})
+	}
+	for _, option := range configure {
+		option(&runtime)
+	}
+	rt, err := dbvm.NewRuntime(runtime)
 	if err != nil {
 		t.Fatal(err)
 	}

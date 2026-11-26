@@ -115,7 +115,26 @@ func (s *PostgresStore) ReserveCutover(ctx context.Context, request PrepareCutov
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return Cutover{}, false, mapPostgresError(err)
 	}
-	if source.State != "ready" || target.State != "ready" || !source.ProviderResourceID.Valid || !target.ProviderResourceID.Valid || source.CutoverID.Valid || target.CutoverID.Valid || !target.RestoreSourceDatabaseID.Valid || target.RestoreSourceDatabaseID != source.ID || target.RestoreSourceResourceID.String != databaseDataResource(databaseFromSQL(source)) {
+	if source.State != "ready" || target.State != "ready" || !source.ProviderResourceID.Valid || !target.ProviderResourceID.Valid || source.CutoverID.Valid || target.CutoverID.Valid {
+		return Cutover{}, false, ErrConflict
+	}
+	var migration bool
+	err = tx.QueryRow(ctx, `SELECT EXISTS (
+		SELECT FROM release_database_switches
+		WHERE id = $1::uuid AND account_id = $2::uuid AND app_id = $3::uuid AND scope = $4
+		  AND source_database_id = $5::uuid AND target_database_id = $6::uuid
+		  AND migration_operation_id IS NOT NULL AND phase = 'staging'
+	)`, request.ID, request.AccountID, request.AppID, request.Scope, request.SourceDatabaseID, request.TargetDatabaseID).Scan(&migration)
+	if err != nil {
+		return Cutover{}, false, mapPostgresError(err)
+	}
+	if migration {
+		c := Cutover{ID: request.ID, AppID: request.AppID, Scope: request.Scope}
+		if err := checkMigrationBindings(ctx, tx, c); err != nil {
+			return Cutover{}, false, err
+		}
+	} else if !target.RestoreSourceDatabaseID.Valid || target.RestoreSourceDatabaseID != source.ID ||
+		target.RestoreSourceResourceID.String != databaseDataResource(databaseFromSQL(source)) {
 		return Cutover{}, false, ErrConflict
 	}
 	targetBindings, err := q.CountManagedPostgresCutoverTargetBindings(ctx, tx, request.TargetDatabaseID)

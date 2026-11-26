@@ -2,9 +2,10 @@ package main_test
 
 import (
 	"bytes"
-	"github.com/onebox-faas/faas/cmd/gregale"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/cmd/gregale"
 )
 
 // TestPostgresCommandsNameInvalidChoices pins the production-us hunt #9
@@ -13,6 +14,7 @@ import (
 // command with a closed-set flag must name the flag, the value and the
 // accepted set, before contacting the API.
 func TestPostgresCommandsNameInvalidChoices(t *testing.T) {
+	t.Setenv("FAAS_APPLICATION_AUTH_ENABLED", "")
 	const requestID = "7a1f3c52-9a0e-4c41-8d36-2f1a8e8b9c10"
 	cases := []struct {
 		name string

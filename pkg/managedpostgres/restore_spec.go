@@ -12,6 +12,22 @@ type RestoreSpecResolver interface {
 	ResolveRestoreSpec(context.Context, RestoreSourceDefinition, time.Time) (Spec, error)
 }
 
+// RestoreMajorSpan describes the end of a previous PostgreSQL major's tenure.
+type RestoreMajorSpan struct {
+	PostgresMajor int
+	Until         time.Time
+}
+
+// RestoreMajorHistoryReader reads the catalog without contacting the source VM.
+type RestoreMajorHistoryReader interface {
+	RestoreMajorHistory(context.Context, RestoreSourceDefinition) ([]RestoreMajorSpan, error)
+}
+
+func restoreSourceDefinition(source Database) RestoreSourceDefinition {
+	return RestoreSourceDefinition{Spec: source.Spec, BackendID: source.BackendID, BackendFingerprint: source.BackendFingerprint,
+		ProviderResourceID: source.ProviderResourceID, DataResourceID: databaseDataResource(source)}
+}
+
 func (s *Service) resolveRestoreSpec(ctx context.Context, source Database, point time.Time, frozen bool) (Spec, error) {
 	backend, err := s.registry.Resolve(source.BackendID, source.BackendFingerprint)
 	if err != nil {
@@ -23,8 +39,7 @@ func (s *Service) resolveRestoreSpec(ctx context.Context, source Database, point
 	}
 	providerCtx, cancel := context.WithTimeout(ctx, s.providerTimeout)
 	defer cancel()
-	spec, err := resolver.ResolveRestoreSpec(providerCtx, RestoreSourceDefinition{Spec: source.Spec, BackendID: source.BackendID,
-		BackendFingerprint: source.BackendFingerprint, ProviderResourceID: source.ProviderResourceID, DataResourceID: databaseDataResource(source)}, point)
+	spec, err := resolver.ResolveRestoreSpec(providerCtx, restoreSourceDefinition(source), point)
 	if err != nil {
 		return Spec{}, err
 	}

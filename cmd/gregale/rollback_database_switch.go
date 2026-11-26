@@ -64,7 +64,7 @@ func cmdRollbackRestoreDatabases(slug, to string, acknowledge, noWait bool, time
 		PrintOK(osStdout, "Database switch %s started; follow it with: gregale release rollback status %s %s --wait", sw.ID, slug, sw.ID)
 		return 0
 	}
-	return followDatabaseSwitch(client, slug, sw, timeout, interval)
+	return followDatabaseSwitch(client, slug, api.MigrationDatabaseSwitch{DatabaseSwitch: sw}, timeout, interval)
 }
 
 // writeDatabaseSwitchPlan explains a switch before it is confirmed: the
@@ -89,15 +89,20 @@ func writeDatabaseSwitchPlan(w io.Writer, slug string, p api.Problem) {
 
 // followDatabaseSwitch polls a switch, printing each phase, until it ends or
 // the timeout passes. It exits 0 only for a completed switch.
-func followDatabaseSwitch(client *api.Client, slug string, sw api.DatabaseSwitch, timeout, interval time.Duration) int {
+func followDatabaseSwitch(client *api.Client, slug string, sw api.MigrationDatabaseSwitch, timeout, interval time.Duration) int {
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	ctx, cancel := context.WithTimeout(signalCtx, timeout)
 	defer cancel()
+	migration := sw.MigrationOperationID != ""
+	statusFlags := "--wait"
+	if migration {
+		statusFlags = "--migration --wait"
+	}
 	last := ""
 	for {
 		if !jsonOutput {
-			if line := databaseSwitchLine(slug, sw); line != last {
+			if line := databaseSwitchLine(slug, sw.DatabaseSwitch); line != last {
 				_, _ = fmt.Fprintln(osStdout, line)
 				last = line
 			}
@@ -110,10 +115,16 @@ func followDatabaseSwitch(client *api.Client, slug string, sw api.DatabaseSwitch
 			if jsonOutput {
 				_ = writeJSON(sw)
 			}
-			return printErr("Still switching", fmt.Errorf("switch %s is %s; follow it with: gregale release rollback status %s %s --wait", sw.ID, sw.Phase, slug, sw.ID))
+			return printErr("Still switching", fmt.Errorf("switch %s is %s; follow it with: gregale release rollback status %s %s %s", sw.ID, sw.Phase, slug, sw.ID, statusFlags))
 		case <-time.After(interval):
 		}
-		next, err := client.GetDatabaseSwitch(ctx, slug, sw.ID)
+		var next api.MigrationDatabaseSwitch
+		var err error
+		if migration {
+			next, err = client.GetMigrationDatabaseSwitch(ctx, slug, sw.ID)
+		} else {
+			next.DatabaseSwitch, err = client.GetDatabaseSwitch(ctx, slug, sw.ID)
+		}
 		if err != nil && ctx.Err() == nil {
 			return printErr("Read database switch failed", err)
 		}
@@ -123,7 +134,7 @@ func followDatabaseSwitch(client *api.Client, slug string, sw api.DatabaseSwitch
 	}
 }
 
-func databaseSwitchOutcome(slug string, sw api.DatabaseSwitch) int {
+func databaseSwitchOutcome(slug string, sw api.MigrationDatabaseSwitch) int {
 	if jsonOutput {
 		if code := jsonOut(writeJSON(sw)); code != 0 || sw.Phase == "completed" {
 			return code
@@ -132,21 +143,25 @@ func databaseSwitchOutcome(slug string, sw api.DatabaseSwitch) int {
 	}
 	switch sw.Phase {
 	case "completed":
+		if sw.MigrationOperationID != "" {
+			PrintOK(osStdout, "%s now uses the native PostgreSQL database %s.", slug, sw.TargetName)
+			return 0
+		}
 		if sw.KeepsRelease {
 			PrintOK(osStdout, "Switched %s to %s. %s keeps every write and is no longer bound to %s; delete it when you no longer need it.",
-				slug, sw.TargetName, databaseName(sw), slug)
+				slug, sw.TargetName, databaseName(sw.DatabaseSwitch), slug)
 			return 0
 		}
 		PrintOK(osStdout, "Rolled back to %s on %s. %s keeps every write and is no longer bound to %s; delete it when you no longer need it.",
-			revisionRef(sw.TargetRevision, sw.TargetDeploymentID), sw.TargetName, databaseName(sw), slug)
+			revisionRef(sw.TargetRevision, sw.TargetDeploymentID), sw.TargetName, databaseName(sw.DatabaseSwitch), slug)
 		return 0
 	case "cancelled":
-		PrintWarn(osStderr, "Database switch cancelled; %s still serves %s on %s.", slug, revisionRef(sw.FromRevision, sw.FromDeploymentID), databaseName(sw))
+		PrintWarn(osStderr, "Database switch cancelled; %s still serves %s on %s.", slug, revisionRef(sw.FromRevision, sw.FromDeploymentID), databaseName(sw.DatabaseSwitch))
 	default:
 		PrintWarn(osStderr, "Database switch failed (%s): %s %s still serves %s on %s.", sw.FailureCode, sw.FailureDetail, slug,
-			revisionRef(sw.FromRevision, sw.FromDeploymentID), databaseName(sw))
+			revisionRef(sw.FromRevision, sw.FromDeploymentID), databaseName(sw.DatabaseSwitch))
 	}
-	if sw.TargetDatabaseID != "" {
+	if sw.TargetDatabaseID != "" && sw.MigrationOperationID == "" {
 		PrintWarn(osStderr, "The restored copy %s was kept; delete it with gregale postgres delete %s if you do not need it.", sw.TargetName, sw.TargetDatabaseID)
 	}
 	return 1
@@ -203,6 +218,7 @@ func cmdRollbackSwitches(args []string) int {
 		return 0
 	}
 	fs := newFlagSet("rollback switches", flag.ContinueOnError)
+	migration := fs.Bool("migration", false, "list native PostgreSQL migration switches")
 	positionals, err := parseSwitchArgs(fs, args)
 	if err != nil || len(positionals) != 1 {
 		PrintUsage(os.Stderr, rollbackSwitchesUsage, "rollback")
@@ -212,12 +228,26 @@ func cmdRollbackSwitches(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	switches, err := client.ListDatabaseSwitches(context.Background(), positionals[0])
-	if err != nil {
-		return printErr("List database switches failed", err)
-	}
-	if jsonOutput {
-		return jsonOut(writeJSON(api.DatabaseSwitchList{Items: switches}))
+	var switches []api.DatabaseSwitch
+	if *migration {
+		rows, err := client.ListMigrationDatabaseSwitches(context.Background(), positionals[0])
+		if err != nil {
+			return printErr("List migration switches failed", err)
+		}
+		if jsonOutput {
+			return jsonOut(writeJSON(api.MigrationDatabaseSwitchList{Items: rows}))
+		}
+		for _, row := range rows {
+			switches = append(switches, row.DatabaseSwitch)
+		}
+	} else {
+		switches, err = client.ListDatabaseSwitches(context.Background(), positionals[0])
+		if err != nil {
+			return printErr("List database switches failed", err)
+		}
+		if jsonOutput {
+			return jsonOut(writeJSON(api.DatabaseSwitchList{Items: switches}))
+		}
 	}
 	if len(switches) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "No database switches.")
@@ -248,6 +278,7 @@ func cmdRollbackSwitch(args []string) int {
 	}
 	fs := newFlagSet("rollback switch", flag.ContinueOnError)
 	cancelSwitch := fs.Bool("cancel", false, "cancel the switch")
+	migration := fs.Bool("migration", false, "read a native PostgreSQL migration switch")
 	wait := fs.Bool("wait", false, "follow the switch until it ends")
 	timeout := fs.Duration("timeout", databaseSwitchDefaultTimeout, "wait deadline")
 	interval := fs.Duration("poll-interval", 2*time.Second, "poll interval")
@@ -261,9 +292,13 @@ func cmdRollbackSwitch(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	var sw api.DatabaseSwitch
+	var sw api.MigrationDatabaseSwitch
 	if *cancelSwitch {
-		sw, err = client.CancelDatabaseSwitch(context.Background(), slug, id)
+		if *migration {
+			sw, err = client.CancelMigrationDatabaseSwitch(context.Background(), slug, id)
+		} else {
+			sw.DatabaseSwitch, err = client.CancelDatabaseSwitch(context.Background(), slug, id)
+		}
 		if err != nil {
 			return printErr("Cancel failed", err)
 		}
@@ -271,8 +306,15 @@ func cmdRollbackSwitch(args []string) int {
 			PrintOK(osStdout, "Cancellation requested; the switch unwinds and %s keeps serving its current release.", slug)
 			return 0
 		}
-	} else if sw, err = client.GetDatabaseSwitch(context.Background(), slug, id); err != nil {
-		return printErr("Read database switch failed", err)
+	} else {
+		if *migration {
+			sw, err = client.GetMigrationDatabaseSwitch(context.Background(), slug, id)
+		} else {
+			sw.DatabaseSwitch, err = client.GetDatabaseSwitch(context.Background(), slug, id)
+		}
+		if err != nil {
+			return printErr("Read database switch failed", err)
+		}
 	}
 	if *wait {
 		return followDatabaseSwitch(client, slug, sw, *timeout, *interval)
@@ -296,15 +338,19 @@ func parseSwitchArgs(fs *flag.FlagSet, args []string) ([]string, error) {
 	return append(positionals, fs.Args()...), nil
 }
 
-func writeDatabaseSwitch(w io.Writer, slug string, sw api.DatabaseSwitch) {
+func writeDatabaseSwitch(w io.Writer, slug string, sw api.MigrationDatabaseSwitch) {
 	_, _ = fmt.Fprintf(w, "switch:        %s\n", sw.ID)
-	_, _ = fmt.Fprintf(w, "phase:         %s\n", databaseSwitchLine(slug, sw))
+	_, _ = fmt.Fprintf(w, "phase:         %s\n", databaseSwitchLine(slug, sw.DatabaseSwitch))
 	if sw.KeepsRelease {
 		_, _ = fmt.Fprintf(w, "release:       %s (kept)\n", revisionRef(sw.TargetRevision, sw.TargetDeploymentID))
 	} else {
 		_, _ = fmt.Fprintf(w, "release:       %s -> %s\n", revisionRef(sw.FromRevision, sw.FromDeploymentID), revisionRef(sw.TargetRevision, sw.TargetDeploymentID))
 	}
-	_, _ = fmt.Fprintf(w, "database:      %s -> %s (restored to %s)\n", databaseName(sw), sw.TargetName, sw.RestorePoint)
+	if sw.MigrationOperationID != "" {
+		_, _ = fmt.Fprintf(w, "database:      %s -> %s\n", databaseName(sw.DatabaseSwitch), sw.TargetName)
+	} else {
+		_, _ = fmt.Fprintf(w, "database:      %s -> %s (restored to %s)\n", databaseName(sw.DatabaseSwitch), sw.TargetName, sw.RestorePoint)
+	}
 	if !sw.KeepsRelease {
 		_, _ = fmt.Fprintf(w, "undoes:        %s\n", strings.Join(sw.UndoneDeploymentIDs, ", "))
 	}

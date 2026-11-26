@@ -162,13 +162,13 @@ func (f *fakeDatabaseRuntime) Dial(context.Context, string) (net.Conn, error) {
 	return client, nil
 }
 
-// SetImportSource records the import's endpoint.
-func (f *fakeDatabaseRuntime) SetImportSource(id string, src dbvm.ImportSource) error {
+// ControlImport records the source endpoint before forwarding to Control.
+func (f *fakeDatabaseRuntime) ControlImport(ctx context.Context, id string, src dbvm.ImportSource, req dbguest.Request) (dbguest.Response, error) {
 	if err := src.Validate(); err != nil {
-		return err
+		return dbguest.Response{}, err
 	}
 	f.calls = append(f.calls, fmt.Sprintf("import_source %s %s:%d", id, src.Host, src.Port))
-	return nil
+	return f.Control(ctx, id, req)
 }
 
 // DialReplication echoes like Dial and records the call.
@@ -378,8 +378,8 @@ func TestStartDatabaseRelaysARestore(t *testing.T) {
 	s := New(vmmStubBase{}, nil, "test", nil).WithDatabases(rt)
 	target := time.Date(2026, 10, 13, 9, 30, 0, 0, time.UTC)
 	_, err := s.StartDatabase(unixCaller(), &vmmdpb.StartDatabaseRequest{DatabaseId: testDatabaseID, PostgresMajor: 17, VcpuCount: 1, MemSizeMib: 384,
-		RestoreSource: "7c9e6679-7425-40de-944b-e07fc1f90ae7", RestoreTarget: timestamppb.New(target), RestoreWindowSeconds: 3600, RestoreUntilEnd: true})
-	if err != nil || rt.started.RestoreSource != "7c9e6679-7425-40de-944b-e07fc1f90ae7" || !rt.started.RestoreTarget.Equal(target) || rt.started.RestoreWindowSeconds != 3600 || !rt.started.RestoreUntilEnd {
+		RestoreSource: "7c9e6679-7425-40de-944b-e07fc1f90ae7", RestoreTarget: timestamppb.New(target), RestoreWindowSeconds: 3600, RestoreUntilEnd: true, RestoreTimeline: 2})
+	if err != nil || rt.started.RestoreSource != "7c9e6679-7425-40de-944b-e07fc1f90ae7" || !rt.started.RestoreTarget.Equal(target) || rt.started.RestoreWindowSeconds != 3600 || !rt.started.RestoreUntilEnd || rt.started.RestoreTimeline != 2 {
 		t.Fatalf("StartDatabase = %v; boot %+v", err, rt.started)
 	}
 }

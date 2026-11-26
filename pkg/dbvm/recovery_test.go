@@ -68,6 +68,10 @@ func TestStaleVMsAndRetiredSpares(t *testing.T) {
 		if got := rt.Stale(testID); got != c.want {
 			t.Errorf("%s: stale = %v, want %v", name, got, c.want)
 		}
+		running, desired := rt.ImageIdentities(testID)
+		if running == "" || desired == "" || (running != desired) != c.want {
+			t.Errorf("%s: image evidence running=%q desired=%q", name, running, desired)
+		}
 	}
 	if rt.Stale("2b7d3c5e-8f43-4c7a-9d0e-5a1f2b3c4d5e") {
 		t.Error("an unknown VM is stale")

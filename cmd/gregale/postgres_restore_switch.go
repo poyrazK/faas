@@ -51,7 +51,7 @@ func cmdPostgresRestoreSwitch(o postgresRestoreSwitch) int {
 		PrintOK(osStdout, "Database switch %s started; follow it with: gregale release rollback status %s %s --wait", sw.ID, o.app, sw.ID)
 		return 0
 	}
-	return followDatabaseSwitch(client, o.app, sw, o.timeout, o.interval)
+	return followDatabaseSwitch(client, o.app, api.MigrationDatabaseSwitch{DatabaseSwitch: sw}, o.timeout, o.interval)
 }
 
 // writePostgresRestoreSwitchPlan explains the switch before it is confirmed:

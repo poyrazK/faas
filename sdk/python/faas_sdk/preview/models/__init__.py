@@ -61,6 +61,7 @@ from .account_trace_match import AccountTraceMatch
 from .account_trace_wake import AccountTraceWake
 from .account_trace_wake_restore_fallback_reason import AccountTraceWakeRestoreFallbackReason
 from .account_usage_response import AccountUsageResponse
+from .activate_managed_postgres_migration_request import ActivateManagedPostgresMigrationRequest
 from .activity_actor_response import ActivityActorResponse
 from .activity_actor_response_type import ActivityActorResponseType
 from .activity_resource_response import ActivityResourceResponse
@@ -757,6 +758,7 @@ from .cancel_deployment_request import CancelDeploymentRequest
 from .cancel_deployment_request_reason import CancelDeploymentRequestReason
 from .cancel_deployment_response_200 import CancelDeploymentResponse200
 from .cancel_event_execution_lineage_retry_job_request import CancelEventExecutionLineageRetryJobRequest
+from .cancel_managed_postgres_query_request import CancelManagedPostgresQueryRequest
 from .cancel_mcp_readiness_maintenance_request import CancelMCPReadinessMaintenanceRequest
 from .cancel_pending_work_request import CancelPendingWorkRequest
 from .cancel_pending_work_response import CancelPendingWorkResponse
@@ -1044,6 +1046,7 @@ from .create_managed_postgres_binding_request_access import CreateManagedPostgre
 from .create_managed_postgres_database_request import CreateManagedPostgresDatabaseRequest
 from .create_managed_postgres_database_request_availability import CreateManagedPostgresDatabaseRequestAvailability
 from .create_managed_postgres_database_request_service_class import CreateManagedPostgresDatabaseRequestServiceClass
+from .create_managed_postgres_masked_branch_request import CreateManagedPostgresMaskedBranchRequest
 from .create_managed_realtime_endpoint_request import CreateManagedRealtimeEndpointRequest
 from .create_managed_realtime_endpoint_request_auth_algorithms_item import (
     CreateManagedRealtimeEndpointRequestAuthAlgorithmsItem,
@@ -1762,6 +1765,8 @@ from .enable_alert_preset_request_action import EnableAlertPresetRequestAction
 from .enable_durable_entity_registry_body import EnableDurableEntityRegistryBody
 from .enable_durable_entity_registry_response_200 import EnableDurableEntityRegistryResponse200
 from .enable_edge_attack_mode_request import EnableEdgeAttackModeRequest
+from .enable_managed_postgres_extension_extension import EnableManagedPostgresExtensionExtension
+from .enable_org_managed_postgres_extension_extension import EnableOrgManagedPostgresExtensionExtension
 from .env_batch_request import EnvBatchRequest
 from .env_batch_request_values import EnvBatchRequestValues
 from .env_batch_response import EnvBatchResponse
@@ -2531,6 +2536,7 @@ from .get_event_consumer_execution_health_window import GetEventConsumerExecutio
 from .get_event_consumer_health_window import GetEventConsumerHealthWindow
 from .get_exclusive_operation_trigger_binding_source import GetExclusiveOperationTriggerBindingSource
 from .get_github_recovery_status_status import GetGithubRecoveryStatusStatus
+from .get_managed_postgres_table_health_sort import GetManagedPostgresTableHealthSort
 from .get_mcp_readiness_pager_duty_acknowledgements_destination import (
     GetMCPReadinessPagerDutyAcknowledgementsDestination,
 )
@@ -2540,6 +2546,7 @@ from .get_obs_recording_coverage_expected_set import GetObsRecordingCoverageExpe
 from .get_obs_rule_coverage_expected_set import GetObsRuleCoverageExpectedSet
 from .get_obs_runtime_builds_expected_role import GetObsRuntimeBuildsExpectedRole
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
+from .get_org_managed_postgres_table_health_sort import GetOrgManagedPostgresTableHealthSort
 from .get_outbound_ai_price_catalog_provider import GetOutboundAIPriceCatalogProvider
 from .get_profile_capture_view_kind import GetProfileCaptureViewKind
 from .get_project_insight_events_interval import GetProjectInsightEventsInterval
@@ -3064,10 +3071,23 @@ from .managed_postgres_activity_compute_start import ManagedPostgresActivityComp
 from .managed_postgres_activity_compute_start_cause import ManagedPostgresActivityComputeStartCause
 from .managed_postgres_activity_hint import ManagedPostgresActivityHint
 from .managed_postgres_activity_hint_code import ManagedPostgresActivityHintCode
+from .managed_postgres_activity_sample import ManagedPostgresActivitySample
+from .managed_postgres_auto_grow_status import ManagedPostgresAutoGrowStatus
+from .managed_postgres_autovacuum import ManagedPostgresAutovacuum
+from .managed_postgres_autovacuum_profile import ManagedPostgresAutovacuumProfile
+from .managed_postgres_autovacuum_settings import ManagedPostgresAutovacuumSettings
+from .managed_postgres_autovacuum_state import ManagedPostgresAutovacuumState
+from .managed_postgres_backup_schedule import ManagedPostgresBackupSchedule
+from .managed_postgres_backup_schedule_state import ManagedPostgresBackupScheduleState
+from .managed_postgres_backup_status import ManagedPostgresBackupStatus
+from .managed_postgres_base_refresh import ManagedPostgresBaseRefresh
+from .managed_postgres_base_refresh_outcome import ManagedPostgresBaseRefreshOutcome
 from .managed_postgres_binding import ManagedPostgresBinding
 from .managed_postgres_binding_access import ManagedPostgresBindingAccess
 from .managed_postgres_binding_list import ManagedPostgresBindingList
 from .managed_postgres_binding_state import ManagedPostgresBindingState
+from .managed_postgres_binding_timeouts import ManagedPostgresBindingTimeouts
+from .managed_postgres_binding_timeouts_state import ManagedPostgresBindingTimeoutsState
 from .managed_postgres_capabilities import ManagedPostgresCapabilities
 from .managed_postgres_capabilities_availability_item import ManagedPostgresCapabilitiesAvailabilityItem
 from .managed_postgres_capabilities_credential_access_item import ManagedPostgresCapabilitiesCredentialAccessItem
@@ -3107,22 +3127,80 @@ from .managed_postgres_database_plan_excess import ManagedPostgresDatabasePlanEx
 from .managed_postgres_database_service_class import ManagedPostgresDatabaseServiceClass
 from .managed_postgres_database_state import ManagedPostgresDatabaseState
 from .managed_postgres_database_usage import ManagedPostgresDatabaseUsage
+from .managed_postgres_diagnostics import ManagedPostgresDiagnostics
+from .managed_postgres_diagnostics_state import ManagedPostgresDiagnosticsState
+from .managed_postgres_error_history import ManagedPostgresErrorHistory
+from .managed_postgres_export import ManagedPostgresExport
+from .managed_postgres_export_manifest import ManagedPostgresExportManifest
+from .managed_postgres_export_request import ManagedPostgresExportRequest
+from .managed_postgres_export_state import ManagedPostgresExportState
+from .managed_postgres_extension_version import ManagedPostgresExtensionVersion
+from .managed_postgres_extensions import ManagedPostgresExtensions
 from .managed_postgres_health import ManagedPostgresHealth
 from .managed_postgres_health_compute_state import ManagedPostgresHealthComputeState
 from .managed_postgres_health_last_error_code import ManagedPostgresHealthLastErrorCode
 from .managed_postgres_health_provider_status import ManagedPostgresHealthProviderStatus
 from .managed_postgres_health_status import ManagedPostgresHealthStatus
+from .managed_postgres_import_request import ManagedPostgresImportRequest
+from .managed_postgres_import_source import ManagedPostgresImportSource
+from .managed_postgres_import_status import ManagedPostgresImportStatus
+from .managed_postgres_import_status_state import ManagedPostgresImportStatusState
+from .managed_postgres_lock_wait import ManagedPostgresLockWait
+from .managed_postgres_maintenance_status import ManagedPostgresMaintenanceStatus
+from .managed_postgres_maintenance_window import ManagedPostgresMaintenanceWindow
+from .managed_postgres_masked_column import ManagedPostgresMaskedColumn
+from .managed_postgres_masked_column_action import ManagedPostgresMaskedColumnAction
+from .managed_postgres_masked_table import ManagedPostgresMaskedTable
+from .managed_postgres_migration_check import ManagedPostgresMigrationCheck
+from .managed_postgres_migration_check_outcome import ManagedPostgresMigrationCheckOutcome
+from .managed_postgres_migration_preparation import ManagedPostgresMigrationPreparation
+from .managed_postgres_migration_preparation_blocker import ManagedPostgresMigrationPreparationBlocker
+from .managed_postgres_migration_preparation_state import ManagedPostgresMigrationPreparationState
+from .managed_postgres_migration_progress import ManagedPostgresMigrationProgress
+from .managed_postgres_migration_progress_state import ManagedPostgresMigrationProgressState
+from .managed_postgres_migration_verification import ManagedPostgresMigrationVerification
+from .managed_postgres_migration_verification_state import ManagedPostgresMigrationVerificationState
+from .managed_postgres_migration_verify_request import ManagedPostgresMigrationVerifyRequest
 from .managed_postgres_overage import ManagedPostgresOverage
 from .managed_postgres_overage_request import ManagedPostgresOverageRequest
+from .managed_postgres_query_cancellation import ManagedPostgresQueryCancellation
+from .managed_postgres_query_cancellation_outcome import ManagedPostgresQueryCancellationOutcome
+from .managed_postgres_query_error import ManagedPostgresQueryError
+from .managed_postgres_query_error_severity import ManagedPostgresQueryErrorSeverity
+from .managed_postgres_query_insight import ManagedPostgresQueryInsight
+from .managed_postgres_query_insights import ManagedPostgresQueryInsights
 from .managed_postgres_query_request import ManagedPostgresQueryRequest
 from .managed_postgres_query_response import ManagedPostgresQueryResponse
 from .managed_postgres_query_response_columns_item import ManagedPostgresQueryResponseColumnsItem
+from .managed_postgres_recovery_status import ManagedPostgresRecoveryStatus
+from .managed_postgres_recovery_status_outcome import ManagedPostgresRecoveryStatusOutcome
+from .managed_postgres_replica_status import ManagedPostgresReplicaStatus
 from .managed_postgres_resize import ManagedPostgresResize
 from .managed_postgres_resize_from_class import ManagedPostgresResizeFromClass
 from .managed_postgres_resize_state import ManagedPostgresResizeState
 from .managed_postgres_resize_target_class import ManagedPostgresResizeTargetClass
+from .managed_postgres_restore_check import ManagedPostgresRestoreCheck
+from .managed_postgres_restore_check_outcome import ManagedPostgresRestoreCheckOutcome
+from .managed_postgres_restore_drill import ManagedPostgresRestoreDrill
+from .managed_postgres_restore_drill_status import ManagedPostgresRestoreDrillStatus
+from .managed_postgres_restore_drill_status_outcome import ManagedPostgresRestoreDrillStatusOutcome
 from .managed_postgres_restore_range import ManagedPostgresRestoreRange
+from .managed_postgres_session import ManagedPostgresSession
+from .managed_postgres_session_sample import ManagedPostgresSessionSample
+from .managed_postgres_sessions import ManagedPostgresSessions
+from .managed_postgres_sessions_state import ManagedPostgresSessionsState
+from .managed_postgres_storage_alert import ManagedPostgresStorageAlert
+from .managed_postgres_storage_alert_state import ManagedPostgresStorageAlertState
+from .managed_postgres_storage_status import ManagedPostgresStorageStatus
 from .managed_postgres_suspend_timeout import ManagedPostgresSuspendTimeout
+from .managed_postgres_table_health import ManagedPostgresTableHealth
+from .managed_postgres_table_health_row import ManagedPostgresTableHealthRow
+from .managed_postgres_table_health_sample import ManagedPostgresTableHealthSample
+from .managed_postgres_table_health_state import ManagedPostgresTableHealthState
+from .managed_postgres_upgrade_rehearsal import ManagedPostgresUpgradeRehearsal
+from .managed_postgres_upgrade_rehearsal_failed_phase import ManagedPostgresUpgradeRehearsalFailedPhase
+from .managed_postgres_upgrade_rehearsal_outcome import ManagedPostgresUpgradeRehearsalOutcome
+from .managed_postgres_upgrade_rehearsal_phase import ManagedPostgresUpgradeRehearsalPhase
 from .managed_postgres_usage_import_reading import ManagedPostgresUsageImportReading
 from .managed_postgres_usage_import_reading_meter import ManagedPostgresUsageImportReadingMeter
 from .managed_postgres_usage_import_request import ManagedPostgresUsageImportRequest
@@ -3138,6 +3216,7 @@ from .managed_postgres_usage_response_egress_state import ManagedPostgresUsageRe
 from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsageResponseGuardrailState
 from .managed_postgres_usage_response_history_state import ManagedPostgresUsageResponseHistoryState
 from .managed_postgres_usage_response_hold import ManagedPostgresUsageResponseHold
+from .managed_postgres_volume_status import ManagedPostgresVolumeStatus
 from .managed_postgres_wake_with_app import ManagedPostgresWakeWithApp
 from .managed_realtime_access_request import ManagedRealtimeAccessRequest
 from .managed_realtime_access_request_action import ManagedRealtimeAccessRequestAction
@@ -3470,6 +3549,9 @@ from .migration_cutover_status import MigrationCutoverStatus
 from .migration_cutover_traffic import MigrationCutoverTraffic
 from .migration_cutover_traffic_coverage import MigrationCutoverTrafficCoverage
 from .migration_cutover_traffic_status import MigrationCutoverTrafficStatus
+from .migration_database_switch import MigrationDatabaseSwitch
+from .migration_database_switch_list import MigrationDatabaseSwitchList
+from .migration_database_switch_phase import MigrationDatabaseSwitchPhase
 from .migration_dependency_checks import MigrationDependencyChecks
 from .migration_dns_record import MigrationDNSRecord
 from .migration_dns_record_type import MigrationDNSRecordType
@@ -5934,6 +6016,8 @@ from .request_audit_record import RequestAuditRecord
 from .request_data_connection_check import RequestDataConnectionCheck
 from .request_data_connection_check_mode import RequestDataConnectionCheckMode
 from .request_event_execution_lineage_case_backfill_request import RequestEventExecutionLineageCaseBackfillRequest
+from .request_managed_postgres_restore_drill import RequestManagedPostgresRestoreDrill
+from .request_managed_postgres_upgrade_rehearsal import RequestManagedPostgresUpgradeRehearsal
 from .rerun_execution_pipeline_request import RerunExecutionPipelineRequest
 from .resize_managed_postgres_database_request import ResizeManagedPostgresDatabaseRequest
 from .resize_managed_postgres_database_request_service_class import ResizeManagedPostgresDatabaseRequestServiceClass
@@ -6567,6 +6651,15 @@ from .set_environment_route_budgets_request import SetEnvironmentRouteBudgetsReq
 from .set_environment_route_budgets_scope import SetEnvironmentRouteBudgetsScope
 from .set_financial_budget_channels_request import SetFinancialBudgetChannelsRequest
 from .set_grace_window_request import SetGraceWindowRequest
+from .set_managed_postgres_auto_grow_request import SetManagedPostgresAutoGrowRequest
+from .set_managed_postgres_autovacuum_request import SetManagedPostgresAutovacuumRequest
+from .set_managed_postgres_autovacuum_request_profile import SetManagedPostgresAutovacuumRequestProfile
+from .set_managed_postgres_backup_schedule_request import SetManagedPostgresBackupScheduleRequest
+from .set_managed_postgres_binding_timeouts_request import SetManagedPostgresBindingTimeoutsRequest
+from .set_managed_postgres_error_history_request import SetManagedPostgresErrorHistoryRequest
+from .set_managed_postgres_maintenance_request import SetManagedPostgresMaintenanceRequest
+from .set_managed_postgres_query_insights_request import SetManagedPostgresQueryInsightsRequest
+from .set_managed_postgres_recovery_region_request import SetManagedPostgresRecoveryRegionRequest
 from .set_managed_postgres_suspend_timeout_request import SetManagedPostgresSuspendTimeoutRequest
 from .set_managed_postgres_wake_with_app_request import SetManagedPostgresWakeWithAppRequest
 from .set_mcp_readiness_fallback_request import SetMCPReadinessFallbackRequest
@@ -7126,6 +7219,8 @@ from .update_trigger_request_delivery import UpdateTriggerRequestDelivery
 from .update_udp_listener_request import UpdateUDPListenerRequest
 from .update_upstream_circuit_breaker_request import UpdateUpstreamCircuitBreakerRequest
 from .upload_deploy_options import UploadDeployOptions
+from .upload_managed_postgres_archive_body import UploadManagedPostgresArchiveBody
+from .upload_org_managed_postgres_archive_body import UploadOrgManagedPostgresArchiveBody
 from .upload_session_response import UploadSessionResponse
 from .upload_session_response_status import UploadSessionResponseStatus
 from .upload_start_request import UploadStartRequest
@@ -7480,6 +7575,7 @@ __all__ = (
     "AccountTraceWake",
     "AccountTraceWakeRestoreFallbackReason",
     "AccountUsageResponse",
+    "ActivateManagedPostgresMigrationRequest",
     "ActivityActorResponse",
     "ActivityActorResponseType",
     "ActivityResourceResponse",
@@ -8168,6 +8264,7 @@ __all__ = (
     "CancelDeploymentRequestReason",
     "CancelDeploymentResponse200",
     "CancelEventExecutionLineageRetryJobRequest",
+    "CancelManagedPostgresQueryRequest",
     "CancelMCPReadinessMaintenanceRequest",
     "CancelPendingWorkRequest",
     "CancelPendingWorkResponse",
@@ -8446,6 +8543,7 @@ __all__ = (
     "CreateManagedPostgresDatabaseRequest",
     "CreateManagedPostgresDatabaseRequestAvailability",
     "CreateManagedPostgresDatabaseRequestServiceClass",
+    "CreateManagedPostgresMaskedBranchRequest",
     "CreateManagedRealtimeEndpointRequest",
     "CreateManagedRealtimeEndpointRequestAuthAlgorithmsItem",
     "CreateManagedRealtimeEndpointRequestAuthMode",
@@ -9143,6 +9241,8 @@ __all__ = (
     "EnableDurableEntityRegistryBody",
     "EnableDurableEntityRegistryResponse200",
     "EnableEdgeAttackModeRequest",
+    "EnableManagedPostgresExtensionExtension",
+    "EnableOrgManagedPostgresExtensionExtension",
     "EnvBatchRequest",
     "EnvBatchRequestValues",
     "EnvBatchResponse",
@@ -9874,6 +9974,7 @@ __all__ = (
     "GetEventConsumerHealthWindow",
     "GetExclusiveOperationTriggerBindingSource",
     "GetGithubRecoveryStatusStatus",
+    "GetManagedPostgresTableHealthSort",
     "GetMCPReadinessPagerDutyAcknowledgementsDestination",
     "GetMirrorRuleSummaryWindow",
     "GetObsInputHealthExpectedRole",
@@ -9881,6 +9982,7 @@ __all__ = (
     "GetObsRuleCoverageExpectedSet",
     "GetObsRuntimeBuildsExpectedRole",
     "GetOpenAPISpecJSONResponse200",
+    "GetOrgManagedPostgresTableHealthSort",
     "GetOutboundAIPriceCatalogProvider",
     "GetProfileCaptureViewKind",
     "GetProjectInsightEventsInterval",
@@ -10363,10 +10465,23 @@ __all__ = (
     "ManagedPostgresActivityComputeStartCause",
     "ManagedPostgresActivityHint",
     "ManagedPostgresActivityHintCode",
+    "ManagedPostgresActivitySample",
+    "ManagedPostgresAutoGrowStatus",
+    "ManagedPostgresAutovacuum",
+    "ManagedPostgresAutovacuumProfile",
+    "ManagedPostgresAutovacuumSettings",
+    "ManagedPostgresAutovacuumState",
+    "ManagedPostgresBackupSchedule",
+    "ManagedPostgresBackupScheduleState",
+    "ManagedPostgresBackupStatus",
+    "ManagedPostgresBaseRefresh",
+    "ManagedPostgresBaseRefreshOutcome",
     "ManagedPostgresBinding",
     "ManagedPostgresBindingAccess",
     "ManagedPostgresBindingList",
     "ManagedPostgresBindingState",
+    "ManagedPostgresBindingTimeouts",
+    "ManagedPostgresBindingTimeoutsState",
     "ManagedPostgresCapabilities",
     "ManagedPostgresCapabilitiesAvailabilityItem",
     "ManagedPostgresCapabilitiesCredentialAccessItem",
@@ -10406,22 +10521,80 @@ __all__ = (
     "ManagedPostgresDatabaseServiceClass",
     "ManagedPostgresDatabaseState",
     "ManagedPostgresDatabaseUsage",
+    "ManagedPostgresDiagnostics",
+    "ManagedPostgresDiagnosticsState",
+    "ManagedPostgresErrorHistory",
+    "ManagedPostgresExport",
+    "ManagedPostgresExportManifest",
+    "ManagedPostgresExportRequest",
+    "ManagedPostgresExportState",
+    "ManagedPostgresExtensions",
+    "ManagedPostgresExtensionVersion",
     "ManagedPostgresHealth",
     "ManagedPostgresHealthComputeState",
     "ManagedPostgresHealthLastErrorCode",
     "ManagedPostgresHealthProviderStatus",
     "ManagedPostgresHealthStatus",
+    "ManagedPostgresImportRequest",
+    "ManagedPostgresImportSource",
+    "ManagedPostgresImportStatus",
+    "ManagedPostgresImportStatusState",
+    "ManagedPostgresLockWait",
+    "ManagedPostgresMaintenanceStatus",
+    "ManagedPostgresMaintenanceWindow",
+    "ManagedPostgresMaskedColumn",
+    "ManagedPostgresMaskedColumnAction",
+    "ManagedPostgresMaskedTable",
+    "ManagedPostgresMigrationCheck",
+    "ManagedPostgresMigrationCheckOutcome",
+    "ManagedPostgresMigrationPreparation",
+    "ManagedPostgresMigrationPreparationBlocker",
+    "ManagedPostgresMigrationPreparationState",
+    "ManagedPostgresMigrationProgress",
+    "ManagedPostgresMigrationProgressState",
+    "ManagedPostgresMigrationVerification",
+    "ManagedPostgresMigrationVerificationState",
+    "ManagedPostgresMigrationVerifyRequest",
     "ManagedPostgresOverage",
     "ManagedPostgresOverageRequest",
+    "ManagedPostgresQueryCancellation",
+    "ManagedPostgresQueryCancellationOutcome",
+    "ManagedPostgresQueryError",
+    "ManagedPostgresQueryErrorSeverity",
+    "ManagedPostgresQueryInsight",
+    "ManagedPostgresQueryInsights",
     "ManagedPostgresQueryRequest",
     "ManagedPostgresQueryResponse",
     "ManagedPostgresQueryResponseColumnsItem",
+    "ManagedPostgresRecoveryStatus",
+    "ManagedPostgresRecoveryStatusOutcome",
+    "ManagedPostgresReplicaStatus",
     "ManagedPostgresResize",
     "ManagedPostgresResizeFromClass",
     "ManagedPostgresResizeState",
     "ManagedPostgresResizeTargetClass",
+    "ManagedPostgresRestoreCheck",
+    "ManagedPostgresRestoreCheckOutcome",
+    "ManagedPostgresRestoreDrill",
+    "ManagedPostgresRestoreDrillStatus",
+    "ManagedPostgresRestoreDrillStatusOutcome",
     "ManagedPostgresRestoreRange",
+    "ManagedPostgresSession",
+    "ManagedPostgresSessions",
+    "ManagedPostgresSessionSample",
+    "ManagedPostgresSessionsState",
+    "ManagedPostgresStorageAlert",
+    "ManagedPostgresStorageAlertState",
+    "ManagedPostgresStorageStatus",
     "ManagedPostgresSuspendTimeout",
+    "ManagedPostgresTableHealth",
+    "ManagedPostgresTableHealthRow",
+    "ManagedPostgresTableHealthSample",
+    "ManagedPostgresTableHealthState",
+    "ManagedPostgresUpgradeRehearsal",
+    "ManagedPostgresUpgradeRehearsalFailedPhase",
+    "ManagedPostgresUpgradeRehearsalOutcome",
+    "ManagedPostgresUpgradeRehearsalPhase",
     "ManagedPostgresUsageImportReading",
     "ManagedPostgresUsageImportReadingMeter",
     "ManagedPostgresUsageImportRequest",
@@ -10437,6 +10610,7 @@ __all__ = (
     "ManagedPostgresUsageResponseGuardrailState",
     "ManagedPostgresUsageResponseHistoryState",
     "ManagedPostgresUsageResponseHold",
+    "ManagedPostgresVolumeStatus",
     "ManagedPostgresWakeWithApp",
     "ManagedRealtimeAccessRequest",
     "ManagedRealtimeAccessRequestAction",
@@ -10745,6 +10919,9 @@ __all__ = (
     "MigrationCutoverTraffic",
     "MigrationCutoverTrafficCoverage",
     "MigrationCutoverTrafficStatus",
+    "MigrationDatabaseSwitch",
+    "MigrationDatabaseSwitchList",
+    "MigrationDatabaseSwitchPhase",
     "MigrationDependencyChecks",
     "MigrationDNSRecord",
     "MigrationDNSRecordType",
@@ -13039,6 +13216,8 @@ __all__ = (
     "RequestDataConnectionCheck",
     "RequestDataConnectionCheckMode",
     "RequestEventExecutionLineageCaseBackfillRequest",
+    "RequestManagedPostgresRestoreDrill",
+    "RequestManagedPostgresUpgradeRehearsal",
     "RerunExecutionPipelineRequest",
     "ResizeManagedPostgresDatabaseRequest",
     "ResizeManagedPostgresDatabaseRequestServiceClass",
@@ -13662,6 +13841,15 @@ __all__ = (
     "SetEnvironmentRouteBudgetsScope",
     "SetFinancialBudgetChannelsRequest",
     "SetGraceWindowRequest",
+    "SetManagedPostgresAutoGrowRequest",
+    "SetManagedPostgresAutovacuumRequest",
+    "SetManagedPostgresAutovacuumRequestProfile",
+    "SetManagedPostgresBackupScheduleRequest",
+    "SetManagedPostgresBindingTimeoutsRequest",
+    "SetManagedPostgresErrorHistoryRequest",
+    "SetManagedPostgresMaintenanceRequest",
+    "SetManagedPostgresQueryInsightsRequest",
+    "SetManagedPostgresRecoveryRegionRequest",
     "SetManagedPostgresSuspendTimeoutRequest",
     "SetManagedPostgresWakeWithAppRequest",
     "SetMCPReadinessFallbackRequest",
@@ -14187,6 +14375,8 @@ __all__ = (
     "UpdateUDPListenerRequest",
     "UpdateUpstreamCircuitBreakerRequest",
     "UploadDeployOptions",
+    "UploadManagedPostgresArchiveBody",
+    "UploadOrgManagedPostgresArchiveBody",
     "UploadSessionResponse",
     "UploadSessionResponseStatus",
     "UploadStartRequest",

@@ -58,6 +58,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/mcpcatalog"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/operatorobs"
+	"github.com/onebox-faas/faas/pkg/apid/postgresexport"
 	"github.com/onebox-faas/faas/pkg/apid/receivers"
 	"github.com/onebox-faas/faas/pkg/apid/routeinsights"
 	"github.com/onebox-faas/faas/pkg/apid/runfiles"
@@ -897,6 +898,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresUsageCollector(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresSuspendTimeouts(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresHealthCollector(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresStorageAlerts(ctx, pool) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresSQLProber(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runAppHealthCollector(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runEdgeCrawlerRangesRefresher(ctx) })
@@ -1992,6 +1994,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	srv.WithSBOMRoot(deps.getenv("FAAS_SBOM_ROOT")).WithSBOMStorage(sbomStorage).WithExecutionFileStorage(sbomStorage)
 	srv.withAgentOutputFiles(sbomStorage)
 	srv.WithOperationArtifactStorage(sbomStorage)
+	if managedPostgresService != nil {
+		srv.postgresExports = postgresexport.New(deps.pool, sbomStorage, managedPostgresService, cloneSealRecipient, accountIdentities)
+		if srv.postgresExports != nil {
+			go srv.postgresExports.Run(ctx, log)
+		}
+		if srv.postgresExports != nil && objectRegistry != nil {
+			srv.postgresBackupSchedules = postgresexport.NewBackupSchedules(deps.pool, srv.postgresExports, postgresBackupBuckets{srv})
+			go srv.postgresBackupSchedules.Run(ctx, log)
+		}
+	}
 	if signPubPath := strings.TrimSpace(deps.getenv("FAAS_SIGN_PUB")); signPubPath != "" {
 		rollbackVerifier, verifyErr := cosign.NewLocalVerifier(signPubPath, sbomStorage)
 		if verifyErr != nil {
