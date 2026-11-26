@@ -158,7 +158,7 @@ func customerOverviewActions(slug string, row api.ProductCustomerOverview, perio
 		actions = append(actions, api.ProductCustomerNextAction{Code: "review_activation", Label: "Review onboarding and activation", URL: base + "/onboarding?" + tenant})
 	}
 	if row.Work.NeedsReview > 0 {
-		actions = append(actions, api.ProductCustomerNextAction{Code: "review_work", Label: "Review unresolved work", URL: base + "?" + tenant + "&period=" + url.QueryEscape(row.Work.ReviewPeriod)})
+		actions = append(actions, api.ProductCustomerNextAction{Code: "review_work", Label: "Review unresolved work", URL: ownerReviewRunsURL(base, row.Customer.TenantID, row.Work.ReviewPeriod)})
 	}
 	if len(actions) == 0 {
 		actions = append(actions, api.ProductCustomerNextAction{Code: "review_customer", Label: "Review customer", URL: base + "?" + tenant + "&period=" + url.QueryEscape(period)})

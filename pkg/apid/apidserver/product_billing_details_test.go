@@ -15,7 +15,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/billing/paddleinvoice"
 	"github.com/onebox-faas/faas/pkg/state"
-	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // adr: 20261020120000 — with Paddle collection send, a customer's billing
@@ -53,16 +52,17 @@ func TestPaddleExportsBilledFromCustomerBillingDetails(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	period := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -1, 0).Format("2006-01")
-	statement := func() api.ProductBillingDocument {
+	closed := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -1, 0)
+	statement := func(period string) api.ProductBillingDocument {
 		return api.ProductBillingDocument{ID: uuid.NewString(), Kind: "statement", TenantID: alice.ID, Period: period, Currency: "EUR", AmountMillicents: 50000,
 			Snapshot: &api.ProductBillingReview{TenantID: alice.ID, Period: period, Currency: "EUR", Closed: true, Starts: 2, AmountMillicents: 50000,
 				Lines: []api.ProductBillingLine{{Feature: "export", Plan: "starter", UnitPriceMillicents: 25000, Starts: 2, Succeeded: 2, AmountMillicents: 50000}}}}
 	}
-	first, second := statement(), statement()
-	fake := &productStatementFake{MemStore: mem, docs: map[string]api.ProductBillingDocument{first.ID: first, second.ID: second}, handoffs: map[string]api.ProductInvoiceHandoff{}}
+	first, second := statement(closed.Format("2006-01")), statement(closed.AddDate(0, -1, 0).Format("2006-01"))
+	mem.SeedProductBillingDocumentForTest(account.ID, app.ID, first)
+	mem.SeedProductBillingDocumentForTest(account.ID, app.ID, second)
 
-	srv := apidserver.NewServer(statetest.NewMem(fake), slog.New(slog.NewTextHandler(io.Discard, nil)), "example.test", apidserver.NoopNotifier{})
+	srv := apidserver.NewServer(mem, slog.New(slog.NewTextHandler(io.Discard, nil)), "example.test", apidserver.NoopNotifier{})
 	paddle := &fakePaddle{status: map[string]string{}}
 	paddleSrv := httptest.NewServer(paddle)
 	defer paddleSrv.Close()
@@ -93,7 +93,7 @@ func TestPaddleExportsBilledFromCustomerBillingDetails(t *testing.T) {
 
 	call("PUT", "/v1/account/billing-connections/paddle", api.PutBillingConnectionRequest{SecretKey: "pdl_sdbx_apikey_01abcdWXYZ", Collection: state.CollectionSend, DaysUntilDue: 14}, http.StatusOK)
 	invoice := func(doc api.ProductBillingDocument) string {
-		return "/v1/apps/" + app.Slug + "/product/billing/documents/" + doc.ID + "/invoice?period=" + period
+		return "/v1/apps/" + app.Slug + "/product/billing/documents/" + doc.ID + "/invoice?period=" + doc.Period
 	}
 	exportReq := api.ProductInvoiceExportRequest{TenantID: alice.ID, Provider: state.BillingProviderPaddle}
 	// ADR-20261019100333: without an address the export stops and keeps the draft.

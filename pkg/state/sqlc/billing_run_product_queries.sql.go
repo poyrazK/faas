@@ -14,7 +14,15 @@ import (
 const billingRunDiscoverProductFeeItems = `-- name: BillingRunDiscoverProductFeeItems :exec
 INSERT INTO billing_run_product_items(run_id,app_id,tenant_id,external_ref,next_attempt_at,updated_at)
 SELECT DISTINCT $1::uuid,a.app_id,a.tenant_id,p.external_ref,$2::timestamptz,$2::timestamptz
-FROM product_control_plan_history a
+FROM (
+  SELECT account_id,app_id,tenant_id,plan,revision,effective_at
+  FROM product_control_plan_history
+  WHERE account_id=$3::uuid
+  UNION ALL
+  SELECT account_id,app_id,tenant_id,receipt->'after'->>'plan',receipt->'after'->>'revision',scheduled_for
+  FROM product_control_customer_changes
+  WHERE account_id=$3::uuid AND schedule_status='pending' AND scheduled_for<=$2::timestamptz
+) a
 JOIN product_control_heads h ON h.account_id=a.account_id AND h.app_id=a.app_id
 JOIN product_control_revisions v ON v.app_id=a.app_id AND v.revision=a.revision
 JOIN platform_tenants p ON p.account_id=a.account_id AND p.id=a.tenant_id

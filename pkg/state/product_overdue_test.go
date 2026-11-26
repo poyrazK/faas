@@ -102,7 +102,9 @@ func productOverdueContract(t *testing.T, s productOverdueTestStore, insertDoc f
 		return e
 	}
 	oldest := export(alice.ID, "2026-07", now.AddDate(0, 0, -20))
-	newer := export(alice.ID, "2026-08", now.AddDate(0, 0, -16))
+	nextDue := now.AddDate(0, 0, -16)
+	newer := export(alice.ID, "2026-08", nextDue)
+	aliceRecent := export(alice.ID, "2026-09", now.AddDate(0, 0, -3))
 	recent := export(bob.ID, "2026-08", now.AddDate(0, 0, -3))
 
 	policy, err := s.PutProductOverduePolicy(ctx, ProductOverduePolicy{AccountID: account.ID, AppID: app.ID, BlockOverdueAfterDays: 14})
@@ -172,6 +174,18 @@ func productOverdueContract(t *testing.T, s productOverdueTestStore, insertDoc f
 		}
 	}
 	paid(oldest)
+	nextURL := "https://invoice.stripe.com/i/" + newer.StatementID[:8]
+	if hold, err := s.GetProductOverdueHold(ctx, account.ID, app.ID, alice.ID); err != nil || hold.ExportID != newer.ID ||
+		!hold.DueAt.Equal(nextDue) || !hold.Since.Equal(since) || hold.HostedInvoiceURL != nextURL {
+		t.Fatalf("immediate hold handoff = %+v, %v", hold, err)
+	}
+	if holds, err := s.ListProductOverdueHolds(ctx, account.ID, app.ID); err != nil || len(holds) != 1 ||
+		holds[0].DocumentID != newer.StatementID || !holds[0].Since.Equal(since) || holds[0].HostedInvoiceURL != nextURL {
+		t.Fatalf("owner holds during handoff = %+v, %v", holds, err)
+	}
+	if err := admit(alice.ID, "held"); !errors.As(err, &refusal) || !refusal.DueAt.Equal(nextDue) || refusal.HostedInvoiceURL != nextURL {
+		t.Fatalf("start during hold handoff = %v", err)
+	}
 	if placed, lifted, err := s.SyncProductOverdueHolds(ctx, now); err != nil || len(placed) != 0 || len(lifted) != 0 {
 		t.Fatalf("moving the hold to the next overdue statement = %+v, %+v, %v", placed, lifted, err)
 	}
@@ -182,6 +196,9 @@ func productOverdueContract(t *testing.T, s productOverdueTestStore, insertDoc f
 	if _, err := s.GetProductOverdueHold(ctx, account.ID, app.ID, alice.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("paid invoice still holds before the next sync: %v", err)
 	}
+	if holds, err := s.ListProductOverdueHolds(ctx, account.ID, app.ID); err != nil || len(holds) != 0 {
+		t.Fatalf("paid workspace still appears held: %+v, %v", holds, err)
+	}
 	if err := admit(alice.ID, "paid"); err != nil {
 		t.Fatalf("paid customer refused: %v", err)
 	}
@@ -189,6 +206,7 @@ func productOverdueContract(t *testing.T, s productOverdueTestStore, insertDoc f
 		t.Fatalf("lift = %+v, %+v, %v", placed, lifted, err)
 	}
 
+	paid(aliceRecent)
 	updated, err := s.PutProductOverduePolicy(ctx, ProductOverduePolicy{AccountID: account.ID, AppID: app.ID, BlockOverdueAfterDays: 0})
 	if err != nil || updated.BlockOverdueAfterDays != 0 || !updated.CreatedAt.Equal(policy.CreatedAt) {
 		t.Fatalf("updated policy = %+v, %v", updated, err)

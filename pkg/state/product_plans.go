@@ -29,7 +29,8 @@ type ProductSelfServiceStore interface {
 type productPlanView struct {
 	head, current api.ProductCatalog
 	customer      api.ProductCustomer
-	starts        map[string]int64
+	starts        map[string]productPlanStartCounts
+	history       productPlanHistory
 	period        string
 	now           time.Time
 }
@@ -56,31 +57,22 @@ func productPlanAuthorized(s ProductPlanScope, head api.ProductCatalog, customer
 }
 
 func productPlanFeatures(v productPlanView) []string {
-	names := map[string]bool{}
-	for name := range v.current.Spec.Plans[v.customer.Plan].Features {
-		names[name] = true
-	}
+	plans := []api.ProductPlan{v.current.Spec.Plans[v.customer.Plan]}
 	if v.head.Spec.SelfService != nil {
 		for _, target := range v.head.Spec.SelfService.Transitions[v.customer.Plan] {
-			for name := range v.head.Spec.Plans[target].Features {
-				names[name] = true
-			}
+			plans = append(plans, v.head.Spec.Plans[target])
 		}
 	}
-	out := []string{}
-	for name := range names {
-		out = append(out, name)
-	}
-	sort.Strings(out)
-	return out
+	return productPlanFeatureNames(plans...)
 }
 
-func productPlanTerms(c api.ProductCatalog, name string, starts map[string]int64) api.ProductPlanTerms {
+func productPlanTerms(c api.ProductCatalog, name string, starts map[string]productPlanStartCounts) api.ProductPlanTerms {
 	p := c.Spec.Plans[name]
 	out := api.ProductPlanTerms{Plan: name, Label: p.Label, Revision: c.Revision, Currency: c.Spec.Currency, Features: []api.ProductPlanFeatureTerms{}, MonthlyFeeMillicents: p.MonthlyFeeMillicents, TrialDays: p.TrialDays,
 		RequiresPaymentMethod: p.RequiresPaymentMethod, FallbackPlan: p.FallbackPlan}
 	for feature, grant := range p.Features {
-		out.Features = append(out.Features, api.ProductPlanFeatureTerms{Name: feature, Label: c.Spec.Features[feature].Label, MonthlyStarts: grant.MonthlyStarts, UnitPriceMillicents: grant.UnitPriceMillicents, Starts: starts[feature], RemainingStarts: max(0, grant.MonthlyStarts-starts[feature]),
+		used := starts[feature].total
+		out.Features = append(out.Features, api.ProductPlanFeatureTerms{Name: feature, Label: c.Spec.Features[feature].Label, MonthlyStarts: grant.MonthlyStarts, UnitPriceMillicents: grant.UnitPriceMillicents, Starts: used, RemainingStarts: max(0, grant.MonthlyStarts-used),
 			IncludedStarts: grant.IncludedStarts})
 	}
 	sort.Slice(out.Features, func(i, j int) bool { return out.Features[i].Name < out.Features[j].Name })
@@ -122,6 +114,7 @@ func productPlanPreview(s ProductPlanScope, v productPlanView, selection api.Pro
 	after := v.customer
 	after.Plan, after.Revision = selection.Plan, selection.Revision
 	p := api.ProductPlanChangePreview{Request: selection, BeforeCustomer: v.customer, AfterCustomer: after, Before: productPlanTerms(v.current, v.customer.Plan, v.starts), After: productPlanTerms(v.head, selection.Plan, v.starts), Period: v.period, HeadRevision: v.head.Revision}
+	p.Pricing = v.history.pricing(v.customer, after, v.current, v.head, v.starts, v.now)
 	p.Hash = productOwnerHash(struct {
 		Account, App, Tenant, AuthApp, AuthAppID, Org string
 		Preview                                       api.ProductPlanChangePreview
@@ -145,8 +138,8 @@ func productPlanCursor(s ProductPlanScope, raw string) (productOwnerCursor, erro
 	return decodeProductOwnerCursor(raw, productOwnerCursorScope("customer-plans", s.AccountID, s.AppID, s.TenantID, ""), true)
 }
 
-func productPlanReceipt(p api.ProductPlanChangePreview, role string) api.ProductPlanChangeReceipt {
-	return api.ProductPlanChangeReceipt{ID: p.Request.ID, Preview: p, ActorRole: role, EffectiveAt: time.Now().UTC().Truncate(time.Microsecond)}
+func productPlanReceipt(p api.ProductPlanChangePreview, role string, now time.Time) api.ProductPlanChangeReceipt {
+	return api.ProductPlanChangeReceipt{ID: p.Request.ID, Preview: p, ActorRole: role, EffectiveAt: now}
 }
 
 // productPlanNeedsPaymentMethod refuses a self-service change to a plan that

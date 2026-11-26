@@ -23,6 +23,7 @@
   const work = new Map(), inputs = new Map(), cards = new Map();
   let planControls, teamControls, guidanceControls, helpControls, notificationControls, activityControls, historyControls, historyPageSize, historyCursorMax, runControls, emailControls, activityPageSize, activityCursorMax, notificationPageSize, helpTextMax, helpPageSize, recoveryMaxBytes, refreshRequest = 0;
   let signupControls, paymentControls;
+  let checkingOverduePayment, overdueRenderKey;
   let billingRequest = 0, billingCursor = '', billingPeriod = '';
   let resultRequest = 0;
   function clearResult() { resultRequest++; $('result').hidden = true; $('result').replaceChildren(); }
@@ -201,12 +202,45 @@
   // An overdue invoice pauses new runs until it is paid (ADR-20261018212918); this is separate from the product team pausing the workspace.
   function renderOverdueHold() {
     const hold = view.overdue_hold, status = $('overdue-status');
+    const holdID = allowed('view_billing') ? hold?.payment_check_id : undefined;
+    const checking = checkingOverduePayment === epoch;
+    const key = JSON.stringify([epoch, hold?.due_at, hold?.hosted_invoice_url, holdID, checking]);
+    if (key === overdueRenderKey) return;
+    overdueRenderKey = key;
     status.replaceChildren(); status.hidden = !hold;
     if (!hold) return;
     status.append(node('span', `New runs are paused until your invoice due ${String(hold.due_at).slice(0, 10)} is paid. Work already running continues.`));
     let link = null;
     try { link = new URL(hold.hosted_invoice_url); } catch { link = null; }
     if (link?.protocol === 'https:') { const a = node('a', 'View and pay invoice'); a.href = link.href; a.target = '_blank'; a.rel = 'noopener noreferrer'; status.append(a); }
+    if (holdID) {
+      const button = node('button', checking ? 'Checking payment status…' : 'Check payment status');
+      const generation = epoch;
+      button.type = 'button';
+      button.className = 'secondary';
+      button.disabled = checking;
+      button.onclick = () => checkOverduePayment(holdID, generation);
+      status.append(button);
+    }
+  }
+  async function checkOverduePayment(holdID, generation) {
+    if (generation !== epoch || checkingOverduePayment === generation || view?.overdue_hold?.payment_check_id !== holdID) return;
+    checkingOverduePayment = generation;
+    message('');
+    renderOverdueHold();
+    try {
+      const result = await api(`${base()}/billing/check-payment`, { method: 'POST', body: JSON.stringify({ hold_id: holdID }) });
+      await refresh(false, generation);
+      current(generation);
+      if (!result.overdue_hold) message('Your payment hold cleared.');
+      else if (result.overdue_hold.payment_check_id === holdID) message('This invoice still has an overdue balance.');
+      else message('This invoice no longer blocks work. Another overdue invoice remains.');
+    } catch (error) {
+      if (generation === epoch) message(error.message);
+    } finally {
+      if (checkingOverduePayment === generation) checkingOverduePayment = undefined;
+      if (generation === epoch && view) renderOverdueHold();
+    }
   }
   // A plan that requires a card keeps the workspace after its trial only with
   // one on file; otherwise the plan's fallback follows. Between the trial's

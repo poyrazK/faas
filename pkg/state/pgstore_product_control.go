@@ -81,8 +81,20 @@ func productCustomerTx(ctx context.Context, db sqlc.DBTX, account, appID, tenant
 	if err != nil {
 		return api.ProductCustomer{}, mapErr(err)
 	}
+	return productCustomerFromPG(tenant, row), nil
+}
+
+func productCustomerForChangePG(ctx context.Context, db sqlc.DBTX, account, app, tenant string) (api.ProductCustomer, error) {
+	row, err := sqlc.New().ProductControlCustomerForUpdate(ctx, db, sqlc.ProductControlCustomerForUpdateParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), TenantID: mustPgUUID(tenant)})
+	if err != nil {
+		return api.ProductCustomer{}, mapErr(err)
+	}
+	return productCustomerFromPG(tenant, sqlc.ProductControlGetCustomerRow(row)), nil
+}
+
+func productCustomerFromPG(tenant string, row sqlc.ProductControlGetCustomerRow) api.ProductCustomer {
 	return withProductConversion(withProductTrial(api.ProductCustomer{TenantID: tenant, Revision: row.Revision, Plan: row.Plan, Suspended: row.Suspended, AuthOrganizationID: pgUUIDString(row.AuthOrganizationID)},
-		row.TrialStartsAt, row.TrialEndsAt), row.PaymentMethodAt, row.TrialResolvedAt), nil
+		row.TrialStartsAt, row.TrialEndsAt), row.PaymentMethodAt, row.TrialResolvedAt)
 }
 
 // withProductTrial adds a customer's stored trial (ADR-20261021195901).
@@ -212,6 +224,10 @@ func (s *PgStore) SetProductCustomer(ctx context.Context, account, appID string,
 	if _, err := q.LockCustomerOperationTenant(ctx, tx, sqlc.LockCustomerOperationTenantParams{AccountID: a, TenantID: c}); err != nil {
 		return api.ProductCustomer{}, mapErr(err)
 	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	if err := applyDueProductPlanPG(ctx, tx, ProductBillingScope{account, appID, customer.TenantID, productcontrol.Period(now)}, now); err != nil {
+		return api.ProductCustomer{}, err
+	}
 	catalog, err := productCatalogTx(ctx, tx, account, appID, customer.Revision)
 	if err != nil {
 		return api.ProductCustomer{}, err
@@ -220,7 +236,7 @@ func (s *PgStore) SetProductCustomer(ctx context.Context, account, appID string,
 		return api.ProductCustomer{}, ErrNotFound
 	}
 	customer.Revision = catalog.Revision
-	if err := q.ProductControlSetCustomer(ctx, tx, sqlc.ProductControlSetCustomerParams{AccountID: a, AppID: b, TenantID: c, Revision: customer.Revision, Plan: customer.Plan, Suspended: customer.Suspended, AuthOrganizationID: org}); err != nil {
+	if err := q.ProductControlSetCustomer(ctx, tx, sqlc.ProductControlSetCustomerParams{AccountID: a, AppID: b, TenantID: c, Revision: customer.Revision, Plan: customer.Plan, Suspended: customer.Suspended, AuthOrganizationID: org, EffectiveAt: pgTime(now)}); err != nil {
 		return api.ProductCustomer{}, mapErr(err)
 	}
 	// The stored assignment carries any trial it started or kept
@@ -236,6 +252,18 @@ func (s *PgStore) SetProductCustomer(ctx context.Context, account, appID string,
 }
 
 func (s *PgStore) GetProductCustomer(ctx context.Context, account, appID, tenant string) (api.ProductCustomer, error) {
+	tenantID, err := operationUUID(tenant)
+	if err != nil {
+		return api.ProductCustomer{}, err
+	}
+	now := time.Now()
+	scope := ProductBillingScope{account, appID, pgUUIDString(tenantID), productcontrol.Period(now)}
+	if err := s.ensureProductPlanAt(ctx, scope, now); err != nil {
+		if errors.Is(err, ErrInvalidArgument) {
+			return api.ProductCustomer{}, ErrNotFound
+		}
+		return api.ProductCustomer{}, err
+	}
 	return productCustomerTx(ctx, s.pool, account, appID, tenant)
 }
 
@@ -293,7 +321,7 @@ func (s *PgStore) GetProductUsage(ctx context.Context, account, appID, tenant, p
 		out.Lines = append(out.Lines, api.ProductUsageLine{Feature: row.Feature, Revision: row.Revision, Plan: row.Plan, Starts: row.Starts, Succeeded: row.Succeeded, AmountMillicents: row.AmountMillicents})
 	}
 	// Starts during the trial use no included starts (ADR-20261021195901).
-	customer, err := productCustomerTx(ctx, s.pool, account, appID, tenant)
+	customer, err := s.GetProductCustomer(ctx, account, appID, tenant)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return api.ProductUsage{}, err
 	}
@@ -326,6 +354,10 @@ func prepareProductOperationTx(ctx context.Context, tx pgx.Tx, op *Operation, de
 	if !managed && admission.ProductFeature == "" {
 		return nil
 	}
+	scope := ProductBillingScope{op.AccountID, op.AppID, op.PlatformTenantID, productcontrol.Period(now)}
+	if err := applyDueProductPlanPG(ctx, tx, scope, now); err != nil {
+		return err
+	}
 	customer, err := productCustomerTx(ctx, tx, op.AccountID, op.AppID, op.PlatformTenantID)
 	if errors.Is(err, ErrNotFound) {
 		return ErrProductAccess
@@ -341,7 +373,7 @@ func prepareProductOperationTx(ctx context.Context, tx pgx.Tx, op *Operation, de
 	if err != nil {
 		return err
 	}
-	if hold, err := productOverdueHoldPG(ctx, tx, op.AccountID, op.AppID, op.PlatformTenantID); err == nil {
+	if hold, err := productOverdueHoldPG(ctx, tx, op.AccountID, op.AppID, op.PlatformTenantID, now); err == nil {
 		return productOverdueRefusal(hold)
 	} else if !errors.Is(err, ErrNotFound) {
 		return err
@@ -418,6 +450,12 @@ func (s *PgStore) ProductCustomerByAuthOrganization(ctx context.Context, account
 	if err != nil {
 		return api.ProductCustomer{}, mapErr(err)
 	}
-	return withProductConversion(withProductTrial(api.ProductCustomer{TenantID: pgUUIDString(row.TenantID), Revision: row.Revision, Plan: row.Plan, Suspended: row.Suspended, AuthOrganizationID: pgUUIDString(row.AuthOrganizationID)},
-		row.TrialStartsAt, row.TrialEndsAt), row.PaymentMethodAt, row.TrialResolvedAt), nil
+	customer, err := s.GetProductCustomer(ctx, account, appID, pgUUIDString(row.TenantID))
+	if err != nil {
+		return api.ProductCustomer{}, err
+	}
+	if customer.AuthOrganizationID != pgUUIDString(c) {
+		return api.ProductCustomer{}, ErrNotFound
+	}
+	return customer, nil
 }
