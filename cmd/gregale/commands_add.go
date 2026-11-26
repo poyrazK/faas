@@ -412,9 +412,7 @@ func cmdAddPostgres(args []string) int {
 		if strings.TrimSpace(*databaseRef) != "" {
 			return printErr("Could not find managed PostgreSQL database", fmt.Errorf("no managed database named or identified %q", reference))
 		}
-		if *region, err = defaultPostgresRegion(ctx, client, *region); err != nil {
-			return printErr("Cannot create managed PostgreSQL database", err)
-		}
+		*region = defaultPostgresRegion(ctx, client, *region)
 		if err := addPostgresUnsupported(ctx, client, *region, *access, *availability, true); err != nil {
 			return printErr("Cannot create managed PostgreSQL database", err)
 		}

@@ -472,12 +472,8 @@ func cmdPostgresCreate(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	ctx := context.Background()
-	resolvedRegion, err := defaultPostgresRegion(ctx, client, *region)
-	if err != nil {
-		return printErr("Could not create managed PostgreSQL database", err)
-	}
 	result, err := client.CreateManagedPostgresDatabase(ctx, api.CreateManagedPostgresDatabaseRequest{
-		Name: fs.Arg(0), Region: resolvedRegion, PostgresMajor: *major, ServiceClass: *serviceClass,
+		Name: fs.Arg(0), Region: defaultPostgresRegion(ctx, client, *region), PostgresMajor: *major, ServiceClass: *serviceClass,
 		Availability: *availability, ScaleToZero: scaleToZero, StorageLimitBytes: *storage,
 		RestoreWindowSeconds: *restoreWindow,
 	})

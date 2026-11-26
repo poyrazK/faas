@@ -725,7 +725,7 @@ var cliCommands = []cliCommand{
 				{Name: "env", Short: "environment scope (defaults to linked project environment)", Value: "SCOPE"},
 				{Name: "scope", Short: "environment scope (alias for --env)", Value: "SCOPE"},
 				{Name: "database", Short: "existing database ID or name", Value: "REF"},
-				{Name: "region", Short: "provider-neutral region when creating", Value: "REGION"},
+				{Name: "region", Short: "region for a new database (default: the platform default)", Value: "REGION"},
 				{Name: "postgres-major", Short: "PostgreSQL major version", Value: "N"},
 				{Name: "class", Short: "service class", Value: "CLASS", ClosedSet: []string{"development", "burstable", "production"}},
 				{Name: "availability", Short: "availability mode", Value: "MODE", ClosedSet: []string{"single_zone", "high_availability"}},
@@ -6508,7 +6508,7 @@ var cliCommands = []cliCommand{
 			{Name: "usage", Short: "Show monthly managed PostgreSQL usage and guardrail state"},
 			{Name: "overage", Short: "Show or change compute overage past the monthly allowance", Notes: []string{"With overage on, databases keep running up to twice the allowance."}, Positionals: []string{"[on|off]"}, Examples: []string{"gregale postgres overage get", "gregale postgres overage set on"}},
 			{Name: "create", Short: "Create a managed PostgreSQL database", Positionals: []string{"<name>"}, Flags: []cliFlag{
-				{Name: "region", Short: "provider-neutral region", Req: true, Value: "REGION"},
+				{Name: "region", Short: "region (default: the platform default)", Value: "REGION"},
 				{Name: "postgres-major", Short: "PostgreSQL major version", Value: "N"},
 				{Name: "class", Short: "service class", Value: "CLASS", ClosedSet: []string{"development", "burstable", "production"}},
 				{Name: "availability", Short: "availability mode", Value: "MODE", ClosedSet: []string{"single_zone", "high_availability"}},

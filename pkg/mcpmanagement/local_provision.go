@@ -199,10 +199,13 @@ func (m *management) planPostgres(ctx context.Context, args planPostgresArgs) (a
 			// the platform default now rather than at apply time.
 			capabilities, err := m.client.GetManagedPostgresCapabilities(ctx, "")
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("read default postgres region: %w", err)
 			}
-			if !regionName.MatchString(capabilities.Region) {
+			switch {
+			case capabilities.Region == "":
 				return nil, invalid("invalid_argument", "the platform reported no default region; pass region")
+			case !regionName.MatchString(capabilities.Region):
+				return nil, invalid("invalid_argument", "the default region "+capabilities.Region+" cannot be reviewed here; pass region")
 			}
 			region = capabilities.Region
 		}
