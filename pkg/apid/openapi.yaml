@@ -46857,6 +46857,71 @@ paths:
         '409': { $ref: '#/components/responses/AlertRuleInvalid' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/alerts/anomaly-preview:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [alert_rules]
+      operationId: previewAlertAnomaly
+      summary: Test a request-count, error-rate, or p95 latency anomaly rule on recent traffic.
+      description: Previews seven days of hourly checkpoints by default. An incident replay previews a selected two-hour period at one-minute resolution and groups breaches into incidents with notification eligibility. Either mode can compare a different multiplier. Request-count rules can compare a same-weekday baseline. Error-rate rules can compare a zero-baseline fallback. Error-rate and p95 latency rules use the live traffic and minimum-value guards. P95 uses successful requests only. An incident replay can also compare two-check recovery confirmation. The preview is read-only.
+      parameters:
+        - name: metric
+          in: query
+          description: Anomaly metric to replay. Error rate and p95 latency require above_baseline.
+          schema: { type: string, enum: [request_count, error_rate_pct, latency_p95_ms], default: request_count }
+        - name: comparison
+          in: query
+          required: true
+          description: Direction in which the observed metric must cross the baseline multiplier.
+          schema: { type: string, enum: [above_baseline, below_baseline] }
+        - name: threshold
+          in: query
+          required: true
+          description: Baseline multiplier for the selected comparison.
+          schema: { type: number, format: double }
+        - name: candidate_threshold
+          in: query
+          description: Optional second baseline multiplier for the same comparison and window.
+          schema: { type: number, format: double }
+        - name: candidate_baseline
+          in: query
+          description: Compare the same multiplier with a baseline experiment. same_weekday requires a 5m or 15m request_count window. zero_baseline_fallback requires an above_baseline error_rate_pct rule and tests a 5 percent and five-failure threshold when the qualified median is zero. Mutually exclusive with candidate_threshold.
+          schema: { type: string, enum: [same_weekday, zero_baseline_fallback] }
+        - name: incident_replay_start
+          in: query
+          description: Minute-aligned start of a completed two-hour period in the past week.
+          schema: { type: string, format: date-time }
+        - name: environment_scope
+          in: query
+          description: Replay only this app's default or named project environment. Requires incident_replay_start. Omitted uses app-wide telemetry.
+          schema: { type: string, minLength: 1, maxLength: 33 }
+        - name: cooldown_minutes
+          in: query
+          description: Minutes between eligible notifications for the same incident. Only supported with incident_replay_start and defaults to 15.
+          schema: { type: integer, minimum: 5, maximum: 1440 }
+        - name: recovery_confirmation_checks
+          in: query
+          description: Compare recovery after two consecutive healthy checks against the default one-check recovery. A skipped check clears the healthy streak. Requires incident_replay_start.
+          schema: { type: integer, enum: [2] }
+        - name: window_spec
+          in: query
+          required: true
+          description: Rolling window length at each checkpoint.
+          schema: { type: string, enum: [5m, 15m, 1h, 6h, 24h, 7d, 15d] }
+      responses:
+        '200':
+          description: Historical checks and threshold breaches, with incidents for a minute-level replay.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlertAnomalyPreviewResponse' }
+        '400': { $ref: '#/components/responses/AlertRuleInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AlertRuleInvalid' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/alerts/{id}:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -126248,6 +126313,242 @@ components:
     # carries the masked constant in webhook_secret_sealed_masked. The
     # sealed ciphertext never leaves the server.
 
+    AlertAnomalyPreviewBreach:
+      type: object
+      description: One preview checkpoint that met the anomaly comparison and minimum impact requirement.
+      required: [evaluated_at, observed, baseline, trigger_value]
+      properties:
+        evaluated_at: { type: string, format: date-time }
+        observed:
+          type: number
+          format: double
+          description: Observed request count, error rate in percent, or p95 latency in milliseconds.
+        baseline: { type: number, format: double, description: Median metric value of qualifying historical windows at the same time of day. }
+        trigger_value: { type: number, format: double, description: Baseline-derived trigger or the absolute rate threshold for a zero-baseline fallback. }
+        eligible_requests:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Eligible request count for an error-rate or p95 latency check. For p95 this counts successful requests only.
+        failed_requests: { type: integer, format: int64, minimum: 0, description: Failed requests for a zero-baseline fallback breach. }
+        zero_baseline_fallback: { type: boolean, description: True when the absolute fallback threshold triggered this breach. }
+
+    AlertAnomalyPreviewCandidate:
+      description: Alternate threshold or baseline evaluated on the preview checkpoints.
+      type: object
+      required: [threshold, breaches]
+      properties:
+        threshold: { type: number, format: double, description: Candidate baseline multiplier. }
+        breaches:
+          type: array
+          maxItems: 168
+          items: { $ref: '#/components/schemas/AlertAnomalyPreviewBreach' }
+        weekday_baseline:
+          $ref: '#/components/schemas/AlertAnomalyWeekdayPreview'
+        zero_baseline_fallback:
+          $ref: '#/components/schemas/AlertAnomalyZeroBaselineFallback'
+
+    AlertAnomalyZeroBaselineFallback:
+      description: Absolute error-rate and failure-count guard for a zero historical baseline.
+      type: object
+      required: [minimum_error_rate_pct, minimum_failed_requests]
+      properties:
+        minimum_error_rate_pct: { type: number, format: double, description: Minimum absolute error rate expressed as a percent. }
+        minimum_failed_requests: { type: integer, format: int64, minimum: 1, description: Minimum failed requests in the evaluation window. }
+
+    AlertAnomalyPreviewSkippedWindow:
+      description: A historical checkpoint the anomaly evaluator could not use.
+      type: object
+      required: [evaluated_at, reason]
+      properties:
+        evaluated_at: { type: string, format: date-time }
+        reason: { type: string, enum: [telemetry_missing_or_stale, insufficient_history, insufficient_traffic] }
+        eligible_requests:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Eligible request count when error-rate or p95 latency telemetry is covered. For p95 this counts successful requests only.
+        required_requests: { type: integer, minimum: 1, description: Minimum eligible request count for a check skipped for insufficient traffic. }
+
+    AlertAnomalyWeekdayPreview:
+      type: object
+      description: Coverage for the same-weekday candidate.
+      required: [evaluated, skipped_windows, fallback_at]
+      properties:
+        evaluated:
+          type: integer
+          minimum: 0
+          maximum: 168
+          description: Checks the candidate could evaluate, including checks using the seven-day fallback.
+        skipped_windows:
+          type: array
+          maxItems: 168
+          items: { $ref: '#/components/schemas/AlertAnomalyPreviewSkippedWindow' }
+        fallback_at:
+          type: array
+          maxItems: 168
+          description: Covered check times where fewer than three usable matching weekdays caused the candidate to use the seven-day baseline. Includes any checks with insufficient seven-day history.
+          items: { type: string, format: date-time }
+
+    AlertAnomalyIncidentReplay:
+      description: Anomaly incidents reconstructed from a selected two-hour interval.
+      type: object
+      required: [cooldown_minutes, incidents]
+      properties:
+        cooldown_minutes: { type: integer, minimum: 5, maximum: 1440 }
+        incidents:
+          type: array
+          description: Incidents for the selected multiplier, newest first. An incident is open at the end of the replay when ended_at is absent.
+          maxItems: 60
+          items: { $ref: '#/components/schemas/AlertObservedIncident' }
+        candidate_incidents:
+          type: array
+          description: Incidents for the candidate, newest first. Omitted when the candidate has no incidents or is absent.
+          maxItems: 60
+          items: { $ref: '#/components/schemas/AlertObservedIncident' }
+
+        recovery_confirmation:
+          $ref: '#/components/schemas/AlertAnomalyRecoveryComparison'
+        deployment_context:
+          $ref: '#/components/schemas/AlertAnomalyDeploymentContext'
+
+    AlertAnomalyDeploymentContext:
+      type: object
+      description: Recorded full-traffic promotions for the selected environment. An app-wide replay includes default-environment promotions.
+      required: [scope, promotions]
+      properties:
+        scope: { type: string, description: Deployment environment scope. }
+        promotions:
+          type: array
+          description: Recorded promotions, newest first. Includes up to 100 in the selected two hours and the latest one before the window when available.
+          maxItems: 101
+          items: { $ref: '#/components/schemas/AlertAnomalyDeploymentPromotion' }
+        truncated: { type: boolean, description: True when more than 100 recorded promotions fall within the replay window. }
+
+    AlertAnomalyDeploymentPromotion:
+      description: A recorded change that sent all traffic in an environment to a deployment.
+      type: object
+      required: [deployment_id, promoted_at]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        commit_sha: { type: string, description: Upstream commit SHA when recorded. }
+        promoted_at: { type: string, format: date-time, description: When a traffic change last took this deployment to 100 percent of the scope. }
+
+    AlertAnomalyRecoveryComparison:
+      description: Replay outcomes with two consecutive healthy checks required for recovery.
+      type: object
+      required: [required_healthy_checks, incidents]
+      properties:
+        required_healthy_checks: { type: integer, enum: [2] }
+        incidents:
+          type: array
+          description: Incidents for the selected multiplier with recovery confirmation, newest first.
+          maxItems: 60
+          items: { $ref: '#/components/schemas/AlertObservedIncident' }
+        candidate_incidents:
+          type: array
+          description: Incidents for the candidate with recovery confirmation, newest first. Omitted when the candidate has no incidents or is absent.
+          maxItems: 60
+          items: { $ref: '#/components/schemas/AlertObservedIncident' }
+
+    AlertAnomalyPreviewResponse:
+      description: Historical anomaly evaluations with coverage, breaches, and optional replay results.
+      type: object
+      required: [first_check_at, last_check_at, step_seconds, evaluated, skipped, skipped_windows, breaches]
+      properties:
+        environment_scope:
+          type: string
+          description: Environment used for both observed traffic and historical baselines. Present for environment-specific replays.
+        environment_scopes:
+          type: array
+          description: Environments available for incident replay. Present in the hourly overview. Recent telemetry may still be unavailable.
+          items: { type: string }
+        first_check_at: { type: string, format: date-time }
+        last_check_at: { type: string, format: date-time }
+        step_seconds: { type: integer, enum: [60, 3600] }
+        evaluated: { type: integer, minimum: 0, maximum: 168, description: Windows with enough data to evaluate, including breaches. }
+        skipped:
+          type: integer
+          minimum: 0
+          maximum: 168
+          description: Checks with missing telemetry, insufficient baseline history, or too few eligible requests.
+        skipped_windows:
+          type: array
+          maxItems: 168
+          items: { $ref: '#/components/schemas/AlertAnomalyPreviewSkippedWindow' }
+        breaches:
+          type: array
+          maxItems: 168
+          items: { $ref: '#/components/schemas/AlertAnomalyPreviewBreach' }
+        candidate:
+          $ref: '#/components/schemas/AlertAnomalyPreviewCandidate'
+        incident_replay:
+          $ref: '#/components/schemas/AlertAnomalyIncidentReplay'
+
+    AlertObservedIncident:
+      description: An incident observed in live traffic or reconstructed during replay.
+      type: object
+      required: [opened_at, eligible_notifications, last_eligible_at]
+      properties:
+        opening_evidence:
+          $ref: '#/components/schemas/AlertObservedIncidentOpeningEvidence'
+        environment_scope: { type: string, description: Environment of this observation when scoped. }
+        opened_at: { type: string, format: date-time }
+        ended_at: { type: string, format: date-time }
+        outcome: { type: string, enum: [recovered, observation_ended] }
+        eligible_notifications: { type: integer, minimum: 1, description: Notification opportunities for this incident under the rule's cooldown. }
+        last_eligible_at: { type: string, format: date-time }
+
+    AlertObservedIncidentOpeningEvidence:
+      description: Values captured at the first breach of a live observed incident.
+      type: object
+      required: [metric, window, comparison, observed, baseline, trigger_value]
+      properties:
+        metric: { type: string, description: Metric the rule evaluated when the incident opened. }
+        window: { type: string, description: Rolling metric window in use when the incident opened. }
+        comparison: { type: string, enum: [above_baseline, below_baseline] }
+        observed: { type: number, format: double, description: Observed value in the metric's units. }
+        baseline: { type: number, format: double, description: Historical median in the metric's units. }
+        trigger_value: { type: number, format: double, description: Trigger derived from the baseline and rule threshold at opening. }
+        baseline_days: { type: integer, minimum: 1, maximum: 7, description: Number of days that qualified for the baseline. }
+
+    AlertObservationCoverage:
+      description: Recorded live Observe only checks during the 24 hours before this response.
+      type: object
+      required: [attempted, completed]
+      properties:
+        attempted: { type: integer, minimum: 0, description: Recorded checks including skipped checks. }
+        completed: { type: integer, minimum: 0, description: Checks that evaluated the condition. }
+        skipped:
+          type: array
+          description: Recorded skips grouped by reason.
+          items: { $ref: '#/components/schemas/AlertObservationSkipCount' }
+        last_checked_at: { type: string, format: date-time, description: Most recent recorded check for this observation even if older than 24 hours. }
+
+    AlertObservationSkipCount:
+      description: Count of observation checks skipped for a single reason.
+      type: object
+      required: [reason, count]
+      properties:
+        reason: { type: string, enum: [insufficient_traffic, insufficient_history, telemetry_missing_or_stale, telemetry_unavailable] }
+        count: { type: integer, minimum: 1 }
+
+    AlertAnomalyEvaluation:
+      description: Why the latest anomaly evaluation did not trigger a fire.
+      type: object
+      required: [reason, evaluated_at, count]
+      properties:
+        baseline_days: { type: integer, minimum: 0, maximum: 7, description: Number of days that qualified for the baseline when history was evaluated. }
+        reason: { type: string, enum: [insufficient_traffic, insufficient_history, telemetry_missing_or_stale, telemetry_unavailable, threshold_not_reached, minimum_impact_not_reached, zero_baseline, notification_cooldown, observed_breach, recovery_confirmation_pending, recovery_confirmed] }
+        evaluated_at: { type: string, format: date-time }
+        count: { type: integer, format: int64, minimum: 0, description: "Eligible requests, qualifying historical windows, or consecutive healthy checks depending on the reason." }
+        required_count: { type: integer, format: int64, minimum: 1, description: "Required requests, historical windows, or healthy checks when the reason includes a count." }
+        observed: { type: number, format: double, description: Observed value in the rule metric's units for a completed check. }
+        baseline: { type: number, format: double, description: Historical median in the rule metric's units for a completed check. }
+        trigger_value: { type: number, format: double, description: Baseline multiplied by the rule threshold when a positive baseline is available. }
+        minimum_value: { type: number, format: double, description: "Minimum required observation for an above-baseline rule, or minimum required baseline for a below-baseline rule. Present when that minimum was not reached." }
+        next_notification_eligible_at: { type: string, format: date-time, description: End of the current incident's notification cooldown when the evaluation suppressed a repeat fire. }
+
     AlertRuleResponse:
       description: |
         A customer-configurable alert rule. Carries the masked webhook
@@ -126270,6 +126571,16 @@ components:
         - created_at
         - updated_at
       properties:
+        observe_only: { type: boolean, description: The rule records observations on the normal evaluation schedule. }
+        recovery_confirmation_checks: { type: integer, minimum: 1, maximum: 2, description: Consecutive healthy checks required to recover. }
+        environment_scope: { type: string, description: Environment observed by this rule when scoped. }
+        observed_incidents:
+          type: array
+          maxItems: 20
+          description: Latest observation-only incidents, most recent first. Included in the individual rule response.
+          items: { $ref: '#/components/schemas/AlertObservedIncident' }
+        observation_coverage:
+          $ref: '#/components/schemas/AlertObservationCoverage'
         mcp_readiness_scope:
           type: string
           maxLength: 40
@@ -126463,6 +126774,8 @@ components:
           description: "Evaluation state. degraded means the rule's own metric source is unavailable; unknown means insufficient samples, compacted event history, or a paused event consumer."
         last_fired_at: { type: string, format: date-time }
         last_evaluated_at: { type: string, format: date-time }
+        anomaly_evaluation:
+          $ref: '#/components/schemas/AlertAnomalyEvaluation'
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -126471,6 +126784,9 @@ components:
       type: object
       required: [name, metric, comparison, threshold, window_spec]
       properties:
+        observe_only: { type: boolean, description: Record baseline breaches as observations. Defaults to false. }
+        recovery_confirmation_checks: { type: integer, minimum: 1, maximum: 2, default: 1, description: Consecutive healthy checks required to recover. Two checks require an app-scoped baseline comparison. }
+        environment_scope: { type: string, maxLength: 33, description: "Scope a request-count, error-rate, or p95 latency baseline rule to default or a named project environment. Scoped Notify supports channels and webhooks. Omitted or empty uses app-wide telemetry." }
         mcp_readiness_scope:
           type: string
           maxLength: 40
@@ -126572,6 +126888,9 @@ components:
       description: 'Partial update — every field is optional. Omitted means leave alone.'
       type: object
       properties:
+        observe_only: { type: boolean, description: Switch an app-scoped baseline rule between observing and notifying. }
+        recovery_confirmation_checks: { type: integer, minimum: 1, maximum: 2, description: Change the number of consecutive healthy checks required to recover. Two checks require an app-scoped baseline comparison. }
+        environment_scope: { type: string, maxLength: 33, description: Change the environment of an anomaly rule in Observe only mode. Set to the empty string to clear the scope. Omit to keep the saved scope when enabling notifications. }
         mcp_readiness_scope:
           type: string
           maxLength: 40
@@ -126640,6 +126959,19 @@ components:
           maxLength: 256
           writeOnly: true
 
+    AlertDeliveryAnomalyEvidence:
+      description: Baseline comparison captured at the time of an anomaly alert fire.
+      type: object
+      required: [metric, comparison, threshold, window, baseline, baseline_days, ratio]
+      properties:
+        metric: { type: string, enum: [error_rate_pct, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count] }
+        comparison: { type: string, enum: [above_baseline, below_baseline] }
+        threshold: { type: number, format: double, description: Configured multiplier when the alert fired. }
+        window: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
+        baseline: { type: number, format: double, description: Median value in the metric's units. }
+        baseline_days: { type: integer, minimum: 1, description: Historical windows used in the baseline. }
+        ratio: { type: number, format: double, minimum: 0, description: Observed value divided by baseline. }
+
     AlertDeliveryResponse:
       description: |
         One alert_deliveries row as surfaced by
@@ -126651,6 +126983,8 @@ components:
       type: object
       required: [id, rule_id, account_id, idempotency_key, status, attempt_count, observed_value, fired_at, is_test]
       properties:
+        anomaly:
+          $ref: '#/components/schemas/AlertDeliveryAnomalyEvidence'
         readiness_event_id: {type: string, format: uuid, description: Stable readiness logical event associated with this physical delivery.}
         readiness_destination: {type: string, enum: [primary, fallback], description: Selected receiver role for this physical readiness dispatch.}
         readiness_failover_reason: {type: string, enum: [primary_failure_threshold, incident_sticky_fallback, recovery_to_primary, primary_queue_blocked], description: Destination selection reason recorded on this physical readiness delivery.}

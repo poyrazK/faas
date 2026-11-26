@@ -159,7 +159,7 @@ func TestHistoricalAlertEvidenceExpiresWhileWaitingForTargetPG(t *testing.T) {
 		t.Fatal(err)
 	}
 	at := time.Now().UTC().Add(-api.AlertRollbackEvidenceMaxCheckDelay + 3*time.Second)
-	id, won, err := s.ClaimAlertFire(ctx, rule.ID, rule.ID+":deadline", nil, 42, at)
+	id, won, _, err := s.ClaimAlertFire(ctx, rule.ID, rule.ID+":deadline", nil, 42, at)
 	if err != nil || !won {
 		t.Fatalf("fire %v %v", won, err)
 	}

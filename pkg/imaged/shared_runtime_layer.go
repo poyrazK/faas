@@ -137,14 +137,15 @@ func (h *Handler) sharedRuntimeAppLayersAt(ctx context.Context, runtime string, 
 	case len(report.Unexpected) > 0:
 		reason = "content_outside_app"
 	default:
-		if nodeRunner && report.NextStandalone && !release.keepsApp && sharedruntime.NextStart(command, report.PackageJSON) {
+		nextArgv, nextStart := sharedruntime.NextStandaloneStartFor(command, report.PackageJSON)
+		if nodeRunner && report.NextStandalone && !release.keepsApp && nextStart {
 			// ADR-20261124160000: the builder kept a standalone tree, which
 			// it does only when the whole /app is over the plan's app layer
 			// cap. Ship only that tree.
 			next, nextCleanup, err := selectNextStandalone(filtered)
 			if err == nil {
 				cleanup()
-				setSharedRuntimeStart(manifest, sharedruntime.NextStandaloneStart, sharedruntime.RunnerPath)
+				setSharedRuntimeStart(manifest, nextArgv, sharedruntime.RunnerPath)
 				for k, v := range sharedruntime.NextStandaloneEnvVars {
 					if _, set := manifest.Env[k]; !set {
 						manifest.Env[k] = v

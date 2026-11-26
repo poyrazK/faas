@@ -827,11 +827,27 @@
       "channel_id",
       "last_error",
       "next_attempt_at",
+      "observation_transition",
+      "pagerduty_region",
+      "pagerduty_target_sealed",
       "queued_at",
       "reason",
       "rule_id",
       "rule_metric",
       "rule_name"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "alert_deferred_fires",
+    "columns": [
+      "channel_id",
+      "channel_only",
+      "delivery_id",
+      "id",
+      "next_attempt_at",
+      "started",
+      "webhook_url"
     ],
     "kind": "operational"
   },
@@ -877,6 +893,15 @@
     "columns": [
       "deployment_id",
       "fire_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "alert_observation_checks",
+    "columns": [
+      "evaluated_at",
+      "rule_id",
+      "skip_reason"
     ],
     "kind": "operational"
   },
@@ -944,11 +969,13 @@
       "custom_metric_name",
       "edge_rule_id",
       "enabled",
+      "environment_scope",
       "event_subscription_id",
       "failure_source",
       "id",
       "last_evaluated_at",
       "last_fired_at",
+      "latest_anomaly_evaluation",
       "log_query",
       "mcp_for_minutes",
       "mcp_min_calls",
@@ -956,8 +983,12 @@
       "metric",
       "name",
       "notify_resolved",
+      "observation_enabled",
+      "observe_only",
+      "observed_incidents",
       "org_id",
       "post_deploy_rollback_window_seconds",
+      "recovery_confirmation_checks",
       "slo_id",
       "state",
       "synthetic_check_id",
@@ -972,6 +1003,26 @@
     "clone": {
       "owner": "app"
     }
+  },
+  {
+    "table": "alert_webhook_stand_downs",
+    "columns": [
+      "app_id",
+      "attempts",
+      "comparison",
+      "environment_scope",
+      "id",
+      "metric",
+      "next_attempt_at",
+      "queued_at",
+      "rule_id",
+      "rule_name",
+      "threshold",
+      "webhook_secret_sealed",
+      "webhook_url",
+      "window_spec"
+    ],
+    "kind": "operational"
   },
   {
     "table": "api_consumer_billing_policies",
