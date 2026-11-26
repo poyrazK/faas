@@ -1,4 +1,4 @@
--- filename: 20261126110235100_managed_postgres_activity.sql
+-- filename: 20261126134203100_managed_postgres_activity.sql
 -- migration-compat: expand
 --
 -- Why a managed PostgreSQL database is awake (ADR-20261125231222).

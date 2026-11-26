@@ -23189,5 +23189,32 @@
       "secret_sealed"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "route_splits",
+    "columns": [
+      "account_id",
+      "created_at",
+      "edge_rule_ids",
+      "error",
+      "id",
+      "kind",
+      "lease_until",
+      "main_ram_mb",
+      "main_resized",
+      "method",
+      "path_glob",
+      "phase",
+      "previous_ram_mb",
+      "route",
+      "route_ram_mb",
+      "source_app_id",
+      "target_app_id",
+      "target_deployment_id",
+      "target_slug",
+      "updated_at",
+      "warning"
+    ],
+    "kind": "operational"
   }
 ]

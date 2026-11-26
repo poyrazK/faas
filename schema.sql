@@ -60887,6 +60887,46 @@ CREATE TABLE public.route_removal_policy_history (
 
 
 --
+-- Name: route_splits; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.route_splits (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    source_app_id uuid NOT NULL,
+    target_slug text NOT NULL,
+    target_app_id uuid,
+    target_deployment_id uuid,
+    kind text NOT NULL,
+    route text NOT NULL,
+    method text DEFAULT ''::text NOT NULL,
+    path_glob text NOT NULL,
+    route_ram_mb integer NOT NULL,
+    main_ram_mb integer NOT NULL,
+    previous_ram_mb integer NOT NULL,
+    main_resized boolean DEFAULT false NOT NULL,
+    edge_rule_ids uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    phase text DEFAULT 'creating'::text NOT NULL,
+    warning text DEFAULT ''::text NOT NULL,
+    error text DEFAULT ''::text NOT NULL,
+    lease_until timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT route_splits_error_check CHECK ((char_length(error) <= 1024)),
+    CONSTRAINT route_splits_kind_check CHECK ((kind = ANY (ARRAY['memory'::text, 'cpu'::text]))),
+    CONSTRAINT route_splits_main_ram_mb_check CHECK ((main_ram_mb > 0)),
+    CONSTRAINT route_splits_method_check CHECK ((char_length(method) <= 16)),
+    CONSTRAINT route_splits_path_glob_check CHECK (((path_glob ~~ '/%'::text) AND (char_length(path_glob) <= 512))),
+    CONSTRAINT route_splits_phase_check CHECK ((phase = ANY (ARRAY['creating'::text, 'deploying'::text, 'rule_live'::text, 'done'::text, 'rolled_back'::text, 'undone'::text]))),
+    CONSTRAINT route_splits_previous_ram_mb_check CHECK ((previous_ram_mb > 0)),
+    CONSTRAINT route_splits_route_check CHECK (((char_length(route) >= 1) AND (char_length(route) <= 512))),
+    CONSTRAINT route_splits_route_ram_mb_check CHECK ((route_ram_mb > 0)),
+    CONSTRAINT route_splits_target_slug_check CHECK ((target_slug ~ '^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$'::text)),
+    CONSTRAINT route_splits_warning_check CHECK ((char_length(warning) <= 1024))
+);
+
+
+--
 -- Name: runtime_artifact_bindings; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -78330,6 +78370,14 @@ ALTER TABLE ONLY public.route_removal_policy_history
 
 
 --
+-- Name: route_splits route_splits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_splits
+    ADD CONSTRAINT route_splits_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: runtime_artifact_bindings runtime_artifact_bindings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -90939,6 +90987,27 @@ CREATE INDEX route_probe_rounds_window_idx ON public.route_probe_rounds USING bt
 --
 
 CREATE INDEX route_removal_approval_lookup ON public.route_removal_approvals USING btree (app_id, candidate_deployment_id, valid_until);
+
+
+--
+-- Name: route_splits_by_source; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX route_splits_by_source ON public.route_splits USING btree (source_app_id, created_at DESC);
+
+
+--
+-- Name: route_splits_in_flight; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX route_splits_in_flight ON public.route_splits USING btree (updated_at) WHERE (phase = ANY (ARRAY['creating'::text, 'deploying'::text, 'rule_live'::text]));
+
+
+--
+-- Name: route_splits_one_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX route_splits_one_active ON public.route_splits USING btree (source_app_id) WHERE (phase = ANY (ARRAY['creating'::text, 'deploying'::text, 'rule_live'::text]));
 
 
 --
@@ -116156,6 +116225,30 @@ ALTER TABLE ONLY public.route_removal_approvals
 
 ALTER TABLE ONLY public.route_removal_policy_history
     ADD CONSTRAINT route_removal_policy_history_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_splits route_splits_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_splits
+    ADD CONSTRAINT route_splits_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_splits route_splits_source_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_splits
+    ADD CONSTRAINT route_splits_source_app_id_fkey FOREIGN KEY (source_app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_splits route_splits_target_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_splits
+    ADD CONSTRAINT route_splits_target_app_id_fkey FOREIGN KEY (target_app_id) REFERENCES public.apps(id) ON DELETE SET NULL;
 
 
 --
