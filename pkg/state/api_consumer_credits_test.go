@@ -79,9 +79,20 @@ func checkConsumerCredits(t *testing.T, ctx context.Context, st state.Store, acc
 	if err != nil {
 		t.Fatal(err)
 	}
-	if final, _, err := statements.FinalizeAPIConsumerUsageStatement(ctx, accountID, appID, consumer.ID, withFee.ID); err != nil ||
-		final.CreditAppliedMillicents != 150 {
-		t.Fatalf("finalized with fee = %+v, %v", final, err)
+	reviewed := st.(state.ReviewedAPIConsumerStatementStore)
+	if _, changed, err := reviewed.FinalizeReviewedAPIConsumerUsageStatement(ctx, accountID, appID, consumer.ID, withFee.ID, 100); changed || !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("stale review: changed %v, %v", changed, err)
+	}
+	if stillDraft, err := statements.GetAPIConsumerUsageStatement(ctx, accountID, appID, consumer.ID, withFee.ID); err != nil ||
+		stillDraft.Status != state.APIConsumerUsageStatementDraft || stillDraft.CreditAppliedMillicents != 0 {
+		t.Fatalf("stale review mutated the statement: %+v, %v", stillDraft, err)
+	}
+	if final, changed, err := reviewed.FinalizeReviewedAPIConsumerUsageStatement(ctx, accountID, appID, consumer.ID, withFee.ID, 50); err != nil ||
+		!changed || final.CreditAppliedMillicents != 150 || final.AmountDueMillicents() != 50 {
+		t.Fatalf("finalized with reviewed credit = %+v, changed %v, %v", final, changed, err)
+	}
+	if _, changed, err := reviewed.FinalizeReviewedAPIConsumerUsageStatement(ctx, accountID, appID, consumer.ID, withFee.ID, 50); changed || err != nil {
+		t.Fatalf("repeat finalization: changed %v, %v", changed, err)
 	}
 	var wantApplied int64
 	if thisMonth := time.Now().UTC().Month(); start.Month() == thisMonth {
