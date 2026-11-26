@@ -4541,7 +4541,7 @@ var cliCommands = []cliCommand{
 				{Name: "cursor", Short: "continue from a previous page's next cursor", Value: "CURSOR"},
 			}},
 			{Name: "waf-review", Short: "Group WAF detections by rule and path to find false positives", Notes: []string{
-				"Each group is assessed: likely_false_positive (a documented false positive, or many clients flagged on one path), likely_attack (clients flagged on many paths), excluded or review.",
+				"Each group is assessed: likely_false_positive (a documented false positive), likely_attack (clients flagged on many paths), excluded or review (read the examples; a path flagged from many clients looks like a false positive but also like a few addresses probing it).",
 				"Detections are sampled, so counts are lower bounds.",
 			}, Examples: []string{
 				"gregale edge rule waf review --app my-api",
@@ -6568,6 +6568,10 @@ var cliCommands = []cliCommand{
 				Examples: []string{"gregale postgres suspend-timeout set orders-db 2m", "gregale postgres suspend-timeout set orders-db default"}},
 			{Name: "app-wake", Short: "Start a scale-to-zero database when an app bound to it wakes (on/off)", Positionals: []string{"<database>", "<on|off>"},
 				Examples: []string{"gregale postgres app-wake set orders-db on", "gregale postgres app-wake set orders-db off"}},
+			{Name: "activity", Short: "Show what kept a database awake: starts, causes and what to do", Positionals: []string{"<database>"},
+				Notes:    []string{"Causes are best guesses from timing: wake-with-app, a cron, a request, an app connecting at start, a running app, or a client outside Gregale. Starts are kept 30 days."},
+				Flags:    []cliFlag{{Name: "since", Short: "period: a duration such as 24h or 7d, or an RFC 3339 time (default 24h)", Value: "PERIOD"}},
+				Examples: []string{"gregale postgres activity orders-db", "gregale postgres activity orders-db --since 7d"}},
 			{Name: "resize", Short: "Durably resize compute; clients may disconnect", Positionals: []string{"<database>"}, Flags: []cliFlag{
 				{Name: "class", Short: "target service class", Req: true, Value: "CLASS", ClosedSet: []string{"development", "burstable", "production"}},
 				{Name: "request-id", Short: "stable request UUID; reuse after uncertain responses", Req: true, Value: "UUID"},

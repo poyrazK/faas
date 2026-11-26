@@ -3,6 +3,8 @@ package managedpostgres
 import (
 	"context"
 	"errors"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // IdleTail estimates the compute a scale-to-zero database spent idle before
@@ -22,9 +24,12 @@ type IdleTail struct {
 // IdleTailReporter is the optional provider surface behind IdleTail. A read
 // sends at most maxRequests requests and reports the number it sent, also
 // with an error. ErrUnsupported means this database or window cannot be
-// priced; any other error means the provider could not be read.
+// priced; any other error means the provider could not be read. It also
+// returns the compute's finished starts and suspends inside the window
+// (ADR-20261125231222), which a read that cannot price the tail may still
+// return with its error.
 type IdleTailReporter interface {
-	IdleTail(ctx context.Context, providerResourceID string, window UsageWindow, maxRequests int) (IdleTail, error)
+	IdleTail(ctx context.Context, providerResourceID string, window UsageWindow, maxRequests int) (IdleTail, []ComputeEvent, error)
 }
 
 // Idle tail read outcomes. Only read and no_compute windows count toward the
@@ -73,7 +78,10 @@ type pendingIdleTail struct {
 // dropped; both are skipped, so old compute never lands in today's counters.
 func (c *UsageCollector) queueIdleTails(work []*usageCollectionWork) {
 	if c.idleTailObserver == nil {
-		return
+		if _, ok := c.store.(ComputeActivityStore); !ok {
+			return
+		}
+		c.idleTailObserver = func(IdleTailObservation) {}
 	}
 	oldest := c.now().UTC().Truncate(c.policy.Window).Add(-c.policy.Window)
 	kept := c.pendingIdleTails[:0]
@@ -120,6 +128,7 @@ func idleTailObservation(item pendingIdleTail, outcome string) IdleTailObservati
 // be read ends the pass.
 func (c *UsageCollector) readIdleTails(ctx context.Context) {
 	ctx = WithBackgroundRequests(ctx)
+	c.pruneComputeActivity(ctx, api.ManagedPostgresActivityRetention)
 	budget := idleTailRequestsPerSweep
 	done := 0
 	for _, item := range c.pendingIdleTails {
@@ -135,8 +144,11 @@ func (c *UsageCollector) readIdleTails(ctx context.Context) {
 			if budget < idleTailRequestsPerRead {
 				break
 			}
-			tail, err := reporter.IdleTail(ctx, item.database.ProviderResourceID, item.usage.Window, idleTailRequestsPerRead)
+			tail, events, err := reporter.IdleTail(ctx, item.database.ProviderResourceID, item.usage.Window, idleTailRequestsPerRead)
 			budget -= max(tail.Requests, 1)
+			if ctx.Err() == nil {
+				c.recordComputeActivity(ctx, item, events)
+			}
 			switch {
 			case ctx.Err() != nil:
 				// Shutdown or a lost sweep: the window stays queued.

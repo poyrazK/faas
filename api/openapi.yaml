@@ -11436,6 +11436,59 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+  /v1/postgres/databases/{id}/activity:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+      - name: since
+        in: query
+        required: false
+        description: Start of the period, as a duration back from now such as 24h or 7d, or an RFC 3339 time. Defaults to the last day; anything older than 30 days is clamped to 30 days.
+        schema: { type: string, maxLength: 64 }
+    get:
+      operationId: getManagedPostgresActivity
+      summary: Show what kept a database awake
+      description: Lists a database's recorded compute starts in the period, newest first (at most 200), each with a likely cause, plus each cause's starts and awake time and hints that name the command acting on the largest causes. A cause is the first of app_wake (wake-with-app started it), cron (a cron of a bound app fired just before), request (a request woke a bound app), app_start (a bound app started without a request), running_app (a bound app was running) and external (none of these, so a client outside Gregale) that matches the start's timing; it is a best guess, never billing. Starts are recorded from the usage sweep, so the latest can lag by up to an hour, and kept 30 days. Reading never wakes the database.
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: Why the database was awake in the period
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresActivity' }
+        default:
+          description: Invalid period, unknown database, or managed PostgreSQL not configured
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/orgs/{organization}/postgres/databases/{id}/activity:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to read what kept a company database awake."
+        schema: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$' }
+      - $ref: '#/components/parameters/ManagedPostgresID'
+      - name: since
+        in: query
+        required: false
+        description: Start of the period, as a duration back from now such as 24h or 7d, or an RFC 3339 time. Defaults to the last day.
+        schema: { type: string, maxLength: 64 }
+    get:
+      operationId: getOrgManagedPostgresActivity
+      summary: "Show what kept a company database awake."
+      description: "A member who can read the organization's databases lists a company database's recorded compute starts with their likely causes, each cause's awake time, and hints."
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: "Why the company database was awake in the period."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresActivity' }
+        default:
+          description: "Problem while reading the company database's activity."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/postgres/databases/{id}/suspend-timeout:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -24981,6 +25034,43 @@ paths:
               schema: { $ref: '#/components/schemas/ConsumerSignupListResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/mcp-stats:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [consumers]
+      operationId: getMCPSellerStats
+      summary: Customer funnel, revenue, tool usage and near-limit customers of a sold MCP server.
+      description: |
+        Reads the app's consumers over UTC calendar months, the current month
+        to date last. Per month: sign-ups by source (oauth, signup, owner),
+        customers with billable units, paying customers, closures, requests,
+        units and revenue per currency. Closed months report billed revenue
+        from finalized statements before credits; the current month reports
+        an estimate priced as statements are. Tools come from the
+        `MCP /tools/<name>` billing labels: units and distinct customers over
+        the window, and this month's estimated revenue. near_limit lists open
+        customers at 80% or more of their plan's monthly units.
+        estimate_complete is false when the estimate priced only the 500
+        customers with the most units this month, or a customer could not be
+        priced.
+      parameters:
+        - name: months
+          in: query
+          required: false
+          description: Calendar months to read, 1 (this month, the default) to 12.
+          schema: { type: integer, minimum: 1, maximum: 12, default: 1 }
+      responses:
+        '200':
+          description: The app's seller stats.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPSellerStatsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /v1/apps/{slug}/consumer-identities:
     parameters:
@@ -48235,10 +48325,12 @@ paths:
         (detected, warned and blocked events) and groups
         them by edge rule, CRS rule and path, with id-like path segments read
         as {id}. Each group is assessed: likely_false_positive (a documented
-        false positive, or at least 3 clients flagged on the path with none
-        sending most of the detections), likely_attack (most detections from
+        false positive), likely_attack (most detections from
         clients flagged on 5 or more paths), excluded (the rule already
-        excludes the CRS rule) or review. The newest 5,000 detections of each
+        excludes the CRS rule) or review (including groups flagged from at
+        least 3 clients with none sending most of the detections, which look
+        like a false positive but also like a few addresses probing one
+        endpoint; read the examples). The newest 5,000 detections of each
         outcome are read and at most 50 groups returned, largest first.
         Detections are sampled, so counts are lower bounds. The window
         defaults to 7 days and is clamped to the plan's event window.
@@ -97404,6 +97496,73 @@ components:
       properties:
         database_id: { type: string }
         enabled: { type: boolean }
+    ManagedPostgresActivity:
+      description: Why a database was awake in a period. Causes are best guesses from timing.
+      type: object
+      required: [database_id, database_name, since, until, starts, awake_seconds, causes, compute_starts, hints, docs_url]
+      properties:
+        database_id: { type: string }
+        database_name: { type: string }
+        since: { type: string, format: date-time, description: "Start of the period after clamping to the 30-day retention." }
+        until: { type: string, format: date-time }
+        starts: { type: integer, description: "Recorded compute starts in the period." }
+        awake_seconds: { type: integer, format: int64, description: "Seconds the compute was up in the period; a start still running counts to until." }
+        suspend_timeout_seconds: { type: integer, format: int64, description: "The suspend timeout in force; omitted for an always-on database or when it could not be read." }
+        causes:
+          type: array
+          items: { $ref: '#/components/schemas/ManagedPostgresActivityCause' }
+        compute_starts:
+          type: array
+          description: The latest starts, newest first, at most 200.
+          items: { $ref: '#/components/schemas/ManagedPostgresActivityComputeStart' }
+        truncated: { type: boolean, description: "True when the period had more starts than compute_starts lists; the totals and causes count them all." }
+        hints:
+          type: array
+          items: { $ref: '#/components/schemas/ManagedPostgresActivityHint' }
+        docs_url: { type: string, format: uri }
+    ManagedPostgresActivityCause:
+      description: One cause's share of a period's starts and awake time.
+      type: object
+      required: [cause, starts, awake_seconds, first_started_at]
+      properties:
+        cause: { type: string, enum: [app_wake, cron, request, app_start, running_app, external] }
+        app_id: { type: string }
+        app_slug: { type: string }
+        detail: { type: string, description: "The cron's path for a cron cause." }
+        starts: { type: integer }
+        awake_seconds: { type: integer, format: int64 }
+        first_started_at: { type: string, format: date-time }
+    ManagedPostgresActivityComputeStart:
+      description: One recorded start of a database's compute.
+      type: object
+      required: [started_at, cause]
+      properties:
+        started_at: { type: string, format: date-time }
+        suspended_at: { type: string, format: date-time, description: "Omitted while the compute runs or its suspend has not been read yet." }
+        cause: { type: string, enum: [app_wake, cron, request, app_start, running_app, external] }
+        app_id: { type: string }
+        app_slug: { type: string }
+        detail: { type: string }
+    ManagedPostgresActivityHint:
+      description: A suggestion for a cause that keeps the database awake.
+      type: object
+      required: [code, cause, message]
+      properties:
+        code: { type: string, enum: [cron_wakes_database, app_wake_starts_database, app_start_wakes_database, running_app_holds_connections, external_client] }
+        cause: { type: string }
+        app_slug: { type: string }
+        message: { type: string }
+        command: { type: string, description: "The CLI command that acts on the hint, when there is one." }
+    ManagedPostgresDatabaseUsage:
+      description: One database's share of the month's compute, with its recorded starts and awake time this month.
+      type: object
+      required: [database_id, name, compute_unit_seconds, starts, awake_seconds]
+      properties:
+        database_id: { type: string }
+        name: { type: string, description: "Empty for a database deleted since." }
+        compute_unit_seconds: { type: integer, format: int64 }
+        starts: { type: integer }
+        awake_seconds: { type: integer, format: int64 }
     SetManagedPostgresSuspendTimeoutRequest:
       description: How long a scale-to-zero database stays up after its last activity before it suspends.
       type: object
@@ -97673,6 +97832,10 @@ components:
           description: Set while every database of the account is held, with the same reason each database reports. Egress holds one database at a time, so it is reported on that database, not here.
           type: string
           enum: [compute_ceiling, egress, inactive]
+        databases:
+          description: The month's compute by database, most first, with each one's recorded starts and awake time; omitted when it could not be read.
+          type: array
+          items: { $ref: '#/components/schemas/ManagedPostgresDatabaseUsage' }
     ManagedPostgresOverage:
       description: An account's managed PostgreSQL compute overage setting.
       type: object
@@ -132693,6 +132856,83 @@ components:
         customers_truncated: { type: boolean, description: "More identity pairs matched than the customer detail limit." }
         other_customer_requests: { type: integer, format: int64, minimum: 0, description: "Identified requests belonging to identity pairs omitted by the detail cap." }
 
+    MCPSellerStatsResponse:
+      description: "A sold MCP server's customers, tools and revenue over UTC calendar months."
+      type: object
+      required: [app, generated_at, months, tools, near_limit, customers, estimate_complete]
+      properties:
+        app: { type: string }
+        generated_at: { type: string, format: date-time }
+        months:
+          type: array
+          description: "Oldest first; the last is the current month to date."
+          items: { $ref: '#/components/schemas/MCPSellerStatsMonth' }
+        tools:
+          type: array
+          items: { $ref: '#/components/schemas/MCPSellerStatsTool' }
+        near_limit:
+          type: array
+          items: { $ref: '#/components/schemas/MCPSellerNearLimit' }
+        customers: { $ref: '#/components/schemas/MCPSellerCustomerTotals' }
+        estimate_complete: { type: boolean, description: "False when the current month's estimate left customers out." }
+    MCPSellerStatsMonth:
+      description: "One UTC calendar month of a sold MCP server's customers, usage and revenue."
+      type: object
+      required: [month, current, signed_up, signed_up_by_source, active, paying, closed, requests, units, revenue]
+      properties:
+        month: { type: string, description: "YYYY-MM (UTC)." }
+        current: { type: boolean }
+        signed_up: { type: integer, format: int64 }
+        signed_up_by_source:
+          type: object
+          description: "Sign-ups by source: oauth, signup or owner."
+          additionalProperties: { type: integer, format: int64 }
+        active: { type: integer, format: int64, description: "Customers with billable units in the month." }
+        paying: { type: integer, format: int64, description: "Customers whose month amounts to more than zero." }
+        closed: { type: integer, format: int64 }
+        requests: { type: integer, format: int64 }
+        units: { type: integer, format: int64 }
+        revenue:
+          type: array
+          items: { $ref: '#/components/schemas/MCPSellerStatsAmount' }
+    MCPSellerStatsAmount:
+      description: "Revenue in one currency, in millicents."
+      type: object
+      required: [currency, billed_millicents, estimated_millicents]
+      properties:
+        currency: { type: string }
+        billed_millicents: { type: integer, format: int64, description: "Finalized statements, before credits." }
+        estimated_millicents: { type: integer, format: int64, description: "The current month priced so far; in a closed month, draft statements the month-end run has not finalized yet." }
+    MCPSellerStatsTool:
+      description: "One MCP tool's units and customers over the window."
+      type: object
+      required: [tool, units, customers]
+      properties:
+        tool: { type: string }
+        units: { type: integer, format: int64 }
+        customers: { type: integer, format: int64 }
+        revenue:
+          type: array
+          description: "This month's estimated revenue for the tool."
+          items: { $ref: '#/components/schemas/MCPSellerStatsAmount' }
+    MCPSellerNearLimit:
+      description: "An open customer at 80% or more of its plan's monthly units this month."
+      type: object
+      required: [consumer_id, name, plan, units, max_units_per_month, percent]
+      properties:
+        consumer_id: { type: string }
+        name: { type: string }
+        plan: { type: string }
+        units: { type: integer, format: int64 }
+        max_units_per_month: { type: integer, format: int64 }
+        percent: { type: integer, format: int64 }
+    MCPSellerCustomerTotals:
+      description: "The app's open and closed customers now."
+      type: object
+      required: [open, closed]
+      properties:
+        open: { type: integer, format: int64 }
+        closed: { type: integer, format: int64 }
     MCPToolInsightsResponse:
       description: "Per-tool MCP usage and estimated compute for one app over the trailing window."
       type: object

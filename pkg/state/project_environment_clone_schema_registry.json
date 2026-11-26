@@ -11417,6 +11417,46 @@
     "kind": "operational"
   },
   {
+    "table": "managed_postgres_app_wake_starts",
+    "columns": [
+      "claimed_at",
+      "database_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_postgres_compute_starts",
+    "columns": [
+      "account_id",
+      "cause",
+      "cause_app_id",
+      "cause_detail",
+      "database_id",
+      "provider_operation_id",
+      "recorded_at",
+      "started_at",
+      "suspended_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_postgres_awake_notices",
+    "columns": [
+      "account_id",
+      "awake_seconds",
+      "cause",
+      "cause_app_id",
+      "cause_detail",
+      "cause_starts",
+      "database_id",
+      "mailed_at",
+      "recorded_at",
+      "starts",
+      "week_start"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_postgres_usage",
     "columns": [
       "account_id",

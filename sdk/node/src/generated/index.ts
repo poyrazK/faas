@@ -1541,6 +1541,10 @@ export type { ManagedPostgresAccountingDiagnostic } from './models/ManagedPostgr
 export type { ManagedPostgresAccountingDiagnosticsResponse } from './models/ManagedPostgresAccountingDiagnosticsResponse.js';
 export type { ManagedPostgresAccountingReconciliationRequest } from './models/ManagedPostgresAccountingReconciliationRequest.js';
 export type { ManagedPostgresAccountingReconciliationResult } from './models/ManagedPostgresAccountingReconciliationResult.js';
+export type { ManagedPostgresActivity } from './models/ManagedPostgresActivity.js';
+export type { ManagedPostgresActivityCause } from './models/ManagedPostgresActivityCause.js';
+export type { ManagedPostgresActivityComputeStart } from './models/ManagedPostgresActivityComputeStart.js';
+export type { ManagedPostgresActivityHint } from './models/ManagedPostgresActivityHint.js';
 export type { ManagedPostgresBinding } from './models/ManagedPostgresBinding.js';
 export type { ManagedPostgresBindingList } from './models/ManagedPostgresBindingList.js';
 export type { ManagedPostgresCapabilities } from './models/ManagedPostgresCapabilities.js';
@@ -1558,6 +1562,7 @@ export type { ManagedPostgresCutoverSourceSessions } from './models/ManagedPostg
 export type { ManagedPostgresCutoverWriterIsolation } from './models/ManagedPostgresCutoverWriterIsolation.js';
 export type { ManagedPostgresDatabase } from './models/ManagedPostgresDatabase.js';
 export type { ManagedPostgresDatabaseList } from './models/ManagedPostgresDatabaseList.js';
+export type { ManagedPostgresDatabaseUsage } from './models/ManagedPostgresDatabaseUsage.js';
 export type { ManagedPostgresHealth } from './models/ManagedPostgresHealth.js';
 export type { ManagedPostgresID } from './models/ManagedPostgresID.js';
 export type { ManagedPostgresOverage } from './models/ManagedPostgresOverage.js';
@@ -1728,6 +1733,12 @@ export type { MCPReadinessReminderPolicy } from './models/MCPReadinessReminderPo
 export type { MCPReadinessRole } from './models/MCPReadinessRole.js';
 export type { MCPReadinessSnapshot } from './models/MCPReadinessSnapshot.js';
 export type { MCPResourcePolicy } from './models/MCPResourcePolicy.js';
+export type { MCPSellerCustomerTotals } from './models/MCPSellerCustomerTotals.js';
+export type { MCPSellerNearLimit } from './models/MCPSellerNearLimit.js';
+export type { MCPSellerStatsAmount } from './models/MCPSellerStatsAmount.js';
+export type { MCPSellerStatsMonth } from './models/MCPSellerStatsMonth.js';
+export type { MCPSellerStatsResponse } from './models/MCPSellerStatsResponse.js';
+export type { MCPSellerStatsTool } from './models/MCPSellerStatsTool.js';
 export type { MCPTaskCompatibilityReportRequest } from './models/MCPTaskCompatibilityReportRequest.js';
 export type { MCPTaskCompatibilityReportResponse } from './models/MCPTaskCompatibilityReportResponse.js';
 export type { MCPTaskHandlerCompatibility } from './models/MCPTaskHandlerCompatibility.js';

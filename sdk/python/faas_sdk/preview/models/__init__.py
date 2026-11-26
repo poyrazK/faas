@@ -3029,6 +3029,13 @@ from .managed_postgres_accounting_diagnostic_state import ManagedPostgresAccount
 from .managed_postgres_accounting_diagnostics_response import ManagedPostgresAccountingDiagnosticsResponse
 from .managed_postgres_accounting_reconciliation_request import ManagedPostgresAccountingReconciliationRequest
 from .managed_postgres_accounting_reconciliation_result import ManagedPostgresAccountingReconciliationResult
+from .managed_postgres_activity import ManagedPostgresActivity
+from .managed_postgres_activity_cause import ManagedPostgresActivityCause
+from .managed_postgres_activity_cause_cause import ManagedPostgresActivityCauseCause
+from .managed_postgres_activity_compute_start import ManagedPostgresActivityComputeStart
+from .managed_postgres_activity_compute_start_cause import ManagedPostgresActivityComputeStartCause
+from .managed_postgres_activity_hint import ManagedPostgresActivityHint
+from .managed_postgres_activity_hint_code import ManagedPostgresActivityHintCode
 from .managed_postgres_binding import ManagedPostgresBinding
 from .managed_postgres_binding_access import ManagedPostgresBindingAccess
 from .managed_postgres_binding_list import ManagedPostgresBindingList
@@ -3071,6 +3078,7 @@ from .managed_postgres_database_list import ManagedPostgresDatabaseList
 from .managed_postgres_database_plan_excess import ManagedPostgresDatabasePlanExcess
 from .managed_postgres_database_service_class import ManagedPostgresDatabaseServiceClass
 from .managed_postgres_database_state import ManagedPostgresDatabaseState
+from .managed_postgres_database_usage import ManagedPostgresDatabaseUsage
 from .managed_postgres_health import ManagedPostgresHealth
 from .managed_postgres_health_compute_state import ManagedPostgresHealthComputeState
 from .managed_postgres_health_last_error_code import ManagedPostgresHealthLastErrorCode
@@ -3387,6 +3395,13 @@ from .mcp_resource_policy_prompt_scopes_type_0 import MCPResourcePolicyPromptSco
 from .mcp_resource_policy_resource_scopes_type_0 import MCPResourcePolicyResourceScopesType0
 from .mcp_resource_policy_tool_limits import MCPResourcePolicyToolLimits
 from .mcp_resource_policy_tool_scopes_type_0 import MCPResourcePolicyToolScopesType0
+from .mcp_seller_customer_totals import MCPSellerCustomerTotals
+from .mcp_seller_near_limit import MCPSellerNearLimit
+from .mcp_seller_stats_amount import MCPSellerStatsAmount
+from .mcp_seller_stats_month import MCPSellerStatsMonth
+from .mcp_seller_stats_month_signed_up_by_source import MCPSellerStatsMonthSignedUpBySource
+from .mcp_seller_stats_response import MCPSellerStatsResponse
+from .mcp_seller_stats_tool import MCPSellerStatsTool
 from .mcp_task_compatibility_report_request import MCPTaskCompatibilityReportRequest
 from .mcp_task_compatibility_report_response import MCPTaskCompatibilityReportResponse
 from .mcp_task_handler_compatibility import MCPTaskHandlerCompatibility
@@ -10282,6 +10297,13 @@ __all__ = (
     "ManagedPostgresAccountingDiagnosticState",
     "ManagedPostgresAccountingReconciliationRequest",
     "ManagedPostgresAccountingReconciliationResult",
+    "ManagedPostgresActivity",
+    "ManagedPostgresActivityCause",
+    "ManagedPostgresActivityCauseCause",
+    "ManagedPostgresActivityComputeStart",
+    "ManagedPostgresActivityComputeStartCause",
+    "ManagedPostgresActivityHint",
+    "ManagedPostgresActivityHintCode",
     "ManagedPostgresBinding",
     "ManagedPostgresBindingAccess",
     "ManagedPostgresBindingList",
@@ -10324,6 +10346,7 @@ __all__ = (
     "ManagedPostgresDatabasePlanExcess",
     "ManagedPostgresDatabaseServiceClass",
     "ManagedPostgresDatabaseState",
+    "ManagedPostgresDatabaseUsage",
     "ManagedPostgresHealth",
     "ManagedPostgresHealthComputeState",
     "ManagedPostgresHealthLastErrorCode",
@@ -10622,6 +10645,13 @@ __all__ = (
     "MCPResourcePolicyResourceScopesType0",
     "MCPResourcePolicyToolLimits",
     "MCPResourcePolicyToolScopesType0",
+    "MCPSellerCustomerTotals",
+    "MCPSellerNearLimit",
+    "MCPSellerStatsAmount",
+    "MCPSellerStatsMonth",
+    "MCPSellerStatsMonthSignedUpBySource",
+    "MCPSellerStatsResponse",
+    "MCPSellerStatsTool",
     "MCPTaskCompatibilityReportRequest",
     "MCPTaskCompatibilityReportResponse",
     "MCPTaskHandlerCompatibility",
