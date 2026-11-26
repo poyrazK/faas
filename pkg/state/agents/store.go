@@ -874,6 +874,8 @@ func optText(s string) pgtype.Text { return pgtype.Text{String: s, Valid: s != "
 
 func optInt(n int) pgtype.Int4 { return pgtype.Int4{Int32: int32(n), Valid: n != 0} }
 
+func optInt16(n int) pgtype.Int2 { return pgtype.Int2{Int16: int16(n), Valid: n != 0} }
+
 func optInt8(n int64) pgtype.Int8 { return pgtype.Int8{Int64: n, Valid: n != 0} }
 
 func optTime(t pgtype.Timestamptz) *time.Time {

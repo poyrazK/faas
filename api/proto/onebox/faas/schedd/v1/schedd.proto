@@ -1316,7 +1316,28 @@ message SandboxRunRequest {
     // action relays a browser action to vmmd (ADR-20261117065818 §2). An
     // older schedd ignores it; agentd sends one only after booted.actions.
     SandboxRunAction action = 7;
+    // pause captures a persistent session (ADR-20261122132055 §2); see
+    // vmmd's RunSandboxPause. An older schedd ignores it.
+    SandboxRunPause pause = 8;
   }
+}
+
+message SandboxRunPause {
+  string capture_id = 1;
+}
+
+// SandboxRunResume restores a paused session from its capture
+// (ADR-20261122132055 §2). schedd prefers node_id, where the capture was
+// taken, and places it elsewhere when that node has no room.
+message SandboxRunResume {
+  string storage_key = 1;
+  string vmstate_storage_key = 2;
+  string fc_version = 3;
+  int64 mem_bytes = 4;
+  string node_id = 5;
+  // require_node: the capture is on node_id alone (durability node), so the
+  // resume runs there or waits; schedd answers no capacity otherwise.
+  bool require_node = 6;
 }
 
 // SandboxRunStart is the session's machine, already checked against the
@@ -1359,6 +1380,12 @@ message SandboxRunStart {
   // ADR-20261117091026 §4). A sender sets it only when it reads them, since
   // an older reader ends a session on a frame it does not know.
   bool web_domain_log = 17;
+  // persistent sizes the session within the persistent shapes
+  // (ADR-20261122132055 §5) rather than the agent run's.
+  bool persistent = 18;
+  // resume restores a paused persistent session; workspace_key is empty
+  // with it.
+  SandboxRunResume resume = 19;
 }
 
 // SandboxRunTask is a sandbox task, as vmmd's RunSandboxTask.
@@ -1443,7 +1470,25 @@ message SandboxRunEvent {
     SandboxRunActionDone action_done = 11;
     // web_domains relays vmmd's domain log (ADR-20261117091026 §4).
     SandboxRunWebDomains web_domains = 12;
+    // paused and pause_refused relay vmmd's answers to pause; the stream
+    // ends after paused.
+    SandboxRunPaused paused = 13;
+    SandboxRunPauseRefused pause_refused = 14;
   }
+}
+
+message SandboxRunPaused {
+  string storage_key = 1;
+  string vmstate_storage_key = 2;
+  string fc_version = 3;
+  int64 mem_bytes = 4;
+  int64 vmstate_bytes = 5;
+  int64 pause_ms = 6;
+  bool has_backing = 7;
+}
+
+message SandboxRunPauseRefused {
+  string reason = 1;
 }
 
 message SandboxRunWebDomains {
