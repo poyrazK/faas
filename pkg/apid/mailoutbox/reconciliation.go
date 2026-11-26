@@ -80,6 +80,7 @@ type Reconciler struct {
 
 	managedPostgresRestoreSlotEnabled func() bool
 	managedPostgresPlanExcessEnabled  func() bool
+	managedPostgresAwakeEnabled       func() bool
 }
 
 func (s *Reconciler) WithVerification(enabled func() bool) *Reconciler {
@@ -121,6 +122,8 @@ func (s *Reconciler) templateEnabled(template string) bool {
 		return s.managedPostgresRestoreSlotEnabled != nil && s.managedPostgresRestoreSlotEnabled()
 	case ManagedPostgresPlanExcessTemplate:
 		return s.managedPostgresPlanExcessEnabled != nil && s.managedPostgresPlanExcessEnabled()
+	case ManagedPostgresAwakeTemplate:
+		return s.managedPostgresAwakeEnabled != nil && s.managedPostgresAwakeEnabled()
 	case AccountRestoredTemplate:
 		return s.accountRestoredEnabled != nil && s.accountRestoredEnabled()
 	case PaymentFailedTemplate:
@@ -340,6 +343,11 @@ func (s *Reconciler) WithManagedPostgresRestoreSlot(enabled func() bool) *Reconc
 func (s *Reconciler) WithManagedPostgresPlanExcess(enabled func() bool) *Reconciler {
 	copy := *s
 	copy.managedPostgresPlanExcessEnabled = enabled
+	return &copy
+}
+func (s *Reconciler) WithManagedPostgresAwake(enabled func() bool) *Reconciler {
+	copy := *s
+	copy.managedPostgresAwakeEnabled = enabled
 	return &copy
 }
 

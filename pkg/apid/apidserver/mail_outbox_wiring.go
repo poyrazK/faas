@@ -94,6 +94,9 @@ func (s *server) configureMailOutbox(ctx context.Context, pool *pgxpool.Pool, ge
 	if err := outbox.ConfigureManagedPostgresPlanExcess(ctx, getenv); err != nil {
 		return err
 	}
+	if err := outbox.ConfigureManagedPostgresAwake(ctx, getenv); err != nil {
+		return err
+	}
 	if outbox != nil {
 		if err := outbox.Ready(ctx); err != nil {
 			return errors.New("apid: producer mail outbox schema is unavailable")
@@ -188,6 +191,24 @@ func (s *server) noticeManagedPostgresPlanExcess(ctx context.Context, notice man
 	err := s.deletionMailOutbox.NoticeManagedPostgresPlanExcess(ctx, notice.AccountID, mailoutbox.ManagedPostgresPlanExcessNotice{
 		DatabaseID: notice.DatabaseID, DatabaseName: notice.DatabaseName, ServiceClass: string(notice.ServiceClass),
 		Reason: notice.Reason, RecordedAt: notice.RecordedAt, DeleteAt: notice.DeleteAt, Reminder: notice.Reminder,
+	})
+	if errors.Is(err, internalmail.ErrDisabled) {
+		return nil
+	}
+	return err
+}
+
+// noticeManagedPostgresAwake queues the weekly awake email for one database
+// (ADR-20261125231222) to the account that owns it. With the outbox off there
+// is nothing to queue and nothing to retry.
+func (s *server) noticeManagedPostgresAwake(ctx context.Context, notice managedpostgres.AwakeNotice) error {
+	if s.deletionMailOutbox == nil {
+		return nil
+	}
+	err := s.deletionMailOutbox.NoticeManagedPostgresAwake(ctx, notice.AccountID, mailoutbox.ManagedPostgresAwakeNotice{
+		DatabaseID: notice.DatabaseID, DatabaseName: notice.DatabaseName, WeekStart: notice.WeekStart,
+		AwakeHoursPerDay: notice.AwakeHoursPerDay(), Starts: notice.Starts, Cause: notice.Cause, AppSlug: notice.AppSlug,
+		Detail: notice.Detail, CauseStarts: notice.CauseStarts, RecordedAt: notice.RecordedAt,
 	})
 	if errors.Is(err, internalmail.ErrDisabled) {
 		return nil

@@ -35,6 +35,7 @@ Account restoration confirmations also require FAAS_INTERNAL_MAIL_ACCOUNT_RESTOR
 Managed PostgreSQL compute cap notices also require FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_CAP_OUTBOX_ENABLED=1.
 Managed PostgreSQL restore slot notices also require FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_RESTORE_SLOT_OUTBOX_ENABLED=1.
 Managed PostgreSQL plan excess notices also require FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_PLAN_EXCESS_OUTBOX_ENABLED=1.
+Managed PostgreSQL awake notices also require FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_AWAKE_OUTBOX_ENABLED=1.
 Payment failure warnings also require FAAS_INTERNAL_MAIL_PAYMENT_FAILED_OUTBOX_ENABLED=1.
 MFA enabled alerts also require FAAS_INTERNAL_MAIL_MFA_ENABLED_ALERT_OUTBOX_ENABLED=1.
 Password changed alerts also require FAAS_INTERNAL_MAIL_PASSWORD_CHANGED_ALERT_OUTBOX_ENABLED=1.
@@ -135,6 +136,7 @@ func RunOperator(ctx context.Context, args []string, getenv func(string) string,
 	reconciler = reconciler.WithManagedPostgresCap(func() bool { return internalmail.ManagedPostgresCapOutboxEnabled(getenv) })
 	reconciler = reconciler.WithManagedPostgresRestoreSlot(func() bool { return internalmail.ManagedPostgresRestoreSlotOutboxEnabled(getenv) })
 	reconciler = reconciler.WithManagedPostgresPlanExcess(func() bool { return internalmail.ManagedPostgresPlanExcessOutboxEnabled(getenv) })
+	reconciler = reconciler.WithManagedPostgresAwake(func() bool { return internalmail.ManagedPostgresAwakeOutboxEnabled(getenv) })
 	reconciler = reconciler.WithAccountRestored(func() bool { return internalmail.AccountRestoredOutboxEnabled(getenv) })
 	reconciler = reconciler.WithPaymentFailed(func() bool { return internalmail.PaymentFailedOutboxEnabled(getenv) })
 	reconciler = reconciler.WithMFAEnabledAlert(func() bool { return internalmail.MFAEnabledAlertOutboxEnabled(getenv) })

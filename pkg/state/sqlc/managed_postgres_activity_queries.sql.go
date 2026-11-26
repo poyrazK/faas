@@ -67,6 +67,71 @@ func (q *Queries) ListManagedPostgresComputeStarts(ctx context.Context, db DBTX,
 	return items, nil
 }
 
+const listUnmailedManagedPostgresAwakeNotices = `-- name: ListUnmailedManagedPostgresAwakeNotices :many
+SELECT n.database_id, n.account_id, n.week_start, n.awake_seconds, n.starts, n.cause, n.cause_detail, n.cause_starts, n.recorded_at,
+       d.name, coalesce(a.slug, '')::text AS cause_app_slug
+FROM managed_postgres_awake_notices n
+JOIN managed_postgres_databases d ON d.id = n.database_id
+LEFT JOIN apps a ON a.id = n.cause_app_id
+WHERE n.mailed_at IS NULL AND n.recorded_at >= $1::timestamptz
+  -- An app cause whose app is gone cannot be named: it is not mailed.
+  AND (n.cause IN ('app_wake', 'external') OR a.slug IS NOT NULL)
+ORDER BY n.recorded_at, n.database_id
+LIMIT $2::int
+`
+
+type ListUnmailedManagedPostgresAwakeNoticesParams struct {
+	Since    pgtype.Timestamptz
+	RowLimit int32
+}
+
+type ListUnmailedManagedPostgresAwakeNoticesRow struct {
+	DatabaseID   pgtype.UUID
+	AccountID    pgtype.UUID
+	WeekStart    pgtype.Date
+	AwakeSeconds int64
+	Starts       int32
+	Cause        string
+	CauseDetail  string
+	CauseStarts  int32
+	RecordedAt   pgtype.Timestamptz
+	Name         string
+	CauseAppSlug string
+}
+
+// Notices recorded at or after since that no email has claimed, oldest first.
+func (q *Queries) ListUnmailedManagedPostgresAwakeNotices(ctx context.Context, db DBTX, arg ListUnmailedManagedPostgresAwakeNoticesParams) ([]ListUnmailedManagedPostgresAwakeNoticesRow, error) {
+	rows, err := db.Query(ctx, listUnmailedManagedPostgresAwakeNotices, arg.Since, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUnmailedManagedPostgresAwakeNoticesRow{}
+	for rows.Next() {
+		var i ListUnmailedManagedPostgresAwakeNoticesRow
+		if err := rows.Scan(
+			&i.DatabaseID,
+			&i.AccountID,
+			&i.WeekStart,
+			&i.AwakeSeconds,
+			&i.Starts,
+			&i.Cause,
+			&i.CauseDetail,
+			&i.CauseStarts,
+			&i.RecordedAt,
+			&i.Name,
+			&i.CauseAppSlug,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const managedPostgresAccountComputeStarts = `-- name: ManagedPostgresAccountComputeStarts :many
 WITH spans AS (
     SELECT s.database_id, s.started_at,
@@ -261,6 +326,65 @@ type PruneManagedPostgresComputeStartsParams struct {
 // Deletes up to batch_size starts recorded before the cutoff.
 func (q *Queries) PruneManagedPostgresComputeStarts(ctx context.Context, db DBTX, arg PruneManagedPostgresComputeStartsParams) (int64, error) {
 	result, err := db.Exec(ctx, pruneManagedPostgresComputeStarts, arg.Cutoff, arg.BatchSize)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordManagedPostgresAwakeNotices = `-- name: RecordManagedPostgresAwakeNotices :execrows
+WITH week AS (
+    -- UTC weeks, whatever the session's time zone.
+    SELECT $1::date::timestamp AT TIME ZONE 'UTC' AS lo, ($1::date + 7)::timestamp AT TIME ZONE 'UTC' AS hi
+), spans AS (
+    SELECT s.database_id, s.account_id, s.cause, s.cause_app_id, s.cause_detail, s.started_at,
+           coalesce(s.suspended_at,
+                    (SELECT min(n.started_at) FROM managed_postgres_compute_starts n
+                     WHERE n.database_id = s.database_id AND n.started_at > s.started_at),
+                    s.started_at) AS ended_at
+    FROM managed_postgres_compute_starts s CROSS JOIN week
+    WHERE s.started_at < week.hi
+), starts AS (
+    SELECT p.database_id, p.account_id, p.cause, p.cause_app_id, p.cause_detail,
+           extract(epoch FROM least(p.ended_at, week.hi) - greatest(p.started_at, week.lo))::bigint AS awake
+    FROM spans p CROSS JOIN week
+    WHERE p.started_at >= week.lo OR p.ended_at > week.lo
+), totals AS (
+    SELECT database_id, min(account_id::text)::uuid AS account_id, count(*)::int AS starts, sum(greatest(awake, 0))::bigint AS awake_seconds
+    FROM starts GROUP BY database_id
+), causes AS (
+    SELECT DISTINCT ON (database_id) database_id, cause, cause_app_id, cause_detail, count(*)::int AS cause_starts
+    FROM starts GROUP BY database_id, cause, cause_app_id, cause_detail
+    ORDER BY database_id, count(*) DESC, cause
+)
+INSERT INTO managed_postgres_awake_notices
+    (database_id, account_id, week_start, awake_seconds, starts, cause, cause_app_id, cause_detail, cause_starts)
+SELECT t.database_id, t.account_id, $1::date, t.awake_seconds, t.starts, c.cause, c.cause_app_id, c.cause_detail, c.cause_starts
+FROM totals t JOIN causes c ON c.database_id = t.database_id
+JOIN managed_postgres_databases d ON d.id = t.database_id
+WHERE d.state = 'ready' AND d.scale_to_zero AND d.deleted_at IS NULL
+  AND t.awake_seconds >= $2::bigint
+  AND c.cause_starts * 100 >= t.starts * $3::int
+  -- Requests are the app's real traffic: there is nothing to change.
+  AND c.cause <> 'request'
+ON CONFLICT (database_id, week_start) DO NOTHING
+`
+
+type RecordManagedPostgresAwakeNoticesParams struct {
+	WeekStart       pgtype.Date
+	MinAwakeSeconds int64
+	MinCausePercent int32
+}
+
+// Records the week's notices (ADR-20261125231222): each ready scale-to-zero
+// database awake at least min_awake_seconds over [week_start, week_start+7d)
+// whose most frequent cause holds at least min_cause_percent of its starts.
+// A database already noticed for the week is left alone. A start ends at
+// its suspend or else the database's next start; one with neither (its
+// suspend not read yet) counts no awake time, so a notice never claims time
+// it cannot show.
+func (q *Queries) RecordManagedPostgresAwakeNotices(ctx context.Context, db DBTX, arg RecordManagedPostgresAwakeNoticesParams) (int64, error) {
+	result, err := db.Exec(ctx, recordManagedPostgresAwakeNotices, arg.WeekStart, arg.MinAwakeSeconds, arg.MinCausePercent)
 	if err != nil {
 		return 0, err
 	}

@@ -49,6 +49,7 @@ type InternalSender struct {
 
 	managedPostgresRestoreSlotEnabled func() bool
 	managedPostgresPlanExcessEnabled  func() bool
+	managedPostgresAwakeEnabled       func() bool
 }
 
 func NewInternalSender(socket, token, from string, enabled func() bool) (*InternalSender, error) {

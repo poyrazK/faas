@@ -4727,6 +4727,8 @@ type Querier interface {
 	// An account's unlifted freezes that have not ended: active and upcoming
 	// windows, weekly windows and after-rollback policies.
 	ListUnliftedReleaseFreezes(ctx context.Context, db DBTX, arg ListUnliftedReleaseFreezesParams) ([]ReleaseFreeze, error)
+	// Notices recorded at or after since that no email has claimed, oldest first.
+	ListUnmailedManagedPostgresAwakeNotices(ctx context.Context, db DBTX, arg ListUnmailedManagedPostgresAwakeNoticesParams) ([]ListUnmailedManagedPostgresAwakeNoticesRow, error)
 	// The notices still to mail: recorded after since, not yet linked to an
 	// intent, for databases not being deleted.
 	ListUnmailedManagedPostgresPlanExcessNotices(ctx context.Context, db DBTX, arg ListUnmailedManagedPostgresPlanExcessNoticesParams) ([]ListUnmailedManagedPostgresPlanExcessNoticesRow, error)
@@ -7559,6 +7561,14 @@ type Querier interface {
 	// $6 = expires_at (nullable — null means suppression is permanent
 	//      until operator override; non-null is the TTL deadline)
 	RecordMailSuppression(ctx context.Context, db DBTX, arg RecordMailSuppressionParams) (bool, error)
+	// Records the week's notices (ADR-20261125231222): each ready scale-to-zero
+	// database awake at least min_awake_seconds over [week_start, week_start+7d)
+	// whose most frequent cause holds at least min_cause_percent of its starts.
+	// A database already noticed for the week is left alone. A start ends at
+	// its suspend or else the database's next start; one with neither (its
+	// suspend not read yet) counts no awake time, so a notice never claims time
+	// it cannot show.
+	RecordManagedPostgresAwakeNotices(ctx context.Context, db DBTX, arg RecordManagedPostgresAwakeNoticesParams) (int64, error)
 	// ADR-20261025094915: compute cap thresholds a usage subject reached in a
 	// UTC month. One row per subject, month and threshold; the first sweep to
 	// see a threshold records it and later sweeps leave it alone.

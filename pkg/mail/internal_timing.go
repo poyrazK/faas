@@ -30,6 +30,7 @@ func (s *InternalSender) WithVerificationOutbox(enabled func() bool) *InternalSe
 	copy := *s
 	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.managedPostgresPlanExcessEnabled = nil
+	copy.managedPostgresAwakeEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
@@ -54,6 +55,7 @@ func (s *InternalSender) WithPasswordResetOutbox(enabled func() bool) *InternalS
 	copy := *s
 	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.managedPostgresPlanExcessEnabled = nil
+	copy.managedPostgresAwakeEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
@@ -78,6 +80,7 @@ func (s *InternalSender) WithMagicLinkOutbox(enabled func() bool) *InternalSende
 	copy := *s
 	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.managedPostgresPlanExcessEnabled = nil
+	copy.managedPostgresAwakeEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
@@ -102,6 +105,7 @@ func (s *InternalSender) WithMFARecoveryAlertOutbox(enabled func() bool) *Intern
 	copy := *s
 	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.managedPostgresPlanExcessEnabled = nil
+	copy.managedPostgresAwakeEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
@@ -126,6 +130,7 @@ func (s *InternalSender) WithMFADisableOutbox(enabled func() bool) *InternalSend
 	copy := *s
 	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.managedPostgresPlanExcessEnabled = nil
+	copy.managedPostgresAwakeEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
@@ -150,6 +155,7 @@ func (s *InternalSender) WithMFADisabledAlertOutbox(enabled func() bool) *Intern
 	copy := *s
 	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.managedPostgresPlanExcessEnabled = nil
+	copy.managedPostgresAwakeEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
@@ -174,6 +180,7 @@ func (s *InternalSender) WithPasswordChangedAlertOutbox(enabled func() bool) *In
 	copy := *s
 	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.managedPostgresPlanExcessEnabled = nil
+	copy.managedPostgresAwakeEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
@@ -198,6 +205,7 @@ func (s *InternalSender) WithMFAEnabledAlertOutbox(enabled func() bool) *Interna
 	copy := *s
 	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.managedPostgresPlanExcessEnabled = nil
+	copy.managedPostgresAwakeEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
@@ -222,6 +230,7 @@ func (s *InternalSender) WithPaymentFailedOutbox(enabled func() bool) *InternalS
 	copy := *s
 	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.managedPostgresPlanExcessEnabled = nil
+	copy.managedPostgresAwakeEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
@@ -246,6 +255,7 @@ func (s *InternalSender) WithAccountSuspendedOutbox(enabled func() bool) *Intern
 	copy := *s
 	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.managedPostgresPlanExcessEnabled = nil
+	copy.managedPostgresAwakeEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
@@ -269,6 +279,7 @@ func (s *InternalSender) WithAccountRestoredOutbox(enabled func() bool) *Interna
 	copy := *s
 	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.managedPostgresPlanExcessEnabled = nil
+	copy.managedPostgresAwakeEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
@@ -293,6 +304,7 @@ func (s *InternalSender) WithNonpaymentDeletionOutbox(enabled func() bool) *Inte
 	copy := *s
 	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.managedPostgresPlanExcessEnabled = nil
+	copy.managedPostgresAwakeEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
@@ -317,6 +329,7 @@ func (s *InternalSender) WithQuotaWarningOutbox(enabled func() bool) *InternalSe
 	copy := *s
 	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.managedPostgresPlanExcessEnabled = nil
+	copy.managedPostgresAwakeEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
@@ -341,6 +354,7 @@ func (s *InternalSender) WithSubscriptionEndedOutbox(enabled func() bool) *Inter
 	copy := *s
 	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.managedPostgresPlanExcessEnabled = nil
+	copy.managedPostgresAwakeEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = enabled
@@ -365,6 +379,7 @@ func (s *InternalSender) WithDeploymentFailedOutbox(enabled func() bool) *Intern
 	copy := *s
 	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.managedPostgresPlanExcessEnabled = nil
+	copy.managedPostgresAwakeEnabled = nil
 	copy.deploymentFailedEnabled = enabled
 	copy.agentRunDeliveredEnabled = nil
 	copy.subscriptionEndedEnabled = nil
@@ -389,6 +404,7 @@ func (s *InternalSender) WithAgentRunDeliveredOutbox(enabled func() bool) *Inter
 	copy := *s
 	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.managedPostgresPlanExcessEnabled = nil
+	copy.managedPostgresAwakeEnabled = nil
 	copy.deploymentFailedEnabled = nil
 	copy.agentRunDeliveredEnabled = enabled
 	copy.subscriptionEndedEnabled = nil
@@ -415,6 +431,7 @@ func (s *InternalSender) WithManagedPostgresCapOutbox(enabled func() bool) *Inte
 	copy := *s
 	copy.managedPostgresRestoreSlotEnabled = nil
 	copy.managedPostgresPlanExcessEnabled = nil
+	copy.managedPostgresAwakeEnabled = nil
 	copy.verificationEnabled = nil
 	copy.passwordResetEnabled = nil
 	copy.magicLinkEnabled = nil
@@ -457,6 +474,7 @@ func (s *InternalSender) WithManagedPostgresRestoreSlotOutbox(enabled func() boo
 	copy.managedPostgresCapEnabled = nil
 	copy.managedPostgresRestoreSlotEnabled = enabled
 	copy.managedPostgresPlanExcessEnabled = nil
+	copy.managedPostgresAwakeEnabled = nil
 	return &copy
 }
 
@@ -468,7 +486,18 @@ func (s *InternalSender) WithManagedPostgresPlanExcessOutbox(enabled func() bool
 	return copy
 }
 
+// WithManagedPostgresAwakeOutbox gates the weekly managed PostgreSQL awake
+// notices (ADR-20261125231222) on their own switch.
+func (s *InternalSender) WithManagedPostgresAwakeOutbox(enabled func() bool) *InternalSender {
+	copy := s.WithManagedPostgresRestoreSlotOutbox(nil)
+	copy.managedPostgresAwakeEnabled = enabled
+	return copy
+}
+
 func (s *InternalSender) credentialOutboxGate() (string, func() bool) {
+	if s.managedPostgresAwakeEnabled != nil {
+		return internalmail.ProducerOutboxManagedPostgresAwakeTemplate, s.managedPostgresAwakeEnabled
+	}
 	if s.managedPostgresPlanExcessEnabled != nil {
 		return internalmail.ProducerOutboxManagedPostgresPlanExcessTemplate, s.managedPostgresPlanExcessEnabled
 	}

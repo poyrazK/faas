@@ -137,3 +137,60 @@ FROM managed_postgres_usage u
 WHERE u.account_id = sqlc.arg(account_id)::uuid AND u.meter = 'compute_unit_seconds'
   AND u.window_from >= sqlc.arg(since)::timestamptz
 GROUP BY u.database_id;
+
+-- name: RecordManagedPostgresAwakeNotices :execrows
+-- Records the week's notices (ADR-20261125231222): each ready scale-to-zero
+-- database awake at least min_awake_seconds over [week_start, week_start+7d)
+-- whose most frequent cause holds at least min_cause_percent of its starts.
+-- A database already noticed for the week is left alone. A start ends at
+-- its suspend or else the database's next start; one with neither (its
+-- suspend not read yet) counts no awake time, so a notice never claims time
+-- it cannot show.
+WITH week AS (
+    -- UTC weeks, whatever the session's time zone.
+    SELECT sqlc.arg(week_start)::date::timestamp AT TIME ZONE 'UTC' AS lo, (sqlc.arg(week_start)::date + 7)::timestamp AT TIME ZONE 'UTC' AS hi
+), spans AS (
+    SELECT s.database_id, s.account_id, s.cause, s.cause_app_id, s.cause_detail, s.started_at,
+           coalesce(s.suspended_at,
+                    (SELECT min(n.started_at) FROM managed_postgres_compute_starts n
+                     WHERE n.database_id = s.database_id AND n.started_at > s.started_at),
+                    s.started_at) AS ended_at
+    FROM managed_postgres_compute_starts s CROSS JOIN week
+    WHERE s.started_at < week.hi
+), starts AS (
+    SELECT p.database_id, p.account_id, p.cause, p.cause_app_id, p.cause_detail,
+           extract(epoch FROM least(p.ended_at, week.hi) - greatest(p.started_at, week.lo))::bigint AS awake
+    FROM spans p CROSS JOIN week
+    WHERE p.started_at >= week.lo OR p.ended_at > week.lo
+), totals AS (
+    SELECT database_id, min(account_id::text)::uuid AS account_id, count(*)::int AS starts, sum(greatest(awake, 0))::bigint AS awake_seconds
+    FROM starts GROUP BY database_id
+), causes AS (
+    SELECT DISTINCT ON (database_id) database_id, cause, cause_app_id, cause_detail, count(*)::int AS cause_starts
+    FROM starts GROUP BY database_id, cause, cause_app_id, cause_detail
+    ORDER BY database_id, count(*) DESC, cause
+)
+INSERT INTO managed_postgres_awake_notices
+    (database_id, account_id, week_start, awake_seconds, starts, cause, cause_app_id, cause_detail, cause_starts)
+SELECT t.database_id, t.account_id, sqlc.arg(week_start)::date, t.awake_seconds, t.starts, c.cause, c.cause_app_id, c.cause_detail, c.cause_starts
+FROM totals t JOIN causes c ON c.database_id = t.database_id
+JOIN managed_postgres_databases d ON d.id = t.database_id
+WHERE d.state = 'ready' AND d.scale_to_zero AND d.deleted_at IS NULL
+  AND t.awake_seconds >= sqlc.arg(min_awake_seconds)::bigint
+  AND c.cause_starts * 100 >= t.starts * sqlc.arg(min_cause_percent)::int
+  -- Requests are the app's real traffic: there is nothing to change.
+  AND c.cause <> 'request'
+ON CONFLICT (database_id, week_start) DO NOTHING;
+
+-- name: ListUnmailedManagedPostgresAwakeNotices :many
+-- Notices recorded at or after since that no email has claimed, oldest first.
+SELECT n.database_id, n.account_id, n.week_start, n.awake_seconds, n.starts, n.cause, n.cause_detail, n.cause_starts, n.recorded_at,
+       d.name, coalesce(a.slug, '')::text AS cause_app_slug
+FROM managed_postgres_awake_notices n
+JOIN managed_postgres_databases d ON d.id = n.database_id
+LEFT JOIN apps a ON a.id = n.cause_app_id
+WHERE n.mailed_at IS NULL AND n.recorded_at >= sqlc.arg(since)::timestamptz
+  -- An app cause whose app is gone cannot be named: it is not mailed.
+  AND (n.cause IN ('app_wake', 'external') OR a.slug IS NOT NULL)
+ORDER BY n.recorded_at, n.database_id
+LIMIT sqlc.arg(row_limit)::int;

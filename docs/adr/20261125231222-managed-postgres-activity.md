@@ -90,10 +90,18 @@ cause dominates (owner, 2026-11-26).
 A weekly sweep mails the account owner, once per database per week, when a
 scale-to-zero database averaged at least
 `api.ManagedPostgresAwakeNoticeHoursPerDay` (6) awake hours a day over the
-last 7 days and one cause holds at least half of its starts. The email names
-the database, the hours, the cause and its lever, and links the activity
-command. Notices are recorded (`managed_postgres_awake_notices`) so a replica
-never mails twice.
+last complete UTC week (Monday to Monday) and one cause other than `request`
+holds at least `api.ManagedPostgresAwakeNoticeCauseSharePercent` (50) of its
+starts. Requests are the app's own traffic, with nothing to change, so they are
+never noticed. The email names the database, the hours, the cause and its
+lever, and links the activity command. Notices are recorded
+(`managed_postgres_awake_notices`) and marked mailed in the transaction that
+queues the email (template `managed_postgres_awake`, gated by
+`FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_AWAKE_OUTBOX_ENABLED` on apid and maild),
+so a replica never mails twice. The usage sweep runs the pass at most hourly,
+and records a week only `api.ManagedPostgresAwakeNoticeSettle` (12 h) after it
+ends, so the lagging idle-tail reads have recorded its last starts; a start
+with no suspend and no later start counts no time in a notice.
 
 ## Consequences
 
@@ -111,4 +119,7 @@ never mails twice.
   diagnosis, never billing: CU-hours stay the usage ledger's.
 - Nothing new is billed and no plan changes. The table is operational data
   (not cloned into environments).
-- Rollout: the migration, then apid. An older apid ignores the table.
+- Rollout: the migration, then apid. An older apid ignores the table. The
+  email adds `20261126141506100_platform_mail_managed_postgres_awake.sql`
+  (widens the outbox template CHECKs; marked contract, so a full release
+  applies it); deploy maild with apid, then turn the gate on for both.

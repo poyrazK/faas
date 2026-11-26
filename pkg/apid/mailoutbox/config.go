@@ -48,6 +48,7 @@ type Service struct {
 
 	managedPostgresRestoreSlot *credentialConfig
 	managedPostgresPlanExcess  *credentialConfig
+	managedPostgresAwake       *credentialConfig
 }
 
 // NewFromEnv performs no DB, credential or socket configuration reads with
