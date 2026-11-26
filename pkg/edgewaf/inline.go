@@ -11,15 +11,22 @@ import (
 )
 
 // inlineRuleFiles is the CRS rule set warn and block rules run in-path
-// (ADR-831 amendment 3 addendum): initialization, scanner detection,
-// protocol attack, and the LFI, RFI, RCE, XSS and SQLi families. On headers
-// and URI it catches what the full set catches at about 1.1 ms p95 instead of
-// 1.6 ms.
-var inlineRuleFiles = []string{"901", "913", "921", "930", "931", "932", "941", "942"}
+// (ADR-831 amendment 3 addendum, widened by amendment 21): initialization,
+// method enforcement, scanner detection, protocol attack, and the LFI, RFI,
+// RCE, PHP, generic (Node.js, SSRF, prototype pollution), XSS, SQLi, session
+// fixation and Java families. Amendment 3 also left out 911, 933, 934, 943
+// and 944, which let block rules pass Log4Shell in a header, Spring4Shell,
+// prototype pollution and PHP wrappers that observe reported. Protocol
+// enforcement (920) stays sampled only: it is the costliest family per
+// detection, and most of the malformed requests it scores are refused by
+// the edge's HTTP server before any rule runs.
+var inlineRuleFiles = []string{"901", "911", "913", "921", "930", "931", "932", "933", "934", "941", "942", "943", "944"}
 
 // compileInline builds the in-path WAF: paranoia level 1, request body access
 // off, so phase 2 evaluates headers, URI and query arguments without reading
-// the body, which is still streaming to the proxy.
+// the body, which is still streaming to the proxy. It applies the same
+// platform policy as the sampled engine (REST methods, no content-type
+// allow-list), so a rule family both run gives the same verdict.
 func compileInline() (coraza.WAF, error) {
 	return compileInlineWith(engine)
 }
@@ -33,10 +40,12 @@ func compileInlineWith(opts engineOptions) (coraza.WAF, error) {
 %s
 Include @crs-setup.conf.example
 SecAction "id:900000,phase:1,pass,t:none,nolog,setvar:tx.blocking_paranoia_level=1"
-%sSecRuleEngine DetectionOnly
+%s
+%s%s
+SecRuleEngine DetectionOnly
 SecAuditEngine Off
 SecRequestBodyAccess Off
-SecResponseBodyAccess Off`, opts.directive(), rules.String())
+SecResponseBodyAccess Off`, opts.directive(), platformPolicy, rules.String(), opts.rules(platformOverrides))
 	waf, err := coraza.NewWAF(coraza.NewWAFConfig().WithRootFS(opts.rootFS()).WithDirectives(directives))
 	if err != nil {
 		return nil, fmt.Errorf("compile in-path OWASP CRS rule set: %w", err)

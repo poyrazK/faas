@@ -161,7 +161,7 @@ func evaluate(waf coraza.WAF, s gateway.WAFSample) (Result, error) {
 	defer func() { _ = tx.Close() }()
 	tx.ProcessConnection(s.ClientIP, 0, "", 0)
 	tx.SetServerName(s.Host)
-	tx.ProcessURI(s.URI, s.Method, s.Proto)
+	tx.ProcessURI(boundURI(s.URI), s.Method, s.Proto)
 	tx.AddRequestHeader("Host", s.Host)
 	for name, values := range boundHeaders(s.Header) {
 		for _, v := range values {
@@ -181,6 +181,18 @@ func evaluate(waf coraza.WAF, s gateway.WAFSample) (Result, error) {
 	res.Detected = res.Score >= s.AnomalyThreshold
 	tx.ProcessLogging()
 	return res, nil
+}
+
+// boundURI returns the URI a check scores: its first
+// api.EdgeWAFMaxInspectURIBytes, cut on a character boundary (ADR-831
+// amendment 21). The gateway refuses a longer URI under warn and block before
+// any check runs; a sampled check scores the prefix, like a body past its
+// inspection limit.
+func boundURI(uri string) string {
+	if len(uri) <= api.EdgeWAFMaxInspectURIBytes {
+		return uri
+	}
+	return safetext.Truncate(uri, api.EdgeWAFMaxInspectURIBytes)
 }
 
 // boundHeaders returns the headers a check scores: each value cut to

@@ -10283,6 +10283,14 @@ const (
 	// (ADR-831 amendment 19).
 	EdgeWAFMaxInspectHeaderBytes      = 16 << 10
 	EdgeWAFMaxInspectHeaderValueBytes = 4 << 10
+	// EdgeWAFMaxInspectURIBytes bounds the request URI (path and query) a
+	// WAF check scores, for the same reason (ADR-831 amendment 21): a check
+	// on a 100 KiB query took about 165 ms and one on 900 KiB 1.5 s, and the
+	// app's check budget is charged after the check, so a few long URIs a
+	// second emptied an app's budget and let every other request to it pass
+	// a block rule unchecked. Warn and block count a longer URI as a
+	// detection; a sampled check scores its first 8 KiB.
+	EdgeWAFMaxInspectURIBytes = 8 << 10
 	// EdgeWAFInlineAccountSharePercent is the share of the node's check
 	// slots (at least one) an account's waiting checks are served first
 	// for (ADR-831 amendment 16). An account may use every free slot, but a
@@ -10310,6 +10318,12 @@ const (
 	// must flag on one path, none of them sending most of the detections,
 	// before the review calls it a likely false positive.
 	EdgeWAFReviewMinClients = 3
+	// EdgeWAFReviewMaxMultiRulePercent is the largest share of a group's
+	// detections that may also have scored on another CRS rule for the
+	// review to still call the group a likely false positive on client
+	// spread (ADR-831 amendment 21): crafted payloads usually trip several
+	// rules, benign false positives one.
+	EdgeWAFReviewMaxMultiRulePercent = 10
 	// EdgeWAFReviewScannerPaths is how many distinct paths a client must be
 	// flagged on in the window before the review treats it as a scanner.
 	EdgeWAFReviewScannerPaths = 5

@@ -1414,3 +1414,68 @@ those paths in `observe`; the bound itself, and so the cost of a check, is
 unchanged. Node.js already refuses more than 16 KiB of headers by default.
 
 Tests: `TestWAFHeadersPastTheInspectionBoundAreADetection`.
+
+## Amendment 21 (2026-11-26): a bounded URI, a wider in-path rule set, a stricter review
+
+A WAF review on main 70cf597319 found three ways `block` protected less than
+its docs said.
+
+1. **A long URI emptied the app's check budget.** Amendment 19 bounded the
+   headers a check scores but left the URI and query "scored in full". A
+   check's cost grows faster than its input (measured on an M3 workstation:
+   8 KiB of query 15 ms, 100 KiB 165 ms, 900 KiB 1.5 s), the edge accepts a
+   1 MiB request line, and the app's inline budget (500 ms a second, burst
+   1 s) is charged after the check. About 30 requests a second with 8 KiB
+   URIs, or one very long URI every two seconds, kept the budget empty, so
+   every other request to the app passed its `block` rule unchecked
+   (`inline_skipped`, reason `budget`); long URIs also held check slots that
+   other accounts' checks then skipped as `busy`. A check now scores at most
+   `api.EdgeWAFMaxInspectURIBytes` (8 KiB) of URI. As amendment 20 does for
+   headers, `warn` and `block` count a longer URI as a detection (category
+   `uninspected-uri`) without running the check, and never box the client
+   for it; a sampled check scores the first 8 KiB (`boundURI`). 8 KiB is
+   nginx's default request-line buffer; Cloudflare allows 16 KiB, so apps
+   with longer URLs keep those paths in `observe`.
+2. **The in-path rule set missed whole attack families.** Amendment 3's
+   addendum chose files 901, 913, 921, 930–932, 941 and 942 for cost, and
+   the claim that it "catches what the full set catches" was measured on the
+   corpus of those families only. `block` therefore passed Log4Shell in a
+   header (944150), Spring4Shell (944130), prototype pollution (934130),
+   Node.js injection (934100), PHP wrappers (933140) and `TRACE` (911100),
+   all of which `observe` reported. The in-path set now adds 911, 933, 934,
+   943 and 944, and applies the same platform policy and overrides as the
+   sampled engine (REST methods allowed, no content-type allow-list), so a
+   family both run gives the same verdict. On the CRS 4.25 regression
+   corpus the in-path check now detects 862 of 862 in-scope attacks (529
+   before, of a smaller scope); the benign corpus still flags only the two
+   documented false positives, and the share of negative corpus tests
+   scored at the threshold by other rules is about the same (22 of 224,
+   was 10 of 129). Protocol enforcement (920) stays sampled only: it cost
+   the most per added detection (about 12% of a check for 32 corpus
+   attacks), and Go's HTTP server already refuses most of the malformed
+   requests it scores. The widened set costs roughly 20–30% more CPU per
+   check on a loaded workstation (`TestInlineRuleSetCost`, noisy);
+   criterion W1 (p95 at most 2 ms on the reference node) must be measured
+   again with `TestEdgeWAFInlineLoad_E2E` before `edge_waf_blocking` is
+   turned on for more accounts.
+3. **The review could be steered.** Amendment 13 called a group a likely
+   false positive when three or more clients were flagged on one path and
+   none sent most of the detections, and the dashboard offered Exclude.
+   Three attacker addresses probing one endpoint met that bar, and so did
+   attacks on a rule in the false-positive catalog. A group now needs its
+   detections to have tripped only that CRS rule (at most
+   `api.EdgeWAFReviewMaxMultiRulePercent`, 10%, also tripped another) to be
+   called a likely false positive by spread or by the catalog: benign
+   requests that score usually trip one rule, crafted payloads several.
+   Otherwise it is `review`, with a reason saying so.
+
+Request bodies are still never blocked (amendment 4); the docs now say so
+first, not last, and point to `kind=validate` and the app's own handling.
+Planted cookies on the shared apps domain still trip `block` until the
+domain is on the Public Suffix List (ADR-20261026100000 amendment 1).
+
+Tests: `TestCheckInline` (the added families and DELETE allowed),
+`TestBoundURI`, `TestWAFURIPastTheInspectionBoundIsADetection`,
+`TestWAFReviewSpreadAttackIsNotAFalsePositive`, and `TestBenignCorpus`,
+`TestCRSRegressionCorpus` and `TestInlineRuleSetCost` with
+`FAAS_WAF_FTW_DIR` set.

@@ -102,6 +102,23 @@ func TestWAFReviewGroupsAndAssesses(t *testing.T) {
 	}
 }
 
+// adr: 831 — amendment 21: a few addresses probing one endpoint with
+// payloads that trip several CRS rules are not called a false positive just
+// because no one of them sent most of the detections.
+func TestWAFReviewSpreadAttackIsNotAFalsePositive(t *testing.T) {
+	t0 := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
+	var events []state.EdgeRuleEvent
+	for i, ip := range []string{"198.51.100.1", "198.51.100.2", "198.51.100.3"} {
+		events = append(events, wafEvent(int64(i+1), t0.Add(time.Duration(i)*time.Minute), state.EdgeRuleEventBlocked, "/login", ip, 942100, 942190, 942260))
+	}
+	slices.Reverse(events)
+	for _, g := range WAFReview(t0.Add(-time.Hour), events, nil, false).Groups {
+		if g.Assessment != api.EdgeWAFReviewUndecided || g.Clients != 3 {
+			t.Errorf("group %d %s = %s (%d clients), want review", g.CRSRuleID, g.Path, g.Assessment, g.Clients)
+		}
+	}
+}
+
 // adr: 831 — amendment 13: a review returns at most EdgeWAFReviewMaxGroups
 // groups.
 func TestWAFReviewCapsGroups(t *testing.T) {

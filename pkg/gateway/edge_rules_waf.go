@@ -110,9 +110,10 @@ type WAFInlineResult struct {
 	// another host of a shared apps domain can plant such a cookie in a
 	// visitor's browser (ADR-831 amendment 18).
 	CookiesOnly bool
-	// Oversized marks a detection for headers past what a check scores
-	// (api.EdgeWAFHeadersExceedInspection, ADR-831 amendment 20). It blocks
-	// but never boxes the client: large cookies and tokens are not attacks.
+	// Oversized marks a detection for headers or a URI past what a check
+	// scores (api.EdgeWAFHeadersExceedInspection, ADR-831 amendment 20;
+	// api.EdgeWAFURIExceedsInspection, amendment 21). It blocks but never
+	// boxes the client: large cookies, tokens and queries are not attacks.
 	Oversized bool
 }
 
@@ -274,11 +275,17 @@ func (h *Handler) checkEdgeRuleWAFInline(rule *EdgeRuleWAFResolved, sample WAFSa
 		return WAFInlineResult{}
 	}
 	var res WAFInlineResult
-	if api.EdgeWAFHeadersExceedInspection(sample.Header) {
+	switch {
+	case api.EdgeWAFURIExceedsInspection(sample.URI):
+		// Scoring the whole URI let a few long ones a second empty the
+		// app's check budget; scoring part of it would let a client hide
+		// a payload past the cut (ADR-831 amendment 21).
+		res = WAFInlineResult{Outcome: WAFInlineDetected, Categories: []string{api.EdgeWAFCategoryUninspectedURI}, Oversized: true}
+	case api.EdgeWAFHeadersExceedInspection(sample.Header):
 		// A check would leave part of the headers unscored, which a
 		// client can use to hide a payload (ADR-831 amendment 20).
 		res = WAFInlineResult{Outcome: WAFInlineDetected, Categories: []string{api.EdgeWAFCategoryUninspectedHeaders}, Oversized: true}
-	} else {
+	default:
 		res = h.wafInline.CheckInline(sample)
 	}
 	outcome := res.Outcome

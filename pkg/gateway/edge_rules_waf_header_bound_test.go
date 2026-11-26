@@ -58,3 +58,48 @@ func TestWAFHeadersPastTheInspectionBoundAreADetection(t *testing.T) {
 		})
 	}
 }
+
+// ADR-831 amendment 21: a URI longer than a check scores is a detection for
+// warn and block rules, without running the check, so long queries can
+// neither hide a payload nor empty the app's check budget; the client is not
+// boxed.
+func TestWAFURIPastTheInspectionBoundIsADetection(t *testing.T) {
+	app := App{ID: "app-1", AccountID: "acct-1"}
+	rule := &EdgeRuleWAFResolved{ID: "rule-1", AccountID: "acct-1", ParanoiaLevel: 1, AnomalyThreshold: 5, Mode: api.EdgeWAFModeBlock}
+	base := "/search?q="
+	for name, tc := range map[string]struct {
+		uri       string
+		wantBlock bool
+	}{
+		"a URI at the bound":   {uri: base + strings.Repeat("a", api.EdgeWAFMaxInspectURIBytes-len(base))},
+		"a URI past the bound": {uri: base + strings.Repeat("a", api.EdgeWAFMaxInspectURIBytes), wantBlock: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			box := NewPenaltyBox()
+			inline := &fakeWAFInline{result: WAFInlineResult{Outcome: WAFInlineClean}}
+			h := &Handler{
+				edgeRules:  wafPenaltyMatcher{wafRuleMatcher: wafRuleMatcher{rule: rule}, penalty: api.EdgeRulePenalty{Seconds: 600, After: 1, WithinSeconds: 60}},
+				wafInline:  inline,
+				penaltyBox: box,
+			}
+			r := httptest.NewRequest(http.MethodGet, "http://shop.example.test"+tc.uri, nil)
+			r.RemoteAddr = "198.51.100.23:51234"
+			w := httptest.NewRecorder()
+			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK, request: r}
+			handled, _ := h.applyEdgeRuleWAF(rec, r, app, rec)
+			if handled != tc.wantBlock || (tc.wantBlock && w.Code != http.StatusForbidden) {
+				t.Fatalf("handled=%v status=%d, want block=%v", handled, w.Code, tc.wantBlock)
+			}
+			wantCalls := 1
+			if tc.wantBlock {
+				wantCalls = 0
+			}
+			if inline.calls != wantCalls {
+				t.Fatalf("check ran %d times, want %d", inline.calls, wantCalls)
+			}
+			if _, _, boxed := box.Boxed(app.ID, challengeClientIP(r)); boxed {
+				t.Fatal("an over-bound URI boxed the client")
+			}
+		})
+	}
+}
