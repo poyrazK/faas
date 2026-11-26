@@ -318,7 +318,7 @@ func renderPostgresDatabaseUsage(databases []api.ManagedPostgresDatabaseUsage) s
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("\nby database (this month; starts and awake time from the last 30 days)\n")
+	b.WriteString("\nby database (this month)\n")
 	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "  DATABASE\tCOMPUTE\tSTARTS\tAWAKE")
 	for _, d := range databases {

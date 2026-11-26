@@ -11370,6 +11370,14 @@
     "kind": "operational"
   },
   {
+    "table": "managed_postgres_app_wake_starts",
+    "columns": [
+      "claimed_at",
+      "database_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_postgres_compute_starts",
     "columns": [
       "account_id",

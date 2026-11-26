@@ -33030,7 +33030,7 @@ components:
         message: {type: string}
         command: {type: string, description: "The CLI command that acts on the hint, when there is one."}
     ManagedPostgresDatabaseUsage:
-      description: One database's share of the month's compute, with its recorded starts and awake time from the last 30 days.
+      description: One database's share of the month's compute, with its recorded starts and awake time this month.
       type: object
       required: [database_id, name, compute_unit_seconds, starts, awake_seconds]
       properties:

@@ -16,7 +16,8 @@ SELECT s.provider_operation_id, s.started_at, s.suspended_at, s.cause, s.cause_a
        coalesce(a.slug, '')::text AS cause_app_slug
 FROM managed_postgres_compute_starts s
 LEFT JOIN apps a ON a.id = s.cause_app_id
-WHERE s.database_id = $1::uuid AND s.started_at >= $2::timestamptz
+WHERE s.database_id = $1::uuid
+  AND coalesce(s.suspended_at, (SELECT min(n.started_at) FROM managed_postgres_compute_starts n WHERE n.database_id = s.database_id AND n.started_at > s.started_at), 'infinity'::timestamptz) > $2::timestamptz
 ORDER BY s.started_at DESC
 LIMIT $3::int
 `
@@ -37,7 +38,7 @@ type ListManagedPostgresComputeStartsRow struct {
 	CauseAppSlug        string
 }
 
-// The database's starts at or after since, newest first.
+// The database's starts awake at or after since, newest first.
 func (q *Queries) ListManagedPostgresComputeStarts(ctx context.Context, db DBTX, arg ListManagedPostgresComputeStartsParams) ([]ListManagedPostgresComputeStartsRow, error) {
 	rows, err := db.Query(ctx, listManagedPostgresComputeStarts, arg.DatabaseID, arg.Since, arg.RowLimit)
 	if err != nil {
@@ -67,17 +68,22 @@ func (q *Queries) ListManagedPostgresComputeStarts(ctx context.Context, db DBTX,
 }
 
 const managedPostgresAccountComputeStarts = `-- name: ManagedPostgresAccountComputeStarts :many
-SELECT s.database_id, count(*)::int AS starts,
-       coalesce(sum(extract(epoch FROM (least(coalesce(s.suspended_at, $1::timestamptz), $1::timestamptz)
-                                       - greatest(s.started_at, $2::timestamptz)))), 0)::bigint AS awake_seconds
-FROM managed_postgres_compute_starts s
-WHERE s.account_id = $3::uuid AND s.started_at >= $2::timestamptz
-GROUP BY s.database_id
+WITH spans AS (
+    SELECT s.database_id, s.started_at,
+           least(coalesce(s.suspended_at, (SELECT min(n.started_at) FROM managed_postgres_compute_starts n WHERE n.database_id = s.database_id AND n.started_at > s.started_at), $2::timestamptz), $2::timestamptz) AS ended_at
+    FROM managed_postgres_compute_starts s
+    WHERE s.account_id = $3::uuid AND s.started_at < $2::timestamptz
+)
+SELECT p.database_id, count(*)::int AS starts,
+       coalesce(sum(extract(epoch FROM (p.ended_at - greatest(p.started_at, $1::timestamptz)))), 0)::bigint AS awake_seconds
+FROM spans p
+WHERE p.ended_at > $1::timestamptz
+GROUP BY p.database_id
 `
 
 type ManagedPostgresAccountComputeStartsParams struct {
-	Now       pgtype.Timestamptz
 	Since     pgtype.Timestamptz
+	Now       pgtype.Timestamptz
 	AccountID pgtype.UUID
 }
 
@@ -87,9 +93,10 @@ type ManagedPostgresAccountComputeStartsRow struct {
 	AwakeSeconds int64
 }
 
-// Each of the account's databases' starts and awake seconds since a time.
+// Each of the account's databases' starts awake in [since, now] and their
+// awake seconds inside it.
 func (q *Queries) ManagedPostgresAccountComputeStarts(ctx context.Context, db DBTX, arg ManagedPostgresAccountComputeStartsParams) ([]ManagedPostgresAccountComputeStartsRow, error) {
-	rows, err := db.Query(ctx, managedPostgresAccountComputeStarts, arg.Now, arg.Since, arg.AccountID)
+	rows, err := db.Query(ctx, managedPostgresAccountComputeStarts, arg.Since, arg.Now, arg.AccountID)
 	if err != nil {
 		return nil, err
 	}
@@ -109,21 +116,26 @@ func (q *Queries) ManagedPostgresAccountComputeStarts(ctx context.Context, db DB
 }
 
 const managedPostgresComputeStartCauses = `-- name: ManagedPostgresComputeStartCauses :many
-SELECT s.cause, s.cause_app_id, s.cause_detail, coalesce(a.slug, '')::text AS cause_app_slug,
+WITH spans AS (
+    SELECT s.cause, s.cause_app_id, s.cause_detail, s.started_at,
+           least(coalesce(s.suspended_at, (SELECT min(n.started_at) FROM managed_postgres_compute_starts n WHERE n.database_id = s.database_id AND n.started_at > s.started_at), $2::timestamptz), $2::timestamptz) AS ended_at
+    FROM managed_postgres_compute_starts s
+    WHERE s.database_id = $3::uuid AND s.started_at < $2::timestamptz
+)
+SELECT p.cause, p.cause_app_id, p.cause_detail, coalesce(a.slug, '')::text AS cause_app_slug,
        count(*)::int AS starts,
-       coalesce(sum(extract(epoch FROM (least(coalesce(s.suspended_at, $1::timestamptz), $1::timestamptz)
-                                       - greatest(s.started_at, $2::timestamptz)))), 0)::bigint AS awake_seconds,
-       min(s.started_at)::timestamptz AS first_started_at
-FROM managed_postgres_compute_starts s
-LEFT JOIN apps a ON a.id = s.cause_app_id
-WHERE s.database_id = $3::uuid AND s.started_at >= $2::timestamptz
-GROUP BY s.cause, s.cause_app_id, s.cause_detail, a.slug
+       coalesce(sum(extract(epoch FROM (p.ended_at - greatest(p.started_at, $1::timestamptz)))), 0)::bigint AS awake_seconds,
+       min(p.started_at)::timestamptz AS first_started_at
+FROM spans p
+LEFT JOIN apps a ON a.id = p.cause_app_id
+WHERE p.ended_at > $1::timestamptz
+GROUP BY p.cause, p.cause_app_id, p.cause_detail, a.slug
 ORDER BY starts DESC, awake_seconds DESC
 `
 
 type ManagedPostgresComputeStartCausesParams struct {
-	Now        pgtype.Timestamptz
 	Since      pgtype.Timestamptz
+	Now        pgtype.Timestamptz
 	DatabaseID pgtype.UUID
 }
 
@@ -137,11 +149,10 @@ type ManagedPostgresComputeStartCausesRow struct {
 	FirstStartedAt pgtype.Timestamptz
 }
 
-// The database's starts at or after since grouped by cause, with the awake
-// seconds inside [since, now] (an open start counts to now), most starts
-// first.
+// The database's starts awake in [since, now] grouped by cause, with the
+// awake seconds inside it, most starts first.
 func (q *Queries) ManagedPostgresComputeStartCauses(ctx context.Context, db DBTX, arg ManagedPostgresComputeStartCausesParams) ([]ManagedPostgresComputeStartCausesRow, error) {
-	rows, err := db.Query(ctx, managedPostgresComputeStartCauses, arg.Now, arg.Since, arg.DatabaseID)
+	rows, err := db.Query(ctx, managedPostgresComputeStartCauses, arg.Since, arg.Now, arg.DatabaseID)
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +219,30 @@ func (q *Queries) ManagedPostgresDatabaseComputeUnitSeconds(ctx context.Context,
 	return items, nil
 }
 
+const pruneManagedPostgresAppWakeStarts = `-- name: PruneManagedPostgresAppWakeStarts :execrows
+DELETE FROM managed_postgres_app_wake_starts w
+WHERE (w.database_id, w.claimed_at) IN (
+    SELECT o.database_id, o.claimed_at FROM managed_postgres_app_wake_starts o
+    WHERE o.claimed_at < $1::timestamptz
+    LIMIT $2::int)
+`
+
+type PruneManagedPostgresAppWakeStartsParams struct {
+	Cutoff    pgtype.Timestamptz
+	BatchSize int32
+}
+
+// Deletes up to batch_size wake-with-app claims made before the cutoff.
+func (q *Queries) PruneManagedPostgresAppWakeStarts(ctx context.Context, db DBTX, arg PruneManagedPostgresAppWakeStartsParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneManagedPostgresAppWakeStarts, arg.Cutoff, arg.BatchSize)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const pruneManagedPostgresComputeStarts = `-- name: PruneManagedPostgresComputeStarts :execrows
+
 DELETE FROM managed_postgres_compute_starts s
 WHERE (s.database_id, s.provider_operation_id) IN (
     SELECT o.database_id, o.provider_operation_id FROM managed_postgres_compute_starts o
@@ -221,6 +255,9 @@ type PruneManagedPostgresComputeStartsParams struct {
 	BatchSize int32
 }
 
+// A start's end is its suspend; one whose suspend was never read ends at
+// the database's next recorded start (a compute runs once at a time), and
+// only the latest open start runs to now.
 // Deletes up to batch_size starts recorded before the cutoff.
 func (q *Queries) PruneManagedPostgresComputeStarts(ctx context.Context, db DBTX, arg PruneManagedPostgresComputeStartsParams) (int64, error) {
 	result, err := db.Exec(ctx, pruneManagedPostgresComputeStarts, arg.Cutoff, arg.BatchSize)
@@ -240,11 +277,11 @@ WITH db AS (
       AND b.created_at <= $2::timestamptz
       AND (b.deleted_at IS NULL OR b.deleted_at > $2::timestamptz)
 ), matches AS (
-    SELECT 1 AS rank, 'app_wake'::text AS cause, NULL::uuid AS app_id, ''::text AS detail, w.last_started_at AS at
-    FROM managed_postgres_wake_with_app w
+    SELECT 1 AS rank, 'app_wake'::text AS cause, NULL::uuid AS app_id, ''::text AS detail, w.claimed_at AS at
+    FROM managed_postgres_app_wake_starts w
     WHERE w.database_id = $3::uuid
-      AND w.last_started_at BETWEEN $2::timestamptz - interval '30 seconds'
-                                AND $2::timestamptz + interval '5 seconds'
+      AND w.claimed_at BETWEEN $2::timestamptz - interval '30 seconds'
+                           AND $2::timestamptz + interval '5 seconds'
     UNION ALL
     SELECT 2, 'cron', (e.data->>'app_id')::uuid, left(coalesce(e.data->>'path', ''), 512), e.at
     FROM events e

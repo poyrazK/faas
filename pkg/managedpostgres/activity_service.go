@@ -112,7 +112,9 @@ func ActivityHints(database Database, causes []ComputeStartCause, suspendTimeout
 			hint.Code = "cron_wakes_database"
 			hint.Message = fmt.Sprintf("Cron %s on %s started the database %d times. Each start keeps it awake for at least the suspend timeout; run the job less often, or lower the timeout.",
 				orDash(cause.Detail), orDash(cause.AppSlug), cause.Starts)
-			hint.Command = "gregale cron list --app " + cause.AppSlug
+			if cause.AppSlug != "" { // empty once the app is deleted
+				hint.Command = "gregale cron list --app " + cause.AppSlug
+			}
 		case CauseAppWake:
 			hint.Code = "app_wake_starts_database"
 			hint.Message = fmt.Sprintf("The database starts with its apps (wake-with-app) %d times. Turn it off if the first query can wait for the start.", cause.Starts)

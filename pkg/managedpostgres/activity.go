@@ -75,6 +75,8 @@ type ComputeActivityStore interface {
 	// cause (an already recorded one is left alone), a suspend closing the
 	// latest start before it. It reports how many starts it recorded.
 	RecordComputeEvents(ctx context.Context, databaseID string, events []ComputeEvent) (int, error)
+	// PruneComputeStarts deletes up to limit starts, and up to limit
+	// wake-with-app claims, made before a time; it reports the larger count.
 	PruneComputeStarts(ctx context.Context, before time.Time, limit int) (int64, error)
 	ComputeStarts(ctx context.Context, databaseID string, since time.Time, limit int) ([]ComputeStart, error)
 	ComputeStartCauses(ctx context.Context, databaseID string, since, now time.Time) ([]ComputeStartCause, error)
@@ -96,8 +98,12 @@ func sortComputeEvents(events []ComputeEvent) []ComputeEvent {
 	return out
 }
 
-// computeStartsPruneBatch bounds one prune pass.
-const computeStartsPruneBatch = 5000
+// computeStartsPruneBatch bounds one prune statement, and
+// computeStartsPruneBatches the statements of one hourly pass (1M rows).
+const (
+	computeStartsPruneBatch   = 5000
+	computeStartsPruneBatches = 200
+)
 
 // recordComputeActivity stores a window's events. A failure is logged: the
 // starts are diagnosis, and the next read of a later window cannot restore
@@ -120,7 +126,14 @@ func (c *UsageCollector) pruneComputeActivity(ctx context.Context, retention tim
 		return
 	}
 	c.activityPrunedAt = now
-	if _, err := store.PruneComputeStarts(ctx, now.Add(-retention), computeStartsPruneBatch); err != nil {
-		c.logger.Debug("managed postgres compute starts not pruned", "error", err)
+	for range computeStartsPruneBatches {
+		n, err := store.PruneComputeStarts(ctx, now.Add(-retention), computeStartsPruneBatch)
+		if err != nil {
+			c.logger.Debug("managed postgres compute starts not pruned", "error", err)
+			return
+		}
+		if n < computeStartsPruneBatch {
+			return
+		}
 	}
 }

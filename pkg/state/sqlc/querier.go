@@ -597,7 +597,9 @@ type Querier interface {
 	ClaimManagedPostgresUndelete(ctx context.Context, db DBTX, arg ClaimManagedPostgresUndeleteParams) (ManagedPostgresDatabase, error)
 	// Claims the opted-in, ready, scale-to-zero databases bound to the app that
 	// were not started in the last gap, and stamps them, so only the claiming
-	// apid replica starts each one.
+	// apid replica starts each one. Each claim is also kept in
+	// managed_postgres_app_wake_starts so the activity read can match the start
+	// it caused after later claims moved the stamp (ADR-20261125231222).
 	ClaimManagedPostgresWakeStarts(ctx context.Context, db DBTX, arg ClaimManagedPostgresWakeStartsParams) ([]ClaimManagedPostgresWakeStartsRow, error)
 	// ADR-732 scheduler side. schedd holds a lease on every restoring or running
 	// fork; terminal transitions clear it (app_forks_lease_status_chk).
@@ -1216,7 +1218,8 @@ type Querier interface {
 	DeferBuildBehind(ctx context.Context, db DBTX, arg DeferBuildBehindParams) (int64, error)
 	DeferBuildDependencyClaim(ctx context.Context, db DBTX, id pgtype.UUID) error
 	// Moves back the stamp of a claim that started nothing, by shift seconds, so
-	// the next wake may claim it sooner; a later claim's stamp is left alone.
+	// the next wake may claim it sooner; a later claim's stamp is left alone. The
+	// claim's history row goes too: it caused no start.
 	DeferManagedPostgresWakeStart(ctx context.Context, db DBTX, arg DeferManagedPostgresWakeStartParams) error
 	DeferNotificationClaim(ctx context.Context, db DBTX, arg DeferNotificationClaimParams) (int64, error)
 	// Fence a failed attempt against a configuration edit or another worker's success.
@@ -4395,7 +4398,7 @@ type Querier interface {
 	// first, so restore descendants are deleted before their sources.
 	ListManagedPostgresAccountErasureDatabases(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ManagedPostgresDatabase, error)
 	ListManagedPostgresAccountingCoverage(ctx context.Context, db DBTX, arg ListManagedPostgresAccountingCoverageParams) ([]ListManagedPostgresAccountingCoverageRow, error)
-	// The database's starts at or after since, newest first.
+	// The database's starts awake at or after since, newest first.
 	ListManagedPostgresComputeStarts(ctx context.Context, db DBTX, arg ListManagedPostgresComputeStartsParams) ([]ListManagedPostgresComputeStartsRow, error)
 	ListManagedPostgresCustomerDatabases(ctx context.Context, db DBTX, arg ListManagedPostgresCustomerDatabasesParams) ([]ManagedPostgresDatabase, error)
 	ListManagedPostgresCutoverCredentials(ctx context.Context, db DBTX, id string) ([]ManagedPostgresCutoverCredential, error)
@@ -5291,7 +5294,8 @@ type Querier interface {
 	MCPOAuthRetirementBindingBusy(ctx context.Context, db DBTX, arg MCPOAuthRetirementBindingBusyParams) (bool, error)
 	MCPOAuthRetirementClientCiphertext(ctx context.Context, db DBTX, arg MCPOAuthRetirementClientCiphertextParams) ([]byte, error)
 	MCPOAuthRetirementFlowCurrent(ctx context.Context, db DBTX, arg MCPOAuthRetirementFlowCurrentParams) (bool, error)
-	// Each of the account's databases' starts and awake seconds since a time.
+	// Each of the account's databases' starts awake in [since, now] and their
+	// awake seconds inside it.
 	ManagedPostgresAccountComputeStarts(ctx context.Context, db DBTX, arg ManagedPostgresAccountComputeStartsParams) ([]ManagedPostgresAccountComputeStartsRow, error)
 	ManagedPostgresAccountDeletionIncluded(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error)
 	// ADR-20261112160000 slice 2c: the accounts whose managed PostgreSQL
@@ -5306,9 +5310,8 @@ type Querier interface {
 	// mailed through it, apart from the compute thresholds ranked above.
 	ManagedPostgresCapEvent(ctx context.Context, db DBTX, arg ManagedPostgresCapEventParams) (ManagedPostgresCapEventRow, error)
 	ManagedPostgresCapSuspendedAt(ctx context.Context, db DBTX, arg ManagedPostgresCapSuspendedAtParams) (pgtype.Timestamptz, error)
-	// The database's starts at or after since grouped by cause, with the awake
-	// seconds inside [since, now] (an open start counts to now), most starts
-	// first.
+	// The database's starts awake in [since, now] grouped by cause, with the
+	// awake seconds inside it, most starts first.
 	ManagedPostgresComputeStartCauses(ctx context.Context, db DBTX, arg ManagedPostgresComputeStartCausesParams) ([]ManagedPostgresComputeStartCausesRow, error)
 	// ADR-20261023181931: a rollback database switch activates its cutover.
 	// Every query runs inside the activation or resume transaction, after the
@@ -6520,6 +6523,11 @@ type Querier interface {
 	PruneGitHubTransportRecoveries(ctx context.Context, db DBTX) error
 	PruneInvocationAttemptHistory(ctx context.Context, db DBTX, arg PruneInvocationAttemptHistoryParams) (int64, error)
 	PruneMCPOAuthRetirementMetadata(ctx context.Context, db DBTX) error
+	// Deletes up to batch_size wake-with-app claims made before the cutoff.
+	PruneManagedPostgresAppWakeStarts(ctx context.Context, db DBTX, arg PruneManagedPostgresAppWakeStartsParams) (int64, error)
+	// A start's end is its suspend; one whose suspend was never read ends at
+	// the database's next recorded start (a compute runs once at a time), and
+	// only the latest open start runs to now.
 	// Deletes up to batch_size starts recorded before the cutoff.
 	PruneManagedPostgresComputeStarts(ctx context.Context, db DBTX, arg PruneManagedPostgresComputeStartsParams) (int64, error)
 	PruneMigrationCutovers(ctx context.Context, db DBTX, arg PruneMigrationCutoversParams) error

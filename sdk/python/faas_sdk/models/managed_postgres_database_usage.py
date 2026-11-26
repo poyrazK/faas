@@ -11,7 +11,7 @@ T = TypeVar("T", bound="ManagedPostgresDatabaseUsage")
 
 @_attrs_define
 class ManagedPostgresDatabaseUsage:
-    """One database's share of the month's compute, with its recorded starts and awake time from the last 30 days."""
+    """One database's share of the month's compute, with its recorded starts and awake time this month."""
 
     database_id: str
     name: str

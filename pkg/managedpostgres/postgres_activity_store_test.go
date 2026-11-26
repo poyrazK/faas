@@ -49,7 +49,12 @@ func TestComputeActivityPGAttributesStarts(t *testing.T) {
 	if err := s.SetWakeWithApp(ctx, database.ID, true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE managed_postgres_wake_with_app SET last_started_at=$2 WHERE database_id=$1`, database.ID, at(30).Add(-5*time.Second)); err != nil {
+	// The claim behind op-4 is matched from its history row even after a
+	// later claim moved last_started_at.
+	if _, err := pool.Exec(ctx, `INSERT INTO managed_postgres_app_wake_starts(database_id,claimed_at) VALUES($1,$2)`, database.ID, at(30).Add(-5*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE managed_postgres_wake_with_app SET last_started_at=$2 WHERE database_id=$1`, database.ID, at(65)); err != nil {
 		t.Fatal(err)
 	}
 	role := "compute-node"
@@ -127,10 +132,22 @@ func TestComputeActivityPGAttributesStarts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The closed start's 300 s, then each open one to now: 60, 50, 40, 30
-	// and 10 minutes.
-	if got := totals[database.ID]; got.Starts != 6 || got.AwakeSeconds != 300+(60+50+40+30+10)*60 {
+	// The closed start's 300 s; a start whose suspend was never read ends at
+	// the next start (10, 10, 10 and 20 minutes); the last runs to now (10).
+	if got := totals[database.ID]; got.Starts != 6 || got.AwakeSeconds != 300+(10+10+10+20+10)*60 {
 		t.Fatalf("totals = %+v", totals)
+	}
+	// A start that began before the period counts its part inside it.
+	since := at(15)
+	totals, err = s.AccountActivityTotals(ctx, accountID, since, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := totals[database.ID]; got.Starts != 5 || got.AwakeSeconds != (5+10+10+20+10)*60 {
+		t.Fatalf("totals since %s = %+v", since, totals)
+	}
+	if starts, err := s.ComputeStarts(ctx, database.ID, since, 100); err != nil || len(starts) != 5 || starts[4].OperationID != "op-2" {
+		t.Fatalf("starts since %s = %+v, %v", since, starts, err)
 	}
 
 	if n, err := s.PruneComputeStarts(ctx, at(15), 1); err != nil || n != 1 {
@@ -141,5 +158,13 @@ func TestComputeActivityPGAttributesStarts(t *testing.T) {
 	}
 	if starts, err := s.ComputeStarts(ctx, database.ID, at(-1), 100); err != nil || len(starts) != 4 {
 		t.Fatalf("after prune %d, %v", len(starts), err)
+	}
+	// Wake-with-app claims are pruned with the starts.
+	if n, err := s.PruneComputeStarts(ctx, at(31), 10); err != nil || n != 2 {
+		t.Fatalf("prune to 31 = %d, %v", n, err)
+	}
+	var claims int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM managed_postgres_app_wake_starts WHERE database_id=$1`, database.ID).Scan(&claims); err != nil || claims != 0 {
+		t.Fatalf("claims left %d, %v", claims, err)
 	}
 }

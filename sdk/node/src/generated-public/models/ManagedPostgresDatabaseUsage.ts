@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One database's share of the month's compute, with its recorded starts and awake time from the last 30 days.
+ * One database's share of the month's compute, with its recorded starts and awake time this month.
  */
 export type ManagedPostgresDatabaseUsage = {
   database_id: string;

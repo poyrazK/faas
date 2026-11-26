@@ -68,14 +68,14 @@ cause dominates (owner, 2026-11-26).
 ### Show
 
 - **API.** `GET /v1/postgres/databases/{id}/activity?since=` (and the org
-  route) returns a summary over the period (starts, awake seconds, the
-  database's CU-seconds from the usage ledger, the idle-tail share), the
+  route) returns a summary over the period (starts, awake seconds), the
   starts newest first (bounded page), per-cause totals, the period covered,
-  and `hints`. The usage API gains `databases`: each database's CU-seconds,
+  and `hints`. CU-seconds stay on the usage API, which already carries them
+  per database; the idle-tail share stays a fleet metric. The usage API gains `databases`: each database's CU-seconds,
   starts and awake seconds for the month.
 - **Hints** are computed by apid, so the CLI, the API and the MCP tool say
-  the same thing. One cause with at least half of the period's starts names
-  itself and its lever: a cron names its schedule and suggests running it less
+  the same thing. Each cause holding at least a fifth of the period's awake
+  time names itself and its lever (several causes can each get a hint): a cron names its schedule and suggests running it less
   often or a 1 minute suspend timeout; a running app suggests that a pool
   keeping connections open holds the compute; `external` names direct
   connections.
@@ -102,6 +102,10 @@ never mails twice.
   gap, and environment-branch databases, held computes and a restore's second
   compute are not read. The API reports the covered period; gaps are visible,
   not filled with guesses.
+- A start whose suspend was never read (its window skipped) ends at the
+  database's next recorded start; only the latest open start counts to now.
+  Wake-with-app claims are kept per claim (`managed_postgres_app_wake_starts`)
+  so a start read later still matches its claim.
 - The cause can be wrong when two things happen within the matching window (a
   cron and a request in the same minute); the first rule wins. It is
   diagnosis, never billing: CU-hours stay the usage ledger's.

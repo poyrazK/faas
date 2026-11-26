@@ -45,7 +45,12 @@ func (s *PostgresStore) RecordComputeEvents(ctx context.Context, databaseID stri
 func (s *PostgresStore) PruneComputeStarts(ctx context.Context, before time.Time, limit int) (int64, error) {
 	n, err := sqlc.New().PruneManagedPostgresComputeStarts(ctx, s.catalog, sqlc.PruneManagedPostgresComputeStartsParams{
 		Cutoff: databaseNullableTime(before), BatchSize: int32(limit)})
-	return n, mapPostgresError(err)
+	if err != nil {
+		return n, mapPostgresError(err)
+	}
+	claims, err := sqlc.New().PruneManagedPostgresAppWakeStarts(ctx, s.catalog, sqlc.PruneManagedPostgresAppWakeStartsParams{
+		Cutoff: databaseNullableTime(before), BatchSize: int32(limit)})
+	return max(n, claims), mapPostgresError(err)
 }
 
 func (s *PostgresStore) ComputeStarts(ctx context.Context, databaseID string, since time.Time, limit int) ([]ComputeStart, error) {

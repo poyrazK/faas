@@ -2,6 +2,7 @@ package apidserver
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
@@ -74,6 +75,9 @@ func (s *server) getManagedPostgresActivity(w http.ResponseWriter, r *http.Reque
 // a failed read leaves the split out of the view.
 func (s *server) managedPostgresDatabaseUsageOrLog(ctx context.Context, account state.Account, since time.Time) []api.ManagedPostgresDatabaseUsage {
 	totals, names, err := s.managedPostgres.DatabaseUsage(ctx, account.ResourceOwnerID(), since, time.Now().UTC())
+	if errors.Is(err, managedpostgres.ErrUnsupported) {
+		return nil // a store without recorded activity has no split
+	}
 	if err != nil {
 		s.log.Warn("managed postgres database usage: read", "err", err)
 		return nil

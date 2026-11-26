@@ -48493,6 +48493,24 @@ CREATE TABLE public.managed_postgres_accounting_reconciliations (
 
 
 --
+-- Name: managed_postgres_app_wake_starts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_app_wake_starts (
+    database_id uuid NOT NULL,
+    claimed_at timestamp with time zone NOT NULL,
+    CONSTRAINT managed_postgres_app_wake_starts_claimed_at_check CHECK (isfinite(claimed_at))
+);
+
+
+--
+-- Name: TABLE managed_postgres_app_wake_starts; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.managed_postgres_app_wake_starts IS 'Wake-with-app start claims, matched to recorded compute starts; pruned with them after 30 days; written only by apid.';
+
+
+--
 -- Name: managed_postgres_awake_notices; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -72952,6 +72970,14 @@ ALTER TABLE ONLY public.managed_postgres_accounting_reconciliations
 
 
 --
+-- Name: managed_postgres_app_wake_starts managed_postgres_app_wake_starts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_app_wake_starts
+    ADD CONSTRAINT managed_postgres_app_wake_starts_pkey PRIMARY KEY (database_id, claimed_at);
+
+
+--
 -- Name: managed_postgres_awake_notices managed_postgres_awake_notices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -86873,6 +86899,13 @@ CREATE UNIQUE INDEX mail_suppressions_event_id_key ON public.mail_suppressions U
 
 
 --
+-- Name: managed_postgres_app_wake_starts_prune_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_app_wake_starts_prune_idx ON public.managed_postgres_app_wake_starts USING btree (claimed_at);
+
+
+--
 -- Name: managed_postgres_bindings_account_app_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -86933,6 +86966,13 @@ CREATE UNIQUE INDEX managed_postgres_clone_reservation_key ON public.managed_pos
 --
 
 CREATE INDEX managed_postgres_compute_starts_account_idx ON public.managed_postgres_compute_starts USING btree (account_id, started_at DESC);
+
+
+--
+-- Name: managed_postgres_compute_starts_prune_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_compute_starts_prune_idx ON public.managed_postgres_compute_starts USING btree (started_at);
 
 
 --
@@ -109536,6 +109576,14 @@ ALTER TABLE ONLY public.managed_postgres_accounting_reconciliations
 
 ALTER TABLE ONLY public.managed_postgres_accounting_reconciliations
     ADD CONSTRAINT managed_postgres_accounting_reconciliations_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: managed_postgres_app_wake_starts managed_postgres_app_wake_starts_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_app_wake_starts
+    ADD CONSTRAINT managed_postgres_app_wake_starts_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
 
 
 --
