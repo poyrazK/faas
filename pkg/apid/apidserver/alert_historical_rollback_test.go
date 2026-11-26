@@ -31,7 +31,7 @@ func TestAlertHistoricalRollbackBlocksUnavailableTelemetryAndResumes(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	fire, won, err := e.store.ClaimAlertFire(ctx, rule.ID, rule.ID+":fire", nil, 42, time.Now().UTC())
+	fire, won, _, err := e.store.ClaimAlertFire(ctx, rule.ID, rule.ID+":fire", nil, 42, time.Now().UTC())
 	if err != nil || !won {
 		t.Fatalf("fire %v %v", won, err)
 	}

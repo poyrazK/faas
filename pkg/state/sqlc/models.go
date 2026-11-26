@@ -634,17 +634,30 @@ type AlertChannelResolveRetry struct {
 }
 
 type AlertChannelStandDown struct {
-	RuleID        pgtype.UUID
+	RuleID                pgtype.UUID
+	ChannelID             pgtype.UUID
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	RuleName              string
+	RuleMetric            string
+	Reason                string
+	QueuedAt              pgtype.Timestamptz
+	Attempts              int32
+	NextAttemptAt         pgtype.Timestamptz
+	LastError             string
+	ObservationTransition bool
+	PagerdutyTargetSealed []byte
+	PagerdutyRegion       pgtype.Text
+}
+
+type AlertDeferredFire struct {
+	ID            pgtype.UUID
+	DeliveryID    pgtype.UUID
 	ChannelID     pgtype.UUID
-	AccountID     pgtype.UUID
-	AppID         pgtype.UUID
-	RuleName      string
-	RuleMetric    string
-	Reason        string
-	QueuedAt      pgtype.Timestamptz
-	Attempts      int32
+	WebhookUrl    string
+	ChannelOnly   bool
+	Started       bool
 	NextAttemptAt pgtype.Timestamptz
-	LastError     string
 }
 
 type AlertDelivery struct {
@@ -681,6 +694,12 @@ type AlertEpisode struct {
 type AlertHistoricalRollbackClaim struct {
 	DeploymentID pgtype.UUID
 	FireID       pgtype.UUID
+}
+
+type AlertObservationCheck struct {
+	RuleID      pgtype.UUID
+	EvaluatedAt pgtype.Timestamptz
+	SkipReason  string
 }
 
 type AlertPreset struct {
@@ -742,6 +761,12 @@ type AlertRule struct {
 	CreatedByAccountID              pgtype.UUID
 	NotifyResolved                  bool
 	CustomMetricLabels              []byte
+	LatestAnomalyEvaluation         []byte
+	ObserveOnly                     bool
+	ObservationEnabled              bool
+	ObservedIncidents               []byte
+	EnvironmentScope                string
+	RecoveryConfirmationChecks      int32
 }
 
 type AlertRuleChannel struct {
@@ -762,6 +787,23 @@ type AlertTestSend struct {
 	Result       []byte
 	CreatedAt    pgtype.Timestamptz
 	CompletedAt  pgtype.Timestamptz
+}
+
+type AlertWebhookStandDown struct {
+	ID                  pgtype.UUID
+	RuleID              pgtype.UUID
+	AppID               pgtype.UUID
+	RuleName            string
+	Metric              string
+	Comparison          string
+	Threshold           float64
+	WindowSpec          string
+	EnvironmentScope    string
+	WebhookUrl          string
+	WebhookSecretSealed []byte
+	QueuedAt            pgtype.Timestamptz
+	NextAttemptAt       pgtype.Timestamptz
+	Attempts            int32
 }
 
 type AnalyticsCohort struct {

@@ -18465,6 +18465,37 @@ END $$;
 
 
 --
+-- Name: guard_live_alert_delivery_scope(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_live_alert_delivery_scope() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    rule_scope text;
+    observing boolean;
+BEGIN
+    IF NOT NEW.is_test THEN
+        SELECT r.environment_scope, r.observe_only INTO rule_scope, observing
+          FROM alert_rules r WHERE r.id = NEW.rule_id FOR UPDATE;
+        IF observing OR coalesce(NEW.payload->>'environment_scope', '') <> rule_scope THEN
+            RAISE check_violation USING MESSAGE = 'live alert delivery does not match the current rule mode or scope',
+                CONSTRAINT = 'alert_deliveries_live_scope';
+        END IF;
+        IF current_setting('faas.alert_handoff_claim', true) IS DISTINCT FROM 'on' AND (
+            EXISTS (SELECT 1 FROM alert_channel_stand_downs s WHERE s.rule_id = NEW.rule_id AND s.observation_transition)
+            OR EXISTS (SELECT 1 FROM alert_webhook_stand_downs s WHERE s.rule_id = NEW.rule_id)
+        ) THEN
+            RAISE check_violation USING MESSAGE = 'live alert delivery requires a handoff-aware evaluator',
+                CONSTRAINT = 'alert_deliveries_live_handoff';
+        END IF;
+    END IF;
+    RETURN NEW;
+END
+$$;
+
+
+--
 -- Name: guard_managed_postgres_accounting_intent(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -20579,6 +20610,24 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+
+
+--
+-- Name: guard_scoped_alert_rule_state(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_scoped_alert_rule_state() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.environment_scope <> '' AND NEW.observe_only = OLD.observe_only
+       AND NEW.state IS DISTINCT FROM OLD.state
+       AND current_setting('faas.scoped_alert_state', true) IS DISTINCT FROM 'on' THEN
+        RETURN NULL;
+    END IF;
+    RETURN NEW;
+END
+$$;
 
 
 --
@@ -32856,9 +32905,28 @@ CREATE TABLE public.alert_channel_stand_downs (
     attempts integer DEFAULT 0 NOT NULL,
     next_attempt_at timestamp with time zone NOT NULL,
     last_error text DEFAULT ''::text NOT NULL,
+    observation_transition boolean DEFAULT false NOT NULL,
+    pagerduty_target_sealed bytea,
+    pagerduty_region text,
     CONSTRAINT alert_channel_stand_downs_attempts_check CHECK ((attempts >= 0)),
     CONSTRAINT alert_channel_stand_downs_last_error_check CHECK ((char_length(last_error) <= 512)),
     CONSTRAINT alert_channel_stand_downs_reason_check CHECK ((reason = ANY (ARRAY['disabled'::text, 'not_released'::text, 'app_deleted'::text, 'deleted'::text])))
+);
+
+
+--
+-- Name: alert_deferred_fires; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.alert_deferred_fires (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    delivery_id uuid NOT NULL,
+    channel_id uuid,
+    webhook_url text DEFAULT ''::text NOT NULL,
+    channel_only boolean DEFAULT false NOT NULL,
+    started boolean DEFAULT false NOT NULL,
+    next_attempt_at timestamp with time zone NOT NULL,
+    CONSTRAINT alert_deferred_fires_check CHECK (((channel_id IS NOT NULL) <> (webhook_url <> ''::text)))
 );
 
 
@@ -32915,6 +32983,17 @@ CREATE TABLE public.alert_episodes (
 CREATE TABLE public.alert_historical_rollback_claims (
     deployment_id uuid NOT NULL,
     fire_id uuid NOT NULL
+);
+
+
+--
+-- Name: alert_observation_checks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.alert_observation_checks (
+    rule_id uuid NOT NULL,
+    evaluated_at timestamp with time zone NOT NULL,
+    skip_reason text NOT NULL
 );
 
 
@@ -33013,6 +33092,12 @@ CREATE TABLE public.alert_rules (
     created_by_account_id uuid,
     notify_resolved boolean DEFAULT false NOT NULL,
     custom_metric_labels jsonb,
+    latest_anomaly_evaluation jsonb,
+    observe_only boolean DEFAULT false NOT NULL,
+    observation_enabled boolean DEFAULT false NOT NULL,
+    observed_incidents jsonb,
+    environment_scope text DEFAULT ''::text NOT NULL,
+    recovery_confirmation_checks integer DEFAULT 1 NOT NULL,
     CONSTRAINT alert_rules_action_chk CHECK ((action = ANY (ARRAY['webhook'::text, 'rollback'::text, 'demote'::text, 'promote'::text]))),
     CONSTRAINT alert_rules_ai_budget_alerts_chk CHECK (((metric <> 'ai_budget_alerts'::text) OR ((app_id IS NOT NULL) AND (event_subscription_id IS NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))))),
     CONSTRAINT alert_rules_comparison_chk CHECK ((comparison = ANY (ARRAY['gt'::text, 'gte'::text, 'lt'::text, 'lte'::text, 'above_baseline'::text, 'below_baseline'::text]))),
@@ -33021,6 +33106,7 @@ CREATE TABLE public.alert_rules (
     CONSTRAINT alert_rules_custom_metric_labels_chk CHECK (((custom_metric_labels IS NULL) OR ((metric = 'custom_metric'::text) AND (jsonb_typeof(custom_metric_labels) = 'object'::text)))),
     CONSTRAINT alert_rules_edge_rule_chk CHECK ((((metric = ANY (ARRAY['edge_rule_hits'::text, 'edge_rule_log_hits'::text, 'edge_rule_activity'::text])) AND (app_id IS NOT NULL) AND (event_subscription_id IS NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['1h'::text, '6h'::text, '24h'::text, '7d'::text]))) OR ((metric <> ALL (ARRAY['edge_rule_hits'::text, 'edge_rule_log_hits'::text, 'edge_rule_activity'::text])) AND (edge_rule_id IS NULL)))),
     CONSTRAINT alert_rules_edge_security_notification_chk CHECK (((metric <> ALL (ARRAY['pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text])) OR (action = 'webhook'::text))),
+    CONSTRAINT alert_rules_environment_scope_chk CHECK (((environment_scope = ''::text) OR ((app_id IS NOT NULL) AND (comparison = ANY (ARRAY['above_baseline'::text, 'below_baseline'::text])) AND (metric = ANY (ARRAY['request_count'::text, 'error_rate_pct'::text, 'latency_p95_ms'::text])) AND (observe_only OR (action = 'webhook'::text)) AND (environment_scope <> 'pr-preview'::text) AND (environment_scope ~ '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$'::text)))),
     CONSTRAINT alert_rules_event_consumer_chk CHECK ((((metric = ANY (ARRAY['event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text])) AND (event_subscription_id IS NOT NULL) AND (app_id IS NOT NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))) OR ((NOT (metric = ANY (ARRAY['event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text]))) AND (event_subscription_id IS NULL)))),
     CONSTRAINT alert_rules_event_retention_chk CHECK (((metric <> ALL (ARRAY['event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text])) OR ((app_id IS NOT NULL) AND (event_subscription_id IS NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))))),
     CONSTRAINT alert_rules_failure_source_chk CHECK (((failure_source IS NULL) OR (failure_source = ANY (ARRAY['any'::text, 'cron'::text, 'queue'::text, 'delayed_task'::text, 'async_invoke'::text, 'inbound_webhook'::text])))),
@@ -33040,9 +33126,12 @@ END)::double precision)) OR ((metric <> ALL (ARRAY['mcp_protocol_error_rate_pct'
     CONSTRAINT alert_rules_mcp_tasks_notification_chk CHECK (((metric <> ALL (ARRAY['mcp_tasks_oldest_age_seconds'::text, 'mcp_tasks_metrics_stale'::text, 'mcp_task_promotion_hold_age_seconds'::text])) OR (action = 'webhook'::text))),
     CONSTRAINT alert_rules_metric_chk CHECK (((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text, 'event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text, 'event_recovery_execution_waiting_jobs'::text, 'event_recovery_execution_prolonged_wait_jobs'::text, 'event_recovery_execution_unknown_jobs'::text, 'event_recovery_execution_retention_risk_jobs'::text, 'event_recovery_notification_admission_overdue_jobs'::text, 'event_recovery_notification_admission_dead_jobs'::text, 'event_recovery_notification_admission_unknown_jobs'::text, 'event_recovery_notification_admission_no_receivers_jobs'::text, 'event_recovery_notification_execution_overdue_jobs'::text, 'event_recovery_notification_execution_dead_jobs'::text, 'event_recovery_notification_execution_unknown_jobs'::text, 'event_recovery_notification_execution_no_receivers_jobs'::text, 'event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text, 'workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text, 'mcp_tasks_oldest_age_seconds'::text, 'mcp_tasks_metrics_stale'::text, 'mcp_task_promotion_hold_age_seconds'::text, 'edge_rule_hits'::text, 'edge_rule_log_hits'::text])) OR (metric = ANY (ARRAY['mcp_policy_unconverged_gateways'::text, 'mcp_policy_unverified'::text])) OR (metric = ANY (ARRAY['mcp_catalog_drift'::text, 'mcp_catalog_monitor_unavailable'::text])) OR (metric = ANY (ARRAY['mcp_oauth_reauthorization_required'::text, 'mcp_oauth_renewal_failed'::text, 'mcp_oauth_retirement_expiring'::text, 'mcp_oauth_issuance_unknown'::text])) OR (metric = 'custom_metric'::text) OR (metric = ANY (ARRAY['log_error_lines'::text, 'log_warn_lines'::text])) OR (metric = ANY (ARRAY['slo_budget_burn'::text, 'slo_budget_remaining_pct'::text])) OR (metric = ANY (ARRAY['synthetic_check_consecutive_failures'::text, 'synthetic_check_latency_p95_ms'::text])) OR (metric = ANY (ARRAY['mcp_protocol_error_rate_pct'::text, 'mcp_protocol_execution_p95_ms'::text])) OR (metric = 'mcp_readiness_unhealthy'::text) OR (metric = 'edge_rule_activity'::text) OR (metric = 'route_insights_detected'::text) OR (metric = 'log_search_matches'::text) OR (metric = ANY (ARRAY['queue_backlog'::text, 'queue_oldest_age_seconds'::text])) OR (metric = ANY (ARRAY['route_monitor_incidents'::text, 'route_health_holds'::text])) OR (metric = 'ai_budget_alerts'::text) OR (metric = 'oom_kills'::text))),
     CONSTRAINT alert_rules_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
+    CONSTRAINT alert_rules_observe_only_chk CHECK ((((NOT observe_only) AND (NOT observation_enabled)) OR (observe_only AND (NOT enabled) AND (app_id IS NOT NULL) AND (comparison = ANY (ARRAY['above_baseline'::text, 'below_baseline'::text]))))),
+    CONSTRAINT alert_rules_observed_incidents_chk CHECK (((observed_incidents IS NULL) OR (jsonb_typeof(observed_incidents) = 'array'::text))),
     CONSTRAINT alert_rules_post_deploy_rollback_window_seconds_check CHECK (((post_deploy_rollback_window_seconds >= 0) AND (post_deploy_rollback_window_seconds <= 3600))),
     CONSTRAINT alert_rules_preauth_notification_chk CHECK (((metric <> ALL (ARRAY['pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text])) OR (action = 'webhook'::text))),
     CONSTRAINT alert_rules_queue_backlog_chk CHECK (((metric <> ALL (ARRAY['queue_backlog'::text, 'queue_oldest_age_seconds'::text])) OR ((app_id IS NOT NULL) AND (event_subscription_id IS NULL) AND (action = 'webhook'::text)))),
+    CONSTRAINT alert_rules_recovery_confirmation_chk CHECK (((recovery_confirmation_checks = 1) OR ((recovery_confirmation_checks = 2) AND (app_id IS NOT NULL) AND (comparison = ANY (ARRAY['above_baseline'::text, 'below_baseline'::text]))))),
     CONSTRAINT alert_rules_recovery_health_chk CHECK (((metric <> ALL (ARRAY['event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text, 'event_recovery_execution_waiting_jobs'::text, 'event_recovery_execution_prolonged_wait_jobs'::text, 'event_recovery_execution_unknown_jobs'::text, 'event_recovery_execution_retention_risk_jobs'::text, 'event_recovery_notification_admission_overdue_jobs'::text, 'event_recovery_notification_admission_dead_jobs'::text, 'event_recovery_notification_admission_unknown_jobs'::text, 'event_recovery_notification_admission_no_receivers_jobs'::text, 'event_recovery_notification_execution_overdue_jobs'::text, 'event_recovery_notification_execution_dead_jobs'::text, 'event_recovery_notification_execution_unknown_jobs'::text, 'event_recovery_notification_execution_no_receivers_jobs'::text])) OR ((app_id IS NOT NULL) AND (event_subscription_id IS NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))))),
     CONSTRAINT alert_rules_route_alerts_chk CHECK (((metric <> ALL (ARRAY['route_monitor_incidents'::text, 'route_health_holds'::text])) OR ((app_id IS NOT NULL) AND (event_subscription_id IS NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))))),
     CONSTRAINT alert_rules_route_insights_chk CHECK (((metric <> 'route_insights_detected'::text) OR ((app_id IS NOT NULL) AND (event_subscription_id IS NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['6h'::text, '24h'::text, '7d'::text]))))),
@@ -33084,6 +33173,29 @@ CREATE TABLE public.alert_test_sends (
 --
 
 COMMENT ON TABLE public.alert_test_sends IS 'Test sends apid relays to meterd, which holds the alerting seal-domain key (ADR 20261022111812). Short-lived: apid deletes a row once it reads the result, meterd prunes abandoned ones.';
+
+
+--
+-- Name: alert_webhook_stand_downs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.alert_webhook_stand_downs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    rule_id uuid NOT NULL,
+    app_id uuid,
+    rule_name text NOT NULL,
+    metric text NOT NULL,
+    comparison text NOT NULL,
+    threshold double precision NOT NULL,
+    window_spec text NOT NULL,
+    environment_scope text NOT NULL,
+    webhook_url text NOT NULL,
+    webhook_secret_sealed bytea NOT NULL,
+    queued_at timestamp with time zone NOT NULL,
+    next_attempt_at timestamp with time zone NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    CONSTRAINT alert_webhook_stand_downs_attempts_check CHECK ((attempts >= 0))
+);
 
 
 --
@@ -66544,6 +66656,14 @@ ALTER TABLE ONLY public.alert_channel_stand_downs
 
 
 --
+-- Name: alert_deferred_fires alert_deferred_fires_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_deferred_fires
+    ADD CONSTRAINT alert_deferred_fires_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: alert_deliveries alert_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -66565,6 +66685,14 @@ ALTER TABLE ONLY public.alert_episodes
 
 ALTER TABLE ONLY public.alert_historical_rollback_claims
     ADD CONSTRAINT alert_historical_rollback_claims_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: alert_observation_checks alert_observation_checks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_observation_checks
+    ADD CONSTRAINT alert_observation_checks_pkey PRIMARY KEY (rule_id, evaluated_at);
 
 
 --
@@ -66613,6 +66741,14 @@ ALTER TABLE ONLY public.alert_rules
 
 ALTER TABLE ONLY public.alert_test_sends
     ADD CONSTRAINT alert_test_sends_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: alert_webhook_stand_downs alert_webhook_stand_downs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_webhook_stand_downs
+    ADD CONSTRAINT alert_webhook_stand_downs_pkey PRIMARY KEY (id);
 
 
 --
@@ -81759,6 +81895,20 @@ CREATE INDEX alert_channel_stand_downs_due_idx ON public.alert_channel_stand_dow
 
 
 --
+-- Name: alert_deferred_fires_delivery_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_deferred_fires_delivery_idx ON public.alert_deferred_fires USING btree (delivery_id);
+
+
+--
+-- Name: alert_deferred_fires_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_deferred_fires_due_idx ON public.alert_deferred_fires USING btree (next_attempt_at);
+
+
+--
 -- Name: alert_deliveries_fired_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -81903,6 +82053,20 @@ CREATE INDEX alert_rules_synthetic_check_id_idx ON public.alert_rules USING btre
 --
 
 CREATE INDEX alert_test_sends_open ON public.alert_test_sends USING btree (created_at) WHERE (state <> 'done'::text);
+
+
+--
+-- Name: alert_webhook_stand_downs_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_webhook_stand_downs_due_idx ON public.alert_webhook_stand_downs USING btree (next_attempt_at);
+
+
+--
+-- Name: alert_webhook_stand_downs_rule_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_webhook_stand_downs_rule_idx ON public.alert_webhook_stand_downs USING btree (rule_id);
 
 
 --
@@ -94185,6 +94349,13 @@ CREATE TRIGGER accounts_traffic_security_epoch AFTER INSERT OR DELETE OR UPDATE 
 
 
 --
+-- Name: alert_deliveries alert_deliveries_live_scope; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER alert_deliveries_live_scope BEFORE INSERT ON public.alert_deliveries FOR EACH ROW EXECUTE FUNCTION public.guard_live_alert_delivery_scope();
+
+
+--
 -- Name: alert_presets alert_presets_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -94203,6 +94374,13 @@ CREATE TRIGGER alert_rules_channel_stand_downs BEFORE DELETE ON public.alert_rul
 --
 
 CREATE TRIGGER alert_rules_keep_episodes BEFORE DELETE ON public.alert_rules FOR EACH ROW EXECUTE FUNCTION public.alert_episodes_keep_deleted_rule();
+
+
+--
+-- Name: alert_rules alert_rules_scoped_state; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER alert_rules_scoped_state BEFORE UPDATE OF state ON public.alert_rules FOR EACH ROW EXECUTE FUNCTION public.guard_scoped_alert_rule_state();
 
 
 --
@@ -102205,6 +102383,14 @@ ALTER TABLE ONLY public.alert_channel_stand_downs
 
 
 --
+-- Name: alert_deferred_fires alert_deferred_fires_delivery_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_deferred_fires
+    ADD CONSTRAINT alert_deferred_fires_delivery_id_fkey FOREIGN KEY (delivery_id) REFERENCES public.alert_deliveries(id) ON DELETE CASCADE;
+
+
+--
 -- Name: alert_deliveries alert_deliveries_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -102234,6 +102420,14 @@ ALTER TABLE ONLY public.alert_episodes
 
 ALTER TABLE ONLY public.alert_historical_rollback_claims
     ADD CONSTRAINT alert_historical_rollback_claims_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: alert_observation_checks alert_observation_checks_rule_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_observation_checks
+    ADD CONSTRAINT alert_observation_checks_rule_id_fkey FOREIGN KEY (rule_id) REFERENCES public.alert_rules(id) ON DELETE CASCADE;
 
 
 --
@@ -102322,6 +102516,14 @@ ALTER TABLE ONLY public.alert_rules
 
 ALTER TABLE ONLY public.alert_test_sends
     ADD CONSTRAINT alert_test_sends_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: alert_webhook_stand_downs alert_webhook_stand_downs_rule_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_webhook_stand_downs
+    ADD CONSTRAINT alert_webhook_stand_downs_rule_id_fkey FOREIGN KEY (rule_id) REFERENCES public.alert_rules(id) ON DELETE CASCADE;
 
 
 --

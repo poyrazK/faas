@@ -47,7 +47,7 @@ func TestQueryInsightsKeepsParkedHistoryAndFencesOldSamples(t *testing.T) {
 	)`); err != nil {
 		t.Fatal(err)
 	}
-	ddl, err := migrations.FS.ReadFile("20261126195619209_native_postgres_query_insights.sql")
+	ddl, err := migrations.FS.ReadFile("20261126223533209_native_postgres_query_insights.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

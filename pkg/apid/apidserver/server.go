@@ -4259,6 +4259,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/alert-rollbacks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAlertRollbacks))))
 	mux.HandleFunc("GET /v1/apps/{slug}/alert-rollbacks/{fire}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAlertRollback))))
 	mux.HandleFunc("GET /v1/apps/{slug}/alerts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAlertRules))))
+	mux.HandleFunc("GET /v1/apps/{slug}/alerts/anomaly-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.previewAlertAnomaly))))
 	mux.HandleFunc("POST /v1/apps/{slug}/alerts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAlertRule)))))
 	// ADR-749: account-level alert notification channels. Writes carry the
 	// same MFA requirement as alert rules: both hold sealed destinations.

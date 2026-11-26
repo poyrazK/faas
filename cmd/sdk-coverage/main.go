@@ -334,6 +334,10 @@ var routeExclude = map[string]bool{
 	"DELETE /v1/postgres/databases/{id}/live":      true,
 	"POST /v1/postgres/databases/{id}/live/rotate": true,
 
+	// ADR-744: the internal anomaly preview is served when the anomaly-alerts
+	// capability is enabled. The released Go SDK covers the alert rule routes.
+	"GET /v1/apps/{slug}/alerts/anomaly-preview": true,
+
 	// ADR-20261027090010 agents: the internal agents capability, answering like
 	// unregistered routes to every account it is not released to, so it stays
 	// out of the public OpenAPI spec and generated SDKs until launch. Mirror

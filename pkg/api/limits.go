@@ -19333,14 +19333,20 @@ const AlertRatioMinRequests = 10
 // with the median of its value at the same time of day over the previous
 // AnomalyBaselineDays days.
 const (
-	AnomalyBaselineDays       = 7
-	AnomalyBaselineMinDays    = 5
-	AnomalyBaselineCacheTTL   = time.Hour
-	AnomalyAlertMinRequests   = 50
-	AnomalyAboveMultiplierMin = 1.5
-	AnomalyAboveMultiplierMax = 20.0
-	AnomalyBelowMultiplierMin = 0.05
-	AnomalyBelowMultiplierMax = 0.67
+	AnomalyBaselineDays          = 7
+	AnomalyBaselineMinDays       = 5
+	AnomalyBaselineCacheTTL      = time.Hour
+	AnomalyAlertMinRequests      = 50
+	AnomalyAboveMultiplierMin    = 1.5
+	AnomalyAboveMultiplierMax    = 20.0
+	AnomalyBelowMultiplierMin    = 0.05
+	AnomalyBelowMultiplierMax    = 0.67
+	AnomalyPreviewChecks         = 7 * 24
+	AnomalyPreviewStep           = time.Hour
+	AnomalyIncidentReplayChecks  = 2 * 60
+	AnomalyIncidentReplayStep    = time.Minute
+	AnomalyReplayRecoveryChecks  = 2
+	AnomalyObservedIncidentLimit = 20
 )
 
 // AnomalyAlertMetrics are the request metrics that support baseline

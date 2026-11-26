@@ -52,7 +52,7 @@ func TestExportDurablePublicationAndExpiry(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	sql, err := os.ReadFile("../../../migrations/20261126195619217_native_postgres_exports.sql")
+	sql, err := os.ReadFile("../../../migrations/20261126223533217_native_postgres_exports.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

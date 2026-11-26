@@ -1,4 +1,4 @@
--- filename: 20261126195619245_clone_inventory_owner_conditions.sql
+-- filename: 20261126223533245_clone_inventory_owner_conditions.sql
 -- migration-compat: expand
 
 -- +goose Up

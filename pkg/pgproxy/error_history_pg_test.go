@@ -66,7 +66,7 @@ func TestPooledErrorHistoryRecordsDeadlockAndTimeout(t *testing.T) {
 	`); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile("../../migrations/20261126195619233_native_postgres_error_history.sql")
+	raw, err := os.ReadFile("../../migrations/20261126223533233_native_postgres_error_history.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

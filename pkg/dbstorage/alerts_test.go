@@ -57,14 +57,14 @@ func TestStorageAlertsSurviveDeliveryRestartAndRecoverAfterGrowth(t *testing.T) 
 			deleted_pending boolean, deletion_requested_at timestamptz);
 		CREATE TABLE org_memberships (org_id uuid, account_id uuid, role text, removed_at timestamptz);
 		CREATE TABLE accounts (id uuid PRIMARY KEY, email text, status text, deletion_requested_at timestamptz, email_verified_at timestamptz, plan text NOT NULL DEFAULT 'pro');`)
-	for _, path := range []string{"20261126195619201_native_postgres_storage_samples.sql", "20261126195619210_native_postgres_storage_alerts.sql"} {
+	for _, path := range []string{"20261126223533201_native_postgres_storage_samples.sql", "20261126223533210_native_postgres_storage_alerts.sql"} {
 		raw, err := os.ReadFile("../../migrations/" + path)
 		if err != nil {
 			t.Fatal(err)
 		}
 		raw, _, _ = bytes.Cut(raw, []byte("-- +goose Down"))
 		exec(string(raw))
-		if path == "20261126195619201_native_postgres_storage_samples.sql" {
+		if path == "20261126223533201_native_postgres_storage_samples.sql" {
 			exec(`ALTER TABLE native_postgres_storage_samples ADD COLUMN low_since timestamptz;`)
 		}
 	}
