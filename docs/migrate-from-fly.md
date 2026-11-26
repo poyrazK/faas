@@ -104,7 +104,7 @@ Gregale has no one-step import from Fly Managed Postgres. Create a database
 and bind it:
 
 ```bash
-gregale add postgres --app my-api --region <region>
+gregale add postgres --app my-api
 gregale postgres attach my-api-postgres my-api --access migration --env MIGRATION_DATABASE_URL
 ```
 

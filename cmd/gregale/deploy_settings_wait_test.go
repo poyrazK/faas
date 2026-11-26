@@ -80,14 +80,14 @@ func TestWaitedSourceDeployAppliesSavedSettings(t *testing.T) {
 			t.Setenv("FAAS_API", (*stub.Srv()).URL)
 			t.Setenv("FAAS_TOKEN", "fp_live_x")
 			main.WithResetJSONOutput(t, false)
-			_, _, restore := main.SwapIO(t)
-			code := main.Run(append(append([]string{}, tt.args...), "deploy", "--name", "demo", "--app", "--timeout", "20s"))
-			restore()
+			stdout, stderr, restore := main.SwapIO(t)
+			defer restore()
+			code := main.Run(append(append([]string{}, tt.args...), "deploy", "--name", "demo", "--app", "--yes", "--timeout", "20s"))
+			if code != 0 {
+				t.Fatalf("deploy exit %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr())
+			}
 			mu.Lock()
 			defer mu.Unlock()
-			if code != 0 {
-				t.Fatalf("deploy exit %d", code)
-			}
 			if settled == nil || settled.WorkerReplicas.Max != 2 || settled.StopSignal == nil || *settled.StopSignal != "SIGTERM" || settled.StopGracePeriodS == nil || *settled.StopGracePeriodS != 10 {
 				t.Fatalf("saved worker settings not applied after the deployment went live: %+v", settled)
 			}

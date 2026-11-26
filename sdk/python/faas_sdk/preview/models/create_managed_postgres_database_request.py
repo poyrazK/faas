@@ -24,10 +24,11 @@ class CreateManagedPostgresDatabaseRequest:
     """Customer request to reserve a managed PostgreSQL database."""
 
     name: str
-    region: str
     request_id: UUID | Unset = UNSET
     """Optional reserved database identity for durable workflows. Identical retries recover the same resource
     independently of the HTTP response cache. A different reservation cannot adopt an existing name."""
+    region: str | Unset = UNSET
+    """Optional. Omit it to use the platform's default placement, which GET /v1/postgres/capabilities reports."""
     postgres_major: int | Unset = 17
     service_class: CreateManagedPostgresDatabaseRequestServiceClass | Unset = "development"
     availability: CreateManagedPostgresDatabaseRequestAvailability | Unset = "single_zone"
@@ -38,11 +39,11 @@ class CreateManagedPostgresDatabaseRequest:
     def to_dict(self) -> dict[str, Any]:
         name = self.name
 
-        region = self.region
-
         request_id: str | Unset = UNSET
         if not isinstance(self.request_id, Unset):
             request_id = str(self.request_id)
+
+        region = self.region
 
         postgres_major = self.postgres_major
 
@@ -65,11 +66,12 @@ class CreateManagedPostgresDatabaseRequest:
         field_dict.update(
             {
                 "name": name,
-                "region": region,
             }
         )
         if request_id is not UNSET:
             field_dict["request_id"] = request_id
+        if region is not UNSET:
+            field_dict["region"] = region
         if postgres_major is not UNSET:
             field_dict["postgres_major"] = postgres_major
         if service_class is not UNSET:
@@ -90,14 +92,14 @@ class CreateManagedPostgresDatabaseRequest:
         d = dict(src_dict)
         name = d.pop("name")
 
-        region = d.pop("region")
-
         _request_id = d.pop("request_id", UNSET)
         request_id: UUID | Unset
         if isinstance(_request_id, Unset):
             request_id = UNSET
         else:
             request_id = UUID(_request_id)
+
+        region = d.pop("region", UNSET)
 
         postgres_major = d.pop("postgres_major", UNSET)
 
@@ -123,8 +125,8 @@ class CreateManagedPostgresDatabaseRequest:
 
         create_managed_postgres_database_request = cls(
             name=name,
-            region=region,
             request_id=request_id,
+            region=region,
             postgres_major=postgres_major,
             service_class=service_class,
             availability=availability,
