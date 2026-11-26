@@ -186,6 +186,10 @@ var featureRouteActions = map[string]authz.OrgAction{
 	"GET /v1/apps/{slug}/data-api/runtime":             authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/data-api/status":              authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/data-api/usage":               authz.OrgActionReadApp,
+	// data-api-inspections (#8068): an inspection opens the app's database
+	// connection like a contract task.
+	"POST /v1/apps/{slug}/data-api-inspections":     authz.OrgActionConfigureApp,
+	"GET /v1/apps/{slug}/data-api-inspections/{id}": authz.OrgActionReadApp,
 	// Binding metadata contains no credentials or live database access.
 	"GET /v1/apps/{slug}/postgres-bindings": authz.OrgActionReadApp,
 	// data-repair
