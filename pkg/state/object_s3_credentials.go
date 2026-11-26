@@ -70,6 +70,24 @@ type ObjectS3ComputeBindingCreateRequest struct {
 	Secrets                 []AppSecret
 	MaxCredentialsPerBucket int
 	MaxSecretsPerApp        int
+	// Borrowed binds an app other than the bucket's owner, in the same
+	// account: a route split's app holds its own key on the source app's
+	// bucket (ADR-20261121170000 amendment 4). Without it the holder must
+	// own the bucket.
+	Borrowed bool
+}
+
+// HeldObjectS3ComputeBinding is an active compute binding an app holds, with
+// the app that owns its bucket (the holder itself unless it was borrowed).
+type HeldObjectS3ComputeBinding struct {
+	Credential  ObjectS3Credential
+	BucketAppID string
+}
+
+// ObjectS3HeldBindingStore lists the compute bindings an app holds, on its
+// own buckets and on buckets it borrowed.
+type ObjectS3HeldBindingStore interface {
+	ObjectS3ComputeBindingsHeldBy(ctx context.Context, accountID, appID string) ([]HeldObjectS3ComputeBinding, error)
 }
 
 func validObjectS3ComputeBindingCreateRequest(req ObjectS3ComputeBindingCreateRequest) bool {

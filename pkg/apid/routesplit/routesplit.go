@@ -31,8 +31,30 @@ type Store interface {
 	AppByID(ctx context.Context, id string) (state.App, error)
 	AppBySlug(ctx context.Context, slug string) (state.App, error)
 	DeploymentByID(ctx context.Context, id string) (state.Deployment, error)
-	ListAppSecrets(ctx context.Context, accountID, appID string) ([]state.AppSecret, error)
+	ListApps(ctx context.Context, accountID string) ([]state.App, error)
 	ListEdgeRulesForApp(ctx context.Context, appID string) ([]state.EdgeRule, error)
+}
+
+// Binding kinds a split carries to the route's app (amendment 4).
+const (
+	BindingPostgres = "postgres"
+	BindingBucket   = "bucket"
+)
+
+// Binding is one managed binding of the source app. The route's app gets
+// its own binding like it: a login on the same database with the same
+// access and variable, or a key on the same bucket with the same
+// permission, variables and key scope.
+type Binding struct {
+	Kind string
+	ID   string
+	// Scope is the environment the binding's variables land in; the
+	// route's app serves the default scope only.
+	Scope string
+	// Label names it in messages: the variable, and the database or bucket.
+	Label string
+	// Ready is false while the binding is still being set up or rotated.
+	Ready bool
 }
 
 // Host is the apid surface a split acts through, so the apps and rules it
@@ -63,6 +85,14 @@ type Host interface {
 	// CreateRule and DeleteRule mutate edge rules.
 	CreateRule(ctx context.Context, acct state.Account, app state.App, req api.CreateEdgeRuleRequest) (string, *api.Problem)
 	DeleteRule(ctx context.Context, acct state.Account, app state.App, ruleID string) *api.Problem
+	// Bindings lists app's managed bindings (Postgres logins and bucket
+	// keys) in every scope.
+	Bindings(ctx context.Context, app state.App) ([]Binding, *api.Problem)
+	// Bind gives target its own binding like b.
+	Bind(ctx context.Context, acct state.Account, source, target state.App, b Binding) *api.Problem
+	// ReleaseBindings deletes target's Postgres bindings and revokes the
+	// bucket keys it borrowed, so deleting it leaves no live credential.
+	ReleaseBindings(ctx context.Context, acct state.Account, target state.App) *api.Problem
 }
 
 // Service applies, advances and undoes splits.
@@ -108,6 +138,10 @@ func (s *Service) Apply(ctx context.Context, acct state.Account, app state.App, 
 		return state.RouteSplit{}, api.ErrValidation(err.Error())
 	}
 	if prob := s.unsupported(ctx, app); prob != nil {
+		return state.RouteSplit{}, prob
+	}
+	bindings, prob := s.carriedBindings(ctx, app)
+	if prob != nil {
 		return state.RouteSplit{}, prob
 	}
 	// The block on the route's app's own hosts is an ip rule: check the
@@ -174,6 +208,17 @@ func (s *Service) Apply(ctx context.Context, acct state.Account, app state.App, 
 		s.deleteTarget(ctx, acct, created, split)
 		s.finish(ctx, split, state.RouteSplitCreating, state.RouteSplitRolledBack, "could not block direct access to the route's app: "+prob.Detail)
 		return state.RouteSplit{}, prob
+	}
+	// Its own bindings before its first deployment, so the route boots with
+	// the database and bucket variables it had in the app.
+	for _, b := range bindings {
+		if prob := s.Host.Bind(ctx, acct, app, created, b); prob != nil {
+			s.deleteTarget(ctx, acct, created, split)
+			s.finish(ctx, split, state.RouteSplitCreating, state.RouteSplitRolledBack, "could not bind "+b.Label+" to the route's app: "+prob.Detail)
+			refused := *prob
+			refused.Detail = "could not give the route's app its own binding " + b.Label + ": " + prob.Detail
+			return state.RouteSplit{}, &refused
+		}
 	}
 	dep, err := s.Store.SeedRouteSplitTarget(ctx, state.RouteSplitSeed{
 		AccountID: app.AccountID, SplitID: split.ID, SourceAppID: app.ID, TargetAppID: created.ID,
@@ -248,9 +293,9 @@ func orMemory(kind string) string {
 	return kind
 }
 
-// unsupported refuses what the first slice does not carry: a project app,
-// a preview, and managed or service bindings, which the route's app would
-// not have.
+// unsupported refuses what a split cannot carry: a project app, a preview,
+// a static egress IP, app-wide edge rules, a binding still being set up,
+// and other apps that admit the app as a caller by name.
 func (s *Service) unsupported(ctx context.Context, app state.App) *api.Problem {
 	refuse := func(detail string) *api.Problem {
 		return api.NewProblem(422, api.CodeRouteSplitUnsupported, "Split not supported for this app", detail)
@@ -260,8 +305,6 @@ func (s *Service) unsupported(ctx context.Context, app state.App) *api.Problem {
 		return refuse("a preview cannot be split")
 	case app.ProjectID != "":
 		return refuse("apps in a project are split in the project's source; split a standalone app, or move the route to its own service there")
-	case len(app.Manifest.ServiceBindings) > 0:
-		return refuse("the app has service bindings, which the route's app would not have yet")
 	case app.StaticEgressIP != nil:
 		return refuse("the app has a static egress IP, which belongs to one app; the route would call out from another address")
 	}
@@ -278,20 +321,72 @@ func (s *Service) unsupported(ctx context.Context, app state.App) *api.Problem {
 			return refuse("the app has app-wide edge rules (" + ruleLabel(rule) + "), which would not run on the route once it moves; give them the app's hosts instead of @app")
 		}
 	}
-	secrets, err := s.Store.ListAppSecrets(ctx, app.AccountID, app.ID)
+	return s.namedCallers(ctx, app)
+}
+
+// namedCallers refuses a split when another app admits this one as a
+// caller by name (allowed_service_callers or allowed_service_call_scopes):
+// the route's app has its own name, so those apps would refuse its calls.
+// A split never edits another app's security settings; the owner adds the
+// route's app there, or drops the list.
+func (s *Service) namedCallers(ctx context.Context, app state.App) *api.Problem {
+	apps, err := s.Store.ListApps(ctx, app.AccountID)
 	if err != nil {
-		return api.ErrCapacity("could not read the app's bindings")
+		return api.ErrCapacity("could not read the account's apps")
 	}
-	var managed []string
-	for _, secret := range secrets {
-		if secret.ManagedPostgresBindingID != "" || secret.ManagedObjectStorageCredentialID != "" {
-			managed = append(managed, secret.Key)
+	var naming []string
+	for _, other := range apps {
+		if other.ID != app.ID && other.Status != state.AppDeleted && NamesCaller(other.Manifest, app.Slug) {
+			naming = append(naming, other.Slug)
 		}
 	}
-	if len(managed) > 0 {
-		return refuse("the app has managed bindings (" + strings.Join(managed, ", ") + "), which the route's app would not have yet")
+	if len(naming) == 0 {
+		return nil
 	}
-	return nil
+	return api.NewProblem(422, api.CodeRouteSplitUnsupported, "Split not supported for this app",
+		"these apps admit "+app.Slug+" as a caller by name and would refuse calls from the route's app: "+strings.Join(naming, ", ")+
+			"; remove "+app.Slug+" from their allowed service callers (or let the route's app call them too once it exists) before splitting")
+}
+
+// NamesCaller reports whether manifest's caller allowlists name slug.
+func NamesCaller(manifest state.AppManifest, slug string) bool {
+	if manifest.AllowedServiceCallers != nil {
+		for _, name := range *manifest.AllowedServiceCallers {
+			if api.SameServiceName(strings.TrimSpace(name), slug) {
+				return true
+			}
+		}
+	}
+	if manifest.AllowedServiceCallScopes != nil {
+		for name := range *manifest.AllowedServiceCallScopes {
+			if api.SameServiceName(strings.TrimSpace(name), slug) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// carriedBindings are the source's bindings the route's app gets its own of:
+// those in the default scope, the one it serves. A binding still being set
+// up or rotated refuses the split, so the copy is never of a half state.
+func (s *Service) carriedBindings(ctx context.Context, app state.App) ([]Binding, *api.Problem) {
+	all, prob := s.Host.Bindings(ctx, app)
+	if prob != nil {
+		return nil, prob
+	}
+	var carried []Binding
+	for _, b := range all {
+		if b.Scope != state.DefaultEnvScope {
+			continue
+		}
+		if !b.Ready {
+			return nil, api.NewProblem(409, api.CodeRouteSplitUnsupported, "Binding not ready",
+				"the app's binding "+b.Label+" is still being set up or rotated; split once it is ready")
+		}
+		carried = append(carried, b)
+	}
+	return carried, nil
 }
 
 // overlapping refuses a split whose path another rule on the app could
@@ -471,6 +566,11 @@ func (s *Service) deleteTarget(ctx context.Context, acct state.Account, app stat
 // when the app really is gone, so a refusal that reads as "no such app" (an
 // access check) never leaves a route's app running unnoticed.
 func (s *Service) deleteApp(ctx context.Context, acct state.Account, app state.App) *api.Problem {
+	// Its bindings go first: apid refuses to delete an app with live
+	// Postgres bindings, and a borrowed bucket key must not outlive it.
+	if prob := s.Host.ReleaseBindings(ctx, acct, app); prob != nil {
+		return prob
+	}
 	prob := s.Host.DeleteApp(ctx, acct, app)
 	if prob == nil || prob.Status != http.StatusNotFound {
 		return prob

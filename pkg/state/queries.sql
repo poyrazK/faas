@@ -6759,6 +6759,20 @@ WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid
   AND b.id=sqlc.arg(bucket_id)::uuid AND b.account_id=sqlc.arg(account_id)::uuid
 FOR UPDATE OF a;
 
+-- name: ObjectS3BindingLockBorrower :one
+SELECT a.id FROM apps a JOIN object_buckets b ON b.account_id=a.account_id
+WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid
+  AND b.id=sqlc.arg(bucket_id)::uuid AND b.app_id<>a.id
+FOR UPDATE OF a;
+
+-- name: ObjectS3ComputeBindingsHeldBy :many
+SELECT sqlc.embed(c), b.app_id AS bucket_app_id
+FROM object_storage_s3_credentials c
+JOIN object_buckets b ON b.id=c.bucket_id AND b.account_id=c.account_id
+WHERE c.account_id=sqlc.arg(account_id)::uuid AND c.managed_app_id=sqlc.arg(app_id)::uuid
+  AND c.status='active' AND c.rotation_parent_id IS NULL AND c.url_request IS NULL
+ORDER BY c.created_at, c.id;
+
 -- name: ObjectS3BindingSecretCount :one
 SELECT count(*) FROM app_secrets WHERE account_id=$1 AND app_id=$2
   AND managed_postgres_binding_id IS NULL AND managed_object_storage_credential_id IS NULL;
