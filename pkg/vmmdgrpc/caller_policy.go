@@ -151,6 +151,8 @@ var vmmdCallerPolicy = map[string]vmmdCaller{
 	vmmdpb.Vmmd_Stats_FullMethodName:                                   callerSchedd | callerGateway,
 	vmmdpb.Vmmd_StopDatabase_FullMethodName:                            callerSchedd,
 	vmmdpb.Vmmd_StopInstance_FullMethodName:                            callerSchedd | callerBuilder,
+	vmmdpb.Vmmd_StreamDatabaseArchiveImport_FullMethodName:             callerSchedd,
+	vmmdpb.Vmmd_StreamDatabaseExport_FullMethodName:                    callerSchedd,
 	vmmdpb.Vmmd_SyncDatabaseArchive_FullMethodName:                     callerSchedd,
 	vmmdpb.Vmmd_ThawInstance_FullMethodName:                            callerSchedd,
 	vmmdpb.Vmmd_UmountOverlayParent_FullMethodName:                     callerSchedd | callerImaged,

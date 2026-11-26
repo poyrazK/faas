@@ -88,6 +88,26 @@ func TestPostgresImportUploadsVerifiedArchive(t *testing.T) {
 	if code, out, stderr := runSwitchCLI(t, handler, args...); code == 0 || !strings.Contains(stderr, "does not match its manifest") {
 		t.Fatalf("expected local checksum failure, exit=%d, stdout=%q, stderr=%q", code, out, stderr)
 	}
+	alias := filepath.Join(filepath.Dir(file), "alias.dump")
+	if err := os.Symlink(file+".manifest.json", alias+".manifest.json"); err != nil {
+		t.Fatal(err)
+	}
+	args[4] = alias
+	if code, _, stderr := runSwitchCLI(t, handler, args...); code == 0 || !strings.Contains(stderr, "refusing to follow symlink") {
+		t.Fatalf("symlinked manifest: exit=%d, stderr=%q", code, stderr)
+	}
+	if err := os.Remove(alias + ".manifest.json"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(alias+".manifest.json", raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(file, alias); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, stderr := runSwitchCLI(t, handler, args...); code == 0 || !strings.Contains(stderr, "refusing to follow symlink") {
+		t.Fatalf("symlinked archive: exit=%d, stderr=%q", code, stderr)
+	}
 	if got := uploads.Load(); got != 1 {
 		t.Fatalf("upload requests = %d, want 1", got)
 	}

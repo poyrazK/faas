@@ -77,7 +77,7 @@ func cmdPostgresBranchMasked(args []string) int {
 }
 
 func readMaskedBranchPolicy(path string) ([]api.ManagedPostgresMaskedTable, error) {
-	file, err := os.Open(path)
+	file, err := openCustomerFile(path)
 	if err != nil {
 		return nil, err
 	}

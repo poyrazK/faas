@@ -24,15 +24,26 @@ func TestDatabaseNodeServesOnlyDatabaseRPCs(t *testing.T) {
 			t.Fatalf("%s: err = %v, handler called = %v", method, err, called)
 		}
 	}
-	if _, err := databaseOnlyUnary(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: vmmdpb.Vmmd_StartDatabase_FullMethodName}, unary); err != nil || !called {
-		t.Fatalf("StartDatabase: err = %v, handler called = %v", err, called)
+	for _, method := range []string{
+		vmmdpb.Vmmd_StartDatabase_FullMethodName,
+		vmmdpb.Vmmd_DatabaseArchiveRestoreCheck_FullMethodName,
+	} {
+		called = false
+		if _, err := databaseOnlyUnary(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: method}, unary); err != nil || !called {
+			t.Fatalf("%s: err = %v, handler called = %v", method, err, called)
+		}
 	}
-	stream := func(any, grpc.ServerStream) error { return nil }
-	if err := databaseOnlyStream(nil, nil, &grpc.StreamServerInfo{FullMethod: vmmdpb.Vmmd_DatabaseSession_FullMethodName}, stream); err != nil {
-		t.Fatalf("DatabaseSession refused: %v", err)
-	}
-	if err := databaseOnlyStream(nil, nil, &grpc.StreamServerInfo{FullMethod: vmmdpb.Vmmd_DatabaseReplicaSession_FullMethodName}, stream); err != nil {
-		t.Fatalf("DatabaseReplicaSession refused: %v", err)
+	stream := func(any, grpc.ServerStream) error { called = true; return nil }
+	for _, method := range []string{
+		vmmdpb.Vmmd_DatabaseSession_FullMethodName,
+		vmmdpb.Vmmd_DatabaseReplicaSession_FullMethodName,
+		vmmdpb.Vmmd_StreamDatabaseExport_FullMethodName,
+		vmmdpb.Vmmd_StreamDatabaseArchiveImport_FullMethodName,
+	} {
+		called = false
+		if err := databaseOnlyStream(nil, nil, &grpc.StreamServerInfo{FullMethod: method}, stream); err != nil || !called {
+			t.Fatalf("%s: err = %v, handler called = %v", method, err, called)
+		}
 	}
 	if err := databaseOnlyStream(nil, nil, &grpc.StreamServerInfo{FullMethod: vmmdpb.Vmmd_ForwardTCPStream_FullMethodName}, stream); status.Code(err) != codes.Unimplemented {
 		t.Fatalf("ForwardTCPStream = %v, want Unimplemented", err)

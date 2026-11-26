@@ -31,6 +31,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -727,34 +728,16 @@ func renderEnvPushScanWarnings(findings []secretscan.Finding, w io.Writer) {
 // symlink points at gets streamed verbatim into the multipart source
 // part and ends up in the build artefact the builder microVM ingests.
 //
-// Two checks:
-//  1. Lstat the FINAL component. If it's a symlink, the kernel would
-//     follow it on Open — refuse before opening.
-//  2. After Open, Lstat again on the resolved path. If a symlink was
-//     swapped in between (TOCTOU race), the second Lstat catches it.
-//     Also confirms the file is a regular file, not a device or FIFO.
-//
-// Note 1: we intentionally don't EvalSymlinks the whole path and
-// compare strings. On macOS, /var is itself a symlink to /private/var
-// (a system-level layout quirk), so EvalSymlinks("/var/folders/...")
-// returns "/private/var/folders/..." even for plain files. Comparing
-// strings there would reject every legitimate customer file on macOS
-// dev boxes. Lstat-on-the-final-component catches the actual attack
-// (a symlink AT the path the customer named) without false-positives.
-// The same reasoning applies to the tarball call site — a customer
-// may legitimately point `--tarball` at /var/folders/.../foo.tar.gz.
-//
-// Note 2: both call sites — cmdEnvPush (env push) and
-// Client.DeployTarball (deploy --tarball) — now share this helper.
-// If you add a third caller that ships customer bytes over the wire,
-// route it through here too; duplicating the Lstat discipline is
-// what causes TOCTOU drift.
+// Validate the final component before opening so a non-regular path cannot
+// block the CLI. Open with no-follow and nonblocking flags to protect the
+// same boundary if a path is replaced before open. Match the opened file
+// and the path to the file that passed the pre-open check. Parent directory
+// symlinks are supported, including macOS's /var alias.
 func openCustomerFile(path string) (*os.File, error) {
 	absIn, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("could not absolutize %q: %w", path, err)
 	}
-	// Pre-open: refuse if the final component is a symlink.
 	preInfo, err := os.Lstat(absIn)
 	if err != nil {
 		return nil, err
@@ -762,32 +745,26 @@ func openCustomerFile(path string) (*os.File, error) {
 	if preInfo.Mode()&os.ModeSymlink != 0 {
 		return nil, fmt.Errorf("refusing to follow symlink at %q", path)
 	}
-	// The Lstat guards above (pre-open + post-open) ARE the security
-	// boundary that the .golangci.yml forbidigo rule exists to enforce.
-	// This call site is the documented escape hatch: any other os.Open
-	// in this repo is a tripwire and must route through a vetted
-	// helper. The pre-open + post-open Lstat discipline below is the
-	// security boundary; the bare Open on the next line is necessary.
-	//nolint:forbidigo // openCustomerFile IS the security boundary — pre-open + post-open Lstat discipline above is what makes os.Open safe here.
-	f, err := os.Open(absIn)
+	if !preInfo.Mode().IsRegular() {
+		return nil, fmt.Errorf("refusing non-regular file %q (mode %s)", path, preInfo.Mode())
+	}
+	f, err := os.OpenFile(absIn, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}
-	// Post-open: confirm the path is still a regular file. Catches
-	// TOCTOU swaps (someone `ln -sf`'ing the path between our preInfo
-	// check and the Open) and refuses devices / FIFOs / directories.
+	opened, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
 	postInfo, err := os.Lstat(absIn)
 	if err != nil {
 		_ = f.Close()
 		return nil, err
 	}
-	if postInfo.Mode()&os.ModeSymlink != 0 {
+	if !opened.Mode().IsRegular() || !os.SameFile(preInfo, opened) || !os.SameFile(opened, postInfo) {
 		_ = f.Close()
-		return nil, fmt.Errorf("refusing to follow symlink at %q (raced after open)", path)
-	}
-	if !postInfo.Mode().IsRegular() {
-		_ = f.Close()
-		return nil, fmt.Errorf("refusing non-regular file %q (mode %s)", path, postInfo.Mode())
+		return nil, fmt.Errorf("refusing changed or non-regular file %q", path)
 	}
 	return f, nil
 }

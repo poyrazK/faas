@@ -39,4 +39,19 @@ func TestPostgresBranchMaskedUsesDedicatedLogicalCopyRoute(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "masked_from:") || !strings.Contains(out, "postgres status branch-id") {
 		t.Fatalf("exit=%d stdout=%q stderr=%q", code, out, stderr)
 	}
+	alias := filepath.Join(filepath.Dir(file), "alias.json")
+	if err := os.Symlink(file, alias); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		path, message string
+	}{
+		{alias, "refusing to follow symlink"},
+		{filepath.Dir(file), "refusing non-regular file"},
+	} {
+		code, _, stderr := runSwitchCLI(t, server, "postgres", "branch", "masked", restoreSwitchDB, "orders-masked", "--policy", tc.path)
+		if code == 0 || !strings.Contains(stderr, tc.message) {
+			t.Fatalf("unsafe policy file: exit=%d, stderr=%q", code, stderr)
+		}
+	}
 }

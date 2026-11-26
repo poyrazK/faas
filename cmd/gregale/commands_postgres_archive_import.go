@@ -54,7 +54,7 @@ func importPostgresArchive(database, path, operation string) int {
 
 func openPostgresArchive(path string) (*os.File, api.ManagedPostgresExportManifest, error) {
 	var manifest api.ManagedPostgresExportManifest
-	meta, err := os.Open(path + ".manifest.json")
+	meta, err := openCustomerFile(path + ".manifest.json")
 	if err != nil {
 		return nil, manifest, err
 	}
@@ -69,12 +69,12 @@ func openPostgresArchive(path string) (*os.File, api.ManagedPostgresExportManife
 	if manifest.RestoreReceipt == "" {
 		return nil, manifest, errors.New("the companion manifest must include a Gregale restore receipt")
 	}
-	file, err := os.Open(path)
+	file, err := openCustomerFile(path)
 	if err != nil {
 		return nil, manifest, err
 	}
 	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() || info.Size() != manifest.SizeBytes {
+	if err != nil || info.Size() != manifest.SizeBytes {
 		_ = file.Close()
 		return nil, manifest, errors.Join(pgarchive.ErrArchive, err)
 	}

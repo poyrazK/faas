@@ -62,6 +62,33 @@ func TestCallerPolicy(t *testing.T) {
 	}
 }
 
+func TestCallerPolicyArchiveStreamsRequireScheduler(t *testing.T) {
+	intercept := CallerPolicyStreamInterceptor()
+	for _, method := range []string{
+		vmmdpb.Vmmd_StreamDatabaseExport_FullMethodName,
+		vmmdpb.Vmmd_StreamDatabaseArchiveImport_FullMethodName,
+	} {
+		for _, tc := range []struct {
+			cn   string
+			want codes.Code
+		}{
+			{"schedd.faas", codes.OK},
+			{"pgproxyd.faas", codes.PermissionDenied},
+			{"db-2.faas", codes.PermissionDenied},
+		} {
+			called := false
+			stream := &recvStream{ctx: tlsPeer(tc.cn)}
+			err := intercept(nil, stream, &grpc.StreamServerInfo{FullMethod: method}, func(any, grpc.ServerStream) error {
+				called = true
+				return nil
+			})
+			if status.Code(err) != tc.want || called != (tc.want == codes.OK) {
+				t.Errorf("%s as %s: err = %v, handler called = %v", method, tc.cn, err, called)
+			}
+		}
+	}
+}
+
 // Every vmmd RPC names its certificate callers, so a new one is refused to
 // all but unix-socket callers until it gets an entry (bug hunt H95).
 func TestCallerPolicyCoversEveryMethod(t *testing.T) {
