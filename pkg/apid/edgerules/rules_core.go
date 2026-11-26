@@ -107,6 +107,13 @@ func planKindProblem(acct state.Account, kind string) *api.Problem {
 }
 
 // kindProblem is the plan gate, then the capability gate, for a new rule's kind.
+// KindProblem is why acct may not create rules of kind (its plan or an
+// operator setting), or nil. Callers that create rules on a customer's
+// behalf check it before they start.
+func (s *Service) KindProblem(acct state.Account, kind string) *api.Problem {
+	return s.kindProblem(acct, kind)
+}
+
 func (s *Service) kindProblem(acct state.Account, kind string) *api.Problem {
 	if prob := planKindProblem(acct, kind); prob != nil {
 		return prob
