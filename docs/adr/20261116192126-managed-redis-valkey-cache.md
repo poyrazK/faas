@@ -440,6 +440,8 @@ closed by a later slice:
   row for it:
   `SELECT d.image_digest, count(*) FROM managed_valkey_caches c JOIN deployments d ON d.app_id = c.app_id WHERE d.status IN ('imaging', 'live') GROUP BY 1;`
   First use: 8.1.4 → 8.1.12 (9 live caches on 8.1.4 on 2026-11-25).
+  Step 1 (#8091) added 8.1.12 to the list; step 2 makes it the image apid
+  deploys and keeps 8.1.4 accepted for the caches that still run it.
 - **Cross-account isolation verified on prod (2026-11-25):** an app in
   another account cannot reach a cache. Service addresses are indexes within
   each account, so the proxy resolves a foreign cache's address in the
