@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Route policy for an unclaimed account (ADR-20261124080000): it may read
@@ -144,6 +146,26 @@ func RefusedField(pattern string, body []byte) string {
 	}
 	sort.Strings(names)
 	return names[0]
+}
+
+// RefusedAppSlug returns the name an unclaimed account must use when the app
+// it creates (POST /v1/apps) lacks the account's suffix
+// (api.AnonymousAppSlug), and "" when the name is fine or the route creates no
+// app. A body without a usable slug is left to the handler's validation.
+func RefusedAppSlug(pattern, accountID string, body []byte) string {
+	if pattern != "POST /v1/apps" {
+		return ""
+	}
+	var req struct {
+		Slug string `json:"slug"`
+	}
+	if json.Unmarshal(body, &req) != nil || req.Slug == "" {
+		return ""
+	}
+	if want := api.AnonymousAppSlug(accountID, req.Slug); want != req.Slug {
+		return want
+	}
+	return ""
 }
 
 // RouteAllowed reports whether an unclaimed account may call the route
