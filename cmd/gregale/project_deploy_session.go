@@ -183,19 +183,22 @@ func (s *savedDeploySession) projectApplyReceipt() api.ApplyResponse {
 }
 
 func renderProjectDeployReceipt(plan api.PlanResponse, apply api.ApplyResponse, session *savedDeploySession, timedOut bool, saveErr error) int {
-	return renderProjectDeployReceiptWithTimeouts(plan, apply, session, timedOut, nil, saveErr)
+	return renderProjectDeployReceiptWithTimeouts(plan, apply, session, timedOut, nil, 0, saveErr)
 }
 
 // renderProjectDeployReceiptAfterWait renders a receipt after
 // waitForProjectApplyTimeouts; any timed-out workload makes it exit 3.
-func renderProjectDeployReceiptAfterWait(plan api.PlanResponse, apply api.ApplyResponse, session *savedDeploySession, timeouts []projectWaitTimeout) int {
-	return renderProjectDeployReceiptWithTimeouts(plan, apply, session, len(timeouts) > 0, timeouts, nil)
+func renderProjectDeployReceiptAfterWait(plan api.PlanResponse, apply api.ApplyResponse, session *savedDeploySession, timeouts []projectWaitTimeout, deadline time.Duration) int {
+	return renderProjectDeployReceiptWithTimeouts(plan, apply, session, len(timeouts) > 0, timeouts, deadline, nil)
 }
 
-func renderProjectDeployReceiptWithTimeouts(plan api.PlanResponse, apply api.ApplyResponse, session *savedDeploySession, timedOut bool, timeouts []projectWaitTimeout, saveErr error) int {
+func renderProjectDeployReceiptWithTimeouts(plan api.PlanResponse, apply api.ApplyResponse, session *savedDeploySession, timedOut bool, timeouts []projectWaitTimeout, deadline time.Duration, saveErr error) int {
 	receipt := projectDeployReceipt{ApplyResponse: apply, RecoverySaved: session != nil, TimedOut: timedOut, WaitTimedOut: timeouts}
 	if session != nil {
 		receipt.SessionID, receipt.ResumeCommand = session.record.ID, session.resumeCommand()
+		if timedOut {
+			receipt.ResumeCommand = session.resumeCommandWithTimeout(deadline)
+		}
 		receipt.SubmissionOutcome = session.record.Outcome
 		receipt.SubmissionStatus = session.record.Project.SubmissionStatus
 		receipt.Warnings = append([]string(nil), session.warnings...)
@@ -226,7 +229,7 @@ func renderProjectDeployReceiptWithTimeouts(plan api.PlanResponse, apply api.App
 		// --no-wait and a timed-out wait leave deploys in flight: resume is
 		// the next step there.
 		if session != nil && (code != 0 || timedOut || status.waitTimedOut > 0 || !projectBuildsAllLive(apply)) {
-			PrintProgress(osStdout, "Saved project deploy %s; resume with: %s", session.record.ID, session.resumeCommand())
+			PrintProgress(osStdout, "Saved project deploy %s; resume with: %s", session.record.ID, receipt.ResumeCommand)
 		}
 		if receipt.RetryCommand != "" {
 			// Resume only reconnects; it never rebuilds what failed, so a
@@ -276,7 +279,7 @@ func resumeSavedProjectDeploy(ctx context.Context, c *Client, s *savedDeploySess
 		return waitForSafeProjectRelease(waitCtx, c, s, deadline)
 	}
 	apply, timeouts := waitForProjectApplyTimeouts(withProjectWaitProgress(waitCtx, osStderr, jsonOutput), c, s.projectApplyReceipt(), deadline)
-	return renderProjectDeployReceiptAfterWait(api.PlanResponse{}, apply, s, timeouts)
+	return renderProjectDeployReceiptAfterWait(api.PlanResponse{}, apply, s, timeouts, deadline)
 }
 
 func (s *savedDeploySession) rememberProjectApply(apply api.ApplyResponse) error {
@@ -387,7 +390,7 @@ func projectSubmissionFailure(s *savedDeploySession, err error) int {
 // projectRetryCommand is the copy-paste command that rebuilds a saved project
 // deploy's failed workloads from the current checkout.
 func projectRetryCommand(sessionID string) string {
-	return recoveryCLI() + " release attempt retry " + sessionID + " --yes"
+	return deployRecoveryCLI() + " release attempt retry " + sessionID + " --yes"
 }
 
 // projectBuildsAllLive reports every workload's deployment live, as a wait

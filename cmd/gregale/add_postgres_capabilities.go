@@ -38,6 +38,24 @@ func addPostgresUnsupported(ctx context.Context, client addPostgresCapabilities,
 	return nil
 }
 
+// defaultPostgresRegion returns region, or the platform's default placement
+// when it is empty. Placement is the operator's choice, so commands that
+// create a database never ask for a region; --region stays for the day more
+// than one is offered. Resolving here keeps the CLI working against servers
+// that still require the field. It is best effort: when capabilities cannot
+// be read (a postgres:manage key without postgres:read), it returns "" and
+// apid fills in the default.
+func defaultPostgresRegion(ctx context.Context, client addPostgresCapabilities, region string) string {
+	if region = strings.TrimSpace(region); region != "" {
+		return region
+	}
+	capabilities, err := client.GetManagedPostgresCapabilities(ctx, "")
+	if err != nil {
+		return ""
+	}
+	return capabilities.Region
+}
+
 // printAddPostgresMigrationHint tells a developer who just bound a runtime
 // credential how schema changes are applied: the runtime role has no DDL, and
 // serving instances never receive migration credentials.

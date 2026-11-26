@@ -93,7 +93,7 @@ Values arrive in `process.env` and `Bun.env`. See [Secrets](secrets.md).
 ## Add PostgreSQL
 
 ```bash
-gregale add postgres --app my-api --region <region>
+gregale add postgres --app my-api
 ```
 
 The connection URL arrives as `DATABASE_URL`. It goes through a connection

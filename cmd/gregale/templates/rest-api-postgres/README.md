@@ -75,7 +75,7 @@ accepted adoption. Redeploy existing apps to obtain the updated image and helper
 ## Deploy with Gregale managed PostgreSQL
 
 Use an existing database from Gregale's qualified Neon-backed preview, or create
-one with `gregale postgres create notes --region <region>`. Reserve the app and
+one with `gregale postgres create notes`. Reserve the app and
 attach both bindings before deploying:
 
 ```sh
