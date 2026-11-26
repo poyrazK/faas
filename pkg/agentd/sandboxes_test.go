@@ -37,8 +37,8 @@ type fakeSandboxSchedd struct {
 	// actions are the browser actions the "actions" script was sent.
 	actions []*scheddpb.SandboxRunAction
 	// pauses are the capture IDs pauses named; the "pause-busy" script
-	// refuses the first, "pause-refused" every one, and "pause-late"
-	// answers the first only after lateBy.
+	// refuses the first, "pause-refused" every one, "pause-late" answers
+	// the first only after lateBy, and "pause-break" breaks the stream.
 	pauses []string
 	lateBy time.Duration
 }
@@ -61,12 +61,27 @@ func (f *fakeSandboxSchedd) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) 
 	case "no-workspace":
 		return status.Error(codes.DataLoss, "the workspace could not be unpacked")
 	}
+	if script == "capture-node-busy" && start.GetResume() != nil {
+		return status.Error(codes.Unavailable, "the capture's node cannot take it now")
+	}
 	if err := stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Placed{Placed: &scheddpb.AgentRunPlaced{
 		Instance: "sandbox-" + start.GetSandboxId(), NodeId: "agents-1"}}}); err != nil {
 		return err
 	}
 	if frame, err := stream.Recv(); err != nil || frame.GetProceed() == nil {
 		return status.Error(codes.Aborted, "not told to proceed")
+	}
+	if script == "resume-stall" && start.GetResume() != nil {
+		// The restore never reports booted; a close ends it.
+		for {
+			frame, err := stream.Recv()
+			if err != nil {
+				return err
+			}
+			if frame.GetClose() != nil {
+				return nil
+			}
+		}
 	}
 	method := "WAKE_COLD_BOOT"
 	if start.GetResume() != nil && script != "restore-fails" {
@@ -144,6 +159,10 @@ func (f *fakeSandboxSchedd) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) 
 			if script == "pause-late" {
 				// vmmd captures inline: it reads no frame until it answers.
 				time.Sleep(lateBy)
+			}
+			if script == "pause-break" {
+				// The stream breaks after vmmd captured and destroyed the VM.
+				return status.Error(codes.Unavailable, "the stream was reset")
 			}
 			if refuse {
 				_ = stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_PauseRefused{PauseRefused: &scheddpb.SandboxRunPauseRefused{Reason: "busy"}}})

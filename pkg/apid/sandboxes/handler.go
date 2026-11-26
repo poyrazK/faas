@@ -271,8 +271,9 @@ func (h *Handler) Pause(w http.ResponseWriter, r *http.Request, acct state.Accou
 }
 
 // Resume handles POST /v1/sandboxes/{id}/resume: agentd restores the
-// paused session's capture with a new identity, or cold-boots it on its
-// volume when the capture cannot be restored.
+// paused session's capture with a new identity, or cold-boots it when the
+// capture cannot be restored. Until workspace volumes (ADR-20261122132055
+// step 5), a cold resume starts from a fresh workspace (resumed_cold).
 func (h *Handler) Resume(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	h.pauseOrResume(w, r, acct, false)
 }

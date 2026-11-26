@@ -24,7 +24,10 @@ ALTER TABLE sandbox_sessions
     ADD COLUMN IF NOT EXISTS paused_at timestamptz,
     ADD COLUMN IF NOT EXISTS durability text,
     ADD COLUMN IF NOT EXISTS resumed_cold boolean NOT NULL DEFAULT false,
-    ADD COLUMN IF NOT EXISTS forked_from uuid;
+    ADD COLUMN IF NOT EXISTS forked_from uuid,
+    -- resume_not_before: a resume refused for want of its capture's node
+    -- is claimed again only after it.
+    ADD COLUMN IF NOT EXISTS resume_not_before timestamptz;
 -- +goose StatementBegin
 DO $migration$
 BEGIN
@@ -108,6 +111,7 @@ ALTER TABLE sandbox_sessions DROP CONSTRAINT IF EXISTS sandbox_sessions_vcpu_che
 ALTER TABLE sandbox_sessions DROP CONSTRAINT IF EXISTS sandbox_sessions_ram_mb_v2_check;
 ALTER TABLE sandbox_sessions DROP CONSTRAINT IF EXISTS sandbox_sessions_state_v2_check;
 ALTER TABLE sandbox_sessions
+    DROP COLUMN IF EXISTS resume_not_before,
     DROP COLUMN IF EXISTS forked_from,
     DROP COLUMN IF EXISTS resumed_cold,
     DROP COLUMN IF EXISTS durability,

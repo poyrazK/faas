@@ -366,6 +366,7 @@ type SandboxSession struct {
 	Durability          pgtype.Text
 	ResumedCold         bool
 	ForkedFrom          pgtype.UUID
+	ResumeNotBefore     pgtype.Timestamptz
 }
 
 type SandboxSessionCapture struct {
@@ -382,6 +383,7 @@ type SandboxSessionCapture struct {
 	State             string
 	CreatedAt         pgtype.Timestamptz
 	ConsumedAt        pgtype.Timestamptz
+	CheckedAt         pgtype.Timestamptz
 }
 
 type SandboxSessionDomain struct {

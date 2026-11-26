@@ -21054,3 +21054,19 @@ const (
 
 // UnclaimedDeployTTLDefault is UnclaimedDeployTTLHoursDefault as a duration.
 const UnclaimedDeployTTLDefault = UnclaimedDeployTTLHoursDefault * time.Hour
+
+// Persistent session timers (ADR-20261122132055 §2), constants so daemons
+// can size their own constants from them. A pause vmmd never answers is
+// given up after SandboxPauseTimeoutSec (a capture that lands later is still
+// taken for 3× as long); a running persistent session whose pauses are all
+// refused ends SandboxPersistentOverrunSec past its run limit. A capture's
+// node uploads it for up to SandboxCaptureUploadSec, then leaves its copy to
+// eviction; agentd deletes a used capture only after that window. A resume
+// refused for want of its capture's node is claimed again after
+// SandboxResumeRetrySec.
+const (
+	SandboxPauseTimeoutSec      = 600
+	SandboxPersistentOverrunSec = 1800
+	SandboxCaptureUploadSec     = 86_400
+	SandboxResumeRetrySec       = 30
+)

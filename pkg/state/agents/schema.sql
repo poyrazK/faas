@@ -265,7 +265,8 @@ CREATE TABLE sandbox_sessions (
  paused_at timestamptz,
  durability text,
  resumed_cold boolean NOT NULL DEFAULT false,
- forked_from uuid
+ forked_from uuid,
+ resume_not_before timestamptz
 );
 
 CREATE TABLE sandbox_session_captures (
@@ -281,7 +282,8 @@ CREATE TABLE sandbox_session_captures (
  has_backing boolean NOT NULL DEFAULT false,
  state text NOT NULL DEFAULT 'live',
  created_at timestamptz NOT NULL DEFAULT now(),
- consumed_at timestamptz
+ consumed_at timestamptz,
+ checked_at timestamptz
 );
 CREATE TABLE agent_sandbox_task_calls (
  sandbox_id uuid PRIMARY KEY,

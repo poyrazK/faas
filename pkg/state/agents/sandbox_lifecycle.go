@@ -204,9 +204,40 @@ func (s *Store) CancelSandboxPause(ctx context.Context, id, token string, frozen
 
 // ReturnSandboxResume puts a resume that never booted back to paused, its
 // capture kept. retry leaves the resume asked for.
-func (s *Store) ReturnSandboxResume(ctx context.Context, id, token string, retry bool) error {
-	n, err := s.q.ReturnSandboxSessionResume(ctx, s.pool, sqlc.ReturnSandboxSessionResumeParams{Retry: retry, SessionID: id, LeaseToken: token})
+func (s *Store) ReturnSandboxResume(ctx context.Context, id, token string, retry bool, after time.Duration) error {
+	n, err := s.q.ReturnSandboxSessionResume(ctx, s.pool, sqlc.ReturnSandboxSessionResumeParams{Retry: retry,
+		RetrySeconds: after.Seconds(), SessionID: id, LeaseToken: token})
 	return fenced(n, err, "return session resume")
+}
+
+// TouchSandboxCaptures records that a sweep found these captures not yet
+// uploaded, so the next sweeps look at others first.
+func (s *Store) TouchSandboxCaptures(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	uuids := make([]pgtype.UUID, 0, len(ids))
+	for _, id := range ids {
+		var u pgtype.UUID
+		if err := u.Scan(id); err != nil {
+			return fmt.Errorf("touch session captures: %w", err)
+		}
+		uuids = append(uuids, u)
+	}
+	if err := s.q.TouchSandboxSessionCaptures(ctx, s.pool, uuids); err != nil {
+		return fmt.Errorf("touch session captures: %w", err)
+	}
+	return nil
+}
+
+// RecordAbandonedSandboxCapture records a pause agentd never saw answered
+// as a used capture, so the sweep deletes whatever vmmd wrote under its key.
+func (s *Store) RecordAbandonedSandboxCapture(ctx context.Context, sessionID string, c SandboxCapture) error {
+	if err := s.q.RecordAbandonedSandboxSessionCapture(ctx, s.pool, sqlc.RecordAbandonedSandboxSessionCaptureParams{
+		CaptureID: c.ID, SessionID: sessionID, NodeID: c.NodeID, StorageKey: c.StorageKey, VmstateStorageKey: c.VMStateStorageKey}); err != nil {
+		return fmt.Errorf("record abandoned session capture: %w", err)
+	}
+	return nil
 }
 
 // MarkSandboxPaused records a pausing session's capture and moves it to

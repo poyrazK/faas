@@ -182,6 +182,114 @@ func TestPersistentSandboxEndsWhenItCannotPause(t *testing.T) {
 	}
 }
 
+// pausedSession is a persistent session paused once, with its capture.
+func pausedSession(t *testing.T, store *agentstore.Store, sbx *agentd.Sandboxes, fake *fakeSandboxSchedd) (id, capture string) {
+	t.Helper()
+	ctx := context.Background()
+	id = queuePersistent(t, store, time.Hour)
+	done := holdSandbox(t, sbx)
+	waitFor(t, "ready", func() bool { return sandboxState(t, store, id).State == agentstore.SandboxReady })
+	if _, err := store.PauseSandbox(ctx, account, id); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	return id, fake.pauses[len(fake.pauses)-1]
+}
+
+func consumedCapture(t *testing.T, store *agentstore.Store, id string) (agentstore.SandboxCapture, bool) {
+	t.Helper()
+	captures, err := store.ConsumedSandboxCaptures(context.Background(), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range captures {
+		if c.ID == id {
+			return c, true
+		}
+	}
+	return agentstore.SandboxCapture{}, false
+}
+
+// A session closed while it resumes never restores its capture: the
+// capture is used, so the sweep deletes it rather than keep it live.
+func TestSandboxClosedWhileResumingUsesItsCapture(t *testing.T) {
+	_, store := openStore(t)
+	ctx := context.Background()
+	fake := &fakeSandboxSchedd{scripts: map[string]string{}}
+	sbx := newSandboxes(t, store, fake, agentd.SandboxConfig{})
+	id, capture := pausedSession(t, store, sbx, fake)
+	fake.mu.Lock()
+	fake.scripts[id] = "resume-stall"
+	fake.mu.Unlock()
+	if _, err := store.ResumeSandbox(ctx, account, id); err != nil {
+		t.Fatal(err)
+	}
+	done := holdSandbox(t, sbx)
+	waitFor(t, "resuming", func() bool { return sandboxState(t, store, id).State == agentstore.SandboxResuming })
+	if _, err := store.CloseSandbox(ctx, account, id); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	if sb := sandboxState(t, store, id); sb.State != agentstore.SandboxClosed {
+		t.Fatalf("session = %s", sb.State)
+	}
+	if _, ok := consumedCapture(t, store, capture); !ok {
+		t.Fatal("the capture of a session closed while resuming is still live")
+	}
+}
+
+// A resume refused for want of its capture's node goes back to paused and
+// is not claimed again at once.
+func TestSandboxResumeRefusedForItsNodeBacksOff(t *testing.T) {
+	_, store := openStore(t)
+	ctx := context.Background()
+	fake := &fakeSandboxSchedd{scripts: map[string]string{}}
+	sbx := newSandboxes(t, store, fake, agentd.SandboxConfig{})
+	id, _ := pausedSession(t, store, sbx, fake)
+	fake.mu.Lock()
+	fake.scripts[id] = "capture-node-busy"
+	fake.mu.Unlock()
+	if _, err := store.ResumeSandbox(ctx, account, id); err != nil {
+		t.Fatal(err)
+	}
+	if found, err := sbx.ClaimOnce(ctx); err != nil || !found {
+		t.Fatalf("claim = %v, %v", found, err)
+	}
+	if sb := sandboxState(t, store, id); sb.State != agentstore.SandboxPaused || sb.ResumeRequestedAt == nil {
+		t.Fatalf("a refused resume = %+v", sb)
+	}
+	if found, err := sbx.ClaimOnce(ctx); err != nil || found {
+		t.Fatalf("claimed again at once: %v, %v", found, err)
+	}
+}
+
+// A pause whose answer never reached agentd may still have written its
+// capture: it is recorded used under its key, so the sweep deletes it.
+func TestSandboxPauseLostWithItsStreamIsSwept(t *testing.T) {
+	_, store := openStore(t)
+	ctx := context.Background()
+	id := queuePersistent(t, store, time.Hour)
+	fake := &fakeSandboxSchedd{scripts: map[string]string{}}
+	fake.scripts[id] = "pause-break"
+	sbx := newSandboxes(t, store, fake, agentd.SandboxConfig{})
+	done := holdSandbox(t, sbx)
+	waitFor(t, "ready", func() bool { return sandboxState(t, store, id).State == agentstore.SandboxReady })
+	if _, err := store.PauseSandbox(ctx, account, id); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	if sb := sandboxState(t, store, id); sb.State != agentstore.SandboxFailed {
+		t.Fatalf("session = %s", sb.State)
+	}
+	c, ok := consumedCapture(t, store, fake.pauses[0])
+	want := "snap/sandbox-session-" + account + "/captures/" + fake.pauses[0] + "/v2/mem"
+	if !ok || c.StorageKey != want || !c.HasBacking {
+		t.Fatalf("abandoned capture = %+v (recorded %v), want key %s", c, ok, want)
+	}
+}
+
 func TestPersistentSandboxResumesColdWhenTheRestoreFails(t *testing.T) {
 	_, store := openStore(t)
 	ctx := context.Background()

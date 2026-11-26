@@ -1017,6 +1017,12 @@ func (q *Queries) FinishSandboxAction(ctx context.Context, db DBTX, arg FinishSa
 }
 
 const finishSandboxSession = `-- name: FinishSandboxSession :execrows
+WITH used AS (
+  UPDATE sandbox_session_captures SET state='consumed', consumed_at=now()
+   WHERE session_id=$4::text::uuid AND state='live' AND $1::text IN ('closed','expired','failed')
+   AND EXISTS (SELECT 1 FROM sandbox_sessions WHERE id=$4::text::uuid AND lease_token=$5::text
+     AND state IN ('starting','ready','frozen','pausing','resuming'))
+)
 UPDATE sandbox_sessions SET state=$1::text, outcome_code=$2::text,
   outcome_message=$3::text, lease_token=NULL, lease_expires_at=NULL, closed_at=now(), updated_at=now()
  WHERE id=$4::text::uuid AND lease_token=$5::text
@@ -1032,6 +1038,8 @@ type FinishSandboxSessionParams struct {
 	LeaseToken     string
 }
 
+// A session that ends, from resuming too, never restores its capture: it
+// is used, so the sweep deletes it.
 func (q *Queries) FinishSandboxSession(ctx context.Context, db DBTX, arg FinishSandboxSessionParams) (int64, error) {
 	result, err := db.Exec(ctx, finishSandboxSession,
 		arg.State,
@@ -2854,7 +2862,8 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id FROM sandbox_session
    AND j.status <> 'deleted' AND j.image_materialization_status='ready' AND j.image_storage_key IS NOT NULL)
    OR EXISTS (SELECT 1 FROM sandbox_templates t JOIN deployments d ON d.app_id=t.app_id
    WHERE t.id=sb.template_id AND t.account_id=sb.account_id AND d.status='live' AND d.rootfs_key <> '')))
- OR (sb.state='paused' AND sb.resume_requested_at IS NOT NULL AND sb.close_requested_at IS NULL AND sb.expires_at > now())
+ OR (sb.state='paused' AND sb.resume_requested_at IS NOT NULL AND sb.close_requested_at IS NULL AND sb.expires_at > now()
+   AND (sb.resume_not_before IS NULL OR sb.resume_not_before <= now()))
  ORDER BY sb.created_at, sb.id LIMIT $1::integer FOR UPDATE OF sb SKIP LOCKED
 `
 
@@ -2891,7 +2900,7 @@ func (q *Queries) ListClaimableSandboxSessions(ctx context.Context, db DBTX, max
 
 const listConsumedSandboxSessionCaptures = `-- name: ListConsumedSandboxSessionCaptures :many
 SELECT id::text AS id, storage_key, vmstate_storage_key, has_backing, created_at FROM sandbox_session_captures
- WHERE state='consumed' ORDER BY created_at, id LIMIT $1::integer
+ WHERE state='consumed' ORDER BY checked_at NULLS FIRST, created_at, id LIMIT $1::integer
 `
 
 type ListConsumedSandboxSessionCapturesRow struct {
@@ -2992,7 +3001,7 @@ const listNodeOnlySandboxCaptures = `-- name: ListNodeOnlySandboxCaptures :many
 SELECT cap.id::text AS id, cap.session_id::text AS session_id, cap.storage_key, cap.vmstate_storage_key, cap.has_backing
   FROM sandbox_session_captures cap JOIN sandbox_sessions sb ON sb.id=cap.session_id
  WHERE cap.state='live' AND sb.state='paused' AND sb.durability='node'
- ORDER BY cap.created_at, cap.id LIMIT $1::integer
+ ORDER BY cap.checked_at NULLS FIRST, cap.created_at, cap.id LIMIT $1::integer
 `
 
 type ListNodeOnlySandboxCapturesRow struct {
@@ -4058,6 +4067,36 @@ func (q *Queries) PutSandboxEgressPolicy(ctx context.Context, db DBTX, arg PutSa
 	return i, err
 }
 
+const recordAbandonedSandboxSessionCapture = `-- name: RecordAbandonedSandboxSessionCapture :exec
+INSERT INTO sandbox_session_captures (id, session_id, account_id, node_id, storage_key, vmstate_storage_key, fc_version,
+  mem_bytes, has_backing, state, consumed_at)
+SELECT $1::text::uuid, sb.id, sb.account_id, $2::text, $3::text,
+  $4::text, '', 0, true, 'consumed', now()
+  FROM sandbox_sessions sb WHERE sb.id=$5::text::uuid
+ON CONFLICT (id) DO NOTHING
+`
+
+type RecordAbandonedSandboxSessionCaptureParams struct {
+	CaptureID         string
+	NodeID            string
+	StorageKey        string
+	VmstateStorageKey string
+	SessionID         string
+}
+
+// A pause agentd never saw answered: vmmd may have written a capture under
+// its key, so a consumed row lets the sweep delete it.
+func (q *Queries) RecordAbandonedSandboxSessionCapture(ctx context.Context, db DBTX, arg RecordAbandonedSandboxSessionCaptureParams) error {
+	_, err := db.Exec(ctx, recordAbandonedSandboxSessionCapture,
+		arg.CaptureID,
+		arg.NodeID,
+		arg.StorageKey,
+		arg.VmstateStorageKey,
+		arg.SessionID,
+	)
+	return err
+}
+
 const recordAgentRunBoot = `-- name: RecordAgentRunBoot :execrows
 UPDATE agent_runs SET boot_ms=$1::integer, updated_at=now()
  WHERE id=$2::text::uuid AND lease_token=$3::text AND state='running'
@@ -4534,21 +4573,28 @@ func (q *Queries) ReturnExpiredResumingSandboxSessions(ctx context.Context, db D
 const returnSandboxSessionResume = `-- name: ReturnSandboxSessionResume :execrows
 UPDATE sandbox_sessions SET state='paused',
   resume_requested_at=CASE WHEN $1::boolean THEN coalesce(resume_requested_at, now()) ELSE NULL END,
+  resume_not_before=CASE WHEN $1::boolean THEN now()+make_interval(secs=>$2::double precision) END,
   lease_token=NULL, lease_owner=NULL, lease_expires_at=NULL, updated_at=now()
- WHERE id=$2::text::uuid AND lease_token=$3::text AND state='resuming'
+ WHERE id=$3::text::uuid AND lease_token=$4::text AND state='resuming'
 `
 
 type ReturnSandboxSessionResumeParams struct {
-	Retry      bool
-	SessionID  string
-	LeaseToken string
+	Retry        bool
+	RetrySeconds float64
+	SessionID    string
+	LeaseToken   string
 }
 
 // A resume that never booted goes back to paused with its capture. retry
-// keeps the request, so the next claim tries again; a refused resume drops
-// it until apid asks again.
+// keeps the request, so a claim tries again after retry_seconds; a refused
+// resume drops it until apid asks again.
 func (q *Queries) ReturnSandboxSessionResume(ctx context.Context, db DBTX, arg ReturnSandboxSessionResumeParams) (int64, error) {
-	result, err := db.Exec(ctx, returnSandboxSessionResume, arg.Retry, arg.SessionID, arg.LeaseToken)
+	result, err := db.Exec(ctx, returnSandboxSessionResume,
+		arg.Retry,
+		arg.RetrySeconds,
+		arg.SessionID,
+		arg.LeaseToken,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -4779,11 +4825,12 @@ func (q *Queries) StartSandboxAction(ctx context.Context, db DBTX, arg StartSand
 
 const startSandboxSession = `-- name: StartSandboxSession :execrows
 UPDATE sandbox_sessions SET state=CASE WHEN state='paused' THEN 'resuming' ELSE 'starting' END,
-  resume_requested_at=CASE WHEN state='paused' THEN NULL ELSE resume_requested_at END,
+  resume_requested_at=CASE WHEN state='paused' THEN NULL ELSE resume_requested_at END, resume_not_before=NULL,
   lease_token=$1::text, lease_owner=$2::text,
   lease_expires_at=now()+make_interval(secs=>$3::double precision), updated_at=now()
  WHERE id=$4::text::uuid
- AND (state='queued' OR (state='paused' AND resume_requested_at IS NOT NULL AND close_requested_at IS NULL AND expires_at > now()))
+ AND (state='queued' OR (state='paused' AND resume_requested_at IS NOT NULL AND close_requested_at IS NULL AND expires_at > now()
+   AND (resume_not_before IS NULL OR resume_not_before <= now())))
 `
 
 type StartSandboxSessionParams struct {
@@ -4872,6 +4919,17 @@ func (q *Queries) SupersedeAgentDeliveries(ctx context.Context, db DBTX) ([]Supe
 		return nil, err
 	}
 	return items, nil
+}
+
+const touchSandboxSessionCaptures = `-- name: TouchSandboxSessionCaptures :exec
+UPDATE sandbox_session_captures SET checked_at=now() WHERE id = ANY($1::uuid[])
+`
+
+// A sweep found these captures not yet uploaded: the next sweeps take
+// others first.
+func (q *Queries) TouchSandboxSessionCaptures(ctx context.Context, db DBTX, ids []pgtype.UUID) error {
+	_, err := db.Exec(ctx, touchSandboxSessionCaptures, ids)
+	return err
 }
 
 const tryLockAccountAgents = `-- name: TryLockAccountAgents :one

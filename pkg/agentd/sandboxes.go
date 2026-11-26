@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	agentstore "github.com/onebox-faas/faas/pkg/state/agents"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 )
 
 // SandboxStore is the sandbox_sessions surface agentd writes;
@@ -56,7 +57,9 @@ type SandboxStore interface {
 	// Persistent sessions (ADR-20261122132055).
 	BeginSandboxPause(ctx context.Context, id, token string) error
 	CancelSandboxPause(ctx context.Context, id, token string, frozen bool) error
-	ReturnSandboxResume(ctx context.Context, id, token string, retry bool) error
+	ReturnSandboxResume(ctx context.Context, id, token string, retry bool, after time.Duration) error
+	TouchSandboxCaptures(ctx context.Context, ids []string) error
+	RecordAbandonedSandboxCapture(ctx context.Context, sessionID string, c agentstore.SandboxCapture) error
 	MarkSandboxPaused(ctx context.Context, id, token string, c agentstore.SandboxCapture, retention time.Duration) error
 	MarkSandboxResumed(ctx context.Context, id, token, nodeID, instanceID string, cold bool, run time.Duration) error
 	ConsumedSandboxCaptures(ctx context.Context, limit int) ([]agentstore.SandboxCapture, error)
@@ -82,14 +85,15 @@ type SandboxConfig struct {
 	// frozen; SandboxIdleFreezeSec unless set.
 	IdleFreeze time.Duration
 	// PauseTimeout bounds a pause vmmd never answers (a capture of the
-	// largest shape takes minutes, not this long); 10 minutes unless set.
+	// largest shape takes minutes, not this long); SandboxPauseTimeoutSec
+	// unless set.
 	// A capture that lands later is still taken for 3× as long: vmmd
 	// answers a pause before it reads the next frame, so no other pause is
 	// asked meanwhile.
 	PauseTimeout time.Duration
 	// PersistentOverrun is how long a persistent session keeps running past
 	// its run limit while its pauses are refused before it ends like an
-	// ephemeral one at its lifetime; 30 minutes unless set.
+	// ephemeral one at its lifetime; SandboxPersistentOverrunSec unless set.
 	PersistentOverrun time.Duration
 	// Workspaces is the artifact store persisted workspaces are kept in
 	// (ADR-20261027090013 step 7); the sweep deletes their archives from
@@ -108,10 +112,10 @@ func (c SandboxConfig) withDefaults() SandboxConfig {
 		c.IdleFreeze = api.SandboxIdleFreezeSec * time.Second
 	}
 	if c.PauseTimeout <= 0 {
-		c.PauseTimeout = 10 * time.Minute
+		c.PauseTimeout = time.Duration(api.SandboxPauseTimeoutSec) * time.Second
 	}
 	if c.PersistentOverrun <= 0 {
-		c.PersistentOverrun = 30 * time.Minute
+		c.PersistentOverrun = time.Duration(api.SandboxPersistentOverrunSec) * time.Second
 	}
 	return c
 }
@@ -148,11 +152,11 @@ const (
 	// deletes.
 	sandboxCaptureSweepBatch = 100
 	// sandboxCaptureUploadWindow is how long a capture's node may still be
-	// uploading it: vmmd gives up after 24 hours (sandboxPublishGiveUp) and
-	// then keeps its copy as an ordinary, evictable cache entry. A consumed
+	// uploading it: vmmd gives up after SandboxCaptureUploadSec and then
+	// keeps its copy as an ordinary, evictable cache entry. A consumed
 	// capture's objects are deleted only once the shared store holds all of
 	// them or this has passed, so no late upload outlives its row.
-	sandboxCaptureUploadWindow = 25 * time.Hour
+	sandboxCaptureUploadWindow = time.Duration(api.SandboxCaptureUploadSec)*time.Second + time.Hour
 )
 
 // Sandboxes drives one replica's sandbox sessions.
@@ -291,6 +295,9 @@ type session struct {
 	// lateAsked.
 	lateCaptureID string
 	lateAsked     time.Time
+	// abandoned are pauses agentd gave up on; the stream's end records them
+	// so the sweep deletes what vmmd may have written.
+	abandoned []string
 	// placedNode is where schedd placed the VM.
 	placedNode string
 }
@@ -326,7 +333,8 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 		s.finish(ctx, claim, &sessionEnd{agentstore.SandboxFailed, sandboxOutcomeWorkspace, "the snapshot the session starts from was deleted or expired"})
 		return
 	}
-	if claim.ImageMissing {
+	// A resume restores its image's drive from its capture.
+	if claim.ImageMissing && (!claim.Resuming || claim.Resume == nil) {
 		s.finish(ctx, claim, &sessionEnd{agentstore.SandboxFailed, sandboxOutcomeImage, "the image the session boots was deleted before it started"})
 		return
 	}
@@ -394,6 +402,7 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 	go s.timeSession(streamCtx, ss, send, closeVM)
 	recvErr := s.receive(streamCtx, stream, ss, send)
 	stop()
+	s.recordAbandoned(ctx, ss)
 	select {
 	case <-lost:
 		// Another replica may hold the session now; the sweeper decides.
@@ -649,6 +658,7 @@ func (s *Sandboxes) overran(ss *session, now time.Time) bool {
 	defer ss.mu.Unlock()
 	if ss.lateCaptureID != "" && now.Sub(ss.lateAsked) > 3*s.scfg.PauseTimeout {
 		s.log.Warn("agentd: gave up on a late sandbox capture", "sandbox_id", ss.claim.ID, "capture_id", ss.lateCaptureID)
+		ss.abandoned = append(ss.abandoned, ss.lateCaptureID)
 		ss.lateCaptureID = ""
 	}
 	return ss.ready && !ss.pausing && ss.lateCaptureID == "" && !now.Before(ss.lease.ExpiresAt.Add(s.scfg.PersistentOverrun))
@@ -756,6 +766,35 @@ func (s *Sandboxes) pauseRefused(ctx context.Context, ss *session, reason string
 	s.log.Info("agentd: sandbox pause refused", "sandbox_id", ss.claim.ID, "reason", reason)
 }
 
+// recordAbandoned records, once the stream has ended, every pause of the
+// session vmmd never answered to agentd: the one in flight, a late one
+// still awaited, and those given up. vmmd may have written their captures,
+// so each becomes a used capture the sweep deletes.
+func (s *Sandboxes) recordAbandoned(ctx context.Context, ss *session) {
+	ss.mu.Lock()
+	ids := ss.abandoned
+	if !ss.paused {
+		if ss.captureID != "" {
+			ids = append(ids, ss.captureID)
+		}
+		if ss.lateCaptureID != "" {
+			ids = append(ids, ss.lateCaptureID)
+		}
+	}
+	node := ss.placedNode
+	ss.mu.Unlock()
+	if node == "" {
+		node = "unknown"
+	}
+	for _, id := range ids {
+		mem := state.SnapshotCaptureMemKey(storagekey.SandboxSessionSnapshotNamespace(ss.claim.AccountID), "", id)
+		c := agentstore.SandboxCapture{ID: id, NodeID: node, StorageKey: mem, VMStateStorageKey: state.SnapshotVMStateKey(state.Snapshot{StorageKey: mem})}
+		if err := s.store.RecordAbandonedSandboxCapture(context.WithoutCancel(ctx), ss.claim.ID, c); err != nil {
+			s.log.Warn("agentd: record an abandoned sandbox capture failed", "sandbox_id", ss.claim.ID, "capture_id", id, "err", err)
+		}
+	}
+}
+
 // pauseTimedOut stops waiting for a pause vmmd has not answered: the VM runs
 // on, and the capture, should vmmd still finish it, is taken late.
 func (s *Sandboxes) pauseTimedOut(ctx context.Context, ss *session) {
@@ -810,6 +849,13 @@ func (s *Sandboxes) sweepCaptures(ctx context.Context) error {
 		return err
 	}
 	var errs []error
+	// waiting are captures still uploading; the next sweeps look past them.
+	var waiting []string
+	defer func() {
+		if err := s.store.TouchSandboxCaptures(ctx, waiting); err != nil {
+			s.log.Warn("agentd: touch sandbox captures failed", "err", err)
+		}
+	}()
 	for _, c := range captures {
 		snap := state.Snapshot{StorageKey: c.StorageKey}
 		if s.now().Sub(c.CreatedAt) < sandboxCaptureUploadWindow {
@@ -823,6 +869,7 @@ func (s *Sandboxes) sweepCaptures(ctx context.Context) error {
 				continue
 			}
 			if !held {
+				waiting = append(waiting, c.ID)
 				continue
 			}
 		}
@@ -858,6 +905,13 @@ func (s *Sandboxes) sweepDurability(ctx context.Context) error {
 		return err
 	}
 	var errs []error
+	// waiting are captures not uploaded yet; the next sweeps look past them.
+	var waiting []string
+	defer func() {
+		if err := s.store.TouchSandboxCaptures(ctx, waiting); err != nil {
+			s.log.Warn("agentd: touch sandbox captures failed", "err", err)
+		}
+	}()
 	for _, c := range captures {
 		snap := state.Snapshot{StorageKey: c.StorageKey}
 		keys := []string{c.StorageKey, c.VMStateStorageKey, state.SnapshotDriveKey(snap)}
@@ -870,6 +924,7 @@ func (s *Sandboxes) sweepDurability(ctx context.Context) error {
 			continue
 		}
 		if !held {
+			waiting = append(waiting, c.ID)
 			continue
 		}
 		if err := s.store.MarkSandboxCaptureRemote(ctx, c.SessionID, c.ID); err != nil {
@@ -931,7 +986,7 @@ func (s *Sandboxes) requeue(ctx context.Context, claim agentstore.SandboxClaim, 
 
 // returnResume puts a resume that never booted back to paused.
 func (s *Sandboxes) returnResume(ctx context.Context, claim agentstore.SandboxClaim, retry bool, cause error) {
-	if err := s.store.ReturnSandboxResume(context.WithoutCancel(ctx), claim.ID, claim.LeaseToken, retry); err != nil {
+	if err := s.store.ReturnSandboxResume(context.WithoutCancel(ctx), claim.ID, claim.LeaseToken, retry, time.Duration(api.SandboxResumeRetrySec)*time.Second); err != nil {
 		s.log.Warn("agentd: return sandbox resume failed", "sandbox_id", claim.ID, "err", err)
 		return
 	}

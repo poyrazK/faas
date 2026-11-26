@@ -427,7 +427,7 @@ const (
 	// capture, so keep the two in step.
 	sandboxPublishFirstRetry = 2 * time.Second
 	sandboxPublishMaxRetry   = 5 * time.Minute
-	sandboxPublishGiveUp     = 24 * time.Hour
+	sandboxPublishGiveUp     = time.Duration(api.SandboxCaptureUploadSec) * time.Second
 )
 
 // publishSandboxCapture uploads a pause capture in the background, retrying
@@ -467,19 +467,31 @@ func (s *Server) publishSandboxCapture(ctx context.Context, memKey string) {
 }
 
 // PublishPendingSandboxCaptures uploads the pause captures a restart left on
-// this node alone. vmmd runs it once at start, in the background.
+// this node alone, retrying as a pause's own upload does until none is left
+// or sandboxPublishGiveUp passes. vmmd runs it at start, in the background.
 func (s *Server) PublishPendingSandboxCaptures(ctx context.Context) {
 	pub, ok := s.vmm.(sandboxCapturePublisher)
 	if !ok {
 		return
 	}
-	n, err := pub.PublishPendingSandboxCaptures(ctx, sandboxPublishGiveUp)
-	if err != nil {
-		s.log.Warn("sandbox: pending capture uploads failed", "uploaded", n, "err", err)
-		return
-	}
-	if n > 0 {
-		s.log.Info("sandbox: uploaded pending capture objects", "objects", n)
+	ctx, cancel := context.WithTimeout(ctx, sandboxPublishGiveUp)
+	defer cancel()
+	wait := sandboxPublishFirstRetry
+	for {
+		n, err := pub.PublishPendingSandboxCaptures(ctx, sandboxPublishGiveUp)
+		if n > 0 {
+			s.log.Info("sandbox: uploaded pending capture objects", "objects", n)
+		}
+		if err == nil {
+			return
+		}
+		s.log.Warn("sandbox: pending capture uploads failed; retrying", "uploaded", n, "retry_in", wait, "err", err)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+		wait = min(2*wait, sandboxPublishMaxRetry)
 	}
 }
 

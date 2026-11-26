@@ -88,6 +88,10 @@ Proposed values; the owner confirms them with the prices (§8).
 | `SandboxPersistentRunMaxSec` (running before an automatic pause) | — / 86,400 / 259,200 / 604,800 |
 | `SandboxPausedRetentionDays` | — / 7 / 30 / 90 |
 | `SandboxResumeWaitSec` | 30 |
+| `SandboxPauseTimeoutSec` (a pause vmmd never answers; a capture landing up to 3× later is still taken) | 600 |
+| `SandboxPersistentOverrunSec` (running past the run limit while every pause is refused, then the session ends) | 1,800 |
+| `SandboxCaptureUploadSec` (a node uploads a capture this long, then leaves its copy to eviction) | 86,400 |
+| `SandboxResumeRetrySec` (a resume refused for want of its capture's node is claimed again after) | 30 |
 | `SandboxForkMax` (per request) | 0 / 1 / 10 / 100 |
 | `SandboxVolumeMaxGB` | — / 10 / 50 / 200 |
 | `SandboxVolumeBackupSec` | 600 |
@@ -188,7 +192,8 @@ Each step is one PR on the sandbox branches until the owner asks for PRs. Every 
 - **Node first.** The pause writes every capture object (mem, vmstate, drive, backing) to the node's snapshot cache only, each with a `.local` mark that pins it against cache eviction. A pause no longer waits for object storage.
 - **Upload.** vmmd then copies the capture to the cache's parent store in the background and drops the marks, retrying with backoff (2 s up to 5 min, giving up after 24 h); a vmmd restart publishes whatever is still marked. Its duration is the `vmmd` operation `SandboxCaptureUpload` (standing in for `sandbox_session_capture_upload_seconds`). A capture deleted while it uploads is deleted again from the parent.
 - **Durability.** agentd's sweep turns `durability: node` into `remote` once the shared store holds every object of the capture (the backing only when the pause reported one, `has_backing`). The capture's row is the record of it.
-- **Resume.** A `remote` capture resumes on its node when it has room and anywhere on the pool otherwise. A `node` capture resumes only on its node (`require_node`): schedd answers `capacity` when it is busy and agentd retries; a capture whose node is gone resumes cold.
+- **Resume.** A `remote` capture resumes on its node when it has room and anywhere on the pool otherwise. A `node` capture resumes only on its node (`require_node`): schedd answers `capacity` when it is busy, draining or restarting, and agentd retries after `SandboxResumeRetrySec`; only a capture whose node is gone resumes cold.
+- **Capture cleanup.** A capture is used once: by its resume, or when its session ends, from `resuming` too. A used capture's objects are deleted only once the shared store holds all of them or `SandboxCaptureUploadSec` (plus an hour) has passed, so no late upload outlives its row. A pause agentd never saw answered (its stream broke, or it gave up on a late capture) is recorded as a used capture under its key for the same sweep. An upload that gives up, or one a restart finds past that window, unpins the node's copy, which the cache may then evict. The sweeps take the least recently checked capture first.
 - **Local paths.** A node-first capture object is local-only until its upload, so the node cache resolves it to its own copy. A local-disk shared store names a path for every key, and restores before the upload used to stage from that missing path and cold-boot.
 - **Not yet:** captures sealed to the account (follows snapshot sealing 3d-3, still behind its flag); the cold resume from the volume (step 5, so it still starts from a fresh workspace).
 
