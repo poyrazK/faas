@@ -49,9 +49,9 @@ export type DatabaseSwitch = {
    */
   target_name: string;
   /**
-   * Writes after this moment stay only in the source database.
+   * The recovery timestamp for restore switches. Writes after this moment stay only in the source database.
    */
-  restore_point: string;
+  restore_point?: string;
   drain: DatabaseSwitchDrain;
   /**
    * Why a switch failed or was cancelled, or why it is aborting.

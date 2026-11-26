@@ -56,7 +56,7 @@ class DatabaseSwitch:
     target_database_id: UUID | Unset = UNSET
     """The restored copy, once its restore has started."""
     restore_point: datetime.datetime | Unset = UNSET
-    """Writes after this moment stay only in the source database."""
+    """The recovery timestamp for restore switches. Writes after this moment stay only in the source database."""
     failure_code: str | Unset = UNSET
     """Why a switch failed or was cancelled, or why it is aborting."""
     failure_detail: str | Unset = UNSET
