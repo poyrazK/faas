@@ -280,11 +280,11 @@ func (g *databaseGuest) prepareLiveMigration(ctx context.Context, src dbguest.Im
 	drained, err := g.queryIn(ctx, "postgres",
 		"SELECT coalesce(bool_and(pg_terminate_backend(pid, 3000)), true) FROM pg_catalog.pg_stat_activity WHERE backend_type='client backend' AND datname="+dbmigration.Literal(src.TargetDatabase))
 	if err != nil || drained != "t" {
-		g.releaseUncommittedFence()
+		g.releaseUncommittedFence(ctx)
 		return nil, "target_sessions_active"
 	}
 	if err := g.checkImportTargetEmpty(ctx, src.TargetDatabase, false); err != nil {
-		g.releaseUncommittedFence()
+		g.releaseUncommittedFence(ctx)
 		return nil, "target_not_empty"
 	}
 	m := &liveMigration{
@@ -293,14 +293,14 @@ func (g *databaseGuest) prepareLiveMigration(ctx context.Context, src dbguest.Im
 		Owner: src.Owner, Schema: dbmigration.SchemaDigest(tables),
 	}
 	if err := g.writeMigration(ctx, m, true); err != nil {
-		g.releaseUncommittedFence()
+		g.releaseUncommittedFence(ctx)
 		return nil, "migration_receipt_unavailable"
 	}
 	return m, ""
 }
 
-func (g *databaseGuest) releaseUncommittedFence() {
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+func (g *databaseGuest) releaseUncommittedFence(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 4*time.Second)
 	defer cancel()
 	found, err := g.queryIn(ctx, "postgres", migrationReceiptExists)
 	if err == nil && found == "f" {
@@ -338,8 +338,8 @@ func (g *databaseGuest) writeMigrationPassfile(src dbguest.ImportSource) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(f.Name())
-	defer f.Close()
+	defer func() { _ = os.Remove(f.Name()) }()
+	defer func() { _ = f.Close() }()
 	escaped := strings.NewReplacer("\\", "\\\\", ":", "\\:").Replace(src.Password)
 	if _, err := fmt.Fprintf(f, "*:5432:%s:%s:%s\n", src.Database, src.User, escaped); err != nil {
 		return err
@@ -527,7 +527,7 @@ func (g *databaseGuest) stopLiveMigration(ctx context.Context, m *liveMigration,
 	if err := g.writeMigrationPassfile(src); err != nil {
 		return g.migrationResponse(m)
 	}
-	defer os.Remove(migrationPassfile)
+	defer func() { _ = os.Remove(migrationPassfile) }()
 	slot, err := g.migrationSlot(ctx, m, src)
 	if err != nil || slot.Exists && (m.State == dbmigration.ResyncRequired ||
 		!dbmigration.IsContinuous(slot, src.Database, m.Floor, m.Confirmed, sub.Durable)) {

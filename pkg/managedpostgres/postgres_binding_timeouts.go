@@ -51,7 +51,7 @@ func (s *PostgresStore) saveBindingTimeouts(ctx context.Context, binding Binding
 	if err != nil {
 		return BindingTimeoutStatus{}, err
 	}
-	defer tx.Rollback(context.WithoutCancel(ctx))
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
 	q := sqlc.New()
 	ready, err := q.LockManagedPostgresBindingTimeoutEdit(ctx, tx, sqlc.LockManagedPostgresBindingTimeoutEditParams{
@@ -108,7 +108,7 @@ func (s *PostgresStore) applyBindingTimeouts(ctx context.Context, binding Bindin
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(context.WithoutCancel(ctx))
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
 	// Hold the binding row across the guest update so rotation, delete and
 	// newer desired policies cannot advance while this role is changing.

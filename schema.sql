@@ -25179,6 +25179,7 @@ DECLARE
     hop jsonb;
     live jsonb;
     alias text;
+    live_alias text;
     query text;
     hops integer;
     present boolean;
@@ -25203,15 +25204,16 @@ BEGIN
         IF query IS NULL OR probe->>'table' IS NULL THEN
             RAISE EXCEPTION 'clone inventory probe is invalid: %', probe USING ERRCODE = '22023';
         END IF;
+        live_alias := CASE WHEN (probe->>'live_on_owner')::boolean IS TRUE THEN alias ELSE 't0' END;
         FOR live IN SELECT value FROM jsonb_array_elements(COALESCE(probe->'live', '[]'::jsonb)) LOOP
             IF live->>'column' IS NULL THEN
                 RAISE EXCEPTION 'clone inventory live condition is invalid: %', live USING ERRCODE = '22023';
             ELSIF (live->>'null')::boolean IS TRUE THEN
-                query := query || format(' AND t0.%I IS NULL', live->>'column');
+                query := query || format(' AND %s.%I IS NULL', live_alias, live->>'column');
             ELSIF live->>'not' IS NOT NULL THEN
-                query := query || format(' AND t0.%I IS DISTINCT FROM %L', live->>'column', live->>'not');
+                query := query || format(' AND %s.%I IS DISTINCT FROM %L', live_alias, live->>'column', live->>'not');
             ELSIF (live->>'source_scope')::boolean IS TRUE THEN
-                query := query || format(' AND coalesce(nullif(t0.%I::text, ''''), ''default'') = ANY ($3)', live->>'column');
+                query := query || format(' AND coalesce(nullif(%s.%I::text, ''''), ''default'') = ANY ($3)', live_alias, live->>'column');
             ELSE
                 RAISE EXCEPTION 'clone inventory live condition is invalid: %', live USING ERRCODE = '22023';
             END IF;
@@ -49346,6 +49348,7 @@ CREATE TABLE public.managed_postgres_databases (
     recovery_region text DEFAULT ''::text NOT NULL,
     restore_from_recovery boolean DEFAULT false NOT NULL,
     data_api_inspection_revision bigint DEFAULT 1 NOT NULL,
+    restore_recovery_timeline bigint DEFAULT 0 NOT NULL,
     CONSTRAINT managed_postgres_clone_has_restore CHECK (((environment_clone_operation_id IS NULL) OR ((restore_source_database_id IS NOT NULL) AND (restore_source_resource_id IS NOT NULL) AND (restore_point_in_time IS NOT NULL)))),
     CONSTRAINT managed_postgres_clone_is_independent CHECK (((environment_clone_operation_id IS NULL) OR ((id <> restore_source_database_id) AND ((provider_resource_id IS NULL) OR (provider_resource_id <> restore_source_resource_id))))),
     CONSTRAINT managed_postgres_copy_fields_ck CHECK ((((restore_source_resource_id IS NULL) AND (restore_point_in_time IS NULL)) OR ((restore_source_database_id IS NOT NULL) AND (restore_source_resource_id IS NOT NULL) AND (restore_point_in_time IS NOT NULL)))),
@@ -73944,6 +73947,14 @@ ALTER TABLE ONLY public.managed_postgres_resizes
 
 ALTER TABLE ONLY public.managed_postgres_restore_proofs
     ADD CONSTRAINT managed_postgres_restore_proofs_pkey PRIMARY KEY (database_id);
+
+
+--
+-- Name: managed_postgres_databases managed_postgres_restore_recovery_timeline_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.managed_postgres_databases
+    ADD CONSTRAINT managed_postgres_restore_recovery_timeline_check CHECK (((restore_recovery_timeline = 0) OR (restore_from_recovery AND ((restore_recovery_timeline >= 1) AND (restore_recovery_timeline <= '4294967295'::bigint))))) NOT VALID;
 
 
 --

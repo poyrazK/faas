@@ -525,7 +525,7 @@ func (p *Provider) Restore(ctx context.Context, req managedpostgres.RestoreReque
 		if !ok {
 			return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnsupported
 		}
-		rt, err = scheduler.RestoreDatabaseFromRecovery(ctx, &scheddpb.RestoreDatabaseFromRecoveryRequest{Restore: request, RecoveryRegion: p.cfg.Region})
+		rt, err = scheduler.RestoreDatabaseFromRecovery(ctx, &scheddpb.RestoreDatabaseFromRecoveryRequest{Restore: request, RecoveryRegion: p.cfg.Region, RecoveryTimeline: req.RecoveryTimeline})
 	} else {
 		rt, err = p.scheduler.RestoreDatabase(ctx, request)
 	}

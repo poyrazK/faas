@@ -250,7 +250,7 @@ func (r *Runtime) adopt(ctx context.Context, vm *databaseVM, spareID string, req
 		BootedAt: vm.record.BootedAt}); err != nil {
 		return req.ID, err
 	}
-	r.restoreMigrationRelay(req.ID, vm)
+	r.restoreMigrationRelay(ctx, req.ID, vm)
 	if err := patchDrive(ctx, filepath.Join(vm.root, fcvm.APISockName), driveUpdate{
 		DriveID: DriveVolume, PathOnHost: spareJailDir + "/" + link, RateLimiter: req.VolumeRateLimiter,
 	}); err != nil {

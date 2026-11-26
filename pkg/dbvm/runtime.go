@@ -480,7 +480,7 @@ func (r *Runtime) Start(ctx context.Context, req BootRequest) (err error) {
 		PrimaryNode: req.PrimaryNode, PrimaryTarget: req.PrimaryTarget, LaunchVersion: launchVersion, BootedAt: time.Now().UTC()}); err != nil {
 		return err
 	}
-	r.restoreMigrationRelay(req.ID, vm)
+	r.restoreMigrationRelay(ctx, req.ID, vm)
 	waitCtx, cancel := context.WithTimeout(ctx, r.cfg.BootTimeout)
 	defer cancel()
 	alive, stop := context.WithCancel(waitCtx)

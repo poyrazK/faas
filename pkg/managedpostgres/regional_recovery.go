@@ -152,12 +152,13 @@ func (s *Service) prepareRegionalRestore(ctx context.Context, source Database, r
 	if err != nil {
 		return target, point, err
 	}
-	if result.Outcome != "covered" || !withinRecoveryWindow(source, now, point) {
+	if result.Outcome != "covered" || result.RecoveryTimeline == 0 || !withinRecoveryWindow(source, now, point) {
 		return target, point, fmt.Errorf("%w: no verified recovery point in %s (%s)", ErrConflict, backend.Region, result.Reason)
 	}
 	target = source
 	target.Spec = spec
 	target.Spec.Region = backend.Region
+	target.RestoreRecoveryTimeline = result.RecoveryTimeline
 	target.BackendID, target.BackendFingerprint = backend.ID, backend.Fingerprint
 	return target, point, nil
 }

@@ -65,7 +65,7 @@ func TestMigrationRelayPreservesItsBindingAcrossRuntimeRestart(t *testing.T) {
 	}
 	recovered := &databaseVM{root: root, lease: vm.lease}
 	next := &Runtime{cfg: cfg, vms: map[string]*databaseVM{id: recovered}}
-	next.restoreMigrationRelay(id, recovered)
+	next.restoreMigrationRelay(t.Context(), id, recovered)
 	if recovered.migrationLn == nil {
 		t.Fatal("migration socket was not recovered")
 	}

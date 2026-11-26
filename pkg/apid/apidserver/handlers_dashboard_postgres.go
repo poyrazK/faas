@@ -35,7 +35,7 @@ func (s *server) renderManagedPostgres(w http.ResponseWriter, r *http.Request, l
 		} else {
 			data.Databases = projectManagedPostgresDashboard(databases)
 			if s.nativePostgresOperationsEnabled(flagSubject(r, acct)) {
-				storage, err := s.managedPostgres.StorageStatuses(r.Context(), databases)
+				storage, err := s.managedPostgres.StorageStatuses(ctx, databases)
 				if err != nil {
 					log.Warn("dashboard renderManagedPostgres: read storage status", "account_id", acct.ID, "err", err)
 				}

@@ -368,6 +368,7 @@ type DeleteRequest struct {
 // receives its own provider resource identity and credential bindings.
 type RestoreRequest struct {
 	FromRecoveryArchive bool
+	RecoveryTimeline    uint32
 	ResourceID          string
 	SourceResourceID    string
 	Spec                Spec
@@ -1246,6 +1247,7 @@ type Database struct {
 	DataResourceID              string
 	RecoveryRegion              string
 	RestoreFromRecovery         bool
+	RestoreRecoveryTimeline     uint32
 	RestoreSourceDatabaseID     string
 	RestoreSourceResourceID     string
 	RestorePointInTime          time.Time

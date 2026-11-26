@@ -20,7 +20,7 @@ type migrationAdmission struct {
 
 func (a *migrationAdmission) startup(conn net.Conn) []byte {
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	defer conn.SetReadDeadline(time.Time{})
+	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
 	var header [4]byte
 	if _, err := io.ReadFull(conn, header[:]); err != nil {
 		return nil

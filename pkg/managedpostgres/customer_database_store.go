@@ -87,6 +87,7 @@ func databaseFromSQL(row sqlc.ManagedPostgresDatabase) Database {
 		AccountingRequired:      row.AccountingRequired,
 		RecoveryRegion:          row.RecoveryRegion,
 		RestoreFromRecovery:     row.RestoreFromRecovery,
+		RestoreRecoveryTimeline: uint32(row.RestoreRecoveryTimeline),
 		RestoreSourceDatabaseID: databaseUUID(row.RestoreSourceDatabaseID), RestoreSourceResourceID: row.RestoreSourceResourceID.String,
 		RestorePointInTime: row.RestorePointInTime.Time, EnvironmentCloneOperationID: databaseUUID(row.EnvironmentCloneOperationID),
 		State: State(row.State), DesiredGeneration: row.DesiredGeneration, ObservedGeneration: row.ObservedGeneration, LastErrorCode: row.LastErrorCode.String,

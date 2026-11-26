@@ -2,6 +2,7 @@ package maskedbranch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -48,7 +49,7 @@ func readTables(ctx context.Context, tx pgx.Tx, policy []api.ManagedPostgresMask
 				AND NOT EXISTS (SELECT FROM pg_catalog.pg_index i WHERE i.indrelid = c.oid AND i.indisunique
 					AND NOT EXISTS (SELECT FROM pg_catalog.pg_constraint k WHERE k.conindid = i.indexrelid AND k.conrelid = c.oid AND k.contype IN ('u','p')))
 		`, p.Name).Scan(&t.oid); err != nil {
-			if err == pgx.ErrNoRows {
+			if errors.Is(err, pgx.ErrNoRows) {
 				return nil, unsupported(t.name, "select a regular table without inheritance, triggers, row security or standalone unique indexes")
 			}
 			return nil, unavailable(ctx, "read source table")

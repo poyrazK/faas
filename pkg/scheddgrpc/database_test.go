@@ -325,6 +325,13 @@ func TestRestoreDatabaseValidatesAndMapsLineage(t *testing.T) {
 	if _, err := s.RestoreDatabase(ctx, &scheddpb.RestoreDatabaseRequest{Database: database, SourceDatabaseId: sourceID, PointInTime: timestamppb.New(target), Snapshot: "../x"}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("bad snapshot name = %v", err)
 	}
+	_, err = s.RestoreDatabaseFromRecovery(ctx, &scheddpb.RestoreDatabaseFromRecoveryRequest{
+		Restore:        &scheddpb.RestoreDatabaseRequest{Database: database, SourceDatabaseId: sourceID, PointInTime: timestamppb.New(target)},
+		RecoveryRegion: "us-west-2", RecoveryTimeline: 3,
+	})
+	if err != nil || f.restore.RecoveryRegion != "us-west-2" || f.restore.RecoveryTimeline != 3 {
+		t.Fatalf("regional restore = %v (%+v)", err, f.restore)
+	}
 }
 
 func TestDatabaseSnapshots(t *testing.T) {

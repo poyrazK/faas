@@ -60,6 +60,7 @@ func (s *server) preparePreviewDatabases(ctx context.Context, acct state.Account
 	if err != nil {
 		return err
 	}
+	manager.AllowMasked = s.capabilityEnabledFor(nativePostgresOperationsCapability, acct, parent)
 	return manager.Prepare(ctx, plan, parent, preview)
 }
 

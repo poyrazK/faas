@@ -172,7 +172,7 @@ func (s *Service) processAutoGrow(ctx context.Context, store *PostgresStore, c a
 	}
 	backend, err := s.registry.Resolve(d.BackendID, d.BackendFingerprint)
 	if err != nil || backend.Driver != "firecracker" {
-		return nil
+		return nil //nolint:nilerr // A missing backend skips this database and leaves other candidates eligible.
 	}
 	scope := WithOwnership(ctx, d.OrgID, c.subject)
 	allowance, err := s.autoGrowAllowance(scope, c.subject)

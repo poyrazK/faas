@@ -16944,8 +16944,8 @@ SELECT * FROM managed_postgres_databases WHERE id=$1 FOR KEY SHARE;
 -- name: InsertManagedPostgresLifecycleDatabase :one
 INSERT INTO managed_postgres_databases(id,account_id,name,region,postgres_major,service_class,availability,scale_to_zero,
     storage_limit_bytes,restore_window_seconds,backend_id,backend_fingerprint,restore_source_database_id,restore_source_resource_id,
-    restore_point_in_time,state,desired_generation,observed_generation,retry_at,created_at,updated_at,accounting_required,org_id,restore_from_recovery)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,false,sqlc.narg(org_id)::uuid,sqlc.arg(restore_from_recovery)) RETURNING *;
+    restore_point_in_time,state,desired_generation,observed_generation,retry_at,created_at,updated_at,accounting_required,org_id,restore_from_recovery,restore_recovery_timeline)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,false,sqlc.narg(org_id)::uuid,sqlc.arg(restore_from_recovery),sqlc.arg(restore_recovery_timeline)) RETURNING *;
 
 -- name: SetManagedPostgresRecoveryRegion :execrows
 UPDATE managed_postgres_databases

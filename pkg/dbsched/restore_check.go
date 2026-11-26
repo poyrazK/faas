@@ -37,7 +37,7 @@ func (s *Scheduler) CheckRestoreTarget(ctx context.Context, id string, target ti
 	}
 	pinned, err := s.restoreNode(ctx, vm)
 	if err != nil {
-		return unknown, nil
+		return unknown, nil //nolint:nilerr // A placement problem leaves archive coverage unverified.
 	}
 	nodes, err := s.store.Nodes(ctx)
 	if err != nil {

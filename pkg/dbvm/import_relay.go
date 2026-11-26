@@ -103,7 +103,7 @@ func (r *Runtime) ControlImport(ctx context.Context, id string, src ImportSource
 	if time.Now().Before(vm.importUncertainUntil) {
 		return dbguest.Response{}, ErrImportBusy
 	}
-	if err := r.serveImportRelay(vm); err != nil {
+	if err := r.serveImportRelay(ctx, vm); err != nil {
 		return dbguest.Response{}, err
 	}
 	vm.importSrc.Store(&src)
@@ -136,20 +136,20 @@ func existingImport(status dbguest.Response, req dbguest.Request) (dbguest.Respo
 }
 
 // serveImportRelay listens for source connections from this guest only.
-func (r *Runtime) serveImportRelay(vm *databaseVM) error {
+func (r *Runtime) serveImportRelay(ctx context.Context, vm *databaseVM) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if vm.importLn != nil {
 		return nil
 	}
-	ln, err := r.listenSourceRelay(vm, r.importUDSPath(vm), vm.importSrc.Load)
+	ln, err := r.listenSourceRelay(ctx, vm, r.importUDSPath(vm), vm.importSrc.Load)
 	if err == nil {
 		vm.importLn = ln
 	}
 	return err
 }
 
-func (r *Runtime) listenSourceRelay(vm *databaseVM, path string, source func() *ImportSource) (net.Listener, error) {
+func (r *Runtime) listenSourceRelay(ctx context.Context, vm *databaseVM, path string, source func() *ImportSource) (net.Listener, error) {
 	_ = os.Remove(path)
 	ln, err := net.Listen("unix", path)
 	if err != nil {
@@ -160,6 +160,8 @@ func (r *Runtime) listenSourceRelay(vm *databaseVM, path string, source func() *
 		_ = ln.Close()
 		return nil, fmt.Errorf("dbvm: import relay: %w", err)
 	}
+	// The listener follows the VM lifetime. Each connection gets its own dial deadline.
+	work := context.WithoutCancel(ctx)
 	slots := make(chan struct{}, importStreamsPerVM)
 	go func() {
 		for {
@@ -181,17 +183,17 @@ func (r *Runtime) listenSourceRelay(vm *databaseVM, path string, source func() *
 			}
 			go func() {
 				defer func() { <-slots }()
-				r.relayImport(conn, *src)
+				r.relayImport(work, conn, *src)
 			}()
 		}
 	}()
 	return ln, nil
 }
 
-func (r *Runtime) relayImport(guest net.Conn, src ImportSource) {
+func (r *Runtime) relayImport(ctx context.Context, guest net.Conn, src ImportSource) {
 	defer func() { _ = guest.Close() }()
-	ctx, cancel := context.WithTimeout(context.Background(), importDialTimeout)
-	remote, err := r.dialImportSource(ctx, src)
+	dialCtx, cancel := context.WithTimeout(ctx, importDialTimeout)
+	remote, err := r.dialImportSource(dialCtx, src)
 	cancel()
 	if err != nil {
 		return

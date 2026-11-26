@@ -13,7 +13,7 @@ import (
 func bindingTimeoutSQL(database, role string, policy managedpostgres.BindingTimeoutPolicy) (string, error) {
 	if !identifierPattern.MatchString(database) || !rolePattern.MatchString(role) ||
 		(!strings.HasPrefix(role, "gregale_rt_") && !strings.HasPrefix(role, "gregale_ro_")) ||
-		policy.Revision < 1 || policy.BindingTimeoutDefaults.Validate() != nil {
+		policy.Revision < 1 || policy.Validate() != nil {
 		return "", managedpostgres.ErrInvalid
 	}
 	return fmt.Sprintf(`BEGIN;

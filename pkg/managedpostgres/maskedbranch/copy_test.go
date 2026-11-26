@@ -1,6 +1,7 @@
 package maskedbranch
 
 import (
+	"context"
 	"errors"
 	"os"
 	"strings"
@@ -23,7 +24,7 @@ func TestMaskedCopyPreservesKeysAndRollsBackFailedValidation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { _ = c.Close(t.Context()) })
+		t.Cleanup(func() { _ = c.Close(context.WithoutCancel(ctx)) })
 		return c
 	}
 	admin, dest, rejected := open(sourceDSN), open(targetDSN), open(failureDSN)

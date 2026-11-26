@@ -341,7 +341,7 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	// request and the restore answered managed_postgres_conflict (production
 	// journey 2026-11-18: 13:52:38.3528715Z).
 	request.PointInTime = request.PointInTime.UTC().Truncate(time.Microsecond)
-	if request.AccountID == "" || request.SourceDatabaseID == "" || !ValidName(request.Name) || request.PointInTime.IsZero() && !(regional && request.Latest) || !validBranchTTL(request.TTL) ||
+	if request.AccountID == "" || request.SourceDatabaseID == "" || !ValidName(request.Name) || request.PointInTime.IsZero() && (!regional || !request.Latest) || !validBranchTTL(request.TTL) ||
 		request.WithinLimit && request.TTL > 0 {
 		return Database{}, false, ErrInvalid
 	}
@@ -430,6 +430,7 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	// A major upgrade preserves the older major's recovery archive. Persist
 	// that historical major before any target or quota slot is reserved.
 	if !regional {
+		target.RestoreRecoveryTimeline = 0
 		target.Spec, err = s.resolveRestoreSpec(ctx, source, request.PointInTime, request.SourceDefinition != nil)
 		if err != nil {
 			return Database{}, false, err
@@ -465,6 +466,7 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 		BackendID:               target.BackendID,
 		BackendFingerprint:      target.BackendFingerprint,
 		RestoreFromRecovery:     regional,
+		RestoreRecoveryTimeline: target.RestoreRecoveryTimeline,
 		RestoreSourceDatabaseID: source.ID,
 		RestoreSourceResourceID: databaseDataResource(source),
 		RestorePointInTime:      request.PointInTime.UTC(),
@@ -618,7 +620,7 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 		if database.RestoreSourceResourceID != "" {
 			request := RestoreRequest{ResourceID: database.ID, SourceResourceID: database.RestoreSourceResourceID,
 				Spec: database.Spec, PointInTime: database.RestorePointInTime, IdempotencyKey: "restore-" + database.ID,
-				FromRecoveryArchive: database.RestoreFromRecovery}
+				FromRecoveryArchive: database.RestoreFromRecovery, RecoveryTimeline: database.RestoreRecoveryTimeline}
 			if receipts, ok := backend.Provider.(RestoreCreationProvider); ok {
 				observed, err = s.reconcileRestoreCreation(providerContext, receipts, database, request)
 			} else {

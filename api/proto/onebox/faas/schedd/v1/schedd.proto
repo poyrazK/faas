@@ -1880,6 +1880,8 @@ message RestoreDatabaseRequest {
 message RestoreDatabaseFromRecoveryRequest {
   RestoreDatabaseRequest restore = 1;
   string recovery_region = 2;
+  // The timeline verified by admission. Zero supports older callers.
+  uint32 recovery_timeline = 3;
 }
 
 message CaptureDatabaseSnapshotRequest {

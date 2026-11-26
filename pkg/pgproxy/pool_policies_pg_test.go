@@ -61,7 +61,7 @@ func TestBindingTimeoutPolicyRecyclesPooledConnections(t *testing.T) {
 		if _, err = h.backend.Exec(ctx, "CREATE ROLE "+role+" LOGIN PASSWORD '"+v.String()+"'"); err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { _, _ = h.backend.Exec(context.Background(), "DROP ROLE IF EXISTS "+role) })
+		t.Cleanup(func() { _, _ = h.backend.Exec(context.WithoutCancel(ctx), "DROP ROLE IF EXISTS "+role) })
 		if err := verifiers.Put(ctx, database, role, v); err != nil {
 			t.Fatal(err)
 		}
@@ -69,7 +69,7 @@ func TestBindingTimeoutPolicyRecyclesPooledConnections(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { _ = conn.Close(context.Background()) })
+		t.Cleanup(func() { _ = conn.Close(context.WithoutCancel(ctx)) })
 		return conn, role
 	}
 	serving, servingRole := connect("gregale_rt_", "-pooler")

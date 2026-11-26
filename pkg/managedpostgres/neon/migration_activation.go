@@ -23,5 +23,5 @@ func (p *Provider) LogicalMigrationSource(ctx context.Context, resourceID string
 	if err != nil {
 		return managedpostgres.Endpoint{}, "", err
 	}
-	return managedpostgres.Endpoint{Role: managedpostgres.EndpointDirect, Host: source.endpoint.Host, Port: 5432}, p.databaseName, nil
+	return managedpostgres.Endpoint{Role: managedpostgres.EndpointDirect, Host: source.Host, Port: 5432}, p.databaseName, nil
 }

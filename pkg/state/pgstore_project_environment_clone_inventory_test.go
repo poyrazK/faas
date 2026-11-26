@@ -89,6 +89,40 @@ func TestPgCloneAdmissionInventoryNamesOnlyTablesTheSourceUses(t *testing.T) {
 		return inventory.Blockers
 	}
 
+	databaseID, bindingID := uuid.NewString(), uuid.NewString()
+	if _, err := pool.Exec(ctx, `INSERT INTO managed_postgres_databases
+		(id, account_id, name, region, postgres_major, service_class, availability, backend_id, backend_fingerprint,
+		 provider_resource_id, data_resource_id, restore_window_seconds, state, observed_generation)
+		VALUES ($1, $2, 'inventory-db', 'us-east-1', 16, 'development', 'single_zone', 'native', repeat('a', 64),
+		 $1::uuid::text, $1::uuid::text, 604800, 'ready', 1)`, databaseID, account.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO managed_postgres_bindings
+		(id, account_id, database_id, app_id, scope, environment_key, access)
+		VALUES ($1, $2, $3, $4, 'staging', 'DATABASE_URL', 'read_write')`, bindingID, account.ID, databaseID, app.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO native_postgres_binding_timeouts
+		(binding_id, statement_timeout_ms, lock_timeout_ms, idle_in_transaction_session_timeout_ms, revision)
+		VALUES ($1, 500, 0, 0, 1)`, bindingID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admit("staging-timeouts"); err != nil {
+		t.Fatalf("timeouts from staging blocked a production clone: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE managed_postgres_bindings SET scope = 'production' WHERE id = $1`, bindingID); err != nil {
+		t.Fatal(err)
+	}
+	timeoutBlocker := []state.ProjectEnvironmentCloneCoverageBlocker{{Table: "native_postgres_binding_timeouts", Code: state.CloneBlockerStrategyUnavailable}}
+	if got := blockers("live-timeouts"); !reflect.DeepEqual(got, timeoutBlocker) {
+		t.Fatalf("live timeout blockers = %+v, want %+v", got, timeoutBlocker)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE managed_postgres_bindings SET state = 'deleted', deleted_at = now() WHERE id = $1`, bindingID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admit("deleted-timeouts"); err != nil {
+		t.Fatalf("timeouts from a deleted binding blocked a production clone: %v", err)
+	}
 	if _, err := createWebhook(app.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +187,7 @@ func TestPgCloneAdmissionInventoryNamesOnlyTablesTheSourceUses(t *testing.T) {
 		t.Fatal(err)
 	}
 	qualified = nil
-	if n := operations(); n != 1 {
+	if n := operations(); n != 3 {
 		t.Fatalf("a refused admission must not create an operation; have %d", n)
 	}
 	// A bucket scoped to another environment is not the source's, and a

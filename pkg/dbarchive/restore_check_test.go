@@ -174,7 +174,13 @@ func TestArchiveRestoreCheck(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		putFile(t, store, dbA, history, "1\t0/4000000\tstandby promoted\n")
+		putHistory := func(name, content string) {
+			t.Helper()
+			if err := store.PutWAL(ctx, dbA, name, strings.NewReader(content), int64(len(content))); err != nil {
+				t.Fatal(err)
+			}
+		}
+		putHistory(history, "1\t0/4000000\tstandby promoted\n")
 		clear(wal)
 		writeCheckPageHeader(wal, 4*walSegmentBytes, walLongHeader, 0)
 		binary.LittleEndian.PutUint32(wal[4:8], 2)
@@ -185,7 +191,7 @@ func TestArchiveRestoreCheck(t *testing.T) {
 		if got := s.checkRestore(ctx, dbA, target, 16); got.Outcome != RestoreCovered || got.Timeline != 2 {
 			t.Fatalf("verified promoted timeline: %+v", got)
 		}
-		putFile(t, store, dbA, "00000003.history", "1\t0/5000000\tcompeting branch\n")
+		putHistory("00000003.history", "1\t0/5000000\tcompeting branch\n")
 		if got := s.checkRestore(ctx, dbA, target, 16); got.Outcome != RestoreUnverified || got.Reason != "timeline_unverified" {
 			t.Fatalf("competing branches were treated as one lineage: %+v", got)
 		}
@@ -351,7 +357,7 @@ func TestRestoreCheckWithPostgresWAL(t *testing.T) {
 }
 
 func withRestoreFixtureFile(path string, read func(io.Reader, int64) error) error {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:forbidigo // Read a local PostgreSQL fixture supplied to the test.
 	if err != nil {
 		return err
 	}

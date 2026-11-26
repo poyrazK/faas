@@ -107,7 +107,8 @@ func (s *Scheduler) restoreFromRecovery(ctx context.Context, req RestoreRequest)
 	}
 	match := func(vm VM) (VM, error) {
 		if !vm.RestoreFromRecovery || vm.RestoreSource != req.Source ||
-			!vm.RestoreTarget.Equal(req.Target) || vm.RecoveryRegion != req.RecoveryRegion {
+			!vm.RestoreTarget.Equal(req.Target) || vm.RecoveryRegion != req.RecoveryRegion ||
+			(req.RecoveryTimeline != 0 && vm.RestoreTimeline != req.RecoveryTimeline) {
 			return vm, ErrConflict
 		}
 		s.resumeRestore(ctx, vm)
@@ -128,8 +129,9 @@ func (s *Scheduler) restoreFromRecovery(ctx context.Context, req RestoreRequest)
 	}
 	covered := false
 	for _, node := range nodes {
-		check, err := s.probeRecoveryArchive(ctx, node, req.Source, req.Target, req.Major, false, 0)
-		if err != nil || check.Outcome != dbarchive.RestoreCovered || check.Timeline == 0 {
+		check, err := s.probeRecoveryArchive(ctx, node, req.Source, req.Target, req.Major, false, req.RecoveryTimeline)
+		if err != nil || check.Outcome != dbarchive.RestoreCovered || check.Timeline == 0 ||
+			(req.RecoveryTimeline != 0 && check.Timeline != req.RecoveryTimeline) {
 			continue
 		}
 		covered = true

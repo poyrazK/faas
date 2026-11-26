@@ -11222,6 +11222,7 @@
       "region",
       "restore_from_recovery",
       "restore_point_in_time",
+      "restore_recovery_timeline",
       "restore_slot_until",
       "restore_source_database_id",
       "restore_source_resource_id",
@@ -22165,6 +22166,7 @@
     "capabilities": [],
     "clone": {
       "owner": "app",
+      "live_on_owner": true,
       "via": [
         [
           "binding_id",

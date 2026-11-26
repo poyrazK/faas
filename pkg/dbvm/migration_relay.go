@@ -42,8 +42,8 @@ func (r *Runtime) saveMigrationBinding(id string, binding migrationBinding) erro
 	if err != nil {
 		return err
 	}
-	defer os.Remove(f.Name())
-	defer f.Close()
+	defer func() { _ = os.Remove(f.Name()) }()
+	defer func() { _ = f.Close() }()
 	if err := json.NewEncoder(f).Encode(binding); err != nil {
 		return err
 	}
@@ -56,11 +56,11 @@ func (r *Runtime) saveMigrationBinding(id string, binding migrationBinding) erro
 	if err := os.Rename(f.Name(), r.migrationBindingPath(id)); err != nil {
 		return err
 	}
-	d, err := os.Open(dir)
+	d, err := os.Open(dir) //nolint:forbidigo // The daemon fsyncs its own volume directory.
 	if err != nil {
 		return err
 	}
-	defer d.Close()
+	defer func() { _ = d.Close() }()
 	return d.Sync()
 }
 
@@ -72,12 +72,12 @@ func (r *Runtime) deleteMigrationBinding(id string) error {
 	return err
 }
 
-func (r *Runtime) serveMigrationRelay(vm *databaseVM, endpoint ImportSource) error {
+func (r *Runtime) serveMigrationRelay(ctx context.Context, vm *databaseVM, endpoint ImportSource) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if vm.migrationLn == nil {
 		path := r.udsPath(vm) + "_" + strconv.FormatUint(uint64(dbguest.MigrationPort), 10)
-		ln, err := r.listenSourceRelay(vm, path, vm.migrationSrc.Load)
+		ln, err := r.listenSourceRelay(ctx, vm, path, vm.migrationSrc.Load)
 		if err != nil {
 			return err
 		}
@@ -87,10 +87,10 @@ func (r *Runtime) serveMigrationRelay(vm *databaseVM, endpoint ImportSource) err
 	return nil
 }
 
-func (r *Runtime) restoreMigrationRelay(id string, vm *databaseVM) {
+func (r *Runtime) restoreMigrationRelay(ctx context.Context, id string, vm *databaseVM) {
 	binding, err := r.readMigrationBinding(id)
 	if err == nil {
-		err = r.serveMigrationRelay(vm, binding.Endpoint)
+		err = r.serveMigrationRelay(ctx, vm, binding.Endpoint)
 	}
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		r.logWarn("dbvm: restore migration relay", "database", id, "err", err)
@@ -149,7 +149,7 @@ func (r *Runtime) ControlMigration(ctx context.Context, id string, src ImportSou
 			return dbguest.Response{}, err
 		}
 	}
-	if err := r.serveMigrationRelay(vm, src); err != nil {
+	if err := r.serveMigrationRelay(ctx, vm, src); err != nil {
 		return dbguest.Response{}, err
 	}
 	req.MigrationPin = dbmigration.EndpointPin(id, src.Host, src.Port)

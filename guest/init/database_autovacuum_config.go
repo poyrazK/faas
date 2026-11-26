@@ -107,8 +107,8 @@ func (c autovacuumConfig) replace(path, content string) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(f.Name())
-	defer f.Close()
+	defer func() { _ = os.Remove(f.Name()) }()
+	defer func() { _ = f.Close() }()
 	if err := f.Chown(c.uid, c.gid); err != nil {
 		return err
 	}
@@ -124,10 +124,10 @@ func (c autovacuumConfig) replace(path, content string) error {
 	if err := os.Rename(f.Name(), path); err != nil {
 		return err
 	}
-	directory, err := os.Open(dir)
+	directory, err := os.Open(dir) //nolint:forbidigo // The guest fsyncs its own PostgreSQL config directory.
 	if err != nil {
 		return err
 	}
-	defer directory.Close()
+	defer func() { _ = directory.Close() }()
 	return directory.Sync()
 }

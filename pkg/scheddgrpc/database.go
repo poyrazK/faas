@@ -152,7 +152,7 @@ func (s *Server) RestoreDatabase(ctx context.Context, req *scheddpb.RestoreDatab
 	if err != nil {
 		return nil, err
 	}
-	return s.restoreDatabase(ctx, d, req, "")
+	return s.restoreDatabase(ctx, d, req, "", 0)
 }
 
 func (s *Server) RestoreDatabaseFromRecovery(ctx context.Context, req *scheddpb.RestoreDatabaseFromRecoveryRequest) (*scheddpb.DatabaseRuntime, error) {
@@ -163,15 +163,15 @@ func (s *Server) RestoreDatabaseFromRecovery(ctx context.Context, req *scheddpb.
 	if !dbsched.ValidRecoveryRegion(req.GetRecoveryRegion()) {
 		return nil, status.Error(codes.InvalidArgument, "invalid recovery region")
 	}
-	return s.restoreDatabase(ctx, d, req.GetRestore(), req.GetRecoveryRegion())
+	return s.restoreDatabase(ctx, d, req.GetRestore(), req.GetRecoveryRegion(), req.GetRecoveryTimeline())
 }
 
-func (s *Server) restoreDatabase(ctx context.Context, d DatabaseScheduler, req *scheddpb.RestoreDatabaseRequest, region string) (*scheddpb.DatabaseRuntime, error) {
+func (s *Server) restoreDatabase(ctx context.Context, d DatabaseScheduler, req *scheddpb.RestoreDatabaseRequest, region string, timeline uint32) (*scheddpb.DatabaseRuntime, error) {
 	if req.GetDatabase() == nil || req.GetPointInTime().CheckValid() != nil {
 		return nil, status.Error(codes.InvalidArgument, "restore needs a database and a point in time")
 	}
 	rr := dbsched.RestoreRequest{ProvisionRequest: provisionRequest(req.GetDatabase()), Source: req.GetSourceDatabaseId(), Target: req.GetPointInTime().AsTime(),
-		Snapshot: req.GetSnapshot(), RecoveryRegion: region}
+		Snapshot: req.GetSnapshot(), RecoveryRegion: region, RecoveryTimeline: timeline}
 	if err := rr.Validate(); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}

@@ -403,8 +403,8 @@ func lifecycleInsertParams(database Database, accountID, databaseID pgtype.UUID)
 		ScaleToZero: database.Spec.ScaleToZero, StorageLimitBytes: database.Spec.StorageLimitBytes, RestoreWindowSeconds: database.Spec.RestoreWindowSeconds,
 		BackendID: database.BackendID, BackendFingerprint: database.BackendFingerprint, RestoreSourceDatabaseID: databaseNullableUUID(database.RestoreSourceDatabaseID),
 		RestoreSourceResourceID: databaseNullableText(database.RestoreSourceResourceID), RestorePointInTime: databaseNullableTime(database.RestorePointInTime),
-		RestoreFromRecovery: database.RestoreFromRecovery,
-		State:               string(database.State), DesiredGeneration: database.DesiredGeneration, ObservedGeneration: database.ObservedGeneration,
+		RestoreFromRecovery: database.RestoreFromRecovery, RestoreRecoveryTimeline: int64(database.RestoreRecoveryTimeline),
+		State: string(database.State), DesiredGeneration: database.DesiredGeneration, ObservedGeneration: database.ObservedGeneration,
 		RetryAt: databaseNullableTime(database.RetryAt), CreatedAt: databaseNullableTime(database.CreatedAt), UpdatedAt: databaseNullableTime(database.UpdatedAt),
 	}
 }

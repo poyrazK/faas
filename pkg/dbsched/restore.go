@@ -30,6 +30,8 @@ const restorePoll = 500 * time.Millisecond
 type RestoreRequest struct {
 	ProvisionRequest
 	RecoveryRegion string
+	// RecoveryTimeline pins a regional restore to the archive lineage checked at admission.
+	RecoveryTimeline uint32
 	// Source is the database whose archive the new one recovers from.
 	Source string
 	// Target is the instant to recover the source to.
@@ -478,7 +480,7 @@ func (s *Scheduler) recordRecoveredTo(ctx context.Context, node Node, vm VM) err
 		return fmt.Errorf("%w: guest did not confirm restore timeline %d", ErrConflict, vm.RestoreTimeline)
 	}
 	if err != nil || resp.RecoveredTo.IsZero() {
-		return nil
+		return nil //nolint:nilerr // Recovery point reporting is best effort once the timeline is confirmed.
 	}
 	if err := s.store.RecordRestore(ctx, vm.DatabaseID, resp.RecoveredTo); err != nil {
 		s.log.Warn("dbsched: record restore point", "database_id", vm.DatabaseID, "err", err)

@@ -9630,6 +9630,7 @@ type ManagedPostgresDatabase struct {
 	RecoveryRegion              string
 	RestoreFromRecovery         bool
 	DataApiInspectionRevision   int64
+	RestoreRecoveryTimeline     int64
 }
 
 type ManagedPostgresDatabaseEndpoint struct {

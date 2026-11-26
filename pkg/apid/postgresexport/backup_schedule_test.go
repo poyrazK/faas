@@ -49,7 +49,7 @@ func (s *scheduledDumpSource) ExportDatabase(ctx context.Context, owner, id stri
 	var stderr bytes.Buffer
 	cmd.Stderr, cmd.Stdout = &stderr, dst
 	if err := cmd.Run(); err != nil {
-		return pgexport.Source{}, fmt.Errorf("pg_dump: %v: %s", err, stderr.String())
+		return pgexport.Source{}, fmt.Errorf("pg_dump: %w: %s", err, stderr.String())
 	}
 	metadata := pgexport.Source{CapturedAt: time.Now(), Extensions: []pgextension.Installed{}}
 	err := s.source.QueryRow(ctx, `SELECT current_setting('server_version_num')::int / 10000,

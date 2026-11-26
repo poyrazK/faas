@@ -34,7 +34,7 @@ func (g *databaseGuest) queueMigrationPreparation(ctx context.Context, m *liveMi
 		return r
 	}
 	*m = next
-	work, cancel := context.WithCancel(context.Background())
+	work, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	g.migrationPrepareCancel = cancel
 	go g.runMigrationPreparation(work, next, src)
 	return g.migrationResponse(m)
@@ -63,7 +63,7 @@ func (g *databaseGuest) runMigrationPreparation(ctx context.Context, snapshot li
 			p.Reason = "preparation_interrupted"
 		}
 	}
-	local, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	local, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	if !g.persistPreparation(local, m, p, m.PreparePending) {
 		// The last committed state remains retryable even if the final

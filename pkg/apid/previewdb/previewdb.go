@@ -36,8 +36,9 @@ type Bindings interface {
 
 // Manager sets up and releases preview databases.
 type Manager struct {
-	Databases Databases
-	Bindings  Bindings
+	Databases   Databases
+	Bindings    Bindings
+	AllowMasked bool
 }
 
 // ErrPending reports a preview database or binding that is still
@@ -98,9 +99,10 @@ func (m Manager) Prepare(ctx context.Context, plan api.Plan, parent, preview sta
 			Owner:             managedpostgres.PreviewOwner{SourceDatabaseID: source.ID, EnvironmentID: environmentID, PRNumber: prNumber},
 			StorageLimitBytes: StorageLimitBytes(plan),
 			Limit:             api.ManagedPostgresPreviewDatabasesMax(plan),
+			AllowMasked:       m.AllowMasked,
 		})
 		if errors.Is(err, managedpostgres.ErrPreviewsOff) {
-			continue // turned off since the list
+			continue // Previews are off or this mode is gated.
 		}
 		if err != nil {
 			return refusal(err)

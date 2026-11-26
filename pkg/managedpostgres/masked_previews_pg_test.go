@@ -71,6 +71,10 @@ func TestPostgresMaskedPreviewsPinPolicyAndBlockPublicationOnFailure(t *testing.
 	if updated, err := service.SetMaskedPreviews(ctx, accountID, source.ID, policy("email")); err != nil || updated.Previews != PreviewsMasked {
 		t.Fatalf("enable masked previews: %s, %v", updated.Previews, err)
 	}
+	if _, err := service.EnsurePreviewDatabase(ctx, request); !errors.Is(err, ErrPreviewsOff) {
+		t.Fatalf("reserved masked preview without its capability: %v", err)
+	}
+	request.AllowMasked = true
 	first, err := service.EnsurePreviewDatabase(ctx, request)
 	if err != nil || !first.IsMaskedBranch() || first.State != StateProvisioning || !first.ExpiresAt.IsZero() || len(provider.copies) != 0 {
 		t.Fatalf("masked reservation: %+v, %v", first, err)
@@ -80,11 +84,16 @@ func TestPostgresMaskedPreviewsPinPolicyAndBlockPublicationOnFailure(t *testing.
 			t.Fatal(err)
 		}
 	}
+	request.AllowMasked = false
 	if retry, err := service.EnsurePreviewDatabase(ctx, request); err != nil || retry.ID != first.ID {
 		t.Fatalf("retry allocated another database: %s, %v", retry.ID, err)
 	}
 	newPR := request
 	newPR.Owner.PRNumber++
+	if _, err := service.EnsurePreviewDatabase(ctx, newPR); !errors.Is(err, ErrPreviewsOff) {
+		t.Fatalf("reserved a new masked preview after capability revocation: %v", err)
+	}
+	newPR.AllowMasked = true
 	second, err := service.EnsurePreviewDatabase(ctx, newPR)
 	if err != nil {
 		t.Fatal(err)

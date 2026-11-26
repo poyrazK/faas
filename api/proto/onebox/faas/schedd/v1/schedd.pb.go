@@ -7804,8 +7804,10 @@ type RestoreDatabaseFromRecoveryRequest struct {
 	state          protoimpl.MessageState  `protogen:"open.v1"`
 	Restore        *RestoreDatabaseRequest `protobuf:"bytes,1,opt,name=restore,proto3" json:"restore,omitempty"`
 	RecoveryRegion string                  `protobuf:"bytes,2,opt,name=recovery_region,json=recoveryRegion,proto3" json:"recovery_region,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// The timeline verified by admission. Zero supports older callers.
+	RecoveryTimeline uint32 `protobuf:"varint,3,opt,name=recovery_timeline,json=recoveryTimeline,proto3" json:"recovery_timeline,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *RestoreDatabaseFromRecoveryRequest) Reset() {
@@ -7850,6 +7852,13 @@ func (x *RestoreDatabaseFromRecoveryRequest) GetRecoveryRegion() string {
 		return x.RecoveryRegion
 	}
 	return ""
+}
+
+func (x *RestoreDatabaseFromRecoveryRequest) GetRecoveryTimeline() uint32 {
+	if x != nil {
+		return x.RecoveryTimeline
+	}
+	return 0
 }
 
 type CaptureDatabaseSnapshotRequest struct {
@@ -10637,10 +10646,11 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\bdatabase\x18\x01 \x01(\v2/.onebox.faas.schedd.v1.ProvisionDatabaseRequestR\bdatabase\x12,\n" +
 	"\x12source_database_id\x18\x02 \x01(\tR\x10sourceDatabaseId\x12>\n" +
 	"\rpoint_in_time\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\vpointInTime\x12\x1a\n" +
-	"\bsnapshot\x18\x04 \x01(\tR\bsnapshot\"\x96\x01\n" +
+	"\bsnapshot\x18\x04 \x01(\tR\bsnapshot\"\xc3\x01\n" +
 	"\"RestoreDatabaseFromRecoveryRequest\x12G\n" +
 	"\arestore\x18\x01 \x01(\v2-.onebox.faas.schedd.v1.RestoreDatabaseRequestR\arestore\x12'\n" +
-	"\x0frecovery_region\x18\x02 \x01(\tR\x0erecoveryRegion\"\x95\x01\n" +
+	"\x0frecovery_region\x18\x02 \x01(\tR\x0erecoveryRegion\x12+\n" +
+	"\x11recovery_timeline\x18\x03 \x01(\rR\x10recoveryTimeline\"\x95\x01\n" +
 	"\x1eCaptureDatabaseSnapshotRequest\x12\x1f\n" +
 	"\vdatabase_id\x18\x01 \x01(\tR\n" +
 	"databaseId\x12\x12\n" +

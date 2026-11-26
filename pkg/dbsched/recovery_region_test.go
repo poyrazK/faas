@@ -110,22 +110,26 @@ func TestRegionalRestoreDoesNotContactTheSource(t *testing.T) {
 func TestRegionalRestoreRechecksReservedTimeline(t *testing.T) {
 	ctx := t.Context()
 	store := NewMemStore()
-	vmm := &recoveryFixtureVMM{fakeVMM: newFakeVMM(), answer: dbarchive.RestoreCovered, archiveTimeline: 2}
+	vmm := &recoveryFixtureVMM{fakeVMM: newFakeVMM(), answer: dbarchive.RestoreCovered, archiveTimeline: 3}
 	vmm.archive = true
 	seedNodes(t, store, Node{ID: "recovery", TargetURL: "unix:///recovery", Lifecycle: NodeActive,
 		RecoveryRegion: "eu-west-1", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 10 << 30})
 	s := New(store, vmm, Config{SharedArchive: true}, nil)
 	source := VM{DatabaseID: uuid.NewString(), Major: 17, VolumeBytes: 1 << 30}
 	req := restoreRequest(source, time.Now().Add(-time.Minute))
-	req.RecoveryRegion = "eu-west-1"
+	req.RecoveryRegion, req.RecoveryTimeline = "eu-west-1", 2
 	reserved, err := s.Restore(ctx, req)
 	if err != nil || reserved.RestoreTimeline != 2 {
 		t.Fatalf("reserve timeline: %+v, %v", reserved, err)
 	}
 	s.restoreWG.Wait()
 	after, err := store.Get(ctx, req.DatabaseID)
-	if err != nil || after.State != StateParked || !slices.Equal(vmm.checkedTimelines, []uint32{0, 2}) {
+	if err != nil || after.State != StateParked || !slices.Equal(vmm.checkedTimelines, []uint32{2, 2}) {
 		t.Fatalf("replay on reserved timeline: %+v, %v, checks %v", after, err, vmm.checkedTimelines)
+	}
+	req.RecoveryTimeline++
+	if _, err := s.Restore(ctx, req); !errors.Is(err, ErrConflict) {
+		t.Fatalf("retry with another timeline: %v", err)
 	}
 }
 

@@ -2,6 +2,7 @@ package apidserver
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -76,7 +77,7 @@ func (s *server) downloadManagedPostgresExport(w http.ResponseWriter, r *http.Re
 	if _, err := io.CopyN(w, reader, manifest.SizeBytes); err != nil {
 		panic(http.ErrAbortHandler)
 	}
-	if _, err := io.CopyN(io.Discard, reader, 1); err != io.EOF {
+	if _, err := io.CopyN(io.Discard, reader, 1); !errors.Is(err, io.EOF) {
 		panic(http.ErrAbortHandler)
 	}
 }

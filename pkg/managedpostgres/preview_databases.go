@@ -107,6 +107,7 @@ type PreviewDatabaseRequest struct {
 	Owner             PreviewOwner
 	StorageLimitBytes int64
 	Limit             int
+	AllowMasked       bool // Allows a new masked copy for this preview.
 }
 
 // SetPreviews changes what a database gives PR preview environments. It
@@ -167,6 +168,9 @@ func (s *Service) EnsurePreviewDatabase(ctx context.Context, request PreviewData
 	}
 	if !errors.Is(err, ErrNotFound) {
 		return Database{}, err
+	}
+	if source.Previews == PreviewsMasked && !request.AllowMasked {
+		return Database{}, ErrPreviewsOff
 	}
 	if !s.provisioningEnabled() || !s.provisioningAllowed(ctx, request.AccountID) {
 		return Database{}, ErrProvisioningClosed

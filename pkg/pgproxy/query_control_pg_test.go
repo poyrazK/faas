@@ -30,7 +30,7 @@ func TestOperatorQueryCancelFencesReusedPooledBackend(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { _ = conn.Close(context.Background()) })
+		t.Cleanup(func() { _ = conn.Close(context.WithoutCancel(ctx)) })
 		return conn
 	}
 	first := open(pooled, "orders-api")

@@ -35,7 +35,7 @@ func (p *testRecoveryBackend) CheckRecoveryTarget(_ context.Context, _ string, m
 	if !latest || p.proof == nil || (p.archiveMajor != 0 && major != p.archiveMajor) {
 		return api.ManagedPostgresRecoveryStatus{Region: "us-west-2", Outcome: "wal_gap", Reason: "missing_wal_segment"}, nil
 	}
-	return api.ManagedPostgresRecoveryStatus{Region: "us-west-2", Outcome: "covered", Reason: "archive_covered", RecoveryPoint: p.proof}, nil
+	return api.ManagedPostgresRecoveryStatus{Region: "us-west-2", Outcome: "covered", Reason: "archive_covered", RecoveryPoint: p.proof, RecoveryTimeline: 2}, nil
 }
 
 func TestRegionalRestoreUsesDestinationEvidenceAndFreezesThePoint(t *testing.T) {
@@ -89,7 +89,8 @@ func TestRegionalRestoreUsesDestinationEvidenceAndFreezesThePoint(t *testing.T) 
 	destination.proof = &point
 	target, err := service.Restore(ctx, request)
 	if err != nil || target.Spec.Region != request.RecoveryRegion || target.BackendID != "west" ||
-		!target.RestorePointInTime.Equal(point) || !destination.lastRestore.FromRecoveryArchive {
+		!target.RestorePointInTime.Equal(point) || !destination.lastRestore.FromRecoveryArchive ||
+		target.RestoreRecoveryTimeline != 2 || destination.lastRestore.RecoveryTimeline != 2 {
 		t.Fatalf("regional restore = %+v %v, dispatch = %+v", target, err, destination.lastRestore)
 	}
 	destination.proof = nil
@@ -109,7 +110,8 @@ func TestRegionalRestoreUsesDestinationEvidenceAndFreezesThePoint(t *testing.T) 
 		target, err := service.Restore(ctx, request)
 		if err != nil || target.Spec.PostgresMajor != 16 || target.Spec.Region != request.RecoveryRegion ||
 			!target.RestorePointInTime.Equal(point) || destination.checkedMajor != 16 ||
-			destination.lastRestore.Spec.PostgresMajor != 16 || !destination.lastRestore.FromRecoveryArchive {
+			destination.lastRestore.Spec.PostgresMajor != 16 || !destination.lastRestore.FromRecoveryArchive ||
+			target.RestoreRecoveryTimeline != 1 || destination.lastRestore.RecoveryTimeline != 1 {
 			t.Fatalf("historical restore = %+v %v, checked major = %d, dispatch = %+v", target, err, destination.checkedMajor, destination.lastRestore)
 		}
 		home.resolve = func(Spec) (Spec, error) { return Spec{}, ErrUnavailable }
@@ -139,7 +141,8 @@ func TestRegionalRestoreUsesDestinationEvidenceAndFreezesThePoint(t *testing.T) 
 		}
 		target, err := service.Restore(ctx, latest)
 		if err != nil || target.Spec.PostgresMajor != 16 || !target.RestorePointInTime.Equal(point) ||
-			destination.lastRestore.Spec.PostgresMajor != 16 || !destination.lastRestore.FromRecoveryArchive {
+			destination.lastRestore.Spec.PostgresMajor != 16 || !destination.lastRestore.FromRecoveryArchive ||
+			target.RestoreRecoveryTimeline != 2 || destination.lastRestore.RecoveryTimeline != 2 {
 			t.Fatalf("regional restore = %+v %v, dispatch = %+v", target, err, destination.lastRestore)
 		}
 
