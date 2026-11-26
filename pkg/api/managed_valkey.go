@@ -28,7 +28,8 @@ const (
 	ManagedValkeyImage = "docker.io/valkey/valkey@sha256:9971099af41c36e887aabdfe22b80c0fe45df949163dfc9cb434febc57cfc3fc"
 
 	// managedValkeyImage814 is valkey/valkey:8.1.4-alpine, which caches
-	// created before 8.1.12 keep until `gregale redis update` moves them. It
+	// created before 8.1.12 keep until their next handoff (`gregale redis
+	// update`, resize or eviction-policy change) moves them. It
 	// stays accepted until no cache deployment runs it (the query is in
 	// ADR-20261116192126).
 	managedValkeyImage814 = "docker.io/valkey/valkey@sha256:e706d1213aaba6896c162bb6a3a9e1894e1a435f28f8f856d14fab2e10aa098b"
@@ -65,9 +66,11 @@ const (
 )
 
 // managedValkeyImages are the images a cache deployment may run: the one
-// apid deploys and the others still running in existing caches, which keep
-// their image until `gregale redis update` moves them. Remove an image only
-// once no cache deployment runs it (the query is in ADR-20261116192126).
+// apid deploys and the others still running in existing caches. A cache
+// keeps its image until its next handoff: `gregale redis update`, a resize
+// and an eviction-policy change all deploy ManagedValkeyImage. Remove an
+// image only once no cache deployment runs it (the query is in
+// ADR-20261116192126).
 var managedValkeyImages = []string{ManagedValkeyImage, managedValkeyImage814}
 
 // ManagedValkeyImages returns a copy of the images a cache may run.
