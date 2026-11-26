@@ -12,8 +12,8 @@ import (
 )
 
 func (s *Service) ReviewProductStripeInvoiceReminder(ctx context.Context, acct state.Account, scope state.ProductBillingScope,
-	documentID string) (api.ProductStripeInvoiceReminderReview, *api.Problem) {
-	var empty api.ProductStripeInvoiceReminderReview
+	documentID string) (ProductStripeInvoiceReminderReview, *api.Problem) {
+	var empty ProductStripeInvoiceReminderReview
 	issue, problem := s.stripeIssueContext(ctx, acct, scope, documentID)
 	if problem != nil {
 		return empty, problem
@@ -49,8 +49,8 @@ func (i stripeInvoiceIssue) reminder(ctx context.Context) (state.ProductStripeIn
 	return attempt.Reminder, nil
 }
 
-func (s *Service) readStripeReminder(ctx context.Context, issue stripeInvoiceIssue) (api.ProductStripeInvoiceReminderReview, *api.Problem) {
-	var empty api.ProductStripeInvoiceReminderReview
+func (s *Service) readStripeReminder(ctx context.Context, issue stripeInvoiceIssue) (ProductStripeInvoiceReminderReview, *api.Problem) {
+	var empty ProductStripeInvoiceReminderReview
 	payments, ok := s.Host.Store().(state.StatementInvoicePaymentStore)
 	if !ok {
 		return empty, api.ErrInternal("statement invoice payment status is unavailable")
@@ -78,7 +78,7 @@ func (s *Service) readStripeReminder(ctx context.Context, issue stripeInvoiceIss
 	if !validStripeInvoiceRecipient(invoice.CustomerEmail) {
 		return empty, exportConflict("Add a valid recipient email in Stripe before sending a reminder.")
 	}
-	review := api.ProductStripeInvoiceReminderReview{
+	review := ProductStripeInvoiceReminderReview{
 		InvoiceID: invoice.ID, Recipient: invoice.CustomerEmail, Currency: issue.export.Currency,
 		AmountRemainingMinor: payment.AmountRemainingMinor, DueAt: invoice.DueDate.UTC(), Livemode: issue.export.Livemode,
 	}
@@ -86,7 +86,7 @@ func (s *Service) readStripeReminder(ctx context.Context, issue stripeInvoiceIss
 		Account, Export, Customer string
 		StripeAmountRemaining     int64
 		ConnectionTime            time.Time
-		Review                    api.ProductStripeInvoiceReminderReview
+		Review                    ProductStripeInvoiceReminderReview
 	}{issue.export.AccountID, issue.export.ID, invoice.Customer, invoice.AmountRemaining, issue.conn.updatedAt.UTC(), review})
 	return review, nil
 }

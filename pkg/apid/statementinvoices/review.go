@@ -119,8 +119,8 @@ func (s *Service) prepareStatementInvoice(ctx context.Context, acct state.Accoun
 	return statementInvoicePreparation{provider: p, connection: conn, proposed: proposed, terms: terms}, nil
 }
 
-func statementInvoiceReview(e state.StatementInvoiceExport, conn connection) api.ProductInvoiceExportReview {
-	review := api.ProductInvoiceExportReview{
+func statementInvoiceReview(e state.StatementInvoiceExport, conn connection) ProductInvoiceExportReview {
+	review := ProductInvoiceExportReview{
 		StatementID: e.StatementID, Provider: e.Provider, Customer: e.Customer, Currency: e.Currency,
 		AmountMinor: e.AmountMinor, Livemode: e.Livemode, Collection: e.Collection,
 		DaysUntilDue: e.DaysUntilDue, AutomaticTax: e.AutomaticTax,
@@ -128,7 +128,7 @@ func statementInvoiceReview(e state.StatementInvoiceExport, conn connection) api
 	raw, _ := json.Marshal(struct {
 		Account, SourceKind string
 		ConnectionUpdatedAt time.Time
-		Terms               api.ProductInvoiceExportReview
+		Terms               ProductInvoiceExportReview
 	}{e.AccountID, e.SourceKind, conn.updatedAt.UTC(), review})
 	digest := sha256.Sum256(raw)
 	review.Hash = hex.EncodeToString(digest[:])

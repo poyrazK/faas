@@ -17,11 +17,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/productcontrol"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type bulkPlanLostResponseStore struct {
-	*state.MemStore
-	loseFor string
+	MemStore *state.MemStore
+	loseFor  string
 }
 
 func (s *bulkPlanLostResponseStore) ApplyProductCustomerChange(ctx context.Context, account, app string, req api.ProductCustomerChangeRequest) (api.ProductCustomerChangeReceipt, error) {
@@ -35,7 +36,7 @@ func (s *bulkPlanLostResponseStore) ApplyProductCustomerChange(ctx context.Conte
 
 type bulkPlanTestHost struct {
 	customerTestHost
-	stores *bulkPlanLostResponseStore
+	stores *statetest.Mem
 }
 
 func (h bulkPlanTestHost) Store() state.Store { return h.stores }
@@ -91,7 +92,7 @@ func TestProductControlBulkPlanReview(t *testing.T) {
 		t.Fatal(err)
 	}
 	var view dashboard.ProductControlData
-	s := &Service{Host: bulkPlanTestHost{customerTestHost{store}, &bulkPlanLostResponseStore{MemStore: store, loseFor: alice.TenantID}},
+	s := &Service{Host: bulkPlanTestHost{customerTestHost{store}, statetest.NewMem(&bulkPlanLostResponseStore{MemStore: store, loseFor: alice.TenantID})},
 		OwnerSessions: func() *session.Manager { return manager },
 		OwnerRender: func(w http.ResponseWriter, _ *http.Request, _ state.Account, data dashboard.ProductControlData) {
 			view = data

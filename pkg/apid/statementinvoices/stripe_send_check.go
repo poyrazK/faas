@@ -15,8 +15,8 @@ import (
 // CheckProductStripeInvoiceSend resolves an expired send using Stripe's
 // event history. The provider operations in this path are read-only.
 func (s *Service) CheckProductStripeInvoiceSend(parent context.Context, acct state.Account, scope state.ProductBillingScope,
-	documentID string) (api.ProductStripeInvoiceSendCheck, *api.Problem) {
-	var empty api.ProductStripeInvoiceSendCheck
+	documentID string) (ProductStripeInvoiceSendCheck, *api.Problem) {
+	var empty ProductStripeInvoiceSendCheck
 	issue, problem := s.stripeIssueContext(parent, acct, scope, documentID)
 	if problem != nil {
 		return empty, problem
@@ -40,15 +40,15 @@ func (s *Service) CheckProductStripeInvoiceSend(parent context.Context, acct sta
 	return s.checkStripeSend(ctx, issue, token)
 }
 
-func (s *Service) checkStripeSend(ctx context.Context, issue stripeInvoiceIssue, token string) (api.ProductStripeInvoiceSendCheck, *api.Problem) {
-	var empty api.ProductStripeInvoiceSendCheck
+func (s *Service) checkStripeSend(ctx context.Context, issue stripeInvoiceIssue, token string) (ProductStripeInvoiceSendCheck, *api.Problem) {
+	var empty ProductStripeInvoiceSendCheck
 	attempt, problem := issue.attempt(ctx)
 	if problem != nil {
 		return empty, problem
 	}
 	invoiceID := issue.export.ProviderInvoiceID
 	if attempt.Stage == state.StripeInvoiceSent {
-		return api.ProductStripeInvoiceSendCheck{InvoiceID: invoiceID, EventID: attempt.SendEventID, EventAt: attempt.SendEventAt}, nil
+		return ProductStripeInvoiceSendCheck{InvoiceID: invoiceID, EventID: attempt.SendEventID, EventAt: attempt.SendEventAt}, nil
 	}
 	now := s.now()
 	retryBefore := now.Add(-api.ProductStripeInvoiceSendRetryWindow)
@@ -87,5 +87,5 @@ func (s *Service) checkStripeSend(ctx context.Context, issue stripeInvoiceIssue,
 	if payments, ok := s.Host.Store().(state.StatementInvoicePaymentStore); ok {
 		s.refreshStripeInvoicePayment(ctx, payments, issue)
 	}
-	return api.ProductStripeInvoiceSendCheck{InvoiceID: invoiceID, EventID: event.ID, EventAt: event.CreatedAt}, nil
+	return ProductStripeInvoiceSendCheck{InvoiceID: invoiceID, EventID: event.ID, EventAt: event.CreatedAt}, nil
 }

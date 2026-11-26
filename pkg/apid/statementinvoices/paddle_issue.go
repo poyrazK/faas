@@ -72,8 +72,8 @@ func (i paddleInvoiceIssue) transaction(ctx context.Context) (paddleinvoice.Tran
 }
 
 func (s *Service) ReviewProductPaddleInvoiceIssue(ctx context.Context, acct state.Account, scope state.ProductBillingScope,
-	documentID string) (api.ProductPaddleInvoiceIssueReview, *api.Problem) {
-	var empty api.ProductPaddleInvoiceIssueReview
+	documentID string) (ProductPaddleInvoiceIssueReview, *api.Problem) {
+	var empty ProductPaddleInvoiceIssueReview
 	payments, ok := s.Host.Store().(state.StatementInvoicePaymentStore)
 	if !ok {
 		return empty, api.ErrInternal("statement invoice payment status is unavailable")
@@ -98,9 +98,9 @@ func (s *Service) ReviewProductPaddleInvoiceIssue(ctx context.Context, acct stat
 }
 
 func (i paddleInvoiceIssue) review(ctx context.Context, scope state.ProductBillingScope, txn paddleinvoice.TransactionState) (
-	api.ProductPaddleInvoiceIssueReview, paddleinvoice.Address, paddleinvoice.Business, *api.Problem,
+	ProductPaddleInvoiceIssueReview, paddleinvoice.Address, paddleinvoice.Business, *api.Problem,
 ) {
-	var review api.ProductPaddleInvoiceIssueReview
+	var review ProductPaddleInvoiceIssueReview
 	if txn.Status != "draft" && txn.Status != "ready" {
 		return review, paddleinvoice.Address{}, paddleinvoice.Business{}, exportConflict("Only a Paddle draft or ready transaction can be issued.")
 	}
@@ -111,7 +111,7 @@ func (i paddleInvoiceIssue) review(ctx context.Context, scope state.ProductBilli
 	if problem != nil {
 		return review, address, business, problem
 	}
-	review = api.ProductPaddleInvoiceIssueReview{
+	review = ProductPaddleInvoiceIssueReview{
 		InvoiceID: txn.ID, Customer: txn.CustomerID, Currency: txn.Currency, AmountMinor: txn.GrandTotal,
 		PaymentTermsInterval: txn.PaymentTermsInterval, PaymentTermsFrequency: txn.PaymentTermsFrequency, Livemode: i.export.Livemode,
 	}
@@ -121,7 +121,7 @@ func (i paddleInvoiceIssue) review(ctx context.Context, scope state.ProductBilli
 		TransactionUpdatedAt, ConnectionTime time.Time
 		Address                              paddleinvoice.Address
 		Business                             paddleinvoice.Business
-		Terms                                api.ProductPaddleInvoiceIssueReview
+		Terms                                ProductPaddleInvoiceIssueReview
 	}{scope, i.export.ID, txn.Status, txn.UpdatedAt.UTC(), i.conn.updatedAt.UTC(), address, business, review})
 	digest := sha256.Sum256(raw)
 	review.Hash = hex.EncodeToString(digest[:])

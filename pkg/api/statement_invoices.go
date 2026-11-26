@@ -67,45 +67,6 @@ type CreateStatementInvoiceRequest struct {
 	Customer string `json:"customer,omitempty"`
 }
 
-// ProductInvoiceExportReview contains the terms shown before an owner confirms an export.
-type ProductInvoiceExportReview struct {
-	StatementID, Provider, Customer, Currency, Collection string
-	AmountMinor                                           int64
-	Livemode, AutomaticTax                                bool
-	DaysUntilDue                                          int
-	Hash                                                  string
-}
-
-// ProductPaddleInvoiceIssueReview describes the existing draft to issue.
-type ProductPaddleInvoiceIssueReview struct {
-	InvoiceID, Customer, Currency, PaymentTermsInterval, Hash string
-	AmountMinor                                               int64
-	PaymentTermsFrequency                                     int
-	Livemode                                                  bool
-}
-
-// ProductStripeInvoiceSendReview is the approved recipient and terms of an existing Stripe invoice.
-type ProductStripeInvoiceSendReview struct {
-	InvoiceID, Recipient, Currency, Hash string
-	TotalMinor, AmountDueMinor           int64
-	DueAt                                time.Time
-	Livemode                             bool
-}
-
-// ProductStripeInvoiceSendCheck is the confirmed send and optional Stripe event.
-type ProductStripeInvoiceSendCheck struct {
-	InvoiceID, EventID string
-	EventAt            time.Time
-}
-
-// ProductStripeInvoiceReminderReview describes a reminder for an overdue invoice.
-type ProductStripeInvoiceReminderReview struct {
-	InvoiceID, Recipient, Currency, Hash string
-	AmountRemainingMinor                 int64
-	DueAt                                time.Time
-	Livemode                             bool
-}
-
 // StatementInvoiceExportResponse is one statement's invoice in the account's
 // billing provider. AmountMinor is in the currency's minor unit (cents).
 type StatementInvoiceExportResponse struct {

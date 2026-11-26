@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
+	"github.com/onebox-faas/faas/pkg/apid/statementinvoices"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/productcontrol"
@@ -46,15 +47,15 @@ type Service struct {
 	// ExportInvoice and InvoiceExport reach statement invoice exports
 	// (ADR-20261018212918): document, provider and customer, or document.
 	ExportInvoice               func(context.Context, state.Account, state.ProductBillingScope, string, string, string) (api.StatementInvoiceExportResponse, *api.Problem)
-	ReviewInvoice               func(context.Context, state.Account, state.ProductBillingScope, string, string, string) (api.ProductInvoiceExportReview, *api.Problem)
+	ReviewInvoice               func(context.Context, state.Account, state.ProductBillingScope, string, string, string) (statementinvoices.ProductInvoiceExportReview, *api.Problem)
 	ConfirmInvoice              func(context.Context, state.Account, state.ProductBillingScope, string, string, string, string) (api.StatementInvoiceExportResponse, *api.Problem)
 	InvoiceExport               func(context.Context, state.Account, state.ProductBillingScope, string) (api.StatementInvoiceExportResponse, *api.Problem)
-	ReviewInvoiceIssue          func(context.Context, state.Account, state.ProductBillingScope, string) (api.ProductPaddleInvoiceIssueReview, *api.Problem)
-	ReviewStripeInvoiceReminder func(context.Context, state.Account, state.ProductBillingScope, string) (api.ProductStripeInvoiceReminderReview, *api.Problem)
+	ReviewInvoiceIssue          func(context.Context, state.Account, state.ProductBillingScope, string) (statementinvoices.ProductPaddleInvoiceIssueReview, *api.Problem)
+	ReviewStripeInvoiceReminder func(context.Context, state.Account, state.ProductBillingScope, string) (statementinvoices.ProductStripeInvoiceReminderReview, *api.Problem)
 	SendStripeInvoiceReminder   func(context.Context, state.Account, state.ProductBillingScope, string, string) (string, *api.Problem)
-	ReviewStripeDraftSend       func(context.Context, state.Account, state.ProductBillingScope, string) (api.ProductStripeInvoiceSendReview, *api.Problem)
-	ReviewStripeInvoiceSend     func(context.Context, state.Account, state.ProductBillingScope, string) (api.ProductStripeInvoiceSendReview, *api.Problem)
-	CheckStripeInvoiceSend      func(context.Context, state.Account, state.ProductBillingScope, string) (api.ProductStripeInvoiceSendCheck, *api.Problem)
+	ReviewStripeDraftSend       func(context.Context, state.Account, state.ProductBillingScope, string) (statementinvoices.ProductStripeInvoiceSendReview, *api.Problem)
+	ReviewStripeInvoiceSend     func(context.Context, state.Account, state.ProductBillingScope, string) (statementinvoices.ProductStripeInvoiceSendReview, *api.Problem)
+	CheckStripeInvoiceSend      func(context.Context, state.Account, state.ProductBillingScope, string) (statementinvoices.ProductStripeInvoiceSendCheck, *api.Problem)
 	SendStripeInvoice           func(context.Context, state.Account, state.ProductBillingScope, string, string, time.Time) (api.StatementInvoiceExportResponse, *api.Problem)
 	IssueInvoice                func(context.Context, state.Account, state.ProductBillingScope, string, string) (api.StatementInvoiceExportResponse, *api.Problem)
 	RefreshInvoicePayment       func(context.Context, state.Account, state.ProductBillingScope, string) (api.StatementInvoiceExportResponse, *api.Problem)

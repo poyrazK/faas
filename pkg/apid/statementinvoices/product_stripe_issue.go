@@ -87,18 +87,18 @@ func (i stripeInvoiceIssue) attempt(ctx context.Context) (state.ProductStripeInv
 }
 
 func (s *Service) ReviewProductStripeInvoiceSend(ctx context.Context, acct state.Account, scope state.ProductBillingScope,
-	documentID string) (api.ProductStripeInvoiceSendReview, *api.Problem) {
+	documentID string) (ProductStripeInvoiceSendReview, *api.Problem) {
 	return s.reviewProductStripeInvoiceSend(ctx, acct, scope, documentID, false)
 }
 
 func (s *Service) ReviewProductStripeDraftSend(ctx context.Context, acct state.Account, scope state.ProductBillingScope,
-	documentID string) (api.ProductStripeInvoiceSendReview, *api.Problem) {
+	documentID string) (ProductStripeInvoiceSendReview, *api.Problem) {
 	return s.reviewProductStripeInvoiceSend(ctx, acct, scope, documentID, true)
 }
 
 func (s *Service) reviewProductStripeInvoiceSend(ctx context.Context, acct state.Account, scope state.ProductBillingScope,
-	documentID string, draftOnly bool) (api.ProductStripeInvoiceSendReview, *api.Problem) {
-	var empty api.ProductStripeInvoiceSendReview
+	documentID string, draftOnly bool) (ProductStripeInvoiceSendReview, *api.Problem) {
+	var empty ProductStripeInvoiceSendReview
 	issue, problem := s.stripeIssueContext(ctx, acct, scope, documentID)
 	if problem != nil {
 		return empty, problem
@@ -134,9 +134,9 @@ func stripeInvoiceDueAt(invoice stripeinvoice.InvoiceState, days int, now time.T
 }
 
 func (i stripeInvoiceIssue) review(invoice stripeinvoice.InvoiceState, attempt state.ProductStripeInvoiceSend, dueAt, now time.Time) (
-	api.ProductStripeInvoiceSendReview, string, *api.Problem,
+	ProductStripeInvoiceSendReview, string, *api.Problem,
 ) {
-	var empty api.ProductStripeInvoiceSendReview
+	var empty ProductStripeInvoiceSendReview
 	if attempt.Stage == state.StripeInvoiceSending && !now.Before(attempt.SendStartedAt.Add(api.ProductStripeInvoiceSendRetryWindow)) {
 		return empty, "", exportConflict("The safe retry window has ended. Use Check Stripe send in Payment follow-up.")
 	}
@@ -152,7 +152,7 @@ func (i stripeInvoiceIssue) review(invoice stripeinvoice.InvoiceState, attempt s
 		!invoice.HasTotals || invoice.Total < 0 || invoice.AmountDue <= 0 {
 		return empty, "", exportConflict("The Stripe invoice needs a recipient email and a positive amount due before it can be sent.")
 	}
-	review := api.ProductStripeInvoiceSendReview{
+	review := ProductStripeInvoiceSendReview{
 		InvoiceID: invoice.ID, Recipient: invoice.CustomerEmail, Currency: i.export.Currency, Livemode: i.export.Livemode,
 		TotalMinor: unit.ToISOMinor(invoice.Total, iso), AmountDueMinor: unit.ToISOMinor(invoice.AmountDue, iso), DueAt: dueAt.UTC(),
 	}
@@ -160,7 +160,7 @@ func (i stripeInvoiceIssue) review(invoice stripeinvoice.InvoiceState, attempt s
 		Account, Export, Customer string
 		Total, AmountDue          int64
 		ConnectionTime            time.Time
-		Review                    api.ProductStripeInvoiceSendReview
+		Review                    ProductStripeInvoiceSendReview
 	}{i.export.AccountID, i.export.ID, invoice.Customer, invoice.Total, invoice.AmountDue, i.conn.updatedAt.UTC(), review})
 	review.Hash = stripeIssueHash(struct {
 		Terms, Collection string

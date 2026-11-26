@@ -12,6 +12,45 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// ProductInvoiceExportReview contains the terms shown before an owner confirms an export.
+type ProductInvoiceExportReview struct {
+	StatementID, Provider, Customer, Currency, Collection string
+	AmountMinor                                           int64
+	Livemode, AutomaticTax                                bool
+	DaysUntilDue                                          int
+	Hash                                                  string
+}
+
+// ProductPaddleInvoiceIssueReview describes the existing draft to issue.
+type ProductPaddleInvoiceIssueReview struct {
+	InvoiceID, Customer, Currency, PaymentTermsInterval, Hash string
+	AmountMinor                                               int64
+	PaymentTermsFrequency                                     int
+	Livemode                                                  bool
+}
+
+// ProductStripeInvoiceSendReview is the approved recipient and terms of an existing Stripe invoice.
+type ProductStripeInvoiceSendReview struct {
+	InvoiceID, Recipient, Currency, Hash string
+	TotalMinor, AmountDueMinor           int64
+	DueAt                                time.Time
+	Livemode                             bool
+}
+
+// ProductStripeInvoiceSendCheck is the confirmed send and optional Stripe event.
+type ProductStripeInvoiceSendCheck struct {
+	InvoiceID, EventID string
+	EventAt            time.Time
+}
+
+// ProductStripeInvoiceReminderReview describes a reminder for an overdue invoice.
+type ProductStripeInvoiceReminderReview struct {
+	InvoiceID, Recipient, Currency, Hash string
+	AmountRemainingMinor                 int64
+	DueAt                                time.Time
+	Livemode                             bool
+}
+
 // productStores are the stores a Product Control statement export reads.
 type productStores struct {
 	exports   state.StatementInvoiceExportStore
@@ -85,21 +124,21 @@ func (s *Service) exportProductStatement(ctx context.Context, acct state.Account
 
 // ReviewProductStatementExport resolves the exact target and collection settings
 // without opening an export attempt or calling the provider.
-func (s *Service) ReviewProductStatementExport(ctx context.Context, acct state.Account, scope state.ProductBillingScope, documentID, provider, customer string) (api.ProductInvoiceExportReview, *api.Problem) {
+func (s *Service) ReviewProductStatementExport(ctx context.Context, acct state.Account, scope state.ProductBillingScope, documentID, provider, customer string) (ProductInvoiceExportReview, *api.Problem) {
 	stores, problem := s.productStores()
 	if problem != nil {
-		return api.ProductInvoiceExportReview{}, problem
+		return ProductInvoiceExportReview{}, problem
 	}
 	src, problem := productStatementInvoiceSource(ctx, acct, stores, scope, documentID, customer)
 	if problem != nil {
-		return api.ProductInvoiceExportReview{}, problem
+		return ProductInvoiceExportReview{}, problem
 	}
 	prepared, problem := s.prepareStatementInvoice(ctx, acct, stores.exports, src, provider)
 	if problem != nil {
-		return api.ProductInvoiceExportReview{}, problem
+		return ProductInvoiceExportReview{}, problem
 	}
 	if prepared.terms.Status == state.StatementInvoiceExportCompleted {
-		return api.ProductInvoiceExportReview{}, exportConflict("this statement already has a completed invoice export")
+		return ProductInvoiceExportReview{}, exportConflict("this statement already has a completed invoice export")
 	}
 	return statementInvoiceReview(prepared.terms, prepared.connection), nil
 }
