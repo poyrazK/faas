@@ -47,7 +47,7 @@ func (h *Handler) enforceIsolatedSandboxKey(w http.ResponseWriter, r *http.Reque
 
 // Only call after proxying to an actual deployment. Platform health,
 // readiness probes and failed guest responses are not partner successes.
-func (h *Handler) recordSandboxPartnerSuccess(appID string, rec *statusRecorder) {
+func (h *Handler) recordSandboxPartnerSuccess(ctx context.Context, appID string, rec *statusRecorder) {
 	keyID := rec.sandboxPartnerKeyID
 	if keyID == "" || !rec.wroteHeader || rec.status < 200 || rec.status >= 300 || rec.platformResponse || rec.platformProblem {
 		return
@@ -62,13 +62,13 @@ func (h *Handler) recordSandboxPartnerSuccess(appID string, rec *statusRecorder)
 		return
 	}
 	recent.Put(keyID, now)
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	go func(ctx context.Context) {
+		ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 		if err := store.RecordAPISandboxPartnerSuccess(ctx, appID, keyID, now); err != nil && h.log != nil {
 			h.log.Warn("gateway: record first successful sandbox partner request", "app_id", appID, "err", err)
 		}
-	}()
+	}(context.WithoutCancel(ctx))
 }
 
 type sandboxPartnerRunStore interface {

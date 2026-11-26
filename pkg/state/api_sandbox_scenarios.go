@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -70,7 +71,7 @@ func (s *PgStore) PutAPISandboxScenarioFromRequest(ctx context.Context, deployme
 	})
 	if err != nil {
 		err = mapErr(err)
-		if err == ErrNotFound && origin.RequestID != "" {
+		if errors.Is(err, ErrNotFound) && origin.RequestID != "" {
 			return api.APISandboxScenario{}, ErrConflict
 		}
 		return api.APISandboxScenario{}, err

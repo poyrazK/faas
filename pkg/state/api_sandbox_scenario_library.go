@@ -96,7 +96,7 @@ func (s *PgStore) PutAPISandboxLibraryScenario(ctx context.Context, appID, id st
 	if err != nil {
 		return api.APISandboxLibraryScenario{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
 	app, scenarioID := mustPgUUID(appID), mustPgUUID(id)
 	if _, err := q.LockAPISandboxScenarioLibrary(ctx, tx, app); err != nil {
@@ -149,7 +149,7 @@ func (s *PgStore) DeleteAPISandboxLibraryScenario(ctx context.Context, appID, id
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
 	app := mustPgUUID(appID)
 	if _, err := q.LockAPISandboxScenarioLibrary(ctx, tx, app); err != nil {

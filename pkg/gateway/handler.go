@@ -8670,7 +8670,7 @@ haveApp:
 	// request's bytes and latency are recorded.
 	finishAccountTools()
 	if completionTarget.DeploymentID != "" && r.Context().Err() == nil {
-		h.recordSandboxPartnerSuccess(app.ID, rec)
+		h.recordSandboxPartnerSuccess(r.Context(), app.ID, rec)
 	}
 	identity = platformIdentityForTarget(r.Context(), r, app, completionTarget)
 	r = r.WithContext(wire.WithPlatformIdentity(r.Context(), identity))

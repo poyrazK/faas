@@ -312,7 +312,7 @@ func ReleaseCommandStatus(policy *state.ReleaseApprovalPolicy, app state.App, d 
 	}
 	status.RequirePassingSandboxSuite = policy.RequiresSandboxSuite()
 	if status.State != api.ReleaseApprovalStateWaiting &&
-		!(status.RequirePassingSandboxSuite && status.State == api.ReleaseApprovalStateApproved) {
+		(!status.RequirePassingSandboxSuite || status.State != api.ReleaseApprovalStateApproved) {
 		return status
 	}
 	expires := since.Add(time.Duration(policy.TimeoutMinutes) * time.Minute)

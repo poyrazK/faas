@@ -28,6 +28,7 @@ func (s *testSandboxPartnerStore) RecordAPISandboxPartnerSuccess(_ context.Conte
 }
 
 func TestAPISandboxPartnerKeyGateAndSuccessfulProxyResponse(t *testing.T) {
+	ctx := t.Context()
 	fixture, token := consumerAuthFixture()
 	store := &testSandboxPartnerStore{fakeConsumerAuthStore: fixture, record: make(chan string, 4)}
 	h := NewHandlerWith(nil, nil, nil).WithConsumerAuth(store)
@@ -59,12 +60,12 @@ func TestAPISandboxPartnerKeyGateAndSuccessfulProxyResponse(t *testing.T) {
 		t.Fatal("active partner credential could not access its private copy")
 	}
 	rec.wroteHeader, rec.status = true, http.StatusNotFound
-	h.recordSandboxPartnerSuccess(app.ID, rec)
+	h.recordSandboxPartnerSuccess(ctx, app.ID, rec)
 	rec.status, rec.platformResponse = http.StatusOK, true
-	h.recordSandboxPartnerSuccess(app.ID, rec)
+	h.recordSandboxPartnerSuccess(ctx, app.ID, rec)
 	rec.platformResponse = false
-	h.recordSandboxPartnerSuccess(app.ID, rec)
-	h.recordSandboxPartnerSuccess(app.ID, rec)
+	h.recordSandboxPartnerSuccess(ctx, app.ID, rec)
+	h.recordSandboxPartnerSuccess(ctx, app.ID, rec)
 	select {
 	case got := <-store.record:
 		if got != app.ID+"/"+fixture.key.ID {

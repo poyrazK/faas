@@ -99,7 +99,7 @@ type sandboxReceiver struct {
 // RoundTrip receives the request serialized and signed by the ordinary
 // dispatcher. Only the HTTP transport is replaced for the sandbox target.
 func (r *sandboxReceiver) RoundTrip(req *http.Request) (*http.Response, error) {
-	defer req.Body.Close()
+	defer func() { _ = req.Body.Close() }()
 	status := r.responseStatus(req)
 	return &http.Response{
 		StatusCode: status, Header: make(http.Header), Body: http.NoBody, Request: req,

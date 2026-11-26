@@ -179,7 +179,7 @@ func TestAPISandboxSuiteQueuesRunsAndReportsAllScenarios(t *testing.T) {
 				t.Fatal("suite launched a second pair before the first finished")
 			}
 		}
-		finishSuiteComparisonForTest(t, e, evidence.Comparison, i == 1)
+		finishSuiteComparisonForTest(ctx, t, e, evidence.Comparison, i == 1)
 		tick()
 	}
 	readAPISandboxTestResponse(t, e.do(t, http.MethodGet, path+"/"+runID, nil, nil), http.StatusOK, &report)
@@ -204,9 +204,8 @@ func TestAPISandboxSuiteQueuesRunsAndReportsAllScenarios(t *testing.T) {
 	}
 }
 
-func finishSuiteComparisonForTest(t *testing.T, e testEnv, report api.APISandboxComparisonReport, regress bool) {
+func finishSuiteComparisonForTest(ctx context.Context, t *testing.T, e testEnv, report api.APISandboxComparisonReport, regress bool) {
 	t.Helper()
-	ctx := t.Context()
 	var apps []string
 	for range 2 {
 		now := time.Now().UTC()
@@ -348,7 +347,7 @@ func TestAPISandboxSuiteReleaseRequirement(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		finishSuiteComparisonForTest(t, e, evidence.Comparison, regress)
+		finishSuiteComparisonForTest(ctx, t, e, evidence.Comparison, regress)
 		tick()
 	}
 	finish(runs[0].ID, true)

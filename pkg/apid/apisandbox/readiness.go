@@ -76,7 +76,7 @@ func probe(ctx context.Context, client http.Client, base, path, token, deploymen
 	if err != nil {
 		return 0, &api.APISandboxFailure{Code: check + "_unreachable", Detail: detail + " could not be reached through the public sandbox URL."}, true
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	status := resp.StatusCode
 	if !slices.Equal(resp.Header.Values(api.RevisionHeader), []string{deploymentID}) {
 		return status, &api.APISandboxFailure{Code: check + "_revision", Detail: detail + " did not return evidence of the selected deployment.", HTTPStatus: status}, true

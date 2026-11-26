@@ -242,7 +242,7 @@ func (s *server) sandboxReceiverHasProof(ctx context.Context, target, proof stri
 	if err != nil {
 		return false
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != http.StatusOK {
 		return false
 	}
