@@ -113,3 +113,101 @@ prints the split as four commands: deploy the same code under a second
 name, size it, add the `kind=route` edge rule for the route's path glob,
 then size the main app down. Nothing is applied for the customer; every
 resize goes through `app scale --plan`.
+
+## Amendment 2 (2026-11-26): apply the split; CPU splits
+
+Owner decisions (2026-11-26): the split runs server-side; the route's app
+inherits variables, secrets and bindings (bindings in a second slice, below);
+CPU-heavy routes are split too.
+
+### CPU splits
+
+`SuggestSplit` keeps the memory rule first. When no route qualifies on
+memory, a route that holds at least 80% of at least three CPU peaks while
+running in at most 30% of active minutes is suggested as a CPU split
+(`kind: "cpu"`). Billing is plan RAM per second (§4.7), so a CPU split
+saves no money: it isolates the route so its bursts stop starving the
+app's other routes. Both apps keep the current size; the route's app can be
+resized later. `kind: "memory"` splits keep amendment 1's sizing.
+
+### Applying a split
+
+`POST /v1/apps/{slug}/route-splits` applies the suggestion the read route
+returns. The body repeats the suggestion (kind, route, method, both sizes,
+window); apid recomputes it over the same window and refuses with 409
+`route_split_changed` when it no longer matches, so nobody applies a split
+they did not see. One split per app is in flight at a time (409
+`route_split_in_flight`, a partial unique index). Splitting takes the
+strictest permission of what it does (owner or admin: it writes edge rules
+and may delete the app it made).
+
+The split is a durable row (`route_splits`, CHECKed phase) that apid's
+`pkg/apid/routesplit` worker advances, every step fenced by a
+compare-and-set on the phase so replicas and restarts are safe. A pass first
+claims the row (`lease_until`, two minutes, released when the pass ends), so
+two apid replicas never run one split's side effects at once. Every step
+acts as the source app's resource account under a grant for the one app it
+addresses, whoever asked. apid is the
+only writer of apps, deployments and edge rules, and it acts through its
+own create-app, scale, delete-app and edge-rule handlers in process (as the
+dashboard does), so the route's app gets the same validation, quotas,
+budget charge, audit and notifications as one a customer makes:
+
+1. `creating`: the row reserves the target name, `<slug>-<last static path
+   segment>` (a random five-character suffix when taken). apid creates a
+   standalone app in the source's account and org, sized `route_ram_mb`
+   (CPU splits: the source's RAM). When its deployment is seeded it takes
+   every runtime and security setting of the source (the environment
+   promotion's settings set: egress allowlist and ports, auth, IP
+   allowlist, rate limits, security policy, declared routes, CORS, start
+   command), so the route runs under the rules it ran under before. It
+   keeps its own RAM, scales to zero (no min instances) and gets no work
+   policies or queue bindings.
+2. `deploying`: in the same request apid creates one deployment of the
+   source's live artifact (the environment branch's artifact copy: same
+   image, rootfs layer, sidecar layers and overrides, no rebuild), reason
+   `route-split:<id>`, and copies the source's default-scope variables and
+   non-managed secret rows by ciphertext (secrets are sealed to the host
+   identity, not to the app). Only the request workload is copied: never
+   the release command, workflows, crons, workers, queue consumers, event
+   subscriptions or schedules, which would run twice.
+3. `rule_live`: once the deployment is live, a `kind=route` edge rule on
+   each of the source's hosts (its platform host and verified app-wide
+   custom domains) for the method and path glob, pointing at the target.
+   The rules are named `route-split:<id>` so a retried pass reuses them and
+   undo finds them.
+4. `done`: a memory split sizes the source to `main_ram_mb` first.
+
+A failure before the rules are live rolls back: the rules made so far go
+first (so the path never routes to a deleted app), then the target app,
+and the row ends `rolled_back` with the error. Once recorded, a split's
+creation runs to the end even if the caller disconnects. The worker pages
+through every in-flight split each pass, so waiting splits never hold
+newer ones back, and two undo requests for one split never both act.
+A deployment that is not live after 15 minutes, or a row left in
+`creating` for 5 minutes, rolls back the same way. A rollback that cannot
+delete the route's app within an hour ends `rolled_back` naming the app for
+the customer to delete, so the source can be split again. After the rules
+are live the split is serving: a transient resize failure (5xx, 429, 409)
+is retried for 15 minutes, and a refusal or one that outlasts the window
+ends `done` with a warning. Undo counts a 404 from deleting the route's app
+as deleted only when the app is really gone.
+`DELETE /v1/apps/{slug}/route-splits/{id}` undoes a finished split: the
+source gets its previous size back first (it serves the route again once
+the rules go), then the rules and the target app are deleted. A failed step
+leaves the split `done`, so undo can be retried.
+
+The first slice splits standalone apps only. Apps in a project (their
+workloads are source-managed), previews, and apps with managed bindings
+(Postgres, object storage) or service bindings are refused up front with
+422 `route_split_unsupported` and what blocks them, so no split ever serves
+a route without the data it needs. So are apps with their own edge rules
+(the route's app answers on its own hostname, where those deny, auth, IP
+and rate-limit rules would not run) and apps with a static egress IP
+(unique to one app). A second slice copies request-path
+bindings with the environment clone's binding definitions and still never
+copies consumers.
+
+`gregale app scale <slug> --suggest --apply-split` applies the suggestion it
+read, `--split-status` lists the app's splits and `--undo-split <id>`
+reverses one. (`--apply` already applies a saved scale plan.)

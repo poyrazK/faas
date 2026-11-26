@@ -973,6 +973,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 				}
 			}()
 		}
+		// ADR-20261121170000 amendment 2: move applied route splits along.
+		// Each step is fenced by a compare-and-set on the split's phase, so
+		// replicas may run it concurrently.
+		if splits, ok := srv.routeSplitService(); ok {
+			go func() {
+				if err := splits.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+					log.Error("route split worker exited", "err", err)
+				}
+			}()
+		}
 		// ADR-20261026152731: accepted source archives and build logs no
 		// longer stay on the control plane for good.
 		if spoolStore, ok := srv.store.(state.SourceSpoolStore); ok {
