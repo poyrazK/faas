@@ -878,3 +878,10 @@ func TestEgressValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestParseDataAPIInspectionCAPath(t *testing.T) {
+	m, err := Parse([]byte("daemons:\n  vmmd:\n    data_api_inspection_ca_path: /etc/faas/inspection-ca.crt\n"))
+	if err != nil || m.Daemons.Vmmd == nil || m.Daemons.Vmmd.DataAPIInspectionCAPath != "/etc/faas/inspection-ca.crt" {
+		t.Fatalf("inspection CA manifest parse: %+v, %v", m, err)
+	}
+}

@@ -864,11 +864,11 @@ Writes functions/&lt;name&gt;/ with a handler whose config `gregale deploy` read
 
 Provision or attach PostgreSQL and inject DATABASE_URL
 
-`gregale add postgres --app <APP> [--env <SCOPE>] [--scope <SCOPE>] [--database <REF>] [--region <REGION>] [--postgres-major <N>] [--class <CLASS>] [--availability <MODE>] [--scale-to-zero] [--environment-key <KEY>] [--access <MODE>] [--wait-timeout <DURATION>]`
+`gregale add postgres [--app <APP>] [--env <SCOPE>] [--scope <SCOPE>] [--database <REF>] [--region <REGION>] [--postgres-major <N>] [--class <CLASS>] [--availability <MODE>] [--scale-to-zero] [--environment-key <KEY>] [--access <MODE>] [--wait-timeout <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <APP>` | app slug | required |
+| `--app <APP>` | app slug (defaults to the linked app) |  |
 | `--env <SCOPE>` | environment scope (defaults to linked project environment) |  |
 | `--scope <SCOPE>` | environment scope (alias for --env) |  |
 | `--database <REF>` | existing database ID or name |  |
@@ -885,11 +885,11 @@ Provision or attach PostgreSQL and inject DATABASE_URL
 
 Provision or attach object storage and inject sealed S3 settings
 
-`gregale add bucket --app <APP> [--env <SCOPE>] [--scope <SCOPE>] [--region <REGION>] [--public] [--serve-at <PATH>] [--permission <MODE>] [--label <LABEL>] [--prefix <PREFIX>] [--key-prefix <KEYS/>] [--wait-timeout <DURATION>] <name>`
+`gregale add bucket [--app <APP>] [--env <SCOPE>] [--scope <SCOPE>] [--region <REGION>] [--public] [--serve-at <PATH>] [--permission <MODE>] [--label <LABEL>] [--prefix <PREFIX>] [--key-prefix <KEYS/>] [--wait-timeout <DURATION>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <APP>` | app slug | required |
+| `--app <APP>` | app slug (defaults to the linked app) |  |
 | `--env <SCOPE>` | environment scope (defaults to linked project environment) |  |
 | `--scope <SCOPE>` | environment scope (alias for --env) |  |
 | `--region <REGION>` | object-storage region |  |
@@ -905,11 +905,11 @@ Provision or attach object storage and inject sealed S3 settings
 
 Set up the AI gateway for an app in one step
 
-`gregale add ai --app <APP> --provider <PROVIDER> [--integration <ID>] [--name <NAME>] [--origin <URL>] [--region <REGION>] [--key-env <NAME>] [--key-stdin] [--key-file <PATH>] [--no-env] [--env <SCOPE>]`
+`gregale add ai [--app <APP>] --provider <PROVIDER> [--integration <ID>] [--name <NAME>] [--origin <URL>] [--region <REGION>] [--key-env <NAME>] [--key-stdin] [--key-file <PATH>] [--no-env] [--env <SCOPE>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <APP>` | app slug | required |
+| `--app <APP>` | app slug (defaults to the linked app) |  |
 | `--provider <PROVIDER>` | AI provider | required; one of `openai` · `anthropic` · `gemini` · `azure_openai` · `bedrock` · `vertex` |
 | `--integration <ID>` | existing AI integration to bind instead of creating one |  |
 | `--name <NAME>` | integration name (default the provider) |  |
@@ -1284,11 +1284,11 @@ gregale release wait 00000000000000000000000000000001 --rollout --progress
 
 Verify an application response from an exact live deployment
 
-`gregale release verify --app <SLUG> [--path <PATH>] [--project-id <UUID>] [--environment-id <UUID>] <deployment-uuid>`
+`gregale release verify [--app <SLUG>] [--path <PATH>] [--project-id <UUID>] [--environment-id <UUID>] <deployment-uuid>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <SLUG>` |  | required |
+| `--app <SLUG>` | app slug (defaults to the linked app) |  |
 | `--path <PATH>` | app-relative GET path (default /) |  |
 | `--project-id <UUID>` | project identity for a named environment (looked up when omitted) |  |
 | `--environment-id <UUID>` | environment identity for a named environment (looked up when omitted) |  |
@@ -3465,7 +3465,7 @@ gregale env set --app my-api SESSION_TOKEN="$SESSION_TOKEN" --class ephemeral
 
 Remove named sealed secrets (alias: rm)
 
-`gregale env unset [--dry-run] [--interactive] [--app <slug>] [--env <SCOPE>] [--restart] [--wait-for-ack] [--timeout <DURATION>] [--no-guard] [<KEY>...]`
+`gregale env unset [--dry-run] [--interactive] [--app <slug>] [--env <SCOPE>] [--restart] [--wait-for-ack] [--timeout <DURATION>] [--no-guard] [--yes] [<KEY>...]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -3477,6 +3477,7 @@ Remove named sealed secrets (alias: rm)
 | `--wait-for-ack` | wait until every active authorized runtime confirms it removed the secret |  |
 | `--timeout <DURATION>` | maximum time to wait for runtime acknowledgements (requires --wait-for-ack) |  |
 | `--no-guard` | do not open a config guard for this change |  |
+| `--yes` | accepted for scripts; removing named keys does not prompt |  |
 
 Examples:
 
@@ -3942,11 +3943,12 @@ Bind a custom domain to an app or project environment
 
 Remove a custom domain binding
 
-`gregale domain delete [--yes] <domain>`
+`gregale domain delete [--yes] [--app <SLUG>] <domain>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--yes` | confirm removal without prompting |  |
+| `--app <SLUG>` | refuse unless the domain is bound to this app |  |
 
 ### domain verify
 
@@ -4058,7 +4060,7 @@ gregale edge rule waf review --app my-api
 gregale edge rule waf review --app my-api --rule RULE_ID --since 24h
 ```
 
-Each group is assessed: likely_false_positive (a documented false positive, or many clients flagged on one path), likely_attack (clients flagged on many paths), excluded or review.
+Each group is assessed: likely_false_positive (a documented false positive), likely_attack (clients flagged on many paths), excluded or review (read the examples; a path flagged from many clients looks like a false positive but also like a few addresses probing it).
 
 Detections are sampled, so counts are lower bounds.
 
@@ -5009,6 +5011,99 @@ gregale postgres recover orders
 
 Works until the database&#39;s restorable_until, 7 days after the delete; a purged database is gone.
 
+### postgres roles
+
+Manage custom roles your logins can SET ROLE to (preview)
+
+#### postgres roles list
+
+List a database&#39;s custom roles
+
+`gregale postgres roles list <database>`
+
+#### postgres roles create
+
+Create or replace a NOLOGIN custom role
+
+`gregale postgres roles create [--bypass-rls] [--grant-to <MODES>] [--member-of <ROLES>] [--default-for <MODES>] <database> <role>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--bypass-rls` | the role bypasses row-level security (refused with Data API or Auth) |  |
+| `--grant-to <MODES>` | access modes whose logins may SET ROLE to it (default migration,read_write) |  |
+| `--member-of <ROLES>` | custom roles of the database it is a member of |  |
+| `--default-for <MODES>` | access modes whose logins start every session as it: read_write, read_only (empty clears) |  |
+
+Examples:
+
+```sh
+gregale postgres roles create windmill-db windmill_user
+gregale postgres roles create windmill-db windmill_admin --bypass-rls --member-of windmill_user --default-for read_write
+```
+
+Gregale creates the role; no login gets admin rights. Logins switch to it with SET ROLE, which is how tools such as Windmill use their roles.
+
+--default-for makes logins start as the role, for tools whose own connection must act as it (Windmill&#39;s windmill_admin). Poolers refuse a role set in the connection string. A login starts as at most one role.
+
+Names are lowercase letters, digits and underscores; names starting with gregale, pg_, neon and other provider prefixes are reserved. A database holds at most 16 custom roles; Hobby and above.
+
+#### postgres roles grant
+
+Let more logins SET ROLE to a custom role
+
+`gregale postgres roles grant --to <MODES> [--default] <database> <role>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--to <MODES>` | access modes: migration, read_write, read_only | required |
+| `--default` | logins of these access modes also start every session as it (read_write, read_only) |  |
+
+Examples:
+
+```sh
+gregale postgres roles grant windmill-db windmill_user --to read_only
+gregale postgres roles grant windmill-db windmill_admin --to read_write --default
+```
+
+#### postgres roles revoke
+
+Stop logins of access modes from using a custom role
+
+`gregale postgres roles revoke --from <MODES> <database> <role>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from <MODES>` | access modes: migration, read_write, read_only | required |
+
+#### postgres roles delete
+
+Drop a custom role; what it owns goes to the schema owner
+
+`gregale postgres roles delete [--yes] <database> <role>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | skip the typed confirmation |  |
+
+### postgres activity
+
+Show what kept a database awake: starts, causes and what to do
+
+`gregale postgres activity [--since <PERIOD>] <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--since <PERIOD>` | period: a duration such as 24h or 7d, or an RFC 3339 time (default 24h) |  |
+
+Examples:
+
+```sh
+gregale postgres activity orders-db
+gregale postgres activity orders-db --since 7d
+```
+
+Causes are best guesses from timing: wake-with-app, a cron, a request, an app connecting at start, a running app, or a client outside Gregale. Starts are kept 30 days.
+
 ### postgres restore
 
 Restore a database to a new database
@@ -5545,7 +5640,7 @@ Show or wait for a durable realtime drain
 
 List managed realtime endpoints
 
-`gregale realtime list <app>`
+`gregale realtime list [<app>]`
 
 ### realtime get
 
@@ -5780,7 +5875,7 @@ List cron rules
 
 Schedule a POST to an app path, or a deployment command
 
-`gregale cron create [--at <RFC3339>] [--in <DURATION>] [--interactive] [--app <slug>] [--schedule <EXPR>] [--path <PATH>] [--command <EXEC>] [--arg <ARG>] [--shell] [--timeout-seconds <N>] [--max-output-bytes <N>] [--timezone <TZ>] [--skip-if-running] [--retry-max] [--retry-backoff-seconds] [--schedule-policy <JSON>] [--failure-rules <JSON>]`
+`gregale cron create [--at <RFC3339>] [--in <DURATION>] [--interactive] [--app <slug>] [--schedule <EXPR>] [--path <PATH>] [--command <EXEC>] [--arg <ARG>] [--shell] [--timeout-seconds <N>] [--max-output-bytes <N>] [--timezone <TZ>] [--skip-if-running] [--retry-max <N>] [--retry-backoff-seconds <N>] [--schedule-policy <JSON>] [--failure-rules <JSON>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5797,8 +5892,8 @@ Schedule a POST to an app path, or a deployment command
 | `--max-output-bytes <N>` | captured output limit (default 1048576 bytes) |  |
 | `--timezone <TZ>` | IANA timezone (default UTC) |  |
 | `--skip-if-running` | skip fires while the previous run is active |  |
-| `--retry-max` | additional command attempts after failure or timeout |  |
-| `--retry-backoff-seconds` | base retry delay; doubles per attempt |  |
+| `--retry-max <N>` | additional command attempts after failure or timeout |  |
+| `--retry-backoff-seconds <N>` | base retry delay; doubles per attempt |  |
 | `--schedule-policy <JSON>` | versioned schedule policy JSON |  |
 | `--failure-rules <JSON>` | versioned failure and outcome-code rules JSON |  |
 
@@ -5828,7 +5923,7 @@ Show one cron rule
 
 Update one cron rule
 
-`gregale cron update [--interactive] [--app <SLUG>] [--schedule <EXPR>] [--path <PATH>] [--timezone <TZ>] [--enable] [--disable] [--skip-if-running] [--allow-overlap] [--retry-max] [--retry-backoff-seconds <N>] [--schedule-policy <JSON>] [--failure-rules <JSON>] [--clear-schedule-policy] [--clear-failure-rules] [<id>]`
+`gregale cron update [--interactive] [--app <SLUG>] [--schedule <EXPR>] [--path <PATH>] [--timezone <TZ>] [--enable] [--disable] [--skip-if-running] [--allow-overlap] [--retry-max <N>] [--retry-backoff-seconds <N>] [--schedule-policy <JSON>] [--failure-rules <JSON>] [--clear-schedule-policy] [--clear-failure-rules] [<id>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5841,7 +5936,7 @@ Update one cron rule
 | `--disable` | disable the cron |  |
 | `--skip-if-running` | skip fires while a previous run is active |  |
 | `--allow-overlap` | allow scheduled fires to overlap |  |
-| `--retry-max` | additional command attempts after failure or timeout |  |
+| `--retry-max <N>` | additional command attempts after failure or timeout |  |
 | `--retry-backoff-seconds <N>` | base retry delay; doubles per attempt |  |
 | `--schedule-policy <JSON>` | replace versioned schedule policy JSON |  |
 | `--failure-rules <JSON>` | replace versioned failure and outcome-code rules JSON |  |

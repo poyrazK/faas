@@ -399,6 +399,7 @@ func (s *server) getManagedPostgresUsage(w http.ResponseWriter, r *http.Request,
 			return
 		}
 	}
+	view.Databases = s.managedPostgresDatabaseUsageOrLog(r.Context(), acct, view.PeriodStart)
 	writeJSON(w, http.StatusOK, view)
 }
 

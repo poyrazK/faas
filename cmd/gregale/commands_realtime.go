@@ -82,8 +82,14 @@ func cmdRealtime(args []string) int {
 
 func cmdRealtimeList(args []string) int {
 	fs := newFlagSet("realtime list", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil || fs.NArg() != 1 || strings.TrimSpace(fs.Arg(0)) == "" {
-		PrintUsage(os.Stderr, "usage: gregale realtime list APP_SLUG", "realtime")
+	err := fs.Parse(args)
+	if err == nil && fs.NArg() == 0 {
+		if app := linkedAppForMissingSlug(); app != "" {
+			err = fs.Parse([]string{app})
+		}
+	}
+	if err != nil || fs.NArg() != 1 || strings.TrimSpace(fs.Arg(0)) == "" {
+		PrintUsage(os.Stderr, "usage: gregale realtime list [APP_SLUG]", "realtime")
 		return 1
 	}
 	client, err := authedClient()

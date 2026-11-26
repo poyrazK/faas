@@ -22,6 +22,7 @@ browser_*
 # (internal, or preview with unpublished docs).
 consumer_*
 product_*
+stripe_customer_missing
 plan_consumer_key_quota_reached
 tenant_*
 platform_tenant_*

@@ -77,6 +77,7 @@ func cmdRealtimeCreate(args []string) int {
 	maxConnectionAge := fs.Int64("max-connection-age-seconds", -1, "per-endpoint connection age cap (0 inherits daemon default)")
 	enabled := fs.Bool("enabled", true, "enable the endpoint immediately")
 	authApp := unreleasedStringFlag(fs, "auth", "Auth app that verifies clients and authorizes channels (ADR-1190)")
+	positional = withLinkedApp(positional, 1)
 	if err := fs.Parse(flags); err != nil || len(positional) != 1 {
 		PrintUsage(osStderr, "usage: gregale realtime create APP_SLUG --callback-url URL (--callback-auth-token-stdin|--callback-auth-token TOKEN) [--auth-mode MODE] [--auth-token-stdin|--auth-token TOKEN] [policy flags]", "realtime")
 		return 1

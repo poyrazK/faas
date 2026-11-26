@@ -204,6 +204,9 @@ func executeAppTaskCommand(ctx context.Context, req apptaskproto.Request, manife
 	if isPostgresBindingProbeCommand(req) {
 		return executePostgresBindingProbeCommand(ctx, req, manifest, secrets, apiEnv, stdout)
 	}
+	if len(req.Command) > 0 && req.Command[0] == api.AppTaskDataAPIWriteInspectionCommand {
+		return executeDataAPIWriteInspection(ctx, req, manifest, secrets, apiEnv, stdout)
+	}
 	if isServiceBindingProbeCommand(req) {
 		return executeServiceBindingProbeCommand(ctx, req, manifest, secrets, apiEnv, stdout)
 	}

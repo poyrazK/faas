@@ -156,6 +156,10 @@ jobs:
     uses: ./.github/workflows/function-backends.yml
     permissions:
       contents: read
+  commit-acceptance:
+    uses: ./.github/workflows/commit-acceptance.yml
+    permissions:
+      contents: read
 
   # Three parallel jobs (PR #167) so the long poles — unit tests (~4:20)
   # and spec-check (~3:54) — run in parallel instead of in series. Wall

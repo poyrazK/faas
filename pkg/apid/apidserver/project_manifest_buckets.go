@@ -25,6 +25,9 @@ import (
 type resolvedManifestBucket struct {
 	appSlug string
 	bucket  object.ManifestBucket
+	// exists marks a `create: true` bucket that an earlier deploy already
+	// created, so the plan says it binds it rather than creating it again.
+	exists bool
 }
 
 // resolveProjectManifestBuckets validates the root manifest's buckets for the
@@ -135,6 +138,11 @@ func (s *server) resolveProjectManifestBuckets(r *http.Request, acct state.Accou
 	}
 	for i, dependency := range out {
 		if dependency.bucket.Create {
+			if app := apps[dependency.appSlug]; app != nil {
+				if _, exists, err := s.object.FindManifestBucket(r.Context(), acct, app.ID, dependency.bucket.Name, dependency.bucket.Scope); err == nil && exists {
+					out[i].exists = true
+				}
+			}
 			continue
 		}
 		app := apps[dependency.appSlug]
@@ -171,7 +179,7 @@ func manifestBucketPlan(buckets []resolvedManifestBucket) []api.PlanManaged {
 	out := make([]api.PlanManaged, 0, len(buckets))
 	for _, dependency := range buckets {
 		out = append(out, api.PlanManaged{Name: dependency.bucket.Name, Kind: "bucket", Source: "gregale.yaml",
-			Provision: &api.PlanManagedProvision{Database: dependency.bucket.Name, Existing: !dependency.bucket.Create,
+			Provision: &api.PlanManagedProvision{Database: dependency.bucket.Name, Existing: !dependency.bucket.Create || dependency.exists,
 				Bindings: []api.PlanManagedBinding{{Workload: dependency.appSlug, EnvKey: dependency.bucket.Prefix}}}})
 	}
 	return out

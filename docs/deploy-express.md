@@ -60,6 +60,9 @@ With no declaration the app builds on Node 24. `"engines": {"node": "22"}` or
 
 ## Deploy
 
+From the project root, preview what Gregale detects, then deploy the
+Express API:
+
 ```bash
 gregale deploy --dry-run
 gregale deploy --name my-api

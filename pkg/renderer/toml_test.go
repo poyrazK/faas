@@ -455,9 +455,13 @@ func TestRenderTOML_VmmdDerivesIdentityAndTargetFromHost(t *testing.T) {
 func TestRenderTOML_OptInServiceProxyHTTPS(t *testing.T) {
 	vmmd := fixtureTOML("vmmd")
 	vmmd.ServiceProxyCAPath = "/etc/faas/tls/service-proxy/ca.crt"
+	vmmd.DataAPIInspectionCAPath = "/etc/faas/pgproxy/inspection-ca.crt"
 	vmmdBody, _, err := renderTOML(tomlRenderCtx{Daemon: "vmmd", DC: vmmd})
 	if err != nil || !strings.Contains(string(vmmdBody), `service_proxy_ca_path = "/etc/faas/tls/service-proxy/ca.crt"`) {
 		t.Fatalf("vmmd CA render: %v\n%s", err, vmmdBody)
+	}
+	if !strings.Contains(string(vmmdBody), `data_api_inspection_ca_path = "/etc/faas/pgproxy/inspection-ca.crt"`) {
+		t.Fatalf("inspection CA missing: %s", vmmdBody)
 	}
 	gateway := fixtureTOML("gatewayd-internal")
 	gateway.ServiceProxyHTTPSListen = "10.100.0.1:443"

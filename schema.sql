@@ -6488,6 +6488,44 @@ END $$;
 
 
 --
+-- Name: bump_data_api_binding_inspection_revision(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.bump_data_api_binding_inspection_revision() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF ROW(NEW.account_id, NEW.database_account_id, NEW.database_id, NEW.app_id, NEW.scope, NEW.environment_key, NEW.access, NEW.state, NEW.deleted_at, NEW.credential_generation, NEW.credential_ref, NEW.provider_identity_id, NEW.rotation_previous_generation, NEW.cutover_id)
+     IS DISTINCT FROM ROW(OLD.account_id, OLD.database_account_id, OLD.database_id, OLD.app_id, OLD.scope, OLD.environment_key, OLD.access, OLD.state, OLD.deleted_at, OLD.credential_generation, OLD.credential_ref, OLD.provider_identity_id, OLD.rotation_previous_generation, OLD.cutover_id) THEN
+    NEW.data_api_inspection_revision := OLD.data_api_inspection_revision + 1;
+  ELSE
+    NEW.data_api_inspection_revision := OLD.data_api_inspection_revision;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: bump_data_api_database_inspection_revision(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.bump_data_api_database_inspection_revision() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF ROW(NEW.account_id, NEW.org_id, NEW.cutover_id, NEW.backend_id, NEW.backend_fingerprint, NEW.provider_resource_id, NEW.data_resource_id, NEW.state, NEW.deleted_at, NEW.desired_generation, NEW.observed_generation)
+     IS DISTINCT FROM ROW(OLD.account_id, OLD.org_id, OLD.cutover_id, OLD.backend_id, OLD.backend_fingerprint, OLD.provider_resource_id, OLD.data_resource_id, OLD.state, OLD.deleted_at, OLD.desired_generation, OLD.observed_generation) THEN
+    NEW.data_api_inspection_revision := OLD.data_api_inspection_revision + 1;
+  ELSE
+    NEW.data_api_inspection_revision := OLD.data_api_inspection_revision;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: capture_binding_promotion_revision(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -27254,6 +27292,19 @@ $$;
 
 
 --
+-- Name: reject_data_api_inspection_evidence_update(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reject_data_api_inspection_evidence_update() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  RAISE EXCEPTION 'Data API inspection evidence is immutable' USING ERRCODE = '23514';
+END;
+$$;
+
+
+--
 -- Name: reject_event_execution_outcome_update(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -31479,12 +31530,14 @@ CREATE TABLE public.account_billing_connections (
     collection text DEFAULT 'none'::text NOT NULL,
     days_until_due integer DEFAULT 30 NOT NULL,
     automatic_tax boolean DEFAULT false NOT NULL,
+    stripe_account_id text,
     CONSTRAINT account_billing_connections_api_url_chk CHECK (((api_url IS NULL) OR ((char_length(api_url) <= 512) AND (api_url ~~ 'https://%'::text)))),
     CONSTRAINT account_billing_connections_automatic_tax_chk CHECK (((NOT automatic_tax) OR (provider = 'stripe'::text))),
     CONSTRAINT account_billing_connections_collection_chk CHECK ((((provider = 'stripe'::text) AND (collection = ANY (ARRAY['none'::text, 'send'::text, 'charge'::text]))) OR ((provider = 'paddle'::text) AND (collection = ANY (ARRAY['none'::text, 'send'::text]))) OR ((provider = 'lago'::text) AND (collection = ANY (ARRAY['none'::text, 'charge'::text]))))),
     CONSTRAINT account_billing_connections_days_until_due_chk CHECK (((days_until_due >= 1) AND (days_until_due <= 365))),
     CONSTRAINT account_billing_connections_last4_chk CHECK ((char_length(key_last4) = 4)),
-    CONSTRAINT account_billing_connections_provider_chk CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'lago'::text])))
+    CONSTRAINT account_billing_connections_provider_chk CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'lago'::text]))),
+    CONSTRAINT account_billing_connections_stripe_account_chk CHECK (((stripe_account_id IS NULL) OR ((provider = 'stripe'::text) AND (stripe_account_id ~ '^acct_[A-Za-z0-9]+$'::text))))
 );
 
 
@@ -33407,6 +33460,21 @@ CREATE TABLE public.api_consumer_spend_caps (
 --
 
 COMMENT ON TABLE public.api_consumer_spend_caps IS 'Monthly spend cap per API consumer; apid checks the month to date and the gateway denies capped consumers (ADR-1306).';
+
+
+--
+-- Name: api_consumer_stripe_links; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_stripe_links (
+    consumer_id uuid NOT NULL,
+    stripe_account_id text NOT NULL,
+    livemode boolean NOT NULL,
+    stripe_customer_id text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_consumer_stripe_links_account_chk CHECK ((stripe_account_id ~ '^acct_[A-Za-z0-9]+$'::text)),
+    CONSTRAINT api_consumer_stripe_links_customer_chk CHECK ((stripe_customer_id ~ '^cus_[A-Za-z0-9]+$'::text))
+);
 
 
 --
@@ -36272,6 +36340,9 @@ CREATE TABLE public.billing_run_items (
     attempts integer DEFAULT 0 NOT NULL,
     next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    usage_gap_hours jsonb,
+    usage_held_at timestamp with time zone,
+    usage_recovered_at timestamp with time zone,
     CONSTRAINT billing_run_items_app_chk CHECK (((source_kind = 'app_consumer'::text) = (app_id IS NOT NULL))),
     CONSTRAINT billing_run_items_completeness_chk CHECK (((completeness IS NULL) OR (completeness = ANY (ARRAY['verified'::text, 'partial'::text, 'gaps_detected'::text, 'unverifiable'::text])))),
     CONSTRAINT billing_run_items_counts_chk CHECK (((attempts >= 0) AND (exported_count >= 0) AND ((revision IS NULL) OR (revision >= 1)))),
@@ -38908,6 +38979,50 @@ COMMENT ON TABLE public.data_api_change_hook_reports IS 'ADR-20261022121642 amen
 --
 
 COMMENT ON COLUMN public.data_api_change_hook_reports.last_dropped_at IS 'ADR-20261022121642 amendment 3: when capture last left a change out at the backlog bound, as the runtime last reported.';
+
+
+--
+-- Name: data_api_inspection_admissions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.data_api_inspection_admissions (
+    task_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    binding_id uuid NOT NULL,
+    database_id uuid NOT NULL,
+    table_name text NOT NULL,
+    nonce text NOT NULL,
+    binding_revision bigint NOT NULL,
+    database_revision bigint NOT NULL,
+    runtime_generation bigint NOT NULL,
+    credential_generation bigint NOT NULL,
+    target_digest text NOT NULL,
+    trust_digest text NOT NULL,
+    CONSTRAINT data_api_inspection_admissions_binding_revision_check CHECK ((binding_revision > 0)),
+    CONSTRAINT data_api_inspection_admissions_credential_generation_check CHECK ((credential_generation > 0)),
+    CONSTRAINT data_api_inspection_admissions_database_revision_check CHECK ((database_revision > 0)),
+    CONSTRAINT data_api_inspection_admissions_nonce_check CHECK ((nonce ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT data_api_inspection_admissions_runtime_generation_check CHECK ((runtime_generation > 0)),
+    CONSTRAINT data_api_inspection_admissions_table_name_check CHECK ((table_name ~ '^[A-Za-z_][A-Za-z0-9_]{0,62}$'::text)),
+    CONSTRAINT data_api_inspection_admissions_target_digest_check CHECK ((target_digest ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT data_api_inspection_admissions_trust_digest_check CHECK ((trust_digest ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: data_api_inspection_executions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.data_api_inspection_executions (
+    task_id uuid NOT NULL,
+    protocol_version smallint NOT NULL,
+    stdout_sha256 bytea NOT NULL,
+    finished_at timestamp with time zone NOT NULL,
+    CONSTRAINT data_api_inspection_executions_protocol_version_check CHECK ((protocol_version = ANY (ARRAY[5, 6]))),
+    CONSTRAINT data_api_inspection_executions_stdout_sha256_check CHECK ((octet_length(stdout_sha256) = 32))
+);
 
 
 --
@@ -48493,6 +48608,57 @@ CREATE TABLE public.managed_postgres_accounting_reconciliations (
 
 
 --
+-- Name: managed_postgres_app_wake_starts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_app_wake_starts (
+    database_id uuid NOT NULL,
+    claimed_at timestamp with time zone NOT NULL,
+    CONSTRAINT managed_postgres_app_wake_starts_claimed_at_check CHECK (isfinite(claimed_at))
+);
+
+
+--
+-- Name: TABLE managed_postgres_app_wake_starts; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.managed_postgres_app_wake_starts IS 'Wake-with-app start claims, matched to recorded compute starts; pruned with them after 30 days; written only by apid.';
+
+
+--
+-- Name: managed_postgres_awake_notices; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_awake_notices (
+    database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    week_start date NOT NULL,
+    awake_seconds bigint NOT NULL,
+    starts integer NOT NULL,
+    cause text NOT NULL,
+    cause_app_id uuid,
+    cause_detail text DEFAULT ''::text NOT NULL,
+    cause_starts integer NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    mailed_at timestamp with time zone,
+    CONSTRAINT managed_postgres_awake_notices_awake_seconds_check CHECK ((awake_seconds >= 0)),
+    CONSTRAINT managed_postgres_awake_notices_cause_check CHECK ((cause = ANY (ARRAY['app_wake'::text, 'cron'::text, 'request'::text, 'app_start'::text, 'running_app'::text, 'external'::text]))),
+    CONSTRAINT managed_postgres_awake_notices_cause_detail_check CHECK ((length(cause_detail) <= 512)),
+    CONSTRAINT managed_postgres_awake_notices_check CHECK (((cause_starts >= 0) AND (cause_starts <= starts))),
+    CONSTRAINT managed_postgres_awake_notices_mailed_at_check CHECK (((mailed_at IS NULL) OR isfinite(mailed_at))),
+    CONSTRAINT managed_postgres_awake_notices_recorded_at_check CHECK (isfinite(recorded_at)),
+    CONSTRAINT managed_postgres_awake_notices_starts_check CHECK ((starts >= 0))
+);
+
+
+--
+-- Name: TABLE managed_postgres_awake_notices; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.managed_postgres_awake_notices IS 'Weekly notices that one cause kept a managed PostgreSQL database awake; mailed once; written only by apid.';
+
+
+--
 -- Name: managed_postgres_bindings; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -48522,12 +48688,14 @@ CREATE TABLE public.managed_postgres_bindings (
     cutover_id uuid,
     connection_limit bigint DEFAULT 0 NOT NULL,
     database_account_id uuid NOT NULL,
+    data_api_inspection_revision bigint DEFAULT 1 NOT NULL,
     CONSTRAINT managed_postgres_bindings_access_v2_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text, 'migration'::text, 'data_api'::text, 'auth'::text, 'session'::text]))),
     CONSTRAINT managed_postgres_bindings_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
     CONSTRAINT managed_postgres_bindings_check CHECK (((state <> 'ready'::text) OR ((provider_identity_id IS NOT NULL) AND (credential_ref IS NOT NULL)))),
     CONSTRAINT managed_postgres_bindings_check1 CHECK (((state = 'deleted'::text) = (deleted_at IS NOT NULL))),
     CONSTRAINT managed_postgres_bindings_connection_limit_check CHECK (((connection_limit >= 0) AND (connection_limit <= 84))),
     CONSTRAINT managed_postgres_bindings_credential_generation_check CHECK ((credential_generation >= 1)),
+    CONSTRAINT managed_postgres_bindings_data_api_inspection_revision_check CHECK ((data_api_inspection_revision > 0)),
     CONSTRAINT managed_postgres_bindings_environment_key_check CHECK ((environment_key ~ '^[A-Z_][A-Z0-9_]{0,126}$'::text)),
     CONSTRAINT managed_postgres_bindings_last_error_code_check CHECK ((last_error_code ~ '^[a-z][a-z0-9_]{0,62}$'::text)),
     CONSTRAINT managed_postgres_bindings_lease_pair_chk CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
@@ -48599,6 +48767,37 @@ CREATE TABLE public.managed_postgres_checkpoint_maintenance (
     CONSTRAINT managed_postgres_checkpoint_maintenance_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'role_requested'::text, 'role_reserved'::text, 'database_requested'::text, 'database_created'::text, 'activation_requested'::text, 'ready'::text]))),
     CONSTRAINT managed_postgres_maintenance_original_owner CHECK (((((reserved_by_operation_id IS NOT NULL))::integer + ((reserved_by_cutover_id IS NOT NULL))::integer) = 1))
 );
+
+
+--
+-- Name: managed_postgres_compute_starts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_compute_starts (
+    database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    provider_operation_id text NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    suspended_at timestamp with time zone,
+    cause text NOT NULL,
+    cause_app_id uuid,
+    cause_detail text DEFAULT ''::text NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT managed_postgres_compute_starts_cause_check CHECK ((cause = ANY (ARRAY['app_wake'::text, 'cron'::text, 'request'::text, 'app_start'::text, 'running_app'::text, 'external'::text]))),
+    CONSTRAINT managed_postgres_compute_starts_cause_detail_check CHECK ((length(cause_detail) <= 512)),
+    CONSTRAINT managed_postgres_compute_starts_check CHECK (((suspended_at IS NULL) OR (isfinite(suspended_at) AND (suspended_at >= started_at)))),
+    CONSTRAINT managed_postgres_compute_starts_check1 CHECK (((cause = ANY (ARRAY['app_wake'::text, 'external'::text])) OR (cause_app_id IS NOT NULL))),
+    CONSTRAINT managed_postgres_compute_starts_provider_operation_id_check CHECK ((provider_operation_id ~ '^[A-Za-z0-9_-]{1,128}$'::text)),
+    CONSTRAINT managed_postgres_compute_starts_recorded_at_check CHECK (isfinite(recorded_at)),
+    CONSTRAINT managed_postgres_compute_starts_started_at_check CHECK (isfinite(started_at))
+);
+
+
+--
+-- Name: TABLE managed_postgres_compute_starts; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.managed_postgres_compute_starts IS 'Starts of a managed PostgreSQL database''s compute with their likely cause (diagnosis, never billing); pruned after 30 days; written only by apid.';
 
 
 --
@@ -48991,6 +49190,7 @@ CREATE TABLE public.managed_postgres_databases (
     preview_environment_id text,
     preview_pr_number integer,
     expires_at timestamp with time zone,
+    data_api_inspection_revision bigint DEFAULT 1 NOT NULL,
     CONSTRAINT managed_postgres_clone_has_restore CHECK (((environment_clone_operation_id IS NULL) OR ((restore_source_database_id IS NOT NULL) AND (restore_source_resource_id IS NOT NULL) AND (restore_point_in_time IS NOT NULL)))),
     CONSTRAINT managed_postgres_clone_is_independent CHECK (((environment_clone_operation_id IS NULL) OR ((id <> restore_source_database_id) AND ((provider_resource_id IS NULL) OR (provider_resource_id <> restore_source_resource_id))))),
     CONSTRAINT managed_postgres_databases_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
@@ -49004,6 +49204,7 @@ CREATE TABLE public.managed_postgres_databases (
     CONSTRAINT managed_postgres_databases_check4 CHECK (((data_resource_id IS NULL) OR ((data_resource_id <> ''::text) AND (length(data_resource_id) <= 255) AND (provider_resource_id IS NOT NULL)))),
     CONSTRAINT managed_postgres_databases_check5 CHECK (((clone_resource_role = 'target'::text) OR (environment_clone_operation_id IS NOT NULL))),
     CONSTRAINT managed_postgres_databases_clone_resource_role_check CHECK ((clone_resource_role = ANY (ARRAY['target'::text, 'checkpoint'::text]))),
+    CONSTRAINT managed_postgres_databases_data_api_inspection_revision_check CHECK ((data_api_inspection_revision > 0)),
     CONSTRAINT managed_postgres_databases_desired_generation_check CHECK ((desired_generation >= 1)),
     CONSTRAINT managed_postgres_databases_labels_object_chk CHECK ((jsonb_typeof(labels) = 'object'::text)),
     CONSTRAINT managed_postgres_databases_last_error_code_check CHECK ((last_error_code ~ '^[a-z][a-z0-9_]{0,62}$'::text)),
@@ -60686,6 +60887,46 @@ CREATE TABLE public.route_removal_policy_history (
 
 
 --
+-- Name: route_splits; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.route_splits (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    source_app_id uuid NOT NULL,
+    target_slug text NOT NULL,
+    target_app_id uuid,
+    target_deployment_id uuid,
+    kind text NOT NULL,
+    route text NOT NULL,
+    method text DEFAULT ''::text NOT NULL,
+    path_glob text NOT NULL,
+    route_ram_mb integer NOT NULL,
+    main_ram_mb integer NOT NULL,
+    previous_ram_mb integer NOT NULL,
+    main_resized boolean DEFAULT false NOT NULL,
+    edge_rule_ids uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    phase text DEFAULT 'creating'::text NOT NULL,
+    warning text DEFAULT ''::text NOT NULL,
+    error text DEFAULT ''::text NOT NULL,
+    lease_until timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT route_splits_error_check CHECK ((char_length(error) <= 1024)),
+    CONSTRAINT route_splits_kind_check CHECK ((kind = ANY (ARRAY['memory'::text, 'cpu'::text]))),
+    CONSTRAINT route_splits_main_ram_mb_check CHECK ((main_ram_mb > 0)),
+    CONSTRAINT route_splits_method_check CHECK ((char_length(method) <= 16)),
+    CONSTRAINT route_splits_path_glob_check CHECK (((path_glob ~~ '/%'::text) AND (char_length(path_glob) <= 512))),
+    CONSTRAINT route_splits_phase_check CHECK ((phase = ANY (ARRAY['creating'::text, 'deploying'::text, 'rule_live'::text, 'done'::text, 'rolled_back'::text, 'undone'::text]))),
+    CONSTRAINT route_splits_previous_ram_mb_check CHECK ((previous_ram_mb > 0)),
+    CONSTRAINT route_splits_route_check CHECK (((char_length(route) >= 1) AND (char_length(route) <= 512))),
+    CONSTRAINT route_splits_route_ram_mb_check CHECK ((route_ram_mb > 0)),
+    CONSTRAINT route_splits_target_slug_check CHECK ((target_slug ~ '^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$'::text)),
+    CONSTRAINT route_splits_warning_check CHECK ((char_length(warning) <= 1024))
+);
+
+
+--
 -- Name: runtime_artifact_bindings; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -64423,6 +64664,7 @@ CREATE TABLE public.usage_statement_invoice_exports (
     claim_token uuid,
     claimed_until timestamp with time zone,
     handoff_reserved boolean DEFAULT false NOT NULL,
+    stripe_issue jsonb,
     CONSTRAINT usage_statement_invoice_exports_attempt_chk CHECK ((attempt >= 0)),
     CONSTRAINT usage_statement_invoice_exports_automatic_tax_chk CHECK (((NOT automatic_tax) OR (provider = 'stripe'::text))),
     CONSTRAINT usage_statement_invoice_exports_claim_chk CHECK (((claim_token IS NULL) = (claimed_until IS NULL))),
@@ -65968,6 +66210,14 @@ ALTER TABLE ONLY public.api_consumer_signups
 
 ALTER TABLE ONLY public.api_consumer_spend_caps
     ADD CONSTRAINT api_consumer_spend_caps_pkey PRIMARY KEY (consumer_id);
+
+
+--
+-- Name: api_consumer_stripe_links api_consumer_stripe_links_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_stripe_links
+    ADD CONSTRAINT api_consumer_stripe_links_pkey PRIMARY KEY (consumer_id, stripe_account_id, livemode);
 
 
 --
@@ -68664,6 +68914,22 @@ ALTER TABLE ONLY public.data_api_access_configs
 
 ALTER TABLE ONLY public.data_api_change_hook_reports
     ADD CONSTRAINT data_api_change_hook_reports_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: data_api_inspection_admissions data_api_inspection_admissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_inspection_admissions
+    ADD CONSTRAINT data_api_inspection_admissions_pkey PRIMARY KEY (task_id);
+
+
+--
+-- Name: data_api_inspection_executions data_api_inspection_executions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_inspection_executions
+    ADD CONSTRAINT data_api_inspection_executions_pkey PRIMARY KEY (task_id);
 
 
 --
@@ -72931,6 +73197,22 @@ ALTER TABLE ONLY public.managed_postgres_accounting_reconciliations
 
 
 --
+-- Name: managed_postgres_app_wake_starts managed_postgres_app_wake_starts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_app_wake_starts
+    ADD CONSTRAINT managed_postgres_app_wake_starts_pkey PRIMARY KEY (database_id, claimed_at);
+
+
+--
+-- Name: managed_postgres_awake_notices managed_postgres_awake_notices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_awake_notices
+    ADD CONSTRAINT managed_postgres_awake_notices_pkey PRIMARY KEY (database_id, week_start);
+
+
+--
 -- Name: managed_postgres_bindings managed_postgres_bindings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -72968,6 +73250,14 @@ ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
 
 ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
     ADD CONSTRAINT managed_postgres_checkpoint_maintenance_source_database_id_key UNIQUE (source_database_id);
+
+
+--
+-- Name: managed_postgres_compute_starts managed_postgres_compute_starts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_compute_starts
+    ADD CONSTRAINT managed_postgres_compute_starts_pkey PRIMARY KEY (database_id, provider_operation_id);
 
 
 --
@@ -78120,6 +78410,14 @@ ALTER TABLE ONLY public.route_removal_approvals
 
 ALTER TABLE ONLY public.route_removal_policy_history
     ADD CONSTRAINT route_removal_policy_history_pkey PRIMARY KEY (app_id, revision);
+
+
+--
+-- Name: route_splits route_splits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_splits
+    ADD CONSTRAINT route_splits_pkey PRIMARY KEY (id);
 
 
 --
@@ -86844,6 +87142,13 @@ CREATE UNIQUE INDEX mail_suppressions_event_id_key ON public.mail_suppressions U
 
 
 --
+-- Name: managed_postgres_app_wake_starts_prune_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_app_wake_starts_prune_idx ON public.managed_postgres_app_wake_starts USING btree (claimed_at);
+
+
+--
 -- Name: managed_postgres_bindings_account_app_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -86897,6 +87202,27 @@ CREATE INDEX managed_postgres_clone_owner_idx ON public.managed_postgres_databas
 --
 
 CREATE UNIQUE INDEX managed_postgres_clone_reservation_key ON public.managed_postgres_databases USING btree (environment_clone_operation_id, restore_source_database_id) WHERE ((environment_clone_operation_id IS NOT NULL) AND (clone_resource_role = 'target'::text));
+
+
+--
+-- Name: managed_postgres_compute_starts_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_compute_starts_account_idx ON public.managed_postgres_compute_starts USING btree (account_id, started_at DESC);
+
+
+--
+-- Name: managed_postgres_compute_starts_prune_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_compute_starts_prune_idx ON public.managed_postgres_compute_starts USING btree (started_at);
+
+
+--
+-- Name: managed_postgres_compute_starts_started_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_compute_starts_started_idx ON public.managed_postgres_compute_starts USING btree (database_id, started_at DESC);
 
 
 --
@@ -90712,6 +91038,27 @@ CREATE INDEX route_probe_rounds_window_idx ON public.route_probe_rounds USING bt
 --
 
 CREATE INDEX route_removal_approval_lookup ON public.route_removal_approvals USING btree (app_id, candidate_deployment_id, valid_until);
+
+
+--
+-- Name: route_splits_by_source; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX route_splits_by_source ON public.route_splits USING btree (source_app_id, created_at DESC);
+
+
+--
+-- Name: route_splits_in_flight; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX route_splits_in_flight ON public.route_splits USING btree (updated_at) WHERE (phase = ANY (ARRAY['creating'::text, 'deploying'::text, 'rule_live'::text]));
+
+
+--
+-- Name: route_splits_one_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX route_splits_one_active ON public.route_splits USING btree (source_app_id) WHERE (phase = ANY (ARRAY['creating'::text, 'deploying'::text, 'rule_live'::text]));
 
 
 --
@@ -95052,6 +95399,20 @@ CREATE TRIGGER customer_operation_subject_immutable BEFORE UPDATE OF record ON p
 --
 
 CREATE TRIGGER customer_operation_webhook_routing_guard BEFORE INSERT OR UPDATE ON public.customer_operation_webhook_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_customer_operation_webhook_routing();
+
+
+--
+-- Name: data_api_inspection_admissions data_api_inspection_admission_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER data_api_inspection_admission_immutable BEFORE UPDATE ON public.data_api_inspection_admissions FOR EACH ROW EXECUTE FUNCTION public.reject_data_api_inspection_evidence_update();
+
+
+--
+-- Name: data_api_inspection_executions data_api_inspection_execution_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER data_api_inspection_execution_immutable BEFORE UPDATE ON public.data_api_inspection_executions FOR EACH ROW EXECUTE FUNCTION public.reject_data_api_inspection_evidence_update();
 
 
 --
@@ -100214,6 +100575,20 @@ CREATE TRIGGER workflow_webhook_routing_guard BEFORE INSERT OR UPDATE ON public.
 
 
 --
+-- Name: managed_postgres_bindings zz_data_api_binding_inspection_revision; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER zz_data_api_binding_inspection_revision BEFORE UPDATE ON public.managed_postgres_bindings FOR EACH ROW EXECUTE FUNCTION public.bump_data_api_binding_inspection_revision();
+
+
+--
+-- Name: managed_postgres_databases zz_data_api_database_inspection_revision; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER zz_data_api_database_inspection_revision BEFORE UPDATE ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.bump_data_api_database_inspection_revision();
+
+
+--
 -- Name: queue_bindings zz_environment_gitops_guard_queue_binding; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -101264,6 +101639,14 @@ ALTER TABLE ONLY public.api_consumer_spend_caps
 
 ALTER TABLE ONLY public.api_consumer_spend_caps
     ADD CONSTRAINT api_consumer_spend_caps_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_stripe_links api_consumer_stripe_links_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_stripe_links
+    ADD CONSTRAINT api_consumer_stripe_links_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
 
 
 --
@@ -104712,6 +105095,38 @@ ALTER TABLE ONLY public.data_api_access_configs
 
 ALTER TABLE ONLY public.data_api_change_hook_reports
     ADD CONSTRAINT data_api_change_hook_reports_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_api_inspection_admissions data_api_inspection_admissions_binding_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_inspection_admissions
+    ADD CONSTRAINT data_api_inspection_admissions_binding_id_fkey FOREIGN KEY (binding_id) REFERENCES public.managed_postgres_bindings(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_api_inspection_admissions data_api_inspection_admissions_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_inspection_admissions
+    ADD CONSTRAINT data_api_inspection_admissions_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_api_inspection_admissions data_api_inspection_admissions_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_inspection_admissions
+    ADD CONSTRAINT data_api_inspection_admissions_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.app_tasks(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_api_inspection_executions data_api_inspection_executions_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_inspection_executions
+    ADD CONSTRAINT data_api_inspection_executions_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.app_tasks(id) ON DELETE CASCADE;
 
 
 --
@@ -109531,6 +109946,22 @@ ALTER TABLE ONLY public.managed_postgres_accounting_reconciliations
 
 
 --
+-- Name: managed_postgres_app_wake_starts managed_postgres_app_wake_starts_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_app_wake_starts
+    ADD CONSTRAINT managed_postgres_app_wake_starts_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_awake_notices managed_postgres_awake_notices_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_awake_notices
+    ADD CONSTRAINT managed_postgres_awake_notices_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
 -- Name: managed_postgres_bindings managed_postgres_bindings_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -109600,6 +110031,14 @@ ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
 
 ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
     ADD CONSTRAINT managed_postgres_checkpoint_maintenance_source_database_id_fkey FOREIGN KEY (source_database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: managed_postgres_compute_starts managed_postgres_compute_starts_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_compute_starts
+    ADD CONSTRAINT managed_postgres_compute_starts_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
 
 
 --
@@ -115872,6 +116311,30 @@ ALTER TABLE ONLY public.route_removal_approvals
 
 ALTER TABLE ONLY public.route_removal_policy_history
     ADD CONSTRAINT route_removal_policy_history_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_splits route_splits_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_splits
+    ADD CONSTRAINT route_splits_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_splits route_splits_source_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_splits
+    ADD CONSTRAINT route_splits_source_app_id_fkey FOREIGN KEY (source_app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_splits route_splits_target_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_splits
+    ADD CONSTRAINT route_splits_target_app_id_fkey FOREIGN KEY (target_app_id) REFERENCES public.apps(id) ON DELETE SET NULL;
 
 
 --

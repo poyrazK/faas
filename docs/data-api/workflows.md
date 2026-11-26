@@ -202,15 +202,20 @@ RPCs remain hidden. `/openapi.json` continues to serve the Swagger 2 contract.
 
 ## Exact numeric round-trips
 
-For editable exact data, generate `--numeric-mode exact` types and pass
-`numericMode: 'exact'` to `createDataClient`. `ExactNumber` distinguishes numeric
-literals from strings and keeps their original decimal text in `source`.
+For editable exact data, generate `--numeric-mode exact` types and pass the
+generated `dataAPINumericMode` to `createDataClient`. Local development and
+hosted sync also accept `"numeric_mode": "exact"` in their JSON configuration.
+Use `data-api check --numeric-mode exact` when comparing exact declarations in
+CI. `ExactNumber` distinguishes numeric literals from strings and keeps their
+original decimal text in `source`.
 REST, RPC and `liveRead` share this mode. The default and string-based lossless
 modes remain available; fingerprints describe the same serving schema.
 
 ```ts
 import { createDataClient, ExactNumber, stringifyExactJSON } from '@gregale/data'
-const db = createDataClient<Database>({ url, accessToken, numericMode: 'exact' })
+import { dataAPINumericMode, type Database } from './database.types.js'
+
+const db = createDataClient<Database>({ url, accessToken, numericMode: dataAPINumericMode })
 const result = await db.schema('api').from('prices').select()
 // Numeric JSON values remain numbers when sent back, including nested JSON.
 await db.schema('api').from('prices').insert(result.data!)

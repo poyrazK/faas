@@ -2,12 +2,16 @@
 package apidserver
 
 import (
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/dataapi"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -27,7 +31,11 @@ func (s *server) createDataAPIContractTask(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.ErrValidation(`kind must be one of "types", "validators" or "schema"`))
 		return
 	}
-	resolved, problem := request.Kind.Request().Resolve()
+	task := request.Kind.Request()
+	if r.URL.Query().Get("output") == "artifact" {
+		task = request.Kind.ArtifactRequest()
+	}
+	resolved, problem := task.Resolve()
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -64,5 +72,52 @@ func (s *server) getDataAPIContractTask(w http.ResponseWriter, r *http.Request, 
 		api.WriteProblem(w, api.ErrInternal("could not load Data API contract task"))
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
+	if r.URL.Query().Get("output") == "artifact" {
+		s.downloadDataAPIContractArtifact(w, r, app, row)
+		return
+	}
 	writeJSON(w, http.StatusOK, appTaskResponse(row))
+}
+
+func (s *server) downloadDataAPIContractArtifact(w http.ResponseWriter, r *http.Request, app state.App, task state.AppTask) {
+	if !api.IsDataAPIContractArtifactTask(task.Command, task.CommandShell) {
+		s.notFound(w, "no such Data API contract artifact")
+		return
+	}
+	if !s.currentDataAPITask(r, app, task) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Data API contract artifact unavailable", "The task is incomplete, failed, or belongs to an earlier deployment."))
+		return
+	}
+	kind := api.DataAPIContractTaskKindOf(task.Command, task.CommandShell)
+	filename := "database.types.ts"
+	if kind == api.DataAPIContractSchema {
+		if _, err := dataapi.Parse([]byte(task.StdoutTail)); err != nil {
+			api.WriteProblem(w, api.ErrInternal("Data API task returned an invalid schema snapshot"))
+			return
+		}
+		filename = "database.schema.json"
+	} else {
+		if dashboardDataAPITypeFingerprint(task.StdoutTail) == "" {
+			api.WriteProblem(w, api.ErrInternal("Data API task returned an invalid TypeScript contract"))
+			return
+		}
+		if kind == api.DataAPIContractValidators {
+			filename = "database.validators.ts"
+		}
+	}
+	writeDataAPIContractDownload(w, "application/octet-stream", filename, task)
+}
+
+func writeDataAPIContractDownload(w http.ResponseWriter, contentType, filename string, task state.AppTask) {
+	content := []byte(task.StdoutTail)
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Length", strconv.Itoa(len(content)))
+	w.Header().Set(api.DataAPIContractArtifactDeploymentHeader, task.DeploymentID)
+	w.Header().Set(api.DataAPIContractArtifactSHA256Header, fmt.Sprintf("%x", sha256.Sum256(content)))
+	_, _ = w.Write(content)
 }

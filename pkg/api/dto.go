@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/onebox-faas/faas/pkg/capgrant"
 	"github.com/onebox-faas/faas/pkg/edgevalidate"
 	"github.com/onebox-faas/faas/pkg/lazyregexp"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
@@ -7923,6 +7924,9 @@ type PlanWorkload struct {
 	Command             []string          `json:"command"`
 	DependsOn           []string          `json:"depends_on,omitempty"`
 	DependsOnConditions map[string]string `json:"depends_on_conditions,omitempty"`
+	// Uses is the service's cross-app grants from gregale.yaml
+	// (ADR-20261122191423), shown so a plan says what each service may call.
+	Uses *capgrant.Uses `json:"uses,omitempty"`
 	// ReleaseCommand is the command the service runs once before each of
 	// its releases goes live, as one shell string or exec-form argv joined
 	// by spaces; empty when it declares none. ReleaseCommandSource names the

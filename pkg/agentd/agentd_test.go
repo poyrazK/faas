@@ -84,7 +84,7 @@ func openStore(t *testing.T) (*pgxpool.Pool, *agentstore.Store) {
 	}
 	// Persistent sessions (ADR-20261122132055): the first is NO TRANSACTION,
 	// so each runs statement by statement as goose runs it.
-	for _, name := range []string{"20261125225059100_sandbox_sessions_persistent.sql", "20261125225059200_sandbox_session_captures.sql"} {
+	for _, name := range []string{"20261126171607100_sandbox_sessions_persistent.sql", "20261126171607200_sandbox_session_captures.sql"} {
 		raw, err := migrations.FS.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)

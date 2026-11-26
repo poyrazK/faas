@@ -8,14 +8,29 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.app_task_response import AppTaskResponse
+from ...models.get_data_api_contract_task_output import (
+    GetDataAPIContractTaskOutput,
+)
 from ...models.problem import Problem
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     slug: str,
     id: UUID,
+    *,
+    output: GetDataAPIContractTaskOutput | Unset = UNSET,
 ) -> dict[str, Any]:
+
+    params: dict[str, Any] = {}
+
+    json_output: str | Unset = UNSET
+    if not isinstance(output, Unset):
+        json_output = output
+
+    params["output"] = json_output
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "get",
@@ -23,6 +38,7 @@ def _get_kwargs(
             slug=quote(str(slug), safe=""),
             id=quote(str(id), safe=""),
         ),
+        "params": params,
     }
 
     return _kwargs
@@ -50,6 +66,11 @@ def _parse_response(
         response_404 = Problem.from_dict(response.json())
 
         return response_404
+
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
 
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
@@ -83,14 +104,16 @@ def sync_detailed(
     id: UUID,
     *,
     client: AuthenticatedClient,
+    output: GetDataAPIContractTaskOutput | Unset = UNSET,
 ) -> Response[AppTaskResponse | Problem]:
     """Get one Data API contract inspection
 
-     Current or terminal receipt of a contract inspection. Any other app task is not found here.
+     Reads the task receipt or downloads a completed artifact for the current serving deployment.
 
     Args:
         slug (str):
         id (UUID):
+        output (GetDataAPIContractTaskOutput | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -103,6 +126,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         id=id,
+        output=output,
     )
 
     response = client.get_httpx_client().request(
@@ -117,14 +141,16 @@ def sync(
     id: UUID,
     *,
     client: AuthenticatedClient,
+    output: GetDataAPIContractTaskOutput | Unset = UNSET,
 ) -> AppTaskResponse | Problem | None:
     """Get one Data API contract inspection
 
-     Current or terminal receipt of a contract inspection. Any other app task is not found here.
+     Reads the task receipt or downloads a completed artifact for the current serving deployment.
 
     Args:
         slug (str):
         id (UUID):
+        output (GetDataAPIContractTaskOutput | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -138,6 +164,7 @@ def sync(
         slug=slug,
         id=id,
         client=client,
+        output=output,
     ).parsed
 
 
@@ -146,14 +173,16 @@ async def asyncio_detailed(
     id: UUID,
     *,
     client: AuthenticatedClient,
+    output: GetDataAPIContractTaskOutput | Unset = UNSET,
 ) -> Response[AppTaskResponse | Problem]:
     """Get one Data API contract inspection
 
-     Current or terminal receipt of a contract inspection. Any other app task is not found here.
+     Reads the task receipt or downloads a completed artifact for the current serving deployment.
 
     Args:
         slug (str):
         id (UUID):
+        output (GetDataAPIContractTaskOutput | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -166,6 +195,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         id=id,
+        output=output,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -178,14 +208,16 @@ async def asyncio(
     id: UUID,
     *,
     client: AuthenticatedClient,
+    output: GetDataAPIContractTaskOutput | Unset = UNSET,
 ) -> AppTaskResponse | Problem | None:
     """Get one Data API contract inspection
 
-     Current or terminal receipt of a contract inspection. Any other app task is not found here.
+     Reads the task receipt or downloads a completed artifact for the current serving deployment.
 
     Args:
         slug (str):
         id (UUID):
+        output (GetDataAPIContractTaskOutput | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -200,5 +232,6 @@ async def asyncio(
             slug=slug,
             id=id,
             client=client,
+            output=output,
         )
     ).parsed

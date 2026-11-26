@@ -245,6 +245,12 @@
 # Default: "" (HTTPS guest path disabled)
 # service_proxy_ca_path = "/etc/faas/tls/service-proxy/ca.crt"
 
+# Public CA certificates for the native PostgreSQL Data API inspection task.
+# They are sent over the host-to-guest task channel; private keys are refused.
+# This does not enable a verified readiness verdict on its own.
+# Default: "" (inspection trust unavailable)
+# data_api_inspection_ca_path = "/etc/faas/pgproxy/inspection-ca.crt"
+
 # schedd_client_cert_path / schedd_client_key_path / schedd_client_ca_path:
 # client mTLS material vmmd uses to dial schedd for ReportCapacity
 # (ADR-052 / issue #95 slice 2). All three empty => no TLS (single-box

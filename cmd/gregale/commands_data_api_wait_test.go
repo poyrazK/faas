@@ -33,8 +33,8 @@ func newDataAPIRefreshTestServer(t *testing.T, wakeID string, statuses []api.Run
 		if !completed.Load() {
 			t.Error("readiness was probed before the accepted restart completed")
 		}
-		if r.URL.Path != "/healthz" || r.Header.Get("Authorization") != "" || r.Header.Get("Cache-Control") != "no-cache" {
-			t.Error("public readiness request must use /healthz without owner credentials or cached responses")
+		if (r.URL.Path != api.DataAPIReadinessPath && r.URL.Path != "/healthz") || r.Header.Get("Authorization") != "" || r.Header.Get("Cookie") != "" || r.Header.Get("Cache-Control") != "no-cache" {
+			t.Error("public readiness request must use a readiness path without credentials or cached responses")
 		}
 		probe(w, r)
 	}))
@@ -86,6 +86,9 @@ func TestDataAPIRefreshWaitJourney(t *testing.T) {
 				{WakeID: "wake-1", Status: "queued"},
 				{WakeID: "wake-1", Status: "completed"},
 			}, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != api.DataAPIReadinessPath {
+					t.Errorf("readiness waited on %s", r.URL.Path)
+				}
 				if probes.Add(1) == 1 {
 					w.WriteHeader(http.StatusServiceUnavailable)
 					return
@@ -107,6 +110,38 @@ func TestDataAPIRefreshWaitJourney(t *testing.T) {
 			}
 			if fixture.restarts.Load() != 1 || fixture.statusReads.Load() != 2 || fixture.healthReads.Load() != 2 {
 				t.Fatal("refresh must queue once, await completion, and retry temporary unreadiness")
+			}
+		})
+	}
+}
+
+func TestDataAPIRefreshWaitOlderRuntime(t *testing.T) {
+	for _, name := range []string{"runtime health", "synthetic edge health"} {
+		t.Run(name, func(t *testing.T) {
+			main.ResetJSONOut(t)
+			synthetic := name == "synthetic edge health"
+			fixture := newDataAPIRefreshTestServer(t, "wake-1", []api.RuntimeConfigRestartStatusResponse{
+				{WakeID: "wake-1", Status: "completed"},
+			}, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == api.DataAPIReadinessPath {
+					http.NotFound(w, r)
+					return
+				}
+				if synthetic {
+					w.Header().Set("X-Faas-Health-Source", "edge")
+					main.WriteJSONTest(w, map[string]string{"status": "ok", "source": "edge"})
+					return
+				}
+				main.WriteJSONTest(w, map[string]bool{"ready": true})
+			})
+			_, stderr, restore := main.SwapIO(t)
+			defer restore()
+			code := main.CmdDataAPIRefresh([]string{"notes", "--wait", "--timeout", "5s"})
+			if (code != 0) != synthetic || fixture.healthReads.Load() != 2 {
+				t.Fatalf("exit=%d reads=%d stderr=%s", code, fixture.healthReads.Load(), stderr())
+			}
+			if synthetic && !strings.Contains(stderr(), "gregale data-api deploy") {
+				t.Fatalf("missing upgrade advice: %s", stderr())
 			}
 		})
 	}
@@ -144,8 +179,8 @@ func TestDataAPIRefreshWaitFailures(t *testing.T) {
 		{name: "restart deadline", wakeID: "wake-1", status: "retrying", statusWake: "wake-1", want: "timed out waiting for Data API restart completion"},
 		{name: "unready engine", wakeID: "wake-1", status: "completed", statusWake: "wake-1", healthStatus: 200, healthBody: `{"ready":false}`, want: "timed out waiting for Data API readiness"},
 		{name: "health request deadline", wakeID: "wake-1", status: "completed", statusWake: "wake-1", blockHealth: true, want: "timed out waiting for Data API readiness"},
-		{name: "ingress denied", wakeID: "wake-1", status: "completed", statusWake: "wake-1", healthStatus: 403, healthBody: "private-provider-error", want: "/healthz returned HTTP 403"},
-		{name: "redirect", wakeID: "wake-1", status: "completed", statusWake: "wake-1", healthStatus: 302, healthBody: "private-provider-error", want: "/healthz returned HTTP 302"},
+		{name: "ingress denied", wakeID: "wake-1", status: "completed", statusWake: "wake-1", healthStatus: 403, healthBody: "private-provider-error", want: "readiness returned HTTP 403"},
+		{name: "redirect", wakeID: "wake-1", status: "completed", statusWake: "wake-1", healthStatus: 302, healthBody: "private-provider-error", want: "readiness returned HTTP 302"},
 		{name: "wrong app", wakeID: "wake-1", status: "completed", statusWake: "wake-1", healthStatus: 200, healthBody: "private-provider-error", want: "valid Data API readiness response"},
 		{name: "missing readiness", wakeID: "wake-1", status: "completed", statusWake: "wake-1", healthStatus: 200, healthBody: `{}`, want: "valid Data API readiness response"},
 		{name: "oversized response", wakeID: "wake-1", status: "completed", statusWake: "wake-1", healthStatus: 200, healthBody: `{"ready":true}` + strings.Repeat(" ", 8192), want: "valid Data API readiness response"},
@@ -231,7 +266,7 @@ func TestDataAPIReadinessURL(t *testing.T) {
 		}
 	}
 	address, err := main.DataAPIReadinessURL(api.AppResponse{URL: "https://platform.example", CanonicalURL: "https://canonical.example/"})
-	if err != nil || address != "https://canonical.example/healthz" {
+	if err != nil || address != "https://canonical.example"+api.DataAPIReadinessPath {
 		t.Fatalf("canonical readiness URL=%q err=%v", address, err)
 	}
 }

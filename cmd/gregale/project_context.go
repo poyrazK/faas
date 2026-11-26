@@ -216,6 +216,22 @@ func linkedProjectContext(start string) (localProjectContext, string, error) {
 	return findProjectContext(start)
 }
 
+// otherAppLinkedAbove reports whether dir's nearest saved context is an
+// ancestor directory's standalone link to an app other than slug. That link
+// is not dir's own: the nearest context wins, so a link saved in dir itself
+// targets slug without rewriting the ancestor's, which the directories
+// beside dir still use. On prod (hunt r50) `deploy --name` under such a
+// directory saved no link, so later commands there targeted the other app,
+// and `link --app` overwrote the ancestor's link.
+func otherAppLinkedAbove(dir, slug string) bool {
+	link, path, err := findProjectContext(dir)
+	if err != nil || link.Version != standaloneContextVersion || link.App == slug {
+		return false
+	}
+	abs, err := filepath.Abs(dir)
+	return err == nil && filepath.Dir(filepath.Dir(path)) != abs
+}
+
 // targetProjectContext is the checkout's CLI target for commands that only
 // read it (ADR-20261107180000 slice 3). The local .gregale/project.json wins;
 // without one, the committed gregale.yaml `project:` block's name and app

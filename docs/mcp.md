@@ -7139,14 +7139,18 @@ failed release; inspect the reported stage and reconcile candidate processes.
 #### Go and Python worker upgrades
 
 `gregale mcp server tasks deploy` also releases Go and Python workers. Their
-starters have no admission tables, so the CLI runs the gate itself
-(ADR-20261123160000): the same release lock, journal, checkpoint and
-deployment adapters as the Node gate, the starter's own migration command
-(`go run . tasks-migrate apply` or `python3 task_schema.py apply`), and a
-readiness rule based on unfinished Tasks: each replacement must be registered,
-heartbeating since the release began and serving every `(tool, handler_version)`
-that `queued`, `running` or `input_required` Tasks need before previous workers
-drain. `recover`, `restore`, `quarantine` and `retire` need the Node gate's claim
+starters have no admission tables, so the CLI runs the gate itself, entirely
+through the Gregale API (ADR-20261123160000, amendment 1): the same journal,
+checkpoint and deployment adapters as the Node gate; the schema migration in
+the web app's release command (`/app/out tasks-migrate apply` or
+`python task_schema.py apply`), with the staged web deployed before the
+candidate worker; and a readiness rule based on unfinished Tasks: a fresh
+report from the always-on observer, taken after the release began, must show
+the candidate deployment serving every `(tool, handler_version)` that `queued`,
+`running` or `input_required` Tasks need, on every replacement, before previous
+workers drain. The machine running the release needs no database credentials;
+set `observer_metric_app` to the app the observer reports for
+(`MCP_TASKS_SCALING_APP_SLUG`). `recover`, `restore`, `quarantine` and `retire` need the Node gate's claim
 fence and stay Node-only; for a failed Go/Python release use the manual steps
 below.
 
@@ -7653,7 +7657,9 @@ ADR-20261118161500.
   allocations; read one app's costs with `gregale_get_costs`. Budget and flag
   plans live only in the server's memory: after a release restarts the hosted
   server, plan again.
-- API consumers (toolset `operate`): `gregale_list_api_consumers`,
+- API consumers (toolset `operate`): `gregale_get_mcp_seller_stats` (a
+  sold MCP server's customers, revenue, tools and customers near their
+  limit; `gregale mcp server stats`), `gregale_list_api_consumers`,
   `gregale_get_api_consumer` and `gregale_plan_api_consumer_change` (create,
   revoke, spend cap, plan). Keys are never shown or issued. Revoking, plans
   and spend caps ask a person first.
