@@ -20,6 +20,7 @@ import type { DataAPIUsageReport } from '../models/DataAPIUsageReport.js';
 import type { DataAPIUsageReportResponse } from '../models/DataAPIUsageReportResponse.js';
 import type { LabelChange } from '../models/LabelChange.js';
 import type { LabelsResponse } from '../models/LabelsResponse.js';
+import type { ManagedPostgresActivity } from '../models/ManagedPostgresActivity.js';
 import type { ManagedPostgresBinding } from '../models/ManagedPostgresBinding.js';
 import type { ManagedPostgresBindingList } from '../models/ManagedPostgresBindingList.js';
 import type { ManagedPostgresCapabilities } from '../models/ManagedPostgresCapabilities.js';
@@ -802,6 +803,74 @@ export class ManagedPostgresService {
       },
       body: requestBody,
       mediaType: 'application/json',
+    });
+  }
+  /**
+   * Show what kept a database awake
+   * Lists a database's recorded compute starts in the period, newest first (at most 200), each with a likely cause, plus each cause's starts and awake time and hints that name the command acting on the largest causes. A cause is the first of app_wake (wake-with-app started it), cron (a cron of a bound app fired just before), request (a request woke a bound app), app_start (a bound app started without a request), running_app (a bound app was running) and external (none of these, so a client outside Gregale) that matches the start's timing; it is a best guess, never billing. Starts are recorded from the usage sweep, so the latest can lag by up to an hour, and kept 30 days. Reading never wakes the database.
+   * @returns ManagedPostgresActivity Why the database was awake in the period
+   * @returns Problem Invalid period, unknown database, or managed PostgreSQL not configured
+   * @throws ApiError
+   */
+  public static getManagedPostgresActivity({
+    id,
+    since,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Start of the period, as a duration back from now such as 24h or 7d, or an RFC 3339 time. Defaults to the last day; anything older than 30 days is clamped to 30 days.
+     */
+    since?: string,
+  }): CancelablePromise<ManagedPostgresActivity | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/activity',
+      path: {
+        'id': id,
+      },
+      query: {
+        'since': since,
+      },
+    });
+  }
+  /**
+   * Show what kept a company database awake.
+   * A member who can read the organization's databases lists a company database's recorded compute starts with their likely causes, each cause's awake time, and hints.
+   * @returns ManagedPostgresActivity Why the company database was awake in the period.
+   * @returns Problem Problem while reading the company database's activity.
+   * @throws ApiError
+   */
+  public static getOrgManagedPostgresActivity({
+    organization,
+    id,
+    since,
+  }: {
+    /**
+     * Organization selected to read what kept a company database awake.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Start of the period, as a duration back from now such as 24h or 7d, or an RFC 3339 time. Defaults to the last day.
+     */
+    since?: string,
+  }): CancelablePromise<ManagedPostgresActivity | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/activity',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      query: {
+        'since': since,
+      },
     });
   }
   /**

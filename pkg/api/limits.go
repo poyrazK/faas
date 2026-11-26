@@ -1334,6 +1334,24 @@ const (
 // ManagedPostgresSuspendTimeoutDocsURL is cited by the out-of-range error.
 const ManagedPostgresSuspendTimeoutDocsURL = "https://gregale.dev/docs/postgres#plans"
 
+// Why a managed PostgreSQL database is awake (ADR-20261125231222).
+// ManagedPostgresActivityRetention is how long recorded compute starts are
+// kept, and so the longest period `postgres activity` covers.
+// ManagedPostgresActivityMaxStarts bounds the starts one activity response
+// lists. ManagedPostgresAwakeNoticeHoursPerDay is the 7-day average awake
+// time at which the weekly notice names the cause, when one cause holds at
+// least ManagedPostgresAwakeNoticeCauseSharePercent of the starts.
+const (
+	ManagedPostgresActivityRetention            = 30 * 24 * time.Hour
+	ManagedPostgresActivityDefaultPeriod        = 24 * time.Hour
+	ManagedPostgresActivityMaxStarts            = 200
+	ManagedPostgresAwakeNoticeHoursPerDay       = 6
+	ManagedPostgresAwakeNoticeCauseSharePercent = 50
+)
+
+// ManagedPostgresActivityDocsURL documents `postgres activity`.
+const ManagedPostgresActivityDocsURL = "https://gregale.dev/docs/postgres#why-is-my-database-awake"
+
 // ManagedPostgresWakeWithAppDocsURL is cited by wake-with-app refusals.
 const ManagedPostgresWakeWithAppDocsURL = "https://gregale.dev/docs/postgres#plans"
 

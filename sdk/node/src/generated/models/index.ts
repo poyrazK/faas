@@ -1640,6 +1640,10 @@ export type { ManagedPostgresAccountingDiagnostic } from './ManagedPostgresAccou
 export type { ManagedPostgresAccountingDiagnosticsResponse } from './ManagedPostgresAccountingDiagnosticsResponse.js';
 export type { ManagedPostgresAccountingReconciliationRequest } from './ManagedPostgresAccountingReconciliationRequest.js';
 export type { ManagedPostgresAccountingReconciliationResult } from './ManagedPostgresAccountingReconciliationResult.js';
+export type { ManagedPostgresActivity } from './ManagedPostgresActivity.js';
+export type { ManagedPostgresActivityCause } from './ManagedPostgresActivityCause.js';
+export type { ManagedPostgresActivityComputeStart } from './ManagedPostgresActivityComputeStart.js';
+export type { ManagedPostgresActivityHint } from './ManagedPostgresActivityHint.js';
 export type { ManagedPostgresBinding } from './ManagedPostgresBinding.js';
 export type { ManagedPostgresBindingList } from './ManagedPostgresBindingList.js';
 export type { ManagedPostgresCapabilities } from './ManagedPostgresCapabilities.js';
@@ -1657,6 +1661,7 @@ export type { ManagedPostgresCutoverSourceSessions } from './ManagedPostgresCuto
 export type { ManagedPostgresCutoverWriterIsolation } from './ManagedPostgresCutoverWriterIsolation.js';
 export type { ManagedPostgresDatabase } from './ManagedPostgresDatabase.js';
 export type { ManagedPostgresDatabaseList } from './ManagedPostgresDatabaseList.js';
+export type { ManagedPostgresDatabaseUsage } from './ManagedPostgresDatabaseUsage.js';
 export type { ManagedPostgresHealth } from './ManagedPostgresHealth.js';
 export type { ManagedPostgresID } from './ManagedPostgresID.js';
 export type { ManagedPostgresOverage } from './ManagedPostgresOverage.js';
