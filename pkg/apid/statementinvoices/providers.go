@@ -62,8 +62,17 @@ type provider interface {
 	dashboardURL(livemode bool, invoiceID string) string
 }
 
-func lookupInvoicePayment(ctx context.Context, p provider, conn connection, export state.StatementInvoiceExport, observedAt time.Time) (state.StatementInvoicePayment, bool, error) {
+func (s *Service) lookupInvoicePayment(ctx context.Context, p provider, conn connection, export state.StatementInvoiceExport, observedAt time.Time) (state.StatementInvoicePayment, bool, error) {
 	payment, known, err := p.payment(ctx, conn, export.ProviderInvoiceID)
+	if !s.productInvoiceWorkflowEnabled(export) {
+		if errors.Is(err, errInvoiceLookupUnconfirmed) {
+			return state.StatementInvoicePayment{Status: state.InvoicePaymentDeleted}, true, nil
+		}
+		return payment, known, err
+	}
+	if export.Provider == state.BillingProviderPaddle {
+		payment.HostedInvoiceURL = paddleCheckoutURL(payment.Status, payment.HostedInvoiceURL)
+	}
 	stripe, isStripe := p.(stripeProvider)
 	if !isStripe || !errors.Is(err, errInvoiceLookupUnconfirmed) ||
 		(export.PaymentStatus != state.InvoicePaymentDraft && export.PaymentStatus != "") {
@@ -318,12 +327,15 @@ func (p stripeProvider) payment(ctx context.Context, conn connection, invoiceID 
 	if err != nil {
 		return state.StatementInvoicePayment{}, false, err
 	}
+	if invoice.Deleted {
+		return state.StatementInvoicePayment{}, false, errInvoiceLookupUnconfirmed
+	}
 	return stripeInvoicePayment(invoice)
 }
 
 func stripeInvoicePayment(invoice stripeinvoice.InvoiceState) (state.StatementInvoicePayment, bool, error) {
 	if invoice.Deleted {
-		return state.StatementInvoicePayment{}, false, errInvoiceLookupUnconfirmed
+		return state.StatementInvoicePayment{Status: state.InvoicePaymentDeleted}, true, nil
 	}
 	// Stripe writes some currencies differently from ISO 4217; Gregale keeps
 	// ISO minor units (ADR-20261019100330).
@@ -441,14 +453,24 @@ func (p paddleProvider) collect(ctx context.Context, conn connection, export *st
 	if txn.Deleted || txn.Status != "draft" && txn.Status != "ready" {
 		return nil
 	}
-	address, business, problem := p.billingDetails(ctx, conn, export.Customer)
-	if problem != nil {
-		return problem
+	address, err := p.client.CustomerAddress(ctx, conn.key, export.Customer)
+	if errors.Is(err, paddleinvoice.ErrNoAddress) {
+		return providerProblem(http.StatusUnprocessableEntity, "Paddle customer has no address",
+			"add an address to the customer in Paddle, then export again; the transaction is kept as a draft")
 	}
-	if err := p.client.BillTransaction(ctx, conn.key, export.ProviderInvoiceID, address.ID, business.ID); err != nil {
+	if err != nil {
 		return paddleCallProblem(err)
 	}
-	return nil
+	// The customer's business, when it has one, carries its tax identifier
+	// onto the invoice (ADR-20261020120000).
+	business, hasBusiness, err := p.client.ActiveBusiness(ctx, conn.key, export.Customer)
+	if err != nil {
+		return paddleCallProblem(err)
+	}
+	if !hasBusiness {
+		business.ID = ""
+	}
+	return callProblemOrNil(p.client.BillTransaction(ctx, conn.key, export.ProviderInvoiceID, address, business.ID), paddleCallProblem)
 }
 
 func (p paddleProvider) billingDetails(ctx context.Context, conn connection, customer string) (paddleinvoice.Address, paddleinvoice.Business, *api.Problem) {
@@ -501,7 +523,7 @@ func paddleTransactionPayment(txn paddleinvoice.TransactionState) (state.Stateme
 		remaining = 0
 	}
 	return knownPayment(state.StatementInvoicePayment{Status: status, AmountPaidMinor: max(txn.GrandTotal-remaining, 0),
-		AmountRemainingMinor: remaining, DueAt: txn.DueAt, PaidAt: txn.PaidAt}, paddleCheckoutURL(status, txn.CheckoutURL))
+		AmountRemainingMinor: remaining, DueAt: txn.DueAt, PaidAt: txn.PaidAt}, txn.CheckoutURL)
 }
 
 // Paddle can expose checkout for a ready draft. Only share the link after

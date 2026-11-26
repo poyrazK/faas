@@ -119,7 +119,7 @@ func (s *Service) exportProductStatement(ctx context.Context, acct state.Account
 	if problem != nil {
 		return api.StatementInvoiceExportResponse{}, problem
 	}
-	return statementInvoiceExportResponse(export), nil
+	return s.statementInvoiceExportResponse(export), nil
 }
 
 // ReviewProductStatementExport resolves the exact target and collection settings
@@ -192,7 +192,7 @@ func (s *Service) ProductStatementInvoice(ctx context.Context, accountID, docume
 	if err != nil {
 		return nil, fmt.Errorf("load product statement invoice: %w", err)
 	}
-	out := statementInvoiceExportResponse(export)
+	out := s.statementInvoiceExportResponse(export)
 	return &out, nil
 }
 
@@ -215,5 +215,5 @@ func (s *Service) GetProductStatementExport(ctx context.Context, acct state.Acco
 	if err != nil {
 		return api.StatementInvoiceExportResponse{}, api.ErrInternal("could not load the statement invoice export")
 	}
-	return statementInvoiceExportResponse(export), nil
+	return s.statementInvoiceExportResponse(export), nil
 }

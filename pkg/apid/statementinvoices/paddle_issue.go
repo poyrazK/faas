@@ -248,7 +248,7 @@ func (s *Service) recordPaddleIssue(ctx context.Context, payments state.Statemen
 	if err != nil {
 		return empty, paddleIssueUnconfirmed()
 	}
-	return statementInvoiceExportResponse(current), nil
+	return s.statementInvoiceExportResponse(current), nil
 }
 
 func paddleIssueCallProblem(err error) *api.Problem {

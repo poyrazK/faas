@@ -1852,6 +1852,7 @@ func newServerWithDeps(
 	s.appEvents.Host = appEventsHost{s}
 	s.outboundAI.Host = outboundAIHost{s}
 	s.statementInvoices.Host = statementInvoicesHost{s}
+	s.statementInvoices.ProductControlEnabled = func() bool { return s.productControl.Enabled }
 	s.billingRuns.Host = billingRunsHost{s}
 	s.billingSync.Host = billingSyncHost{s}
 	s.consumerBilling.Host = consumerBillingHost{s}

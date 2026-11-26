@@ -81,7 +81,7 @@ func (s *Service) refreshProductStatementPayment(ctx context.Context, exports st
 		return empty, api.ErrInternal("could not load the statement invoice export")
 	}
 	if reuseInvoicePayment(export, s.now()) {
-		return statementInvoiceExportResponse(export), nil
+		return s.statementInvoiceExportResponse(export), nil
 	}
 	return s.refreshInvoicePayment(ctx, exports, payments, export)
 }
@@ -112,7 +112,7 @@ func (s *Service) refreshInvoicePayment(parent context.Context, exports state.St
 		}
 	}()
 	if reuseInvoicePayment(claimed, s.now()) {
-		return statementInvoiceExportResponse(claimed), nil
+		return s.statementInvoiceExportResponse(claimed), nil
 	}
 
 	// A repeated form submit can cancel the first browser request. Finish the
@@ -135,7 +135,7 @@ func (s *Service) refreshInvoicePayment(parent context.Context, exports state.St
 	}
 
 	observedAt := s.now()
-	payment, known, err := lookupInvoicePayment(ctx, p, conn, claimed, observedAt)
+	payment, known, err := s.lookupInvoicePayment(ctx, p, conn, claimed, observedAt)
 	if err != nil || !known {
 		// Keep the short claim after a provider failure to coalesce retries.
 		release = false
@@ -156,7 +156,7 @@ func (s *Service) refreshInvoicePayment(parent context.Context, exports state.St
 	if err != nil {
 		return empty, api.ErrInternal("could not load the refreshed payment status")
 	}
-	return statementInvoiceExportResponse(current), nil
+	return s.statementInvoiceExportResponse(current), nil
 }
 
 func invoiceConnectionMode(livemode bool) string {

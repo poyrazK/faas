@@ -28,7 +28,7 @@ func (s *Service) prepareStatementInvoice(ctx context.Context, acct state.Accoun
 	}
 	prior, err := store.GetStatementInvoiceExport(ctx, acct.ID, src.kind, src.statementID)
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
-		return out, api.ErrInternal("could not read the statement invoice export")
+		return out, api.ErrInternal("could not load the statement invoice export")
 	}
 	hasPrior := err == nil
 	if hasPrior && prior.Provider != name && !prior.Retargetable() {
@@ -101,7 +101,7 @@ func (s *Service) prepareStatementInvoice(ctx context.Context, acct state.Accoun
 			}
 		}
 	}
-	if hasPrior && !prior.Retargetable() && prior.Customer != customer {
+	if src.kind == state.StatementSourceProductControl && hasPrior && !prior.Retargetable() && prior.Customer != customer {
 		return out, exportConflict("an export for this statement already targets another customer")
 	}
 	proposed := state.StatementInvoiceExport{
@@ -111,7 +111,7 @@ func (s *Service) prepareStatementInvoice(ctx context.Context, acct state.Accoun
 	}
 	terms := proposed
 	if hasPrior && !prior.Retargetable() {
-		if prior.Livemode != conn.livemode {
+		if src.kind == state.StatementSourceProductControl && prior.Livemode != conn.livemode {
 			return out, exportConflict("the export started with a " + p.title() + " key in the other mode; reconnect that key to finish it")
 		}
 		terms = prior

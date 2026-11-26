@@ -236,7 +236,7 @@ func (s *Service) SendProductStripeInvoice(parent context.Context, acct state.Ac
 		return empty, problem
 	}
 	s.refreshStripeInvoicePayment(ctx, payments, issue)
-	return statementInvoiceExportResponse(issue.export), nil
+	return s.statementInvoiceExportResponse(issue.export), nil
 }
 
 func (s *Service) refreshStripeInvoicePayment(ctx context.Context, payments state.StatementInvoicePaymentStore, issue stripeInvoiceIssue) {

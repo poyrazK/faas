@@ -130,7 +130,8 @@ func (s *Service) syncInvoice(ctx context.Context, payments state.StatementInvoi
 	if conn == nil {
 		return deferSync(api.StatementInvoiceSyncKeyRetry)
 	}
-	if conn.livemode != export.Livemode {
+	productWorkflow := s.productInvoiceWorkflowEnabled(export)
+	if productWorkflow && conn.livemode != export.Livemode {
 		// Reconnecting with live credentials can leave old test invoices.
 		// Defer those quietly and alert when live balances cannot sync.
 		if export.Livemode && !cached.modeMismatchReported {
@@ -143,11 +144,16 @@ func (s *Service) syncInvoice(ctx context.Context, payments state.StatementInvoi
 	if paidStripe {
 		// Keep the known paid balance and last balance-check time. Only the
 		// unresolved delivery receipt needs another provider lookup.
-		export, _ = s.reconcileStripeInvoiceSend(ctx, export, stripeClaim, conn.key)
+		if conn.livemode == export.Livemode {
+			export, _ = s.reconcileStripeInvoiceSend(ctx, export, stripeClaim, conn.key)
+		}
 		return deferSync(api.StatementInvoiceSyncRetry)
 	}
-	observedAt := s.now()
-	payment, known, err := lookupInvoicePayment(ctx, p, *conn, export, observedAt)
+	var observedAt time.Time
+	if productWorkflow {
+		observedAt = s.now()
+	}
+	payment, known, err := s.lookupInvoicePayment(ctx, p, *conn, export, observedAt)
 	if errors.Is(err, errKeyRejected) {
 		cached.conn = nil
 		conns[cacheKey] = cached
@@ -157,8 +163,11 @@ func (s *Service) syncInvoice(ctx context.Context, payments state.StatementInvoi
 	if err != nil || !known {
 		return deferSync(api.StatementInvoiceSyncRetry)
 	}
-	if stripeClaim != "" && (payment.Status == state.InvoicePaymentPaid || payment.AmountPaidMinor > 0) {
+	if stripeClaim != "" && conn.livemode == export.Livemode && (payment.Status == state.InvoicePaymentPaid || payment.AmountPaidMinor > 0) {
 		export, _ = s.reconcileStripeInvoiceSend(ctx, export, stripeClaim, conn.key)
+	}
+	if !productWorkflow {
+		observedAt = s.now()
 	}
 	return s.recordInvoicePayment(ctx, payments, export, payment, observedAt)
 }
@@ -169,7 +178,11 @@ func (s *Service) recordInvoicePayment(ctx context.Context, payments state.State
 	if payment.Status == state.InvoicePaymentPaid {
 		next = stripeDeliveryRetryAt(export, payment.PaidAt, now, now.Add(api.StatementInvoiceSyncRetry))
 	}
-	prev, err := payments.RecordStatementInvoicePayment(ctx, export.ID, payment, now, next)
+	record := payments.RecordStatementInvoicePayment
+	if s.productInvoiceWorkflowEnabled(export) {
+		record = payments.RecordStatementInvoicePaymentIfFresh
+	}
+	prev, err := record(ctx, export.ID, payment, now, next)
 	if errors.Is(err, state.ErrStatementInvoicePaymentStale) {
 		return nil
 	}
@@ -219,7 +232,7 @@ func (s *Service) notifySyncBlocked(ctx context.Context, accountID, provider, ex
 	body := fmt.Sprintf("Gregale could not open or use your %s key, so the payment status of invoices it exported to %s "+
 		"stopped updating. Customers held for an overdue invoice there are let through after %d hours without a fresh status.\n\n"+
 		"Reconnect %s with: gregale account billing-connection connect %s\n(as of %s)\n",
-		title, title, int(api.ConsumerOverdueStatusMaxAge.Hours()), title, provider, now.Format(time.RFC3339))
+		title, title, int(api.ConsumerOverdueStatusMaxAge.Hours()), title, provider, now.UTC().Format(time.RFC3339))
 	if expectedMode != "" {
 		body = fmt.Sprintf("Gregale needs a %s connection in %s mode to check these exported invoices. Their last confirmed payment status remains visible.\n\n"+
 			"Reconnect %s in %s mode with: gregale account billing-connection connect %s\n(as of %s)\n",

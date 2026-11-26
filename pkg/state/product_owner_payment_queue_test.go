@@ -137,7 +137,7 @@ func testProductOwnerPaymentQueue(t *testing.T, s productOwnerBillingQueueTestSt
 	record(staleAt, StatementInvoicePayment{Status: InvoicePaymentPaid, AmountPaidMinor: 900})
 	// A background observation that started before a newer sync completed
 	// must not restore the previous state.
-	if _, err := s.RecordStatementInvoicePayment(ctx, export.ID, open, checked, nil); !errors.Is(err, ErrStatementInvoicePaymentStale) {
+	if _, err := s.RecordStatementInvoicePaymentIfFresh(ctx, export.ID, open, checked, nil); !errors.Is(err, ErrStatementInvoicePaymentStale) {
 		t.Fatalf("stale observation returned %v", err)
 	}
 	list(staleAt.Add(api.ConsumerOverdueStatusMaxAge+time.Hour), "")

@@ -204,7 +204,7 @@ func TestProductControlOwnerPaddleIssue(t *testing.T) {
 		t.Fatalf("issued payment status = %+v, %v", synced, err)
 	}
 	// A background sync that saw the draft before issuance cannot put it back.
-	if _, err := store.RecordStatementInvoicePayment(ctx, synced.ID, state.StatementInvoicePayment{Status: state.InvoicePaymentDraft},
+	if _, err := store.RecordStatementInvoicePaymentIfFresh(ctx, synced.ID, state.StatementInvoicePayment{Status: state.InvoicePaymentDraft},
 		synced.StatusSyncedAt.Add(-time.Second), nil); !errors.Is(err, state.ErrStatementInvoicePaymentStale) {
 		t.Fatalf("older draft observation returned %v", err)
 	}

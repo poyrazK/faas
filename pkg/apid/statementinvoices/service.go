@@ -71,6 +71,12 @@ type Service struct {
 	// (ADR-20261020170649); the worker skips accounts it is not. Nil
 	// releases every account.
 	Released func(accountID string) bool
+	// ProductControlEnabled reports the internal release gate for Product Control invoice handling.
+	ProductControlEnabled func() bool
+}
+
+func (s *Service) productInvoiceWorkflowEnabled(export state.StatementInvoiceExport) bool {
+	return export.SourceKind == state.StatementSourceProductControl && s.ProductControlEnabled != nil && s.ProductControlEnabled()
 }
 
 // released reports whether the worker serves an account's monetization.
@@ -392,14 +398,14 @@ type statementInvoiceSource struct {
 	draftConnectionAt time.Time
 }
 
-func statementInvoiceExportResponse(e state.StatementInvoiceExport) api.StatementInvoiceExportResponse {
+func (s *Service) statementInvoiceExportResponse(e state.StatementInvoiceExport) api.StatementInvoiceExportResponse {
 	out := api.StatementInvoiceExportResponse{StatementID: e.StatementID, Provider: e.Provider, Customer: e.Customer,
 		Status: e.Status, InvoiceID: e.ProviderInvoiceID, Currency: e.Currency, AmountMinor: e.AmountMinor,
 		Livemode: e.Livemode, Collection: e.Collection, AutomaticTax: e.AutomaticTax, CreatedAt: e.CreatedAt.UTC(), CompletedAt: e.CompletedAt,
 		SourceKind: e.SourceKind, PaymentStatus: e.PaymentStatus, AmountPaidMinor: e.AmountPaidMinor,
 		AmountRemainingMinor: e.AmountRemainingMinor, DueAt: e.DueAt, PaidAt: e.PaidAt,
 		HostedInvoiceURL: e.HostedInvoiceURL, StatusSyncedAt: e.StatusSyncedAt, Overdue: e.Overdue(time.Now())}
-	if e.Provider == state.BillingProviderPaddle {
+	if e.Provider == state.BillingProviderPaddle && s.productInvoiceWorkflowEnabled(e) {
 		out.HostedInvoiceURL = paddleCheckoutURL(e.PaymentStatus, out.HostedInvoiceURL)
 	}
 	if e.ProviderInvoiceID != "" {
