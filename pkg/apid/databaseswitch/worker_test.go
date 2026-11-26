@@ -104,7 +104,10 @@ type fakeCutovers struct {
 
 func (f *fakeCutovers) Prepare(_ context.Context, r managedpostgres.PrepareCutoverRequest) (managedpostgres.Cutover, error) {
 	f.calls = append(f.calls, "prepare")
-	f.cutover = managedpostgres.Cutover{ID: r.ID, AccountID: r.AccountID, AppID: r.AppID, Scope: r.Scope, State: managedpostgres.CutoverPrepared}
+	f.cutover = managedpostgres.Cutover{
+		ID: r.ID, AccountID: r.AccountID, AppID: r.AppID, Scope: r.Scope, State: managedpostgres.CutoverPrepared,
+		Source: managedpostgres.Database{ID: r.SourceDatabaseID}, Target: managedpostgres.Database{ID: r.TargetDatabaseID},
+	}
 	return f.cutover, nil
 }
 

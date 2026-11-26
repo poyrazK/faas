@@ -11,10 +11,16 @@ import (
 
 type testRecoveryBackend struct {
 	fakeProvider
-	proof *time.Time
+	proof           *time.Time
+	historicalMajor int
+	checkedMajor    int
 }
 
-func (p *testRecoveryBackend) CheckRecoveryTarget(_ context.Context, _ string, _ int, _ time.Time, latest bool) (api.ManagedPostgresRecoveryStatus, error) {
+func (p *testRecoveryBackend) CheckRecoveryTarget(_ context.Context, _ string, major int, _ time.Time, latest bool) (api.ManagedPostgresRecoveryStatus, error) {
+	p.checkedMajor = major
+	if !latest && major == p.historicalMajor {
+		return api.ManagedPostgresRecoveryStatus{Region: "us-west-2", Outcome: "covered", Reason: "archive_covered", RecoveryTimeline: 1}, nil
+	}
 	if !latest || p.proof == nil {
 		return api.ManagedPostgresRecoveryStatus{Region: "us-west-2", Outcome: "wal_gap", Reason: "missing_wal_segment"}, nil
 	}
@@ -81,4 +87,24 @@ func TestRegionalRestoreUsesDestinationEvidenceAndFreezesThePoint(t *testing.T) 
 		t.Fatalf("retry = %+v %v, destination restores=%d, home resolutions=%d, home restores=%d",
 			again, err, destination.restoreCalls, home.resolutions, home.restoreCalls)
 	}
+
+	t.Run("historical major", func(t *testing.T) {
+		home.resolve = func(spec Spec) (Spec, error) {
+			spec.PostgresMajor = 16
+			return spec, nil
+		}
+		destination.historicalMajor = 16
+		request.Latest, request.PointInTime, request.Name = false, point, "orders-before-upgrade"
+		target, err := service.Restore(ctx, request)
+		if err != nil || target.Spec.PostgresMajor != 16 || target.Spec.Region != request.RecoveryRegion ||
+			!target.RestorePointInTime.Equal(point) || destination.checkedMajor != 16 ||
+			destination.lastRestore.Spec.PostgresMajor != 16 || !destination.lastRestore.FromRecoveryArchive {
+			t.Fatalf("historical restore = %+v %v, checked major = %d, dispatch = %+v", target, err, destination.checkedMajor, destination.lastRestore)
+		}
+		home.resolve = func(Spec) (Spec, error) { return Spec{}, ErrUnavailable }
+		again, err := service.Restore(ctx, request)
+		if err != nil || again.ID != target.ID || home.resolutions != 1 || destination.restoreCalls != 2 {
+			t.Fatalf("retry = %+v %v, home resolutions = %d, restore calls = %d", again, err, home.resolutions, destination.restoreCalls)
+		}
+	})
 }

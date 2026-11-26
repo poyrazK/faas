@@ -126,14 +126,23 @@ func (s *Service) prepareRegionalRestore(ctx context.Context, source Database, r
 		return target, point, err
 	}
 	checkAt := point
+	spec := source.Spec
 	if request.Latest {
 		checkAt = now.Add(-time.Second)
-	} else if !withinRecoveryWindow(source, now, point) {
-		return target, point, ErrInvalid
+	} else {
+		if !withinRecoveryWindow(source, now, point) {
+			return target, point, ErrInvalid
+		}
+		// Read the catalog's major history before checking WAL on the
+		// destination. The restore can run without contacting the source VM.
+		spec, err = s.resolveRestoreSpec(ctx, source, point, false)
+		if err != nil {
+			return target, point, err
+		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	result, err := reader.CheckRecoveryTarget(ctx, databaseDataResource(source), source.Spec.PostgresMajor, checkAt, request.Latest)
+	result, err := reader.CheckRecoveryTarget(ctx, databaseDataResource(source), spec.PostgresMajor, checkAt, request.Latest)
 	if err != nil {
 		return target, point, err
 	}
@@ -144,6 +153,7 @@ func (s *Service) prepareRegionalRestore(ctx context.Context, source Database, r
 		return target, point, fmt.Errorf("%w: no verified recovery point in %s (%s)", ErrConflict, backend.Region, result.Reason)
 	}
 	target = source
+	target.Spec = spec
 	target.Spec.Region = backend.Region
 	target.BackendID, target.BackendFingerprint = backend.ID, backend.Fingerprint
 	return target, point, nil

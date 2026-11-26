@@ -121,7 +121,7 @@ func (s *MemoryStore) Reserve(ctx context.Context, database Database, limit int)
 			return Database{}, false, ErrNotFound
 		}
 		if database.RestoreFromRecovery && (source.RecoveryRegion != database.Spec.Region || source.Spec.Region == database.Spec.Region ||
-			source.Spec.PostgresMajor != database.Spec.PostgresMajor || source.ObservedGeneration != source.DesiredGeneration) {
+			source.Spec.PostgresMajor < database.Spec.PostgresMajor || source.ObservedGeneration != source.DesiredGeneration) {
 			return Database{}, false, ErrConflict
 		}
 		if source.State != StateReady || source.ProviderResourceID == "" ||

@@ -70,6 +70,9 @@ func (w *Worker) stage(ctx context.Context, sw state.DatabaseSwitch) state.Datab
 			Scope: sw.Scope, SourceDatabaseID: sw.SourceDatabaseID, TargetDatabaseID: sw.TargetDatabaseID})
 		switch {
 		case err == nil:
+			if sw.MigrationOperationID != "" && c.ID != sw.ID {
+				return w.beginAbort(sw, codeStagingFailed, "Another cutover already owns the app environment.")
+			}
 			sw.CutoverID = c.ID
 		case errors.Is(err, managedpostgres.ErrProvisioningClosed):
 			return w.beginAbort(sw, codeProvisioningClosed, "Managed PostgreSQL provisioning is not open for this account.")
@@ -415,12 +418,22 @@ func (w *Worker) resume(ctx context.Context, sw state.DatabaseSwitch) state.Data
 func (w *Worker) abort(ctx context.Context, sw state.DatabaseSwitch) state.DatabaseSwitch {
 	var c managedpostgres.Cutover
 	var cutoverErr error
-	if sw.CutoverID != "" {
-		c, cutoverErr = w.Cutovers.Get(ctx, sw.AccountID, sw.CutoverID)
+	cutoverID := sw.CutoverID
+	recoveringCutover := cutoverID == "" && sw.MigrationOperationID != ""
+	if recoveringCutover {
+		// Preparation and the guest seal may commit before the switch save.
+		cutoverID = sw.ID
+	}
+	if cutoverID != "" {
+		c, cutoverErr = w.Cutovers.Get(ctx, sw.AccountID, cutoverID)
 		if cutoverErr != nil && !errors.Is(cutoverErr, managedpostgres.ErrNotFound) {
 			return w.retry(sw, errorCode(cutoverErr))
 		}
-		if cutoverErr == nil && c.State == managedpostgres.CutoverActivated {
+		if recoveringCutover && cutoverErr == nil && c.ID == sw.ID && c.AccountID == sw.AccountID &&
+			c.AppID == sw.AppID && c.Scope == sw.Scope && c.Source.ID == sw.SourceDatabaseID && c.Target.ID == sw.TargetDatabaseID {
+			sw.CutoverID = c.ID
+		}
+		if sw.CutoverID != "" && cutoverErr == nil && c.State == managedpostgres.CutoverActivated {
 			if err := w.restoreTarget(ctx, sw); err != nil {
 				return w.retry(sw, errorCode(err))
 			}

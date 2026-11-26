@@ -131162,7 +131162,7 @@ components:
         source_database_name: { type: string }
         target_database_id: { type: string, format: uuid, description: "The restored copy, once its restore has started." }
         target_name: { type: string, description: "Name of the restored copy." }
-        restore_point: { type: string, format: date-time, description: "Writes after this moment stay only in the source database." }
+        restore_point: { type: string, format: date-time, description: "The recovery timestamp for restore switches. Writes after this moment stay only in the source database." }
         drain:
           $ref: '#/components/schemas/DatabaseSwitchDrain'
         failure_code: { type: string, description: "Why a switch failed or was cancelled, or why it is aborting." }

@@ -241,13 +241,6 @@ func hideNativePostgresFields(root *yaml.Node) []*yaml.Node {
 			dropListValues(body, func(value string) bool { return value == "replica_only" })
 		}
 	}
-	switchSchema := mappingValue(schemas, "DatabaseSwitch")
-	required := mappingValue(switchSchema, "required")
-	if mappingValue(mappingValue(switchSchema, "properties"), "restore_point") != nil &&
-		required != nil && required.Kind == yaml.SequenceNode &&
-		!slices.ContainsFunc(required.Content, func(n *yaml.Node) bool { return n.Value == "restore_point" }) {
-		required.Content = append(required.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "restore_point"})
-	}
 	return removed
 }
 

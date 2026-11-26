@@ -105,3 +105,41 @@ func TestMigrationActivationCancelsBeforeChangingBindings(t *testing.T) {
 		t.Fatalf("failure code = %s, calls = %v", sw.FailureCode, calls)
 	}
 }
+
+type missingCutoverCheckpoint struct{ state.DatabaseSwitchStore }
+
+func (s missingCutoverCheckpoint) SaveDatabaseSwitch(_ context.Context, _ state.DatabaseSwitch, _ time.Time) (state.DatabaseSwitch, error) {
+	return state.DatabaseSwitch{}, errors.New("lost switch checkpoint")
+}
+
+func TestMigrationActivationAbortsAfterLosingCutoverCheckpoint(t *testing.T) {
+	h, _ := newMigrationHarness(t)
+	h.worker.Store = missingCutoverCheckpoint{h.store}
+	sw := h.tick()
+	if sw.CutoverID != "" || !slices.Equal(h.cutovers.calls, []string{"prepare", "seal", "verify"}) {
+		t.Fatalf("lost checkpoint = %+v, calls = %v", sw, h.cutovers.calls)
+	}
+
+	h.worker.Store = h.store
+	h.clock = h.clock.Add(2 * time.Hour)
+	sw = h.runUntil(state.DatabaseSwitchFailed, 5)
+	if sw.FailureCode != "migration_receipt_expired" || h.cutovers.cutover.State != managedpostgres.CutoverCancelled ||
+		!slices.Equal(h.cutovers.calls, []string{"prepare", "seal", "verify", "cancel", "abort-seal"}) {
+		t.Fatalf("failure = %s, cutover = %s, calls = %v", sw.FailureCode, h.cutovers.cutover.State, h.cutovers.calls)
+	}
+}
+
+func TestMigrationAbortLeavesUnrelatedCutoverUntouched(t *testing.T) {
+	h, _ := newMigrationHarness(t)
+	sw := h.sw
+	h.cutovers.cutover = managedpostgres.Cutover{
+		ID: sw.ID, AccountID: sw.AccountID, AppID: sw.AppID, Scope: sw.Scope,
+		Source: managedpostgres.Database{ID: sw.SourceDatabaseID}, Target: managedpostgres.Database{ID: uuid.NewString()},
+		State: managedpostgres.CutoverPrepared,
+	}
+	h.clock = h.clock.Add(2 * time.Hour)
+	h.runUntil(state.DatabaseSwitchFailed, 4)
+	if h.cutovers.cutover.State != managedpostgres.CutoverPrepared || len(h.cutovers.calls) != 0 {
+		t.Fatalf("unrelated cutover changed: %s, calls = %v", h.cutovers.cutover.State, h.cutovers.calls)
+	}
+}
