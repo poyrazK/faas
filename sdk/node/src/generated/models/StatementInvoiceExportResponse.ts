@@ -50,5 +50,17 @@ export type StatementInvoiceExportResponse = {
    */
   overdue?: boolean;
   status_synced_at?: string;
+  /**
+   * A reviewed Stripe issuance or delivery can be resumed.
+   */
+  stripe_send_pending?: boolean;
+  /**
+   * When Stripe finalized this reviewed draft.
+   */
+  stripe_issued_at?: string;
+  /**
+   * When Stripe accepted the manual invoice send.
+   */
+  stripe_sent_at?: string;
 };
 
