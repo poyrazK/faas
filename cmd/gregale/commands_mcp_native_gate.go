@@ -241,10 +241,10 @@ func (g *mcpGate) wait(ctx context.Context, check func(context.Context) (bool, e
 	deadline := time.Now().Add(g.timeout)
 	for {
 		ok, err := check(ctx)
-		if err != nil {
+		if err != nil && !errors.Is(err, errMCPGateRetry) {
 			return err
 		}
-		if ok {
+		if ok && err == nil {
 			return nil
 		}
 		if !time.Now().Before(deadline) {
@@ -423,7 +423,7 @@ func (v reportMCPGateView) Baseline(ctx context.Context) (time.Time, error) {
 func (v reportMCPGateView) Ready(ctx context.Context, since time.Time, replacements []string) (bool, error) {
 	report, deployments, err := v.read(ctx)
 	if err != nil {
-		return false, nil // A failed read is retried until the release deadline.
+		return false, fmt.Errorf("%w: %w", errMCPGateRetry, err)
 	}
 	return mcpReportReplacementsReady(report, since, deployments, len(replacements))
 }
@@ -431,10 +431,14 @@ func (v reportMCPGateView) Ready(ctx context.Context, since time.Time, replaceme
 func (v reportMCPGateView) PreviousGone(ctx context.Context, since time.Time) (bool, error) {
 	report, deployments, err := v.read(ctx)
 	if err != nil {
-		return false, nil
+		return false, fmt.Errorf("%w: %w", errMCPGateRetry, err)
 	}
 	return mcpReportPreviousGone(report, since, deployments)
 }
+
+// errMCPGateRetry marks a failed API or journal read: the gate polls again
+// until the release deadline instead of failing the stage.
+var errMCPGateRetry = errors.New("compatibility report unavailable")
 
 func mcpJournalDeployments(s mcpNativeReleaseState) mcpGateDeployments {
 	previous := make([]string, 0, len(s.PreviousDeployments))

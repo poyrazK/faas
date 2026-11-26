@@ -36,6 +36,7 @@ type fakeGateStack struct {
 	candidate   string
 	unpublished bool
 	frozen      bool // the observer publishes no report after the release starts
+	failReads   int  // report reads that fail once the candidate starts
 }
 
 func newGateStack() *fakeGateStack {
@@ -45,6 +46,10 @@ func newGateStack() *fakeGateStack {
 func (s *fakeGateStack) report(context.Context) (api.MCPTaskCompatibilityReportResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.candidate != "" && s.failReads > 0 {
+		s.failReads--
+		return api.MCPTaskCompatibilityReportResponse{}, errors.New("503 from the API")
+	}
 	handler := api.MCPTaskHandlerCompatibility{ToolName: "build_report", HandlerVersion: "v1", WaitingTasks: 3}
 	for id, n := range s.workers {
 		if n > 0 {
@@ -139,6 +144,16 @@ func TestMCPBuiltinGateReleasesWhenReplacementsServePendingTasks(t *testing.T) {
 	again := hooks.run(t, stack, checkpoint)
 	if !again.OK || hooks.started != 1 || hooks.drained != 1 {
 		t.Fatalf("rerun = %+v, hooks = %+v", again, hooks)
+	}
+}
+
+// A failed report read is polled again until the deadline, not a failure.
+func TestMCPBuiltinGateRetriesFailedReportReads(t *testing.T) {
+	stack := newGateStack()
+	stack.failReads = 3
+	hooks := &gateHooks{candidateWorkers: 1}
+	if report := hooks.run(t, stack, filepath.Join(t.TempDir(), "journal.gate")); !report.OK || stack.failReads != 0 {
+		t.Fatalf("report = %+v, unread failures = %d", report, stack.failReads)
 	}
 }
 
