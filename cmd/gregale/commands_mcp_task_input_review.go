@@ -78,30 +78,15 @@ func runMCPTaskInputTemplate(ctx context.Context, client *mcphosting.Client, tas
 }
 
 func writeMCPTaskInputTemplate(path, endpoint string, task mcphosting.Task, revision string) error {
-	forms, err := task.InputForms()
+	review, err := newMCPTaskInputTemplate(endpoint, task, revision)
 	if err != nil {
 		return err
 	}
-	review := mcpTaskInputReview{Version: 1, EndpointSHA256: mcpTaskReceiptEndpoint(endpoint),
-		TaskID: task.TaskID, Revision: revision, Forms: make(map[string]mcpReviewedForm, len(forms))}
-	if revision != "" {
-		review.Version = 2
-	}
-	for _, form := range forms {
-		digest, err := mcpFormDigest(form.Message, form.Schema)
-		if err != nil {
-			return errors.New("MCP Task form could not be fingerprinted")
-		}
-		review.Forms[form.ID] = mcpReviewedForm{Message: form.Message, Schema: form.Schema, FormSHA256: digest}
-	}
-	body, err := json.MarshalIndent(review, "", "  ")
+	body, err := encodeMCPTaskInputTemplate(review)
 	if err != nil {
 		return err
 	}
-	if len(body) >= mcpTaskInputReviewMaxBytes {
-		return errors.New("MCP Task input template exceeds 1 MiB")
-	}
-	if err := publishCustomerOperationReceipt(path, append(body, '\n')); err != nil {
+	if err := publishCustomerOperationReceipt(path, body); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return errors.New("MCP Task input template already exists")
 		}
@@ -110,12 +95,48 @@ func writeMCPTaskInputTemplate(path, endpoint string, task mcphosting.Task, revi
 	return nil
 }
 
-func readMCPTaskInputReview(path, endpoint string) (mcpTaskInputReview, error) {
+func newMCPTaskInputTemplate(endpoint string, task mcphosting.Task, revision string) (mcpTaskInputReview, error) {
 	var review mcpTaskInputReview
-	raw, err := readCustomerOperationPrivateReceiptBound(path, mcpTaskInputReviewMaxBytes)
+	forms, err := task.InputForms()
 	if err != nil {
 		return review, err
 	}
+	review = mcpTaskInputReview{Version: 1, EndpointSHA256: mcpTaskReceiptEndpoint(endpoint),
+		TaskID: task.TaskID, Revision: revision, Forms: make(map[string]mcpReviewedForm, len(forms))}
+	if revision != "" {
+		review.Version = 2
+	}
+	for _, form := range forms {
+		digest, err := mcpFormDigest(form.Message, form.Schema)
+		if err != nil {
+			return review, errors.New("MCP Task form could not be fingerprinted")
+		}
+		review.Forms[form.ID] = mcpReviewedForm{Message: form.Message, Schema: form.Schema, FormSHA256: digest}
+	}
+	return review, nil
+}
+
+func encodeMCPTaskInputTemplate(review mcpTaskInputReview) ([]byte, error) {
+	body, err := json.MarshalIndent(review, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	if len(body) >= mcpTaskInputReviewMaxBytes {
+		return nil, errors.New("MCP Task input template exceeds 1 MiB")
+	}
+	return append(body, '\n'), nil
+}
+
+func readMCPTaskInputReview(path, endpoint string) (mcpTaskInputReview, error) {
+	raw, err := readCustomerOperationPrivateReceiptBound(path, mcpTaskInputReviewMaxBytes)
+	if err != nil {
+		return mcpTaskInputReview{}, err
+	}
+	return decodeMCPTaskInputReview(raw, endpoint)
+}
+
+func decodeMCPTaskInputReview(raw []byte, endpoint string) (mcpTaskInputReview, error) {
+	var review mcpTaskInputReview
 	canonical, err := operations.CanonicalJSON(raw)
 	if err != nil {
 		return review, errors.New("invalid MCP Task input review JSON")
@@ -132,7 +153,11 @@ func readMCPTaskInputReview(path, endpoint string) (mcpTaskInputReview, error) {
 		return review, errors.New("invalid MCP Task input review version or revision")
 	}
 	if review.EndpointSHA256 != mcpTaskReceiptEndpoint(endpoint) {
-		return review, errors.New("MCP Task input review does not match the selected endpoint")
+		// Group exports use the canonical endpoint saved by the Node SDK.
+		canonicalEndpoint, err := mcpTaskGroupEndpoint(endpoint)
+		if err != nil || review.Revision == "" || review.EndpointSHA256 != mcpTaskReceiptEndpoint(canonicalEndpoint) {
+			return review, errors.New("MCP Task input review does not match the selected endpoint")
+		}
 	}
 	for _, form := range review.Forms {
 		digest, err := mcpFormDigest(form.Message, form.Schema)

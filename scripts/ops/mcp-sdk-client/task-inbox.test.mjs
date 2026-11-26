@@ -189,11 +189,11 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
     return claim;
   }
 
-  async function requestInput(claim) {
+  async function requestInput(claim, name = 'approval', message = 'Private SDK fixture prompt') {
     assert.equal((await store.requestInputs({
       taskID: claim.task_id, leaseToken: claim.lease_token,
-      requests: { approval: { method: 'elicitation/create', params: {
-        mode: 'form', message: 'Private SDK fixture prompt', requestedSchema: { type: 'object', properties: {} },
+      requests: { [name]: { method: 'elicitation/create', params: {
+        mode: 'form', message, requestedSchema: { type: 'object', properties: {} },
       } } },
     })).ready, false);
   }
@@ -1002,6 +1002,74 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
       const repeated = await runGroupCLI('submit', cliGroup, renewedToken, '--plan', cliPlan);
       assert.deepEqual(repeated, continued);
       assert.equal(groupRequests.submissions, beforeSubmit + 3);
+
+      const reviewTasks = new Set([continued[0].task.taskId, continued[2].task.taskId]);
+      for (const { task } of continued) {
+        const lease = await store.claim(3, 30_000);
+        assert.equal(lease.task_id, task.taskId);
+        if (reviewTasks.has(task.taskId)) await requestInput(lease);
+      }
+      const reviewDir = join(groupRoot, 'cli-input-reviews');
+      const beforeReviews = groupRequests.responses;
+      const exports = await runGroupCLI('review', cliGroup, renewedToken, '--out-dir', reviewDir);
+      assert.deepEqual(exports.map(entry => [entry.receiptIndex, entry.outcome, entry.taskId]), [
+        [0, 'written', continued[0].task.taskId],
+        [1, 'not_pending', continued[1].task.taskId],
+        [2, 'written', continued[2].task.taskId],
+      ]);
+      assert.equal(groupRequests.responses, beforeReviews);
+      assert.equal((await stat(reviewDir)).mode & 0o777, 0o700);
+      const reviewFiles = [exports[0].templatePath, exports[2].templatePath];
+      assert.deepEqual(reviewFiles, [join(reviewDir, 'member-0-input.json'), join(reviewDir, 'member-2-input.json')]);
+      const drafts = [];
+      for (const [index, path] of reviewFiles.entries()) {
+        assert.equal((await stat(path)).mode & 0o777, 0o600);
+        const draft = JSON.parse(await readFile(path, 'utf8'));
+        assert.equal(draft.version, 2);
+        assert.equal(draft.taskId, exports[index * 2].taskId);
+        assert.match(draft.reviewRevision, /^[0-9a-f]{64}$/);
+        assert.equal(draft.forms.approval.response, null);
+        draft.forms.approval.response = { action: 'accept', content: {} };
+        const edited = JSON.stringify(draft, null, 2) + '\n';
+        await writeFile(path, edited);
+        drafts.push(edited);
+      }
+      const again = await runGroupCLI('review', cliGroup, renewedToken, '--out-dir', reviewDir);
+      assert.deepEqual(again.map(entry => entry.outcome), ['existing', 'not_pending', 'existing']);
+      assert.deepEqual(await Promise.all(reviewFiles.map(path => readFile(path, 'utf8'))), drafts);
+
+      const staleTask = exports[2].taskId;
+      const irisReviewer = await connect('iris', scope, createMcpTaskReviewFetch());
+      const originalReview = await getTaskInputReview(irisReviewer, staleTask);
+      assert.equal((await respondToReviewedTaskInput(irisReviewer, originalReview, { approval: { action: 'decline' } })).outcome, 'applied');
+      const nextLease = await store.claim(3, 30_000);
+      assert.equal(nextLease.task_id, staleTask);
+      await requestInput(nextLease, 'confirmation', 'Review the next step');
+      const afterChange = await runGroupCLI('review', cliGroup, renewedToken, '--out-dir', reviewDir);
+      assert.deepEqual(afterChange.map(entry => entry.outcome), ['existing', 'not_pending', 'stale_template']);
+      assert.deepEqual(await Promise.all(reviewFiles.map(path => readFile(path, 'utf8'))), drafts);
+
+      async function answerReview(taskId, path) {
+        return promisify(execFile)(gregale, [
+          'mcp', 'client', 'respond', '--url', endpoint.href.replace(/^http:/, 'HTTP:'),
+          '--token-env', 'MCP_TASK_GROUP_FIXTURE_TOKEN',
+          '--task-id', taskId, '--reviewed-input-file', path,
+        ], { env: groupCLIEnv(renewedToken), timeout: 5_000 });
+      }
+      const beforeStaleReply = groupRequests.responses;
+      await assert.rejects(answerReview(staleTask, reviewFiles[1]), error =>
+        error.code !== 0 && error.stderr.includes('no longer matches the pending forms'));
+      assert.equal(groupRequests.responses, beforeStaleReply);
+      assert.deepEqual(Object.keys((await getTaskInputReview(irisReviewer, staleTask)).forms), ['confirmation']);
+
+      const { stdout } = await answerReview(exports[0].taskId, reviewFiles[0]);
+      const applied = JSON.parse(stdout);
+      assert.deepEqual([applied.outcome, applied.taskId, applied.status], ['applied', exports[0].taskId, 'working']);
+      const resumedTasks = await readWatchAndInterrupt(cliGroup, renewedToken, 3);
+      assert.deepEqual(resumedTasks.map(event => [event.receiptIndex, event.task.status]), [
+        [0, 'working'], [1, 'working'], [2, 'input_required'],
+      ]);
+      assert.deepEqual(await readFile(join(cliGroup, 'group.json')), manifestBytes);
     }
   } finally {
     admissionProbe?.release.resolve();

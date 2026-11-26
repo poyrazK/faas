@@ -6479,6 +6479,35 @@ current when the watcher restarts, it is emitted again with the same ID.
 A newer Task state has its own ID. Acknowledging a pause records delivery
 of that update. Use the reviewed input flow to submit the answer.
 
+#### Export reviews for paused Task group members
+
+Use a current client token on an endpoint that advertises reviewed input
+by Task ID. Choose a separate private output directory under an existing
+directory.
+
+```sh
+gregale mcp client group review \
+  --url https://reports.example.com/mcp --token-env MCP_TOKEN \
+  --group ./receipts/weekly-batch --out-dir ./reviews
+```
+
+The command returns one entry per receipt in group order. Each available
+review includes the Task ID and a path such as `member-0-input.json`. The
+private file holds the forms and their server revision. Fill in each
+`response` and submit it through the existing reviewed-input command.
+
+```sh
+gregale mcp client respond \
+  --url https://reports.example.com/mcp --token-env MCP_TOKEN \
+  --task-id "$TASK_ID" --reviewed-input-file ./reviews/member-0-input.json
+```
+
+Repeat exports preserve draft answers. An `existing` entry points to a
+template for the current revision, and `stale_template` flags a saved draft
+from an earlier revision. Choose a new output directory to export the
+current forms while keeping the earlier draft. The server verifies the
+revision again when the response is submitted.
+
 #### Stop a Task group from TypeScript
 
 Call `stopMcpTaskGroup` with the saved group path and the current authorized

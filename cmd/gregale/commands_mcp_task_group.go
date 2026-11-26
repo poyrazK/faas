@@ -32,6 +32,10 @@ func cmdMCPTaskGroup(action string, args []string) int {
 	tokenEnv := fs.String("token-env", "", "environment variable containing a current MCP client token")
 	group := fs.String("group", "", "private group directory saved by the Node SDK")
 	var includeResults, resume bool
+	var reviewDir string
+	if action == "review" {
+		fs.StringVar(&reviewDir, "out-dir", "", "private directory for new reviewed-input templates")
+	}
 	if action == "status" {
 		fs.BoolVar(&includeResults, "include-results", false, "include retained results and execution errors")
 	}
@@ -48,6 +52,9 @@ func cmdMCPTaskGroup(action string, args []string) int {
 	}
 	if fs.NArg() != 0 || *timeout <= 0 || strings.TrimSpace(*group) == "" || *tokenEnv == "" {
 		return printErr("Invalid MCP Task group flags", errors.New("provide --url, --token-env and --group with a positive --timeout"))
+	}
+	if action == "review" && strings.TrimSpace(reviewDir) == "" {
+		return printErr("Invalid MCP Task group flags", errors.New("group review requires --out-dir"))
 	}
 	if action == "watch" && (interval < 250*time.Millisecond || interval > time.Hour) {
 		return printErr("Invalid MCP Task group flags", errors.New("--interval must be between 250ms and 1h"))
@@ -76,6 +83,9 @@ func cmdMCPTaskGroup(action string, args []string) int {
 	defer cancel()
 	if action == "stop" {
 		return runMCPTaskGroupStop(ctx, client, manifest, dir)
+	}
+	if action == "review" {
+		return runMCPTaskGroupReview(ctx, client, manifest, dir, reviewDir)
 	}
 	entries := make([]mcpTaskGroupStatusEntry, len(manifest.Members))
 	for i := range entries {

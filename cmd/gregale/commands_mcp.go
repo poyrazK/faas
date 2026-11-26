@@ -107,6 +107,8 @@ func cmdMCP(args []string) int {
 		return cmdMCPTaskGroupAck(args[1:])
 	case "task-group-submit":
 		return cmdMCPTaskGroupSubmit(args[1:])
+	case "task-group-review":
+		return cmdMCPTaskGroup("review", args[1:])
 	case "doctor":
 		for i, arg := range args[1:] {
 			if arg == "--stack" {
