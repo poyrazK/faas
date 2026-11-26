@@ -585,6 +585,10 @@ export type { ManagedExecutionWorkflowArtifactInput } from './models/ManagedExec
 export type { ManagedExecutionWorkflowResponse } from './models/ManagedExecutionWorkflowResponse.js';
 export type { ManagedOperationEffect } from './models/ManagedOperationEffect.js';
 export type { ManagedOperationResult } from './models/ManagedOperationResult.js';
+export type { ManagedPostgresActivity } from './models/ManagedPostgresActivity.js';
+export type { ManagedPostgresActivityCause } from './models/ManagedPostgresActivityCause.js';
+export type { ManagedPostgresActivityComputeStart } from './models/ManagedPostgresActivityComputeStart.js';
+export type { ManagedPostgresActivityHint } from './models/ManagedPostgresActivityHint.js';
 export type { ManagedPostgresBinding } from './models/ManagedPostgresBinding.js';
 export type { ManagedPostgresBindingList } from './models/ManagedPostgresBindingList.js';
 export type { ManagedPostgresCapabilities } from './models/ManagedPostgresCapabilities.js';
@@ -594,6 +598,7 @@ export type { ManagedPostgresCustomRole } from './models/ManagedPostgresCustomRo
 export type { ManagedPostgresCustomRoleList } from './models/ManagedPostgresCustomRoleList.js';
 export type { ManagedPostgresDatabase } from './models/ManagedPostgresDatabase.js';
 export type { ManagedPostgresDatabaseList } from './models/ManagedPostgresDatabaseList.js';
+export type { ManagedPostgresDatabaseUsage } from './models/ManagedPostgresDatabaseUsage.js';
 export type { ManagedPostgresHealth } from './models/ManagedPostgresHealth.js';
 export type { ManagedPostgresID } from './models/ManagedPostgresID.js';
 export type { ManagedPostgresOverage } from './models/ManagedPostgresOverage.js';
