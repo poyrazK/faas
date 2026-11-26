@@ -1042,6 +1042,9 @@ const (
 // threshold verdict, skipReason is a fail-closed "we can't even
 // fetch" signal.
 func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64, bool, string) {
+	if rule.EnvironmentID != "" {
+		return e.observeEnvironment(ctx, rule)
+	}
 	if string(rule.Metric) == api.MetricMCPReadinessUnhealthy {
 		return e.observeMCPReadiness(ctx, rule)
 	}

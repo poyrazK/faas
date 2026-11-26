@@ -436,3 +436,36 @@ consumers; (2) platform-tenant consumer creation writes `ON CONFLICT (app_id,
 COALESCE(environment_id, zero uuid), external_ref)`, the per-environment
 index; (3) once every apid runs (2), the contract migration drops the
 app-wide indexes and full clones copy consumers, keys and plan assignments.
+
+### Alert rules (detail, 2026-11-26)
+
+- `alert_rules.environment_id` (NULL is production) names one of the app's
+  project environments; a trigger checks it and keeps it fixed, and the
+  environment's deletion removes its rules. Account-wide rules are
+  production's.
+- **What a stage rule reads.** Prometheus request series carry only the app,
+  so the gateway also counts requests on an environment host per
+  environment: `gateway_environment_request_duration_seconds{app,
+  environment,class}`, `gateway_environment_cold_boot_total` and
+  `gateway_environment_capacity_refusals_total`. These are added beside the
+  app-wide series, which keep their labels, so existing dashboards and
+  production rules are unchanged (production rules keep reading the whole
+  app, as before). Failed invocations already carry their environment.
+- **A stage rule can run** on `request_count`, `error_rate_pct`,
+  `latency_p50_ms`, `latency_p95_ms`, `latency_p99_ms`, `cold_start_pct` or
+  `failed_invocations`, with `gt`, `gte`, `lt` or `lte` and a webhook action
+  (`alert_rules_environment_enabled_chk`). The API refuses creating any
+  other stage rule, and refuses enabling one; a clone's paused copy of such
+  a rule can be edited or deleted. Notification channels work as for
+  production.
+- API and CLI take `environment` on the app's alert list and create routes.
+- **Release.** An N-1 meterd would evaluate a stage rule over the whole app,
+  and an N-1 gateway does not count environment hosts, so creating or
+  enabling a stage rule waits for the apid runtime key
+  `stage_alert_rules_enabled` (default off), turned on once every meterd and
+  gatewayd-internal runs this release.
+- Rule names become unique per app and environment
+  (`alert_rules_app_environment_name_uniq`); the app-wide
+  `alert_rules_app_name_uniq` is dropped by the contract release that also
+  lets a full clone copy rules paused, as for consumers. Until then a stage
+  rule's name must differ from production's.

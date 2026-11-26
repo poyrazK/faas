@@ -465,37 +465,40 @@ type RotateAlertRuleSecretRequest struct {
 // state.* typed values at the boundary (handles the import cycle
 // for us).
 type AlertRuleResponse struct {
-	MCPReadinessScope               string            `json:"mcp_readiness_scope,omitempty"`
-	MCPMinCalls                     int               `json:"mcp_min_calls,omitempty"`
-	MCPForMinutes                   int               `json:"mcp_for_minutes,omitempty"`
-	EventSubscriptionID             string            `json:"event_subscription_id,omitempty"`
-	EdgeRuleID                      string            `json:"edge_rule_id,omitempty"`
-	PostDeployRollbackWindowSeconds int               `json:"post_deploy_rollback_window_seconds,omitempty"`
-	ID                              string            `json:"id"`
-	AppID                           string            `json:"app_id"`
-	Name                            string            `json:"name"`
-	Enabled                         bool              `json:"enabled"`
-	Metric                          string            `json:"metric"`
-	Comparison                      string            `json:"comparison"`
-	Threshold                       float64           `json:"threshold"`
-	WindowSpec                      string            `json:"window_spec"`
-	FailureSource                   string            `json:"failure_source,omitempty"`
-	CustomMetricName                string            `json:"custom_metric_name,omitempty"`
-	CustomMetricLabels              map[string]string `json:"custom_metric_labels,omitempty"`
-	LogQuery                        string            `json:"log_query,omitempty"`
-	SLOID                           string            `json:"slo_id,omitempty"`
-	SyntheticCheckID                string            `json:"synthetic_check_id,omitempty"`
-	ChannelIDs                      []string          `json:"channel_ids,omitempty"`
-	Action                          string            `json:"action"`
-	WebhookURL                      string            `json:"webhook_url"`
-	WebhookSecretSealedMasked       string            `json:"webhook_secret_sealed_masked"`
-	NotifyResolved                  bool              `json:"notify_resolved,omitempty"`
-	CooldownMinutes                 int               `json:"cooldown_minutes"`
-	State                           string            `json:"state"`
-	LastFiredAt                     string            `json:"last_fired_at,omitempty"`
-	LastEvaluatedAt                 string            `json:"last_evaluated_at,omitempty"`
-	CreatedAt                       string            `json:"created_at"`
-	UpdatedAt                       string            `json:"updated_at"`
+	MCPReadinessScope               string `json:"mcp_readiness_scope,omitempty"`
+	MCPMinCalls                     int    `json:"mcp_min_calls,omitempty"`
+	MCPForMinutes                   int    `json:"mcp_for_minutes,omitempty"`
+	EventSubscriptionID             string `json:"event_subscription_id,omitempty"`
+	EdgeRuleID                      string `json:"edge_rule_id,omitempty"`
+	PostDeployRollbackWindowSeconds int    `json:"post_deploy_rollback_window_seconds,omitempty"`
+	ID                              string `json:"id"`
+	AppID                           string `json:"app_id"`
+	// EnvironmentID is the stage the rule belongs to; omitted for
+	// production.
+	EnvironmentID             string            `json:"environment_id,omitempty"`
+	Name                      string            `json:"name"`
+	Enabled                   bool              `json:"enabled"`
+	Metric                    string            `json:"metric"`
+	Comparison                string            `json:"comparison"`
+	Threshold                 float64           `json:"threshold"`
+	WindowSpec                string            `json:"window_spec"`
+	FailureSource             string            `json:"failure_source,omitempty"`
+	CustomMetricName          string            `json:"custom_metric_name,omitempty"`
+	CustomMetricLabels        map[string]string `json:"custom_metric_labels,omitempty"`
+	LogQuery                  string            `json:"log_query,omitempty"`
+	SLOID                     string            `json:"slo_id,omitempty"`
+	SyntheticCheckID          string            `json:"synthetic_check_id,omitempty"`
+	ChannelIDs                []string          `json:"channel_ids,omitempty"`
+	Action                    string            `json:"action"`
+	WebhookURL                string            `json:"webhook_url"`
+	WebhookSecretSealedMasked string            `json:"webhook_secret_sealed_masked"`
+	NotifyResolved            bool              `json:"notify_resolved,omitempty"`
+	CooldownMinutes           int               `json:"cooldown_minutes"`
+	State                     string            `json:"state"`
+	LastFiredAt               string            `json:"last_fired_at,omitempty"`
+	LastEvaluatedAt           string            `json:"last_evaluated_at,omitempty"`
+	CreatedAt                 string            `json:"created_at"`
+	UpdatedAt                 string            `json:"updated_at"`
 }
 
 // AlertRuleRow is the closed-set-typed counterpart of AlertRuleResponse,

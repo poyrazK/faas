@@ -6378,7 +6378,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer finishGRPC()
 	// One request copy per group of context values below: each WithContext
 	// copies the whole *http.Request, and nothing reads r between them.
-	r = r.WithContext(withCapacityRefusalMark(withResponseCacheFill(r.Context(), h.responseCache)))
+	r = r.WithContext(withEnvironmentHostMark(withCapacityRefusalMark(withResponseCacheFill(r.Context(), h.responseCache))))
 	// These forwarding controls are authored below from the pinned app and
 	// streaming decision. A public header cannot turn ordinary HTTP into a
 	// detachable response and escape its deadline.
@@ -6631,6 +6631,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	app = lookedApp
 haveApp:
+	markEnvironmentHost(r, app.PublicEnvironmentID)
 	// Previews serve unreleased code on guessable hosts; every answer for
 	// one, proxied or from the edge, tells search engines not to index it.
 	if app.IsPreview {
@@ -8776,6 +8777,7 @@ haveApp:
 		// behind a wake rather than by how long the wake took.
 		if cold && wakeMethod != WakeMethodUnspecified {
 			h.metrics.ObserveColdBootWithTrace(app.ID, firstByteAt.Sub(wakeStart), target.NodeID, traceID)
+			h.metrics.ObserveEnvironmentColdBoot(app.ID, app.PublicEnvironmentID)
 			if !platformWakeStart.IsZero() {
 				switch {
 				case startupOOM.Any():
@@ -8877,6 +8879,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 		}
 		if capacityRefusalForSLO(r, status) {
 			h.metrics.ObserveCapacityRefusal(appID)
+			h.metrics.ObserveEnvironmentCapacityRefusal(appID, environmentHostFrom(r))
 		}
 		// Per-app full request duration histogram (issue #273 / ADR-042).
 		// The class label is the 3-digit status bucketed to 2xx/3xx/4xx/5xx
@@ -8895,6 +8898,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 		// test paths that don't carry a deployment id.
 		deploymentLabel := h.metrics.deploymentLabels.admit(appID, api.Plan(plan), target.DeploymentID)
 		h.metrics.ObserveRequestDurationByDeploymentWithTrace(appID, statusClassBucket(status), deploymentLabel, elapsed, traceIDFromContext(r.Context()))
+		h.metrics.ObserveEnvironmentRequestDuration(appID, environmentHostFrom(r), statusClassBucket(status), elapsed)
 		// ADR-093: per-route emission. Gated on a non-empty
 		// routeLabel (the routeLabelSet always returns a non-empty
 		// label for an opted-in app — the empty string is the

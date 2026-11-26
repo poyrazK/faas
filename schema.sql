@@ -15053,6 +15053,27 @@ END $$;
 
 
 --
+-- Name: guard_alert_rule_environment(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_alert_rule_environment() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' AND NEW.environment_id IS DISTINCT FROM OLD.environment_id THEN
+    RAISE EXCEPTION 'an alert rule keeps its environment' USING ERRCODE = '23514';
+  END IF;
+  IF NEW.environment_id IS NOT NULL AND NOT EXISTS (
+      SELECT 1 FROM apps a JOIN project_environments e ON e.project_id = a.project_id AND e.account_id = a.account_id
+      WHERE a.id = NEW.app_id AND a.account_id = NEW.account_id AND e.id = NEW.environment_id) THEN
+    RAISE EXCEPTION 'an alert rule environment belongs to its app''s project' USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_api_consumer_environment(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -32744,6 +32765,7 @@ CREATE TABLE public.alert_rules (
     created_by_account_id uuid,
     notify_resolved boolean DEFAULT false NOT NULL,
     custom_metric_labels jsonb,
+    environment_id uuid,
     CONSTRAINT alert_rules_action_chk CHECK ((action = ANY (ARRAY['webhook'::text, 'rollback'::text, 'demote'::text, 'promote'::text]))),
     CONSTRAINT alert_rules_ai_budget_alerts_chk CHECK (((metric <> 'ai_budget_alerts'::text) OR ((app_id IS NOT NULL) AND (event_subscription_id IS NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))))),
     CONSTRAINT alert_rules_comparison_chk CHECK ((comparison = ANY (ARRAY['gt'::text, 'gte'::text, 'lt'::text, 'lte'::text, 'above_baseline'::text, 'below_baseline'::text]))),
@@ -65701,6 +65723,14 @@ ALTER TABLE ONLY public.alert_rule_channels
 
 
 --
+-- Name: alert_rules alert_rules_environment_enabled_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.alert_rules
+    ADD CONSTRAINT alert_rules_environment_enabled_chk CHECK (((environment_id IS NULL) OR (NOT enabled) OR ((metric = ANY (ARRAY['request_count'::text, 'error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'failed_invocations'::text])) AND (comparison = ANY (ARRAY['gt'::text, 'gte'::text, 'lt'::text, 'lte'::text])) AND (action = 'webhook'::text)))) NOT VALID;
+
+
+--
 -- Name: alert_rules alert_rules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -80686,6 +80716,13 @@ CREATE UNIQUE INDEX alert_rules_account_wide_name_uniq ON public.alert_rules USI
 
 
 --
+-- Name: alert_rules_app_environment_name_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX alert_rules_app_environment_name_uniq ON public.alert_rules USING btree (app_id, name, COALESCE(environment_id, '00000000-0000-0000-0000-000000000000'::uuid)) WHERE (app_id IS NOT NULL);
+
+
+--
 -- Name: alert_rules_app_name_uniq; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -80704,6 +80741,13 @@ CREATE INDEX alert_rules_edge_rule_idx ON public.alert_rules USING btree (edge_r
 --
 
 CREATE INDEX alert_rules_enabled_idx ON public.alert_rules USING btree (account_id) WHERE (enabled = true);
+
+
+--
+-- Name: alert_rules_environment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_rules_environment_idx ON public.alert_rules USING btree (environment_id) WHERE (environment_id IS NOT NULL);
 
 
 --
@@ -92755,6 +92799,13 @@ CREATE TRIGGER alert_presets_set_updated_at_trg BEFORE UPDATE ON public.alert_pr
 
 
 --
+-- Name: alert_rules alert_rule_environment_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER alert_rule_environment_guard BEFORE INSERT OR UPDATE OF environment_id, app_id, account_id ON public.alert_rules FOR EACH ROW EXECUTE FUNCTION public.guard_alert_rule_environment();
+
+
+--
 -- Name: alert_rules alert_rules_channel_stand_downs; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -100783,6 +100834,14 @@ ALTER TABLE ONLY public.alert_rules
 
 ALTER TABLE ONLY public.alert_rules
     ADD CONSTRAINT alert_rules_created_by_account_id_fkey FOREIGN KEY (created_by_account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: alert_rules alert_rules_environment_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_rules
+    ADD CONSTRAINT alert_rules_environment_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE NOT VALID;
 
 
 --

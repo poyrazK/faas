@@ -46501,7 +46501,14 @@ paths:
       description: |
         Returns both app-scoped rules (app_id == <slug>) and
         account-wide rules (app_id == ""). Account-wide rules
-        apply to every app on the account.
+        apply to every app on the account. With `environment` set to a
+        stage, returns that stage's rules instead.
+      parameters:
+        - name: environment
+          in: query
+          required: false
+          description: Project environment slug. Omitted or production lists production's rules; a stage's rules are its own.
+          schema: { type: string }
       responses:
         '200':
           description: Alert rules on the account, filtered to those visible at this app.
@@ -46526,6 +46533,11 @@ paths:
         via the host age recipient, and never appears in a
         response. webhook_url is SSRF-guarded at write time
         (loopback + metadata ranges denied).
+
+        With `environment` set to a stage, the rule watches that stage's own
+        requests, errors, latency, cold starts or failed invocations, with
+        gt, gte, lt or lte and a webhook action. Other rules stay in
+        production. Stage rules answer 501 until the platform enables them.
       requestBody:
         required: true
         description: 'Alert rule payload. See CreateAlertRuleRequest.'
@@ -46543,6 +46555,11 @@ paths:
               cooldown_minutes: 15
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
+        - name: environment
+          in: query
+          required: false
+          description: Project environment slug the rule belongs to. Omitted or production creates a production rule.
+          schema: { type: string }
       responses:
         '201':
           description: The new alert rule (carries the masked secret).
@@ -46556,6 +46573,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/AlertRuleInvalid' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
 
   /v1/apps/{slug}/alerts/{id}:
     parameters:
@@ -46609,6 +46627,7 @@ paths:
         '402': { $ref: '#/components/responses/AlertRuleInvalid' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
 
   /v1/apps/{slug}/alerts/{id}/rotate-secret:
     parameters:
@@ -125897,6 +125916,10 @@ components:
           pattern: '^[a-f0-9]{32}$'
           description: 'Pinned app id. Empty string = account-wide rule.'
           example: "0123456789abcdef0123456789abcdef"
+        environment_id:
+          type: string
+          format: uuid
+          description: The stage the rule belongs to. Omitted for production.
         name: { type: string, example: "p99 > 500ms" }
         enabled: { type: boolean, example: true }
         metric:

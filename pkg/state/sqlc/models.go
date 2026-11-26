@@ -742,6 +742,7 @@ type AlertRule struct {
 	CreatedByAccountID              pgtype.UUID
 	NotifyResolved                  bool
 	CustomMetricLabels              []byte
+	EnvironmentID                   pgtype.UUID
 }
 
 type AlertRuleChannel struct {

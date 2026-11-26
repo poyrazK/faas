@@ -1341,9 +1341,11 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "list", Short: "List alert rules", Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "slug"},
+				{Name: "environment", Short: "project environment whose rules to list; omitted is production", Value: "ENV"},
 			}},
 			{Name: "add", Short: "Add an alert rule", Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "slug"},
+				{Name: "environment", Short: "project environment the rule watches; a stage watches its own requests, errors, latency, cold starts or failed invocations; omitted is production", Value: "ENV"},
 				{Name: "name", Short: "rule name (3..120 chars)", Req: true, Value: "NAME"},
 				{Name: "metric", Short: "metric (mcp_tasks_metrics_stale includes the min=0 observer heartbeat)", Value: "METRIC", ClosedSet: api.AllowedAlertRuleMetrics},
 				{Name: "comparison", Short: "gt|gte|lt|lte|above_baseline|below_baseline", Value: "OP"},

@@ -69,6 +69,9 @@ func customerAlertRule(row sqlc.AlertRule) AlertRule {
 	if row.CreatedByAccountID.Valid {
 		r.CreatedByAccountID = uuid.UUID(row.CreatedByAccountID.Bytes).String()
 	}
+	if row.EnvironmentID.Valid {
+		r.EnvironmentID = uuid.UUID(row.EnvironmentID.Bytes).String()
+	}
 	return r
 }
 func customerAlertRuleResult(row sqlc.AlertRule, err error) (AlertRule, error) {
@@ -114,6 +117,10 @@ func insertCustomerAlertRule(ctx context.Context, db sqlc.DBTX, in AlertRule) (A
 	if err != nil {
 		return AlertRule{}, err
 	}
+	environment, err := alertPgUUID(in.EnvironmentID)
+	if err != nil {
+		return AlertRule{}, err
+	}
 	source := pgtype.Text{}
 	if in.FailureSource != "" {
 		source = pgtype.Text{String: string(in.FailureSource), Valid: true}
@@ -138,7 +145,7 @@ func insertCustomerAlertRule(ctx context.Context, db sqlc.DBTX, in AlertRule) (A
 	if err != nil {
 		return AlertRule{}, err
 	}
-	return customerAlertRuleResult(sqlc.New().InsertCustomerAlertRule(ctx, db, sqlc.InsertCustomerAlertRuleParams{CustomMetricLabels: customMetricLabelsJSON(in.CustomMetricLabels), CreatedByAccountID: createdBy, McpReadinessScope: in.MCPReadinessScope, McpMinCalls: int32(in.MCPMinCalls), McpForMinutes: int32(in.MCPForMinutes), EventSubscriptionID: sub, EdgeRuleID: edgeRule, AccountID: acct, AppID: app, Name: in.Name, Enabled: in.Enabled, Metric: string(in.Metric), Comparison: string(in.Comparison), Threshold: in.Threshold, WindowSpec: string(in.WindowSpec), FailureSource: source, Action: string(in.Action), WebhookUrl: in.WebhookURL, WebhookSecretSealed: in.WebhookSecretSealed, CooldownMinutes: alertOptionalInt(&in.CooldownMinutes).Int32, State: string(in.State), PostDeployRollbackWindowSeconds: alertOptionalInt(&in.PostDeployRollbackWindowSeconds).Int32, CustomMetricName: customMetric, SloID: sloID, SyntheticCheckID: checkID, LogQuery: logQuery, NotifyResolved: in.NotifyResolved}))
+	return customerAlertRuleResult(sqlc.New().InsertCustomerAlertRule(ctx, db, sqlc.InsertCustomerAlertRuleParams{CustomMetricLabels: customMetricLabelsJSON(in.CustomMetricLabels), CreatedByAccountID: createdBy, McpReadinessScope: in.MCPReadinessScope, McpMinCalls: int32(in.MCPMinCalls), McpForMinutes: int32(in.MCPForMinutes), EventSubscriptionID: sub, EdgeRuleID: edgeRule, AccountID: acct, AppID: app, Name: in.Name, Enabled: in.Enabled, Metric: string(in.Metric), Comparison: string(in.Comparison), Threshold: in.Threshold, WindowSpec: string(in.WindowSpec), FailureSource: source, Action: string(in.Action), WebhookUrl: in.WebhookURL, WebhookSecretSealed: in.WebhookSecretSealed, CooldownMinutes: alertOptionalInt(&in.CooldownMinutes).Int32, State: string(in.State), PostDeployRollbackWindowSeconds: alertOptionalInt(&in.PostDeployRollbackWindowSeconds).Int32, CustomMetricName: customMetric, SloID: sloID, SyntheticCheckID: checkID, LogQuery: logQuery, NotifyResolved: in.NotifyResolved, EnvironmentID: environment}))
 }
 func (s *PgStore) UpdateAlertRule(ctx context.Context, id string, p UpdateAlertRuleParams) (AlertRule, error) {
 	if p.MCPMinCalls != nil && (*p.MCPMinCalls < 0 || *p.MCPMinCalls > 1000000) || p.MCPForMinutes != nil && (*p.MCPForMinutes < 0 || *p.MCPForMinutes > 60) {

@@ -4222,6 +4222,11 @@ type AlertRule struct {
 	ID                              string
 	AccountID                       string
 	AppID                           string // empty = account-wide
+	// EnvironmentID is the project environment the rule belongs to; empty is
+	// production (ADR-20261104120000 amendment 2026-11-22). A stage rule
+	// reads only signals counted per environment and is enabled only for
+	// them (StageAlertRuleRunnable).
+	EnvironmentID string
 	// CreatedByAccountID is the member who created the rule
 	// (ADR-20261026151103); empty for a rule older than the column, which
 	// only the app's creator could create.
