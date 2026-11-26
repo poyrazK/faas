@@ -282,6 +282,26 @@ func TestBoundHeaders(t *testing.T) {
 	}
 }
 
+// TestSampledCheckReportsUninspectedURI: a sampled check scores the URI's
+// prefix and reports the URI as uninspected, as warn and block treat it, so
+// observe does not silently miss a payload past the cut (ADR-831 amendment
+// 21).
+func TestSampledCheckReportsUninspectedURI(t *testing.T) {
+	waf, _ := sharedInspector(t).engine(1)
+	uri := "/search?pad=" + strings.Repeat("a", api.EdgeWAFMaxInspectURIBytes) + "&q=1%27%20UNION%20SELECT%20password%20FROM%20users--"
+	res, err := evaluate(waf, sample(http.MethodGet, uri, nil, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Detected || !res.Oversized || !slices.Contains(res.Categories, api.EdgeWAFCategoryUninspectedURI) {
+		t.Fatalf("result = %+v, want an uninspected-uri detection", res)
+	}
+	short, err := evaluate(waf, sample(http.MethodGet, "/search?q=shoes", nil, ""))
+	if err != nil || short.Detected || short.Oversized {
+		t.Fatalf("short URI = %+v (%v), want clean", short, err)
+	}
+}
+
 // TestBoundURI: a sampled check scores at most api.EdgeWAFMaxInspectURIBytes
 // of the URI, so its cost stays bounded (ADR-831 amendment 21).
 func TestBoundURI(t *testing.T) {
@@ -295,6 +315,13 @@ func TestBoundURI(t *testing.T) {
 	}
 	if !utf8.ValidString(got) {
 		t.Fatal("a cut URI is not valid UTF-8")
+	}
+	// A cut never splits a %XX escape.
+	for _, pad := range []int{1, 2} {
+		esc := strings.Repeat("a", api.EdgeWAFMaxInspectURIBytes-pad) + "%41" + strings.Repeat("b", 10)
+		if got := boundURI(esc); strings.Contains(got, "%") || len(got) != api.EdgeWAFMaxInspectURIBytes-pad {
+			t.Fatalf("cut %d bytes into an escape: kept %d bytes ending %q", pad, len(got), got[len(got)-3:])
+		}
 	}
 	// Bytes are scored as sent: a NUL is not rewritten.
 	raw := "/q?x=%00\x00" + strings.Repeat("a", api.EdgeWAFMaxInspectURIBytes)

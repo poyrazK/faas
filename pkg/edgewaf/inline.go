@@ -101,7 +101,7 @@ func (i *Inspector) CheckInline(s gateway.WAFSample) gateway.WAFInlineResult {
 		out.Outcome = gateway.WAFInlineError
 	case res.Detected:
 		out.Outcome, out.RuleIDs, out.Categories, out.Score = gateway.WAFInlineDetected, res.RuleIDs, res.Categories, res.Score
-		out.CookiesOnly = res.CookiesOnly
+		out.CookiesOnly, out.Oversized = res.CookiesOnly, res.Oversized
 	default:
 		out.Outcome = gateway.WAFInlineClean
 	}

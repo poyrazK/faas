@@ -321,7 +321,9 @@ A check scores up to 8 KiB of URL and query. A check's cost grows faster
 than its input, so a longer one would let a few long requests a second use
 up your app's check budget; `warn` and `block` count a URL over 8 KiB as a
 detection (category `uninspected-uri`) without checking it, and it never puts
-the client in a penalty box. Sampled checks score its first 8 KiB. If your
+the client in a penalty box. Sampled checks, `observe` included, score its
+first 8 KiB and report the URL as `uninspected-uri` too, so `observe` shows
+what `block` would refuse. If your
 app legitimately receives longer URLs, keep the rule in `observe` for those
 paths, or send the data in a body.
 

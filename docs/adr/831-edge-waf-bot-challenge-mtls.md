@@ -1473,10 +1473,21 @@ its docs said.
    paths is not taken for a scanner.
 4. **Under `warn`, an oversized request was not sampled.** The request still
    reaches the app, so padding the query past the bound would have hidden a
-   body payload from the report. Such a request is now sampled (its first
-   8 KiB of URI and its body prefix). `boundURI` cuts on bytes without
-   `safetext.Clean`, so rules that look for NUL or invalid encodings still
-   see them.
+   body payload from the report. Such a request with a body is now sampled
+   (its first 8 KiB of URI and its body prefix); one without a body is not,
+   as there is nothing more to find. `boundURI` cuts on bytes without
+   `safetext.Clean`, and never inside a `%XX` escape, so a check scores only
+   encodings the client sent.
+5. **`observe` reported nothing past the cut.** A sampled check on a URI
+   past the bound scored only the prefix and reported nothing about the
+   rest. It now also reports the URI as `uninspected-uri`, as `warn` and
+   `block` treat it, so `observe` predicts what `block` would refuse.
+
+**Rollout.** Rules already in `block` start refusing URIs over 8 KiB and
+methods outside GET, HEAD, POST, OPTIONS, PUT, PATCH and DELETE (911100)
+when the gateway carrying this amendment is deployed, without a change on
+the customer's side. Check the accounts `edge_waf_blocking` includes for
+`observe` detections of both before deploying.
 
 Request bodies are still never blocked (amendment 4); the docs now say so
 first, not last, and point to `kind=validate` and the app's own handling.
@@ -1485,7 +1496,7 @@ domain is on the Public Suffix List (ADR-20261026100000 amendment 1).
 
 Tests: `TestCheckInline` (the added families and DELETE allowed),
 `TestBoundURI`, `TestWAFURIPastTheInspectionBoundIsADetection`,
-`TestWAFWarnOversizedRequestIsStillSampled`,
+`TestWAFWarnOversizedRequestIsStillSampled`, `TestSampledCheckReportsUninspectedURI`,
 `TestWAFReviewSpreadIsNotAFalsePositive`, and `TestBenignCorpus`,
 `TestCRSRegressionCorpus` and `TestInlineRuleSetCost` with
 `FAAS_WAF_FTW_DIR` set.

@@ -127,4 +127,10 @@ func TestWAFWarnOversizedRequestIsStillSampled(t *testing.T) {
 	if len(inspector.samples) != 1 || !strings.Contains(string(inspector.samples[0].Body), "OR 1=1") {
 		t.Fatalf("samples = %d, want one carrying the body", len(inspector.samples))
 	}
+	// Without a body there is nothing more to find, so it is not sampled.
+	get := httptest.NewRequest(http.MethodGet, "http://shop.example.test"+uri, nil)
+	getRec := &statusRecorder{ResponseWriter: httptest.NewRecorder(), status: http.StatusOK, request: get}
+	if handled, submit := h.applyEdgeRuleWAF(getRec, get, app, getRec); handled || submit != nil {
+		t.Fatalf("bodyless oversized request: handled=%v sampled=%v, want passed and not sampled", handled, submit != nil)
+	}
 }
