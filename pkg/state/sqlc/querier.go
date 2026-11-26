@@ -5985,11 +5985,16 @@ type Querier interface {
 	// ADR-20261122191423 slice 2: short-lived workload S3 credentials.
 	ObjectWorkloadCredentialInsert(ctx context.Context, db DBTX, arg ObjectWorkloadCredentialInsertParams) error
 	ObjectWorkloadCredentialListLiveForApp(ctx context.Context, db DBTX, callerAppID pgtype.UUID) ([]ObjectWorkloadCredentialListLiveForAppRow, error)
+	// A grant whose access or prefix changed moves the caller's live credentials
+	// for that bucket to the new scope, so a guest's (and its SDK's) cached key
+	// keeps working within what uses: still allows and loses the rest at once.
+	ObjectWorkloadCredentialRegrant(ctx context.Context, db DBTX, arg ObjectWorkloadCredentialRegrantParams) (int64, error)
 	// A workload credential resolves while it has not expired, its caller app
 	// still exists, the instance it was issued to still holds a VM, its bucket is
 	// ready and the bucket's resource owner may use object storage: the same
 	// owner rule object_storage_credential_live applies to compute keys. A grant
-	// that uses: drops is revoked by deleting the row (ObjectWorkloadCredentialDelete).
+	// that uses: drops is revoked by deleting the row (ObjectWorkloadCredentialDelete);
+	// one whose access or prefix changed is rescoped (ObjectWorkloadCredentialRegrant).
 	ObjectWorkloadCredentialResolve(ctx context.Context, db DBTX, accessKeyID string) (ObjectWorkloadCredentialResolveRow, error)
 	ObjectWriteInsert(ctx context.Context, db DBTX, arg ObjectWriteInsertParams) error
 	ObjectWriteKeyFenced(ctx context.Context, db DBTX, arg ObjectWriteKeyFencedParams) (bool, error)

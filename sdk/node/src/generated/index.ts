@@ -3867,6 +3867,7 @@ export type { WorkflowStepSpec } from './models/WorkflowStepSpec.js';
 export type { WorkflowTriggerSpec } from './models/WorkflowTriggerSpec.js';
 export type { WorkloadDependency } from './models/WorkloadDependency.js';
 export type { WorkloadPort } from './models/WorkloadPort.js';
+export type { WorkloadUses } from './models/WorkloadUses.js';
 export type { WorkPolicyListResponse } from './models/WorkPolicyListResponse.js';
 export type { WorkPolicyResponse } from './models/WorkPolicyResponse.js';
 
