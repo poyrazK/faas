@@ -4,6 +4,10 @@ Every error Gregale returns carries a stable `code`. [Errors](errors.md) explain
 
 The list is generated from the code that builds each error, so a new code appears here when it ships. Codes for features whose docs are not published yet are left out. Each code's name is its anchor: link to `error-codes#plan_limit_apps`, for example.
 
+If you are fixing a failure rather than looking up one code, start with [the common codes](errors.md#common-codes), which group the frequent ones by what went wrong, or [Troubleshooting](troubleshooting.md), which goes by symptom.
+
+Jump to: [A](#a) · [B](#b) · [C](#c) · [D](#d) · [E](#e) · [F](#f) · [G](#g) · [H](#h) · [I](#i) · [J](#j) · [L](#l) · [M](#m) · [N](#n) · [O](#o) · [P](#p) · [Q](#q) · [R](#r) · [S](#s) · [T](#t) · [U](#u) · [V](#v) · [W](#w)
+
 ## A
 
 ### `account_abuse_hold`
@@ -54,7 +58,7 @@ HTTP 403 Forbidden · Admin access required
 
 HTTP 402 Payment Required · Spend cap reached
 
-See [Billing](billing.md#spend-cap).
+See [Billing](billing.md#spend-cap), [Cost controls](cost-controls.md).
 
 ### `alert_preset_disabled`
 
@@ -116,6 +120,8 @@ HTTP 503 Service Unavailable · App admission unavailable
 
 HTTP 422 Unprocessable Entity · Unsupported CPU architecture
 
+Your binary won't run on this control plane
+
 ### `app_concurrency_reached`
 
 HTTP 429 Too Many Requests · App concurrency reached
@@ -156,17 +162,23 @@ See [Errors](errors.md), [Troubleshooting](troubleshooting.md).
 
 HTTP 422 Unprocessable Entity · App_healthz_unauthorized; Health endpoint returning 401
 
+Your /healthz is gated behind auth — we treat that as 'down'
+
 See [Troubleshooting](troubleshooting.md).
 
 ### `app_layer_too_large`
 
 HTTP 403 Forbidden · App too large
 
-See [Builds and framework detection](build.md#limits), [Container compatibility](container-compatibility.md), [Fix a failed deploy](troubleshoot-deploys.md).
+The built app is larger than your plan's app filesystem
+
+See [Builds and framework detection](build.md#limits), [Container compatibility](container-compatibility.md), [Deploy a Next.js app](deploy-nextjs.md), [Troubleshooting](troubleshooting.md).
 
 ### `app_log_drain_invalid`
 
 HTTP 400 Bad Request · Bad request; Invalid log drain
+
+See [Logs](logs.md#log-drains).
 
 ### `app_logs_unavailable`
 
@@ -180,7 +192,9 @@ See [CLI guide](cli-setup.md), [Logs](logs.md), [Errors](errors.md).
 
 HTTP 422 Unprocessable Entity · App bound to loopback; Application bound to loopback
 
-See [Errors](errors.md), [Fix a failed deploy](troubleshoot-deploys.md), [Troubleshooting](troubleshooting.md).
+Your app is listening on 127.0.0.1 — gateway traffic can't reach it
+
+See [Errors](errors.md), [Troubleshooting](troubleshooting.md).
 
 ### `app_maintenance_mode`
 
@@ -190,19 +204,29 @@ HTTP 503 Service Unavailable · App in maintenance
 
 HTTP 409 Conflict or 422 Unprocessable Entity · Many operations send this code; the response's `title` and `detail` name the failure.
 
+### `app_name_unavailable`
+
+HTTP 409 Conflict · App name unavailable
+
 ### `app_not_listening`
 
 HTTP 422 Unprocessable Entity · No process listening on $PORT; App listens on a different port
 
-See [Deployment overrides](deploy-overrides.md), [Errors](errors.md), [Deploy a web framework](frameworks.md).
+Your app isn't accepting traffic on the port we expect
+
+See [Deployment overrides](deploy-overrides.md), [Errors](errors.md), [Deploy a web framework](frameworks.md), [Troubleshooting](troubleshooting.md).
 
 ### `app_not_purgeable`
 
 HTTP 409 Conflict · App not purgeable
 
+See [Apps](apps.md#purge-a-deleted-app-to-reuse-its-name).
+
 ### `app_not_restorable`
 
 HTTP 409 Conflict · App not restorable
+
+See [Apps](apps.md#retained-deleted-apps).
 
 ### `app_protocol_invalid`
 
@@ -212,17 +236,23 @@ HTTP 400 Bad Request · Invalid app_protocol; Invalid app protocol
 
 HTTP 409 Conflict · Slug taken
 
+See [Apps](apps.md).
+
 ### `app_runtime_oom`
 
 HTTP 422 Unprocessable Entity or 503 Service Unavailable · Container out of memory; App is out of memory; App ran out of memory during startup
 
-See [Errors](errors.md), [Fix a failed deploy](troubleshoot-deploys.md), [Troubleshooting](troubleshooting.md).
+Your app used more than its RAM limit and was killed
+
+See [Errors](errors.md), [Troubleshooting](troubleshooting.md).
 
 ### `app_startup_crash`
 
 HTTP 422 Unprocessable Entity · App exited during startup
 
-See [Errors](errors.md), [Fix a failed deploy](troubleshoot-deploys.md), [Troubleshooting](troubleshooting.md).
+Your app crashed before it became ready
+
+See [Errors](errors.md), [Troubleshooting](troubleshooting.md).
 
 ### `app_startup_timeout`
 
@@ -288,6 +318,8 @@ HTTP 400 Bad Request · Many operations send this code; the response's `title` a
 
 HTTP 422 Unprocessable Entity · Before checkpoint callback failed
 
+Your before_checkpoint callback did not complete successfully
+
 See [How scaling to zero works](cold-wake.md), [Functions and runtimes](functions.md).
 
 ### `billing_already_cancelled`
@@ -338,6 +370,10 @@ See [Billing](billing.md#cancel-and-resume).
 
 HTTP 501 Not Implemented · Billing provider not initialised; State store not initialised
 
+### `binding_not_granted`
+
+HTTP 403 Forbidden · Binding not granted
+
 ### `binding_verification_budget_full`
 
 HTTP 429 Too Many Requests · Verification budget full
@@ -384,15 +420,19 @@ Verify the exact deployment receiving traffic, then promote, advance its canary,
 
 ### `build_failed`
 
-The response's `title` and `detail` describe the failure.
+Build failed
 
-See [Fix a failed deploy](troubleshoot-deploys.md).
+A step of your build exited with an error
+
+See [Troubleshooting](troubleshooting.md).
 
 ### `build_infrastructure_failed`
 
-The response's `title` and `detail` describe the failure.
+Build could not run
 
-See [Fix a failed deploy](troubleshoot-deploys.md).
+A platform problem stopped the build; your code did not cause it
+
+See [Troubleshooting](troubleshooting.md).
 
 ### `build_not_found`
 
@@ -404,7 +444,7 @@ See [Builds and framework detection](build.md).
 
 HTTP 503 Service Unavailable
 
-See [Fix a failed deploy](troubleshoot-deploys.md), [Troubleshooting](troubleshooting.md).
+See [Troubleshooting](troubleshooting.md).
 
 ### `build_provenance_not_found`
 
@@ -422,7 +462,7 @@ See [Builds and framework detection](build.md).
 
 HTTP 503 Service Unavailable
 
-See [Fix a failed deploy](troubleshoot-deploys.md), [Troubleshooting](troubleshooting.md).
+See [Troubleshooting](troubleshooting.md).
 
 ### `build_undetected`
 
@@ -434,7 +474,7 @@ See [Troubleshooting](troubleshooting.md).
 
 ### `cache_shrink_needs_evict`
 
-HTTP 409 Conflict · Shrinking needs evict
+HTTP 409 Conflict · Shrinking needs --evict
 
 ### `cache_waking`
 
@@ -578,7 +618,7 @@ HTTP 409 Conflict · Database switch cannot be cancelled
 
 HTTP 409 Conflict · Database switch unavailable
 
-See [Deploys](deploys.md#rollbacks-that-restore-the-database).
+See [Safe releases](releases.md#rollbacks-that-restore-the-database).
 
 ### `database_switches_active`
 
@@ -598,7 +638,9 @@ HTTP 409 Conflict · Debug replay is unavailable; Mirror replay is unavailable
 
 HTTP 422 Unprocessable Entity · Dependency installation failure
 
-See [Errors](errors.md), [Fix a failed deploy](troubleshoot-deploys.md), [Troubleshooting](troubleshooting.md).
+The build VM couldn't install your dependencies
+
+See [Errors](errors.md), [Troubleshooting](troubleshooting.md).
 
 ### `deploy_failed`
 
@@ -702,6 +744,8 @@ HTTP 409 Conflict · Scope already live
 
 HTTP 422 Unprocessable Entity
 
+Your new release started but did not answer its first request correctly
+
 See [Container compatibility](container-compatibility.md).
 
 ### `deployment_stalled`
@@ -714,7 +758,9 @@ See [Deploys](deploys.md).
 
 HTTP 503 Service Unavailable
 
-See [Container compatibility](container-compatibility.md), [Fix a failed deploy](troubleshoot-deploys.md).
+Gregale could not start your new release to check it; your current release keeps serving
+
+See [Container compatibility](container-compatibility.md), [Troubleshooting](troubleshooting.md).
 
 ### `dev_debug_not_developer_environment`
 
@@ -894,6 +940,8 @@ See [Environment variables](env.md).
 
 HTTP 422 Unprocessable Entity · Missing environment variable
 
+Your code references an env var we haven't been given
+
 ### `env_var_not_found`
 
 HTTP 400 Bad Request · Env var not set
@@ -966,7 +1014,7 @@ See [Errors](errors.md).
 
 HTTP 409 Conflict · Recovery plan changed
 
-See [Build stored workflows in Gregale](stored-workflow-authoring.md).
+See [Recover stored workflow runs](stored-workflow-recovery.md).
 
 ### `event_storage_capacity_exhausted`
 
@@ -991,6 +1039,8 @@ HTTP 400 Bad Request · Exclude slug is not a workload in this commit
 ### `execution_mode_conflict`
 
 HTTP 422 Unprocessable Entity · Execution mode conflicts with the app's behavior
+
+Your app did not behave like its execution mode
 
 See [Errors](errors.md).
 
@@ -1031,6 +1081,8 @@ HTTP 403 Forbidden · GitHub installation could not be verified
 ### `function_init_failed`
 
 HTTP 422 Unprocessable Entity · Function init failed
+
+Your function's init hook failed before it became ready
 
 See [Errors](errors.md), [Functions and runtimes](functions.md).
 
@@ -1228,6 +1280,8 @@ See [Container compatibility](container-compatibility.md).
 
 HTTP 422 Unprocessable Entity
 
+The container image you asked for could not be pulled
+
 ### `image_required`
 
 HTTP 400 Bad Request · Image digest required
@@ -1318,6 +1372,8 @@ See [Scaling policy](scaling-policy.md).
 
 HTTP 422 Unprocessable Entity · Invalid CPU
 
+See [Plans and pricing](plans.md#what-each-limit-means).
+
 ### `invalid_cpu_ram_pair`
 
 HTTP 422 Unprocessable Entity · Invalid CPU/RAM pair
@@ -1392,6 +1448,8 @@ See [Authentication](auth.md#app-access-control).
 
 HTTP 422 Unprocessable Entity · Invalid RAM
 
+See [Plans and pricing](plans.md#what-each-limit-means).
+
 ### `invalid_recover_action`
 
 HTTP 422 Unprocessable Entity · Invalid recover_rollout action
@@ -1432,11 +1490,23 @@ HTTP 400 Bad Request · Source must be one of: cold_boot, manual_upload; Source 
 
 HTTP 400 Bad Request · Invalid State
 
+### `invalid_suspend_timeout`
+
+HTTP 422 Unprocessable Entity · Invalid suspend timeout
+
+See [Managed PostgreSQL](postgres.md#plans).
+
 ### `invalid_traffic_percent`
 
 HTTP 422 Unprocessable Entity · Invalid traffic_percent
 
 See [Progressive rollouts](rollouts.md).
+
+### `invalid_wake_with_app`
+
+HTTP 422 Unprocessable Entity · Invalid wake-with-app setting
+
+See [Managed PostgreSQL](postgres.md#plans).
 
 ### `invalid_warm_pool_size`
 
@@ -1446,9 +1516,13 @@ HTTP 422 Unprocessable Entity · Invalid warm_pool_size; Invalid max_concurrency
 
 HTTP 422 Unprocessable Entity · Invalid warm_snapshot_min_ms
 
+See [How scaling to zero works](cold-wake.md#warm-snapshots-opt-in-pro-and-scale).
+
 ### `invalid_warm_snapshot_min_requests`
 
 HTTP 422 Unprocessable Entity · Invalid warm_snapshot_min_requests
+
+See [How scaling to zero works](cold-wake.md#warm-snapshots-opt-in-pro-and-scale).
 
 ### `invocation_environment_work_isolation_unavailable`
 
@@ -1706,6 +1780,10 @@ See [Managed PostgreSQL](postgres.md).
 
 HTTP 409 Conflict · Cache binding target missing
 
+### `managed_redis_cache_missing`
+
+HTTP 409 Conflict · Cache missing
+
 ### `managed_redis_limit`
 
 HTTP 403 Forbidden · Managed Redis cache limit reached
@@ -1956,7 +2034,7 @@ HTTP 403 Forbidden · Application standards mutation forbidden; Approver not all
 
 Ask a teammate the policy lets approve to approve this promotion, then promote with their approval.
 
-See [Account and organization management](account.md#roles), [Deploys](deploys.md#release-approvals).
+See [Account and organization management](account.md#roles), [Release approvals, freezes and schedules](release-controls.md#release-approvals).
 
 ### `org_slug_invalid`
 
@@ -2254,6 +2332,8 @@ See [Event-driven workloads](event-driven.md#async-backlog).
 
 HTTP 403 Forbidden · Autoscale target CPU% is not allowed on this plan; Autoscale target RPS is not allowed on this plan
 
+See [Plans and pricing](plans.md).
+
 ### `plan_cors_preset_quota_reached`
 
 HTTP 403 Forbidden · CORS preset limit reached
@@ -2281,6 +2361,8 @@ See [Crons](crons.md).
 ### `plan_custom_metrics_not_allowed`
 
 HTTP 402 Payment Required · Custom metrics not available on this plan
+
+See [Plans and pricing](plans.md).
 
 ### `plan_delayed_tasks_cap`
 
@@ -2349,6 +2431,8 @@ HTTP 403 Forbidden · Plan gate blocked
 ### `plan_health_path_wakes_not_allowed`
 
 HTTP 403 Forbidden · Health-path wakes are not allowed on this plan
+
+See [Plans and pricing](plans.md).
 
 ### `plan_inbound_webhook_quota`
 
@@ -2444,7 +2528,7 @@ See [Environment variables](env.md).
 
 HTTP 403 Forbidden · Project secret limit reached
 
-See [Delivered secrets](secrets.md#project-environment-secrets).
+See [Secrets](secrets.md#project-environment-secrets).
 
 ### `plan_limit_ram`
 
@@ -2456,7 +2540,7 @@ See [Plans and pricing](plans.md#at-a-glance).
 
 HTTP 403 Forbidden · Secret count limit reached
 
-See [Delivered secrets](secrets.md).
+See [Secrets](secrets.md).
 
 ### `plan_limit_trusted_signers`
 
@@ -2584,6 +2668,8 @@ See [Plans and pricing](plans.md).
 
 HTTP 403 Forbidden · Per-app authentication is not allowed on this plan; Per-deployment authentication is not allowed on this plan
 
+See [Plans and pricing](plans.md).
+
 ### `plan_rollback_on_5xx_not_allowed`
 
 HTTP 403 Forbidden · Plan doesn't allow 5xx auto-rollback
@@ -2593,6 +2679,8 @@ See [Plans and pricing](plans.md).
 ### `plan_route_metrics_not_allowed`
 
 HTTP 403 Forbidden · Per-route metrics are not allowed on this plan
+
+See [Plans and pricing](plans.md).
 
 ### `plan_source_bytes`
 
@@ -2615,6 +2703,8 @@ See [Static egress IP](static-egress-ip.md).
 ### `plan_streaming_not_allowed`
 
 HTTP 403 Forbidden · Streaming responses are not allowed on this plan
+
+See [Plans and pricing](plans.md).
 
 ### `plan_token_stale`
 
@@ -2642,9 +2732,13 @@ See [Plans and pricing](plans.md).
 
 HTTP 403 Forbidden · Warm-pool capacity is not allowed on this plan
 
+See [Plans and pricing](plans.md).
+
 ### `plan_warm_snapshot_not_allowed`
 
 HTTP 403 Forbidden · Warm-tier snapshots are not allowed on this plan
+
+See [Plans and pricing](plans.md).
 
 ### `plan_webhook_quota`
 
@@ -2661,6 +2755,8 @@ See [Plans and pricing](plans.md).
 ### `plan_websocket_not_allowed`
 
 HTTP 403 Forbidden · WebSocket / Upgrade traffic is not allowed on this plan
+
+See [Plans and pricing](plans.md).
 
 ### `plan_workflows_not_allowed`
 
@@ -2679,6 +2775,28 @@ See [Plans and pricing](plans.md).
 HTTP 503 Service Unavailable · Releases are paused
 
 See [Release approvals, freezes and schedules](release-controls.md).
+
+### `postgres_bypass_rls_conflict`
+
+HTTP 409 Conflict · BYPASSRLS conflicts with Data API or Auth
+
+Use a separate database for the tool that needs BYPASSRLS, or declare the role without --bypass-rls.
+
+See [Custom Postgres roles](postgres-custom-roles.md).
+
+### `postgres_bypass_rls_unavailable`
+
+HTTP 422 Unprocessable Entity · BYPASSRLS unavailable
+
+See [Custom Postgres roles](postgres-custom-roles.md).
+
+### `postgres_custom_role_default_taken`
+
+HTTP 409 Conflict · Default role already set
+
+Remove it there first (gregale postgres roles create &lt;database> &lt;role> --default-for '' on that role).
+
+See [Custom Postgres roles](postgres-custom-roles.md).
 
 ### `postgres_custom_roles_limit`
 
@@ -2842,7 +2960,7 @@ Run `gregale project apply` or `gregale project promote` and approve the plan, o
 
 HTTP 429 Too Many Requests · Promotion queue is full
 
-See [Deploys](deploys.md#promotion-admission), [Environment promotion](environment-promotion.md).
+See [Environment promotion](environment-promotion.md#promotion-admission).
 
 ### `project_release_baseline_expired`
 
@@ -2856,7 +2974,7 @@ HTTP 409 Conflict · Deployment control conflicted
 
 ### `project_release_rollback_required`
 
-HTTP 409 Conflict · Project release rollback required
+HTTP 409 Conflict · Project release owns traffic; Project release rollback required
 
 Roll back the project environment release, then retry this app rollback if needed.
 
@@ -2868,7 +2986,7 @@ Bind the bucket in an environment whose release does not pin secrets, or release
 
 Bind the database in an environment whose release does not pin secrets, or release without pinned secrets first.
 
-See [Delivered secrets](secrets.md).
+See [Secrets](secrets.md).
 
 ### `project_required`
 
@@ -2877,6 +2995,86 @@ HTTP 409 Conflict · Project required
 ### `project_retry_changed`
 
 HTTP 409 Conflict · Project retry stopped
+
+### `project_rollback_already_complete`
+
+HTTP 409 Conflict · Rollback already complete
+
+### `project_rollback_auto_undo_blocked`
+
+HTTP 409 Conflict · Automatic rollback undo paused
+
+### `project_rollback_conflict`
+
+HTTP 409 Conflict · Project rollback already running; Project rollback conflict; Rollback resume unavailable
+
+### `project_rollback_health_failed`
+
+HTTP 409 Conflict · Rollback health verification paused
+
+### `project_rollback_health_probe_required`
+
+HTTP 409 Conflict · Health probe required
+
+### `project_rollback_health_timeout`
+
+HTTP 409 Conflict · Rollback health verification paused
+
+### `project_rollback_live_traffic_failed`
+
+HTTP 409 Conflict · Rollback live-traffic verification paused
+
+### `project_rollback_live_traffic_required`
+
+HTTP 409 Conflict · Production error budget required; Request telemetry required
+
+### `project_rollback_live_traffic_timeout`
+
+HTTP 409 Conflict · Rollback live-traffic verification paused
+
+### `project_rollback_paused`
+
+HTTP 409 Conflict · Project rollback paused
+
+### `project_rollback_plan_changed`
+
+HTTP 409 Conflict · Reviewed resume plan changed; Reviewed rollback plan changed; Reviewed undo plan changed
+
+### `project_rollback_pre_cutover_health_failed`
+
+HTTP 409 Conflict · Pre-cutover health verification failed
+
+### `project_rollback_pre_cutover_health_timeout`
+
+HTTP 409 Conflict · Pre-cutover health verification failed
+
+### `project_rollback_preparation_expired`
+
+HTTP 409 Conflict · Rollback preparation expired
+
+### `project_rollback_preparation_released`
+
+The response's `title` and `detail` describe the failure.
+
+### `project_rollback_prepared`
+
+The response's `title` and `detail` describe the failure.
+
+### `project_rollback_request_reused`
+
+HTTP 409 Conflict · Rollback request ID already used
+
+### `project_rollback_undo_artifacts_unavailable`
+
+The response's `title` and `detail` describe the failure.
+
+### `project_rollback_undo_started`
+
+HTTP 409 Conflict · Rollback undo already accepted
+
+### `project_rollback_undo_unavailable`
+
+HTTP 409 Conflict · Rollback undo unavailable
 
 ### `project_selection_empty`
 
@@ -3022,7 +3220,7 @@ HTTP 409 Conflict · Release approvals need a canary; Release approvals need an 
 
 Deploy with --rollout safe or fast (or without --rollout immediate and --traffic-percent), or remove the policy with `gregale release approval disable`.
 
-See [Deploys](deploys.md#release-approvals), [Release approvals, freezes and schedules](release-controls.md).
+See [Release approvals, freezes and schedules](release-controls.md#release-approvals).
 
 ### `release_approval_decided`
 
@@ -3038,7 +3236,7 @@ HTTP 409 Conflict · Release rejected
 
 Deploy a new release; a rejection is final.
 
-See [Deploys](deploys.md#release-approvals).
+See [Release approvals, freezes and schedules](release-controls.md#release-approvals).
 
 ### `release_approval_required`
 
@@ -3046,7 +3244,7 @@ HTTP 409 Conflict · Release waiting for approval
 
 An eligible teammate approves it on its approval page in the dashboard; the rollout then continues on its next tick.
 
-See [Deploys](deploys.md#release-approvals).
+See [Release approvals, freezes and schedules](release-controls.md#release-approvals).
 
 ### `release_approval_self`
 
@@ -3056,7 +3254,7 @@ Ask an eligible teammate to approve it on the release's approval page in the das
 
 Ask another approver to approve this promotion, then promote with their approval.
 
-See [Deploys](deploys.md#release-approvals).
+See [Release approvals, freezes and schedules](release-controls.md#release-approvals).
 
 ### `release_approval_session_required`
 
@@ -3064,13 +3262,15 @@ HTTP 403 Forbidden · Approve as a person; Approve in the dashboard
 
 Approve the promotion signed in as yourself, not with an API key or token, then promote with that approval.
 
-See [Deploys](deploys.md#release-approvals).
+See [Release approvals, freezes and schedules](release-controls.md#release-approvals).
 
 ### `release_command_failed`
 
 HTTP 422 Unprocessable Entity
 
-See [Safe releases](releases.md), [Fix a failed deploy](troubleshoot-deploys.md).
+Your release command exited non-zero or timed out; the previous release keeps serving
+
+See [Safe releases](releases.md), [Troubleshooting](troubleshooting.md).
 
 ### `release_freeze_limit`
 
@@ -3078,7 +3278,7 @@ HTTP 409 Conflict · Too many freezes
 
 Lift freezes you no longer need with `gregale release freeze lift`.
 
-See [Deploys](deploys.md#deploy-freezes).
+See [Release approvals, freezes and schedules](release-controls.md#deploy-freezes).
 
 ### `release_freeze_not_found`
 
@@ -3092,7 +3292,7 @@ HTTP 403 Forbidden · Freeze override not allowed
 
 Ask an owner or admin to lift the freeze with `gregale release freeze lift`, or to deploy with --override-freeze.
 
-See [Deploys](deploys.md#deploy-freezes).
+See [Release approvals, freezes and schedules](release-controls.md#deploy-freezes).
 
 ### `release_frozen`
 
@@ -3100,7 +3300,7 @@ HTTP 409 Conflict · Production releases are frozen
 
 Wait for the freeze to end, lift it with `gregale release freeze lift`, or release anyway with override_freeze and a reason (CLI: --override-freeze REASON); the override is audited.
 
-See [Deploys](deploys.md#deploy-freezes), [Release approvals, freezes and schedules](release-controls.md).
+See [Release approvals, freezes and schedules](release-controls.md#deploy-freezes).
 
 ### `release_gate_limit`
 
@@ -3108,7 +3308,7 @@ HTTP 409 Conflict · Too many release gates
 
 Delete a gate you no longer need with `gregale release gate rm`.
 
-See [Deploys](deploys.md#release-gates).
+See [Safe releases](releases.md#release-gates).
 
 ### `release_gate_not_found`
 
@@ -3122,9 +3322,11 @@ HTTP 409 Conflict · Active graph required; History unavailable; Release graph c
 
 ### `release_infrastructure_failed`
 
-The response's `title` and `detail` describe the failure.
+Release command could not run
 
-See [Deploys](deploys.md), [Safe releases](releases.md), [Fix a failed deploy](troubleshoot-deploys.md).
+A platform problem stopped the release task; your release command did not cause it
+
+See [Deploys](deploys.md), [Safe releases](releases.md), [Troubleshooting](troubleshooting.md).
 
 ### `release_not_parked`
 
@@ -3160,7 +3362,7 @@ See [Functions and runtimes](functions.md).
 
 HTTP 503 Service Unavailable · Request budget exceeded; Request timed out
 
-See [Edge rules](edge-rules.md), [Errors](errors.md), [Troubleshooting](troubleshooting.md).
+See [Edge rules](edge-rules.md), [Errors](errors.md), [Host an MCP server](mcp-hosting.md), [Troubleshooting](troubleshooting.md).
 
 ### `request_too_large`
 
@@ -3168,7 +3370,7 @@ HTTP 413 Request Entity Too Large · Event too large; MCP instance probe failed;
 
 For larger uploads, use a bucket signed URL (gregale storage ... signed-url).
 
-See [Event-driven workloads](event-driven.md), [Plans and pricing](plans.md), [Storage](storage.md).
+See [Event-driven workloads](event-driven.md), [Plans and pricing](plans.md), [Storage](storage.md), [Edge rules](edge-rules.md).
 
 ### `request_upload_timeout`
 
@@ -3214,7 +3416,7 @@ HTTP 409 Conflict · Rollback crosses release commands
 
 If the target is compatible with those changes, retry with acknowledge_releases (CLI: --acknowledge-releases). To undo database changes first, restore each listed database to its restore point.
 
-See [Deploys](deploys.md#releases-that-change-the-database), [Safe releases](releases.md), [Fix a failed deploy](troubleshoot-deploys.md).
+See [Safe releases](releases.md#releases-that-change-the-database), [Troubleshooting](troubleshooting.md).
 
 ### `rollback_deployment_changed`
 
@@ -3236,7 +3438,7 @@ HTTP 409 Conflict · Rollback target's database changes were undone; Rollback ta
 
 Deploy that code again; its release command runs before it serves.
 
-See [Deploys](deploys.md#rollbacks-that-restore-the-database), [Safe releases](releases.md).
+See [Safe releases](releases.md#rollbacks-that-restore-the-database).
 
 ### `rollback_target_ineligible`
 
@@ -3294,6 +3496,10 @@ HTTP 409 Conflict · Run control changed
 
 HTTP 503 Service Unavailable · Safe release unavailable
 
+### `saved_insight_limit`
+
+HTTP 409 Conflict · Saved insight limit reached
+
 ### `scaling_request_conflict`
 
 HTTP 409 Conflict · Scaling request ID reused
@@ -3328,13 +3534,13 @@ HTTP 410 Gone · Secret entry unavailable
 
 HTTP 400 Bad Request · Invalid secret key
 
-See [Delivered secrets](secrets.md).
+See [Secrets](secrets.md).
 
 ### `secret_not_found`
 
 HTTP 400 Bad Request · Secret not set; Secret unavailable
 
-See [Delivered secrets](secrets.md).
+See [Secrets](secrets.md).
 
 ### `secret_reference_conflict`
 
@@ -3350,7 +3556,7 @@ See [Environment variables](env.md).
 
 HTTP 422 Unprocessable Entity · Secret-shaped values found in uploaded source
 
-See [Delivered secrets](secrets.md).
+See [Secrets](secrets.md).
 
 ### `secret_store_unavailable`
 
@@ -3360,7 +3566,7 @@ HTTP 503 Service Unavailable · Secret storage unavailable
 
 HTTP 413 Request Entity Too Large · Secret value too large
 
-See [Delivered secrets](secrets.md).
+See [Secrets](secrets.md).
 
 ### `security_posture_blocked`
 
@@ -3480,35 +3686,51 @@ See [Builds and framework detection](build.md#limits).
 
 ### `stage_dependency_restore_failed`
 
-The response's `title` and `detail` describe the failure.
+Dependencies restore failed
+
+Your package manager install step exited non-zero inside the build VM
 
 ### `stage_image_build_oom`
 
-The response's `title` and `detail` describe the failure.
+Image build ran out of memory
+
+The build VM hit its 2 GB memory ceiling during image_build
 
 ### `stage_image_build_timeout`
 
-The response's `title` and `detail` describe the failure.
+Image build timed out
+
+The build VM exceeded the 15-minute build-time ceiling
 
 ### `stage_readiness_failed`
 
-The response's `title` and `detail` describe the failure.
+Readiness probe failed
+
+The deployed VM's /healthz never returned 200
 
 ### `stage_security_scan_findings`
 
-The response's `title` and `detail` describe the failure.
+Security scan flagged findings
+
+Grype found CVEs at or above the plan's severity threshold
 
 ### `stage_snapshot_prepare_timeout`
 
 HTTP 422 Unprocessable Entity · Snapshot prime exceeded the scheduler deadline
 
+The snapshot_prepare stage exceeded the scheduler's wall-clock ceiling
+
 ### `stage_source_download_failed`
 
-The response's `title` and `detail` describe the failure.
+Source download failed
+
+The build VM could not fetch your repository tarball
 
 ### `stateless_only_violation`
 
 HTTP 422 Unprocessable Entity · Stateless-only platform
+
+This app shape needs persistent storage we don't provide
 
 See [Storage](storage.md).
 
@@ -3561,6 +3783,10 @@ HTTP 409 Conflict · Stored workflow changed; Suite target changed; Verification
 ### `streaming_not_available`
 
 HTTP 413 Request Entity Too Large · Streaming response exceeded plan cap
+
+### `suspend_timeout_always_on`
+
+HTTP 409 Conflict · Database is always-on
 
 ### `synthetic_check_invalid`
 
@@ -3708,7 +3934,7 @@ HTTP 401 Unauthorized · Many operations send this code; the response's `title` 
 
 Migration unavailable
 
-See [Apps](apps.md), [Billing](billing.md), [Jobs from the CLI](cli-jobs.md).
+See [Apps](apps.md), [Billing](billing.md), [Jobs from the CLI](cli-jobs.md), [Secrets and required configuration](cli-secrets.md).
 
 ### `undo_plan_changed`
 
@@ -3813,6 +4039,12 @@ The response's `title` and `detail` describe the failure.
 ### `wake_queue_full`
 
 The response's `title` and `detail` describe the failure.
+
+### `wake_with_app_unsupported`
+
+HTTP 409 Conflict · Database cannot start with its app
+
+See [Managed PostgreSQL](postgres.md#plans).
 
 ### `webhook_outbox_full`
 
@@ -3935,6 +4167,14 @@ See [CLI guide](cli-setup.md).
 HTTP 408 Request Timeout · Workflow wait timed out
 
 See [CLI guide](cli-setup.md).
+
+### `workload_bucket_not_found`
+
+HTTP 404 Not Found · Granted bucket not found
+
+### `workload_credential_limit`
+
+HTTP 429 Too Many Requests · Too many workload credentials
 
 ### `workload_not_production`
 

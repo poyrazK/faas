@@ -85,7 +85,7 @@ RULES = [
     (r"retained-service-spans|spans-", "Tracing:"),
     (r"response-status-hooks", "Throttle suggestions"),
     (r"^warmup$", "Warm pool"),
-    (r"^(apps-root|artifact-sync-.*|compute-mem-mb|control-plane-api-target|cp-state-backup-.*|curl|drill-.*|edge-discovery-url|git-sha|h2-?c-.*|ha-.*|host-(age-pub|age-recipient-path|bridge-cidr|hmac-key-path|key-path|name)|internal-target|json|masquerade-cidr|origin-ip|output|peer-entry-addrs|private-(control-|peer-)?ingress-cidrs|public-(control-addr|edge-control-plane-target|edge-mode|entry-addrs|health-path|host|iface|ingress-cidrs|listen-addr|private-listen-addr)|quiet-pause(-observe)?|rclone-bin|repo-root|require-shared-artifacts|sample-interval|sign-pub|token|trusted-ingress-cidrs)$", "INFRA"),
+    (r"^(apps-root|artifact-sync-.*|compute-mem-mb|control-plane-api-target|cp-state-backup-.*|curl|drill-.*|edge-discovery-url|git-sha|h2-?c-.*|ha-.*|host-(age-pub|age-recipient-path|bridge-cidr|hmac-key-path|key-path|name)|internal-target|json|masquerade-cidr|origin-ip|output|peer-entry-addrs|private-(control-|peer-)?ingress-cidrs|public-(control-addr|edge-control-plane-target|edge-mode|entry-addrs|health-path|host|iface|ingress-cidrs|listen-addr|private-listen-addr)|quiet-pause(-observe)?|rclone-bin|reload-(bin-dir|dry-run|poll-seconds|proc|wait-seconds)|repo-root|require-shared-artifacts|sample-interval|sign-pub|systemctl|token|trusted-ingress-cidrs)$", "INFRA"),
     (r"^(canonical-headers|control|dns-handoff|edge-health-outcome|handler|inflight|pgbackend|rule-label-set|stale-target|workload-retirement)$", "INFRA"),
     (r"^/v1/apps/\\$|^/v1\?api.key", "TEST"),
     (r"^app-layer-max", "Builds in builder"),
@@ -219,7 +219,7 @@ RULES = [
     (r"commit-relay|commit-source|^commit|gregale-commit|/commit", "Gregale Commit"),
     (r"exclusive-operation|exclusive_operation|managed-exclusive|^exclusive", "Managed exclusive operations"),
     # --- account, billing, identity
-    (r"api-monetization|consumer-billing|consumer-plan|consumer-signup|rate-card|billing-run|consumer-overdue|consumer-credit|consumer-meter|consumer-route-usage|api-consumer-(billing|credit|meter|plan|rate|route|signup|overdue)|lagoinvoice|automatic-tax|billing-connection", "API monetization"),
+    (r"api-monetization|monetization-funnel|consumer-billing|consumer-plan|consumer-signup|rate-card|billing-run|consumer-overdue|consumer-credit|consumer-meter|consumer-route-usage|api-consumer-(billing|credit|meter|plan|rate|route|signup|overdue)|lagoinvoice|automatic-tax|billing-connection", "API monetization"),
     (r"consumers?|consumer-keys|api-consumer|end-user", "API consumers"),
     (r"platform-tenant", "Platform tenants"),
     (r"tenant-surface|tenant-hostname|wildcard", "Tenant surfaces"),
@@ -231,10 +231,10 @@ RULES = [
     (r"orgs?$|^/v1/orgs|org-|organization|members|invitation|seat|transfer-ownership|iam-|roles?$|ownership", "Orgs:"),
     (r"keys?$|api-key|^/v1/keys|scopes|service-caller-key|key-pool", "API keys"),
     (r"^mail$|mail|email|notification-email|magic-link|postmark|resend", "Customer notification emails"),
-    (r"signup|login|logout|mfa|password|session|cli-auth|email-verif|verify|whoami|account|oauth-links|link$|unlink", "Signup, login"),
-    (r"feature-flag|customer-flags|^flags|flags-|/flags|platformflags|capflags|platform-flags|feature-flags|^flag[-_](kills|request[-_]attributes|cohorts)$|^analytics-(events|property-keys)$|^insights$|/insights|^analytics-cohort|/cohorts|insight-cohort|^flag-(experiments|experiment-units|experiment-latency|conversion-daily|event-usage|event-names)$", "Customer feature flags"),
+    (r"signup|login|logout|mfa|password|session|cli-auth|email-verif|verify|whoami|account|oauth-links|link$|unlink|^claim$", "Signup, login"),
+    (r"feature-flag|customer-flags|^flags|flags-|/flags|platformflags|capflags|platform-flags|feature-flags|^flag[-_](kills|request[-_]attributes|cohorts)$|^analytics-(events|property-keys)$|^insights$|/insights|^analytics-cohort|/cohorts|insight-cohort|saved-insights|savedinsightnotify|^edge[-_]flags$|^flag[-_]notifications?$|flag-notifications|flagnotify|^flag[-_]notification[-_]settings$|^flag-(experiments|experiment-units|experiment-latency|conversion-daily|event-usage|event-names)$", "Customer feature flags"),
     # --- developer tools
-    (r"mcp-management|mcpmanagement|mcp[-_]?openapi|agent-connections|agentconnections|agent-policy|mcp-serve|oauth-authorization|oauth-protected|/oauth/(authorize|consent|register|revoke|token)|well-known/oauth|jwks", "Gregale management MCP server"),
+    (r"mcp-management|mcpmanagement|docsindex|mcp[-_]?openapi|agent-connections|agentconnections|agent-policy|mcp-serve|oauth-authorization|oauth-protected|/oauth/(authorize|consent|register|revoke|token)|well-known/oauth|jwks", "Gregale management MCP server"),
     (r"security\.txt|security/|pgp|docs-links|customer-pages|docs-content|^/docs|subprocessor-md|^docs$|security-advisories|^/(terms|privacy|acceptable-use)$|^legal$|legal[-_]pages|^legal-acceptances$", "Docs site and trust pages"),
     (r"openapi\.(json|yaml)|^/v1/openapi|capabilities|productcap|sdk-coverage|^meta$", "Public OpenAPI spec"),
     (r"^sdk|sdk$|webhook-receiver|idempotency|transport|^client|options$|dto$|codes$|errors$|scopes$|^doc$|streaming$|release-context|^context", "SDKs:"),
@@ -296,6 +296,7 @@ RULES = [
     (r"route-lifecycle|route-removal|deprecat|sunset", "Route lifecycle review"),
     (r"route-advisor|routeadvisor|advise", "Route advisor"),
     (r"route-health", "Critical route health"),
+    (r"verification-contract|verification_contract", "Verification contracts"),
     (r"route-monitor|route-budget|routemonitor|production-route", "Production route budgets"),
     (r"route-requirement|route-polic|saved-route|requirements", "Route requirements"),
     (r"openapi|api-contract|contract-diff|apihostingcontract|deploydiff-openapi", "OpenAPI:"),
@@ -328,6 +329,8 @@ RULES = [
     (r"domain|certificate|tls|acme|cert", "Custom domains"),
     # --- runtime
     (r"workload-identity|oidc", "Workload identity"),
+    # ADR-20261122191423: gregale.yaml `uses:` grants authorize binding tokens.
+    (r"^capgrant$", "Workload identity"),
     (r"secret|seal", "Secrets:"),
     (r"env-diff|^env|environment-variable|env-var|/env$", "Env vars:"),
     (r"chaos|scenario|rehearse", "Scenario tests"),

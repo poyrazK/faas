@@ -7,23 +7,33 @@ import (
 )
 
 type Backlog struct {
-	Pending       int64      `json:"pending"`
-	Blocked       int64      `json:"blocked"`
-	Accepted      int64      `json:"accepted"`
-	OldestPending *time.Time `json:"oldest_pending,omitempty"`
+	Pending         int64      `json:"pending"`
+	Blocked         int64      `json:"blocked"`
+	Accepted        int64      `json:"accepted"`
+	OldestPending   *time.Time `json:"oldest_pending,omitempty"`
+	CleanupEligible *int64     `json:"cleanup_eligible,omitempty"`
 }
 
 var ErrReplayLeaseBusy = errors.New("commit: blocked event still has a live lease")
 
-func (r *Relay) Backlog(ctx context.Context) (Backlog, error) {
+func (r *Relay) Backlog(ctx context.Context, cleanupBefore ...time.Time) (Backlog, error) {
 	var b Backlog
 	if r.Pool == nil {
 		return b, errors.New("commit: customer database unavailable")
 	}
+	var cutoff any
+	if len(cleanupBefore) > 0 {
+		cutoff = cleanupBefore[0]
+	}
+	var cleanupCount int64
 	err := r.Pool.QueryRow(ctx, `SELECT count(*) FILTER(WHERE accepted_at IS NULL AND blocked_code IS NULL),
  count(*) FILTER(WHERE accepted_at IS NULL AND blocked_code IS NOT NULL),
- count(*) FILTER(WHERE accepted_at IS NOT NULL),min(created_at) FILTER(WHERE accepted_at IS NULL)
- FROM public.gregale_outbox`).Scan(&b.Pending, &b.Blocked, &b.Accepted, &b.OldestPending)
+ count(*) FILTER(WHERE accepted_at IS NOT NULL),min(created_at) FILTER(WHERE accepted_at IS NULL),
+ count(*) FILTER(WHERE accepted_at<$1::timestamptz)
+ FROM public.gregale_outbox`, cutoff).Scan(&b.Pending, &b.Blocked, &b.Accepted, &b.OldestPending, &cleanupCount)
+	if err == nil && cutoff != nil {
+		b.CleanupEligible = &cleanupCount
+	}
 	return b, err
 }
 
@@ -33,17 +43,19 @@ func (r *Relay) ReplayBlocked(ctx context.Context, eventID string) (bool, error)
 	if r.Pool == nil {
 		return false, errors.New("commit: customer database unavailable")
 	}
-	tag, err := r.Pool.Exec(ctx, `UPDATE public.gregale_outbox SET blocked_code=NULL,next_attempt_at=clock_timestamp(),
- lease_token=NULL,lease_until=NULL WHERE event_id=$1::uuid AND accepted_at IS NULL AND blocked_code IS NOT NULL
-	AND (lease_until IS NULL OR lease_until<=clock_timestamp())`, eventID)
-	if err == nil && tag.RowsAffected() == 0 {
-		var busy bool
-		err = r.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM public.gregale_outbox WHERE event_id=$1::uuid AND accepted_at IS NULL AND blocked_code IS NOT NULL AND lease_until>clock_timestamp())`, eventID).Scan(&busy)
-		if err == nil && busy {
-			return false, ErrReplayLeaseBusy
-		}
+	var released, wasBlocked bool
+	err := r.Pool.QueryRow(ctx, `WITH released AS (
+ UPDATE public.gregale_outbox SET blocked_code=NULL,next_attempt_at=clock_timestamp(),lease_token=NULL,lease_until=NULL
+ WHERE event_id=$1::uuid AND accepted_at IS NULL AND blocked_code IS NOT NULL
+ AND (lease_until IS NULL OR lease_until<=clock_timestamp()) RETURNING event_id
+ ) SELECT EXISTS(SELECT 1 FROM released),
+ EXISTS(SELECT 1 FROM public.gregale_outbox WHERE event_id=$1::uuid AND accepted_at IS NULL AND blocked_code IS NOT NULL)`, eventID).Scan(&released, &wasBlocked)
+	// Both reads use the same snapshot. A lease expiring during this statement
+	// cannot turn an unreleased block into a completed replay request.
+	if err == nil && !released && wasBlocked {
+		return false, ErrReplayLeaseBusy
 	}
-	return tag.RowsAffected() == 1, err
+	return released, err
 }
 
 // Run is the managed polling lifecycle. A source outage never exits the loop;

@@ -73,6 +73,7 @@ var cliTreeCompoundWords = []string{
 	"grace-window", "payment-method", "server-key", "egress-overage",
 	"ack-sync", "billing-connection", "content-policy", "tag-limit", "app-limit", "request-policy", "legal-hold",
 	"event-hold", "impact-alert", "lifecycle-alert", "ownership-rule", "compound-alert", "source-map",
+	"suspend-timeout", "app-wake",
 }
 
 // cliTreeValueWord matches a word that is a value, not a verb: today's

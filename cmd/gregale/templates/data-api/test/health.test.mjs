@@ -4,7 +4,7 @@ import http from 'node:http'
 import { EventEmitter } from 'node:events'
 import { createServer } from '../server.mjs'
 import { createHealth, readRuntimeVersion } from '../health.mjs'
-import { runtimeConfig, limits } from '../config.mjs'
+import { runtimeConfig, limits, readinessPath } from '../config.mjs'
 
 async function fixture(t, coordinated = false) {
   const config = runtimeConfig({ DATABASE_URL: 'postgres://restricted:private-password@localhost/db', DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'notes', ...(coordinated ? { DATA_API_COORDINATED_REFRESH: '1' } : {}) })
@@ -39,9 +39,10 @@ test('liveness needs no engine, database, JWT or admission and readiness disting
   assert.equal(response.headers.get('cache-control'), 'no-store')
   assert.deepEqual(await response.json(), { version: 1, live: true })
   assert.equal(state.probes.length, 0)
-  response = await fetch(base + '/healthz')
+  response = await fetch(base + readinessPath)
   let report = await response.json()
   assert.equal(response.status, 200)
+  assert.equal(response.headers.get('cache-control'), 'no-store')
   assert.deepEqual(report.checks, { engine: 'reachable', sql: 'ready', database: 'reachable', refresh: 'disabled' })
   assert.deepEqual(report.admission, { active: 0, queued: 0, capacity: 2, queue_capacity: 8 })
   assert.equal(report.runtime_version, readRuntimeVersion())
@@ -51,7 +52,7 @@ test('liveness needs no engine, database, JWT or admission and readiness disting
   assert.equal(report.pool.timeouts_total, 3)
   assert.ok(Number.isFinite(Date.parse(report.pool.checked_at)))
   state.sql = 503
-  response = await fetch(base + '/healthz'); report = await response.json()
+  response = await fetch(base + readinessPath); report = await response.json()
   assert.equal(response.status, 503)
   assert.equal(report.live, true)
   assert.deepEqual(report.checks, { engine: 'reachable', sql: 'unready', database: 'unknown', refresh: 'disabled' })

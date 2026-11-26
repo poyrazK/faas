@@ -992,6 +992,27 @@ func (c *Client) ListAPIConsumers(ctx context.Context, slug string) (APIConsumer
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/consumers", nil, &out)
 }
 
+// ListAPIConsumersInEnvironment lists one project environment's consumers;
+// "" lists production's (ADR-20261104120000 amendment 2026-11-22).
+func (c *Client) ListAPIConsumersInEnvironment(ctx context.Context, slug, environment string) (APIConsumerListResponse, error) {
+	var out APIConsumerListResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/consumers"+consumerEnvironmentQuery(environment), nil, &out)
+}
+
+// CreateAPIConsumerInEnvironment registers a consumer in one project
+// environment; "" creates a production consumer.
+func (c *Client) CreateAPIConsumerInEnvironment(ctx context.Context, slug, environment string, req CreateAPIConsumerRequest) (APIConsumerResponse, error) {
+	var out APIConsumerResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/consumers"+consumerEnvironmentQuery(environment), req, &out)
+}
+
+func consumerEnvironmentQuery(environment string) string {
+	if environment == "" {
+		return ""
+	}
+	return "?environment=" + url.QueryEscape(environment)
+}
+
 // CreateAPIConsumer registers an end-customer identity for an app.
 func (c *Client) CreateAPIConsumer(ctx context.Context, slug string, req CreateAPIConsumerRequest) (APIConsumerResponse, error) {
 	var out APIConsumerResponse
@@ -1026,8 +1047,9 @@ func (c *Client) GetAPIConsumerRateCard(ctx context.Context, slug, rateCardID st
 // consumer usage and usage-quote methods. Empty bounds use the server's
 // trailing-30d default.
 type APIConsumerUsageOptions struct {
-	Since string
-	Until string
+	Since     string
+	Until     string
+	Breakdown bool
 }
 
 // GetAPIConsumerUsage returns durable minute usage for one stable API
@@ -1042,6 +1064,9 @@ func (c *Client) GetAPIConsumerUsage(ctx context.Context, slug, consumerID strin
 	}
 	if opts.Until != "" {
 		q.Set("until", opts.Until)
+	}
+	if opts.Breakdown {
+		q.Set("breakdown", "true")
 	}
 	if len(q) > 0 {
 		path += "?" + q.Encode()
@@ -1059,6 +1084,9 @@ func (c *Client) GetAPIConsumerUsageQuote(ctx context.Context, slug, consumerID 
 	}
 	if opts.Until != "" {
 		q.Set("until", opts.Until)
+	}
+	if opts.Breakdown {
+		q.Set("breakdown", "true")
 	}
 	if len(q) > 0 {
 		path += "?" + q.Encode()
@@ -2280,6 +2308,12 @@ func (c *Client) ListProjects(ctx context.Context) ([]ProjectSummaryResponse, er
 func (c *Client) GetProject(ctx context.Context, slug string) (ProjectResponse, error) {
 	var out ProjectResponse
 	return out, c.do(ctx, http.MethodGet, "/v1/projects/"+url.PathEscape(slug), nil, &out)
+}
+
+// GetProjectWithRollback requests exact production deployment membership.
+func (c *Client) GetProjectWithRollback(ctx context.Context, slug string) (ProjectResponse, error) {
+	var out ProjectResponse
+	return out, c.do(ctx, http.MethodGet, "/v1/projects/"+url.PathEscape(slug)+"?include_rollback=true", nil, &out)
 }
 
 // UpdateProject changes a project's repository or production branch.
@@ -5165,7 +5199,7 @@ func (c *Client) PostAuthLogin(ctx context.Context, email, password string) (Pro
 // ACTIONS_ID_TOKEN_REQUEST_TOKEN from GitHub Actions) for a
 // short-lived opaque bearer (5 min TTL, fp_oidc_ prefix). Used by
 // the CI deploy path so customers can swap the long-lived
-// FAAS_TOKEN secret for keyless OIDC. The wire contract is
+// GREGALE_TOKEN secret for keyless OIDC. The wire contract is
 // PR-A (ADR-101 / issue #270); PR-B adds the CLI flag + Action
 // input that drives this call.
 //
@@ -8255,6 +8289,14 @@ func (c *Client) RunWorkflowWithIdempotencyKey(ctx context.Context, slug, workfl
 	var resp WorkflowRunResponse
 	path := fmt.Sprintf("/v1/apps/%s/workflows/%s/runs", slug, workflowName)
 	err := c.doWithIdempotencyKey(ctx, "POST", path, input, &resp, idempotencyKey)
+	return resp, err
+}
+
+// LookupWorkflowRunStart reads the retained run ID for a pipeline tool's original start key.
+func (c *Client) LookupWorkflowRunStart(ctx context.Context, slug, workflowName, key string) (WorkflowRunStartLookupResponse, error) {
+	var resp WorkflowRunStartLookupResponse
+	path := "/v1/apps/" + url.PathEscape(slug) + "/workflows/run-starts/" + url.PathEscape(workflowName)
+	err := c.doWithHeaders(ctx, "GET", path, nil, &resp, http.Header{"Idempotency-Key": {key}})
 	return resp, err
 }
 

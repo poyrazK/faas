@@ -69,6 +69,7 @@ plain cli_auth_codes.token_hash
 plain cli_auth_codes.verifier_hash
 plain consumer_keys.hashed_secret
 plain customer_operation_webhook_receipts.body_sha256
+plain data_api_inspection_executions.stdout_sha256
 plain deploy_tokens.token_sha256
 plain deployment_openapi_docs.doc_sha256
 plain deployment_registry_verifications.payload
@@ -174,3 +175,5 @@ plain trigger_records.work_fairness_digest
 plain trigger_records.work_key_digest
 plain workflow_runs.create_request_fingerprint
 plain workflow_webhook_receipts.body_hash
+# ADR-20261124080000: SHA-256 of an anonymous deploy claim token; the token itself is never stored.
+plain unclaimed_accounts.claim_token_sha256

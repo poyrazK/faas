@@ -88,7 +88,7 @@ func (h *cliAuthHandlers) bindMCPProjects(w http.ResponseWriter, r *http.Request
 	}
 	if err := store.SetCliAuthCodeProjects(r.Context(), hash, ids); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
-			h.renderCliAuthError(w, r, "Code expired", "Start the connection again from your agent.")
+			h.renderMCPCodeGone(w, r, hash)
 			return false
 		}
 		h.log.Error("cli_auth.bind_projects", "err", err)

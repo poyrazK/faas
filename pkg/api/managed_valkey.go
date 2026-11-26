@@ -20,10 +20,19 @@ const (
 	// that releases the /v1/redis surface.
 	ManagedValkeyCapability = "managed-redis"
 
-	// ManagedValkeyImage is the only image a managed cache app runs. It is
-	// digest-pinned (valkey/valkey:8.1.4-alpine); a new Valkey release is a
-	// reviewed change here. Deploy references carry a digest and no tag.
-	ManagedValkeyImage = "docker.io/valkey/valkey@sha256:e706d1213aaba6896c162bb6a3a9e1894e1a435f28f8f856d14fab2e10aa098b"
+	// ManagedValkeyImage is the image apid deploys for a new cache, resize or
+	// upgrade. It is digest-pinned (valkey/valkey:8.1.12-alpine); a new Valkey
+	// release is a reviewed change here. Deploy references carry a digest and
+	// no tag. A cache may run any image in managedValkeyImages: one becomes
+	// ManagedValkeyImage only a release after it joined that list.
+	ManagedValkeyImage = "docker.io/valkey/valkey@sha256:9971099af41c36e887aabdfe22b80c0fe45df949163dfc9cb434febc57cfc3fc"
+
+	// managedValkeyImage814 is valkey/valkey:8.1.4-alpine, which caches
+	// created before 8.1.12 keep until their next handoff (`gregale redis
+	// update`, resize or eviction-policy change) moves them. It
+	// stays accepted until no cache deployment runs it (the query is in
+	// ADR-20261116192126).
+	managedValkeyImage814 = "docker.io/valkey/valkey@sha256:e706d1213aaba6896c162bb6a3a9e1894e1a435f28f8f856d14fab2e10aa098b"
 
 	// ManagedValkeyPort is the port a cache listens on at its service address.
 	ManagedValkeyPort = 6379
@@ -55,6 +64,34 @@ const (
 	// ManagedValkeyDefaultEvictionPolicy evicts least recently used keys.
 	ManagedValkeyDefaultEvictionPolicy = "allkeys-lru"
 )
+
+// managedValkeyImages are the images a cache deployment may run: the one
+// apid deploys and the others still running in existing caches. A cache
+// keeps its image until its next handoff: `gregale redis update`, a resize
+// and an eviction-policy change all deploy ManagedValkeyImage. Remove an
+// image only once no cache deployment runs it (the query is in
+// ADR-20261116192126).
+var managedValkeyImages = []string{ManagedValkeyImage, managedValkeyImage814}
+
+// ManagedValkeyImages returns a copy of the images a cache may run.
+func ManagedValkeyImages() []string {
+	return slices.Clone(managedValkeyImages)
+}
+
+// IsManagedValkeyImage reports whether ref is an image a cache may run.
+func IsManagedValkeyImage(ref string) bool {
+	return slices.Contains(managedValkeyImages, ref)
+}
+
+// IsManagedValkeyCommand reports whether entrypoint is one apid gives a cache
+// deployment: ManagedValkeyServerCommand or ManagedValkeyHandoffCommand. A
+// customer app that deploys the official Valkey image with its own command
+// is not a managed cache.
+func IsManagedValkeyCommand(entrypoint []string) bool {
+	return len(entrypoint) == 3 && entrypoint[0] == "/bin/sh" && entrypoint[1] == "-c" &&
+		strings.Contains(entrypoint[2], "valkey-server --port ") &&
+		strings.Contains(entrypoint[2], " --maxmemory-policy ")
+}
 
 // ManagedValkeyEvictionPolicies are the maxmemory policies a cache may use.
 var ManagedValkeyEvictionPolicies = []string{
@@ -262,6 +299,12 @@ func ErrManagedValkeyLimit(plan Plan, limit int) *Problem {
 		WithLimit(int64(limit), int64(limit+1))
 }
 
+// ComposeRedisConfiguredReason is a plan's not_provisioned_reason for a
+// Compose redis service whose every user already has its key set (bound to a
+// managed cache by an earlier apply, or set by hand). Feature hints read it to
+// say the key is in place instead of asking for an external Redis.
+const ComposeRedisConfiguredReason = "every service that uses it already has its key set"
+
 // Problem codes for managed caches.
 const (
 	CodeManagedRedisNotInPlan = "managed_redis_not_in_plan"
@@ -318,9 +361,17 @@ type BindRedisCacheRequest struct {
 	EnvKey string `json:"env_key,omitempty"`
 }
 
-// RedisCacheBinding is the result of a binding.
+// RedisCacheBinding is the result of a binding. Binding also grants the app
+// the call to the cache (ADR-20261124174500).
 type RedisCacheBinding struct {
 	Cache  string `json:"cache"`
 	App    string `json:"app"`
 	EnvKey string `json:"env_key"`
+}
+
+// RedisCacheUnbinding answers DELETE /v1/redis/{name}/bindings/{app}: the
+// app may no longer call the cache. Its connection variable stays set.
+type RedisCacheUnbinding struct {
+	Cache string `json:"cache"`
+	App   string `json:"app"`
 }

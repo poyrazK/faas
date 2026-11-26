@@ -56,5 +56,9 @@ export type FlagExperiment = {
    * The guardrail breach that stopped the experiment.
    */
   breach?: Record<string, any>;
+  /**
+   * The experiment's own notification channels for its decisions and problems; absent uses the environment's.
+   */
+  notify_channel_ids?: Array<string>;
 };
 

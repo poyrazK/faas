@@ -8,6 +8,7 @@ import { completable, createMcpHandler, McpServer, ResourceTemplate } from '@mod
 import * as z from 'zod/v4';
 import { createAuth, verifiedCallerIdentity } from './auth.js';
 import { createRuntimeCatalog } from './catalog.js';
+import { applicationToolkitRegistration } from './application-toolkit.js';
 import { createResourceUpdateHub, createSubscriptionOutput, validResourceUpdateURI } from './resource-updates.js';
 
 const MCP_PROTOCOL_VERSION_META_KEY = 'io.modelcontextprotocol/protocolVersion';
@@ -168,10 +169,14 @@ function guestConfig(config) {
   return ['api-key', 'oauth-proxy'].includes(config?.auth?.mode) ? { ...config, auth: { mode: 'open' } } : config;
 }
 
-export function createApp(suppliedConfig, { keyResolver, log = console.log, taskRuntime, tasks = NO_TASKS, resourceUpdateAdapter: suppliedResourceUpdateAdapter, expectedCatalogSHA256 = process.env.MCP_CATALOG_EXPECTED_SHA256 } = {}) {
-  const config = guestConfig(suppliedConfig);
+export function createApp(suppliedConfig, { keyResolver, log = console.log, taskRuntime, tasks = NO_TASKS, resourceUpdateAdapter: suppliedResourceUpdateAdapter, expectedCatalogSHA256 = process.env.MCP_CATALOG_EXPECTED_SHA256 , toolkit, resolveToolkitPrincipal, pipelineTasks } = {}) {
+  let config = guestConfig(suppliedConfig);
   const gatewayOnly = config !== suppliedConfig;
   const { clientSupportsMcpTasks, installMcpTaskHandlers, MCP_TASKS_EXTENSION_ID, TASK_INBOX_EXTENSION, MCP_TASK_INPUT_REVIEW_EXTENSION_ID } = tasks;
+  if (pipelineTasks && !toolkit) throw new TypeError('Pipeline Tasks require an application toolkit');
+  if (pipelineTasks && tasks === NO_TASKS) throw new TypeError('Pipeline Tasks require the mcp-node-tasks starter');
+  const registration = toolkit === undefined ? undefined : applicationToolkitRegistration(config, toolkit, resolveToolkitPrincipal, pipelineTasks, tasks.inputMethodsFor);
+  if (registration) config = registration.config;
   if (taskRuntime && tasks === NO_TASKS) throw new Error('A task runtime needs the MCP Tasks module');
   if (config.version !== 1 || config.transport !== 'streamable-http' || config.mode !== 'stateless') throw new Error('Unsupported MCP hosting profile');
   if (typeof config.endpoint !== 'string' || !/^\/(?:[A-Za-z0-9._~-]+\/?)*$/.test(config.endpoint) || config.endpoint.split('/').some(s => s === '.' || s === '..')) throw new Error('Invalid MCP endpoint');
@@ -179,7 +184,10 @@ export function createApp(suppliedConfig, { keyResolver, log = console.log, task
   const tasksEnabled = config.tasks?.enabled === true;
   if (config.tasks !== undefined && (typeof config.tasks !== 'object' || config.tasks === null || typeof config.tasks.enabled !== 'boolean')) throw new Error('tasks.enabled must be explicitly true or false when task settings are present');
   if (tasksEnabled !== !!taskRuntime) throw new Error('MCP Tasks require an enabled durable task runtime');
+  const workerRuntime = taskRuntime;
+  taskRuntime = registration?.taskRuntime(workerRuntime) ?? workerRuntime;
   const supportsTaskSubmission = () => config.auth?.mode === 'external-oauth' && taskRuntime?.supportsTaskSubmission?.();
+  const supportsKeyedTool = name => workerRuntime?.canCreate?.(name) && !pipelineTasks?.canCreate(name);
   const supportsGroupOwner = () => supportsTaskSubmission() && taskRuntime?.supportsTaskGroupOwnerBinding?.();
   const resourceUpdateAdapter = suppliedResourceUpdateAdapter || createResourceUpdateHub();
   if (typeof resourceUpdateAdapter.publish !== 'function' || typeof resourceUpdateAdapter.subscribe !== 'function') {
@@ -202,6 +210,7 @@ export function createApp(suppliedConfig, { keyResolver, log = console.log, task
   };
   const catalog = createRuntimeCatalog({ normalizeDefinition: normalizeCatalogDefinition });
   const { sampleCustomerRecord } = installDefaultCatalog(catalog, tasks);
+  registration?.install(catalog);
   function resourceAuthorized(entry, uri, authInfo, subscription = false) {
     if (typeof entry.authorize !== 'function') return !subscription;
     try { return entry.authorize(String(uri), {authInfo, config}) === true; }
@@ -222,7 +231,7 @@ export function createApp(suppliedConfig, { keyResolver, log = console.log, task
   function catalogStatus() {
     const authPolicy = Object.fromEntries(['tool_scopes', 'resource_scopes', 'prompt_scopes']
       .map(key => [key, config.auth[key] ?? null]));
-    const sha256 = catalog.contractFingerprint({ tasks_enabled: Boolean(taskRuntime), auth_policy: authPolicy });
+    const sha256 = catalog.contractFingerprint({ tasks_enabled: Boolean(workerRuntime), auth_policy: authPolicy });
     return { ready: !expectedCatalogSHA256 || sha256 === expectedCatalogSHA256, revision: catalog.revision(), sha256 };
   }
 
@@ -280,9 +289,9 @@ export function createApp(suppliedConfig, { keyResolver, log = console.log, task
               return { isError: true, content: [{ type: 'text', text: 'request_approval requires client support for elicitation form requests.' }] };
             }
           }
-          return taskRuntime.create(entry.name, args, authInfo, config.auth.mode, clientCapabilities, entry.definition.outputSchema, request?.submissionKey);
+          return taskRuntime.create(entry.name, args, authInfo, config.auth.mode, clientCapabilities, entry.definition.outputSchema, request?.submissionKey, ctx.mcpReq.signal);
         }
-        return entry.handler(args, ctx, { authInfo, config, taskRuntime });
+        return entry.handler(args, ctx, { authInfo, config, taskRuntime: workerRuntime });
       };
       const definition = taskCall ? { ...entry.definition, outputSchema: undefined } : entry.definition;
       labelTool(entry.name);
@@ -379,6 +388,9 @@ export function createApp(suppliedConfig, { keyResolver, log = console.log, task
     const requestedTaskIDSet = new Set(uniqueTaskIDs);
     const resourceURIsByTaskID = new Map();
     let subscription;
+    const pipelineReads = new AbortController();
+    let pipelineActive = false;
+    let nativeActive = false;
     let unsubscribeBus;
     let unsubscribeCatalog;
     const unsubscribeResourceUpdates = new Map();
@@ -396,6 +408,7 @@ export function createApp(suppliedConfig, { keyResolver, log = console.log, task
     const cleanup = endResponse => {
       if (ended) return;
       ended = true;
+      pipelineReads.abort();
       clearInterval(keepAlive);
       clearTimeout(authDeadline);
       output?.close();
@@ -447,6 +460,10 @@ export function createApp(suppliedConfig, { keyResolver, log = console.log, task
       sendMessage(result);
       closeNow();
     };
+    function closeIfIdle() {
+      if (ready && !pipelineActive && !nativeActive && !genericResourceURIs.size
+          && !honored.toolsListChanged && !honored.promptsListChanged && !honored.resourcesListChanged) closeGracefully();
+    }
     function deliver(message) {
       if (ended) return;
       if (req.auth?.expiresAt * 1000 <= Date.now()) { closeNow(); return; }
@@ -512,9 +529,9 @@ export function createApp(suppliedConfig, { keyResolver, log = console.log, task
           continue;
         }
         const taskID = taskIDFromResourceURI(uri);
-        if (!taskRuntime || typeof taskRuntime.subscribe !== 'function' || !taskID) continue;
+        if (!workerRuntime || typeof workerRuntime.subscribe !== 'function' || !taskID) continue;
         try {
-          await taskRuntime.get(taskID, req.auth, config.auth.mode, name => auth.toolPolicy.canAccess(name, req.auth));
+          await workerRuntime.get(taskID, req.auth, config.auth.mode, name => auth.toolPolicy.canAccess(name, req.auth));
           if (ended) return;
           resourceTaskIDs.set(uri, taskID);
         } catch {
@@ -557,8 +574,8 @@ export function createApp(suppliedConfig, { keyResolver, log = console.log, task
         if (typeof unsubscribe === 'function') unsubscribeResourceUpdates.set(uri, unsubscribe);
       }
       let acceptedTaskIDs = new Set();
-      if (allTaskIDs.length > 0 && taskRuntime?.subscribe) {
-        subscription = await taskRuntime.subscribe(
+      if (allTaskIDs.length > 0 && workerRuntime?.subscribe) {
+        subscription = await workerRuntime.subscribe(
           allTaskIDs, req.auth, config.auth.mode,
           name => auth.toolPolicy.canAccess(name, req.auth), task => {
             const taskID = task.taskId.toLowerCase();
@@ -572,9 +589,9 @@ export function createApp(suppliedConfig, { keyResolver, log = console.log, task
             }
             resourceTaskIDs.clear();
             resourceURIsByTaskID.clear();
-            requestedTaskIDSet.clear();
-            if (!honored.toolsListChanged && !honored.promptsListChanged
-                && !honored.resourcesListChanged && genericResourceURIs.size === 0) closeGracefully();
+            nativeActive = false;
+            acceptedTaskIDs.clear();
+            closeIfIdle();
           },
         );
         if (ended) {
@@ -584,7 +601,18 @@ export function createApp(suppliedConfig, { keyResolver, log = console.log, task
           return;
         }
         acceptedTaskIDs = new Set(subscription.taskIds.map(taskID => taskID.toLowerCase()));
+        nativeActive = acceptedTaskIDs.size > 0;
       }
+      const pipelineCandidates = uniqueTaskIDs.filter(id => !acceptedTaskIDs.has(id));
+      const pipelineSubscription = pipelineCandidates.length && taskRuntime?.subscribePipelineTasks
+        ? await taskRuntime.subscribePipelineTasks(
+          pipelineCandidates, req.auth, clientCapabilities, pipelineReads.signal, sendTask,
+          () => { pipelineActive = false; closeIfIdle(); },
+        )
+        : { taskIds: [], tasks: [] };
+      if (ended) return;
+      pipelineActive = pipelineSubscription.taskIds.length > 0;
+      const pipelineIDs = new Set(pipelineSubscription.taskIds);
       for (const [uri, taskID] of resourceTaskIDs) {
         if (!acceptedTaskIDs.has(taskID)) {
           resourceTaskIDs.delete(uri);
@@ -601,7 +629,7 @@ export function createApp(suppliedConfig, { keyResolver, log = console.log, task
       const acceptedResourceURIs = uniqueResourceURIs.filter(uri => genericResourceURIs.has(uri) || resourceTaskIDs.has(uri));
       if (acceptedResourceURIs.length > 0) honored.resourceSubscriptions = acceptedResourceURIs;
       if (Object.hasOwn(notifications, 'taskIds') && allTaskIDs.length > 0) {
-        honored.taskIds = (subscription?.taskIds || []).filter(taskID => requestedTaskIDSet.has(taskID.toLowerCase()));
+        honored.taskIds = uniqueTaskIDs.filter(taskID => acceptedTaskIDs.has(taskID) || pipelineIDs.has(taskID));
       }
       if (ended) return;
 
@@ -619,16 +647,17 @@ export function createApp(suppliedConfig, { keyResolver, log = console.log, task
       res.protocolObservation?.response(acknowledged);
       output.write(`event: message\ndata: ${JSON.stringify(acknowledged)}\n\n`);
       if (ended) return;
-      for (const task of subscription?.tasks || []) {
-        if (requestedTaskIDSet.has(task.taskId.toLowerCase())) sendTask(task);
+      for (const task of [...pipelineSubscription.tasks, ...(subscription?.tasks || [])]) {
+        const id = task.taskId.toLowerCase();
+        if (requestedTaskIDSet.has(id) && (pipelineIDs.has(id) || acceptedTaskIDs.has(id))) sendTask(task);
       }
       ready = true;
       queuedBytes = 0;
       for (const frame of queued.splice(0)) if (!output.write(frame)) break;
       if (ended) return;
-      if (closeAfterSetup) closeNow();
-      else if (Object.keys(honored).length === 0) closeGracefully();
-      else {
+      if (closeAfterSetup) { closeNow(); return; }
+      closeIfIdle();
+      if (!ended) {
         keepAlive = setInterval(() => { if (!ended) output.write(': keepalive\n\n'); }, TASK_SUBSCRIPTION_KEEPALIVE_MS);
         keepAlive.unref?.();
       }
@@ -704,7 +733,7 @@ export function createApp(suppliedConfig, { keyResolver, log = console.log, task
     const { groupId, binding, toolName } = req.body?.params ?? {};
     if (!validGroupOwnerRequest(req, TASK_GROUP_OWNER_METHOD) ||
       (binding !== undefined && (typeof binding !== 'string' || typeof toolName !== 'string')) ||
-      (toolName !== undefined && (typeof toolName !== 'string' || !taskRuntime?.canCreate?.(toolName) ||
+      (toolName !== undefined && (typeof toolName !== 'string' || !supportsKeyedTool(toolName) ||
         !auth.toolPolicy.canAccess(toolName, req.auth)))) {
       return jsonRpcError(res, req.body?.id ?? null, -32002, 'Task group owner is unavailable for this request', 403);
     }
@@ -744,7 +773,7 @@ export function createApp(suppliedConfig, { keyResolver, log = console.log, task
       const keyed = req.headers['mcp-method'] === TASK_SUBMISSION_METHOD_HEADER;
       if (keyed || submissionKey !== undefined) {
         if (!keyed || protocolVersion !== CURRENT_PROTOCOL_VERSION || !supportsTaskSubmission() || !taskName ||
-          !taskRuntime?.canCreate?.(taskName) || typeof submissionKey !== 'string') {
+          !supportsKeyedTool(taskName) || typeof submissionKey !== 'string') {
           return jsonRpcError(res, req.body?.id ?? null, -32602, 'Keyed Task submission is unavailable for this request', 400);
         }
         // The gateway and guest OAuth policy already authorized the body.

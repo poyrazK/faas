@@ -68,6 +68,14 @@ func FetchRequestHealth(ctx context.Context, client *promql.Client, appID string
 	// increase. Exclude that partial coverage instead of hiding its errors.
 	coverageQuery := fmt.Sprintf(`count(count by (deployment) (increase(%s[%s])) and on (deployment) count by (deployment) (%s)) - (count(%s unless (count_over_time(%s[%s]) >= %d)) or vector(0))`, selector, api.AppHealthMetricsRange, selector, selector, selector, api.AppHealthMetricsRange, api.AppHealthCounterMinSamples)
 	coverage, err := client.QueryScalar(ctx, coverageQuery)
+	if errors.Is(err, promql.ErrNoData) && count == 0 {
+		// The release's series came back after a gateway restart with no
+		// request since: one scrape has no increase. That is an idle
+		// release, not missing telemetry (prod 2026-11-23: health read
+		// "unknown" for minutes after every gateway restart).
+		out.Reason = requestsUnobservedReason(ctx, client)
+		return out
+	}
 	if err != nil {
 		return out
 	}
@@ -103,8 +111,11 @@ func FetchRequestHealth(ctx context.Context, client *promql.Client, appID string
 	}
 	out.RequestCount = int64(SafeRoundNonNeg(count))
 	out.ServerErrors = int64(SafeRoundNonNeg(failures))
-	if count > 0 {
-		out.ErrorRatePct = failures / count * 100
+	// The rate is of the counts it is shown with: increase() extrapolates,
+	// and "24 of 28 requests returned 5xx (86.75%)" read as a miscount
+	// (prod hunt r33).
+	if out.RequestCount > 0 {
+		out.ErrorRatePct = float64(out.ServerErrors) / float64(out.RequestCount) * 100
 	}
 	out.AsOf = time.Unix(0, int64(seconds*float64(time.Second))).UTC().Format(time.RFC3339Nano)
 	out.Source, out.Reason = SourcePrometheus, ""

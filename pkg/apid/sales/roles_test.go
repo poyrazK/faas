@@ -16,6 +16,7 @@ import (
 type teamFake struct {
 	*fakeStore
 	roster    map[string]string
+	members   []referrals.TeamMember
 	saved     []string
 	moved     string
 	payouts   int
@@ -26,7 +27,10 @@ type teamFake struct {
 
 func (f *teamFake) TeamRoster(context.Context) (map[string]string, error) { return f.roster, nil }
 func (f *teamFake) TeamMembers(context.Context, []string) ([]referrals.TeamMember, error) {
-	return []referrals.TeamMember{{AccountID: "22222222-2222-2222-2222-222222222222", Email: "seller@example.com", AccountStatus: "active", EmailVerified: true, MFAEnrolled: true}}, nil
+	if f.members != nil {
+		return f.members, nil
+	}
+	return []referrals.TeamMember{{AccountID: "22222222-2222-2222-2222-222222222222", Email: "seller@example.com", StoredRole: referrals.RoleRep, StoredActive: true, Version: 1, AccountStatus: "active", EmailVerified: true, MFAEnrolled: true}}, nil
 }
 func (f *teamFake) AccountIDByEmail(context.Context, string) (string, error) {
 	return "22222222-2222-2222-2222-222222222222", nil
@@ -144,6 +148,109 @@ func mustRoster(t *testing.T, s *Service) roster {
 	return r
 }
 
+func TestManagersManageTheTeam(t *testing.T) {
+	member := "22222222-2222-2222-2222-222222222222"
+	for _, role := range []string{referrals.RoleRep, referrals.RoleManager, referrals.RoleAdmin} {
+		t.Run(role, func(t *testing.T) {
+			s, f, acct := teamFixture(role)
+			w := httptest.NewRecorder()
+			s.AdminTeam(w, newRequest("GET", "/v1/sales/admin/team", "", nil), acct)
+			list := w.Code
+			w = httptest.NewRecorder()
+			s.AddMember(w, newRequest("POST", "/v1/sales/admin/team", `{"email":"seller@example.com","role":"rep"}`, nil), acct)
+			add := w.Code
+			w = httptest.NewRecorder()
+			s.UpdateMember(w, newRequest("PUT", "/v1/sales/admin/team/"+member, `{"role":"rep","active":false,"version":1}`, map[string]string{"member": member}), acct)
+			remove := w.Code
+			if role == referrals.RoleRep {
+				if list != 403 || add != 403 || remove != 403 || len(f.saved) != 0 {
+					t.Fatal("rep managed the team", list, add, remove, f.saved)
+				}
+				return
+			}
+			if list != 200 || add != 200 || remove != 200 || len(f.saved) != 2 {
+				t.Fatal(role, list, add, remove, f.saved)
+			}
+		})
+	}
+}
+
+// Managers manage salespeople only; managers stay with owner admins.
+func TestManagersCannotManageManagers(t *testing.T) {
+	member := "22222222-2222-2222-2222-222222222222"
+	manager := []referrals.TeamMember{{AccountID: member, Email: "seller@example.com", StoredRole: referrals.RoleManager, StoredActive: true, Version: 1}}
+	configManager := []referrals.TeamMember{{AccountID: member, Email: "boss@example.com", StoredRole: referrals.RoleRep, StoredActive: true, Version: 1}}
+	update := func(body string) *http.Request {
+		return newRequest("PUT", "/v1/sales/admin/team/"+member, body, map[string]string{"member": member})
+	}
+	for _, tt := range []struct {
+		name    string
+		members []referrals.TeamMember
+		run     func(*Service, *httptest.ResponseRecorder, state.Account)
+	}{
+		{"add a manager", nil, func(s *Service, w *httptest.ResponseRecorder, a state.Account) {
+			s.AddMember(w, newRequest("POST", "/v1/sales/admin/team", `{"email":"alt@example.com","role":"manager"}`, nil), a)
+		}},
+		{"promote a salesperson", nil, func(s *Service, w *httptest.ResponseRecorder, a state.Account) {
+			s.UpdateMember(w, update(`{"role":"manager","active":true,"version":1}`), a)
+		}},
+		{"deactivate a manager", manager, func(s *Service, w *httptest.ResponseRecorder, a state.Account) {
+			s.UpdateMember(w, update(`{"role":"rep","active":false,"version":1}`), a)
+		}},
+		{"demote a manager", manager, func(s *Service, w *httptest.ResponseRecorder, a state.Account) {
+			s.UpdateMember(w, update(`{"role":"rep","active":true,"version":1}`), a)
+		}},
+		{"touch a config manager's rep row", configManager, func(s *Service, w *httptest.ResponseRecorder, a state.Account) {
+			s.UpdateMember(w, update(`{"role":"rep","active":false,"version":1}`), a)
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			s, f, acct := teamFixture(referrals.RoleManager)
+			f.members = tt.members
+			s.Config.Members["boss@example.com"] = true // config manager
+			w := httptest.NewRecorder()
+			tt.run(s, w, acct)
+			if w.Code != 403 || len(f.saved) != 0 {
+				t.Fatal(w.Code, f.saved, w.Body.String())
+			}
+			// An owner admin may do the same.
+			s, f, acct = teamFixture(referrals.RoleAdmin)
+			f.members = tt.members
+			w = httptest.NewRecorder()
+			tt.run(s, w, acct)
+			if w.Code != 200 || len(f.saved) != 1 {
+				t.Fatal("admin", w.Code, f.saved, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestManagersDoNotSeeCommissionTerms(t *testing.T) {
+	bps := int32(1500)
+	for _, role := range []string{referrals.RoleManager, referrals.RoleAdmin} {
+		s, f, acct := teamFixture(role)
+		f.members = []referrals.TeamMember{{AccountID: "22222222-2222-2222-2222-222222222222", Email: "seller@example.com", CommissionBPS: &bps}}
+		w := httptest.NewRecorder()
+		s.AdminTeam(w, newRequest("GET", "/v1/sales/admin/team", "", nil), acct)
+		body := w.Body.String()
+		terms := strings.Contains(body, `"commission_bps":1500`) || strings.Contains(body, "default_commission_bps")
+		if w.Code != 200 || terms != (role == referrals.RoleAdmin) {
+			t.Fatal(role, w.Code, body)
+		}
+	}
+}
+
+func TestManagersCannotChangeThemselves(t *testing.T) {
+	for _, body := range []string{`{"role":"manager","active":false,"version":1}`, `{"role":"rep","active":true,"version":1}`} {
+		s, f, acct := teamFixture(referrals.RoleManager)
+		w := httptest.NewRecorder()
+		s.UpdateMember(w, newRequest("PUT", "/v1/sales/admin/team/"+acct.ID, body, map[string]string{"member": acct.ID}), acct)
+		if w.Code != 400 || len(f.saved) != 0 {
+			t.Fatal(body, w.Code, f.saved, w.Body.String())
+		}
+	}
+}
+
 func TestOwnerAdminOnlyActions(t *testing.T) {
 	type action struct {
 		name, method, path, body string
@@ -153,11 +260,6 @@ func TestOwnerAdminOnlyActions(t *testing.T) {
 	customer := "33333333-3333-3333-3333-333333333333"
 	member := "22222222-2222-2222-2222-222222222222"
 	actions := []action{
-		{"team", "GET", "/v1/sales/admin/team", "", nil, func(s *Service, w *httptest.ResponseRecorder, r *http.Request, a state.Account) { s.AdminTeam(w, r, a) }},
-		{"add member", "POST", "/v1/sales/admin/team", `{"email":"seller@example.com","role":"rep"}`, nil, func(s *Service, w *httptest.ResponseRecorder, r *http.Request, a state.Account) { s.AddMember(w, r, a) }},
-		{"update member", "PUT", "/v1/sales/admin/team/" + member, `{"role":"manager","active":true,"version":1}`, map[string]string{"member": member}, func(s *Service, w *httptest.ResponseRecorder, r *http.Request, a state.Account) {
-			s.UpdateMember(w, r, a)
-		}},
 		{"agreement", "POST", "/v1/sales/admin/team/" + member + "/agreements", `{"commission_bps":1500,"note":"2026 contract"}`, map[string]string{"member": member}, func(s *Service, w *httptest.ResponseRecorder, r *http.Request, a state.Account) {
 			s.AddAgreement(w, r, a)
 		}},

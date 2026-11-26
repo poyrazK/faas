@@ -462,10 +462,13 @@ jobs:
           if [[ "$PLAN_RESULT" != "success" || "$control_ok" != "true" || "$prepare_ok" != "true" || "$COMPUTE_RESULT" != "success" ]]; then
             gate_timeout=0
           fi
+          # Actions runs this step with `bash -e`, so a bare `gate_exit=$?`
+          # never ran on a failed gate: the step died here and the summary
+          # below, the only place that says why, was never written (rc.374).
+          gate_exit=0
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" \
             "/usr/local/bin/gregalectl compute-nodes release-status --desired-release '${DESIRED_RELEASE}' --timeout '${gate_timeout}' --poll-interval 10s --break-glass-db -json" \
-            >"$status_file" 2>"$error_file"
-          gate_exit=$?
+            >"$status_file" 2>"$error_file" || gate_exit=$?
 
           {
             echo "### Platform rollout ${RELEASE_TAG}"

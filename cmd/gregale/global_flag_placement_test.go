@@ -20,6 +20,10 @@ func TestGlobalFlagAfterCommandExplainsPlacement(t *testing.T) {
 		{[]string{"deploy", "--non-interactive"}, "--non-interactive is a global flag: put it before the command, as in 'gregale --non-interactive deploy'"},
 		{[]string{"logs", "--profile", "staging"}, "--profile is a global flag: put it before the command, as in 'gregale --profile NAME logs'"},
 		{[]string{"deploy", "--naem", "demo"}, "Did you mean --name?"},
+		// Prod hunt r36: `gregale app` shows "idle timeout" and "min
+		// instances"; the flags are --idle and --min.
+		{[]string{"app", "demo", "--idle-timeout", "45"}, "Did you mean --idle?"},
+		{[]string{"app", "scale", "demo", "--min-instances", "1"}, "Did you mean --min?"},
 		// rc.318 field report: the bare "unknown flag" did not say which
 		// command takes the setting.
 		{[]string{"app", "scale", "demo", "--websocket-enabled"}, "--websocket-enabled is an app setting, not a scale setting: run 'gregale app update <app> --websocket-enabled'"},

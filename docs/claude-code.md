@@ -15,7 +15,7 @@ gregale login
 `gregale login` opens your browser once, and Claude Code uses that login for
 every `gregale` command it runs. Where nobody can open a browser, such as a
 container or CI, put a scoped key in Claude Code's environment as
-`FAAS_TOKEN` instead; see
+`GREGALE_TOKEN` instead; see
 [Give the agent its own key](agents.md#give-the-agent-its-own-key).
 
 ## Tell Claude Code how the project deploys
@@ -67,9 +67,10 @@ gregale --non-interactive --json app health my-api --errors
 gregale logs my-api --since 15m
 ```
 
-A new app can be private: its URL answers `401` until you open it. Ask Claude
-Code to run `gregale app update my-api --no-require-authn` only if the app
-should be public.
+A new app can be private: its URL answers `401` until you open it. If the app
+should be public, such as a site people open in a browser, ask Claude Code to
+add `access: public` to its `gregale.yaml`; every deploy, including through the
+MCP server, keeps it public ([declare access](auth.md#declare-access-in-gregaleyaml)).
 
 ## Roll back
 

@@ -175,6 +175,8 @@ var toolsetOf = map[string]string{
 	"gregale_get_insight_retention":       ToolsetDiagnose,
 	"gregale_get_insight_requests":        ToolsetDiagnose,
 	"gregale_list_insight_cohorts":        ToolsetDiagnose,
+	"gregale_list_saved_insights":         ToolsetDiagnose,
+	"gregale_run_saved_insight":           ToolsetDiagnose,
 	"gregale_get_environment":             ToolsetRelease,
 	"gregale_plan_environment_promotion":  ToolsetRelease,
 	"gregale_apply_environment_promotion": ToolsetRelease,
@@ -264,6 +266,11 @@ var toolsetOf = map[string]string{
 	"gregale_plan_cron":       ToolsetProvision,
 	"gregale_check_domain":    ToolsetProvision,
 	"gregale_apply_provision": ToolsetProvision,
+
+	// ADR-20261122220000 verification contracts.
+	"gregale_validate_verification_contract":    ToolsetRelease,
+	"gregale_get_verification_contract":         ToolsetRelease,
+	"gregale_plan_verification_contract_change": ToolsetRelease,
 }
 
 func toolsetIncludes(name, selected string) bool {

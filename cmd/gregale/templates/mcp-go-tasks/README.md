@@ -286,18 +286,24 @@ replicas.
 
 ## Worker upgrades
 
-The automated `gregale mcp server tasks deploy` gate supports Node workers only.
-Go workers require a manual rollout:
+`gregale mcp server tasks deploy` replaces Go workers without dropping Tasks.
+The CLI runs the release gate itself, through the Gregale API
+(ADR-20261123160000, amendment 1): it deploys the staged web first, so its
+release command (`/app/out tasks-migrate apply`) migrates the schema, then the
+candidate worker app, waits until the observer's compatibility report shows the
+candidate deployment serving every handler version that unfinished Tasks need
+on each replacement, then drains the previous worker apps. Workers log an
+`mcp_task_worker_started` receipt (worker ID and drain budget) that the CLI reads;
+a generation deployed before the receipt existed must be replaced manually once.
+Export `MCP_TASK_NAMESPACE` before running it, set `observer_metric_app` to the
+observer's `MCP_TASKS_SCALING_APP_SLUG`, and keep the release journal outside the
+sources. No database credentials are needed on your machine.
 
-1. Run explicit schema migrations with the migration binding. Retain the owner
-   keys, payload keys and handler versions needed by existing Tasks on every writer.
-2. Deploy replacement workers into a separate app with at least one replica and
-   the same namespace, database and execution policy. Verify the replacements
-   start successfully, publish fresh worker-handler registrations and advance work.
-3. Point the observer at the replacement worker app with an app-scoped
-   `metrics:write` token. Verify its fresh heartbeat before enabling scale-to-zero
-   for that app. Gracefully retire previous workers after checking compatibility
-   and replacement readiness. Keep external effects idempotent by Task ID.
+Retain the owner keys, payload keys and handler versions needed by existing
+Tasks on every writer. Recovery, quarantine and retirement of a failed Go
+release are manual: restore the previous worker app's replicas, then retire the
+candidate after checking replacement readiness. Keep external effects idempotent
+by Task ID.
 
 ## Graceful shutdown
 

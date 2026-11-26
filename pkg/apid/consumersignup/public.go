@@ -128,7 +128,7 @@ func (s *Service) OfferedPlans(ctx context.Context, app state.App, set state.API
 	now := s.now()
 	out := make([]api.ConsumerSignupPlan, 0, len(ids))
 	for _, id := range ids {
-		plan := api.ConsumerSignupPlan{ID: id, Name: "Standard", Prices: currentPrices(cards, id, now)}
+		plan := api.ConsumerSignupPlan{ID: id, Name: "Standard", Prices: currentPrices(cards, id, now), Free: id != "" && id == set.FreePlanID}
 		if id != "" && plans != nil {
 			p, err := plans.GetAPIConsumerPlan(ctx, app.AccountID, app.ID, id)
 			if err != nil {
@@ -232,11 +232,19 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request) {
 		unavailable(w)
 		return
 	}
-	key, livemode, problem := s.Host.StripeKey(ctx, app.AccountID)
-	if problem != nil {
-		s.failed(ctx, app, "", "the Stripe connection cannot be used: "+problem.Detail)
-		unavailable(w)
-		return
+	free := planID != "" && planID == set.FreePlanID
+	var key string
+	var livemode bool
+	if free {
+		// No checkout, but the sign-up still records the connection's mode.
+		_, livemode, _ = s.Host.StripeKey(ctx, app.AccountID)
+	} else {
+		var problem *api.Problem
+		if key, livemode, problem = s.Host.StripeKey(ctx, app.AccountID); problem != nil {
+			s.failed(ctx, app, "", "the Stripe connection cannot be used: "+problem.Detail)
+			unavailable(w)
+			return
+		}
 	}
 	token, err := newClaimToken()
 	if err != nil {
@@ -258,6 +266,15 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	case err != nil:
 		api.WriteProblem(w, api.ErrInternal("could not start the sign-up"))
+		return
+	}
+	if free {
+		// The free plan needs no card: the page completes the sign-up at once
+		// with the claim token (ADR-20261124094745).
+		s.Host.Audit(ctx, "api_consumer.signup_started", app.AccountID, map[string]any{"app_id": app.ID, "signup_id": signup.ID,
+			"plan_id": planID, "free": true})
+		w.Header().Set("Cache-Control", "no-store")
+		httpkit.WriteJSON(w, http.StatusCreated, api.CreateConsumerSignupResponse{ID: signup.ID, ClaimToken: token, ExpiresAt: signup.ExpiresAt})
 		return
 	}
 	metadata := map[string]string{"gregale_app": app.Slug, "gregale_signup": signup.ID}
@@ -339,6 +356,15 @@ func (s *Service) completedConsumer(ctx context.Context, w http.ResponseWriter, 
 		}
 		return consumer, true
 	}
+	if signup.CheckoutSessionID == "" && signup.PlanID != "" && signup.PlanID == set.FreePlanID {
+		return s.completeFree(ctx, w, app, signup, now)
+	}
+	if signup.CheckoutSessionID == "" {
+		// A free sign-up whose plan stopped being the free plan.
+		api.WriteProblem(w, api.NewProblem(http.StatusGone, api.CodeConsumerSignupExpired, "Sign-up expired",
+			"this API's plans changed since you started; start the sign-up again"))
+		return state.APIConsumer{}, false
+	}
 	key, _, problem := s.Host.StripeKey(ctx, app.AccountID)
 	if problem != nil {
 		s.failed(ctx, app, signup.ID, "the Stripe connection cannot be used: "+problem.Detail)
@@ -369,15 +395,20 @@ func (s *Service) completedConsumer(ctx context.Context, w http.ResponseWriter, 
 		return state.APIConsumer{}, false
 	}
 	if created {
-		if outbox, ok := s.Host.Store().(state.AppWebhookEventOutboxStore); ok {
-			_, _ = outbox.RelayAppWebhookEventOutboxSource(ctx, state.AppWebhookEventConsumerSignedUp, signup.ID)
-		}
-		s.Host.Audit(ctx, "api_consumer.created", app.AccountID, map[string]any{"app_id": app.ID, "consumer_id": consumer.ID,
-			"external_ref": consumer.ExternalRef, "signup_id": signup.ID})
-		s.Host.Audit(ctx, "api_consumer.signed_up", app.AccountID, map[string]any{"app_id": app.ID, "consumer_id": consumer.ID,
-			"signup_id": signup.ID, "plan_id": signup.PlanID, "trial_days": set.TrialDays, "livemode": signup.Livemode})
+		s.signedUp(ctx, app, signup, consumer, set.TrialDays)
 	}
 	return consumer, true
+}
+
+// signedUp relays the sign-up webhook and audits a new signed-up consumer.
+func (s *Service) signedUp(ctx context.Context, app state.App, signup state.APIConsumerSignup, consumer state.APIConsumer, trialDays int) {
+	if outbox, ok := s.Host.Store().(state.AppWebhookEventOutboxStore); ok {
+		_, _ = outbox.RelayAppWebhookEventOutboxSource(ctx, state.AppWebhookEventConsumerSignedUp, signup.ID)
+	}
+	s.Host.Audit(ctx, "api_consumer.created", app.AccountID, map[string]any{"app_id": app.ID, "consumer_id": consumer.ID,
+		"external_ref": consumer.ExternalRef, "signup_id": signup.ID})
+	s.Host.Audit(ctx, "api_consumer.signed_up", app.AccountID, map[string]any{"app_id": app.ID, "consumer_id": consumer.ID,
+		"signup_id": signup.ID, "plan_id": signup.PlanID, "trial_days": trialDays, "livemode": signup.Livemode})
 }
 
 // issueKey issues the sign-up's key, revokes the one it issued before and

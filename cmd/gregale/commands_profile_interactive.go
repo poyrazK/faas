@@ -26,8 +26,8 @@ func cmdProfileUseInteractive(args []string, cfg cliConfig) int {
 	if jsonOutput || nonInteractive || !stdinIsTTY() || !stdoutIsTTY() {
 		return printErr("Interactive terminal required", errors.New("use profile use <name> and profile check for scripts or JSON"))
 	}
-	if profileOverride != "" || os.Getenv("FAAS_API") != "" || os.Getenv("FAAS_TOKEN") != "" {
-		return printErr("Connection override is active", errors.New("run without --profile, FAAS_API, and FAAS_TOKEN so this flow can check each saved connection and its own credential"))
+	if name, _ := envAPIVar(); profileOverride != "" || name != "" || envTokenName() != "" {
+		return printErr("Connection override is active", errors.New("run without --profile, GREGALE_API_URL, FAAS_API, GREGALE_TOKEN and FAAS_TOKEN so this flow can check each saved connection and its own credential"))
 	}
 	names := []string{"default"}
 	for name := range cfg.Profiles {

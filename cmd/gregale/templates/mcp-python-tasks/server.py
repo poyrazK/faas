@@ -28,6 +28,7 @@ from urllib.parse import urlsplit
 import protocol_telemetry
 from protocol_telemetry import ProtocolObservation, start_protocol_heartbeat
 
+from application_toolkit_host import TaskSubscriptionBudget, ToolkitResourceNotFound, ToolkitTaskReadFailed, install_application_toolkit, mount_pipeline_tasks
 from auth import AuthConfigurationError, AuthFailure, Authenticator, GATEWAY_AUTHORIZED
 from catalog import RuntimeCatalog
 from tasks import DurableTaskRuntime, TASK_ID_PATTERN, TaskNotFound, register_task_handler, resolve_task_role, task_id_from_uri, task_resource_template
@@ -86,6 +87,7 @@ TASKS_EXTENSION_ID = "io.modelcontextprotocol/tasks"
 MAX_TASK_SUBSCRIPTION_IDS = 64
 TASK_SUBSCRIPTION_KEEPALIVE_SECONDS = 10
 SUBSCRIPTION_STREAM_SLOTS = threading.BoundedSemaphore(MAX_SUBSCRIPTION_STREAMS)
+PIPELINE_TASK_SUBSCRIPTION_BUDGET = TaskSubscriptionBudget()
 
 
 class ResourceUpdateHub:
@@ -475,10 +477,19 @@ def dispatch(message, protocol, authenticator, granted_scopes, task_runtime=None
         if task_runtime is None:
             return 404, rpc_error(request_id, -32601, "method not found")
         try:
-            task, _record = task_runtime.get(params.get("taskId"), granted_scopes, authenticator, granted_scopes)
+            args = (params.get("taskId"), granted_scopes, authenticator, granted_scopes)
+            get_with_capabilities = getattr(task_runtime, "get_with_client_capabilities", None)
+            if callable(get_with_capabilities):
+                meta = params.get("_meta")
+                capabilities = meta.get(CLIENT_CAPABILITIES_META_KEY) if isinstance(meta, dict) and protocol == CURRENT_PROTOCOL else None
+                task, _record = get_with_capabilities(*args, capabilities)
+            else:
+                task, _record = task_runtime.get(*args)
             return 200, rpc_response(request_id, task)
         except TaskNotFound:
             return 404, rpc_error(request_id, -32002, "task not found")
+        except ToolkitTaskReadFailed:
+            return 500, rpc_error(request_id, -32603, "could not read pipeline Task")
     if method == "tasks/cancel":
         if task_runtime is None:
             return 404, rpc_error(request_id, -32601, "method not found")
@@ -683,6 +694,7 @@ def call_tool(request_id, params, authenticator, granted_scopes, protocol=CURREN
     has_tasks = (task_runtime and protocol == CURRENT_PROTOCOL and task_capability is not None
                  and task_capability is not False and task_runtime.can_create(name))
     if keyed and (not has_tasks or not supports_task_submission(task_runtime, authenticator)
+                  or not getattr(task_runtime, 'can_submit_keyed', task_runtime.can_create)(name)
                   or not valid_task_submission_key(metadata[TASK_SUBMISSION_KEY_META])):
         return tool_error(request_id, "Task submission key is unavailable")
     if has_tasks:
@@ -796,6 +808,8 @@ def read_resource(request_id, params, authenticator, granted_scopes, task_runtim
             task, _record = task_runtime.get(task_id, granted_scopes, authenticator, granted_scopes)
         except TaskNotFound:
             return 404, rpc_error(request_id, -32002, "resource not found")
+        except ToolkitTaskReadFailed:
+            return 500, rpc_error(request_id, -32603, "could not read pipeline Task")
         content = {"uri": uri, "mimeType": "application/json", "text": json.dumps(task, separators=(",", ":"), allow_nan=False)}
         return 200, rpc_response(request_id, {"contents": [content]})
     entry = MCP_CATALOG.match_resource(uri)
@@ -804,6 +818,8 @@ def read_resource(request_id, params, authenticator, granted_scopes, task_runtim
     if entry["handler"] is not None:
         try:
             contents = entry["handler"](uri, entry["variables"], request_context(granted_scopes))
+        except ToolkitResourceNotFound:
+            return 404, rpc_error(request_id, -32002, "resource not found")
         except Exception:
             return 500, rpc_error(request_id, -32603, "resource read failed")
         if (not isinstance(contents, list) or any(not isinstance(content, dict) for content in contents)
@@ -979,7 +995,7 @@ class MCPHandler(BaseHTTPRequestHandler):
         if path == "/healthz":
             health = runtime_catalog_health(
                 getattr(self.server, "expected_catalog_sha256", ""),
-                getattr(self.server, "task_runtime", None) is not None,
+                getattr(self.server, "subscription_task_runtime", getattr(self.server, "task_runtime", None)) is not None,
                 self.server.app_config.get("auth", {}),
             )
             health["ok"] = health["ready"]
@@ -1044,7 +1060,7 @@ class MCPHandler(BaseHTTPRequestHandler):
             return
         health = runtime_catalog_health(
             getattr(self.server, "expected_catalog_sha256", ""),
-            getattr(self.server, "task_runtime", None) is not None,
+            getattr(self.server, "subscription_task_runtime", getattr(self.server, "task_runtime", None)) is not None,
             self.server.app_config.get("auth", {}),
         )
         if not health["ready"]:
@@ -1256,8 +1272,8 @@ class MCPHandler(BaseHTTPRequestHandler):
             return
         requested_resource_uris = list(dict.fromkeys(requested_resource_uris))
 
+        capabilities = metadata.get(CLIENT_CAPABILITIES_META_KEY)
         if unique_ids:
-            capabilities = metadata.get(CLIENT_CAPABILITIES_META_KEY)
             extensions = capabilities.get("extensions", {}) if isinstance(capabilities, dict) else {}
             task_capability = extensions.get(TASKS_EXTENSION_ID) if isinstance(extensions, dict) else None
             if (
@@ -1280,7 +1296,28 @@ class MCPHandler(BaseHTTPRequestHandler):
             self.send_rpc(429, rpc_error(request_id, -32603, "subscription limit reached"), protocol)
             return
 
-        runtime = self.server.task_runtime
+        runtime = getattr(self.server, "subscription_task_runtime", self.server.task_runtime)
+        read_pipeline_task = getattr(self.server.task_runtime, "get_pipeline_task", None)
+        budget = runtime if runtime is not None else PIPELINE_TASK_SUBSCRIPTION_BUDGET
+
+        def read_task(task_id, *, pipeline=None):
+            wire = None
+            if runtime is not None and pipeline is not True:
+                try:
+                    wire, _record = runtime.get(task_id, granted_scopes, self.server.authenticator, granted_scopes)
+                except TaskNotFound:
+                    if pipeline is False:
+                        raise
+            pipeline = wire is None
+            if pipeline:
+                if read_pipeline_task is None or task_id not in seen:
+                    raise TaskNotFound
+                wire = read_pipeline_task(task_id, granted_scopes, capabilities, timeout=5)
+            detail = {key: value for key, value in wire.items() if key != "resultType"}
+            state = {key: value for key, value in detail.items() if key != "lastUpdatedAt"} if pipeline else detail
+            fingerprint = json.dumps(state, sort_keys=True, separators=(",", ":"), allow_nan=False)
+            return {"detail": detail, "fingerprint": fingerprint, "pipeline": pipeline}
+
         reserved_ids = 0
         task_subscription_reserved = False
         updates_queue = queue.Queue(maxsize=128)
@@ -1322,26 +1359,24 @@ class MCPHandler(BaseHTTPRequestHandler):
             if len(all_task_ids) > MAX_TASK_SUBSCRIPTION_IDS:
                 self.send_rpc(400, rpc_error(request_id, -32602, "task and resource subscription filters exceed 64 distinct task IDs"), protocol)
                 return
-            if runtime is not None and all_task_ids:
-                if not runtime.reserve_task_subscription():
+            has_task_reader = runtime is not None or read_pipeline_task is not None
+            if has_task_reader and all_task_ids:
+                if not budget.reserve_task_subscription():
                     self.send_rpc(429, rpc_error(request_id, -32603, "task subscription limit reached"), protocol)
                     return
                 task_subscription_reserved = True
 
             current = {}
             accepted_ids = []
-            if runtime is not None:
+            if has_task_reader:
                 for task_id in all_task_ids:
                     try:
-                        wire, _task = runtime.get(task_id, granted_scopes, self.server.authenticator, granted_scopes)
+                        current[task_id] = read_task(task_id)
                     except TaskNotFound:
                         continue
                     except Exception:
                         self.send_rpc(500, rpc_error(request_id, -32603, "could not read task subscription state"), protocol)
                         return
-                    detail = {key: value for key, value in wire.items() if key != "resultType"}
-                    fingerprint = json.dumps(detail, sort_keys=True, separators=(",", ":"), allow_nan=False)
-                    current[task_id] = {"detail": detail, "fingerprint": fingerprint}
                     accepted_ids.append(task_id)
 
             accepted_set = set(accepted_ids)
@@ -1353,8 +1388,8 @@ class MCPHandler(BaseHTTPRequestHandler):
             if self.subscription_auth_expired(granted_scopes):
                 self.send_rpc(401, rpc_error(request_id, -32000, "authentication expired during subscription setup"), protocol)
                 return
-            if accepted_ids and runtime is not None:
-                if not runtime.reserve_watched_task_ids(len(accepted_ids)):
+            if accepted_ids:
+                if not budget.reserve_watched_task_ids(len(accepted_ids)):
                     self.send_rpc(429, rpc_error(request_id, -32603, "watched task limit reached"), protocol)
                     return
                 reserved_ids = len(accepted_ids)
@@ -1396,8 +1431,9 @@ class MCPHandler(BaseHTTPRequestHandler):
                         pending_resource_updates.discard(uri)
 
             try:
-                if runtime is not None and accepted_ids:
-                    _task_updates, unsubscribe_task_updates = runtime.subscribe_task_changes(list(accepted_ids), updates_queue)
+                native_ids = [task_id for task_id in accepted_ids if not current[task_id]["pipeline"]]
+                if runtime is not None and native_ids:
+                    _task_updates, unsubscribe_task_updates = runtime.subscribe_task_changes(native_ids, updates_queue)
                     has_event_sources = True
                 for uri in accepted_resource_uris:
                     unsubscribe = RESOURCE_UPDATE_ADAPTER.subscribe(uri, lambda _uri, uri=uri: enqueue_resource_update(uri))
@@ -1445,34 +1481,35 @@ class MCPHandler(BaseHTTPRequestHandler):
                 self.finish_task_subscription(request_id)
                 return
 
-            poll_interval = max(5.0, runtime.poll_interval_ms / 1000 if runtime is not None else 5.0)
+            poll_interval = (
+                2.0 if any(task["pipeline"] for task in current.values())
+                else max(5.0, runtime.poll_interval_ms / 1000 if runtime is not None else 5.0)
+            )
             next_poll = time.monotonic() + poll_interval
             next_keepalive = time.monotonic() + TASK_SUBSCRIPTION_KEEPALIVE_SECONDS
 
             def refresh_task(task_id):
                 nonlocal reserved_ids
-                if runtime is None or task_id not in current:
+                if task_id not in current:
                     return True
                 try:
-                    wire, _task = runtime.get(task_id, granted_scopes, self.server.authenticator, granted_scopes)
+                    snapshot = read_task(task_id, pipeline=current[task_id]["pipeline"])
                 except TaskNotFound:
                     current.pop(task_id, None)
                     accepted_ids.remove(task_id)
-                    runtime.release_watched_task_ids(1)
+                    budget.release_watched_task_ids(1)
                     reserved_ids -= 1
                     return True
                 except Exception:
                     return True
-                detail = {key: value for key, value in wire.items() if key != "resultType"}
-                fingerprint = json.dumps(detail, sort_keys=True, separators=(",", ":"), allow_nan=False)
-                if current[task_id]["fingerprint"] == fingerprint:
+                if current[task_id]["fingerprint"] == snapshot["fingerprint"]:
                     return True
-                current[task_id] = {"detail": detail, "fingerprint": fingerprint}
+                current[task_id] = snapshot
                 if self.subscription_auth_expired(granted_scopes):
                     self.close_sse_stream()
                     return False
                 if task_id in requested_set:
-                    self.write_subscription_task(request_id, detail)
+                    self.write_subscription_task(request_id, snapshot["detail"])
                 for uri in resource_uris_by_task_id.get(task_id, ()):
                     self.write_subscription_resource_updated(request_id, uri)
                 return True
@@ -1503,7 +1540,7 @@ class MCPHandler(BaseHTTPRequestHandler):
                         if not refresh_task(task_id):
                             return
                     refresh_lists()
-                    next_poll = now + poll_interval
+                    next_poll = time.monotonic() + poll_interval
                     if not accepted_ids and not list_fingerprints and not has_generic_resource_subscriptions:
                         self.finish_task_subscription(request_id)
                         return
@@ -1553,8 +1590,8 @@ class MCPHandler(BaseHTTPRequestHandler):
                     unsubscribe()
                 except Exception:
                     pass
-            if task_subscription_reserved and runtime is not None:
-                runtime.release_task_subscription(reserved_ids)
+            if task_subscription_reserved:
+                budget.release_task_subscription(reserved_ids)
             SUBSCRIPTION_STREAM_SLOTS.release()
 
     def write_subscription_resource_updated(self, request_id, uri):
@@ -1586,7 +1623,7 @@ class MCPHandler(BaseHTTPRequestHandler):
 
     def write_subscription_task(self, request_id, detail):
         params = dict(detail)
-        params["_meta"] = {SUBSCRIPTION_ID_META_KEY: request_id}
+        params["_meta"] = {**detail.get("_meta", {}), SUBSCRIPTION_ID_META_KEY: request_id}
         self.write_sse_message({"jsonrpc": "2.0", "method": "notifications/tasks", "params": params})
 
     def finish_task_subscription(self, request_id):
@@ -1739,7 +1776,7 @@ def load_config(path):
     return config
 
 
-def main():
+def main(*, toolkit=None, resolve_toolkit_principal=None, pipeline_tasks=None):
     host = os.environ.get("MCP_BIND_ADDRESS")
     if not host:
         host = "0.0.0.0" if os.environ.get("FAAS_APP_ID") else "127.0.0.1"
@@ -1761,6 +1798,12 @@ def main():
             expected_catalog_sha256 = os.environ.get("MCP_CATALOG_EXPECTED_SHA256", "").strip().lower()
             if expected_catalog_sha256 and not re.fullmatch(r"[a-f0-9]{64}", expected_catalog_sha256):
                 raise AuthConfigurationError("MCP_CATALOG_EXPECTED_SHA256 must be a 64-character SHA-256 hex digest")
+        if pipeline_tasks is not None and toolkit is None:
+            raise ValueError("Pipeline Tasks require an application toolkit")
+        if toolkit is not None and task_role in {"combined", "web"}:
+            app_config = install_application_toolkit(
+                app_config, MCP_CATALOG, toolkit, resolve_toolkit_principal, pipeline_tasks=pipeline_tasks,
+            )
         authenticator = Authenticator(app_config) if task_role in {"combined", "web"} else None
         task_runtime = DurableTaskRuntime(app_config, role=task_role)
         if not task_runtime.enabled:
@@ -1780,6 +1823,10 @@ def main():
                     task_runtime.close()
             return
         port = int(os.environ.get("PORT", "8080"))
+        effective_task_runtime = (
+            mount_pipeline_tasks(app_config, pipeline_tasks, task_runtime, resolve_toolkit_principal)
+            if pipeline_tasks is not None else task_runtime
+        )
         server = DrainingHTTPServer((host, port), MCPHandler)
     except (ValueError, OSError, socket.error, json.JSONDecodeError, AuthConfigurationError) as exc:
         if task_runtime is not None:
@@ -1787,7 +1834,8 @@ def main():
         raise SystemExit(f"could not start MCP app: {exc}") from None
     server.app_config = app_config
     server.authenticator = authenticator
-    server.task_runtime = task_runtime
+    server.task_runtime = effective_task_runtime
+    server.subscription_task_runtime = task_runtime
     server.expected_catalog_sha256 = expected_catalog_sha256
     server.daemon_threads = True
     stop_heartbeat = start_protocol_heartbeat()

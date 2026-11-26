@@ -55,6 +55,9 @@ const (
 	// successful claim. The user lands on their account page so the
 	// browser is logged in alongside the CLI.
 	cliAuthDashboard = "/dashboard/account"
+	// cliAuthHome is where an expired MCP approval page sends a browser
+	// that has nothing left to approve.
+	cliAuthHome = "/dashboard"
 	// Browser-authorized CLI sessions are replaceable credentials. A finite
 	// lifetime bounds exposure for a lost device even when the user never
 	// returns to run `gregale logout`.
@@ -344,6 +347,30 @@ func (h *cliAuthHandlers) browserAuthOrg(r *http.Request, req api.CliAuthExchang
 	return orgID, err
 }
 
+// pendingCliAuthCode returns the hash of the page's code while it can still
+// be approved. Otherwise it renders why not and reports false.
+func (h *cliAuthHandlers) pendingCliAuthCode(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+	raw := r.URL.Query().Get("code")
+	hash, ok := normalizeCliAuthCode(raw)
+	if !ok {
+		h.renderCliAuthError(w, r, "Code looks malformed", "Run gregale login again and open the new link from your terminal.")
+		return nil, false
+	}
+	status, _, err := h.srv.store.PeekCliAuthCode(r.Context(), hash)
+	switch {
+	case err != nil && !errors.Is(err, state.ErrNotFound):
+		h.log.Error("cli_auth.lookup", "err", err)
+		h.renderCliAuthError(w, r, "Sign-in temporarily unavailable", "Reload this page to try again. If the code has expired, run gregale login again.")
+	case err != nil && isMCPAuthCode(raw):
+		h.renderMCPCodeExpired(w, r)
+	case err != nil || status != api.CliAuthStatusPending:
+		h.renderCliAuthRetry(w, r, "Code unavailable")
+	default:
+		return hash, true
+	}
+	return nil, false
+}
+
 // renderCliAuthPage handles GET /cli-auth?code=…. The route is mounted
 // behind sessionAuth, so only a signed-in dashboard session reaches this
 // function. It renders the authorization page without accepting an email
@@ -371,19 +398,8 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 		h.renderSecretEntryPage(w, r)
 		return
 	}
-	hash, ok := normalizeCliAuthCode(r.URL.Query().Get("code"))
+	hash, ok := h.pendingCliAuthCode(w, r)
 	if !ok {
-		h.renderCliAuthError(w, r, "Code looks malformed", "Run gregale login again and open the new link from your terminal.")
-		return
-	}
-	status, _, err := h.srv.store.PeekCliAuthCode(r.Context(), hash)
-	if err != nil && !errors.Is(err, state.ErrNotFound) {
-		h.log.Error("cli_auth.lookup", "err", err)
-		h.renderCliAuthError(w, r, "Sign-in temporarily unavailable", "Reload this page to try again. If the code has expired, run gregale login again.")
-		return
-	}
-	if err != nil || status != api.CliAuthStatusPending {
-		h.renderCliAuthRetry(w, r, "Code unavailable")
 		return
 	}
 	acct, ok := AccountFrom(r.Context())
@@ -533,6 +549,11 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 			h.renderCliAuthRetry(w, r, "Code already used")
 			return
 		}
+		if errors.Is(err, state.ErrNotFound) && isMCPAuthCode(rawCode) {
+			// Claim reports a used code as ErrConflict, so this one expired.
+			h.renderMCPCodeExpired(w, r)
+			return
+		}
 		if errors.Is(err, state.ErrNotFound) {
 			h.renderCliAuthRetry(w, r, "Code expired")
 			return
@@ -597,6 +618,44 @@ func (h *cliAuthHandlers) renderCliAuthRetry(w http.ResponseWriter, r *http.Requ
 		Data:  map[string]any{"CLIRetry": true, "AccountEmail": acct.Email},
 	}
 	h.renderCliAuthFailure(w, r, page)
+}
+
+// renderMCPCodeExpired answers an approval link whose MCP code has expired.
+// The link outlives its code when the person signs up or signs in first, so
+// the page says why it stopped and gives the signed-in browser somewhere to
+// go. A missing row means expired: only a well-formed MCP code reaches the
+// lookup, and each carries 256 random bits. Like renderCliAuthError, it never
+// says whether the code was approved before it expired.
+func (h *cliAuthHandlers) renderMCPCodeExpired(w http.ResponseWriter, r *http.Request) {
+	acct, _ := AccountFrom(r.Context())
+	// The console origin, not this listener's: the page may be opened on
+	// the API host, which serves no dashboard.
+	home := strings.TrimRight(h.urlBase, "/") + cliAuthHome
+	h.renderCliAuthFailure(w, r, dashboard.Page{
+		Title: "Approval link expired",
+		Body:  "cli_auth",
+		Data: map[string]any{
+			"Error":        true,
+			"MCP":          true,
+			"Expired":      true,
+			"TTLMinutes":   int(api.MCPBrowserAuthorizationTTL / time.Minute),
+			"AccountEmail": acct.Email,
+			"DashboardURL": home,
+		},
+	})
+}
+
+// renderMCPCodeGone answers an MCP code that a bind step found no longer
+// pending. Those updates match only a pending, unexpired row, so a code an
+// earlier submission approved lands here too: only a code the lookup cannot
+// find any more gets the expired page; the rest get the generic recovery,
+// which never says whether that earlier submission approved it.
+func (h *cliAuthHandlers) renderMCPCodeGone(w http.ResponseWriter, r *http.Request, hash []byte) {
+	if _, _, err := h.srv.store.PeekCliAuthCode(r.Context(), hash); errors.Is(err, state.ErrNotFound) {
+		h.renderMCPCodeExpired(w, r)
+		return
+	}
+	h.renderCliAuthError(w, r, "Code unavailable", "")
 }
 
 func (h *cliAuthHandlers) renderCliAuthError(w http.ResponseWriter, r *http.Request, title, detail string) {

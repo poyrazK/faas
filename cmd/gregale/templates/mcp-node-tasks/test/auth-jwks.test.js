@@ -94,6 +94,28 @@ test('a JWKS fetch failure is labelled signing keys unavailable with Retry-After
   assert.deepEqual(misconfigured.body, { error: 'invalid_token' });
 });
 
+test('a protected JWKS URL (401/403) is labelled signing keys refused without Retry-After', async t => {
+  t.mock.method(performance, 'now', () => 1000);
+  const answer = async (auth, token) => {
+    const headers = {};
+    let body;
+    const response = { setHeader(name, value) { headers[name] = value; }, status() { return this; }, json(value) { body = value; return this; } };
+    await auth.middleware({ headers: { authorization: `Bearer ${token}` } }, response, () => {});
+    return { headers, body };
+  };
+  const token = await credential(key.kid);
+  for (const status of [401, 403]) {
+    t.mock.method(globalThis, 'fetch', async () => new Response('', { status }));
+    const auth = createAuth(config);
+    for (let i = 0; i < 2; i++) { // the failed fetch, then its cooldown
+      const { headers, body } = await answer(auth, token);
+      assert.equal(headers['Retry-After'], undefined);
+      assert.match(headers['WWW-Authenticate'], /error="invalid_token", error_description="signing keys refused"$/);
+      assert.deepEqual(body, { error: 'invalid_token', error_description: 'signing keys refused' });
+    }
+  }
+});
+
 test('failed rotation refresh does not block a still-fresh cached verification key', async t => {
   let now = Date.now();
   let fetches = 0;

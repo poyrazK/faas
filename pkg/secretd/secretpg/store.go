@@ -467,3 +467,28 @@ func (s *Store) RecordStorageGrant(ctx context.Context, r secretd.StorageGrantRe
 	}
 	return nil
 }
+
+// VerificationLease implements secretd.VerificationLeaseStore.
+func (s *Store) VerificationLease(ctx context.Context, deploymentID string) (secretd.VerificationLease, error) {
+	dep, err := pgUUID(deploymentID)
+	if err != nil {
+		return secretd.VerificationLease{}, secretd.ErrUnknownVerificationLease
+	}
+	row, err := s.q.VerificationLease(ctx, s.db, dep)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return secretd.VerificationLease{}, secretd.ErrUnknownVerificationLease
+	}
+	if err != nil {
+		return secretd.VerificationLease{}, fmt.Errorf("secretpg: verification lease: %w", err)
+	}
+	return secretd.VerificationLease{
+		AppID:     uuid.UUID(row.AppID.Bytes).String(),
+		NodeName:  row.NodeName,
+		ExpiresAt: row.ExpiresAt.Time,
+		Status:    row.Status,
+		Scope:     row.Scope,
+		Contract:  row.Contract,
+	}, nil
+}
+
+var _ secretd.VerificationLeaseStore = (*Store)(nil)

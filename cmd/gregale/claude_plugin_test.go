@@ -26,6 +26,11 @@ var agentFacingFiles = []string{
 	"templates/agents.md.tmpl",
 	claudePluginDir + "/skills/deploy/SKILL.md",
 	claudePluginDir + "/skills/diagnose/SKILL.md",
+	chatgptPluginDir + "/skills/get-started/SKILL.md",
+	chatgptPluginDir + "/skills/deploy/SKILL.md",
+	chatgptPluginDir + "/skills/diagnose/SKILL.md",
+	chatgptPluginDir + "/skills/roll-back/SKILL.md",
+	chatgptPluginDir + "/skills/migrate/SKILL.md",
 }
 
 var (

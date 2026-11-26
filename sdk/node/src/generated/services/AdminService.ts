@@ -13,6 +13,7 @@ import type { AdminStatusEventCreateRequest } from '../models/AdminStatusEventCr
 import type { AdminStatusEventEditRequest } from '../models/AdminStatusEventEditRequest.js';
 import type { AdminStatusEventUpdateRequest } from '../models/AdminStatusEventUpdateRequest.js';
 import type { AdminStatusUpdateEditRequest } from '../models/AdminStatusUpdateEditRequest.js';
+import type { AppNameReportResponse } from '../models/AppNameReportResponse.js';
 import type { BillingCatalogResponse } from '../models/BillingCatalogResponse.js';
 import type { BillingPaddleOveragePreflightResponse } from '../models/BillingPaddleOveragePreflightResponse.js';
 import type { BillingReconcileResponse } from '../models/BillingReconcileResponse.js';
@@ -550,6 +551,40 @@ export class AdminService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         403: `code: admin_required — the held-link review needs an operator session with MFA.`,
+      },
+    });
+  }
+  /**
+   * Existing apps an app name blocklist matches (operator-only).
+   * Lists existing apps whose names the live `app_name_blocklist` runtime
+   * setting matches, for review. Nothing is changed: existing apps keep
+   * their names. With `blocklist` the report uses that list instead of the
+   * live one, so an operator can see a list's effect before setting it.
+   * Deleted apps that can still be restored are listed too (status
+   * `deleted`): a restore brings their name back. When more than 5000 apps
+   * match, the first 5000 by name are listed and `truncated` is true.
+   *
+   * @returns AppNameReportResponse Matching apps, sorted by name.
+   * @throws ApiError
+   */
+  public static getAppNameReport({
+    blocklist,
+  }: {
+    /**
+     * Entries separated by commas, spaces or newlines: exact names or patterns where * matches any characters.
+     */
+    blocklist?: string,
+  }): CancelablePromise<AppNameReportResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/app-names/report',
+      query: {
+        'blocklist': blocklist,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: admin_required — the app name report needs an operator session with MFA.`,
       },
     });
   }

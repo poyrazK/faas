@@ -274,6 +274,12 @@ type App struct {
 	// apps.node_id was added by migration 00090. Tests that
 	// don't exercise the per-schedd routing path leave it zero.
 	NodeID string
+	// HasLiveDeployment: the app has a live public-routing deployment.
+	// With no NodeID it separates an app that has nothing to serve (409
+	// no_live_deployment, ErrAppNotPlaced) from a deployed app schedd could
+	// not place (fleet at capacity, no schedd claiming), which stays a
+	// platform 503 the availability SLO counts.
+	HasLiveDeployment bool
 	// Sidecars (issue #463 / ADR-069 / ADR-071 / PR-C §5) is
 	// the per-deployment sidecar roster mirrored on the app
 	// for the public listener's routing-key split
@@ -1062,8 +1068,26 @@ type Handler struct {
 	// WithTenantRequestBudgetStore arms the gate; nil then fails closed.
 	tenantRequestBudgetStore TenantRequestBudgetStore
 	// consumerPlanStore and its policy cache enforce consumer plans (ADR-953).
-	consumerPlanStore          ConsumerPlanStore
-	consumerPlanPolicies       *consumerPlanPolicyCache
+	consumerPlanStore    ConsumerPlanStore
+	consumerPlanPolicies *consumerPlanPolicyCache
+	// oauthConsumers enrolls MCP OAuth callers as API consumers through
+	// apid (ADR-20261124094745); nil leaves them unattributed.
+	oauthConsumers     OAuthConsumerEnroller
+	oauthConsumerCache *oauthConsumerCache
+	// oauthLinks links signed-in MCP callers to consumer keys they hold
+	// (ADR-20261124094745); nil answers the link path 404.
+	oauthLinks OAuthConsumerLinker
+	// upgradeLinks adds upgrade_url to plan-limit refusals
+	// (ADR-20261124094745); nil leaves it out.
+	upgradeLinks     ConsumerUpgradeLinker
+	upgradeLinkCache *upgradeLinkCache
+	// mcpSessions remembers MCP sessions whose client declared URL
+	// elicitation (ADR-20261125230541).
+	mcpSessions mcpSessionCapabilities
+	// mcpAccountTools answers the MCP account tools of OAuth consumers
+	// (ADR-20261125194510); nil leaves tool lists and calls to the app.
+	mcpAccountTools            MCPAccountToolAnswerer
+	mcpAccountToolLimiter      *mcpAccountToolLimiter
 	tenantRequestBudgetEnabled bool
 	// apiMonetization is the API monetization release gate
 	// (ADR-20261018090210); nil keeps monetization off.
@@ -1071,6 +1095,9 @@ type Handler struct {
 	// apiMonetizationFlags is the api_monetization platform flag: it
 	// releases monetization to the accounts it admits (ADR-20261020170649).
 	apiMonetizationFlags *platformflags.Set
+	// edgeFlagsRelease is the edge_flags platform flag (ADR-20261124212701):
+	// nil routes no request at the edge.
+	edgeFlagsRelease *platformflags.Set
 	// capabilityAllowed decides a product capability flag for an app's
 	// account (ADR-20261023115741); nil releases every capability.
 	capabilityAllowed func(capability, accountID string) bool
@@ -3249,6 +3276,15 @@ func corsResponseOps(rule *EdgeRuleCORSResolved, allowedOrigin string) []EdgeRul
 // A missing matcher means the feature is disabled. Once a JWT rule matches,
 // a missing verifier is a 503 rather than an authentication bypass.
 func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app App) bool {
+	if h.applyEdgeRuleJWTGates(w, r, app) {
+		return true
+	}
+	// ADR-20261125194510: an MCP account tool call admitted by every
+	// matching rule is answered here, never by the app.
+	return h.answerMCPAccountTool(w, r, app)
+}
+
+func (h *Handler) applyEdgeRuleJWTGates(w http.ResponseWriter, r *http.Request, app App) bool {
 	if h.edgeRules == nil {
 		return false
 	}
@@ -5840,7 +5876,7 @@ func (h *Handler) setupStreamingWriter(w http.ResponseWriter, rec *statusRecorde
 	onFlush := func(cumulative int64) {
 		delta := cumulative - lastReported
 		lastReported = cumulative
-		if delta <= 0 {
+		if delta <= 0 || rec.isPlatformResponse() {
 			return
 		}
 		if h.egressSink != nil && target.InstanceID != "" {
@@ -6683,6 +6719,17 @@ haveApp:
 	triggerClass := ClassifyWakeTrigger(r)
 	smokeDeploymentID, deploymentSmoke := h.authorizedDeploymentSmokeTarget(r, app)
 	rec.deploymentSmoke = deploymentSmoke
+	// ADR-20261122220000: a request carrying a smoke token this gateway does
+	// not know (the challenge has not reached it yet, or expired) is refused
+	// like an unknown route probe. Serving it from the live deployment would
+	// send a verification contract's request, possibly a state-changing one,
+	// to the predecessor instead of the candidate. The verifier reads the
+	// unproven 503 as gateway-unavailable and retries.
+	if !deploymentSmoke && r.Header.Get(apihostingreceipt.PlatformSmokeTokenHeader) != "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+			"Deployment smoke not authorized", "the smoke challenge is unknown or expired on this gateway"))
+		return
+	}
 	workloadAdmissionScope := app.Scope
 	if app.PinnedDeploymentScope != "" {
 		workloadAdmissionScope = app.PinnedDeploymentScope
@@ -6832,6 +6879,7 @@ haveApp:
 		}
 		if billingAttributed {
 			r = withBillingRoute(r, h.billingRouteSetFor(app.ID).admit(preLabel))
+			r = withPlanRoute(r, preLabel)
 		} else if jwtTenantPossible {
 			r = withBillingRouteCandidate(r, preLabel)
 		}
@@ -7213,6 +7261,10 @@ haveApp:
 	if h.serveGatedEdgeAnswer(w, r, app, declaredPath) {
 		return
 	}
+	// ADR-20261124212701: edge flag routing, after every identity and access
+	// gate (a verified customer buckets as the SDK would) and before the
+	// response cache, whose key then carries the rewritten path.
+	r, edgeVisitorSetCookie := h.applyEdgeFlags(w, r, app)
 	managedVersionSetCookie := ""
 	managedReleaseContextSetCookie := ""
 	if app.VersionAffinityManagedCookie && app.VersionAffinityCookie == "" {
@@ -7456,6 +7508,7 @@ haveApp:
 		cw := newCacheWriter(w, rec, rule, ResponseCachePerEntryMaxBytes, responseCacheFillFrom(r.Context(), h.responseCache))
 		cw.excludeManagedVersionCookie(managedVersionSetCookie)
 		cw.excludeManagedCookie(managedReleaseContextSetCookie)
+		cw.excludeManagedCookie(edgeVisitorSetCookie)
 		w = cw
 		if h.contentObserver != nil && contentObservable(r) {
 			// Compare the body this miss stores with the previous one for the
@@ -7591,7 +7644,10 @@ haveApp:
 		wakeMethod        WakeMethod
 		platformWakeStart time.Time
 		platformWakeTrace *wakePhaseTrace
-		err               error
+		// startupOOM collects the instances whose wake reported that the
+		// app ran out of memory while booting; set only on wake paths.
+		startupOOM *sched.StartupOOMRecorder
+		err        error
 	)
 
 	// PickWarm is the combined warm-path decision for the production backend. A
@@ -7704,6 +7760,7 @@ haveApp:
 				platformWakeStart = time.Now()
 				platformWakeTrace = newWakePhaseTrace(platformWakeStart)
 				wakeCtx := withWakePhaseTrace(r.Context(), platformWakeTrace)
+				wakeCtx = withStartupOOMRecorder(wakeCtx, &startupOOM)
 				if acceptsWakePage(r) {
 					var cancel context.CancelFunc
 					wakeCtx, cancel = context.WithTimeout(wakeCtx, time.Duration(api.WakePageAfterMs)*time.Millisecond)
@@ -7725,7 +7782,7 @@ haveApp:
 					return
 				}
 			} else {
-				admittedWakeID, method, atCapacity, admitErr = h.backend.Admit(r.Context(), app.ID, exactDeploymentID, exactDeploymentScope, exactDeploymentTrigger, maxInstances+api.RolloutConcurrencyGrant)
+				admittedWakeID, method, atCapacity, admitErr = h.backend.Admit(withStartupOOMRecorder(r.Context(), &startupOOM), app.ID, exactDeploymentID, exactDeploymentScope, exactDeploymentTrigger, maxInstances+api.RolloutConcurrencyGrant)
 			}
 			settled := false
 			if admitErr == nil && atCapacity {
@@ -7808,6 +7865,7 @@ haveApp:
 		// booting. API clients retain the plan-derived wait budget.
 		wakeCtx := r.Context()
 		wakeCtx = withWakePhaseTrace(wakeCtx, platformWakeTrace)
+		wakeCtx = withStartupOOMRecorder(wakeCtx, &startupOOM)
 		// A thaw prefers the frozen instance this session is pinned to
 		// (ADR-1151): its in-memory state is why the app keeps affinity.
 		wakeCtx = sched.WithPreferredInstance(wakeCtx, preferredInstanceID)
@@ -7920,7 +7978,7 @@ haveApp:
 	routing, hasPublicRouting := publicRoutingSnapshot(r.Context())
 	if !exactDeployment || hasPublicRouting {
 		//nolint:contextcheck // request ctx at handler boundary.
-		burstWaitCtx, cancelBurstWait := context.WithTimeout(r.Context(), burstCapacityWait(app))
+		burstWaitCtx, cancelBurstWait := context.WithTimeout(withStartupOOMRecorder(r.Context(), &startupOOM), burstCapacityWait(app))
 		defer cancelBurstWait()
 		var burstErr error
 		if hasPublicRouting {
@@ -7961,7 +8019,7 @@ haveApp:
 		if platformWakeStart.IsZero() {
 			platformWakeStart = time.Now()
 		}
-		fanoutCtx, fanoutSpan := pkgtrace.StartSpan(r.Context(), "gateway.wake_fanout",
+		fanoutCtx, fanoutSpan := pkgtrace.StartSpan(withStartupOOMRecorder(r.Context(), &startupOOM), "gateway.wake_fanout",
 			attribute.String("app_id", app.ID),
 			attribute.String("deployment_id", pick.ColdBucket),
 		)
@@ -8343,6 +8401,17 @@ haveApp:
 	//     wrap below.
 	decision, isStreaming := decideStreaming(h, r, app)
 
+	// ADR-20261125194510: an opted-in OAuth consumer's tools/list answer
+	// gets the MCP account tools. The wrapper sits under the streaming and
+	// cap writers, so it sees the app's bytes as they reach the client.
+	// finishAccountTools runs once the app answered; the defer covers the
+	// early returns and is a no-op after it.
+	w, finishAccountTools := wrapMCPAccountToolsList(w, r)
+	defer finishAccountTools()
+	// ADR-20261125230541: remember a session whose client takes URL
+	// elicitation, for plan refusals later in it.
+	w = h.wrapMCPInitialize(w, r)
+
 	// Streaming-Status header stamp (ADR-102 D2). UNCONDITIONAL —
 	// the header must land on EVERY response (streaming AND
 	// buffered) so customers can self-diagnose. Precedent:
@@ -8585,6 +8654,9 @@ haveApp:
 				h.proxyFor(tgt.NodeID, planCap).ServeHTTP(w, req)
 			}, app)
 	}
+	// The held-back tools/list answer reaches the client before the
+	// request's bytes and latency are recorded.
+	finishAccountTools()
 	identity = platformIdentityForTarget(r.Context(), r, app, completionTarget)
 	r = r.WithContext(wire.WithPlatformIdentity(r.Context(), identity))
 	requestAttrs.addTarget(completionTarget)
@@ -8664,11 +8736,10 @@ haveApp:
 	}
 	// ADR-046 (per-instance egress metering, telemetry only):
 	// record the response body bytes that egressed the gateway on
-	// this instance. Gated on 2xx/3xx because 4xx/5xx the
-	// ReverseProxy never actually wrote the response body to the
-	// wire (it short-circuited on the upstream reject) — billing
-	// bytes that didn't egress would be wrong on both ends of the
-	// financial model. nil-safe for unit tests.
+	// this instance. An app's own 4xx/5xx body egresses like any
+	// other and is billed; a response the gateway wrote itself
+	// (statusRecorder.isPlatformResponse) is not. nil-safe for
+	// unit tests.
 	if !probe {
 		h.recordEgress(rec, completionTarget, app)
 	}
@@ -8706,8 +8777,31 @@ haveApp:
 		if cold && wakeMethod != WakeMethodUnspecified {
 			h.metrics.ObserveColdBootWithTrace(app.ID, firstByteAt.Sub(wakeStart), target.NodeID, traceID)
 			if !platformWakeStart.IsZero() {
-				h.metrics.ObservePlatformWakeWithTrace(firstByteAt.Sub(platformWakeStart), traceID)
-				platformWakeTrace.observe(h.metrics, firstByteAt)
+				switch {
+				case startupOOM.Any():
+					// The app ran out of memory while a wake this request
+					// admitted booted it: the kernel's OOM kill, not the
+					// platform, set the latency this request waited out,
+					// whichever instance the final pick routed it to. The
+					// app's own wake latency (above) keeps it; the phase
+					// breakdown follows the SLO series it decomposes.
+					// Checked before the smoke case so a candidate that OOMs
+					// on its first boot still moves the startup_oom rate the
+					// ADR treats as a platform signal.
+					h.metrics.ObservePlatformWakeExcluded(platformWakeExcludedStartupOOM)
+				case deploymentSmoke:
+					// A deployment smoke verifies a candidate, not customer
+					// demand. It is admitted while the candidate's first-boot
+					// instance is still capturing the snapshot the smoke then
+					// restores, so its wait is the deploy pipeline's
+					// (2026-11-24: 24 of 32 platform wakes over 350 ms were
+					// smokes; customer restores held p95 157 ms). The app's
+					// own wake latency (above) keeps it.
+					h.metrics.ObservePlatformWakeExcluded(platformWakeExcludedDeploymentSmoke)
+				default:
+					h.metrics.ObservePlatformWakeWithTrace(firstByteAt.Sub(platformWakeStart), traceID)
+					platformWakeTrace.observe(h.metrics, firstByteAt)
+				}
 			}
 			// Wake-locality classifier (PR scale-out readiness). Increment
 			// AFTER the first-byte observation so the 350 ms measurement
@@ -8843,6 +8937,14 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// An Info line also spends the request-log budget: past it the line is
 	// not built (see requestLogBudget).
 	decision := trafficDecisionEvidence(r.Context(), status, false)
+	if status >= http.StatusOK && status < http.StatusMultipleChoices && decision.path == "public_http" &&
+		decision.outcome == "upstream_response" && !decision.edgeResponse && !decision.deploymentPinned &&
+		decision.cache != "hit" && !strings.HasPrefix(decision.cache, "stale_") &&
+		target.InstanceID != "" && target.DeploymentID != "" && truncatedResponse(r) == nil && !isRouteProbe(r.Context()) {
+		if backend, ok := h.backend.(*PGBackend); ok {
+			backend.observeProjectRollbackResponse(r.Context(), appID, target.DeploymentID, startTime(r), time.Now())
+		}
+	}
 	level := requestLogLevel(code, cold)
 	if requestLog := h.log; requestLog != nil && requestLog.Enabled(r.Context(), level) && h.requestLogBudget.admit(level, h.metrics) {
 		if suppressed := h.requestLogBudget.takeSuppressed(); suppressed > 0 {
@@ -8958,7 +9060,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				GuestRuntime:                         guestEvidence.Runtime,
 				GuestOutcome:                         guestEvidence.Outcome,
 				GuestErrorClass:                      guestEvidence.ErrorClass,
-				FlagEvidenceJSON:                     guestEvidence.FlagEvidenceJSON,
+				FlagEvidenceJSON:                     flagEvidenceWithEdge(r.Context(), guestEvidence.FlagEvidenceJSON),
 				GuestCPUTimeMS:                       guestEvidence.CPUTimeMS,
 				GuestPeakRSSMB:                       guestEvidence.PeakRSSMB,
 				GuestResourceUsageAvailable:          guestEvidence.ResourceUsageAvailable,
@@ -9135,10 +9237,12 @@ func (h *Handler) routeSetFor(appID string, enabled bool) *routeLabelSet {
 // recordEgress attributes response body bytes to the (instanceID,
 // minute) bucket in h.egressSink. Called after the proxy ServeHTTP
 // returns so the recorder has observed every body chunk that hit
-// the wire. The 2xx/3xx gate mirrors what the gateway actually
-// delivered to the caller: 4xx/5xx responses never reach the body
-// stage on the ReverseProxy path (it short-circuits to the error
-// branch), so trying to count their bytes would over-attribute.
+// the wire. Every status the app answered counts: an app's own 404
+// page or 500 body leaves the platform like any other response, and
+// since gateway response bytes are billed app egress
+// (ADR-20261121210517) skipping them made error statuses a free
+// channel (metering review 2026-11-23). Only bytes the gateway wrote
+// itself (writeForwarderProblem marks the recorder) are left out.
 //
 // PR-B streaming path: when the recorder is armed with a flusher
 // (rec.flusher != nil, set by setupStreamingWriter), the per-flush
@@ -9168,7 +9272,7 @@ func (h *Handler) recordEgress(rec *statusRecorder, target Target, app App) {
 	if rec.flusher != nil {
 		return
 	}
-	if rec.status < 200 || rec.status >= 400 {
+	if rec.status < 200 || rec.isPlatformResponse() {
 		return
 	}
 	if rec.Bytes <= 0 {
@@ -9456,6 +9560,12 @@ type statusRecorder struct {
 	http.ResponseWriter
 	status      int
 	wroteHeader bool
+	// platformResponse marks a response the gateway wrote itself (a
+	// forwarder problem), not the app: its bytes are not app egress.
+	platformResponse bool
+	// platformProblem is whether the committed headers carried
+	// api.ErrorCodeHeader (prepareResponseHeaders).
+	platformProblem bool
 	// headerAt is when the response headers were committed: a long-lived
 	// response's latency (ADR-20261109153000).
 	headerAt                 time.Time
@@ -9540,6 +9650,50 @@ type statusRecorder struct {
 // per-chunk read deadlines during request-body admission.
 func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 
+// markPlatformResponse flags the statusRecorder under w (through any
+// Unwrap chain) as carrying a gateway-written response. An uncommitted retry
+// attempt keeps the mark itself until it commits or is discarded.
+func markPlatformResponse(w http.ResponseWriter) {
+	for w != nil {
+		if rec, ok := w.(*statusRecorder); ok {
+			// Once the app's status is on the wire the response is the
+			// app's; a later platform write must not unbill it.
+			if !rec.wroteHeader {
+				rec.platformResponse = true
+			}
+			return
+		}
+		if rw, ok := w.(*retryWriter); ok {
+			if !rw.committed {
+				rw.platformResponse = true
+				return
+			}
+		}
+		u, ok := w.(interface{ Unwrap() http.ResponseWriter })
+		if !ok {
+			return
+		}
+		w = u.Unwrap()
+	}
+}
+
+// isPlatformResponse reports whether the gateway, not the app, wrote this
+// response: either a writer marked it, or it carries api.ErrorCodeHeader,
+// which api.WriteProblem stamps and both proxy paths strip from a guest's
+// response (ADR-20261030115139). Its bytes are not billed app egress.
+func (s *statusRecorder) isPlatformResponse() bool {
+	if s.platformResponse {
+		return true
+	}
+	if s.wroteHeader {
+		return s.platformProblem
+	}
+	if s.ResponseWriter == nil {
+		return false
+	}
+	return s.ResponseWriter.Header().Get(api.ErrorCodeHeader) != ""
+}
+
 // ProblemHTMLRequest lets the shared API problem writer negotiate the
 // browser-facing error page for gateway requests. API handlers do not use this
 // wrapper, so their RFC 7807 JSON responses remain unchanged.
@@ -9584,6 +9738,9 @@ func (s *statusRecorder) prepareResponseHeaders(code int) {
 		// reading it here is race-free relative to the underlying
 		// ResponseWriter.
 		s.ContentType = s.ResponseWriter.Header().Get("Content-Type")
+		// Who wrote the response is fixed when its headers commit; a header
+		// set afterwards never unbills bytes already sent.
+		s.platformProblem = s.ResponseWriter.Header().Get(api.ErrorCodeHeader) != ""
 		s.headCachePrivate = s.sharedCachePrivate || responseForbidsSharedCaching(s.Header())
 		// ADR-089 / issue #561 PR 4: apply any EdgeRuleHeaderOp
 		// mutations the applyEdgeRuleHeaders helper installed
@@ -10290,6 +10447,10 @@ func writeWakeError(w http.ResponseWriter, err error) {
 		w.Header().Set("Retry-After", "1")
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 			"App instance starting", "this app's instances are starting or stopping and none can take the request yet; retry shortly"))
+	case errors.Is(err, ErrAppNotPlaced):
+		w.Header().Set("Cache-Control", "no-store")
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeNoLiveDeployment,
+			"App has no live deployment", "this app has nothing deployed to serve yet; its owner deploys it with `gregale deploy`"))
 	case errors.Is(err, ErrBootstrapAborted):
 		// ADR-098 C7: the leader aborted under the bootstrap cap
 		// (queue empty AND no live instance). The customer should
@@ -10372,7 +10533,7 @@ func (h *Handler) logWakeFailure(appID string, err error) {
 func unclassifiedWakeError(err error) bool {
 	for _, known := range []error{ErrConcurrencyQueueFull, ErrConcurrencyQueueWaitTimeout,
 		ErrConcurrencyQueueAdmissionUnavailable, ErrWakeQueueWaitTimeout, ErrQueueFull,
-		ErrWakeAdmissionQueueFull, ErrBootstrapAborted} {
+		ErrWakeAdmissionQueueFull, ErrBootstrapAborted, ErrAppNotPlaced} {
 		if errors.Is(err, known) {
 			return false
 		}

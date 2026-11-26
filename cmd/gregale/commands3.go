@@ -168,6 +168,7 @@ func secretsList(args []string) int {
 		return jsonOut(writeJSON(resp))
 	}
 	code := renderSecretListHuman(*app, *scope, *secretClass, *olderThan, *deliveryStatus, &resp, keys...)
+	printRecentConfigGuardVerdict(context.Background(), client, *app, *scope)
 	printSecretKeyHints(*app, *scope, secretKeyHints(keys, availableKeys, secretMetadataKeys(&resp)))
 	if *scope != api.EnvScopeAllSentinel && *secretClass == "" && *deliveryStatus == "" && age == 0 {
 		printPlainVariables(osStdout, client, *app, *scope, keys)
@@ -221,7 +222,7 @@ func renderSecretsByScope(w io.Writer, app string, resp *api.AppSecretListRespon
 	for _, s := range scopes {
 		for _, row := range resp.SecretsByScope[s] {
 			_, _ = fmt.Fprintf(w, "  %-48s %-10s · %s · %s%s\n", s+"/"+row.Key, secretClassLabel(row.SecretClass),
-				secretDeliveryLabel(row.DeliveryStatus), secretRuntimeReloadLabel(row.DeliveryVersion,
+				secretDeliveryRowLabel(row.DeliveryStatus, row.RuntimeReloadTargetsComplete, row.RuntimeReloadObservations), secretRuntimeReloadLabel(row.DeliveryVersion,
 					row.LastRuntimeReloadVersion, row.LastRuntimeReloadProjection, row.LastRuntimeReloadSignal, row.LastRuntimeReloadInstanceID,
 					row.RuntimeReloadObservations, row.RuntimeReloadTargetsComplete), secretUpdatedAtSuffix(row.UpdatedAt))
 		}
@@ -241,7 +242,7 @@ func renderFlatSecrets(w io.Writer, app string, resp *api.AppSecretListResponse)
 	_, _ = fmt.Fprintf(w, "%s: %d/%d secrets\n", app, resp.Count, resp.Quota)
 	for _, s := range resp.Secrets {
 		_, _ = fmt.Fprintf(w, "  %-48s %-10s · %s · %s%s\n", scopeOrDefault(s.Scope)+"/"+s.Key, secretClassLabel(s.SecretClass),
-			secretDeliveryLabel(s.DeliveryStatus), secretRuntimeReloadLabel(s.DeliveryVersion,
+			secretDeliveryRowLabel(s.DeliveryStatus, s.RuntimeReloadTargetsComplete, s.RuntimeReloadObservations), secretRuntimeReloadLabel(s.DeliveryVersion,
 				s.LastRuntimeReloadVersion, s.LastRuntimeReloadProjection, s.LastRuntimeReloadSignal, s.LastRuntimeReloadInstanceID,
 				s.RuntimeReloadObservations, s.RuntimeReloadTargetsComplete), secretUpdatedAtSuffix(s.UpdatedAt))
 	}
@@ -365,6 +366,23 @@ func filterAppSecretListByClass(resp *api.AppSecretListResponse, class string) {
 	}
 	resp.Secrets = filtered
 	resp.Count = len(filtered)
+}
+
+// secretDeliveryRowLabel is secretDeliveryLabel for a listed row. A failure
+// with no instance running was recorded by a boot that never started, often a
+// crashing first deploy; "delivery failed" alone read as a broken secret on a
+// worker that later connected fine (agent eval 2026-11-23, voting-app P10).
+func secretDeliveryRowLabel(status string, targetsComplete bool, targets []api.SecretRuntimeReloadObservation) string {
+	if secretFailedWithoutInstance(status, targetsComplete, targets) {
+		return "delivery failed on a boot that did not start (none running now)"
+	}
+	return secretDeliveryLabel(status)
+}
+
+// secretFailedWithoutInstance reports a failed delivery while the complete
+// list of active instances is empty.
+func secretFailedWithoutInstance(status string, targetsComplete bool, targets []api.SecretRuntimeReloadObservation) bool {
+	return status == "failed" && targetsComplete && len(targets) == 0
 }
 
 func secretDeliveryLabel(status string) string {
@@ -632,6 +650,14 @@ func secretsSet(args []string) int {
 		if problem := api.ValidateSecretKey(p.Key); problem != nil {
 			// Keep the secret_invalid_key Problem a PUT would return, so
 			// JSON consumers route on the same code (#6662).
+			return printErr(problem.Title, &APIError{Problem: *problem})
+		}
+		// An empty value failed only at its own PUT, after the keys before it
+		// were saved: `env set A=1 B= C=2` saved A, never C, and reported an
+		// unconfirmed partial write (prod hunt r48). The size cap stays with
+		// the server, which knows the plan.
+		if problem := (api.PutAppSecretRequest{Value: p.Value}).Validate(0); problem != nil {
+			problem.Detail = p.Key + ": " + problem.Detail
 			return printErr(problem.Title, &APIError{Problem: *problem})
 		}
 	}
@@ -910,7 +936,7 @@ func readSecretsFile(path string) ([]secretsPair, error) {
 				next := strings.TrimRight(scanner.Text(), "\r")
 				value.WriteByte('\n')
 				value.WriteString(next)
-				if dotenvClosesQuote(strings.TrimRight(next, " \t"), quote) {
+				if dotenvContinuationCloses(next, quote) {
 					closed = true
 					break
 				}
@@ -956,8 +982,22 @@ func dotenvOpenQuote(line string) (byte, bool) {
 	if value == "" || value[0] != '"' && value[0] != '\'' {
 		return 0, false
 	}
-	quote := value[0]
-	return quote, !dotenvClosesQuote(value[1:], quote)
+	// A quote closed before a trailing ` # comment` closes the value on this
+	// line: `URL="x" # note` was read as an unterminated multi-line value
+	// (prod hunt r48).
+	return value[0], dotenvClosingQuote(value) < 0
+}
+
+// dotenvContinuationCloses reports whether a continuation line of a
+// multi-line quoted value closes it: it ends in the closing quote, or the
+// closing quote is followed only by a ` # comment` (a PEM whose last line is
+// `-----END KEY-----" # prod key` was refused as unclosed).
+func dotenvContinuationCloses(line string, quote byte) bool {
+	if dotenvClosesQuote(strings.TrimRight(line, " \t"), quote) {
+		return true
+	}
+	end := dotenvClosingQuote(string(quote) + line)
+	return end > 0 && strings.HasPrefix(strings.TrimSpace(line[end:]), "#")
 }
 
 // dotenvClosesQuote reports whether s ends with an unescaped closing quote.

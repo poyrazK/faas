@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -17,11 +18,13 @@ var ErrMixedAPIConsumerRateCardCurrency = errors.New("billing: API consumer rate
 // would fall back to an app rate card with a monthly allowance (ADR-950), a
 // graduated ladder (ADR-951), route weights (ADR-952), or that belong to a
 // consumer plan (ADR-953).
-var ErrAPIConsumerAllowanceInTenantStatement = errors.New("billing: app rate cards with included units, tiers, route weights, or consumer plans cannot price platform tenant statements")
+var ErrAPIConsumerAllowanceInTenantStatement = errors.New("billing: app rate cards with included units, tiers, route weights, model prices, or consumer plans cannot price platform tenant statements")
 
 // APIConsumerUsageChargeBucket is the priced form of one durable usage
 // minute. RateCardID is empty when no card was effective for that minute.
 type APIConsumerUsageChargeBucket struct {
+	WaivedUnits              int64
+	Model                    string
 	WindowStart              time.Time
 	BillableUnits            int64
 	RateCardID               string
@@ -68,11 +71,15 @@ func QuotePlatformTenantUsage(appCards []state.APIConsumerRateCard, tenantCards 
 			return APIConsumerUsageQuote{}, ErrTenantMonthPeriodRequired
 		}
 	}
-	if len(requestCards) == 0 {
-		if err := requireFlatAppCards(appCards); err != nil {
-			return APIConsumerUsageQuote{}, err
+	orderedUsage := append([]state.APIConsumerUsageBucket(nil), usage...)
+	sort.Slice(orderedUsage, func(i, j int) bool {
+		if orderedUsage[i].WindowStart.Equal(orderedUsage[j].WindowStart) {
+			return orderedUsage[i].AppID < orderedUsage[j].AppID
 		}
-		quote, err := QuoteAPIConsumerUsage(appCards, usage)
+		return orderedUsage[i].WindowStart.Before(orderedUsage[j].WindowStart)
+	})
+	if len(requestCards) == 0 {
+		quote, err := quoteTenantAppFallback(appCards, orderedUsage)
 		return trialFreeTenantQuote(quote, options), err
 	}
 	tenantCards = requestCards
@@ -96,13 +103,6 @@ func QuotePlatformTenantUsage(appCards []state.APIConsumerRateCard, tenantCards 
 		return APIConsumerUsageQuote{}, err
 	}
 
-	orderedUsage := append([]state.APIConsumerUsageBucket(nil), usage...)
-	sort.Slice(orderedUsage, func(i, j int) bool {
-		if orderedUsage[i].WindowStart.Equal(orderedUsage[j].WindowStart) {
-			return orderedUsage[i].AppID < orderedUsage[j].AppID
-		}
-		return orderedUsage[i].WindowStart.Before(orderedUsage[j].WindowStart)
-	})
 	tenantCardForUsage := make([]int, len(orderedUsage))
 	fallbackUsage := make([]state.APIConsumerUsageBucket, 0, len(orderedUsage))
 	tenantCardIndex := -1
@@ -121,12 +121,7 @@ func QuotePlatformTenantUsage(appCards []state.APIConsumerRateCard, tenantCards 
 	var fallbackQuote APIConsumerUsageQuote
 	var err error
 	if len(fallbackUsage) > 0 {
-		// Only minutes no tenant card prices fall back to app cards, so an
-		// app card's allowance, tiers, weights, or plan matter only then.
-		if err := requireFlatAppCards(appCards); err != nil {
-			return APIConsumerUsageQuote{}, err
-		}
-		fallbackQuote, err = QuoteAPIConsumerUsage(appCards, fallbackUsage)
+		fallbackQuote, err = quoteTenantAppFallback(appCards, fallbackUsage)
 		if err != nil {
 			return APIConsumerUsageQuote{}, err
 		}
@@ -212,16 +207,36 @@ func tenantCardUnit(card state.PlatformTenantRateCard) string {
 	return card.Unit
 }
 
-// requireFlatAppCards rejects app cards a cross-app statement cannot apply:
-// allowances, tiers, weights, and plans are per consumer, while a tenant
-// statement mixes sources and prices only usage deltas.
-func requireFlatAppCards(cards []state.APIConsumerRateCard) error {
+// quoteTenantAppFallback prices uncovered requests using the app's request
+// stream. Usage must be ordered by minute.
+func quoteTenantAppFallback(cards []state.APIConsumerRateCard, usage []state.APIConsumerUsageBucket) (APIConsumerUsageQuote, error) {
+	var requestCards []state.APIConsumerRateCard
 	for _, card := range cards {
-		if card.IncludedUnitsPerMonth > 0 || len(card.Tiers) > 0 || len(card.RouteWeights) > 0 || card.PlanID != "" {
-			return ErrAPIConsumerAllowanceInTenantStatement
+		if StreamUnit(card.Unit) == state.APIConsumerRateCardUnitRequest {
+			requestCards = append(requestCards, card)
 		}
 	}
-	return nil
+	ordered := orderedAPIConsumerRateCards(requestCards)
+	var selected []state.APIConsumerRateCard
+	active := -1
+	for _, bucket := range usage {
+		previous := active
+		for active+1 < len(ordered) && !ordered[active+1].EffectiveFrom.After(bucket.WindowStart) {
+			active++
+		}
+		if active == previous {
+			continue
+		}
+		card := ordered[active]
+		if card.IncludedUnitsPerMonth > 0 || len(card.Tiers) > 0 || len(card.RouteWeights) > 0 || len(card.ModelPrices) > 0 || card.PlanID != "" {
+			return APIConsumerUsageQuote{}, ErrAPIConsumerAllowanceInTenantStatement
+		}
+		if active > 0 && ordered[active-1].EffectiveFrom.Equal(card.EffectiveFrom) {
+			return APIConsumerUsageQuote{}, fmt.Errorf("billing: duplicate API consumer rate-card effective_from %s", card.EffectiveFrom.Format(time.RFC3339))
+		}
+		selected = append(selected, card)
+	}
+	return QuoteAPIConsumerUsage(selected, usage)
 }
 
 // APIConsumerUsageQuote is a deterministic estimate, not an invoice or a
@@ -234,6 +249,11 @@ type APIConsumerUsageQuote struct {
 	AmountMillicents int64
 	Priced           bool
 	Buckets          []APIConsumerUsageChargeBucket
+	RouteBreakdown   []api.APIConsumerQuoteBreakdown
+	MeterBreakdown   []api.APIConsumerQuoteBreakdown
+	// Statement adjustments use the resolved history to distinguish an ended
+	// plan unit from a unit whose durable usage is unexpectedly absent.
+	planRateHistory []state.APIConsumerRateCard
 }
 
 // QuoteOptions adjust how a quote prices usage. VolumeSteps maps a volume
@@ -243,6 +263,7 @@ type APIConsumerUsageQuote struct {
 // TrialStart and TrialEnd bound a consumer's trial (ADR-1314): its minutes
 // are priced at zero and consume no included units, steps or volume.
 type QuoteOptions struct {
+	ModelWaivers         []state.APIConsumerUsageWaiver
 	VolumeSteps          map[string]int
 	TrialStart, TrialEnd time.Time
 	// EndedAt is when the consumer was revoked; prorating cards stop
@@ -266,9 +287,7 @@ func QuoteAPIConsumerUsageFrom(cards []state.APIConsumerRateCard, usage []state.
 	return QuoteAPIConsumerUsageWith(cards, usage, from, QuoteOptions{})
 }
 
-// QuoteAPIConsumerUsageWith is QuoteAPIConsumerUsageFrom with options.
-func QuoteAPIConsumerUsageWith(cards []state.APIConsumerRateCard, usage []state.APIConsumerUsageBucket, from time.Time,
-	opts QuoteOptions) (APIConsumerUsageQuote, error) {
+func orderedAPIConsumerRateCards(cards []state.APIConsumerRateCard) []state.APIConsumerRateCard {
 	ordered := append([]state.APIConsumerRateCard(nil), cards...)
 	sort.Slice(ordered, func(i, j int) bool {
 		if ordered[i].EffectiveFrom.Equal(ordered[j].EffectiveFrom) {
@@ -276,6 +295,17 @@ func QuoteAPIConsumerUsageWith(cards []state.APIConsumerRateCard, usage []state.
 		}
 		return ordered[i].EffectiveFrom.Before(ordered[j].EffectiveFrom)
 	})
+	return ordered
+}
+
+func apiConsumerCardEnded(card state.APIConsumerRateCard, minute time.Time) bool {
+	return !card.EffectiveUntil.IsZero() && !minute.Before(card.EffectiveUntil)
+}
+
+// QuoteAPIConsumerUsageWith is QuoteAPIConsumerUsageFrom with options.
+func QuoteAPIConsumerUsageWith(cards []state.APIConsumerRateCard, usage []state.APIConsumerUsageBucket, from time.Time,
+	opts QuoteOptions) (APIConsumerUsageQuote, error) {
+	ordered := orderedAPIConsumerRateCards(cards)
 	var quote APIConsumerUsageQuote
 	for i, card := range ordered {
 		if !state.ValidAPIConsumerRateCardUnit(card.Unit) {
@@ -319,13 +349,14 @@ func QuoteAPIConsumerUsageWith(cards []state.APIConsumerRateCard, usage []state.
 		for cardIndex+1 < len(ordered) && !ordered[cardIndex+1].EffectiveFrom.After(minute) {
 			cardIndex++
 		}
-		priced := APIConsumerUsageChargeBucket{WindowStart: minute, BillableUnits: bucket.BillableUnits}
+		priced := APIConsumerUsageChargeBucket{WindowStart: minute, BillableUnits: bucket.BillableUnits, Model: bucket.Model}
 		trial := opts.inTrial(minute)
+		active := cardIndex >= 0 && !apiConsumerCardEnded(ordered[cardIndex], minute)
 		switch {
-		case cardIndex >= 0 && trial:
+		case active && trial:
 			card := ordered[cardIndex]
 			priced.RateCardID, priced.Currency, priced.Trial = card.ID, card.Currency, true
-		case cardIndex >= 0:
+		case active:
 			if priced, err = priceMinute(ordered[cardIndex], priced, usedThisMonth, monthTotals[month], opts); err != nil {
 				return APIConsumerUsageQuote{}, err
 			}
@@ -388,11 +419,15 @@ func priceMinute(card state.APIConsumerRateCard, bucket APIConsumerUsageChargeBu
 	}
 	if len(card.Tiers) == 0 {
 		charged := bucket.BillableUnits - includedUnits(card.IncludedUnitsPerMonth, usedBefore, bucket.BillableUnits)
-		amount, err := multiplyMillicents(charged, card.PriceMillicentsPerUnit)
+		price := card.PriceMillicentsPerUnit
+		if override, ok := card.ModelPrices[bucket.Model]; ok {
+			price = override
+		}
+		amount, err := multiplyMillicents(charged, price)
 		if err != nil {
 			return bucket, err
 		}
-		bucket.PriceMillicentsPerUnit, bucket.ChargedUnits, bucket.AmountMillicents = card.PriceMillicentsPerUnit, charged, amount
+		bucket.PriceMillicentsPerUnit, bucket.ChargedUnits, bucket.AmountMillicents = price, charged, amount
 		return bucket, nil
 	}
 	bucket.TierUnits = make([]int64, len(card.Tiers))
@@ -448,15 +483,26 @@ func priceVolumeMinute(tiers []state.APIConsumerRateCardTier, bucket APIConsumer
 // TieredCardEffectiveIn reports whether a tiered card prices any minute of
 // [start, end). Such periods must be whole UTC months (ADR-951).
 func TieredCardEffectiveIn(cards []state.APIConsumerRateCard, start, end time.Time) bool {
-	ordered := append([]state.APIConsumerRateCard(nil), cards...)
-	sort.Slice(ordered, func(i, j int) bool { return ordered[i].EffectiveFrom.Before(ordered[j].EffectiveFrom) })
-	for i, card := range ordered {
-		until := end
-		if i+1 < len(ordered) {
-			until = ordered[i+1].EffectiveFrom
-		}
-		if len(card.Tiers) > 0 && card.EffectiveFrom.Before(end) && until.After(start) {
-			return true
+	return apiConsumerCardEffectiveIn(cards, start, end, func(card state.APIConsumerRateCard) bool {
+		return len(card.Tiers) > 0
+	})
+}
+
+func apiConsumerCardEffectiveIn(cards []state.APIConsumerRateCard, start, end time.Time, matches func(state.APIConsumerRateCard) bool) bool {
+	_, streams := UnitStreams(cards)
+	for _, stream := range streams {
+		ordered := orderedAPIConsumerRateCards(stream)
+		for i, card := range ordered {
+			until := end
+			if i+1 < len(ordered) {
+				until = ordered[i+1].EffectiveFrom
+			}
+			if !card.EffectiveUntil.IsZero() && card.EffectiveUntil.Before(until) {
+				until = card.EffectiveUntil
+			}
+			if matches(card) && card.EffectiveFrom.Before(end) && until.After(start) {
+				return true
+			}
 		}
 	}
 	return false
@@ -479,10 +525,10 @@ func (q *APIConsumerUsageQuote) add(bucket APIConsumerUsageChargeBucket) error {
 	}
 	q.BillableUnits += bucket.BillableUnits
 	if bucket.RateCardID == "" {
-		if q.UnpricedUnits > maxInt64-bucket.BillableUnits {
+		if q.UnpricedUnits > maxInt64-(bucket.BillableUnits-bucket.WaivedUnits) {
 			return fmt.Errorf("billing: API consumer unpriced usage total overflow")
 		}
-		q.UnpricedUnits += bucket.BillableUnits
+		q.UnpricedUnits += bucket.BillableUnits - bucket.WaivedUnits
 	} else {
 		// A re-rated tiered adjustment bucket may be negative (ADR-951).
 		if (bucket.AmountMillicents > 0 && q.AmountMillicents > maxInt64-bucket.AmountMillicents) ||

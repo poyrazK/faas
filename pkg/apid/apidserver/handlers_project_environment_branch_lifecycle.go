@@ -130,8 +130,9 @@ func (s *server) environmentBranchBuckets(ctx context.Context, branch state.Proj
 
 // environmentBranchWorkloadStatus lists the branch's workloads: each one the
 // parent serves, with its URL in the branch and its deployment there. A
-// workload with no live deployment in the branch is starting (it has not
-// been activated yet).
+// workload with no live deployment in the branch reports its newest branch
+// deployment instead: starting while it activates, its failure, or that it
+// has not gone live within api.EnvironmentBranchActivationStall.
 func (s *server) environmentBranchWorkloadStatus(ctx context.Context, store state.ProjectEnvironmentBranchStore, acct state.Account, project state.Project, branch state.ProjectEnvironmentBranch) ([]api.ProjectEnvironmentBranchWorkload, error) {
 	parents, err := store.ProjectEnvironmentBranchWorkloads(ctx, acct.ID, project.ID, branch.Slug)
 	if err != nil {
@@ -147,6 +148,10 @@ func (s *server) environmentBranchWorkloadStatus(ctx context.Context, store stat
 			workload.DeploymentID, workload.Status = live.ID, string(live.Status)
 		case !errors.Is(err, state.ErrNotFound):
 			return nil, err
+		default:
+			if err := s.describeUnservedEnvironmentBranchWorkload(ctx, branch, parent.AppID, &workload, time.Now()); err != nil {
+				return nil, err
+			}
 		}
 		out = append(out, workload)
 	}
@@ -317,8 +322,10 @@ func (s *server) resetProjectEnvironmentBranch(w http.ResponseWriter, r *http.Re
 		api.WriteProblem(w, problem)
 		return
 	}
+	// A pull request's branch stays its pull request's: githubd only uses a
+	// branch with the PR's number, and its data follows the previews setting.
 	spec := environmentBranchSpec{parent: branch.ParentSlug, slug: branch.Slug, egress: branch.EgressMode,
-		privateNetworks: branch.PrivateNetworks, ttl: environmentBranchResetTTL(branch)}
+		privateNetworks: branch.PrivateNetworks, ttl: environmentBranchResetTTL(branch), pullRequest: branch.PullRequestNumber}
 	if problem := s.environmentBranchEgressProblem(spec.egress, spec.privateNetworks); problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -348,6 +355,12 @@ func (s *server) resetProjectEnvironmentBranch(w http.ResponseWriter, r *http.Re
 		api.WriteProblem(w, api.ErrCapacity("could not reset the environment branch"))
 		return
 	}
+	// Only now that the old branch is gone: a pull request branch's reset
+	// starts from an empty database again. A purge that fails leaves the
+	// database to the new branch and the sweep, so the reset goes on.
+	if err := s.purgeEnvironmentBranchPreviewDatabases(ctx, branch); err != nil && s.log != nil {
+		s.log.Warn("environment branch reset kept its empty databases", "environment_id", branch.EnvironmentID, "err", err)
+	}
 	response, problem := s.branchProjectEnvironment(ctx, store, acct, project, spec)
 	if problem != nil {
 		// The old branch is gone; say so, so the caller creates it again.
@@ -368,4 +381,44 @@ func (s *server) resetProjectEnvironmentBranch(w http.ResponseWriter, r *http.Re
 func environmentBranchResetTTL(branch state.ProjectEnvironmentBranch) time.Duration {
 	ttl := branch.ExpiresAt.Sub(branch.CreatedAt).Round(time.Second)
 	return min(max(ttl, api.EnvironmentBranchMinTTL), api.EnvironmentBranchMaxTTL)
+}
+
+// describeUnservedEnvironmentBranchWorkload fills in a workload with no live
+// deployment from the branch's newest deployment of it. Activation only
+// waits for the branch's data, so a deployment that has its data and is
+// still not live after api.EnvironmentBranchActivationStall is reported
+// rather than shown as starting forever.
+func (s *server) describeUnservedEnvironmentBranchWorkload(ctx context.Context, branch state.ProjectEnvironmentBranch, appID string, workload *api.ProjectEnvironmentBranchWorkload, now time.Time) error {
+	reader, ok := s.store.(interface {
+		LatestDeploymentForScope(context.Context, string, string) (state.Deployment, error)
+	})
+	if !ok {
+		return nil
+	}
+	latest, err := reader.LatestDeploymentForScope(ctx, appID, branch.Slug)
+	if errors.Is(err, state.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if latest.CreatedAt.Before(branch.CreatedAt) {
+		return nil // an earlier incarnation's deployment
+	}
+	workload.DeploymentID = latest.ID
+	switch {
+	case latest.Status == state.DeployFailed:
+		workload.Status = string(latest.Status)
+		workload.Error = latest.Error
+		if workload.Error == "" {
+			workload.Error = "the branch deployment failed"
+		}
+		if latest.ErrorCode != "" {
+			workload.Error = latest.ErrorCode + ": " + workload.Error
+		}
+	case branch.DataState == state.EnvironmentBranchDataReady && now.Sub(latest.CreatedAt) > api.EnvironmentBranchActivationStall:
+		workload.Error = fmt.Sprintf("the branch deployment has not gone live after %s (status %s); reset the branch to try again, or contact support if it persists",
+			api.EnvironmentBranchActivationStall, latest.Status)
+	}
+	return nil
 }

@@ -56,13 +56,13 @@ WHERE account_id = sqlc.arg(account_id)::uuid AND day < sqlc.arg(before)::date;
 -- name: CreateFlagExperiment :one
 INSERT INTO flag_experiments (id, account_id, project_id, environment_id, key, flag_key, rule_id, control,
     metric_event, metric_kind, mixing_lift, weights, guardrails, created_by, metric_definition, cuped,
-    unit, layer, traffic, allocation, denominator_event, percentile)
+    unit, layer, traffic, allocation, denominator_event, percentile, notify_channel_ids)
 SELECT sqlc.arg(id)::uuid, sqlc.arg(account_id)::uuid, sqlc.arg(project_id)::uuid, sqlc.arg(environment_id)::uuid,
     sqlc.arg(key)::text, sqlc.arg(flag_key)::text, sqlc.arg(rule_id)::text, sqlc.arg(control)::text,
     sqlc.arg(metric_event)::text, sqlc.arg(metric_kind)::text, sqlc.arg(mixing_lift)::double precision, sqlc.arg(weights)::jsonb,
     sqlc.arg(guardrails)::jsonb, sqlc.arg(created_by)::text, sqlc.arg(metric_definition)::jsonb, sqlc.arg(cuped)::boolean,
     sqlc.arg(unit)::text, sqlc.arg(layer)::text, sqlc.arg(traffic)::int, sqlc.arg(allocation)::text,
-    sqlc.arg(denominator_event)::text, sqlc.arg(percentile)::int
+    sqlc.arg(denominator_event)::text, sqlc.arg(percentile)::int, sqlc.arg(notify_channel_ids)::uuid[]
 WHERE (SELECT count(*) FROM flag_experiments x WHERE x.environment_id = sqlc.arg(environment_id)::uuid) < sqlc.arg(max_experiments)::bigint
 RETURNING *;
 

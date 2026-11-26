@@ -2,7 +2,9 @@
 // for the stable problem `code` values the API returns. Each entry comes from
 // the places the code's problem is built: the HTTP status, the title and hint
 // written there (the strings a customer receives) and the docs page it links
-// to. docs/error-codes-unpublished.txt leaves out the codes of areas whose
+// to. A code no call site titles or hints takes them from its pkg/whycopy
+// row, which is what such a problem carries to the customer.
+// docs/error-codes-unpublished.txt leaves out the codes of areas whose
 // docs are not published yet.
 //
 //	make error-codes-md
@@ -24,6 +26,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/docsmarkers"
+	"github.com/onebox-faas/faas/pkg/whycopy"
 )
 
 const (
@@ -33,7 +36,7 @@ const (
 
 	maxTitles = 3
 	maxHints  = 2
-	maxLinks  = 3
+	maxLinks  = 4
 	// More statuses than this read as noise; the entry says they vary.
 	maxStatuses = 3
 	// A code built with more distinct titles than this is a generic one
@@ -44,6 +47,9 @@ const (
 )
 
 var codeRE = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+
+// whycopyRow looks up the customer explanation catalog; tests replace it.
+var whycopyRow = whycopy.Lookup
 
 func main() {
 	if err := run(".", os.Stdout); err != nil {
@@ -150,6 +156,17 @@ func aggregate(c *collection, pg pages) map[string]*entry {
 		if len(e.statuses) == 0 {
 			if st := customerStatus(api.StatusForCode(code)); st != 0 && st != 500 {
 				e.statuses[st] = 0
+			}
+		}
+		// A code no call site titles or hints is built away from apid (a
+		// build, deploy or gateway failure) and reaches customers through
+		// its whycopy row, which Decorate copies onto the problem.
+		if row, ok := whycopyRow(code); ok {
+			if len(e.titles) == 0 && row.Title != "" {
+				e.titles[row.Title] = 0
+			}
+			if len(e.hints) == 0 && row.Hint != "" {
+				e.hints[row.Hint] = 0
 			}
 		}
 		// Pages that name the code in backticks explain it.
@@ -423,7 +440,23 @@ func render(entries map[string]*entry, ex *exclusions) string {
 	b.WriteString("A real response's `detail` adds the specifics, such as the observed value, the limit or the field that failed.\n\n")
 	b.WriteString("The list is generated from the code that builds each error, so a new code appears here when it ships. ")
 	b.WriteString("Codes for features whose docs are not published yet are left out. ")
-	b.WriteString("Each code's name is its anchor: link to `error-codes#plan_limit_apps`, for example.\n")
+	b.WriteString("Each code's name is its anchor: link to `error-codes#plan_limit_apps`, for example.\n\n")
+	b.WriteString("If you are fixing a failure rather than looking up one code, start with [the common codes](errors.md#common-codes), which group the frequent ones by what went wrong, ")
+	b.WriteString("or [Troubleshooting](troubleshooting.md), which goes by symptom.\n")
+
+	var letters []string
+	for _, code := range codes {
+		if l := strings.ToUpper(code[:1]); len(letters) == 0 || letters[len(letters)-1] != l {
+			letters = append(letters, l)
+		}
+	}
+	if len(letters) > 0 {
+		jump := make([]string, len(letters))
+		for i, l := range letters {
+			jump[i] = fmt.Sprintf("[%s](#%s)", l, strings.ToLower(l))
+		}
+		fmt.Fprintf(&b, "\nJump to: %s\n", strings.Join(jump, " · "))
+	}
 
 	letter := ""
 	for _, code := range codes {

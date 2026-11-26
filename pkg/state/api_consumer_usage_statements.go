@@ -29,6 +29,12 @@ type APIConsumerUsageStatementStore interface {
 	FinalizeAPIConsumerUsageStatement(context.Context, string, string, string, string) (APIConsumerUsageStatement, bool, error)
 }
 
+// ReviewedAPIConsumerStatementStore finalizes a statement only if the amount
+// due after applying credits still matches the owner's review.
+type ReviewedAPIConsumerStatementStore interface {
+	FinalizeReviewedAPIConsumerUsageStatement(ctx context.Context, accountID, appID, consumerID, statementID string, due int64) (APIConsumerUsageStatement, bool, error)
+}
+
 // APIConsumerUsageStatementHandoffStore is the persistence boundary for the
 // provider-neutral invoice handoff. It is optional so existing Store test
 // doubles remain source-compatible.
@@ -92,6 +98,9 @@ func validateAPIConsumerUsageStatementInput(input APIConsumerUsageStatementInput
 	if input.BillableUnits < 0 || input.UnpricedUnits < 0 || input.AmountMillicents < 0 {
 		return fmt.Errorf("consumer usage statement: totals must be non-negative")
 	}
+	if input.Waiver != nil && (input.Revision < 2 || input.PriorStatus != APIConsumerUsageStatementDraft) {
+		return ErrConflict
+	}
 	var units, unpriced, amount int64
 	for i, bucket := range input.Buckets {
 		if bucket.WindowStart.IsZero() || !bucket.WindowStart.Equal(bucket.WindowStart.UTC().Truncate(time.Minute)) {
@@ -104,6 +113,12 @@ func validateAPIConsumerUsageStatementInput(input APIConsumerUsageStatementInput
 			return fmt.Errorf("consumer usage statement: bucket %d has an unknown unit", i)
 		}
 		tiered := bucket.TierUnits != nil
+		if bucket.Model != "" {
+			meter, ok := AppMeterOfUnit(bucket.Unit)
+			if !ok || !ValidAppMeter(bucket.Model) || !ValidAppMeter(ModelMeterName(meter, bucket.Model)) || tiered {
+				return fmt.Errorf("consumer usage statement: bucket %d has an invalid model", i)
+			}
+		}
 		if bucket.BillableUnits < 0 || bucket.PriceMillicentsPerUnit < 0 || (bucket.AmountMillicents < 0 && !tiered) {
 			return fmt.Errorf("consumer usage statement: bucket %d values must be non-negative", i)
 		}
@@ -115,15 +130,19 @@ func validateAPIConsumerUsageStatementInput(input APIConsumerUsageStatementInput
 		if bucket.ChargedUnits != nil && *bucket.ChargedUnits < 0 {
 			return fmt.Errorf("consumer usage statement: bucket %d charged_units must be non-negative", i)
 		}
+		if bucket.WaivedUnits < 0 || bucket.WaivedUnits > bucket.BillableUnits ||
+			(bucket.WaivedUnits > 0 && (bucket.Model == "" || bucket.RateCardID != "" || bucket.Trial)) {
+			return fmt.Errorf("consumer usage statement: bucket %d has invalid waived units", i)
+		}
 		if bucket.RateCardID == "" {
 			if bucket.Currency != "" || bucket.PriceMillicentsPerUnit != 0 || bucket.AmountMillicents != 0 ||
 				(bucket.ChargedUnits != nil && *bucket.ChargedUnits != 0) {
 				return fmt.Errorf("consumer usage statement: bucket %d unpriced bucket has pricing fields", i)
 			}
-			if unpriced > maxAPIConsumerUsageStatementInt64-bucket.BillableUnits {
+			if unpriced > maxAPIConsumerUsageStatementInt64-(bucket.BillableUnits-bucket.WaivedUnits) {
 				return fmt.Errorf("consumer usage statement: unpriced units overflow")
 			}
-			unpriced += bucket.BillableUnits
+			unpriced += bucket.BillableUnits - bucket.WaivedUnits
 		} else {
 			if _, err := uuid.Parse(bucket.RateCardID); err != nil {
 				return fmt.Errorf("consumer usage statement: bucket %d rate_card_id must be a UUID: %w", i, err)
@@ -193,6 +212,7 @@ func sumStatementFees(fees []APIConsumerStatementFee, currency string) (int64, e
 
 func cloneAPIConsumerUsageStatement(statement APIConsumerUsageStatement) APIConsumerUsageStatement {
 	statement.Fees = slices.Clone(statement.Fees)
+	statement.Waiver = cloneAPIConsumerUsageWaiver(statement.Waiver)
 	statement.Buckets = append([]APIConsumerUsageStatementBucket(nil), statement.Buckets...)
 	for i := range statement.Buckets {
 		statement.Buckets[i].TierUnits = slices.Clone(statement.Buckets[i].TierUnits)
@@ -245,7 +265,7 @@ func sameAPIConsumerUsageStatementSnapshot(draft APIConsumerUsageStatement, inpu
 		a, b := draft.Buckets[i], input.Buckets[i]
 		if !a.WindowStart.Equal(b.WindowStart) || a.BillableUnits != b.BillableUnits || a.Charged() != b.Charged() || a.RateCardID != b.RateCardID ||
 			a.Currency != b.Currency || a.PriceMillicentsPerUnit != b.PriceMillicentsPerUnit || a.AmountMillicents != b.AmountMillicents ||
-			!slices.Equal(a.TierUnits, b.TierUnits) || a.Unit != b.Unit || a.Trial != b.Trial {
+			!slices.Equal(a.TierUnits, b.TierUnits) || a.Unit != b.Unit || a.Model != b.Model || a.Trial != b.Trial || a.WaivedUnits != b.WaivedUnits {
 			return false
 		}
 	}

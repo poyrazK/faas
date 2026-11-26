@@ -2,46 +2,14 @@
 
 Read application logs from the terminal, save the filters you use as named views, and query archived logs by instance and date.
 
-## Guided log filtering
+- Something just broke: [read logs for the latest failed deployment](#read-logs-for-the-latest-failed-deployment) or [find the latest HTTP server error](#find-the-latest-recorded-http-server-error).
+- [Filter logs](#filter-logs)
+- [Save and reuse log views](#save-and-reuse-log-views)
+- [Set a preferred view for a project](#set-a-preferred-view-for-a-project)
+- [Query archived logs](#query-archived-logs)
+- [Complete log commands in your shell](#complete-log-commands-in-your-shell)
 
-Run `gregale logs my-api --interactive` to choose runtime output or HTTP
-request events, a time window, and filters. Runtime queries offer log level,
-text matching, and optional following. HTTP queries offer an exact status code
-and route path and return up to 100 events.
-
-The flow prints an equivalent command for POSIX shells, then asks whether to
-run it. Declining leaves the command available to copy. App selection uses the
-explicit target, linked app, or the interactive app picker. `--app my-api` is
-also accepted.
-
-This mode requires terminal input and output and accepts only an app target
-alongside `--interactive`. Scripts and JSON output retain the existing source,
-time-window, and filter flags.
-
-## Saved log views
-
-Save frequently used filters and reuse them for any explicit or linked app:
-
-```sh
-gregale logs views save runtime-errors --since 1h --level error
-gregale logs my-api --view runtime-errors
-gregale logs --view runtime-errors
-gregale logs views list
-gregale logs views show runtime-errors
-gregale logs views delete runtime-errors
-```
-
-The guided `logs --interactive` flow also offers to save the chosen filters.
-Names use 1–64 lowercase letters, digits, underscores, or hyphens. Use
-`--replace` when saving over an existing name. Views require relative windows
-such as `15m`, `1h`, or `3d`, recalculated each time you run them.
-
-Views store filter text in `log-views.json` beside the CLI configuration, with
-file permissions restricted to the owner. They do not store app targets,
-credentials, or log output. Runtime views support level, text, and follow;
-HTTP views support status, route, and page size. Supply an app target and
-compatible one-off overrides alongside `--view`; add `--dry-run` to preview
-them without changing the saved view. Update the view to persist filter changes.
+Live tailing, retention and log drains are covered in [Logs](logs.md).
 
 ## Read logs for the latest failed deployment
 
@@ -96,7 +64,133 @@ payloads. JSON emits one selection receipt followed by the existing canonical
 HTTP log record. No matching row emits only the selection receipt. Reads make
 no writes, deployments, retries, or recovery actions.
 
-## Save a latest-request-error log view
+## Filter logs
+
+Run `gregale logs my-api --interactive` to choose runtime output or HTTP
+request events, a time window, and filters. Runtime queries offer log level,
+text matching, and optional following. HTTP queries offer an exact status code
+and route path and return up to 100 events.
+
+The flow prints an equivalent command for POSIX shells, then asks whether to
+run it. Declining leaves the command available to copy. App selection uses the
+explicit target, linked app, or the interactive app picker. `--app my-api` is
+also accepted.
+
+This mode requires terminal input and output and accepts only an app target
+alongside `--interactive`. Scripts and JSON output retain the existing source,
+time-window, and filter flags.
+
+### Preview a log query offline
+
+Use `logs --view errors --dry-run` or
+`logs --app my-api --source http --status 500 --since 1h --dry-run` to inspect
+the effective app, source, and validated filters without authentication or
+remote reads. Human and JSON output distinguish explicit flags/names, saved
+view filters, linked app targeting, CLI defaults, and inferred selection rules.
+Saved views accept an app target, `--dry-run`, and compatible one-off
+filter overrides. No interactive picker is opened by a preview.
+Logs are app-scoped: a linked environment does not filter these queries.
+Runtime lookbacks are normalized to timestamps; HTTP lookbacks retain their
+query duration. Deployment revisions/latest references, server defaults,
+retention, and runtime/build-log routing remain unresolved. Archive and
+latest-failure/latest-request-error selectors can also be previewed without
+selecting remote records. JSON includes dry_run, app, profile, environment_scope,
+mode, source, filters, setting_sources, notes, and optional saved view metadata.
+The existing log-query validation still applies. Omit `--dry-run` to execute
+the query through its existing path.
+
+### Inspect the configured connection in log previews
+
+`logs --view errors --dry-run` now includes configured profile/API details
+with their sources, including a `GREGALE_API_URL` override. JSON adds `connection`
+with profile, profile_source, api_base, api_source, verified (false), and
+address_redacted, while preserving the existing profile field.
+The same shared offline formatter is used by Job previews. API URL credentials,
+query strings, and fragments are hidden; malformed addresses are not displayed.
+Configuration is not changed, and no credentials, app access, API health, or
+remote logs are checked. Runtime, HTTP, archive, and latest-error previews all
+include this metadata. Copyable commands retain their existing profile targeting
+and API-environment-override behavior.
+
+### Override saved log filters for one query
+
+`logs --view errors --since 15m --dry-run` uses the saved view with an explicit
+window override. Remove `--dry-run` to execute the same effective query; the
+saved view is never rewritten. Runtime views support since, grep, level, and
+follow overrides; ordinary HTTP views support since, route, status, and limit.
+Latest-request-error views support only since and route. App targeting remains
+independent. View source and selection type cannot be changed.
+Explicit empty `--grep=`, `--level=`, or `--route=` clears that filter for
+this query; `--follow=false` disables saved follow mode. Existing query validation
+still applies, including HTTP status 100..599 and page limits 1..200. Temporary
+windows may use RFC3339 timestamps as well as relative durations. Previews mark
+overridden values as explicit_flag while inherited filters remain saved_view.
+
+### Temporarily remove a saved HTTP status filter
+
+`logs --view http-errors --clear-status --dry-run` previews the saved query
+without restricting it to the saved status code. Remove `--dry-run` to query
+all statuses with the remaining filters. The saved view is unchanged.
+`--clear-status` requires an ordinary HTTP view, excludes explicit `--status`,
+and is unavailable for runtime or latest-request-error views.
+`--clear-status=false` keeps the saved status filter. Clearing an already
+unfiltered HTTP view is valid. Preview JSON marks status as explicit_flag,
+uses `filters.status: 0` for no status restriction, and adds
+`view.cleared_filters: ["status"]`; human output labels it as all HTTP statuses.
+
+### Clear saved text filters for one log query
+
+`logs --view errors --clear-grep --clear-level --dry-run` removes saved
+text and level restrictions from the preview. `--clear-route` removes a saved
+route restriction from ordinary HTTP or latest-request-error views.
+These options require a compatible saved view, conflict with their corresponding
+explicit filter flags, and leave the saved file unchanged. False clear flags
+leave the saved filters in place. Clearing an already-empty filter is valid.
+Preview JSON lists cleared fields under `view.cleared_filters`, with empty
+filter values marked explicit_flag; human output labels the cleared restrictions.
+Empty overrides such as `--grep=` still work. Omit `--dry-run` to query through
+the same validated path with the saved restrictions removed for that invocation.
+
+### Copy the effective log query from a preview
+
+Log previews now include a POSIX-shell quoted `query_command` in JSON and
+a copyable human command. It pins the app and selected profile, expands
+saved filters, applies overrides/clears, and omits view, clear, and dry-run
+flags. Changes to the saved view cannot change the copied query’s filters.
+Relative windows stay relative and are recalculated when the command is run;
+explicit timestamps and unresolved deployment references are preserved.
+Runtime, HTTP, archive, and latest-error selectors keep their query mode.
+The command uses the selected profile’s configured connection with any API
+environment override still applying; no connection or remote resource is
+verified by the preview. Commands are shown for review and never executed
+automatically.
+
+## Save and reuse log views
+
+Save frequently used filters and reuse them for any explicit or linked app:
+
+```sh
+gregale logs views save runtime-errors --since 1h --level error
+gregale logs my-api --view runtime-errors
+gregale logs --view runtime-errors
+gregale logs views list
+gregale logs views show runtime-errors
+gregale logs views delete runtime-errors
+```
+
+The guided `logs --interactive` flow also offers to save the chosen filters.
+Names use 1–64 lowercase letters, digits, underscores, or hyphens. Use
+`--replace` when saving over an existing name. Views require relative windows
+such as `15m`, `1h`, or `3d`, recalculated each time you run them.
+
+Views store filter text in `log-views.json` beside the CLI configuration, with
+file permissions restricted to the owner. They do not store app targets,
+credentials, or log output. Runtime views support level, text, and follow;
+HTTP views support status, route, and page size. Supply an app target and
+compatible one-off overrides alongside `--view`; add `--dry-run` to preview
+them without changing the saved view. Update the view to persist filter changes.
+
+### Save a latest-request-error log view
 
 Create a reusable error search with
 `gregale logs views save recent-server-errors --latest-request-error --since 1h --route /checkout`.
@@ -115,7 +209,7 @@ not a second defaults file. Human execution identifies the saved view and
 filters; normal selection output reports the effective retained window. JSON
 keeps the latest-error selection receipt and canonical HTTP log record.
 
-## Understand and run saved log views from the list
+### Understand and run saved log views from the list
 
 `gregale logs views list` now describes each saved view's purpose: runtime logs,
 HTTP requests, or latest HTTP error. The human list shows the relative window
@@ -129,7 +223,7 @@ The sorted JSON list remains an array of names for compatibility. Use
 Existing empty-list guidance, storage, and show/save/delete behavior remain
 unchanged. Relative windows are recalculated when the view is run.
 
-## Update one saved log-view filter
+### Update one saved log-view filter
 
 `gregale logs views update recent-server-errors --since 3h` changes the saved
 window while preserving its selector, route, and omitted settings. Update
@@ -150,7 +244,7 @@ changed views are re-read before the atomic private write to detect intervening
 edits. Updating performs no API requests and never executes a view. Existing
 save, show, list, delete, and JSON-list compatibility remain unchanged.
 
-## Preview a saved log-view update
+### Preview a saved log-view update
 
 `gregale logs views update recent-server-errors --since 3h --dry-run` validates
 the proposed view and shows its before/after filters and resulting run command,
@@ -166,7 +260,7 @@ saved definition during a preview. It preserves the selected profile explicitly,
 uses the linked app, and can take `--app APP_SLUG` for an explicit target.
 Nothing executes automatically. Remove `--dry-run` from the update to save it.
 
-## Rename a saved log view
+### Rename a saved log view
 
 `gregale logs views rename recent-server-errors production-errors` moves the
 existing definition to an unused name, preserving every selector and filter.
@@ -180,201 +274,7 @@ app; add `--app APP_SLUG` to select one explicitly. No app or environment is
 changed by naming a view, and no log query or API request occurs. Existing
 show/list/update/delete commands use the new name after a successful rename.
 
-## Preview a log query offline
-
-Use `logs --view errors --dry-run` or
-`logs --app my-api --source http --status 500 --since 1h --dry-run` to inspect
-the effective app, source, and validated filters without authentication or
-remote reads. Human and JSON output distinguish explicit flags/names, saved
-view filters, linked app targeting, CLI defaults, and inferred selection rules.
-Saved views accept an app target, `--dry-run`, and compatible one-off
-filter overrides. No interactive picker is opened by a preview.
-Logs are app-scoped: a linked environment does not filter these queries.
-Runtime lookbacks are normalized to timestamps; HTTP lookbacks retain their
-query duration. Deployment revisions/latest references, server defaults,
-retention, and runtime/build-log routing remain unresolved. Archive and
-latest-failure/latest-request-error selectors can also be previewed without
-selecting remote records. JSON includes dry_run, app, profile, environment_scope,
-mode, source, filters, setting_sources, notes, and optional saved view metadata.
-The existing log-query validation still applies. Omit `--dry-run` to execute
-the query through its existing path.
-
-## Override saved log filters for one query
-
-`logs --view errors --since 15m --dry-run` uses the saved view with an explicit
-window override. Remove `--dry-run` to execute the same effective query; the
-saved view is never rewritten. Runtime views support since, grep, level, and
-follow overrides; ordinary HTTP views support since, route, status, and limit.
-Latest-request-error views support only since and route. App targeting remains
-independent. View source and selection type cannot be changed.
-Explicit empty `--grep=`, `--level=`, or `--route=` clears that filter for
-this query; `--follow=false` disables saved follow mode. Existing query validation
-still applies, including HTTP status 100..599 and page limits 1..200. Temporary
-windows may use RFC3339 timestamps as well as relative durations. Previews mark
-overridden values as explicit_flag while inherited filters remain saved_view.
-
-## Temporarily remove a saved HTTP status filter
-
-`logs --view http-errors --clear-status --dry-run` previews the saved query
-without restricting it to the saved status code. Remove `--dry-run` to query
-all statuses with the remaining filters. The saved view is unchanged.
-`--clear-status` requires an ordinary HTTP view, excludes explicit `--status`,
-and is unavailable for runtime or latest-request-error views.
-`--clear-status=false` keeps the saved status filter. Clearing an already
-unfiltered HTTP view is valid. Preview JSON marks status as explicit_flag,
-uses `filters.status: 0` for no status restriction, and adds
-`view.cleared_filters: ["status"]`; human output labels it as all HTTP statuses.
-
-## Clear saved text filters for one log query
-
-`logs --view errors --clear-grep --clear-level --dry-run` removes saved
-text and level restrictions from the preview. `--clear-route` removes a saved
-route restriction from ordinary HTTP or latest-request-error views.
-These options require a compatible saved view, conflict with their corresponding
-explicit filter flags, and leave the saved file unchanged. False clear flags
-leave the saved filters in place. Clearing an already-empty filter is valid.
-Preview JSON lists cleared fields under `view.cleared_filters`, with empty
-filter values marked explicit_flag; human output labels the cleared restrictions.
-Empty overrides such as `--grep=` still work. Omit `--dry-run` to query through
-the same validated path with the saved restrictions removed for that invocation.
-
-## Copy the effective log query from a preview
-
-Log previews now include a POSIX-shell quoted `query_command` in JSON and
-a copyable human command. It pins the app and selected profile, expands
-saved filters, applies overrides/clears, and omits view, clear, and dry-run
-flags. Changes to the saved view cannot change the copied query’s filters.
-Relative windows stay relative and are recalculated when the command is run;
-explicit timestamps and unresolved deployment references are preserved.
-Runtime, HTTP, archive, and latest-error selectors keep their query mode.
-The command uses the selected profile’s configured connection with any API
-environment override still applying; no connection or remote resource is
-verified by the preview. Commands are shown for review and never executed
-automatically.
-
-## Validate archived-log instance IDs before querying
-
-Archive queries and `--dry-run` previews validate `--instance` locally using
-the server’s exact format: 1..128 ASCII letters, numbers, dots, underscores,
-or hyphens. IDs do not have to be UUIDs. Spaces, slashes, non-ASCII characters,
-and longer IDs fail with format guidance before app selection, authentication,
-or network access. The instance value is not trimmed or rewritten; valid
-IDs and UTC-date behavior are unchanged. Local format validation does not
-establish instance ownership, archive availability, or retention.
-
-## Use UTC archive date shortcuts
-
-`logs --archive --instance INSTANCE --date yesterday --dry-run` resolves the
-previous UTC day locally. `--date today` selects the current UTC day.
-Previews show the resolved `YYYY-MM-DD` date, and the copyable query command
-pins that date rather than retaining the shortcut. Without a preview, the
-shortcut resolves when the query starts. Local timezone settings do not change
-the result. Existing explicit `YYYY-MM-DD` dates remain supported and validated;
-invalid dates fail before authentication or network access. Format validation
-does not establish archive availability or retention.
-
-## Preview archives from the instance history list
-
-`ps --all` now includes copyable archive-preview commands for each instance
-with a valid archive ID. Each command pins the app and current profile and
-uses `--date yesterday --dry-run`; running the preview resolves the previous
-UTC day locally without reading an archive. Instance listing does not establish
-archive availability, retention, or plan access.
-JSON remains NDJSON and preserves existing instance fields, adding
-`archive_preview_command` and `archive_availability: "not_checked"` when
-`--all` is used. Commands are omitted for IDs or app targets that fail archive
-query validation. Ordinary `ps` output, empty-list behavior, and the history
-cap are unchanged. The listing makes no additional API calls and executes
-none of the suggested commands.
-
-## Complete filters compatible with the selected log view
-
-After `logs --view errors --`, shell completion reads the selected view locally
-and suggests compatible runtime or HTTP filters and clear flags. Latest-error
-views suggest only since/route filters plus app, view, and dry-run options.
-Both `--view NAME` and `--view=NAME` work; repeated selectors use the last name.
-Flag values are consumed as data and are not treated as view selectors.
-Unknown, missing, malformed, or unreadable saved views fall back to ordinary
-completion. Value completion remains unchanged. Bash, Zsh, Fish, and PowerShell
-use the shared local helper; no credentials or remote API calls are needed.
-Reload or regenerate the Fish completion script to enable its static-flag
-suppression rule for recognized saved-view flag positions.
-
-## Avoid conflicting log-view options during completion
-
-Saved-view flag completion now omits a filter when its clear flag is enabled,
-and omits the corresponding clear flag when the filter was explicitly provided.
-This applies to grep, level, route, and status. Explicit empty filter values
-count as supplied. `--clear-grep=false` allows grep suggestions again; repeated
-clear flags use their last boolean value, matching command parsing.
-Only completed flags are considered, and values that resemble flags remain
-data. Saved filters alone do not suppress overrides or clears. Command-side
-validation remains authoritative, and completion stays offline.
-
-## Preview directly from saved-view listings
-
-`logs views list` now shows a copyable preview command beside each query
-command, for example `gregale --profile default logs --view errors --dry-run`.
-Listing is offline and never runs the suggested commands. Previews use the
-linked app or an explicit app override and do not verify remote access.
-`gregale --json logs views list --details` returns sorted objects with name,
-view, run_command, and preview_command. The existing JSON names array remains
-the default (`--details=false` also retains it). Empty detailed listings are
-empty arrays. Each command retains the selected connection profile.
-
-## Target saved-view listing commands at an app
-
-`logs views list --app my-api` includes the explicit app in each query and
-preview command, without resolving project links or calling the API.
-`--app` must be a valid nonempty slug; it is not saved into the view.
-`--details` JSON entries add the explicit app (when supplied) and
-`app_verified: false`. The default JSON names array remains unchanged even
-with `--app`. Without the flag, generated commands retain their existing
-linked-app behavior. Listing and preview do not establish app existence or access.
-
-## Complete the app target in a saved-view listing
-
-`logs views list --app <TAB>` and `logs views list --app=prefix<TAB>` now
-use the shared local completion helper to suggest cached app slugs. The inline
-form retains the `--app=` prefix. Suggestions are validated, sorted, and
-deduplicated; `--details` may precede app targeting.
-The current connection’s credential-bound cache is used, or the explicit
-`FAAS_COMPLETION_CACHE_PATH` override. No remote refresh or app verification
-is performed. Missing, unreadable, malformed, oversized, or unsupported-version
-caches produce no suggestions. The context probe does not read the cache.
-Reload generated completion scripts, especially Fish, for the updated rules.
-
-## Inspect one view with targeted preview guidance
-
-`logs views show errors --app my-api` shows saved filters plus copyable query
-and preview commands for that explicit, unverified app. Without `--app`, the
-commands use linked-app targeting. App flags may precede or follow the view
-name and are validated locally; no API calls or saved-file changes occur.
-`--details` JSON uses the same name/view/app/app_verified/run_command/
-preview_command fields as detailed listings. The default JSON saved-filter
-object is unchanged, including when an app target is supplied. Unknown-name
-corrections retain app targeting and details options.
-
-## Complete a view name after show options
-
-`logs views show --app my-api --details <TAB>` now completes saved view
-names after the completed options. Inline app values and boolean details
-values work too; an unfinished app value is left to app completion.
-Only the first view-name position is completed. Option values are consumed
-as data, so flag-looking values cannot become options or view names.
-The existing name-first form remains supported. Completion stays offline,
-and its context probe does not read saved files.
-
-## Complete app targets while inspecting one saved view
-
-`logs views show errors --app=prefix<TAB>` and the spaced `--app <TAB>` form
-now share the listing’s bounded, validated local cache reader. Options may
-appear before or after the view name, and `--details` is supported. The helper
-accepts at most one completed view name and consumes app values as data.
-Cache isolation, sorted/deduplicated suggestions, missing/invalid-cache behavior,
-and the read-free context probe are unchanged. Completion performs no API calls.
-
-## Find saved views by log source
+### Find saved views by log source
 
 `logs views list --source http --app my-api` lists only HTTP views, including
 latest-request-error views. `--source runtime` selects runtime views. Filtering
@@ -385,7 +285,7 @@ Only runtime/http are accepted, and empty matches remain valid empty arrays
 with explanatory human guidance. Listing remains offline; the full saved store
 is still validated. App completion continues to work after source options.
 
-## Find saved log views by part of their name
+### Find saved log views by part of their name
 
 `logs views list --name checkout` selects views whose names contain that
 literal, case-sensitive text. Combine it with --source, --app, and --details;
@@ -396,20 +296,39 @@ filters are rejected; omit --name to list without a name filter. Repeated
 filters use their last value. Listing remains offline and read-only, and
 app completion works after completed name filters.
 
-## Inspect the configured connection in log previews
+### Preview directly from saved-view listings
 
-`logs --view errors --dry-run` now includes configured profile/API details
-with their sources, including a `FAAS_API` override. JSON adds `connection`
-with profile, profile_source, api_base, api_source, verified (false), and
-address_redacted, while preserving the existing profile field.
-The same shared offline formatter is used by Job previews. API URL credentials,
-query strings, and fragments are hidden; malformed addresses are not displayed.
-Configuration is not changed, and no credentials, app access, API health, or
-remote logs are checked. Runtime, HTTP, archive, and latest-error previews all
-include this metadata. Copyable commands retain their existing profile targeting
-and API-environment-override behavior.
+`logs views list` now shows a copyable preview command beside each query
+command, for example `gregale --profile default logs --view errors --dry-run`.
+Listing is offline and never runs the suggested commands. Previews use the
+linked app or an explicit app override and do not verify remote access.
+`gregale --json logs views list --details` returns sorted objects with name,
+view, run_command, and preview_command. The existing JSON names array remains
+the default (`--details=false` also retains it). Empty detailed listings are
+empty arrays. Each command retains the selected connection profile.
 
-## Reuse a project-specific preferred log view
+### Target saved-view listing commands at an app
+
+`logs views list --app my-api` includes the explicit app in each query and
+preview command, without resolving project links or calling the API.
+`--app` must be a valid nonempty slug; it is not saved into the view.
+`--details` JSON entries add the explicit app (when supplied) and
+`app_verified: false`. The default JSON names array remains unchanged even
+with `--app`. Without the flag, generated commands retain their existing
+linked-app behavior. Listing and preview do not establish app existence or access.
+
+### Inspect one view with targeted preview guidance
+
+`logs views show errors --app my-api` shows saved filters plus copyable query
+and preview commands for that explicit, unverified app. Without `--app`, the
+commands use linked-app targeting. App flags may precede or follow the view
+name and are validated locally; no API calls or saved-file changes occur.
+`--details` JSON uses the same name/view/app/app_verified/run_command/
+preview_command fields as detailed listings. The default JSON saved-filter
+object is unchanged, including when an app target is supplied. Unknown-name
+corrections retain app targeting and details options.
+
+## Set a preferred view for a project
 
 Configure an existing saved view with `logs defaults set errors`, then preview
 it with `logs --saved-view --dry-run`. `logs defaults show` reports the stored
@@ -431,7 +350,7 @@ filters and do not depend on the preference. Local configuration summaries
 include the new defaults file. Default-set name completion and saved-view
 compatible flag completion use local files only.
 
-## Check the preferred view reference before querying
+### Check the preferred view reference before querying
 
 `logs defaults show` now reports whether the preferred view exists in the
 local saved-view store, its source and latest-error mode, and the saved-view
@@ -455,7 +374,7 @@ store path, inspection command, and replacement template when applicable.
 Missing optional preferences remain successful, and invalid preference files
 retain their existing validation guidance. This check is offline and read-only.
 
-## Preview a preferred log view before saving
+### Preview a preferred log view before saving
 
 Run `gregale logs defaults set errors --dry-run` to inspect the resolved
 preference path, before/after view names, and selected filters without writing
@@ -468,23 +387,7 @@ malformed or unsafe preference files must be reviewed before previewing.
 The command reads local configuration only and does not check remote app access
 or guarantee that the destination is writable. Omit `--dry-run` to save.
 
-## Show only local configuration problems
-
-Use `gregale config context get --local-config --problems-only` for a compact check of
-invalid configuration files, broken preferred-log-view references, and damaged
-or incompletely scanned recovery stores. The same full offline validation runs
-before filtering, and the exit status is unchanged. Missing optional files and
-healthy entries are omitted. A healthy project prints “No local configuration
-problems found”; remote resources and health are still not checked.
-
-JSON includes `problems_only: true`, the project `root`, the overall `valid`
-result, and a `files` array containing only problem entries. `recovery_records`
-is included only when that store has a problem. Healthy reports contain an
-empty `files` array. Inspection and explicit repair guidance is retained, and
-no files are changed. `--problems-only` requires `--local-config`; omit it for
-the complete inventory.
-
-## Preview clearing a preferred log view
+### Preview clearing a preferred log view
 
 `gregale logs defaults clear --dry-run` shows the resolved preference path,
 current view name, and the effect of removing the preference. It does not
@@ -498,7 +401,7 @@ remove a malformed regular preference file. Omit `--dry-run` to remove the
 preference; saved views remain available via `logs --view NAME`. All preview
 checks are offline and read-only.
 
-## Inspect preferred log filters in one command
+### Inspect preferred log filters in one command
 
 `gregale logs defaults show` now includes the preferred view's current saved
 filters: its relative time window and active runtime or HTTP filters. The
@@ -517,3 +420,123 @@ slug is validated locally; existence and access are not checked. JSON adds
 and broken references still omit preview commands, while retaining the requested
 target metadata. App completion uses the existing local cache for spaced and
 inline `--app` values. All inspection remains offline and read-only.
+
+### Show only local configuration problems
+
+Use `gregale config context get --local-config --problems-only` for a compact check of
+invalid configuration files, broken preferred-log-view references, and damaged
+or incompletely scanned recovery stores. The same full offline validation runs
+before filtering, and the exit status is unchanged. Missing optional files and
+healthy entries are omitted. A healthy project prints “No local configuration
+problems found”; remote resources and health are still not checked.
+
+JSON includes `problems_only: true`, the project `root`, the overall `valid`
+result, and a `files` array containing only problem entries. `recovery_records`
+is included only when that store has a problem. Healthy reports contain an
+empty `files` array. Inspection and explicit repair guidance is retained, and
+no files are changed. `--problems-only` requires `--local-config`; omit it for
+the complete inventory.
+
+## Query archived logs
+
+When an instance stops, its lines move to the log archive. Read one
+instance's archived lines for one UTC day with
+`gregale logs my-api --archive --instance INSTANCE --date YYYY-MM-DD`, and
+list instance IDs with `gregale app instances my-api --all`. See
+[Reading one archived day](logs.md#reading-one-archived-day) for the full command.
+
+### Validate archived-log instance IDs before querying
+
+Archive queries and `--dry-run` previews validate `--instance` locally using
+the server’s exact format: 1..128 ASCII letters, numbers, dots, underscores,
+or hyphens. IDs do not have to be UUIDs. Spaces, slashes, non-ASCII characters,
+and longer IDs fail with format guidance before app selection, authentication,
+or network access. The instance value is not trimmed or rewritten; valid
+IDs and UTC-date behavior are unchanged. Local format validation does not
+establish instance ownership, archive availability, or retention.
+
+### Use UTC archive date shortcuts
+
+`logs --archive --instance INSTANCE --date yesterday --dry-run` resolves the
+previous UTC day locally. `--date today` selects the current UTC day.
+Previews show the resolved `YYYY-MM-DD` date, and the copyable query command
+pins that date rather than retaining the shortcut. Without a preview, the
+shortcut resolves when the query starts. Local timezone settings do not change
+the result. Existing explicit `YYYY-MM-DD` dates remain supported and validated;
+invalid dates fail before authentication or network access. Format validation
+does not establish archive availability or retention.
+
+### Preview archives from the instance history list
+
+`ps --all` now includes copyable archive-preview commands for each instance
+with a valid archive ID. Each command pins the app and current profile and
+uses `--date yesterday --dry-run`; running the preview resolves the previous
+UTC day locally without reading an archive. Instance listing does not establish
+archive availability, retention, or plan access.
+JSON remains NDJSON and preserves existing instance fields, adding
+`archive_preview_command` and `archive_availability: "not_checked"` when
+`--all` is used. Commands are omitted for IDs or app targets that fail archive
+query validation. Ordinary `ps` output, empty-list behavior, and the history
+cap are unchanged. The listing makes no additional API calls and executes
+none of the suggested commands.
+
+## Complete log commands in your shell
+
+Shell completion for `gregale logs` reads your saved views locally, so it
+suggests only flags and names that fit the command so far. It needs no
+credentials or network access.
+
+### Complete filters compatible with the selected log view
+
+After `logs --view errors --`, shell completion reads the selected view locally
+and suggests compatible runtime or HTTP filters and clear flags. Latest-error
+views suggest only since/route filters plus app, view, and dry-run options.
+Both `--view NAME` and `--view=NAME` work; repeated selectors use the last name.
+Flag values are consumed as data and are not treated as view selectors.
+Unknown, missing, malformed, or unreadable saved views fall back to ordinary
+completion. Value completion remains unchanged. Bash, Zsh, Fish, and PowerShell
+use the shared local helper; no credentials or remote API calls are needed.
+Reload or regenerate the Fish completion script to enable its static-flag
+suppression rule for recognized saved-view flag positions.
+
+### Avoid conflicting log-view options during completion
+
+Saved-view flag completion now omits a filter when its clear flag is enabled,
+and omits the corresponding clear flag when the filter was explicitly provided.
+This applies to grep, level, route, and status. Explicit empty filter values
+count as supplied. `--clear-grep=false` allows grep suggestions again; repeated
+clear flags use their last boolean value, matching command parsing.
+Only completed flags are considered, and values that resemble flags remain
+data. Saved filters alone do not suppress overrides or clears. Command-side
+validation remains authoritative, and completion stays offline.
+
+### Complete the app target in a saved-view listing
+
+`logs views list --app <TAB>` and `logs views list --app=prefix<TAB>` now
+use the shared local completion helper to suggest cached app slugs. The inline
+form retains the `--app=` prefix. Suggestions are validated, sorted, and
+deduplicated; `--details` may precede app targeting.
+The current connection’s credential-bound cache is used, or the explicit
+`FAAS_COMPLETION_CACHE_PATH` override. No remote refresh or app verification
+is performed. Missing, unreadable, malformed, oversized, or unsupported-version
+caches produce no suggestions. The context probe does not read the cache.
+Reload generated completion scripts, especially Fish, for the updated rules.
+
+### Complete a view name after show options
+
+`logs views show --app my-api --details <TAB>` now completes saved view
+names after the completed options. Inline app values and boolean details
+values work too; an unfinished app value is left to app completion.
+Only the first view-name position is completed. Option values are consumed
+as data, so flag-looking values cannot become options or view names.
+The existing name-first form remains supported. Completion stays offline,
+and its context probe does not read saved files.
+
+### Complete app targets while inspecting one saved view
+
+`logs views show errors --app=prefix<TAB>` and the spaced `--app <TAB>` form
+now share the listing’s bounded, validated local cache reader. Options may
+appear before or after the view name, and `--details` is supported. The helper
+accepts at most one completed view name and consumes app values as data.
+Cache isolation, sorted/deduplicated suggestions, missing/invalid-cache behavior,
+and the read-free context probe are unchanged. Completion performs no API calls.

@@ -18,7 +18,7 @@ import (
 //
 // The token lives in three places, in priority order:
 //
-//  1. $FAAS_TOKEN (CI / scripts).
+//  1. $GREGALE_TOKEN, or the earlier name $FAAS_TOKEN (CI / scripts).
 //  2. The OS keychain (macOS Keychain / Linux libsecret via D-Bus /
 //     Windows wincred, UX §2.2). The canonical store — gated by the
 //     OS user unlock, never backed up by default.
@@ -230,11 +230,40 @@ func describeKeyringErr(err error) string {
 // keyringOptOutHint tells a user how to stop the CLI asking the keychain.
 const keyringOptOutHint = "To keep the API key in a file instead, run 'gregale login --insecure-storage' or set GREGALE_KEYRING=off."
 
-// apiBase returns the effective API base URL. Explicit $FAAS_API remains the
-// highest-priority override for local development and CI; the persistent
-// non-secret CLI config is consulted only when the environment is unset.
+// apiEnvVar is the variable that overrides the API address. Apps on Gregale
+// and the SDKs read the same name.
+const apiEnvVar = "GREGALE_API_URL"
+
+// legacyAPIEnvVar is the variable's earlier name. It is still read, after
+// GREGALE_API_URL, so existing CI and scripts keep working.
+const legacyAPIEnvVar = "FAAS_API"
+
+// envAPIVar returns the first API address variable set to a non-blank value,
+// and that value trimmed; "" and "" when neither is set.
+func envAPIVar() (name, value string) {
+	for _, name := range []string{apiEnvVar, legacyAPIEnvVar} {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+			return name, value
+		}
+	}
+	return "", ""
+}
+
+// envAPIName names the API address variable for messages: the one in use, or
+// GREGALE_API_URL when neither is set.
+func envAPIName() string {
+	if name, _ := envAPIVar(); name != "" {
+		return name
+	}
+	return apiEnvVar
+}
+
+// apiBase returns the effective API base URL. An explicit $GREGALE_API_URL
+// (or $FAAS_API) remains the highest-priority override for local development
+// and CI; the persistent non-secret CLI config is consulted only when the
+// environment is unset.
 func apiBase() string {
-	if raw := strings.TrimSpace(os.Getenv("FAAS_API")); raw != "" {
+	if _, raw := envAPIVar(); raw != "" {
 		return normalizeAPIBase(raw)
 	}
 	if cfg, err := loadCLIConfig(); err == nil {
@@ -273,7 +302,7 @@ func legacyTokenPath() (string, error) {
 	return filepath.Join(dir, "faas", "token"), nil
 }
 
-// loadToken returns the token from $FAAS_TOKEN, the OS keychain, or
+// loadToken returns the token from $GREGALE_TOKEN or $FAAS_TOKEN, the OS keychain, or
 // the plaintext-file fallback — in that priority order. A non-empty
 // env var always wins (CI) and is intentionally not format-validated:
 // callers may use an explicitly supplied short-lived bearer there.
@@ -299,16 +328,46 @@ func loadToken() string {
 }
 
 func loadTokenWithDiagnostics(diagnostics io.Writer) string {
-	if v := os.Getenv("FAAS_TOKEN"); v != "" {
+	if _, v := envTokenVar(); v != "" {
 		return strings.TrimSpace(v)
 	}
+	// An agent's anonymous deploy key (ADR-20261124080000) is not a login:
+	// only deploy and claim use it (deploy_anonymous.go).
 	return loadStoredToken(diagnostics)
 }
 
-// envToken returns the FAAS_TOKEN override, trimmed like loadToken does.
-func envToken() string { return strings.TrimSpace(os.Getenv("FAAS_TOKEN")) }
+// tokenEnvVar is the variable users set to authenticate without a saved
+// login. The Terraform provider reads the same name.
+const tokenEnvVar = "GREGALE_TOKEN"
 
-// loadStoredToken is loadToken without the FAAS_TOKEN override: the
+// legacyTokenEnvVar is the variable's earlier name. It is still read, after
+// GREGALE_TOKEN, so existing CI secrets and scripts keep working.
+const legacyTokenEnvVar = "FAAS_TOKEN"
+
+// envTokenVar returns the first token variable set to a non-empty value, and
+// that value untrimmed; "" and "" when neither is set.
+func envTokenVar() (name, value string) {
+	for _, name := range []string{tokenEnvVar, legacyTokenEnvVar} {
+		if value := os.Getenv(name); value != "" {
+			return name, value
+		}
+	}
+	return "", ""
+}
+
+// envTokenName names the token variable in use, for messages; "" when none is.
+func envTokenName() string {
+	name, _ := envTokenVar()
+	return name
+}
+
+// envToken returns the token variable override, trimmed like loadToken does.
+func envToken() string {
+	_, value := envTokenVar()
+	return strings.TrimSpace(value)
+}
+
+// loadStoredToken is loadToken without the token variable override: the
 // credential saved for the selected profile. Logout and re-login revoke the
 // key behind this credential, never the environment's.
 func loadStoredToken(diagnostics io.Writer) string {
@@ -386,7 +445,7 @@ func loadLegacyToken(diagnostics io.Writer, askKeychain bool) string {
 	return ""
 }
 
-// warnEnvTokenOverride prints one stderr line when FAAS_TOKEN replaces a
+// warnEnvTokenOverride prints one stderr line when the token variable replaces a
 // credential the user selected: an explicit --profile, or a login saved for
 // the selected profile. JSON mode prints nothing: there stderr carries only
 // Problem documents, which scripts parse.
@@ -395,15 +454,17 @@ func warnEnvTokenOverride() {
 	switch {
 	case env == "" || jsonOutput:
 	case profileOverride != "":
-		PrintWarn(osStderr, "FAAS_TOKEN is set and overrides --profile %s's saved login; this command sends FAAS_TOKEN to %s. Unset FAAS_TOKEN to use the profile's login.", profileOverride, displayAPIBase(apiBase()))
+		name := envTokenName()
+		PrintWarn(osStderr, "%s is set and overrides --profile %s's saved login; this command sends %s to %s. Unset %s to use the profile's login.", name, profileOverride, name, displayAPIBase(apiBase()), name)
 	case savedLoginShadowedBy(env):
-		PrintWarn(osStderr, "FAAS_TOKEN is set and overrides your saved login; unset FAAS_TOKEN to use it.")
+		name := envTokenName()
+		PrintWarn(osStderr, "%s is set and overrides your saved login; unset %s to use it.", name, name)
 	}
 }
 
 // savedLoginShadowedBy reports whether a credential saved for the selected
 // profile differs from env. The OS keychain is read only from an interactive
-// terminal: automation that exports FAAS_TOKEN never touched it before, and a
+// terminal: automation that exports a token variable never touched it before, and a
 // keychain probe on a headless host can start a D-Bus session.
 func savedLoginShadowedBy(env string) bool {
 	if meta, err := loadManagedSession(); err == nil && meta.Managed && meta.KeyID != "" && meta.TokenFingerprint != "" && !meta.matches(env) {
@@ -425,7 +486,7 @@ func savedLoginShadowedBy(env string) bool {
 }
 
 // validPersistedToken keeps the on-disk/keychain stores aligned with the
-// server's long-lived API-key contract. FAAS_TOKEN is handled separately in
+// server's long-lived API-key contract. The token variable is handled separately in
 // loadToken because explicit environment overrides are also used for
 // short-lived bearer credentials in automation.
 func validPersistedToken(token string) bool {

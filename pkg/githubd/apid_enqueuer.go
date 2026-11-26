@@ -77,6 +77,7 @@ func (a *apidEnqueuer) Enqueue(ctx context.Context, spec BuildSpec) (state.Build
 		AccountId:               spec.App.AccountID,
 		AppId:                   spec.App.ID,
 		DeliveryId:              spec.DeliveryID,
+		ProjectDeployGroupId:    spec.ProjectDeployGroupID,
 		CommitSha:               spec.CommitSHA,
 		SourcePath:              spec.SourcePath,
 		SourceUrl:               spec.SourceURL,

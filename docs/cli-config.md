@@ -19,11 +19,11 @@ the platform user-config directory) with mode `0600`. Supported settings are:
 | `api-base` | an `https://` URL, or `http://` on this machine (without embedded credentials) | `https://api.gregale.dev` |
 | `json` | `true`, `false`, `on`, `off`, `yes`, `no`, `1`, `0` | `false` |
 
-Environment variables take precedence over the file: `FAAS_API` overrides
+Environment variables take precedence over the file: `GREGALE_API_URL` overrides
 `api-base`, and `FAAS_JSON` overrides `json`. Use `gregale config list --json`
 to see the effective value and its source without exposing credentials;
 `config list`, `config get` and `context` drop any `user:password@` part of a
-`FAAS_API` URL before printing it.
+`GREGALE_API_URL` URL before printing it.
 
 ### Read request retries
 
@@ -62,7 +62,7 @@ are omitted and arbitrary response content is never copied into diagnostics.
 
 Every request carries your API key, and `gregale login` receives a new one in
 the response, so the CLI refuses a plain `http://` API address unless the host
-is this machine (`localhost`, `127.0.0.1`, `::1`). The rule covers `FAAS_API`,
+is this machine (`localhost`, `127.0.0.1`, `::1`). The rule covers `GREGALE_API_URL`,
 `config set api-base`, `profile add` and an address saved by an older release:
 commands that contact the API fail before sending anything, while `config`,
 `profile`, `context` and `completion` keep working so you can switch to an
@@ -606,13 +606,17 @@ For example, this previews a deployment using the `staging` connection and the
 gregale --profile staging deploy --size small --dry-run
 ```
 
-`FAAS_API` and `FAAS_TOKEN` still override the selected connection's endpoint
-and credential. When `FAAS_TOKEN` replaces an explicit `--profile` or a saved
+`GREGALE_API_URL` and `GREGALE_TOKEN` still override the selected connection's endpoint
+and credential. When `GREGALE_TOKEN` replaces an explicit `--profile` or a saved
 login, the command prints a one-line warning on stderr (stdout, including
 `--json` output, is unchanged). `login` and `start` refuse to run while
-`FAAS_TOKEN` is set, because the login they save would never be used;
-`login --token "$FAAS_TOKEN"` with the same value is still accepted. JSON
+`GREGALE_TOKEN` is set, because the login they save would never be used;
+`login --token "$GREGALE_TOKEN"` with the same value is still accepted. JSON
 preferences remain shared across connections.
+`FAAS_TOKEN`, the variable's earlier name, still works; when both are set,
+`GREGALE_TOKEN` wins. The Terraform provider reads `GREGALE_TOKEN` too.
+`FAAS_API`, the variable's earlier name, still works; when both are set,
+`GREGALE_API_URL` wins. Apps on Gregale and the SDKs read the same name.
 `gregale config set api-base <url>` updates the selected connection; changing
 its endpoint does not clear its stored credential, so log in again when changing
 to a different server. `gregale context` reports the effective profile and API
@@ -648,7 +652,7 @@ gregale --profile staging profile check --timeout 5s --json
 `profile check` makes one read-only `GET /v1/account` request using the selected
 endpoint and credential. It reports the profile, setting sources, endpoint
 reachability, authentication result, and account ID, email, plan, and status.
-It explains `FAAS_API` and `FAAS_TOKEN` overrides without printing credentials
+It explains `GREGALE_API_URL` and `GREGALE_TOKEN` overrides without printing credentials
 or raw server error details. It does not change saved settings or credentials.
 
 The default timeout is `10s`; `--timeout` accepts a positive Go duration.
@@ -673,7 +677,7 @@ Argument and configuration errors use the normal stderr error output.
 ## Shared command error diagnostics
 
 `login`, `apps`, and `deploy` use the shared CLI error renderer. Authentication
-hints name the selected profile and explain when `FAAS_TOKEN` overrides its
+hints name the selected profile and explain when `GREGALE_TOKEN` overrides its
 stored credential. An explicitly supplied login token gets a token replacement
 hint. Permission, rate-limit, and server errors receive recovery hints when the
 API has not supplied one. Existing server codes and specific hints are retained.
@@ -775,9 +779,9 @@ include `category` and `exit_code` alongside the server's unchanged `code`:
 | Exit code | JSON category | Meaning |
 |---|---|---|
 | `0` | — | Success |
-| `1` | `invalid_request` | Invalid arguments, local validation/filesystem failures, or other API rejection |
+| `1` | `invalid_request` | Invalid arguments, local validation/filesystem failures, API 501 (a feature this installation does not run), or other API rejection |
 | `2` | `authentication` | Missing credential or API 401; log in again |
-| `3` | `temporary_failure` | Network/transport failure, timeout, API 408/429, or API 5xx |
+| `3` | `temporary_failure` | Network/transport failure, timeout, API 408/429, or API 5xx other than 501 |
 | `4` | `not_found` | API 404/410; resource missing or gone |
 | `5` | `conflict` | API 409/412; inspect current state before retrying |
 | `6` | `permission_denied` | API 403; check access or plan requirements |

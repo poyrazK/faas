@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -322,6 +323,94 @@ func TestIsHopByHopHeader(t *testing.T) {
 		if got := isHopByHopHeader(k); got != want {
 			t.Errorf("isHopByHopHeader(%q) = %v, want %v", k, got, want)
 		}
+	}
+}
+
+func TestDataAPIPublicCacheHonorsRepresentationAfterJSONHit(t *testing.T) {
+	const path = "/rest/v1/products"
+	const vary = "Accept, Accept-Profile, Authorization, Cookie, Prefer, Range, Range-Unit"
+	var calls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Cache-Control", "public, max-age=60")
+		w.Header().Set("Vary", vary)
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		switch {
+		case strings.Contains(strings.Join(r.Header.Values("Accept"), ","), "text/csv"):
+			w.Header().Set("Content-Type", "text/csv")
+			_, _ = w.Write([]byte("id\n42\n"))
+		case r.Header.Get("Range") != "":
+			w.Header().Set("Content-Range", "0-0/*")
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write([]byte(`[{"id":42}]`))
+		case r.Header.Get("Prefer") != "":
+			w.Header().Set("Content-Range", "0-0/1")
+			_, _ = w.Write([]byte(`[{"id":42}]`))
+		case r.Header.Get("Accept-Profile") == "catalog":
+			w.Header().Set("Cache-Control", "no-store")
+			w.WriteHeader(http.StatusNotAcceptable)
+			_, _ = w.Write([]byte(`{"message":"Profile unavailable"}`))
+		default:
+			_, _ = w.Write([]byte(`[{"id":42}]`))
+		}
+	}))
+	defer upstream.Close()
+	h, backend, _ := newTestHandler(t)
+	backend.upstream = upstream.Listener.Addr().String()
+	backend.setLegacyHot()
+	h.WithResponseCache(NewResponseCache())
+	seedCacheRule(t, h, backend.host, EdgeRuleCacheResolved{
+		ID: "data-cache", DataAPIPublicRead: true, PathGlob: path, MaxAgeSeconds: 60,
+	})
+	get := func(headers http.Header) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "http://"+backend.host+path, nil)
+		req.Header = headers.Clone()
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	jsonHeaders := http.Header{"Accept": {"application/json"}, "Accept-Profile": {"api"}}
+	first := get(jsonHeaders)
+	if first.Code != http.StatusOK || first.Body.String() != `[{"id":42}]` {
+		t.Fatalf("JSON fill = %d, body %q", first.Code, first.Body.String())
+	}
+	if hit := get(jsonHeaders); hit.Header().Get("X-Faas-Cache") != "hit" || calls.Load() != 1 {
+		t.Fatalf("JSON replay = %d, cache %q, upstream calls %d", hit.Code, hit.Header().Get("X-Faas-Cache"), calls.Load())
+	}
+
+	for _, tc := range []struct {
+		label, header, value, responseHeader, responseValue string
+		status                                              int
+	}{
+		{"csv", "Accept", "text/csv", "Content-Type", "text/csv", http.StatusOK},
+		{"range", "Range", "0-0", "Content-Range", "0-0/*", http.StatusPartialContent},
+		{"count", "Prefer", "count=exact", "Content-Range", "0-0/1", http.StatusOK},
+		{"range unit", "Range-Unit", "items", "Content-Type", "application/json; charset=utf-8", http.StatusOK},
+		{"authorization", "Authorization", "Bearer secret", "Content-Type", "application/json; charset=utf-8", http.StatusOK},
+		{"cookie", "Cookie", "session=secret", "Content-Type", "application/json; charset=utf-8", http.StatusOK},
+		{"profile", "Accept-Profile", "catalog", "Content-Type", "application/json; charset=utf-8", http.StatusNotAcceptable},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			headers := jsonHeaders.Clone()
+			headers.Set(tc.header, tc.value)
+			before := calls.Load()
+			for range 2 {
+				r := get(headers)
+				if r.Code != tc.status || r.Header().Get(tc.responseHeader) != tc.responseValue || r.Header().Get("X-Faas-Cache") == "hit" {
+					t.Fatalf("variant = %d, headers %v, body %q", r.Code, r.Header(), r.Body.String())
+				}
+				if tc.label == "csv" && r.Body.String() != "id\n42\n" {
+					t.Fatalf("CSV body = %q", r.Body.String())
+				}
+			}
+			if calls.Load() != before+2 {
+				t.Fatalf("variant upstream calls = %d, want 2", calls.Load()-before)
+			}
+		})
+	}
+	if h.responseCache.Len() != 1 {
+		t.Fatalf("cache contains %d entries, want only the original JSON", h.responseCache.Len())
 	}
 }
 

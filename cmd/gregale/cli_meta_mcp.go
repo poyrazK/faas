@@ -231,7 +231,7 @@ func mcpCLICommand() cliCommand {
 				{Name: "dry-run", Short: "print the source change and gateway policy without writing either", Bool: true},
 			}, Examples: []string{"gregale mcp server auth enable --mode api-key --app my-mcp", "gregale mcp server auth enable --mode oauth-proxy --app my-mcp --auth-app my-auth"}},
 		}},
-		{Name: "replay", Short: "Compare a zero-traffic candidate with the serving deployment before promotion", Notes: []string{"Sends discovery, static resource reads and reviewed fixtures only; tools run only when named with --allow-tool. Captures no production traffic and changes nothing."}, Flags: []cliFlag{
+		{Name: "replay", Short: "Compare a zero-traffic candidate with the serving deployment", Notes: []string{"Run it before promotion. Sends discovery, static resource reads and reviewed fixtures only; tools run only when named with --allow-tool. Captures no production traffic and changes nothing."}, Flags: []cliFlag{
 			{Name: "app", Short: "app slug", Value: "SLUG", Req: true},
 			{Name: "candidate", Short: "candidate deployment UUID with zero traffic", Value: "UUID", Req: true},
 			{Name: "path", Short: "MCP source directory (default .)", Value: "DIR"},
@@ -241,6 +241,34 @@ func mcpCLICommand() cliCommand {
 			{Name: "runs", Short: "times to send each probe (1-5, default 3)", Value: "N"},
 			{Name: "timeout", Short: "overall deadline (default 2m)", Value: "DURATION"},
 		}, Examples: []string{"gregale mcp server replay --app my-mcp --candidate <uuid> --token-env MCP_TOKEN", "gregale mcp server replay --app my-mcp --candidate <uuid> --fixtures fixtures.json --allow-tool search"}},
+		{Name: "insights", Short: "Show per-tool calls, failures, mismatches and estimated cost", Notes: []string{"Covers the last hour. Cost is an upper bound at the overage rate; usage inside the plan's included GB-hours costs nothing extra."}, Flags: []cliFlag{
+			{Name: "app", Short: "app slug", Value: "SLUG", Req: true},
+			{Name: "timeout", Short: "API deadline (default 30s)", Value: "DURATION"},
+		}, Examples: []string{"gregale mcp server insights --app my-mcp", "gregale mcp server insights --app my-mcp --json"}},
+		{Name: "keys", Short: "Issue, list and revoke consumer keys for an api-key MCP server", Subcommands: []cliSub{
+			{Name: "create", Short: "Create a consumer key with mcp: scopes", Notes: []string{"Scopes default to the endpoint scopes in gregale-mcp.json."}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "SLUG", Req: true},
+				{Name: "name", Short: "key name", Value: "NAME", Req: true},
+				{Name: "consumer", Short: "existing API consumer ID", Value: "ID"},
+				{Name: "new-consumer", Short: "create an API consumer with this name", Value: "NAME"},
+				{Name: "scopes", Short: "comma-separated MCP scopes without the mcp: prefix", Value: "SCOPES"},
+				{Name: "tools", Short: "tools the key may call; grants their scopes from gregale-mcp.json", Value: "TOOLS"},
+				{Name: "expires", Short: "key expiry, RFC3339", Value: "TIME"},
+				{Name: "path", Short: "MCP source directory (default .)", Value: "DIR"},
+				{Name: "timeout", Short: "API deadline (default 30s)", Value: "DURATION"},
+			}, Examples: []string{"gregale mcp server keys create --app my-mcp --new-consumer acme --name prod", "gregale mcp server keys create --app my-mcp --consumer <id> --name ci --scopes tools,admin", "gregale mcp server keys create --app my-mcp --consumer <id> --name reader --tools search,fetch"}},
+			{Name: "list", Short: "List a consumer's MCP keys", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "SLUG", Req: true},
+				{Name: "consumer", Short: "API consumer ID", Value: "ID", Req: true},
+				{Name: "timeout", Short: "API deadline (default 30s)", Value: "DURATION"},
+			}},
+			{Name: "revoke", Short: "Revoke an MCP key", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Value: "SLUG", Req: true},
+				{Name: "consumer", Short: "API consumer ID", Value: "ID", Req: true},
+				{Name: "key", Short: "key ID", Value: "ID", Req: true},
+				{Name: "timeout", Short: "API deadline (default 30s)", Value: "DURATION"},
+			}},
+		}},
 		{Name: "access", Short: "Audit MCP access-policy drift and admission evidence", Subcommands: []cliSub{{Name: "audit", Short: "Compare source and role policy with stored account gateway rules", Flags: []cliFlag{
 			{Name: "app", Short: "MCP application slug", Value: "SLUG", Req: true},
 			{Name: "path", Short: "reviewed source directory (default .)", Value: "DIR"},
@@ -258,7 +286,7 @@ func mcpCLICommand() cliCommand {
 			{Name: "retry", Short: "Retry provider retirement", Flags: []cliFlag{{Name: "id", Short: "retirement UUID", Value: "ID", Req: true}, {Name: "allow-active-grant-revocation", Short: "allow active grant revocation", Bool: true}, {Name: "timeout", Short: "API deadline", Value: "DURATION"}}},
 			{Name: "acknowledge-manual", Short: "Acknowledge manual provider cleanup", Flags: []cliFlag{{Name: "id", Short: "retirement UUID", Value: "ID", Req: true}, {Name: "timeout", Short: "API deadline", Value: "DURATION"}}},
 		}},
-		{Name: "deploy", Short: "Pin the candidate catalog, verify MCP discovery and promote", Flags: []cliFlag{{Name: "path", Short: "source directory (default .)", Value: "DIR"}, {Name: "name", Short: "app slug", Value: "SLUG", Req: true}, {Name: "size", Short: "app RAM/CPU resource size", Value: "SIZE", ClosedSet: []string{"micro", "small", "medium", "large", "xlarge"}}, {Name: "profile", Short: "deprecated: use --size", Value: "SIZE"}, {Name: "token-env", Short: "client token for external OAuth verification", Value: "ENV"}, {Name: "secrets-file", Short: "sealed app secrets", Value: "PATH"}, {Name: "release-policy", Short: "role-specific catalog baselines to verify before promotion", Value: "PATH"}, {Name: "validate-url", Short: "pre-upload compatibility gate endpoint", Value: "URL"}, {Name: "fixtures", Short: "candidate smoke fixtures", Value: "PATH"}, {Name: "allow-tool-execution", Short: "execute reviewed tool fixtures once", Bool: true}, {Name: "access-audit", Short: "optional stored-policy gate with gateway or guest-only placement", Value: "PLACEMENT", ClosedSet: []string{"gateway", "guest-only"}}, {Name: "access-audit-algorithms", Short: "reviewed gateway algorithms for --access-audit (default RS256,ES256)", Value: "LIST"}, {Name: "idempotency-key", Short: "retry identity printed by a failed submission", Value: "KEY"}, {Name: "expected-serving-deployment", Short: "reviewed serving deployment; empty requires no serving release", Value: "ID"}, {Name: "expected-app-id", Short: "reviewed immutable app identity", Value: "ID"}, {Name: "require-catalog-pin", Short: "require candidate catalog integrity support", Bool: true}, {Name: "publication-id", Short: "native private publication requiring owner-approved platform tests", Value: "SHA256"}, {Name: "require-reviewed-tools", Short: "require runtime tools to match configured tool_scopes before fixtures and promotion", Bool: true}, {Name: "mcp-task-migration-override", Short: "allow this deployment to replace incompatible MCP task workers once", Bool: true}, {Name: "timeout", Short: "deployment and verification wait timeout in seconds (default 1200)", Value: "SECONDS"}}, Examples: []string{"gregale mcp server deploy --path ./my-mcp --name my-mcp --size small"}},
+		{Name: "deploy", Short: "Pin the candidate catalog, verify MCP discovery and promote", Flags: []cliFlag{{Name: "path", Short: "source directory (default .)", Value: "DIR"}, {Name: "name", Short: "app slug", Value: "SLUG", Req: true}, {Name: "size", Short: "app RAM/CPU resource size", Value: "SIZE", ClosedSet: []string{"micro", "small", "medium", "large", "xlarge"}}, {Name: "profile", Short: "deprecated: use --size", Value: "SIZE"}, {Name: "token-env", Short: "client token for external OAuth verification", Value: "ENV"}, {Name: "secrets-file", Short: "sealed app secrets", Value: "PATH"}, {Name: "release-policy", Short: "role-specific catalog baselines to verify before promotion", Value: "PATH"}, {Name: "validate-url", Short: "pre-upload compatibility gate endpoint", Value: "URL"}, {Name: "fixtures", Short: "candidate smoke fixtures", Value: "PATH"}, {Name: "allow-tool-execution", Short: "execute reviewed tool fixtures once", Bool: true}, {Name: "access-audit", Short: "optional stored-policy gate with gateway or guest-only placement", Value: "PLACEMENT", ClosedSet: []string{"gateway", "guest-only"}}, {Name: "access-audit-algorithms", Short: "reviewed gateway algorithms for --access-audit (default RS256,ES256)", Value: "LIST"}, {Name: "idempotency-key", Short: "retry identity printed by a failed submission", Value: "KEY"}, {Name: "expected-serving-deployment", Short: "reviewed serving deployment; empty requires no serving release", Value: "ID"}, {Name: "expected-app-id", Short: "reviewed immutable app identity", Value: "ID"}, {Name: "require-catalog-pin", Short: "require candidate catalog integrity support", Bool: true}, {Name: "publication-id", Short: "native private publication requiring owner-approved platform tests", Value: "SHA256"}, {Name: "require-reviewed-tools", Short: "require runtime tools to match configured tool_scopes before fixtures and promotion", Bool: true}, {Name: "mcp-task-migration-override", Short: "allow this deployment to replace incompatible MCP task workers once", Bool: true}, {Name: "timeout", Short: "deployment and verification wait timeout in seconds (default 1200)", Value: "SECONDS"}, {Name: "replay", Short: "compare the candidate with the serving deployment (discovery, static resources, prompt fixtures) and refuse promotion on a breaking change or a new error", Bool: true}}, Examples: []string{"gregale mcp server deploy --path ./my-mcp --name my-mcp --size small"}},
 		{Name: "overview", Short: "Inspect replicas, Task workers, observers and promotion holds", Flags: []cliFlag{
 			{Name: "app", Short: "serving HTTP MCP application", Value: "SLUG", Req: true},
 			{Name: "worker-app", Short: "optional separate durable Task worker application", Value: "SLUG"},

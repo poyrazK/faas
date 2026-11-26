@@ -15,6 +15,10 @@ var flagSynonyms = map[string][]string{
 	"data":  {"payload", "body"},
 	"body":  {"payload", "data"},
 	"input": {"payload"},
+	// `gregale app` shows "idle timeout" and "min instances" (prod hunt r36).
+	"idle-timeout":  {"idle"},
+	"min-instances": {"min"},
+	"max-instances": {"max", "max-concurrency"},
 }
 
 func suggestUnknownFlag(diagnostic string, fs *flag.FlagSet) string {

@@ -67,6 +67,8 @@ func (h *Handler) markHealthFailure(appID string, err error) {
 	reason := "wake_failed"
 	if prob := api.AsProblem(err); prob != nil && prob.Code != "" {
 		reason = prob.Code
+	} else if errors.Is(err, ErrAppNotPlaced) {
+		reason = api.CodeNoLiveDeployment
 	} else if errors.Is(err, context.DeadlineExceeded) {
 		reason = "wake_timeout"
 	} else if errors.Is(err, context.Canceled) {

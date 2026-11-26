@@ -108,6 +108,9 @@ type JailerVMM struct {
 	// Public CA bundle for the opt-in guest service HTTPS endpoint. Never a
 	// private key and never the daemon-to-daemon mTLS root.
 	serviceProxyCAPEM []byte
+	// Public, operator-configured PostgreSQL CA used only for trusted Data API
+	// inspection requests; it is delivered over the host-to-guest channel.
+	dataAPIInspectionCAPEM []byte
 	// storage is the artifact backend where snapshot blobs live per
 	// #96 / ADR-025 axis 2. Restore resolves StorageKey → local tmp;
 	// Snapshot Streams the produced mem blob back through Storage.Put.
@@ -1133,6 +1136,17 @@ func NewJailerVMM(chrootBase string, readyTimeout time.Duration) *JailerVMM {
 func (v *JailerVMM) WithServiceProxyCA(pem []byte) *JailerVMM {
 	v.serviceProxyCAPEM = append([]byte(nil), pem...)
 	return v
+}
+
+// WithDataAPIInspectionCA configures only the task-inspection trust anchor.
+func (v *JailerVMM) WithDataAPIInspectionCA(pem []byte) *JailerVMM {
+	v.dataAPIInspectionCAPEM = append([]byte(nil), pem...)
+	return v
+}
+
+// DataAPIInspectionCA supplies a private copy to the app-task dispatcher.
+func (v *JailerVMM) DataAPIInspectionCA() []byte {
+	return append([]byte(nil), v.dataAPIInspectionCAPEM...)
 }
 
 // PrepareJailHelper stages the release-matched helper in the chroot base before
@@ -7370,6 +7384,17 @@ func (v *JailerVMM) NoteWorkloadOOM(instance string, peakMB, planMB int) {
 	if rec := v.recs[instance]; rec != nil {
 		rec.oomKilled, rec.oomPeakMB, rec.oomPlanMB = true, peakMB, planMB
 	}
+}
+
+// StartupOOMKilled reports whether the guest has reported a workload OOM kill
+// (ADR-121) for instance. Read when a wake completes: a kill reported before
+// the wake returns means the app's own memory exhaustion is part of the wake
+// latency, so the gateway keeps that wake out of the platform wake SLO.
+func (v *JailerVMM) StartupOOMKilled(instance string) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	rec := v.recs[instance]
+	return rec != nil && rec.oomKilled
 }
 
 // startupOOMProblem explains a failed startup as app_runtime_oom when the

@@ -67,7 +67,7 @@ function snapshotEntry(entry) {
   return { ...entry, definition: snapshotMetadata(entry.definition) };
 }
 
-function canonicalJSON(value) {
+export function canonicalJSON(value) {
   if (value === null || typeof value !== 'object') {
     if (typeof value === 'function' || typeof value === 'bigint' || value === undefined) {
       throw new TypeError('MCP catalog definitions must contain only JSON values');

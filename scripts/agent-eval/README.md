@@ -26,6 +26,9 @@ Tasks live in `tasks.json`:
 | `deploy-flask-render` | Deploy Render's Flask example |
 | `migrate-django-heroku` | Move Heroku's Django getting-started app; its `ALLOWED_HOSTS` opens only when Heroku's `DYNO` is set, so Gregale's smoke request gets 400 until the agent fixes it, and it asks for Python 3.15 |
 | `deploy-go-heroku` | Deploy Heroku's Go getting-started app; its Procfile starts `go-getting-started`, a binary only Heroku's buildpack makes |
+| `day2-config-change` | Change a live app's greeting through its `GREETING` variable without editing code (`http` + `file_contains`) |
+| `day2-schedule` | Add `POST /tick` and have Gregale call it every 15 minutes (`cli_output` on `gregale cron list`) |
+| `day2-no-cold-start` | Remove cold starts and state the monthly cost (`app_field` `min_instances` ≥ 1, `answer` names a price) |
 
 The five framework tasks follow the framework and migration guides
 (`docs/frameworks.md`, `docs/deploy-*.md`, `docs/migrate-from-*.md`): each
@@ -51,11 +54,20 @@ measure what a cold agent does with a repository Gregale did not create:
 - Apps and projects that appear in the evaluation account during the run are
   the run's. Checks read them (`apps_created`, `apps_serving`, `app_http`
   on the created app whose slug matches, `no_traps`), and cleanup deletes
-  them. Runs are sequential for that reason.
+  them. `no_traps` grades the end state: an app still parked by this run, or
+  a latest release that failed, not a failed release the agent replaced. Runs are sequential for that reason.
+  `vote_counted` grades the voting app end to end: it votes, as a new voter,
+  for the option with fewer votes on the created `vote` app and waits for the
+  `result` app's Socket.IO `scores` to count it (slugs match `(^|-)vote$` and
+  `(^|-)result$`, each optionally with the 5-character suffix a taken name gets; both must be public). Page GETs alone passed a deployment
+  whose votes all failed (rc.380).
 - `features` lists the Gregale features that apply to the repository. Each is
   a regex over the agent's shell commands (`command`), over files in the
   checkout after the run (`file`), or a fact about what it created
-  (`state: project_created`). `feature_score` is the share used. Until the
+  (`state: project_created`). `feature_score` is the share used. A feature
+  with `"unless": "first_deploy_live"` is a fix the agent needs only when
+  Gregale's detection falls short; it counts as used when every app the run
+  created went live on its first deployment. Until the
   scan reports features itself (ADR-20261112223000 §1), the list is written
   by hand.
 - Every run is graded for anti-patterns in its shell commands: raw calls to

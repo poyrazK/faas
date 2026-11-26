@@ -27,14 +27,43 @@ fi
 for task_tool in firecracker jailer ip nft; do
   command -v "$task_tool" >/dev/null || { echo "Missing native dependency: $task_tool" >&2; exit 1; }
 done
-task_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+task_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$task_root"
-task_results=$(mktemp "${TMPDIR:-/tmp}/gregale-commit-native.XXXXXX")
-trap 'rm -f "$task_results"' EXIT HUP INT TERM
-if ! "${GO:-go}" test -p 1 -tags metal -json ./cmd/e2e -count=1 -timeout 30m \
-  -run '^TestSourceDeployWakeMetal$' > "$task_results"; then
-  cat "$task_results"
+# The disposable customer SQL server is reachable through a single test-only IP.
+task_sql_ip=198.18.0.253
+if [ -n "$(ip -4 address show to "$task_sql_ip/32")" ]; then
+  echo 'Disposable Commit SQL proxy address already exists.' >&2
   exit 1
+fi
+task_results=$(mktemp "${TMPDIR:-/tmp}/gregale-commit-native.XXXXXX")
+task_sql_owned=0
+task_cleanup() {
+  task_exit=$?
+  trap - EXIT
+  if [ "$task_sql_owned" = 1 ]; then
+    ip address del "$task_sql_ip/32" dev lo || task_exit=1
+  fi
+  rm -f "$task_results" || task_exit=1
+  exit "$task_exit"
+}
+trap task_cleanup EXIT
+trap 'exit 1' HUP INT TERM
+ip address add "$task_sql_ip/32" dev lo
+task_sql_owned=1
+export GREGALE_COMMIT_NATIVE_SQL_IP="$task_sql_ip"
+task_status=0
+"${GO:-go}" test -p 1 -tags metal -json ./cmd/e2e -count=1 -timeout 30m \
+  -run '^TestSourceDeployWakeMetal$' > "$task_results" || task_status=$?
+if [ -n "${FAAS_COMMIT_NATIVE_RESULTS:-}" ]; then
+  if [ -e "$FAAS_COMMIT_NATIVE_RESULTS" ] || [ -L "$FAAS_COMMIT_NATIVE_RESULTS" ]; then
+    echo 'Refusing to replace native Commit result evidence.' >&2
+    exit 1
+  fi
+  (set -C; cat "$task_results" > "$FAAS_COMMIT_NATIVE_RESULTS")
+fi
+if [ "$task_status" -ne 0 ]; then
+  cat "$task_results"
+  exit "$task_status"
 fi
 python3 - "$task_results" <<'PY'
 import json
@@ -43,13 +72,16 @@ required = {
     "TestSourceDeployWakeMetal",
     "TestSourceDeployWakeMetal/commit-snapshot-wake",
     "TestSourceDeployWakeMetal/commit-cold-boot-wake",
+    "TestSourceDeployWakeMetal/commit-consumer-crash-recovery",
 }
 passed = set()
 for line in open(sys.argv[1]):
     event = json.loads(line)
+    if event.get("Action") in {"fail", "skip"}:
+        raise SystemExit("Native Commit acceptance failed or skipped: " + str(event.get("Test", event.get("Package"))))
     if event.get("Action") == "pass" and event.get("Test") in required:
         passed.add(event["Test"])
 if required - passed:
     raise SystemExit("Native Commit acceptance missing passes: " + ", ".join(sorted(required - passed)))
-print("Native Commit producer-death, snapshot-restore, and cold-boot gates passed.")
+print("Native Commit producer and consumer crash recovery, snapshot restore, and cold boot passed.")
 PY

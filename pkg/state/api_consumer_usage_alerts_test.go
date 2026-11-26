@@ -77,7 +77,7 @@ func TestMemConsumerUsageAlertsFireOncePerMonthAndOnDenial(t *testing.T) {
 	policy := state.APIConsumerPlanPolicy{PlanID: plan.ID, AppID: appID, MaxUnitsPerMonth: 10, AlertThresholdsPercent: plan.AlertThresholdsPercent}
 	admit := func(units int64) state.APIConsumerPlanDecision {
 		t.Helper()
-		decision, err := m.AdmitAPIConsumerPlanRequest(ctx, accountID, consumer.ID, policy, units)
+		decision, err := m.AdmitAPIConsumerPlanRequest(ctx, accountID, consumer.ID, policy, "", units)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -127,14 +127,14 @@ func TestMemUpdateConsumerPlanAlerts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	kept, err := m.UpdateAPIConsumerPlanLimits(ctx, accountID, appID, plan.ID, 0, 200, nil)
+	kept, err := m.UpdateAPIConsumerPlanLimits(ctx, accountID, appID, plan.ID, 0, 200, nil, nil)
 	if err != nil || !slices.Equal(kept.AlertThresholdsPercent, []int32{80}) {
 		t.Fatalf("nil thresholds = %+v err=%v, want kept", kept, err)
 	}
-	if _, err := m.UpdateAPIConsumerPlanLimits(ctx, accountID, appID, plan.ID, 0, 0, nil); !errors.Is(err, state.ErrInvalidArgument) {
+	if _, err := m.UpdateAPIConsumerPlanLimits(ctx, accountID, appID, plan.ID, 0, 0, nil, nil); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("removing the monthly limit under alerts err=%v, want ErrInvalidArgument", err)
 	}
-	cleared, err := m.UpdateAPIConsumerPlanLimits(ctx, accountID, appID, plan.ID, 0, 0, []int32{})
+	cleared, err := m.UpdateAPIConsumerPlanLimits(ctx, accountID, appID, plan.ID, 0, 0, []int32{}, nil)
 	if err != nil || len(cleared.AlertThresholdsPercent) != 0 {
 		t.Fatalf("empty thresholds = %+v err=%v, want cleared", cleared, err)
 	}

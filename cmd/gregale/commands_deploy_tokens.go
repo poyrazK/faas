@@ -138,7 +138,7 @@ func cmdDeployTokensAdd(args []string) int {
 	}
 	PrintProgress(osStdout, "  expires: %s", expiresAt)
 	// The receipt named no variable for CI to put the token in.
-	PrintProgress(osStdout, "In CI, set it as FAAS_TOKEN; then gregale deploy --name %s deploys this app only.", slug)
+	PrintProgress(osStdout, "In CI, set it as GREGALE_TOKEN; then gregale deploy --name %s deploys this app only.", slug)
 	return 0
 }
 

@@ -52,7 +52,7 @@ async function fixture(t, failure = '') {
     },
     publicFetch: async (input, init = {}) => {
       init.signal?.throwIfAborted()
-      if (input.endsWith('/healthz')) return response({ ready: failure !== 'bad-health' })
+      if (input.endsWith('/__gregale/ready')) return response({ ready: failure !== 'bad-health' })
       const url = new URL(input), auth = new Headers(init.headers).get('authorization')
       assert.doesNotMatch(auth, /private-management/)
       const [, subject, tenant] = auth.split('|')
@@ -107,7 +107,7 @@ test('hosted limits mirror canonical bounds and preserve strict workload validat
   assert.match(await readFile(new URL('./load-fixture.sql', import.meta.url), 'utf8'), new RegExp(`pg_sleep\\(${hostedBounds.pauseMs / 1000}\\)`))
   assert.throws(() => options({ requests: 1001 }), /invalid_options/)
   const raw = { environment: 'staging', api: 'https://management.example', account_id: 'id', region: 'eu', builder_node_ids: ['native'], app_host_suffix: '.apps.example', load: { concurrency: 33 } }
-  assert.throws(() => validateConfig(raw, { FAAS_TOKEN: 'private', FAAS_DATA_API_SOURCE_COMMIT: 'a'.repeat(40) }), /invalid_load_options/)
+  assert.throws(() => validateConfig(raw, { FAAS_TOKEN: 'private', FAAS_DATA_API_SOURCE_COMMIT: 'a'.repeat(40) }, { checkConfigOnly: true }), /invalid_load_options/)
 })
 test('seven hosted scenarios use the installed SDK, preserve receipts and retain explicit private evidence', async t => {
   const f = await fixture(t), report = await f.run()

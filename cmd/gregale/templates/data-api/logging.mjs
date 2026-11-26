@@ -1,5 +1,6 @@
 import { randomUUID, createHash } from 'node:crypto'
 import { createTimings, timingPhases } from './timing.mjs'
+import { readinessPath } from './config.mjs'
 
 const trace = Symbol('requestTrace')
 const codes = new Set(['storage_commit_unknown','storage_sessions_unavailable','storage_checksum_mismatch','storage_session_conflict','storage_part_conflict','storage_session_limit','storage_session_not_found','storage_invalid_session','storage_invalid_part','storage_version_conflict','change_hooks_unavailable','change_hooks_busy','change_hooks_observation_unavailable','hooks_owner_required','origin_not_allowed', 'not_found', 'invalid_path', 'method_not_allowed',
@@ -19,7 +20,7 @@ const unavailableCodes = new Set(['storage_commit_unknown','storage_sessions_una
 const overloadedCodes = new Set(['change_hooks_busy','data_api_overloaded', 'storage_busy', 'storage_client_busy'])
 
 function route(url) {
-  if (url === '/healthz' || url === '/livez') return 'health'
+  if (url === '/healthz' || url === '/livez' || url === readinessPath) return 'health'
   if (url === '/__gregale/schema') return 'schema'
   if (url === '/openapi.json' || url === '/openapi-3.1.json') return 'openapi'
   if (url.startsWith('/rest/v1/rpc/')) return 'rpc'

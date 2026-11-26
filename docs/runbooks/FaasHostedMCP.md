@@ -28,6 +28,18 @@ Covers `FaasHostedMCPDown`, `FaasHostedMCPRestarting` and
   dropped after ten idle minutes, so memory follows active connections.
   `gregale_management_mcp_connection_servers` counts the built ones.
 
+## Run a controlled restart
+
+Dispatch [ops-restart-hosted-mcp](https://github.com/poyrazK/faas/actions/workflows/ops-restart-hosted-mcp.yml)
+from `main` when the `production-us` fleet rollout is idle. It restarts
+`faas-mcp-bridge.service` on the control plane and reports the old and new
+systemd invocation IDs once the new invocation answers on loopback.
+
+For an upload approval rehearsal, record the pending plan ID, approval ID,
+and upload ID before dispatch. After the restart, confirm that hosted MCP
+still returns the same plan and approval. Have the reviewer approve using the
+original review link, then retry the same plan ID.
+
 ## OAuth client callback refused
 
 `invalid_client` with `none of the client's redirect URIs is allowed on this
@@ -37,7 +49,13 @@ matched the operator allowlist. Authorization stops before account sign-in.
 The shipped unit allows Google Antigravity's exact HTTPS callback,
 `https://antigravity.google/oauth-callback`, published at
 `https://antigravity.google/oauth/client-metadata.json`. Older units omit it.
-Inspect `systemctl cat faas-mcp-bridge` for the active `--oauth-redirect-uri`
+It also allows Glama's `https://glama.ai/api/app/mcp/oauth/callback` (Glama's
+connector health checks and users' connections) and
+`https://glama.ai/mcp/inspector/oauth/callback` (its MCP Inspector), as
+published at `https://glama.ai/api/app/mcp/oauth/client-metadata.json` and
+`https://glama.ai/mcp/inspector/oauth/client-metadata.json`. A unit without
+them refuses Glama, and Glama's connector page then reports the server
+unhealthy. Inspect `systemctl cat faas-mcp-bridge` for the active `--oauth-redirect-uri`
 arguments and any `ExecStart` override. Converge `control_plane_service` to
 install the updated unit and let its handler reload/restart the bridge. An
 override that replaces `ExecStart` also needs the exact callback. Retry

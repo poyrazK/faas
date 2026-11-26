@@ -74,13 +74,18 @@ func cmdMCP(args []string) int {
 		return cmdMCPAccess(args[1:])
 	case "policy":
 		return cmdMCPPolicy(args[1:])
-	case "auth", "replay":
+	case "auth", "replay", "insights", "keys":
 		if !mcpGatewayPreviewCLI() {
 			printCommandValidation(os.Stderr, "unknown mcp subcommand %q\n", args[0])
 			return unknownSubcommandChoices(os.Stderr, "mcp", nestedCliCommand("mcp"), args[0])
 		}
-		if args[0] == "auth" {
+		switch args[0] {
+		case "auth":
 			return cmdMCPAuth(args[1:])
+		case "insights":
+			return cmdMCPInsights(args[1:])
+		case "keys":
+			return cmdMCPKeys(args[1:])
 		}
 		return cmdMCPReplay(args[1:])
 	case "tasks":
@@ -925,6 +930,7 @@ type mcpDeployOptions struct {
 	expectedAppID                              string
 	requireCatalogPin                          bool
 	requireReviewedTools                       bool
+	replay                                     bool
 }
 
 func cmdMCPDeploy(args []string) int {
@@ -952,6 +958,7 @@ func cmdMCPDeploy(args []string) int {
 	fs.StringVar(&o.expectedAppID, "expected-app-id", "", "require this reviewed immutable app identity before promotion")
 	fs.BoolVar(&o.requireCatalogPin, "require-catalog-pin", false, "refuse promotion when the candidate cannot provide a catalog integrity pin")
 	fs.BoolVar(&o.requireReviewedTools, "require-reviewed-tools", false, "require discovered tools to exactly match configured tool_scopes before fixtures and promotion")
+	fs.BoolVar(&o.replay, "replay", false, "preview: compare the candidate with the serving deployment and refuse promotion on a breaking catalog change or a new error")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -965,6 +972,12 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	smoke, err := loadMCPSmokeGate(o.smokeFixtures, o.allowToolExecution)
 	if err != nil {
 		return printErr("MCP smoke fixtures", err)
+	}
+	if o.replay && o.publicationID != "" {
+		return printErr("MCP replay", errors.New("--replay does not apply to a private publication; its candidate is verified by owner-approved platform tests"))
+	}
+	if smoke, err = withMCPReplayGate(smoke, o.replay); err != nil {
+		return printErr("MCP replay", err)
 	}
 	dir, err := filepath.Abs(o.path)
 	if err != nil {
@@ -989,6 +1002,9 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	}
 	if cfg.Auth.Mode != mcphosting.AuthOpen && token == "" && o.publicationID == "" {
 		return printErr("MCP verification", fmt.Errorf("%s deploy requires --token-env with a %s for verification", cfg.Auth.Mode, mcpVerificationCredential(cfg.Auth.Mode)))
+	}
+	if o.replay && cfg.Auth.Mode != mcphosting.AuthOpen && token == "" {
+		return printErr("MCP replay", fmt.Errorf("--replay on a %s server requires --token-env with a %s for both deployments", cfg.Auth.Mode, mcpVerificationCredential(cfg.Auth.Mode)))
 	}
 	if o.validateEndpoint != "" {
 		report, validationErr := validateMCPEndpoint(context.Background(), o.validateEndpoint, token, mcphosting.ProtocolVersion, 30*time.Second)

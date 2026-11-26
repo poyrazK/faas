@@ -85,6 +85,13 @@ type authFailure struct {
 // that is wrong.
 var errSigningKeysUnavailable = errors.New("signing keys unavailable")
 
+// errSigningKeysRefused marks a token that could not be checked because the
+// JWKS URL demanded credentials (HTTP 401 or 403). That is configuration, not
+// a wrong token: an authorization server behind access protection (on
+// Gregale, any app that requires a key) cannot serve its public keys.
+// Retrying cannot fix it, so it carries no Retry-After.
+var errSigningKeysRefused = errors.New("signing keys refused")
+
 // errUnsafeJWKSRedirect is a configuration error (the JWKS URL redirects to
 // plain HTTP or loops), never a passing failure.
 var errUnsafeJWKSRedirect = errors.New("unsafe JWKS redirect")
@@ -387,6 +394,9 @@ func (a *authenticator) authenticate(authorization string) (*authContext, *authF
 	claims, err := a.keyResolver.verify(match[1], a.issuer, a.resource)
 	if errors.Is(err, errSigningKeysUnavailable) {
 		return nil, &authFailure{status: http.StatusUnauthorized, error: "invalid_token", scopes: a.baseScopes, description: errSigningKeysUnavailable.Error(), retryable: true}
+	}
+	if errors.Is(err, errSigningKeysRefused) {
+		return nil, &authFailure{status: http.StatusUnauthorized, error: "invalid_token", scopes: a.baseScopes, description: errSigningKeysRefused.Error()}
 	}
 	if err != nil {
 		return nil, &authFailure{status: http.StatusUnauthorized, error: "invalid_token", scopes: a.baseScopes}
@@ -824,6 +834,9 @@ func (r *jwkResolver) fetch() ([]jsonWebKey, error) {
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode >= http.StatusInternalServerError || response.StatusCode == http.StatusTooManyRequests {
 		return nil, fmt.Errorf("%w: JWKS provider answered HTTP %d", errSigningKeysUnavailable, response.StatusCode)
+	}
+	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+		return nil, fmt.Errorf("%w: JWKS URL answered HTTP %d", errSigningKeysRefused, response.StatusCode)
 	}
 	if response.StatusCode != http.StatusOK || response.Request.URL.Scheme != "https" {
 		return nil, errors.New("could not fetch JWKS")

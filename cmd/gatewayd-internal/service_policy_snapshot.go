@@ -99,6 +99,7 @@ type servicePolicyEvidenceReader struct {
 	Members                   map[string]state.ScenarioTestMember
 	Projects                  map[string]state.PreviewServicePolicy
 	Peers                     map[string][]string
+	CacheGrants               map[string]bool
 }
 
 func (s *servicePolicyEvidenceReader) MarshalJSON() ([]byte, error) {
@@ -107,7 +108,27 @@ func (s *servicePolicyEvidenceReader) MarshalJSON() ([]byte, error) {
 		Members  map[string]state.ScenarioTestMember
 		Projects map[string]state.PreviewServicePolicy
 		Peers    map[string][]string `json:",omitempty"`
-	}{s.apps, s.Members, s.Projects, s.Peers})
+		Grants   map[string]bool     `json:",omitempty"`
+	}{s.apps, s.Members, s.Projects, s.Peers, s.CacheGrants})
+}
+
+var _ state.ManagedValkeyCacheGrantReader = (*servicePolicyEvidenceReader)(nil)
+
+// ManagedValkeyCacheGranted records the cache grant a call was authorized
+// against (ADR-20261124174500). A pinned view without grants grants nothing.
+func (s *servicePolicyEvidenceReader) ManagedValkeyCacheGranted(ctx context.Context, cacheAppID, appID string) (bool, error) {
+	grants, ok := s.ServicePolicyReader.(state.ManagedValkeyCacheGrantReader)
+	if !ok {
+		return false, nil
+	}
+	granted, err := grants.ManagedValkeyCacheGranted(ctx, cacheAppID, appID)
+	if err == nil {
+		if s.CacheGrants == nil {
+			s.CacheGrants = make(map[string]bool)
+		}
+		s.CacheGrants[cacheAppID+"/"+appID] = granted
+	}
+	return granted, err
 }
 
 // PRPreviewSetPeerIDs records the preview set a standalone PR preview's call

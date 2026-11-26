@@ -53,6 +53,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 422:
         response_422 = Problem.from_dict(response.json())
 
@@ -100,7 +105,7 @@ def sync_detailed(
     read access to customers; Lago
     an API key and, for the EU region or a self-hosted Lago, api_url. Only
     the last four characters, the mode and the Lago API URL are ever
-    returned.
+    returned. Pending credit pack purchases prevent Stripe connection changes.
 
     Args:
         provider (BillingProvider): A billing provider statements export to.
@@ -141,7 +146,7 @@ def sync(
     read access to customers; Lago
     an API key and, for the EU region or a self-hosted Lago, api_url. Only
     the last four characters, the mode and the Lago API URL are ever
-    returned.
+    returned. Pending credit pack purchases prevent Stripe connection changes.
 
     Args:
         provider (BillingProvider): A billing provider statements export to.
@@ -177,7 +182,7 @@ async def asyncio_detailed(
     read access to customers; Lago
     an API key and, for the EU region or a self-hosted Lago, api_url. Only
     the last four characters, the mode and the Lago API URL are ever
-    returned.
+    returned. Pending credit pack purchases prevent Stripe connection changes.
 
     Args:
         provider (BillingProvider): A billing provider statements export to.
@@ -216,7 +221,7 @@ async def asyncio(
     read access to customers; Lago
     an API key and, for the EU region or a self-hosted Lago, api_url. Only
     the last four characters, the mode and the Lago API URL are ever
-    returned.
+    returned. Pending credit pack purchases prevent Stripe connection changes.
 
     Args:
         provider (BillingProvider): A billing provider statements export to.

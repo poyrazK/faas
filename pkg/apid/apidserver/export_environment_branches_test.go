@@ -7,6 +7,7 @@ import (
 
 	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -77,4 +78,18 @@ func (r *server) WakeEnvironmentBranchData() { r.wakeEnvironmentBranchData() }
 // EnvironmentBranchDataWakeChannel is the reconciler's wake-up channel.
 func (r *server) EnvironmentBranchDataWakeChannel() <-chan struct{} {
 	return r.environmentBranchDataWakeChannel()
+}
+
+// DescribeUnservedEnvironmentBranchWorkload reports a branch workload with no
+// live deployment as the branch status does at now.
+func (r *server) DescribeUnservedEnvironmentBranchWorkload(ctx context.Context, branch state.ProjectEnvironmentBranch, appID string, now time.Time) (api.ProjectEnvironmentBranchWorkload, error) {
+	var workload api.ProjectEnvironmentBranchWorkload
+	err := r.describeUnservedEnvironmentBranchWorkload(ctx, branch, appID, &workload, now)
+	return workload, err
+}
+
+// DatabaseCopyRestoreError classifies a failed restore of the copy of source
+// at point.
+func DatabaseCopyRestoreError(cloned, source managedpostgres.Database, point time.Time, err error) error {
+	return projectEnvironmentDatabaseCopyRestoreError(cloned, projectEnvironmentDatabaseCopy{source: source, pointInTime: point}, err)
 }

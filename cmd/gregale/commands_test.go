@@ -28,7 +28,7 @@ func TestPrintErrTransportErrorIsActionableInTextMode(t *testing.T) {
 		t.Fatalf("exit code = %d, want platform error 3", code)
 	}
 	output := stderr.String()
-	for _, want := range []string{"Could not reach Gregale", "connection refused", "FAAS_API", cliDocsURL} {
+	for _, want := range []string{"Could not reach Gregale", "connection refused", "GREGALE_API_URL", cliDocsURL} {
 		if !strings.Contains(output, want) {
 			t.Errorf("output missing %q:\n%s", want, output)
 		}

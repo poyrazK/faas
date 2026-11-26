@@ -1,0 +1,65 @@
+name: Commit consumer load acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  consumer-load:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    services:
+      postgres:
+        image: postgres@sha256:1a6ab3f5345eb6dbe04a1349529caabdb0ab09293a09590fad07b2246bfa4b54
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: commit_fixture
+          POSTGRES_DB: faas
+        ports: ['5432']
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      GOMAXPROCS: '2'
+      GOMEMLIMIT: 4GiB
+      GOGC: '30'
+      GOFLAGS: -gcflags=all=-dwarf=false
+      FAAS_PGTEST_TEMPLATE_DATABASE: '1'
+      FAAS_COMMIT_TLS_PG_BIN_DIR: /usr/lib/postgresql/16/bin
+      FAAS_COMMIT_TLS_PG_TMPDIR: /tmp
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Record source identity
+        run: python3 scripts/ci/commit_acceptance_report.py prepare "$RUNNER_TEMP/commit-consumer-load/report.json" consumer-load
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Check acceptance reporting
+        run: python3 -m unittest scripts/ci/commit_acceptance_report_test.py
+      - name: Install PostgreSQL fixture binaries
+        run: |
+          if [ ! -x "$FAAS_COMMIT_TLS_PG_BIN_DIR/initdb" ] || [ ! -x "$FAAS_COMMIT_TLS_PG_BIN_DIR/pg_ctl" ]; then
+            sudo apt-get update
+            sudo apt-get install -y postgresql-16
+          fi
+          test -x "$FAAS_COMMIT_TLS_PG_BIN_DIR/initdb"
+          test -x "$FAAS_COMMIT_TLS_PG_BIN_DIR/pg_ctl"
+      - name: Run sustained consumer gate
+        env:
+          DATABASE_URL: postgres://faas:commit_fixture@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/faas?sslmode=disable
+        run: python3 scripts/ci/commit_acceptance_report.py run "$RUNNER_TEMP/commit-consumer-load/report.json" consumer-load
+      - name: Upload sanitized acceptance report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: commit-consumer-load-report
+          path: ${{ runner.temp }}/commit-consumer-load/report.json
+          if-no-files-found: warn
+          retention-days: 14

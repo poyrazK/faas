@@ -36,6 +36,13 @@ func TestDiagnosticProblemFallbackHints(t *testing.T) {
 			t.Errorf("status %d code %q hint = %q, want it to mention %q", tc.status, tc.code, got.Hint, tc.want)
 		}
 	}
+	// Agent eval 2026-11-23: `postgres query` was refused while feature list
+	// showed app-tasks available; the hint must not send the agent back there.
+	interactive := main.DiagnosticProblem(*api.ErrInteractiveSessionsNotEnabled())
+	if strings.Contains(interactive.Hint, "feature list") || !strings.Contains(interactive.Hint, "alternative in the detail") ||
+		!strings.Contains(interactive.Detail, "release.command") {
+		t.Errorf("interactive refusal hint = %q detail = %q", interactive.Hint, interactive.Detail)
+	}
 	server := main.DiagnosticProblem(api.Problem{Status: 501, Hint: "server hint"})
 	if server.Hint != "server hint" {
 		t.Errorf("a server-supplied hint was replaced: %q", server.Hint)

@@ -68,7 +68,7 @@ func RuntimeBuildLimitations() []string {
 // RuntimeBuilds never sends probes or changes deployment/notification state.
 // All queries use original timestamps and one pinned evaluation time.
 func RuntimeBuilds(ctx context.Context, client *promql.Client, registry RuntimeBuildRegistry, selected RuntimeBuildSelection, now time.Time) api.ObsRuntimeBuilds {
-	ctx, cancel := context.WithTimeout(ctx, api.ObsRuntimeBuildBudget)
+	ctx, cancel := context.WithTimeout(ctx, runtimeCollectionBudget)
 	defer cancel()
 	out, _ := collectRuntimeBuilds(ctx, client, registry, selected, now)
 	return out

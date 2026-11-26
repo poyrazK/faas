@@ -92,9 +92,14 @@ var routeActions = map[string]authz.OrgAction{
 	"GET /v1/apps/{slug}/release-approval-policy":    authz.OrgActionReadApp,
 	"PUT /v1/apps/{slug}/release-approval-policy":    authz.OrgActionManageAppSecurity,
 	"DELETE /v1/apps/{slug}/release-approval-policy": authz.OrgActionManageAppSecurity,
-	"GET /v1/apps/{slug}/release-approvals":          authz.OrgActionReadApp,
-	"GET /v1/deployments/{id}/approvals":             authz.OrgActionReadApp,
-	"POST /v1/deployments/{id}/approvals":            authz.OrgActionApproveAppRelease,
+	// Verification contracts gate promotion (ADR-20261122220000): reading one
+	// is reading the app; changing or removing one changes a release gate.
+	"GET /v1/apps/{slug}/verification-contract":    authz.OrgActionReadApp,
+	"PUT /v1/apps/{slug}/verification-contract":    authz.OrgActionManageAppSecurity,
+	"DELETE /v1/apps/{slug}/verification-contract": authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/release-approvals":        authz.OrgActionReadApp,
+	"GET /v1/deployments/{id}/approvals":           authz.OrgActionReadApp,
+	"POST /v1/deployments/{id}/approvals":          authz.OrgActionApproveAppRelease,
 	// A check after a release command with an unknown outcome (ADR-1448 amendment 1).
 	"POST /v1/deployments/{id}/release-outcome": authz.OrgActionDeployApp,
 	// Release diff (ADR-20261021101117).
@@ -114,6 +119,7 @@ var routeActions = map[string]authz.OrgAction{
 	// state. Release gates and the route-health guard stop releases, so only
 	// owners and admins change them, as with the approval policy.
 	"POST /v1/apps/{slug}/rollback":                             authz.OrgActionDeployApp,
+	"GET /v1/apps/{slug}/rollbacks/preflight":                   authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/rollbacks/{operation}":                 authz.OrgActionReadApp,
 	"POST /v1/apps/{slug}/rollouts/recover":                     authz.OrgActionDeployApp,
 	"GET /v1/apps/{slug}/rollouts/{id}/observation":             authz.OrgActionReadApp,
@@ -151,6 +157,7 @@ var routeActions = map[string]authz.OrgAction{
 	// Binding a callback's webhook verification secret manages a secret. Run
 	// URLs name no app, so indirectlyAddressedApp resolves the run's app.
 	"POST /v1/apps/{slug}/workflows/{name}/runs":                             authz.OrgActionDeployApp,
+	"GET /v1/apps/{slug}/workflows/run-starts/{name}":                        authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/workflows/runs":                                     authz.OrgActionReadApp,
 	"POST /v1/apps/{slug}/workflows/runs:cancel-preview":                     authz.OrgActionReadApp,
 	"POST /v1/apps/{slug}/workflows/runs:cancel-queued":                      authz.OrgActionDeployApp,
@@ -224,6 +231,7 @@ var routeActions = map[string]authz.OrgAction{
 	"GET /v1/apps/{slug}/analytics/timeseries":      authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/analytics/route-customers": authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/analytics/route-resources": authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/mcp-tool-insights":         authz.OrgActionReadApp,
 
 	// Credentials a company app issues (ADR-20261026151103 amendment 1).
 	// Each one is shown once to the member who mints or sets it and keeps

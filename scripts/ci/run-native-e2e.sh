@@ -492,6 +492,8 @@ if [[ -n "${phase}" ]]; then
     # Three cache deployments (create, resize) plus park and restart.
     # The opt-in soak (FAAS_E2E_REDIS_SOAK=1) runs 100 handoffs instead.
     managed-redis-only) phase_timeout=45m; if [[ "${FAAS_E2E_REDIS_SOAK:-}" == 1 ]]; then phase_timeout=330m; fi ;;
+    # One source build and two deploy/wake cycles, all through store grants.
+    storage-grants-only) phase_timeout=60m ;;
     customer-job-operations-only) phase_timeout=35m ;;
     customer-workflow-operations-only) phase_timeout=35m ;;
     # Eight native source builds plus real minute-spaced verification rounds.
@@ -517,6 +519,9 @@ if [[ -n "${phase}" ]]; then
     app-task-interactive-only) phase_timeout=45m ;;
     # Two builder-VM builds per test (the watch test coalesces a third).
     dev-loop-only) phase_timeout=60m ;;
+    # Three builder-VM builds; the two Next.js builds install ~470 MB of
+    # node_modules each.
+    js-frameworks-free-only) phase_timeout=75m ;;
     twonode) phase_timeout=25m ;;
     *) phase_timeout=15m ;;
   esac
@@ -546,6 +551,10 @@ export FAAS_E2E_BIN_DIR="${stage_root}/bin"
 mkdir -p "${FAAS_E2E_BIN_DIR}"
 
 case "${phase}" in
+  storage-grants-only)
+    [[ -x "${FAAS_E2E_MINIO_BIN:-}" ]] || die "storage-grants-only needs FAAS_E2E_MINIO_BIN (a minio server binary)"
+    export FAAS_E2E_STORAGE_GRANTS=1
+    ;;
   financial|financial-system)
     [[ -z "${FAAS_SKIP_PG_TESTS:-}" ]] || die "financial acceptance rejects FAAS_SKIP_PG_TESTS"
     export FAAS_FINANCIAL_SYSTEM_ACCEPTANCE=1

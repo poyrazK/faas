@@ -32,7 +32,7 @@ The [error code reference](error-codes.md) lists every code with the HTTP
 status it is sent with, its title and hint, and the page that explains it.
 This page covers the codes you are most likely to meet and what to do next.
 For a deployment that failed, start with
-[Fix a failed deploy](troubleshoot-deploys.md).
+[Troubleshooting](troubleshooting.md#a-deploy-failed).
 
 ## 502, 503 and 504 responses
 

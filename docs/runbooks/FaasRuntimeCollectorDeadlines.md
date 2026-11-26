@@ -1,9 +1,13 @@
 # FaasRuntimeCollectorDeadlines
 
+## Symptom
+
 One apid has recorded an estimated three or more reports with
 `deadline_exceeded` per five-minute window for five consecutive minutes.
 The collection uses a shared three-second source deadline and can inherit an
 earlier deadline from its caller.
+
+## Check
 
 1. Open **Gregale Runtime Diagnostics** for the alert's **apid instance**.
    The warning's **Runtime Diagnostics** link opens that view. Review
@@ -21,6 +25,8 @@ earlier deadline from its caller.
    For a focused verifier run, use `--runtime-diagnostics none` to keep core
    evidence or select only the advisory groups you need. Compare the next
    report's evidence coverage and timing.
+
+## Verify
 
 Confirm expected polls produce fresh evidence and the five-minute deadline count
 drops below the warning threshold. See [runtime collector metrics](../ops/post-deployment-monitoring.md#runtime-collector-metrics).

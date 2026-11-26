@@ -120,6 +120,17 @@ func TestTieredCardPeriodsAreCalendarMonths(t *testing.T) {
 	}
 }
 
+// adr: 1317 — a new card supersedes only its own unit stream.
+func TestTieredCardEffectiveInIgnoresOtherUnits(t *testing.T) {
+	start := allowanceStart
+	request := volumeLadder(start)
+	model := unitCard("app:tokens", start.Add(time.Minute), 5)
+	window := start.Add(2 * time.Minute)
+	if !TieredCardEffectiveIn([]state.APIConsumerRateCard{request, model}, window, window.Add(time.Minute)) {
+		t.Fatal("model rate hides a still-effective request tier")
+	}
+}
+
 func TestValidateRateCardTiers(t *testing.T) {
 	for name, tiers := range map[string][]state.APIConsumerRateCardTier{
 		"single step":      {{PriceMillicentsPerUnit: 1}},

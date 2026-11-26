@@ -24,8 +24,13 @@ commit the file, put credentials in the Dockerfile, or pass them on command line
 The managed bucket supplies all six `GREGALE_S3_ASSETS_*` settings automatically.
 
 ```sh
-gregale deploy --name my-files --secrets-file /absolute/private/files.secrets
+gregale deploy --name my-files --secrets-file /absolute/private/files.secrets --no-require-authn
 ```
+
+`--no-require-authn` makes the app public on purpose: the app checks
+`STORAGE_APP_TOKEN` itself, and a private app would need a Gregale API key in
+the same `Authorization` header, so every PUT/GET got `401`. It stays public
+on later deploys; requests without the storage token are still refused.
 
 Set APP_URL to your deployment URL and STORAGE_APP_TOKEN in your local shell:
 
@@ -34,7 +39,9 @@ curl --fail-with-body -X PUT "$APP_URL/objects/file.bin" \
   -H "Authorization: Bearer $STORAGE_APP_TOKEN" --data-binary @file.bin
 curl --fail-with-body "$APP_URL/objects/file.bin" \
   -H "Authorization: Bearer $STORAGE_APP_TOKEN" --output downloaded.bin
-curl --fail-with-body "$APP_URL/readyz"
+# Gregale's edge answers a public GET /readyz (the health path) itself
+# without waking the app; read the app's own readiness report with:
+gregale release verify <deployment-id> --app <slug> --path /readyz
 ```
 
 Keys contain 1–128 letters, digits, dots, underscores or hyphens, starting with a

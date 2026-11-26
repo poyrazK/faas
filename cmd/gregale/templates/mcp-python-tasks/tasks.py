@@ -1508,6 +1508,18 @@ class DurableTaskRuntime:
                 (self.namespace, self._worker_id),
             )
 
+    def worker_receipt(self):
+        """Startup receipt `gregale mcp server tasks deploy` reads from worker logs.
+
+        It names this worker's registry ID and drain budget and is refreshed with
+        each capability heartbeat so it outlives the bounded log ring. claimFence
+        is false: this runtime has no database-side claim fence, so the CLI's
+        quarantine and retirement flows stay Node-only.
+        """
+        return json.dumps({"event": "mcp_task_worker_started", "workerID": str(self._worker_id),
+                           "claimFence": False, "shutdownTimeoutMs": self.drain_timeout * 1000},
+                          separators=(",", ":"))
+
     def _worker_capability_heartbeat_loop(self):
         last_cleanup = 0.0
         last_error_log = 0.0
@@ -1531,6 +1543,7 @@ class DurableTaskRuntime:
                         '{"event":"mcp_task_worker_capability_heartbeat_failed"}'
                     )
                     last_error_log = now
+            print(self.worker_receipt(), flush=True)
             if self._stopping.wait(10):
                 break
         try:

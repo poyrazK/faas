@@ -40,11 +40,27 @@ gregale redis bind sessions --app web
 
 This sets `REDIS_URL` on `web` (use `--env` for another name) to
 `redis://sessions.svc.gregale:6379`. The app picks it up at its next deploy or
-wake.
+wake. A cache binds only to an app that exists, so for a new app deploy once,
+bind, and deploy again. An app that needs Redis to start fails that first
+deploy's health check; the deploy after binding fixes it.
+
+Binding also lets the app call the cache. An app in a project reaches only its
+own project's services under the default `project` policy, and a cache is not
+part of any project, so the binding is what lets it connect. To take that
+away:
+
+```bash
+gregale redis unbind sessions --app web
+```
+
+The app's `REDIS_URL` stays set until you remove it with `gregale env unset`;
+its connections are refused from then on.
 
 Caches have no password. A cache has no public address, and only apps in the
 same account that are allowed to call it can connect, so clients configured
-with a bare `host:port` work too.
+with a bare `host:port` work too. An app that calls with the `account`
+service policy (`x-gregale-service-policy: account`) reaches every service in
+the account, caches included, without a binding.
 
 ## Docker Compose
 
@@ -52,8 +68,10 @@ When you deploy a Compose project, a `redis` or `valkey` service becomes a
 managed cache named `<project>-<service>`. Every service that pointed at it
 gets the cache's address in the same form it used: `REDIS_URL=redis://redis:6379/0`
 becomes `redis://<project>-redis.svc.gregale:6379/0`, and
-`REDIS_ADDR=redis:6379` becomes `<project>-redis.svc.gregale:6379`. A key you
-have already set keeps its value. The deploy plan shows each cache it will
+`REDIS_ADDR=redis:6379` becomes `<project>-redis.svc.gregale:6379`, and each
+of those services may call the cache. A key you have already set keeps its
+value; for a service that already had its key set before caches granted calls,
+run `gregale redis bind` once to let it connect. The deploy plan shows each cache it will
 create, or why it will not.
 
 ## Scale to zero
@@ -83,7 +101,9 @@ gregale redis restart sessions
 All three keep your data. A resize or update starts a new VM that copies the
 cache before it takes over; writes pause for a moment at the switch. Shrinking
 below the data the cache holds needs `--evict`, which lets the cache evict keys
-by its policy. A restart saves the cache's memory and restores it.
+by its policy. A restart saves the cache's memory and restores it. A parked
+cache, or one switching to its new VM during a resize or update, has nothing
+running to restart; its next connection starts it with its data.
 
 ## Limits
 

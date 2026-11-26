@@ -23,9 +23,10 @@ import (
 // Reasons a Compose redis service is not provided.
 const (
 	composeRedisUnavailable   = "managed Redis is not available to this account"
+	composeRedisNoServiceTCP  = "managed Redis needs private TCP between services, which this installation has not enabled"
 	composeRedisPlan          = "the plan includes no more managed Redis caches"
 	composeRedisNotReferenced = "no selected service uses it"
-	composeRedisConfigured    = "every service that uses it already has its key set"
+	composeRedisConfigured    = api.ComposeRedisConfiguredReason
 )
 
 type composeRedisBinding struct {
@@ -106,6 +107,7 @@ func (s *server) composeRedisPlan(ctx context.Context, acct state.Account, proje
 		}
 		return provisions, reasons, nil
 	}
+	serviceTCP := s.privateServiceTCPEnabled()
 	existing, err := store.ListManagedValkeyCaches(ctx, acct.ID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list managed caches: %w", err)
@@ -128,6 +130,12 @@ func (s *server) composeRedisPlan(ctx context.Context, acct state.Account, proje
 		}
 		if len(bindings) == 0 {
 			reasons[m.Name] = composeRedisConfigured
+			continue
+		}
+		// Only a service that still needs a cache is held back by the
+		// switch; one already bound reads as configured above.
+		if !serviceTCP {
+			reasons[m.Name] = composeRedisNoServiceTCP
 			continue
 		}
 		provision := composeRedisProvision{service: m.Name, cache: composeRedisCacheName(projectSlug, m.Name, scope), bindings: bindings}
@@ -206,16 +214,18 @@ func (s *server) applyComposeRedis(r *http.Request, acct state.Account, scope st
 	limits := api.MustLimitsFor(acct.Plan)
 	for _, service := range services {
 		provision := provisions[service]
-		if !provision.existing {
-			if _, _, problem := s.provisionRedisCache(r, acct, api.CreateRedisCacheRequest{Name: provision.cache}); problem != nil {
-				return problemWithDetail(problem, fmt.Sprintf("Compose service %q: create cache %q", service, provision.cache))
-			}
+		cacheApp, problem := s.composeRedisCacheApp(r, acct, provision)
+		if problem != nil {
+			return problemWithDetail(problem, fmt.Sprintf("Compose service %q: create cache %q", service, provision.cache))
 		}
 		for _, binding := range provision.bindings {
 			app, ok := byWorkload[binding.Workload]
 			if !ok {
 				return api.NewProblem(http.StatusConflict, "managed_redis_binding_target_missing", "Cache binding target missing",
 					fmt.Sprintf("Compose service %q: no app for workload %q", service, binding.Workload))
+			}
+			if problem := s.grantRedisCache(r.Context(), acct, cacheApp, app); problem != nil {
+				return problem
 			}
 			if problem := s.sealAndPersist(r.Context(), acct, app, scope, binding.EnvKey, binding.Value, api.SecretClassPersistent, limits); problem != nil {
 				return problem
@@ -226,6 +236,21 @@ func (s *server) applyComposeRedis(r *http.Request, acct state.Account, scope st
 		})
 	}
 	return nil
+}
+
+// composeRedisCacheApp creates a planned cache, or loads the account's
+// existing cache with its name, so its consumers can be granted the call.
+func (s *server) composeRedisCacheApp(r *http.Request, acct state.Account, provision composeRedisProvision) (state.App, *api.Problem) {
+	if !provision.existing {
+		app, _, problem := s.provisionRedisCache(r, acct, api.CreateRedisCacheRequest{Name: provision.cache})
+		return app, problem
+	}
+	app, err := s.store.AppBySlug(r.Context(), provision.cache)
+	if err != nil || app.AccountID != acct.ID || app.Status == state.AppDeleted {
+		return state.App{}, api.NewProblem(http.StatusConflict, "managed_redis_cache_missing", "Cache missing",
+			fmt.Sprintf("cache %q is no longer one of this account's caches; apply again", provision.cache))
+	}
+	return app, nil
 }
 
 // problemWithDetail prefixes a problem's detail with where it happened.

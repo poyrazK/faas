@@ -1881,6 +1881,10 @@ type WakeResult struct {
 	InstanceID        string
 	NodeID            string // compute_nodes.id (uuid), empty only on error
 	Method            vmmdpb.WakeMethod
+	// StartupOOM: the app ran out of memory while this wake booted it
+	// (vmmd WakeResponse.startup_oom). Gateways keep such a wake out of the
+	// platform wake SLO. False on the already-running fast path.
+	StartupOOM bool
 	// WakeID is the per-wake-attempt correlation handle (gaps analysis
 	// 2026-07-23). UUIDv7 minted at Phase 2 before CreateInstance;
 	// gatewayd-internal propagates it back to the client as x-faas-wake-id and
@@ -4859,7 +4863,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 
 	bootInput.identity.InstanceID = fresh.ID
 	bootInput.identity.NodeID = fresh.NodeID
-	return WakeResult{InstanceID: bootInput.insID, NodeID: fresh.NodeID, Method: out.Method, WakeID: bootInput.wakeID, Port: bootInput.spec.Port, DeploymentID: bootInput.depID, RequestCount: fresh.RequestCount, Identity: bootInput.identity}, nil
+	return WakeResult{InstanceID: bootInput.insID, NodeID: fresh.NodeID, Method: out.Method, StartupOOM: out.StartupOOM, WakeID: bootInput.wakeID, Port: bootInput.spec.Port, DeploymentID: bootInput.depID, RequestCount: fresh.RequestCount, Identity: bootInput.identity}, nil
 }
 
 // recordBootCharacterization persists the workload class a cold boot's
@@ -5685,14 +5689,15 @@ func (e *Engine) warnRestorePressureFallback(operation string, err error) {
 // both observe app.NodeID != "" and return nil. Returns the
 // underlying store / chooser error wrapped with %w+op when
 // placement cannot proceed (capacity exhausted, FK rejection,
-// etc.); the subscriber logs and continues — the next notify
-// (e.g. a later admin update) is a fresh opportunity.
+// etc.); the caller logs and continues. Only kind=created triggers a
+// claim, so a later update is not a retry: the next unplaced sweep
+// (about a minute later) is.
 //
 // Caller contract:
 //   - ctx must be cancellable; the subscriber drops on cancel.
-//   - The cold-start sweep calls this once per ListUnplacedApps
-//     row at schedd startup (closes the pg_notify missed-event
-//     window).
+//   - The unplaced sweep (Engine.SweepUnplaced) calls this for each
+//     ListUnplacedApps row at boot and then about once a minute
+//     (closes the pg_notify missed-event window).
 func (e *Engine) ClaimUnplaced(ctx context.Context, appID string) error {
 	if appID == "" {
 		return fmt.Errorf("sched: claim unplaced: empty app id")
@@ -7523,6 +7528,12 @@ func (e *Engine) markPrimeFailed(ctx context.Context, deploymentID string, cause
 		observed = serviceConflict
 	}
 	_ = whycopy.Decorate(problem, code, observed)
+	// The fix names this app and deployment, not <slug> (ADR-20261123230000).
+	values := whycopy.Values{Deployment: deploymentID}
+	if app, appErr := e.store.AppByID(markCtx, dep.AppID); appErr == nil {
+		values.App = app.Slug
+	}
+	_ = whycopy.Complete(problem, values)
 
 	message := "snapshot prime failed: " + cause.Error()
 	if capacity != nil {
@@ -8172,8 +8183,21 @@ func (e *Engine) ReconcileDeletedApp(ctx context.Context, appID string) (int, er
 
 // Evict destroys a RUNNING instance under RAM pressure (spec §4.3). Unlike Park
 // it does not snapshot — the next wake cold-boots (ADR-005), so the state lands
-// in STOPPED rather than PARKED.
+// in STOPPED rather than PARKED. Rollouts also stop replicas through it; the
+// pressure paths go through EvictUnderPressure, which records why. A replica
+// that froze before the lock parks with reason superseded, so it is not
+// counted as a memory pressure park.
 func (e *Engine) Evict(ctx context.Context, instanceID string) error {
+	return e.evict(ctx, instanceID, "state_transition", "", parkReasonSuperseded)
+}
+
+// parkReasonSuperseded is the frozen_park reason when Evict, not memory
+// pressure, parks a frozen instance.
+const parkReasonSuperseded = "superseded"
+
+// evict stops a running instance with a kind/reason transition, or parks a
+// frozen one with parkReason.
+func (e *Engine) evict(ctx context.Context, instanceID, kind, reason, parkReason string) error {
 	ins, err := e.lockedInStates(ctx, instanceID, state.StateRunning, state.StateFrozen)
 	if err != nil || ins == nil {
 		return err
@@ -8182,7 +8206,7 @@ func (e *Engine) Evict(ctx context.Context, instanceID string) error {
 	if state.State(ins.State) == state.StateFrozen {
 		// ADR-1151: under memory pressure frozen VMs go first. The
 		// deployment's snapshot stays, so the instance parks, not stops.
-		e.parkFrozenLocked(ctx, *ins, "memory_pressure")
+		e.parkFrozenLocked(ctx, *ins, parkReason)
 		return nil
 	}
 
@@ -8195,7 +8219,7 @@ func (e *Engine) Evict(ctx context.Context, instanceID string) error {
 		return fmt.Errorf("sched: evict: destroy %s: %w", instanceID, err)
 	}
 	e.ledger.Release(instanceID)
-	e.transition(ctx, instanceID, ins.AppID, state.StateStopped)
+	e.transitionWithKind(ctx, instanceID, ins.AppID, state.StateStopped, kind, reason)
 	if ins.Mode == string(state.InstanceModeWorker) {
 		e.scheduleWorkerReconcile(ctx, ins.DeploymentID)
 	}

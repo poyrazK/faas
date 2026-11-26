@@ -376,7 +376,7 @@ debug requests, crash snapshots or forks; those answer `403` and need an API
 key. The OIDC bearer the deploy Action uses has the same limits. Browser sessions with MFA enabled need verification from the last
 five minutes when minting or rotating one. CLI requests use their scoped
 bearer credential. The token is shown once;
-store it as `FAAS_TOKEN` in the CI secret store.
+store it as `GREGALE_TOKEN` in the CI secret store.
 
 A deploy token can also manage its app's edge rules, but only for that app's
 own hosts: a rule's `match_host` must be `@app`, the app's
@@ -398,7 +398,7 @@ gregale app deploy-token rotate <token-id> --app my-api   # the old token stops 
 gregale app deploy-token delete <token-id> --app my-api
 ```
 
-With the token in `FAAS_TOKEN`, `gregale deploy --name my-api … --wait` reads
+With the token in `GREGALE_TOKEN`, `gregale deploy --name my-api … --wait` reads
 the app, deploys it and follows the deployment to the end. The token reaches
 no other app, and it cannot read build logs: the wait reports the
 deployment's status and failure reason instead. Use a key with `apps:read`
@@ -501,63 +501,3 @@ so delete one (`gregale release alias delete`) to make room.
 - [Progressive rollouts](rollouts.md) — Dark deployments, canary stages, safe-by-default rollouts and sticky revisions.
 - [Atomic project releases](project-releases.md) — Release every service of a project together, with readiness checks and schema contracts.
 - [Environment promotion](environment-promotion.md) — Promote a tested artifact and its configuration from one environment to the next.
-
-## Where sections moved
-
-These sections now have their own pages.
-
-### Adding services to an atomic project
-
-Moved to [Atomic project releases](project-releases.md#adding-services-to-an-atomic-project).
-
-### Safe changes
-
-Moved to [Safe releases](releases.md#safe-changes).
-
-### Releases that change the database
-
-Moved to [Safe releases](releases.md#releases-that-change-the-database).
-
-### Rollbacks that restore the database
-
-Moved to [Safe releases](releases.md#rollbacks-that-restore-the-database).
-
-### Release gates
-
-Moved to [Safe releases](releases.md#release-gates).
-
-### What changed between releases
-
-Moved to [Safe releases](releases.md#what-changed-between-releases).
-
-### The release page
-
-Moved to [Safe releases](releases.md#the-release-page).
-
-### Release approvals
-
-Moved to [Release approvals, freezes and schedules](release-controls.md#release-approvals).
-
-### Deploy freezes
-
-Moved to [Release approvals, freezes and schedules](release-controls.md#deploy-freezes).
-
-### Scheduled releases
-
-Moved to [Release approvals, freezes and schedules](release-controls.md#scheduled-releases).
-
-### Dark deployments
-
-Moved to [Progressive rollouts](rollouts.md#dark-deployments).
-
-### Progressive rollouts
-
-Moved to [Progressive rollouts](rollouts.md).
-
-### Promote a tested HTTP configuration snapshot
-
-Moved to [Environment promotion](environment-promotion.md#promote-a-tested-http-configuration-snapshot).
-
-### Promotion admission
-
-Moved to [Environment promotion](environment-promotion.md#promotion-admission).

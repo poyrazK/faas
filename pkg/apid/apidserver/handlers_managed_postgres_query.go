@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"io"
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -36,12 +37,42 @@ func (s *server) queryManagedPostgresDatabase(w http.ResponseWriter, r *http.Req
 		managedPostgresQueryProblem(w, err)
 		return
 	}
+	writeManagedPostgresQueryResult(w, database.ID, result)
+}
+
+func (s *server) previewManagedPostgresDataAPICatalog(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if s.managedPostgres == nil {
+		managedPostgresNotConfiguredProblem(w)
+		return
+	}
+	if r.Body != nil {
+		body, err := io.ReadAll(io.LimitReader(r.Body, 1))
+		if err != nil || len(body) != 0 {
+			api.WriteProblem(w, api.ErrValidation("catalog preview does not accept a request body"))
+			return
+		}
+	}
+	database, err := s.managedPostgres.Get(r.Context(), acct.ID, r.PathValue("id"))
+	if err != nil {
+		managedPostgresProblem(w, err)
+		return
+	}
+	result, err := s.managedPostgres.PreviewDataAPICatalog(r.Context(), database)
+	s.audit.Emit(r.Context(), "postgres.data_api_catalog_preview", &acct.ID, managedPostgresQueryAudit(database.ID, api.DataAPICatalogPreviewSQL, result, err))
+	if err != nil {
+		managedPostgresQueryProblem(w, err)
+		return
+	}
+	writeManagedPostgresQueryResult(w, database.ID, result)
+}
+
+func writeManagedPostgresQueryResult(w http.ResponseWriter, databaseID string, result managedpostgres.ReadOnlyQueryResult) {
 	columns := make([]api.ManagedPostgresQueryColumn, 0, len(result.Columns))
 	for _, c := range result.Columns {
 		columns = append(columns, api.ManagedPostgresQueryColumn{Name: c.Name, Type: c.Type})
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, api.ManagedPostgresQueryResponse{DatabaseID: database.ID, Columns: columns, Rows: result.Rows, RowCount: result.RowCount, Truncated: result.Truncated, DurationMS: result.Duration.Milliseconds()})
+	writeJSON(w, http.StatusOK, api.ManagedPostgresQueryResponse{DatabaseID: databaseID, Columns: columns, Rows: result.Rows, RowCount: result.RowCount, Truncated: result.Truncated, DurationMS: result.Duration.Milliseconds()})
 }
 
 // decodeManagedPostgresQuery reads and checks the request body, writing the

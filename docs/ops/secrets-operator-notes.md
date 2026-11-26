@@ -1,4 +1,4 @@
-# Delivered secrets: operator notes
+# Secrets: operator notes
 
 Fleet and upgrade notes behind the customer [secrets page](../secrets.md).
 They moved here so that page can be published (#5709).

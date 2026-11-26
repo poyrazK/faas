@@ -15,7 +15,7 @@ gregale login
 
 `gregale login` opens your browser once, and the agent uses that login for
 every `gregale` command it runs. Where nobody can open a browser, put a
-scoped key in the agent's environment as `FAAS_TOKEN` instead; see
+scoped key in the agent's environment as `GREGALE_TOKEN` instead; see
 [Give the agent its own key](agents.md#give-the-agent-its-own-key).
 
 ## Tell Cursor how the project deploys
@@ -75,8 +75,10 @@ The command returns when the previous release serves again. See
 ## The MCP server (preview)
 
 Gregale's hosted MCP server, in preview, gives Cursor Gregale's tools without
-the CLI. `gregale mcp connect --client cursor` adds it to `~/.cursor/mcp.json`,
-keeping your other servers. To add it yourself:
+the CLI.
+[Add Gregale to Cursor](https://cursor.com/en/install-mcp?name=gregale&config=eyJ1cmwiOiJodHRwczovL2FwaS5ncmVnYWxlLmRldi9tY3AifQ==)
+in one click, or run `gregale mcp connect --client cursor` to add it to
+`~/.cursor/mcp.json`, keeping your other servers. To add it yourself:
 
 ```json
 {

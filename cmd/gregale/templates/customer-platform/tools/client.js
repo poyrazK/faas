@@ -18,9 +18,9 @@ export function apiClient(apiBase, token, fetchAPI = fetch) {
   if (base.username || base.password || base.search || base.hash || base.pathname !== "/" ||
       (base.protocol !== "https:" && !(base.protocol === "http:" &&
         ["127.0.0.1", "localhost", "[::1]"].includes(base.hostname)))) {
-    throw new Error("FAAS_API must be an HTTPS origin (HTTP is allowed only on loopback)");
+    throw new Error("GREGALE_API_URL must be an HTTPS origin (HTTP is allowed only on loopback)");
   }
-  if (!token) throw new Error("Set FAAS_TOKEN on the operator machine");
+  if (!token) throw new Error("Set GREGALE_TOKEN on the operator machine");
   return {
     base: base.origin,
     async request(method, path, body) {
@@ -103,7 +103,7 @@ export async function retryCredential(api, path) {
       intent?.prefix !== journal.plaintext.slice(3, 11) || intent?.hash !== digest(journal.plaintext) ||
       !intent.name || JSON.stringify(intent.scopes) !== '["write"]' ||
       !Array.isArray(journal.revoke_key_ids) || journal.revoke_key_ids.length > 100) {
-    throw new Error("Invalid credential journal or mismatched FAAS_API");
+    throw new Error("Invalid credential journal or mismatched GREGALE_API_URL");
   }
   id(journal.tenant_id); id(intent.consumer_id); journal.revoke_key_ids.forEach(id);
   // Build an allowlisted body: never serialize the journal or its plaintext.

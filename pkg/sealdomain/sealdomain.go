@@ -181,6 +181,9 @@ var registry = []Spec{
 	)},
 	{Domain: Storage, Readers: []string{"s3-gatewayd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("object_storage_s3_credentials", "secret_sealed"),
+		// Short-lived workload credentials (ADR-20261122191423); new
+		// table, so there is no fleet copy.
+		cols("object_storage_workload_credentials", "secret_sealed"),
 	)},
 	// Trigger config envelopes (jsonb leaves, not listed here) belong to
 	// delivery too. apid merges an update without opening the stored config

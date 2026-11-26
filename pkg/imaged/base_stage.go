@@ -222,7 +222,7 @@ func (h *Handler) ensureBaseExt4(
 						h.log.Warn("imaged: refresh base digest sidecar source ref", "key", digestKey, "err", sidecarErr)
 					}
 				}
-				if markErr := markCachedBaseGeneration(be, baseKey, digestKey, ref); markErr != nil {
+				if markErr := markCachedBaseGeneration(ctx, be, baseKey, digestKey, ref); markErr != nil {
 					h.log.Warn("imaged: mark cached base generation", "key", baseKey, "err", markErr)
 				}
 				return BaseStageResult{
@@ -468,7 +468,7 @@ func (h *Handler) trySkipPinnedBaseLocally(
 			h.log.Warn("imaged: upgrade legacy base digest sidecar source ref", "key", digestKey, "err", sidecarErr)
 		}
 	}
-	if markErr := markCachedBaseGeneration(be, baseKey, digestKey, ref); markErr != nil {
+	if markErr := markCachedBaseGeneration(ctx, be, baseKey, digestKey, ref); markErr != nil {
 		h.log.Warn("imaged: mark cached base generation", "key", baseKey, "err", markErr)
 	}
 	h.log.Info("imaged: reused pinned base from local evidence",
@@ -925,13 +925,13 @@ func (h *Handler) writeScanSidecar(ctx context.Context, baseKey, digestKey, ref,
 	if err := putSharedBaseSidecar(ctx, be, scanKey, scanBlob); err != nil {
 		return fmt.Errorf("imaged: write scan sidecar %q: %w", scanKey, err)
 	}
-	if err := markCachedBaseGeneration(be, baseKey, digestKey, ref); err != nil {
+	if err := markCachedBaseGeneration(ctx, be, baseKey, digestKey, ref); err != nil {
 		return err
 	}
 	return nil
 }
 
-func markCachedBaseGeneration(be storage.StorageBackend, baseKey, digestKey, generation string) error {
+func markCachedBaseGeneration(ctx context.Context, be storage.StorageBackend, baseKey, digestKey, generation string) error {
 	// The base marker is the commit record consumed by vmmd. Mark the two
 	// sidecars first so observing the base generation also means every local
 	// artifact needed to validate it is protected from cache eviction.
@@ -943,11 +943,35 @@ func markCachedBaseGeneration(be storage.StorageBackend, baseKey, digestKey, gen
 		if cache == nil {
 			continue
 		}
-		if err := cache.MarkGeneration(cacheKey, generation); err != nil {
+		err = cache.MarkGeneration(cacheKey, generation)
+		if errors.Is(err, os.ErrNotExist) {
+			// Another node published this artifact to the shared store and
+			// this node never read it (a fresh node joining a fleet whose
+			// bucket already holds the base): read it through, which fills
+			// the cache, then mark it.
+			if fillErr := fillCache(ctx, be, key); fillErr != nil {
+				return fmt.Errorf("imaged: mark cached base generation %q: fill cache: %w", key, fillErr)
+			}
+			err = cache.MarkGeneration(cacheKey, generation)
+		}
+		if err != nil {
 			return fmt.Errorf("imaged: mark cached base generation %q: %w", key, err)
 		}
 	}
 	return nil
+}
+
+// fillCache reads key through be so a read-through cache holds it.
+func fillCache(ctx context.Context, be storage.StorageBackend, key string) error {
+	rc, err := be.Get(ctx, key)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(io.Discard, rc)
+	if closeErr := rc.Close(); copyErr == nil {
+		copyErr = closeErr
+	}
+	return copyErr
 }
 
 // scanSourceForBase resolves the path Grype should inspect. Local storage

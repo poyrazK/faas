@@ -38,7 +38,20 @@ func TestGatewayAuthModes(t *testing.T) {
 			c.Tasks = &TasksConfig{Enabled: &enabled, DatabaseURLEnv: "DATABASE_URL", OwnerKeyEnv: "MCP_TASK_OWNER_KEY", NamespaceEnv: "MCP_TASK_NAMESPACE"}
 		}},
 		{"oauth-proxy", AuthOAuthProxy, "", nil},
-		{"oauth-proxy derives jwks", AuthOAuthProxy, "omit it", func(c *Config) { c.Auth.JWKSURL = "https://login.example/jwks" }},
+		{"oauth-proxy external issuer", AuthOAuthProxy, "", func(c *Config) {
+			c.Auth.Issuer, c.Auth.JWKSURL, c.Auth.Scopes = "https://tenant.idp.example/", "https://tenant.idp.example/.well-known/jwks.json", []string{"mcp:tools"}
+			c.Auth.ToolScopes, c.Auth.Audience = ScopePolicy{"search": {"mcp:tools"}}, "api://tools"
+		}},
+		{"external issuer jwks is https", AuthOAuthProxy, "auth.jwks_url", func(c *Config) {
+			c.Auth.Issuer, c.Auth.JWKSURL = "https://tenant.idp.example/", "http://tenant.idp.example/jwks"
+		}},
+		{"external issuer needs a scope", AuthOAuthProxy, "external issuer requires at least one scope", func(c *Config) {
+			c.Auth.Issuer, c.Auth.JWKSURL, c.Auth.Scopes = "https://tenant.idp.example/", "https://tenant.idp.example/jwks", nil
+		}},
+		{"audience only with an external issuer", AuthOAuthProxy, "auth.audience", func(c *Config) { c.Auth.Audience = "api://tools" }},
+		{"audience has no whitespace", AuthOAuthProxy, "auth.audience", func(c *Config) {
+			c.Auth.Issuer, c.Auth.JWKSURL, c.Auth.Audience = "https://tenant.idp.example/", "https://tenant.idp.example/jwks", "api tools"
+		}},
 		{"oauth-proxy needs a Gregale Auth issuer", AuthOAuthProxy, "Gregale Auth issuer", func(c *Config) { c.Auth.Issuer = "https://login.example/" }},
 		{"oauth-proxy needs a scope", AuthOAuthProxy, "at least one scope", func(c *Config) { c.Auth.Scopes = nil }},
 		{"oauth-proxy scopes are OpenID scopes", AuthOAuthProxy, "only the openid", func(c *Config) { c.Auth.Scopes = []string{"tools"} }},
@@ -64,5 +77,13 @@ func TestGatewayAuthModes(t *testing.T) {
 	}
 	if got := OAuthProxyJWKSURL("https://login.example/auth/v1"); got != "https://login.example/auth/v1/.well-known/jwks.json" {
 		t.Fatalf("OAuthProxyJWKSURL = %q", got)
+	}
+	external := AuthConfig{Mode: AuthOAuthProxy, Resource: "https://tools.example/mcp", JWKSURL: "https://idp.example/jwks"}
+	if !external.ExternalIssuer() || external.TokenAudience() != "https://tools.example/mcp" {
+		t.Fatalf("external issuer audience defaults to the resource: %q", external.TokenAudience())
+	}
+	external.Audience = "api://tools"
+	if external.TokenAudience() != "api://tools" || gatewayModeConfig(AuthOAuthProxy).Auth.ExternalIssuer() {
+		t.Fatal("audience override or Gregale Auth detection is wrong")
 	}
 }

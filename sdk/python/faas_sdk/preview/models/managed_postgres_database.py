@@ -51,6 +51,12 @@ class ManagedPostgresDatabase:
     """Cached read-only provider observation, separate from lifecycle state. Healthy does not prove SQL
     connectivity. Failed checks update checked_at while retaining last_success_at; stale observations must not imply
     current availability."""
+    suspend_timeout_seconds: int | Unset = UNSET
+    """Seconds a scale-to-zero database stays up after its last activity; absent for an always-on database."""
+    suspend_timeout_custom: bool | Unset = UNSET
+    """True when the database has its own suspend timeout rather than the platform default."""
+    wake_with_app: bool | Unset = UNSET
+    """True when the database starts when an app bound to it wakes."""
     restore_source_database_id: None | str | Unset = UNSET
     restore_point_in_time: datetime.datetime | None | Unset = UNSET
     last_error_code: None | str | Unset = UNSET
@@ -106,6 +112,12 @@ class ManagedPostgresDatabase:
         health: dict[str, Any] | Unset = UNSET
         if not isinstance(self.health, Unset):
             health = self.health.to_dict()
+
+        suspend_timeout_seconds = self.suspend_timeout_seconds
+
+        suspend_timeout_custom = self.suspend_timeout_custom
+
+        wake_with_app = self.wake_with_app
 
         restore_source_database_id: None | str | Unset
         if isinstance(self.restore_source_database_id, Unset):
@@ -179,6 +191,12 @@ class ManagedPostgresDatabase:
         )
         if health is not UNSET:
             field_dict["health"] = health
+        if suspend_timeout_seconds is not UNSET:
+            field_dict["suspend_timeout_seconds"] = suspend_timeout_seconds
+        if suspend_timeout_custom is not UNSET:
+            field_dict["suspend_timeout_custom"] = suspend_timeout_custom
+        if wake_with_app is not UNSET:
+            field_dict["wake_with_app"] = wake_with_app
         if restore_source_database_id is not UNSET:
             field_dict["restore_source_database_id"] = restore_source_database_id
         if restore_point_in_time is not UNSET:
@@ -238,6 +256,12 @@ class ManagedPostgresDatabase:
             health = UNSET
         else:
             health = ManagedPostgresHealth.from_dict(_health)
+
+        suspend_timeout_seconds = d.pop("suspend_timeout_seconds", UNSET)
+
+        suspend_timeout_custom = d.pop("suspend_timeout_custom", UNSET)
+
+        wake_with_app = d.pop("wake_with_app", UNSET)
 
         def _parse_restore_source_database_id(data: object) -> None | str | Unset:
             if data is None:
@@ -347,6 +371,9 @@ class ManagedPostgresDatabase:
             created_at=created_at,
             updated_at=updated_at,
             health=health,
+            suspend_timeout_seconds=suspend_timeout_seconds,
+            suspend_timeout_custom=suspend_timeout_custom,
+            wake_with_app=wake_with_app,
             restore_source_database_id=restore_source_database_id,
             restore_point_in_time=restore_point_in_time,
             last_error_code=last_error_code,

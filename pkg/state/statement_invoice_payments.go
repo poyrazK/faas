@@ -51,8 +51,9 @@ type StatementInvoicePaymentStore interface {
 	// RecordStatementInvoicePayment stores a synced status and returns the
 	// previous one; a nil next stops syncing.
 	RecordStatementInvoicePayment(ctx context.Context, exportID string, payment StatementInvoicePayment, syncedAt time.Time, next *time.Time) (string, error)
-	// DeferStatementInvoiceSync retries a failed sync at next.
-	DeferStatementInvoiceSync(ctx context.Context, exportID string, next time.Time) error
+	// SetStatementInvoiceNextSync schedules the next check without changing
+	// the recorded payment or balance-check timestamp. Nil stops polling.
+	SetStatementInvoiceNextSync(ctx context.Context, exportID string, next *time.Time) error
 	// ListStatementInvoices pages an account's completed exports, newest
 	// first, after the given cursor; filter is a payment status, unpaid,
 	// overdue, or empty for all.
@@ -151,15 +152,18 @@ func (m *MemStore) RecordStatementInvoicePayment(_ context.Context, exportID str
 	return prev, nil
 }
 
-func (m *MemStore) DeferStatementInvoiceSync(_ context.Context, exportID string, next time.Time) error {
+func (m *MemStore) SetStatementInvoiceNextSync(_ context.Context, exportID string, next *time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	e, ok := m.statementInvoiceExports[exportID]
 	if !ok {
 		return ErrNotFound
 	}
-	at := next.UTC()
-	e.NextStatusSyncAt = &at
+	e.NextStatusSyncAt = nil
+	if next != nil {
+		at := next.UTC()
+		e.NextStatusSyncAt = &at
+	}
 	m.statementInvoiceExports[exportID] = e
 	return nil
 }
@@ -277,10 +281,10 @@ func (s *PgStore) RecordStatementInvoicePayment(ctx context.Context, exportID st
 	return prev, nil
 }
 
-func (s *PgStore) DeferStatementInvoiceSync(ctx context.Context, exportID string, next time.Time) error {
+func (s *PgStore) SetStatementInvoiceNextSync(ctx context.Context, exportID string, next *time.Time) error {
 	tag, err := s.pool.Exec(ctx, `update usage_statement_invoice_exports set next_status_sync_at = $2 where id = $1::uuid`, exportID, next)
 	if err != nil {
-		return fmt.Errorf("defer statement invoice sync: %w", err)
+		return fmt.Errorf("set next statement invoice sync: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound

@@ -132,6 +132,37 @@ func TestOperatorHTTPErrorExplainsStepUp(t *testing.T) {
 	}
 }
 
+// A new operator's session is mfa_pending but the account has no confirmed
+// authenticator: /verify answers 409 mfa_required, and the CLI must send them
+// to browser setup instead of echoing the raw problem.
+func TestOperatorVerifyMFAPointsAnUnenrolledOperatorToSetup(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/account/mfa/verify" {
+			http.NotFound(w, r)
+			return
+		}
+		if !strings.Contains(r.Header.Get("Cookie"), "opaque-session") {
+			t.Errorf("verify sent no session cookie: %q", r.Header.Get("Cookie"))
+		}
+		writeTestJSON(w, http.StatusConflict, api.Problem{Status: http.StatusConflict, Code: api.CodeMFARequired,
+			Detail: "finish /v1/account/mfa/confirm before verifying or using recovery codes"})
+	}))
+	defer server.Close()
+	sess := operatorSession{BaseURL: server.URL, Cookie: "opaque-session"}
+	setup := server.URL + "/dashboard/account/mfa?action=enroll"
+	err := newOperatorHTTPClient(&sess).verifyMFA(t.Context(), "123456")
+	if err == nil || !strings.Contains(err.Error(), setup) {
+		t.Fatalf("error = %v", err)
+	}
+	// An operator with no authenticator has no code to type.
+	if err := newOperatorHTTPClient(&sess).verifyMFA(t.Context(), " "); err == nil || !strings.Contains(err.Error(), setup) {
+		t.Fatalf("empty code error = %v", err)
+	}
+	if !sess.SteppedUpAt.IsZero() {
+		t.Fatal("a refused verify must not stamp a step-up")
+	}
+}
+
 // apid accepts each TOTP code once (RFC 6238 §5.2). Logging in spends the
 // code; a forced step-up that reuses it must say the code was already used
 // and keep the saved session, and the next code must step up and save the

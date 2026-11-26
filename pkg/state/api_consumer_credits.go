@@ -181,13 +181,7 @@ func (m *MemStore) CreateAPIConsumerCreditGrant(_ context.Context, g APIConsumer
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	open := 0
-	for _, existing := range m.apiConsumerCreditGrants {
-		if existing.ConsumerID == g.ConsumerID && existing.RemainingMillicents > 0 {
-			open++
-		}
-	}
-	if open >= api.ConsumerCreditOpenGrantsMax {
+	if m.countReservedConsumerCreditGrantsLocked(g.ConsumerID) >= api.ConsumerCreditOpenGrantsMax {
 		return APIConsumerCreditGrant{}, ErrConflict
 	}
 	if m.apiConsumerCreditGrants == nil {
@@ -196,6 +190,21 @@ func (m *MemStore) CreateAPIConsumerCreditGrant(_ context.Context, g APIConsumer
 	g.ID, g.RemainingMillicents, g.VoidedAt, g.CreatedAt = uuid.NewString(), g.AmountMillicents, nil, now
 	m.apiConsumerCreditGrants[g.ID] = g
 	return g, nil
+}
+
+func (m *MemStore) countReservedConsumerCreditGrantsLocked(consumerID string) int {
+	open := 0
+	for _, existing := range m.apiConsumerCreditGrants {
+		if existing.ConsumerID == consumerID && existing.RemainingMillicents > 0 {
+			open++
+		}
+	}
+	for _, purchase := range m.apiConsumerCreditPurchases {
+		if purchase.ConsumerID == consumerID && purchase.Status == ConsumerCreditPurchasePending {
+			open++
+		}
+	}
+	return open
 }
 
 func (m *MemStore) ListAPIConsumerCreditGrants(_ context.Context, accountID, appID, consumerID string) ([]APIConsumerCreditGrant, error) {
@@ -262,12 +271,11 @@ func (m *MemStore) APIConsumerCreditPosition(_ context.Context, accountID, appID
 	return pos, nil
 }
 
-// applyAPIConsumerCreditsLocked draws the consumer's usable grants down
-// against a statement being finalized, oldest-expiring first, and returns
-// the credit applied. The caller holds m.mu.
-func (m *MemStore) applyAPIConsumerCreditsLocked(statement APIConsumerUsageStatement, now time.Time) int64 {
+// planAPIConsumerCreditsLocked allocates usable grants oldest-expiring first.
+// The caller holds m.mu until it has committed the statement and its credits.
+func (m *MemStore) planAPIConsumerCreditsLocked(statement APIConsumerUsageStatement, now time.Time) (int64, []apiConsumerCreditApplication) {
 	if statement.AmountMillicents <= 0 || statement.Currency == "" {
-		return 0
+		return 0, nil
 	}
 	var grants []APIConsumerCreditGrant
 	for _, g := range m.apiConsumerCreditGrants {
@@ -278,18 +286,17 @@ func (m *MemStore) applyAPIConsumerCreditsLocked(statement APIConsumerUsageState
 	}
 	sortCreditGrantsForUse(grants)
 	left := statement.AmountMillicents
+	var applications []apiConsumerCreditApplication
 	for _, g := range grants {
 		if left == 0 {
 			break
 		}
 		take := min(left, g.RemainingMillicents)
-		g.RemainingMillicents -= take
-		m.apiConsumerCreditGrants[g.ID] = g
-		m.apiConsumerCreditApplications = append(m.apiConsumerCreditApplications,
+		applications = append(applications,
 			apiConsumerCreditApplication{GrantID: g.ID, StatementID: statement.ID, AmountMillicents: take})
 		left -= take
 	}
-	return statement.AmountMillicents - left
+	return statement.AmountMillicents - left, applications
 }
 
 // sortCreditGrantsForUse orders grants by expiry (never-expiring last), then

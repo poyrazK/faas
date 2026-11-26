@@ -22,6 +22,7 @@ browser_*
 # (internal, or preview with unpublished docs).
 consumer_*
 product_*
+stripe_customer_missing
 plan_consumer_key_quota_reached
 tenant_*
 platform_tenant_*
@@ -185,3 +186,7 @@ quota_unavailable
 registry_unavailable
 target_lookup_failed
 unknown_plan
+
+# Verification contracts (ADR-20261122220000): preview, docs/verification-contracts.md unpublished.
+deployment_verification_contract_failed
+verification_contract_changed

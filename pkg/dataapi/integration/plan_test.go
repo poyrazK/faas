@@ -129,7 +129,7 @@ func TestStalePlanFailsBeforeWriting(t *testing.T) {
 }
 
 func TestUnsupportedPackagesAndEscapingClientsFail(t *testing.T) {
-	for _, metadata := range []string{`{}`, `{"devDependencies":{"typescript":"5"},"packageManager":"pnpm@10"}`, `{"devDependencies":{"typescript":"5"},"workspaces":["web"]}`} {
+	for _, metadata := range []string{`{}`, `{"devDependencies":{"typescript":"5"},"packageManager":"pnpm@10"}`} {
 		root := app(t, ".")
 		if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(metadata), 0o644); err != nil {
 			t.Fatal(err)
@@ -152,6 +152,96 @@ func TestUnsupportedPackagesAndEscapingClientsFail(t *testing.T) {
 	}
 }
 
+func TestNPMWorkspaceRootCanBeTheClient(t *testing.T) {
+	root := app(t, ".")
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"private":true,"workspaces":["apps/*"],"devDependencies":{"typescript":"5.9.3"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := integration.Build(root, "."); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNPMWorkspaceIntegrationAndResume(t *testing.T) {
+	root := app(t, "apps/web")
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"private":true,"workspaces":["apps/*"],"devDependencies":{"typescript":"5.9.3"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "apps/web/package.json"), []byte(`{"name":"web","private":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := integration.BuildWithNumericMode(root, "apps/web", "exact")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.WorkspaceRoot != "." {
+		t.Fatalf("workspace root = %q", plan.WorkspaceRoot)
+	}
+	if err := plan.Apply(); err != nil {
+		t.Fatal(err)
+	}
+	client := filepath.Join(root, "apps/web", integration.ClientSource, "client.ts")
+	if err := os.WriteFile(client, []byte("// developer edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(root, integration.Config)
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal(configBytes, &config); err != nil {
+		t.Fatal(err)
+	}
+	config["migrations"] = "custom-migrations"
+	configBytes, _ = json.Marshal(config)
+	if err := os.WriteFile(configPath, configBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := integration.Resume(root, "apps/web", "exact")
+	if err != nil || !resumed.Resume || len(resumed.Files) != 0 {
+		t.Fatalf("resume = %+v, %v", resumed, err)
+	}
+	content, err := os.ReadFile(client)
+	if err != nil || string(content) != "// developer edit\n" {
+		t.Fatal("resume changed the client")
+	}
+	after, _ := os.ReadFile(configPath)
+	if string(after) != string(configBytes) {
+		t.Fatal("resume changed the configuration")
+	}
+	if _, err := integration.Resume(root, "apps/web", "number"); err == nil {
+		t.Fatal("resumed with the wrong numeric mode")
+	}
+	if err := os.Remove(filepath.Join(root, integration.Requests)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := integration.Resume(root, "apps/web", "exact"); err == nil {
+		t.Fatal("resumed with missing setup")
+	}
+}
+
+func TestNPMWorkspaceRejectsNonMember(t *testing.T) {
+	root := app(t, "apps/web")
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"private":true,"workspaces":["packages/*"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := integration.Build(root, "apps/web"); err == nil {
+		t.Fatal("accepted a directory outside the workspace patterns")
+	}
+}
+
+func TestNPMWorkspaceObjectConfiguration(t *testing.T) {
+	root := app(t, "apps/web")
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"private":true,"workspaces":{"packages":["apps/*"]}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := integration.Build(root, "apps/web")
+	if err != nil || plan.WorkspaceRoot != "." {
+		t.Fatalf("workspace = %+v, error = %v", plan, err)
+	}
+}
+
 func TestNewGeneratedTypeFileInvalidatesPlan(t *testing.T) {
 	root := app(t, ".")
 	plan, err := integration.Build(root, ".")
@@ -170,5 +260,26 @@ func TestNewGeneratedTypeFileInvalidatesPlan(t *testing.T) {
 	content, _ := os.ReadFile(filepath.Join(root, plan.GeneratedTypes))
 	if string(content) != "user content" {
 		t.Fatal("overwrote user's types")
+	}
+}
+
+func TestExactNumericModeIsRecordedInTheIntegrationPlan(t *testing.T) {
+	root := app(t, ".")
+	plan, err := integration.BuildWithNumericMode(root, ".", "exact")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := plan.Apply(); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(filepath.Join(root, integration.Config))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		NumericMode string `json:"numeric_mode"`
+	}
+	if err := json.Unmarshal(content, &config); err != nil || config.NumericMode != "exact" {
+		t.Fatalf("numeric mode = %q, parse: %v", config.NumericMode, err)
 	}
 }

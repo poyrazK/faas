@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"maps"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -60,18 +62,22 @@ var consumerVerbPositionals = map[string][]string{
 	"signup-set":            {"slug"},
 	"signup-delete":         {"slug"},
 	"signups":               {"slug"},
+	"identities":            {"slug"},
+	"identity-delete":       {"slug", "identity-id"},
 }
 
-const consumersUsage = "usage: gregale api consumer <list|create|info|revoke|keys|key-create|key-revoke|usage|quote|completeness|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff|statement-export|plans|plan-create|plan-update|set-plan|plan-history|usage-alerts|credits|credit-grant|credit-void|spend-cap|spend-cap-set|spend-cap-delete|trial|trial-set|trial-end|billing-policy|billing-policy-set|billing-policy-delete|overdue-holds|signup|signup-set|signup-delete|signups> <slug> [consumer-id] [id] [flags]"
+const consumersUsage = "usage: gregale api consumer <list|create|info|revoke|keys|key-create|key-revoke|usage|quote|completeness|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff|statement-export|plans|plan-create|plan-update|set-plan|plan-history|usage-alerts|credits|credit-grant|credit-void|spend-cap|spend-cap-set|spend-cap-delete|trial|trial-set|trial-end|billing-policy|billing-policy-set|billing-policy-delete|overdue-holds|signup|signup-set|signup-delete|signups|identities|identity-delete> <slug> [consumer-id] [id] [flags]"
 
 // consumerFlags holds every leaf flag; consumerVerbFlags decides which
 // verb may set which, so a misplaced flag is a usage error, not ignored.
 type consumerFlags struct {
 	externalRef, name, scopes, expires   string
+	environment                          string
 	since, until                         string
 	currency, effectiveFrom              string
 	priceMillicents, includedUnits       int64
 	periodStart, periodEnd, month        string
+	waiverFile                           string
 	invoiceID                            string
 	customer, provider                   string
 	amountMillicents                     int64
@@ -84,6 +90,9 @@ type consumerFlags struct {
 	prorateMonthlyFees                   bool
 	tiers                                multiFlag
 	weights                              multiFlag
+	toolWeights, toolLimits, routeLimits multiFlag
+	modelPrices                          multiFlag
+	usageBreakdown                       bool
 	plan                                 string
 	maxPerMinute, maxPerMonth            int64
 	alertAt                              string
@@ -92,26 +101,30 @@ type consumerFlags struct {
 	dailyLimit                           int
 	disabled                             bool
 	customerPlanChanges, customerClosing bool
+	freePlan                             string
+	oauthConsumers                       bool
+	accountTools                         bool
 }
 
 var consumerVerbFlags = map[string][]string{
-	"create":             {"external-ref", "name", "trial-days"},
+	"list":               {"environment"},
+	"create":             {"external-ref", "name", "trial-days", "environment"},
 	"trial-set":          {"days", "ends-at"},
 	"billing-policy-set": {"block-overdue-after-days"},
 	"key-create":         {"name", "scopes", "expires"},
-	"usage":              {"since", "until"},
-	"quote":              {"since", "until"},
+	"usage":              {"since", "until", "breakdown"},
+	"quote":              {"since", "until", "breakdown"},
 	"completeness":       {"period-start", "period-end", "month"},
-	"rate-card-create":   {"currency", "price-millicents", "included-units", "tier", "weight", "plan", "effective-from", "unit", "tier-mode", "base-fee-millicents", "minimum-millicents", "prorate-monthly-fees"},
-	"plan-create":        {"name", "max-requests-per-minute", "max-units-per-month", "alert-at"},
-	"plan-update":        {"plan", "max-requests-per-minute", "max-units-per-month", "alert-at"},
+	"rate-card-create":   {"currency", "price-millicents", "included-units", "tier", "weight", "tool-weight", "model-price", "plan", "effective-from", "unit", "tier-mode", "base-fee-millicents", "minimum-millicents", "prorate-monthly-fees"},
+	"plan-create":        {"name", "max-requests-per-minute", "max-units-per-month", "alert-at", "route-limit", "tool-limit"},
+	"plan-update":        {"plan", "max-requests-per-minute", "max-units-per-month", "alert-at", "route-limit", "tool-limit"},
 	"set-plan":           {"plan", "effective-from"},
-	"statement-draft":    {"period-start", "period-end", "month"},
+	"statement-draft":    {"period-start", "period-end", "month", "waiver-file"},
 	"statement-handoff":  {"invoice-id"},
 	"statement-export":   {"customer", "provider"},
 	"credit-grant":       {"currency", "amount-millicents", "expires", "note"},
 	"spend-cap-set":      {"currency", "monthly-cap-millicents"},
-	"signup-set":         {"display-name", "plans", "key-scopes", "terms-url", "return-url", "trial-days", "daily-limit", "disabled", "customer-plan-changes", "customer-closing"},
+	"signup-set":         {"display-name", "plans", "key-scopes", "terms-url", "return-url", "trial-days", "daily-limit", "disabled", "customer-plan-changes", "customer-closing", "free-plan", "oauth-consumers", "account-tools"},
 }
 
 // cmdConsumers manages an app's API consumers and their monetization:
@@ -130,8 +143,9 @@ func cmdConsumers(args []string) int {
 	fs := newFlagSet("consumers "+verb, flag.ContinueOnError)
 	var f consumerFlags
 	fs.StringVar(&f.externalRef, "external-ref", "", "stable consumer reference (create)")
+	fs.StringVar(&f.environment, "environment", "", "project environment whose consumers to list or create; omitted is production (list, create)")
 	fs.StringVar(&f.name, "name", "", "consumer or key display name")
-	fs.StringVar(&f.scopes, "scopes", "write", "comma-separated key scopes: read, write, admin (key-create)")
+	fs.StringVar(&f.scopes, "scopes", "write", "comma-separated key scopes: read, write, admin, billing, mcp:<scope> (key-create)")
 	fs.StringVar(&f.expires, "expires", "", "key or credit expiry, RFC3339 (key-create, credit-grant)")
 	fs.StringVar(&f.since, "since", "", "usage window start (RFC3339)")
 	fs.StringVar(&f.until, "until", "", "usage window end (RFC3339)")
@@ -171,10 +185,16 @@ func registerConsumerMonetizationFlags(fs *flag.FlagSet, f *consumerFlags) {
 	fs.Int64Var(&f.includedUnits, "included-units", 0, "free requests per consumer per UTC calendar month (rate-card-create)")
 	fs.Var(&f.tiers, "tier", "graduated step UP_TO:PRICE_MILLICENTS, repeatable; the last step's UP_TO is inf (rate-card-create)")
 	fs.Var(&f.weights, "weight", "route weight \"METHOD /template=N\", repeatable; unlisted routes count 1 (rate-card-create)")
+	fs.Var(&f.toolWeights, "tool-weight", "MCP tool weight TOOL=N, repeatable; the route \"MCP /tools/TOOL\" (rate-card-create)")
+	fs.Var(&f.routeLimits, "route-limit", "per-consumer route cap \"METHOD /template=100/minute,5000/month\" or =none, repeatable (plan-create, plan-update)")
+	fs.Var(&f.toolLimits, "tool-limit", "per-consumer MCP tool cap TOOL=1000/month or TOOL=none, repeatable (plan-create, plan-update)")
+	fs.Var(&f.modelPrices, "model-price", "price override MODEL=MILLICENTS for a flat app meter (repeatable)")
+	fs.BoolVar(&f.usageBreakdown, "breakdown", false, "show usage by route and meter")
 	fs.StringVar(&f.effectiveFrom, "effective-from", "", "UTC minute the price starts, RFC3339 (default: next minute)")
 	fs.StringVar(&f.periodStart, "period-start", "", "statement period start, RFC3339 UTC minute")
 	fs.StringVar(&f.periodEnd, "period-end", "", "statement period end (exclusive), RFC3339 UTC minute")
 	fs.StringVar(&f.month, "month", "", "statement calendar month YYYY-MM (instead of --period-start/--period-end)")
+	fs.StringVar(&f.waiverFile, "waiver-file", "", "JSON approval for the exact model units on a held draft (statement-draft)")
 	fs.StringVar(&f.invoiceID, "invoice-id", "", "your billing system's invoice reference (statement-handoff)")
 	fs.StringVar(&f.customer, "customer", "", "provider customer: Stripe cus_…, Paddle ctm_… or Lago external ID (statement-export; default: the consumer's external_ref)")
 	fs.StringVar(&f.provider, "provider", "", "billing provider: stripe, paddle or lago (statement-export; default stripe)")
@@ -191,6 +211,9 @@ func registerConsumerMonetizationFlags(fs *flag.FlagSet, f *consumerFlags) {
 	fs.BoolVar(&f.disabled, "disabled", false, "keep the settings but stop taking sign-ups (signup-set)")
 	fs.BoolVar(&f.customerPlanChanges, "customer-plan-changes", false, "let customers switch between the offered plans with their own key (signup-set)")
 	fs.BoolVar(&f.customerClosing, "customer-closing", false, "let customers close their account with their own key (signup-set)")
+	fs.StringVar(&f.freePlan, "free-plan", "", "offered plan that charges nothing; joining it needs no card (signup-set)")
+	fs.BoolVar(&f.oauthConsumers, "oauth-consumers", false, "people signed in through the app's MCP oauth-proxy issuer become consumers on --free-plan (signup-set)")
+	fs.BoolVar(&f.accountTools, "account-tools", false, "add account_usage and account_plans tools to the MCP server for --oauth-consumers callers (signup-set)")
 }
 
 func consumerVerbUsage(verb string, positionals []string) string {
@@ -251,8 +274,8 @@ func buildConsumerRequest(verb string, f consumerFlags) (any, error) {
 		}
 		return nil, nil
 	case "plan-update":
-		if f.plan == "" || f.plan == defaultPlanName || (f.maxPerMinute < 0 && f.maxPerMonth < 0 && f.alertAt == "") {
-			return nil, errors.New("--plan and at least one of --max-requests-per-minute, --max-units-per-month, or --alert-at are required")
+		if f.plan == "" || f.plan == defaultPlanName || (f.maxPerMinute < 0 && f.maxPerMonth < 0 && f.alertAt == "" && len(f.routeLimits) == 0 && len(f.toolLimits) == 0) {
+			return nil, errors.New("--plan and at least one of --max-requests-per-minute, --max-units-per-month, --alert-at, --route-limit or --tool-limit are required")
 		}
 		return nil, nil
 	case "set-plan":
@@ -269,7 +292,20 @@ func buildConsumerRequest(verb string, f consumerFlags) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		return api.CreateAPIConsumerUsageStatementRequest{PeriodStart: &start, PeriodEnd: &end}, nil
+		request := api.CreateAPIConsumerUsageStatementRequest{PeriodStart: &start, PeriodEnd: &end}
+		if f.waiverFile != "" {
+			data, err := os.ReadFile(f.waiverFile)
+			if err != nil {
+				return nil, fmt.Errorf("read --waiver-file: %w", err)
+			}
+			if err := json.Unmarshal(data, &request.Waiver); err != nil {
+				return nil, fmt.Errorf("decode --waiver-file: %w", err)
+			}
+			if request.Waiver == nil {
+				return nil, errors.New("--waiver-file must contain a JSON object")
+			}
+		}
+		return request, nil
 	case "statement-export":
 		return api.CreateStatementInvoiceRequest{Provider: strings.TrimSpace(f.provider), Customer: strings.TrimSpace(f.customer)}, nil
 	case "statement-handoff":
@@ -288,8 +324,8 @@ func buildConsumerKeyRequest(f consumerFlags) (api.CreateConsumerKeyRequest, err
 	}
 	for _, scope := range strings.Split(f.scopes, ",") {
 		scope = strings.TrimSpace(scope)
-		if scope != "read" && scope != "write" && scope != "admin" && scope != api.ConsumerScopeBilling {
-			return req, fmt.Errorf("unknown scope %q; use read, write, admin, or billing", scope)
+		if scope != "read" && scope != "write" && scope != "admin" && scope != api.ConsumerScopeBilling && !api.ValidConsumerKeyMCPScope(scope) {
+			return req, fmt.Errorf("unknown scope %q; use read, write, admin, billing, or mcp:<scope>", scope)
 		}
 		req.Scopes = append(req.Scopes, scope)
 	}
@@ -314,7 +350,26 @@ func buildAppRateCardRequest(f consumerFlags) (api.CreateAPIConsumerRateCardRequ
 	req.BaseFeeMillicentsPerMonth, req.MinimumMillicentsPerMonth = f.baseFeeMillicents, f.minimumMillicents
 	req.ProrateMonthlyFees = f.prorateMonthlyFees
 	req.RouteWeights, err = parseRouteWeights(f.weights)
-	return req, err
+	if err == nil {
+		req.RouteWeights, err = parseToolWeights(req.RouteWeights, f.toolWeights)
+	}
+	if err != nil || len(f.modelPrices) == 0 {
+		return req, err
+	}
+	req.ModelPrices = make(map[string]int64, len(f.modelPrices))
+	for _, entry := range f.modelPrices {
+		model, raw, ok := strings.Cut(entry, "=")
+		model = strings.TrimSpace(model)
+		price, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+		if !ok || err != nil || model == "" || price < 0 {
+			return req, fmt.Errorf("--model-price %q: use MODEL=MILLICENTS with a non-negative price", entry)
+		}
+		if _, exists := req.ModelPrices[model]; exists {
+			return req, fmt.Errorf("--model-price %q: model given twice", entry)
+		}
+		req.ModelPrices[model] = price
+	}
+	return req, nil
 }
 
 // parseRouteWeights reads "METHOD /template=N" entries; the server checks
@@ -475,9 +530,9 @@ func callConsumers(ctx context.Context, client *Client, verb string, args []stri
 	}
 	switch verb {
 	case "list":
-		return client.ListAPIConsumers(ctx, slug)
+		return client.ListAPIConsumersInEnvironment(ctx, slug, f.environment)
 	case "create":
-		return client.CreateAPIConsumer(ctx, slug, request.(api.CreateAPIConsumerRequest))
+		return client.CreateAPIConsumerInEnvironment(ctx, slug, f.environment, request.(api.CreateAPIConsumerRequest))
 	case "info":
 		return client.GetAPIConsumer(ctx, slug, args[1])
 	case "revoke":
@@ -489,9 +544,9 @@ func callConsumers(ctx context.Context, client *Client, verb string, args []stri
 	case "key-revoke":
 		return client.RevokeConsumerKey(ctx, slug, args[1], args[2])
 	case "usage":
-		return client.GetAPIConsumerUsage(ctx, slug, args[1], api.APIConsumerUsageOptions{Since: f.since, Until: f.until})
+		return client.GetAPIConsumerUsage(ctx, slug, args[1], api.APIConsumerUsageOptions{Since: f.since, Until: f.until, Breakdown: f.usageBreakdown})
 	case "quote":
-		return client.GetAPIConsumerUsageQuote(ctx, slug, args[1], api.APIConsumerUsageOptions{Since: f.since, Until: f.until})
+		return client.GetAPIConsumerUsageQuote(ctx, slug, args[1], api.APIConsumerUsageOptions{Since: f.since, Until: f.until, Breakdown: f.usageBreakdown})
 	case "completeness":
 		period := request.(api.CreateAPIConsumerUsageStatementRequest)
 		return client.GetAPIConsumerUsageCompleteness(ctx, slug, args[1], *period.PeriodStart, *period.PeriodEnd)
@@ -611,6 +666,27 @@ func consumerKeyStatus(k api.ConsumerKeyResponse) string {
 	return "active"
 }
 
+func consumerMeterRouteLabel(route string) string {
+	if route == "" {
+		return "Unattributed requests"
+	}
+	return route
+}
+
+func printConsumerQuoteLine(tw *tabwriter.Writer, label, currency string, line api.APIConsumerQuoteBreakdown) {
+	if line.RateCardID == "" {
+		if line.WaivedUnits > 0 {
+			_, _ = fmt.Fprintf(tw, "%s\t%d waived units, %d unpriced units\n", label, line.WaivedUnits, line.BillableUnits-line.WaivedUnits)
+		} else {
+			_, _ = fmt.Fprintf(tw, "%s\t%d unpriced units\n", label, line.BillableUnits)
+		}
+		return
+	}
+	_, _ = fmt.Fprintf(tw, "%s\t%d units, %d included, %d charged at %d millicents per unit\t%s\n",
+		label, line.BillableUnits, line.IncludedUnits, line.ChargedUnits, line.PriceMillicentsPerUnit,
+		formatMillicents(currency, line.AmountMillicents))
+}
+
 func printConsumerBillingResult(tw *tabwriter.Writer, out any) error {
 	if printConsumerPlanResult(tw, out) || printConsumerCreditResult(tw, out) || printConsumerSignupResult(tw, out) {
 		return tw.Flush()
@@ -619,9 +695,25 @@ func printConsumerBillingResult(tw *tabwriter.Writer, out any) error {
 	case api.APIConsumerUsageResponse:
 		_, _ = fmt.Fprintf(tw, "Window\t%s – %s\nRequests\t%d\nErrors\t%d\nBillable units\t%d\n",
 			v.PeriodStart.Format(time.RFC3339), v.PeriodEnd.Format(time.RFC3339), v.RequestCount, v.ErrorCount, v.BillableUnits)
+		for _, route := range v.RouteBreakdown {
+			_, _ = fmt.Fprintf(tw, "Route\t%s\t%d billable requests\n", consumerMeterRouteLabel(route.Route), route.BillableRequests)
+		}
+		for _, meter := range v.MeterBreakdown {
+			_, _ = fmt.Fprintf(tw, "Meter\t%s\t%d reported units\n", meter.Meter, meter.Units)
+		}
 	case api.APIConsumerUsageQuoteResponse:
 		_, _ = fmt.Fprintf(tw, "Window\t%s – %s\nBillable units\t%d\nUnpriced units\t%d\nEstimate\t%s\n",
 			v.PeriodStart.Format(time.RFC3339), v.PeriodEnd.Format(time.RFC3339), v.BillableUnits, v.UnpricedUnits, formatMillicents(v.Currency, v.AmountMillicents))
+		for _, line := range v.RouteBreakdown {
+			printConsumerQuoteLine(tw, consumerMeterRouteLabel(line.Route), v.Currency, line)
+		}
+		for _, line := range v.MeterBreakdown {
+			label := line.Unit
+			if line.Model != "" {
+				label += " (" + line.Model + ")"
+			}
+			printConsumerQuoteLine(tw, label, v.Currency, line)
+		}
 	case api.APIConsumerRateCardListResponse:
 		_, _ = fmt.Fprintln(tw, "ID\tEFFECTIVE FROM\tPRICE PER REQUEST\tINCLUDED PER MONTH")
 		for _, c := range v.RateCards {
@@ -634,6 +726,9 @@ func printConsumerBillingResult(tw *tabwriter.Writer, out any) error {
 		for _, route := range routes {
 			_, _ = fmt.Fprintf(tw, "Route weight\t%s = %d units\n", route, v.RouteWeights[route])
 		}
+		for _, model := range slices.Sorted(maps.Keys(v.ModelPrices)) {
+			_, _ = fmt.Fprintf(tw, "Model price\t%s = %d millicents per unit\n", model, v.ModelPrices[model])
+		}
 	case api.APIConsumerUsageStatementListResponse:
 		_, _ = fmt.Fprintln(tw, "ID\tPERIOD START\tPERIOD END\tREVISION\tUNITS\tAMOUNT")
 		for _, s := range v.Statements {
@@ -642,11 +737,18 @@ func printConsumerBillingResult(tw *tabwriter.Writer, out any) error {
 		}
 	case api.APIConsumerUsageStatementResponse:
 		printStatementSummary(tw, v.ID, v.PeriodStart, v.PeriodEnd, v.Revision, v.Status, v.Currency, v.BillableUnits, v.UnpricedUnits, v.AmountMillicents)
-		var charged int64
+		var charged, waived int64
 		for _, bucket := range v.Buckets {
 			charged += bucket.ChargedUnits
+			waived += bucket.WaivedUnits
 		}
-		if priced := v.BillableUnits - v.UnpricedUnits; charged != priced {
+		if waived > 0 {
+			_, _ = fmt.Fprintf(tw, "Waived units\t%d\n", waived)
+		}
+		if v.Waiver != nil {
+			_, _ = fmt.Fprintf(tw, "Waiver source\t%s\nWaiver reason\t%s\n", v.Waiver.SourceStatementID, v.Waiver.Reason)
+		}
+		if priced := v.BillableUnits - v.UnpricedUnits - waived; charged != priced {
 			_, _ = fmt.Fprintf(tw, "Charged units\t%d\t(the monthly allowance covers the rest; an adjustment can charge units that were free before)\n", charged)
 		}
 		if v.CreditAppliedMillicents > 0 {

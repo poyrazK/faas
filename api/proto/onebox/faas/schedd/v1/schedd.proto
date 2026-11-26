@@ -616,6 +616,11 @@ message WakeResponse {
   // identity carries the scheduler-authored deployment and placement
   // metadata for the selected instance. Empty on failure.
   PlatformIdentity identity = 8;
+  // startup_oom mirrors vmmd WakeResponse.startup_oom for the instance this
+  // response admitted: the app ran out of memory while it booted, so the
+  // gateway files the wake as an app fault, not platform wake latency.
+  // Older schedd never sets it.
+  bool startup_oom = 9;
 }
 
 // AdmitInstanceRequest mirrors WakeRequest for the schedule scale-out
@@ -716,6 +721,11 @@ message AdmitInstanceResponse {
   // identity carries the scheduler-authored deployment and placement
   // metadata for the admitted instance. Empty on at-capacity.
   PlatformIdentity identity = 10;
+  // startup_oom mirrors vmmd WakeResponse.startup_oom for the instance this
+  // response admitted: the app ran out of memory while it booted, so the
+  // gateway files the wake as an app fault, not platform wake latency.
+  // Older schedd never sets it.
+  bool startup_oom = 11;
 }
 
 // Touch is one instance's most-recent request time.
@@ -1272,6 +1282,11 @@ message EnsureWakeResponse {
   // identity carries the scheduler-authored deployment and placement
   // metadata for the primary instance. Empty on failure.
   PlatformIdentity identity = 9;
+  // startup_oom mirrors vmmd WakeResponse.startup_oom for the instance this
+  // response admitted: the app ran out of memory while it booted, so the
+  // gateway files the wake as an app fault, not platform wake latency.
+  // Older schedd never sets it.
+  bool startup_oom = 10;
 }
 
 message FrameworkReadyReport { string instance_id = 1; }

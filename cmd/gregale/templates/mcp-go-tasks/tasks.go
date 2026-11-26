@@ -1530,6 +1530,7 @@ func (runtime *mcpTaskRuntime) workerLoop(ctx context.Context) {
 		if err := runtime.heartbeatWorkerCapabilities(heartbeatCtx); err != nil && ctx.Err() == nil {
 			log.Printf("MCP task worker capability heartbeat failed")
 		}
+		log.Print(mcpTaskWorkerReceipt(runtime.workerID, runtime.drainTimeout))
 	}
 	refreshCapabilities()
 	lastCapabilityHeartbeat := time.Now()

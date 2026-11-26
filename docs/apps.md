@@ -281,6 +281,29 @@ is closed and the grace sweep finishes the purge once the reason clears. An
 app with live object storage buckets is refused with `409 app_not_purgeable`
 before anything changes; restore it and delete its buckets first.
 
+### When the name you ask for is taken
+
+App names are unique across Gregale. When `gregale deploy` asks for a name
+another account holds, or one the platform does not offer (brand and
+look-alike login names), it creates your app under the name with a short
+suffix instead, such as `shop-x7k2q`, and says so:
+
+```text
+Note: the name shop belongs to another account, so this app is shop-x7k2q (https://shop-x7k2q.gregale.app). Pass --name to choose a different name.
+```
+
+The suffix depends only on your account (or organization) and the name, so
+the next deploy of the same name updates the same app. If you deleted that
+app, its name stays held for the restore window and the deploy takes the
+next suffix instead; restore the app (`gregale app restore`) to keep using
+the old one. Pass `--name` to pick another name. A deploy whose `gregale.yaml` names the app keeps failing
+instead, because its routes and bindings would point at the wrong app.
+
+The API and `gregale app rename` do not add a suffix: creating or renaming
+to a name another account holds answers `409` (`app_rename_failed` for a
+rename), and a name the platform does not offer answers `409
+app_name_unavailable`.
+
 ## Open a shell in a fresh app VM
 
 `gregale app exec` runs a one-off command in a fresh VM built from the app's

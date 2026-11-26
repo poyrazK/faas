@@ -411,7 +411,7 @@ listed.
 Use an absolute executable path if the client cannot find `gregale` on its PATH.
 To select a named connection, place the prefix before the command, for example
 `["--profile", "staging", "mcp", "serve", "--transport", "stdio"]`.
-`FAAS_API` and `FAAS_TOKEN` retain their normal precedence over saved settings.
+`GREGALE_API_URL` and `GREGALE_TOKEN` retain their normal precedence over saved settings.
 Use the profile's stored login or supply a scoped token through the client's
 environment; do not put tokens in command arguments or commit them to a client
 configuration. A missing credential fails startup on stderr. API authorization
@@ -635,7 +635,7 @@ and behavioral fixtures:
 `access_mode` must match `gregale-mcp.json`. Open access requires no token
 reference. External OAuth requires `token_env`, naming an existing `MCP_*`
 client-token variable in the local CLI environment. Tokens are never accepted
-as tool arguments or inferred from the account's `FAAS_TOKEN`. Ordinary publication
+as tool arguments or inferred from the account's `GREGALE_TOKEN`. Ordinary publication
 excludes durable MCP Tasks, which retain their dedicated stack release flow.
 The explicit access declaration is required because the built-in example
 starters initially use open access.
@@ -4193,7 +4193,7 @@ access. Native resource capability flags still apply. An older server without
 `GET /v1/apps/{slug}/resource-inventory` returns an unavailable read; the bridge
 does not fall back to account inventory. Counts exclude other apps and scopes.
 
-For local read-only inspection with an app-bound token in `FAAS_TOKEN`:
+For local read-only inspection with an app-bound token in `GREGALE_TOKEN`:
 
 ```sh
 gregale mcp serve --tools core,provision
@@ -4639,11 +4639,17 @@ The server is the `mcp-bridged` daemon:
 - **Failover:** after a control-plane takeover, the standby's bootstrap and
   deploy start the server again. Connected agents keep their grants; open
   streams reconnect.
-- **Clients:** the unit allows Claude's, ChatGPT's and Google Antigravity's published OAuth
-  callbacks plus loopback clients. Antigravity publishes its client at
-  `https://antigravity.google/oauth/client-metadata.json` and uses the exact
-  callback `https://antigravity.google/oauth-callback`. Override `ExecStart` in a drop-in to
-  change the list.
+- **Clients:** the unit allows Claude's, ChatGPT's, Google Antigravity's and
+  Glama's published OAuth callbacks plus loopback clients. Antigravity
+  publishes its client at `https://antigravity.google/oauth/client-metadata.json`
+  and uses the exact callback `https://antigravity.google/oauth-callback`.
+  Glama publishes two clients: its connector at
+  `https://glama.ai/api/app/mcp/oauth/client-metadata.json` (callback
+  `https://glama.ai/api/app/mcp/oauth/callback`), which runs Glama's health
+  checks and users' connections, and its MCP Inspector at
+  `https://glama.ai/mcp/inspector/oauth/client-metadata.json` (callback
+  `https://glama.ai/mcp/inspector/oauth/callback`). Override `ExecStart` in a
+  drop-in to change the list.
 - **Client identity:** a client either registers (Dynamic Client
   Registration) or names a Client ID Metadata Document URL as its
   `client_id` (ADR-20261030065746). The server fetches the document over
@@ -4781,8 +4787,11 @@ callback, and use authorization-code **S256 PKCE** with the exact resource URL.
 Read scope is `gregale:read`; optional write scope is `gregale:write`. API keys
 are accepted only by browser account review, never as MCP access tokens. Gregale
 API scopes remain authoritative for every tool call.
-The default challenge requests read access. To expose remote write tools, request
-both scopes in the client's OAuth settings as well as enabling bridge writes.
+The default challenge requests read access. When bridge writes are enabled and a
+client asks only for `gregale:read`, browser consent offers "Deploy and manage
+apps" (preselected) or "Inspect only" before sign-in; choosing deploy grants
+`gregale:write` too, and the token response names the granted scope. A client
+can also request both scopes in its OAuth settings.
 
 Each grant has its own SDK server, API credential, and plan store. Every remote
 request rechecks its account credential through the API. Access tokens expire
@@ -5102,6 +5111,9 @@ qualification. Raw upstream error text, Task payloads and bearer values are
 excluded. Actions carry argument arrays for use by automation or a dashboard.
 
 ## Runtime catalog management
+
+The Node and Python starters can also publish a [typed application toolkit](sdk-application-toolkits.md)
+with explicit scopes for its SDK tools and resources.
 
 The Node, Go, and Python starters expose in-process operations to register,
 replace, and remove tools, resources, and prompts. Application code can change
@@ -6851,6 +6863,26 @@ The OAuth provider doctor's signing-key check applies the same `key_ops`
 requirement and does not count encryption-only or malformed-operation keys
 as usable verification keys.
 
+The `jwks_url` must answer anonymous requests. When the starter cannot fetch
+its keys it does not call the token wrong: a network failure, timeout, 5xx or
+429 is answered with `error_description="signing keys unavailable"` and
+`Retry-After`, and a 401 or 403 with `error_description="signing keys
+refused"` and no `Retry-After`. The CLI names the cause in both cases. A 403
+can also come from a firewall in front of the provider that refuses the app's
+requests.
+
+An authorization server you deploy on Gregale answers 401 or 403 while its URL
+is private (new apps start private on some plans) or has a `--public-auth`
+mode other than `open` (see [App access control](auth.md#app-access-control)).
+Open it to anonymous callers:
+
+```bash
+gregale app update <authorization-server-app> --no-require-authn --public-auth open
+```
+
+and set `access: public` in its `gregale.yaml`, or its next deploy makes it
+private again.
+
 All three starters filter `tools/list`, `resources/list`,
 `resources/templates/list` and `prompts/list` using verified JWT scopes for each
 request. They check `tools/call`, `resources/read`, `prompts/get` and
@@ -7829,10 +7861,23 @@ serialize cooperating gate invocations; coordinate independent policy changes
 and all key-writing processes during rollout. No automatic cleanup follows a
 failed release; inspect the reported stage and reconcile candidate processes.
 
-#### Manual Go and Python worker upgrades
+#### Go and Python worker upgrades
 
-Go/Python workers require a manual rollout. The automated release gate and its
-native deployment adapter currently support generated Node workers only.
+`gregale mcp server tasks deploy` also releases Go and Python workers. Their
+starters have no admission tables, so the CLI runs the gate itself, entirely
+through the Gregale API (ADR-20261123160000, amendment 1): the same journal,
+checkpoint and deployment adapters as the Node gate; the schema migration in
+the web app's release command (`/app/out tasks-migrate apply` or
+`python task_schema.py apply`), with the staged web deployed before the
+candidate worker; and a readiness rule based on unfinished Tasks: a fresh
+report from the always-on observer, taken after the release began, must show
+the candidate deployment serving every `(tool, handler_version)` that `queued`,
+`running` or `input_required` Tasks need, on every replacement, before previous
+workers drain. The machine running the release needs no database credentials;
+set `observer_metric_app` to the app the observer reports for
+(`MCP_TASKS_SCALING_APP_SLUG`). `recover`, `restore`, `quarantine` and `retire` need the Node gate's claim
+fence and stay Node-only; for a failed Go/Python release use the manual steps
+below.
 
 Run explicit schema migrations with the migration binding. Keep retained owner
 and payload keys, compatible handler versions and execution policy consistent
@@ -8299,6 +8344,12 @@ ADR-20261118140000.
   mode on or off. The plan is pinned to the current rules: apply fails with
   `plan_stale` if they changed. On a production app the apply asks a person
   first.
+- Verification contracts (toolset `release`, ADR-20261122220000):
+  `gregale_validate_verification_contract` checks a `gregale.verify.yaml`
+  offline; `gregale_get_verification_contract` reads the app's stored contract;
+  `gregale_plan_verification_contract_change` reviews `set` or `delete`, pinned
+  to the stored revision. Once set, a new deployment whose required check fails
+  is not promoted.
 - Previews (toolset `release`): `gregale_list_previews`, `gregale_get_preview`
   and `gregale_plan_preview_change` (`create` for a pull request, or
   `destroy`, which asks a person first). Previews are reached only through
@@ -8392,6 +8443,10 @@ Five read-only tools in the `diagnose` toolset query product analytics (see
   member count, the plan's member bound and the last refresh; rules target a
   cohort with the `gregale.cohort` attribute (see
   [Target a cohort](flags.md#target-a-cohort)).
+- `gregale_list_saved_insights` lists saved insights with their query,
+  digest, alert, last scheduled value and alert state;
+  `gregale_run_saved_insight` takes `key` and runs one now (see
+  [Save, share and export an insight](flags.md#save-share-and-export-an-insight)).
 
 Each result carries guidance: a flag breakdown is observational, so causal
 claims need an experiment.

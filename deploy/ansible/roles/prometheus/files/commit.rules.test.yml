@@ -4,6 +4,102 @@ evaluation_interval: 1m
 tests:
   - interval: 1m
     input_series:
+      - series: 'schedd_commit_relay_unknown_sources{instance="scheduler-a"}'
+        values: '0x2 1x7 0x7'
+      - series: 'schedd_commit_relay_failing_sources{instance="scheduler-a"}'
+        values: '0x2 1x7 0x7'
+      - series: 'schedd_commit_relay_oldest_pending_timestamp_seconds{instance="scheduler-a"}'
+        values: '0x20'
+    alert_rule_test:
+      - { eval_time: 2m, alertname: FaasCommitSourceObservationUnknown, exp_alerts: [] }
+      - { eval_time: 2m, alertname: FaasCommitRelaySourceFailure, exp_alerts: [] }
+      - eval_time: 8m
+        alertname: FaasCommitSourceObservationUnknown
+        exp_alerts:
+          - exp_labels: { severity: warn, component: schedd, family: commit }
+            exp_annotations:
+              summary: "Commit source backlog cannot be established"
+              description: "An enabled source has no fresh known backlog observation. Check scheduler relay configuration, database access and source diagnostics. Unknown counts must not be treated as an empty queue."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
+      - eval_time: 8m
+        alertname: FaasCommitRelaySourceFailure
+        exp_alerts:
+          - exp_labels: { severity: warn, component: schedd, family: commit }
+            exp_annotations:
+              summary: "Commit relay source recovery is pending"
+              description: "A fresh source observation reports a relay failure. Inspect the source health code and recover database access, schema, binding, cleanup or downstream acceptance without deleting pending events."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
+      - { eval_time: 11m, alertname: FaasCommitSourceObservationUnknown, exp_alerts: [] }
+      - { eval_time: 11m, alertname: FaasCommitRelaySourceFailure, exp_alerts: [] }
+      - { eval_time: 8m, alertname: FaasCommitBacklogOverdue, exp_alerts: [] }
+  - interval: 1m
+    input_series:
+      - series: 'schedd_commit_receipt_usage_reconciliation_current{instance="scheduler-a"}'
+        values: '0x70'
+    alert_rule_test:
+      - { eval_time: 30m, alertname: FaasCommitReceiptUsageReconciliationStalled, exp_alerts: [] }
+      - eval_time: 61m
+        alertname: FaasCommitReceiptUsageReconciliationStalled
+        exp_alerts:
+          - exp_labels: { severity: warn, component: schedd, family: commit }
+            exp_annotations:
+              summary: "Commit receipt usage reconciliation is incomplete"
+              description: "Receipt usage backfill is incomplete, a reconciliation is overdue, or the usage ledger cannot be sampled. Check scheduler health and PostgreSQL before trusting receipt usage metrics."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
+  - interval: 1m
+    input_series:
+      - series: 'schedd_commit_receipt_usage_reconciliation_current{instance="scheduler-a"}'
+        values: '0x70'
+      - series: 'schedd_commit_receipt_usage_reconciliation_current{instance="scheduler-b"}'
+        values: '1x70'
+    alert_rule_test:
+      - { eval_time: 61m, alertname: FaasCommitReceiptUsageReconciliationStalled, exp_alerts: [] }
+  - interval: 1m
+    input_series:
+      - series: 'schedd_commit_receipt_usage_reconciliation_current{instance="scheduler-a"}'
+        values: '0x65 1x10'
+    alert_rule_test:
+      - { eval_time: 70m, alertname: FaasCommitReceiptUsageReconciliationStalled, exp_alerts: [] }
+  - interval: 1m
+    input_series:
+      - series: 'schedd_commit_receipt_usage_reconciliation_current{instance="scheduler-a"}'
+        values: '1x5 0x65 1x10'
+    alert_rule_test:
+      - { eval_time: 4m, alertname: FaasCommitReceiptUsageReconciliationStalled, exp_alerts: [] }
+      - eval_time: 67m
+        alertname: FaasCommitReceiptUsageReconciliationStalled
+        exp_alerts:
+          - exp_labels: { severity: warn, component: schedd, family: commit }
+            exp_annotations:
+              summary: "Commit receipt usage reconciliation is incomplete"
+              description: "Receipt usage backfill is incomplete, a reconciliation is overdue, or the usage ledger cannot be sampled. Check scheduler health and PostgreSQL before trusting receipt usage metrics."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
+      - { eval_time: 72m, alertname: FaasCommitReceiptUsageReconciliationStalled, exp_alerts: [] }
+  - interval: 1h
+    input_series:
+      - series: 'schedd_commit_receipt_payload_json_bytes{instance="scheduler-a"}'
+        values: '0+3145728x10'
+      - series: 'schedd_commit_receipt_storage_sample_success{instance="scheduler-a"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 8h
+        alertname: FaasCommitReceiptStorageGrowing
+        exp_alerts:
+          - exp_labels: { severity: warn, component: schedd, family: commit }
+            exp_annotations:
+              summary: "Commit receipt payload storage is growing"
+              description: "Receipt payload JSON text grew by more than 10 MiB over six hours. Review receipt growth and capacity. The measurement excludes other columns and indexes."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
+  - interval: 1h
+    input_series:
+      - series: 'schedd_commit_receipt_payload_json_bytes{instance="scheduler-a"}'
+        values: '0+3145728x10'
+      - series: 'schedd_commit_receipt_storage_sample_success{instance="scheduler-a"}'
+        values: '1x4 0x6'
+    alert_rule_test:
+      - { eval_time: 8h, alertname: FaasCommitReceiptStorageGrowing, exp_alerts: [] }
+  - interval: 1m
+    input_series:
       - series: 'schedd_commit_relay_oldest_pending_timestamp_seconds{instance="scheduler-a"}'
         values: '1x30'
       - series: 'schedd_commit_relay_oldest_pending_timestamp_seconds{instance="scheduler-b"}'

@@ -22,6 +22,11 @@ case "${runtime_image}" in
     fixture_body='import numpy as np, pandas as pd; assert pd.DataFrame({"x": [1, 2]}).x.sum() == 3; assert np.mean([1, 3]) == 2; print("runtime-smoke-ok")'
     runtime_command=(/usr/local/bin/python3 -I "/tmp/gregale-runtime-smoke/${fixture_name}")
     ;;
+  sandbox-code-interpreter)
+    fixture_name=handler.py
+    fixture_body='import numpy, pandas, scipy, sklearn, matplotlib, ipykernel, jupyter_client; assert pandas.DataFrame({"x": [1, 2]}).x.sum() == 3; print("runtime-smoke-ok")'
+    runtime_command=(/usr/local/bin/python3 -I "/tmp/gregale-runtime-smoke/${fixture_name}")
+    ;;
   runner-python312|runner-python313)
     fixture_name=handler.py
     fixture_body='print("runtime-smoke-ok")'

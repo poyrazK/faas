@@ -1607,6 +1607,11 @@ type Manifest struct {
 	// Protection is on or off: a deploy turns the app's production
 	// protection on or off (ADR-20261116120000 §5). Empty leaves it as it is.
 	Protection string `yaml:"protection,omitempty"`
+	// Access is who may call the app's public URL: "public" (no Gregale
+	// API key) or "key". Every production deploy applies it, and removing
+	// it returns the app to the plan default (ADR-20261124090000
+	// amendment 1). Empty means not declared.
+	Access string `yaml:"access,omitempty"`
 	// Project holds the repository's project-wide service settings
 	// (ADR-20261107180000). It is meaningful in the repository's root
 	// gregale.yaml, where the scanner applies it; it replaces the
@@ -2260,6 +2265,7 @@ type tomlManifest struct {
 	Extensions          []ExtensionSpec            `toml:"extensions"`
 	Labels              map[string]string          `toml:"labels"`
 	Protection          string                     `toml:"protection"`
+	Access              string                     `toml:"access"`
 }
 
 type tomlTriggers struct {
@@ -2292,6 +2298,7 @@ func parseTOMLManifest(b []byte) (*Manifest, error) {
 		Extensions:          raw.Extensions,
 		Labels:              raw.Labels,
 		Protection:          raw.Protection,
+		Access:              raw.Access,
 	}, nil
 }
 
@@ -2331,6 +2338,9 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	}
 	if m.Protection != "" && m.Protection != api.AppProtectionStateOn && m.Protection != api.AppProtectionStateOff {
 		return fmt.Errorf("protection: %q is not on or off", m.Protection)
+	}
+	if m.Access != "" && m.Access != api.ServiceAccessPublic && m.Access != api.ServiceAccessKey {
+		return fmt.Errorf("access: %q is not public or key", m.Access)
 	}
 	if m.Project != nil {
 		if err := m.Project.Validate(); err != nil {
