@@ -1994,6 +1994,11 @@ const (
 	// The gateway edits a tools/list answer for account tools only up to
 	// this size; a larger answer passes through unchanged.
 	MCPAccountToolsListMaxBytes = 1 << 20
+	// The gateway remembers an MCP session whose initialize declared URL
+	// elicitation this long, and at most this many sessions per app, per
+	// gateway process (ADR-20261125230541).
+	MCPSessionCapabilityTTL      = 24 * time.Hour
+	MCPSessionCapabilitiesPerApp = 1024
 )
 
 // Consumer and platform tenant controls (ADR-1314, ADR-1315, ADR-1322,
