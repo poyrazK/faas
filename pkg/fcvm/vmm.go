@@ -1316,7 +1316,7 @@ func (v *JailerVMM) resolveDriveImage(instance string) (string, error) {
 	}
 	var found string
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".ext4") || entry.Name() == buildkitSeedImageName {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".ext4") || entry.Name() == buildkitSeedImageName || entry.Name() == sandboxVolumeImageName {
 			continue
 		}
 		if found != "" {
@@ -2350,6 +2350,13 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 		if _, err := v.stageAgentInputForOwner(ctx, stagingOwner, root, inputSrc, filepath.Dir(layerSrc), l.Instance); err != nil {
 			return fmt.Errorf("vmm: stage input: %w", err)
+		}
+	}
+	if spec.SandboxVolume != "" {
+		// The capture refers to the volume by its jail name; the same file
+		// is bound in again (ADR-20261122132055 §4).
+		if _, err := v.stageEphemeralWritableAsForOwner(ctx, stagingOwner, root, spec.SandboxVolume, sandboxVolumeImageName, l.UID, l.GID, l.Instance); err != nil {
+			return fmt.Errorf("vmm: stage sandbox volume: %w", err)
 		}
 	}
 	// PR-B: stage each sidecar drive as read-only (the upper/writable
@@ -6015,6 +6022,10 @@ func (v *JailerVMM) provisionForOwner(ctx context.Context, owner nativeLaunchRec
 		var err error
 		if d.DriveID == DriveAgentInput {
 			name, err = v.stageAgentInputForOwner(ctx, owner, root, d.PathOnHost, agentInputStagingDir(cfg.Drives), instanceID)
+		} else if d.DriveID == DriveSandboxVolume {
+			// A session's volume is its own and outlives the VM: bound in,
+			// never copied (ADR-20261122132055 §4).
+			name, err = v.stageEphemeralWritableAsForOwner(ctx, owner, root, d.PathOnHost, sandboxVolumeImageName, uid, gid, instanceID)
 		} else if d.IsReadOnly {
 			name, err = v.stageReadOnlyAsForOwner(ctx, owner, root, d.PathOnHost, coldBootReadOnlyDriveName(i, d), instanceID)
 		} else if cfg.EphemeralWritable {

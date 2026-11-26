@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -88,6 +89,12 @@ type sandboxActivity struct {
 	// for a session that takes none; actionMu runs them one at a time.
 	runAction func(ctx context.Context, a *vmmdpb.RunSandboxAction)
 	actionMu  sync.Mutex
+	// volume: the session has a workspace volume (ADR-20261122132055 §4),
+	// backed up every volumeBackupEvery while it runs (zero: only at a
+	// pause); volumeBackingUp runs one backup at a time.
+	volume            bool
+	volumeBackupEvery time.Duration
+	volumeBackingUp   atomic.Bool
 }
 
 func newSandboxActivity(sandboxID string, plan api.Plan) *sandboxActivity {
@@ -188,6 +195,11 @@ func (s *Server) RunSandbox(stream vmmdpb.Vmmd_RunSandboxServer) error {
 		opErr = problem
 		return grpcerr.ToStatus(problem)
 	}
+	volumeGB, volumeBackupID, volumeEvery, problem := sandboxVolumeFromProto(first.GetStart(), wake.Plan)
+	if problem != nil {
+		opErr = problem
+		return grpcerr.ToStatus(problem)
+	}
 	runner, _ := s.vmm.(sandboxTaskRunner)
 	if task != nil && runner == nil {
 		problem := api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented, "Sandbox tasks unavailable", "this vmm cannot run sandbox tasks")
@@ -195,6 +207,12 @@ func (s *Server) RunSandbox(stream vmmdpb.Vmmd_RunSandboxServer) error {
 		return grpcerr.ToStatus(problem)
 	}
 	ctx := stream.Context()
+	if volumeGB > 0 {
+		if err := s.prepareSandboxVolume(ctx, &wake, volumeGB, volumeBackupID); err != nil {
+			opErr = err
+			return err
+		}
+	}
 	inst, err := sandboxVMM.WakeSandbox(ctx, wake)
 	if err != nil {
 		opErr = err
@@ -215,6 +233,7 @@ func (s *Server) RunSandbox(stream vmmdpb.Vmmd_RunSandboxServer) error {
 	}
 	act := newSandboxActivity(wake.SandboxID, wake.Plan)
 	act.accountID = wake.AccountID
+	act.volume, act.volumeBackupEvery = volumeGB > 0, volumeEvery
 	if meter, ok := s.vmm.(sandboxMeter); ok {
 		act.usage = meter.MeterSandbox(wake.Instance)
 	}
@@ -267,6 +286,12 @@ func (s *Server) serveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandbox
 	}
 	usageTick := time.NewTicker(usageEvery)
 	defer usageTick.Stop()
+	var volumeTick <-chan time.Time
+	if act.volume && act.volumeBackupEvery > 0 {
+		t := time.NewTicker(act.volumeBackupEvery)
+		defer t.Stop()
+		volumeTick = t.C
+	}
 	stopped := false
 	defer func() {
 		if act.usage != nil && !stopped {
@@ -346,6 +371,8 @@ func (s *Server) serveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandbox
 			if report, changed := act.report(); changed {
 				ev = &vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_Activity{Activity: report}}
 			}
+		case <-volumeTick:
+			s.backupSandboxVolume(ctx, act)
 		case <-usageTick.C:
 			if act.usage != nil {
 				u := act.usage.Snapshot()
@@ -438,25 +465,43 @@ func (s *Server) publishSandboxCapture(ctx context.Context, memKey string) {
 	if !ok {
 		return
 	}
+	started := time.Now()
+	s.retryInBackground(ctx, "SandboxCaptureUpload", "capture upload", memKey, func(ctx context.Context) error {
+		return pub.PublishSandboxCapture(ctx, memKey)
+	}, func() {
+		s.log.Info("sandbox: capture uploaded", "storage_key", memKey, "upload_ms", time.Since(started).Milliseconds())
+	}, func() {
+		// Left to the node cache's eviction rather than pinned for good.
+		if err := pub.UnpinSandboxCapture(memKey); err != nil {
+			s.log.Warn("sandbox: unpin a given-up capture failed", "storage_key", memKey, "err", err)
+		}
+	})
+}
+
+// retryInBackground runs upload until it succeeds or sandboxPublishGiveUp
+// passes, backing off between tries, outliving the caller's stream; done
+// runs after a success and gaveUp after the last failure.
+func (s *Server) retryInBackground(ctx context.Context, op, what, key string, upload func(context.Context) error, done, gaveUp func()) {
 	go func() {
-		// The upload outlives the pause's stream.
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sandboxPublishGiveUp)
 		defer cancel()
 		started := time.Now()
 		wait := sandboxPublishFirstRetry
 		for {
-			err := pub.PublishSandboxCapture(ctx, memKey)
-			s.ops.Observe("SandboxCaptureUpload", time.Since(started), err)
+			err := upload(ctx)
+			s.ops.Observe(op, time.Since(started), err)
 			if err == nil {
-				s.log.Info("sandbox: capture uploaded", "storage_key", memKey, "upload_ms", time.Since(started).Milliseconds())
+				if done != nil {
+					done()
+				}
 				return
 			}
-			s.log.Warn("sandbox: capture upload failed; retrying", "storage_key", memKey, "retry_in", wait, "err", err)
+			s.log.Warn("sandbox: "+what+" failed; retrying", "key", key, "retry_in", wait, "err", err)
 			select {
 			case <-ctx.Done():
-				s.log.Warn("sandbox: capture upload gave up; it stays on this node until evicted", "storage_key", memKey)
-				if err := pub.UnpinSandboxCapture(memKey); err != nil {
-					s.log.Warn("sandbox: unpin a given-up capture failed", "storage_key", memKey, "err", err)
+				s.log.Warn("sandbox: "+what+" gave up; it stays on this node", "key", key)
+				if gaveUp != nil {
+					gaveUp()
 				}
 				return
 			case <-time.After(wait):
@@ -530,10 +575,13 @@ func (s *Server) pauseSandbox(ctx context.Context, instance string, act *sandbox
 	}
 	snap := captured.Snapshot
 	s.publishSandboxCapture(ctx, snap.StorageKey)
+	// The VM is gone, so the volume is as the capture left it.
+	volumeBackup := s.prepareSandboxPauseBackup(ctx, act)
 	return &vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_Paused{Paused: &vmmdpb.RunSandboxPaused{
 		Snapshot: &vmmdpb.AgentRunSnapshot{StorageKey: snap.StorageKey, VmstateStorageKey: snap.VMStateStorageKey,
 			FcVersion: snap.FCVersion, MemBytes: snap.MemBytes},
-		VmstateBytes: captured.Info.VMStateBytes, PauseMs: time.Since(started).Milliseconds(), HasBacking: captured.HasBacking}}}, nil, nil
+		VmstateBytes: captured.Info.VMStateBytes, PauseMs: time.Since(started).Milliseconds(), HasBacking: captured.HasBacking,
+		VolumeBackupId: volumeBackup}}}, nil, nil
 }
 
 // thawSandbox thaws a frozen session VM in place before a call. A freeze in

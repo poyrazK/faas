@@ -143,6 +143,7 @@ var vmmdCallerPolicy = map[string]vmmdCaller{
 	vmmdpb.Vmmd_RunAgent_FullMethodName:                                callerSchedd,
 	vmmdpb.Vmmd_RunDataRepairRehearsal_FullMethodName:                  callerSchedd,
 	vmmdpb.Vmmd_RunSandbox_FullMethodName:                              callerSchedd,
+	vmmdpb.Vmmd_DeleteSandboxVolume_FullMethodName:                     callerSchedd,
 	vmmdpb.Vmmd_RuntimeAdmissionIdentity_FullMethodName:                callerSchedd,
 	vmmdpb.Vmmd_SandboxCall_FullMethodName:                             callerGateway,
 	vmmdpb.Vmmd_SeccompStatus_FullMethodName:                           callerSchedd,

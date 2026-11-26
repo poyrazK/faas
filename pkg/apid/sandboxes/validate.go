@@ -199,6 +199,11 @@ func validShape(plan api.Plan, a *agentstore.SandboxAdmission, in api.CreateSand
 		}
 		return nil
 	}
+	if in.SnapshotID != "" {
+		// Its /workspace is its volume, which a workspace archive does not
+		// seed; schedd refuses a start with both.
+		return api.ErrValidation("snapshot_id starts ephemeral sessions only; a persistent session keeps its files on its volume")
+	}
 	volume := in.VolumeGB
 	if volume == 0 {
 		volume = min(api.SandboxVolumeDefaultGB, api.SandboxVolumeMaxGB[idx])

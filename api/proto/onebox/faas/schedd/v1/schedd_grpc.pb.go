@@ -45,6 +45,7 @@ const (
 	Schedd_ReportWorkloadOOM_FullMethodName                  = "/onebox.faas.schedd.v1.Schedd/ReportWorkloadOOM"
 	Schedd_RunAgent_FullMethodName                           = "/onebox.faas.schedd.v1.Schedd/RunAgent"
 	Schedd_RunSandbox_FullMethodName                         = "/onebox.faas.schedd.v1.Schedd/RunSandbox"
+	Schedd_DeleteSandboxVolume_FullMethodName                = "/onebox.faas.schedd.v1.Schedd/DeleteSandboxVolume"
 	Schedd_ReportMemoryPressure_FullMethodName               = "/onebox.faas.schedd.v1.Schedd/ReportMemoryPressure"
 	Schedd_ReportSlowRequest_FullMethodName                  = "/onebox.faas.schedd.v1.Schedd/ReportSlowRequest"
 	Schedd_ProvisionDatabase_FullMethodName                  = "/onebox.faas.schedd.v1.Schedd/ProvisionDatabase"
@@ -395,6 +396,9 @@ type ScheddClient interface {
 	// grant and recorded answers down. The VM is destroyed and the
 	// reservation released when the stream ends.
 	RunSandbox(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[SandboxRunRequest, SandboxRunEvent], error)
+	// DeleteSandboxVolume removes a persistent session's workspace volume
+	// from one node (ADR-20261122132055 §4), relayed to that node's vmmd.
+	DeleteSandboxVolume(ctx context.Context, in *DeleteSandboxVolumeRequest, opts ...grpc.CallOption) (*DeleteSandboxVolumeResponse, error)
 	// ReportMemoryPressure (ADR-1155) is vmmd's best-effort relay of a guest
 	// memory-pressure report: MemAvailable fell to the pressure share of
 	// MemTotal while a profile collector was registered. schedd queues one
@@ -710,6 +714,16 @@ func (c *scheddClient) RunSandbox(ctx context.Context, opts ...grpc.CallOption) 
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Schedd_RunSandboxClient = grpc.BidiStreamingClient[SandboxRunRequest, SandboxRunEvent]
+
+func (c *scheddClient) DeleteSandboxVolume(ctx context.Context, in *DeleteSandboxVolumeRequest, opts ...grpc.CallOption) (*DeleteSandboxVolumeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteSandboxVolumeResponse)
+	err := c.cc.Invoke(ctx, Schedd_DeleteSandboxVolume_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
 
 func (c *scheddClient) ReportMemoryPressure(ctx context.Context, in *ReportMemoryPressureRequest, opts ...grpc.CallOption) (*ReportMemoryPressureAck, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -1494,6 +1508,9 @@ type ScheddServer interface {
 	// grant and recorded answers down. The VM is destroyed and the
 	// reservation released when the stream ends.
 	RunSandbox(grpc.BidiStreamingServer[SandboxRunRequest, SandboxRunEvent]) error
+	// DeleteSandboxVolume removes a persistent session's workspace volume
+	// from one node (ADR-20261122132055 §4), relayed to that node's vmmd.
+	DeleteSandboxVolume(context.Context, *DeleteSandboxVolumeRequest) (*DeleteSandboxVolumeResponse, error)
 	// ReportMemoryPressure (ADR-1155) is vmmd's best-effort relay of a guest
 	// memory-pressure report: MemAvailable fell to the pressure share of
 	// MemTotal while a profile collector was registered. schedd queues one
@@ -1670,6 +1687,9 @@ func (UnimplementedScheddServer) RunAgent(grpc.BidiStreamingServer[AgentRunReque
 }
 func (UnimplementedScheddServer) RunSandbox(grpc.BidiStreamingServer[SandboxRunRequest, SandboxRunEvent]) error {
 	return status.Error(codes.Unimplemented, "method RunSandbox not implemented")
+}
+func (UnimplementedScheddServer) DeleteSandboxVolume(context.Context, *DeleteSandboxVolumeRequest) (*DeleteSandboxVolumeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteSandboxVolume not implemented")
 }
 func (UnimplementedScheddServer) ReportMemoryPressure(context.Context, *ReportMemoryPressureRequest) (*ReportMemoryPressureAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportMemoryPressure not implemented")
@@ -2073,6 +2093,24 @@ func _Schedd_RunSandbox_Handler(srv interface{}, stream grpc.ServerStream) error
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Schedd_RunSandboxServer = grpc.BidiStreamingServer[SandboxRunRequest, SandboxRunEvent]
+
+func _Schedd_DeleteSandboxVolume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteSandboxVolumeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).DeleteSandboxVolume(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_DeleteSandboxVolume_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).DeleteSandboxVolume(ctx, req.(*DeleteSandboxVolumeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
 
 func _Schedd_ReportMemoryPressure_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ReportMemoryPressureRequest)
@@ -2952,6 +2990,10 @@ var Schedd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReportWorkloadOOM",
 			Handler:    _Schedd_ReportWorkloadOOM_Handler,
+		},
+		{
+			MethodName: "DeleteSandboxVolume",
+			Handler:    _Schedd_DeleteSandboxVolume_Handler,
 		},
 		{
 			MethodName: "ReportMemoryPressure",

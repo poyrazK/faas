@@ -154,6 +154,12 @@ service Vmmd {
   // that finds the VM frozen thaws it in place and reports thawed. The VM is
   // destroyed on close and whenever the stream ends.
   rpc RunSandbox(stream RunSandboxRequest) returns (stream RunSandboxEvent);
+  // DeleteSandboxVolume removes a persistent session's workspace volume
+  // from this node (ADR-20261122132055 §4): schedd calls it for agentd once
+  // the session ended or its newest copy is on another node. A volume a
+  // running session uses is refused with FailedPrecondition; one that is not
+  // here is not an error.
+  rpc DeleteSandboxVolume(DeleteSandboxVolumeRequest) returns (DeleteSandboxVolumeResponse);
 
   // PersistSandboxWorkspace archives a session's workspace to the artifact
   // store (ADR-20261027090013 step 7). vmmd asks agentd, on the session's
@@ -3650,6 +3656,18 @@ message RunSandboxStart {
   // ran, so a restore runs none, and no workspace_key goes with it. A failed
   // restore still cold-boots (ADR-005) and booted says so.
   bool session_capture = 23;
+  // volume_gb gives a persistent session its workspace volume
+  // (ADR-20261122132055 §4), mounted at /workspace: vmmd makes it, or grows
+  // the node's copy to this size. Zero: no volume. An older vmmd ignores it
+  // and the workspace is on the root drive.
+  int32 volume_gb = 24;
+  // volume_backup_id is the session's newest volume backup. The node's copy
+  // is used when it is that backup or newer; otherwise vmmd restores the
+  // backup first. Empty: the volume was never backed up.
+  string volume_backup_id = 25;
+  // volume_backup_interval_ms backs the volume up while the session runs,
+  // reporting each backup as volume_backup. Zero: only pauses back it up.
+  int64 volume_backup_interval_ms = 26;
 }
 
 // RunSandboxAction is one browser action on a live session
@@ -3779,7 +3797,35 @@ message RunSandboxEvent {
     // or the capture failed before the guest was touched. The VM keeps
     // running.
     RunSandboxPauseRefused pause_refused = 13;
+    // volume_backup reports a backup of the session's volume taken while it
+    // runs (ADR-20261122132055 §4). Sent only to a start with volume_gb, so
+    // an older reader never sees one.
+    RunSandboxVolumeBackup volume_backup = 14;
   }
+}
+
+// RunSandboxVolumeBackup is one stored backup of a session's volume.
+message RunSandboxVolumeBackup {
+  string backup_id = 1;
+  int64 size_bytes = 2;
+  // data_chunks counts the chunks that hold data; uploaded_bytes is what
+  // this backup added to the store, compressed.
+  int32 data_chunks = 3;
+  int64 uploaded_bytes = 4;
+  int64 backup_ms = 5;
+  // incremental: only the blocks changed since the node's last backup were
+  // read.
+  bool incremental = 6;
+}
+
+message DeleteSandboxVolumeRequest {
+  string account_id = 1;
+  string sandbox_id = 2;
+}
+
+message DeleteSandboxVolumeResponse {
+  // deleted: the node had a copy and removed it.
+  bool deleted = 1;
 }
 
 message RunSandboxPaused {
@@ -3791,6 +3837,10 @@ message RunSandboxPaused {
   // node now and reaches the shared store in the background
   // (ADR-20261122132055 §2).
   bool has_backing = 4;
+  // volume_backup_id names the backup of the session's volume as the
+  // capture left it (ADR-20261122132055 §4), uploaded in the background with
+  // the capture. Empty for a session without a volume.
+  string volume_backup_id = 5;
 }
 
 message RunSandboxPauseRefused {

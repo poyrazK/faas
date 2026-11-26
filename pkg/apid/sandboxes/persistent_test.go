@@ -48,12 +48,14 @@ func TestCreatePersistent(t *testing.T) {
 		status int
 		code   string
 	}{
-		"a lifetime":                {`{"preset":"codex","kind":"persistent","lifetime_s":60}`, http.StatusBadRequest, api.CodeValidation},
-		"an idle timeout":           {`{"preset":"codex","kind":"persistent","idle_timeout_s":60}`, http.StatusBadRequest, api.CodeValidation},
-		"RAM over the plan":         {`{"preset":"codex","kind":"persistent","ram_mb":16384}`, http.StatusForbidden, api.CodeAgentLimit},
-		"vCPUs over the plan":       {`{"preset":"codex","kind":"persistent","vcpu":5}`, http.StatusForbidden, api.CodeAgentLimit},
-		"a volume over the plan":    {`{"preset":"codex","kind":"persistent","volume_gb":51}`, http.StatusForbidden, api.CodeAgentLimit},
-		"a volume on an ephemeral":  {`{"preset":"codex","volume_gb":5}`, http.StatusBadRequest, api.CodeValidation},
+		"a lifetime":               {`{"preset":"codex","kind":"persistent","lifetime_s":60}`, http.StatusBadRequest, api.CodeValidation},
+		"an idle timeout":          {`{"preset":"codex","kind":"persistent","idle_timeout_s":60}`, http.StatusBadRequest, api.CodeValidation},
+		"RAM over the plan":        {`{"preset":"codex","kind":"persistent","ram_mb":16384}`, http.StatusForbidden, api.CodeAgentLimit},
+		"vCPUs over the plan":      {`{"preset":"codex","kind":"persistent","vcpu":5}`, http.StatusForbidden, api.CodeAgentLimit},
+		"a volume over the plan":   {`{"preset":"codex","kind":"persistent","volume_gb":51}`, http.StatusForbidden, api.CodeAgentLimit},
+		"a volume on an ephemeral": {`{"preset":"codex","volume_gb":5}`, http.StatusBadRequest, api.CodeValidation},
+		"a workspace snapshot": {`{"preset":"codex","kind":"persistent","snapshot_id":"33333333-3333-3333-3333-333333333333"}`,
+			http.StatusBadRequest, api.CodeValidation},
 		"ephemeral above its limit": {`{"preset":"codex","ram_mb":8192}`, http.StatusForbidden, api.CodeAgentLimit},
 	} {
 		var p api.Problem
