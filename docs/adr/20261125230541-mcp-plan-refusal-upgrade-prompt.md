@@ -42,14 +42,17 @@ answered in MCP terms. Spend-cap and overdue-invoice refusals keep their
    - for `tools/call`, a result with `isError: true` whose text names the
      limit, when a per-minute limit clears, and the link;
    - for other methods, error `-32000` with the same text as `message` and
-     `data` = `{code, upgrade_url, retry_after_seconds}`.
+     `data` = `{code, upgrade_url, retry_after_seconds}`, plus `limit`,
+     `observed` and `docs_url` for route and tool limits, as the 429 problem
+     carries them.
    The request is never billed (unchanged).
 3. **Knowing the client's capabilities.** Protocol 2026-07-28 carries them
    on every request (`params._meta["io.modelcontextprotocol/clientCapabilities"]`).
    Older protocols declare them once in `initialize`: when that request
    declares `elicitation.url`, the gateway remembers the `Mcp-Session-Id`
-   of the answer for 24 hours, per app, in that gateway process (at most
-   1,024 sessions per app, so one app's callers cannot crowd out another's;
+   of the answer for 24 hours, per app, in that gateway process
+   (`api.MCPSessionCapabilityTTL`; at most
+   `api.MCPSessionCapabilitiesPerApp` = 1,024 sessions per app, so one app's callers cannot crowd out another's;
    a full app drops expired sessions, then an arbitrary one). A later
    request of the session reaching another node gets the tool-error form,
    which still carries the link.
@@ -61,10 +64,10 @@ answered in MCP terms. Spend-cap and overdue-invoice refusals keep their
 - No schema, proto or API changes. An older gateway answers 429 as before.
 - Clients that relied on the 429 for MCP requests now get HTTP 200 with a
   JSON-RPC error or tool error; MCP clients could not act on the 429.
-- Request telemetry records the answer as status 200 with the platform
-  error code header, so it counts as a gateway answer, not the app's. MCP
-  telemetry (`mcp_requests` outcome, seller insights) still counts it as
-  `rate_limited`.
+- Telemetry records the answer as the 429 it replaces (as a gRPC error in
+  a 200 is mapped to its HTTP status): request metrics, request telemetry,
+  `mcp_requests` (`rate_limited`) and `gregale mcp diagnostics` agree. The
+  answer also carries the platform error code header.
 - A request whose body spells `id`, `method` or `params` twice (in any
   case) keeps the 429, so the answer never echoes an id the app would not
   read.

@@ -50,10 +50,13 @@ type mcpPlanRefusedKey struct{}
 // elicitation; the answer's session id is remembered.
 type mcpInitializeKey struct{}
 
+// mcpRequest is the admitted request; a session's capabilities are looked
+// up only when a refusal needs them.
 type mcpRequest struct {
 	id             json.RawMessage
 	method         string
 	urlElicitation bool
+	appID, session string
 }
 
 // mcpEnvelope is what the gateway reads from an MCP JSON-RPC request.
@@ -61,10 +64,10 @@ type mcpEnvelope struct {
 	ID     json.RawMessage `json:"id"`
 	Method string          `json:"method"`
 	Params struct {
-		Name         string                     `json:"name"`
-		Cursor       *string                    `json:"cursor"`
-		Meta         map[string]json.RawMessage `json:"_meta"`
-		Capabilities json.RawMessage            `json:"capabilities"`
+		Name         string          `json:"name"`
+		Cursor       *string         `json:"cursor"`
+		Meta         json.RawMessage `json:"_meta"`
+		Capabilities json.RawMessage `json:"capabilities"`
 	} `json:"params"`
 }
 
@@ -89,6 +92,16 @@ func readMCPEnvelope(r *http.Request) (mcpEnvelope, bool) {
 	return env, true
 }
 
+// metaClientCapabilities returns the client capabilities of a request's
+// _meta; anything malformed reads as none.
+func metaClientCapabilities(meta json.RawMessage) json.RawMessage {
+	var m map[string]json.RawMessage
+	if len(meta) == 0 || json.Unmarshal(meta, &m) != nil {
+		return nil
+	}
+	return m["io.modelcontextprotocol/clientCapabilities"]
+}
+
 // declaresURLElicitation reports whether client capabilities include
 // elicitation.url.
 func declaresURLElicitation(capabilities json.RawMessage) bool {
@@ -111,9 +124,8 @@ func (h *Handler) markMCPRequest(r *http.Request, app App) {
 	if !ok || len(env.ID) == 0 || env.Method == "" {
 		return
 	}
-	req := mcpRequest{id: env.ID, method: env.Method,
-		urlElicitation: declaresURLElicitation(env.Params.Meta["io.modelcontextprotocol/clientCapabilities"]) ||
-			h.mcpSessions.urlElicitation(app.ID, r.Header.Get("Mcp-Session-Id"), time.Now())}
+	req := mcpRequest{id: env.ID, method: env.Method, appID: app.ID, session: r.Header.Get("Mcp-Session-Id"),
+		urlElicitation: declaresURLElicitation(metaClientCapabilities(env.Params.Meta))}
 	ctx := context.WithValue(r.Context(), mcpRequestKey{}, req)
 	if env.Method == "initialize" && declaresURLElicitation(env.Params.Capabilities) {
 		ctx = context.WithValue(ctx, mcpInitializeKey{}, app.ID)
@@ -127,14 +139,20 @@ type mcpPlanRefusal struct {
 	message    string
 	upgradeURL string
 	retryAfter int64
+	// limit, observed and docsURL are the problem's, for route limits.
+	limit, observed *int64
+	docsURL         string
 }
 
 // writeMCPPlanRefusal answers an admitted MCP JSON-RPC request the plan
 // refused. False leaves the refusal to the 429 problem.
-func writeMCPPlanRefusal(w http.ResponseWriter, r *http.Request, refusal mcpPlanRefusal) bool {
+func (h *Handler) writeMCPPlanRefusal(w http.ResponseWriter, r *http.Request, refusal mcpPlanRefusal) bool {
 	req, ok := r.Context().Value(mcpRequestKey{}).(mcpRequest)
 	if !ok {
 		return false
+	}
+	if !req.urlElicitation {
+		req.urlElicitation = h.mcpSessions.urlElicitation(req.appID, req.session, time.Now())
 	}
 	text := refusal.message
 	if refusal.upgradeURL != "" {
@@ -143,6 +161,12 @@ func writeMCPPlanRefusal(w http.ResponseWriter, r *http.Request, refusal mcpPlan
 	data := map[string]any{"code": refusal.code, "retry_after_seconds": refusal.retryAfter}
 	if refusal.upgradeURL != "" {
 		data["upgrade_url"] = refusal.upgradeURL
+	}
+	if refusal.limit != nil && refusal.observed != nil {
+		data["limit"], data["observed"] = *refusal.limit, *refusal.observed
+	}
+	if refusal.docsURL != "" {
+		data["docs_url"] = refusal.docsURL
 	}
 	answer := map[string]any{"jsonrpc": "2.0", "id": req.id}
 	switch {
@@ -161,7 +185,8 @@ func writeMCPPlanRefusal(w http.ResponseWriter, r *http.Request, refusal mcpPlan
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	// The answer is the gateway's, not the app's, though it is a 200.
+	// The answer is the gateway's, not the app's, though it is a 200;
+	// telemetry records it as the 429 it replaces (observedStatus).
 	w.Header().Set(api.ErrorCodeHeader, refusal.code)
 	*r = *r.WithContext(context.WithValue(r.Context(), mcpPlanRefusedKey{}, true))
 	w.WriteHeader(http.StatusOK)
@@ -179,13 +204,16 @@ func mcpPlanRefusalMessage(decision ConsumerPlanDecision, route string) string {
 	return msg
 }
 
-// mcpSessionTTL is how long the gateway remembers that a session's client
-// declared URL elicitation.
-const mcpSessionTTL = 24 * time.Hour
+// mcpSessionTTL and mcpSessionsPerApp bound the session memory
+// (pkg/api/limits.go).
+const (
+	mcpSessionTTL     = api.MCPSessionCapabilityTTL
+	mcpSessionsPerApp = api.MCPSessionCapabilitiesPerApp
+)
 
-// mcpSessionsPerApp bounds the sessions remembered for one app, so one
-// app's callers cannot crowd out another's.
-const mcpSessionsPerApp = 1024
+// mcpSessionAppSweep bounds the apps one remember examines for expired
+// sessions, so the lock is never held over the whole table.
+const mcpSessionAppSweep = 64
 
 // mcpSessionCapabilities remembers, per gateway process, the MCP sessions
 // whose initialize declared URL elicitation. A session served by another
@@ -240,8 +268,14 @@ func (c *mcpSessionCapabilities) remember(appID, session string, now time.Time) 
 	sessions[session] = now.Add(mcpSessionTTL)
 }
 
+// dropExpiredApps drops up to mcpSessionAppSweep apps (map order is
+// random) whose sessions all expired.
 func (c *mcpSessionCapabilities) dropExpiredApps(now time.Time) {
+	examined := 0
 	for appID, sessions := range c.apps {
+		if examined++; examined > mcpSessionAppSweep {
+			return
+		}
 		if dropExpired(sessions, now); len(sessions) == 0 {
 			delete(c.apps, appID)
 		}

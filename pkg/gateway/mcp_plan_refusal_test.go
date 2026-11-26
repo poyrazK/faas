@@ -35,6 +35,9 @@ func TestMCPPlanRefusal(t *testing.T) {
 			Data    struct {
 				Code         string `json:"code"`
 				UpgradeURL   string `json:"upgrade_url"`
+				Limit        *int64 `json:"limit"`
+				Observed     *int64 `json:"observed"`
+				DocsURL      string `json:"docs_url"`
 				Elicitations []struct {
 					Mode, ElicitationID, URL, Message string
 				} `json:"elicitations"`
@@ -59,6 +62,8 @@ func TestMCPPlanRefusal(t *testing.T) {
 		var a answer
 		if refused := r.Context().Value(mcpPlanRefusedKey{}) == true; refused != (w.Code == http.StatusOK) {
 			t.Fatalf("telemetry mark = %v for status %d", refused, w.Code)
+		} else if refused && observedStatus(r, http.StatusOK) != http.StatusTooManyRequests {
+			t.Fatal("telemetry does not record the refusal as 429")
 		}
 		if w.Code == http.StatusOK {
 			if err := json.Unmarshal(w.Body.Bytes(), &a); err != nil {
@@ -103,6 +108,18 @@ func TestMCPPlanRefusal(t *testing.T) {
 			t.Fatalf("%+v", a)
 		}
 	})
+	t.Run("route limits carry limit, observed and docs", func(t *testing.T) {
+		_, a := refuse(t, "route_month", link, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`, true)
+		if a.Error == nil || a.Error.Data.Limit == nil || *a.Error.Data.Limit != 10 || a.Error.Data.Observed == nil || a.Error.Data.DocsURL == "" {
+			t.Fatalf("%+v", a.Error)
+		}
+	})
+	t.Run("malformed _meta reads as no capabilities", func(t *testing.T) {
+		_, a := refuse(t, "month", link, `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"search","_meta":"x"}}`, true)
+		if a.Result == nil || !a.Result.IsError {
+			t.Fatalf("%+v", a)
+		}
+	})
 	for name, tc := range map[string]struct {
 		body string
 		mark bool
@@ -141,7 +158,7 @@ func TestMCPSessionURLElicitation(t *testing.T) {
 		r.Header.Set("Mcp-Session-Id", session)
 		h.markMCPRequest(r, App{ID: appID})
 		req, _ := r.Context().Value(mcpRequestKey{}).(mcpRequest)
-		return req.urlElicitation
+		return req.urlElicitation || h.mcpSessions.urlElicitation(req.appID, req.session, time.Now())
 	}
 	if !later("app-1", "s-1") || later("app-1", "s-2") || later("app-2", "s-1") {
 		t.Fatal("session capability not scoped to the app's session")
