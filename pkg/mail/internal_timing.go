@@ -486,8 +486,8 @@ func (s *InternalSender) WithManagedPostgresPlanExcessOutbox(enabled func() bool
 	return copy
 }
 
-// WithManagedPostgresAwakeOutbox gates the managed PostgreSQL plan
-// excess notices (ADR-20261125231222) on their own switch.
+// WithManagedPostgresAwakeOutbox gates the weekly managed PostgreSQL awake
+// notices (ADR-20261125231222) on their own switch.
 func (s *InternalSender) WithManagedPostgresAwakeOutbox(enabled func() bool) *InternalSender {
 	copy := s.WithManagedPostgresRestoreSlotOutbox(nil)
 	copy.managedPostgresAwakeEnabled = enabled

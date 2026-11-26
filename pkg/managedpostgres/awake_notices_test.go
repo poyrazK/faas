@@ -83,6 +83,16 @@ func TestUsageCollectorNoticesAwakeHourly(t *testing.T) {
 		t.Fatalf("weeks %v, mailed %v; want a second pass that mails nothing", store.weeks, mailed)
 	}
 
+	// Early on Monday the week that just ended has not settled: the pass
+	// records the week before it, already noticed.
+	monday := &awakeTestStore{MemoryStore: NewMemoryStore()}
+	early := time.Date(2026, 11, 23, 5, 0, 0, 0, time.UTC)
+	(&UsageCollector{store: monday, now: func() time.Time { return early }, logger: slog.New(slog.DiscardHandler),
+		notifyAwake: func(context.Context, AwakeNotice) error { return nil }}).noticeAwake(ctx)
+	if len(monday.weeks) != 1 || !monday.weeks[0].Equal(time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("weeks %v at %s; want the settled week of 2026-11-09", monday.weeks, early)
+	}
+
 	// Without a mailer nothing is recorded.
 	idle := &awakeTestStore{MemoryStore: NewMemoryStore()}
 	(&UsageCollector{store: idle, now: func() time.Time { return now }, logger: slog.New(slog.DiscardHandler)}).noticeAwake(ctx)
@@ -106,6 +116,7 @@ func TestAwakeNoticesPGRecordOncePerWeek(t *testing.T) {
 		from, hrs  float64
 		detail     string
 		withoutApp bool
+		open       bool // its suspend not read yet
 	}
 	database := func(scaleToZero bool, starts ...start) string {
 		t.Helper()
@@ -119,9 +130,13 @@ func TestAwakeNoticesPGRecordOncePerWeek(t *testing.T) {
 			if st.withoutApp {
 				appID = nil
 			}
+			var suspended any = at.Add(time.Duration(st.hrs * float64(time.Hour)))
+			if st.open {
+				suspended = nil
+			}
 			if _, err := pool.Exec(ctx, `INSERT INTO managed_postgres_compute_starts
 				(database_id,account_id,provider_operation_id,started_at,suspended_at,cause,cause_app_id,cause_detail) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
-				db.ID, accountID, "op-"+uuid.NewString(), at, at.Add(time.Duration(st.hrs*float64(time.Hour))), st.cause, appID, st.detail); err != nil {
+				db.ID, accountID, "op-"+uuid.NewString(), at, suspended, st.cause, appID, st.detail); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -138,10 +153,19 @@ func TestAwakeNoticesPGRecordOncePerWeek(t *testing.T) {
 	database(false, cron(0), cron(24), cron(48))
 	// Awake too little.
 	database(true, cron(0), start{cause: CauseCron, from: 24, hrs: 1, detail: "/cron/sync"})
+	// Starts whose suspends were never read end at the next start, and the
+	// last one counts nothing: 2 h + 2 h + 0, not the rest of the week.
+	database(true, start{cause: CauseCron, from: 0, open: true, detail: "/cron/sync"}, start{cause: CauseCron, from: 2, open: true, detail: "/cron/sync"},
+		start{cause: CauseCron, from: 4, open: true, detail: "/cron/sync"})
+	// An app cause whose app is gone is recorded but never listed.
+	gone := database(true, cron(0), cron(24), cron(48))
 
 	minAwake := int64(api.ManagedPostgresAwakeNoticeHoursPerDay) * 7 * 3600
-	if n, err := s.RecordAwakeNotices(ctx, week, minAwake, api.ManagedPostgresAwakeNoticeCauseSharePercent); err != nil || n != 1 {
-		t.Fatalf("recorded %d, %v; want only the cron database", n, err)
+	if n, err := s.RecordAwakeNotices(ctx, week, minAwake, api.ManagedPostgresAwakeNoticeCauseSharePercent); err != nil || n != 2 {
+		t.Fatalf("recorded %d, %v; want the two cron databases", n, err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE managed_postgres_awake_notices SET cause_app_id=$2 WHERE database_id=$1", gone, uuid.NewString()); err != nil {
+		t.Fatal(err)
 	}
 	if n, err := s.RecordAwakeNotices(ctx, week, minAwake, api.ManagedPostgresAwakeNoticeCauseSharePercent); err != nil || n != 0 {
 		t.Fatalf("second pass recorded %d, %v; want none", n, err)

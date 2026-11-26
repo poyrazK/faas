@@ -87,8 +87,9 @@ func lastCompleteWeek(now time.Time) time.Time {
 // awakeNoticeBatch bounds the notices one pass mails.
 const awakeNoticeBatch = 100
 
-// noticeAwake records last week's notices and mails the unmailed ones, at
-// most once an hour. A failure is logged; the next pass retries.
+// noticeAwake records the last complete week's notices once the week has
+// settled, and mails the unmailed ones, at most once an hour. A failure is
+// logged; the next pass retries.
 func (c *UsageCollector) noticeAwake(ctx context.Context) {
 	store, ok := c.store.(AwakeNoticeStore)
 	now := c.now()
@@ -97,7 +98,8 @@ func (c *UsageCollector) noticeAwake(ctx context.Context) {
 	}
 	c.awakeNoticedAt = now
 	minAwake := int64(api.ManagedPostgresAwakeNoticeHoursPerDay) * 7 * 3600
-	if _, err := store.RecordAwakeNotices(ctx, lastCompleteWeek(now), minAwake, api.ManagedPostgresAwakeNoticeCauseSharePercent); err != nil {
+	week := lastCompleteWeek(now.Add(-api.ManagedPostgresAwakeNoticeSettle))
+	if _, err := store.RecordAwakeNotices(ctx, week, minAwake, api.ManagedPostgresAwakeNoticeCauseSharePercent); err != nil {
 		c.logger.Warn("managed postgres awake notices not recorded", "error", err)
 		return
 	}

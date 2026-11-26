@@ -3199,11 +3199,14 @@ the compute cap notices above. With the gate off apid still records notices but
 mails none; turning it on mails those recorded within the email's lifetime.
 
 At most once an hour the usage sweep looks at the last complete UTC week
-(Monday to Monday) and records one notice for each ready scale-to-zero database
+(Monday to Monday), once `api.ManagedPostgresAwakeNoticeSettle` has passed
+since it ended so its last idle-tail windows are read, and records one notice for each ready scale-to-zero database
 that was awake at least `api.ManagedPostgresAwakeNoticeHoursPerDay` hours a day
 on average while one cause held at least
 `api.ManagedPostgresAwakeNoticeCauseSharePercent`% of its starts. Requests are
-the app's real traffic and are never noticed. A database is noticed at most
+the app's real traffic and are never noticed. A start whose suspend was not
+read counts only up to the database's next start. A notice whose cause names
+an app that no longer exists is not mailed. A database is noticed at most
 once per week. apid mails every notice that is unmailed and under
 `api.InternalMailManagedPostgresAwakeTTL` old to the account that owns the
 database. It encrypts a frozen snapshot (database name, hours a day, starts,

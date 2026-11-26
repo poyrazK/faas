@@ -98,7 +98,10 @@ lever, and links the activity command. Notices are recorded
 (`managed_postgres_awake_notices`) and marked mailed in the transaction that
 queues the email (template `managed_postgres_awake`, gated by
 `FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_AWAKE_OUTBOX_ENABLED` on apid and maild),
-so a replica never mails twice. The usage sweep runs the pass at most hourly.
+so a replica never mails twice. The usage sweep runs the pass at most hourly,
+and records a week only `api.ManagedPostgresAwakeNoticeSettle` (12 h) after it
+ends, so the lagging idle-tail reads have recorded its last starts; a start
+with no suspend and no later start counts no time in a notice.
 
 ## Consequences
 

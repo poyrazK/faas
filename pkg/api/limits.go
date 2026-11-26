@@ -1341,12 +1341,16 @@ const ManagedPostgresSuspendTimeoutDocsURL = "https://gregale.dev/docs/postgres#
 // lists. ManagedPostgresAwakeNoticeHoursPerDay is the 7-day average awake
 // time at which the weekly notice names the cause, when one cause holds at
 // least ManagedPostgresAwakeNoticeCauseSharePercent of the starts.
+// ManagedPostgresAwakeNoticeSettle is how long after a week ends its notices
+// wait, so the idle-tail reads (which lag the windows) have recorded its last
+// starts and suspends.
 const (
 	ManagedPostgresActivityRetention            = 30 * 24 * time.Hour
 	ManagedPostgresActivityDefaultPeriod        = 24 * time.Hour
 	ManagedPostgresActivityMaxStarts            = 200
 	ManagedPostgresAwakeNoticeHoursPerDay       = 6
 	ManagedPostgresAwakeNoticeCauseSharePercent = 50
+	ManagedPostgresAwakeNoticeSettle            = 12 * time.Hour
 )
 
 // ManagedPostgresActivityDocsURL documents `postgres activity`.
