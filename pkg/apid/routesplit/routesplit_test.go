@@ -19,11 +19,15 @@ import (
 
 // fakeHost records what the split asked apid to do and acts on the store.
 type fakeHost struct {
-	store     *state.MemStore
-	split     *routeresources.Split
-	resized   map[string]int
-	deleted   map[string]bool
-	ruleErr   *api.Problem
+	store   *state.MemStore
+	split   *routeresources.Split
+	resized map[string]int
+	deleted map[string]bool
+	ruleErr *api.Problem
+	// ruleErrKind limits ruleErr to rules of one kind.
+	ruleErrKind string
+	// kindErr refuses every rule kind up front, as a plan gate does.
+	kindErr   *api.Problem
 	resizeErr *api.Problem
 	// deleteNotFound answers 404 without deleting, as a refused access
 	// check does.
@@ -72,8 +76,12 @@ func (h *fakeHost) AppHosts(_ context.Context, app state.App) []string {
 	return []string{app.Slug + ".gregale.dev", "shop.example.com"}
 }
 
+func (h *fakeHost) DirectHosts(_ context.Context, app state.App) []string {
+	return []string{app.Slug + ".gregale.dev", app.Slug + "--*.gregale.dev"}
+}
+
 func (h *fakeHost) CreateRule(ctx context.Context, acct state.Account, app state.App, req api.CreateEdgeRuleRequest) (string, *api.Problem) {
-	if h.ruleErr != nil {
+	if h.ruleErr != nil && (h.ruleErrKind == "" || h.ruleErrKind == req.Kind) {
 		return "", h.ruleErr
 	}
 	rule, err := h.store.CreateEdgeRule(ctx, state.CreateEdgeRuleParams{
@@ -85,6 +93,8 @@ func (h *fakeHost) CreateRule(ctx context.Context, acct state.Account, app state
 	}
 	return rule.ID, nil
 }
+
+func (h *fakeHost) RuleKindProblem(state.Account, string) *api.Problem { return h.kindErr }
 
 func (h *fakeHost) DeleteRule(ctx context.Context, _ state.Account, _ state.App, ruleID string) *api.Problem {
 	if err := h.store.DeleteEdgeRule(ctx, ruleID); err != nil {
@@ -194,6 +204,9 @@ func TestApplyRunsToDoneAndUndoes(t *testing.T) {
 	}
 	if rules, _ := f.store.ListEdgeRulesForApp(f.ctx, f.source.ID); len(rules) != 0 {
 		t.Fatalf("rules left after undo: %+v", rules)
+	}
+	if rules, _ := f.store.ListEdgeRulesForApp(f.ctx, target.ID); len(rules) != 0 {
+		t.Fatalf("block rules left on the deleted route's app: %+v", rules)
 	}
 }
 
@@ -345,6 +358,9 @@ func TestRollbackRemovesRules(t *testing.T) {
 	if rules, _ := f.store.ListEdgeRulesForApp(f.ctx, f.source.ID); len(rules) != 0 {
 		t.Fatalf("rules left after rollback: %+v", rules)
 	}
+	if rules, _ := f.store.ListEdgeRulesForApp(f.ctx, split.TargetAppID); len(rules) != 0 {
+		t.Fatalf("block rules left after rollback: %+v", rules)
+	}
 }
 
 // The route's app runs under the source's settings (here its egress
@@ -380,11 +396,11 @@ func TestTargetInheritsSettings(t *testing.T) {
 func TestApplyRefusesUncopiableProtections(t *testing.T) {
 	f := newFixture(t)
 	if _, err := f.store.CreateEdgeRule(f.ctx, state.CreateEdgeRuleParams{AccountID: f.acct.ID, AppID: f.source.ID,
-		MatchHost: "shop.gregale.dev", MatchPath: "/admin/*", Enabled: true, Kind: state.EdgeRuleKind("deny"), Name: "admin"}); err != nil {
+		MatchHost: api.EdgeRuleAppHosts, MatchPath: "/admin/*", Enabled: true, Kind: state.EdgeRuleKindIP, Name: "admin"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request()); prob == nil || prob.Code != api.CodeRouteSplitUnsupported {
-		t.Fatalf("edge rules: %+v", prob)
+		t.Fatalf("app-wide edge rules: %+v", prob)
 	}
 	g := newFixture(t)
 	ip := netip.MustParseAddr("198.51.100.7")
@@ -392,6 +408,187 @@ func TestApplyRefusesUncopiableProtections(t *testing.T) {
 	source.StaticEgressIP = &ip
 	if _, prob := g.svc.Apply(g.ctx, g.acct, source, g.request()); prob == nil || prob.Code != api.CodeRouteSplitUnsupported {
 		t.Fatalf("static egress IP: %+v", prob)
+	}
+}
+
+// An app with host rules splits: they still run on routed requests, and the
+// route's app gets a deny-all rule on each of its own hosts before any
+// traffic moves.
+func TestSplitBlocksTheRouteAppsOwnHosts(t *testing.T) {
+	f := newFixture(t)
+	if _, err := f.store.CreateEdgeRule(f.ctx, state.CreateEdgeRuleParams{AccountID: f.acct.ID, AppID: f.source.ID,
+		MatchHost: "shop.gregale.dev", MatchPath: "/admin/*", Enabled: true, Kind: state.EdgeRuleKindIP, Name: "admin"}); err != nil {
+		t.Fatal(err)
+	}
+	split, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request())
+	if prob != nil {
+		t.Fatalf("apply with host rules: %+v", prob)
+	}
+	if err := f.store.MarkDeploymentLive(f.ctx, split.TargetDeploymentID); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.Step(f.ctx)
+	f.svc.Step(f.ctx) // a retried pass reuses the block rules
+	blocks, err := f.store.ListEdgeRulesForApp(f.ctx, split.TargetAppID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hosts := map[string]bool{}
+	for _, rule := range blocks {
+		if rule.Kind != state.EdgeRuleKindIP || rule.MatchPath != "/**" || rule.Name != routesplit.RuleName(split.ID) {
+			t.Fatalf("block rule = %+v", rule)
+		}
+		hosts[rule.MatchHost] = true
+	}
+	if len(blocks) != 2 || !hosts["shop-exports.gregale.dev"] || !hosts["shop-exports--*.gregale.dev"] {
+		t.Fatalf("block rules = %+v", blocks)
+	}
+	if got := f.read(t, split.ID); got.Phase != state.RouteSplitDone || len(got.EdgeRuleIDs) != 2 {
+		t.Fatalf("split = %+v", got)
+	}
+}
+
+// Apply blocks the route's app's own hosts before it deploys anything; a
+// block that cannot be made rolls the split back and leaves nothing behind.
+func TestApplyRollsBackWhenTheBlockFails(t *testing.T) {
+	f := newFixture(t)
+	split, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request())
+	if prob != nil {
+		t.Fatalf("apply: %+v", prob)
+	}
+	if blocks, _ := f.store.ListEdgeRulesForApp(f.ctx, split.TargetAppID); len(blocks) != 2 {
+		t.Fatalf("block rules after apply = %+v, want 2 before the deployment is live", blocks)
+	}
+
+	g := newFixture(t)
+	g.host.ruleErr = api.ErrCapacity("edge rules unavailable")
+	if _, prob := g.svc.Apply(g.ctx, g.acct, g.source, g.request()); prob == nil {
+		t.Fatal("apply succeeded without its block")
+	}
+	splits, err := g.store.RouteSplitsForApp(g.ctx, g.acct.ID, g.source.ID, 10)
+	if err != nil || len(splits) != 1 || splits[0].Phase != state.RouteSplitRolledBack || !strings.Contains(splits[0].Error, "block direct access") {
+		t.Fatalf("splits = %+v, %v", splits, err)
+	}
+	if len(g.host.deleted) != 1 {
+		t.Fatalf("route's app not deleted: %v", g.host.deleted)
+	}
+	for id := range g.host.deleted {
+		if rules, _ := g.store.ListEdgeRulesForApp(g.ctx, id); len(rules) != 0 {
+			t.Fatalf("rules left on the deleted route's app: %+v", rules)
+		}
+	}
+}
+
+// The worker repairs a missing block before any route rule, retrying a
+// transient failure instead of rolling back; a refusal rolls back.
+func TestBlockRepair(t *testing.T) {
+	f := newFixture(t)
+	split, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request())
+	if prob != nil {
+		t.Fatalf("apply: %+v", prob)
+	}
+	blocks, _ := f.store.ListEdgeRulesForApp(f.ctx, split.TargetAppID)
+	if err := f.store.DeleteEdgeRule(f.ctx, blocks[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.MarkDeploymentLive(f.ctx, split.TargetDeploymentID); err != nil {
+		t.Fatal(err)
+	}
+	f.host.ruleErr, f.host.ruleErrKind = api.NewProblem(http.StatusServiceUnavailable, "unavailable", "Unavailable", "try again"), "ip"
+	f.svc.Step(f.ctx)
+	if got := f.read(t, split.ID); got.Phase != state.RouteSplitDeploying {
+		t.Fatalf("after a transient block failure the split is %+v", got)
+	}
+	if rules, _ := f.store.ListEdgeRulesForApp(f.ctx, f.source.ID); len(rules) != 0 {
+		t.Fatalf("route rules before the block is whole: %+v", rules)
+	}
+	f.host.ruleErr = nil
+	f.svc.Step(f.ctx)
+	if blocks, _ := f.store.ListEdgeRulesForApp(f.ctx, split.TargetAppID); len(blocks) != 2 {
+		t.Fatalf("repaired block rules = %+v", blocks)
+	}
+	if got := f.read(t, split.ID); got.Phase != state.RouteSplitRuleLive {
+		t.Fatalf("after the repair the split is %+v", got)
+	}
+
+	g := newFixture(t)
+	split, prob = g.svc.Apply(g.ctx, g.acct, g.source, g.request())
+	if prob != nil {
+		t.Fatalf("apply: %+v", prob)
+	}
+	blocks, _ = g.store.ListEdgeRulesForApp(g.ctx, split.TargetAppID)
+	if err := g.store.DeleteEdgeRule(g.ctx, blocks[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.store.MarkDeploymentLive(g.ctx, split.TargetDeploymentID); err != nil {
+		t.Fatal(err)
+	}
+	g.host.ruleErr, g.host.ruleErrKind = api.NewProblem(http.StatusPaymentRequired, api.CodePlanEdgeRuleKindNotAllowed, "Not on plan", "ip rules"), "ip"
+	g.svc.Step(g.ctx)
+	if got := g.read(t, split.ID); got.Phase != state.RouteSplitRolledBack || !strings.Contains(got.Error, "block direct access") {
+		t.Fatalf("after a refused block the split is %+v", got)
+	}
+}
+
+// An account that may not make ip rules is refused before anything is made.
+func TestApplyChecksTheIPRuleGate(t *testing.T) {
+	f := newFixture(t)
+	f.host.kindErr = api.NewProblem(http.StatusPaymentRequired, api.CodePlanEdgeRuleKindNotAllowed, "Not on plan", "ip rules need Hobby")
+	_, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request())
+	if prob == nil || prob.Code != api.CodePlanEdgeRuleKindNotAllowed || !strings.Contains(prob.Detail, "ip rules need Hobby") {
+		t.Fatalf("apply = %+v", prob)
+	}
+	if splits, _ := f.store.RouteSplitsForApp(f.ctx, f.acct.ID, f.source.ID, 10); len(splits) != 0 {
+		t.Fatalf("splits recorded: %+v", splits)
+	}
+}
+
+// Rules that already decide the split's path, or count it per app, refuse
+// the split; ones elsewhere, and earlier splits' rules, do not.
+func TestApplyRefusesOverlappingRules(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind, path, ruleName string
+		refused                    bool
+	}{
+		{"route on the path", "route", "/exports/**", "", true},
+		{"rewrite everywhere", "rewrite", "/**", "", true},
+		{"redirect elsewhere", "redirect", "/old/*", "", false},
+		{"throttle everywhere", "throttle", "/**", "", true},
+		{"throttle elsewhere", "throttle", "/api/*", "", false},
+		{"earlier split", "route", "/exports/**", routesplit.RuleName("earlier"), false},
+		{"ip on the path", "ip", "/exports/*", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			if _, err := f.store.CreateEdgeRule(f.ctx, state.CreateEdgeRuleParams{AccountID: f.acct.ID, AppID: f.source.ID,
+				MatchHost: "shop.gregale.dev", MatchPath: tc.path, Enabled: true, Kind: state.EdgeRuleKind(tc.kind), Name: tc.ruleName}); err != nil {
+				t.Fatal(err)
+			}
+			_, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request())
+			if refused := prob != nil && prob.Code == api.CodeRouteSplitUnsupported; refused != tc.refused {
+				t.Fatalf("refused = %v (%+v), want %v", refused, prob, tc.refused)
+			}
+		})
+	}
+}
+
+func TestGlobsMayOverlap(t *testing.T) {
+	for _, tc := range []struct {
+		a, b string
+		want bool
+	}{
+		{"/exports/*", "/exports/*", true},
+		{"/exports", "/exports/**", true},
+		{"/**", "/exports/*", true},
+		{"/api/*", "/exports/*", false},
+		{"/exports/1", "/exports/*", true},
+		{"/export", "/exports/*", false},
+		{"/a", "/b", false},
+		{"", "/b", true},
+	} {
+		if got := routesplit.GlobsMayOverlap(tc.a, tc.b); got != tc.want {
+			t.Errorf("GlobsMayOverlap(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
+		}
 	}
 }
 
