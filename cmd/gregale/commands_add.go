@@ -86,7 +86,7 @@ func cmdAddBucket(args []string) int {
 	// Flags may follow NAME, as the help shows; Go's flag parsing stopped at
 	// NAME and dropped them (Hunt 14 H14-13).
 	fs := newFlagSet("add bucket", flag.ContinueOnError)
-	appSlug := fs.String("app", "", "app slug (required)")
+	appSlug := fs.String("app", "", "app slug (defaults to the linked app)")
 	scope := fs.String("env", "", "environment scope (defaults to linked project environment)")
 	fs.Var(newStringAlias(scope), "scope", "environment scope (alias for --env)")
 	region := fs.String("region", "", "object-storage region (uses the account default when omitted)")
@@ -100,12 +100,15 @@ func cmdAddBucket(args []string) int {
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
+	// In the app's checkout --app defaults to the linked app, like the
+	// other app-scoped commands; add printed usage there (prod hunt r51).
+	fillLinkedApp(appSlug)
 	resolvedScope, resolveErr := resolveEnvironmentFlagOrContext(*scope)
 	if resolveErr != nil {
 		return printErr("Could not read local project context", resolveErr)
 	}
 	*scope = resolvedScope
-	usage := "usage: gregale add bucket NAME --app APP [--env SCOPE] [--region REGION] [--public --serve-at PATH] [--permission read|write|read_write] [--label LABEL] [--prefix PREFIX] [--key-prefix KEYS/] [--wait-timeout DURATION]"
+	usage := "usage: gregale add bucket NAME [--app APP] [--env SCOPE] [--region REGION] [--public --serve-at PATH] [--permission read|write|read_write] [--label LABEL] [--prefix PREFIX] [--key-prefix KEYS/] [--wait-timeout DURATION]"
 	// A standalone app reads the default scope, so --env defaults to it once
 	// the app is known; only a project app outside a linked checkout needs
 	// --env (Snapbox SB-2). The CLI named the answer and still made the user
@@ -319,7 +322,7 @@ func waitForObjectBucket(ctx context.Context, client interface {
 func cmdAddPostgres(args []string) int {
 	// Flags may follow NAME (Hunt 14 H14-13).
 	fs := newFlagSet("add postgres", flag.ContinueOnError)
-	appSlug := fs.String("app", "", "app slug (required)")
+	appSlug := fs.String("app", "", "app slug (defaults to the linked app)")
 	scope := fs.String("env", "", "environment scope (defaults to linked project environment)")
 	fs.Var(newStringAlias(scope), "scope", "environment scope (alias for --env)")
 	environmentKey := fs.String("environment-key", "DATABASE_URL", "connection environment variable name")
@@ -336,12 +339,15 @@ func cmdAddPostgres(args []string) int {
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
+	// In the app's checkout --app defaults to the linked app, like the
+	// other app-scoped commands; add printed usage there (prod hunt r51).
+	fillLinkedApp(appSlug)
 	resolvedScope, resolveErr := resolveEnvironmentFlagOrContext(*scope)
 	if resolveErr != nil {
 		return printErr("Could not read local project context", resolveErr)
 	}
 	*scope = resolvedScope
-	usage := "usage: gregale add postgres [NAME] --app APP [--env SCOPE] [--database REF] [--region REGION] [--class development|burstable|production] [--availability single_zone|high_availability] [--scale-to-zero[=BOOL]] [--environment-key KEY] [--access read_write|read_only|migration|data_api|session] [--wait-timeout DURATION]"
+	usage := "usage: gregale add postgres [NAME] [--app APP] [--env SCOPE] [--database REF] [--region REGION] [--class development|burstable|production] [--availability single_zone|high_availability] [--scale-to-zero[=BOOL]] [--environment-key KEY] [--access read_write|read_only|migration|data_api|session] [--wait-timeout DURATION]"
 	if fs.NArg() != 0 && fs.NArg() != 1 {
 		PrintUsage(os.Stderr, usage, "add")
 		return 1

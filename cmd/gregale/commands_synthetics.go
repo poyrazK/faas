@@ -149,7 +149,11 @@ func cmdSyntheticsSetEnabled(args []string, enabled bool) int {
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
+	// <check> or <app> <check>; syntheticCheckArgs reads which.
 	ref, ok := syntheticCheckArgs(slug, fs.Args())
+	if fs.NArg() != 1 && fs.NArg() != 2 {
+		ok = false
+	}
 	if !ok {
 		PrintUsage(os.Stderr, "usage: gregale alert check "+verb+" [<slug>|--app <slug>] <check-id|name>", "synthetics")
 		return 1
@@ -181,7 +185,11 @@ func cmdSyntheticsRm(args []string) int {
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
+	// <check> or <app> <check>; syntheticCheckArgs reads which.
 	ref, ok := syntheticCheckArgs(slug, fs.Args())
+	if fs.NArg() != 1 && fs.NArg() != 2 {
+		ok = false
+	}
 	if !ok {
 		PrintUsage(os.Stderr, "usage: gregale alert check delete [<slug>|--app <slug>] <check-id|name> [--yes]", "synthetics")
 		return 1
@@ -197,6 +205,6 @@ func cmdSyntheticsRm(args []string) int {
 	if err := client.DeleteSyntheticCheck(context.Background(), *slug, id); err != nil {
 		return printErr("Could not delete synthetic check", err)
 	}
-	_, _ = fmt.Fprintf(osStdout, "Deleted check %s\n", fs.Arg(0))
+	_, _ = fmt.Fprintf(osStdout, "Deleted check %s\n", ref)
 	return 0
 }

@@ -318,7 +318,12 @@ or shell syntax must use the list form. `user` takes a name or id with an
 optional `:group`, resolved against the image's `/etc/passwd` and `/etc/group`.
 `working_dir` must be an absolute path. `stop_signal` accepts the signals
 guest-init delivers (SIGTERM, SIGINT, SIGQUIT, SIGHUP, SIGUSR1, SIGUSR2), and
-`stop_grace_period` is capped by the plan. Like commands, these overrides are
+`stop_grace_period` is capped by the plan. guest-init signals the process it
+started. A source-built Node or Python app whose start command (or npm script)
+is one simple command runs it with `exec`, so the app itself gets the signal; a
+compound command such as `cd src && node server.js` stays under `/bin/sh`,
+which does not forward it, so write `cd src && exec node server.js` if the app
+drains on SIGTERM. Like commands, these overrides are
 captured per deployment, so queued deployments and rollbacks keep them.
 Source-built services take the same overrides:
 an `entrypoint` is folded into the service's start command (the entrypoint,

@@ -84,7 +84,7 @@ func ClassifyNode(planJSON, packageJSON []byte) api.SharedRuntimeVerdict {
 	case bun:
 		// ADR-20261124160000: the layer keeps Bun's own install, if the
 		// artifact has one (imaged decides).
-		start = []string{"/bin/sh", "-c", strings.TrimSpace(command)}
+		start = ShellStart(command)
 	case reason != "":
 		return ineligible(reason)
 	case StartReachesBun(command, packageJSON):
@@ -192,7 +192,7 @@ func resolveStart(command string, packageJSON []byte) ([]string, string) {
 	case "npx", "yarn", "pnpm", "bun", "bunx", "corepack":
 		return nil, ReasonPackageManagerStart
 	default:
-		return []string{"/bin/sh", "-c", command}, ""
+		return ShellStart(command), ""
 	}
 	var script string
 	switch {
@@ -218,7 +218,7 @@ func resolveStart(command string, packageJSON []byte) ([]string, string) {
 	if pkg.Scripts["pre"+script] != "" || pkg.Scripts["post"+script] != "" {
 		return nil, ReasonNPMLifecycleHooks
 	}
-	return []string{"/bin/sh", "-c", body}, ""
+	return ShellStart(body), ""
 }
 
 // RunnerPath is the PATH a shared-runtime app runs with on the runner base.

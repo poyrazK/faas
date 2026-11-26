@@ -107,6 +107,10 @@ type consumerFlags struct {
 }
 
 var consumerVerbFlags = map[string][]string{
+	// Revokes do not prompt; --yes, which scripts pass to every removal,
+	// failed as an unknown flag (prod hunt r54).
+	"revoke":             {"yes"},
+	"key-revoke":         {"yes"},
 	"list":               {"environment"},
 	"create":             {"external-ref", "name", "trial-days", "environment"},
 	"trial-set":          {"days", "ends-at"},
@@ -149,6 +153,7 @@ func cmdConsumers(args []string) int {
 	fs.StringVar(&f.expires, "expires", "", "key or credit expiry, RFC3339 (key-create, credit-grant)")
 	fs.StringVar(&f.since, "since", "", "usage window start (RFC3339)")
 	fs.StringVar(&f.until, "until", "", "usage window end (RFC3339)")
+	_ = fs.Bool("yes", false, "accepted for scripts; revoke does not prompt (revoke, key-revoke)")
 	if monetizationCLI() {
 		registerConsumerMonetizationFlags(fs, &f)
 	}
