@@ -10075,7 +10075,7 @@ gregale mcp server diff --before baseline.json --after candidate.json --check --
 
 ### mcp client
 
-tools · call · complete · prompts · render · resources · read · watch · status · wait · respond · cancel
+tools · call · complete · prompts · render · resources · read · watch · status · inbox · group · wait · respond · cancel
 
 #### mcp client tools
 
@@ -10327,7 +10327,7 @@ Read the status or result of a previously returned task handle
 | `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
 | `--name <NAME>` | connection name (config) |  |
 | `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
-| `--task-id <ID>` | opaque task ID (task-get, task-wait or task-cancel) |  |
+| `--task-id <ID>` | opaque task ID (task-get, task-wait, task-respond or task-cancel) |  |
 | `--metadata-only` | show Task metadata and next action |  |
 | `--read-result` | read a completed Task result from a private receipt |  |
 | `--task-submission-key <UUID>` | find a retained Task by saved UUIDv7 |  |
@@ -10339,6 +10339,179 @@ Examples:
 
 ```sh
 gregale mcp client status --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840
+```
+
+#### mcp client inbox
+
+List your retained Task metadata on a server
+
+`gregale mcp client inbox [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--status <STATUS>] [--limit <N>] [--cursor <CURSOR>] [--follow] [--once] [--wait-timeout <DURATION>] [--checkpoint-file <FILE>] [--interval <DURATION>] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--status <STATUS>` | filter by retained Task status | one of `working` · `input_required` · `completed` · `failed` · `cancelled` |
+| `--limit <N>` | maximum entries on this page (1–50, default 20) |  |
+| `--cursor <CURSOR>` | nextCursor from the previous page (single-page reads) |  |
+| `--follow` | follow new and changed inbox entries as JSON lines (also --watch) |  |
+| `--once` | exit after printing one inbox event (requires --watch) |  |
+| `--wait-timeout <DURATION>` | total time to wait for the first event (requires --watch --once) |  |
+| `--checkpoint-file <FILE>` | save inbox watch progress to a private file (requires --watch) |  |
+| `--interval <DURATION>` | time between watch scans (1s–1h, default 30s) |  |
+| `--timeout <DURATION>` | deadline for one inbox read or watch scan (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp client inbox --app my-mcp --token-env MCP_TOKEN --status input_required
+gregale mcp client inbox --app my-mcp --token-env MCP_TOKEN --status input_required --watch
+```
+
+#### mcp client group
+
+status · stop · watch · ack · submit · review · respond
+
+`gregale mcp client group <status|stop|watch|ack|submit|review|respond>`
+
+##### mcp client group status
+
+Read the current status of a saved Node SDK Task group
+
+`gregale mcp client group status --url <URL> --token-env <ENV> --group <DIR> [--include-results] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | MCP endpoint URL used to save the group | required |
+| `--token-env <ENV>` | environment variable containing a current MCP client token | required |
+| `--group <DIR>` | private group directory saved by the Node SDK | required |
+| `--include-results` | include retained results and execution errors |  |
+| `--timeout <DURATION>` | total Task read deadline (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp client group status --url https://reports.example.com/mcp --token-env MCP_TOKEN --group ./reports
+```
+
+##### mcp client group stop
+
+Stop a saved Node SDK Task group and request cancellation
+
+`gregale mcp client group stop --url <URL> --token-env <ENV> --group <DIR> [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | MCP endpoint URL used to save the group | required |
+| `--token-env <ENV>` | environment variable containing a current MCP client token | required |
+| `--group <DIR>` | private group directory saved by the Node SDK | required |
+| `--timeout <DURATION>` | total group stop deadline (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp client group stop --url https://reports.example.com/mcp --token-env MCP_TOKEN --group ./reports
+```
+
+##### mcp client group watch
+
+Stream status changes of a saved Node SDK Task group
+
+`gregale mcp client group watch --url <URL> --token-env <ENV> --group <DIR> [--interval <DURATION>] [--timeout <DURATION>] [--resume]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | MCP endpoint URL used to save the group | required |
+| `--token-env <ENV>` | environment variable containing a current MCP client token | required |
+| `--group <DIR>` | private group directory saved by the Node SDK | required |
+| `--interval <DURATION>` | polling interval when a stream is unavailable (default 2s) |  |
+| `--timeout <DURATION>` | total group watch deadline (default 2m) |  |
+| `--resume` | skip updates acknowledged from the CLI or Node SDK |  |
+
+Examples:
+
+```sh
+gregale mcp client group watch --url https://reports.example.com/mcp --token-env MCP_TOKEN --group ./reports
+```
+
+##### mcp client group ack
+
+Acknowledge a handled update in a saved Task group
+
+`gregale mcp client group ack --group <DIR> --update-id <ID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--group <DIR>` | private group directory saved by the Node SDK | required |
+| `--update-id <ID>` | updateId from a Task group watch event | required |
+
+Examples:
+
+```sh
+gregale mcp client group ack --group ./reports --update-id UPDATE_ID
+```
+
+##### mcp client group submit
+
+Submit or continue a recoverable group of owner-bound Tasks
+
+`gregale mcp client group submit --url <URL> --token-env <ENV> --group <DIR> --plan <FILE> [--retry-unconfirmed] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | MCP endpoint URL for the group | required |
+| `--token-env <ENV>` | environment variable containing a current MCP client token | required |
+| `--group <DIR>` | private interoperable Task group directory | required |
+| `--plan <FILE>` | JSON file with the original tool calls in order | required |
+| `--retry-unconfirmed` | retry recorded submissions after a Task-not-found lookup |  |
+| `--timeout <DURATION>` | total group submission deadline (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp client group submit --url https://reports.example.com/mcp --token-env MCP_TOKEN --group ./reports --plan ./calls.json
+```
+
+##### mcp client group review
+
+Export private reviewed-input templates for paused Task group members
+
+`gregale mcp client group review --url <URL> --token-env <ENV> --group <DIR> --out-dir <DIR> [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | MCP endpoint URL used to save the group | required |
+| `--token-env <ENV>` | environment variable containing a current MCP client token | required |
+| `--group <DIR>` | private interoperable Task group directory | required |
+| `--out-dir <DIR>` | private directory for new reviewed-input templates | required |
+| `--timeout <DURATION>` | total group review deadline (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp client group review --url https://reports.example.com/mcp --token-env MCP_TOKEN --group ./reports --out-dir ./reviews
+```
+
+##### mcp client group respond
+
+Apply selected reviewed inputs to Tasks in a saved group
+
+`gregale mcp client group respond --url <URL> --token-env <ENV> --group <DIR> --reviewed-input-file <FILE>... [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | MCP endpoint URL used to save the group | required |
+| `--token-env <ENV>` | environment variable containing a current MCP client token | required |
+| `--group <DIR>` | private interoperable Task group directory | required |
+| `--reviewed-input-file <FILE>` | private completed review file (repeatable) | required |
+| `--timeout <DURATION>` | total group response deadline (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp client group respond --url https://reports.example.com/mcp --token-env MCP_TOKEN --group ./reports --reviewed-input-file ./reviews/member-0-input.json --reviewed-input-file ./reviews/member-2-input.json
 ```
 
 #### mcp client wait
@@ -10362,7 +10535,7 @@ Resume waiting for a task to finish
 | `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
 | `--name <NAME>` | connection name (config) |  |
 | `--timeout <DURATION>` | total task wait timeout (default 5m) |  |
-| `--task-id <ID>` | opaque task ID (task-get, task-wait or task-cancel) |  |
+| `--task-id <ID>` | opaque task ID (task-get, task-wait, task-respond or task-cancel) |  |
 | `--task-receipt <FILE>` | resume a retained Task from a private receipt instead of supplying the Task ID |  |
 | `--interactive` | answer modern MCP task input forms in the terminal |  |
 | `--input-responses-file <PATH>` | JSON file with elicitation responses keyed by request ID |  |
@@ -10380,7 +10553,7 @@ gregale mcp client wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe
 
 Submit reviewed Task input and return a status snapshot
 
-`gregale mcp client respond [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] --task-receipt <FILE> --reviewed-input-file <FILE> [--timeout <DURATION>] [<slug>]`
+`gregale mcp client respond [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--task-receipt <FILE>] [--task-id <ID>] --reviewed-input-file <FILE> [--timeout <DURATION>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -10388,7 +10561,8 @@ Submit reviewed Task input and return a status snapshot
 | `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
 | `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
 | `--token-env <ENV>` | environment variable containing an MCP client token |  |
-| `--task-receipt <FILE>` | private receipt for the retained Task | required |
+| `--task-receipt <FILE>` | private receipt for the retained Task |  |
+| `--task-id <ID>` | Task ID from the inbox or a Task submission |  |
 | `--reviewed-input-file <FILE>` | answer forms from a reviewed private Task input template | required |
 | `--timeout <DURATION>` | total request timeout (default 30s) |  |
 
@@ -10396,6 +10570,7 @@ Examples:
 
 ```sh
 gregale mcp client respond --app my-mcp --token-env MCP_TOKEN --task-receipt ./task.json --reviewed-input-file ./reviewed-input.json
+gregale mcp client respond --app my-mcp --token-env MCP_TOKEN --task-id 786512e2-9e0d-44bd-8f29-789f320fe840 --reviewed-input-file ./reviewed-input.json
 ```
 
 #### mcp client cancel
@@ -10419,7 +10594,7 @@ Request cooperative cancellation of a previously returned task
 | `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
 | `--name <NAME>` | connection name (config) |  |
 | `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
-| `--task-id <ID>` | opaque task ID (task-get, task-wait or task-cancel) |  |
+| `--task-id <ID>` | opaque task ID (task-get, task-wait, task-respond or task-cancel) |  |
 | `--task-receipt <FILE>` | cancel a retained Task from a private receipt instead of supplying the Task ID |  |
 
 Examples:
