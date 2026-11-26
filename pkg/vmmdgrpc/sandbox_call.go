@@ -65,7 +65,9 @@ func (s *Server) SandboxCall(stream vmmdpb.Vmmd_SandboxCallServer) error {
 	// an instance it does not keep is not a session VM, which the dial
 	// refuses below.
 	if act := s.sandboxActivityFor(instance); act != nil {
-		act.begin()
+		if !act.tryBegin() {
+			return status.Error(codes.Unavailable, "the sandbox is pausing; resume it and retry")
+		}
 		defer func() { act.end(time.Now()) }()
 		if err := s.thawSandbox(ctx, instance, act); err != nil {
 			s.log.Warn("sandbox: thaw failed", "instance", instance, "err", err)

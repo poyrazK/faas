@@ -8,7 +8,7 @@ are self-contained; no SDK checkout or separately published package is needed.
 ## Deploy with managed PostgreSQL
 
 Use a database from Gregale's qualified Neon-backed preview, or create one with
-`gregale postgres create notes --region <region>`. Reserve the app before attaching
+`gregale postgres create notes`. Reserve the app before attaching
 credentials, then deploy the generated source:
 
 ```sh

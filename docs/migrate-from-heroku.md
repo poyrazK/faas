@@ -87,7 +87,7 @@ Gregale has no one-step import from Heroku Postgres. Two ways to move:
 - **Move to managed PostgreSQL.** Create a database and bind it:
 
   ```bash
-  gregale add postgres --app my-api --region <region>
+  gregale add postgres --app my-api
   gregale postgres attach my-api-postgres my-api --access migration --env MIGRATION_DATABASE_URL
   ```
 

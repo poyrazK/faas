@@ -127,7 +127,7 @@ func waitForSafeProjectRelease(ctx context.Context, c *Client, s *savedDeploySes
 			if errors.Is(waitCtx.Err(), context.Canceled) {
 				return projectSubmissionFailure(s, waitCtx.Err())
 			}
-			return renderProjectDeployReceipt(api.PlanResponse{}, last, s, true, nil)
+			return renderProjectDeployReceiptWithTimeouts(api.PlanResponse{}, last, s, true, nil, deadline, nil)
 		case <-timer.C:
 		}
 	}

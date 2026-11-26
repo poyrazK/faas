@@ -14,7 +14,7 @@ cd customer-platform
 ```
 
 Use an existing Gregale managed PostgreSQL database, or create one with
-`gregale postgres create customer-db --region <region>`. Reserve the app and
+`gregale postgres create customer-db`. Reserve the app and
 attach separate runtime and migration bindings:
 
 ```sh

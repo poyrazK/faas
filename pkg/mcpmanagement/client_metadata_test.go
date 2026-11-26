@@ -123,6 +123,9 @@ func TestMetadataDocumentsThatDoNotFitAreRefused(t *testing.T) {
 		"confidential client": func(id string) map[string]any {
 			return map[string]any{"client_id": id, "redirect_uris": []string{testRedirect}, "token_endpoint_auth_method": "private_key_jwt"}
 		},
+		"confidential methods only": func(id string) map[string]any {
+			return map[string]any{"client_id": id, "redirect_uris": []string{testRedirect}, "token_endpoint_auth_methods_supported": []string{"private_key_jwt"}, "token_endpoint_auth_method": "none"}
+		},
 		"implicit response type": func(id string) map[string]any {
 			return map[string]any{"client_id": id, "redirect_uris": []string{testRedirect}, "response_types": []string{"token"}}
 		},
